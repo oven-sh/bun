@@ -1281,21 +1281,30 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_listener(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        let Some(cell) = this.handlers.as_deref() else {
+        let Some(handlers) = this.handlers else {
             return JSValue::UNDEFINED;
         };
-        // SAFETY: read-only field access; see `get_handlers` for the aliasing contract.
-        let handlers = unsafe { &*cell.get() };
+        let handlers: *const Handlers = handlers.as_ptr();
 
-        if handlers.mode != SocketMode::Server || this.socket.is_detached() {
+        // SAFETY: read-only field access; see `get_handlers` for the aliasing contract.
+        if unsafe { (*handlers).mode } != SocketMode::Server || this.socket.is_detached() {
             return JSValue::UNDEFINED;
         }
 
-        // SAFETY: handlers points to Listener.handlers field (server mode invariant).
+        // Zig: `@fieldParentPtr("handlers", handlers)`. Server-mode
+        // `this.handlers` is set to `&mut listener.handlers` (the embedded
+        // `Listener.handlers` field — Listener.rs:34 / Listener.rs on_create),
+        // so subtracting the field offset recovers the parent `Listener*`.
+        // This is ONLY valid because `NewSocket.handlers` is a raw
+        // `NonNull<Handlers>` pointing into the `Listener` allocation; an
+        // `Rc`/`Box` payload would break the invariant.
+        //
+        // SAFETY: server-mode invariant (checked above) guarantees `handlers`
+        // addresses `Listener.handlers`.
         let l: &Listener = unsafe {
-            &*((handlers as *const Handlers as *const u8)
+            &*(handlers as *const u8)
                 .sub(core::mem::offset_of!(Listener, handlers))
-                as *const Listener)
+                .cast::<Listener>()
         };
         l.strong_self.get().unwrap_or(JSValue::UNDEFINED)
     }
@@ -2218,17 +2227,16 @@ impl<const SSL: bool> NewSocket<SSL> {
         })?;
 
         // In Zig `this_handlers.* = handlers` overwrites the pointee so the
-        // listener + all sockets observe the new callbacks. The Rc payload is
-        // `UnsafeCell<Handlers>`, so `UnsafeCell::get` yields a write-capable
-        // `*mut Handlers` with valid provenance — no `*const → *mut` cast.
+        // listener + all sockets observe the new callbacks. `this.handlers` is
+        // a raw `*mut Handlers` (server: `&mut listener.handlers`; client:
+        // `Box::into_raw`), so writing through it has valid provenance.
         let p: *mut Handlers = this
             .handlers
-            .as_ref()
             .expect("No handlers set on Socket")
-            .get();
-        // SAFETY: `p` is the `UnsafeCell` payload of a live `Rc`; no `&Handlers`
-        // borrow is live across the read/writes below (single-threaded event
-        // loop, and `from_js` cannot reenter this socket's handlers).
+            .as_ptr();
+        // SAFETY: `p` is the freely-aliased raw pointer; no `&Handlers` borrow
+        // is live across the read/writes below (single-threaded event loop,
+        // and `from_js` cannot reenter this socket's handlers).
         let prev_mode = unsafe { (*p).mode };
         let handlers = Handlers::from_js(global, socket_obj, prev_mode == SocketMode::Server)?;
         // Preserve runtime state across the struct assignment. `Handlers.fromJS` returns a
@@ -2238,7 +2246,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // `.duplex_server`. Losing the counter causes the next `markInactive` to either free
         // the heap-allocated client `Handlers` while the socket still points at it, or
         // underflow on the server path.
-        // SAFETY: see above — raw-pointer-only access through `UnsafeCell::get`.
+        // SAFETY: raw-pointer-only access; see `get_handlers` contract.
         unsafe {
             let active_connections = (*p).active_connections;
             core::ptr::drop_in_place(p); // Zig: this_handlers.deinit()

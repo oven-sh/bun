@@ -448,11 +448,24 @@ impl BunTestRoot {
 
         debug_assert!(self.active_file.is_none());
 
+        // Derive the stored backref from the TestRunner's *stable* storage
+        // (the global `Jest::RUNNER` NonNull) rather than `self as *mut _`.
+        // A pointer coerced from `&mut self` carries provenance bounded by this
+        // call's reborrow; the next `Jest::runner()` hands out a fresh
+        // `&'static mut TestRunner`, invalidating that tag, so later derefs at
+        // `BunTest::run`/`on_uncaught_exception` would be use-after-invalidation
+        // under Stacked Borrows. Zig (.zig:178) just passes a stable `*BunTestRoot`.
+        // SAFETY: single-threaded; `RUNNER` outlives every BunTest. Field
+        // projection via `addr_of_mut!` creates no intermediate `&mut TestRunner`.
+        let stable_root: *mut BunTestRoot = Jest::runner_ptr()
+            .map(|p| unsafe { core::ptr::addr_of_mut!((*p.as_ptr()).bun_test_root) })
+            .unwrap_or(self as *mut BunTestRoot);
+
         // Zig: active_file = .new(undefined); active_file.get().?.init(...)
         // TODO(port): in-place init — Rc::new_cyclic or two-phase init may be
         // needed because BunTest stores a backref to BunTestRoot.
         let bun_test = BunTestCell::new(BunTest::init(
-            self as *const BunTestRoot,
+            stable_root,
             file_id,
             Some(reporter),
             default_concurrent,
@@ -491,8 +504,16 @@ impl BunTestRoot {
 
     pub fn on_before_print(&self) {
         if let Some(active_file) = &self.active_file {
-            // Read-only field access through `BunTestCell` Deref.
-            if let Some(reporter) = active_file.reporter {
+            // Do NOT go through `<BunTestCell as Deref>` here. Two of the three
+            // callers (`on_uncaught_exception`, test_command.rs report-status)
+            // reach this while a `&mut BunTest` to the *same* cell payload is
+            // live and reused afterward; materialising a sibling `&BunTest`
+            // would pop the caller's Unique tag under Stacked Borrows. Read the
+            // reporter field via raw ptr instead — `Option<&_>` is `Copy`.
+            // SAFETY: single-threaded; `active_file` keeps the cell alive; raw
+            // field read creates no intermediate `&BunTest`.
+            let reporter = unsafe { *core::ptr::addr_of!((*active_file.as_ptr()).reporter) };
+            if let Some(reporter) = reporter {
                 // `last_printed_dot` is `Cell<bool>` so the `&CommandLineReporter` borrow
                 // suffices — no `&mut` materialized through a shared ref (Zig used `*T`).
                 if reporter.reporters.dots && reporter.last_printed_dot.get() {
@@ -500,8 +521,14 @@ impl BunTestRoot {
                     Output::flush();
                     reporter.last_printed_dot.set(false);
                 }
-                if let Some(runner) = Jest::runner() {
-                    runner.current_file.print_if_needed();
+                // `Jest::runner()` would hand out `&'static mut TestRunner` while
+                // `self: &BunTestRoot` — a field of that same TestRunner — is
+                // live. Project `current_file` through the raw global ptr instead.
+                if let Some(runner_ptr) = Jest::runner_ptr() {
+                    // SAFETY: single-threaded; disjoint field from `bun_test_root`.
+                    unsafe {
+                        (*core::ptr::addr_of_mut!((*runner_ptr.as_ptr()).current_file)).print_if_needed();
+                    }
                 }
             }
         }
@@ -533,7 +560,7 @@ pub enum Phase {
 }
 
 pub struct BunTest<'a> {
-    pub bun_test_root: *const BunTestRoot,
+    pub bun_test_root: *mut BunTestRoot,
     pub in_run_loop: bool,
     pub allocation_scope: AllocationScope,
     // gpa / arena_allocator / arena dropped — see §Allocators (non-AST crate)
@@ -558,7 +585,7 @@ pub struct BunTest<'a> {
 
 impl<'a> BunTest<'a> {
     pub fn init(
-        bun_test_root: *const BunTestRoot,
+        bun_test_root: *mut BunTestRoot,
         file_id: FileId,
         reporter: Option<&'a CommandLineReporter>,
         default_concurrent: bool,
@@ -1442,7 +1469,7 @@ pub enum Only {
 }
 
 pub struct BaseScope {
-    pub parent: Option<*const DescribeScope>,
+    pub parent: Option<*mut DescribeScope>,
     pub name: Option<Box<[u8]>>,
     pub concurrent: bool,
     pub mode: ScopeMode,
@@ -1457,7 +1484,7 @@ impl BaseScope {
     pub fn init(
         cfg: BaseScopeCfg,
         name_not_owned: Option<&[u8]>,
-        parent: Option<*const DescribeScope>,
+        parent: Option<*mut DescribeScope>,
         has_callback: bool,
     ) -> BaseScope {
         let parent_base = parent.map(|p| unsafe { &(*p).base });
@@ -1485,8 +1512,9 @@ impl BaseScope {
     pub fn propagate(&mut self, has_callback: bool) {
         self.has_callback = has_callback;
         if let Some(parent) = self.parent {
-            // SAFETY: parent backref valid; tree is single-threaded and parent outlives child
-            let parent = unsafe { &mut *(parent as *mut DescribeScope) };
+            // SAFETY: parent backref valid; tree is single-threaded and parent
+            // outlives child. `parent` is `*mut` (Zig: `?*DescribeScope`).
+            let parent = unsafe { &mut *parent };
             if self.only != Only::No {
                 parent.mark_contains_only();
             }

@@ -3008,7 +3008,8 @@ impl<'a> BundleV2<'a> {
         this.clone_ast()?;
 
         // SAFETY: see `generate_from_cli` — raw-ptr borrow sidestep for
-        // `&mut self.linker` / `&mut *this` / `&this.graph.entry_points`.
+        // `link` takes a raw `*mut BundleV2` and only touches fields disjoint
+        // from `this.linker`.
         let mut chunks = unsafe {
             let bundle_ptr: *mut BundleV2 = &mut *this;
             let ep_len = (*bundle_ptr).graph.entry_points.len();
@@ -3016,7 +3017,7 @@ impl<'a> BundleV2<'a> {
             let ep = (*bundle_ptr).graph.entry_points.as_ptr().cast::<Index>();
             let scbs = core::mem::take(&mut (*bundle_ptr).graph.server_component_boundaries);
             this.linker.link(
-                &mut *bundle_ptr,
+                bundle_ptr,
                 core::slice::from_raw_parts(ep, ep_len),
                 scbs,
                 &mut reachable_files,
@@ -3637,7 +3638,7 @@ impl<'a> BundleV2<'a> {
             let scbs = core::mem::take(&mut (*bundle_ptr).graph.server_component_boundaries);
             let mut reachable_files = reachable_files;
             self.linker.link(
-                &mut *bundle_ptr,
+                bundle_ptr,
                 core::slice::from_raw_parts(ep, ep_len),
                 scbs,
                 &mut reachable_files,

@@ -473,10 +473,13 @@ pub fn populateLinkedNamesCache(this: *PackageManager) void {
         // `DT_UNKNOWN` for every entry, and rejecting it here would
         // drop real scope dirs. `openDirForIteration` below will reject
         // non-dirs as EACCES/ENOTDIR and we'll just skip them.
-        if (name[0] == '@' and (entry.kind == .directory or entry.kind == .unknown)) {
+        if (name.len > 0 and name[0] == '@' and (entry.kind == .directory or entry.kind == .unknown)) {
             if (comptime bun.Environment.isWindows) {
                 // WTF-16 name; skip scope flattening on Windows for now.
                 // Falls through to the lstat path in linkedPackagePath.
+                // The scope dir itself counts as a potential link
+                // parent, so record it for the Windows fast path.
+                this.linked_names_any_on_windows = true;
                 continue;
             }
             const scope_fd = switch (bun.openDirForIteration(root_fd, name)) {
@@ -507,7 +510,15 @@ pub fn populateLinkedNamesCache(this: *PackageManager) void {
             continue;
         }
 
-        if (comptime bun.Environment.isWindows) continue;
+        if (comptime bun.Environment.isWindows) {
+            // Over-approximate: any reparse-point entry at this level
+            // is a candidate link. `linkedPackagePath`'s per-call
+            // `GetFileAttributesW` will still reject false positives
+            // by path (non-matching pkg name → ENOENT). We just need
+            // enough signal to skip the syscall when zero links exist.
+            if (entry.kind == .sym_link) this.linked_names_any_on_windows = true;
+            continue;
+        }
         // See notes above — symlink-only filter with `.unknown` lstat
         // fallback so NFS / FUSE / ftype=0 hosts don't silently drop
         // every entry.
@@ -556,10 +567,12 @@ fn isLinkedEntry(kind: std.fs.File.Kind, dir_fd: bun.FD, name: [:0]const u8) boo
 ///
 /// Performance: when `linked_names` has been populated (via
 /// `populateLinkedNamesCache` at install start), this is a single
-/// hashmap check with no syscalls. When the cache is empty (no active
-/// links on this machine), it returns immediately. Falls back to the
-/// per-call `lstat` when the cache has not been populated (e.g. on
-/// Windows, or if a caller runs outside the isolated-install flow).
+/// hashmap check with no syscalls on POSIX. On Windows the readdir
+/// yields WTF-16 names we can't key into the UTF-8 map, but
+/// `linked_names_any_on_windows` preserves the zero-syscall fast
+/// path for the "no links on this machine" case. Falls back to a
+/// per-call `lstat` / `GetFileAttributesW` when the cache was not
+/// populated (e.g. a caller outside the isolated-install flow).
 pub fn linkedPackagePath(
     this: *PackageManager,
     pkg_name: []const u8,
@@ -582,6 +595,17 @@ pub fn linkedPackagePath(
     // npm-only install on Windows into a hard exit. Honor populate's
     // "no links on this machine" result.
     if (this.linked_names_populated and this.global_link_dir_path.len == 0) return null;
+
+    // Windows fast path. `use_cache` is always false on Windows (the
+    // readdir yields WTF-16 names we can't key into the UTF-8 set),
+    // so without this every call falls through to GetFileAttributesW
+    // — one syscall per npm package per install, even on machines
+    // with zero registered links. `populateLinkedNamesCache` already
+    // paid the readdir cost and recorded whether any link-shaped
+    // entry exists; honor it here.
+    if (comptime bun.Environment.isWindows) {
+        if (this.linked_names_populated and !this.linked_names_any_on_windows) return null;
+    }
 
     const dir_path = this.globalLinkDirPath();
     const joined = bun.path.joinAbsStringBufZ(dir_path, buf, &.{pkg_name}, .auto);

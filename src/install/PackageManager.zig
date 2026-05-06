@@ -104,6 +104,14 @@ global_link_dir_path: string = "",
 /// See `populateLinkedNamesCache` / `linkedPackagePath`.
 linked_names: bun.StringHashMapUnmanaged(void) = .{},
 linked_names_populated: bool = false,
+/// Windows-only fast-path companion to `linked_names`: on Windows the
+/// readdir entry is WTF-16 so we can't key it into the UTF-8 hashmap,
+/// but we *can* record whether the global link dir is nonempty during
+/// the same readdir pass. `linkedPackagePath` consults this to skip
+/// the per-call `GetFileAttributesW` when no links exist — restoring
+/// the "zero syscalls when no packages are linked" guarantee that the
+/// POSIX fast path in `linked_names` provides.
+linked_names_any_on_windows: bool = false,
 
 onWake: WakeHandler = .{},
 ci_mode: bun.LazyBool(computeIsContinuousIntegration, @This(), "ci_mode") = .{},

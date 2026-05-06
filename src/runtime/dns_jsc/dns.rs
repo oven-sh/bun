@@ -2340,9 +2340,10 @@ pub mod internal {
                     #[cfg(target_os = "macos")]
                     {
                         (*req).libinfo.machport = machport;
-                        let poll = (*req).libinfo.file_poll.as_mut().unwrap();
+                        // SAFETY: file_poll was set in lookup_libinfo before the first callback fires.
+                        let poll = (*req).libinfo.file_poll.unwrap().as_mut();
                         poll.fd = sys::Fd::from_native(core::mem::transmute::<u32, i32>(machport));
-                        match poll.register(Loop::get(), Async::PollKind::Machport, true) {
+                        match poll.register(&mut *Loop::get(), Async::Flags::Machport, true) {
                             sys::Result::Err(_) => {
                                 bun_output::scoped_log!(dns, "libinfoCallback: failed to register poll");
                                 break 'retry;

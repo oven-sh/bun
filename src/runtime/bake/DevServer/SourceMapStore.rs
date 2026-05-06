@@ -424,15 +424,10 @@ impl Entry {
 impl Drop for Entry {
     fn drop(&mut self) {
         // PORT NOTE: Zig `deinit` used `useAllFields` to statically assert every field is handled.
-        // In Rust, `Box`/`MultiArrayList` fields drop automatically; only the side effects remain.
+        // In Rust, `Box`/`Vec` fields drop automatically; only the side-effect assert remains.
+        // `Shared` elements drop their `Rc<PackedMap>` via `Vec::drop` — no explicit `deinit` loop.
         debug_assert!(self.ref_count == 0);
-        let files = self.files.slice();
-        for i in 0..files.len() {
-            let mut file = files.get(i);
-            file.deinit();
-            // TODO(port): packed_map::Shared::deinit — confirm this is not double-dropping vs MultiArrayList Drop.
-        }
-        // self.files: MultiArrayList drops its backing storage.
+        // self.files: Vec<Shared> drops its backing storage and each Shared.
         // self.paths: Box<[..]> drops the outer allocation; inner slices are borrowed (not freed).
     }
 }
@@ -446,6 +441,14 @@ pub enum EncodeSourceMapPathError {
 }
 impl From<bun_alloc::AllocError> for EncodeSourceMapPathError {
     fn from(_: bun_alloc::AllocError) -> Self { Self::OutOfMemory }
+}
+impl From<bun_str::strings::PercentEncodeError> for EncodeSourceMapPathError {
+    fn from(e: bun_str::strings::PercentEncodeError) -> Self {
+        match e {
+            bun_str::strings::PercentEncodeError::IncompleteUTF8 => Self::IncompleteUTF8,
+            bun_str::strings::PercentEncodeError::OutOfMemory => Self::OutOfMemory,
+        }
+    }
 }
 impl From<bun_core::Error> for EncodeSourceMapPathError {
     fn from(e: bun_core::Error) -> Self {

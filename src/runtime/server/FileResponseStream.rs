@@ -203,13 +203,13 @@ impl FileResponseStream {
         #[cfg(unix)]
         {
             if let Some(poll) = this.reader.handle.get_poll() {
-                if this.reader.flags.nonblocking {
-                    poll.flags.insert(aio::PollFlag::Nonblocking);
+                if this.reader.flags.contains(PosixFlags::NONBLOCKING) {
+                    poll.set_flag(FilePollFlag::Nonblocking);
                 }
                 match opts.file_type {
-                    FileType::Socket => poll.flags.insert(aio::PollFlag::Socket),
+                    FileType::Socket => poll.set_flag(FilePollFlag::Socket),
                     FileType::NonblockingPipe | FileType::Pipe => {
-                        poll.flags.insert(aio::PollFlag::Fifo)
+                        poll.set_flag(FilePollFlag::Fifo)
                     }
                     FileType::File => {}
                 }
@@ -243,9 +243,11 @@ impl FileResponseStream {
                     // Zig: jsc.AnyTask.New(FileResponseStream, onReaderDone).init(this)
                     // TODO(port): callback dispatch — see AnyTask::New comment.
                     self.eof_task = Some(AnyTask::New::<FileResponseStream>::init(self));
-                    self.vm
-                        .event_loop()
-                        .enqueue_task(Task::init(self.eof_task.as_mut().unwrap()));
+                    // SAFETY: `vm` is `&'static VirtualMachine` (LIFETIMES.tsv).
+                    unsafe {
+                        (*(*self.vm).event_loop())
+                            .enqueue_task(Task::init(self.eof_task.as_mut().unwrap()));
+                    }
                     break 'brk (c, ReadState::Eof);
                 }
                 break 'brk (c, state_);

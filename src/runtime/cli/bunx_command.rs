@@ -401,6 +401,7 @@ impl BunxCommand {
         let mut subpath = PathBuffer::uninit();
         if with_stale_check {
             let len = {
+                let total = subpath.len();
                 let mut cursor: &mut [u8] = &mut subpath[..];
                 write!(
                     cursor,
@@ -409,12 +410,12 @@ impl BunxCommand {
                     bun_paths::SEP as char,
                 )
                 .expect("unreachable");
-                subpath.len() - cursor.len()
+                total - cursor.len()
             };
             subpath[len] = 0;
             // SAFETY: subpath[len] == 0 written above
             let subpath_z = unsafe { ZStr::from_raw(subpath.as_ptr(), len) };
-            let target_package_json_fd = match bun_sys::openat(Fd::cwd(), subpath_z, O::RDONLY, 0).unwrap_result() {
+            let target_package_json_fd = match bun_sys::openat(Fd::cwd(), subpath_z, O::RDONLY, 0) {
                 Ok(fd) => fd,
                 Err(_) => return Err(bun_core::err!("NeedToInstall")),
             };

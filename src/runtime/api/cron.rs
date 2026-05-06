@@ -566,16 +566,14 @@ impl CronRegisterJob {
             self.tmp_path.as_ref().unwrap(),
             sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
             0o644,
-        )
-        .unwrap_result()
-        {
+        ) {
             Ok(f) => f,
             Err(_) => {
                 self.set_err(format_args!("Failed to create plist file"));
                 return Self::finish(self);
             }
         };
-        if file.write_all(&plist).unwrap_result().is_err() {
+        if file.write_all(&plist).is_err() {
             file.close();
             self.set_err(format_args!("Failed to write plist"));
             return Self::finish(self);

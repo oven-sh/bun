@@ -9,10 +9,10 @@ use crate::cli::Command;
 use bun_collections::StringHashMap;
 use bun_core::{Global, Output};
 use bun_io::{BufferedReader, ReadState};
-use bun_jsc::EventLoopHandle;
-use bun_jsc::MiniEventLoop::MiniEventLoop;
+use bun_event_loop::EventLoopHandle;
+use bun_event_loop::MiniEventLoop::{self as MiniEventLoopMod, MiniEventLoop};
 use bun_resolver::package_json::{DependencyMap, IncludeDependencies, IncludeScripts};
-use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
+use crate::api::bun::process::{self as spawn, Process, ProcessExitVTable, Rusage, SpawnOptions, Status};
 use bun_str::{strings, ZStr};
 use bun_sys as sys;
 

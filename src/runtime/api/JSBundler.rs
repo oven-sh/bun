@@ -885,10 +885,9 @@ pub mod js_bundler {
                     // Default to CJS for bytecode, since esm doesn't really work yet.
                     this.format = options::Format::Cjs;
                     if did_set_target && this.target != Target::Bun && this.bytecode {
-                        return global_this.throw_invalid_arguments(
+                        return Err(global_this.throw_invalid_arguments(
                             "target must be 'bun' when bytecode is true",
-                            &[],
-                        );
+                        ));
                     }
                     this.target = Target::Bun;
                 }
@@ -960,17 +959,15 @@ pub mod js_bundler {
                                 this.env_behavior = api::DotEnvBehavior::LoadAll;
                             }
                         } else {
-                            return global_this.throw_invalid_arguments(
-                                "env must be 'inline', 'disable', or a string with a '*' character",
-                                &[],
-                            );
+                            return Err(global_this.throw_invalid_arguments(
+                            "env must be 'inline', 'disable', or a string with a '*' character",
+                        ));
                         }
                         drop(slice);
                     } else {
-                        return global_this.throw_invalid_arguments(
+                        return Err(global_this.throw_invalid_arguments(
                             "env must be 'inline', 'disable', or a string with a '*' character",
-                            &[],
-                        );
+                        ));
                     }
                 }
             }
@@ -984,7 +981,9 @@ pub mod js_bundler {
             // Parse JSX configuration
             if let Some(jsx_value) = config.get_truthy(global_this, "jsx")? {
                 if !jsx_value.is_object() {
-                    return global_this.throw_invalid_arguments("jsx must be an object", &[]);
+                    return Err(global_this.throw_invalid_arguments(
+                            "jsx must be an object",
+                        ));
                 }
 
                 if let Some(slice) =
@@ -1050,10 +1049,9 @@ pub mod js_bundler {
 
                 if this.bytecode && format != options::Format::Cjs && format != options::Format::Esm
                 {
-                    return global_this.throw_invalid_arguments(
-                        "format must be 'cjs' or 'esm' when bytecode is true.",
-                        &[],
-                    );
+                    return Err(global_this.throw_invalid_arguments(
+                            "format must be 'cjs' or 'esm' when bytecode is true.",
+                        ));
                 }
             }
 
@@ -1081,10 +1079,9 @@ pub mod js_bundler {
                         this.minify.keep_names = keep_names;
                     }
                 } else {
-                    return global_this.throw_invalid_arguments(
-                        "Expected minify to be a boolean or an object",
-                        &[],
-                    );
+                    return Err(global_this.throw_invalid_arguments(
+                            "Expected minify to be a boolean or an object",
+                        ));
                 }
             }
 
@@ -1100,8 +1097,8 @@ pub mod js_bundler {
                     drop(slice);
                 }
             } else {
-                return global_this
-                    .throw_invalid_arguments("Expected entrypoints to be an array of strings", &[]);
+                return Err(global_this
+                    .throw_invalid_arguments("Expected entrypoints to be an array of strings"));
             }
 
             // Parse the files option for in-memory files
@@ -1130,10 +1127,9 @@ pub mod js_bundler {
                         drop(slice);
                     }
                 } else {
-                    return global_this.throw_invalid_arguments(
-                        "Expected conditions to be an array of strings",
-                        &[],
-                    );
+                    return Err(global_this.throw_invalid_arguments(
+                            "Expected conditions to be an array of strings",
+                        ));
                 }
             }
 
@@ -1214,8 +1210,8 @@ pub mod js_bundler {
             if let Some(allow_unresolved_val) = config.get_own(global_this, "allowUnresolved")? {
                 if !allow_unresolved_val.is_undefined() && !allow_unresolved_val.is_null() {
                     if !allow_unresolved_val.js_type_loose().is_array() {
-                        return global_this
-                            .throw_invalid_arguments("allowUnresolved must be an array", &[]);
+                        return Err(global_this
+                    .throw_invalid_arguments("allowUnresolved must be an array"));
                     }
                     this.allow_unresolved = Some(StringSet::default());
                     if allow_unresolved_val.get_length(global_this)? > 0 {
@@ -1315,10 +1311,9 @@ pub mod js_bundler {
                         drop(slice);
                     }
                 } else {
-                    return global_this.throw_invalid_arguments(
-                        "Expected naming to be a string or an object",
-                        &[],
-                    );
+                    return Err(global_this.throw_invalid_arguments(
+                            "Expected naming to be a string or an object",
+                        ));
                 }
             }
 
@@ -1384,10 +1379,9 @@ pub mod js_bundler {
 
                 while let Some(prop) = loader_iter.next()? {
                     if !prop.has_prefix(b".") || prop.length() < 2 {
-                        return global_this.throw_invalid_arguments(
+                        return Err(global_this.throw_invalid_arguments(
                             "loader property names must be file extensions, such as '.txt'",
-                            &[],
-                        );
+                        ));
                     }
 
                     // PERF(port): was assume_capacity
@@ -1435,10 +1429,9 @@ pub mod js_bundler {
                         drop(slice);
                     }
                 } else if !metafile_value.is_undefined_or_null() {
-                    return global_this.throw_invalid_arguments(
-                        "Expected metafile to be a boolean, string, or object with json/markdown paths",
-                        &[],
-                    );
+                    return Err(global_this.throw_invalid_arguments(
+                            "Expected metafile to be a boolean, string, or object with json/markdown paths",
+                        ));
                 }
             }
 
@@ -1508,10 +1501,9 @@ pub mod js_bundler {
 
                         // If argv[0] is "bun" or "bunx", we don't check if the binary is standalone
                         if outfile == b"bun" || outfile == b"bunx" {
-                            return global_this.throw_invalid_arguments(
-                                "cannot use compile with an output file named 'bun' because bun won't realize it's a standalone executable. Please choose a different name for compile.outfile",
-                                &[],
-                            );
+                            return Err(global_this.throw_invalid_arguments(
+                            "cannot use compile with an output file named 'bun' because bun won't realize it's a standalone executable. Please choose a different name for compile.outfile",
+                        ));
                         }
 
                         compile.outfile.append_slice_exact(outfile)?;
@@ -1523,10 +1515,9 @@ pub mod js_bundler {
             // is only available in compiled binaries. Without it, JSC must parse the file
             // twice (once for module analysis, once for bytecode), which is a deopt.
             if this.bytecode && this.format == options::Format::Esm && this.compile.is_none() {
-                return global_this.throw_invalid_arguments(
-                    "ESM bytecode requires compile: true. Use format: 'cjs' for bytecode without compile.",
-                    &[],
-                );
+                return Err(global_this.throw_invalid_arguments(
+                            "ESM bytecode requires compile: true. Use format: 'cjs' for bytecode without compile.",
+                        ));
             }
 
             // Validate standalone HTML mode: compile + browser target + all HTML entrypoints
@@ -1543,10 +1534,9 @@ pub mod js_bundler {
                     true
                 };
                 if has_all_html && this.code_splitting {
-                    return global_this.throw_invalid_arguments(
-                        "Cannot use compile with target 'browser' and splitting for standalone HTML",
-                        &[],
-                    );
+                    return Err(global_this.throw_invalid_arguments(
+                            "Cannot use compile with target 'browser' and splitting for standalone HTML",
+                        ));
                 }
             }
 
@@ -1602,8 +1592,8 @@ pub mod js_bundler {
 
     fn build(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<JSValue> {
         if arguments.is_empty() || !arguments[0].is_object() {
-            return global_this
-                .throw_invalid_arguments("Expected a config object to be passed to Bun.build", &[]);
+            return Err(global_this
+                    .throw_invalid_arguments("Expected a config object to be passed to Bun.build"));
         }
 
         let vm = global_this.bun_vm();

@@ -846,7 +846,7 @@ impl InitCommand {
                 None => bun_sys::File::create(Fd::cwd(), b"package.json", true)?.handle(),
             };
             let _close = scopeguard::guard(fd, |fd: Fd| {
-                let _ = fd.close();
+                let _ = bun_sys::close(fd);
             });
             let mut buffer_writer = js_printer::BufferWriter::init();
             buffer_writer.append_newline = true;
@@ -857,7 +857,7 @@ impl InitCommand {
                 js_ast::Expr {
                     // SAFETY: fields.object is non-null (set above from arena/store).
                     data: js_ast::ExprData::EObject(unsafe {
-                        js_ast::StoreRef::from_raw(fields.object)
+                        logger::js_ast::StoreRef::from_raw(fields.object)
                     }),
                     loc: logger::Loc::EMPTY,
                 },
@@ -876,7 +876,7 @@ impl InitCommand {
                 break 'write_package_json;
             }
             let written = package_json_writer.ctx.get_written();
-            if let Err(err) = bun_sys::File::from(fd).write_all(written) {
+            if let Err(err) = bun_sys::File::from_fd(fd).write_all(written) {
                 Output::pretty_errorln(format_args!(
                     "package.json failed to write due to error {}",
                     err.name(),

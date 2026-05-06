@@ -218,20 +218,21 @@ pub fn run_task(
             let any = cast!(AnyTask);
             // Zig: `any.run() catch |err| reportErrorOrTerminate(global, err)`.
             if let Err(err) = any.run() {
-                report_error_or_terminate(global, err)?;
+                report_error_or_terminate(global, erased_js_error(err))?;
             }
         }
         task_tag::ManagedTask => {
             // Zig: `any.run() catch |err| reportErrorOrTerminate(global, err)`.
             if let Err(err) = ManagedTask::run(cast_ptr!(ManagedTask)) {
-                report_error_or_terminate(global, err)?;
+                report_error_or_terminate(global, erased_js_error(err))?;
             }
         }
         task_tag::CppTask => {
             // Zig: `any.run(global) catch |err| reportErrorOrTerminate(global, err)`.
-            if let Err(err) = cast!(CppTask).run(global) {
-                report_error_or_terminate(global, err)?;
-            }
+            // `bun_jsc::CppTask` is currently the event_loop stub re-export; the
+            // real `bun_jsc::cpp_task::CppTask::run` lives in the gated block.
+            let _ = cast!(CppTask);
+            todo!("blocked_on: bun_jsc::cpp_task::CppTask::run");
         }
 
         // ── archive ──────────────────────────────────────────────────────

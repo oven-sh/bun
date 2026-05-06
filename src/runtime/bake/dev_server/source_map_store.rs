@@ -46,6 +46,9 @@ pub struct WeakRef {
 pub struct Entry {
     pub ref_count: u32,
     pub files: MultiArrayList<packed_map::Shared>,
+    /// Approximate retained-memory cost of this entry's source-map data;
+    /// reported to the HMR client so it can budget eviction.
+    pub overlapping_memory_cost: u32,
     /// BORROW_PARAM (LIFETIMES.tsv): `&entry.files` returned by `get`.
     _opaque_tail: (),
 }

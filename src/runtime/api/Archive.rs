@@ -873,6 +873,8 @@ struct ExtractContext {
 }
 
 impl TaskContext for ExtractContext {
+    const TAG: TaskTag = task_tag::ArchiveExtractTask;
+
     fn run(&mut self) {
         self.result = self.do_run();
     }
@@ -881,7 +883,7 @@ impl TaskContext for ExtractContext {
         Ok(match &self.result {
             ExtractResult::Success(count) => PromiseResult::Resolve(JSValue::js_number(*count as f64)),
             ExtractResult::Err(e) => {
-                PromiseResult::Reject(global.create_error_instance("{s}", &[<&'static str>::from(e).into()]))
+                PromiseResult::Reject(global.create_error_instance(<&'static str>::from(e)))
             }
         })
     }

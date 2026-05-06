@@ -125,21 +125,33 @@ impl Assets {
             bstr::BStr::new(mime_type.value),
         );
 
+        // Captured up-front so borrows of `self.files` / `self.path_map` below don't
+        // overlap with `owner()` (`&self`) calls.
+        let server = self.owner().server;
+
+        // PORT NOTE: reshaped for borrowck — Zig holds `gop` (key/value ptrs into
+        // `path_map`) live across calls that take `&mut self`. Capture `index` /
+        // `found_existing` and re-derive the value slot at the end instead.
         let gop = self.path_map.get_or_put(abs_path)?;
-        if !gop.found_existing {
+        let path_index = gop.index;
+        let found_existing = gop.found_existing;
+        let existing_entry = if found_existing { Some(*gop.value_ptr) } else { None };
+        drop(gop);
+
+        if !found_existing {
             // Locate a stable pointer for the file path
             let owner = self.owner_mut();
             // SAFETY: accessing disjoint field `client_graph` via parent ptr; `assets` (self) is
             // not touched through `owner` for the duration of this borrow.
             // PORT NOTE: in Zig, `path_map` keys borrow `client_graph`'s interned key storage
-            // (the `gop.key_ptr.* = stable_abs_path` write below shared the slice). Rust
+            // (the `gop.key_ptr.* = stable_abs_path` write shared the slice). Rust
             // `StringArrayHashMap` owns its keys as `Box<[u8]>`, and `get_or_put` already
             // boxed `abs_path` on insert, so the reassignment is a no-op here — we still call
             // `insert_empty` for its side effect of registering the file in `client_graph`.
             let _ = unsafe { &mut (*owner).client_graph }
                 .insert_empty(abs_path, super::FileKind::Unknown)?;
         } else {
-            let entry_index = *gop.value_ptr;
+            let entry_index = existing_entry.unwrap();
             // When there is one reference to the asset, the entry can be
             // replaced in-place with the new asset.
             if self.refs[entry_index.get()] == 1 {
@@ -154,7 +166,7 @@ impl Assets {
                     contents,
                     InitFromBytesOptions {
                         mime_type: Some(mime_type),
-                        server: self.owner().server,
+                        server,
                         ..Default::default()
                     },
                 );
@@ -172,6 +184,7 @@ impl Assets {
 
         self.reindex_if_needed()?;
         let file_index_gop = self.files.get_or_put(content_hash)?;
+        let file_index = file_index_gop.index;
         if !file_index_gop.found_existing {
             self.refs.push(1);
             // PERF(port): was assume_capacity-style append in Zig path — profile in Phase B
@@ -179,17 +192,17 @@ impl Assets {
                 contents,
                 InitFromBytesOptions {
                     mime_type: Some(mime_type),
-                    server: self.owner().server,
+                    server,
                     ..Default::default()
                 },
             );
         } else {
-            self.refs[file_index_gop.index] += 1;
+            self.refs[file_index] += 1;
             let mut contents_mut = *contents;
             contents_mut.detach();
         }
-        let entry = EntryIndex::init(u32::try_from(file_index_gop.index).unwrap());
-        *gop.value_ptr = entry;
+        let entry = EntryIndex::init(u32::try_from(file_index).unwrap());
+        self.path_map.values_mut()[path_index] = entry;
         debug_assert_eq!(self.files.count(), self.refs.len());
         Ok(entry)
     }

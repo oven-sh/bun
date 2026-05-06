@@ -2404,7 +2404,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
         if let Some(elide_lines) = args.option(b"--elide-lines") {
             if !elide_lines.is_empty() {
                 ctx.bundler_options.elide_lines = match strings::parse_int::<usize>(elide_lines, 10) {
-                    Ok(v) => v,
+                    Ok(v) => Some(v),
                     Err(_) => {
                         Output::pretty_errorln(format_args!("<r><red>error<r>: Invalid elide-lines: \"{}\"", BStr::new(elide_lines)));
                         Global::exit(1);
@@ -2415,7 +2415,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
 
         if let Some(define) = &opts.define {
             if !define.keys.is_empty() {
-                bun_jsc::RuntimeTranspilerCache::IS_DISABLED.store(true, std::sync::atomic::Ordering::Relaxed);
+                bun_jsc::runtime_transpiler_cache::IS_DISABLED.store(true, std::sync::atomic::Ordering::Relaxed);
             }
         }
     }

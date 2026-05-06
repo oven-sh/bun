@@ -836,6 +836,28 @@ pub fn js_get_packed_settings(global_object: &JSGlobalObject, callframe: &CallFr
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// Local extension shim — `JSValue::withAsyncContextIfNeeded` (JSValue.zig:2267)
+// is not yet on `bun_jsc::JSValue`; forward to the C++ symbol directly.
+// ──────────────────────────────────────────────────────────────────────────
+trait JsValueAsyncContextExt {
+    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue;
+}
+impl JsValueAsyncContextExt for JSValue {
+    #[inline]
+    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue {
+        unsafe extern "C" {
+            fn AsyncContextFrame__withAsyncContextIfNeeded(
+                global: *const JSGlobalObject,
+                callback: JSValue,
+            ) -> JSValue;
+        }
+        debug_assert!(self.is_cell());
+        // SAFETY: `global` is a live JSGlobalObject; `self` is a callable JSCell.
+        unsafe { AsyncContextFrame__withAsyncContextIfNeeded(global, self) }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // Handlers
 // ──────────────────────────────────────────────────────────────────────────
 

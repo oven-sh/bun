@@ -812,7 +812,7 @@ pub fn build_with_vm(
         };
         if any_client_chunks {
             let runtime_file: &OutputFile = &bundled_outputs[runtime_file_index as usize];
-            if let Err(err) = runtime_file.write_to_disk(root_dir, b".") {
+            if let Err(err) = runtime_file.write_to_disk(root_dir.fd(), b".") {
                 bun_crash_handler::handle_error_return_trace(err, None);
                 Output::err(
                     err,

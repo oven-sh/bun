@@ -18,18 +18,25 @@
 use core::ptr::NonNull;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
+#[allow(unused_imports)]
 use bun_collections::ArrayHashMap;
+#[allow(unused_imports)]
 use bun_core::Output;
+#[allow(unused_imports)]
 use bun_jsc::{self as jsc, ZigException, ZigStackFrame, ZigStackFramePosition};
+#[allow(unused_imports)]
 use bun_jsc::zig_stack_frame_position::Ordinal;
 use bun_logger::Log;
+#[allow(unused_imports)]
 use bun_paths::path_buffer_pool;
+#[allow(unused_imports)]
 use crate::api::server::StaticRoute;
 use bun_str::strings;
 use bun_uws_sys::body_reader_mixin::{BodyReaderHandler, BodyResponse};
 use bun_uws::{self as uws, AnyResponse, Request};
 
 use super::source_map_store::{self as SourceMapStore};
+#[allow(unused_imports)]
 use super::source_map_store_body::GetResult;
 use super::{DevServer, CLIENT_PREFIX};
 

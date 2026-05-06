@@ -178,7 +178,15 @@ impl Default for WindowsBackend {
 impl<Owner: ChannelOwner> Channel<Owner> {
     /// Adopt a duplex fd into the channel and start reading. POSIX: the
     /// socketpair end. Windows: the inherited named-pipe end (worker side).
-    pub fn adopt(&mut self, vm: &mut VirtualMachine, fd: Fd) -> bool {
+    // PORT NOTE: callers (`runner.rs`, `Worker.rs`) only hold `&VirtualMachine`;
+    // the upstream `rare_data()` / `test_parallel_ipc_group()` accessors require
+    // `&mut`. We cast away const locally — single-threaded init path, mirrors
+    // Zig's `*jsc.VirtualMachine`.
+    pub fn adopt(&mut self, vm: &VirtualMachine, fd: Fd) -> bool {
+        // SAFETY: see PORT NOTE — VM is process-singleton and accessed only
+        // from the main thread here.
+        let vm: &mut VirtualMachine =
+            unsafe { &mut *(vm as *const VirtualMachine as *mut VirtualMachine) };
         #[cfg(windows)]
         {
             let _ = vm;

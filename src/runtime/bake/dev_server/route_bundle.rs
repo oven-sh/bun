@@ -98,6 +98,14 @@ impl Data {
     }
 }
 
+impl RouteBundle {
+    /// `RouteBundle.invalidateClientBundle` — full body in gated
+    /// `../DevServer/RouteBundle.rs` draft.
+    pub fn invalidate_client_bundle(&mut self, _dev: *mut super::DevServer) {
+        todo!("blocked_on: dev_server::RouteBundle::invalidate_client_bundle body un-gate")
+    }
+}
+
 pub enum UnresolvedIndex<'a> {
     Framework(framework_router::RouteIndex),
     /// BORROW_PARAM (LIFETIMES.tsv): `.initRef(html)` takes own ref when stored.

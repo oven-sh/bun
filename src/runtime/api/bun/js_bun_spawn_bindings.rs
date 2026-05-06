@@ -197,17 +197,17 @@ fn get_argv(
     argv: &mut Vec<Option<*const c_char>>,
 ) -> JsResult<()> {
     if args.is_empty_or_undefined_or_null() {
-        return global_this.throw_invalid_arguments("cmd must be an array of strings", format_args!(""));
+        return Err(global_this.throw_invalid_arguments("cmd must be an array of strings"));
     }
 
     let mut cmds_array = args.array_iterator(global_this)?;
 
     if cmds_array.len == 0 {
-        return global_this.throw_invalid_arguments("cmd must not be empty", format_args!(""));
+        return Err(global_this.throw_invalid_arguments("cmd must not be empty"));
     }
 
     if cmds_array.len > u32::MAX - 2 {
-        return global_this.throw_invalid_arguments("cmd array is too large", format_args!(""));
+        return Err(global_this.throw_invalid_arguments("cmd array is too large"));
     }
 
     // + 1 for argv0

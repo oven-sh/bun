@@ -4048,12 +4048,12 @@ impl RunCommand {
         }
         let mut script_name_buf = PathBuffer::uninit();
 
-        let script_name_to_search = ctx.args.entry_points[0];
+        let script_name_to_search: &[u8] = &ctx.args.entry_points[0];
 
         let mut absolute_script_path: Option<Box<[u8]>> = None;
 
         // TODO: optimize this pass for Windows. we can make better use of system apis available
-        let mut file_path = script_name_to_search;
+        let mut file_path: &[u8] = script_name_to_search;
         {
             let opened = 'brk: {
                 if bun_paths::is_absolute(script_name_to_search) {

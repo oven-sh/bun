@@ -1877,8 +1877,15 @@ impl Drop for WindowsStdio {
         match self {
             WindowsStdio::Buffer(pipe) | WindowsStdio::Ipc(pipe) => {
                 if !pipe.is_null() {
+                    #[cfg(windows)]
                     // SAFETY: non-null heap allocation from create_zeroed_pipe.
                     unsafe { (**pipe).close_and_destroy() };
+                    #[cfg(not(windows))]
+                    {
+                        // `uv::Pipe` is the c_void shim on non-Windows; this arm
+                        // is unreachable (WindowsStdio is never constructed there).
+                        let _ = pipe;
+                    }
                 }
             }
             _ => {}

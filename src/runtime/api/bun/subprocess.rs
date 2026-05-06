@@ -172,6 +172,53 @@ pub struct Subprocess<'a> {
     pub exited_due_to_maxbuf: Option<MaxBuf::Kind>,
 }
 
+// `..Default::default()` is used by `js_bun_spawn_bindings::spawn_maybe_sync` to
+// fill the address-independent tail fields. The "real" non-defaultable fields
+// (`process`, `ref_count`, …) are always supplied explicitly there, so the
+// values returned here for them are never observed — but Rust still requires
+// `default()` to construct *something*. `process: ManuallyDrop<Arc<Process>>`
+// has no cheap placeholder, so this stays a `todo!()` until Process gains a
+// stub constructor or the call site stops using struct-update syntax.
+impl<'a> Default for Subprocess<'a> {
+    fn default() -> Self {
+        todo!("blocked_on: bun_process::Process default — js_bun_spawn_bindings should fill all fields explicitly")
+    }
+}
+
+// ── local extension shims for upstream types missing methods ────────────────
+// `JSValue::push` exists in JSValue.zig but not yet in bun_jsc::JSValue.
+trait JsValuePushExt {
+    fn push(self, global: &JSGlobalObject, value: JSValue) -> JsResult<()>;
+}
+impl JsValuePushExt for JSValue {
+    fn push(self, _global: &JSGlobalObject, _value: JSValue) -> JsResult<()> {
+        todo!("blocked_on: bun_jsc::JSValue::push")
+    }
+}
+
+// `bun_jsc::AnyPromise` (lib.rs enum stub) lacks resolve/reject; the real impls
+// live on `bun_jsc::any_promise::AnyPromise`. Shim until the stub is replaced.
+trait AnyPromiseExt {
+    fn resolve(self, global: &JSGlobalObject, value: JSValue);
+    fn reject_with_async_stack(self, global: &JSGlobalObject, value: JSValue);
+}
+impl AnyPromiseExt for bun_jsc::AnyPromise {
+    fn resolve(self, _global: &JSGlobalObject, _value: JSValue) {
+        todo!("blocked_on: bun_jsc::AnyPromise::resolve")
+    }
+    fn reject_with_async_stack(self, _global: &JSGlobalObject, _value: JSValue) {
+        todo!("blocked_on: bun_jsc::AnyPromise::reject_with_async_stack")
+    }
+}
+
+/// Parse a JS value into a `bun_sys::SignalCode` (number or signal-name string).
+/// Local shim — `bun_sys::SignalCode` has no `from_js` because bun_sys can't
+/// depend on bun_jsc.
+fn signal_code_from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<SignalCode> {
+    let _ = (value, global);
+    todo!("blocked_on: bun_sys::SignalCode::from_js")
+}
+
 // Intrusive ref-count: bun.ptr.RefCount(@This(), "ref_count", deinit, .{})
 // `RefPtr<Subprocess>` provides ref/deref and frees the Box when ref_count → 0.
 impl<'a> RefCounted for Subprocess<'a> {

@@ -596,8 +596,8 @@ impl CreateCommand {
                 }
 
                 let destination_dir = destination_dir__;
-                let mut walker_ = bun_sys::walker_skippable::Walker::walk(
-                    bun_sys::Fd::from_std_dir(template_dir),
+                let mut walker_ = bun_sys::walker_skippable::walk(
+                    bun_sys::Fd::from_std_dir(&template_dir),
                     SKIP_FILES,
                     SKIP_DIRS,
                 )?;

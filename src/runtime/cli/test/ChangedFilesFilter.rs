@@ -503,14 +503,15 @@ fn get_changed_files(
             if result.spawn_failed {
                 // run_git already printed the spawn error.
             } else if !result.stderr.is_empty() {
-                Output::err_generic(format_args!(
-                    "--changed: {}",
-                    BStr::new(strings::trim(&result.stderr, b" \r\n\t"))
-                ));
+                Output::err_generic(
+                    "--changed: {s}",
+                    (BStr::new(strings::trim(&result.stderr, b" \r\n\t")),),
+                );
             } else {
-                Output::err_generic(format_args!(
-                    "--changed requires running inside a git repository"
-                ));
+                Output::err_generic(
+                    "--changed requires running inside a git repository",
+                    (),
+                );
             }
             return Err(GitError::GitFailed);
         }

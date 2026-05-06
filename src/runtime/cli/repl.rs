@@ -1299,12 +1299,15 @@ impl<'a> Repl<'a> {
         // If the transform wrapped in an async IIFE (top-level await), wait for it
         let mut resolved_result = result;
         if let Some(promise) = result.as_promise() {
-            promise.set_handled();
-            vm.wait_for_promise(jsc::AnyPromise::Normal(promise));
-            match promise.status() {
-                PromiseStatus::Fulfilled => resolved_result = promise.result(vm.jsc_vm),
+            // SAFETY: `promise` is a live JSC heap cell; `vm.jsc_vm` is the
+            // owning JSC VM handle for this thread.
+            unsafe { (*promise).set_handled() };
+            vm_mut(vm).wait_for_promise(jsc::AnyPromise::Normal(promise));
+            let jsc_vm_ref = unsafe { &*vm.jsc_vm };
+            match unsafe { (*promise).status() } {
+                PromiseStatus::Fulfilled => resolved_result = unsafe { (*promise).result(jsc_vm_ref) },
                 PromiseStatus::Rejected => {
-                    let rejection = promise.result(vm.jsc_vm);
+                    let rejection = unsafe { (*promise).result(jsc_vm_ref) };
                     self.print_js_error_to(rejection, Output::error_writer(), stderr_colors);
                     return true;
                 }
@@ -1315,7 +1318,7 @@ impl<'a> Repl<'a> {
         // Unwrap the { value: expr } wrapper produced by transform_for_repl
         let mut actual_result = resolved_result;
         if resolved_result.is_object() {
-            let maybe_value = match resolved_result.get_own(global, "value") {
+            let maybe_value = match resolved_result.get_own(global, &bun_str::String::static_("value")) {
                 Ok(v) => v,
                 Err(err) => {
                     let exc = global.take_exception(err);
@@ -1338,10 +1341,10 @@ impl<'a> Repl<'a> {
         });
 
         // Drain the event loop (timers, I/O, etc.) before printing / exiting
-        vm.tick();
+        vm_mut(vm).tick();
         while vm.is_event_loop_alive() {
-            vm.tick();
-            vm.event_loop().auto_tick_active();
+            vm_mut(vm).tick();
+            vm_mut(vm).auto_tick_active();
         }
 
         if print_result {
@@ -1395,7 +1398,7 @@ impl<'a> Repl<'a> {
         }
 
         if let Some(vm) = self.vm {
-            vm.tick();
+            vm_mut(vm).tick();
         }
     }
 

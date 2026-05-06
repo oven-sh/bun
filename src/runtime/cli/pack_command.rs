@@ -38,11 +38,19 @@ use crate::cli::run_command::RunCommand;
 /// has no inherent methods (real impl gated behind `package_manager_real`).
 trait LogLevelExt {
     fn is_verbose(self) -> bool;
+    fn show_progress(self) -> bool;
 }
 impl LogLevelExt for LogLevel {
     #[inline]
     fn is_verbose(self) -> bool {
         matches!(self, LogLevel::Verbose | LogLevel::VerboseNoProgress)
+    }
+    #[inline]
+    fn show_progress(self) -> bool {
+        !matches!(
+            self,
+            LogLevel::Silent | LogLevel::Quiet | LogLevel::DefaultNoProgress | LogLevel::VerboseNoProgress,
+        )
     }
 }
 

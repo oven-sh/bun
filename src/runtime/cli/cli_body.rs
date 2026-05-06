@@ -359,25 +359,22 @@ pub mod reserved_command {
     #[cold]
     pub fn exec() -> Result<(), bun_core::Error> {
         let argv = bun::argv();
-        let command_name = 'found: {
-            for arg in &argv[1..] {
+        let command_name: &[u8] = 'found: {
+            for arg in argv.iter().skip(1) {
                 if arg.len() > 1 && arg[0] == b'-' {
                     continue;
                 }
-                break 'found arg.as_bytes();
+                break 'found arg;
             }
-            argv[1].as_bytes()
+            argv.get(1).map(|z| z.as_bytes()).unwrap_or(b"")
         };
-        Output::pretty_error(
-            "<r><red>Uh-oh<r>. <b><yellow>bun {}<r> is a subcommand reserved for future use by Bun.\n\
+        let name = bstr::BStr::new(command_name);
+        Output::pretty_error(format_args!(
+            "<r><red>Uh-oh<r>. <b><yellow>bun {0}<r> is a subcommand reserved for future use by Bun.\n\
              \n\
-             If you were trying to run a package.json script called {}, use <b><magenta>bun run {}<r>.\n",
-            format_args!(
-                "{0}{0}{0}",
-                bstr::BStr::new(command_name)
-            ),
-        );
-        // TODO(port): Output::pretty_error positional substitution (3× same arg)
+             If you were trying to run a package.json script called {0}, use <b><magenta>bun run {0}<r>.\n",
+            name,
+        ));
         Output::flush();
         Global::exit(1);
     }

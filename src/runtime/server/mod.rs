@@ -1306,6 +1306,29 @@ impl AnyServer {
         any_server_dispatch_mut!(self, |s| s.on_pending_request())
     }
 
+    /// Dispatch the user `fetch` handler. Mirrors Zig `AnyServer.onRequest`
+    /// (see `server.zig`): un-erase the SSL bool from the tag and downcast
+    /// `AnyResponse` to the matching `NewAppResponse<SSL>` variant.
+    pub fn on_request(&mut self, req: &mut uws_sys::Request, resp: uws::AnyResponse) {
+        // SAFETY: ptr was produced by `AnyServer::from` for the matching tag
+        // and is non-null while the server is alive; `assert_{no_,}ssl` upholds
+        // the tag↔SSL invariant.
+        match self.tag {
+            AnyServerTag::HTTPServer => unsafe {
+                (*self.ptr.cast::<HTTPServer>()).on_request(req, &mut *resp.assert_no_ssl())
+            },
+            AnyServerTag::HTTPSServer => unsafe {
+                (*self.ptr.cast::<HTTPSServer>()).on_request(req, &mut *resp.assert_ssl())
+            },
+            AnyServerTag::DebugHTTPServer => unsafe {
+                (*self.ptr.cast::<DebugHTTPServer>()).on_request(req, &mut *resp.assert_no_ssl())
+            },
+            AnyServerTag::DebugHTTPSServer => unsafe {
+                (*self.ptr.cast::<DebugHTTPSServer>()).on_request(req, &mut *resp.assert_ssl())
+            },
+        }
+    }
+
     pub fn on_request_complete(&mut self) {
         any_server_dispatch_mut!(self, |s| s.on_request_complete())
     }

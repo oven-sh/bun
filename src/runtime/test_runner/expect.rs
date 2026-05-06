@@ -2152,29 +2152,21 @@ impl ExpectCustomAsymmetricMatcher {
     /// which creates an asymmetric matcher instance (`ExpectCustomAsymmetricMatcher`).
     /// This will not run the matcher, but just capture the args etc.
     pub fn create(global_this: &JSGlobalObject, call_frame: &CallFrame, matcher_fn: JSValue) -> JsResult<JSValue> {
-        let flags: Flags;
-
         // try to retrieve the ExpectStatic instance (to get the flags)
-        if let Some(expect_static) = ExpectStatic::from_js(call_frame.this()) {
-            flags = expect_static.flags;
+        let flags = if let Some(expect_static) = <ExpectStatic as bun_jsc::JsClass>::from_js(call_frame.this()) {
+            // SAFETY: from_js returns the live m_ctx payload for this JSValue.
+            unsafe { (*expect_static).flags }
         } else {
             // if it's not an ExpectStatic instance, assume it was called from the Expect constructor, so use the default flags
-            flags = Flags::default();
-        }
+            Flags::default()
+        };
 
-        // create the matcher instance
-        let instance = Box::into_raw(Box::new(ExpectCustomAsymmetricMatcher { flags: Flags::default() }));
-
-        // SAFETY: freshly leaked Box; wrapper takes ownership, freed in finalize
-        let instance_jsvalue = unsafe { (*instance).to_js(global_this) };
+        // create the matcher instance (flags stored upfront)
+        let instance_jsvalue = ExpectCustomAsymmetricMatcher { flags }.to_js(global_this);
         instance_jsvalue.ensure_still_alive();
 
-        // store the flags
-        // SAFETY: instance is the m_ctx payload kept alive by instance_jsvalue (ensure_still_alive above)
-        unsafe { (*instance).flags = flags };
-
         // store the user-provided matcher function into the instance
-        Self::js::matcher_fn_set_cached(instance_jsvalue, global_this, matcher_fn);
+        expect_custom_asymmetric_matcher_js::matcher_fn_set_cached(instance_jsvalue, global_this, matcher_fn);
 
         // capture the args as a JS array saved in the instance, so the matcher can be executed later on with them
         let args = call_frame.arguments();
@@ -2182,7 +2174,7 @@ impl ExpectCustomAsymmetricMatcher {
         for (i, arg) in args.iter().enumerate() {
             array.put_index(global_this, i as u32, *arg)?;
         }
-        Self::js::captured_args_set_cached(instance_jsvalue, global_this, array);
+        expect_custom_asymmetric_matcher_js::captured_args_set_cached(instance_jsvalue, global_this, array);
         array.ensure_still_alive();
 
         // return the same instance, now fully initialized including the captured args (previously it was incomplete)

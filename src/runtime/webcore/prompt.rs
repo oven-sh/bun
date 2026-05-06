@@ -32,7 +32,7 @@ fn alert(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         // PERF(port): was stack-fallback (2048 bytes) — profile in Phase B
         let message = arguments[0].to_slice(global)?;
 
-        if message.len() > 0 {
+        if !message.slice().is_empty() {
             // 3. Set message to the result of normalizing newlines given message.
             // *  We skip step 3 because they are already done in most terminals by default.
 
@@ -192,6 +192,14 @@ pub mod prompt {
     pub trait ReadByte {
         type Error;
         fn read_byte(&mut self) -> Result<u8, Self::Error>;
+    }
+
+    impl ReadByte for bun_core::output::BufferedStdin {
+        type Error = bun_core::Error;
+        #[inline]
+        fn read_byte(&mut self) -> Result<u8, Self::Error> {
+            bun_core::output::BufferedStdin::read_byte(self)
+        }
     }
 
     /// Adapted from `std.io.Reader.readUntilDelimiterArrayList` to only append

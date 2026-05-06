@@ -123,8 +123,10 @@ pub mod s3_stub {
 // needs at struct-level. These match the Zig payload shapes (path ∨ fd).
 // TODO(b2-blocked): swap to `pub use crate::node::{PathLike, PathOrFileDescriptor};`.
 pub mod node_types {
-    use bun_str::PathString;
+    use bun_str::{PathString, ZStr};
+    use bun_paths::PathBuffer;
     use bun_sys::Fd;
+    #[derive(Clone)]
     pub enum PathLike {
         String(PathString),
         Buffer(Vec<u8>),
@@ -137,7 +139,18 @@ pub mod node_types {
             }
         }
         pub fn estimated_size(&self) -> usize { self.slice().len() }
+        pub fn is_string(&self) -> bool { matches!(self, Self::String(_)) }
+        /// Null-terminate into `buf`. Mirrors `node::PathLike::sliceZ`.
+        pub fn slice_z<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a ZStr {
+            let s = self.slice();
+            let n = s.len().min(buf.len() - 1);
+            buf[..n].copy_from_slice(&s[..n]);
+            buf[n] = 0;
+            // SAFETY: buf[n] == 0 written above
+            unsafe { ZStr::from_raw(buf.as_ptr(), n) }
+        }
     }
+    #[derive(Clone)]
     pub enum PathOrFileDescriptor {
         Path(PathLike),
         Fd(Fd),
@@ -145,6 +158,14 @@ pub mod node_types {
     impl PathOrFileDescriptor {
         pub fn estimated_size(&self) -> usize {
             match self { Self::Path(p) => p.estimated_size(), Self::Fd(_) => 0 }
+        }
+        /// Panics if not a `Path` (Zig: `.path` union access).
+        pub fn path(&self) -> &PathLike {
+            match self { Self::Path(p) => p, Self::Fd(_) => unreachable!("PathOrFileDescriptor::path() on .fd") }
+        }
+        /// Panics if not an `Fd` (Zig: `.fd` union access).
+        pub fn fd(&self) -> Fd {
+            match self { Self::Fd(fd) => *fd, Self::Path(_) => unreachable!("PathOrFileDescriptor::fd() on .path") }
         }
     }
     /// `node.PathOrBlob` — used by `Blob.writeFile*`.

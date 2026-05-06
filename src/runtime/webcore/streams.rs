@@ -1876,6 +1876,25 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     }
 }
 
+impl<const SSL: bool, const HTTP3: bool> SinkHandler for HTTPServerWritable<SSL, HTTP3> {
+    fn write(&mut self, data: StreamResult) -> Writable {
+        Self::write(self, data)
+    }
+    fn write_latin1(&mut self, data: StreamResult) -> Writable {
+        Self::write_latin1(self, data)
+    }
+    fn write_utf16(&mut self, data: StreamResult) -> Writable {
+        Self::write_utf16(self, data)
+    }
+    fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
+        Self::end(self, err)
+    }
+    fn connect(&mut self, signal: Signal) -> bun_sys::Result<()> {
+        Self::connect(self, signal);
+        bun_sys::Result::Ok(())
+    }
+}
+
 pub type HTTPSResponseSink = HTTPServerWritable<true, false>;
 pub type HTTPResponseSink = HTTPServerWritable<false, false>;
 pub type H3ResponseSink = HTTPServerWritable<true, true>;

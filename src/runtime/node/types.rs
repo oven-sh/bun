@@ -706,7 +706,9 @@ impl Encoding {
 impl Encoding {
     pub fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<Encoding>> {
         // TODO(port): ComptimeStringMap::fromJSCaseInsensitive — needs case-insensitive lookup
-        bun_str::comptime_string_map::from_js_case_insensitive(&ENCODING_MAP, global, value)
+        let str = bun_str::String::from_js(value, global)?;
+        // str.deref() on Drop
+        Ok(str.in_map_case_insensitive(&ENCODING_MAP))
     }
 
     pub fn assert(value: JSValue, global_object: &JSGlobalObject, default: Encoding) -> JsResult<Encoding> {

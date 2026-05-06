@@ -2040,16 +2040,20 @@ impl Function {
         self.print_source_code(&mut source_code)?;
 
         source_code.push(0);
-        let state = match TCC::State::init::<Function>(
-            TCC::InitOptions {
-                options: ZStr::from_static(Self::TCC_OPTIONS.as_bytes()),
-                err: TCC::ErrHandler {
-                    ctx: self,
-                    handler: Self::handle_tcc_error,
+        let state = match TCC::State::init::<Function, false>(TCC::Config {
+            options: Some(NonNull::from(ZStr::from_static(Self::TCC_OPTIONS.as_bytes()))),
+            output_type: TCC::OutputFormat::Memory,
+            err: TCC::ConfigErr {
+                ctx: Some(self as *mut Function),
+                // SAFETY: `Option<&mut T>` is ABI-identical to `*mut T` (NPO).
+                handler: unsafe {
+                    core::mem::transmute::<
+                        extern "C" fn(Option<&mut Function>, *const c_char),
+                        unsafe extern "C" fn(*mut Function, *const c_char),
+                    >(Self::handle_tcc_error)
                 },
             },
-            false,
-        ) {
+        }) {
             Ok(s) => s,
             Err(_) => return Err(bun_core::err!("TCCMissing")),
         };

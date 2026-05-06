@@ -1214,11 +1214,12 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use bstr::BStr;
 
 use bun_boringssl as boringssl;
-use bun_collections::{ArrayHashMap, MutableString};
+use bun_collections::ArrayHashMap;
+use bun_string::MutableString;
 use bun_core::{self as bun, Environment, FeatureFlags, Global, Output, StringBuilder, err};
 // CommonAbortReason — enum(u8) only; toJS stays in jsc
 use bun_http_types::FetchRedirect::CommonAbortReason;
-use bun_string::{strings, ZigString, ZStr};
+use bun_string::{strings, ZigString, ZigStringSlice, ZStr};
 // TODO(b0): bun_jsc::URL::{href_from_string, join} arrive in bun_url via move-in
 // (MOVE_DOWN bun_jsc::URL → bun_url, shared with install/js_parser/bake)
 use bun_url::URL;
@@ -1230,7 +1231,8 @@ use crate::certificate_info::CertificateInfo;
 use crate::h2_client as h2;
 use crate::h3_client as h3;
 use crate::http_cert_error::HTTPCertError;
-use crate::http_context::{HttpContext, HttpSocket, HttpsContext};
+use crate::http_context::HTTPSocket as HttpSocket;
+use crate::{HttpContext, HttpsContext};
 use crate::http_request_body::HTTPRequestBody;
 use crate::http_thread::HttpThread as HTTPThread;
 use crate::internal_state::InternalState;

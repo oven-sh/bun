@@ -1056,9 +1056,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.cur_scope().is_after_const_local_prefix = was_after_after_const_local_prefix;
 
         // visit_decls returns the surviving decl count; truncate `data.decls.len` to it.
-        // The `is_export && replace_exports` branch is gated on the bool placeholder.
         let was_const = data.kind == S::Kind::KConst;
-        let new_len = if !(data.is_export && REPLACE_EXPORTS_REAL) {
+        let new_len = if !(data.is_export && p.options.features.replace_exports.entries.len() > 0) {
             p.visit_decls::<false>(data.decls.slice_mut(), was_const)
         } else {
             p.visit_decls::<true>(data.decls.slice_mut(), was_const)

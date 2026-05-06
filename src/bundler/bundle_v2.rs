@@ -3240,7 +3240,7 @@ impl<'a> BundleV2<'a> {
                 parse_task.contents_or_fd = parse_task::ContentsOrFd::Contents(source_code);
                 unsafe { this.graph.pool.as_mut() }.schedule(parse_task);
 
-                if let Some(watcher) = this.bun_watcher {
+                if let Some(watcher_ptr) = this.bun_watcher {
                     'add_watchers: {
                         if !this.should_add_watcher_plugin(&load.namespace, &load.path) {
                             break 'add_watchers;
@@ -3274,7 +3274,7 @@ impl<'a> BundleV2<'a> {
                             // the bundle is running.
                             let _ = unsafe {
                                 ((*hook).add_file)(
-                                    watcher.as_ptr(),
+                                    watcher_ptr.as_ptr(),
                                     fd,
                                     &load.path,
                                     bun_wyhash::hash(load.path.as_ref()) as u32,

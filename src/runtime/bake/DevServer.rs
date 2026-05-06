@@ -2673,9 +2673,9 @@ impl DevServer<'_> {
 
         {
             self.graph_safety_lock.lock();
-            let _g = scopeguard::guard((), |_| self.graph_safety_lock.unlock());
             self.client_graph.reset();
             self.server_graph.reset();
+            self.graph_safety_lock.unlock();
         }
 
         // PORT NOTE: `bun_bundler::bake_types::EntryPointList` and the local
@@ -4180,7 +4180,11 @@ impl DevServer<'_> {
         bv2: &mut BundleV2,
     ) -> Result<(), AllocError> {
         self.graph_safety_lock.lock();
-        let _g = scopeguard::guard((), |_| self.graph_safety_lock.unlock());
+        // PORT NOTE: erase to raw ptr so the guard closure doesn't hold a unique
+        // borrow of `self` for the rest of the scope (Zig `defer` had no aliasing).
+        let __lock_ptr: *mut ThreadLock = &mut self.graph_safety_lock;
+        // SAFETY: `__lock_ptr` points into `*self`, which outlives `_g`.
+        let _g = scopeguard::guard((), move |_| unsafe { (*__lock_ptr).unlock() });
 
         debug_log!(
             "handleParseTaskFailure({}, .{}, {}, {} messages)",
@@ -4223,7 +4227,11 @@ impl DevServer<'_> {
         debug_assert!(self.current_bundle.is_some());
 
         self.graph_safety_lock.lock();
-        let _g = scopeguard::guard((), |_| self.graph_safety_lock.unlock());
+        // PORT NOTE: erase to raw ptr so the guard closure doesn't hold a unique
+        // borrow of `self` for the rest of the scope (Zig `defer` had no aliasing).
+        let __lock_ptr: *mut ThreadLock = &mut self.graph_safety_lock;
+        // SAFETY: `__lock_ptr` points into `*self`, which outlives `_g`.
+        let _g = scopeguard::guard((), move |_| unsafe { (*__lock_ptr).unlock() });
 
         // TODO(port): `switch (graph == .client) { inline else => |is_client| ... }` — unrolled
         // `Owner::encode()` returns the body-module `Packed`; the keystone
@@ -4263,7 +4271,11 @@ impl DevServer<'_> {
         }
 
         self.graph_safety_lock.lock();
-        let _g = scopeguard::guard((), |_| self.graph_safety_lock.unlock());
+        // PORT NOTE: erase to raw ptr so the guard closure doesn't hold a unique
+        // borrow of `self` for the rest of the scope (Zig `defer` had no aliasing).
+        let __lock_ptr: *mut ThreadLock = &mut self.graph_safety_lock;
+        // SAFETY: `__lock_ptr` points into `*self`, which outlives `_g`.
+        let _g = scopeguard::guard((), move |_| unsafe { (*__lock_ptr).unlock() });
 
         // TODO(port): switch (side) { inline else => |side_comptime| ... } — unrolled
         macro_rules! check {
@@ -4458,7 +4470,11 @@ impl DevServer<'_> {
         }
 
         self.graph_safety_lock.lock();
-        let _g = scopeguard::guard((), |_| self.graph_safety_lock.unlock());
+        // PORT NOTE: erase to raw ptr so the guard closure doesn't hold a unique
+        // borrow of `self` for the rest of the scope (Zig `defer` had no aliasing).
+        let __lock_ptr: *mut ThreadLock = &mut self.graph_safety_lock;
+        // SAFETY: `__lock_ptr` points into `*self`, which outlives `_g`.
+        let _g = scopeguard::guard((), move |_| unsafe { (*__lock_ptr).unlock() });
 
         let bundle_index = route_bundle::Index::init(u32::try_from(self.route_bundles.len()).unwrap());
 
@@ -5614,7 +5630,11 @@ impl DevServer<'_> {
         content_hash: u64,
     ) -> Result<(), bun_core::Error> {
         self.graph_safety_lock.lock();
-        let _g = scopeguard::guard((), |_| self.graph_safety_lock.unlock());
+        // PORT NOTE: erase to raw ptr so the guard closure doesn't hold a unique
+        // borrow of `self` for the rest of the scope (Zig `defer` had no aliasing).
+        let __lock_ptr: *mut ThreadLock = &mut self.graph_safety_lock;
+        // SAFETY: `__lock_ptr` points into `*self`, which outlives `_g`.
+        let _g = scopeguard::guard((), move |_| unsafe { (*__lock_ptr).unlock() });
         let _ = self.assets.replace_path(
             &path.text,
             contents,

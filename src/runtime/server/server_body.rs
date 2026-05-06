@@ -1148,21 +1148,21 @@ fn throw_not_enough_arguments(
 }
 
 // ─── Local JsClass shims (codegen `*__fromJS` not yet emitted) ───────────────
+// Pointee types lack #[repr(C)] but are only ever passed by pointer across FFI.
+#[allow(improper_ctypes)]
 unsafe extern "C" {
-    fn Request__fromJS(value: JSValue) -> *mut Request;
-    fn NodeHTTPResponse__fromJS(value: JSValue) -> *mut NodeHTTPResponse;
+    fn Request__fromJS(value: JSValue) -> Option<core::ptr::NonNull<Request>>;
+    fn NodeHTTPResponse__fromJS(value: JSValue) -> Option<core::ptr::NonNull<NodeHTTPResponse>>;
 }
 #[inline]
 fn request_from_js(value: JSValue, _global: &JSGlobalObject) -> Option<*mut Request> {
     // SAFETY: FFI call into generated class binding
-    let p = unsafe { Request__fromJS(value) };
-    if p.is_null() { None } else { Some(p) }
+    unsafe { Request__fromJS(value) }.map(|p| p.as_ptr())
 }
 #[inline]
 fn node_http_response_from_js(value: JSValue, _global: &JSGlobalObject) -> Option<*mut NodeHTTPResponse> {
     // SAFETY: FFI call into generated class binding
-    let p = unsafe { NodeHTTPResponse__fromJS(value) };
-    if p.is_null() { None } else { Some(p) }
+    unsafe { NodeHTTPResponse__fromJS(value) }.map(|p| p.as_ptr())
 }
 #[inline]
 fn fetch_headers_from_js(value: JSValue, global: &JSGlobalObject) -> Option<*mut FetchHeaders> {
@@ -2831,7 +2831,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // avoid invalid_reference_casting on the stored `&'static`.
         let vm: *mut jsc::virtual_machine::VirtualMachine = jsc::virtual_machine::VirtualMachine::get();
 
-        let mut node_http_response: Option<*mut NodeHTTPResponse> = None;
+        let mut node_http_response_raw: *mut NodeHTTPResponse = core::ptr::null_mut();
         let mut is_async = false;
         // PORT NOTE: Zig used `defer` for cleanup. There are no early returns
         // between here and the end of this fn, so the scopeguards have been
@@ -2858,12 +2858,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 req,
                 resp as *mut _ as *mut c_void,
                 upgrade_ctx.map(|c| c as *mut _).unwrap_or(core::ptr::null_mut()),
-                &mut node_http_response,
+                &mut node_http_response_raw,
             )
         }) {
             Ok(v) => v,
             Err(_) => global.take_exception(JsError::Thrown),
         };
+        let node_http_response: Option<*mut NodeHTTPResponse> =
+            (!node_http_response_raw.is_null()).then_some(node_http_response_raw);
 
         enum HTTPResult {
             Rejection(JSValue),
@@ -4729,6 +4731,8 @@ pub extern "C" fn Server__setMaxHTTPHeaderSize() {
 
 // ─── Externs ─────────────────────────────────────────────────────────────────
 // TODO(port): move to <area>_sys
+// Pointee types (Request, NodeHTTPResponse) lack #[repr(C)] but are only passed by pointer.
+#[allow(improper_ctypes)]
 unsafe extern "C" {
     fn NodeHTTPServer__onRequest_http(
         any_server: usize,
@@ -4739,7 +4743,7 @@ unsafe extern "C" {
         request: *mut uws::Request,
         response: *mut c_void, // *uws.NewApp(false).Response
         upgrade_ctx: *mut WebSocketUpgradeContext,
-        node_response_ptr: *mut Option<*mut NodeHTTPResponse>,
+        node_response_ptr: *mut *mut NodeHTTPResponse,
     ) -> JSValue;
 
     fn NodeHTTPServer__onRequest_https(
@@ -4751,7 +4755,7 @@ unsafe extern "C" {
         request: *mut uws::Request,
         response: *mut c_void, // *uws.NewApp(true).Response
         upgrade_ctx: *mut WebSocketUpgradeContext,
-        node_response_ptr: *mut Option<*mut NodeHTTPResponse>,
+        node_response_ptr: *mut *mut NodeHTTPResponse,
     ) -> JSValue;
 
     fn Bun__createNodeHTTPServerSocketForClientError(

@@ -617,15 +617,10 @@ pub extern "C" fn napi_create_array_with_length(
 
     // https://github.com/nodejs/node/blob/14c68e3b536798e25f810ed7ae180a5cde9e47d3/deps/v8/src/api/api.cc#L8163-L8174
     // size_t immediately cast to int as argument to Array::New, then min 0
-    // SAFETY: bit-reinterpret usize as i64 (same size on 64-bit targets).
-    let len_i64: i64 = unsafe { core::mem::transmute::<usize, i64>(length) };
+    // Bit-reinterpret usize as i64 (same width on 64-bit targets).
+    let len_i64: i64 = length as i64;
     let len_i32: i32 = len_i64 as i32; // @truncate
-    let len: u32 = if len_i32 > 0 {
-        // SAFETY: len_i32 > 0 so the bit pattern is a valid u32.
-        unsafe { core::mem::transmute::<i32, u32>(len_i32) }
-    } else {
-        0
-    };
+    let len: u32 = if len_i32 > 0 { len_i32 as u32 } else { 0 };
 
     let array = match JSValue::create_empty_array(env.to_js(), len as usize) {
         Ok(v) => v,
@@ -2409,10 +2404,11 @@ impl ThreadSafeFunction {
         self_.unref();
 
         if let Some(fun) = self_.finalizer_fun {
-            // PORT NOTE: ownership transfer of `env` into the Finalizer; we move it out of `self`
-            // before freeing the box. Matches Zig where the else-branch deinits `env` instead.
-            // SAFETY: moving `env` out by value; field is overwritten with a zeroed sentinel below before Box drop.
-            let env = unsafe { core::ptr::read(&self_.env) };
+            // PORT NOTE: ownership transfer of `env` into the Finalizer. We clone (bumps the
+            // external refcount) and let the original drop with the Box below — net refcount
+            // delta is zero, equivalent to the Zig move. Avoids writing a zeroed `NonNull`
+            // sentinel back into the field, which is UB for `ExternalShared<T>`.
+            let env = self_.env.clone();
             let finalizer = Finalizer {
                 env,
                 fun,
@@ -2420,10 +2416,6 @@ impl ThreadSafeFunction {
                 hint: self_.ctx,
             };
             finalizer.enqueue();
-            // Prevent double-drop of env when the box is freed below.
-            // SAFETY: NapiEnvRef is #[repr(C)] POD-ish; zeroed sentinel is a valid no-op-Drop state (verified in Phase B).
-            unsafe { core::ptr::write(&mut self_.env, core::mem::zeroed()) };
-            // TODO(port): verify NapiEnvRef has a no-op Drop for the zeroed sentinel.
         }
         // else-branch: `env` drops with the Box below.
 
@@ -2738,8 +2730,10 @@ mod v8_api {
         pub fn _ZNK2v85Value7IsInt32Ev() -> *mut c_void;
         pub fn _ZNK2v85Value8IsBigIntEv() -> *mut c_void;
         pub fn _ZN2v812api_internal17FromJustIsNothingEv() -> *mut c_void;
-        pub fn uv_os_getpid() -> *mut c_void;
-        pub fn uv_os_getppid() -> *mut c_void;
+        // NOTE: return type omitted to match the `uv_functions_to_export` declarations
+        // below (avoids `clashing_extern_declarations`); only the symbol address is used.
+        pub fn uv_os_getpid();
+        pub fn uv_os_getppid();
     }
 }
 

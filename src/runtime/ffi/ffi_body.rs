@@ -3178,7 +3178,10 @@ impl CompilerRT {
             .expect("unreachable");
         // Re-declare the C++ NapiHandleScope hooks locally — the canonical
         // declarations live in `crate::napi::napi_body` which is private, and
-        // we only need the symbol addresses to hand to TCC.
+        // we only need the symbol addresses to hand to TCC. The canonical
+        // signatures use `*mut NapiHandleScope` (an opaque type not re-exported
+        // here); `*mut c_void` is ABI-identical for address-taking purposes.
+        #[allow(clashing_extern_declarations)]
         unsafe extern "C" {
             fn NapiHandleScope__open(env: *mut napi::NapiEnv, escapable: bool) -> *mut c_void;
             fn NapiHandleScope__close(env: *mut napi::NapiEnv, current: *mut c_void);

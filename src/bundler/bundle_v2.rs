@@ -979,8 +979,9 @@ pub mod api {
     pub mod JSBundler {
         use bun_options_types::ImportKind;
         use crate::options::{Loader, Target};
+        use crate::options_impl::TargetExt;
         use crate::parse_task::ParseTask;
-        use crate::bundle_v2::BundleV2;
+        use super::super::BundleV2;
 
         /// `Plugin = opaque {}` — backed by C++ `BunPlugin`. The bundler only
         /// calls `has_any_matches` / `match_on_load` / `match_on_resolve`,
@@ -1213,29 +1214,30 @@ pub mod saved_file {
 
 // ── crate-root re-exports for forward-refs left by move-out ───────────────
 pub use crate::cache::RuntimeTranspilerCache;
-pub use crate::bake_types::{get_hmr_runtime, HmrRuntimeSide};
+pub use self::bake_types::{get_hmr_runtime, HmrRuntimeSide};
 /// `crate::bundle_v2::JSBundlerPlugin` — see BundleThread.rs.
-pub type JSBundlerPlugin = crate::api::JSBundler::Plugin;
-pub type FileMap = crate::api::JSBundler::FileMap;
+pub type JSBundlerPlugin = self::api::JSBundler::Plugin;
+pub type FileMap = self::api::JSBundler::FileMap;
 
 use bun_sourcemap as SourceMap;
 use bun_paths as resolve_path;
 
-use crate::options::{self, Loader, Target, PathTemplate};
-use crate::graph::Graph;
-use crate::linker_context::LinkerContext;
+use crate::options::{self, Loader, Target};
+use crate::Graph::Graph;
+use crate::LinkerContext;
 use crate::linker_graph::LinkerGraph;
-use crate::parse_task::ParseTask;
+use crate::parse_task::{self, ParseTask};
 use crate::thread_pool::ThreadPool;
-use crate::deferred_batch_task::DeferredBatchTask;
-use crate::server_component_parse_task::ServerComponentParseTask;
-use crate::ast_builder::AstBuilder;
-use crate::chunk::{Chunk, ChunkImport};
-use crate::cache::CacheEntry;
-use crate::path_to_source_index_map::PathToSourceIndexMap;
+use crate::DeferredBatchTask::DeferredBatchTask;
+use crate::ServerComponentParseTask::ServerComponentParseTask;
+use crate::AstBuilder::AstBuilder;
+use crate::chunk::{self, Chunk, ChunkImport};
+use crate::cache::Entry as CacheEntry;
+use crate::PathToSourceIndexMap::PathToSourceIndexMap;
 use crate::barrel_imports;
+use crate::ungate_support::{JSMeta, ImportData, ExportData, RefImportData, entry_point};
 
-pub use crate::bundle_thread::BundleThread;
+pub use crate::BundleThread::BundleThread;
 
 bun_core::declare_scope!(part_dep_tree, visible);
 bun_core::declare_scope!(Bundle, visible);

@@ -320,10 +320,11 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // resolve any /./ and /../ occurrences
             // use resolvePosix since we asserted above all seps are '/'
             #[cfg(windows)]
-            if bun_str::strings::index_of(&rel_path, b"/./").is_some() {
+            if strings::index_of(&rel_path, b"/./").is_some() {
                 let mut buf = bun_paths::PathBuffer::uninit();
-                let rel_path_fixed: Box<[u8]> =
-                    Box::from(path::normalize_buf(&rel_path, &mut buf, path::Style::Posix));
+                let rel_path_fixed: Box<[u8]> = Box::from(
+                    &*path::resolve_path::normalize_buf::<path::resolve_path::Posix>(&rel_path, &mut buf),
+                );
                 chunk.final_rel_path = rel_path_fixed;
                 continue;
             }
@@ -349,7 +350,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     // SAFETY: chunk pointers were taken from `chunks` slice above and remain valid.
                     let chunk = unsafe { &*chunk };
                     if chunk.entry_point.is_entry_point {
-                        if kinds[chunk.entry_point.source_index as usize] == EntryPointKind::UserSpecified {
+                        if kinds[chunk.entry_point.source_index as usize] == EntryPoint::Kind::UserSpecified {
                             entry_naming = Some(&chunk.template.data);
                         } else {
                             chunk_naming = Some(&chunk.template.data);
@@ -385,7 +386,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 c.log.add_msg(Logger::Msg {
                     kind: Logger::Kind::Note,
                     data: Logger::Data {
-                        text: text.into_boxed_slice(),
+                        text: Cow::Owned(text),
                         ..Default::default()
                     },
                     ..Default::default()
@@ -400,7 +401,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     // cross-chunk import specifiers. During printing, cross-chunk imports use
     // unique_key placeholders as paths. Now that final paths are known, replace
     // those placeholders with the resolved paths and serialize.
-    if c.options.generate_bytecode_cache && c.options.output_format == OutputFormat::Esm && c.options.compile {
+    if c.options.generate_bytecode_cache && c.options.output_format == options::Format::Esm && c.options.compile {
         // Build map from unique_key -> final resolved path
         // SAFETY: c points to LinkerContext which is the `linker` field of BundleV2.
         let b: &mut BundleV2 = unsafe {
@@ -421,8 +422,8 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 };
                 let normalizer = cheap_prefix_normalizer(public_path, &ch.final_rel_path);
                 let mut resolved: Vec<u8> = Vec::new();
-                resolved.extend_from_slice(normalizer.0);
-                resolved.extend_from_slice(normalizer.1);
+                resolved.extend_from_slice(normalizer[0]);
+                resolved.extend_from_slice(normalizer[1]);
                 unique_key_to_path.put(&ch.unique_key, resolved.into_boxed_slice());
             }
         }

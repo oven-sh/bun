@@ -835,13 +835,13 @@ pub fn generate_entry_point_tail_js(
                     }
 
                     let sorted_and_filtered_export_aliases =
-                        c.graph.meta.items(.sorted_and_filtered_export_aliases)[source_index as usize];
+                        c.graph.meta.items_sorted_and_filtered_export_aliases()[source_index as usize];
 
                     if !sorted_and_filtered_export_aliases.is_empty() {
                         let resolved_exports: ResolvedExports =
-                            c.graph.meta.items(.resolved_exports)[source_index as usize];
+                            c.graph.meta.items_resolved_exports()[source_index as usize];
                         let imports_to_bind: RefImportData =
-                            c.graph.meta.items(.imports_to_bind)[source_index as usize];
+                            c.graph.meta.items_imports_to_bind()[source_index as usize];
 
                         // If the output format is ES6 modules and we're an entry point, generate an
                         // ES6 export statement containing all exports. Except don't do that if this
@@ -851,7 +851,7 @@ pub fn generate_entry_point_tail_js(
                         // PERF(port): was arena-backed ArrayList(ClauseItem) — profile in Phase B
                         let mut items: Vec<js_ast::ClauseItem> = Vec::new();
                         let cjs_export_copies =
-                            c.graph.meta.items(.cjs_export_copies)[source_index as usize];
+                            c.graph.meta.items_cjs_export_copies()[source_index as usize];
 
                         let mut had_default_export = false;
 
@@ -1216,5 +1216,5 @@ pub fn generate_entry_point_tail_js(
 //   source:     src/bundler/linker_context/postProcessJSChunk.zig (1125 lines)
 //   confidence: medium
 //   todos:      13
-//   notes:      MultiArrayList .items(.field) accessor syntax left as-is (needs Rust API); worker.allocator pass-throughs need &'bump Bump threading in Phase B; AST node constructor shapes (Stmt::alloc/Expr::init/S::*/E::*) and CompileResult variant layout need Phase-B verification.
+//   notes:      MultiArrayList .items(.field) → .items_<field>() accessors; worker.allocator pass-throughs need &'bump Bump threading in Phase B; AST node constructor shapes (Stmt::alloc/Expr::init/S::*/E::*) and CompileResult variant layout need Phase-B verification.
 // ──────────────────────────────────────────────────────────────────────────

@@ -82,17 +82,21 @@ impl Report {
         ignore_sourcemap_: bool,
     ) -> Option<Report> {
         bun_jsc::mark_binding(core::panic::Location::caller());
-        let vm = global_this.vm();
+        // Use the raw `*mut VM` accessor instead of narrowing through `&VM` and
+        // casting back to `*mut` — C++ mutates the VM (controlFlowProfiler /
+        // functionHasExecutedCache), so we must preserve write provenance.
+        let vm = global_this.vm_ptr();
 
         let mut result: Option<Report> = None;
 
         let mut generator = Generator { result: &mut result, byte_range_mapping };
 
-        // SAFETY: Generator and the callback are kept alive for the duration of the FFI call;
+        // SAFETY: `vm` is the live `*mut VM` owning `global_this`; Generator and the
+        // callback are kept alive for the duration of the FFI call;
         // CodeCoverage__withBlocksAndFunctions invokes the callback synchronously.
         let ok = unsafe {
             CodeCoverage__withBlocksAndFunctions(
-                vm as *const VM as *mut VM,
+                vm,
                 generator.byte_range_mapping.source_id,
                 (&mut generator as *mut Generator).cast::<c_void>(),
                 ignore_sourcemap_,

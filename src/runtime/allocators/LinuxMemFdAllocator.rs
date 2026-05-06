@@ -68,16 +68,28 @@ impl LinuxMemFdAllocator {
     }
 
     /// Zig: `pub const deref = RefCount.deref;`
-    pub fn deref(&self) {
-        // TODO(port): IntrusiveArc::deref handles the fence + drop + dealloc; this
-        // hand-rolled body is a placeholder so call sites translate 1:1. Phase B
-        // should route through `bun_ptr::IntrusiveArc::<Self>::deref_raw(self)`.
-        if self.ref_count.fetch_sub(1, Ordering::AcqRel) == 1 {
-            // SAFETY: refcount hit zero; we are the unique owner. Reconstruct the
-            // Box that `new` leaked so Drop runs and the allocation is freed.
-            unsafe {
-                drop(Box::from_raw(self as *const Self as *mut Self));
-            }
+    ///
+    /// # Safety
+    /// `this` must point to a live, Box-allocated `Self` (as produced by
+    /// [`Self::new`] / `IntrusiveArc::new`), and the caller must own one
+    /// outstanding ref. After this call `this` may be dangling; the caller
+    /// must not hold any live `&Self`/`&mut Self` derived from `this`.
+    //
+    // PORT NOTE: takes `*mut Self` (not `&self`) to mirror Zig's
+    // `RefCount.deref(self: *Self)`. Taking `&self` and then freeing the
+    // allocation via `Box::from_raw(self as *const _ as *mut _)` is UB:
+    // it materializes `&mut Self` (via `Drop`) while a shared `&self`
+    // borrow is still live.
+    // TODO(port): route through `bun_ptr::ThreadSafeRefCount::<Self>::deref`
+    // once `Self: ThreadSafeRefCounted` is wired up.
+    pub unsafe fn deref(this: *mut Self) {
+        // SAFETY: `ref_count` is `AtomicU32` (interior-mut); raw-ptr read is
+        // sound while `this` is live per caller contract.
+        if unsafe { (*this).ref_count.fetch_sub(1, Ordering::AcqRel) } == 1 {
+            // SAFETY: refcount hit zero; we are the unique owner. Reconstruct
+            // the Box that `new` leaked so `Drop` runs and the allocation is
+            // freed. `this` has `*mut` provenance from `Box::into_raw`.
+            drop(unsafe { Box::from_raw(this) });
         }
     }
 

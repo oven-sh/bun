@@ -76,10 +76,12 @@ impl JSFunction {
         options: CreateJSFunctionOptions,
     ) -> JSValue {
         // SAFETY: `global` is a valid live JSGlobalObject for the duration of the call;
-        // the FFI side does not retain the raw pointer past return.
+        // the FFI side does not retain the raw pointer past return. JSGlobalObject is an
+        // opaque FFI handle — Rust never reads its body, so passing `*const` is sound even
+        // though C++ may mutate VM state behind it (matches the convention in JSGlobalObject.rs).
         unsafe {
             JSFunction__createFromZig(
-                global as *const JSGlobalObject as *mut JSGlobalObject,
+                global,
                 fn_name.into(),
                 implementation,
                 function_length,

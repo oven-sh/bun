@@ -123,25 +123,51 @@ impl ProxyTunnel {
 }
 
 // ─── SSLWrapper callbacks (ctx = *mut HTTPClient) ────────────────────────────
+//
+// ALIASING NOTE: every callback below is invoked *synchronously from inside* an
+// SSLWrapper method whose `&mut self` receiver IS `(*proxy_tunnel).wrapper`.
+// Forming `&mut ProxyTunnel` here would create a second live unique borrow of
+// memory that overlaps the caller's `&mut SSLWrapper` — UB under Stacked
+// Borrows. Callbacks therefore never materialise `&mut ProxyTunnel`; they
+// access individual fields through raw `addr_of!`/`addr_of_mut!` projections so
+// each borrow covers only memory disjoint from `wrapper`. The Zig original
+// (ProxyTunnel.zig) has no exclusive-alias rule so this was never modelled.
+
+/// Bump the intrusive refcount via a raw field projection so the borrow covers
+/// only `ref_count` (a `Cell`), never the whole tunnel — avoids overlapping the
+/// caller's live `&mut SSLWrapper`.
+#[inline]
+unsafe fn ref_raw(proxy: *mut ProxyTunnel) {
+    // SAFETY: `proxy` is live; `ref_count` is a `Cell<u32>` so a shared borrow
+    // is sound regardless of other raw aliases on this single thread.
+    let rc = unsafe { &*addr_of!((*proxy).ref_count) };
+    rc.set(rc.get() + 1);
+}
 
 fn on_open(ctx: *mut HTTPClient) {
     // SAFETY: ctx was set in `start()` to a live `&mut HTTPClient`; the SSLWrapper
     // never invokes a callback after `detach_and_deref` clears `proxy_tunnel`.
+    // HTTPClient owns ProxyTunnel only by `NonNull` pointer, so `&mut *ctx`
+    // does not overlap the caller's `&mut SSLWrapper`.
     let this = unsafe { &mut *ctx };
     scoped_log!(http_proxy_tunnel, "ProxyTunnel onOpen");
     bun_analytics::features::http_client_proxy.fetch_add(1, Ordering::Relaxed);
     this.state.response_stage = HTTPStage::ProxyHandshake;
     this.state.request_stage = HTTPStage::ProxyHandshake;
     let Some(proxy_nn) = this.proxy_tunnel else { return };
-    // SAFETY: proxy_tunnel is the live intrusive-refcounted tunnel allocated in `start()`.
-    let proxy = unsafe { &mut *proxy_nn.as_ptr() };
-    proxy.ref_();
+    // SAFETY: live intrusive-refcounted tunnel allocated in `start()`. Do NOT
+    // form `&mut ProxyTunnel` — see ALIASING NOTE. Bump the refcount via raw
+    // field projection.
+    unsafe { ref_raw(proxy_nn.as_ptr()) };
     let _guard = scopeguard::guard(proxy_nn, |p| {
-        // SAFETY: balances the ref_ above; tunnel still allocated until count hits 0.
+        // SAFETY: balances the ref_raw above; tunnel still allocated until count hits 0.
         unsafe { ProxyTunnel::deref(p.as_ptr()) };
     });
-    if let Some(wrapper) = &mut proxy.wrapper {
-        let Some(ssl_ptr) = wrapper.ssl else { return };
+    // SAFETY: shared read of a Copy field (`ssl: Option<NonNull<SSL>>`) through
+    // the raw pointer. The caller's `&mut SSLWrapper` is live on this same
+    // memory, but a read-only place access does not assert uniqueness.
+    let ssl_opt = unsafe { (*proxy_nn.as_ptr()).wrapper.as_ref().and_then(|w| w.ssl) };
+    if let Some(ssl_ptr) = ssl_opt {
         let _hostname = this.hostname.unwrap_or(this.url.hostname);
 
         // PORT NOTE: Zig `configureHTTPClient` is `configureHTTPClientWithALPN(ssl, host, .h1)`;

@@ -326,20 +326,25 @@ pub fn terminate_all_and_wait(timeout_ms: u64) {
         while !it.is_null() {
             // SAFETY: worker valid while registered (removed only in shutdown()).
             let w = unsafe { &*it };
-            it = w.live_next;
+            // SAFETY: live_workers::MUTEX held; list links written only under it.
+            it = unsafe { *w.live_next.get() };
             if w.requested_terminate.swap(true, Ordering::Release) {
                 continue;
             }
             w.vm_lock.lock();
-            if !w.vm.is_null() {
-                // SAFETY: vm published under vm_lock; non-null here.
-                let vm = unsafe { &*w.vm };
-                // SAFETY: jsc_vm is a valid JSC::VM*; notify_need_termination
-                // is documented thread-safe (VMTraps). Cast through the real
+            // SAFETY: vm_lock held; `vm` is published/unpublished under vm_lock.
+            let vm_ptr = unsafe { *w.vm.get() };
+            if !vm_ptr.is_null() {
+                // SAFETY: vm_ptr published under vm_lock and non-null here.
+                // jsc_vm is a valid JSC::VM*; notify_need_termination is
+                // documented thread-safe (VMTraps). Cast through the real
                 // opaque `crate::VM` (the `crate::VM` stub is layout-only).
-                unsafe { (*(vm.jsc_vm as *const crate::VM)).notify_need_termination() };
+                // We deliberately do NOT bind `&VirtualMachine` — the worker
+                // thread may hold a live mutable view of the VM; raw-pointer
+                // field/method access keeps any autoref scoped to the access.
+                unsafe { (*((*vm_ptr).jsc_vm as *const crate::VM)).notify_need_termination() };
                 // SAFETY: event_loop() returns the live `*mut EventLoop` self-ptr.
-                unsafe { (*vm.event_loop()).wakeup() };
+                unsafe { (*(*vm_ptr).event_loop()).wakeup() };
             }
             w.vm_lock.unlock();
         }
@@ -494,15 +499,17 @@ impl WebWorker {
         // vm_lock serialises against shutdown() nulling `vm` and freeing the
         // arena it lives in.
         this.vm_lock.lock();
-        if !this.vm.is_null() {
-            // SAFETY: vm published under vm_lock; non-null here.
-            let vm = unsafe { &*this.vm };
-            // SAFETY: jsc_vm is a valid JSC::VM*; notify_need_termination is
+        // SAFETY: vm_lock held; `vm` is published/unpublished under vm_lock.
+        let vm_ptr = unsafe { *this.vm.get() };
+        if !vm_ptr.is_null() {
+            // SAFETY: vm_ptr published under vm_lock and non-null here.
+            // jsc_vm is a valid JSC::VM*; notify_need_termination is
             // documented thread-safe (VMTraps). Cast through the real opaque
-            // `crate::VM` (the `crate::VM` stub is layout-only).
-            unsafe { (*(vm.jsc_vm as *const crate::VM)).notify_need_termination() };
+            // `crate::VM` (the `crate::VM` stub is layout-only). No
+            // `&VirtualMachine` binding — see `terminate_all_and_wait`.
+            unsafe { (*((*vm_ptr).jsc_vm as *const crate::VM)).notify_need_termination() };
             // SAFETY: event_loop() returns the live `*mut EventLoop` self-ptr.
-            unsafe { (*vm.event_loop()).wakeup() };
+            unsafe { (*(*vm_ptr).event_loop()).wakeup() };
         }
         this.vm_lock.unlock();
     }

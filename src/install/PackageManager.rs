@@ -1823,11 +1823,7 @@ pub fn init(
         on_init_error: http_thread_on_init_error,
     });
 
-    // SAFETY: singleton fully initialized. The HTTP thread is now live and may
-    // project `&(*get()).field` concurrently, but `timestamp_for_manifest_cache_control`
-    // is main-thread-only state; this narrowly-scoped place expression does not
-    // materialize a `&mut PackageManager` that outlives the assignment.
-    unsafe { (*manager_ptr).timestamp_for_manifest_cache_control = 'brk: {
+    let timestamp_for_manifest_cache_control: u32 = 'brk: {
         if cfg!(debug_assertions) {
             // TODO(port): bun.Environment.allow_assert
             if let Some(cache_control) = env.get("BUN_CONFIG_MANIFEST_CACHE_CONTROL_TIMESTAMP") {
@@ -1840,8 +1836,15 @@ pub fn init(
 
         (u64::try_from(bun_core::time::timestamp().max(0)).unwrap()) as u32 // @truncate
     };
+    // SAFETY: singleton fully initialized. The HTTP thread is now live and may
+    // project `&(*get()).field` concurrently, but `timestamp_for_manifest_cache_control`
+    // is main-thread-only state; this raw-pointer place write does not materialize a
+    // `&mut PackageManager` that could alias worker projections.
+    unsafe {
+        (*manager_ptr).timestamp_for_manifest_cache_control = timestamp_for_manifest_cache_control;
+    }
 
-    Ok((manager, original_cwd_clone))
+    Ok((manager_ptr, original_cwd_clone))
 }
 
 pub fn init_with_runtime(

@@ -198,7 +198,7 @@ impl OutputFileList {
 
     pub fn insert_additional_output_files(
         &mut self,
-        additional_output_files: &[options::OutputFile],
+        additional_output_files: &mut Vec<options::OutputFile>,
     ) {
         debug_assert!(
             self.index_for_sourcemaps_and_bytecode.unwrap_or(0)
@@ -207,12 +207,13 @@ impl OutputFileList {
             self.index_for_sourcemaps_and_bytecode.unwrap_or(0),
             self.additional_output_files_start,
         );
-        // PORT NOTE: reshaped for borrowck — capture len before mut borrow
+        // PORT NOTE: Zig did bitwise memcpy (ownership move). `OutputFile` is not
+        // `Clone`, so drain by value into the target window.
         let len = additional_output_files.len();
-        // TODO(port): OutputFile may not be Copy; Zig did bitwise memcpy (ownership move).
-        // Phase B: consider taking Vec<OutputFile> by value and splicing/moving instead.
-        self.get_mutable_additional_output_files()[..len]
-            .clone_from_slice(additional_output_files);
+        let dest = self.get_mutable_additional_output_files();
+        for (i, of) in additional_output_files.drain(..).enumerate() {
+            dest[i] = of;
+        }
         self.total_insertions += u32::try_from(len).unwrap();
     }
 

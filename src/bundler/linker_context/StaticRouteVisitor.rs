@@ -121,7 +121,7 @@ impl<'a> StaticRouteVisitor<'a> {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/bundler/linker_context/StaticRouteVisitor.zig (93 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      MultiArrayList .items(.field) accessor shape guessed; ImportRecord::List referenced via module path
+//   confidence: high
+//   todos:      0
+//   notes:      SoA columns via derived `*ListExt` traits; parse_graph deref'd as raw backref
 // ──────────────────────────────────────────────────────────────────────────

@@ -479,13 +479,6 @@ impl Linker {
                         }
                     }
 
-                    // CYCLEBREAK FORWARD_DECL: `PluginRunner` is an opaque
-                    // `[u8; 0]` newtype in the un-gated transpiler header
-                    // (real impl lives in `bundler_jsc::plugin_runner`), so
-                    // `could_be_plugin` / `on_resolve` have no method bodies
-                    // to call here. Gate the dispatch until the JSC-side
-                    // plugin runner is linked.
-                    
                     if let Some(runner) = self.plugin_runner {
                         let import_record =
                             &mut result.ast.import_records.slice_mut()[record_i];
@@ -502,11 +495,11 @@ impl Linker {
                                 log,
                                 import_record.range.loc,
                                 if IS_BUN {
-                                    crate::transpiler::PluginTarget::Bun
+                                    PluginTarget::Bun
                                 } else if opts.target == options::Target::Browser {
-                                    crate::transpiler::PluginTarget::Browser
+                                    PluginTarget::Browser
                                 } else {
-                                    crate::transpiler::PluginTarget::Node
+                                    PluginTarget::Node
                                 },
                             )? {
                                 import_record.path = self.generate_import_path(

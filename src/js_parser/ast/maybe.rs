@@ -80,24 +80,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             return RelocateVars { ok: false, ..Default::default() };
         }
 
-        // PORT NOTE: Binding2ExprWrapperHoisted is a `()` stub on P (P.rs round-C);
-        // construct the ToExpr wrapper inline around `&mut P` + `wrap_identifier_hoisting`
-        // (Zig: `p.to_expr_wrapper_hoisted` was `Binding.ToExpr(P, P.wrapIdentifierHoisting)`).
-        let allocator = p.allocator;
         let mut value: Expr = Expr::EMPTY;
-        {
-            let mut wrapper = crate::ast::binding::_draft::ToExpr::init(
-                p,
-                allocator,
-                |ctx: &mut Self, loc, ref_| ctx.wrap_identifier_hoisting(loc, ref_),
-            );
-            for decl in decls {
-                let binding = Binding::to_expr(&decl.binding, &mut wrapper);
-                if let Some(decl_value) = decl.value {
-                    value = Expr::join_with_comma(value, Expr::assign(binding, decl_value));
-                } else if mode == RelocateVarsMode::ForInOrForOf {
-                    value = Expr::join_with_comma(value, binding);
-                }
+        for decl in decls {
+            let binding = Binding::to_expr(&decl.binding, &mut p.to_expr_wrapper_hoisted);
+            if let Some(decl_value) = decl.value {
+                value = Expr::join_with_comma(value, Expr::assign(binding, decl_value));
+            } else if mode == RelocateVarsMode::ForInOrForOf {
+                value = Expr::join_with_comma(value, binding);
             }
         }
 

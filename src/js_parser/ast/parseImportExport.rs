@@ -86,19 +86,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 None
             };
             if let Some(slice) = slice_opt {
-                 // blocked_on: bun_options_types::ImportRecord: Default (P::add_import_record chain re-gated)
-                {
-                    let import_record_index = p.add_import_record(
-                        bun_options_types::ImportKind::Dynamic,
-                        value.loc,
-                        slice,
-                    );
-                    return Ok(p.new_expr(
-                        E::Import { expr: value, import_record_index, options: import_options },
-                        loc,
-                    ));
-                }
-                let _ = slice;
+                let import_record_index = p.add_import_record(
+                    bun_options_types::ImportKind::Dynamic,
+                    value.loc,
+                    slice,
+                );
+                return Ok(p.new_expr(
+                    E::Import { expr: value, import_record_index, options: import_options },
+                    loc,
+                ));
             }
         }
 
@@ -115,12 +111,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         ))
     }
 
-    pub fn parse_import_clause(&mut self) -> Result<ImportClause, Error> {
-        
-        // blocked_on: P::{store_name_in_ref, check_for_non_bmp_code_point} gated (P.rs:640
-        //   impl block); ClauseItem.alias is ArenaStr (*const [u8]) not &[u8]; BumpVec
-        //   construction (items.push needs &'a Bump); LocRef.ref_ is Option<Ref>.
-        {
+    pub fn parse_import_clause(&mut self) -> Result<ImportClause<'a>, Error> {
         let p = self;
         // TODO(port): narrow error set
         let mut items = bumpalo::collections::Vec::<ClauseItem>::new_in(p.allocator);
@@ -135,10 +126,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // The alias may be a keyword;
             let is_identifier = p.lexer.token == T::TIdentifier;
             let alias_loc = p.lexer.loc();
-            let alias = p.parse_clause_alias(b"import")?;
+            let alias = p.parse_clause_alias("import")?;
             let mut name = LocRef {
                 loc: alias_loc,
-                ref_: p.store_name_in_ref(alias)?,
+                ref_: Some(p.store_name_in_ref(alias)?),
             };
             let mut original_name = alias;
             p.lexer.next()?;
@@ -164,7 +155,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         original_name = p.lexer.identifier;
                         name = LocRef {
                             loc: p.lexer.loc(),
-                            ref_: p.store_name_in_ref(original_name)?,
+                            ref_: Some(p.store_name_in_ref(original_name)?),
                         };
                         p.lexer.next()?;
 
@@ -190,14 +181,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         original_name = p.lexer.identifier;
                         name = LocRef {
                             loc: p.lexer.loc(),
-                            ref_: p.store_name_in_ref(original_name)?,
+                            ref_: Some(p.store_name_in_ref(original_name)?),
                         };
                         p.lexer.expect(T::TIdentifier)?;
 
                         if is_eval_or_arguments(original_name) {
                             let r = p.source.range_of_string(name.loc);
                             p.log.add_range_error_fmt(
-                                p.source,
+                                Some(p.source),
                                 r,
                                 format_args!(
                                     "Cannot use {} as an identifier here",
@@ -220,7 +211,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     // "import { type xx as yy } from 'mod'"
                     // "import { type if as yy } from 'mod'"
                     // "import { type 'xx' as yy } from 'mod'"
-                    let _ = p.parse_clause_alias(b"import")?;
+                    let _ = p.parse_clause_alias("import")?;
                     p.lexer.next()?;
 
                     if p.lexer.is_contextual_keyword(b"as") {
@@ -229,7 +220,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         p.lexer.expect(T::TIdentifier)?;
                     } else if !is_identifier_inner {
                         // An import where the name is a keyword must have an alias
-                        p.lexer.expected_string("\"as\"")?;
+                        p.lexer.expected_string(b"\"as\"")?;
                     }
                     had_type_only_imports = true;
                 }

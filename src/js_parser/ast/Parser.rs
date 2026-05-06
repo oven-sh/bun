@@ -273,20 +273,6 @@ impl<'a> Parser<'a> {
         }
     }
 
-    // TODO(b2-ast-round-D): replace body with `_scan_imports::<...>()` dispatch
-    // once the ScanOnly `P` instantiations compile.
-    pub fn scan_imports(&mut self, scan_pass: &mut ScanPassResult) -> Result<(), Error> {
-        let _ = (scan_pass, &self.options);
-        todo!("Parser::scan_imports — blocked on P method surface (b2-ast-round-D)")
-    }
-}
-
-// Round-D: analyze()/_parse()/scan_imports()/to_lazy_export_ast() drive the
-// full P method surface (init/prepare_for_visit_pass/to_ast) which is still
-// gated in P.rs. Each is per-method gated; `parse()`/`has_bun_pragma()` above
-// stay live.
-impl<'a> Parser<'a> {
-     // blocked_on: _scan_imports (P::init / parse_stmts_up_to gated)
     pub fn scan_imports(&mut self, scan_pass: &mut ScanPassResult) -> Result<(), Error> {
         if self.options.ts && self.options.jsx.parse {
             self._scan_imports::<true, JsxReact>(scan_pass)
@@ -331,14 +317,14 @@ impl<'a> Parser<'a> {
             ),
             core::mem::take(&mut self.options),
         )?;
-        p.import_records = &mut scan_pass.import_records;
-        p.named_imports = &mut scan_pass.named_imports;
+        p.import_records = crate::ast::p::ImportRecordList::Borrowed(&mut scan_pass.import_records);
+        p.named_imports = crate::ast::p::NamedImportsType::Borrowed(&mut scan_pass.named_imports);
 
         // The problem with our scan pass approach is type-only imports.
         // We don't have accurate symbol counts.
         // So we don't have a good way to distinguish between a type-only import and not.
         if TS {
-            p.parse_pass_symbol_uses = &mut scan_pass.used_symbols;
+            p.parse_pass_symbol_uses = Some(&mut scan_pass.used_symbols);
         }
 
         // Parse the file in the first pass, but do not bind symbols
@@ -370,10 +356,11 @@ impl<'a> Parser<'a> {
                 // - import 'foo';
                 // - import("foo")
                 // - require("foo")
-                import_record.flags.is_unused = import_record.flags.is_unused
+                let new_unused = import_record.flags.contains(ImportRecordFlags::IS_UNUSED)
                     || (import_record.kind == bun_options_types::ImportKind::Stmt
-                        && !import_record.flags.was_originally_bare_import
-                        && !import_record.flags.calls_runtime_re_export_fn);
+                        && !import_record.flags.contains(ImportRecordFlags::WAS_ORIGINALLY_BARE_IMPORT)
+                        && !import_record.flags.contains(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN));
+                import_record.flags.set(ImportRecordFlags::IS_UNUSED, new_unused);
             }
 
             let mut iter = scan_pass.used_symbols.iterator();
@@ -382,7 +369,7 @@ impl<'a> Parser<'a> {
                 if val.used {
                     scan_pass.import_records.as_mut_slice()[val.import_record_index as usize]
                         .flags
-                        .is_unused = false;
+                        .remove(ImportRecordFlags::IS_UNUSED);
                 }
             }
         }

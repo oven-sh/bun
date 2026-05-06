@@ -3537,8 +3537,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 if let Some(uses) = &mut self.parse_pass_symbol_uses {
                     uses.put(name, crate::parser::ParsePassSymbolUse {
                         r#ref: stmt.namespace_ref,
+                        used: false,
                         import_record_index: stmt.import_record_index,
-                        ..Default::default()
                     })
                     .expect("unreachable");
                 }
@@ -3616,8 +3616,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     if let Some(uses) = &mut self.parse_pass_symbol_uses {
                         uses.put(name, crate::parser::ParsePassSymbolUse {
                             r#ref,
+                            used: false,
                             import_record_index: stmt.import_record_index,
-                            ..Default::default()
                         })
                         .expect("unreachable");
                     }
@@ -3633,14 +3633,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
         let mut end: usize = 0;
 
-        for i in 0..stmt.items.len() {
-            let mut item = stmt.items[i];
-            let name = self.load_name_from_ref(item.name.r#ref.expect("unreachable"));
+        // SAFETY: arena-owned `*mut [ClauseItem]` valid for parser 'a lifetime.
+        let items_slice: &mut [js_ast::ClauseItem] = unsafe { &mut *stmt.items };
+        for i in 0..items_slice.len() {
+            let mut item = items_slice[i];
+            let name = self.load_name_from_ref(item.name.ref_.expect("unreachable"));
             let r#ref = self.declare_symbol(js_ast::symbol::Kind::Import, item.name.loc, name)?;
-            item.name.r#ref = Some(r#ref);
+            item.name.ref_ = Some(r#ref);
 
-            self.is_import_item.insert(r#ref, ())?;
-            self.check_for_non_bmp_code_point(item.alias_loc, item.alias);
+            self.is_import_item.insert(r#ref, ());
+            // SAFETY: ClauseItem.alias is `*const [u8]` arena-owned for 'a.
+            let alias: &'a [u8] = unsafe { &*item.alias };
+            self.check_for_non_bmp_code_point(item.alias_loc, alias);
 
             // ensure every e_import_identifier holds the namespace
             if self.options.features.hot_module_reloading {
@@ -3648,16 +3652,17 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 if symbol.namespace_alias.is_none() {
                     symbol.namespace_alias = Some(js_ast::NamespaceAlias {
                         namespace_ref: stmt.namespace_ref,
-                        alias: item.alias,
+                        alias,
                         import_record_index: stmt.import_record_index,
+                        was_originally_property_access: false,
                     });
                 }
             }
 
-            if let Some(remap) = &macro_remap {
-                if let Some(remapped_path) = remap.get(item.alias) {
+            if let Some(remap) = macro_remap {
+                if let Some(remapped_path) = remap.get(alias) {
                     let new_import_id = self.add_import_record(ImportKind::Stmt, path.loc, remapped_path);
-                    self.macro_.refs.put(r#ref, crate::parser::MacroRefData { import_record_id: new_import_id, name: item.alias })?;
+                    self.macro_.refs.put(r#ref, crate::parser::MacroRefData { import_record_id: new_import_id, name: Some(alias) })?;
 
                     self.import_records.items_mut()[new_import_id as usize].path.namespace = js_ast::Macro::NAMESPACE;
                     self.import_records.items_mut()[new_import_id as usize].flags.insert(bun_options_types::ImportRecordFlags::IS_UNUSED);

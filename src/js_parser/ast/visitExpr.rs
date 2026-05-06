@@ -1951,9 +1951,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
 
             if e_.args.len >= 1 {
-                // blocked_on: P::check_dynamic_specifier gated (P.rs:690 ``).
-                let _ = (e_.args.slice()[0], e_.target.loc);
-                todo!("e_call: P::check_dynamic_specifier (gated)");
+                p.check_dynamic_specifier(e_.args.slice()[0], e_.target.loc, "require")
+                    .expect("unreachable");
             }
 
             if p.options.features.allow_runtime {
@@ -1975,9 +1974,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     Data::EString(..) => {
                         // require.resolve(FOO) => require.resolve(FOO)
                         // (this will register dependencies)
-                        // blocked_on: P::transpose_require_resolve_known_string gated (P.rs:840).
-                        let _ = first;
-                        todo!("e_call: P::transpose_require_resolve_known_string (gated)");
+                        return p.transpose_require_resolve_known_string(first);
                     }
                     Data::EIf(..) => {
                         // require.resolve(FOO  ? '123' : '456')
@@ -1993,19 +1990,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
 
             if e_.args.len >= 1 {
-                // blocked_on: P::check_dynamic_specifier gated (P.rs:690).
-                let _ = (e_.args.slice()[0], e_.target.loc);
-                todo!("e_call: P::check_dynamic_specifier (gated)");
+                p.check_dynamic_specifier(e_.args.slice()[0], e_.target.loc, "require.resolve")
+                    .expect("unreachable");
             }
 
             return expr;
         } else if let Some(special) = e_.target.data.e_special() {
             match special {
                 E::Special::HotAccept => {
-                    // blocked_on: P::handle_import_meta_hot_accept_call lives in the gated
-                    // round-D impl block.
-                    let _ = &mut *e_;
-                    todo!("e_call: P::handle_import_meta_hot_accept_call (gated)");
+                    p.handle_import_meta_hot_accept_call(&mut e_);
                     // After validating that the import.meta.hot
                     // code is correct, discard the entire
                     // expression in production.
@@ -2051,13 +2044,47 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     return p.new_expr(E::Undefined {}, expr.loc);
                 }
 
-                // blocked_on: MacroContext::call surface — `p.options.macro_context` is a
-                // *mut MacroContext placeholder; the cross-FFI call shape (record.path,
-                // source_dir, log, source, range, expr, name) → !Result<Expr> isn't ported.
-                // Body preserved verbatim in `_draft::e_call`. Loud at the precise spot
-                // rather than gating the whole visitor.
-                let _ = macro_ref_data;
-                todo!("e_call: MacroContext::call dispatch — see _draft");
+                let name: &[u8] = macro_ref_data
+                    .name
+                    .unwrap_or_else(|| e_.target.data.e_dot().unwrap().name);
+                let record =
+                    &p.import_records.items()[macro_ref_data.import_record_id as usize];
+                let copied = Expr { loc: expr.loc, data: expr.data };
+                let start_error_count = p.log.msgs.items().len();
+                p.macro_call_count += 1;
+                let macro_result = match p.options.macro_context.call(
+                    record.path.text,
+                    p.source.path.source_dir(),
+                    p.log,
+                    p.source,
+                    record.range,
+                    copied,
+                    name,
+                ) {
+                    Ok(r) => r,
+                    Err(err) => {
+                        if matches!(err, bun_core::Error::MacroFailed) {
+                            if p.log.msgs.items().len() == start_error_count {
+                                p.log
+                                    .add_error(Some(p.source), expr.loc, b"macro threw exception")
+                                    .expect("unreachable");
+                            }
+                        } else {
+                            p.log
+                                .add_error_fmt(
+                                    Some(p.source),
+                                    expr.loc,
+                                    format_args!("{:?} error in macro", err),
+                                )
+                                .expect("unreachable");
+                        }
+                        return expr;
+                    }
+                };
+
+                if !matches!(macro_result.data, Data::ECall(..)) {
+                    return p.visit_expr(macro_result);
+                }
             }
         }
 

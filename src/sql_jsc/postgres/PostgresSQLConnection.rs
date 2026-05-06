@@ -710,7 +710,9 @@ impl PostgresSQLConnection {
         if !done {
             // read buffer is not empty, so we need to write the data to the buffer and then read it
             self.read_buffer.write(data).expect("failed to write to read buffer");
-            match PostgresRequest::on_data(self, self.buffered_reader()) {
+            // PORT NOTE: reshaped for borrowck — build reader (raw backref) before reborrowing self.
+            let reader = self.buffered_reader();
+            match PostgresRequest::on_data(self, reader) {
                 Ok(()) => {
                     debug!("clean read_buffer");
                     // success, we read everything! let's reset the last message start and the head
@@ -2082,6 +2084,13 @@ impl PostgresSQLConnection {
                         self.flush_data();
                     }
                     protocol::Authentication::SASLContinue(cont) => {
+                        // PORT NOTE: reshaped for borrowck — read `password` (raw
+                        // *const [u8] backref into options_buf) before taking
+                        // `&mut self.authentication_state`; Zig passed `this` but
+                        // compute_salted_password only needs the password slice.
+                        // SAFETY: self.password points into self.options_buf for the
+                        // lifetime of the connection (see ::init).
+                        let password: &[u8] = unsafe { &*self.password };
                         let AuthenticationState::SASL(sasl) = &mut self.authentication_state else {
                             debug!("Unexpected SASLContinue for authentication state: {}", <&'static str>::from(&self.authentication_state));
                             return Err(AnyPostgresError::UnexpectedMessage);
@@ -2102,7 +2111,7 @@ impl PostgresSQLConnection {
                             }
                             Err(e) => return Err(e.into()),
                         };
-                        sasl.compute_salted_password(&server_salt_decoded_base64, iteration_count, self)?;
+                        sasl.compute_salted_password(&server_salt_decoded_base64, iteration_count, password)?;
                         drop(server_salt_decoded_base64);
 
                         let mut auth_string: Vec<u8> = Vec::new();
@@ -2148,8 +2157,11 @@ impl PostgresSQLConnection {
                             data: Data::Temporary(&payload),
                         };
 
-                        response.write_internal(self.writer())?;
+                        // PORT NOTE: reshaped for borrowck — set status before
+                        // self.writer()/flush_data() so the `sasl` borrow ends
+                        // first (Zig order is not load-bearing).
                         sasl.status = AuthenticationState::SaslStatus::Continue;
+                        response.write_internal(self.writer())?;
                         self.flush_data();
                     }
                     protocol::Authentication::SASLFinal(final_) => {

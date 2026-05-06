@@ -810,11 +810,11 @@ impl Expr {
     // PERF(port): Zig took `comptime op: Op.Code`. `Op::Code` does not derive
     // `ConstParamTy` (Op.rs owns the enum); pass at runtime here. Revisit once
     // `Code` gains `ConstParamTy` — call sites are a handful of literal ops.
-    pub fn join_with_left_associative_op(op: Op::Code, a: Expr, b: Expr) -> Expr {
+    pub fn join_with_left_associative_op(op: Op::Code, a: Expr, b: Expr, allocator: &Bump) -> Expr {
         // "(a, b) op c" => "a, b op c"
         if let Data::EBinary(mut comma) = a.data {
             if comma.op == crate::ast::OpCode::BinComma {
-                comma.right = Self::join_with_left_associative_op(op, comma.right, b);
+                comma.right = Self::join_with_left_associative_op(op, comma.right, b, allocator);
             }
         }
 
@@ -824,8 +824,9 @@ impl Expr {
             if binary.op == op {
                 return Self::join_with_left_associative_op(
                     op,
-                    Self::join_with_left_associative_op(op, a, binary.left),
+                    Self::join_with_left_associative_op(op, a, binary.left, allocator),
                     binary.right,
+                    allocator,
                 );
             }
         }
@@ -835,20 +836,20 @@ impl Expr {
         Expr::init(E::Binary { op, left: a, right: b }, a.loc)
     }
 
-    pub fn join_with_comma(a: Expr, b: Expr) -> Expr {
-        if a.is_missing() {
+    pub fn join_with_comma(self, b: Expr) -> Expr {
+        if self.is_missing() {
             return b;
         }
         if b.is_missing() {
-            return a;
+            return self;
         }
         Expr::init(
-            E::Binary { op: crate::ast::OpCode::BinComma, left: a, right: b },
-            a.loc,
+            E::Binary { op: crate::ast::OpCode::BinComma, left: self, right: b },
+            self.loc,
         )
     }
 
-    pub fn join_all_with_comma(all: &[Expr]) -> Expr {
+    pub fn join_all_with_comma(all: &[Expr], _: &Bump) -> Expr {
         debug_assert!(!all.is_empty());
         match all.len() {
             1 => all[0],
@@ -863,21 +864,25 @@ impl Expr {
         }
     }
 
-    pub fn join_all_with_comma_callback<C>(
+    // PORT NOTE: Zig threaded `ctx: anytype` and called `callback(ctx, ...)` on
+    // each element. Rust passes `ctx` by `&mut` so a single `&mut P` (the parser
+    // state) can be reborrowed for each callback invocation without `Copy`.
+    pub fn join_all_with_comma_callback<C: ?Sized>(
         all: &[Expr],
-        ctx: C,
-        callback: fn(ctx: &C, expr: Expr) -> Option<Expr>,
+        ctx: &mut C,
+        callback: fn(ctx: &mut C, expr: Expr) -> Option<Expr>,
+        _: &Bump,
     ) -> Option<Expr> {
         match all.len() {
             0 => None,
-            1 => callback(&ctx, all[0]),
+            1 => callback(ctx, all[0]),
             2 => {
                 let result = Expr::join_with_comma(
-                    callback(&ctx, all[0]).unwrap_or(Expr {
+                    callback(ctx, all[0]).unwrap_or(Expr {
                         data: Data::EMissing(E::Missing {}),
                         loc: all[0].loc,
                     }),
-                    callback(&ctx, all[1]).unwrap_or(Expr {
+                    callback(ctx, all[1]).unwrap_or(Expr {
                         data: Data::EMissing(E::Missing {}),
                         loc: all[1].loc,
                     }),
@@ -889,7 +894,7 @@ impl Expr {
             }
             _ => {
                 let mut i: usize = 1;
-                let mut expr = callback(&ctx, all[0]).unwrap_or(Expr {
+                let mut expr = callback(ctx, all[0]).unwrap_or(Expr {
                     data: Data::EMissing(E::Missing {}),
                     loc: all[0].loc,
                 });
@@ -897,7 +902,7 @@ impl Expr {
                 while i < all.len() {
                     expr = Expr::join_with_comma(
                         expr,
-                        callback(&ctx, all[i]).unwrap_or(Expr {
+                        callback(ctx, all[i]).unwrap_or(Expr {
                             data: Data::EMissing(E::Missing {}),
                             loc: all[i].loc,
                         }),
@@ -1300,8 +1305,8 @@ pub type Disabler = DebugOnlyDisabler<Expr>;
 
 impl Expr {
     #[inline]
-    pub fn is_primitive_literal(this: &Expr) -> bool {
-        Tag::is_primitive_literal(this.data.tag())
+    pub fn is_primitive_literal(&self) -> bool {
+        Tag::is_primitive_literal(self.data.tag())
     }
 
     #[inline]

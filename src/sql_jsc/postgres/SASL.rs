@@ -1,7 +1,5 @@
 use bun_base64;
 
-use super::postgres_sql_connection::PostgresSQLConnection;
-
 use bun_sha_hmac::hmac::EVP_MAX_MD_SIZE;
 
 const NONCE_BYTE_LEN: usize = 18;
@@ -59,11 +57,16 @@ fn hmac(password: &[u8], data: &[u8]) -> Option<[u8; 32]> {
 }
 
 impl SASL {
+    // PORT NOTE: reshaped for borrowck — Zig passed `*PostgresSQLConnection` but
+    // only read `connection.password`. Taking `&mut PostgresSQLConnection` here
+    // would alias the `&mut self.authentication_state` borrow live at the call
+    // site in `PostgresSQLConnection::on`. Caller dereferences the
+    // self-referential `*const [u8]` and passes the slice directly.
     pub fn compute_salted_password(
         &mut self,
         salt_bytes: &[u8],
         iteration_count: u32,
-        connection: &mut PostgresSQLConnection,
+        password: &[u8],
     ) -> Result<(), bun_core::Error> {
         // Zig: `jsc.API.Bun.Crypto.EVP.pbkdf2` (src/runtime/api/crypto.zig).
         // PORT NOTE: `bun_runtime::crypto::EVP::pbkdf2` is a thin wrapper over
@@ -74,10 +77,6 @@ impl SASL {
         use core::ffi::c_uint;
 
         self.salted_password_created = true;
-        // SAFETY: `connection.password` is a self-referential slice into
-        // `connection.options_buf` (see PostgresSQLConnection::init); valid for
-        // the lifetime of `connection`.
-        let password: &[u8] = unsafe { &*connection.password };
         let out = &mut self.salted_password_bytes;
         out.fill(0);
         // SAFETY: FFI into BoringSSL; ERR_clear_error has no preconditions.

@@ -1001,7 +1001,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     || p.lexer.is_contextual_keyword(b"interface")
                 {
                     let mut _opts = ParseStatementOptions {
-                        ts_decorators: opts.ts_decorators,
+                        ts_decorators: opts.ts_decorators.take(),
                         is_name_optional: true,
                         lexical_decl: LexicalDecl::AllowAll,
                         ..Default::default()

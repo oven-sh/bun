@@ -160,6 +160,21 @@ pub mod bun_css {
             Self { v: bun_core::handle_oom(BabyList::from_slice(self.v.slice())) }
         }
     }
+    impl LayerName {
+        /// Mirror of `bun_css::LayerName::eql` for the lifetime-erased shadow
+        /// type. Compares each dot-segment by bytes.
+        pub fn eql(&self, rhs: &LayerName) -> bool {
+            if self.v.len != rhs.v.len {
+                return false;
+            }
+            for (l, r) in self.v.slice().iter().zip(rhs.v.slice()) {
+                if **l != **r {
+                    return false;
+                }
+            }
+            true
+        }
+    }
     impl core::fmt::Display for LayerName {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
             for (i, part) in self.v.slice().iter().enumerate() {

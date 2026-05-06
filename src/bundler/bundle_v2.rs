@@ -1508,9 +1508,11 @@ pub struct PendingImport {
 }
 
 pub struct BundleV2<'a> {
-    // PORT NOTE: raw ptrs — Zig stored `*Transpiler` (and aliased the same
-    // pointer into `ssr_transpiler` when SSR graph isn't separate).
-    pub transpiler: *mut Transpiler<'a>,
+    // PORT NOTE: Zig stored `*Transpiler` (and aliased the same pointer into
+    // `ssr_transpiler` when SSR graph isn't separate). Kept as `&'a mut` for
+    // ergonomic field access in the draft body; `ssr_transpiler` is `*mut` so
+    // the alias is legal.
+    pub transpiler: &'a mut Transpiler<'a>,
     /// When Server Component is enabled, this is used for the client bundles
     /// and `transpiler` is used for the server bundles.
     pub client_transpiler: Option<NonNull<Transpiler<'a>>>,
@@ -1575,9 +1577,15 @@ pub struct BakeOptions<'a> {
 }
 
 impl<'a> BundleV2<'a> {
+    /// `bundle_v2.zig:loop()` — opaque event-loop handle stored on the linker.
+    /// PORT NOTE: `linker.r#loop` is `Option<NonNull<()>>` (erased); the draft
+    /// `EventLoop` enum lives separately on the bundler so plugin dispatch can
+    /// distinguish JS vs Mini loops.
+    pub r#loop: EventLoop,
+
     #[inline]
     pub fn r#loop(&mut self) -> &mut EventLoop {
-        &mut self.linker.r#loop
+        &mut self.r#loop
     }
 
     /// Returns the jsc.EventLoop where plugin callbacks can be queued up on
@@ -1589,7 +1597,7 @@ impl<'a> BundleV2<'a> {
             // SAFETY: completion is a valid backref while bundle is running
             unsafe { &(*completion).jsc_event_loop }
         } else {
-            match self.r#loop() {
+            match &self.r#loop {
                 // From bake where the loop running the bundle is also the loop
                 // running the plugins.
                 EventLoop::Js(jsc_event_loop) => jsc_event_loop,
@@ -1601,14 +1609,14 @@ impl<'a> BundleV2<'a> {
 
     fn ensure_client_transpiler(&mut self) {
         if self.client_transpiler.is_none() {
-            let _ = self.initialize_client_transpiler().unwrap_or_else(|e| {
+            let _ = self.initialize_client_transpiler().unwrap_or_else(|e: Error| {
                 panic!("Failed to initialize client transpiler: {}", e.name());
             });
         }
     }
 
     #[cold]
-    fn initialize_client_transpiler(&mut self) -> Result<&mut Transpiler, Error> {
+    fn initialize_client_transpiler(&mut self) -> Result<&mut Transpiler<'a>, Error> {
         let alloc = self.allocator();
 
         let this_transpiler = &mut *self.transpiler;

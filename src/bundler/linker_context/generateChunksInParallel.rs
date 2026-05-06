@@ -41,7 +41,7 @@ use crate::dispatch::BYTECODE_HOOK;
 const BYTECODE_EXTENSION: &str = ".jsc";
 
 bun_core::declare_scope!(PartRanges, hidden);
-bun_core::declare_scope!(LinkerCtx, hidden);
+use crate::linker_context::LinkerCtx;
 macro_rules! debug {
     ($($arg:tt)*) => { bun_core::scoped_log!(LinkerCtx, $($arg)*) };
 }

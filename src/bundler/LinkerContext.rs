@@ -133,7 +133,9 @@ pub use crate::linker_context::scan_imports_and_exports::scan_imports_and_export
  pub use crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order;
  pub use crate::linker_context::find_imported_css_files_in_js_order::find_imported_css_files_in_js_order;
  pub use crate::linker_context::generate_code_for_lazy_export::generate_code_for_lazy_export;
- pub use crate::linker_context::do_step5::{do_step5, create_exports_for_file};
+ // do_step5 / create_exports_for_file are inherent methods on LinkerContext (see
+ // `linker_context/doStep5.rs`), not free functions — no item re-export.
+ pub use crate::linker_context::do_step5;
  pub use crate::linker_context::compute_cross_chunk_dependencies::compute_cross_chunk_dependencies;
  pub use crate::linker_context::post_process_js_chunk::post_process_js_chunk;
  pub use crate::linker_context::post_process_css_chunk::post_process_css_chunk;
@@ -259,7 +261,12 @@ pub mod EntryPoint {
 }
 use crate::Graph::{InputFileListExt as _, SideEffects as _GraphSideEffects};
 use crate::ungate_support::js_meta::JSMetaListExt as _;
+use crate::ungate_support::{EntryPointListExt as _, CompileResultForSourceMapListExt as _};
+use crate::linker_graph::FileListExt as _;
 use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
+use bun_js_parser::ast::bundled_ast::Flags as AstFlags;
+use crate::bundle_v2::generic_path_with_pretty_initialized;
+type DeclaredSymbolList = js_ast::DeclaredSymbolList;
 
 // TODO(b2-blocked): method bodies depend on `LinkerGraph` SoA accessors
 // (`graph.files.items_*()`, `graph.ast.items_*()`, `graph.meta.items_*()`),

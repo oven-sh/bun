@@ -1305,19 +1305,25 @@ impl<'a> Drop for BunTest<'a> {
 }
 
 // `export const Bun__TestScope__Describe2__bunTestThen = jsc.toJSHostFn(bunTestThen);`
-// TODO(port): move to <area>_sys
-// TODO(b2-blocked): bun_jsc::host_fn::to_js_host_fn is a no-arg stub; the
-// `#[bun_jsc::host_fn]` proc-macro already emits the extern-"C" wrapper for
-// `bun_test_then`/`bun_test_catch`, but its mangled name isn't stable yet.
-// Gate the C++-linked statics until the proc-macro exposes a named symbol.
+// PORT NOTE: `jsc::host_fn::to_js_host_fn` is a const-panicking stub (Zig used
+// `comptime` reflection); hand-roll the C-ABI thunks here so `JSValue::then`
+// gets a real fn pointer.
+unsafe extern "C" fn bun_test_then_c(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue {
+    // SAFETY: JSC passes non-null live pointers for both.
+    let (global, frame) = unsafe { (&*global, &*frame) };
+    jsc::host_fn::to_js_host_fn_result(global, BunTest::bun_test_then(global, frame))
+}
+unsafe extern "C" fn bun_test_catch_c(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue {
+    // SAFETY: JSC passes non-null live pointers for both.
+    let (global, frame) = unsafe { (&*global, &*frame) };
+    jsc::host_fn::to_js_host_fn_result(global, BunTest::bun_test_catch(global, frame))
+}
 
 #[unsafe(no_mangle)]
-pub static Bun__TestScope__Describe2__bunTestThen: jsc::host_fn::JSHostFn =
-    jsc::host_fn::to_js_host_fn(BunTest::bun_test_then);
+pub static Bun__TestScope__Describe2__bunTestThen: jsc::host_fn::JSHostFn = bun_test_then_c;
 
 #[unsafe(no_mangle)]
-pub static Bun__TestScope__Describe2__bunTestCatch: jsc::host_fn::JSHostFn =
-    jsc::host_fn::to_js_host_fn(BunTest::bun_test_catch);
+pub static Bun__TestScope__Describe2__bunTestCatch: jsc::host_fn::JSHostFn = bun_test_catch_c;
 
 #[derive(Copy, Clone)]
 pub struct EntryData {
@@ -1365,8 +1371,10 @@ impl RefDataValue {
             return None;
         }
         let (the_sequence, _) = buntest.execution.get_current_and_valid_execution_sequence(self)?;
-        // SAFETY: active_entry is a valid intrusive node while the sequence is live
-        the_sequence.active_entry.map(|p| unsafe { &mut *p })
+        // SAFETY: `the_sequence` is a NonNull into `execution.sequences`; deref
+        // at point-of-use only. `active_entry` is a valid intrusive node while
+        // the sequence is live.
+        unsafe { the_sequence.as_ref().active_entry.map(|p| &mut *p.as_ptr()) }
     }
 }
 

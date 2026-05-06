@@ -505,7 +505,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         let data_url = match DataURL::parse_without_check(url_slice.slice()) {
             Ok(d) => d,
             Err(_) => {
-                let err = ctx.create_error("failed to fetch the data URL");
+                let err = ctx.create_error_instance("{}", format_args!("failed to fetch the data URL"));
                 is_error = true;
                 return Ok(
                     JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(

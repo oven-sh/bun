@@ -899,58 +899,22 @@ impl ServerConfig {
 
             // When HTML bundles are provided, ensure DevServer options are ready
             // The presence of these options causes Bun.serve to initialize things.
-            if init_ctx.dedupe_html_bundle_map.count() > 0
+            if !init_ctx.dedupe_html_bundle_map.is_empty()
                 || !init_ctx.framework_router_list.is_empty()
             {
                 if args.development.is_hmr_enabled() {
-                    let root = bun_resolver::fs::FileSystem::instance().top_level_dir;
-                    let framework = crate::bake::Framework::auto(
-                        &init_ctx.arena,
-                        &mut global.bun_vm().transpiler.resolver,
-                        &init_ctx.framework_router_list,
-                    )?;
-                    args.bake = Some(crate::bake::UserOptions {
-                        // TODO(port): ownership transfer of arena/js_string_allocations into bake
-                        arena: core::mem::take(&mut init_ctx.arena),
-                        allocations: core::mem::take(&mut init_ctx.js_string_allocations),
-                        root,
-                        framework,
-                        bundler_options: crate::bake::SplitBundlerOptions::empty(),
-                    });
-                    let bake = args.bake.as_mut().unwrap();
-
-                    let o = &vm.transpiler.options.transform_options;
-
-                    // TODO(port): confirm enum path for serve_env_behavior
-                    match o.serve_env_behavior {
-                        bun_bundler::options::EnvBehavior::Prefix => {
-                            bake.bundler_options.client.env_prefix =
-                                vm.transpiler.options.transform_options.serve_env_prefix.clone();
-                            bake.bundler_options.client.env =
-                                bun_bundler::options::EnvBehavior::Prefix;
-                        }
-                        bun_bundler::options::EnvBehavior::LoadAll => {
-                            bake.bundler_options.client.env =
-                                bun_bundler::options::EnvBehavior::LoadAll;
-                        }
-                        bun_bundler::options::EnvBehavior::Disable => {
-                            bake.bundler_options.client.env =
-                                bun_bundler::options::EnvBehavior::Disable;
-                        }
-                        _ => {}
-                    }
-
-                    if let Some(define) = &o.serve_define {
-                        bake.bundler_options.client.define = define.clone();
-                        bake.bundler_options.server.define = define.clone();
-                        bake.bundler_options.ssr.define = define.clone();
-                    }
+                    // TODO(b2-blocked): bake::Framework::auto, bake::BuildConfigSubset
+                    // {env, env_prefix, define} fields, and ServerInitContext.arena
+                    // are not yet ported. The Zig body constructs `bake.UserOptions`
+                    // from the resolved framework + transform_options here.
+                    let _ = core::mem::take(&mut init_ctx.js_string_allocations);
+                    let _ = &vm.transpiler.options.transform_options;
+                    todo!("blocked_on: crate::bake::Framework::auto + BuildConfigSubset.{{env,env_prefix,define}}");
                 } else {
                     if !init_ctx.framework_router_list.is_empty() {
-                        return global.throw_invalid_arguments(
+                        return Err(global.throw_invalid_arguments(
                             "FrameworkRouter is currently only supported when `development: true`",
-                            &[],
-                        );
+                        ));
                     }
                     // init_ctx.arena drops at scope end
                 }

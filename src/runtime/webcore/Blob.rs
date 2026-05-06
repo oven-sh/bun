@@ -4711,9 +4711,11 @@ impl Blob {
                 | jsc::JSType::StringObject
                 | jsc::JSType::DerivedStringObject => {
                     let sliced = current.to_slice(global)?;
-                    let allocator = sliced.allocator_get();
-                    could_have_non_ascii = could_have_non_ascii || !sliced.allocator_is_wtf();
-                    joiner.push(sliced.slice(), allocator);
+                    could_have_non_ascii = could_have_non_ascii || !sliced.is_wtf_backed();
+                    // PORT NOTE: Zig handed `allocator` to the joiner so it could
+                    // free in-place; `StringJoiner::push` dropped that param, so
+                    // clone into the joiner and let `sliced` drop normally.
+                    joiner.push_cloned(sliced.slice());
                 }
 
                 jsc::JSType::Array | jsc::JSType::DerivedArray => {
@@ -4731,9 +4733,8 @@ impl Blob {
                                 | jsc::JSType::StringObject
                                 | jsc::JSType::DerivedStringObject => {
                                     let sliced = item.to_slice(global)?;
-                                    let allocator = sliced.allocator_get();
-                                    could_have_non_ascii = could_have_non_ascii || !sliced.allocator_is_wtf();
-                                    joiner.push(sliced.slice(), allocator);
+                                    could_have_non_ascii = could_have_non_ascii || !sliced.is_wtf_backed();
+                                    joiner.push_cloned(sliced.slice());
                                     continue;
                                 }
                                 jsc::JSType::ArrayBuffer

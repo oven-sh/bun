@@ -605,16 +605,10 @@ impl Request {
             // SAFETY: `formatter` outlives `_indent_guard` (same scope, guard dropped first);
             // the raw pointer is only dereferenced in the closure at scope exit, at which point
             // no other borrow of `formatter` is live.
-            let _indent_guard = scopeguard::guard(
-                formatter as *mut F,
-                |p| unsafe { (*p).indent_dec() },
-            );
-            // SAFETY: re-borrow for the body of the scope; `_indent_guard` only
-            // dereferences at drop after this borrow ends.
-            let formatter = unsafe { &mut *(_indent_guard.cast_const() as *mut F as *mut F) };
-            let _ = &formatter; // suppress unused if optimized away
-            // Re-acquire a usable &mut F for the rest of the block.
-            // (scopeguard owns the raw pointer; we still hold the original &mut via outer scope.)
+            let formatter_ptr: *mut F = formatter;
+            let _indent_guard = scopeguard::guard((), move |_| unsafe {
+                (*formatter_ptr).indent_dec()
+            });
 
             formatter.write_indent(writer)?;
             writer.write_str(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>method<d>:<r> \""))?;

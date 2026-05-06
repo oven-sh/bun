@@ -2,7 +2,7 @@
 //!
 //! TCP/TLS socket JS bindings (`Bun.connect` / `Bun.listen` socket wrappers).
 
-use core::cell::Cell;
+use core::cell::{Cell, UnsafeCell};
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr;
 use std::rc::Rc;
@@ -127,11 +127,15 @@ pub struct NewSocket<const SSL: bool> {
 
     pub flags: Flags,
     pub ref_count: Cell<u32>, // intrusive — see `bun_ptr::IntrusiveRc<Self>`
-    // TODO(port): TSV says `Option<Rc<Handlers>>`, but `reload()` mutates
-    // through it (`this_handlers.* = handlers`). Phase B: decide between
-    // `Rc<RefCell<Handlers>>` or raw `*mut Handlers` (server sockets borrow
-    // the Listener-embedded value).
-    pub handlers: Option<Rc<Handlers>>,
+    // Zig: `handlers: ?*Handlers` — a freely-aliased mutable heap pointer
+    // shared between the Listener and every accepted/connected socket.
+    // `reload()` overwrites the pointee in place (`this_handlers.* = handlers`)
+    // and `Scope::enter/exit` bump `active_connections` through it, so the
+    // payload MUST sit behind `UnsafeCell` for interior mutability — writing
+    // through `Rc::as_ptr() as *mut _` (the old shape) is UB. Server sockets
+    // still borrow the Listener-embedded value; Phase B may swap this to a
+    // raw `*mut Handlers` once Listener.rs and this file converge.
+    pub handlers: Option<Rc<UnsafeCell<Handlers>>>,
     /// Reference to the JS wrapper. Held strong while the socket is active so the
     /// wrapper cannot be garbage-collected out from under in-flight callbacks, and
     /// downgraded to weak once the socket is closed/inactive so GC can reclaim it.
@@ -530,11 +534,22 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
 
-    pub fn get_handlers(&self) -> &Handlers {
-        // TODO(port): lifetime — Rc<Handlers> deref vs &Handlers; see field note.
-        self.handlers
-            .as_deref()
-            .expect("No handlers set on Socket")
+    pub fn get_handlers(&self) -> &mut Handlers {
+        // SAFETY: Zig's `*Handlers` is a freely-aliased mutable pointer on a
+        // single-threaded event loop. `UnsafeCell::get` yields a write-capable
+        // `*mut Handlers` from the shared `Rc`; callers uphold the invariant
+        // that no two `&mut Handlers` derived here are live across a reentrant
+        // dispatch (the Zig code has the same hazard and guards it via
+        // `Scope::enter/exit` refcounting). The returned reference points into
+        // the Rc heap payload, NOT into `self`, so it remains valid across
+        // `&mut self` operations that don't drop the Rc.
+        unsafe {
+            &mut *self
+                .handlers
+                .as_ref()
+                .expect("No handlers set on Socket")
+                .get()
+        }
     }
 
     pub fn handle_connect_error(&mut self, errno: c_int) -> JsResult<()> {
@@ -752,10 +767,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         // JS-callable TLS accessors (`setServername`, `getPeerCertificate`,
         // `getEphemeralKeyInfo`, `setVerifyMode`) consult this on sockets
         // whose connection may already be gone.
-        let Some(handlers) = self.handlers.as_deref() else {
+        let Some(cell) = self.handlers.as_deref() else {
             return false;
         };
-        handlers.mode.is_server()
+        // SAFETY: read-only field access; see `get_handlers` for the aliasing contract.
+        unsafe { (*cell.get()).mode.is_server() }
     }
 
     pub fn on_open(&mut self, socket: SocketHandler<SSL>) {

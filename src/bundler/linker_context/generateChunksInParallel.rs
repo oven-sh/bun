@@ -130,7 +130,9 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             callback: prepare_css_asts_for_chunk,
                         },
                         chunk: chunk as *mut Chunk,
-                        linker: c as *mut LinkerContext,
+                        // PORT NOTE: `PrepareCssAstTask.linker` is `*mut LinkerContext<'static>`
+                        // (raw ptr is invariant); `.cast()` erases the inner `'a` to satisfy it.
+                        linker: (c as *mut LinkerContext).cast(),
                     };
                     batch.push(ThreadPoolLib::Batch::from(&mut tasks[i].task));
                     i += 1;

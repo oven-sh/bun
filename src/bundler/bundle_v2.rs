@@ -4429,7 +4429,12 @@ impl<'a> BundleV2<'a> {
                 continue;
             }
 
-            let (transpiler, bake_graph, target): (&mut Transpiler, bake::Graph, options::Target) =
+            // PORT NOTE: borrowck — `transpiler_for_target` returns `&mut Transpiler`
+            // tied to `&mut self`, but the underlying storage is raw `*mut Transpiler`
+            // backrefs valid for `'a` (see `init`). Compute the raw ptr first, then
+            // deref once, so the `&mut self` borrow doesn't span the rest of the loop
+            // body (Zig held all of these as raw ptrs and aliased freely).
+            let (transpiler_ptr, bake_graph, target): (*mut Transpiler<'a>, bake::Graph, options::Target) =
                 if import_record.tag == bun_options_types::import_record::Tag::BakeResolveToSsrGraph {
                     if self.framework.is_none() {
                         self.log_for_resolution_failures(&source.path.text, bake::Graph::Ssr).add_error_fmt(
@@ -4451,10 +4456,12 @@ impl<'a> BundleV2<'a> {
                         continue;
                     }
 
-                    (unsafe { &mut *self.ssr_transpiler }, bake::Graph::Ssr, Target::BakeServerComponentsSsr)
+                    (self.ssr_transpiler, bake::Graph::Ssr, Target::BakeServerComponentsSsr)
                 } else {
-                    (self.transpiler_for_target(ctx.target), ctx.target.bake_graph(), ctx.target)
+                    (self.transpiler_for_target(ctx.target) as *mut Transpiler<'a>, ctx.target.bake_graph(), ctx.target)
                 };
+            // SAFETY: see PORT NOTE above — raw `*mut Transpiler` lives for `'a`.
+            let transpiler: &mut Transpiler<'a> = unsafe { &mut *transpiler_ptr };
 
             // Check the FileMap first for in-memory files
             if let Some(file_map) = self.file_map {
@@ -4510,7 +4517,13 @@ impl<'a> BundleV2<'a> {
                 ) {
                     Ok(r) => break r,
                     Err(err) => {
-                        let log = self.log_for_resolution_failures(&source.path.text, bake_graph);
+                        // PORT NOTE: borrowck — `log_for_resolution_failures` returns
+                        // `&mut Log` tied to `&mut self`, but it's always a raw-ptr
+                        // deref (DevServer vtable or `transpiler.log`). Detach via
+                        // `*mut` so later `self.*` reads don't conflict.
+                        let log: &mut Logger::Log = unsafe {
+                            &mut *(self.log_for_resolution_failures(&source.path.text, bake_graph) as *mut Logger::Log)
+                        };
 
                         // Only perform directory busting when hot-reloading is enabled
                         if err == bun_core::err!("ModuleNotFound") {

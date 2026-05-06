@@ -483,6 +483,11 @@ pub fn generate_code_for_lazy_export(
                         continue;
                     }
 
+                    // SAFETY: `LinkerContext::allocator()` returns a stable `&Arena` valid for the
+                    // link pass; detach via raw-pointer round-trip so `name` doesn't borrow `this`
+                    // across the `&mut self` call to `generate_named_export_in_file` below.
+                    let alloc: &bun_alloc::Arena =
+                        unsafe { &*(this.allocator() as *const bun_alloc::Arena) };
                     let name = property
                         .key
                         .as_ref()
@@ -490,7 +495,7 @@ pub fn generate_code_for_lazy_export(
                         .data
                         .as_e_string()
                         .unwrap()
-                        .slice(this.allocator());
+                        .slice(alloc);
 
                     // TODO: support non-identifier names
                     if !js_lexer::is_identifier(name) {
@@ -511,7 +516,6 @@ pub fn generate_code_for_lazy_export(
                     let generated =
                         this.generate_named_export_in_file(source_index, module_ref, name, name)?;
                     // PERF(port): was `this.allocator().alloc(Stmt, 1)` (arena).
-                    let alloc = this.allocator();
                     let new_stmts: *mut [Stmt] = alloc.alloc_slice_fill_iter(core::iter::once(
                         Stmt::alloc(
                             S::Local {
@@ -545,7 +549,12 @@ pub fn generate_code_for_lazy_export(
                         .fmt_identifier()
                 )
                 .expect("write to Vec<u8> cannot fail");
-                let name = this.allocator().alloc_slice_copy(&name_buf);
+                // SAFETY: `LinkerContext::allocator()` returns a stable `&Arena` valid for the
+                // link pass; detach via raw-pointer round-trip so `name` doesn't borrow `this`
+                // across the `&mut self` call to `generate_named_export_in_file` below.
+                let alloc: &bun_alloc::Arena =
+                    unsafe { &*(this.allocator() as *const bun_alloc::Arena) };
+                let name = alloc.alloc_slice_copy(&name_buf);
 
                 let generated = this.generate_named_export_in_file(
                     source_index,
@@ -553,7 +562,6 @@ pub fn generate_code_for_lazy_export(
                     name,
                     b"default",
                 )?;
-                let alloc = this.allocator();
                 let new_stmts: *mut [Stmt] = alloc.alloc_slice_fill_iter(core::iter::once(
                     Stmt::alloc(
                         S::ExportDefault {

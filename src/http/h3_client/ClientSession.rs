@@ -82,7 +82,7 @@ impl ClientSession {
         !self.closed
             && self.port == port
             && self.reject_unauthorized == reject_unauthorized
-            && strings::eql_long::<true>(&self.hostname, hostname)
+            && strings::eql_long(&self.hostname, hostname, true)
     }
 
     pub fn has_headroom(&self) -> bool {

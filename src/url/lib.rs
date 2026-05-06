@@ -72,15 +72,18 @@ fn range_of_slice_in_buffer(slice: &[u8], buffer: &[u8]) -> Option<(u32, u32)> {
 
 // ── route_param (TYPE_ONLY move-down from bun_router, see CYCLEBREAK.md) ──
 pub mod route_param {
-    // TODO(port): lifetime — name/value borrow from route name + request path
+    // PORT NOTE: name/value borrow from the route template + the live request
+    // path; lifetime-generic so `bun_router` (the only producer) can fill them
+    // from non-'static buffers. Downstream that only stores literals can use
+    // `Param<'static>`.
     #[derive(Clone, Copy)]
-    pub struct Param {
-        pub name: &'static [u8],
-        pub value: &'static [u8],
+    pub struct Param<'a> {
+        pub name: &'a [u8],
+        pub value: &'a [u8],
     }
     // TODO(b2-blocked): bun_collections::MultiArrayList — derive(MultiArrayElement)
     // proc-macro not yet available. Using Vec; SoA layout is a perf concern only.
-    pub type List = Vec<Param>;
+    pub type List<'a> = Vec<Param<'a>>;
 }
 pub use route_param::List as ParamsList;
 
@@ -1390,7 +1393,7 @@ impl<'a> CombinedScanner<'a> {
         query_string: &'a [u8],
         pathname: &'a [u8],
         routename: &'a [u8],
-        url_params: &'a ParamsList,
+        url_params: &'a ParamsList<'a>,
     ) -> CombinedScanner<'a> {
         CombinedScanner {
             query: Scanner::init(query_string),
@@ -1430,7 +1433,7 @@ fn string_pointer_from_strings(parent: &[u8], in_: &[u8]) -> api::StringPointer 
 }
 
 pub struct PathnameScanner<'a> {
-    pub params: &'a ParamsList,
+    pub params: &'a ParamsList<'a>,
     pub pathname: &'a [u8],
     pub routename: &'a [u8],
     pub i: usize,
@@ -1446,7 +1449,7 @@ impl<'a> PathnameScanner<'a> {
         self.i = 0;
     }
 
-    pub fn init(pathname: &'a [u8], routename: &'a [u8], params: &'a ParamsList) -> PathnameScanner<'a> {
+    pub fn init(pathname: &'a [u8], routename: &'a [u8], params: &'a ParamsList<'a>) -> PathnameScanner<'a> {
         PathnameScanner { pathname, routename, params, i: 0 }
     }
 

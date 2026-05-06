@@ -351,19 +351,10 @@ fn index_route_hash() -> u32 {
 // version stores raw slices with no ownership; the correct Rust port is a
 // borrowed `&'a [u8]`, not a forged `'static`.
 //
-// NOTE: bun_url still carries a non-generic `route_param::Param` copy for
-// `PathnameScanner` (TYPE_ONLY move-down). Once bun_url adopts `Param<'a>`,
-// this module collapses back to a re-export.
-pub mod route_param {
-    #[derive(Clone, Copy)]
-    pub struct Param<'a> {
-        pub name: &'a [u8],
-        pub value: &'a [u8],
-    }
-    // TODO(b2-blocked): bun_collections::MultiArrayList — derive(MultiArrayElement)
-    // proc-macro not yet available. Using Vec; SoA layout is a perf concern only.
-    pub type List<'a> = Vec<Param<'a>>;
-}
+// `bun_url::route_param::Param<'a>` is now lifetime-generic (TYPE_ONLY
+// move-down landed); collapse the local copy to a re-export so the param list
+// type matches `PathnameScanner::init`.
+pub use bun_url::route_param;
 pub use route_param::Param;
 
 pub struct Router<'a> {
@@ -1003,7 +994,7 @@ impl<'a> RouteLoader<'a> {
                                 // entry.dir is a string with a trailing slash
                                 let entry_dir = entry.dir();
                                 if cfg!(debug_assertions) {
-                                    debug_assert!(bun_paths::is_sep_any(
+                                    debug_assert!(bun_paths::resolve_path::is_sep_any(
                                         entry_dir[base_dir.len() - 1]
                                     ));
                                 }

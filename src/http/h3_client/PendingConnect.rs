@@ -125,9 +125,8 @@ impl PendingConnect {
             return;
         };
         s.qsocket = Some(qs);
-        // SAFETY: qs.ext() returns the per-socket user storage slot for *mut ClientSession.
-        unsafe { *qs.ext::<*mut ClientSession>() = session };
-        // TODO(port): verify quic::Socket::ext signature — Zig was `qs.ext(ClientSession).* = session`
+        // SAFETY: qs.ext() returns the per-socket user storage slot for ClientSession.
+        unsafe { *qs.ext::<ClientSession>() = core::ptr::NonNull::new(session) };
     }
 
     /// DNS worker may call from off the HTTP thread; mirror
@@ -168,8 +167,8 @@ pub fn fail_session(session: *mut ClientSession, err: bun_core::Error) {
     // SAFETY: caller guarantees `session` is live (held by an intrusive ref).
     let s = unsafe { &mut *session };
     s.closed = true;
-    if let Some(ctx) = super::ClientContext::get() {
-        ctx.unregister(session);
+    if let Some(ctx) = super::super::client_context::ClientContext::get() {
+        ctx.unregister(s);
     }
     while !s.pending.as_slice().is_empty() {
         let stream = s.pending.as_slice()[0];
@@ -182,8 +181,7 @@ pub fn fail_session(session: *mut ClientSession, err: bun_core::Error) {
         }
     }
     // Zig .monotonic == LLVM monotonic == Rust Relaxed
-    let _ = super::LIVE_SESSIONS.fetch_sub(1, Ordering::Relaxed);
-    // TODO(port): Zig `H3.live_sessions` — assuming `super::LIVE_SESSIONS: AtomicUsize`
+    let _ = super::super::LIVE_SESSIONS.fetch_sub(1, Ordering::Relaxed);
     // SAFETY: session is intrusive-refcounted; this drops the connection-alive ref.
     unsafe { (*session).deref() };
 }

@@ -3491,6 +3491,10 @@ pub mod fs {
         #[inline] pub fn abs_path(&self) -> &bun_string::PathString {
             todo!("b2-blocked: bun_resolver::fs::Entry::abs_path (MOVE_DOWN pending)")
         }
+        /// Zig: `entry.abs_path = PathString.init(...)`.
+        #[inline] pub fn set_abs_path(&mut self, _p: bun_string::PathString) {
+            todo!("b2-blocked: bun_resolver::fs::Entry::abs_path setter (MOVE_DOWN pending)")
+        }
         #[inline] pub fn cache(&self) -> &EntryCache {
             todo!("b2-blocked: bun_resolver::fs::Entry::cache (MOVE_DOWN pending)")
         }
@@ -3521,6 +3525,11 @@ pub mod fs {
         /// `bun_resolver::fs::DirEntry.data`; opaque here.
         #[inline] pub fn data(&self) -> &() {
             todo!("b2-blocked: bun_resolver::fs::DirEntry::data (MOVE_DOWN pending)")
+        }
+        /// Zig: `dir_entry.data.iterator()`. Yields `&mut Entry` for each file
+        /// in the cached directory listing.
+        #[inline] pub fn iter(&self) -> core::slice::IterMut<'_, Entry> {
+            todo!("b2-blocked: bun_resolver::fs::DirEntry iterator (MOVE_DOWN pending)")
         }
     }
     /// `bun.fs.FileSystem.DirnameStore` — interned-dirname arena.

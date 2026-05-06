@@ -2511,7 +2511,7 @@ impl<'a> BundleV2<'a> {
                         "{:x}S{:08}#{}",
                         self.unique_key, source_id, bstr::BStr::new(export_name_string)
                     ).as_bytes()));
-                    let export_name = server.new_expr(E::EString { data: export_name_string, ..Default::default() });
+                    let export_name = server.new_expr(E::EString { data: astr(export_name_string), ..Default::default() });
 
                     // write dependencies on the underlying module, not the proxy
                     server_manifest_props.push(G::Property {

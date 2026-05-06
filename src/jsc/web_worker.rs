@@ -609,9 +609,10 @@ mod __phase_a_body {
         }
 
         /// Phase 1: build the worker's arena + VirtualMachine and publish `vm`.
-        fn start_vm(&mut self) -> Result<(), bun_core::Error> {
-            debug_assert!(self.status == Status::Start);
-            debug_assert!(self.vm.is_null());
+        fn start_vm(&self) -> Result<(), bun_core::Error> {
+            debug_assert!(self.status.get() == Status::Start);
+            // SAFETY: worker-thread only; vm is unpublished at this point.
+            debug_assert!(unsafe { *self.vm.get() }.is_null());
 
             // SAFETY: `parent` is non-null and outlives this worker while
             // `parent_poll_ref` is held (see file header). The parent VM runs
@@ -659,8 +660,10 @@ mod __phase_a_body {
                 }
             }
 
-            self.arena = Some(MimallocArena::init());
-            let allocator = self.arena.as_ref().unwrap().allocator();
+            // SAFETY: worker-thread only field; no other thread reads `arena`.
+            unsafe { *self.arena.get() = Some(MimallocArena::init()) };
+            // SAFETY: just initialised above; worker-thread only.
+            let allocator = unsafe { (*self.arena.get()).as_ref().unwrap().allocator() };
 
             let mut temp_proxy_storage = jsc::RareData::ProxyEnvStorage::default();
             let temp_proxy_guard = scopeguard::guard(&mut temp_proxy_storage, |s| {

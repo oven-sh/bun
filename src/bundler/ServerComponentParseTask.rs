@@ -316,9 +316,12 @@ fn generate_client_reference_proxy(
         };
 
         // throw new Error(...)
+        // Hoist the `&mut self` symbol allocation out of the nested `&self`
+        // `new_expr` calls to satisfy the borrow checker.
+        let error_ref = b.new_external_symbol(b"Error")?;
         let err_msg = b.new_expr(E::New {
             target: b.new_expr(E::Identifier {
-                ref_: b.new_external_symbol(b"Error")?,
+                ref_: error_ref,
                 ..Default::default()
             }),
             args: BabyList::<Expr>::from_slice(&[b.new_expr(E::String::init(err_msg_string))])?,

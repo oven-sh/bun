@@ -234,13 +234,16 @@ impl Target {
         }
     }
 
-    pub fn default_conditions(self) -> &'static [&'static str] {
+    pub fn default_conditions(self) -> &'static [&'static [u8]] {
+        // PORT NOTE: Zig `default_conditions` is `std.EnumArray(Target, []const string)`
+        // — `string` is `[]const u8`. Callers (`ESMConditions::init`) take byte
+        // slices, so surface bytes directly rather than `&str`.
         match self {
-            Target::Node => &["node"],
-            Target::Browser => &["browser", "module"],
-            Target::Bun => &["bun", "node"],
-            Target::BakeServerComponentsSsr => &["bun", "node"],
-            Target::BunMacro => &["macro", "bun", "node"],
+            Target::Node => &[b"node"],
+            Target::Browser => &[b"browser", b"module"],
+            Target::Bun => &[b"bun", b"node"],
+            Target::BakeServerComponentsSsr => &[b"bun", b"node"],
+            Target::BunMacro => &[b"macro", b"bun", b"node"],
         }
     }
 }

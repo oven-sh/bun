@@ -1023,7 +1023,7 @@ struct SymbolsMap {
 
 #[derive(Default)]
 struct StringArray {
-    items: Vec<Box<ZStr>>,
+    items: Vec<ZBox>,
 }
 
 impl Drop for StringArray {
@@ -1032,7 +1032,7 @@ impl Drop for StringArray {
             // Attempting to free an empty null-terminated slice will crash if it was a default value
             debug_assert!(!item.is_empty());
         }
-        // Vec<Box<ZStr>> drops itself
+        // Vec<ZBox> drops itself
     }
 }
 
@@ -1043,9 +1043,9 @@ impl StringArray {
         property: &'static str,
     ) -> JsResult<StringArray> {
         let mut iter = value.array_iterator(global_this)?;
-        let mut items: Vec<Box<ZStr>> = Vec::new();
+        let mut items: Vec<ZBox> = Vec::new();
 
-        while let Some(val) = iter.next(global_this)? {
+        while let Some(val) = iter.next()? {
             if !val.is_string() {
                 // items dropped automatically
                 return Err(global_this.throw_invalid_argument_type_value(
@@ -1055,7 +1055,7 @@ impl StringArray {
                 ));
             }
             let str = val.get_zig_string(global_this)?;
-            if str.is_empty() {
+            if str.len == 0 {
                 continue;
             }
             items.push(str.to_owned_slice_z());
@@ -1080,10 +1080,10 @@ impl StringArray {
             ));
         }
         let str = value.get_zig_string(global_this)?;
-        if str.is_empty() {
+        if str.len == 0 {
             return Ok(StringArray::default());
         }
-        let mut items: Vec<Box<ZStr>> = Vec::new();
+        let mut items: Vec<ZBox> = Vec::new();
         items.push(str.to_owned_slice_z());
         Ok(StringArray { items })
     }

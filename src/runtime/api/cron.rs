@@ -1920,24 +1920,30 @@ fn spawn_cmd_generic<T: SpawnCmdTarget>(
     #[cfg(unix)]
     {
         if let Some(stdout) = spawned.stdout {
+            let this_ptr = this as *mut T as *mut core::ffi::c_void;
             if !spawned.memfds[1] {
-                this.stdout_reader().set_parent(this);
+                this.stdout_reader().set_parent(this_ptr);
                 let _ = sys::set_nonblocking(stdout);
                 *this.remaining_fds() += 1;
-                this.stdout_reader().flags.nonblocking = true;
-                this.stdout_reader().flags.socket = true;
-                this.stdout_reader().flags.memfd = false;
-                this.stdout_reader().flags.received_eof = false;
-                this.stdout_reader().flags.closed_without_reporting = false;
-                if this.stdout_reader().start(stdout, true).unwrap_result().is_err() {
+                {
+                    use bun_io::pipe_reader::PosixFlags;
+                    let flags = &mut this.stdout_reader().flags;
+                    flags.insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET);
+                    flags.remove(
+                        PosixFlags::MEMFD
+                            | PosixFlags::RECEIVED_EOF
+                            | PosixFlags::CLOSED_WITHOUT_REPORTING,
+                    );
+                }
+                if this.stdout_reader().start(stdout, true).is_err() {
                     this.set_err(format_args!("Failed to start reading stdout"));
                     return T::finish(this);
                 }
                 if let Some(p) = this.stdout_reader().handle.get_poll() {
-                    p.flags.insert(bun_aio::PollFlag::Socket);
+                    p.set_flag(bun_io::FilePollFlag::Socket);
                 }
             } else {
-                this.stdout_reader().set_parent(this);
+                this.stdout_reader().set_parent(this_ptr);
                 this.stdout_reader().start_memfd(stdout);
             }
         }

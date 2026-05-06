@@ -1172,8 +1172,8 @@ impl Subprocess<'_> {
 
                     let args = [
                         this_value,
-                        Self::get_exit_code(self, global_this),
-                        Self::get_signal_code(self, global_this),
+                        self.get_exit_code(global_this),
+                        self.get_signal_code(global_this),
                         waitpid_value,
                     ];
 

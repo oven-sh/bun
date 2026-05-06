@@ -197,10 +197,11 @@ impl MimallocArena {
 
     pub fn borrow(&self) -> Borrowed<'_> {
         #[cfg(feature = "ci_assert")]
-        { Borrowed { heap: &*self.heap } }
+        // SAFETY: Box guarantees a non-null, stable address for the DebugHeap for the
+        // lifetime of `self`.
+        { Borrowed { heap: unsafe { NonNull::new_unchecked(Box::as_ptr(&self.heap) as *mut DebugHeap) }, _lt: PhantomData } }
         #[cfg(not(feature = "ci_assert"))]
-        // SAFETY: heap is a valid mi_heap_t* for the lifetime of self (owned, destroyed in Drop).
-        { Borrowed { heap: unsafe { self.heap.as_ref() } } }
+        { Borrowed { heap: self.heap, _lt: PhantomData } }
     }
 
     /// In v3, `mi_malloc`/`mi_free` are already thread-local-fast — there is no

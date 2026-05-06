@@ -50,14 +50,27 @@
 /// compile-time checks. Only do so for primitives and manually-audited `#[repr(C)]` types.
 pub unsafe trait AssertNoUninitializedPadding {}
 
-/// Compile-time assertion that `T` has no uninitialized padding. See module docs.
+/// Assertion that `T` has no uninitialized padding. See module docs.
 ///
-/// In Zig this walked `@typeInfo(T)` at comptime and emitted `@compileError` on gaps.
-/// In Rust the actual checking lives in the `#[derive(AssertNoUninitializedPadding)]`
-/// proc-macro; this function is a zero-cost call-site marker bounded on the trait so
-/// existing `assertNoUninitializedPadding(Foo)` call sites translate 1:1.
-pub const fn assert_no_uninitialized_padding<T: AssertNoUninitializedPadding>() {
-    // The trait bound IS the check. Body intentionally empty.
+/// In Zig this walked `@typeInfo(T)` at comptime and emitted `@compileError` on gaps,
+/// with an `else => return` arm that silently accepted any non-aggregate type and a
+/// `.pointer => |ptr| assertNoUninitializedPadding(ptr.child)` arm so callers could
+/// pass `@TypeOf(slice)` directly.
+///
+/// In Rust the actual layout checking lives in `#[derive(AssertNoUninitializedPadding)]`
+/// on each serialized struct; this function is a zero-cost call-site marker that
+/// documents intent. It takes a type-witness value so call sites can mirror the Zig
+/// `assertNoUninitializedPadding(@TypeOf(value))` pattern (pass any value of `T` —
+/// or name `T` explicitly via turbofish and reference the fn item without calling).
+///
+/// The trait bound is intentionally *not* applied here: Zig's `else => return` accepts
+/// all leaf types, and bounding the generic would force every `write_array<T>` caller
+/// to propagate `T: AssertNoUninitializedPadding` before the derive exists.
+#[inline(always)]
+#[allow(dropping_copy_types, clippy::needless_pass_by_value)]
+pub fn assert_no_uninitialized_padding<T>(_type_witness: T) {
+    // Body intentionally empty — the derive on `T` is the check. Matches Zig's
+    // runtime behaviour (the Zig version is `comptime`-only and codegens nothing).
 }
 
 // TODO(port): proc-macro — the derive should expand roughly to the following per type

@@ -145,15 +145,20 @@ impl Version {
 
 // Exported C symbol — null-terminated
 // PORT NOTE: moved out of `impl Version` — Rust impl blocks cannot hold `static` items.
+// `*const c_char` is `!Sync`, so wrap in the `#[repr(transparent)]` `SyncCStr` newtype
+// (same pattern as `Bun__userAgent` in bun_core::Global) so the C++ side still sees a
+// single `const char*`-sized symbol.
 #[unsafe(no_mangle)]
-pub static Bun__githubURL: *const c_char = const_format::concatcp!(
-    "https://github.com/oven-sh/bun/releases/download/bun-v",
-    Global::PACKAGE_JSON_VERSION,
-    "/",
-    Version::ZIP_FILENAME,
-    "\0"
-)
-.as_ptr() as *const c_char;
+pub static Bun__githubURL: SyncCStr = SyncCStr(
+    const_format::concatcp!(
+        "https://github.com/oven-sh/bun/releases/download/bun-v",
+        Global::PACKAGE_JSON_VERSION,
+        "/",
+        Version::ZIP_FILENAME,
+        "\0"
+    )
+    .as_ptr() as *const c_char,
+);
 
 // ──────────────────────────────────────────────────────────────────────────
 

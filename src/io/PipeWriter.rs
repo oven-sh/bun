@@ -327,10 +327,22 @@ impl<Parent: PosixBufferedWriterParent> PosixPipeWriter for PosixBufferedWriter<
 impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     #[inline]
     fn parent(&mut self) -> &mut Parent {
-        // SAFETY: parent is a BACKREF set via set_parent; valid while writer is
-        // alive. Zig's `*Parent` aliases freely; in Rust we gate this behind
-        // `&mut self` so borrowck enforces at most one live `&mut Parent` and
-        // forbids interleaving with other `&self`/`&mut self` borrows.
+        // SAFETY: `parent` is a BACKREF set via set_parent; the pointee outlives
+        // this writer.
+        //
+        // ALIASING HAZARD: per the Zig layout this writer is itself a *field of*
+        // `Parent` (intrusive backref — see PipeWriter.zig `parent: *Parent`),
+        // so the `&mut Parent` produced here *overlaps* the caller's `&mut self`.
+        // borrowck CANNOT see through the raw `*mut Parent` and therefore does
+        // NOT enforce uniqueness between them; under Stacked Borrows, deriving
+        // a fresh Unique from the stored raw pointer pops the caller's
+        // `&mut self` tag. This mirrors Zig's freely-aliasing `*Parent` and is
+        // a known port-level unsoundness. Callers MUST treat the returned
+        // reference as a leaf call into the vtable only — do not retain it, do
+        // not access the writer subobject through it, and prefer ordering so it
+        // is the last use of `self` in the basic block.
+        // TODO(port): change the parent vtable to take `*mut Self`/`NonNull<Self>`
+        // so no `&mut Parent` is ever materialized while `&mut self` is live.
         unsafe { &mut *self.parent }
     }
 
@@ -601,10 +613,22 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
 
     #[inline]
     fn parent(&mut self) -> &mut Parent {
-        // SAFETY: parent is a BACKREF set via set_parent; valid while writer is
-        // alive. Zig's `*Parent` aliases freely; in Rust we gate this behind
-        // `&mut self` so borrowck enforces at most one live `&mut Parent` and
-        // forbids interleaving with other `&self`/`&mut self` borrows.
+        // SAFETY: `parent` is a BACKREF set via set_parent; the pointee outlives
+        // this writer.
+        //
+        // ALIASING HAZARD: per the Zig layout this writer is itself a *field of*
+        // `Parent` (intrusive backref — see PipeWriter.zig `parent: *Parent`),
+        // so the `&mut Parent` produced here *overlaps* the caller's `&mut self`.
+        // borrowck CANNOT see through the raw `*mut Parent` and therefore does
+        // NOT enforce uniqueness between them; under Stacked Borrows, deriving
+        // a fresh Unique from the stored raw pointer pops the caller's
+        // `&mut self` tag. This mirrors Zig's freely-aliasing `*Parent` and is
+        // a known port-level unsoundness. Callers MUST treat the returned
+        // reference as a leaf call into the vtable only — do not retain it, do
+        // not access the writer subobject through it, and prefer ordering so it
+        // is the last use of `self` in the basic block.
+        // TODO(port): change the parent vtable to take `*mut Self`/`NonNull<Self>`
+        // so no `&mut Parent` is ever materialized while `&mut self` is live.
         unsafe { &mut *self.parent }
     }
 
@@ -1295,10 +1319,22 @@ impl<Parent: WindowsBufferedWriterParent> BaseWindowsPipeWriter for WindowsBuffe
 impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
     #[inline]
     fn parent(&mut self) -> &mut Parent {
-        // SAFETY: parent is a BACKREF set via set_parent; valid while writer is
-        // alive. Zig's `*Parent` aliases freely; in Rust we gate this behind
-        // `&mut self` so borrowck enforces at most one live `&mut Parent` and
-        // forbids interleaving with other `&self`/`&mut self` borrows.
+        // SAFETY: `parent` is a BACKREF set via set_parent; the pointee outlives
+        // this writer.
+        //
+        // ALIASING HAZARD: per the Zig layout this writer is itself a *field of*
+        // `Parent` (intrusive backref — see PipeWriter.zig `parent: *Parent`),
+        // so the `&mut Parent` produced here *overlaps* the caller's `&mut self`.
+        // borrowck CANNOT see through the raw `*mut Parent` and therefore does
+        // NOT enforce uniqueness between them; under Stacked Borrows, deriving
+        // a fresh Unique from the stored raw pointer pops the caller's
+        // `&mut self` tag. This mirrors Zig's freely-aliasing `*Parent` and is
+        // a known port-level unsoundness. Callers MUST treat the returned
+        // reference as a leaf call into the vtable only — do not retain it, do
+        // not access the writer subobject through it, and prefer ordering so it
+        // is the last use of `self` in the basic block.
+        // TODO(port): change the parent vtable to take `*mut Self`/`NonNull<Self>`
+        // so no `&mut Parent` is ever materialized while `&mut self` is live.
         unsafe { &mut *self.parent }
     }
 
@@ -1684,10 +1720,22 @@ impl<Parent: WindowsStreamingWriterParent> BaseWindowsPipeWriter for WindowsStre
 impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
     #[inline]
     fn parent(&mut self) -> &mut Parent {
-        // SAFETY: parent is a BACKREF set via set_parent; valid while writer is
-        // alive. Zig's `*Parent` aliases freely; in Rust we gate this behind
-        // `&mut self` so borrowck enforces at most one live `&mut Parent` and
-        // forbids interleaving with other `&self`/`&mut self` borrows.
+        // SAFETY: `parent` is a BACKREF set via set_parent; the pointee outlives
+        // this writer.
+        //
+        // ALIASING HAZARD: per the Zig layout this writer is itself a *field of*
+        // `Parent` (intrusive backref — see PipeWriter.zig `parent: *Parent`),
+        // so the `&mut Parent` produced here *overlaps* the caller's `&mut self`.
+        // borrowck CANNOT see through the raw `*mut Parent` and therefore does
+        // NOT enforce uniqueness between them; under Stacked Borrows, deriving
+        // a fresh Unique from the stored raw pointer pops the caller's
+        // `&mut self` tag. This mirrors Zig's freely-aliasing `*Parent` and is
+        // a known port-level unsoundness. Callers MUST treat the returned
+        // reference as a leaf call into the vtable only — do not retain it, do
+        // not access the writer subobject through it, and prefer ordering so it
+        // is the last use of `self` in the basic block.
+        // TODO(port): change the parent vtable to take `*mut Self`/`NonNull<Self>`
+        // so no `&mut Parent` is ever materialized while `&mut self` is live.
         unsafe { &mut *self.parent }
     }
 

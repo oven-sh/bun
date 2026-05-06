@@ -1233,7 +1233,7 @@ impl WindowsBufferedReader {
     fn _on_read_chunk(&mut self, buf: &[u8], has_more: ReadState) -> bool {
         if let Some(m) = self.maxbuf {
             // SAFETY: MaxBuf intrusive ownership; ptr live while in pipereader.
-            unsafe { m.as_ptr().as_mut().unwrap().on_read_bytes(buf.len() as u64) };
+            unsafe { MaxBuf::on_read_bytes(m, buf.len() as u64) };
         }
 
         if has_more == ReadState::Eof {

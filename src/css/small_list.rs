@@ -925,6 +925,7 @@ where
         pfs: &css::VendorPrefix,
         pfi: &SmallList<T, 1>,
         r: &mut BabyList<SmallList<T, 1>>,
+        alloc: &bun_alloc::Arena,
     ) {
         if pfs.contains(css::VendorPrefix::from_name(prefix)) {
             let mut images = SmallList::<T, 1>::init_capacity(pfi.len());
@@ -932,7 +933,7 @@ where
             // PORT NOTE: reshaped for borrowck — index instead of zip
             for i in 0..pfi.len() {
                 let in_ = pfi.at(i);
-                let image = in_.get_image().get_prefixed(css::VendorPrefix::from_name(prefix));
+                let image = in_.get_image().get_prefixed(alloc, css::VendorPrefix::from_name(prefix));
                 // SAFETY: i < len; slot uninitialized after set_len
                 unsafe { ptr::write(images.as_ptr().add(i as usize), in_.with_image(image)) };
             }
@@ -940,12 +941,9 @@ where
         }
     }
 
-    prefix_helper("webkit", &prefixes, prefix_images, &mut res);
-    prefix_helper("moz", &prefixes, prefix_images, &mut res);
-    prefix_helper("o", &prefixes, prefix_images, &mut res);
-
-    // PORT NOTE: reshaped for borrowck — drop prefix_images borrow before mutating `this`
-    let _ = prefix_images;
+    prefix_helper("webkit", &prefixes, prefix_images, &mut res, allocator);
+    prefix_helper("moz", &prefixes, prefix_images, &mut res, allocator);
+    prefix_helper("o", &prefixes, prefix_images, &mut res, allocator);
 
     if prefixes.none {
         if let Some(r) = rgb {

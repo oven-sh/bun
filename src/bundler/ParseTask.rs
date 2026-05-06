@@ -11,11 +11,10 @@ use core::sync::atomic::{AtomicU32, Ordering};
 
 use bun_alloc::Arena as Bump; // bumpalo::Bump re-export
 use bun_collections::BabyList;
-use bun_core::{self, err, Error as AnyError, FeatureFlags};
+use bun_core::{self, declare_scope, scoped_log, err, Error as AnyError, FeatureFlags};
 use bun_logger::{self as logger, Loc, Location, Log, Msg, Source};
 use bun_options_types::ImportRecord;
-use bun_output::{declare_scope, scoped_log};
-use bun_str::{self as bun_string, strings};
+use bun_string::{self, strings};
 use bun_sys::Fd;
 use bun_threading::ThreadPool as ThreadPoolLib;
 
@@ -23,19 +22,25 @@ use bun_js_parser::{
     self as js_parser,
     ast::{self, BundledAst as JSAst, Expr, Part, E, G},
 };
+use bun_js_parser::Index;
 
-use crate::bundle_v2::{
-    self as bundler, target_from_hashbang, BundleV2, ContentHasher, UseDirective,
-};
-use crate::cache::fs::Entry as CacheEntry;
+use crate::bun_css;
+use crate::bundle_v2::{self as bundler, BundleV2};
+use crate::ungate_support::{target_from_hashbang, ContentHasher, UseDirective, perf};
+use crate::cache::{Entry as CacheEntry, ExternalFreeFunction};
 use crate::html_scanner::HTMLScanner;
 use crate::options::{self, Loader};
-use bun_fs as Fs;
-use bun_node_fallbacks as NodeFallbackModules;
+use crate::bun_fs as Fs;
+use crate::bun_node_fallbacks as NodeFallbackModules;
 use bun_resolver::{self as _resolver, Resolver};
 use crate::transpiler::Transpiler;
 
 declare_scope!(ParseTask, hidden);
+
+/// `bun.jsc.EventLoopTask` (ParseTask.zig:Result.task). T6 type erased here.
+mod EventLoop {
+    pub type Task = bun_event_loop::ConcurrentTask::ConcurrentTask;
+}
 
 // ───────────────────────────────────────────────────────────────────────────
 // ContentsOrFd
@@ -71,7 +76,7 @@ pub struct ParseTask {
     pub path: Fs::Path,
     pub secondary_path_for_commonjs_interop: Option<Fs::Path>,
     pub contents_or_fd: ContentsOrFd,
-    pub external_free_function: CacheEntry::ExternalFreeFunction,
+    pub external_free_function: ExternalFreeFunction,
     pub side_effects: _resolver::SideEffects,
     pub loader: Option<Loader>,
     pub jsx: options::jsx::Pragma,
@@ -90,7 +95,7 @@ pub struct ParseTask {
     pub module_type: options::ModuleType,
     pub emit_decorator_metadata: bool,
     pub experimental_decorators: bool,
-    pub ctx: *const BundleV2, // BACKREF (LIFETIMES.tsv)
+    pub ctx: *const BundleV2<'static>, // BACKREF (LIFETIMES.tsv)
     // TODO(port): arena lifetime — borrowed from package_json
     pub package_version: &'static [u8],
     pub package_name: &'static [u8],
@@ -109,13 +114,13 @@ pub enum ParseTaskStage {
 /// The information returned to the Bundler thread when a parse finishes.
 pub struct Result {
     pub task: EventLoop::Task,
-    pub ctx: *const BundleV2, // BACKREF (LIFETIMES.tsv)
+    pub ctx: *const BundleV2<'static>, // BACKREF (LIFETIMES.tsv)
     pub value: ResultValue,
     pub watcher_data: WatcherData,
     /// This is used for native onBeforeParsePlugins to store
     /// a function pointer and context pointer to free the
     /// returned source code by the plugin.
-    pub external: CacheEntry::ExternalFreeFunction,
+    pub external: ExternalFreeFunction,
 }
 
 pub enum ResultValue {
@@ -178,13 +183,18 @@ pub enum Step {
 // ───────────────────────────────────────────────────────────────────────────
 
 impl ParseTask {
+    // TODO(b2-blocked): body reads `_resolver::Result` fields and
+    // `ctx.transpiler.options.target` (raw-ptr deref); the worker callbacks
+    // (`task_callback`/`io_task_callback`) are gated below. Un-gates with the
+    // `__parse_worker_draft` block.
+    #[cfg(any())]
     pub fn init(
         resolve_result: &_resolver::Result,
         source_index: Index,
         ctx: &BundleV2,
     ) -> ParseTask {
         ParseTask {
-            ctx: ctx as *const BundleV2,
+            ctx: ctx as *const BundleV2<'static>,
             path: resolve_result.path_pair.primary.clone(),
             contents_or_fd: ContentsOrFd::Fd {
                 dir: resolve_result.dirname_fd,
@@ -207,7 +217,7 @@ impl ParseTask {
             known_target: ctx.transpiler.options.target,
             // defaults:
             secondary_path_for_commonjs_interop: None,
-            external_free_function: CacheEntry::ExternalFreeFunction::NONE,
+            external_free_function: ExternalFreeFunction::NONE,
             loader: None,
             task: ThreadPoolLib::Task::new(task_callback),
             io_task: ThreadPoolLib::Task::new(io_task_callback),
@@ -344,6 +354,19 @@ export var __callDispose = (stack, error, hasError) => {
 }
 ";
 
+// ══════════════════════════════════════════════════════════════════════════
+// Per-file parse worker — `getAST`/`getCodeForParseTask`/`runFromThreadPool`.
+// TODO(b2-blocked): bodies depend on `js_parser::parser::Options`,
+// `bun_md::render_to_html`, `options::OutputFormat`, `bundler::api::JSBundler`,
+// `ThreadPool::Worker`, `Transpiler.options` field shape, and the gated
+// `BundleV2::on_parse_task_complete`. The struct surface above (ParseTask /
+// Result / Success / ContentsOrFd / RuntimeSource) is real; this block
+// un-gates once `js_parser::parser` and `BundleV2` method bodies land.
+// ══════════════════════════════════════════════════════════════════════════
+#[cfg(any())]
+mod __parse_worker_draft {
+use super::*;
+
 fn get_runtime_source_comptime(target: options::Target) -> RuntimeSource {
     use const_format::concatcp;
 
@@ -378,7 +401,7 @@ fn get_runtime_source_comptime(target: options::Target) -> RuntimeSource {
         known_target: target,
         // defaults:
         secondary_path_for_commonjs_interop: None,
-        external_free_function: CacheEntry::ExternalFreeFunction::NONE,
+        external_free_function: ExternalFreeFunction::NONE,
         task: ThreadPoolLib::Task::new(task_callback),
         io_task: ThreadPoolLib::Task::new(io_task_callback),
         stage: ParseTaskStage::NeedsSourceCode,
@@ -475,7 +498,7 @@ fn get_ast(
 
     match loader {
         Loader::Jsx | Loader::Tsx | Loader::Js | Loader::Ts => {
-            let _trace = bun_core::perf::trace("Bundler.ParseJS");
+            let _trace = perf::trace("Bundler.ParseJS");
             return if let Some(res) = resolver.caches.js.parse(
                 bump, // TODO(port): zig passed transpiler.allocator
                 opts.clone(),
@@ -493,7 +516,7 @@ fn get_ast(
             // to monomorphize the RootType. Expanded to two calls.
         }
         Loader::Json | Loader::Jsonc => {
-            let _trace = bun_core::perf::trace("Bundler.ParseJSON");
+            let _trace = perf::trace("Bundler.ParseJSON");
             let mode = if matches!(loader, Loader::Jsonc) {
                 bun_interchange::json::Mode::Jsonc
             } else {
@@ -510,7 +533,7 @@ fn get_ast(
             ));
         }
         Loader::Toml => {
-            let _trace = bun_core::perf::trace("Bundler.ParseTOML");
+            let _trace = perf::trace("Bundler.ParseTOML");
             let mut temp_log = Log::init(bump);
             let guard = scopeguard::guard((), |_| {
                 temp_log.clone_to_with_recycled(log, true);
@@ -526,7 +549,7 @@ fn get_ast(
             return Ok(result);
         }
         Loader::Yaml => {
-            let _trace = bun_core::perf::trace("Bundler.ParseYAML");
+            let _trace = perf::trace("Bundler.ParseYAML");
             let mut temp_log = Log::init(bump);
             let guard = scopeguard::guard((), |_| {
                 temp_log.clone_to_with_recycled(log, true);
@@ -541,7 +564,7 @@ fn get_ast(
             return Ok(result);
         }
         Loader::Json5 => {
-            let _trace = bun_core::perf::trace("Bundler.ParseJSON5");
+            let _trace = perf::trace("Bundler.ParseJSON5");
             let mut temp_log = Log::init(bump);
             let guard = scopeguard::guard((), |_| {
                 temp_log.clone_to_with_recycled(log, true);
@@ -935,7 +958,7 @@ fn get_code_for_parse_task_without_plugins(
         ContentsOrFd::Fd { dir, file } => 'brk: {
             let contents_dir = *dir;
             let contents_file = *file;
-            let _trace = bun_core::perf::trace("Bundler.readFile");
+            let _trace = perf::trace("Bundler.readFile");
 
             // SAFETY: ctx backref is valid for ParseTask lifetime.
             let ctx = unsafe { &*task.ctx };
@@ -1488,7 +1511,7 @@ impl<'a> OnBeforeParsePlugin<'a> {
             if !wrapper.result.source_ptr.is_null() {
                 let ptr = wrapper.result.source_ptr;
                 if wrapper.result.free_user_context.is_some() {
-                    self.task.external_free_function = CacheEntry::ExternalFreeFunction {
+                    self.task.external_free_function = ExternalFreeFunction {
                         ctx: wrapper.result.user_context,
                         function: wrapper.result.free_user_context,
                     };
@@ -1500,7 +1523,7 @@ impl<'a> OnBeforeParsePlugin<'a> {
                     unsafe { core::slice::from_raw_parts(ptr, wrapper.result.source_len) };
                 return Ok(CacheEntry {
                     contents,
-                    external_free_function: CacheEntry::ExternalFreeFunction {
+                    external_free_function: ExternalFreeFunction {
                         ctx: wrapper.result.user_context,
                         function: wrapper.result.free_user_context,
                     },
@@ -2007,16 +2030,16 @@ pub fn on_complete(result: *mut Result) {
     let r = unsafe { &mut *result };
     BundleV2::on_parse_task_complete(result, unsafe { &*r.ctx });
 }
+} // end #[cfg(any())] mod __parse_worker_draft
 
 // ───────────────────────────────────────────────────────────────────────────
 // Re-exports
 // ───────────────────────────────────────────────────────────────────────────
 
 pub use bun_js_parser::ast::Ref;
-pub use bun_js_parser::ast::Index;
 
-pub use crate::bundle_v2::DeferredBatchTask;
-pub use crate::bundle_v2::ThreadPool;
+pub use crate::DeferredBatchTask::DeferredBatchTask;
+pub use crate::ThreadPool;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

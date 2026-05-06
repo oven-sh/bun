@@ -5,6 +5,11 @@
 // so the crate compiles. Draft bodies are preserved on disk; un-gating happens
 // in B-2 as lower-tier crate surfaces solidify.
 
+// B-2 un-gate support: shared value types + crate-name shims for the
+// freshly un-gated `Chunk` / `LinkerContext` / `ParseTask` modules.
+pub mod ungate_support;
+pub use ungate_support::*;
+
 pub mod IndexStringMap;
 pub mod PathToSourceIndexMap;
 pub mod DeferredBatchTask;
@@ -140,8 +145,11 @@ pub mod options {
         Server = 1,
     }
 
-    /// `options.zig:2198`. Minimal real def — methods that pull in
-    /// `api::StringMap`/`EnvConfig` stay gated until peechy codegen lands.
+    /// `options.zig:2198`. Minimal real def — kept separate from
+    /// `options_impl::Env` because `bun_collections::MultiArrayList` is not
+    /// `Clone` and downstream (`resolver/package_json.rs`) needs `Env: Clone`.
+    /// The `api::StringMap`/`EnvConfig`-driven methods (`set_from_api`,
+    /// `set_defaults_map`, `to_api`) live on `options_impl::Env`.
     #[derive(Clone, Default)]
     pub struct Env {
         pub behavior: EnvBehavior,
@@ -226,8 +234,10 @@ pub mod options {
     pub use crate::bake_types::Framework;
 
     pub mod jsx {
-        /// `api.JsxRuntime` (schema.zig:771). Defined locally — peechy codegen
-        /// hasn't emitted it into `bun_options_types::schema` yet.
+        /// `api.JsxRuntime` (schema.zig:771). Mirrors
+        /// `bun_options_types::schema::api::JsxRuntime` but kept local so
+        /// `Pragma.runtime` Defaults to `Automatic` (the api enum's `_none = 0`
+        /// would be the derived default otherwise).
         #[repr(u8)]
         #[derive(Clone, Copy, PartialEq, Eq, Debug)]
         pub enum Runtime {
@@ -273,9 +283,10 @@ pub mod options {
             }
         }
 
-        /// `options.zig:JSX.Pragma`. Field-compatible subset; methods that
-        /// allocate (`member_list_to_components_if_different`, `from_api`) stay
-        /// gated until ownership of `factory`/`fragment` is restructured.
+        /// `options.zig:JSX.Pragma`. Field-compatible subset; the allocating
+        /// `member_list_to_components_if_different` / `from_api` live on
+        /// `options_impl::jsx::Pragma` (this shim keeps `factory`/`fragment`
+        /// as `&'static [&'static [u8]]` for downstream borrowers).
         #[derive(Clone, Debug)]
         pub struct Pragma {
             pub factory: &'static [&'static [u8]],

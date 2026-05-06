@@ -1,6 +1,7 @@
 //! This file is mostly the API schema but with all the options normalized.
 //! Normalization is necessary because most fields in the API schema are optional
 
+use std::borrow::Cow;
 use bun_logger as logger;
 use bun_string::strings;
 use bun_core::{Output, Global};
@@ -113,7 +114,11 @@ pub fn validate_path(
     }
 }
 
-// TODO(port): narrow error set
+#[cfg(any())]
+// TODO(port): both Zig call sites (defines/loaders from transform options) inline
+// the map construction directly; this generic helper is dead until a concrete
+// map trait (`reserve`/`insert`) is available. Gated to avoid a silent no-op
+// (the body never inserts — see options.zig:41-51).
 pub fn string_hash_map_from_arrays<M, K, V>(
     total_capacity: usize,
     keys: &[K],
@@ -701,11 +706,32 @@ impl LoaderOptional {
     pub const NONE: LoaderOptional = LoaderOptional(254);
 
     pub fn unwrap(self) -> Option<Loader> {
-        if self.0 == 254 {
-            None
-        } else {
-            // SAFETY: non-NONE values are constructed from valid Loader discriminants
-            Some(unsafe { core::mem::transmute::<u8, Loader>(self.0) })
+        // PORT NOTE: spec uses `@enumFromInt(@intFromEnum(opt))` which is
+        // debug-checked. PORTING.md §Forbidden patterns bars transmute-to-enum;
+        // use an exhaustive match so any out-of-range tag is `None`, not UB.
+        match self.0 {
+            0 => Some(Loader::Jsx),
+            1 => Some(Loader::Js),
+            2 => Some(Loader::Ts),
+            3 => Some(Loader::Tsx),
+            4 => Some(Loader::Css),
+            5 => Some(Loader::File),
+            6 => Some(Loader::Json),
+            7 => Some(Loader::Jsonc),
+            8 => Some(Loader::Toml),
+            9 => Some(Loader::Wasm),
+            10 => Some(Loader::Napi),
+            11 => Some(Loader::Base64),
+            12 => Some(Loader::Dataurl),
+            13 => Some(Loader::Text),
+            14 => Some(Loader::Bunsh),
+            15 => Some(Loader::Sqlite),
+            16 => Some(Loader::SqliteEmbedded),
+            17 => Some(Loader::Html),
+            18 => Some(Loader::Yaml),
+            19 => Some(Loader::Json5),
+            20 => Some(Loader::Md),
+            _ => None,
         }
     }
 
@@ -1380,8 +1406,9 @@ impl ESMConditions {
 pub mod jsx {
     use super::*;
 
-    // TODO(b2-blocked): bun_options_types::schema::api::JsxRuntime — peechy
-    // codegen. Local mirror so `Pragma.runtime` is real.
+    // Local mirror of `api::JsxRuntime` (sans `_none`) — kept distinct so
+    // `Pragma.runtime` is closed over the three real runtimes and Default is
+    // `Automatic` (Zig: `runtime: api.Api.JsxRuntime = .automatic`).
     #[repr(u8)]
     #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
     pub enum Runtime {
@@ -1389,6 +1416,16 @@ pub mod jsx {
         Automatic,
         Classic,
         Solid,
+    }
+
+    impl From<api::JsxRuntime> for Runtime {
+        fn from(r: api::JsxRuntime) -> Self {
+            match r {
+                api::JsxRuntime::Classic => Runtime::Classic,
+                api::JsxRuntime::Solid => Runtime::Solid,
+                api::JsxRuntime::Automatic | api::JsxRuntime::_none => Runtime::Automatic,
+            }
+        }
     }
 
     #[derive(Debug, Clone, Copy)]
@@ -1463,7 +1500,10 @@ pub mod jsx {
     }
 
     impl Pragma {
-        pub fn hash_for_runtime_transpiler(&self, hasher: &mut bun_wyhash::Wyhash11) {
+        pub fn hash_for_runtime_transpiler(&self, hasher: &mut bun_wyhash::Wyhash) {
+            // PORT NOTE: spec options.zig:1213 takes `*std.hash.Wyhash`, which is the
+            // algorithm behind `bun.hash` — distinct from `bun.Wyhash11`. Using
+            // `Wyhash11` would yield a different cache key than the Zig path.
             for factory in self.factory.iter() {
                 hasher.update(factory);
             }
@@ -1574,8 +1614,6 @@ pub mod jsx {
             Ok(out.into_boxed_slice())
         }
 
-        #[cfg(any())]
-        // TODO(b2-blocked): bun_options_types::schema::api::Jsx — peechy codegen.
         pub fn from_api(jsx: api::Jsx) -> Result<Pragma, bun_core::Error> {
             let mut pragma = Pragma::default();
 
@@ -1593,7 +1631,7 @@ pub mod jsx {
                 )?;
             }
 
-            pragma.runtime = jsx.runtime;
+            pragma.runtime = Runtime::from(jsx.runtime);
             pragma.side_effects = jsx.side_effects;
 
             if !jsx.import_source.is_empty() {
@@ -1636,7 +1674,8 @@ pub mod default_user_defines {
 pub use default_user_defines as DefaultUserDefines;
 
 #[cfg(any())]
-// TODO(b2-blocked): bun_options_types::schema::api::StringMap + defines::DefineDataInit
+// TODO(b2-blocked): defines::{DefineDataInit, DefineValue} (names not yet
+// surfaced by bundler/defines.rs) + DotEnv::Loader::copy_for_define.
 pub fn defines_from_transform_options(
     log: &mut logger::Log,
     maybe_input_define: Option<api::StringMap>,
@@ -1800,8 +1839,8 @@ impl Default for ResolveFileExtensions {
     fn default() -> Self {
         ResolveFileExtensions {
             node_modules: ResolveFileExtensionsGroup {
-                esm: bundle_options_defaults::node_modules::MODULE_EXTENSION_ORDER,
-                default: bundle_options_defaults::node_modules::EXTENSION_ORDER,
+                esm: owned_string_list(bundle_options_defaults::node_modules::MODULE_EXTENSION_ORDER),
+                default: owned_string_list(bundle_options_defaults::node_modules::EXTENSION_ORDER),
             },
             default: ResolveFileExtensionsGroup::default(),
         }
@@ -1818,35 +1857,42 @@ impl ResolveFileExtensions {
         }
     }
 
-    pub fn kind(&self, kind_: bun_options_types::ImportKind, is_node_modules: bool) -> &[&[u8]] {
+    pub fn kind(&self, kind_: bun_options_types::ImportKind, is_node_modules: bool) -> &[Box<[u8]>] {
         use bun_options_types::ImportKind;
         match kind_ {
             ImportKind::Stmt
             | ImportKind::EntryPointBuild
             | ImportKind::EntryPointRun
-            | ImportKind::Dynamic => self.group(is_node_modules).esm,
-            _ => self.group(is_node_modules).default,
+            | ImportKind::Dynamic => &self.group(is_node_modules).esm,
+            _ => &self.group(is_node_modules).default,
         }
     }
 }
 
+/// Convert a static `&[&[u8]]` default into an owned `Box<[Box<[u8]>]>`.
+/// PERF(port): the Zig kept these as borrowed `[]const string`; we own them so
+/// user-provided lists (e.g. `transform.extension_order`) can be stored without
+/// `Box::leak` (PORTING.md §Forbidden patterns).
+#[inline]
+pub(crate) fn owned_string_list(s: &[&[u8]]) -> Box<[Box<[u8]>]> {
+    s.iter().map(|b| Box::<[u8]>::from(*b)).collect()
+}
+
 #[derive(Debug, Clone)]
 pub struct ResolveFileExtensionsGroup {
-    pub esm: &'static [&'static [u8]],
-    pub default: &'static [&'static [u8]],
+    pub esm: Box<[Box<[u8]>]>,
+    pub default: Box<[Box<[u8]>]>,
 }
 
 impl Default for ResolveFileExtensionsGroup {
     fn default() -> Self {
         ResolveFileExtensionsGroup {
-            esm: bundle_options_defaults::MODULE_EXTENSION_ORDER,
-            default: bundle_options_defaults::EXTENSION_ORDER,
+            esm: owned_string_list(bundle_options_defaults::MODULE_EXTENSION_ORDER),
+            default: owned_string_list(bundle_options_defaults::EXTENSION_ORDER),
         }
     }
 }
 
-#[cfg(any())]
-// TODO(b2-blocked): bun_options_types::schema::api::LoaderMap — peechy codegen.
 pub fn loaders_from_transform_options(
     _loaders: Option<api::LoaderMap>,
     target: Target,
@@ -1867,22 +1913,31 @@ pub fn loaders_from_transform_options(
     loaders.reserve(u32::try_from(total_capacity).unwrap() as usize);
     for (i, ext) in input_loaders.extensions.iter().enumerate() {
         // PERF(port): was assume_capacity
-        loaders.insert(ext.clone(), loader_values[i]);
+        loaders.insert(ext, loader_values[i]);
     }
 
+    // PORT NOTE: Zig `getOrPutValue` → contains+insert; `Loader` is not `Default`
+    // so the `V: Default`-gated `StringArrayHashMap::get_or_put_value` does not
+    // apply. Semantics are identical (insert only when absent).
     for ext in DEFAULT_LOADER_EXT {
-        loaders.get_or_put_value(*ext, *DEFAULT_LOADERS.get(*ext).unwrap());
+        if !loaders.contains(*ext) {
+            loaders.insert(*ext, *DEFAULT_LOADERS.get(*ext).unwrap());
+        }
     }
 
     if target.is_bun() {
         for ext in DEFAULT_LOADER_EXT_BUN {
-            loaders.get_or_put_value(*ext, *DEFAULT_LOADERS.get(*ext).unwrap());
+            if !loaders.contains(*ext) {
+                loaders.insert(*ext, *DEFAULT_LOADERS.get(*ext).unwrap());
+            }
         }
     }
 
     if target == Target::Browser {
         for ext in DEFAULT_LOADER_EXT_BROWSER {
-            loaders.get_or_put_value(*ext, *DEFAULT_LOADERS.get(*ext).unwrap());
+            if !loaders.contains(*ext) {
+                loaders.insert(*ext, *DEFAULT_LOADERS.get(*ext).unwrap());
+            }
         }
     }
 
@@ -1939,18 +1994,13 @@ pub enum PackagesOption {
 }
 
 impl PackagesOption {
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_options_types::schema::api::PackagesMode — peechy codegen.
     pub fn from_api(packages: Option<api::PackagesMode>) -> PackagesOption {
         match packages.unwrap_or(api::PackagesMode::Bundle) {
             api::PackagesMode::External => PackagesOption::External,
             api::PackagesMode::Bundle => PackagesOption::Bundle,
-            _ => PackagesOption::Bundle,
         }
     }
 
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_options_types::schema::api::PackagesMode — peechy codegen.
     pub fn to_api(packages: Option<PackagesOption>) -> api::PackagesMode {
         match packages.unwrap_or(PackagesOption::Bundle) {
             PackagesOption::External => api::PackagesMode::External,
@@ -1968,15 +2018,15 @@ pub static PACKAGES_OPTION_MAP: phf::Map<&'static [u8], PackagesOption> = phf::p
 /// BundleOptions is used when ResolveMode is not set to "disable".
 /// BundleOptions is effectively webpack + babel
 pub struct BundleOptions<'a> {
-    pub footer: &'static [u8],
-    pub banner: &'static [u8],
+    pub footer: Cow<'static, [u8]>,
+    pub banner: Cow<'static, [u8]>,
     pub define: Box<defines::Define>,
     pub drop: Box<[Box<[u8]>]>,
     /// Set of enabled feature flags for dead-code elimination via `import { feature } from "bun:bundle"`.
     /// Initialized once from the CLI --feature flags.
     pub bundler_feature_flags: Box<StringSet>,
     pub loaders: LoaderHashTable,
-    pub resolve_dir: &'static [u8],
+    pub resolve_dir: Cow<'static, [u8]>,
     pub jsx: jsx::Pragma,
     pub emit_decorator_metadata: bool,
     pub experimental_decorators: bool,
@@ -1997,8 +2047,8 @@ pub struct BundleOptions<'a> {
 
     pub output_dir: Box<[u8]>,
     pub root_dir: Box<[u8]>,
-    pub node_modules_bundle_url: &'static [u8],
-    pub node_modules_bundle_pretty_path: &'static [u8],
+    pub node_modules_bundle_url: Cow<'static, [u8]>,
+    pub node_modules_bundle_pretty_path: Cow<'static, [u8]>,
 
     pub write: bool,
     pub preserve_symlinks: bool,
@@ -2012,7 +2062,7 @@ pub struct BundleOptions<'a> {
 
     pub tsconfig_override: Option<Box<[u8]>>,
     pub target: Target,
-    pub main_fields: &'static [&'static [u8]],
+    pub main_fields: Box<[Box<[u8]>]>,
     /// TODO: remove this in favor accessing bundler.log
     pub log: &'a mut logger::Log,
     pub external: ExternalModules,
@@ -2149,8 +2199,6 @@ impl<'a> BundleOptions<'a> {
     ];
 
     #[inline]
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_options_types::schema::api::CssInJsBehavior — peechy codegen.
     pub fn css_import_behavior(&self) -> api::CssInJsBehavior {
         match self.target {
             Target::Browser => api::CssInJsBehavior::AutoOnimportcss,
@@ -2163,7 +2211,9 @@ impl<'a> BundleOptions<'a> {
     }
 
     #[cfg(any())]
-    // TODO(b2-blocked): defines_from_transform_options + api::TransformOptions.define
+    // TODO(b2-blocked): defines_from_transform_options (see above) +
+    // api::TransformOptions.define field (peechy `TransformOptions` body still
+    // opaque).
     pub fn load_defines(
         &mut self,
         loader_: Option<&mut DotEnv::Loader>,
@@ -2210,8 +2260,10 @@ impl<'a> BundleOptions<'a> {
     }
 
     #[cfg(any())]
-    // TODO(b2-blocked): bun_options_types::schema::api::TransformOptions field set
-    // (peechy codegen) + analytics::Features + Fs::FileSystem::get_fd_path.
+    // TODO(b2-blocked): bun_options_types::schema::api::TransformOptions field
+    // set (still opaque — Jsx/LoaderMap/etc. landed but the struct body has
+    // not) + bun_analytics::Features + ExternalModules::init (resolver) +
+    // Runtime::Features::init_bundler_feature_flags + Fs::FileSystem::get_fd_path.
     pub fn from_api(
         fs: &mut Fs::FileSystem,
         log: &'a mut logger::Log,
@@ -2225,8 +2277,8 @@ impl<'a> BundleOptions<'a> {
         // TODO(port): many fields below have Zig defaults via `= ...`; in Rust we initialize
         // each explicitly. Phase B: add a `Default`-ish builder.
         let mut opts = BundleOptions {
-            footer: b"",
-            banner: b"",
+            footer: Cow::Borrowed(b""),
+            banner: Cow::Borrowed(b""),
             log,
             // TODO(port): define is initialized as undefined in Zig and filled by loadDefines later.
             define: defines::Define::empty(),
@@ -2247,7 +2299,7 @@ impl<'a> BundleOptions<'a> {
             drop: transform.drop.clone(),
             bundler_feature_flags,
 
-            resolve_dir: b"/",
+            resolve_dir: Cow::Borrowed(b"/"),
             jsx: jsx::Pragma::default(),
             emit_decorator_metadata: false,
             experimental_decorators: false,
@@ -2262,15 +2314,15 @@ impl<'a> BundleOptions<'a> {
             origin: URL::default(),
             output_dir_handle: None,
             root_dir: Box::default(),
-            node_modules_bundle_url: b"",
-            node_modules_bundle_pretty_path: b"",
+            node_modules_bundle_url: Cow::Borrowed(b""),
+            node_modules_bundle_pretty_path: Cow::Borrowed(b""),
             preserve_symlinks: false,
             preserve_extensions: false,
             production: false,
             output_format: Format::Esm,
             append_package_version_in_query_string: false,
             tsconfig_override: None,
-            main_fields: Target::default_main_fields()[Target::Browser],
+            main_fields: owned_string_list(Target::default_main_fields()[Target::Browser]),
             allow_unresolved: AllowUnresolved::All,
             entry_naming: Box::default(),
             asset_naming: Box::default(),
@@ -2353,15 +2405,16 @@ impl<'a> BundleOptions<'a> {
         }
 
         if !transform.extension_order.is_empty() {
-            // TODO(port): extension_order.default.default expects &'static [&'static [u8]]; transform value is owned.
-            // Phase B: change ResolveFileExtensionsGroup fields to Cow / Box.
-            opts.extension_order.default.default =
-                Box::leak(transform.extension_order.clone().into_boxed_slice());
+            opts.extension_order.default.default = transform
+                .extension_order
+                .iter()
+                .map(|s| Box::<[u8]>::from(s.as_ref()))
+                .collect();
         }
 
         if let Some(t) = transform.target {
             opts.target = Target::from(Some(t));
-            opts.main_fields = Target::default_main_fields()[opts.target];
+            opts.main_fields = owned_string_list(Target::default_main_fields()[opts.target]);
         }
 
         {
@@ -2404,16 +2457,19 @@ impl<'a> BundleOptions<'a> {
                         b".jsx", b".cjs", b".js", b".mjs", b".mts", b".tsx", b".ts", b".cts",
                         b".json", b".node",
                     ];
-                    opts.extension_order.default.default = EXT_WITH_NODE;
-                    opts.extension_order.node_modules.default = NM_EXT_WITH_NODE;
+                    opts.extension_order.default.default = owned_string_list(EXT_WITH_NODE);
+                    opts.extension_order.node_modules.default = owned_string_list(NM_EXT_WITH_NODE);
                 }
             }
             _ => {}
         }
 
         if !transform.main_fields.is_empty() {
-            // TODO(port): same lifetime issue as extension_order
-            opts.main_fields = Box::leak(transform.main_fields.clone().into_boxed_slice());
+            opts.main_fields = transform
+                .main_fields
+                .iter()
+                .map(|s| Box::<[u8]>::from(s.as_ref()))
+                .collect();
         }
 
         // PORT NOTE: reshaped for borrowck — pass opts.log via raw mutable borrow
@@ -2649,7 +2705,7 @@ impl TransformResult {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, bun_collections::MultiArrayElement)]
 pub struct EnvEntry {
     pub key: Box<[u8]>,
     pub value: Box<[u8]>,
@@ -2694,14 +2750,10 @@ impl Env {
         }
     }
 
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_collections::MultiArrayElement derive for EnvEntry
     pub fn ensure_total_capacity(&mut self, capacity: u64) -> Result<(), bun_alloc::AllocError> {
         self.defaults.ensure_total_capacity(capacity as usize)
     }
 
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_options_types::schema::api::StringMap — peechy codegen.
     pub fn set_defaults_map(&mut self, defaults: api::StringMap) -> Result<(), bun_alloc::AllocError> {
         self.defaults.shrink_retaining_capacity(0);
 
@@ -2713,16 +2765,14 @@ impl Env {
 
         for (i, key) in defaults.keys.iter().enumerate() {
             // PERF(port): was assume_capacity
-            self.defaults.push(EnvEntry {
+            self.defaults.append(EnvEntry {
                 key: key.clone(),
                 value: defaults.values[i].clone(),
-            });
+            })?;
         }
         Ok(())
     }
 
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_options_types::schema::api::EnvConfig — peechy codegen.
     // For reading from API
     pub fn set_from_api(&mut self, config: api::EnvConfig) -> Result<(), bun_alloc::AllocError> {
         self.set_behavior_from_prefix(config.prefix.as_deref().unwrap_or(b""));
@@ -2745,12 +2795,10 @@ impl Env {
         }
     }
 
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_options_types::schema::api::LoadedEnvConfig — peechy codegen.
     pub fn set_from_loaded(&mut self, config: api::LoadedEnvConfig) -> Result<(), bun_alloc::AllocError> {
         self.behavior = match config.dotenv {
-            api::DotEnvBehavior::Prefix => api::DotEnvBehavior::Prefix,
-            api::DotEnvBehavior::LoadAll => api::DotEnvBehavior::LoadAll,
+            api::DotEnvBehavior::prefix => api::DotEnvBehavior::prefix,
+            api::DotEnvBehavior::load_all => api::DotEnvBehavior::load_all,
             _ => api::DotEnvBehavior::disable,
         };
 
@@ -2759,8 +2807,6 @@ impl Env {
         self.set_defaults_map(config.defaults)
     }
 
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_options_types::schema::api::LoadedEnvConfig — peechy codegen.
     pub fn to_api(&self) -> api::LoadedEnvConfig {
         let slice = self.defaults.slice();
 
@@ -2768,27 +2814,22 @@ impl Env {
             dotenv: self.behavior,
             prefix: self.prefix.clone(),
             defaults: api::StringMap {
-                keys: slice.items_key().to_vec().into(),
-                values: slice.items_value().to_vec().into(),
+                keys: slice.key().to_vec(),
+                values: slice.value().to_vec(),
             },
         }
     }
 
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_collections::MultiArrayList::slice().items_key()
-    // accessor codegen.
     // For reading from package.json
     pub fn get_or_put_value(&mut self, key: &[u8], value: &[u8]) -> Result<(), bun_alloc::AllocError> {
         let slice = self.defaults.slice();
-        let keys = slice.items_key();
-        for _key in keys {
+        for _key in slice.key().iter() {
             if key == &**_key {
                 return Ok(());
             }
         }
 
-        self.defaults.push(EnvEntry { key: Box::from(key), value: Box::from(value) });
-        Ok(())
+        self.defaults.append(EnvEntry { key: Box::from(key), value: Box::from(value) })
     }
 }
 
@@ -2810,8 +2851,6 @@ pub enum EntryPointKind {
 }
 
 impl EntryPointKind {
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_options_types::schema::api::FrameworkEntryPointType
     pub fn to_api(self) -> api::FrameworkEntryPointType {
         match self {
             EntryPointKind::Client => api::FrameworkEntryPointType::Client,
@@ -2827,8 +2866,6 @@ impl EntryPoint {
         self.kind != EntryPointKind::Disabled && !self.path.is_empty()
     }
 
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_options_types::schema::api::FrameworkEntryPoint
     pub fn to_api(
         &self,
         toplevel_path: &[u8],
@@ -2866,8 +2903,6 @@ impl EntryPoint {
         }
     }
 
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_options_types::schema::api::FrameworkEntryPoint
     pub fn from_loaded(
         &mut self,
         framework_entry_point: api::FrameworkEntryPoint,
@@ -2879,8 +2914,6 @@ impl EntryPoint {
         Ok(())
     }
 
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_options_types::schema::api::FrameworkEntryPointMessage
     pub fn from_api(
         &mut self,
         framework_entry_point: api::FrameworkEntryPointMessage,
@@ -2924,8 +2957,6 @@ pub struct RouteConfig {
 }
 
 impl RouteConfig {
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_options_types::schema::api::LoadedRouteConfig
     pub fn to_api(&self) -> api::LoadedRouteConfig {
         api::LoadedRouteConfig {
             asset_prefix: self.asset_prefix_path.clone(),
@@ -2954,8 +2985,6 @@ impl RouteConfig {
         }
     }
 
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_options_types::schema::api::LoadedRouteConfig
     pub fn from_loaded_routes(loaded: api::LoadedRouteConfig) -> RouteConfig {
         RouteConfig {
             extensions: loaded.extensions,
@@ -2968,26 +2997,24 @@ impl RouteConfig {
         }
     }
 
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_options_types::schema::api::RouteConfig
     pub fn from_api(router_: api::RouteConfig) -> Result<RouteConfig, bun_core::Error> {
         let mut router = Self::zero();
 
         let static_dir: &[u8] =
-            bun_str::strings::trim_right(router_.static_dir.as_deref().unwrap_or(b""), b"/\\");
+            strings::trim_right(router_.static_dir.as_deref().unwrap_or(b""), b"/\\");
         let asset_prefix: &[u8] =
-            bun_str::strings::trim_right(router_.asset_prefix.as_deref().unwrap_or(b""), b"/\\");
+            strings::trim_right(router_.asset_prefix.as_deref().unwrap_or(b""), b"/\\");
 
         match router_.dir.len() {
             0 => {}
             1 => {
-                router.dir = Box::from(bun_str::strings::trim_right(&router_.dir[0], b"/\\"));
+                router.dir = Box::from(strings::trim_right(&router_.dir[0], b"/\\"));
                 router.routes_enabled = !router.dir.is_empty();
             }
             _ => {
                 router.possible_dirs = router_.dir.clone();
                 for dir in router_.dir.iter() {
-                    let trimmed = bun_str::strings::trim_right(dir, b"/\\");
+                    let trimmed = strings::trim_right(dir, b"/\\");
                     if !trimmed.is_empty() {
                         router.dir = Box::from(trimmed);
                     }
@@ -3008,7 +3035,7 @@ impl RouteConfig {
         if !router_.extensions.is_empty() {
             let mut count: usize = 0;
             for _ext in router_.extensions.iter() {
-                let ext = bun_str::strings::trim_left(_ext, b".");
+                let ext = strings::trim_left(_ext, b".");
 
                 if ext.is_empty() {
                     continue;
@@ -3020,7 +3047,7 @@ impl RouteConfig {
             let mut extensions: Vec<Box<[u8]>> = Vec::with_capacity(count);
 
             for _ext in router_.extensions.iter() {
-                let ext = bun_str::strings::trim_left(_ext, b".");
+                let ext = strings::trim_left(_ext, b".");
 
                 if ext.is_empty() {
                     continue;

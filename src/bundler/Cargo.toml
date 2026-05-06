@@ -33,8 +33,10 @@ bun_core.workspace = true
 bun_collections.workspace = true
 bun_crash_handler.workspace = true
 # bun_css — needed by Chunk.rs/ParseTask.rs/LinkerContext.rs (un-gated B-2: css
-# calc lattice now real).
-bun_css.workspace = true
+# calc lattice now real). Optional so the crate can still typecheck while a
+# concurrent agent has src/css/ mid-edit; enabled by default via the `css`
+# feature below.
+bun_css = { workspace = true, optional = true }
 bun_dotenv.workspace = true
 bun_event_loop.workspace = true
 bun_glob.workspace = true
@@ -55,3 +57,9 @@ bun_sys.workspace = true
 bun_threading.workspace = true
 bun_url.workspace = true
 bun_wyhash.workspace = true
+
+[features]
+default = ["css"]
+css = ["dep:bun_css"]
+debug_logs = []
+show_crash_trace = []

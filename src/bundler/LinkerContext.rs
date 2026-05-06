@@ -8,35 +8,40 @@ use bun_alloc::{Arena as Bump, AllocError};
 use bun_collections::{BabyList, MultiArrayList, AutoBitSet, ArrayHashMap, HashMap};
 use bun_logger as Logger;
 use bun_logger::{Loc, Range, Data, Source, Log};
-use bun_str::{strings, MutableString, StringJoiner};
+use bun_string::{strings, MutableString, StringJoiner};
 use bun_sourcemap::{self as SourceMap, LineOffsetTable, SourceMapState, SourceMapPieces, SourceMapShifts, DebugIDFormatter};
 use bun_threading::{self as sync, ThreadPool as ThreadPoolLib, WaitGroup};
 use bun_options_types::{ImportRecord, ImportKind};
 // TODO(b0): bake_types arrives from move-in (TYPE_ONLY → bundler)
 use crate::bake_types as bake;
-use bun_css as css;
+use crate::bun_css as css;
 
 use bun_js_parser::{self as js_ast, Ref, Index, Expr, Stmt, Part, Symbol, Binding, Dependency, NamedImport, TlaCheck, DeclaredSymbol, ExportsKind, BundledAst as JSAst};
 use bun_js_parser::{E, S, B, G};
-use bun_js_parser::printer as js_printer;
+use bun_js_printer::{self as js_printer, renamer};
 use bun_js_parser::lexer as lex;
-use bun_js_parser::renamer;
 
 use bun_resolver::{self as _resolver, Resolver};
 use bun_options_types::SideEffects;
-use bun_fs as Fs;
-use bun_node_fallbacks as NodeFallbackModules;
+use crate::bun_fs as Fs;
+use crate::bun_node_fallbacks as NodeFallbackModules;
+use crate::ungate_support::perf;
 
 use crate::options::{self, Loader, Format, Target, SourceMapOption};
+use crate::Graph::Graph;
 use crate::{
     AdditionalFile, BundleV2, Chunk, CompileResult, CompileResultForSourceMap, ContentHasher,
-    EntryPoint, ExportData, Graph, ImportTracker, JSMeta, LinkerGraph, MangledProps, PartRange,
-    RefImportData, ServerComponentBoundary, StableRef, WrapKind, ThreadPool,
-    generic_path_with_pretty_initialized, log_part_dependency_tree,
+    ImportTracker, LinkerGraph, MangledProps, PartRange,
+    ServerComponentBoundary, StableRef, WrapKind, ThreadPool,
 };
 
-bun_output::declare_scope!(LinkerCtx, visible);
-bun_output::declare_scope!(TreeShake, hidden);
+/// `bun.jsc.EventLoopHandle` (LinkerContext.zig:28). The real handle is a T6
+/// JSC type; the linker only stores it to pass through to chunk-generation
+/// tasks. Erased here to break the cycle (CYCLEBREAK GENUINE).
+pub type EventLoop = Option<core::ptr::NonNull<()>>;
+
+bun_core::declare_scope!(LinkerCtx, visible);
+bun_core::declare_scope!(TreeShake, hidden);
 
 // ══════════════════════════════════════════════════════════════════════════
 // CYCLEBREAK(b0): vtable instance for `bun_crash_handler::BundleGenerateChunkVTable`
@@ -105,13 +110,20 @@ pub fn bundle_generate_chunk_action(
 }
 
 macro_rules! debug {
-    ($($arg:tt)*) => { bun_output::scoped_log!(LinkerCtx, $($arg)*) };
+    ($($arg:tt)*) => { bun_core::scoped_log!(LinkerCtx, $($arg)*) };
 }
 macro_rules! debug_tree_shake {
-    ($($arg:tt)*) => { bun_output::scoped_log!(TreeShake, $($arg)*) };
+    ($($arg:tt)*) => { bun_core::scoped_log!(TreeShake, $($arg)*) };
 }
 
-// Re-exports from sibling modules
+// Re-exports from sibling modules.
+// TODO(b2-blocked): the `linker_context/` submodule directory is gated until
+// `LinkerGraph.rs` un-gates (every file in there reaches into `graph.files`
+// SoA accessors). The function names are kept here so callers can reference
+// `crate::linker_context_mod::scan_imports_and_exports` etc.; bodies live in
+// the gated files.
+#[cfg(any())]
+mod __linker_context_reexports {
 pub use crate::linker_context::output_file_list_builder as OutputFileListBuilder;
 pub use crate::linker_context::static_route_visitor as StaticRouteVisitor;
 pub use crate::linker_context::metafile_builder as MetafileBuilder;
@@ -137,9 +149,10 @@ pub use crate::linker_context::convert_stmts_for_chunk::convert_stmts_for_chunk;
 pub use crate::linker_context::convert_stmts_for_chunk_for_dev_server::convert_stmts_for_chunk_for_dev_server;
 pub use crate::linker_context::generate_code_for_file_in_chunk_js::generate_code_for_file_in_chunk_js;
 pub use crate::linker_context::write_output_files_to_disk::write_output_files_to_disk;
+} // end #[cfg(any())] __linker_context_reexports
 
 // TODO(port): DeferredBatchTask, ParseTask re-exports — Zig re-exports from bundle_v2
-pub use crate::DeferredBatchTask;
+pub use crate::DeferredBatchTask::DeferredBatchTask;
 pub use crate::ParseTask;
 
 pub struct LinkerContext<'a> {
@@ -188,6 +201,56 @@ pub struct LinkerContext<'a> {
 }
 
 impl<'a> LinkerContext<'a> {
+    pub fn mark_pending_task_done(&self) {
+        self.pending_task_count.fetch_sub(1, Ordering::Monotonic);
+    }
+
+    pub fn is_external_dynamic_import(&self, record: &ImportRecord, source_index: u32) -> bool {
+        self.graph.code_splitting
+            && record.kind == ImportKind::Dynamic
+            && self.graph.files.items_entry_point_kind()[record.source_index.get() as usize].is_entry_point()
+            && record.source_index.get() != source_index
+    }
+}
+
+// Local re-exports for the un-gated tree-shaking impl below. `EntryPoint::Kind`
+// and `SideEffects` live in sibling modules; the Phase-A draft referenced them
+// via Zig-style nested paths. The real `EntryPoint` lives in
+// `bundle_v2::__phase_a_draft` (gated); mirror the value-type enum here so
+// the tree-shaking signatures resolve. Collapses to a re-export once
+// bundle_v2 un-gates.
+#[allow(non_snake_case)]
+pub mod EntryPoint {
+    /// Mirrors `bundle_v2.zig:EntryPoint.Kind`.
+    #[repr(u8)]
+    #[derive(Clone, Copy, PartialEq, Eq, Default)]
+    pub enum Kind {
+        #[default]
+        None,
+        UserSpecified,
+        DynamicImport,
+        Html,
+    }
+    impl Kind {
+        #[inline]
+        pub fn is_entry_point(self) -> bool {
+            self != Self::None
+        }
+        #[inline]
+        pub fn is_user_specified_entry_point(self) -> bool {
+            self == Self::UserSpecified
+        }
+    }
+}
+use crate::Graph::{InputFileListExt as _, SideEffects as _GraphSideEffects};
+
+// TODO(b2-blocked): method bodies depend on `LinkerGraph` SoA accessors
+// (`graph.files.items_*()`, `graph.ast.items_*()`, `graph.meta.items_*()`),
+// `ThreadPool::Worker`, `generic_path_with_pretty_initialized`, and the gated
+// `linker_context/` submodules. The struct + LinkerOptions + SourceMapData
+// above are real; this impl block un-gates with `LinkerGraph.rs`.
+#[cfg(any())]
+impl<'a> LinkerContext<'a> {
     pub fn allocator(&self) -> &Bump {
         // TODO(port): bundler is an AST crate; LinkerGraph owns the arena
         self.graph.allocator()
@@ -199,14 +262,7 @@ impl<'a> LinkerContext<'a> {
         generic_path_with_pretty_initialized(path, self.options.target, resolver.fs.top_level_dir, self.allocator())
     }
 
-    pub fn is_external_dynamic_import(&self, record: &ImportRecord, source_index: u32) -> bool {
-        self.graph.code_splitting
-            && record.kind == ImportKind::Dynamic
-            && self.graph.files.items_entry_point_kind()[record.source_index.get() as usize].is_entry_point()
-            && record.source_index.get() != source_index
-    }
-
-    pub fn should_include_part(&self, source_index: Index::Int, part: &Part) -> bool {
+    pub fn should_include_part(&self, source_index: crate::IndexInt, part: &Part) -> bool {
         // As an optimization, ignore parts containing a single import statement to
         // an internal non-wrapped file. These will be ignored anyway and it's a
         // performance hit to include the part only to discover it's unnecessary later.
@@ -297,7 +353,7 @@ impl<'a> LinkerContext<'a> {
         Ok(())
     }
 
-    pub fn compute_data_for_source_map(&mut self, reachable: &[Index::Int]) {
+    pub fn compute_data_for_source_map(&mut self, reachable: &[crate::IndexInt]) {
         debug_assert!(self.options.source_maps != SourceMapOption::None);
         self.source_maps.line_offset_wait_group = WaitGroup::init_with_count(reachable.len());
         self.source_maps.quoted_contents_wait_group = WaitGroup::init_with_count(reachable.len());
@@ -403,7 +459,7 @@ impl<'a> LinkerContext<'a> {
 
         if self.options.source_maps != SourceMapOption::None {
             // SAFETY: Index is repr(transparent) u32 wrapper; reinterpret slice
-            let reachable_ints: &[Index::Int] = unsafe {
+            let reachable_ints: &[crate::IndexInt] = unsafe {
                 core::slice::from_raw_parts(reachable.as_ptr().cast(), reachable.len())
             };
             self.compute_data_for_source_map(reachable_ints);
@@ -507,7 +563,7 @@ impl<'a> LinkerContext<'a> {
 
     pub fn generate_named_export_in_file(
         &mut self,
-        source_index: Index::Int,
+        source_index: crate::IndexInt,
         module_ref: Ref,
         name: &[u8],
         alias: &[u8],
@@ -879,9 +935,13 @@ impl From<BunError> for LinkError {
         LinkError::BuildFailed
     }
 }
+// TODO(b2-blocked): bun_core::Error::from_name — not yet on the public surface.
+#[cfg(any())]
 impl From<LinkError> for BunError {
     fn from(e: LinkError) -> Self { BunError::from_name(<&'static str>::from(e)) }
 }
+
+unsafe fn noop_task_callback(_: *mut ThreadPoolLib::Task) {}
 
 pub struct LinkerOptions {
     pub generate_bytecode_cache: bool,
@@ -954,7 +1014,7 @@ pub struct SourceMapData {
 
 pub struct SourceMapDataTask {
     pub ctx: *mut LinkerContext<'static>, // BACKREF — task stored in ctx.source_maps.*_tasks
-    pub source_index: Index::Int,
+    pub source_index: crate::IndexInt,
     pub thread_task: ThreadPoolLib::Task,
 }
 
@@ -963,11 +1023,16 @@ impl Default for SourceMapDataTask {
         Self {
             ctx: core::ptr::null_mut(),
             source_index: 0,
-            thread_task: ThreadPoolLib::Task { callback: Self::run_line_offset },
+            // TODO(b2-blocked): real callback is `Self::run_line_offset`
+            // (gated below with `ThreadPool::Worker`).
+            thread_task: ThreadPoolLib::Task { callback: noop_task_callback },
         }
     }
 }
 
+// TODO(b2-blocked): bodies depend on `ThreadPool::Worker`, `BundleV2.linker`
+// container_of, and `LinkerGraph` SoA accessors. Un-gates with `ThreadPool.rs`.
+#[cfg(any())]
 impl SourceMapDataTask {
     pub fn run_line_offset(thread_task: *mut ThreadPoolLib::Task) {
         // SAFETY: thread_task points to SourceMapDataTask.thread_task
@@ -1031,8 +1096,10 @@ impl SourceMapDataTask {
     }
 }
 
+// TODO(b2-blocked): see SourceMapDataTask above.
+#[cfg(any())]
 impl SourceMapData {
-    pub fn compute_line_offsets(this: &mut LinkerContext, alloc: &Bump, source_index: Index::Int) {
+    pub fn compute_line_offsets(this: &mut LinkerContext, alloc: &Bump, source_index: crate::IndexInt) {
         debug!("Computing LineOffsetTable: {}", source_index);
         let line_offset_table: &mut LineOffsetTable::List =
             &mut this.graph.files.items_line_offset_table_mut()[source_index as usize];
@@ -1058,7 +1125,7 @@ impl SourceMapData {
         );
     }
 
-    pub fn compute_quoted_source_contents(this: &mut LinkerContext, _alloc: &Bump, source_index: Index::Int) {
+    pub fn compute_quoted_source_contents(this: &mut LinkerContext, _alloc: &Bump, source_index: crate::IndexInt) {
         debug!("Computing Quoted Source Contents: {}", source_index);
         let quoted_source_contents = &mut this.graph.files.items_quoted_source_contents_mut()[source_index as usize];
         quoted_source_contents.reset();
@@ -1127,7 +1194,7 @@ enum MatchImportKind {
 pub struct ChunkMeta {
     pub imports: ChunkMetaMap,
     pub exports: ChunkMetaMap,
-    pub dynamic_imports: ArrayHashMap<Index::Int, ()>,
+    pub dynamic_imports: ArrayHashMap<crate::IndexInt, ()>,
 }
 
 pub type ChunkMetaMap = ArrayHashMap<Ref, ()>;
@@ -1150,6 +1217,12 @@ struct SubstituteChunkFinalPathResult {
     shifts: Box<[SourceMapShifts]>,
 }
 
+// TODO(b2-blocked): scan/tree-shake/link method bodies. These reach into
+// `LinkerGraph` SoA fields (`graph.files`, `graph.meta`, `graph.ast`), the
+// gated `linker_context/scanImportsAndExports.rs`, `bun_resolve_builtins`,
+// and `css::css_modules`. The bodies are real ports of `LinkerContext.zig`
+// and un-gate together with `LinkerGraph.rs`.
+#[cfg(any())]
 impl<'a> LinkerContext<'a> {
     pub fn generate_isolated_hash(&mut self, chunk: &Chunk) -> u64 {
         let _trace = bun::perf::trace("Bundler.generateIsolatedHash");
@@ -1264,7 +1337,7 @@ impl<'a> LinkerContext<'a> {
 
     pub fn validate_tla(
         &mut self,
-        source_index: Index::Int,
+        source_index: crate::IndexInt,
         tla_keywords: &[Range],
         tla_checks: &mut [TlaCheck],
         input_files: &[Source],
@@ -1606,7 +1679,7 @@ impl<'a> LinkerContext<'a> {
 
     pub fn require_or_import_meta_for_source(
         &self,
-        source_index: Index::Int,
+        source_index: crate::IndexInt,
         was_unwrapped_require: bool,
     ) -> js_printer::RequireOrImportMeta {
         let flags = self.graph.meta.items_flags()[source_index as usize];
@@ -1651,7 +1724,7 @@ impl<'a> LinkerContext<'a> {
                 for (inner_index, symbol_) in symbols.slice_const().iter().enumerate() {
                     let mut symbol = symbol_;
                     if symbol.kind == Symbol::Kind::LocalCss {
-                        let r#ref = 'ref: {
+                        let r#ref = 'follow: {
                             let mut r#ref = Ref::init(
                                 u32::try_from(inner_index).unwrap(),
                                 u32::try_from(source_index).unwrap(),
@@ -1662,7 +1735,7 @@ impl<'a> LinkerContext<'a> {
                                 r#ref = symbol.link;
                                 symbol = all_symbols[r#ref.source_index as usize].at(r#ref.inner_index);
                             }
-                            break 'ref r#ref;
+                            break 'follow r#ref;
                         };
 
                         let entry = local_css_names.get_or_put(r#ref).expect("OOM");
@@ -1805,10 +1878,19 @@ impl<'a> LinkerContext<'a> {
         }
         list.sort_by(StableRef::is_less_than);
     }
+} // end #[cfg(any())] — split: tree-shaking trio un-gated below (B-2 second pass)
 
+// ══════════════════════════════════════════════════════════════════════════
+// B-2 second pass: un-gated tree-shaking primitives. These reach into
+// `LinkerGraph` SoA columns (`files_live`, `meta.items_flags()`) and the
+// `Graph::InputFileListExt` accessors. `LinkerGraph` real fields land via the
+// concurrent `LinkerGraph.rs` un-gate; until lib.rs flips its module gate the
+// stub `LinkerGraph(())` will surface here — expected and tracked.
+// ══════════════════════════════════════════════════════════════════════════
+impl<'a> LinkerContext<'a> {
     pub fn mark_file_reachable_for_code_splitting(
         &mut self,
-        source_index: Index::Int,
+        source_index: crate::IndexInt,
         entry_points_count: usize,
         distances: &mut [u32],
         distance: u32,
@@ -1904,7 +1986,7 @@ impl<'a> LinkerContext<'a> {
 
     pub fn mark_file_live_for_tree_shaking(
         &mut self,
-        source_index: Index::Int,
+        source_index: crate::IndexInt,
         side_effects: &[SideEffects],
         parts: &mut [BabyList<Part>],
         import_records: &[BabyList<ImportRecord>],
@@ -2051,8 +2133,8 @@ impl<'a> LinkerContext<'a> {
 
     pub fn mark_part_live_for_tree_shaking(
         &mut self,
-        part_index: Index::Int,
-        source_index: Index::Int,
+        part_index: crate::IndexInt,
+        source_index: crate::IndexInt,
         side_effects: &[SideEffects],
         parts: &mut [BabyList<Part>],
         import_records: &[BabyList<ImportRecord>],
@@ -2124,7 +2206,14 @@ impl<'a> LinkerContext<'a> {
             );
         }
     }
+} // end un-gated tree-shaking impl (B-2 second pass)
 
+// TODO(b2-blocked): remaining link-phase methods (match_import_with_export,
+// advance_import_tracker, create_wrapper_for_file, …) — these reach into
+// `LinkerGraph` SoA fields plus `bun_resolve_builtins` / `css::css_modules`
+// surfaces that have not stabilized. Re-gated until those land.
+#[cfg(any())]
+impl<'a> LinkerContext<'a> {
     pub fn match_import_with_export(
         &mut self,
         init_tracker: ImportTracker,
@@ -2434,7 +2523,7 @@ impl<'a> LinkerContext<'a> {
         wrap: WrapKind,
         wrapper_ref: Ref,
         wrapper_part_index: &mut Index,
-        source_index: Index::Int,
+        source_index: crate::IndexInt,
     ) {
         match wrap {
             // If this is a CommonJS file, we're going to need to generate a wrapper
@@ -2768,7 +2857,7 @@ impl<'a> LinkerContext<'a> {
         &mut self,
         named_imports_ptr: &mut JSAst::NamedImports,
         imports_to_bind: &mut RefImportData,
-        source_index: Index::Int,
+        source_index: crate::IndexInt,
     ) {
         let mut named_imports = named_imports_ptr.clone(self.allocator()).expect("OOM");
         // PORT NOTE: Zig `defer named_imports_ptr.* = named_imports;` — write-back at end
@@ -3047,6 +3136,9 @@ pub struct InsideWrapperPrefix {
     pub has_async_dependency: bool,
 }
 
+// TODO(b2-blocked): `Expr`/`Stmt` builder helpers (`E::Call`, `S::SExpr` etc.)
+// — bun_js_parser AST builder surface not yet stable.
+#[cfg(any())]
 impl InsideWrapperPrefix {
     pub fn init() -> Self {
         Self { stmts: Vec::new(), sync_dependencies_end: 0, has_async_dependency: false }

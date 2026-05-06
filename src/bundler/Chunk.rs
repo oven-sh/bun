@@ -7,13 +7,17 @@ use bun_core::{FeatureFlags, Output};
 use bun_options_types::{ImportKind, ImportRecord};
 use bun_js_parser::{Index, Ref, Stmt};
 use bun_sourcemap as source_map;
-use bun_str::{strings, StringJoiner};
+use bun_string::{strings, StringJoiner};
 
 use crate::analyze_transpiled_module;
+use crate::bun_css;
+use crate::bun_fs;
+use crate::bun_renamer;
 use crate::html_import_manifest as HTMLImportManifest;
 use crate::options::{self, Loader};
+use crate::Graph::{Graph, InputFileListExt as _};
 use crate::{
-    cheap_prefix_normalizer, CompileResult, CrossChunkImport, Graph, LinkerContext, LinkerGraph,
+    cheap_prefix_normalizer, CompileResult, CrossChunkImport, LinkerContext, LinkerGraph,
     PartRange, PathTemplate,
 };
 
@@ -58,8 +62,11 @@ pub struct Chunk {
     pub intermediate_output: IntermediateOutput,
     pub isolated_hash: u64,
 
-    // TODO(port): was `= undefined` in Zig (set before use)
-    pub renamer: bun_renamer::Renamer,
+    // TODO(port): was `= undefined` in Zig (set before use). The Zig field is
+    // the `renamer.Renamer` union; the Rust enum borrows from the symbol table
+    // (`Renamer<'r,'src>`), which can't live in a 'static-ish struct yet.
+    // `ChunkRenamer` is an owned-erased placeholder (see `crate::bun_renamer`).
+    pub renamer: bun_renamer::ChunkRenamer,
 
     pub compile_results_for_chunk: Box<[CompileResult]>,
 
@@ -212,15 +219,17 @@ pub struct CodeResult {
     pub shifts: Vec<source_map::SourceMapShifts>,
 }
 
+// PORT NOTE: Zig used `std.mem.Allocator`; the Rust crate exposes a global
+// mimalloc — we don't need a vtable here yet. Keep `()` so callers compile;
+// real allocator threading (page_allocator vs default_allocator) lands when
+// `bun_alloc::Allocator` is a stable trait object.
+type DynAlloc = ();
+
 impl IntermediateOutput {
-    pub fn allocator_for_size(size: usize) -> &'static dyn bun_alloc::Allocator {
+    pub fn allocator_for_size(_size: usize) -> &'static DynAlloc {
         // PERF(port): Zig picks page_allocator for large buffers vs mimalloc default.
         // TODO(port): expose page_allocator / default_allocator as &'static dyn Allocator
-        if size >= 512 * 1024 {
-            bun_alloc::page_allocator()
-        } else {
-            bun_alloc::default_allocator()
-        }
+        &()
     }
 
     /// Count occurrences of a closing HTML tag (e.g. `</script`, `</style`) in content.
@@ -294,7 +303,7 @@ impl IntermediateOutput {
     #[allow(clippy::too_many_arguments)]
     pub fn code(
         &mut self,
-        allocator_to_use: Option<&dyn bun_alloc::Allocator>,
+        allocator_to_use: Option<&DynAlloc>,
         parse_graph: &Graph,
         linker_graph: &LinkerGraph,
         import_prefix: &[u8],
@@ -339,7 +348,7 @@ impl IntermediateOutput {
     #[allow(clippy::too_many_arguments)]
     pub fn code_standalone(
         &mut self,
-        allocator_to_use: Option<&dyn bun_alloc::Allocator>,
+        allocator_to_use: Option<&DynAlloc>,
         parse_graph: &Graph,
         linker_graph: &LinkerGraph,
         import_prefix: &[u8],
@@ -380,7 +389,7 @@ impl IntermediateOutput {
     #[allow(clippy::too_many_arguments)]
     pub fn code_with_source_map_shifts<const ENABLE_SOURCE_MAP_SHIFTS: bool>(
         &mut self,
-        allocator_to_use: Option<&dyn bun_alloc::Allocator>,
+        allocator_to_use: Option<&DynAlloc>,
         graph: &Graph,
         linker_graph: &LinkerGraph,
         import_prefix: &[u8],
@@ -390,6 +399,11 @@ impl IntermediateOutput {
         force_absolute_path: bool,
         standalone_chunk_contents: Option<&[Option<&[u8]>]>,
     ) -> Result<CodeResult, AllocError> {
+        // B-2 second pass: un-gated. `Graph.input_files` SoA accessors are now
+        // real (`Graph::InputFileListExt`); `LinkerGraph.files` SoA
+        // (`items_entry_point_chunk_index`) lands with the LinkerGraph un-gate.
+        // `bun_paths` / `bun_core::fmt::count` / `bun_alloc::alloc_slice`
+        // surfaces are tracked upstream.
         // TODO(port): MultiArrayList SoA accessors — assuming `.items(.field)` → method returning slice
         let additional_files = graph.input_files.items_additional_files();
         let unique_key_for_additional_files = graph.input_files.items_unique_key_for_additional_file();
@@ -1010,7 +1024,7 @@ impl Layers {
 
 impl CssImportOrder {
     // TODO(port): hasher: anytype — Zig hasher protocol has .update([]const u8)
-    pub fn hash<H: bun_core::Hasher>(&self, hasher: &mut H) {
+    pub fn hash<H: bun_core::Hasher + ?Sized>(&self, hasher: &mut H) {
         // TODO: conditions, condition_import_records
 
         // Zig: bun.writeAnyToHasher(hasher, std.meta.activeTag(this.kind)) — feeds the small-int
@@ -1042,14 +1056,14 @@ impl CssImportOrder {
         }
     }
 
-    pub fn fmt<'a>(&'a self, ctx: &'a LinkerContext) -> CssImportOrderDebug<'a> {
+    pub fn fmt<'a>(&'a self, ctx: &'a LinkerContext<'a>) -> CssImportOrderDebug<'a> {
         CssImportOrderDebug { inner: self, ctx }
     }
 }
 
 pub struct CssImportOrderDebug<'a> {
     inner: &'a CssImportOrder,
-    ctx: &'a LinkerContext,
+    ctx: &'a LinkerContext<'a>,
 }
 
 impl<'a> fmt::Display for CssImportOrderDebug<'a> {
@@ -1072,8 +1086,10 @@ impl<'a> fmt::Display for CssImportOrderDebug<'a> {
                 write!(writer, "\"{}\"", bstr::BStr::new(&path.pretty))?;
             }
             CssImportOrderKind::SourceIndex(source_index) => {
+                // SAFETY: `parse_graph` is a backref into `BundleV2.graph`, valid
+                // for the lifetime of the link step that owns this LinkerContext.
                 let source =
-                    &self.ctx.parse_graph.input_files.items_source()[source_index.get() as usize];
+                    &unsafe { &*self.ctx.parse_graph }.input_files.items_source()[source_index.get() as usize];
                 write!(
                     writer,
                     "{} ({})",
@@ -1122,10 +1138,7 @@ impl Content {
 }
 
 // Re-exports (Zig: pub const X = ...)
-pub use bun_js_parser::Ref;
-pub use bun_js_parser::Index;
-
-pub use crate::DeferredBatchTask;
+pub use crate::DeferredBatchTask::DeferredBatchTask;
 pub use crate::ThreadPool;
 pub use crate::ParseTask;
 

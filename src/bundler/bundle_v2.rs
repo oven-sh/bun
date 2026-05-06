@@ -70,9 +70,9 @@ pub struct BundleV2<'a> {
     /// When Bun Bake is used, the resolved framework is passed here.
     pub framework: Option<bake::Framework>,
     pub graph: Graph,
-    // TODO(b2-blocked): crate::LinkerContext — module is still gated (depends
-    // on bun_css / Chunk / LinkerGraph). Uses the lib.rs opaque stub for now.
-    pub linker: LinkerContext,
+    // Real `LinkerContext<'a>` (un-gated B-2). Borrows the same arena lifetime
+    // as `transpiler` (Zig stored both as raw pointers into the bundler heap).
+    pub linker: LinkerContext<'a>,
     // CYCLEBREAK GENUINE: `jsc::hot_reloader::NewHotReloader<BundleV2, …>` is a
     // T6 generic instantiated over a T5 type. SAFETY: erased — never deref'd here.
     pub bun_watcher: Option<NonNull<()>>,

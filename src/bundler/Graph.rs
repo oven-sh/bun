@@ -102,6 +102,7 @@ pub struct HtmlImports {
     pub html_source_indices: BabyList<IndexInt>,
 }
 
+#[derive(bun_collections::MultiArrayElement)]
 pub struct InputFile {
     pub source: logger::Source,
     pub secondary_path: Box<[u8]>,
@@ -114,6 +115,53 @@ pub struct InputFile {
     pub unique_key_for_additional_file: Box<[u8]>,
     pub content_hash_for_additional_file: u64,
     pub flags: InputFileFlags,
+}
+
+/// SoA column accessors on `MultiArrayList<InputFile>` matching the Zig
+/// `.items(.field)` calling convention used by LinkerContext / Chunk. The
+/// derive emits a `Slice`-based ext trait with bare field names; the bundler
+/// port consistently spells these `items_<field>()` directly on the list, so
+/// this trait bridges that.
+pub trait InputFileListExt {
+    fn items_source(&self) -> &[logger::Source];
+    fn items_source_mut(&self) -> &mut [logger::Source];
+    fn items_loader(&self) -> &[options::Loader];
+    fn items_side_effects(&self) -> &[SideEffects];
+    fn items_additional_files(&self) -> &[BabyList<AdditionalFile>];
+    fn items_unique_key_for_additional_file(&self) -> &[Box<[u8]>];
+}
+
+impl InputFileListExt for MultiArrayList<InputFile> {
+    #[inline]
+    fn items_source(&self) -> &[logger::Source] {
+        // SAFETY: `logger::Source` is exactly the column type for `InputFileField::source`.
+        unsafe { self.items::<logger::Source>(InputFileField::source) }
+    }
+    #[inline]
+    fn items_source_mut(&self) -> &mut [logger::Source] {
+        // SAFETY: see above. `MultiArrayList::items` already hands back `&mut [F]`.
+        unsafe { self.items::<logger::Source>(InputFileField::source) }
+    }
+    #[inline]
+    fn items_loader(&self) -> &[options::Loader] {
+        // SAFETY: column type matches.
+        unsafe { self.items::<options::Loader>(InputFileField::loader) }
+    }
+    #[inline]
+    fn items_side_effects(&self) -> &[SideEffects] {
+        // SAFETY: column type matches.
+        unsafe { self.items::<SideEffects>(InputFileField::side_effects) }
+    }
+    #[inline]
+    fn items_additional_files(&self) -> &[BabyList<AdditionalFile>] {
+        // SAFETY: column type matches.
+        unsafe { self.items::<BabyList<AdditionalFile>>(InputFileField::additional_files) }
+    }
+    #[inline]
+    fn items_unique_key_for_additional_file(&self) -> &[Box<[u8]>] {
+        // SAFETY: column type matches.
+        unsafe { self.items::<Box<[u8]>>(InputFileField::unique_key_for_additional_file) }
+    }
 }
 
 bitflags::bitflags! {

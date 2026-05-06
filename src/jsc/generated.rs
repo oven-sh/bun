@@ -460,10 +460,12 @@ impl SSLConfig {
 
     pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Self> {
         let mut ext = MaybeUninit::<ExternSSLConfig>::uninit();
-        // SAFETY: `global` is live; C++ fully initializes `*result` iff true.
-        let success = unsafe {
-            bindgenConvertJSToSSLConfig(global as *const _ as *mut _, value, ext.as_mut_ptr())
-        };
+        // SAFETY: `global` is an opaque ZST FFI handle (see
+        // `JSGlobalObject::as_ptr`) — the `*mut` is passed across FFI only,
+        // never written through on the Rust side; C++ fully initializes
+        // `*result` iff true.
+        let success =
+            unsafe { bindgenConvertJSToSSLConfig(global.as_ptr(), value, ext.as_mut_ptr()) };
         if success {
             // SAFETY: success ⇒ C++ initialized `ext`.
             Ok(Self::convert_from_extern(unsafe { ext.assume_init() }))

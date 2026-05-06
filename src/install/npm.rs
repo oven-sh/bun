@@ -1464,12 +1464,12 @@ pub mod package_manifest {
 
             #[cfg(target_os = "linux")]
             if is_using_o_tmpfile {
-                let _close = scopeguard::guard((), |_| file.close());
+                let _close = scopeguard::guard((), |_| { let _ = file.close(); });
                 // Attempt #1.
-                if bun_sys::linkat_tmpfile(file.handle, cache_dir, outpath).unwrap().is_err() {
+                if bun_sys::linkat_tmpfile(file.handle, cache_dir, outpath).is_err() {
                     // Attempt #2: the file may already exist. Let's unlink and try again.
-                    let _ = bun_sys::unlinkat(cache_dir, outpath).unwrap();
-                    bun_sys::linkat_tmpfile(file.handle, cache_dir, outpath).unwrap()?;
+                    let _ = bun_sys::unlinkat(cache_dir, outpath);
+                    bun_sys::linkat_tmpfile(file.handle, cache_dir, outpath)?;
                     // There is no attempt #3. This is a cache, so it's not essential.
                 }
                 return Ok(());
@@ -1477,7 +1477,7 @@ pub mod package_manifest {
 
             #[cfg(not(windows))]
             {
-                let _close = scopeguard::guard((), |_| file.close());
+                let _close = scopeguard::guard((), |_| { let _ = file.close(); });
                 // Attempt #1. Rename the file.
                 let rc = bun_sys::renameat(tmpdir, tmp_path, cache_dir, outpath);
 
@@ -1486,12 +1486,12 @@ pub mod package_manifest {
                         // Fallback path: atomically swap from <tmp>/*.npm -> <cache>/*.npm, then unlink the temporary file.
                         let _unlink = scopeguard::guard((), |_| {
                             // If atomically swapping fails, then we should still unlink the temporary file as a courtesy.
-                            let _ = bun_sys::unlinkat(tmpdir, tmp_path).unwrap();
+                            let _ = bun_sys::unlinkat(tmpdir, tmp_path);
                         });
 
                         if matches!(
                             err.get_errno(),
-                            bun_sys::Errno::EXIST | bun_sys::Errno::NOTEMPTY | bun_sys::Errno::OPNOTSUPP
+                            bun_sys::Errno::EEXIST | bun_sys::Errno::ENOTEMPTY | bun_sys::Errno::EOPNOTSUPP
                         ) {
                             // Atomically swap the old file with the new file.
                             bun_sys::renameat2(
@@ -1500,8 +1500,7 @@ pub mod package_manifest {
                                 cache_dir,
                                 outpath,
                                 bun_sys::Renameat2Flags { exchange: true, ..Default::default() },
-                            )
-                            .unwrap()?;
+                            )?;
 
                             // Success.
                             return Ok(());
@@ -1510,7 +1509,7 @@ pub mod package_manifest {
                     bun_sys::Result::Ok(()) => {}
                 }
 
-                rc.unwrap()?;
+                rc?;
             }
 
             Ok(())

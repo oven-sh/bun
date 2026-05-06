@@ -641,5 +641,5 @@ impl Symbol {
 //   source:     src/js_parser/ast/Symbol.zig (487 lines)
 //   confidence: medium
 //   todos:      11
-//   notes:      Map::get returns *mut Symbol (union-find aliasing); original_name is arena raw slice; size_of==88 assert disabled
+//   notes:      Map::get returns *mut Symbol derived from BabyList NonNull (union-find aliasing, raw-ptr-only access); original_name is arena raw slice; size_of==88 assert disabled
 // ──────────────────────────────────────────────────────────────────────────

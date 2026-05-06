@@ -99,6 +99,7 @@ mod node {
 // crate-private module, which trips E0365 if we `pub use` it again. Import it
 // privately at file scope instead and call as `validators::foo` directly.
 use super::util::validators;
+use super::MaybeTodo as _;
 
 pub use super::node_fs_constant as constants;
 // node_fs_watcher / node_fs_stat_watcher are JSC-bound and not yet declared in

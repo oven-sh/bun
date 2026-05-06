@@ -294,12 +294,12 @@ pub struct CreateCommand;
 impl CreateCommand {
     #[cold]
     pub fn exec(
-        ctx: &Command::Context,
+        ctx: Command::Context<'_>,
         example_tag: ExampleTag,
         template: &[u8],
     ) -> Result<(), bun_core::Error> {
         Global::configure_allocator(Global::AllocatorConfiguration { long_running: false, ..Default::default() });
-        HTTP::HTTPThread::init(&Default::default());
+        HTTP::http_thread::init(&Default::default());
 
         let mut create_options = CreateOptions::parse(ctx)?;
         let positionals = &create_options.positionals;
@@ -308,7 +308,8 @@ impl CreateCommand {
             return CreateListExamplesCommand::exec(ctx);
         }
 
-        let filesystem = fs::FileSystem::init(None)?;
+        // SAFETY: `fs::FileSystem::init` returns a process-global singleton pointer.
+        let filesystem: &mut fs::FileSystem = unsafe { &mut *fs::FileSystem::init(None)? };
         let mut env_loader: DotEnv::Loader = {
             let map = Box::new(DotEnv::Map::init());
             DotEnv::Loader::init(Box::leak(map))

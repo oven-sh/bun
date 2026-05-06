@@ -283,6 +283,21 @@ pub trait MaybeErrorTodo: Sized + Default {
     }
 }
 
+/// Extension surface providing `Maybe::todo()` on `bun_sys::Maybe<T>`
+/// (= `core::result::Result<T, bun_sys::Error>`). Zig's `Maybe(T).todo()`
+/// returns `.{ .err = bun.sys.Error.todo() }`; this is the Rust equivalent for
+/// the upstream type-alias form of `Maybe` used throughout `node/`.
+pub trait MaybeTodo: Sized {
+    fn todo() -> Self;
+}
+
+impl<T> MaybeTodo for core::result::Result<T, bun_sys::Error> {
+    #[inline]
+    fn todo() -> Self {
+        Err(bun_sys::Error::todo())
+    }
+}
+
 impl<E> Maybe<bool, E> {
     pub fn is_true(self) -> bool {
         // Zig: `if (comptime ReturnType != bool) @compileError(...)` — enforced

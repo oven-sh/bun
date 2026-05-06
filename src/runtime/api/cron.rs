@@ -118,10 +118,11 @@ trait CronJobBase {
     fn exit_status_mut(&mut self) -> &mut Option<Status>;
     fn maybe_finished(&mut self);
 
-    fn loop_(&self) -> &AsyncLoop {
+    fn loop_(&self) -> *mut AsyncLoop {
         #[cfg(windows)]
         {
-            VirtualMachine::get().uv_loop()
+            // SAFETY: per-thread VM singleton.
+            unsafe { vm_mut() }.uv_loop()
         }
         #[cfg(not(windows))]
         {
@@ -129,8 +130,9 @@ trait CronJobBase {
         }
     }
 
-    fn event_loop(&self) -> &EventLoop {
-        VirtualMachine::get().event_loop()
+    fn event_loop(&self) -> *mut EventLoop {
+        // SAFETY: per-thread VM singleton.
+        unsafe { vm_mut() }.event_loop()
     }
 
     fn on_reader_done(&mut self) {

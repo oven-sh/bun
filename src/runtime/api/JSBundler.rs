@@ -744,30 +744,26 @@ pub mod js_bundler {
                 let mut i: usize = 0;
                 while let Some(plugin) = iter.next()? {
                     if !plugin.is_object() {
-                        return global_this
-                            .throw_invalid_arguments("Expected plugin to be an object", &[]);
+                        return Err(global_this
+                            .throw_invalid_arguments("Expected plugin to be an object"));
                     }
 
-                    if let Some(slice) =
-                        plugin.get_optional::<ZigString::Slice>(global_this, "name")?
-                    {
-                        if slice.len() == 0 {
-                            return global_this.throw_invalid_arguments(
+                    if let Some(slice) = get_optional_slice(plugin, global_this, b"name")? {
+                        if slice.slice().is_empty() {
+                            return Err(global_this.throw_invalid_arguments(
                                 "Expected plugin to have a non-empty name",
-                                &[],
-                            );
+                            ));
                         }
                         drop(slice);
                     } else {
-                        return global_this
-                            .throw_invalid_arguments("Expected plugin to have a name", &[]);
+                        return Err(global_this
+                            .throw_invalid_arguments("Expected plugin to have a name"));
                     }
 
-                    let Some(function) = plugin.get_function(global_this, "setup")? else {
-                        return global_this.throw_invalid_arguments(
+                    let Some(function) = get_function(plugin, global_this, b"setup")? else {
+                        return Err(global_this.throw_invalid_arguments(
                             "Expected plugin to have a setup() function",
-                            &[],
-                        );
+                        ));
                     };
 
                     let bun_plugins: *mut Plugin = match **plugins {
@@ -788,7 +784,7 @@ pub mod js_bundler {
                         }
                     };
 
-                    let is_last = i == length - 1;
+                    let is_last = i == (length as usize).saturating_sub(1);
                     // SAFETY: bun_plugins is a valid pointer created/stored above
                     let mut plugin_result = unsafe {
                         (*bun_plugins).add_plugin(
@@ -803,7 +799,8 @@ pub mod js_bundler {
                     if !plugin_result.is_empty_or_undefined_or_null() {
                         if let Some(promise) = plugin_result.as_any_promise() {
                             promise.set_handled(global_this.vm());
-                            global_this.bun_vm().wait_for_promise(promise);
+                            // SAFETY: bun_vm() returns the live process VirtualMachine pointer.
+                            unsafe { (*global_this.bun_vm()).wait_for_promise(promise) };
                             match promise.unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled) {
                                 jsc::PromiseResult::Pending => unreachable!(),
                                 jsc::PromiseResult::Fulfilled(val) => {

@@ -4830,30 +4830,32 @@ fn mark_all_route_children(
     bits: &mut [&mut DynamicBitSet],
     route_index: framework_router::RouteIndex,
 ) {
-    let mut next = router.route_ptr(route_index).first_child.unwrap_();
+    let mut next = router.route_ptr(route_index).first_child;
     while let Some(child_index) = next {
         let route = router.route_ptr(child_index);
-        if let Some(index) = route.bundle.unwrap_() {
+        if let Some(index) = route.bundle {
             for b in bits.iter_mut() {
                 b.set(index.get() as usize);
             }
         }
         mark_all_route_children(router, bits, child_index);
-        next = route.next_sibling.unwrap_();
+        next = route.next_sibling;
     }
 }
 
 impl DevServer<'_> {
     fn mark_all_route_children_failed(&mut self, route_index: framework_router::RouteIndex) {
-        let mut next = self.router.route_ptr(route_index).first_child.unwrap_();
+        let mut next = self.router.route_ptr(route_index).first_child;
         while let Some(child_index) = next {
             let route = self.router.route_ptr(child_index);
-            if let Some(index) = route.bundle.unwrap_() {
+            let bundle = route.bundle;
+            let next_sibling = route.next_sibling;
+            if let Some(index) = bundle {
                 self.route_bundle_ptr(index).server_state =
                     route_bundle::State::PossibleBundlingFailures;
             }
             self.mark_all_route_children_failed(child_index);
-            next = route.next_sibling.unwrap_();
+            next = next_sibling;
         }
     }
 

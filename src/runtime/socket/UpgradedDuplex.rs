@@ -130,12 +130,7 @@ impl<'a> UpgradedDuplex<'a> {
         };
 
         if let Some(data) = data {
-            // TODO(port): confirm bun_jsc path for ArrayBuffer::BinaryType::to_js(.Buffer, ...)
-            let buffer = match bun_jsc::ArrayBuffer::binary_type_to_js(
-                bun_jsc::BinaryType::Buffer,
-                data,
-                global,
-            ) {
+            let buffer = match bun_jsc::BinaryType::Buffer.to_js(data, global) {
                 Ok(b) => b,
                 Err(err) => {
                     (self.handlers.on_error)(self.handlers.ctx, global.take_exception(err));

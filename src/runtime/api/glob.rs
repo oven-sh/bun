@@ -468,14 +468,15 @@ impl Glob {
         // PERF(port): was arena bulk-free — Zig used a local ArenaAllocator for the
         // toSlice() temp allocation. Dropped here; to_slice() owns its buffer.
 
-        let arguments_ = callframe.arguments_old(1);
-        let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), arguments_.slice());
+        let arguments_ = callframe.arguments_old::<1>();
+        // SAFETY: bun_vm() returns a non-null *mut to the live VirtualMachine for this global.
+        let mut arguments = ArgumentsSlice::init(unsafe { &*global_this.bun_vm() }, arguments_.slice());
         let Some(str_arg) = arguments.next_eat() else {
-            return global_this.throw(format_args!("Glob.matchString: expected 1 arguments, got 0"));
+            return Err(global_this.throw(format_args!("Glob.matchString: expected 1 arguments, got 0")));
         };
 
         if !str_arg.is_string() {
-            return global_this.throw(format_args!("Glob.matchString: first argument is not a string"));
+            return Err(global_this.throw(format_args!("Glob.matchString: first argument is not a string")));
         }
 
         let str = str_arg.to_slice(global_this)?;

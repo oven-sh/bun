@@ -335,7 +335,10 @@ impl<'a> Scanner<'a> {
     pub fn next(&mut self, entry: &mut fs::Entry, fd: Fd) {
         let name = entry.base_lowercase();
         self.has_iterated = true;
-        match entry.kind(&self.fs.fs, true) {
+        // `Entry::kind` takes `*mut RealFS` (Zig `*Implementation`); cast the
+        // shared singleton ref — `kind()` only stat()s through it.
+        let real_fs = &self.fs.fs as *const fs::RealFS as *mut fs::RealFS;
+        match entry.kind(real_fs, true) {
             fs::EntryKind::Dir => {
                 if (!name.is_empty() && name[0] == b'.') || name == b"node_modules" {
                     return;

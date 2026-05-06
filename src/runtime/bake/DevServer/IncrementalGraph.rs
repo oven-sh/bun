@@ -990,7 +990,7 @@ impl IncrementalGraph<Client> {
         let mut is_special_framework_file = false;
 
         if gop.found_existing {
-            let mut existing = gop.value_ptr.unpack();
+            let mut existing = core::mem::take(gop.value_ptr).unpack();
 
             // Free the original content + old source map
             // PORT NOTE: reshaped for borrowck — `gop` borrows `self.bundled_files` mutably;

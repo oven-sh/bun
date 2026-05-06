@@ -158,10 +158,11 @@ impl Entry {
         arena: &Bump,
     ) -> Result<Vec<u8>, bun_core::Error> {
         // TODO(port): narrow error set
-        let mut j = StringJoiner::new(arena);
+        let _ = arena;
+        let mut j = StringJoiner::default();
         j.push_static(b"AAAA");
         self.join_vlq(kind, &mut j, arena, Side::Client)?;
-        Ok(j.done())
+        Ok(j.done()?.into_vec())
     }
 
     pub fn render_json(

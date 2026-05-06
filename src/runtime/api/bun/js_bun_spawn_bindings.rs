@@ -1248,10 +1248,10 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
 
     if let Readable::Pipe(pipe) = &mut subprocess.stdout {
-        // PORT NOTE: pass `subprocess_ptr` (the Box::into_raw pointer captured
-        // before any field borrow) instead of the live `&mut subprocess`, which
-        // would alias with the `&mut subprocess.stdout` borrow held by `pipe`.
-        if let Some(err) = pipe.start(subprocess_ptr, event_loop).as_err() {
+        // PORT NOTE: pass `subprocess_nn` (the `NonNull<Subprocess<'static>>`
+        // captured above) instead of the live `&mut subprocess`, which would
+        // alias with the `&mut subprocess.stdout` borrow held by `pipe`.
+        if let Some(err) = pipe.start(subprocess_nn, event_loop).as_err() {
             let _ = subprocess.try_kill(subprocess.kill_signal);
             let _ = global_this.throw_value(err.to_js(global_this)?);
             return Err(JsError::Thrown);
@@ -1265,7 +1265,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     if let Readable::Pipe(pipe) = &mut subprocess.stderr {
         // PORT NOTE: see stdout arm above — avoid aliased &mut.
-        if let Some(err) = pipe.start(subprocess_ptr, event_loop).as_err() {
+        if let Some(err) = pipe.start(subprocess_nn, event_loop).as_err() {
             let _ = subprocess.try_kill(subprocess.kill_signal);
             let _ = global_this.throw_value(err.to_js(global_this)?);
             return Err(JsError::Thrown);

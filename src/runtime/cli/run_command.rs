@@ -1921,6 +1921,7 @@ use bun_bundler::Transpiler;
 use crate::cli::{self as cli, Arguments, Command};
 use bun_collections::{ArrayHashMap, StringHashMap};
 use bun_core::{self as core, env_var, fmt as bun_fmt, Environment, Global, Output};
+use bun_core::{note, pretty_errorln};
 use bun_dotenv as DotEnv;
 use bun_http as http;
 use bun_jsc as jsc;

@@ -377,7 +377,7 @@ pub fn build_with_vm(
             };
 
             if !default.is_object() {
-                return Err(global
+                return Err(js_err(global
                     .throw_invalid_arguments(format_args!(
                         "Your config file's default export must be an object.\n\
                          \n\
@@ -390,12 +390,11 @@ pub fn build_with_vm(
                          \n\
                          Learn more at https://bun.com/docs/ssg",
                         "  ", "  ", "  ", "  ", "  ", "  ", "  ", "  ", "  "
-                    )));
-                return Err(bun_core::err!("JSError"));
+                    ))));
             }
 
             let Some(app) = default.get(global, "app").map_err(js_err)? else {
-                return Err(global
+                return Err(js_err(global
                     .throw_invalid_arguments(format_args!(
                         "Your config file's default export must contain an \"app\" property.\n\
                          \n\
@@ -408,8 +407,7 @@ pub fn build_with_vm(
                          \n\
                          Learn more at https://bun.com/docs/ssg",
                         "  ", "  ", "  ", "  ", "  ", "  ", "  ", "  ", "  "
-                    )));
-                return Err(bun_core::err!("JSError"));
+                    ))));
             };
 
             bake_body::UserOptions::from_js(app, global).map_err(js_err)?

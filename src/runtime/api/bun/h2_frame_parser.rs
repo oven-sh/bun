@@ -2739,9 +2739,9 @@ impl H2FrameParser {
                 return Ok(self.streams.get(&stream_id).copied());
             }
 
-            if let Some(js_header_name) = get_http2_common_string(global_object, header.well_know) {
+            if let Some(js_header_name) = get_http2_common_string(global_object, header.well_know as u32) {
                 headers.push(global_object, js_header_name)?;
-                headers.push(global_object, BunString::create_utf8_for_js(global_object, header.value)?)?;
+                headers.push(global_object, bun_jsc::bun_string_jsc::create_utf8_for_js(global_object, header.value)?)?;
                 if header.never_index {
                     if sensitive_headers.is_undefined() {
                         sensitive_headers = JSValue::create_empty_array(global_object, 0)?;

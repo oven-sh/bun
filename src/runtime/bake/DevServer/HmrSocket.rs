@@ -225,16 +225,15 @@ impl HmrSocket {
                         debug_assert!(false);
                         ws.close();
                     }
-                    super::TestingBatchEvents::Enabled(event_const) => {
+                    super::TestingBatchEvents::Enabled(_event_const) => {
                         // PORT NOTE: reshaped for borrowck — Zig copied the payload then
                         // overwrote the union; here we replace-and-extract.
-                        let mut event = core::mem::replace(
+                        let super::TestingBatchEvents::Enabled(mut event) = core::mem::replace(
                             &mut dev.testing_batch_events,
                             super::TestingBatchEvents::Disabled,
-                        )
-                        .into_enabled()
-                        .expect("unreachable");
-                        let _ = event_const;
+                        ) else {
+                            unreachable!()
+                        };
 
                         if event.entry_points.set.count() == 0 {
                             dev.publish(
@@ -245,9 +244,8 @@ impl HmrSocket {
                             return;
                         }
 
-                        // TODO(port): std.time.Timer — map to bun_core::time::Timer
-                        let timer = bun_core::time::Timer::start()
-                            .unwrap_or_else(|_| panic!("timers unsupported"));
+                        // TODO(port): std.time.Timer — `start_async_bundle` takes Instant.
+                        let timer = std::time::Instant::now();
                         dev.start_async_bundle(event.entry_points, true, timer)
                             // bun.handleOom(err) — Rust aborts on OOM by default
                             .expect("OOM");

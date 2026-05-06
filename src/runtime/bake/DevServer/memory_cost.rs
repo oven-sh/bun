@@ -222,7 +222,7 @@ pub fn memory_cost_slice<T>(slice: &[T]) -> usize {
     slice.len() * size_of::<T>()
 }
 
-pub fn memory_cost_array_hash_map<K, V>(map: &ArrayHashMap<K, V>) -> usize {
+pub fn memory_cost_array_hash_map<K, V, C>(map: &ArrayHashMap<K, V, C>) -> usize {
     // Zig: @TypeOf(map.entries).capacityInBytes(map.entries.capacity)
     // i.e. the MultiArrayList backing storage byte capacity.
     // TODO(port): ArrayHashMap must expose `capacity_in_bytes()` (entries MultiArrayList byte capacity).

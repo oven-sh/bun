@@ -1,8 +1,9 @@
-use core::ffi::{c_int, c_void};
+use core::ffi::{c_uint, c_void};
 use core::mem::offset_of;
 use core::ptr::NonNull;
 
 use bun_aio::KeepAlive;
+use bun_aio::posix_event_loop::{get_vm_ctx, AllocatorType};
 use bun_boringssl_sys as boringssl;
 use bun_jsc::{
     CallFrame, JSGlobalObject, JSPromiseStrong, JSValue, JsResult, WorkPool, WorkPoolTask,

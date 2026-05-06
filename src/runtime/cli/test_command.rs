@@ -866,7 +866,7 @@ impl CommandLineReporter {
                     Output::flush();
                 }
                 bun_test::Execution::Result::FailBecauseExpectedHasAssertions => {
-                    Output::err(bun_core::err!("AssertionError"), format_args!("received <red>0 assertions<r>, but expected <green>at least one assertion<r> to be called\n"));
+                    Output::err(bun_core::err!("AssertionError"), "received <red>0 assertions<r>, but expected <green>at least one assertion<r> to be called\n", ());
                     Output::flush();
                 }
                 bun_test::Execution::Result::FailBecauseTimeout
@@ -874,7 +874,7 @@ impl CommandLineReporter {
                 | bun_test::Execution::Result::FailBecauseTimeoutWithDoneCallback
                 | bun_test::Execution::Result::FailBecauseHookTimeoutWithDoneCallback => {
                     if Output::is_github_action() {
-                        Output::print_error("::error title=error: Test \"{}\" timed out after {}ms::\n", (bstr::BStr::new(display_label), test_entry.timeout));
+                        Output::print_error(format_args!("::error title=error: Test \"{}\" timed out after {}ms::\n", bstr::BStr::new(display_label), test_entry.timeout));
                         Output::flush();
                     }
                 }

@@ -201,7 +201,7 @@ const _: () = {
 
 impl Archive {
     pub fn finalize(this: *mut Self) {
-        jsc::mark_binding(core::panic::Location::caller());
+        jsc::mark_binding();
         // SAFETY: called once by the JSC finalizer on the mutator thread; `this`
         // was allocated by `Box::into_raw` in `constructor`/`create_archive`.
         drop(unsafe { Box::from_raw(this) });

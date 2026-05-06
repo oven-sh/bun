@@ -79,9 +79,10 @@ pub fn filter<'a>(
         match get_changed_files(top_level_dir, changed_since) {
             Ok(set) => set,
             Err(GitError::GitNotFound) => {
-                Output::err_generic(format_args!(
-                    "<b>--changed<r> requires <b>git<r> to be installed and in PATH"
-                ));
+                Output::err_generic(
+                    "<b>--changed<r> requires <b>git<r> to be installed and in PATH",
+                    (),
+                );
                 Global::exit(1);
             }
             Err(GitError::GitFailed) => {

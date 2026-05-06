@@ -1091,7 +1091,9 @@ impl Assets {
             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
             0o666,
         )?;
-        let _close = scopeguard::guard(&file, |f| f.close());
+        let _close = scopeguard::guard(&file, |f| {
+            let _ = f.close();
+        });
 
         // Write contents of known assets to the new file. Template assets get formatted.
         if is_template {
@@ -1103,14 +1105,15 @@ impl Assets {
             if let Some(a) = args {
                 let _ = write!(&mut buf, "{}", a);
             }
-            file.write_all(&buf).unwrap_result()?;
+            file.write_all(&buf)?;
         } else {
-            file.write_all(asset).unwrap_result()?;
+            file.write_all(asset)?;
         }
-        Output::prettyln(
-            " + <r><d>{s}{s}<r>",
-            format_args!("{}{}", bstr::BStr::new(filename), message_suffix),
-        );
+        Output::prettyln(format_args!(
+            " + <r><d>{}{}<r>",
+            bstr::BStr::new(filename),
+            message_suffix,
+        ));
         Output::flush();
         Ok(())
     }

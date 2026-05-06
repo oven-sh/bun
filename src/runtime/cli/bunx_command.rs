@@ -2,7 +2,6 @@
 
 use core::mem::size_of;
 use std::io::Write as _;
-use std::sync::OnceLock;
 
 use bstr::BStr;
 
@@ -44,10 +43,14 @@ fn as_core_path_buf(buf: &mut PathBuffer) -> &mut bun_core::PathBuffer {
 }
 
 /// Process-lifetime bump arena for the package.json parser. Matches the
-/// `dummy_bump()` shim in `pm_pkg_command.rs`.
-fn bunx_bump() -> &'static bumpalo::Bump {
-    static BUMP: OnceLock<bumpalo::Bump> = OnceLock::new();
-    BUMP.get_or_init(bumpalo::Bump::new)
+/// `dummy_bump()` shim in `pm_pkg_command.rs`. `bumpalo::Bump` is `!Sync`,
+/// so a `static OnceLock` is out; the CLI is single-threaded one-shot, so we
+/// cache a leaked arena per thread instead.
+fn bunx_bump() -> &'static bun_alloc::Arena {
+    thread_local! {
+        static BUMP: &'static bun_alloc::Arena = Box::leak(Box::new(bun_alloc::Arena::new()));
+    }
+    BUMP.with(|b| *b)
 }
 
 /// bunx-specific options parsed from argv.

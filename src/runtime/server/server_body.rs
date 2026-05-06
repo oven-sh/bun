@@ -15,7 +15,8 @@ use bun_http::{self as http, Method, MimeType};
 use bun_http_jsc::method_jsc::MethodJsc as _;
 use bun_jsc::{
     self as jsc, host_fn, ArrayBuffer, CallFrame, JSGlobalObject, JSPromise, JSValue, JsError,
-    JsRef, JsResult, Node, StringJsc as _, Strong, StrongOptional, SysErrorJsc as _, SystemError, VirtualMachine,
+    JsRef, JsResult, Node, StringJsc as _, Strong, StrongOptional, SysErrorJsc as _, SystemError,
+    VirtualMachine, ZigString,
 };
 use crate::webcore::{self as WebCore, AbortSignal, AnyBlob, Blob, Body, CookieMap, FetchHeaders, Request, Response};
 use crate::webcore::fetch as Fetch;

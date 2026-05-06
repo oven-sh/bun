@@ -63,29 +63,33 @@ impl AnyPromiseExt for jsc::AnyPromise {
     where
         F: FnOnce(&JSGlobalObject) -> JsResult<JSValue>,
     {
-        // Mirror `AnyPromise.wrap` (AnyPromise.zig): call through `JSPromise::wrap`
-        // (which catches a thrown exception and rejects), then resolve/reject this
-        // promise with the result.
-        match JSPromise::wrap(global, f) {
+        // Mirror `AnyPromise.wrap` (AnyPromise.zig): run `f` through the host-call
+        // wrapper so a thrown exception is converted to an Err, then resolve/reject
+        // this existing promise with the outcome.
+        match f(global) {
             Ok(v) => self.resolve_value(global, v),
-            Err(e) => Err(e),
+            Err(_) => {
+                let err = global.try_take_exception().unwrap_or(JSValue::UNDEFINED);
+                self.reject_value(global, err)
+            }
         }
     }
     fn resolve_value(self, global: &JSGlobalObject, value: JSValue) -> JsTerminated<()> {
-        match self {
-            // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
-            jsc::AnyPromise::Normal(p) => unsafe { (*p).resolve(global, value) },
-            jsc::AnyPromise::Internal(p) => unsafe { (*p).resolve(global, value) },
-        }
-        Ok(())
+        // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
+        // `JSInternalPromise` subclasses `JSPromise` in C++; the pointer cast is sound.
+        let p: *mut JSPromise = match self {
+            jsc::AnyPromise::Normal(p) => p,
+            jsc::AnyPromise::Internal(p) => p as *mut JSPromise,
+        };
+        unsafe { (*p).resolve(global, value) }
     }
     fn reject_value(self, global: &JSGlobalObject, value: JSValue) -> JsTerminated<()> {
-        match self {
-            // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
-            jsc::AnyPromise::Normal(p) => unsafe { (*p).reject(global, value) },
-            jsc::AnyPromise::Internal(p) => unsafe { (*p).reject(global, value) },
-        }
-        Ok(())
+        // SAFETY: see `resolve_value`.
+        let p: *mut JSPromise = match self {
+            jsc::AnyPromise::Normal(p) => p,
+            jsc::AnyPromise::Internal(p) => p as *mut JSPromise,
+        };
+        unsafe { (*p).reject(global, Ok(value)) }
     }
     fn reject_value_with_async_stack(
         self,

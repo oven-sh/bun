@@ -2498,36 +2498,12 @@ impl IncrementalGraph<Server> {
     pub fn take_source_map(
         &mut self,
         _arena: &bun_alloc::Arena,
-        out: &mut SourceMapStore::Entry,
+        out: &mut SourceMapStoreEntry,
     ) -> Result<(), bun_alloc::AllocError> {
-        let paths = self.bundled_files.keys();
-
-        let mut file_paths: Vec<*const [u8]> =
-            Vec::with_capacity(self.current_chunk_parts.len());
-        let mut contained_maps: MultiArrayList<PackedMapShared> = MultiArrayList::default();
-        contained_maps.ensure_total_capacity(self.current_chunk_parts.len())?;
-
-        let mut overlapping_memory_cost: u32 = 0;
-
-        // For server, we use the tracked file indices to get the correct paths
-        for item in &self.current_chunk_source_maps {
-            file_paths.push(&*paths[item.file_index.get() as usize] as *const [u8]); // PERF(port): was assume_capacity
-            contained_maps.push(item.source_map.clone()); // PERF(port): was assume_capacity
-            overlapping_memory_cost += u32::try_from(item.source_map.memory_cost()).unwrap();
-        }
-
-        overlapping_memory_cost += u32::try_from(
-            contained_maps.memory_cost() + memory_cost_slice(&file_paths),
-        )
-        .unwrap();
-
-        *out = SourceMapStore::Entry {
-            dev_allocator: self.dev_allocator(),
-            ref_count: out.ref_count,
-            paths: file_paths.into_boxed_slice(),
-            files: contained_maps,
-            overlapping_memory_cost,
-        };
+        let _ = out;
+        // TODO(port): blocked_on: bun_collections::MultiArrayElement for packed_map_body::Shared
+        todo!("blocked_on: bun_collections::MultiArrayElement for PackedMap.Shared");
+        #[allow(unreachable_code)]
         Ok(())
     }
 }

@@ -297,7 +297,12 @@ impl<'a> Subprocess<'a> {
     /// Debug-assert the per-stdio spawn result is well-formed.
     #[inline]
     pub fn assert_stdio_result(result: &StdioResult) {
-        assert_stdio_result(*result);
+        #[cfg(all(debug_assertions, unix))]
+        if let Some(fd) = result {
+            debug_assert!(fd.is_valid());
+        }
+        #[cfg(not(all(debug_assertions, unix)))]
+        let _ = result;
     }
 
     /// Obtain `&mut Process` through the `Arc`. Zig stores `*Process` and
@@ -1296,7 +1301,7 @@ impl Subprocess<'_> {
         );
         this.finalize_streams();
 
-        this.process.detach();
+        this.process_mut().detach();
         // Match Zig's `this.process.deref()`: release the Arc strong ref now, not when
         // ref_count → 0. ManuallyDrop on the field prevents a double-drop later.
         // SAFETY: finalize() runs exactly once; no code path reads `this.process` after this.

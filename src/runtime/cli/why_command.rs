@@ -154,7 +154,7 @@ impl<'a> GlobPattern<'a> {
                 result.version_pattern = version_pattern;
 
                 let sliced = semver::SlicedString::init(version_pattern, version_pattern);
-                result.version_query = semver::Query::parse(version_pattern, sliced).ok();
+                result.version_query = semver::query::parse(version_pattern, sliced).ok();
 
                 return result;
             }

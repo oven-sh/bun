@@ -2367,12 +2367,12 @@ pub mod internal {
     #[host_fn]
     pub fn get_dns_cache_stats(global_object: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         let object = JSValue::create_empty_object(global_object, 6);
-        object.put(global_object, ZigString::static_("cacheHitsCompleted"), JSValue::js_number(DNS_CACHE_HITS_COMPLETED.load(Ordering::Relaxed)));
-        object.put(global_object, ZigString::static_("cacheHitsInflight"), JSValue::js_number(DNS_CACHE_HITS_INFLIGHT.load(Ordering::Relaxed)));
-        object.put(global_object, ZigString::static_("cacheMisses"), JSValue::js_number(DNS_CACHE_MISSES.load(Ordering::Relaxed)));
-        object.put(global_object, ZigString::static_("size"), JSValue::js_number(DNS_CACHE_SIZE.load(Ordering::Relaxed)));
-        object.put(global_object, ZigString::static_("errors"), JSValue::js_number(DNS_CACHE_ERRORS.load(Ordering::Relaxed)));
-        object.put(global_object, ZigString::static_("totalCount"), JSValue::js_number(GETADDRINFO_CALLS.load(Ordering::Relaxed)));
+        object.put(global_object, b"cacheHitsCompleted", JSValue::js_number(DNS_CACHE_HITS_COMPLETED.load(Ordering::Relaxed) as f64));
+        object.put(global_object, b"cacheHitsInflight", JSValue::js_number(DNS_CACHE_HITS_INFLIGHT.load(Ordering::Relaxed) as f64));
+        object.put(global_object, b"cacheMisses", JSValue::js_number(DNS_CACHE_MISSES.load(Ordering::Relaxed) as f64));
+        object.put(global_object, b"size", JSValue::js_number(DNS_CACHE_SIZE.load(Ordering::Relaxed) as f64));
+        object.put(global_object, b"errors", JSValue::js_number(DNS_CACHE_ERRORS.load(Ordering::Relaxed) as f64));
+        object.put(global_object, b"totalCount", JSValue::js_number(GETADDRINFO_CALLS.load(Ordering::Relaxed) as f64));
         Ok(object)
     }
 
@@ -2388,7 +2388,7 @@ pub mod internal {
         GETADDRINFO_CALLS.fetch_add(1, Ordering::Relaxed);
         let mut timestamp_to_store: u32 = 0;
         // is there a cache hit?
-        if !env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_DNS_CACHE.get() {
+        if !env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_DNS_CACHE.get().unwrap_or(false) {
             if let Some(entry) = guard.get(&key, &mut timestamp_to_store) {
                 if preload {
                     drop(guard);

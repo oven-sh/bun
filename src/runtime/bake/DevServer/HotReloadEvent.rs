@@ -243,7 +243,7 @@ impl HotReloadEvent {
                 };
                 // PORT NOTE: mod.rs `incremental_graph::File` is the un-packed shape already.
                 if file.kind == FileKind::Css {
-                    entry_points.append_css(abs_path);
+                    let _ = entry_points.append_css(abs_path);
                 }
             }
         }

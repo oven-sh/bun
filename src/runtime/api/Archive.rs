@@ -984,6 +984,8 @@ struct BlobContext {
 }
 
 impl TaskContext for BlobContext {
+    const TAG: TaskTag = task_tag::ArchiveBlobTask;
+
     fn run(&mut self) {
         self.result = match &self.compress {
             Compression::Gzip(opts) => match compress_gzip(self.store.shared_view(), opts.level) {
@@ -997,26 +999,37 @@ impl TaskContext for BlobContext {
     fn run_from_js(&mut self, global: &JSGlobalObject) -> JsResult<PromiseResult> {
         match core::mem::replace(&mut self.result, BlobResult::Uncompressed) {
             BlobResult::Err(e) => Ok(PromiseResult::Reject(
-                global.create_error_instance("{s}", &[<&'static str>::from(&e).into()]),
+                global.create_error_instance(<&'static str>::from(&e)),
             )),
             BlobResult::Compressed(data) => {
                 // self.result already replaced with Uncompressed above — ownership transferred
                 Ok(PromiseResult::Resolve(match self.output_type {
                     BlobOutputType::Blob => {
-                        Blob::new(Blob::create_with_bytes_and_allocator(data, global, false)).to_js(global)
+                        let _blob_ptr =
+                            Blob::new(Blob::create_with_bytes_and_allocator(data, global, false));
+                        // TODO(port): `Blob::to_js` has duplicate inherent defs (E0034).
+                        todo!("blocked_on: webcore::Blob::to_js duplicate definition")
                     }
-                    BlobOutputType::Bytes => JSValue::create_buffer(global, data),
+                    BlobOutputType::Bytes => {
+                        // Ownership transfers to JSC's deallocator.
+                        JSValue::create_buffer(global, Box::leak(data.into_boxed_slice()))
+                    }
                 }))
             }
             BlobResult::Uncompressed => Ok(match self.output_type {
                 BlobOutputType::Blob => {
-                    let store = Arc::clone(&self.store);
-                    PromiseResult::Resolve(Blob::new(Blob::init_with_store(store, global)).to_js(global))
+                    let _store = self.store.clone();
+                    // TODO(port): `Blob::init_with_store` / `Blob::to_js` have
+                    // duplicate inherent defs in webcore/Blob.rs (E0034).
+                    todo!("blocked_on: webcore::Blob::init_with_store duplicate definition")
                 }
                 BlobOutputType::Bytes => {
                     let dup = self.store.shared_view().to_vec();
                     // TODO(port): Zig matched OOM here and rejected; Rust Vec aborts on OOM.
-                    PromiseResult::Resolve(JSValue::create_buffer(global, dup))
+                    PromiseResult::Resolve(JSValue::create_buffer(
+                        global,
+                        Box::leak(dup.into_boxed_slice()),
+                    ))
                 }
             }),
         }
@@ -1079,6 +1092,8 @@ struct WriteContext {
 }
 
 impl TaskContext for WriteContext {
+    const TAG: TaskTag = task_tag::ArchiveWriteTask;
+
     fn run(&mut self) {
         self.result = self.do_run();
     }
@@ -1087,9 +1102,9 @@ impl TaskContext for WriteContext {
         Ok(match &self.result {
             WriteResult::Success => PromiseResult::Resolve(JSValue::UNDEFINED),
             WriteResult::Err(e) => {
-                PromiseResult::Reject(global.create_error_instance("{s}", &[<&'static str>::from(e).into()]))
+                PromiseResult::Reject(global.create_error_instance(<&'static str>::from(e)))
             }
-            WriteResult::SysErr(sys_err) => PromiseResult::Reject(sys_err.to_js(global)?),
+            WriteResult::SysErr(sys_err) => PromiseResult::Reject(sys_err.to_js(global)),
         })
     }
 }

@@ -836,9 +836,9 @@ pub fn build_with_vm(
     pt.attach();
 
     // Static site generator
-    let server_render_funcs = JSValue::create_empty_array(global, router.types.len())?;
-    let server_param_funcs = JSValue::create_empty_array(global, router.types.len())?;
-    let client_entry_urls = JSValue::create_empty_array(global, router.types.len())?;
+    let server_render_funcs = JSValue::create_empty_array(global, router.types.len()).map_err(js_err)?;
+    let server_param_funcs = JSValue::create_empty_array(global, router.types.len()).map_err(js_err)?;
+    let client_entry_urls = JSValue::create_empty_array(global, router.types.len()).map_err(js_err)?;
 
     for (i, router_type) in router.types.iter().enumerate() {
         if let Some(client_file) = router_type.client_file {
@@ -848,10 +848,10 @@ pub fn build_with_vm(
                 BStr::new(public_path),
                 BStr::new(&pt.output_file(client_file).dest_path),
             ))
-            .to_js(global)?;
-            client_entry_urls.put_index(global, u32::try_from(i).unwrap(), str)?;
+            .to_js(global).map_err(js_err)?;
+            client_entry_urls.put_index(global, u32::try_from(i).unwrap(), str).map_err(js_err)?;
         } else {
-            client_entry_urls.put_index(global, u32::try_from(i).unwrap(), JSValue::NULL)?;
+            client_entry_urls.put_index(global, u32::try_from(i).unwrap(), JSValue::NULL).map_err(js_err)?;
         }
 
         let server_file = OpaqueFileId::init(router_type.server_file.get());
@@ -907,8 +907,8 @@ pub fn build_with_vm(
         } else {
             JSValue::NULL
         };
-        server_render_funcs.put_index(global, u32::try_from(i).unwrap(), server_render_func)?;
-        server_param_funcs.put_index(global, u32::try_from(i).unwrap(), server_param_func)?;
+        server_render_funcs.put_index(global, u32::try_from(i).unwrap(), server_render_func).map_err(js_err)?;
+        server_param_funcs.put_index(global, u32::try_from(i).unwrap(), server_param_func).map_err(js_err)?;
     }
 
     let mut navigatable_routes: Vec<fr::RouteIndex> = Vec::new();
@@ -936,32 +936,32 @@ pub fn build_with_vm(
             BStr::new(public_path),
             BStr::new(&output_file.dest_path),
         ))
-        .to_js(global)?;
+        .to_js(global).map_err(js_err)?;
     }
 
     // Route URL patterns with parameter placeholders.
     // Examples: "/", "/about", "/blog/:slug", "/products/:category/:id"
-    let route_patterns = JSValue::create_empty_array(global, navigatable_routes.len())?;
+    let route_patterns = JSValue::create_empty_array(global, navigatable_routes.len()).map_err(js_err)?;
 
     // File indices for each route's components (page, layouts).
     // Example: [2, 5, 0] = page at index 2, layout at 5, root layout at 0
-    let route_nested_files = JSValue::create_empty_array(global, navigatable_routes.len())?;
+    let route_nested_files = JSValue::create_empty_array(global, navigatable_routes.len()).map_err(js_err)?;
 
     // Router type index (lower 8 bits) and flags (upper 24 bits).
     // Example: 0x00000001 = router type 1, no flags
-    let route_type_and_flags = JSValue::create_empty_array(global, navigatable_routes.len())?;
+    let route_type_and_flags = JSValue::create_empty_array(global, navigatable_routes.len()).map_err(js_err)?;
 
     // Source file paths relative to project root.
     // Examples: "pages/index.tsx", "pages/blog/[slug].tsx"
-    let route_source_files = JSValue::create_empty_array(global, navigatable_routes.len())?;
+    let route_source_files = JSValue::create_empty_array(global, navigatable_routes.len()).map_err(js_err)?;
 
     // Parameter names for dynamic routes (reversed order), null for static routes.
     // Examples: ["slug"] for /blog/[slug], ["id", "category"] for /products/[category]/[id]
-    let route_param_info = JSValue::create_empty_array(global, navigatable_routes.len())?;
+    let route_param_info = JSValue::create_empty_array(global, navigatable_routes.len()).map_err(js_err)?;
 
     // CSS chunk URLs for each route.
     // Example: ["/assets/main.css", "/assets/blog.css"]
-    let route_style_references = JSValue::create_empty_array(global, navigatable_routes.len())?;
+    let route_style_references = JSValue::create_empty_array(global, navigatable_routes.len()).map_err(js_err)?;
 
     let mut params_buf: Vec<&[u8]> = Vec::new();
     for (nav_index, &route_index) in navigatable_routes.iter().enumerate() {
@@ -987,12 +987,9 @@ pub fn build_with_vm(
                 params_buf.push(name);
             }
             fr::Part::CatchAllOptional(_) => {
-                return Err(global
-                    .throw(
-                        "catch-all routes are not supported in static site generation",
-                        format_args!(""),
-                    )
-                    .into());
+                return Err(js_err(global.throw(
+                    "catch-all routes are not supported in static site generation",
+                )));
             }
             _ => {}
         }
@@ -1017,12 +1014,9 @@ pub fn build_with_vm(
                     params_buf.push(name);
                 }
                 fr::Part::CatchAllOptional(_) => {
-                    return Err(global
-                        .throw(
-                            "catch-all routes are not supported in static site generation",
-                            format_args!(""),
-                        )
-                        .into());
+                    return Err(js_err(global.throw(
+                        "catch-all routes are not supported in static site generation",
+                    )));
                 }
                 _ => {}
             }
@@ -1036,8 +1030,8 @@ pub fn build_with_vm(
         }
 
         // Fill styles and file_list
-        let styles = JSValue::create_empty_array(global, css_chunks_count)?;
-        let file_list = JSValue::create_empty_array(global, file_count as usize)?;
+        let styles = JSValue::create_empty_array(global, css_chunks_count).map_err(js_err)?;
+        let file_list = JSValue::create_empty_array(global, file_count as usize).map_err(js_err)?;
 
         next = route.parent;
         file_count = 1;

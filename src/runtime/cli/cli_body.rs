@@ -435,7 +435,7 @@ pub mod command {
             GLOBAL_CLI_CTX = CONTEXT_DATA.assume_init_mut();
         }
 
-        if Tag::USES_GLOBAL_OPTIONS.get(COMMAND) {
+        if bun_options_types::CommandTag::USES_GLOBAL_OPTIONS[COMMAND] {
             // SAFETY: just initialized
             unsafe { (*GLOBAL_CLI_CTX).args = arguments::parse(COMMAND, &mut *GLOBAL_CLI_CTX)? };
         }
@@ -460,23 +460,23 @@ pub mod command {
     }
 
     // std.process.args allocates!
-    struct ArgsIterator<'a> {
-        buf: &'a [&'a ZStr],
+    struct ArgsIterator {
+        buf: bun::Argv,
         i: u32,
     }
 
-    impl<'a> ArgsIterator<'a> {
-        fn new(buf: &'a [&'a ZStr]) -> Self {
+    impl ArgsIterator {
+        fn new(buf: bun::Argv) -> Self {
             Self { buf, i: 0 }
         }
 
-        pub fn next(&mut self) -> Option<&'a [u8]> {
+        pub fn next(&mut self) -> Option<&'static [u8]> {
             if self.buf.len() <= self.i as usize {
                 return None;
             }
             let i = self.i;
             self.i += 1;
-            Some(self.buf[i as usize].as_bytes())
+            Some(self.buf.get(i as usize).unwrap().as_bytes())
         }
 
         pub fn skip(&mut self) -> bool {

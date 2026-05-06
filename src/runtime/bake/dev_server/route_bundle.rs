@@ -20,6 +20,7 @@ pub struct Index(pub u32);
 impl Index {
     #[inline] pub const fn init(v: u32) -> Self { debug_assert!(v < (1 << 30)); Self(v) }
     #[inline] pub const fn get(self) -> u32 { self.0 }
+    #[inline] pub const fn to_optional(self) -> IndexOptional { Some(self) }
 }
 /// `Index.Optional` — packed sentinel in Zig; `Option` here (non-FFI).
 pub type IndexOptional = Option<Index>;

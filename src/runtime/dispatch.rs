@@ -287,8 +287,8 @@ pub fn run_task(
         task_tag::ShellTouchTask => shell_dispatch!(ShellTouchTask),
         task_tag::ShellMkdirTask => shell_dispatch!(ShellMkdirTask),
         task_tag::ShellLsTask => shell_dispatch!(ShellLsTask),
-        task_tag::ShellMvBatchedTask => shell_dispatch!(nested ShellMvBatchedTask),
-        task_tag::ShellMvCheckTargetTask => shell_dispatch!(nested ShellMvCheckTargetTask),
+        task_tag::ShellMvBatchedTask => shell_dispatch!(ShellMvBatchedTask),
+        task_tag::ShellMvCheckTargetTask => shell_dispatch!(ShellMvCheckTargetTask),
         task_tag::ShellRmTask => shell_dispatch!(ShellRmTask),
         task_tag::ShellRmDirTask => {
             let t = cast_ptr!(ShellRmDirTask);
@@ -322,40 +322,30 @@ pub fn run_task(
 
         // ── glob / image / transpiler ────────────────────────────────────
         task_tag::AsyncGlobWalkTask => {
-            let t = cast_ptr!(AsyncGlobWalkTask<'_>);
+            let _t = cast_ptr!(AsyncGlobWalkTask<'_>);
             // Zig: `defer t.deinit(); try t.runFromJS();` — `?` short-circuits
             // before `destroy` only on JsTerminated, which tears down the VM.
-            let _g = scopeguard::guard(t, |p| unsafe {
-                bun_jsc::ConcurrentPromiseTask::destroy(p)
-            });
-            // SAFETY: live until guard runs.
-            unsafe { (*t).run_from_js()? };
+            // `AsyncGlobWalkTask` is currently aliased to the zero-generic
+            // `ConcurrentPromiseTask` stub (see api/glob.rs); the real
+            // `run_from_js`/`destroy` are on the gated generic.
+            todo!("blocked_on: bun_jsc::ConcurrentPromiseTask<WalkTask>::run_from_js");
         }
         task_tag::AsyncImageTask => {
-            let t = cast_ptr!(AsyncImageTask<'_>);
-            let _g = scopeguard::guard(t, |p| unsafe {
-                bun_jsc::ConcurrentPromiseTask::destroy(p)
-            });
-            // SAFETY: live until guard runs.
-            unsafe { (*t).run_from_js()? };
+            let _t = cast_ptr!(AsyncImageTask<'_>);
+            // Body: `defer t.deinit(); try t.runFromJS();`
+            todo!("blocked_on: crate::image::PipelineTask::run_from_js");
         }
         task_tag::AsyncTransformTask => {
-            let t = cast_ptr!(AsyncTransformTask);
-            let _g = scopeguard::guard(t, |p| unsafe {
-                bun_jsc::ConcurrentPromiseTask::destroy(p)
-            });
-            // SAFETY: live until guard runs.
-            unsafe { (*t).run_from_js()? };
+            let _t = cast_ptr!(AsyncTransformTask);
+            // Body: `defer t.deinit(); try t.runFromJS();`
+            todo!("blocked_on: bun_jsc::ConcurrentPromiseTask<TransformTask>::run_from_js");
         }
 
         // ── blob copy/read/write promise tasks ───────────────────────────
         task_tag::CopyFilePromiseTask => {
-            let t = cast_ptr!(CopyFilePromiseTask);
-            let _g = scopeguard::guard(t, |p| unsafe {
-                bun_jsc::ConcurrentPromiseTask::destroy(p)
-            });
-            // SAFETY: live until guard runs.
-            unsafe { (*t).run_from_js()? };
+            let _t = cast_ptr!(CopyFilePromiseTask);
+            // Body: `defer t.deinit(); try t.runFromJS();`
+            todo!("blocked_on: bun_jsc::ConcurrentPromiseTask<CopyFile>::run_from_js");
         }
         task_tag::ReadFileTask => {
             // Body: `defer t.deinit(); try t.runFromJS();`

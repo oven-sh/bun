@@ -566,7 +566,9 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     // SAFETY: `WatcherAtomics::init` / `HotReloadEvent::init_empty` only store `p`
     // as `*const DevServer` for later `concurrent_task.from(dev)`; not dereferenced
     // during construction.
-    unsafe { w!(watcher_atomics, WatcherAtomics::init(p)) };
+    // PORT NOTE: `WatcherAtomics::init` is typed against `dev_server::DevServer`;
+    // cast through the erased pointer while the two struct shapes converge.
+    unsafe { w!(watcher_atomics, WatcherAtomics::init(p as *const () as *const crate::bake::dev_server::DevServer)) };
 
     // This causes a memory leak, but the allocator is otherwise used on multiple threads.
     // (allocator param dropped â global mimalloc)
@@ -2531,12 +2533,12 @@ impl DevServer<'_> {
             }
 
             for entry in &self.incremental_result.framework_routes_affected {
-                if let Some(index) = self.router.route_ptr(entry.route_index).bundle.unwrap_() {
+                if let Some(index) = self.router.route_ptr(entry.route_index()).bundle {
                     self.route_bundle_ptr(index).server_state =
                         route_bundle::State::PossibleBundlingFailures;
                 }
-                if entry.should_recurse_when_visiting {
-                    self.mark_all_route_children_failed(entry.route_index);
+                if entry.should_recurse_when_visiting() {
+                    self.mark_all_route_children_failed(entry.route_index());
                 }
             }
 
@@ -2685,7 +2687,7 @@ impl DevServer<'_> {
                     cursor,
                     "{}/{}.css",
                     ASSET_PREFIX,
-                    bstr::BStr::new(&bun_core::fmt::bytes_to_hex_lower(&item.to_ne_bytes())),
+                    bstr::BStr::new(bun_core::fmt::bytes_to_hex_lower_string(&item.to_ne_bytes()).as_bytes()),
                 )
                 .expect("unreachable");
                 let written = buf.len() - cursor.len();
@@ -2923,14 +2925,14 @@ pub fn finalize_bundle(
     let mut scb_bitset = DynamicBitSet::init_empty(input_file_sources.len())?;
     for ((source_index, ssr_index), ref_index) in scbs
         .list
-        .items_source_index()
+        .source_index()
         .iter()
-        .zip(scbs.list.items_ssr_source_index())
-        .zip(scbs.list.items_reference_source_index())
+        .zip(scbs.list.ssr_source_index())
+        .zip(scbs.list.reference_source_index())
     {
         scb_bitset.set(*source_index as usize);
         scb_bitset.set(*ref_index as usize);
-        if (*ssr_index as usize) < scb_bitset.bit_length() {
+        if (*ssr_index as usize) < scb_bitset.capacity() {
             scb_bitset.set(*ssr_index as usize);
         }
     }
@@ -3012,7 +3014,7 @@ pub fn finalize_bundle(
     for (chunk, metadata) in result.css_chunks().iter_mut().zip(result.css_file_list.values()) {
         debug_assert!(matches!(chunk.content, bundler::chunk::Content::Css(_)));
 
-        let index = bun_js_parser::ast::Index::init(chunk.entry_point.source_index);
+        let index = bun_js_parser::ast::Index::init(chunk.entry_point.source_index());
 
         let code = chunk.intermediate_output.code(
             &bv2.graph,
@@ -3045,7 +3047,7 @@ pub fn finalize_bundle(
             if strings::index_of(first_1024, b"tailwind").is_some() {
                 let entry = map.get_or_put(key)?;
                 if !entry.found_existing {
-                    *entry.key = Box::from(key);
+                    *entry.key_ptr = Box::from(key);
                 }
             } else {
                 if let Some(_entry) = map.fetch_swap_remove(key) {
@@ -3065,7 +3067,7 @@ pub fn finalize_bundle(
     }
 
     for chunk in result.html_chunks().iter_mut() {
-        let index = bun_js_parser::ast::Index::init(chunk.entry_point.source_index);
+        let index = bun_js_parser::ast::Index::init(chunk.entry_point.source_index());
         let compile_result = &chunk.compile_results_for_chunk[0].html();
         let generated_js = dev.generate_javascript_code_for_html_file(
             index,
@@ -3132,12 +3134,12 @@ pub fn finalize_bundle(
         }
     }
     for chunk in result.html_chunks() {
-        let index = bun_js_parser::ast::Index::init(chunk.entry_point.source_index);
+        let index = bun_js_parser::ast::Index::init(chunk.entry_point.source_index());
         dev.client_graph
             .process_chunk_dependencies(&mut ctx, incremental_graph::ProcessMode::Normal, index)?;
     }
     for chunk in result.css_chunks() {
-        let entry_index = bun_js_parser::ast::Index::init(chunk.entry_point.source_index);
+        let entry_index = bun_js_parser::ast::Index::init(chunk.entry_point.source_index());
         dev.client_graph
             .process_chunk_dependencies(&mut ctx, incremental_graph::ProcessMode::Css, entry_index)?;
     }
@@ -4898,21 +4900,26 @@ impl DevServer<'_> {
     pub fn on_file_update(
         &mut self,
         events: &[bun_watcher::Event],
-        changed_files: &[Option<Box<ZStr>>],
+        changed_files: &[bun_watcher::ChangedFilePath],
         watchlist: bun_watcher::ItemList,
     ) {
         debug_assert!(self.magic == Magic::Valid);
         debug_log!("onFileUpdate start");
         let _end = scopeguard::guard((), |_| debug_log!("onFileUpdate end"));
 
-        let slice = watchlist.slice();
+        let mut slice = watchlist.slice();
         let file_paths = slice.items_file_path();
-        let counts = slice.items_count();
+        // SAFETY: column 4 (`Count`) is `u32` per `WatchItemField`.
+        let counts: &mut [u32] =
+            unsafe { slice.items_mut::<u32>(bun_watcher::WatchItemField::Count) };
         let kinds = slice.items_kind();
 
-        let ev = self.watcher_atomics.watcher_acquire_event();
+        let ev_ptr = self.watcher_atomics.watcher_acquire_event();
+        // SAFETY: `watcher_acquire_event` returns a valid `*mut HotReloadEvent`
+        // into `self.watcher_atomics.events`; exclusive on the watcher thread.
+        let ev = unsafe { &mut *ev_ptr };
         let _release =
-            scopeguard::guard((), |_| self.watcher_atomics.watcher_release_and_submit_event(ev));
+            scopeguard::guard((), |_| self.watcher_atomics.watcher_release_and_submit_event(ev_ptr));
 
         let _flush = scopeguard::guard((), |_| self.bun_watcher.flush_evictions());
 
@@ -4936,10 +4943,12 @@ impl DevServer<'_> {
 
             match kind {
                 bun_watcher::Kind::File => {
-                    if event.op.delete || event.op.rename {
+                    if event.op.contains(bun_watcher::Op::DELETE)
+                        || event.op.contains(bun_watcher::Op::RENAME)
+                    {
                         // TODO: audit this line heavily
                         self.bun_watcher
-                            .remove_at_index(event.index, 0, &[], bun_watcher::Kind::File);
+                            .remove_at_index(bun_watcher::Kind::File, event.index, 0, &[]);
                     }
 
                     ev.append_file(file_path);
@@ -4951,7 +4960,7 @@ impl DevServer<'_> {
                         let names = event.names(changed_files);
                         if !names.is_empty() {
                             for maybe_sub_path in names {
-                                ev.append_dir(file_path, maybe_sub_path.as_deref());
+                                ev.append_dir(file_path, maybe_sub_path.map(|s| s.as_bytes()));
                             }
                         } else {
                             ev.append_dir(file_path, None);
@@ -4959,6 +4968,7 @@ impl DevServer<'_> {
                     }
                     #[cfg(not(target_os = "linux"))]
                     {
+                        let _ = changed_files;
                         ev.append_dir(file_path, None);
                     }
                 }
@@ -4970,13 +4980,11 @@ impl DevServer<'_> {
         if !err.path.is_empty() {
             Output::err(
                 err,
-                format_args!(
-                    "failed to watch {:?} for hot-reloading",
-                    bun_core::fmt::quote(&err.path)
-                ),
+                "failed to watch {} for hot-reloading",
+                (bun_core::fmt::quote(&err.path),),
             );
         } else {
-            Output::err(err, "failed to watch files for hot-reloading");
+            Output::err(err, "failed to watch files for hot-reloading", ());
         }
         Output::warn(
             "The development server is still running, but hot-reloading is disabled until a restart.",
@@ -5024,7 +5032,8 @@ impl DevServer<'_> {
         associated_route: framework_router::RouteIndex,
         file_kind: framework_router::FileKind,
     ) -> Result<OpaqueFileId, bun_core::Error> {
-        let index = self.server_graph.insert_stale_extra(abs_path, false, true)?;
+        let index = self.server_graph.insert_stale_extra(abs_path, false, true)
+            .map_err(bun_core::Error::from)?;
         self.route_lookup.put(
             index,
             RouteIndexAndRecurseFlag::new(
@@ -5052,13 +5061,13 @@ impl DevServer<'_> {
         ty: framework_router::FileKind,
     ) -> Result<(), AllocError> {
         // TODO: maybe this should track the error, send over HmrSocket?
-        Output::err_generic(format_args!(
+        Output::err_generic(
             "Multiple {} matching the same route pattern is ambiguous",
-            match ty {
+            (match ty {
                 framework_router::FileKind::Page => "pages",
                 framework_router::FileKind::Layout => "layout",
-            }
-        ));
+            },),
+        );
         Output::pretty_errorln(format_args!("  - <blue>{}<r>", bstr::BStr::new(rel_path)));
         let mut buf = paths::path_buffer_pool::get();
         Output::pretty_errorln(format_args!(

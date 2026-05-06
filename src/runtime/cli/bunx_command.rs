@@ -451,7 +451,7 @@ impl BunxCommand {
                 }
                 #[cfg(not(windows))]
                 {
-                    let stat = match target_package_json.stat().unwrap_result() {
+                    let stat = match target_package_json.stat() {
                         Ok(s) => s,
                         Err(_) => break 'is_stale true,
                     };
@@ -470,6 +470,7 @@ impl BunxCommand {
         }
 
         let len = {
+            let total = subpath.len();
             let mut cursor: &mut [u8] = &mut subpath[..];
             write!(
                 cursor,
@@ -479,7 +480,7 @@ impl BunxCommand {
                 pkg = BStr::new(package_name),
             )
             .expect("unreachable");
-            subpath.len() - cursor.len()
+            total - cursor.len()
         };
         subpath[len] = 0;
         // SAFETY: subpath[len] == 0 written above
@@ -519,11 +520,11 @@ impl BunxCommand {
     }
 
     fn exit_with_usage() -> ! {
-        Command::Tag::print_help(Command::Tag::BunxCommand, false);
+        crate::cli::command::tag_print_help(Command::Tag::BunxCommand, false);
         Global::exit(1);
     }
 
-    pub fn exec(ctx: &mut Command::Context, argv: &[&'static ZStr]) -> Result<(), bun_core::Error> {
+    pub fn exec(ctx: &mut ContextData, argv: &[&'static ZStr]) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         // Don't log stuff
         ctx.debug.silent = true;

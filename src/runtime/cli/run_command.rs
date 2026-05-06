@@ -4080,10 +4080,14 @@ impl RunCommand {
                     break 'brk sys::open_file_absolute_z(file_path_z, sys::OpenFlags::READ_ONLY);
                 } else {
                     let mut path_buf_2 = PathBuffer::uninit();
-                    let Ok(cwd) = bun_core::getcwd(&mut path_buf_2) else { return false };
+                    // SAFETY: bun_paths::PathBuffer and bun_core::PathBuffer are
+                    // layout-identical newtype wrappers over `[u8; MAX_PATH_BYTES]`.
+                    let Ok(cwd) = bun_core::getcwd(unsafe {
+                        &mut *(::core::ptr::addr_of_mut!(path_buf_2) as *mut bun_core::PathBuffer)
+                    }) else { return false };
                     let cwd_len = cwd.len();
                     path_buf_2[cwd_len] = SEP;
-                    let parts = [script_name_to_search];
+                    let parts: [&[u8]; 1] = [script_name_to_search];
                     file_path = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
                         &path_buf_2[..cwd_len + 1],
                         &mut script_name_buf,
@@ -4100,20 +4104,20 @@ impl RunCommand {
                 }
             };
             let Ok(std_file) = opened else { return false };
-            let Ok(file) = Fd::from_std_file(std_file)
-                .make_libuv_owned_for_syscall(sys::Tag::open, sys::ErrorCase::CloseOnFail)
-                .unwrap_result()
+            // `bun.FD.fromStdFile(f)` — `sys::File { handle: Fd }` already wraps the fd.
+            let Ok(file) = std_file.handle
+                .make_lib_uv_owned_for_syscall(sys::Tag::open, sys::ErrorCase::CloseOnFail)
             else {
                 return false;
             };
             // PORT NOTE: defer file.close() — using scopeguard
-            let _close = scopeguard::guard(file, |f| f.close());
-            let file = *_close;
+            let _close = scopeguard::guard(file, |f: Fd| f.close());
+            let file: Fd = *_close;
 
             match sys::fstat(file) {
                 sys::Result::Ok(stat) => {
                     // directories cannot be run. if only there was a faster way to check this
-                    if sys::S::ISDIR(u32::try_from(stat.mode).unwrap()) {
+                    if sys::S::ISDIR(stat.st_mode as _) {
                         return false;
                     }
                 }

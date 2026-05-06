@@ -228,19 +228,29 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         #[cfg(not(windows))]
         {
             let g = Self::ensure_posix_group(vm);
-            let Some(sock) = Socket::from_fd(
-                g,
+            // PORT NOTE: Zig `Socket.fromFd(g, .dynamic, fd, Self, self, null, true)`
+            // wraps `g.fromFd(...)` and stashes `*Self` into the ext slot.
+            // `bun_uws::NewSocketHandler` has no `from_fd` yet, so inline the
+            // shim against `SocketGroup::from_fd` here.
+            let raw = g.from_fd(
                 uws::SocketKind::Dynamic,
-                fd,
-                self as *mut Self,
                 None,
+                core::mem::size_of::<*mut Self>() as core::ffi::c_int,
+                fd.native(),
                 true,
-            ) else {
+            );
+            if raw.is_null() {
                 // us_socket_from_fd does NOT take ownership on failure; leaving
                 // the inherited IPC endpoint open keeps the peer process alive.
                 fd.close();
                 return false;
-            };
+            }
+            // SAFETY: `raw` is a freshly-created live us_socket_t; ext was
+            // sized for `*mut Self` above.
+            unsafe {
+                *(*raw).ext::<*mut Self>() = self as *mut Self;
+            }
+            let sock = Socket::from(raw);
             self.backend.socket = sock;
             sock.set_timeout(0);
             true
@@ -453,7 +463,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         let mut head: usize = 0;
         while self.r#in.len() - head >= 5 {
             let len = u32::from_le_bytes(self.r#in[head..][..4].try_into().unwrap());
-            if len > Frame::MAX_PAYLOAD {
+            if len > frame::MAX_PAYLOAD {
                 self.mark_done();
                 return;
             }

@@ -223,10 +223,11 @@ fn get_argv(
         cmds_array.next()?.unwrap(),
     )?;
 
-    *argv0 = Some(argv0_result.argv0.as_ptr() as *const c_char);
-    argv.push(Some(argv0_result.arg0.as_ptr() as *const c_char));
-    // TODO(port): lifetime — argv0_result.{argv0,arg0} are owned Box<ZStr> and drop at end of this
-    // fn. Phase B: collect into a backing Vec<Box<ZStr>> in the caller that lives past spawn_process.
+    *argv0 = Some(argv0_result.argv0.as_ptr());
+    argv.push(Some(argv0_result.arg0.as_ptr()));
+    // TODO(port): lifetime — argv0_result.{argv0,arg0} are owned ZBox and drop at end of this
+    // fn. Phase B: collect into a backing Vec<ZBox> in the caller that lives past spawn_process.
+    core::mem::forget(argv0_result);
 
     let mut arg_index: usize = 1;
     while let Some(value) = cmds_array.next()? {
@@ -235,7 +236,7 @@ fn get_argv(
 
         // Check for null bytes in argument (security: prevent null byte injection)
         if arg.index_of_ascii_char(0).is_some() {
-            return global_this
+            return Err(global_this
                 .err(
                     jsc::ErrorCode::INVALID_ARG_VALUE,
                     format_args!(
@@ -244,16 +245,18 @@ fn get_argv(
                         arg.to_zig_string()
                     ),
                 )
-                .throw();
+                .throw());
         }
 
-        // TODO(port): lifetime — owned Box<ZStr> dropped at end of loop body; Phase B: collect into backing Vec.
-        argv.push(Some(arg.to_owned_slice_z()?));
+        // TODO(port): lifetime — owned ZBox dropped at end of loop body; Phase B: collect into backing Vec.
+        let owned = arg.to_owned_slice_z();
+        argv.push(Some(owned.as_ptr()));
+        core::mem::forget(owned);
         arg_index += 1;
     }
 
     if argv.is_empty() {
-        return global_this.throw_invalid_arguments("cmd must be an array of strings", format_args!(""));
+        return Err(global_this.throw_invalid_arguments("cmd must be an array of strings"));
     }
     Ok(())
 }

@@ -269,8 +269,10 @@ impl FileResponseStream {
             bun_uws::WriteResult::Backpressure(_) => {
                 // release the read ref; on_writable re-takes it
                 let _guard2 = scopeguard::guard((), move |_| unsafe { Self::deref(this) });
-                self.resp
-                    .on_writable::<FileResponseStream>(Self::on_writable, self);
+                self.resp.on_writable(
+                    |p: *mut FileResponseStream, off, r| unsafe { (*p).on_writable(off, r) },
+                    self as *mut FileResponseStream,
+                );
                 #[cfg(not(unix))]
                 self.reader.pause();
                 false
@@ -332,10 +334,10 @@ impl FileResponseStream {
                 let mut off: i64 = i64::try_from(self.sendfile.offset).unwrap();
                 // TODO(port): move to bun_sys::linux — std.os.linux.sendfile
                 let rc = bun_sys::linux::sendfile(
-                    self.sendfile.socket_fd.cast(),
-                    self.fd.cast(),
+                    self.sendfile.socket_fd.native(),
+                    self.fd.native(),
                     &mut off,
-                    adjusted,
+                    adjusted as usize,
                 );
                 let errno = sys::get_errno(rc);
                 let sent: u64 =
@@ -352,8 +354,8 @@ impl FileResponseStream {
                         }
                         return self.arm_sendfile_writable();
                     }
-                    sys::Errno::INTR => continue,
-                    sys::Errno::AGAIN => return self.arm_sendfile_writable(),
+                    sys::Errno::EINTR => continue,
+                    sys::Errno::EAGAIN => return self.arm_sendfile_writable(),
                     _ => {
                         self.fail_with(sys::Error {
                             errno: errno as _,
@@ -422,8 +424,10 @@ impl FileResponseStream {
         bun_output::scoped_log!(FileResponseStream, "armSendfileWritable");
         if !self.sendfile.has_set_on_writable {
             self.sendfile.has_set_on_writable = true;
-            self.resp
-                .on_writable::<FileResponseStream>(Self::on_writable, self);
+            self.resp.on_writable(
+                |p: *mut FileResponseStream, off, r| unsafe { (*p).on_writable(off, r) },
+                self as *mut FileResponseStream,
+            );
         }
         self.resp.mark_needs_more();
         true
@@ -505,7 +509,9 @@ impl FileResponseStream {
     }
 
     pub fn event_loop(&self) -> EventLoopHandle {
-        EventLoopHandle::init(self.vm.event_loop())
+        // SAFETY: `vm` is `&'static VirtualMachine` (LIFETIMES.tsv); event_loop()
+        // returns a `*mut EventLoop` we reborrow as `&EventLoop` for the handle.
+        EventLoopHandle::init(unsafe { &*(*self.vm).event_loop() })
     }
 
     pub fn r#loop(&self) -> *mut aio::Loop {
@@ -531,13 +537,15 @@ impl FileResponseStream {
     /// zero-ref path has write provenance back to the original allocation
     /// instead of being laundered through a `&T -> *const T -> *mut T` cast.
     pub unsafe fn deref(this: *mut Self) {
-        let n = (*this).ref_count.get() - 1;
-        (*this).ref_count.set(n);
-        if n == 0 {
-            // SAFETY: intrusive ref_count just reached zero — no other live
-            // references. Dropping the Box runs `impl Drop` (fd close) and
-            // field drops.
-            drop(Box::from_raw(this));
+        unsafe {
+            let n = (*this).ref_count.get() - 1;
+            (*this).ref_count.set(n);
+            if n == 0 {
+                // SAFETY: intrusive ref_count just reached zero — no other live
+                // references. Dropping the Box runs `impl Drop` (fd close) and
+                // field drops.
+                drop(Box::from_raw(this));
+            }
         }
     }
 }
@@ -552,7 +560,7 @@ impl Drop for FileResponseStream {
             #[cfg(windows)]
             Closer::close(self.fd, bun_sys::windows::libuv::Loop::get());
             #[cfg(not(windows))]
-            Closer::close(self.fd);
+            Closer::close(self.fd, ());
         }
     }
 }

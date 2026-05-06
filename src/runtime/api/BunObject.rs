@@ -1936,7 +1936,7 @@ pub extern "C" fn Bun__escapeHTML8(
                 debug_assert!(escaped_html.len() > input_slice.len());
 
                 // assert we do not allocate a new string unnecessarily
-                debug_assert!(input_slice != escaped_html);
+                debug_assert!(input_slice != &escaped_html[..]);
             }
 
             if input_slice.len() <= 32 {
@@ -1945,22 +1945,29 @@ pub extern "C" fn Bun__escapeHTML8(
                 return out;
             }
 
-            ZigString::init(&escaped_html).to_external_value(global_object)
+            // SAFETY: ownership of `escaped_html` transfers to JSC's
+            // external-string finalizer (mimalloc-backed); do not drop here.
+            let leaked: &'static [u8] = Box::leak(escaped_html);
+            ZigString::init(leaked).to_external_value(global_object)
         }
     }
 }
 
 #[bun_jsc::host_fn]
 pub fn alloc_unsafe(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let arguments = callframe.arguments_old(1);
+    let arguments = callframe.arguments_old::<1>();
     let size = arguments.ptr[0];
-    if !size.is_uint32_as_any_int() {
-        return global_this.throw_invalid_arguments("Expected a positive number", format_args!(""));
+    // SAFETY: pure FFI predicate; C++ handles any tagged JSValue.
+    if !unsafe { super::JSC__JSValue__isUInt32AsAnyInt(size) } {
+        return Err(global_this.throw_invalid_arguments("Expected a positive number"));
     }
-    Ok(JSValue::create_uninitialized_uint8_array(
-        global_this,
-        size.to_uint64_no_truncate(),
-    ))
+    // SAFETY: `size` encodes a non-negative integer (checked above); `global_this` is live.
+    Ok(unsafe {
+        super::JSC__JSValue__createUninitializedUint8Array(
+            global_this,
+            super::JSC__JSValue__toUInt64NoTruncate(size) as usize,
+        )
+    })
 }
 
 #[bun_jsc::host_fn]
@@ -1972,8 +1979,10 @@ pub fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
 
     #[cfg(not(windows))]
     {
-        let arguments_ = callframe.arguments_old(2);
-        let mut args = CallFrame::ArgumentsSlice::init(global_this.bun_vm(), arguments_.slice());
+        let arguments_ = callframe.arguments_old::<2>();
+        // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
+        let vm = unsafe { &*global_this.bun_vm() };
+        let mut args = ArgumentsSlice::init(vm, arguments_.slice());
 
         let mut buf = PathBuffer::uninit();
         let path = 'brk: {
@@ -1981,8 +1990,8 @@ pub fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
                 if path.is_string() {
                     let path_str = path.to_slice(global_this)?;
                     if path_str.len() > MAX_PATH_BYTES {
-                        return global_this
-                            .throw_invalid_arguments("Path too long", format_args!(""));
+                        return Err(global_this
+                            .throw_invalid_arguments("Path too long"));
                     }
                     let paths = &[path_str.slice()];
                     break 'brk bun_paths::resolve_path::join_abs_string_buf::<
@@ -1994,7 +2003,7 @@ pub fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
                     );
                 }
             }
-            return global_this.throw_invalid_arguments("Expected a path", format_args!(""));
+            return Err(global_this.throw_invalid_arguments("Expected a path"));
         };
 
         let path_len = path.len();
@@ -2028,10 +2037,9 @@ pub fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
             if let Some(value) = opts.get(global_this, "size")? {
                 let size_value = value.coerce_to_int64(global_this)?;
                 if size_value < 0 {
-                    return global_this.throw_invalid_arguments(
+                    return Err(global_this.throw_invalid_arguments(
                         "size must be a non-negative integer",
-                        format_args!(""),
-                    );
+                    ));
                 }
                 map_size = Some(usize::try_from(size_value).unwrap());
             }
@@ -2039,10 +2047,9 @@ pub fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
             if let Some(value) = opts.get(global_this, "offset")? {
                 let offset_value = value.coerce_to_int64(global_this)?;
                 if offset_value < 0 {
-                    return global_this.throw_invalid_arguments(
+                    return Err(global_this.throw_invalid_arguments(
                         "offset must be a non-negative integer",
-                        format_args!(""),
-                    );
+                    ));
                 }
                 offset = usize::try_from(offset_value).unwrap();
                 // std.mem.alignBackwardAnyAlign(usize, offset, pageSize())
@@ -2062,14 +2069,14 @@ pub fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
             let _ = sys::munmap(ptr as *mut u8, size as usize);
         }
 
-        Ok(jsc::array_buffer::make_typed_array_with_bytes_no_copy(
+        jsc::array_buffer::make_typed_array_with_bytes_no_copy(
             global_this,
             jsc::TypedArrayType::TypeUint8,
             map.as_ptr() as *mut c_void,
             map.len(),
-            munmap_dealloc,
+            Some(munmap_dealloc),
             map.len() as *mut c_void,
-        ))
+        )
     }
 }
 

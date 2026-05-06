@@ -56,7 +56,29 @@ pub enum Backend {
     System = 0,
     Bun = 1,
 }
-// PORT NOTE: `Backend.Map = bun.ComptimeEnumMap(Backend)` → strum::EnumString (keys == variant names).
+// PORT NOTE: `Backend.Map = bun.ComptimeEnumMap(Backend)` → phf map keyed by lowercase variant name.
+pub static BACKEND_MAP: phf::Map<&'static [u8], Backend> = phf::phf_map! {
+    b"system" => Backend::System,
+    b"bun" => Backend::Bun,
+};
+
+impl bun_jsc::FromJsEnum for Backend {
+    fn from_js_value(
+        v: bun_jsc::JSValue,
+        global: &bun_jsc::JSGlobalObject,
+        property_name: &'static str,
+    ) -> bun_jsc::JsResult<Self> {
+        use bun_jsc::ComptimeStringMapExt as _;
+        match BACKEND_MAP.from_js(global, v)? {
+            Some(e) => Ok(e),
+            None => Err(global.throw_invalid_argument_type(
+                property_name,
+                "value",
+                "\"system\" | \"bun\"",
+            )),
+        }
+    }
+}
 
 // PORT NOTE: Zig `pub var backend` is read from WorkPool threads + written from JS;
 // "torn read of a 1-byte enum is fine" → relaxed atomic is the safe-Rust spelling.
@@ -486,20 +508,23 @@ impl Encoded {
 }
 
 pub fn encode(rgba: &[u8], width: u32, height: u32, opts: EncodeOptions) -> Result<Encoded, Error> {
+    // SAFETY: `EncodeOptions.icc_profile` is borrowed from the caller for the
+    // duration of this call (Phase-A raw-ptr stand-in for a lifetime param).
+    let icc: Option<&[u8]> = opts.icc_profile.map(|p| unsafe { p.as_ref() });
     match opts.format {
-        Format::Jpeg => jpeg::encode(rgba, width, height, opts.quality, opts.progressive, opts.icc_profile),
+        Format::Jpeg => jpeg::encode(rgba, width, height, opts.quality, opts.progressive, icc),
         // PNG carries iCCP on both truecolour and indexed images — quantise
         // operates on raw RGB numbers without converting colour spaces, so
         // the palette entries are still in the source space and need the
         // profile to be interpreted correctly (see PNG spec §11.3.3.3).
         Format::Png => {
             if opts.palette {
-                png::encode_indexed(rgba, width, height, opts.compression_level, opts.colors, opts.dither, opts.icc_profile)
+                png::encode_indexed(rgba, width, height, opts.compression_level, opts.colors, opts.dither, icc)
             } else {
-                png::encode(rgba, width, height, opts.compression_level, opts.icc_profile)
+                png::encode(rgba, width, height, opts.compression_level, icc)
             }
         }
-        Format::Webp => webp::encode(rgba, width, height, opts.quality, opts.lossless, opts.icc_profile),
+        Format::Webp => webp::encode(rgba, width, height, opts.quality, opts.lossless, icc),
         // Same routing rationale as decode(): the OS encoder is a capability
         // fallback, not a fast path — ImageIO's quality scale doesn't match
         // libjpeg-turbo's, and it can't honour compressionLevel/palette/

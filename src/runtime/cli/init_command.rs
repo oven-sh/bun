@@ -1050,8 +1050,8 @@ impl Assets {
             bun_sys::O::CREAT | bun_sys::O::EXCL | bun_sys::O::WRONLY,
             0o666,
         )?;
-        let _close = scopeguard::guard(&file, |f| {
-            let _ = f.close();
+        let _close = scopeguard::guard(file.handle(), |fd| {
+            let _ = bun_sys::close(fd);
         });
 
         file.write_all(contents)?;
@@ -1091,8 +1091,8 @@ impl Assets {
             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
             0o666,
         )?;
-        let _close = scopeguard::guard(&file, |f| {
-            let _ = f.close();
+        let _close = scopeguard::guard(file.handle(), |fd| {
+            let _ = bun_sys::close(fd);
         });
 
         // Write contents of known assets to the new file. Template assets get formatted.
@@ -1136,8 +1136,8 @@ impl Assets {
             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
             0o666,
         )?;
-        let _close = scopeguard::guard(&file, |f| {
-            let _ = f.close();
+        let _close = scopeguard::guard(file.handle(), |fd| {
+            let _ = bun_sys::close(fd);
         });
 
         if is_template {

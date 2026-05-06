@@ -1434,21 +1434,24 @@ impl<'a> Repl<'a> {
 
         let mut resolved_result = result;
         if let Some(promise) = result.as_promise() {
-            promise.set_handled();
+            // SAFETY: `promise` is a live JSC heap cell; `vm.jsc_vm` is the
+            // owning JSC VM handle for this thread.
+            unsafe { (*promise).set_handled() };
             self.enable_signals_during_wait();
             // PORT NOTE: reshaped for borrowck — disable_signals_during_wait called on each path
-            vm.wait_for_promise(jsc::AnyPromise::Normal(promise));
-            if vm.jsc_vm.execution_forbidden() {
-                vm.jsc_vm.set_execution_forbidden(false);
+            vm_mut(vm).wait_for_promise(jsc::AnyPromise::Normal(promise));
+            if unsafe { (*vm.jsc_vm).execution_forbidden() } {
+                vm_set_execution_forbidden(vm.jsc_vm, false);
                 global.clear_termination_exception();
                 self.print(format_args!("\n"));
                 self.disable_signals_during_wait();
                 return;
             }
-            match promise.status() {
-                PromiseStatus::Fulfilled => resolved_result = promise.result(vm.jsc_vm),
+            let jsc_vm_ref = unsafe { &*vm.jsc_vm };
+            match unsafe { (*promise).status() } {
+                PromiseStatus::Fulfilled => resolved_result = unsafe { (*promise).result(jsc_vm_ref) },
                 PromiseStatus::Rejected => {
-                    let rejection = promise.result(vm.jsc_vm);
+                    let rejection = unsafe { (*promise).result(jsc_vm_ref) };
                     self.set_last_error(rejection);
                     self.print_js_error(rejection);
                     self.disable_signals_during_wait();
@@ -1464,13 +1467,13 @@ impl<'a> Repl<'a> {
 
         let mut actual_result = resolved_result;
         if resolved_result.is_object() {
-            let maybe_value = match resolved_result.get_own(global, "value") {
+            let maybe_value = match resolved_result.get_own(global, &bun_str::String::static_("value")) {
                 Ok(v) => v,
                 Err(err) => {
                     let exc = global.take_exception(err);
                     self.set_last_error(exc);
                     self.print_js_error(exc);
-                    vm.tick();
+                    vm_mut(vm).tick();
                     return;
                 }
             };
@@ -1481,8 +1484,8 @@ impl<'a> Repl<'a> {
 
         self.set_last_result(actual_result);
         if !actual_result.is_undefined() {
-            let global_this = global.to_js_value();
-            global_this.put(global, "_", actual_result);
+            let global_this = global_to_js_value(global);
+            global_this.put(global, b"_", actual_result);
         }
 
         if let Err(err) = self.copy_value_to_clipboard(actual_result) {
@@ -1490,7 +1493,7 @@ impl<'a> Repl<'a> {
             self.set_last_error(exc);
             self.print_js_error(exc);
         }
-        vm.tick();
+        vm_mut(vm).tick();
     }
 
     /// Format a JS value as a string suitable for clipboard.

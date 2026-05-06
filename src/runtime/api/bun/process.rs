@@ -3781,7 +3781,7 @@ pub mod sync {
 
         let process = match spawn_process_posix(&options.to_spawn_options(no_orphans), argv, envp)? {
             Maybe::Err(err) => return Ok(Maybe::Err(err)),
-            Maybe::Result(proces) => proces,
+            Maybe::Ok(proces) => proces,
         };
         // Negative → kill() in the C++ signal forwarder targets the pgroup, so
         // a SIGTERM/SIGINT delivered to `bun run` reaches every descendant
@@ -3833,7 +3833,7 @@ pub mod sync {
                     loop {
                         match posix_spawn::wait4(-1, libc::WNOHANG as u32, None) {
                             Maybe::Err(_) => break,
-                            Maybe::Result(w) => {
+                            Maybe::Ok(w) => {
                                 if w.pid <= 0 {
                                     break;
                                 }
@@ -3914,7 +3914,7 @@ pub mod sync {
                             cleanup_spawn_posix(&mut out, &out_fds, &process, success);
                             return Ok(Maybe::Err(err));
                         }
-                        Maybe::Result(st) => break 'blk st,
+                        Maybe::Ok(st) => break 'blk st,
                     }
                 }
                 // null: kqueue()/kevent-receipt failed — fall through to the
@@ -3942,7 +3942,7 @@ pub mod sync {
                         continue;
                     }
                     poll_fds_buf[poll_len] = libc::pollfd {
-                        fd: fd.cast(),
+                        fd: fd.native(),
                         events: libc::POLLIN | libc::POLLERR | libc::POLLHUP,
                         revents: 0,
                     };
@@ -3956,7 +3956,7 @@ pub mod sync {
                 let rc = unsafe { libc::poll(poll_fds_buf.as_mut_ptr(), poll_len as _, -1) };
                 match bun_sys::get_errno(rc as isize) {
                     bun_sys::E::SUCCESS => {}
-                    bun_sys::E::AGAIN | bun_sys::E::INTR => continue,
+                    bun_sys::E::EAGAIN | bun_sys::E::EINTR => continue,
                     err => {
                         cleanup_spawn_posix(&mut out, &out_fds, &process, success);
                         return Ok(Maybe::Err(bun_sys::Error::from_code(err, bun_sys::Tag::poll)));
@@ -3971,8 +3971,7 @@ pub mod sync {
             for (idx, &memfd) in process.memfds[1..].iter().enumerate() {
                 if memfd {
                     out[idx] =
-                        bun_sys::File::from(out_fds[idx]).read_to_end().bytes;
-                    // TODO(port): bun_sys::File::read_to_end() API shape
+                        bun_sys::File::from(out_fds[idx]).read_to_end().unwrap_or_default();
                 }
             }
         }
@@ -3981,7 +3980,7 @@ pub mod sync {
         let stdout = core::mem::take(&mut out[0]);
         let stderr = core::mem::take(&mut out[1]);
         cleanup_spawn_posix(&mut out, &out_fds, &process, success);
-        Ok(Maybe::Result(Result { status, stdout, stderr }))
+        Ok(Maybe::Ok(Result { status, stdout, stderr }))
     }
 
     #[cfg(unix)]

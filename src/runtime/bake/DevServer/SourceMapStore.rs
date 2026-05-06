@@ -537,7 +537,7 @@ impl SourceMapStore {
                 // TODO(port): Zig left these `undefined`; caller fills them. Using zeroed/default placeholders.
                 overlapping_memory_cost: 0,
                 paths: Box::default(),
-                files: MultiArrayList::default(),
+                files: Vec::new(),
             };
             Ok(PutOrIncrementRefCount::Uninitialized(gop.value_ptr))
         } else {
@@ -587,7 +587,7 @@ impl SourceMapStore {
         let mut new_weak_ref_count: u32 = 1;
 
         let mut found = false;
-        for i in 0..self.weak_refs.count() {
+        for i in 0..self.weak_refs.readable_length() {
             let r = self.weak_refs.peek_item(i);
             if r.key() == key {
                 new_weak_ref_count += r.count;
@@ -598,14 +598,15 @@ impl SourceMapStore {
         }
         if !found {
             // If full, one must be expired to make room.
-            if self.weak_refs.count() >= WEAK_REF_ENTRY_MAX {
+            if self.weak_refs.readable_length() >= WEAK_REF_ENTRY_MAX {
                 let first = self.weak_refs.read_item().unwrap();
                 self.unref_count(first.key(), first.count);
-                if self.weak_ref_sweep_timer.state == EventLoopTimer::State::ACTIVE
+                if self.weak_ref_sweep_timer.state == EventLoopTimerState::ACTIVE
                     && self.weak_ref_sweep_timer.next.sec == first.expire
                 {
-                    self.owner().vm.timer.remove(&mut self.weak_ref_sweep_timer);
-                    // TODO(port): borrowck — owner() borrows self mutably while weak_ref_sweep_timer is a field of self.
+                    // `(*owner.vm).timer` is `()` upstream; the real `timer::All` lives behind
+                    // an opaque per-VM handle that bun_runtime hasn't bridged yet.
+                    todo!("blocked_on: bun_jsc::VirtualMachine::timer.remove");
                 }
             }
         }
@@ -632,7 +633,7 @@ impl SourceMapStore {
             return false;
         }
         let mut found = false;
-        for i in 0..self.weak_refs.count() {
+        for i in 0..self.weak_refs.readable_length() {
             let r = self.weak_refs.peek_item_mut(i);
             if r.key() == key {
                 r.count = r.count.saturating_sub(1);
@@ -661,7 +662,7 @@ impl SourceMapStore {
     }
 
     pub fn locate_weak_ref(&self, key: Key) -> Option<LocateWeakRefResult> {
-        for i in 0..self.weak_refs.count() {
+        for i in 0..self.weak_refs.readable_length() {
             let r = self.weak_refs.peek_item(i);
             if r.key() == key {
                 return Some(LocateWeakRefResult { index: i, r#ref: r });

@@ -1571,11 +1571,11 @@ impl<S: GraphSide> IncrementalGraph<S> {
         // don't call this function for CSS sources
         debug_assert!(!ctx.loaders[index.get() as usize].is_css());
 
-        for import_record in ctx.import_records[index.get() as usize].slice() {
+        'records: for import_record in ctx.import_records[index.get() as usize].slice() {
             // When an import record is duplicated, it gets marked unused.
             // This happens in `ConvertESMExportsForHmr.deduplicatedImport`
             // There is still a case where deduplication must happen.
-            if import_record.flags.is_unused {
+            if import_record.flags.contains(bun_options_types::ImportRecordFlags::IS_UNUSED) {
                 continue;
             }
 
@@ -1585,13 +1585,12 @@ impl<S: GraphSide> IncrementalGraph<S> {
                     let key = import_record.path.key_for_incremental_graph();
                     let imported_file_index: FileIndex = 'brk: {
                         if import_record.source_index.is_valid() {
-                            if let Some(i) =
-                                ctx.get_cached_index(S::SIDE, import_record.source_index).unwrap()
-                            {
-                                break 'brk i;
+                            let cached = *ctx.get_cached_index(S::SIDE, import_record.source_index.into());
+                            if cached.raw() != u32::MAX {
+                                break 'brk FileIndex::init(cached.raw());
                             }
                         }
-                        let Some(idx) = self.bundled_files.get_index(key) else {
+                        let Some(idx) = self.get_index_by_slice(key) else {
                             break 'try_index_record;
                         };
                         FileIndex::init(u32::try_from(idx).unwrap())
@@ -1608,13 +1607,14 @@ impl<S: GraphSide> IncrementalGraph<S> {
                         // If the edge has already been seen, it will be skipped
                         // to ensure duplicate edges never exist.
                         if gop.value_ptr.seen {
-                            continue;
+                            continue 'records;
                         }
                         let lookup = gop.value_ptr;
                         lookup.seen = true;
-                        let dep = &mut self.edges[lookup.edge_index.get() as usize];
+                        let edge_index = lookup.edge_index;
+                        let dep = &mut self.edges[edge_index.get() as usize];
                         dep.next_import = *new_imports;
-                        *new_imports = lookup.edge_index.to_optional();
+                        *new_imports = edge_index.to_optional();
                     } else {
                         // A new edge is needed to represent the dependency and import.
                         let first_dep_val = self.first_dep[imported_file_index.get() as usize];
@@ -1695,7 +1695,7 @@ impl<S: GraphSide> IncrementalGraph<S> {
                 let file = g.get_file_by_index(file_index);
                 let dev = g.owner();
                 if file.is_route {
-                    let route_index = dev.route_lookup.get(&file_index).copied().unwrap_or_else(|| {
+                    let route_index = dev.route_lookup.get(&ig::FileIndex::init(file_index.get())).copied().unwrap_or_else(|| {
                         Output::panic(format_args!(
                             "Route not in lookup index: {} {}",
                             file_index.get(),
@@ -1706,7 +1706,7 @@ impl<S: GraphSide> IncrementalGraph<S> {
                     dev.incremental_result.framework_routes_affected.push(route_index);
                 }
                 if file.is_client_component_boundary {
-                    dev.incremental_result.client_components_affected.push(file_index);
+                    dev.incremental_result.client_components_affected.push(ig::FileIndex::init(file_index.get()));
                 }
                 // Certain files do not propagate updates to dependencies.
                 if goal == TraceDependencyGoal::StopAtBoundary && file.stops_dependency_trace() {
@@ -1722,13 +1722,8 @@ impl<S: GraphSide> IncrementalGraph<S> {
                 let dev = g.owner();
                 if file.is_hmr_root {
                     let key = g.bundled_files.keys()[file_index.get() as usize].clone();
-                    let index = dev.server_graph.get_file_index(&key).unwrap_or_else(|| {
-                        Output::panic(format_args!(
-                            "Server Incremental Graph is missing component for {}",
-                            bun_fmt::quote(&key)
-                        ))
-                    });
-                    dev.server_graph.trace_dependencies(index, gts, goal, index)?;
+                    let _ = (&key, &dev.server_graph, gts, goal);
+                    // TODO(port): blocked_on: dev_server::incremental_graph::IncrementalGraph::get_file_index/trace_dependencies
                 } else if let Some(route_bundle_index) = file.html_route_bundle_index {
                     // If the HTML file itself was modified, or an asset was
                     // modified, this must be a hard reload. Otherwise just

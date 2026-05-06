@@ -294,6 +294,26 @@ const _: () = {
 };
 
 impl<'a> Subprocess<'a> {
+    /// Debug-assert the per-stdio spawn result is well-formed.
+    #[inline]
+    pub fn assert_stdio_result(result: &StdioResult) {
+        assert_stdio_result(*result);
+    }
+
+    /// Obtain `&mut Process` through the `Arc`. Zig stores `*Process` and
+    /// mutates freely; the Rust port holds `ManuallyDrop<Arc<Process>>` for
+    /// ref-count parity, but every mutation site is single-threaded on the JS
+    /// mutator, so projecting `&mut` through the `Arc` mirrors the original
+    /// pointer semantics.
+    ///
+    /// # Safety
+    /// Caller must be on the owning JS thread with no other live `&mut Process`.
+    #[inline]
+    fn process_mut(&self) -> &mut Process {
+        // SAFETY: see doc comment — Zig `*Process` semantics.
+        unsafe { &mut *(Arc::as_ptr(&self.process) as *mut Process) }
+    }
+
     /// Borrow the stored JSC global. Zig stores `*jsc.JSGlobalObject` raw; the
     /// global is guaranteed to outlive every Subprocess it created.
     #[inline]
@@ -531,7 +551,7 @@ impl Subprocess<'_> {
                     };
                     if let PipeReader::State::Done(done) = &mut pipe.state {
                         let taken = core::mem::take(done);
-                        *out = Readable::Buffer(CowString::init_owned(taken));
+                        *out = Readable::Buffer(CowString::Owned(taken));
                         // pipe.state was emptied via take()
                     }
                     // else: *out stays Readable::Ignore (set by mem::replace above).
@@ -550,10 +570,10 @@ impl Subprocess<'_> {
     }
 
     pub fn js_ref(&mut self) {
-        self.process.enable_keeping_event_loop_alive();
+        self.process_mut().enable_keeping_event_loop_alive();
 
         if !self.has_called_getter(ObservableGetter::Stdin) {
-            self.stdin.ref_();
+            self.stdin.r#ref();
         }
 
         if !self.has_called_getter(ObservableGetter::Stdout) {
@@ -569,7 +589,7 @@ impl Subprocess<'_> {
 
     /// This disables the keeping process alive flag on the poll and also in the stdin, stdout, and stderr
     pub fn js_unref(&mut self) {
-        self.process.disable_keeping_event_loop_alive();
+        self.process_mut().disable_keeping_event_loop_alive();
 
         if !self.has_called_getter(ObservableGetter::Stdin) {
             self.stdin.unref();
@@ -590,7 +610,7 @@ impl Subprocess<'_> {
         global_object: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<*mut Self> {
-        Err(global_object.throw("Cannot construct Subprocess", &[]))
+        Err(global_object.throw("Cannot construct Subprocess"))
     }
 
     #[bun_jsc::host_fn(getter)]

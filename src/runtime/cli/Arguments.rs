@@ -2014,12 +2014,12 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                     ctx.debug.run_in_bun = opts.target.unwrap() == api::Target::Bun;
                 } else {
                     if ctx.bundler_options.bytecode {
-                        Output::err_generic("target must be 'bun' when bytecode is true. Received: {}", format_args!("{}", options::Target::from(opts.target)));
+                        Output::err_generic("target must be 'bun' when bytecode is true. Received: {}", format_args!("{:?}", options::Target::from(opts.target)));
                         Global::exit(1);
                     }
 
                     if ctx.bundler_options.bake {
-                        Output::err_generic("target must be 'bun' when using --app. Received: {}", format_args!("{}", options::Target::from(opts.target)));
+                        Output::err_generic("target must be 'bun' when using --app. Received: {}", format_args!("{:?}", options::Target::from(opts.target)));
                     }
                 }
             }
@@ -2324,7 +2324,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             ctx.bundler_options.server_components = true;
             if let Some(target) = opts.target {
                 if !options::Target::from(Some(target)).is_server_side() {
-                    Output::err_generic("Cannot use client-side --target={} with --server-components", format_args!("{}", options::Target::from(Some(target))));
+                    Output::err_generic("Cannot use client-side --target={} with --server-components", format_args!("{:?}", options::Target::from(Some(target))));
                     Global::crash();
                 } else {
                     opts.target = Some(api::Target::Bun);

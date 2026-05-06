@@ -65,7 +65,6 @@ pub fn view(
             // struct in `package_manager_real` does. The Zig code falls back to
             // reading the cwd `package.json` here. Until the stub grows those
             // fields, this branch is unreachable in practice.
-            let _ = manager;
             todo!("blocked_on: bun_install::PackageManager::root_package_json_name_at_time_of_init");
             #[allow(unreachable_code)]
             {

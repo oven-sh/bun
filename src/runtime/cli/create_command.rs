@@ -618,7 +618,7 @@ impl CreateCommand {
                 )?;
 
                 package_json_file = bun_sys::File::openat(
-                    destination_dir,
+                    destination_dir.fd(),
                     b"package.json",
                     bun_sys::O::RDWR,
                     0,
@@ -641,22 +641,22 @@ impl CreateCommand {
                                         progress.refresh();
 
                                         package_json_file = None;
-                                        Output::pretty_errorln(
+                                        pretty_errorln!(
                                             "Error reading package.json: <r><red>{}",
-                                            format_args!("{}", err.name()),
+                                            bstr::BStr::new(err.name()),
                                         );
                                         break 'read_package_json;
                                     }
                                 };
 
-                                if stat.kind() != bun_sys::FileKind::File || stat.size() == 0 {
+                                if bun_sys::kind_from_mode(stat.st_mode as _) != bun_sys::FileKind::File || stat.st_size == 0 {
                                     package_json_file = None;
                                     node.end();
                                     progress.refresh();
                                     break 'read_package_json;
                                 }
 
-                                break 'brk stat.size();
+                                break 'brk stat.st_size as u64;
                             }
                         };
 
@@ -1591,7 +1591,7 @@ impl CreateCommand {
                         if bun_paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes()) {
                             break 'outer;
                         }
-                        if bun_sys::Fd::cwd().directory_exists_at(outdir_path_).is_true() {
+                        if bun_sys::directory_exists_at(bun_sys::Fd::cwd(), outdir_path_).unwrap_or(false) {
                             example_tag = ExampleTag::LocalFolder;
                             break 'brk &home_dir_buf[..len];
                         }
@@ -1608,7 +1608,7 @@ impl CreateCommand {
                     if bun_paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes()) {
                         break 'outer;
                     }
-                    if bun_sys::Fd::cwd().directory_exists_at(outdir_path_).is_true() {
+                    if bun_sys::directory_exists_at(bun_sys::Fd::cwd(), outdir_path_).unwrap_or(false) {
                         example_tag = ExampleTag::LocalFolder;
                         break 'brk &home_dir_buf[..len];
                     }
@@ -1625,7 +1625,7 @@ impl CreateCommand {
                         if bun_paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes()) {
                             break 'outer;
                         }
-                        if bun_sys::Fd::cwd().directory_exists_at(outdir_path_).is_true() {
+                        if bun_sys::directory_exists_at(bun_sys::Fd::cwd(), outdir_path_).unwrap_or(false) {
                             example_tag = ExampleTag::LocalFolder;
                             break 'brk &home_dir_buf[..len];
                         }

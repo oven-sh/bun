@@ -267,7 +267,7 @@ impl PublishCommand {
             package_url,
             headers.entries,
             // SAFETY: headers.content was allocated above
-            unsafe { core::slice::from_raw_parts(headers.content.ptr.unwrap(), headers.content.len) },
+            unsafe { core::slice::from_raw_parts(headers.content.ptr.unwrap().as_ptr(), headers.content.len) },
             &mut response_buf,
             b"",
             None,
@@ -283,9 +283,10 @@ impl PublishCommand {
         }
 
         // Parse the response to check if this specific version exists
-        let source = logger::Source::init_path_string(b"???", &response_buf.list);
+        let source = logger::Source::init_path_string(b"???", response_buf.list.as_slice());
         let mut log = logger::Log::init();
-        let Ok(json) = json_mod::parse_utf8(&source, &mut log) else {
+        let bump = bun_alloc::Arena::new();
+        let Ok(json) = json_mod::parse_utf8(&source, &mut log, &bump) else {
             return false;
         };
 

@@ -184,6 +184,7 @@ impl UpdateInteractiveCommand {
         todo!("blocked_on: bun_install::PackageManager::workspace_package_json_cache (package_manager_real un-gate)")
     }
 
+    #[allow(dead_code)]
     fn update_catalog_definitions(
         manager: &mut PackageManager,
         catalog_updates: &StringHashMap<CatalogUpdate>,
@@ -194,11 +195,10 @@ impl UpdateInteractiveCommand {
 
         // Group updates by workspace
         let mut catalog_it = catalog_updates.iter();
-        while let Some(entry) = catalog_it.next() {
-            let catalog_key = entry.key();
-            let update = entry.value();
-
-            let result = workspace_catalog_updates.get_or_put(&update.workspace_path);
+        while let Some((catalog_key, update)) = catalog_it.next() {
+            let result = workspace_catalog_updates
+                .get_or_put(&update.workspace_path)
+                .map_err(|_| bun_core::err!("OutOfMemory"))?;
             if !result.found_existing {
                 *result.value_ptr = Vec::new();
             }
@@ -208,7 +208,7 @@ impl UpdateInteractiveCommand {
             let package_name = if let Some(idx) = colon_index {
                 &catalog_key[..idx]
             } else {
-                catalog_key
+                &catalog_key[..]
             };
             let catalog_name = colon_index.map(|idx| Box::<[u8]>::from(&catalog_key[idx + 1..]));
 
@@ -219,53 +219,33 @@ impl UpdateInteractiveCommand {
             });
         }
 
-        // Update catalog definitions for each workspace
-        let mut workspace_it = workspace_catalog_updates.iter_mut();
-        while let Some(workspace_entry) = workspace_it.next() {
-            let workspace_path = workspace_entry.key();
-            let updates_for_workspace = workspace_entry.value_mut();
-
-            // Build the package.json path for this workspace
-            let root_dir = FileSystem::instance().top_level_dir;
-            let mut path_buf = PathBuffer::uninit();
-            let package_json_path =
-                Self::build_package_json_path(root_dir, workspace_path, &mut path_buf);
-
-            // Load and parse the package.json properly
-            let mut package_json = match manager.workspace_package_json_cache.get_with_path(
-                manager.log,
-                package_json_path,
-                bun_install::GetJsonOptions { guess_indentation: true },
-            ) {
-                bun_install::GetJsonResult::ParseErr(err) => {
-                    Output::err_generic(format_args!(
-                        "Failed to parse package.json at {}: {}",
-                        BStr::new(package_json_path),
-                        err.name()
-                    ));
-                    continue;
-                }
-                bun_install::GetJsonResult::ReadErr(err) => {
-                    Output::err_generic(format_args!(
-                        "Failed to read package.json at {}: {}",
-                        BStr::new(package_json_path),
-                        err.name()
-                    ));
-                    continue;
-                }
-                bun_install::GetJsonResult::Entry(entry) => entry,
-            };
-
-            // Use the PackageJSONEditor to update catalogs
-            edit_catalog_definitions(manager, updates_for_workspace.as_mut_slice(), &mut package_json.root)?;
-
-            // Save the updated package.json
-            Self::save_package_json(manager, &mut package_json, package_json_path)?;
-        }
-        Ok(())
+        let _ = (manager, workspace_catalog_updates);
+        // Second loop needs `manager.workspace_package_json_cache` /
+        // `manager.log` (absent on stub `PackageManager`). Body preserved in
+        // update_interactive_command.zig; re-port once `package_manager_real`
+        // un-gates.
+        todo!("blocked_on: bun_install::PackageManager::workspace_package_json_cache (package_manager_real un-gate)")
     }
 
+    #[allow(dead_code)]
     fn update_interactive(
+        ctx: Command::Context,
+        original_cwd: &[u8],
+        manager: &mut PackageManager,
+    ) -> Result<(), bun_core::Error> {
+        let _ = (ctx, original_cwd, manager);
+        // Real body needs `manager.lockfile`, `manager.log`,
+        // `manager.root_package_id`, `manager.options.filter_patterns`,
+        // `manager.options.do_`, `manager.to_update`, `manager.root_dir`,
+        // `Lockfile::load_from_cwd`, `PackageManager::install_with_manager` —
+        // all gated behind `package_manager_real` (`#![cfg(any())]`
+        // reconciler-6). Body preserved verbatim in
+        // update_interactive_command.zig.
+        todo!("blocked_on: bun_install::PackageManager::lockfile / install_with_manager (package_manager_real un-gate)")
+    }
+
+    #[cfg(any())]
+    fn update_interactive_disabled(
         ctx: Command::Context,
         original_cwd: &[u8],
         manager: &mut PackageManager,

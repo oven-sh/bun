@@ -181,107 +181,21 @@ fn print_skipped_packages(skipped_packages: &Vec<Box<[u8]>>) {
 fn build_dependency_tree(
     pm: &mut PackageManager,
 ) -> Result<StringHashMap<Vec<Box<[u8]>>>, bun_alloc::AllocError> {
-    let mut dependency_tree: StringHashMap<Vec<Box<[u8]>>> = StringHashMap::new();
-
-    let packages = pm.lockfile.packages.slice();
-    let pkg_names = packages.items_name();
-    let pkg_dependencies = packages.items_dependencies();
-    let pkg_resolutions = packages.items_resolutions();
-    let buf = pm.lockfile.buffers.string_bytes.as_slice();
-    let dependencies = pm.lockfile.buffers.dependencies.as_slice();
-    let resolutions = pm.lockfile.buffers.resolutions.as_slice();
-
-    // TODO(port): MultiArrayList column accessors (`items(.field)`) are placeholder method names.
-    let pkg_resolution_tags = packages.items_resolution();
-
-    debug_assert_eq!(pkg_names.len(), pkg_dependencies.len());
-    debug_assert_eq!(pkg_names.len(), pkg_resolutions.len());
-    for (pkg_idx, ((pkg_name, deps), res_list)) in pkg_names
-        .iter()
-        .zip(pkg_dependencies)
-        .zip(pkg_resolutions)
-        .enumerate()
-    {
-        let package_name = pkg_name.slice(buf);
-
-        if pkg_resolution_tags[pkg_idx].tag != bun_install::Resolution::Tag::Npm {
-            continue;
-        }
-
-        let dep_slice = deps.get(dependencies);
-        let res_slice = res_list.get(resolutions);
-
-        debug_assert_eq!(dep_slice.len(), res_slice.len());
-        for (_, &resolved_pkg_id) in dep_slice.iter().zip(res_slice) {
-            if (resolved_pkg_id as usize) >= pkg_names.len() {
-                continue;
-            }
-
-            let resolved_name = pkg_names[resolved_pkg_id as usize].slice(buf);
-
-            let result = dependency_tree.get_or_put(resolved_name)?;
-            if !result.found_existing {
-                *result.key_ptr = Box::<[u8]>::from(resolved_name);
-                *result.value_ptr = Vec::new();
-            }
-            result.value_ptr.push(Box::<[u8]>::from(package_name));
-        }
-    }
-
-    Ok(dependency_tree)
+    let _ = pm;
+    // Body iterates `pm.lockfile.packages` / `pm.lockfile.buffers` and
+    // `Resolution::Tag` columns — all gated behind the upstream
+    // `bun_install::PackageManager::lockfile` field (reconciler-6).
+    todo!("blocked_on: bun_install::PackageManager::lockfile")
 }
 
 fn build_production_package_set(
     pm: &mut PackageManager,
     prod_set: &mut StringHashMap<()>,
 ) -> Result<(), bun_alloc::AllocError> {
-    let packages = pm.lockfile.packages.slice();
-    let pkg_names = packages.items_name();
-    let pkg_dependencies = packages.items_dependencies();
-    let pkg_resolutions = packages.items_resolutions();
-    let buf = pm.lockfile.buffers.string_bytes.as_slice();
-    let dependencies = pm.lockfile.buffers.dependencies.as_slice();
-    let resolutions = pm.lockfile.buffers.resolutions.as_slice();
-    let root_id = pm.root_package_id.get(&pm.lockfile, pm.workspace_name_hash);
-
-    // TODO(port): bun.LinearFifo(u32, .Dynamic) → VecDeque<u32>
-    let mut queue: VecDeque<u32> = VecDeque::new();
-
-    let root_deps = pkg_dependencies[root_id as usize];
-    let root_resolutions = pkg_resolutions[root_id as usize];
-    let dep_slice = root_deps.get(dependencies);
-    let res_slice = root_resolutions.get(resolutions);
-
-    debug_assert_eq!(dep_slice.len(), res_slice.len());
-    for (dep, &resolved_pkg_id) in dep_slice.iter().zip(res_slice) {
-        if !dep.behavior.is_dev() && (resolved_pkg_id as usize) < packages.len() {
-            let pkg_name = pkg_names[resolved_pkg_id as usize].slice(buf);
-            prod_set.put(pkg_name, ())?;
-            queue.push_back(resolved_pkg_id);
-        }
-    }
-
-    while let Some(current_pkg_id) = queue.pop_front() {
-        let current_deps = pkg_dependencies[current_pkg_id as usize];
-        let current_resolutions = pkg_resolutions[current_pkg_id as usize];
-        let current_dep_slice = current_deps.get(dependencies);
-        let current_res_slice = current_resolutions.get(resolutions);
-
-        debug_assert_eq!(current_dep_slice.len(), current_res_slice.len());
-        for (_, &resolved_pkg_id) in current_dep_slice.iter().zip(current_res_slice) {
-            if (resolved_pkg_id as usize) >= pkg_names.len() {
-                continue;
-            }
-
-            let pkg_name = pkg_names[resolved_pkg_id as usize].slice(buf);
-            if !prod_set.contains(pkg_name) {
-                prod_set.put(pkg_name, ())?;
-                queue.push_back(resolved_pkg_id);
-            }
-        }
-    }
-
-    Ok(())
+    let _ = (pm, prod_set);
+    // Body walks `pm.lockfile.packages` / `pm.root_package_id` /
+    // `pm.workspace_name_hash` — gated behind upstream PackageManager stub.
+    todo!("blocked_on: bun_install::PackageManager::lockfile")
 }
 
 struct CollectPackagesResult {

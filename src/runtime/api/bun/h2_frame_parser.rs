@@ -878,7 +878,8 @@ impl Handlers {
         let Some(callback) = event.get(this_value) else { return false };
         // SAFETY: global_object outlives Handlers (JSC_BORROW)
         let global = unsafe { &*self.global_object };
-        self.vm.event_loop().run_callback(callback, global, context, data);
+        // SAFETY: `event_loop()` returns a non-null *mut EventLoop owned by the VM.
+        unsafe { (*self.vm.event_loop()).run_callback(callback, global, context, data) };
         true
     }
 
@@ -1718,11 +1719,12 @@ impl Stream {
             parser: parser as *mut _,
             stream_id: self.id,
         });
-        // SAFETY: signal_ref is heap-allocated; listen stores the raw ptr for callback
-        signal_ref.signal = signal.ref_().listen(
-            &mut *signal_ref as *mut SignalRef as *mut c_void,
-            SignalRef::abort_listener,
-        );
+        // SAFETY: ref_() bumps the C++ intrusive refcount and returns the same live
+        // pointer; signal_ref is heap-allocated and outlives the listener registration
+        // (cleared via `detach` in `Drop for SignalRef`).
+        let refed = signal.ref_();
+        unsafe { (*refed).listen(&mut *signal_ref as *mut SignalRef) };
+        signal_ref.signal = refed;
         // TODO: We should not need this ref counting here, since Parser owns Stream
         parser.ref_();
         self.signal = Some(signal_ref);
@@ -1774,7 +1776,26 @@ impl Stream {
     }
 }
 
+// Route AbortSignal callbacks through the Rust trait — the Zig spec passes a
+// fn pointer; `bun_jsc::abort_signal::listen` instead expects `*mut C: AbortListener`.
+impl AbortListener for SignalRef {
+    fn on_abort(&mut self, reason: JSValue) {
+        SignalRef::abort_listener(self as *mut SignalRef, reason);
+    }
+}
+
 type HeaderValue = lshpack::DecodeResult;
+
+// PORT NOTE: `lshpack::HpackError` does not yet impl `From` for `bun_core::Error`
+// (see TODO in lshpack.rs). Map variants 1:1 to interned error names so Zig
+// callers that match on `error.UnableToDecode` etc. keep their semantics.
+fn hpack_error_to_core(e: lshpack::HpackError) -> bun_core::Error {
+    match e {
+        lshpack::HpackError::UnableToDecode => bun_core::err!("UnableToDecode"),
+        lshpack::HpackError::EmptyHeaderName => bun_core::err!("EmptyHeaderName"),
+        lshpack::HpackError::UnableToEncode => bun_core::err!("UnableToEncode"),
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // H2FrameParser impl — core methods

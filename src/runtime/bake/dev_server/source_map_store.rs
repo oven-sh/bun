@@ -71,6 +71,15 @@ impl SourceMapStore {
         todo!("blocked_on: SourceMapStore::remove_or_upgrade_weak_ref")
     }
 
+    /// Full body in gated `../DevServer/SourceMapStore.rs` draft.
+    pub fn put_or_increment_ref_count(
+        &mut self,
+        _script_id: Key,
+        _ref_count: u32,
+    ) -> Result<PutOrIncrementRefCount<'_>, bun_alloc::AllocError> {
+        todo!("blocked_on: SourceMapStore::put_or_increment_ref_count body un-gate")
+    }
+
     pub fn unref(&mut self, key: Key) {
         self.unref_count(key, 1);
     }

@@ -565,15 +565,15 @@ fn get_changed_files(
             if diff.spawn_failed {
                 // run_git already printed the spawn error.
             } else if !diff.stderr.is_empty() {
-                Output::err_generic(format_args!(
-                    "--changed: {}",
-                    BStr::new(strings::trim(&diff.stderr, b" \r\n\t"))
-                ));
+                Output::err_generic(
+                    "--changed: {s}",
+                    (BStr::new(strings::trim(&diff.stderr, b" \r\n\t")),),
+                );
             } else {
-                Output::err_generic(format_args!(
-                    "--changed: git diff against {} failed",
-                    bun_fmt::quote(since)
-                ));
+                Output::err_generic(
+                    "--changed: git diff against {f} failed",
+                    (bun_fmt::quote(since),),
+                );
             }
             return Err(GitError::GitFailed);
         }
@@ -658,10 +658,10 @@ fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
     }) {
         Ok(p) => p,
         Err(err) => {
-            Output::err_generic(format_args!(
-                "--changed: failed to spawn git: {}",
-                err.name()
-            ));
+            Output::err_generic(
+                "--changed: failed to spawn git: {s}",
+                (err.name(),),
+            );
             return GitResult {
                 ok: false,
                 spawn_failed: true,
@@ -673,7 +673,7 @@ fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
 
     match proc {
         sys::Result::Err(err) => {
-            Output::err_generic(format_args!("--changed: failed to spawn git: {}", err));
+            Output::err_generic("--changed: failed to spawn git: {f}", format_args!("{}", err));
             GitResult {
                 ok: false,
                 spawn_failed: true,

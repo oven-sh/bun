@@ -956,7 +956,7 @@ impl CommandLineReporter {
             match status {
                 R::Pending | R::Pass | R::Skip | R::SkippedBecauseLabel | R::Todo | R::Fail => {}
 
-                R::FailBecauseFailingTestPassed => { let _ = writer.write_all(&Output::pretty_fmt("  <d>^<r> <red>this test is marked as failing but it passed.<r> <d>Remove `.failing` if tested behavior now works<r>\n", colors)); }
+                R::FailBecauseFailingTestPassed => { let _ = writer.write_all(&Output::pretty_fmt_rt("  <d>^<r> <red>this test is marked as failing but it passed.<r> <d>Remove `.failing` if tested behavior now works<r>\n", colors)); }
                 R::FailBecauseTodoPassed => { let _ = writer.write_all(&Output::pretty_fmt("  <d>^<r> <red>this test is marked as todo but passes.<r> <d>Remove `.todo` if tested behavior now works<r>\n", colors)); }
                 R::FailBecauseExpectedAssertionCount | R::FailBecauseExpectedHasAssertions => {} // printed above
                 R::FailBecauseTimeout => { let _ = write!(writer, "{}", Output::pretty_fmt_args("  <d>^<r> <red>this test timed out after {}ms.<r>\n", colors, (test_entry.timeout,))); }

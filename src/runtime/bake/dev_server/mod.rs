@@ -210,13 +210,14 @@ pub struct EntryPointList {
 }
 impl EntryPointList {
     /// `EntryPointList.appendCss` — DevServer.zig.
-    pub fn append_css(&mut self, abs_path: &[u8]) {
+    pub fn append_css(&mut self, abs_path: &[u8]) -> Result<(), bun_core::Error> {
         let gop = bun_core::handle_oom(self.set.get_or_put(abs_path));
         if gop.found_existing {
             *gop.value_ptr |= entry_point_list::Flags::CLIENT | entry_point_list::Flags::CSS;
         } else {
             *gop.value_ptr = entry_point_list::Flags::CLIENT | entry_point_list::Flags::CSS;
         }
+        Ok(())
     }
 }
 

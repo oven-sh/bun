@@ -645,25 +645,25 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
             return CronJob::register(global, args[0], args[1]);
         }
         if args[0].is_string() && args[2].is_undefined() {
-            return global.throw_invalid_arguments(format_args!(
+            return Err(global.throw_invalid_arguments(format_args!(
                 "Bun.cron(schedule, handler) expects a function handler as the second argument"
-            ));
+            )));
         }
 
         if !args[0].is_string() {
-            return global.throw_invalid_arguments(format_args!(
+            return Err(global.throw_invalid_arguments(format_args!(
                 "Bun.cron() expects a string path as the first argument"
-            ));
+            )));
         }
         if !args[1].is_string() {
-            return global.throw_invalid_arguments(format_args!(
+            return Err(global.throw_invalid_arguments(format_args!(
                 "Bun.cron() expects a string schedule as the second argument"
-            ));
+            )));
         }
         if !args[2].is_string() {
-            return global.throw_invalid_arguments(format_args!(
+            return Err(global.throw_invalid_arguments(format_args!(
                 "Bun.cron() expects a string title as the third argument"
-            ));
+            )));
         }
 
         let path_str = args[0].to_bun_string(global)?;
@@ -676,19 +676,19 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
 
         // Validate title: only [a-zA-Z0-9_-]
         if !validate_title(title_slice.slice()) {
-            return global.throw_invalid_arguments(format_args!(
+            return Err(global.throw_invalid_arguments(format_args!(
                 "Cron title must contain only alphanumeric characters, hyphens, and underscores"
-            ));
+            )));
         }
 
         // Parse and normalize cron schedule to numeric form for crontab/launchd/schtasks
         let parsed = match CronExpression::parse(schedule_slice.slice()) {
             Ok(p) => p,
             Err(e) => {
-                return global.throw_invalid_arguments(format_args!(
+                return Err(global.throw_invalid_arguments(format_args!(
                     "{}",
-                    CronExpression::error_message(e)
-                ))
+                    bstr::BStr::new(CronExpression::error_message(e))
+                )))
             }
         };
         let mut fmt_buf = [0u8; 512];

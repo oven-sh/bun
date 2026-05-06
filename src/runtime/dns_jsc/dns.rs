@@ -2825,10 +2825,25 @@ impl Resolver {
 
     // Intrusive refcount forwarders (RefCount.ref / RefCount.deref).
     pub fn ref_(&self) { self.ref_count.ref_(); }
-    pub fn deref(&self) {
-        if self.ref_count.deref() {
-            // SAFETY: last ref; self is heap-allocated via Box::into_raw
-            Self::deinit(self as *const Self as *mut Self);
+    /// Decrement the intrusive refcount; on last ref, runs `deinit` (frees the
+    /// allocation via `Box::from_raw`).
+    ///
+    /// Takes a raw `*mut Self` (not `&self`) because the final deref must write
+    /// through / deallocate `*this`; deriving a `*mut` from a `&self` borrow
+    /// and writing through it is UB under Stacked/Tree Borrows. Matches the
+    /// Zig `RefCount.deref(*@This())` signature and the codebase pattern in
+    /// `bun_ptr::RefCount::deref(self_: *mut T)`.
+    ///
+    /// # Safety
+    /// `this` must point to a live heap-allocated `Resolver` originating from
+    /// `Box::into_raw` (see `init`). If this call may drop the last reference,
+    /// the caller must not hold any live `&`/`&mut` borrow of `*this`.
+    pub unsafe fn deref(this: *mut Self) {
+        // SAFETY: caller contract — `this` is live; `ref_count` uses interior
+        // mutability so a shared read is sufficient for the decrement.
+        if unsafe { (*this).ref_count.deref() } {
+            // SAFETY: last ref; `this` was `Box::into_raw`'d in `init`.
+            unsafe { Self::deinit(this) };
         }
     }
 
@@ -2865,7 +2880,8 @@ impl Resolver {
     }
 
     pub fn finalize(this: *mut Self) {
-        unsafe { (*this).deref() };
+        // SAFETY: `this` is the heap allocation from `init`; JSC finalizer holds the last JS ref.
+        unsafe { Self::deref(this) };
     }
 
     fn deinit(this: *mut Self) {

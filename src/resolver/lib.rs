@@ -6069,7 +6069,7 @@ impl<'a> Resolver<'a> {
                         // re-derived `*mut` inside (Zig held `?*PackageJSON`).
                         unsafe { &*dir_info }
                             .package_json_for_dependencies
-                            .or(unsafe { &*dir_info }.package_json)
+                            .or(unsafe { &*dir_info }.package_json())
                             .map(|p| p as *const PackageJSON),
                         &esm,
                         dependency_behavior,

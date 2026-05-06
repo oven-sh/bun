@@ -1145,7 +1145,11 @@ impl RunCommand {
     /// resolved root `DirInfo` (opaque to install — caller discards).
     pub fn configure_env_for_run(
         ctx: bun_bunfig::Command::Context,
-        this_transpiler: &mut bun_transpiler::Transpiler,
+        // Zig: `var this_transpiler: Transpiler = undefined` out-param. Taking
+        // `&mut MaybeUninit<T>` so the caller never has to materialize a `&mut T`
+        // pointing at uninitialized memory (which is UB regardless of whether the
+        // callee writes-before-read).
+        this_transpiler_out: &mut core::mem::MaybeUninit<bun_transpiler::Transpiler>,
         // Zig: `env: ?*DotEnv.Loader` — call site passes `this.env_mut()` (always Some).
         env: &mut bun_dotenv::Loader,
         log_errors: bool,
@@ -1158,8 +1162,8 @@ impl RunCommand {
         // loadProcess()/runEnvLoader(). The only install caller always passes a
         // loader, so the `had_env` path is the only one exercised here.
         let had_env = true;
-        *this_transpiler =
-            bun_transpiler::Transpiler::init(ctx.allocator, ctx.log, ctx.args, Some(env))?;
+        let this_transpiler = this_transpiler_out
+            .write(bun_transpiler::Transpiler::init(ctx.allocator, ctx.log, ctx.args, Some(env))?);
         this_transpiler.options.env.behavior = api::DotEnvBehavior::LoadAll;
         this_transpiler.env.quiet = true;
         this_transpiler.options.env.prefix = b"";

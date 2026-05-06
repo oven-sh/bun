@@ -196,7 +196,7 @@ pub fn init_global(
     }
 
     GLOBAL_INITIALIZED.with(|g| g.set(true));
-    global
+    global_ptr
 }
 
 impl<'a> MiniEventLoop<'a> {
@@ -724,10 +724,15 @@ impl EventLoopKindT for JsKind {
 
 impl EventLoopKindT for MiniKind {
     type Loop = MiniEventLoop<'static>;
-    type Ref = &'static mut MiniEventLoop<'static>;
+    // PORT NOTE (aliasing): Zig `refType() = *MiniEventLoop` is a freely-aliasing
+    // pointer. Returning `&'static mut` would let two `get_vm()` calls (or
+    // `get_vm()` + `init_global()`) hold overlapping `&mut` — UB. Return the raw
+    // pointer (matches `JsKind::Ref = *mut ()`); callers reborrow scoped `&mut`.
+    type Ref = *mut MiniEventLoop<'static>;
     fn get_vm() -> Self::Ref {
-        // SAFETY: caller must have called init_global() first (Zig invariant: `global` is set).
-        unsafe { &mut *GLOBAL.with(|g| g.get()) }
+        // Caller must have called `init_global()` first (Zig invariant: `global`
+        // is set). No `&mut` materialized here — raw-ptr-only access.
+        GLOBAL.with(|g| g.get())
     }
 }
 

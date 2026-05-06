@@ -520,7 +520,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         if let Some(s) = h2_session {
             // SAFETY: live intrusive-refcounted ClientSession; deref releases
             // the strong ref the caller transferred.
-            unsafe { (*s.as_ptr()).deref() };
+            unsafe { h2::ClientSession::deref(s.as_ptr()) };
         }
         Self::close_socket(socket);
     }
@@ -883,7 +883,7 @@ impl<const SSL: bool> Drop for HTTPContext<SSL> {
                 pooled.target_hostname = Box::default();
                 if let Some(s) = pooled.h2_session.take() {
                     // SAFETY: pool owns one strong ref while parked.
-                    unsafe { (*s.as_ptr()).deref() };
+                    unsafe { h2::ClientSession::deref(s.as_ptr()) };
                 }
                 pooled.http_socket.close(uws::CloseKind::Failure);
             }
@@ -1067,7 +1067,7 @@ impl<const SSL: bool> Handler<SSL> {
         pooled.target_hostname = Box::default();
         if let Some(s) = pooled.h2_session.take() {
             // SAFETY: pool owns one strong ref while parked.
-            unsafe { (*s.as_ptr()).deref() };
+            unsafe { h2::ClientSession::deref(s.as_ptr()) };
         }
         // SAFETY: owner is the HiveArray backing this slot; address-stable
         // (static or Box-allocated) and outlives any pooled entry.

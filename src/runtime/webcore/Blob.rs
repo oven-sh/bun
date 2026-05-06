@@ -346,7 +346,7 @@ impl Blob {
     {
         debug!("doReadFromS3");
         // TODO(port): WrappedFn struct that calls jsc::to_js_host_call(g, F, (b, g, by, Lifetime::Clone)).
-        fn wrapped<F>(b: &mut Blob, g: *mut JSGlobalObject, by: &mut [u8]) -> JSValue
+        fn wrapped<F>(b: &mut Blob, g: *const JSGlobalObject, by: &mut [u8]) -> JSValue
         where
             F: Fn(&mut Blob, &JSGlobalObject, &mut [u8], Lifetime) -> JSValue + 'static,
         {
@@ -567,7 +567,7 @@ struct FormDataContext {
     joiner: bun_core::StringJoiner,
     boundary: *const [u8], // borrowed; outlives the joiner
     failed: bool,
-    global_this: *mut JSGlobalObject,
+    global_this: *const JSGlobalObject,
 }
 
 impl FormDataContext {
@@ -964,7 +964,7 @@ impl Blob {
 
 struct URLSearchParamsConverter {
     buf: Vec<u8>,
-    global_this: *mut JSGlobalObject,
+    global_this: *const JSGlobalObject,
 }
 
 impl URLSearchParamsConverter {
@@ -1437,7 +1437,7 @@ fn write_file_with_empty_source_to_destination(
             struct Wrapper {
                 promise: jsc::JSPromiseStrong,
                 store: StoreRef,
-                global: *mut JSGlobalObject,
+                global: *const JSGlobalObject,
             }
             impl Wrapper {
                 fn resolve(result: S3::S3UploadResult, opaque_this: *mut c_void) -> jsc::JsTerminatedResult<()> {
@@ -1663,7 +1663,7 @@ pub fn write_file_with_source_destination(
                     struct Wrapper {
                         store: StoreRef,
                         promise: jsc::JSPromiseStrong,
-                        global: *mut JSGlobalObject,
+                        global: *const JSGlobalObject,
                     }
                     impl Wrapper {
                         fn resolve(result: S3::S3UploadResult, opaque_self: *mut c_void) -> jsc::JsTerminatedResult<()> {
@@ -2663,13 +2663,13 @@ impl Blob {
 
 pub struct S3BlobDownloadTask {
     pub blob: Blob,
-    pub global_this: *mut JSGlobalObject,
+    pub global_this: *const JSGlobalObject,
     pub promise: jsc::JSPromiseStrong,
     pub poll_ref: bun_aio::KeepAlive,
     pub handler: S3ReadHandler,
 }
 
-pub type S3ReadHandler = fn(&mut Blob, *mut JSGlobalObject, &mut [u8]) -> JSValue;
+pub type S3ReadHandler = fn(&mut Blob, *const JSGlobalObject, &mut [u8]) -> JSValue;
 
 impl S3BlobDownloadTask {
     pub fn call_handler(&mut self, raw_bytes: &mut [u8]) -> JSValue {

@@ -81,16 +81,16 @@ impl ListenSocket {
         unsafe { us_listen_socket_remove_server_name(self, hostname.as_ptr()) }
     }
 
-    pub fn find_server_name_userdata<T>(&mut self, hostname: &core::ffi::CStr) -> Option<&mut T> {
+    /// Returns the raw userdata pointer registered via `add_server_name` for
+    /// `hostname`, cast to `*mut T`. Returned as `NonNull<T>` (not `&mut T`)
+    /// because the pointee is caller-owned external storage — materializing a
+    /// `&mut T` here could alias the caller's own live reference to it. Mirrors
+    /// Zig's `?*T` return (Zig pointers freely alias).
+    pub fn find_server_name_userdata<T>(&mut self, hostname: &core::ffi::CStr) -> Option<NonNull<T>> {
         // SAFETY: self and hostname valid; caller guarantees the stored userdata
         // is a *T (mirrors Zig `@ptrCast(@alignCast(...))`).
         let p = unsafe { us_listen_socket_find_server_name_userdata(self, hostname.as_ptr()) };
-        if p.is_null() {
-            None
-        } else {
-            // SAFETY: non-null, caller-asserted type/alignment.
-            Some(unsafe { &mut *p.cast::<T>() })
-        }
+        NonNull::new(p.cast::<T>())
     }
 
     pub fn on_server_name(

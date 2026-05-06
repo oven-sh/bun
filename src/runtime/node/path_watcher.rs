@@ -1214,10 +1214,10 @@ impl Kqueue {
 
     /// Caller holds `manager.mutex`.
     fn remove_watch(manager: &'static PathWatcherManager, watcher: &mut PathWatcher) {
-        // SAFETY: caller holds manager.mutex.
-        let plat = unsafe { &mut *(&manager.platform as *const _ as *mut Kqueue) };
+        // SAFETY: caller holds manager.mutex; exclusive access to `entries`.
+        let entries = unsafe { &mut (*manager.platform.get()).entries };
         for &ident in watcher.platform.fds.iter() {
-            if let Some(kv) = plat.entries.fetch_swap_remove(&ident) {
+            if let Some(kv) = entries.fetch_swap_remove(&ident) {
                 // Closing the fd auto-removes the kevent.
                 kv.value.fd.close();
                 // kv.value.subpath dropped here.

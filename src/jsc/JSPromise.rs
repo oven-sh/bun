@@ -382,9 +382,12 @@ impl JSPromise {
         }
     }
 
-    pub fn result(&mut self, vm: &mut VM) -> JSValue {
+    pub fn result(&mut self, vm: &VM) -> JSValue {
         // SAFETY: both pointers are valid for the duration of the call.
-        unsafe { JSC__JSPromise__result(self, vm) }
+        // `VM` is an interior-mutable opaque handle; `as_mut_ptr` yields a
+        // `*mut VM` with write provenance without materializing an aliased
+        // `&mut VM` (Zig spec: `*VM` aliases freely).
+        unsafe { JSC__JSPromise__result(self, vm.as_mut_ptr()) }
     }
 
     pub fn is_handled(&self) -> bool {
@@ -542,7 +545,7 @@ impl JSPromise {
         self.to_js()
     }
 
-    pub fn unwrap(&mut self, vm: &mut VM, mode: UnwrapMode) -> Unwrapped {
+    pub fn unwrap(&mut self, vm: &VM, mode: UnwrapMode) -> Unwrapped {
         match self.status() {
             Status::Pending => Unwrapped::Pending,
             Status::Fulfilled => Unwrapped::Fulfilled(self.result(vm)),

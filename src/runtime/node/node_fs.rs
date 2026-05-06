@@ -756,10 +756,13 @@ impl<const IS_SHELL: bool> CpSingleTask<IS_SHELL> {
         let this: &mut Self = unsafe {
             &mut *((task as *mut u8).sub(offset_of!(Self, task)).cast::<Self>())
         };
+        // Preserve the raw `*mut` (Box::leak provenance) so `on_subtask_done`
+        // may later promote it to `&mut` once the refcount reaches zero.
+        let cp_task = this.cp_task;
         // SAFETY: cp_task is set in create() and the parent outlives all subtasks (subtask_count refcount).
         // Shared borrow only — other workpool threads (and the directory-scan thread) may hold
         // `&Self` to the same parent concurrently; never form `&mut` here.
-        let parent = unsafe { &*this.cp_task };
+        let parent = unsafe { &*cp_task };
 
         // TODO: error strings on node_fs will die
         let mut node_fs = NodeFS::default();
@@ -791,9 +794,9 @@ impl<const IS_SHELL: bool> CpSingleTask<IS_SHELL> {
 
         // SAFETY: `this` was Box::leak'd in create(); destroyed exactly once here
         unsafe { Self::destroy(this as *mut Self) };
-        // Must be the very last use of `parent`: when the count reaches
+        // Must be the very last use of the parent: when the count reaches
         // zero, runFromJSThread is enqueued and may destroy the parent.
-        parent.on_subtask_done();
+        NewAsyncCpTask::on_subtask_done(cp_task);
     }
 
     /// SAFETY: `this` must be the pointer Box::leak'd in `create()`; called exactly once.

@@ -2444,7 +2444,7 @@ impl DevServer {
                 gts.clear_and_free();
                 // PERF(port): was ArenaAllocator
                 self.client_graph.take_source_map(entry)?;
-                core::mem::forget(_guard);
+                scopeguard::ScopeGuard::into_inner(_guard);
             }
             source_map_store::PutResult::Shared(_) => {}
         }

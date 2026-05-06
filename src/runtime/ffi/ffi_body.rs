@@ -2,7 +2,7 @@ use core::ffi::{c_char, c_int, c_long, c_void};
 use core::fmt::{self, Write as _};
 use core::ptr::NonNull;
 use std::io::Write as _;
-use std::sync::Once;
+use std::sync::{Once, OnceLock};
 
 use bstr::BStr;
 

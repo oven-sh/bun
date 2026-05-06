@@ -65,11 +65,6 @@ impl FontPaletteValuesRule {
 /// A property within an `@font-palette-values` rule.
 ///
 /// See [FontPaletteValuesRule](FontPaletteValuesRule).
-//
-// blocked_on: properties::font::FontFamily + properties::custom::CustomProperty
-// (`gated_prop!`-stubbed in properties/mod.rs). The enum body un-gates with the
-// variant payloads once those leaves un-gate.
-#[cfg(any())]
 pub enum FontPaletteValuesProperty {
     /// The `font-family` property.
     FontFamily(crate::css_properties::font::FontFamily),
@@ -79,24 +74,6 @@ pub enum FontPaletteValuesProperty {
     OverrideColors(ArrayList<OverrideColors>),
     /// An unknown or unsupported property.
     Custom(crate::css_properties::custom::CustomProperty),
-}
-#[cfg(not(any()))]
-/// Data-only stub: real variant payloads land when `properties::{font,custom}`
-/// un-gate.
-pub struct FontPaletteValuesProperty;
-
-#[cfg(not(any()))]
-impl FontPaletteValuesProperty {
-    /// Unreachable in practice: while the enum body is gated, no parser path
-    /// constructs a `FontPaletteValuesProperty`, so the rule's `properties`
-    /// list is always empty. Panic loudly if that invariant is violated
-    /// (PORTING.md §Forbidden: silent no-op).
-    pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
-        todo!("blocked_on: properties::{{font,custom}} un-gate — FontPaletteValuesProperty enum body")
-    }
-    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-        todo!("blocked_on: properties::{{font,custom}} un-gate — FontPaletteValuesProperty enum body")
-    }
 }
 
 impl FontPaletteValuesRule {
@@ -112,7 +89,6 @@ impl FontPaletteValuesRule {
     }
 }
 
-#[cfg(any())]
 impl FontPaletteValuesProperty {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
@@ -129,7 +105,7 @@ impl FontPaletteValuesProperty {
             FontPaletteValuesProperty::OverrideColors(o) => {
                 dest.write_str("override-colors")?;
                 dest.delim(b':', false)?;
-                css::to_css::from_list::<OverrideColors>(o.as_slice(), dest)
+                css::to_css::from_list(o.as_slice(), dest)
             }
             FontPaletteValuesProperty::Custom(custom) => {
                 dest.write_str(custom.name.as_str())?;
@@ -140,7 +116,16 @@ impl FontPaletteValuesProperty {
     }
 
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        css::implement_deep_clone(self, bump)
+        // PORT NOTE: `css.implementDeepClone` variant-walk.
+        use crate::generics::DeepClone as _;
+        match self {
+            Self::FontFamily(f) => Self::FontFamily(f.deep_clone(bump)),
+            Self::BasePalette(b) => Self::BasePalette(b.deep_clone(bump)),
+            Self::OverrideColors(o) => {
+                Self::OverrideColors(o.iter().map(|c| c.deep_clone(bump)).collect())
+            }
+            Self::Custom(c) => Self::Custom(c.deep_clone(bump)),
+        }
     }
 }
 
@@ -153,26 +138,17 @@ pub struct OverrideColors {
     pub color: CssColor,
 }
 
-// blocked_on: CSSIntegerFns::{parse,to_css}, CssColor::{parse,to_css,
-// CurrentColor variant}, ParserError::InvalidValue, DeepClone.
-#[cfg(any())]
 impl OverrideColors {
     pub fn parse(input: &mut css::Parser) -> css::Result<OverrideColors> {
         use crate::css_values::number::CSSIntegerFns;
-        let index = match CSSIntegerFns::parse(input) {
-            Ok(vv) => vv,
-            Err(e) => return Err(e),
-        };
+        let index = CSSIntegerFns::parse(input)?;
         if index < 0 {
-            return Err(input.new_custom_error(css::ParserError::InvalidValue));
+            return Err(input.new_custom_error(css::ParserError::invalid_value));
         }
 
-        let color = match CssColor::parse(input) {
-            Ok(vv) => vv,
-            Err(e) => return Err(e),
-        };
+        let color = CssColor::parse(input)?;
         if matches!(color, CssColor::CurrentColor) {
-            return Err(input.new_custom_error(css::ParserError::InvalidValue));
+            return Err(input.new_custom_error(css::ParserError::invalid_value));
         }
 
         Ok(OverrideColors { index: u16::try_from(index).unwrap(), color })
@@ -186,7 +162,15 @@ impl OverrideColors {
     }
 
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        css::implement_deep_clone(self, bump)
+        use crate::generics::DeepClone as _;
+        Self { index: self.index, color: self.color.deep_clone(bump) }
+    }
+}
+
+impl css::generics::ToCss for OverrideColors {
+    #[inline]
+    fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        OverrideColors::to_css(self, dest)
     }
 }
 

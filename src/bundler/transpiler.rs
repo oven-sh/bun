@@ -276,20 +276,14 @@ impl<'a> Transpiler<'a> {
                 let has_production_env = env.is_production();
                 if !was_production && has_production_env {
                     self.options.set_production(true);
-                    // TODO(b2-blocked): `self.resolver.opts.set_production(true)`
-                    // — resolver's FORWARD_DECL `BundleOptions` (resolver
-                    // lib.rs:2123 `mod options`) carries neither `production`
-                    // nor `force_node_env`, so the only field `setProduction`
-                    // touches that exists there is `jsx.development`. Mirror
-                    // that one write so resolver-side JSX import-source
-                    // selection (`Pragma::import_source`) stays in sync.
-                    // Guard on `self.options.force_node_env` (kept in lockstep
-                    // with resolver opts per transpiler.zig:350-351) so this
-                    // matches the `setProduction` precondition in
-                    // options.zig:1825 rather than clobbering a forced env.
-                    if self.options.force_node_env == options::ForceNodeEnv::Unspecified {
-                        self.resolver.opts.jsx.development = false;
-                    }
+                    // Spec transpiler.zig:275 `this.resolver.opts.setProduction(true)`.
+                    // The resolver's FORWARD_DECL `BundleOptions` now exposes
+                    // `set_production` (flips `production` + `jsx.development`
+                    // and self-guards on `force_node_env`; resolver/lib.rs).
+                    // Call it directly so resolver-side production gating
+                    // (conditional-export `"production"` matching) stays in
+                    // sync, instead of the partial single-field write.
+                    self.resolver.opts.set_production(true);
                 }
 
                 // Load the project root for .env file discovery. If the cwd
@@ -341,10 +335,8 @@ impl<'a> Transpiler<'a> {
                 env.load_process()?;
                 if env.is_production() {
                     self.options.set_production(true);
-                    // TODO(b2-blocked): see note in the `.prefix` arm above.
-                    if self.options.force_node_env == options::ForceNodeEnv::Unspecified {
-                        self.resolver.opts.jsx.development = false;
-                    }
+                    // Spec transpiler.zig:302 — see note in the `.prefix` arm.
+                    self.resolver.opts.set_production(true);
                 }
             }
             DotEnvBehavior::_none => {}

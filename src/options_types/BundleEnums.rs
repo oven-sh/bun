@@ -130,7 +130,7 @@ impl ModuleType {
 
 /// `bundler/options.zig` `Target` — bundle target platform.
 #[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash, Enum)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash, Enum, strum::IntoStaticStr)]
 pub enum Target {
     Browser,
     Bun,
@@ -248,7 +248,7 @@ impl Target {
 /// - bun-native-bundler-plugin-api/bundler_plugin.h
 /// - src/jsc/bindings/headers-handwritten.h
 #[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash, Enum)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash, Enum, strum::IntoStaticStr)]
 pub enum Loader {
     Jsx = 0,
     Js = 1,
@@ -282,12 +282,36 @@ impl LoaderOptional {
     pub const NONE: LoaderOptional = LoaderOptional(254);
 
     pub fn unwrap(self) -> Option<Loader> {
-        if self.0 == 254 {
-            None
-        } else {
-            // SAFETY: discriminants 0..=20 are valid Loader; producers only
-            // ever store a valid Loader discriminant or 254.
-            Some(unsafe { core::mem::transmute::<u8, Loader>(self.0) })
+        // Spec options.zig:594-596 uses `@enumFromInt(@intFromEnum(opt))` which is
+        // debug-checked. PORTING.md §Forbidden patterns bars transmute-to-enum;
+        // exhaustive match so out-of-range tags are debug-asserted, never UB.
+        match self.0 {
+            0 => Some(Loader::Jsx),
+            1 => Some(Loader::Js),
+            2 => Some(Loader::Ts),
+            3 => Some(Loader::Tsx),
+            4 => Some(Loader::Css),
+            5 => Some(Loader::File),
+            6 => Some(Loader::Json),
+            7 => Some(Loader::Jsonc),
+            8 => Some(Loader::Toml),
+            9 => Some(Loader::Wasm),
+            10 => Some(Loader::Napi),
+            11 => Some(Loader::Base64),
+            12 => Some(Loader::Dataurl),
+            13 => Some(Loader::Text),
+            14 => Some(Loader::Bunsh),
+            15 => Some(Loader::Sqlite),
+            16 => Some(Loader::SqliteEmbedded),
+            17 => Some(Loader::Html),
+            18 => Some(Loader::Yaml),
+            19 => Some(Loader::Json5),
+            20 => Some(Loader::Md),
+            254 => None,
+            _ => {
+                debug_assert!(false, "LoaderOptional out of range: {}", self.0);
+                None
+            }
         }
     }
 

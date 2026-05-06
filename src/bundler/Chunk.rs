@@ -17,9 +17,11 @@ use crate::bun_renamer;
 use crate::html_import_manifest as HTMLImportManifest;
 use crate::options::{self, Loader};
 use crate::Graph::{Graph, InputFileListExt as _};
+use crate::linker_graph::FileListExt as _;
+use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
 use crate::{
-    cheap_prefix_normalizer, CompileResult, CrossChunkImport, LinkerContext, LinkerGraph,
-    PartRange, PathTemplate,
+    cheap_prefix_normalizer, AdditionalFile, CompileResult, CrossChunkImport, LinkerContext,
+    LinkerGraph, PartRange, PathTemplate,
 };
 
 // TODO(port): Index::Int — assuming bun_js_parser exports this alongside Index

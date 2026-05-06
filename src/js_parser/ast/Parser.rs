@@ -1913,7 +1913,6 @@ impl<'a> Parser<'a> {
             p.jsx_imports = jsx_imports;
         }
 
-        #[cfg(any())] // blocked_on: options::Framework::{server_components,react_fast_refresh} — `options::Framework` is still a unit-struct stub (parser.rs); real fields live in bun_runtime::bake::Framework
         if p.server_components_wrap_ref.is_valid() {
             let fw = p
                 .options
@@ -1922,23 +1921,21 @@ impl<'a> Parser<'a> {
             let sc = fw.server_components.as_ref().unwrap();
             p.generate_react_refresh_import(
                 &mut before,
-                sc.server_runtime_import,
+                &sc.server_runtime_import[..],
                 &[crate::ast::p::ReactRefreshImportClause {
-                    name: sc.server_register_client_reference,
+                    name: &sc.server_register_client_reference[..],
                     r#ref: p.server_components_wrap_ref,
                     enabled: true,
                 }],
             )?;
         }
 
-        #[cfg(any())] // blocked_on: options::Framework::react_fast_refresh — `options::Framework` is still a unit-struct stub (parser.rs); real field lives in bun_runtime::bake::Framework
         if p.react_refresh.register_used || p.react_refresh.signature_used {
             p.generate_react_refresh_import(
                 &mut before,
-                if let Some(fw) = p.options.framework {
-                    fw.react_fast_refresh.as_ref().unwrap().import_source
-                } else {
-                    b"react-refresh/runtime"
+                match p.options.framework {
+                    Some(fw) => &fw.react_fast_refresh.as_ref().unwrap().import_source[..],
+                    None => b"react-refresh/runtime",
                 },
                 &[
                     crate::ast::p::ReactRefreshImportClause {

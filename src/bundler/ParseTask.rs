@@ -22,9 +22,13 @@ use bun_threading::thread_pool as ThreadPoolLib;
 
 use bun_js_parser::{
     self as js_parser,
-    ast::{self, BundledAst as JSAst, Expr, Part, E, G},
+    ast::{self, Expr, Part, E, G},
 };
 use bun_js_parser::Index;
+// PORT NOTE: `BundledAst<'arena>` — the bundler graph stores `'static`-erased
+// ASTs (arena outlives the link step). Use the crate-level alias so the
+// `Success`/helper signatures don't carry an explicit `'static` everywhere.
+use crate::ungate_support::JSAst;
 /// `js_parser.Parser.Options` — the real parser-entry options struct.
 pub use bun_js_parser::parser::ParserOptions;
 

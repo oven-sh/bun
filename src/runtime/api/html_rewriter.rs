@@ -1446,7 +1446,7 @@ fn create_lolhtml_error(global: &JSGlobalObject) -> JSValue {
 
     let err = create_lolhtml_string_error();
     let value = bun_string_jsc::to_error_instance(&err, global);
-    value.put(global, "name", ZigString::init(b"HTMLRewriterError").to_js(global));
+    value.put(global, b"name", ZigString::init(b"HTMLRewriterError").to_js(global));
     value
 }
 

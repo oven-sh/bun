@@ -1083,8 +1083,8 @@ pub fn build_with_vm(
         route_patterns.put_index(
             global,
             u32::try_from(nav_index).unwrap(),
-            pattern_string.to_js(global)?,
-        )?;
+            pattern_string.to_js(global).map_err(js_err)?,
+        ).map_err(js_err)?;
 
         let mut src_path = BunString::clone_utf8(resolve_path::relative(
             cwd,

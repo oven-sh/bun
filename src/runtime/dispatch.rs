@@ -385,12 +385,14 @@ pub fn run_task(
 
         // ── hot-reload (Zig early-returns from the drain loop) ───────────
         task_tag::HotReloadTask => {
-            let t = cast!(hot_reloader::HotReloadTask);
+            let _t = cast!(hot_reloader::HotReloadTask);
             // Zig: `defer t.deinit(); t.run(); counter.* = 0; return;`.
             // `deinit` here only resets the intrusive task state (no free).
-            t.run();
-            t.deinit();
-            return Ok(RunTaskResult::EarlyReturn);
+            // `HotReloadTask::{run,deinit}` require `Ctx: HotReloaderCtx`;
+            // `bun_jsc::VirtualMachineRef` doesn't implement it yet (gated).
+            todo!("blocked_on: bun_jsc::VirtualMachineRef: hot_reloader::HotReloaderCtx");
+            #[allow(unreachable_code)]
+            { return Ok(RunTaskResult::EarlyReturn); }
         }
         task_tag::BakeHotReloadEvent => {
             BakeHotReloadEvent::run(cast!(BakeHotReloadEvent));

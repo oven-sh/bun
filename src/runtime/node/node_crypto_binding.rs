@@ -253,12 +253,9 @@ pub struct CryptoJob<Ctx> {
 // `KeepAlive::{ref,unref}` over `&VirtualMachine`).
 
 impl<Ctx: CryptoJobCtx> CryptoJob<Ctx> {
-    pub fn init(global: &JSGlobalObject, callback: JSValue, ctx: &Ctx) -> JsResult<*mut Self>
-    where
-        Ctx: Clone,
-    {
-        // TODO(port): Zig copies `ctx.*` by value into the heap allocation; `Clone`
-        // bound is the closest Rust shape. Phase B may switch to taking `Ctx` by value.
+    pub fn init(global: &JSGlobalObject, callback: JSValue, ctx: Ctx) -> JsResult<*mut Self> {
+        // PORT NOTE: Zig copies `ctx.*` by value into the heap allocation; Rust takes
+        // `Ctx` by value (move) — `Scrypt` is not `Clone` (owns `StringOrBuffer`/Strong).
         let vm = global.bun_vm();
         let job = Box::into_raw(Box::new(CryptoJob {
             vm,

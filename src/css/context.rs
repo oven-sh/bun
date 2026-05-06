@@ -7,7 +7,6 @@ use crate::css_parser as css;
 use css::css_rules::media::MediaRule;
 #[cfg(any())]
 use css::media_query::{MediaCondition, MediaFeature, MediaFeatureId, MediaList, MediaQuery};
-#[cfg(any())]
 use css::css_properties::custom::UnparsedProperty;
 
 // TODO(port): LIFETIMES.tsv prescribes `&'a HashSet<String>` for unused_symbols verbatim,

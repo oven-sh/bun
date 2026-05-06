@@ -817,6 +817,7 @@ pub type BundlerAtRule = DefaultAtRule;
 // TODO(port): when ENABLE_TAILWIND_PARSING == true, this is `TailwindAtRule`.
 
 pub struct BundlerAtRuleParser<'a> {
+    pub allocator: &'a Bump,
     pub import_records: &'a mut BabyList<ImportRecord>,
     pub layer_names: BabyList<LayerName>,
     pub options: &'a ParserOptions<'a>,
@@ -826,7 +827,6 @@ pub struct BundlerAtRuleParser<'a> {
     pub enclosing_layer: LayerName,
 }
 
-#[cfg(any())] // blocked_on: BabyList push/len/reserve API + ImportRecord Default
 impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
     // TODO(port): when ENABLE_TAILWIND_PARSING, Prelude = enum { Tailwind(TailwindAtRule) }.
     type Prelude = ();
@@ -865,34 +865,41 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
     }
 
     fn on_import_rule(this: &mut Self, import_rule: &mut ImportRule, start_position: u32, end_position: u32) {
-        let import_record_index = this.import_records.len();
+        let import_record_index = this.import_records.len;
         import_rule.import_record_idx = import_record_index;
-        this.import_records.push(ImportRecord {
+        bun_core::handle_oom(this.import_records.append(ImportRecord {
             path: ast::fs::path_init(import_rule.url),
             kind: if import_rule.supports.is_some() { ImportKind::AtConditional } else { ImportKind::At },
             range: logger::Range {
                 loc: logger::Loc { start: i32::try_from(start_position).unwrap() },
                 len: i32::try_from(end_position - start_position).unwrap(),
             },
-            ..Default::default()
-        });
+            // NOTE: `ImportRecord` deliberately has no `Default` (range/path/kind
+            // are required); spell out the remaining defaults explicitly.
+            tag: Default::default(),
+            loader: None,
+            source_index: Default::default(),
+            module_id: 0,
+            original_path: b"",
+            flags: Default::default(),
+        }));
     }
 
     fn on_layer_rule(this: &mut Self, layers: &SmallList<LayerName, 1>) {
         if this.anon_layer_count > 0 {
             return;
         }
-        this.layer_names.reserve(layers.len() as usize);
+        bun_core::handle_oom(this.layer_names.ensure_unused_capacity(layers.len() as usize));
         for layer in layers.slice() {
             if this.enclosing_layer.v.len() > 0 {
                 let mut cloned = LayerName { v: SmallList::default() };
-                cloned.v.reserve((this.enclosing_layer.v.len() + layer.v.len()) as usize);
-                cloned.v.extend_from_slice(this.enclosing_layer.v.slice());
-                cloned.v.extend_from_slice(layer.v.slice());
-                // PERF(port): was appendSliceAssumeCapacity
-                this.layer_names.push(cloned);
+                // PERF(port): was appendSliceAssumeCapacity — `SmallList` has no
+                // public `reserve`, so two `append_slice` calls each grow once.
+                cloned.v.append_slice(this.enclosing_layer.v.slice());
+                cloned.v.append_slice(layer.v.slice());
+                this.layer_names.append_assume_capacity(cloned);
             } else {
-                this.layer_names.push(layer.deep_clone());
+                this.layer_names.append_assume_capacity(layer.deep_clone(this.allocator));
             }
         }
     }
@@ -906,7 +913,7 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
     }
 
     fn push_to_enclosing_layer(this: &mut Self, name: LayerName) {
-        this.enclosing_layer.v.extend_from_slice(name.v.slice());
+        this.enclosing_layer.v.append_slice(name.v.slice());
     }
 
     fn take_layer_names(this: &mut Self) -> BabyList<LayerName> {
@@ -2735,6 +2742,7 @@ impl<AtRule> StyleSheet<AtRule> {
         // `BundlerAtRuleParser` no longer owns `import_records`; it goes through
         // the `Parser` instead. Until then, only the at-rule-parser holds it.
         let mut at_rule_parser = BundlerAtRuleParser {
+            allocator,
             import_records,
             options: &options,
             layer_names: BabyList::default(),

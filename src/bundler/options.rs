@@ -52,9 +52,10 @@ pub type ConditionsMap = StringArrayHashMap<()>;
 // TODO(b2-blocked): bun_sys::Dir — directory handle. Mapped to Fd for now
 // (matches `bun.FD.fromStdDir` pattern).
 pub type Dir = bun_sys::Fd;
-/// `Loader.HashTable` (Zig nested type alias). Hoisted because Rust inherent
-/// impls cannot define associated types.
-pub type LoaderHashTable = StringArrayHashMap<Loader>;
+/// `Loader.HashTable` (Zig nested type alias). Unified with the canonical
+/// `bun_options_types::BundleEnums::LoaderHashTable` so the resolver and
+/// bundler share one nominal map type (PORTING.md crate-tier rule).
+pub use bun_options_types::BundleEnums::LoaderHashTable;
 /// `Loader.Map` (Zig nested type alias).
 pub type LoaderEnumMap = EnumMap<Loader, &'static [u8]>;
 
@@ -486,18 +487,11 @@ pub use bun_options_types::BundleEnums::ModuleType;
 // canonical const map on the upstream enum.
 pub static MODULE_TYPE_LIST: phf::Map<&'static [u8], ModuleType> = ModuleType::LIST;
 
-// PORT NOTE: `EnumSetType` derives Copy/Clone/PartialEq/Eq itself; explicit
-// duplicates removed to avoid E0119.
-#[derive(Debug, Hash, Enum, enumset::EnumSetType, strum::IntoStaticStr)]
-pub enum Target {
-    Browser,
-    Bun,
-    BunMacro,
-    Node,
-
-    /// This is used by bake.Framework.ServerComponents.separate_ssr_graph
-    BakeServerComponentsSsr,
-}
+// B-3 UNIFIED: was a local CYCLEBREAK dup of `bun_options_types::BundleEnums::Target`.
+// Spec options.zig:379 has exactly ONE `Target`; re-export the canonical enum so
+// `BundleOptions.target`, `js_printer::Options.target`, the resolver, and css
+// targets all share one nominal type (kills the `to_bundle_enums_target` shim).
+pub use bun_options_types::BundleEnums::Target;
 
 // PORT NOTE: hoisted from `impl Target` — Rust forbids `static` in inherent impls.
 pub static TARGET_MAP: phf::Map<&'static [u8], Target> = phf::phf_map! {
@@ -508,46 +502,90 @@ pub static TARGET_MAP: phf::Map<&'static [u8], Target> = phf::phf_map! {
     b"node" => Target::Node,
 };
 
-impl Target {
+pub const TARGET_MAIN_FIELD_NAMES: [&[u8]; 4] = [
+    b"browser",
+    b"module",
+    b"main",
+    // https://github.com/jsforum/jsforum/issues/5
+    // Older packages might use jsnext:main in place of module
+    b"jsnext:main",
+];
+
+// Note that this means if a package specifies "module" and "main", the ES6
+// module will not be selected. This means tree shaking will not work when
+// targeting node environments.
+//
+// Some packages incorrectly treat the "module" field as "code for the browser". It
+// actually means "code for ES6 environments" which includes both node and the browser.
+//
+// For example, the package "@firebase/app" prints a warning on startup about
+// the bundler incorrectly using code meant for the browser if the bundler
+// selects the "module" field instead of the "main" field.
+//
+// This is unfortunate but it's a problem on the side of those packages.
+// They won't work correctly with other popular bundlers (with node as a target) anyway.
+const DEFAULT_MAIN_FIELDS_NODE: &[&[u8]] =
+    &[TARGET_MAIN_FIELD_NAMES[2], TARGET_MAIN_FIELD_NAMES[1]];
+
+// Note that this means if a package specifies "main", "module", and
+// "browser" then "browser" will win out over "module". This is the
+// same behavior as webpack: https://github.com/webpack/webpack/issues/4674.
+//
+// This is deliberate because the presence of the "browser" field is a
+// good signal that this should be preferred. Some older packages might only use CJS in their "browser"
+// but in such a case they probably don't have any ESM files anyway.
+const DEFAULT_MAIN_FIELDS_BROWSER: &[&[u8]] = &[
+    TARGET_MAIN_FIELD_NAMES[0],
+    TARGET_MAIN_FIELD_NAMES[1],
+    TARGET_MAIN_FIELD_NAMES[3],
+    TARGET_MAIN_FIELD_NAMES[2],
+];
+const DEFAULT_MAIN_FIELDS_BUN: &[&[u8]] = &[
+    TARGET_MAIN_FIELD_NAMES[1],
+    TARGET_MAIN_FIELD_NAMES[2],
+    TARGET_MAIN_FIELD_NAMES[3],
+];
+
+/// Bundler-only `Target` methods. Extension trait per PORTING.md crate-tier
+/// rule — the canonical `Target` lives in `bun_options_types` (lower tier) and
+/// cannot depend on `bake_types` / `StringHashMap`. Re-exported through
+/// `bun_bundler::options` so `use bun_bundler::options::TargetExt;` makes
+/// `.bake_graph()` etc. available on the single canonical type.
+pub trait TargetExt: Copy {
     // pub const fromJS — deleted: see PORTING.md "*_jsc alias" rule.
     // TODO(port): move to *_jsc — bun_bundler_jsc::options_jsc::target_from_js
 
-    pub fn to_api(self) -> api::Target {
-        match self {
-            Target::Node => api::Target::node,
-            Target::Browser => api::Target::browser,
-            Target::Bun | Target::BakeServerComponentsSsr => api::Target::bun,
-            Target::BunMacro => api::Target::bun_macro,
+    fn bake_graph(self) -> crate::bake_types::Graph;
+    fn out_extensions(self) -> StringHashMap<&'static [u8]>;
+
+    // Original comment:
+    // The neutral target is for people that don't want esbuild to try to
+    // pick good defaults for their platform. In that case, the list of main
+    // fields is empty by default. You must explicitly configure it yourself.
+    // array.set(Target.neutral, &listc);
+    fn default_main_fields_map() -> EnumMap<Target, &'static [&'static [u8]]> {
+        enum_map::enum_map! {
+            Target::Node => DEFAULT_MAIN_FIELDS_NODE,
+            Target::Browser => DEFAULT_MAIN_FIELDS_BROWSER,
+            Target::Bun => DEFAULT_MAIN_FIELDS_BUN,
+            Target::BunMacro => DEFAULT_MAIN_FIELDS_BUN,
+            Target::BakeServerComponentsSsr => DEFAULT_MAIN_FIELDS_BUN,
         }
     }
 
-    #[inline]
-    pub fn is_server_side(self) -> bool {
-        matches!(
-            self,
-            Target::BunMacro | Target::Node | Target::Bun | Target::BakeServerComponentsSsr
-        )
-    }
-
-    #[inline]
-    pub fn is_bun(self) -> bool {
-        matches!(self, Target::BunMacro | Target::Bun | Target::BakeServerComponentsSsr)
-    }
-
-    #[inline]
-    pub fn is_node(self) -> bool {
-        matches!(self, Target::Node)
-    }
-
-    #[inline]
-    pub fn process_browser_define_value(self) -> Option<&'static [u8]> {
-        match self {
-            Target::Browser => Some(b"true"),
-            _ => Some(b"false"),
+    fn default_conditions_map() -> EnumMap<Target, &'static [&'static [u8]]> {
+        enum_map::enum_map! {
+            Target::Node => &[b"node" as &[u8]][..],
+            Target::Browser => &[b"browser" as &[u8], b"module"][..],
+            Target::Bun => &[b"bun" as &[u8], b"node"][..],
+            Target::BakeServerComponentsSsr => &[b"bun" as &[u8], b"node"][..],
+            Target::BunMacro => &[b"macro" as &[u8], b"bun", b"node"][..],
         }
     }
+}
 
-    pub fn bake_graph(self) -> crate::bake_types::Graph {
+impl TargetExt for Target {
+    fn bake_graph(self) -> crate::bake_types::Graph {
         // TODO(b0): bake::Graph arrives from move-in (TYPE_ONLY → bundler)
         match self {
             Target::Browser => crate::bake_types::Graph::Client,
@@ -556,7 +594,7 @@ impl Target {
         }
     }
 
-    pub fn out_extensions(self) -> StringHashMap<&'static [u8]> {
+    fn out_extensions(self) -> StringHashMap<&'static [u8]> {
         let mut exts = StringHashMap::<&'static [u8]>::default();
 
         const OUT_EXTENSIONS_LIST: &[&[u8]] =
@@ -579,91 +617,6 @@ impl Target {
         }
 
         exts
-    }
-
-    pub fn from(plat: Option<api::Target>) -> Target {
-        match plat.unwrap_or(api::Target::_none) {
-            api::Target::node => Target::Node,
-            api::Target::browser => Target::Browser,
-            api::Target::bun => Target::Bun,
-            api::Target::bun_macro => Target::BunMacro,
-            _ => Target::Browser,
-        }
-    }
-
-    pub const MAIN_FIELD_NAMES: [&'static [u8]; 4] = [
-        b"browser",
-        b"module",
-        b"main",
-        // https://github.com/jsforum/jsforum/issues/5
-        // Older packages might use jsnext:main in place of module
-        b"jsnext:main",
-    ];
-
-    // Note that this means if a package specifies "module" and "main", the ES6
-    // module will not be selected. This means tree shaking will not work when
-    // targeting node environments.
-    //
-    // Some packages incorrectly treat the "module" field as "code for the browser". It
-    // actually means "code for ES6 environments" which includes both node and the browser.
-    //
-    // For example, the package "@firebase/app" prints a warning on startup about
-    // the bundler incorrectly using code meant for the browser if the bundler
-    // selects the "module" field instead of the "main" field.
-    //
-    // This is unfortunate but it's a problem on the side of those packages.
-    // They won't work correctly with other popular bundlers (with node as a target) anyway.
-    const DEFAULT_MAIN_FIELDS_NODE: &'static [&'static [u8]] =
-        &[Self::MAIN_FIELD_NAMES[2], Self::MAIN_FIELD_NAMES[1]];
-
-    // Note that this means if a package specifies "main", "module", and
-    // "browser" then "browser" will win out over "module". This is the
-    // same behavior as webpack: https://github.com/webpack/webpack/issues/4674.
-    //
-    // This is deliberate because the presence of the "browser" field is a
-    // good signal that this should be preferred. Some older packages might only use CJS in their "browser"
-    // but in such a case they probably don't have any ESM files anyway.
-    const DEFAULT_MAIN_FIELDS_BROWSER: &'static [&'static [u8]] = &[
-        Self::MAIN_FIELD_NAMES[0],
-        Self::MAIN_FIELD_NAMES[1],
-        Self::MAIN_FIELD_NAMES[3],
-        Self::MAIN_FIELD_NAMES[2],
-    ];
-    const DEFAULT_MAIN_FIELDS_BUN: &'static [&'static [u8]] = &[
-        Self::MAIN_FIELD_NAMES[1],
-        Self::MAIN_FIELD_NAMES[2],
-        Self::MAIN_FIELD_NAMES[3],
-    ];
-
-    // Original comment:
-    // The neutral target is for people that don't want esbuild to try to
-    // pick good defaults for their platform. In that case, the list of main
-    // fields is empty by default. You must explicitly configure it yourself.
-    // array.set(Target.neutral, &listc);
-    pub fn default_main_fields() -> EnumMap<Target, &'static [&'static [u8]]> {
-        enum_map::enum_map! {
-            Target::Node => Self::DEFAULT_MAIN_FIELDS_NODE,
-            Target::Browser => Self::DEFAULT_MAIN_FIELDS_BROWSER,
-            Target::Bun => Self::DEFAULT_MAIN_FIELDS_BUN,
-            Target::BunMacro => Self::DEFAULT_MAIN_FIELDS_BUN,
-            Target::BakeServerComponentsSsr => Self::DEFAULT_MAIN_FIELDS_BUN,
-        }
-    }
-
-    pub fn default_conditions_map() -> EnumMap<Target, &'static [&'static [u8]]> {
-        enum_map::enum_map! {
-            Target::Node => &[b"node" as &[u8]][..],
-            Target::Browser => &[b"browser" as &[u8], b"module"][..],
-            Target::Bun => &[b"bun" as &[u8], b"node"][..],
-            Target::BakeServerComponentsSsr => &[b"bun" as &[u8], b"node"][..],
-            Target::BunMacro => &[b"macro" as &[u8], b"bun", b"node"][..],
-        }
-    }
-
-    pub fn default_conditions(self) -> &'static [&'static [u8]] {
-        // TODO(port): Zig used a static EnumArray; we recompute via enum_map each call.
-        // PERF(port): was comptime EnumArray — profile in Phase B
-        Self::default_conditions_map()[self]
     }
 }
 

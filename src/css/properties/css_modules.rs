@@ -53,9 +53,6 @@ impl Composes {
         })
     }
 
-    // blocked_on: values::ident::CustomIdent::to_css un-gate (Printer::write_ident).
-    // Body once un-gated is the verbatim Zig loop below.
-    #[cfg(any())]
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         use crate::css_values::ident::CustomIdentFns;
         let mut first = true;

@@ -312,10 +312,23 @@ impl<'a> Parser<'a> {
             unsafe { &mut *self.log.as_ptr() },
             self.source,
             self.define,
-            // SAFETY: Zig moves the lexer/options by value into the inner
-            // parser; `Parser` is not reused after `_scan_imports`.
-            unsafe { core::ptr::read(&self.lexer) },
-            unsafe { core::ptr::read(&self.options) },
+            // Zig moves lexer/options by value into `P` (Parser.zig) and only
+            // `defer p.lexer.deinit()` cleans up — Zig has no implicit destructor
+            // on `Parser.lexer`. In Rust, `Lexer` owns `Vec`s and `Options` owns
+            // `jsx: Pragma` boxes, so a bitwise `ptr::read` would double-free
+            // when `self` later drops. Move them out, leaving inert placeholders.
+            core::mem::replace(
+                &mut self.lexer,
+                js_lexer::Lexer::init_without_reading(
+                    // SAFETY: `self.log` aliases the `&'a mut Log` originally
+                    // given to `Parser::init`; the prior unique borrow lived in
+                    // the lexer we just moved out, so reborrowing here is sound.
+                    unsafe { &mut *self.log.as_ptr() },
+                    self.source,
+                    self.bump,
+                ),
+            ),
+            core::mem::take(&mut self.options),
         )?;
         p.import_records = &mut scan_pass.import_records;
         p.named_imports = &mut scan_pass.named_imports;

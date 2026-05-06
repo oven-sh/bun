@@ -1317,8 +1317,18 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
             LogicalSidePair::Inline => (S::INLINE_START, S::INLINE_END),
         };
 
-        if start.as_ref().map(|p| p.property_id().tag() == start_prop).unwrap_or(false)
-            && end.as_ref().map(|p| p.property_id().tag() == end_prop).unwrap_or(false)
+        // Zig: `@as(PropertyIdTag, start.*.?) == start_prop` — raw
+        // discriminant. Exclude `Unparsed` so an unparsed longhand falls
+        // through to the else branch and is appended as-is, instead of
+        // hitting `unreachable!()` in `extract_*`.
+        if start
+            .as_ref()
+            .map(|p| !matches!(p, Property::Unparsed(_)) && p.property_id().tag() == start_prop)
+            .unwrap_or(false)
+            && end
+                .as_ref()
+                .map(|p| !matches!(p, Property::Unparsed(_)) && p.property_id().tag() == end_prop)
+                .unwrap_or(false)
             && shorthand_supported
         {
             // Zig built `value: ValueType` field-by-field then `@unionInit`.
@@ -1365,15 +1375,19 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
     ) {
         // _ = this; // autofix
         let _ = context;
+        let _ = logical;
         let bump = dest.bump();
         if let Some(v) = val.as_ref() {
-            if v.property_id().tag() == logical {
+            // Zig: `@as(css.PropertyIdTag, v.*) == logical` — raw discriminant.
+            // Match `Unparsed` first so an unparsed `*-block-start: var(--x)`
+            // emits `*-top: var(--x)` instead of panicking in `extract_logical`.
+            if let Property::Unparsed(u) = v {
+                dest.push(Property::Unparsed(u.with_property_id(bump, physical)));
+            } else {
                 // Zig moved the payload (`@field(v, @tagName(logical))`) by value.
                 // PORT NOTE: reshaped for borrowck — clone instead of moving out
                 // of `&Property`; `LengthPercentageOrAuto` is small.
                 dest.push(make_physical(extract_logical(v).clone()));
-            } else if let Property::Unparsed(u) = v {
-                dest.push(Property::Unparsed(u.with_property_id(bump, physical)));
             }
         }
     }

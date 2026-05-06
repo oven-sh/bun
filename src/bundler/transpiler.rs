@@ -411,18 +411,39 @@ pub struct ParseResult {
     pub input_fd: Option<FD>,
     pub empty: bool,
     // PORT NOTE: Zig `_resolver.PendingResolution.List` is
-    // `MultiArrayList(PendingResolution)`; that alias isn't re-exported from
-    // bun_resolver yet, so spell the type out.
-    pub pending_imports: bun_collections::MultiArrayList<resolver::PendingResolution>,
+    // `MultiArrayList(PendingResolution)`. `PendingResolution` does not yet
+    // derive `MultiArrayElement` (lives in `bun_resolver`, derive macro is in
+    // `bun_collections_macros` — orphan rules forbid impl-ing it here), so the
+    // SoA `len()`/column accessors aren't reachable. Use AoS `Vec` for now;
+    // `is_pending_import` only scans `import_record_id`, so the layout
+    // difference is observable only as a SoA→AoS perf delta.
+    // TODO(b3): switch back to `MultiArrayList<PendingResolution>` once the
+    // derive lands upstream in `bun_resolver`.
+    pub pending_imports: Vec<resolver::PendingResolution>,
 
     /// Zig: `?*bun.RuntimeTranspilerCache`. SAFETY: erased — bundler stores it
     /// and hands it back to the runtime side; never dereferenced here.
     pub runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
+
+    /// Owns the bytes that `source.contents` points into when they came from
+    /// `cache::Fs::read_file_with_allocator` (non-shared-buffer path) or a
+    /// decoded `data:` URL. `logger::Source.contents` is `&'static [u8]`
+    /// (Phase-A `Str` convention) so the backing must live at least as long as
+    /// the `ParseResult`; threading it here means it drops when the result is
+    /// recycled instead of leaking via `mem::forget` (PORTING.md §Forbidden).
+    /// `Contents::Empty`/`SharedBuffer` for the virtual-source / shared-buffer
+    /// paths (no-op on drop).
+    pub source_contents_backing: crate::cache::Contents,
 }
 
 impl ParseResult {
     #[inline]
-    fn empty_with(source: logger::Source, loader: options::Loader, input_fd: Option<FD>) -> Self {
+    fn empty_with(
+        source: logger::Source,
+        loader: options::Loader,
+        input_fd: Option<FD>,
+        source_contents_backing: crate::cache::Contents,
+    ) -> Self {
         ParseResult {
             source,
             loader,
@@ -432,29 +453,15 @@ impl ParseResult {
             empty: true,
             pending_imports: Default::default(),
             runtime_transpiler_cache: None,
+            source_contents_backing,
         }
     }
 
     pub fn is_pending_import(&self, id: u32) -> bool {
-        // Spec transpiler.zig:43-47: scan `pending_imports.items(.import_record_id)`
-        // for `id`. `bun_collections::MultiArrayList` does not yet expose a
-        // by-field column accessor for `PendingResolution` (no
-        // `MultiArrayElement` derive on it yet), so we cannot iterate the SoA
-        // column here. The empty case is trivially `false`; for the non-empty
-        // case fail loudly rather than silently returning `false`, which would
-        // make `linker.rs` skip *every* deferred import record (PORTING.md
-        // §Forbidden patterns: silent no-op).
-        // TODO(b2-blocked): replace with
-        //   self.pending_imports.slice().import_record_id().iter().any(|&x| x == id)
-        // once the `MultiArrayElement` derive lands on `resolver::PendingResolution`.
-        if self.pending_imports.len() == 0 {
-            return false;
-        }
-        let _ = id;
-        todo!(
-            "ParseResult::is_pending_import: pending_imports is non-empty but \
-             PendingResolution has no MultiArrayElement column accessor yet"
-        );
+        // Spec transpiler.zig:43-47: scan `pending_imports.items(.import_record_id)` for `id`.
+        // PORT NOTE: AoS scan (see field comment); SoA column iteration restored
+        // when `PendingResolution: MultiArrayElement` lands.
+        self.pending_imports.iter().any(|p| p.import_record_id == id)
     }
 }
 
@@ -601,10 +608,10 @@ impl<'a> Transpiler<'a> {
         // per-worker `Transpiler::init` calls the previous leak was discarded
         // (`FileSystem::init` only stores `top_level_dir` on first call).
         let cwd: Option<&'static [u8]> = match opts.absolute_working_dir.as_deref() {
-            Some(s) => Some(Fs::DirnameStore::instance().append(s)?),
+            Some(s) => Some(Fs::DirnameStore::instance().append_slice(s)?),
             None => None,
         };
-        let fs: *mut Fs::FileSystem = Fs::FileSystem::init(cwd)?;
+        let fs: *mut Fs::FileSystem = Fs::FileSystem::init_once(cwd)?;
 
         let env_loader: *mut dot_env::Loader<'static> = match env_loader_ {
             Some(l) => l,
@@ -1757,7 +1764,16 @@ impl<'a> Transpiler<'a> {
                     mangled_props: None,
                     ..Default::default()
                 };
-                js_printer::print_ast::<W, false, ENABLE_SOURCE_MAP>(writer, ast, symbols, source, opts)
+                js_printer::print_ast::<W, false, ENABLE_SOURCE_MAP>(
+                    writer,
+                    // PORT NOTE: `print_ast` takes a `&bumpalo::Bump` (for
+                    // `binary_expression_stack` arena) — same as the Cjs arm.
+                    self.allocator,
+                    &ast,
+                    symbols,
+                    source,
+                    opts,
+                )
             }
 
             js_printer::Format::EsmAscii => {
@@ -1839,7 +1855,16 @@ impl<'a> Transpiler<'a> {
             target: to_bundle_enums_target(self.options.target),
             ..Default::default()
         };
-        js_printer::print_ast::<W, IS_BUN, ENABLE_SOURCE_MAP>(writer, ast, symbols, source, opts)
+        js_printer::print_ast::<W, IS_BUN, ENABLE_SOURCE_MAP>(
+            writer,
+            // PORT NOTE: thread the per-transpiler arena (mirrors the Cjs arm /
+            // spec transpiler.zig:635 — same shape across all three arms).
+            self.allocator,
+            &ast,
+            symbols,
+            source,
+            opts,
+        )
     }
 
     pub fn print<W>(

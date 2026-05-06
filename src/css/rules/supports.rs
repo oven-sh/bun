@@ -50,14 +50,13 @@ impl Declaration {
     }
 }
 
-// blocked_on: generics::{CssEql,CssHash} impls for SupportsCondition/
-// Declaration. Zig's `css.implement*` helpers were @typeInfo reflection; the
-// Rust port requires per-type trait impls (or a derive macro). Phase B: derive.
-#[cfg(any())]
 impl Declaration {
     pub fn eql(&self, other: &Self) -> bool {
-        // TODO(port): css.implementEql is comptime-reflection equality — replace with #[derive(PartialEq)] in Phase B
-        css::implement_eql(self, other)
+        // PORT NOTE: Zig `css.implementEql` field-walk, hand-expanded.
+        // `PropertyId` carries its own tag+prefix `PartialEq` (see
+        // properties_generated.rs `impl PartialEq for PropertyId`); `value` is
+        // byte-slice equality.
+        self.property_id == other.property_id && self.value == other.value
     }
 }
 
@@ -86,16 +85,38 @@ impl SupportsCondition {
     }
 }
 
-#[cfg(any())]
 impl SupportsCondition {
+    // blocked_on: generics::CssHash for PropertyId — `#[derive(CssHash)]` /
+    // `implement_hash` need every field type to provide `.hash(&mut Wyhash)`.
+    // `PropertyId` only impls `core::hash::Hash` today. Phase B: add
+    // `impl CssHash for PropertyId` then swap to `#[derive(CssHash)]`.
+    #[cfg(any())]
     pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
-        // TODO(port): css.implementHash is comptime-reflection — replace with #[derive(Hash)] in Phase B
         css::implement_hash(self, hasher)
     }
 
     pub fn eql(&self, other: &SupportsCondition) -> bool {
-        // TODO(port): css.implementEql is comptime-reflection — replace with #[derive(PartialEq)] in Phase B
-        css::implement_eql(self, other)
+        // PORT NOTE: Zig `css.implementEql` variant-walk, hand-expanded because
+        // `#[derive(CssEql)]` would require `PropertyId: CssEql` (it only
+        // provides the custom tag+prefix `PartialEq`). Semantics match the Zig
+        // reflection: tag mismatch → false, then field-wise structural eq.
+        match (self, other) {
+            (Self::Not(a), Self::Not(b)) => a.eql(b),
+            (Self::And(a), Self::And(b)) | (Self::Or(a), Self::Or(b)) => {
+                a.len() == b.len() && a.iter().zip(b.iter()).all(|(l, r)| l.eql(r))
+            }
+            (Self::Declaration(a), Self::Declaration(b)) => a.eql(b),
+            (Self::Selector(a), Self::Selector(b)) => *a == *b,
+            (Self::Unknown(a), Self::Unknown(b)) => *a == *b,
+            _ => false,
+        }
+    }
+}
+
+impl crate::generics::CssEql for SupportsCondition {
+    #[inline]
+    fn eql(&self, other: &Self) -> bool {
+        SupportsCondition::eql(self, other)
     }
 }
 

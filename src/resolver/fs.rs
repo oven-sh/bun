@@ -193,13 +193,19 @@ macro_rules! string_store_impl {
             #[inline]
             pub fn instance() -> &'static Self { &$zst }
             #[inline]
-            fn backing() -> &'static mut $bty {
-                // SAFETY: `$backing()` returns the raw `*mut` singleton (Zig `*Self`);
-                // the singleton serializes all mutation through its internal `mutex`.
-                unsafe { &mut *$backing() }
+            fn backing() -> *mut $bty {
+                // PORT NOTE: returns the raw `*mut` singleton (Zig `*Self`). Do NOT
+                // materialize a `&'static mut` here — two threads entering `append`
+                // would each hold a live `&'static mut` to the same object (UB)
+                // regardless of the backing's internal mutex. Form the `&mut` only
+                // for the duration of a single locked operation at the call site.
+                $backing()
             }
             pub fn append(&self, value: &[u8]) -> core::result::Result<&'static [u8], AllocError> {
-                let s = Self::backing().append(value)?;
+                // SAFETY: `$backing()` is the process-lifetime singleton; `append`
+                // serializes mutation through its internal mutex. The `&mut` is
+                // scoped to this call only (no `&'static mut` escapes).
+                let s = unsafe { (*Self::backing()).append(value)? };
                 // SAFETY: `append` returns a slice into the singleton's backing storage
                 // (heap-owned by a `'static` `BSSStringList` or a leaked mi_malloc); the
                 // borrow tied to `&mut self` is artificially short — re-erase to `'static`.
@@ -207,15 +213,18 @@ macro_rules! string_store_impl {
             }
             #[inline]
             pub fn exists(&self, value: &[u8]) -> bool {
-                Self::backing().exists(value)
+                // SAFETY: see `append` above; `&mut` scoped to this call only.
+                unsafe { (*Self::backing()).exists(value) }
             }
         }
         impl strings::Appender for &'static $t {
             fn append(&mut self, s: &[u8]) -> core::result::Result<&[u8], AllocError> {
-                <$t>::backing().append(s)
+                // SAFETY: see `<$t>::append`; `&mut` scoped to this call only.
+                unsafe { (*<$t>::backing()).append(s) }
             }
             fn append_lower_case(&mut self, s: &[u8]) -> core::result::Result<&[u8], AllocError> {
-                <$t>::backing().append_lower_case(s)
+                // SAFETY: see `<$t>::append`; `&mut` scoped to this call only.
+                unsafe { (*<$t>::backing()).append_lower_case(s) }
             }
         }
     };
@@ -394,13 +403,17 @@ pub mod dir_entry {
     pub struct EntryStore(());
     impl EntryStore {
         #[inline]
-        pub fn instance() -> &'static mut EntryStoreBacking {
-            // SAFETY: `entry_store_backing()` returns the raw `*mut` singleton (Zig `*Self`);
-            // the singleton serializes all mutation through its internal `mutex`.
-            unsafe { &mut *entry_store_backing() }
+        pub fn instance() -> *mut EntryStoreBacking {
+            // PORT NOTE: returns the raw `*mut` singleton (Zig `*Self`). Do NOT
+            // materialize a `&'static mut` here — concurrent callers would alias the
+            // same object via `&mut` (UB) regardless of the backing's internal mutex.
+            // Form the `&mut` only for the duration of a single locked operation.
+            entry_store_backing()
         }
         pub fn append(value: Entry) -> core::result::Result<*mut Entry, AllocError> {
-            let r = Self::instance().append(value)?;
+            // SAFETY: process-lifetime singleton; `append` serializes via its internal
+            // mutex. The `&mut` is scoped to this call only (no `&'static mut` escapes).
+            let r = unsafe { (*Self::instance()).append(value)? };
             Ok(r as *mut Entry)
         }
     }

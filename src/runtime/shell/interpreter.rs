@@ -1655,6 +1655,25 @@ pub fn shell_openat(
     }
 }
 
+/// Spec: interpreter.zig `ShellSyscall.open` (interpreter.zig:1920-1929).
+/// `bun_sys::open` already routes through `sys_uv` on Windows (returns a uv
+/// fd), so unlike `openat`'s NT-handle directory path this needs no explicit
+/// `makeLibUVOwnedForSyscall` — the dead `if (isWindows)` tail in the Zig
+/// source is unreachable after the early `return bun.sys.open(...)`.
+#[allow(dead_code)] // no Zig callers yet; ported for ShellSyscall surface parity
+pub fn shell_open(file_path: &bun_core::ZStr, flags: i32, perm: bun_sys::Mode) -> bun_sys::Result<Fd> {
+    #[cfg(windows)]
+    {
+        use bun_sys::FdExt;
+        return bun_sys::open(file_path, flags, perm)?
+            .make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail);
+    }
+    #[cfg(not(windows))]
+    {
+        bun_sys::open(file_path, flags, perm)
+    }
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Builtin flag-parsing infra (Spec: interpreter.zig `ParseError` / `FlagParser`)
 // ────────────────────────────────────────────────────────────────────────────

@@ -11,10 +11,10 @@ impl Expect {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        // TODO(port): `defer this.postMatch(globalThis)` — scopeguard would hold a `&mut self`
-        // borrow for the whole body; Phase B should reshape (inner-closure or shared-borrow
-        // `post_match`) so this runs on every exit path.
-        let _post = scopeguard::guard((), |_| this.post_match(global));
+        // PORT NOTE: reshaped for borrowck — `defer this.postMatch(globalThis)` is modeled by
+        // wrapping `this` in a scopeguard so `post_match` runs on every exit path while the body
+        // still has `&mut Expect` access via DerefMut.
+        let mut this = scopeguard::guard(this, |this| this.post_match(global));
 
         let this_value = frame.this();
         let _arguments = frame.arguments_old::<1>();
@@ -69,11 +69,12 @@ impl Expect {
 
         // handle failure
         // PORT NOTE: reshaped for borrowck — Zig held two `*Formatter` aliases via `toFmt`;
-        // Rust `to_fmt(&mut formatter)` cannot be borrowed twice concurrently. Phase B may
-        // need `Formatter` to use interior mutability or take `&self`.
+        // Rust `to_fmt(&mut Formatter)` borrows exclusively, so use a second formatter for the
+        // expected value (matches the toBeOneOf.rs pattern).
         let mut formatter = super::make_formatter(global);
+        let mut formatter2 = super::make_formatter(global);
         let value_fmt = value.to_fmt(&mut formatter);
-        let expected_fmt = other_value.to_fmt(&mut formatter);
+        let expected_fmt = other_value.to_fmt(&mut formatter2);
         if not {
             // Zig: const expected_line = "Expected: not \\> <green>{f}<r>\n";
             // Zig: const received_line = "Received: <red>{f}<r>\n";

@@ -13,9 +13,9 @@ impl Expect {
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
         // `defer this.postMatch(globalThis)` — side effect on every exit path.
-        let _post = scopeguard::guard((), |_| this.post_match(global));
-        // TODO(port): scopeguard borrows `this` mutably across the fn body; Phase B may need to
-        // restructure (e.g. call post_match explicitly on each return) if borrowck rejects this.
+        // PORT NOTE: move `this` into the scopeguard so the body uses it via DerefMut and
+        // `post_match` runs on drop without an overlapping borrow.
+        let mut this = scopeguard::guard(this, |this| this.post_match(global));
 
         let this_value = frame.this();
         let arguments_ = frame.arguments_old::<1>(); let arguments: &[JSValue] = arguments_.slice();

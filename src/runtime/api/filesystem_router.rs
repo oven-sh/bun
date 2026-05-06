@@ -742,10 +742,15 @@ impl MatchedRoute {
         // instead, we just store a boolean saying whether we should generate this whenever the script is requested
         // this is kind of bad. we should consider instead a way to inline the contents of the script.
         if client_framework_enabled {
+            // SAFETY: `generate_entry_point_path` only copies `dir`/`base`/`ext` bytes into
+            // `entry_point_tempbuf`; the forged `'static` PathName never escapes this call.
+            let path_name = bun_logger::fs::PathName::init(unsafe {
+                core::mem::transmute::<&[u8], &'static [u8]>(file_path)
+            });
             bun_object::get_public_path_with_asset_prefix(
                 Transpiler::entry_points::ClientEntryPoint::generate_entry_point_path(
                     &mut entry_point_tempbuf,
-                    &Fs::PathName::init(file_path),
+                    &path_name,
                 ),
                 top_level_dir,
                 origin,

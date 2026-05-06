@@ -428,9 +428,9 @@ impl Context {
                 // SAFETY: e is the active field after an encode do_work().
                 if unsafe { self.last_result.e } == 0 {
                     return Error::init(
-                        c"Compression failed".as_ptr(),
+                        "Compression failed",
                         -1,
-                        c"ERR_BROTLI_COMPRESSION_FAILED".as_ptr(),
+                        "ERR_BROTLI_COMPRESSION_FAILED",
                     );
                 }
                 Error::ok()
@@ -438,7 +438,7 @@ impl Context {
             bun_zlib::NodeMode::BROTLI_DECODE => {
                 if self.error_ != c::BrotliDecoderErrorCode2::NO_ERROR {
                     return Error::init(
-                        c"Decompression failed".as_ptr(),
+                        "Decompression failed",
                         self.error_ as i32,
                         code_for_error(self.error_),
                     );
@@ -447,9 +447,9 @@ impl Context {
                     && unsafe { self.last_result.d } == c::BrotliDecoderResult::needs_more_input
                 {
                     return Error::init(
-                        c"unexpected end of file".as_ptr(),
+                        "unexpected end of file",
                         bun_zlib::ReturnCode::BufError as i32,
-                        c"Z_BUF_ERROR".as_ptr(),
+                        "Z_BUF_ERROR",
                     );
                 }
                 Error::ok()

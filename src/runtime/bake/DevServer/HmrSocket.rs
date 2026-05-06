@@ -71,7 +71,10 @@ impl HmrSocket {
     }
 
     pub fn on_open(&mut self, ws: AnyWebSocket) {
-        let dev = unsafe { self.dev() };
+        // PORT NOTE: derive `dev` from the raw NonNull directly (not via
+        // `self.dev()`) so its lifetime isn't tied to `&self` — we assign
+        // `self.underlying` below while `dev` is still live.
+        let dev = unsafe { &mut *self.dev.as_ptr() };
         let mut header = [0u8; 1 + DevServer::CONFIGURATION_HASH_KEY_LEN];
         header[0] = MessageId::Version.char();
         header[1..].copy_from_slice(&dev.configuration_hash_key);

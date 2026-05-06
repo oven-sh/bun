@@ -910,28 +910,31 @@ pub fn network_interfaces_posix(global_this: &JSGlobalObject) -> JsResult<JSValu
             //  the address and cidr values can be slices into this same buffer
             // e.g. addr_str = "192.168.88.254", cidr_str = "192.168.88.254/24"
             let mut buf = [0u8; 64];
-            let addr_str = bun_fmt::format_ip(&addr, &mut buf).expect("unreachable");
+            // PORT NOTE: reshaped for borrowck — capture buf base ptr/len before
+            // format_ip's mutable borrow, and reduce addr_str to (start, len)
+            // immediately so subsequent buf accesses don't alias the returned slice.
+            let buf_ptr = buf.as_ptr() as usize;
+            let buf_len = buf.len();
+            let (start, addr_len) = {
+                let addr_str = bun_fmt::format_ip(&addr, &mut buf).expect("unreachable");
+                //NOTE addr_str might not start at buf[0] due to slicing in formatIp
+                (addr_str.as_ptr() as usize - buf_ptr, addr_str.len())
+            };
             let mut cidr = JSValue::NULL;
             if let Some(suffix) = maybe_suffix {
-                //NOTE addr_str might not start at buf[0] due to slicing in formatIp
-                let start = addr_str.as_ptr() as usize - buf.as_ptr() as usize;
                 // Start writing the suffix immediately after the address
-                let addr_len = addr_str.len();
                 let suffix_len = {
                     let mut cursor = &mut buf[start + addr_len..];
                     write!(cursor, "/{}", suffix).expect("unreachable");
                     let remaining = cursor.len();
-                    (buf.len() - (start + addr_len)) - remaining
+                    (buf_len - (start + addr_len)) - remaining
                 };
                 // The full cidr value is the address + the suffix
                 let cidr_str = &buf[start..start + addr_len + suffix_len];
                 cidr = ZigString::init(cidr_str).with_encoding().to_js(global_this);
             }
 
-            // PORT NOTE: reshaped for borrowck — re-slice addr_str from buf
-            let addr_str_len = addr_str.len();
-            let start = addr_str.as_ptr() as usize - buf.as_ptr() as usize;
-            interface.put(global_this, b"address", ZigString::init(&buf[start..start + addr_str_len]).with_encoding().to_js(global_this));
+            interface.put(global_this, b"address", ZigString::init(&buf[start..start + addr_len]).with_encoding().to_js(global_this));
             interface.put(global_this, b"cidr", cidr);
         }
 

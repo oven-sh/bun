@@ -1099,8 +1099,8 @@ pub mod js_bundler {
             }
 
             // Parse the files option for in-memory files
-            if let Some(files_obj) = config.get_own_object(global_this, "files")? {
-                this.files = FileMap::from_js(global_this, files_obj.to_js())?;
+            if let Some(files_obj) = get_own_object(config, global_this, "files")? {
+                this.files = FileMap::from_js(global_this, JSValue::from_cell(files_obj))?;
             }
 
             if let Some(flag) = config.get_boolean_loose(global_this, "emitDCEAnnotations")? {

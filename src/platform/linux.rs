@@ -8,8 +8,7 @@ use core::sync::atomic::{AtomicU8, Ordering};
 
 use bun_core::Fd;
 
-// TODO(b2-blocked): bun_alloc::LinuxMemFdAllocator is gated (depends on bun_sys mmap surface).
-// pub use bun_alloc::LinuxMemFdAllocator as MemFdAllocator;
+pub use bun_alloc::LinuxMemFdAllocator as MemFdAllocator;
 
 /// splice() moves data between two file descriptors without copying
 /// between kernel address space and user address space.  It
@@ -25,7 +24,6 @@ pub fn splice(
     flags: u32,
 ) -> usize {
     // SAFETY: direct Linux syscall; arguments mirror the kernel ABI for splice(2).
-    // TODO(port): confirm whether bun_sys exposes a raw `syscall6` wrapper to use instead of libc::syscall.
     unsafe {
         libc::syscall(
             libc::SYS_splice,
@@ -51,8 +49,8 @@ static RWF_BOOL: AtomicU8 = AtomicU8::new(RWFFlagSupport::Unknown as u8);
 
 impl RWFFlagSupport {
     pub fn is_linux_kernel_version_with_buggy_rwf_nonblock() -> bool {
-        bun_core::linux_kernel_version().major == 5
-            && matches!(bun_core::linux_kernel_version().minor, 9 | 10)
+        let v = bun_core::linux_kernel_version();
+        v.major == 5 && matches!(v.minor, 9 | 10)
     }
 
     pub fn disable() {
@@ -70,7 +68,9 @@ impl RWFFlagSupport {
         match current {
             RWFFlagSupport::Unknown => {
                 if Self::is_linux_kernel_version_with_buggy_rwf_nonblock()
-                    || bun_core::getenv_z(bun_core::zstr!("BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK")).is_some()
+                    || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK
+                        .get()
+                        .unwrap_or(false)
                 {
                     RWF_BOOL.store(RWFFlagSupport::Unsupported as u8, Ordering::Relaxed);
                     return false;
@@ -80,7 +80,7 @@ impl RWFFlagSupport {
                 true
             }
             RWFFlagSupport::Supported => true,
-            _ => false,
+            RWFFlagSupport::Unsupported => false,
         }
     }
 }
@@ -125,11 +125,3 @@ pub extern "C" fn sys_epoll_pwait2(
         ) as c_long as isize
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/platform/linux.zig (93 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      raw syscalls via libc::syscall; verify bun_core::{linux_kernel_version, feature_flag} paths in Phase B
-// ──────────────────────────────────────────────────────────────────────────

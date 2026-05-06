@@ -21,10 +21,9 @@ use crate::webcore::{ByteStream, Pipe, PipeHandler, ReadableStream, Wrap};
 declare_scope!(ResumableSink, visible);
 
 /// Trait capturing the codegen'd JS-side accessors for a ResumableSink class
-/// (e.g. `jsc.Codegen.JSResumableFetchSink`).
-// TODO(port): this models the Zig `comptime js: type` param which carries the
-// codegen module's static fns. Phase B should replace with the actual
-// `#[bun_jsc::JsClass]` derive output once codegen emits Rust.
+/// (e.g. `jsc.Codegen.JSResumableFetchSink`). Models the Zig `comptime js: type`
+/// param; impls below forward to the per-class modules emitted by
+/// `js_class_module!` in `bun_jsc::generated`.
 pub trait ResumableSinkJs {
     fn to_js(this: *mut (), global: &JSGlobalObject) -> JSValue;
     fn from_js(value: JSValue) -> Option<*mut ()>;
@@ -177,8 +176,7 @@ impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<'a, J
             if byte_stream.pipe.is_empty() {
                 // equivalent to onStart to get the highWaterMark
                 this_ref.high_water_mark = if byte_stream.high_water_mark < i64::MAX as u64 {
-                    // TODO(port): exact integer types — Zig used @intCast from byte_stream.highWaterMark
-                    i64::try_from(byte_stream.high_water_mark).unwrap()
+                    byte_stream.high_water_mark as i64
                 } else {
                     i64::MAX
                 };
@@ -285,14 +283,10 @@ impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<'a, J
         bun_jsc::mark_binding!();
         let args = callframe.arguments();
         if args.len() > 0 && args[0].is_object() {
-            // PORT NOTE: Zig `getOptionalInt(i64)` = `get` + `validateIntegerRange`.
-            // `bun_jsc::JSValue::get_optional_int` and
-            // `JSGlobalObject::validate_integer_range` are still gated upstream,
-            // so inline the lookup and fall back to plain i64 coercion.
-            // TODO(port): blocked_on: bun_jsc::JSValue::get_optional_int — restore
-            // proper `validateIntegerRange` (throws ERR_OUT_OF_RANGE) once ungated.
-            if let Some(value) = args[0].get(global_this, "highWaterMark")? {
-                this.high_water_mark = value.coerce_to_int64(global_this)?;
+            if let Some(high_water_mark) =
+                args[0].get_optional_int::<i64>(global_this, "highWaterMark")?
+            {
+                this.high_water_mark = high_water_mark;
             }
         }
 
@@ -566,47 +560,55 @@ pub enum ResumableSinkBackpressure {
     Done,
 }
 
-// TODO(b2-blocked): bun_jsc::codegen — `generate-classes.ts` has not yet emitted
-// the per-class Rust accessor modules (`JSResumableFetchSink` /
-// `JSResumableS3UploadSink`). Until it does, define zero-sized markers that
-// satisfy `ResumableSinkJs` so downstream type aliases (`ResumableFetchSink`,
-// `ResumableS3UploadSink`) and their callers type-check. All bodies panic if
-// reached at runtime.
-macro_rules! resumable_sink_js_stub {
+/// Defines a zero-sized marker per codegen'd class and forwards every
+/// `ResumableSinkJs` method to the matching `bun_jsc::generated::$name` module
+/// (which wraps the C++ `${TypeName}__create` / `${TypeName}__fromJS` /
+/// `${TypeName}Prototype__${prop}{Get,Set}CachedValue` externs emitted by
+/// `generate-classes.ts`).
+macro_rules! resumable_sink_js {
     ($($name:ident),* $(,)?) => {$(
         pub enum $name {}
         impl ResumableSinkJs for $name {
-            fn to_js(_this: *mut (), _global: &JSGlobalObject) -> JSValue {
-                todo!(concat!("blocked_on: bun_jsc::codegen::", stringify!($name)))
+            #[inline]
+            fn to_js(this: *mut (), global: &JSGlobalObject) -> JSValue {
+                bun_jsc::generated::$name::to_js(this, global)
             }
-            fn from_js(_value: JSValue) -> Option<*mut ()> {
-                todo!(concat!("blocked_on: bun_jsc::codegen::", stringify!($name)))
+            #[inline]
+            fn from_js(value: JSValue) -> Option<*mut ()> {
+                bun_jsc::generated::$name::from_js(value)
             }
-            fn from_js_direct(_value: JSValue) -> Option<*mut ()> {
-                todo!(concat!("blocked_on: bun_jsc::codegen::", stringify!($name)))
+            #[inline]
+            fn from_js_direct(value: JSValue) -> Option<*mut ()> {
+                bun_jsc::generated::$name::from_js_direct(value)
             }
-            fn oncancel_set_cached(_this: JSValue, _global: &JSGlobalObject, _v: JSValue) {
-                todo!(concat!("blocked_on: bun_jsc::codegen::", stringify!($name)))
+            #[inline]
+            fn oncancel_set_cached(this: JSValue, global: &JSGlobalObject, v: JSValue) {
+                bun_jsc::generated::$name::oncancel_set_cached(this, global, v)
             }
-            fn oncancel_get_cached(_this: JSValue) -> Option<JSValue> {
-                todo!(concat!("blocked_on: bun_jsc::codegen::", stringify!($name)))
+            #[inline]
+            fn oncancel_get_cached(this: JSValue) -> Option<JSValue> {
+                bun_jsc::generated::$name::oncancel_get_cached(this)
             }
-            fn ondrain_set_cached(_this: JSValue, _global: &JSGlobalObject, _v: JSValue) {
-                todo!(concat!("blocked_on: bun_jsc::codegen::", stringify!($name)))
+            #[inline]
+            fn ondrain_set_cached(this: JSValue, global: &JSGlobalObject, v: JSValue) {
+                bun_jsc::generated::$name::ondrain_set_cached(this, global, v)
             }
-            fn ondrain_get_cached(_this: JSValue) -> Option<JSValue> {
-                todo!(concat!("blocked_on: bun_jsc::codegen::", stringify!($name)))
+            #[inline]
+            fn ondrain_get_cached(this: JSValue) -> Option<JSValue> {
+                bun_jsc::generated::$name::ondrain_get_cached(this)
             }
-            fn stream_set_cached(_this: JSValue, _global: &JSGlobalObject, _v: JSValue) {
-                todo!(concat!("blocked_on: bun_jsc::codegen::", stringify!($name)))
+            #[inline]
+            fn stream_set_cached(this: JSValue, global: &JSGlobalObject, v: JSValue) {
+                bun_jsc::generated::$name::stream_set_cached(this, global, v)
             }
-            fn stream_get_cached(_this: JSValue) -> Option<JSValue> {
-                todo!(concat!("blocked_on: bun_jsc::codegen::", stringify!($name)))
+            #[inline]
+            fn stream_get_cached(this: JSValue) -> Option<JSValue> {
+                bun_jsc::generated::$name::stream_get_cached(this)
             }
         }
     )*};
 }
-resumable_sink_js_stub!(JSResumableFetchSink, JSResumableS3UploadSink);
+resumable_sink_js!(JSResumableFetchSink, JSResumableS3UploadSink);
 
 // Forward to the inherent methods on each Context type. The Zig spec uses
 // duck-typed `Context.writeRequestData` / `Context.writeEndRequest`; in Rust we
@@ -626,7 +628,6 @@ impl ResumableSinkContext for FetchTasklet {
 pub type ResumableFetchSink<'a> = ResumableSink<'a, JSResumableFetchSink, FetchTasklet>;
 pub type ResumableS3UploadSink<'a> = ResumableSink<'a, JSResumableS3UploadSink, S3UploadStreamWrapper>;
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     fn Bun__assignStreamIntoResumableSink(
         global_this: *const JSGlobalObject,

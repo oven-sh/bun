@@ -1,40 +1,5 @@
 //! `Bun.build()` plugin host + `BuildArtifact` JS wrapper.
 
-/// `BuildArtifact.kind` — what role an output file plays.
-#[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
-pub enum OutputKind {
-    #[strum(serialize = "chunk")] Chunk,
-    #[strum(serialize = "asset")] Asset,
-    #[strum(serialize = "entry-point")] EntryPoint,
-    #[strum(serialize = "sourcemap")] Sourcemap,
-    #[strum(serialize = "bytecode")] Bytecode,
-    #[strum(serialize = "module_info")] ModuleInfo,
-    #[strum(serialize = "metafile-json")] MetafileJson,
-    #[strum(serialize = "metafile-markdown")] MetafileMarkdown,
-}
-
-impl OutputKind {
-    pub fn is_file_in_standalone_mode(self) -> bool {
-        !matches!(
-            self,
-            Self::Sourcemap | Self::Bytecode | Self::ModuleInfo
-                | Self::MetafileJson | Self::MetafileMarkdown
-        )
-    }
-}
-
-/// Full `.classes.ts` payload wraps a `webcore::Blob` plus
-/// `loader/path/hash/output_kind/sourcemap` — re-exported from `_jsc_gated`.
-pub use _jsc_gated::BuildArtifact;
-/// Opaque surface — `JSBundler::Config` + plugin pipeline.
-pub struct JSBundler(());
-
-/// `jsc.API.JSBundler.Plugin` — re-exported for `crate::bake` (`SplitBundlerOptions.plugin`).
-pub use _jsc_gated::js_bundler::Plugin;
-
-// TODO(b2-blocked): bun_jsc + #[bun_jsc::host_fn]/JsClass proc-macros
-
-mod _jsc_gated {
 use core::ffi::c_void;
 
 use bun_core::Output;
@@ -2338,7 +2303,11 @@ pub mod js_bundler {
 }
 
 pub use js_bundler as JSBundler;
+/// `jsc.API.JSBundler.Plugin` — re-exported for `crate::bake` (`SplitBundlerOptions.plugin`).
+pub use js_bundler::Plugin;
 
+/// Full `.classes.ts` payload — wraps a `webcore::Blob` plus
+/// `loader/path/hash/output_kind/sourcemap`.
 #[bun_jsc::JsClass(no_constructor)]
 pub struct BuildArtifact {
     pub blob: Blob,
@@ -2349,6 +2318,7 @@ pub struct BuildArtifact {
     pub sourcemap: bun_jsc::Strong, // Strong.Optional
 }
 
+/// `BuildArtifact.kind` — what role an output file plays.
 #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum OutputKind {
     #[strum(serialize = "chunk")]
@@ -2371,11 +2341,14 @@ pub enum OutputKind {
 
 impl OutputKind {
     pub fn is_file_in_standalone_mode(self) -> bool {
-        self != Self::Sourcemap
-            && self != Self::Bytecode
-            && self != Self::ModuleInfo
-            && self != Self::MetafileJson
-            && self != Self::MetafileMarkdown
+        !matches!(
+            self,
+            Self::Sourcemap
+                | Self::Bytecode
+                | Self::ModuleInfo
+                | Self::MetafileJson
+                | Self::MetafileMarkdown
+        )
     }
 }
 
@@ -2644,12 +2617,9 @@ impl BuildArtifact {
     }
 }
 
-} // mod _jsc_gated
-
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/api/JSBundler.zig (2050 lines)
 //   confidence: medium
-//   todos:      18
-//   notes:      Names self-referential slices need raw ptrs; MiniImportRecord slice fields are borrowed (raw *const [u8]); Load.path/namespace changed from borrowed to owned; std.fs.cwd().openDir replaced with bun_sys stub
+//   notes:      Names self-referential slices need raw ptrs; MiniImportRecord slice fields are borrowed (raw *const [u8]); Load.path/namespace changed from borrowed to owned
 // ──────────────────────────────────────────────────────────────────────────

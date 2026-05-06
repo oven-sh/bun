@@ -780,11 +780,13 @@ impl protocol::TryOp for LengthValue {
     #[inline]
     fn try_op<C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> f32) -> Option<Self> {
         // PORT NOTE: `LengthValue::try_op` takes a 2-arg closure (ctx folded
-        // in by caller); inline the same-unit + px-convert dispatch here so
-        // the 3-arg `Fn(C, f32, f32)` shape (which `DimensionPercentage`
-        // forwards) is satisfied without `C: Copy`.
-        if let Some(v) = self.try_same_unit_op(rhs, |a, b| f(ctx, a, b)) {
-            return Some(v);
+        // in by caller); the `protocol::TryOp` shape passes `C` by-value with
+        // no `Copy` bound, so we can't capture `ctx` in an `Fn` closure that
+        // might be called more than once. Inline the same-unit + px-convert
+        // dispatch here so `f` is invoked exactly once on the chosen path.
+        if core::mem::discriminant(self) == core::mem::discriminant(rhs) {
+            let v = f(ctx, self.value(), rhs.value());
+            return Some(self.map_value(|_| v));
         }
         if let (Some(a), Some(b)) = (self.to_px(), rhs.to_px()) {
             return Some(LengthValue::Px(f(ctx, a, b)));

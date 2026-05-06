@@ -1065,8 +1065,12 @@ impl Bunfig {
         ctx: &mut ContextData,
     ) -> Result<(), bun_core::Error> {
         // SAFETY: ctx.log is populated by `create_context_data()` before any
-        // bunfig load; single-threaded CLI startup invariant.
-        let log: &mut logger::Log = unsafe { ctx.log() };
+        // bunfig load; single-threaded CLI startup invariant. The raw pointer
+        // is copied out so the resulting `&mut Log` does not borrow `ctx`
+        // (Parser later needs `&mut ctx` alongside `&mut log`).
+        let log_ptr: *mut logger::Log = ctx.log;
+        debug_assert!(!log_ptr.is_null());
+        let log: &mut logger::Log = unsafe { &mut *log_ptr };
         let log_count = log.errors + log.warnings;
 
         let bump = Bump::new();

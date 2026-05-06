@@ -30,6 +30,10 @@ pub struct ExecState {
     pub tasks_done: usize,
     pub output_waiting: usize,
     pub output_done: usize,
+    /// FIFO of in-flight OutputTask pointers awaiting an IOWriter chunk
+    /// completion. Stopgap until `WriterTag` can carry the `*mut OutputTask`
+    /// directly — see mkdir.rs `Exec::output_queue` for rationale.
+    pub output_queue: std::collections::VecDeque<*mut OutputTask<Ls>>,
 }
 
 /// Custom parse error for invalid options. Spec: ls.zig `Opts.ParseError` (ls
@@ -98,6 +102,7 @@ impl Ls {
                         tasks_done: 0,
                         output_waiting: 0,
                         output_done: 0,
+                        output_queue: std::collections::VecDeque::new(),
                     });
 
                     let cwd = Builtin::cwd(interp, cmd);

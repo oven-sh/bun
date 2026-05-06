@@ -1855,31 +1855,13 @@ impl NetworkSink {
         // TODO(port): @ptrCast(this) to JSSink — depends on codegen layout
     }
 
-    pub fn finalize(&mut self) {
-        self.detach_writable();
-    }
-
-    fn detach_writable(&mut self) {
-        if let Some(_task) = self.task.take() {
-            // TODO(b2-blocked): `task.deref()` once `bun_s3::MultiPartUpload` is real.
-        }
-    }
-
-    pub fn finalize_and_destroy(this: *mut Self) {
-        // SAFETY: this is Box-allocated
-        let this_ref = unsafe { &mut *this };
-        this_ref.finalize();
-        // SAFETY: this was Box::into_raw'd
-        drop(unsafe { Box::from_raw(this) });
-    }
-
-    pub fn abort(&mut self) {
-        self.ended = true;
-        self.done = true;
-        self.signal.close(None);
-        self.cancel = true;
-        self.finalize();
-    }
+    // NOTE: `finalize` / `detach_writable` / `finalize_and_destroy` / `abort` are
+    // intentionally NOT defined in this live impl block. A previous stub
+    // `detach_writable` here did `self.task.take()` without calling the
+    // intrusive `deref()` on the `MultiPartUpload`, leaking one refcount per
+    // teardown (PORTING.md §Forbidden: silent no-op for real Zig logic). The
+    // correct implementations live in the `#[cfg(any())]` block below and are
+    // un-gated together with `bun_s3::MultiPartUpload`.
 
     pub fn flush(&mut self) -> bun_sys::Result<()> {
         Ok(())
@@ -2311,21 +2293,26 @@ impl ReadResult {
                 let owned = slice_ref.as_ptr() != buf.as_ptr();
                 let done = is_done || (close_on_empty && slice_ref.is_empty());
 
-                // PORT NOTE: Zig `bun.ByteList.fromOwnedSlice(slice)` adopts an
-                // existing heap allocation by pointer/len. The Rust
-                // `BabyList::from_owned_slice` takes `Box<[T]>`; reconstructing
-                // a Box here would assume the global allocator owns `slice`,
-                // which the caller does not guarantee. Use `from_slice` (copies)
-                // for now; Phase B should add `BabyList::adopt_raw(ptr, len)`.
-                // TODO(port): avoid copy — adopt raw allocation.
+                // Zig `bun.ByteList.fromOwnedSlice(slice)` adopts an existing heap
+                // allocation by pointer/len (cap = len). The contract is: when
+                // `slice.ptr != buf.ptr` the slice IS a default-allocator heap
+                // allocation whose ownership is being transferred into the
+                // StreamResult, and downstream `Result.release()` frees it via
+                // `clear_and_free`. Mirror that by adopting the raw allocation
+                // instead of copying — copying would leak the original buffer.
                 break 'brk if owned && done {
-                    StreamResult::OwnedAndDone(
-                        ByteList::from_slice(slice_ref).unwrap_or_else(|_| bun_core::out_of_memory()),
-                    )
+                    let len = u32::try_from(slice_ref.len()).unwrap();
+                    // SAFETY: `owned` branch — caller transfers a default-allocator
+                    // heap allocation of exactly `len` bytes (cap == len), all initialized.
+                    StreamResult::OwnedAndDone(unsafe {
+                        ByteList::from_raw_parts(slice_ref.as_mut_ptr(), len, len)
+                    })
                 } else if owned {
-                    StreamResult::Owned(
-                        ByteList::from_slice(slice_ref).unwrap_or_else(|_| bun_core::out_of_memory()),
-                    )
+                    let len = u32::try_from(slice_ref.len()).unwrap();
+                    // SAFETY: see above — ownership of `slice` is transferred here.
+                    StreamResult::Owned(unsafe {
+                        ByteList::from_raw_parts(slice_ref.as_mut_ptr(), len, len)
+                    })
                 } else if done {
                     StreamResult::IntoArrayAndDone(IntoArray {
                         len: slice_ref.len() as BlobSizeType,

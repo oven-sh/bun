@@ -239,19 +239,22 @@ impl OutputTaskVTable for Touch {
     fn write_out(
         interp: &mut Interpreter,
         cmd: NodeId,
-        _child: *mut OutputTask<Self>,
+        child: *mut OutputTask<Self>,
         output: &mut OutputSrc,
     ) -> Option<Yield> {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_waiting += 1;
         }
         if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
-            let child = ChildPtr { node: cmd, tag: WriterTag::Builtin };
+            if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+                exec.output_queue.push_back(child);
+            }
+            let childptr = ChildPtr { node: cmd, tag: WriterTag::Builtin };
             let buf = output.slice().to_vec();
             return Some(
                 Builtin::of_mut(interp, cmd)
                     .stdout
-                    .enqueue(child, &buf, safeguard),
+                    .enqueue(childptr, &buf, safeguard),
             );
         }
         let buf = output.slice().to_vec();

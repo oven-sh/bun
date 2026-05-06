@@ -377,26 +377,6 @@ pub mod garbage_collection_controller;
 #[path = "comptime_string_map_jsc.rs"] pub mod comptime_string_map_jsc;
 #[path = "config.rs"] pub mod config;
 
-// ──────────────────────────────────────────────────────────────────────────
-// Stub surface (B-1): opaque newtypes / placeholder fns for every public symbol
-// that lib.rs previously re-exported from a gated module. Downstream crates
-// type-check against these; bodies are filled in B-2.
-// ──────────────────────────────────────────────────────────────────────────
-
-/// Helper: declare an opaque stub type with a given name.
-#[macro_export]
-#[doc(hidden)]
-macro_rules! stub_ty {
-    ($($(#[$m:meta])* $name:ident),* $(,)?) => {
-        $(
-            $(#[$m])*
-            #[repr(transparent)]
-            #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-            pub struct $name(pub usize);
-        )*
-    };
-}
-
 /// Binding for JSCInitialize in ZigGlobalObject.cpp
 pub fn initialize(eval_mode: bool) {
     // TODO(port): bun_core::analytics::Features::jsc_inc — analytics counter not yet wired.

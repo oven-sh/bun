@@ -751,7 +751,7 @@ impl Subprocess<'_> {
     #[bun_jsc::host_fn(getter)]
     pub fn get_terminal(this: &Self, global_this: &JSGlobalObject) -> JSValue {
         if let Some(terminal) = this.terminal {
-            return Terminal::to_js(terminal.as_ptr(), global_this);
+            return crate::api::bun_terminal_body::to_js(terminal.as_ptr(), global_this);
         }
         JSValue::UNDEFINED
     }

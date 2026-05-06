@@ -74,6 +74,8 @@ pub struct RuntimeState {
     /// `RareData.ssl_ctx_cache` — concrete digest-keyed weak `SSL_CTX*` cache.
     /// Same cycle-break story as `sql_rare`.
     pub ssl_ctx_cache: crate::api::SSLContextCache::SSLContextCache,
+    /// `RareData.editor_context` — `bun_jsc` cannot name `crate::cli::open`.
+    pub editor_context: crate::cli::open::EditorContext,
     /// Synthetic `bun:main` wrapper source.
     pub entry_point: ServerEntryPoint,
     /// Backing arena for `vm.transpiler` (spec passes `bun.default_allocator`;

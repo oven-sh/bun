@@ -735,6 +735,26 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
     }
 }
 
+// Wires `ResolveInfoRequest<T>` into `Channel::resolve` — the per-record
+// `T::RAW_CALLBACK` parses the raw DNS reply and calls back into
+// `on_cares_complete`. Zig: `channel.resolve(name, type_name, ResolveInfoRequest(..),
+// request, cares_type, onCaresComplete)`.
+impl<T: CAresRecordType> c_ares::ResolveHandler for ResolveInfoRequest<T> {
+    const LOOKUP_NAME: &'static [u8] = T::TYPE_NAME.as_bytes();
+    const NS_TYPE: c_ares::NSType = T::NS_TYPE;
+    unsafe extern "C" fn raw_callback(
+        ctx: *mut c_void,
+        status: c_int,
+        timeouts: c_int,
+        buffer: *mut u8,
+        buffer_length: c_int,
+    ) {
+        // SAFETY: `ctx` is the `*mut ResolveInfoRequest<T>` handed to `ares_query`
+        // by `Channel::resolve`; the callback owns it for this call.
+        unsafe { (T::RAW_CALLBACK)(ctx, status, timeouts, buffer, buffer_length) }
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // GetHostByAddrInfoRequest
 // ──────────────────────────────────────────────────────────────────────────

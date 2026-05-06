@@ -1041,6 +1041,12 @@ impl ZigString {
     pub fn substring(self, start_index: usize) -> ZigString {
         self.substring_with_len(start_index.min(self.len), self.len)
     }
+    /// `ZigString.trunc` (ZigString.zig:268) — clamp `len`, preserving the
+    /// pointer (and its tag bits) verbatim.
+    #[inline]
+    pub fn trunc(self, len: usize) -> ZigString {
+        ZigString { ptr: self.ptr, len: self.len.min(len) }
+    }
     /// `ZigString.toSlice` — borrowed-or-owned UTF-8.
     pub fn to_slice(&self) -> ZigStringSlice {
         if self.len == 0 { return ZigStringSlice::EMPTY; }

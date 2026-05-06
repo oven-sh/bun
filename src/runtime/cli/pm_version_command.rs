@@ -193,26 +193,25 @@ impl PmVersionCommand {
             current_version.unwrap_or(b"0.0.0"),
             version_type,
             new_version,
-            pm_shims::preid(pm),
+            pm.options.preid,
             &package_json_dir,
         )?;
         // `defer ctx.allocator.free(new_version_str)` — handled by Drop.
 
         if let Some(version) = current_version {
-            if !pm_shims::allow_same_version(pm) && version == new_version_str.as_slice() {
+            if !pm.options.allow_same_version && version == new_version_str.as_slice() {
                 Output::err_generic("Version not changed", ());
                 Global::exit(1);
             }
         }
 
         {
-            // TODO(port): `json.data.e_object.putString` — verify AST mutation API
-            let _ = (&mut json, &new_version_str);
-            todo!("blocked_on: bun_logger::js_ast::E::Object::put_string");
+            json.data
+                .e_object_mut()
+                .expect("checked e_object above")
+                .put_string(&json_bump, b"version", &new_version_str)?;
 
-            #[allow(unreachable_code)]
-            {
-                let mut buffer_writer = JSPrinter::BufferWriter::init();
+            let mut buffer_writer = JSPrinter::BufferWriter::init();
                 buffer_writer.append_newline = !package_json_contents.is_empty()
                     && package_json_contents[package_json_contents.len() - 1] == b'\n';
                 let mut package_json_writer = JSPrinter::BufferPrinter::init(buffer_writer);

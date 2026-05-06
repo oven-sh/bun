@@ -142,22 +142,25 @@ impl SecureContext {
         ctx_opts: uws::socket_context::BunSocketContextOptions,
         d: [u8; 32],
     ) -> JsResult<Box<SecureContext>> {
-        let mut err = bun_uws_sys::create_bun_socket_error_t::none;
-        // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
-        let vm = unsafe { &mut *global.bun_vm() };
-        // `rare_data().ssl_ctx_cache()` currently returns the upstream
-        // `bun_jsc::rare_data::high_tier::SSLContextCache` opaque cycle-break
-        // stub (a private type — cannot be named or extended from this crate).
-        // The real `get_or_create_digest` lives in `crate::api::SSLContextCache`
-        // and is wired in once the rare-data vtable / type-carrier lands. Touch
-        // the accessor so the borrow shape stays exercised.
-        let _ = vm.rare_data().ssl_ctx_cache();
-        let Some(ctx) = ssl_ctx_cache_get_or_create_digest(&ctx_opts, d, &mut err) else {
+        let mut err = uws::create_bun_socket_error_t::none;
+        // PORT NOTE: spec is `global.bunVM().rareData().sslCtxCache()`. In the
+        // Rust crate split, `bun_jsc::RareData::ssl_ctx_cache()` returns an
+        // opaque cycle-break stub; the concrete per-VM `SSLContextCache` lives
+        // on this crate's `RuntimeState` (one per JS thread, same lifetime as
+        // `RareData`). Reach it via the thread-local — same instance
+        // `Bun__RareData__sslCtxCache` hands out over FFI.
+        let state = crate::jsc_hooks::runtime_state();
+        debug_assert!(!state.is_null(), "RuntimeState not installed");
+        // SAFETY: `state` is the boxed per-thread `RuntimeState` installed by
+        // `init_runtime_state`; the embedded `ssl_ctx_cache` has a stable
+        // address for the VM's lifetime and is only touched from the JS thread.
+        let cache = unsafe { &mut (*state).ssl_ctx_cache };
+        let Some(ctx) = cache.get_or_create_digest(ctx_opts, d, &mut err) else {
             // `err` is only set for the input-validation paths (bad PEM, missing
             // file, …). When BoringSSL itself fails (e.g. unsupported curve) the
             // enum is still `.none`; surface the library error stack instead of
             // throwing an empty placeholder.
-            if err == bun_uws_sys::create_bun_socket_error_t::none {
+            if err == uws::create_bun_socket_error_t::none {
                 // SAFETY: FFI; ERR_get_error reads the thread-local BoringSSL error queue, no preconditions.
                 let code = unsafe { boringssl::ERR_get_error() };
                 if code != 0 {
@@ -165,11 +168,7 @@ impl SecureContext {
                 }
                 return Err(global.throw("Failed to create SSL context"));
             }
-            // SAFETY: `bun_uws_sys::create_bun_socket_error_t` and
-            // `bun_uws::create_bun_socket_error_t` are both `#[repr(C)]` with
-            // identical variants; transmute bridges the duplicate definitions.
-            let uws_err: uws::create_bun_socket_error_t = unsafe { core::mem::transmute(err) };
-            return Err(global.throw_value(create_bun_socket_error_to_js(uws_err, global)));
+            return Err(global.throw_value(create_bun_socket_error_to_js(err, global)));
         };
         Ok(Box::new(SecureContext {
             ctx,

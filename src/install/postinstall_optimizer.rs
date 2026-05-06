@@ -247,7 +247,7 @@ impl List {
         None
     }
 
-    pub fn get(&self, pkg_info: PkgInfo) -> Option<PostinstallOptimizer> {
+    pub fn get(&self, pkg_info: PkgInfo<'_>) -> Option<PostinstallOptimizer> {
         if let Some(optimize) = self.dynamic.get(&pkg_info.name_hash) {
             return Some(*optimize);
         }
@@ -278,5 +278,5 @@ impl List {
 //   source:     src/install/postinstall_optimizer.zig (198 lines)
 //   confidence: medium
 //   todos:      5
-//   notes:      LazyLock for comptime hash/version consts; ArrayHashMap needs identity-u64 ctx; npm::OperatingSystem::WIN32/ALL bitfield consts assumed; PkgInfo.version_buf lifetime deferred.
+//   notes:      LazyLock for comptime hash/version consts; ArrayHashMap needs identity-u64 ctx; npm::OperatingSystem::WIN32/ALL bitfield consts assumed.
 // ──────────────────────────────────────────────────────────────────────────

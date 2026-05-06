@@ -13,7 +13,7 @@ pub use super::source_map_store_body::PutOrIncrementRefCount;
 
 /// See `SourceId` for the bit layout.
 #[repr(transparent)]
-#[derive(Copy, Clone, Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Default)]
 pub struct Key(pub u64);
 impl Key {
     #[inline] pub const fn init(v: u64) -> Self { Self(v) }

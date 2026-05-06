@@ -790,9 +790,31 @@ impl CssColor {
                 light.hash(hasher);
                 dark.hash(hasher);
             }
-            CssColor::System(_) => hasher.update(&6u32.to_ne_bytes()),
+            CssColor::System(sys) => {
+                hasher.update(&6u32.to_ne_bytes());
+                hasher.update(&(*sys as u32).to_ne_bytes());
+            }
         }
     }
+}
+
+impl crate::generics::ToCss for CssColor {
+    #[inline]
+    fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> { CssColor::to_css(self, dest) }
+}
+
+// `light_dark` payload helpers (Zig anonymous struct methods)
+// `takeLightFreeDark` / `takeDarkFreeLight` — in Rust, taking ownership of one
+// `Box` and dropping the other is just destructuring; provided as free fns.
+#[inline]
+pub fn take_light_free_dark(light: Box<CssColor>, dark: Box<CssColor>) -> Box<CssColor> {
+    drop(dark);
+    light
+}
+#[inline]
+pub fn take_dark_free_light(light: Box<CssColor>, dark: Box<CssColor>) -> Box<CssColor> {
+    drop(light);
+    dark
 }
 
 // ──────────────────────────── ColorFallbackKind ──────────────────────────

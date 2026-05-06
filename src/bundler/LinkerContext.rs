@@ -8,9 +8,11 @@ use bun_alloc::{Arena as Bump, AllocError};
 use bun_collections::{BabyList, MultiArrayList, AutoBitSet, ArrayHashMap, HashMap};
 use bun_logger as Logger;
 use bun_logger::{Loc, Range, Data, Source, Log};
-use bun_string::{strings, MutableString, StringJoiner};
+use bun_string::{strings, MutableString, string_joiner::StringJoiner};
 use bun_sourcemap::{self as SourceMap, LineOffsetTable, SourceMapState, SourceMapPieces, SourceMapShifts, DebugIDFormatter};
-use bun_threading::{self as sync, ThreadPool as ThreadPoolLib, WaitGroup};
+// PORT NOTE: alias the *module* (not the `ThreadPool` struct) so
+// `ThreadPoolLib::Task` / `ThreadPoolLib::Batch` resolve as nested items.
+use bun_threading::{self as sync, thread_pool as ThreadPoolLib, WaitGroup};
 use bun_options_types::{ImportRecord, ImportKind};
 // TODO(b0): bake_types arrives from move-in (TYPE_ONLY → bundler)
 use crate::bake_types as bake;
@@ -119,33 +121,33 @@ macro_rules! debug_tree_shake {
 // Re-exports from sibling modules in `linker_context/`.
 // `LinkerGraph` SoA accessors are real now (`#[derive(MultiArrayElement)]` on
 // `JSAst`/`JSMeta`/`File`); the submodule bodies un-gate against those. Module
-// declarations live in `lib.rs::linker_context` — any that haven't landed yet
-// are concurrent-agent edits and surface as unresolved-module errors here.
-pub use crate::linker_context::output_file_list_builder as OutputFileListBuilder;
-pub use crate::linker_context::static_route_visitor as StaticRouteVisitor;
-pub use crate::linker_context::metafile_builder as MetafileBuilder;
-
-pub use crate::linker_context::compute_chunks::compute_chunks;
-pub use crate::linker_context::find_all_imported_parts_in_js_order::{find_all_imported_parts_in_js_order, find_imported_parts_in_js_order};
-pub use crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order;
-pub use crate::linker_context::find_imported_css_files_in_js_order::find_imported_css_files_in_js_order;
-pub use crate::linker_context::generate_code_for_lazy_export::generate_code_for_lazy_export;
+// declarations live in `lib.rs::linker_context` — each re-export below is
+// gated alongside its module declaration so partial un-gates compile.
 pub use crate::linker_context::scan_imports_and_exports::scan_imports_and_exports;
-pub use crate::linker_context::do_step5::{do_step5, create_exports_for_file};
-pub use crate::linker_context::compute_cross_chunk_dependencies::compute_cross_chunk_dependencies;
-pub use crate::linker_context::post_process_js_chunk::post_process_js_chunk;
-pub use crate::linker_context::post_process_css_chunk::post_process_css_chunk;
-pub use crate::linker_context::post_process_html_chunk::post_process_html_chunk;
-pub use crate::linker_context::rename_symbols_in_chunk::rename_symbols_in_chunk;
-pub use crate::linker_context::generate_chunks_in_parallel::generate_chunks_in_parallel;
-pub use crate::linker_context::generate_compile_result_for_js_chunk::generate_compile_result_for_js_chunk;
-pub use crate::linker_context::generate_compile_result_for_css_chunk::generate_compile_result_for_css_chunk;
-pub use crate::linker_context::generate_compile_result_for_html_chunk::generate_compile_result_for_html_chunk;
-pub use crate::linker_context::prepare_css_asts_for_chunk::{prepare_css_asts_for_chunk, PrepareCssAstTask};
-pub use crate::linker_context::convert_stmts_for_chunk::convert_stmts_for_chunk;
-pub use crate::linker_context::convert_stmts_for_chunk_for_dev_server::convert_stmts_for_chunk_for_dev_server;
-pub use crate::linker_context::generate_code_for_file_in_chunk_js::generate_code_for_file_in_chunk_js;
-pub use crate::linker_context::write_output_files_to_disk::write_output_files_to_disk;
+
+#[cfg(any())] pub use crate::linker_context::output_file_list_builder as OutputFileListBuilder;
+#[cfg(any())] pub use crate::linker_context::static_route_visitor as StaticRouteVisitor;
+#[cfg(any())] pub use crate::linker_context::metafile_builder as MetafileBuilder;
+#[cfg(any())] pub use crate::linker_context::compute_chunks::compute_chunks;
+#[cfg(any())] pub use crate::linker_context::find_all_imported_parts_in_js_order::{find_all_imported_parts_in_js_order, find_imported_parts_in_js_order};
+#[cfg(any())] pub use crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order;
+#[cfg(any())] pub use crate::linker_context::find_imported_css_files_in_js_order::find_imported_css_files_in_js_order;
+#[cfg(any())] pub use crate::linker_context::generate_code_for_lazy_export::generate_code_for_lazy_export;
+#[cfg(any())] pub use crate::linker_context::do_step5::{do_step5, create_exports_for_file};
+#[cfg(any())] pub use crate::linker_context::compute_cross_chunk_dependencies::compute_cross_chunk_dependencies;
+#[cfg(any())] pub use crate::linker_context::post_process_js_chunk::post_process_js_chunk;
+#[cfg(any())] pub use crate::linker_context::post_process_css_chunk::post_process_css_chunk;
+#[cfg(any())] pub use crate::linker_context::post_process_html_chunk::post_process_html_chunk;
+#[cfg(any())] pub use crate::linker_context::rename_symbols_in_chunk::rename_symbols_in_chunk;
+#[cfg(any())] pub use crate::linker_context::generate_chunks_in_parallel::generate_chunks_in_parallel;
+#[cfg(any())] pub use crate::linker_context::generate_compile_result_for_js_chunk::generate_compile_result_for_js_chunk;
+#[cfg(any())] pub use crate::linker_context::generate_compile_result_for_css_chunk::generate_compile_result_for_css_chunk;
+#[cfg(any())] pub use crate::linker_context::generate_compile_result_for_html_chunk::generate_compile_result_for_html_chunk;
+#[cfg(any())] pub use crate::linker_context::prepare_css_asts_for_chunk::{prepare_css_asts_for_chunk, PrepareCssAstTask};
+#[cfg(any())] pub use crate::linker_context::convert_stmts_for_chunk::convert_stmts_for_chunk;
+#[cfg(any())] pub use crate::linker_context::convert_stmts_for_chunk_for_dev_server::convert_stmts_for_chunk_for_dev_server;
+#[cfg(any())] pub use crate::linker_context::generate_code_for_file_in_chunk_js::generate_code_for_file_in_chunk_js;
+#[cfg(any())] pub use crate::linker_context::write_output_files_to_disk::write_output_files_to_disk;
 
 // TODO(port): DeferredBatchTask, ParseTask re-exports — Zig re-exports from bundle_v2
 pub use crate::DeferredBatchTask::DeferredBatchTask;

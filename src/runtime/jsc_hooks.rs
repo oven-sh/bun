@@ -972,9 +972,31 @@ fn transpile_source_code_inner(
                 // TODO(port): re-express as a raw-ptr scopeguard once the
                 // borrowck story for the watcher hand-off settles.
 
+                // PORT NOTE: `ParseOptions::path` is `bun_logger::fs::Path`
+                // (the `'static`-slice flavour used by `logger::Source`), but
+                // `path` here is `bun_resolver::fs::Path<'_>`. The two structs
+                // are field-identical; the resolver-side slices are interned in
+                // `'static` BSSStringList stores (see resolver/lib.rs
+                // `dirname_store`/`filename_store`), so the lifetime extension
+                // is sound. Phase-B collapses both `Path` defs into one type.
+                // SAFETY: see PORT NOTE — `path.text` / `.namespace` / `.pretty`
+                // borrow `'static` interned storage.
+                let parse_path = unsafe {
+                    bun_logger::fs::Path {
+                        pretty: core::mem::transmute::<&[u8], &'static [u8]>(path.pretty),
+                        text: core::mem::transmute::<&[u8], &'static [u8]>(path.text),
+                        namespace: core::mem::transmute::<&[u8], &'static [u8]>(path.namespace),
+                        name: bun_logger::fs::PathName::init(core::mem::transmute::<
+                            &[u8],
+                            &'static [u8],
+                        >(path.text)),
+                        is_disabled: path.is_disabled,
+                        is_symlink: path.is_symlink,
+                    }
+                };
                 let parse_options = ParseOptions {
                     allocator: &arena_guard.1,
-                    path: path.clone(),
+                    path: parse_path,
                     loader,
                     dirname_fd: bun_sys::Fd::INVALID,
                     file_descriptor: fd,

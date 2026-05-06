@@ -505,9 +505,11 @@ pub struct S3UploadStreamWrapper {
 /// finalizer body when the last ref is released.
 pub type S3UploadStreamWrapperRef = bun_ptr::IntrusiveRc<S3UploadStreamWrapper>;
 
-impl S3UploadStreamWrapper {
-    pub type ResumableSink = ResumableS3UploadSink;
+// Zig: `pub const ResumableSink = @import("../ResumableSink.zig").ResumableS3UploadSink;`
+// Inherent associated types are unstable; expose as a module-level alias instead.
+pub type ResumableSink = ResumableS3UploadSink<'static>;
 
+impl S3UploadStreamWrapper {
     fn detach_sink(&mut self) {
         bun_output::scoped_log!(S3UploadStream, "detachSink {}", self.sink.is_some());
         if let Some(sink) = self.sink.take() {
@@ -909,7 +911,7 @@ pub fn readable_stream(
     let readable_value = reader.to_readable_stream(global_this)?;
 
     pub struct S3DownloadStreamWrapper {
-        pub readable_stream_ref: ReadableStream::Strong,
+        pub readable_stream_ref: ReadableStreamStrong,
         pub path: Box<[u8]>,
         pub global: &'static JSGlobalObject, // JSC_BORROW
     }

@@ -23,9 +23,9 @@ pub struct ByteStream {
     pub pending_buffer: *mut [u8],
     pub pending_value: Strong, // jsc.Strong.Optional
     pub offset: usize,
-    pub high_water_mark: Blob::SizeType,
+    pub high_water_mark: blob::SizeType,
     pub pipe: Pipe,
-    pub size_hint: Blob::SizeType,
+    pub size_hint: blob::SizeType,
     pub buffer_action: Option<BufferAction>,
 }
 
@@ -51,9 +51,9 @@ impl Default for ByteStream {
 // TODO(port): `NewSource` is a Zig comptime type-generator that wires callbacks into a
 // `.classes.ts` wrapper. In Rust this becomes `ReadableStream::Source<ByteStream>` where
 // `ByteStream: ReadableStreamSourceContext` (trait with `on_start`/`on_pull`/... methods).
-pub type Source = ReadableStream::Source<ByteStream>;
+pub type Source = readable_stream::NewSource<ByteStream>;
 
-pub const TAG: ReadableStream::Tag = ReadableStream::Tag::Bytes;
+pub const TAG: readable_stream::Tag = readable_stream::Tag::Bytes;
 
 impl ByteStream {
     #[inline]
@@ -84,7 +84,7 @@ impl ByteStream {
         // For HTTPS, the size is probably quite a bit lower like 64 KB due to TLS transmission.
         // We add 1 extra page size so that if there's a little bit of excess buffered data, we avoid extra allocations.
         // TODO(port): `std.heap.pageSize()` — using `bun_sys::page_size()` placeholder.
-        let page_size: Blob::SizeType = Blob::SizeType::try_from(bun_sys::page_size()).unwrap();
+        let page_size: blob::SizeType = blob::SizeType::try_from(bun_sys::page_size()).unwrap();
         streams::Start::ChunkSize((512 * 1024 + page_size).min(self.high_water_mark.max(page_size)))
     }
 
@@ -213,13 +213,13 @@ impl ByteStream {
                 } else {
                     self.pending.result = streams::Result::IntoArrayAndDone {
                         value: self.value(),
-                        len: to_copy_len as Blob::SizeType, // @truncate
+                        len: to_copy_len as blob::SizeType, // @truncate
                     };
                 }
             } else {
                 self.pending.result = streams::Result::IntoArray {
                     value: self.value(),
-                    len: to_copy_len as Blob::SizeType, // @truncate
+                    len: to_copy_len as blob::SizeType, // @truncate
                 };
             }
 
@@ -352,13 +352,13 @@ impl ByteStream {
 
                 return streams::Result::IntoArrayAndDone {
                     value: view,
-                    len: to_write as Blob::SizeType, // @truncate
+                    len: to_write as blob::SizeType, // @truncate
                 };
             }
 
             return streams::Result::IntoArray {
                 value: view,
-                len: to_write as Blob::SizeType, // @truncate
+                len: to_write as blob::SizeType, // @truncate
             };
         }
 

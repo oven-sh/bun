@@ -140,7 +140,7 @@ pub mod js {
 // the TSV row is for plain `*T` fields, not intrusive mixins.)
 #[bun_jsc::JsClass]
 pub struct Terminal {
-    ref_count: Cell<u32>,
+    ref_count: bun_ptr::RefCount<Terminal>,
 
     /// The master side of the PTY (original fd, used for ioctl operations)
     /// On Windows this is always invalid_fd; ConPTY uses hpcon for control.
@@ -167,7 +167,7 @@ pub struct Terminal {
     rows: u16,
 
     /// Terminal name (e.g., "xterm-256color")
-    term_name: ZigString::Slice,
+    term_name: ZigStringSlice,
 
     /// Event loop handle for callbacks
     event_loop_handle: EventLoopHandle,
@@ -225,7 +225,7 @@ pub type IOReader = BufferedReader;
 pub struct Options {
     pub cols: u16,
     pub rows: u16,
-    pub term_name: ZigString::Slice,
+    pub term_name: ZigStringSlice,
     pub data_callback: Option<JSValue>,
     pub exit_callback: Option<JSValue>,
     pub drain_callback: Option<JSValue>,

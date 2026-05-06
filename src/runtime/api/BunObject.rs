@@ -777,7 +777,7 @@ pub fn braces(
             };
         }
 
-        match Braces::NewLexer::<{ Braces::Encoding::Wtf8 }>::tokenize(&arena, brace_slice.slice())
+        match Braces::NewLexer::<{ Braces::StringEncoding::Wtf8 }>::tokenize(&arena, brace_slice.slice())
         {
             Ok(v) => break 'lexer_output v,
             Err(err) => return global.throw_error(err, "failed to tokenize braces"),

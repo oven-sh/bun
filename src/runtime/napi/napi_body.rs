@@ -2000,7 +2000,7 @@ pub enum DispatchState {
 }
 
 pub struct TsfnQueue {
-    pub data: LinearFifo<*mut c_void>,
+    pub data: LinearFifo<*mut c_void, DynamicBuffer<*mut c_void>>,
     /// This value will never change after initialization. Zero means the size is unlimited.
     pub max_queue_size: usize,
     pub count: AtomicU32,
@@ -2009,7 +2009,7 @@ pub struct TsfnQueue {
 impl TsfnQueue {
     pub fn init(max_queue_size: usize) -> TsfnQueue {
         TsfnQueue {
-            data: LinearFifo::new(),
+            data: LinearFifo::init(),
             max_queue_size,
             count: AtomicU32::new(0),
         }

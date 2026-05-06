@@ -1760,7 +1760,9 @@ impl PublishCommand {
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum PublishError {
+    #[error("OutOfMemory")]
     OutOfMemory,
+    #[error("NeedAuth")]
     NeedAuth,
 }
 impl From<AllocError> for PublishError {

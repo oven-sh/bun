@@ -293,7 +293,7 @@ impl Blob {
     /// (`bun_jsc::webcore::Blob`, `bun_http_jsc`) can read blob bytes without a
     /// `bun_runtime` forward-dep. Mirrors Zig `Blob.sharedView`'s
     /// `(ptr,len)` shape.
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn Bun__Blob__sharedView(this: *const Blob, len: *mut usize) -> *const u8 {
         // SAFETY: caller (bun_jsc shim) passes a live `*const Blob` obtained
         // from `Blob__fromJS`; `len` is a stack out-param.

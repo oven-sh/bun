@@ -4,11 +4,34 @@ use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, JSFunction, JSGlobalObject, JSObject, JSUint8Array,
     JSValue, JsResult,
 };
-use bun_jsc::host_fn::{DomCall, DomEffect};
+use bun_jsc::host_fn::DomCall;
 use bun_str::{self as strings, ZigString};
 
 // TODO(port): `bun.api.FFI` lives in `src/runtime/ffi/FFI.zig` → `crate::ffi::FFI`
+#[allow(unused_imports)]
 use crate::ffi::FFI;
+
+// ── DOM-call C++ put helpers (generated in ZigLazyStaticFunctions-inlines.h) ──
+// In Zig these are `@extern`ed by the comptime `DOMCall(...)` type-generator;
+// here we declare them directly since the `#[bun_jsc::dom_call]` proc-macro is
+// not yet implemented.
+// TODO(port): move to <area>_sys
+#[allow(non_snake_case)]
+unsafe extern "C" {
+    fn FFI__ptr__put(global: *mut JSGlobalObject, value: JSValue);
+    fn Reader__u8__put(global: *mut JSGlobalObject, value: JSValue);
+    fn Reader__u16__put(global: *mut JSGlobalObject, value: JSValue);
+    fn Reader__u32__put(global: *mut JSGlobalObject, value: JSValue);
+    fn Reader__ptr__put(global: *mut JSGlobalObject, value: JSValue);
+    fn Reader__i8__put(global: *mut JSGlobalObject, value: JSValue);
+    fn Reader__i16__put(global: *mut JSGlobalObject, value: JSValue);
+    fn Reader__i32__put(global: *mut JSGlobalObject, value: JSValue);
+    fn Reader__i64__put(global: *mut JSGlobalObject, value: JSValue);
+    fn Reader__u64__put(global: *mut JSGlobalObject, value: JSValue);
+    fn Reader__intptr__put(global: *mut JSGlobalObject, value: JSValue);
+    fn Reader__f32__put(global: *mut JSGlobalObject, value: JSValue);
+    fn Reader__f64__put(global: *mut JSGlobalObject, value: JSValue);
+}
 
 pub fn new_cstring(
     global_this: &JSGlobalObject,

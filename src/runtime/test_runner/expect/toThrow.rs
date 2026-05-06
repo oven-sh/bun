@@ -375,24 +375,24 @@ pub fn to_throw(
         if let Some(received_message) = received_message_opt {
             let received_message_fmt = received_message.to_fmt(&mut formatter);
 
-            return global.throw_pretty(
+            return Err(global.throw_pretty(
                 signature,
                 format_args!(
                     "\n\nExpected constructor: <green>{}<r>\nReceived constructor: <red>{}<r>\n\nReceived message: <red>{}<r>\n",
                     expected_class, received_class, received_message_fmt,
                 ),
-            );
+            ));
         }
 
         let received_fmt = result.to_fmt(&mut formatter);
 
-        return global.throw_pretty(
+        return Err(global.throw_pretty(
             signature,
             format_args!(
                 "\n\nExpected constructor: <green>{}<r>\nReceived constructor: <red>{}<r>\n\nReceived value: <red>{}<r>\n",
                 expected_class, received_class, received_fmt,
             ),
-        );
+        ));
     }
 
     // did not throw

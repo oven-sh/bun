@@ -14,16 +14,19 @@ use bun_jsc::{
     self as jsc, ArrayBuffer, Codegen, EventLoopHandle, JSGlobalObject, JSValue, MarkedArrayBuffer,
     SystemError,
 };
-use crate::api::bun::Subprocess as JscSubprocess;
+use crate::api::bun::subprocess as JscSubprocess;
 use crate::webcore::{self, Blob, FileSink, ReadableStream};
-use crate::shell::interpreter::Cmd as ShellCmd;
+use crate::shell::states::cmd::Cmd as ShellCmd;
 use crate::shell::{self as sh, EnvMap, IOWriter, Yield};
-use bun_spawn::{self, Process, Rusage, SpawnOptions, Status, WindowsSpawnOptions, WindowsSpawnResult};
+use bun_spawn::{self, Status};
+use crate::api::bun::process::{Process, Rusage, SpawnOptions};
+#[cfg(windows)]
+use crate::api::bun::process::{WindowsSpawnOptions, WindowsSpawnResult, WindowsOptions};
 use bun_sys::{self, Fd};
 use enumset::{EnumSet, EnumSetType};
 use strum::IntoStaticStr;
 
-use crate::util::{self, OutKind, Stdio};
+use crate::shell::util::{self, OutKind, Stdio};
 
 pub use util::Stdio as StdioReexport;
 // pub const ShellSubprocess = NewShellSubprocess(.js);

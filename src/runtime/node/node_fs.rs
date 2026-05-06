@@ -365,8 +365,12 @@ fn os_path_literal_empty() -> &'static OSPathSliceZ {
 #[inline]
 fn standalone_module_graph_get() -> Option<&'static StandaloneModuleGraphStub> { None }
 struct StandaloneModuleGraphStub;
+struct StandaloneFileStub;
+impl StandaloneFileStub {
+    #[inline] fn contents(&self) -> &[u8] { &[] }
+}
 impl StandaloneModuleGraphStub {
-    fn find(&self, _: &[u8]) -> Option<()> { None }
+    fn find(&self, _: &[u8]) -> Option<&StandaloneFileStub> { None }
     fn stat(&self, _: &ZStr) -> Option<sys::Stat> { None }
 }
 
@@ -382,6 +386,55 @@ fn get_total_memory_size() -> u64 {
     // SAFETY: FFI into bun's C++ bindings; no invariants required.
     unsafe { Bun__ramSize() as u64 }
 }
+
+/// Local shim for `Maybe(void)::aborted` (node.rs:302). `bun_sys::Maybe` is
+/// `core::result::Result`, which has no `aborted()` constructor; inline the
+/// sentinel error directly so call sites stay shaped like the Zig source.
+#[inline]
+fn abort_err() -> sys::Error {
+    sys::Error { errno: E::EINTR as _, syscall: sys::Tag::access, ..Default::default() }
+}
+
+/// Local shim for `Maybe(R).errnoSysP` (node.rs:427). The crate-level helper
+/// is an inherent method on `crate::node::Maybe`, but `bun_sys::Maybe` is
+/// `core::result::Result`; provide a free function with the same return shape
+/// (`Option<Maybe<()>>`) so `.unwrap_or(Ok(()))` chaining keeps working.
+#[inline]
+fn errno_sys_p_maybe(rc: c_int, syscall: sys::Tag, file_path: &[u8]) -> Option<Maybe<()>> {
+    match sys::get_errno(rc) {
+        sys::posix::E::SUCCESS => None,
+        e => Some(Maybe::Err(sys::Error {
+            errno: e as sys::ErrorInt,
+            syscall,
+            path: file_path.into(),
+            ..Default::default()
+        })),
+    }
+}
+
+/// `bun.sys.Error.withPathLike` — `with_path()` for a `PathOrFileDescriptor`.
+/// On `Fd`, the upstream Zig records the fd; here we just attach the path
+/// slice when available (matches the read/write callers in this file, which
+/// only reach this with `Path`).
+#[inline]
+fn with_path_like(err: sys::Error, p: &PathOrFileDescriptor) -> sys::Error {
+    match p {
+        PathOrFileDescriptor::Path(p) => err.with_path(p.slice()),
+        PathOrFileDescriptor::Fd(fd) => sys::Error { fd: *fd, ..err },
+    }
+}
+
+/// Convert the local `TimeLike` (libc::timespec on unix) into the
+/// `bun_sys::TimeLike` shape that `Syscall::utimens`/`lutimens` accept.
+#[cfg(not(windows))]
+#[inline]
+fn to_sys_time_like(t: TimeLike) -> sys::TimeLike {
+    sys::TimeLike { sec: t.tv_sec as i64, nsec: t.tv_nsec as i64 }
+}
+#[cfg(windows)]
+#[inline]
+fn to_sys_time_like(t: TimeLike) -> TimeLike { t }
+
 
 /// `bun.sys.PosixStat` — uv-shaped stat struct. `Stats::init` (from
 /// `super::stat`) takes its sibling `PosixStat` by reference, so route through

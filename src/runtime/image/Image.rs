@@ -223,7 +223,7 @@ impl jsc::FromJsEnum for Fit {
         use jsc::ComptimeStringMapExt as _;
         match FIT_MAP.from_js(global, v)? {
             Some(e) => Ok(e),
-            None => Err(global.throw_invalid_argument_type(prop, "\"fill\" | \"inside\"", v)),
+            None => Err(global.throw_invalid_argument_type(prop, prop, "\"fill\" | \"inside\"")),
         }
     }
 }
@@ -232,7 +232,7 @@ impl jsc::FromJsEnum for codecs::Filter {
         use jsc::ComptimeStringMapExt as _;
         match codecs::FILTER_MAP.from_js(global, v)? {
             Some(e) => Ok(e),
-            None => Err(global.throw_invalid_argument_type(prop, "Filter name", v)),
+            None => Err(global.throw_invalid_argument_type(prop, prop, "Filter name")),
         }
     }
 }

@@ -610,7 +610,7 @@ fn print_modified_segment(
         }
     }
     if !modified_style.single_line {
-        writer.write_all(b"\n")?;
+        writer.write_str("\n")?;
     }
     Ok(())
 }
@@ -622,7 +622,7 @@ pub fn print_hunk_header(
     original_line_count: usize,
     changed_line_number: usize,
     changed_line_count: usize,
-) -> std::io::Result<()> {
+) -> std::fmt::Result {
     if config.enable_ansi_colors {
         write!(
             writer,
@@ -647,7 +647,7 @@ pub fn print_diff(
     writer: &mut impl Write,
     diff_segments: &[DiffSegment<'_>],
     config: &DiffConfig,
-) -> std::io::Result<()> {
+) -> std::fmt::Result {
     // PERF(port): was arena bulk-free — profile in Phase B
     let mut removed_line_number: usize = 1;
     let mut inserted_line_number: usize = 1;

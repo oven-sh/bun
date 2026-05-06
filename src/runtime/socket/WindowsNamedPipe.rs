@@ -262,12 +262,13 @@ impl WindowsNamedPipe {
         if let Some(bytes) = data {
             if !bytes.is_empty() {
                 // ref because we have pending data
+                #[cfg(windows)]
                 if let Some(source) = self.writer.source.as_ref() {
                     source.pipe.r#ref();
                 }
                 if self.flags.disconnected() {
                     // enqueue to be sent after connecting
-                    self.writer.outgoing.write(bytes).unwrap_or_oom();
+                    bun_core::handle_oom(self.writer.outgoing.write(bytes));
                 } else {
                     // write will enqueue the data if it cannot be sent
                     let _ = self.writer.write(bytes);

@@ -742,15 +742,15 @@ mod _gated_from_js {
             let mut any = false;
 
             if let Some(passphrase) = generated.passphrase.get() {
-                result.passphrase = Some(passphrase.to_owned_slice_z());
+                result.passphrase = Some(zbox_into_cstring(passphrase.to_owned_slice_z()));
                 any = true;
             }
             if let Some(dh_params_file) = generated.dh_params_file.get() {
-                result.dh_params_file_name = Some(handle_path(global, "dhParamsFile", dh_params_file)?);
+                result.dh_params_file_name = Some(handle_path(global, "dhParamsFile", &dh_params_file)?);
                 any = true;
             }
             if let Some(server_name) = generated.server_name.get() {
-                result.server_name = Some(server_name.to_owned_slice_z());
+                result.server_name = Some(zbox_into_cstring(server_name.to_owned_slice_z()));
                 result.requires_custom_request_ctx = true;
             }
 

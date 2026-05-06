@@ -1024,8 +1024,18 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     // PORT NOTE: pass the raw `*mut SubprocessT` captured above instead of the
     // live `&mut subprocess` alongside a `&mut subprocess.<field>` borrow
     // (PORTING.md §Forbidden aliased-&mut).
-    MaxBuf::create_for_subprocess(subprocess_ptr, &mut subprocess.stderr_maxbuf, max_buffer);
-    MaxBuf::create_for_subprocess(subprocess_ptr, &mut subprocess.stdout_maxbuf, max_buffer);
+    MaxBuf::create_for_subprocess(
+        subprocess_nn.cast(),
+        &SUBPROCESS_MAXBUF_VTABLE,
+        &mut subprocess.stderr_maxbuf,
+        max_buffer,
+    );
+    MaxBuf::create_for_subprocess(
+        subprocess_nn.cast(),
+        &SUBPROCESS_MAXBUF_VTABLE,
+        &mut subprocess.stdout_maxbuf,
+        max_buffer,
+    );
 
     #[cfg(windows)]
     if !IS_SYNC {

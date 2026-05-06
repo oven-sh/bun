@@ -1158,7 +1158,7 @@ where
         } else {
             if this.end_request_streaming().unwrap_or(true) {
                 // TODO: properly propagate exception upwards
-                any_js_calls = true;
+                any_js_calls.set(true);
             }
 
             if let Some(response) = this.response_weakref.get() {
@@ -1166,7 +1166,7 @@ where
                     let _keep = jsc::EnsureStillAlive(stream.value);
                     shim::response_detach_stream(response, global_this);
                     stream.abort(global_this);
-                    any_js_calls = true;
+                    any_js_calls.set(true);
                 }
             }
         }

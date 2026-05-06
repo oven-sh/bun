@@ -269,7 +269,14 @@ impl UpgradeCommand {
             }
         }
 
-        let http_proxy: Option<URL> = env_loader.get_http_proxy_for(&api_url);
+        // SAFETY: env_loader's backing storage is process-static (env block /
+        // leaked map); the URL borrows are valid for 'static. Zig had no
+        // lifetime here.
+        let http_proxy: Option<URL<'static>> = unsafe {
+            core::mem::transmute::<Option<URL<'_>>, Option<URL<'static>>>(
+                env_loader.get_http_proxy_for(&api_url),
+            )
+        };
 
         let metadata_body: &'static mut MutableString =
             Box::leak(Box::new(MutableString::init(2048)?));

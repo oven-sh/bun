@@ -2078,7 +2078,7 @@ impl EndTag {
         // SAFETY: self.end_tag is non-null (checked above) and valid for the
         // duration of the lol-html callback that owns it.
         if unsafe { lolhtml::EndTag::set_name(self.end_tag, text.slice()) }.is_err() {
-            return global.throw_value(create_lolhtml_error(global));
+            return Err(global.throw_value(create_lolhtml_error(global)));
         }
         Ok(true)
     }
@@ -2089,7 +2089,9 @@ impl WrapperLike for EndTag {
     fn init(v: *mut Self::Raw) -> *mut Self { Self::init(v) }
     fn ref_(&self) { self.ref_() }
     fn deref(this: *mut Self) { Self::deref(this) }
-    fn to_js(&self, g: &JSGlobalObject) -> JSValue { self.to_js(g) }
+    fn to_js(&self, _g: &JSGlobalObject) -> JSValue {
+        todo!("blocked_on: bun_jsc::JsClass to_js for *mut Self (intrusive-rc wrapper)")
+    }
 }
 
 // ───────────────────────── AttributeIterator ─────────────────────────────

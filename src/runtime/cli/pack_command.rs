@@ -2931,18 +2931,20 @@ impl IgnorePatterns {
 
         let mut ignore_kind = IgnorePatternsKind::Npmignore;
 
-        let ignore_file = match dir.open_file_z(zstr_lit(b".npmignore\0"), Default::default()) {
+        let ignore_file: File = match File::openat(dir.fd(), b".npmignore", bun_sys::O::RDONLY, 0) {
             Ok(f) => f,
             Err(err) => 'ignore_file: {
+                let err = bun_core::Error::from(err);
                 if err != bun_core::err!("FileNotFound") {
                     // Crash if the file exists and fails to open. Don't want to create a tarball
                     // with files you want to ignore.
                     Self::ignore_file_fail(dir, ignore_kind, IgnoreFileFailReason::Open, err);
                 }
                 ignore_kind = IgnorePatternsKind::Gitignore;
-                match dir.open_file_z(zstr_lit(b".gitignore\0"), Default::default()) {
+                match File::openat(dir.fd(), b".gitignore", bun_sys::O::RDONLY, 0) {
                     Ok(f) => break 'ignore_file f,
                     Err(err2) => {
+                        let err2 = bun_core::Error::from(err2);
                         if err2 != bun_core::err!("FileNotFound") {
                             Self::ignore_file_fail(dir, ignore_kind, IgnoreFileFailReason::Open, err2);
                         }
@@ -2951,14 +2953,14 @@ impl IgnorePatterns {
                 }
             }
         };
-        let _close = scopeguard::guard((), |_| ignore_file.close());
 
-        let contents = match File::from(ignore_file).read_to_end().unwrap() {
+        let contents = match ignore_file.read_to_end() {
             Ok(c) => c,
             Err(err) => {
-                Self::ignore_file_fail(dir, ignore_kind, IgnoreFileFailReason::Read, err);
+                Self::ignore_file_fail(dir, ignore_kind, IgnoreFileFailReason::Read, err.into());
             }
         };
+        let _ = ignore_file.close();
         // contents freed by Drop
 
         let mut has_rel_path = false;
@@ -3026,60 +3028,52 @@ fn print_archived_files_and_packages<const IS_DRY_RUN: bool>(
     if ctx.manager.options.log_level == LogLevel::Silent || ctx.manager.options.log_level == LogLevel::Quiet {
         return;
     }
-    const PACKED_FMT: &str = "<r><b><cyan>packed<r> {} {}";
-
     if IS_DRY_RUN {
         let PackListOrQueue::Queue(pack_queue) = pack_list else { unreachable!() };
 
-        let package_json_stat = match root_dir.statat(zstr_lit(b"package.json\0")).unwrap() {
+        let package_json_stat = match bun_sys::fstatat(root_dir, bun_core::zstr!("package.json")) {
             Ok(s) => s,
             Err(err) => {
-                Output::err(err, "failed to stat package.json", format_args!(""));
+                Output::err(bun_core::Error::from(err), "failed to stat package.json", format_args!(""));
                 Global::crash();
             }
         };
 
-        ctx.stats.unpacked_size += usize::try_from(package_json_stat.size).unwrap();
+        ctx.stats.unpacked_size += usize::try_from(package_json_stat.st_size).unwrap();
 
-        Output::prettyln(
-            concat!("\n", "<r><b><cyan>packed<r> {} {}"),
-            format_args!(
-                "{} {}",
-                bun_fmt::size(usize::try_from(package_json_stat.size).unwrap(), bun_fmt::SizeFormatterOptions { space_between_number_and_unit: false }),
-                "package.json",
-            ),
-        );
+        Output::prettyln(format_args!(
+            "\n<r><b><cyan>packed<r> {} {}",
+            bun_fmt::size(usize::try_from(package_json_stat.st_size).unwrap(), bun_fmt::SizeFormatterOptions { space_between_number_and_unit: false }),
+            "package.json",
+        ));
 
         while let Some(item) = pack_queue.remove_or_null() {
-            let stat = match root_dir.statat(&item.path).unwrap() {
+            let stat = match bun_sys::fstatat(root_dir, &item.path) {
                 Ok(s) => s,
                 Err(err) => {
                     if item.optional {
                         ctx.stats.total_files -= 1;
                         continue;
                     }
-                    Output::err(err, "failed to stat file: \"{}\"", format_args!("{}", bstr::BStr::new(item.path.as_bytes())));
+                    Output::err(bun_core::Error::from(err), "failed to stat file: \"{}\"", format_args!("{}", bstr::BStr::new(item.path.as_bytes())));
                     Global::crash();
                 }
             };
 
-            ctx.stats.unpacked_size += usize::try_from(stat.size).unwrap();
+            ctx.stats.unpacked_size += usize::try_from(stat.st_size).unwrap();
 
-            Output::prettyln(
-                PACKED_FMT,
-                format_args!(
-                    "{} {}",
-                    bun_fmt::size(usize::try_from(stat.size).unwrap(), bun_fmt::SizeFormatterOptions { space_between_number_and_unit: false }),
-                    bstr::BStr::new(item.path.as_bytes()),
-                ),
-            );
+            Output::prettyln(format_args!(
+                "<r><b><cyan>packed<r> {} {}",
+                bun_fmt::size(usize::try_from(stat.st_size).unwrap(), bun_fmt::SizeFormatterOptions { space_between_number_and_unit: false }),
+                bstr::BStr::new(item.path.as_bytes()),
+            ));
         }
 
         for dep in &ctx.bundled_deps {
             if !dep.was_packed {
                 continue;
             }
-            Output::prettyln("<r><b><green>bundled<r> {}", format_args!("{}", bstr::BStr::new(&dep.name)));
+            Output::prettyln(format_args!("<r><b><green>bundled<r> {}", bstr::BStr::new(&dep.name)));
         }
 
         Output::flush();
@@ -3088,31 +3082,25 @@ fn print_archived_files_and_packages<const IS_DRY_RUN: bool>(
 
     let PackListOrQueue::List(pack_list) = pack_list else { unreachable!() };
 
-    Output::prettyln(
-        concat!("\n", "<r><b><cyan>packed<r> {} {}"),
-        format_args!(
-            "{} {}",
-            bun_fmt::size(package_json_len, bun_fmt::SizeFormatterOptions { space_between_number_and_unit: false }),
-            "package.json",
-        ),
-    );
+    Output::prettyln(format_args!(
+        "\n<r><b><cyan>packed<r> {} {}",
+        bun_fmt::size(package_json_len, bun_fmt::SizeFormatterOptions { space_between_number_and_unit: false }),
+        "package.json",
+    ));
 
     for entry in pack_list.iter() {
-        Output::prettyln(
-            PACKED_FMT,
-            format_args!(
-                "{} {}",
-                bun_fmt::size(entry.size, bun_fmt::SizeFormatterOptions { space_between_number_and_unit: false }),
-                bstr::BStr::new(entry.subpath.as_bytes()),
-            ),
-        );
+        Output::prettyln(format_args!(
+            "<r><b><cyan>packed<r> {} {}",
+            bun_fmt::size(entry.size, bun_fmt::SizeFormatterOptions { space_between_number_and_unit: false }),
+            bstr::BStr::new(entry.subpath.as_bytes()),
+        ));
     }
 
     for dep in &ctx.bundled_deps {
         if !dep.was_packed {
             continue;
         }
-        Output::prettyln("<r><b><green>bundled<r> {}", format_args!("{}", bstr::BStr::new(&dep.name)));
+        Output::prettyln(format_args!("<r><b><green>bundled<r> {}", bstr::BStr::new(&dep.name)));
     }
 
     Output::flush();

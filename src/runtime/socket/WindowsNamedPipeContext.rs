@@ -178,11 +178,11 @@ impl WindowsNamedPipeContext {
         if self.is_open {
             match &self.socket {
                 SocketType::Tls(tls) => {
-                    let Ok(js_err) = err.to_js(self.global_this) else { return };
+                    let js_err = err.to_js(self.global_this);
                     tls.handle_error(js_err);
                 }
                 SocketType::Tcp(tcp) => {
-                    let Ok(js_err) = err.to_js(self.global_this) else { return };
+                    let js_err = err.to_js(self.global_this);
                     tcp.handle_error(js_err);
                 }
                 SocketType::None => {}
@@ -190,10 +190,10 @@ impl WindowsNamedPipeContext {
         } else {
             match &self.socket {
                 SocketType::Tls(tls) => {
-                    let _ = tls.handle_connect_error(err.errno);
+                    let _ = tls.handle_connect_error(err.errno as i32);
                 }
                 SocketType::Tcp(tcp) => {
-                    let _ = tcp.handle_connect_error(err.errno);
+                    let _ = tcp.handle_connect_error(err.errno as i32);
                 }
                 SocketType::None => {}
             }

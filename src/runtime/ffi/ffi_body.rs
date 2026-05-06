@@ -2070,9 +2070,9 @@ unsafe extern "C" {
 impl Drop for Function {
     fn drop(&mut self) {
         // base_name, arg_types, Step::Failed.msg are owned and freed by drop glue.
-        if let Some(mut state) = self.state.take() {
+        if let Some(state) = self.state.take() {
             // SAFETY: state is a valid TCC::State pointer; we own it
-            unsafe { state.as_mut().deinit() };
+            unsafe { TCC::State::destroy(state.as_ptr()) };
         }
         if let Step::Compiled(compiled) = &mut self.step {
             if let Some(wrapper) = compiled.ffi_callback_function_wrapper.take() {

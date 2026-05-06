@@ -1488,6 +1488,56 @@ impl TinyLog {
     }
 }
 
+/// Local shim — `bun_core::io::Writer` exposes only `write_all`/`print`; the
+/// Zig writer interface had `splatByteAll`/`splatBytesAll`. Implement here so
+/// `TinyLog::print` keeps its body verbatim.
+fn writer_splat_byte_all(
+    w: &mut bun_core::io::Writer,
+    byte: u8,
+    n: usize,
+) -> Result<(), bun_core::Error> {
+    let chunk = [byte; 256];
+    let mut remain = n;
+    while remain > 0 {
+        let take = remain.min(chunk.len());
+        w.write_all(&chunk[..take])?;
+        remain -= take;
+    }
+    Ok(())
+}
+
+fn writer_splat_bytes_all(
+    w: &mut bun_core::io::Writer,
+    bytes: &str,
+    n: usize,
+) -> Result<(), bun_core::Error> {
+    for _ in 0..n {
+        w.write_all(bytes.as_bytes())?;
+    }
+    Ok(())
+}
+
+/// Local extension shim — `JSValue::putBunStringOneOrArray` exists in
+/// `JSValue.zig` but not yet in `bun_jsc`. Stubbed until upstream lands.
+trait JsValuePutOneOrArray {
+    fn put_bun_string_one_or_array(
+        self,
+        global: &JSGlobalObject,
+        key: &bun_str::String,
+        value: JSValue,
+    ) -> JsResult<JSValue>;
+}
+impl JsValuePutOneOrArray for JSValue {
+    fn put_bun_string_one_or_array(
+        self,
+        _global: &JSGlobalObject,
+        _key: &bun_str::String,
+        _value: JSValue,
+    ) -> JsResult<JSValue> {
+        todo!("blocked_on: bun_jsc::JSValue::put_bun_string_one_or_array")
+    }
+}
+
 /// Interface for connecting FrameworkRouter to another codebase
 // PORT NOTE: Zig's `InsertionContext` was an `*anyopaque` + `*const VTable` pair, with `wrap()`
 // generating a comptime vtable per concrete type. Per LIFETIMES.tsv this is BORROW_PARAM →
@@ -1524,6 +1574,9 @@ impl FrameworkRouter {
         let Some(root_info) = r.read_dir_info_ignore_error(&abs_root) else {
             return Ok(());
         };
+        // SAFETY: read_dir_info_ignore_error returns a non-null *const DirInfo into the
+        // resolver's static dir-info store; valid for the duration of this scan.
+        let root_info = unsafe { &*root_info };
         let mut arena_state = Arena::new();
         self.scan_inner(ty, r, root_info, &mut arena_state, ctx)
     }
@@ -1537,15 +1590,21 @@ impl FrameworkRouter {
         ctx: &mut dyn InsertionHandler,
     ) -> Result<(), AllocError> {
         let fs = r.fs();
-        // TODO(port): fs_impl = &fs.fs — resolver internals
+        // SAFETY: BACKREF — `r.fs()` is the process-global FileSystem singleton; valid for the
+        // program lifetime. Resolver mutex serializes mutation. We hold a raw pointer (no borrow)
+        // so `r.read_dir_info_ignore_error(&mut self)` below does not conflict.
+        let fs_ref: &bun_resolver::fs::FileSystem = unsafe { &*fs };
+        let fs_impl: *mut bun_resolver::fs::Implementation = unsafe { &mut (*fs).fs as *mut _ };
 
         if let Some(entries) = dir_info.get_entries_const() {
             let mut it = entries.data.iter();
             'outer: while let Some(entry) = it.next() {
-                let file = entry.value();
+                // SAFETY: EntryMap stores `*mut Entry` into the EntryStore singleton; entries
+                // outlive this scan and are serialized via `RealFS.entries_mutex`.
+                let file: &bun_resolver::fs::Entry = unsafe { &**entry.1 };
                 let base = file.base();
                 // PORT NOTE: reshaped for borrowck — fetch type fields fresh each iteration.
-                match file.kind(fs.fs(), false) {
+                match file.kind(fs_impl, false) {
                     bun_resolver::fs::EntryKind::Dir => {
                         let t = &self.types[t_index.get() as usize];
                         if t.ignore_underscores && base.starts_with(b"_") {
@@ -1559,8 +1618,10 @@ impl FrameworkRouter {
                         }
 
                         if let Some(child_info) =
-                            r.read_dir_info_ignore_error(fs.abs(&[file.dir(), file.base()]))
+                            r.read_dir_info_ignore_error(fs_ref.abs(&[file.dir, file.base()]))
                         {
+                            // SAFETY: see `root_info` note in `scan` — points into resolver's static store.
+                            let child_info = unsafe { &*child_info };
                             self.scan_inner(t_index, r, child_info, arena_state, ctx)?;
                         }
                     }
@@ -1591,7 +1652,7 @@ impl FrameworkRouter {
                             >(
                                 &mut rel_path_buf[1..],
                                 &self.root,
-                                fs.abs(&[file.dir(), file.base()]),
+                                fs_ref.abs(&[file.dir, file.base()]),
                             );
                             full_rel_path.len()
                         };

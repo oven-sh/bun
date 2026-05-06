@@ -11,8 +11,10 @@ impl Expect {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        let _post = scopeguard::guard((), |_| this.post_match(global));
-        // TODO(port): errdefer — scopeguard above borrows `this` and `global` for the whole scope; Phase B may need to reshape if borrowck rejects.
+        // `defer this.postMatch(globalThis)` — side effect on every exit path.
+        // PORT NOTE: move `this` into the scopeguard so the body uses it via DerefMut and
+        // `post_match` runs on drop without an overlapping borrow.
+        let mut this = scopeguard::guard(this, |this| this.post_match(global));
 
         let this_value = frame.this();
         let _arguments = frame.arguments_old::<1>();
@@ -68,9 +70,12 @@ impl Expect {
         }
 
         // handle failure
+        // PORT NOTE: Zig aliased one `*Formatter` for both fmt adapters; Rust `to_fmt` takes
+        // `&mut Formatter` so two live adapters need two formatters (matches toBeLessThan.rs).
         let mut formatter = super::make_formatter(global);
+        let mut formatter2 = super::make_formatter(global);
         let value_fmt = value.to_fmt(&mut formatter);
-        let expected_fmt = other_value.to_fmt(&mut formatter);
+        let expected_fmt = other_value.to_fmt(&mut formatter2);
         if not {
             const EXPECTED_LINE: &str = "Expected: not \\<= <green>{}<r>\n";
             const RECEIVED_LINE: &str = "Received: <red>{}<r>\n";

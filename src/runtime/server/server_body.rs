@@ -4627,8 +4627,28 @@ pub fn server_set_on_client_error_(global: &JSGlobalObject, server: JSValue, cal
                 let this = unsafe { &mut *this };
                 if let Some(app) = this.app {
                     this.on_clienterror.deinit();
-                    this.on_clienterror = Strong::create(callback, global);
-                    unsafe { &*app }.on_client_error(this, <$T>::on_client_error_callback);
+                    this.on_clienterror = StrongOptional::create(callback, global);
+                    // uws_sys::App::on_client_error takes the raw C-ABI handler shape;
+                    // wrap our typed callback in an extern "C" thunk that slices raw_packet.
+                    extern "C" fn thunk(
+                        user_data: *mut c_void,
+                        _ssl: c_int,
+                        socket: *mut uws_sys::us_socket_t,
+                        error_code: u8,
+                        raw_packet: *mut u8,
+                        raw_packet_len: c_int,
+                    ) {
+                        // SAFETY: user_data is the `*mut Self` registered below; socket is a live
+                        // uWS socket; raw_packet/raw_packet_len describe a valid (possibly empty) buffer.
+                        let this = unsafe { &mut *(user_data as *mut $T) };
+                        let packet: &[u8] = if raw_packet_len > 0 {
+                            unsafe { core::slice::from_raw_parts(raw_packet, raw_packet_len as usize) }
+                        } else {
+                            &[]
+                        };
+                        this.on_client_error_callback(unsafe { &mut *socket }, error_code, packet);
+                    }
+                    unsafe { &mut *app }.on_client_error(thunk, (this as *mut $T).cast::<c_void>());
                 }
                 return Ok(JSValue::UNDEFINED);
             }

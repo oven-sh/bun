@@ -75,8 +75,8 @@ pub fn to_start_with(
                     "Expected to not start with: <green>{}<r>\n",
                     "Received: <red>{}<r>\n"
                 ),
-                expected_fmt,
-                value_fmt
+                expected.to_fmt(&mut formatter),
+                value.to_fmt(&mut formatter2),
             ),
         );
         // PORT NOTE: Zig used `"\n\n" ++ expected_line ++ received_line` as the comptime fmt
@@ -98,10 +98,11 @@ pub fn to_start_with(
                 "Expected to start with: <green>{}<r>\n",
                 "Received: <red>{}<r>\n"
             ),
-            expected_fmt,
-            value_fmt
+            expected.to_fmt(&mut formatter),
+            value.to_fmt(&mut formatter2),
         ),
     )
+    // `this` (scopeguard) drops here → post_match(global)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -857,5 +857,7 @@ pub type FileList = MultiArrayList<File>;
 //               (B-3). load() reshaped for borrowck via Slice::items_raw on
 //               disjoint MultiArrayList columns; symbols clone spelled out as
 //               ptr::copy (Symbol lacks Clone). generate_symbol_import_and_use
-//               now takes bun_js_parser::Index to match LinkerContext callers.
+//               and load() take crate::Index (bun_options_types) to match
+//               LinkerContext callers; Dependency still bridges to
+//               bun_js_parser::Index. Send+Sync asserted for worker-pool fanout.
 // ──────────────────────────────────────────────────────────────────────────

@@ -145,11 +145,9 @@ fn generate_compile_result_for_css_chunk_impl(
                 Some(ImportInfo {
                     import_records: &css_import.condition_import_records,
                     ast_urls_for_css: parse_graph.ast.items_url_for_css(),
-                    ast_unique_key_for_additional_file: parse_graph
-                        .input_files
-                        .items_unique_key_for_additional_file(),
+                    ast_unique_key_for_additional_file: unique_keys,
                 }),
-                Some(&c.mangled_props),
+                Some(local_names),
                 // layer does not need symbols i think
                 symbols,
             ) {
@@ -185,11 +183,9 @@ fn generate_compile_result_for_css_chunk_impl(
                 Some(ImportInfo {
                     import_records: &import_records,
                     ast_urls_for_css: parse_graph.ast.items_url_for_css(),
-                    ast_unique_key_for_additional_file: parse_graph
-                        .input_files
-                        .items_unique_key_for_additional_file(),
+                    ast_unique_key_for_additional_file: unique_keys,
                 }),
-                Some(&c.mangled_props),
+                Some(local_names),
                 // external_path does not need symbols i think
                 symbols,
             ) {
@@ -224,11 +220,9 @@ fn generate_compile_result_for_css_chunk_impl(
                 Some(ImportInfo {
                     import_records: &c.graph.ast.items_import_records()[idx.get() as usize],
                     ast_urls_for_css: parse_graph.ast.items_url_for_css(),
-                    ast_unique_key_for_additional_file: parse_graph
-                        .input_files
-                        .items_unique_key_for_additional_file(),
+                    ast_unique_key_for_additional_file: unique_keys,
                 }),
-                Some(&c.mangled_props),
+                Some(local_names),
                 symbols,
             ) {
                 Ok(_) => {}

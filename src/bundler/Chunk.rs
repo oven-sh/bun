@@ -371,7 +371,7 @@ impl IntermediateOutput {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn code(
+    pub fn code<'d>(
         &mut self,
         allocator_to_use: Option<&DynAlloc>,
         parse_graph: &Graph,
@@ -379,10 +379,13 @@ impl IntermediateOutput {
         import_prefix: &[u8],
         chunk: &mut Chunk,
         chunks: &mut [Chunk],
-        display_size: Option<&mut usize>,
+        // PORT NOTE: `?*usize` in Zig — accept both `&mut usize` and
+        // `Option<&mut usize>` so call sites that ported either way compile.
+        display_size: impl Into<Option<&'d mut usize>>,
         force_absolute_path: bool,
         enable_source_map_shifts: bool,
     ) -> Result<CodeResult, AllocError> {
+        let display_size: Option<&mut usize> = display_size.into();
         // switch (enable_source_map_shifts) { inline else => |b| ... }
         if enable_source_map_shifts {
             self.code_with_source_map_shifts::<true>(

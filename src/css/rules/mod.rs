@@ -311,21 +311,24 @@ pub(super) fn vendor_prefix_to_css(
 }
 
 /// Port of `CustomIdentFns.toCss` → `Printer.writeIdent` with CSS-module
-/// custom-ident scoping. `CustomIdent::to_css` in `values/ident.rs` is gated
-/// on a stale `Printer::write_ident` blocker.
+/// custom-ident scoping. Both `CustomIdent::to_css` and `Printer::write_ident`
+/// are gated on the css_modules `Pattern::write` borrowck reshape; this is the
+/// non-css-module tail (`serialize_identifier`) that both share.
 #[inline]
 pub(super) fn custom_ident_to_css(
     ident: &css::css_values::ident::CustomIdent,
     dest: &mut Printer,
 ) -> Result<(), PrintErr> {
-    let css_module_custom_idents_enabled = if let Some(css_module) = &dest.css_module {
-        css_module.config.custom_idents
-    } else {
-        false
-    };
     // SAFETY: CustomIdent.v points into the parser arena which outlives the AST.
     let v = unsafe { &*ident.v };
-    dest.write_ident(v, css_module_custom_idents_enabled)
+    // blocked_on: Printer::write_ident — css-module custom-ident scoping path
+    // is gated; fall through to its unscoped tail.
+    #[cfg(any())]
+    {
+        let enabled = dest.css_module.as_ref().is_some_and(|m| m.config.custom_idents);
+        return dest.write_ident(v, enabled);
+    }
+    css::serializer::serialize_identifier(v, dest).map_err(|_| dest.add_fmt_error())
 }
 
 /// Port of `DashedIdentFns.toCss` → `Printer.writeDashedIdent`. The real

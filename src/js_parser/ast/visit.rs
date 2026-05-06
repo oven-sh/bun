@@ -713,7 +713,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             "only_scan_imports_and_do_not_visit must not run this."
         );
 
-        class.ts_decorators = self.visit_ts_decorators(class.ts_decorators);
+        self.visit_ts_decorators(&mut class.ts_decorators);
 
         if let Some(name) = class.class_name {
             self.record_declared_symbol(name.ref_.unwrap());
@@ -819,7 +819,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                     continue;
                 }
-                property.ts_decorators = self.visit_ts_decorators(property.ts_decorators);
+                self.visit_ts_decorators(&mut property.ts_decorators);
                 let is_private = if let Some(key) = property.key {
                     matches!(key.data, ExprData::EPrivateIdentifier(_))
                 } else {

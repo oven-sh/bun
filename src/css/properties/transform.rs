@@ -1,5 +1,4 @@
 #![allow(unused_imports, dead_code)]
-use bumpalo::collections::Vec as BumpVec;
 use bun_alloc::Arena as Bump;
 use bun_string::strings;
 

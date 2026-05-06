@@ -452,13 +452,11 @@ impl CustomIdent {
         Ok(CustomIdent { v: ident as *const [u8] })
     }
 
-    #[cfg(any())] // blocked_on: Printer::write_ident
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         Self::to_css_with_options(self, dest, true)
     }
 
     /// Write the custom ident to CSS.
-    #[cfg(any())] // blocked_on: Printer::{css_module, write_ident}
     pub fn to_css_with_options(
         &self,
         dest: &mut Printer,
@@ -470,7 +468,8 @@ impl CustomIdent {
             } else {
                 false
             };
-        // SAFETY: arena-owned slice
+        // SAFETY: arena-owned slice valid for the printer's `'a` lifetime
+        // (raw-ptr deref yields an unbounded borrow, which coerces to `'a`).
         let v = unsafe { &*self.v };
         dest.write_ident(v, css_module_custom_idents_enabled)
     }
@@ -501,5 +500,5 @@ pub type CustomIdentList = SmallList<CustomIdent, 1>;
 //   source:     src/css/values/ident.zig (324 lines)
 //   confidence: medium
 //   todos:      8
-//   notes:      `v: []const u8` fields use raw *const [u8] (arena-owned) pending 'bump threading; IdentOrRef.hash preserves suspicious Zig 2-byte hash; inherent assoc type alias (HashMap<V>) hoisted to free alias; debug_ident is debug-only (no release stub — Rust compile_error! is eager). to_css/deep_clone gated on Printer::write_ident/write_dashed_ident + generics::DeepClone.
+//   notes:      `v: []const u8` fields use raw *const [u8] (arena-owned) pending 'bump threading; IdentOrRef.hash preserves suspicious Zig 2-byte hash; inherent assoc type alias (HashMap<V>) hoisted to free alias; debug_ident is debug-only (no release stub — Rust compile_error! is eager). DashedIdentReference::{parse_with_options,to_css} gated on ParserOptions.css_modules + CssModule::reference_dashed.
 // ──────────────────────────────────────────────────────────────────────────

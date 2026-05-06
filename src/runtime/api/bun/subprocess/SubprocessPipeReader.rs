@@ -45,14 +45,28 @@ impl PipeReader {
         self.ref_count.set(self.ref_count.get() + 1);
     }
 
+    /// Decrement the intrusive refcount; frees the allocation when it hits zero.
+    ///
+    /// Takes a raw `*mut Self` (not `&self`) because the final deref destroys the
+    /// allocation — materializing a `&self`/`&mut self` and then writing/freeing
+    /// through a pointer derived from it is UB under Stacked Borrows. Callers must
+    /// treat `this` as potentially dangling after return.
+    ///
+    /// # Safety
+    /// `this` must point to a live `PipeReader` created by `create()` (i.e. boxed
+    /// via `Box::into_raw`) with `ref_count > 0`. No `&`/`&mut` borrows of `*this`
+    /// may outlive this call on the zero path.
     #[inline]
-    pub fn deref(&self) {
-        let n = self.ref_count.get() - 1;
-        self.ref_count.set(n);
+    pub unsafe fn deref(this: *mut Self) {
+        // SAFETY: `this` is live; `ref_count` is a `Cell` so shared access is sound.
+        let rc = unsafe { &(*this).ref_count };
+        let n = rc.get() - 1;
+        rc.set(n);
         if n == 0 {
             // SAFETY: refcount hit zero; we are the last owner of this heap allocation
-            // created in `create()` via Box::into_raw.
-            unsafe { PipeReader::deinit(self as *const Self as *mut Self) };
+            // created in `create()` via Box::into_raw. `this` carries write provenance
+            // from the original Box.
+            unsafe { PipeReader::deinit(this) };
         }
     }
 }

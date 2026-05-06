@@ -266,15 +266,19 @@ impl Terminal {
         self.ref_count.set(self.ref_count.get() + 1);
     }
 
-    pub fn deref_(&self) {
+    pub fn deref_(&mut self) {
         let n = self.ref_count.get() - 1;
         self.ref_count.set(n);
         if n == 0 {
             // TODO(port): intrusive refcount drop path — Zig `deinit` calls
             // `bun.destroy(this)`. With IntrusiveRc this becomes
             // `IntrusiveRc::drop_in_place(self)`.
-            // SAFETY: self was allocated via Box::into_raw in init_terminal.
-            unsafe { deinit_and_destroy(self as *const Self as *mut Self) };
+            // SAFETY: ref_count == 0 so this is the last live reference; `self`
+            // was Box::into_raw'd in init_terminal and every caller holds an
+            // exclusive `&mut Terminal` derived from that raw pointer, so
+            // recovering `*mut Self` here preserves provenance without a
+            // shared→mut cast.
+            unsafe { deinit_and_destroy(self as *mut Self) };
         }
     }
 

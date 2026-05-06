@@ -815,7 +815,11 @@ pub struct FSEventsWatcher {
     pub path: &'static [u8],
     pub callback: Callback,
     pub flush_callback: UpdateEndCallback,
-    pub loop_: Option<&'static FSEventsLoop>,
+    // Zig: `loop: ?*FSEventsLoop`. Stored as a raw pointer because the loop is
+    // shared with the CFRunLoop thread and mutated through `unregister_watcher`
+    // on drop; holding a `&'static FSEventsLoop` and casting it to `*mut` would
+    // be UB (write through pointer derived from shared ref).
+    pub loop_: Option<NonNull<FSEventsLoop>>,
     pub recursive: bool,
     pub ctx: *mut (),
 }

@@ -179,7 +179,11 @@ impl PostgresSQLQuery {
         queries_array: JSValue,
     ) {
         self.ref_();
-        let _deref = scopeguard::guard((), |_| self.deref_());
+        // SAFETY: raw ptr derived from the exclusive `&mut self`; the guard fires at
+        // end-of-scope after all other borrows of `self` have ended. `ref_()` above
+        // guarantees the count stays >0 until this guard runs.
+        let this_ptr = self as *mut Self;
+        let _deref = scopeguard::guard(this_ptr, |p| unsafe { Self::deref_(p) });
         self.status = Status::Fail;
         let Some(this_value) = self.this_value.try_get() else { return };
         let _downgrade = scopeguard::guard((), |_| self.this_value.downgrade());
@@ -198,7 +202,11 @@ impl PostgresSQLQuery {
 
     pub fn on_js_error(&mut self, err: JSValue, global_object: &JSGlobalObject) {
         self.ref_();
-        let _deref = scopeguard::guard((), |_| self.deref_());
+        // SAFETY: raw ptr derived from the exclusive `&mut self`; the guard fires at
+        // end-of-scope after all other borrows of `self` have ended. `ref_()` above
+        // guarantees the count stays >0 until this guard runs.
+        let this_ptr = self as *mut Self;
+        let _deref = scopeguard::guard(this_ptr, |p| unsafe { Self::deref_(p) });
         self.status = Status::Fail;
         let Some(this_value) = self.this_value.try_get() else { return };
         let _downgrade = scopeguard::guard((), |_| self.this_value.downgrade());
@@ -237,7 +245,11 @@ impl PostgresSQLQuery {
 
     pub fn on_result(&mut self, command_tag_str: &[u8], global_object: &JSGlobalObject, connection: JSValue, is_last: bool) {
         self.ref_();
-        let _deref = scopeguard::guard((), |_| self.deref_());
+        // SAFETY: raw ptr derived from the exclusive `&mut self`; the guard fires at
+        // end-of-scope after all other borrows of `self` have ended. `ref_()` above
+        // guarantees the count stays >0 until this guard runs.
+        let this_ptr = self as *mut Self;
+        let _deref = scopeguard::guard(this_ptr, |p| unsafe { Self::deref_(p) });
         if is_last {
             self.status = Status::Success;
         } else {
@@ -439,7 +451,8 @@ impl PostgresSQLQuery {
                     // fail to run do cleanup
                     this.statement = None;
                     drop(stmt);
-                    this.deref_();
+                    // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
+                unsafe { Self::deref_(this) };
 
                     if !global_object.has_exception() {
                         return global_object.throw_value(postgres_error_to_js(global_object, Some("failed to execute query"), err));
@@ -456,7 +469,8 @@ impl PostgresSQLQuery {
                 // fail to run do cleanup
                 this.statement = None;
                 drop(stmt);
-                this.deref_();
+                // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
+                unsafe { Self::deref_(this) };
 
                 return global_object.throw_out_of_memory();
             }
@@ -483,7 +497,8 @@ impl PostgresSQLQuery {
         ) {
             Ok(s) => s,
             Err(err) => {
-                this.deref_();
+                // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
+                unsafe { Self::deref_(this) };
                 if !global_object.has_exception() {
                     return global_object.throw_error(err, "failed to generate signature");
                 }
@@ -519,7 +534,8 @@ impl PostgresSQLQuery {
                             this.statement = None;
                             let error_response = stmt.error_response.as_ref().unwrap().to_js(global_object)?;
                             drop(stmt);
-                            this.deref_();
+                            // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
+                unsafe { Self::deref_(this) };
                             return global_object.throw_value(error_response);
                         }
                         PostgresSQLStatement::Status::Prepared => {
@@ -538,7 +554,8 @@ impl PostgresSQLQuery {
                                     // fail to run do cleanup
                                     this.statement = None;
                                     drop(stmt);
-                                    this.deref_();
+                                    // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
+                unsafe { Self::deref_(this) };
 
                                     if !global_object.has_exception() {
                                         return global_object.throw_value(postgres_error_to_js(global_object, Some("failed to bind and execute query"), err));
@@ -580,7 +597,8 @@ impl PostgresSQLQuery {
                         if let Some(stmt) = this.statement.take() {
                             drop(stmt);
                         }
-                        this.deref_();
+                        // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
+                unsafe { Self::deref_(this) };
                         if !global_object.has_exception() {
                             return global_object.throw_value(postgres_error_to_js(global_object, Some("failed to prepare and query"), err));
                         }
@@ -608,7 +626,8 @@ impl PostgresSQLQuery {
                         if let Some(stmt) = this.statement.take() {
                             drop(stmt);
                         }
-                        this.deref_();
+                        // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
+                unsafe { Self::deref_(this) };
                         if !global_object.has_exception() {
                             return global_object.throw_value(postgres_error_to_js(global_object, Some("failed to write query"), err));
                         }

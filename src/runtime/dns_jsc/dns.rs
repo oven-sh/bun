@@ -3939,7 +3939,7 @@ impl Resolver {
                 return;
             }
 
-            let owner = Async::Owner::new(Async::poll_tag::DNS_RESOLVER, self as *mut Self as *mut ());
+            let owner = Async::Owner::new(Async::posix_event_loop::poll_tag::DNS_RESOLVER, self as *mut Self as *mut ());
             // SAFETY: `event_loop_handle` is set once VM is initialized; live for VM lifetime.
             // Hoisted above `poll_entry` so the `&self` borrow ends before `self.polls`
             // is borrowed mutably.

@@ -90,7 +90,7 @@ pub fn get_candidate_package_patterns<'a>(
             // PERF(port): Zig threaded `ctx.allocator` through `parsePackageJSONUTF8`; the Rust
             // signature takes a `&Bump` arena explicitly. Nodes go through the global Store, so
             // this only buffers transient parser scratch — fresh per-iteration is fine.
-            let bump = bumpalo::Bump::new();
+            let bump = bun_alloc::Arena::new();
             let json = json::parse_package_json_utf8(&json_source, log, &bump)?;
 
             let Some(prop) = json.as_property(b"workspaces") else {

@@ -755,7 +755,8 @@ impl Task {
         let pkg_res = pkg_resolutions[pkg_id as usize];
 
         // TODO(port): Zig labeled-switch `next_step:` modeled as loop+match
-        let mut step = entry_steps[self.entry_id.get() as usize].load(Ordering::Acquire);
+        let mut step =
+            Step::from_u32(entry_steps[self.entry_id.get() as usize].load(Ordering::Acquire));
         'step: loop {
             match step {
                 Step::LinkPackage => {

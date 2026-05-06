@@ -417,7 +417,7 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
         let mut best_short_text_a: &[Unit] = &[];
         let mut best_short_text_b: &[Unit] = &[];
 
-        while i128::from(j) < i128::try_from(short_text.len()).unwrap() && {
+        while (j as i128) < i128::try_from(short_text.len()).unwrap() && {
             match index_of(&short_text[usize::try_from(j + 1).unwrap()..], seed) {
                 Some(found) => {
                     j = isize::try_from(found).unwrap() + j + 1;
@@ -899,7 +899,7 @@ fn diff_lines_to_chars_munge<Unit: DiffUnit>(
             let line_u8: &[u8] =
                 unsafe { core::slice::from_raw_parts(line.as_ptr() as *const u8, line.len()) };
             // TODO(port): StringHashMap key ownership — Zig stored a borrowed slice.
-            line_hash.insert(line_u8, line_array.len() - 1);
+            line_hash.insert(line_u8.into(), line_array.len() - 1);
             chars.push(line_array.len() - 1);
         }
         line_start = line_end + 1;

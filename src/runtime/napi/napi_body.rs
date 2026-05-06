@@ -1273,7 +1273,10 @@ pub extern "C" fn napi_get_typedarray_info(
         return env.invalid_arg();
     };
     if let Some(ty) = unsafe { maybe_type.as_mut() } {
-        let Some(napi_ty) = array_buffer.typed_array_type.to_typed_array_type().to_napi() else {
+        // Zig: `array_buffer.typed_array_type.toTypedArrayType().toNapi()`. The Rust
+        // `ArrayBuffer.typed_array_type` field is already a `JSType`, so map it
+        // straight to `napi_typedarray_type`.
+        let Some(napi_ty) = napi_typedarray_type::from_js_type(array_buffer.typed_array_type) else {
             return env.invalid_arg();
         };
         *ty = napi_ty;
@@ -1388,7 +1391,7 @@ pub extern "C" fn napi_create_promise(
     let env = get_env!(env_);
     let deferred = get_out!(env, deferred_);
     let promise = get_out!(env, promise_);
-    let strong = Box::new(JSPromise::Strong::init(env.to_js()));
+    let strong = Box::new(JSPromiseStrong::init(env.to_js()));
     let strong_ptr = Box::into_raw(strong);
     *deferred = strong_ptr;
     // SAFETY: strong_ptr was just created from Box::into_raw and is non-null.

@@ -27,7 +27,7 @@ pub fn to_be_number(
         return Ok(JSValue::UNDEFINED);
     }
 
-    let formatter = super::make_formatter(global);
+    let mut formatter = super::make_formatter(global);
     // `defer formatter.deinit()` → dropped implicitly (impl Drop for Formatter).
     let received = value.to_fmt(&mut formatter);
 

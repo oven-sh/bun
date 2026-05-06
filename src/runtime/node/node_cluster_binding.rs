@@ -69,7 +69,7 @@ pub fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
     if callback.is_function() {
         // TODO: remove this strong. This is expensive and would be an easy way to create a memory leak.
         // These sequence numbers shouldn't exist from JavaScript's perspective at all.
-        singleton
+        let _ = singleton
             .callbacks
             .put(singleton.seq, StrongOptional::create(callback, global));
     }

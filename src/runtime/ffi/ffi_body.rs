@@ -1323,7 +1323,7 @@ impl FFI {
         let _tcc_guard = scopeguard::guard(&mut tcc_state, |s| {
             if let Some(state) = s {
                 // SAFETY: state is a valid TCC::State pointer from compile()
-                unsafe { state.as_mut().deinit() };
+                unsafe { TCC::State::destroy(state.as_ptr()) };
             }
         });
 

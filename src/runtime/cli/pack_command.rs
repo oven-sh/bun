@@ -2619,7 +2619,7 @@ fn edit_root_package_json(
         b"optionalDependencies".as_slice(),
     ] {
         if let Some(dependencies_expr) = json.root.get(dependency_group) {
-            if let ExprData::EObject(dependencies) = &dependencies_expr.data {
+            if let ExprData::EObject(mut dependencies) = dependencies_expr.data {
                 for dependency in dependencies.properties.slice_mut() {
                     // TODO(port): Zig iterated `slice()` of `*dependency`; need mutable iter
                     if dependency.key.is_none() {
@@ -2629,7 +2629,7 @@ fn edit_root_package_json(
                         continue;
                     }
 
-                    let Some(package_spec) = dependency.value.as_ref().unwrap().as_string() else { continue };
+                    let Some(package_spec) = dependency.value.as_ref().unwrap().as_utf8_string_literal() else { continue };
                     if let Some(without_workspace_protocol) =
                         strings::without_prefix_if_possible_comptime(package_spec, b"workspace:")
                     {
@@ -2640,7 +2640,7 @@ fn edit_root_package_json(
                             // TODO: this might be too strict
                             let c = without_workspace_protocol[0];
                             if c == b'^' || c == b'~' || c == b'*' {
-                                let dependency_name = match dependency.key.as_ref().unwrap().as_string() {
+                                let dependency_name = match dependency.key.as_ref().unwrap().as_utf8_string_literal() {
                                     Some(n) => n,
                                     None => {
                                         Output::err_generic(
@@ -2651,60 +2651,26 @@ fn edit_root_package_json(
                                     }
                                 };
 
-                                'failed_to_resolve: {
-                                    // find the current workspace version and append to package spec without `workspace:`
-                                    let Some(lockfile) = maybe_lockfile else { break 'failed_to_resolve };
-
-                                    let Some(workspace_version) = lockfile
-                                        .workspace_versions
-                                        .get(Semver::String::Builder::string_hash(dependency_name))
-                                    else {
-                                        break 'failed_to_resolve;
-                                    };
-
-                                    let prefix: &str = match c {
-                                        b'^' => "^",
-                                        b'~' => "~",
-                                        b'*' => "",
-                                        _ => unreachable!(),
-                                    };
-                                    let mut data: Vec<u8> = Vec::new();
-                                    write!(
-                                        &mut data,
-                                        "{}{}",
-                                        prefix,
-                                        workspace_version.fmt(lockfile.buffers.string_bytes.as_slice()),
-                                    )
-                                    .expect("OOM");
-
-                                    dependency.value = Some(Expr::allocate(
-                                        E::String { data: data.into_boxed_slice() },
-                                        Default::default(),
-                                    ));
-                                    // TODO(port): Expr::allocate signature
-
-                                    continue;
-                                }
-
-                                // only produce this error only when we need to get the workspace version
-                                Output::err_generic(
-                                    "Failed to resolve workspace version for \"{}\" in `{}`. Run <cyan>`bun install`<r> and try again.",
-                                    format_args!("{} {}", bstr::BStr::new(dependency_name), bstr::BStr::new(dependency_group)),
-                                );
-                                Global::crash();
+                                // find the current workspace version and append to package spec without `workspace:`
+                                let _ = (maybe_lockfile, c, dependency_name);
+                                let _ = Semver::string::Builder::string_hash;
+                                todo!("blocked_on: bun_install::Lockfile::workspace_versions");
+                                // (Zig: lockfile.workspace_versions.get(string_hash(name)) →
+                                //  rewrite dependency.value to "<prefix><version>"; on miss
+                                //  fall through to err_generic + crash.)
                             }
                         }
 
-                        dependency.value = Some(Expr::allocate(
-                            E::String { data: Box::<[u8]>::from(without_workspace_protocol) },
+                        dependency.value = Some(Expr::init(
+                            E::EString::init(Box::leak(Box::<[u8]>::from(without_workspace_protocol))),
                             Default::default(),
                         ));
                     } else if let Some(catalog_name_str) =
                         strings::without_prefix_if_possible_comptime(package_spec, b"catalog:")
                     {
-                        let dep_name_str = dependency.key.as_ref().unwrap().as_string().unwrap();
+                        let dep_name_str = dependency.key.as_ref().unwrap().as_utf8_string_literal().unwrap();
 
-                        let lockfile = match maybe_lockfile {
+                        let _lockfile = match maybe_lockfile {
                             Some(l) => l,
                             None => {
                                 Output::err_generic(
@@ -2715,50 +2681,11 @@ fn edit_root_package_json(
                             }
                         };
 
-                        let catalog_name = Semver::String::init(catalog_name_str, catalog_name_str);
-
-                        let catalog = match lockfile.catalogs.get_group(
-                            lockfile.buffers.string_bytes.as_slice(),
-                            catalog_name,
-                            catalog_name_str,
-                        ) {
-                            Some(c) => c,
-                            None => {
-                                Output::err_generic(
-                                    "Failed to resolve catalog version for \"{}\" in `{}` (no matching catalog).",
-                                    format_args!("{} {}", bstr::BStr::new(dep_name_str), bstr::BStr::new(dependency_group)),
-                                );
-                                Global::crash();
-                            }
-                        };
-
-                        let dep_name = Semver::String::init(dep_name_str, dep_name_str);
-
-                        let dep = match catalog.get_context(
-                            dep_name,
-                            Semver::String::ArrayHashContext {
-                                arg_buf: dep_name_str,
-                                existing_buf: lockfile.buffers.string_bytes.as_slice(),
-                            },
-                        ) {
-                            Some(d) => d,
-                            None => {
-                                Output::err_generic(
-                                    "Failed to resolve catalog version for \"{}\" in `{}` (no matching catalog dependency).",
-                                    format_args!("{} {}", bstr::BStr::new(dep_name_str), bstr::BStr::new(dependency_group)),
-                                );
-                                Global::crash();
-                            }
-                        };
-
-                        dependency.value = Some(Expr::allocate(
-                            E::String {
-                                data: Box::<[u8]>::from(
-                                    dep.version.literal.slice(lockfile.buffers.string_bytes.as_slice()),
-                                ),
-                            },
-                            Default::default(),
-                        ));
+                        let _catalog_name = Semver::String::init(catalog_name_str, catalog_name_str);
+                        let _ = Semver::string::ArrayHashContext { arg_buf: dep_name_str, existing_buf: b"" };
+                        todo!("blocked_on: bun_install::Lockfile::catalogs");
+                        // (Zig: lockfile.catalogs.get_group(...) → catalog.get_context(...) →
+                        //  rewrite dependency.value to dep.version.literal.)
                     }
                 }
             }
@@ -2775,7 +2702,7 @@ fn edit_root_package_json(
 
     let written = match js_printer::print_json(
         &mut package_json_writer,
-        &json.root,
+        json.root,
         // shouldn't be used
         &json.source,
         js_printer::PrintJsonOptions {
@@ -2805,7 +2732,7 @@ fn edit_root_package_json(
 
 /// A glob pattern used to ignore or include files in the project tree.
 /// Might come from .npmignore, .gitignore, or `files` in package.json
-#[derive(Clone)]
+// PORT NOTE: `CowSliceZ<u8>` is not `Clone`; manual borrow via `as_positive`.
 pub struct Pattern {
     pub glob: CowString,
     pub flags: PatternFlags,
@@ -2964,7 +2891,10 @@ enum IgnoreFileFailReason {
 impl IgnorePatterns {
     fn ignore_file_fail(dir: &Dir, ignore_kind: IgnorePatternsKind, reason: IgnoreFileFailReason, err: bun_core::Error) -> ! {
         let mut buf = PathBuffer::uninit();
-        let dir_path = bun_sys::get_fd_path(Fd::from_std_dir(dir), &mut buf).unwrap_or(b"");
+        let dir_path: &[u8] = match bun_sys::get_fd_path(Fd::from_std_dir(dir), &mut buf) {
+            Ok(p) => &*p,
+            Err(_) => b"",
+        };
         Output::err(
             err,
             "failed to {} {} at: \"{}{}{}\"",
@@ -3030,7 +2960,7 @@ impl IgnorePatterns {
 
         let mut has_rel_path = false;
 
-        for line in contents.split(|&b| b == b'\n').filter(|s| !s.is_empty()) {
+        for line in contents.split(|&b| b == b'\n') {
             if line.is_empty() {
                 continue;
             }
@@ -3236,9 +3166,9 @@ pub mod bindings {
 
     #[bun_jsc::host_fn]
     pub fn js_read_tarball(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let args = call_frame.arguments_old(1).slice();
+        let args = call_frame.arguments_old::<1>().slice();
         if args.len() < 1 || !args[0].is_string() {
-            return global.throw("expected tarball path string argument", format_args!(""));
+            return Err(global.throw("expected tarball path string argument"));
         }
 
         let tarball_path_str = args[0].to_bun_string(global)?;
@@ -3246,34 +3176,36 @@ pub mod bindings {
 
         let tarball_path = tarball_path_str.to_utf8();
 
-        let tarball_file = match Dir::cwd().open_file(tarball_path.slice(), Default::default()) {
-            // TODO(port): std.fs.cwd().openFile → bun_sys equivalent
-            Ok(f) => File::from(f),
+        let tarball_file = match bun_sys::open_file(tarball_path.slice(), Default::default()) {
+            Ok(f) => f,
             Err(err) => {
-                return global.throw(
+                return Err(global.throw(format_args!(
                     "failed to open tarball file \"{}\": {}",
-                    format_args!("{}: {}", bstr::BStr::new(tarball_path.slice()), err.name()),
-                );
+                    bstr::BStr::new(tarball_path.slice()),
+                    bun_core::Error::from(err).name(),
+                )));
             }
         };
-        let _close = scopeguard::guard((), |_| tarball_file.close());
 
-        let tarball = match tarball_file.read_to_end().unwrap() {
+        let tarball = match tarball_file.read_to_end() {
             Ok(b) => b,
             Err(err) => {
-                return global.throw(
+                let _ = tarball_file.close();
+                return Err(global.throw(format_args!(
                     "failed to read tarball contents \"{}\": {}",
-                    format_args!("{}: {}", bstr::BStr::new(tarball_path.slice()), err.name()),
-                );
+                    bstr::BStr::new(tarball_path.slice()),
+                    bun_core::Error::from(err).name(),
+                )));
             }
         };
+        let _ = tarball_file.close();
         // tarball freed by Drop
 
         let mut sha1_digest: [u8; sha::SHA1::DIGEST] = [0; sha::SHA1::DIGEST];
         let mut sha1 = sha::SHA1::init();
         sha1.update(&tarball);
-        sha1.final_(&mut sha1_digest);
-        let shasum_str = BunString::create_format(format_args!("{}", bun_fmt::bytes_to_hex_lower(&sha1_digest)));
+        sha1.r#final(&mut sha1_digest);
+        let shasum_str = BunString::create_format(format_args!("{}", bun_fmt::bytes_to_hex_lower_string(&sha1_digest)));
         // bun.handleOom → infallible / panic-on-OOM
 
         let mut sha512_digest: [u8; sha::SHA512::DIGEST] = [0; sha::SHA512::DIGEST];

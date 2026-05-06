@@ -1605,11 +1605,11 @@ impl DNSLookup {
         bun_output::scoped_log!(DNSLookup, "init");
 
         let mut poll_ref = KeepAlive::init();
-        poll_ref.ref_(global_this.bun_vm());
+        poll_ref.ref_(js_event_loop_ctx());
 
         Box::into_raw(Box::new(Self {
-            // SAFETY: resolver is a live intrusive-RC m_ctx; clone_from_raw bumps the embedded ref_count.
-            resolver: Some(unsafe { bun_ptr::IntrusiveRc::clone_from_raw(resolver) }),
+            // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
+            resolver: Some(unsafe { bun_ptr::IntrusiveRc::init_ref(resolver) }),
             global_this: global_this as *const JSGlobalObject,
             poll_ref,
             promise: JSPromiseStrong::init(global_this),

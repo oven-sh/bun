@@ -1304,7 +1304,7 @@ impl ElementHandler {
         });
 
         if !this_object.is_object() {
-            return global.throw_invalid_arguments("Expected object");
+            return Err(global.throw_invalid_arguments("Expected object"));
         }
 
         if let Some(val) = this_object.get(global, "element")? {

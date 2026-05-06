@@ -434,7 +434,7 @@ impl Interpreter {
                 // `*const ast::*` into the arena without threading `'arena`.
                 Ok(script) => Ok(unsafe {
                     core::mem::transmute::<
-                        crate::shell::shell_body::ast::Script<'_>,
+                        crate::shell::shell_body::AST::Script<'_>,
                         ast::Script,
                     >(script)
                 }),

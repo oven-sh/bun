@@ -465,15 +465,13 @@ fn parse_option_definitions(
                             let _ = validators::validate_boolean_array(
                                 global,
                                 default_value,
-                                "options.{}.default",
-                                format_args!("{}", option.long_name),
+                                format_args!("options.{}.default", option.long_name),
                             )?;
                         } else {
                             let _ = validators::validate_boolean(
                                 global,
                                 default_value,
-                                "options.{}.default",
-                                format_args!("{}", option.long_name),
+                                format_args!("options.{}.default", option.long_name),
                             )?;
                         }
                     }

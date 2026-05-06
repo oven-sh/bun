@@ -1169,7 +1169,8 @@ where
         self.request_body_readable_stream_ref.deinit();
 
         if let Some(cookies) = self.cookies.take() {
-            drop(cookies); // deref
+            // SAFETY: opaque FFI handle; release the ref we took in set_cookies.
+            unsafe { (*cookies).deref() };
         }
 
         if let Some(request) = self.request_weakref.get() {

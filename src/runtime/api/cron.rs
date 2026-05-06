@@ -1319,7 +1319,9 @@ impl CronJob {
             // deinit: this_value.deinit() then destroy.
             // SAFETY: last ref; nobody else holds a pointer.
             unsafe {
-                (*this).this_value.deinit();
+                // PORT NOTE: `JsRef::deinit()` was dropped — Strong's Drop on
+                // reassignment handles teardown (JSRef.rs trailer).
+                (*this).this_value = JsRef::empty();
                 drop(Box::from_raw(this));
             }
         }

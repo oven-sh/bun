@@ -1035,7 +1035,7 @@ impl Scrypt {
     fn deinit_sync(&mut self) {
         self.salt.deinit();
         self.password.deinit();
-        drop(self.buf.take());
+        self.buf.deinit();
     }
 }
 

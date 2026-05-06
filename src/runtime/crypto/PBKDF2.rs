@@ -235,21 +235,23 @@ impl PBKDF2 {
         )? {
             Some(v) => v,
             None => {
-                return global_this.throw_invalid_argument_type_value(
+                return Err(global_this.throw_invalid_argument_type_value(
                     "password",
                     "string or buffer",
                     arg0,
-                );
+                ));
             }
         };
 
         if guard.password.slice().len() > i32::MAX as usize {
-            return global_this.throw_invalid_arguments("password is too long", ());
+            return Err(global_this.throw_invalid_arguments("password is too long"));
         }
 
         if is_async {
             if !arg5.is_function() {
-                return global_this.throw_invalid_argument_type_value("callback", "function", arg5);
+                return Err(
+                    global_this.throw_invalid_argument_type_value("callback", "function", arg5)
+                );
             }
         }
 

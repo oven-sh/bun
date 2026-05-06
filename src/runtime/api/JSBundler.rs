@@ -1039,9 +1039,9 @@ pub mod js_bundler {
                 }
             }
 
-            if let Some(format) =
-                config.get_optional_enum::<options::Format>(global_this, "format")?
-            {
+            if let Some(_format_val) = config.get_truthy(global_this, "format")? {
+                let format: options::Format =
+                    todo!("blocked_on: bun_jsc::JSValue::get_optional_enum::<options::Format>");
                 this.format = format;
 
                 if this.bytecode && format != options::Format::Cjs && format != options::Format::Esm

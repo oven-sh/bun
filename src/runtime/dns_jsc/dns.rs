@@ -242,20 +242,25 @@ pub mod lib_info {
 
         // SAFETY: request is live until the FilePoll callback fires.
         debug_assert!(unsafe { (*request).backend.as_libinfo().machport } != 0);
-        let poll = FilePoll::init(
-            this.vm(),
+        let ctx = js_event_loop_ctx();
+        let poll_ptr = FilePoll::init(
+            ctx,
             // TODO: WHAT?????????
             sys::Fd::from_native(i32::MAX - 1),
             Default::default(),
             // TODO(port): FilePoll generic owner type GetAddrInfoRequest
-            request,
+            Async::Owner::new(
+                Async::posix_event_loop::poll_tag::GET_ADDR_INFO_REQUEST,
+                request.cast(),
+            ),
         );
-        // SAFETY: request is live (heap-allocated) and exclusively accessed on this thread.
-        unsafe { (*request).backend.as_libinfo_mut().file_poll = Some(poll) };
+        // SAFETY: FilePoll::init returns a live pool slot; exclusive on this thread.
+        let poll = unsafe { &mut *poll_ptr };
         // SAFETY: see above.
         let machport = unsafe { (*request).backend.as_libinfo().machport };
         let rc = poll.register_with_fd(
-            this.vm().event_loop_handle.unwrap(),
+            // SAFETY: JS event loop is live for the resolver's lifetime.
+            unsafe { ctx.platform_event_loop() },
             Async::PollKind::Machport,
             Async::posix_event_loop::OneShotFlag::OneShot,
             // SAFETY: bitcast u32 mach_port → i32 fd, matches Zig @bitCast
@@ -263,8 +268,12 @@ pub mod lib_info {
         );
         debug_assert!(matches!(rc, sys::Result::Ok(_)));
 
-        poll.enable_keeping_process_alive(this.vm().event_loop());
-        this.request_sent(global_this.bun_vm());
+        poll.enable_keeping_process_alive(ctx);
+        // SAFETY: request is live (heap-allocated) and exclusively accessed on this thread.
+        // TODO(port): `file_poll` stores `Box<FilePoll>` but the slot is hive-allocated;
+        // Phase B: change field to `*mut FilePoll` and route deinit through the pool.
+        unsafe { (*request).backend.as_libinfo_mut().file_poll = Some(Box::from_raw(poll_ptr)) };
+        this.request_sent(this.vm());
 
         promise_value
     }

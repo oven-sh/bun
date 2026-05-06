@@ -458,23 +458,23 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             }
 
             if let Some(signal_val) = args.get_truthy(global_this, "signal")? {
-                if let Some(signal) = signal_val.as_::<WebCore::AbortSignal>() {
-                    **abort_signal = Some(signal.ref_());
+                if let Some(signal) = WebCore::AbortSignal::from_js(signal_val) {
+                    // SAFETY: `from_js` returns a live FFI handle owned by JS.
+                    **abort_signal = Some(unsafe { (*signal).ref_() });
                 } else {
-                    return global_this.throw_invalid_argument_type_value(
+                    return Err(global_this.throw_invalid_argument_type_value(
                         "signal",
                         "AbortSignal",
                         signal_val,
-                    );
+                    ));
                 }
             }
 
             if let Some(on_disconnect_) = args.get_truthy(global_this, "onDisconnect")? {
                 if !on_disconnect_.is_cell() || !on_disconnect_.is_callable() {
-                    return global_this.throw_invalid_arguments(
+                    return Err(global_this.throw_invalid_arguments(
                         "onDisconnect must be a function or undefined",
-                        format_args!(""),
-                    );
+                    ));
                 }
 
                 on_disconnect_callback = if IS_SYNC {

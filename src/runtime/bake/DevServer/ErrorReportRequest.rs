@@ -237,15 +237,31 @@ fn extract_json_encoded_source_code<'a, const N: usize>(
     //
     // This function expects but does not assume the escape sequences
     // given are valid, and does not bubble errors up.
-    let mut log = Log::init();
+    //
+    // PORT NOTE: `Lexer<'a>` borrows `&'a mut Log` and `&'a Source`; allocate
+    // both from the caller's arena so their lifetime matches the decoded
+    // `ArenaVec<'a, u8>` slices we hand back in `result`.
+    let log: &'a mut Log = arena.alloc(Log::init());
+    let source: &'a bun_logger::Source =
+        arena.alloc(bun_logger::Source::init_empty_file(b""));
     let mut l = bun_interchange::toml::Lexer {
-        log: &mut log,
-        source: bun_logger::Source::init_empty_file(b""),
-        // TODO(port): Zig passed `arena` as allocator here; Rust Lexer may
-        // bind the arena differently.
-        allocator: arena,
-        should_redact_logs: false,
+        log,
+        source,
+        start: 0,
+        end: 0,
+        current: 0,
+        bump: arena,
+        code_point: -1,
+        identifier: b"",
+        number: 0.0,
         prev_error_loc: bun_logger::Loc::EMPTY,
+        string_literal_slice: b"",
+        string_literal_is_ascii: true,
+        line_number: 0,
+        token: bun_interchange::toml::lexer::T::t_end_of_file,
+        allow_double_bracket: true,
+        has_newline_before: false,
+        should_redact_logs: false,
     };
     // log dropped at scope exit
 

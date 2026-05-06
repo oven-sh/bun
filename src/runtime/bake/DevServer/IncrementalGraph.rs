@@ -2135,7 +2135,7 @@ impl IncrementalGraph<Client> {
     ) -> Result<(), bun_core::Error> {
         self.owner().graph_safety_lock.assert_locked();
         for path in paths {
-            let Some(index) = self.bundled_files.get_index(path) else {
+            let Some(index) = self.get_index_by_slice(path) else {
                 // Cannot enqueue because it's impossible to know what
                 // targets to bundle for. Instead, a failing bundle must
                 // retrieve the list of files and add them as stale.
@@ -2147,7 +2147,7 @@ impl IncrementalGraph<Client> {
             // `entry_points` is consumed by startAsyncBundle/TestingBatch.
             // PORT NOTE: reshaped for borrowck — re-index keys/values per use.
             self.stale_files.set(index);
-            let data = self.bundled_files.values()[index].unpack();
+            let data = self.unpack_at(index);
             match &data.content {
                 Content::CssRoot(_) | Content::CssChild => {
                     if matches!(data.content, Content::CssRoot(_)) {
@@ -2161,7 +2161,7 @@ impl IncrementalGraph<Client> {
                         let dep = entry.dependency;
                         self.stale_files.set(dep.get() as usize);
 
-                        let dep_file = self.bundled_files.values()[dep.get() as usize].unpack();
+                        let dep_file = self.unpack_at(dep.get() as usize);
                         if matches!(dep_file.content, Content::CssRoot(_)) {
                             entry_points
                                 .append_css(&self.bundled_files.keys()[dep.get() as usize])?;
@@ -2177,7 +2177,7 @@ impl IncrementalGraph<Client> {
                         let dep = entry.dependency;
                         self.stale_files.set(dep.get() as usize);
 
-                        let dep_file = self.bundled_files.values()[dep.get() as usize].unpack();
+                        let dep_file = self.unpack_at(dep.get() as usize);
                         // Assets violate the "do not reprocess
                         // unchanged files" rule by reprocessing ALL
                         // dependencies, instead of just the CSS roots.

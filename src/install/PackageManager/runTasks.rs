@@ -1593,7 +1593,7 @@ pub fn generate_network_task_for_tarball<'a>(
     patch_name_and_version_hash: Option<u64>,
     authorization: Authorization,
 ) -> Result<Option<&'a mut NetworkTask>, ForTarballError> {
-    if this.has_created_network_task(task_id, is_required) {
+    if has_created_network_task(this, task_id, is_required) {
         return Ok(None);
     }
 
@@ -1602,25 +1602,28 @@ pub fn generate_network_task_for_tarball<'a>(
     // compute every value that needs `this` *before* taking that borrow, then
     // populate `network_task` without touching `this`.
     let apply_patch_task = if let Some(h) = patch_name_and_version_hash {
-        'brk: {
-            let patch_hash = this
-                .lockfile
-                .patched_dependencies
-                .get(&h)
-                .unwrap()
-                .patchfile_hash()
-                .unwrap();
-            let task = PatchTask::new_apply_patch_hash(this, package.meta.id, patch_hash, h);
-            task.callback.apply_mut().task_id = Some(task_id);
-            break 'brk Some(task);
+        let patch_hash = this
+            .lockfile
+            .patched_dependencies
+            .get(&h)
+            .unwrap()
+            .patchfile_hash()
+            .unwrap();
+        let task = PatchTask::new_apply_patch_hash(this, package.meta.id, patch_hash, h);
+        // SAFETY: `task` is a fresh non-null `Box::into_raw` from
+        // `new_apply_patch_hash`; we hold the only reference.
+        if let PatchTaskCallback::Apply(apply) = unsafe { &mut (*task).callback } {
+            apply.task_id = Some(task_id);
         }
+        // SAFETY: reclaiming the `Box` produced by `new_apply_patch_hash`.
+        Some(unsafe { Box::from_raw(task) })
     } else {
         None
     };
     let pkg_name = this.lockfile.str(&package.name);
     let scope = this.scope_for_package_name(pkg_name);
-    let cache_dir = this.get_cache_directory();
-    let temp_dir = this.get_temporary_directory().handle;
+    let cache_dir = directories::get_cache_directory(this);
+    let temp_dir = directories::get_temporary_directory(this).handle;
     // Backref address only — stored, not dereffed in this function. The tag is
     // immediately popped by the next `this` use; that's fine for a stored
     // back-pointer (TODO(port): lifetime — BACKREF).
@@ -1628,7 +1631,7 @@ pub fn generate_network_task_for_tarball<'a>(
 
     // Take the pool slot as a raw pointer so borrowck releases `this` for the
     // streaming-setup tail. Reborrowed `&mut` per-statement below.
-    let net_ptr: *mut NetworkTask = this.get_network_task();
+    let net_ptr: *mut NetworkTask = get_network_task(this);
     // SAFETY: `net_ptr` is the unique handle to a freshly-vended pool slot; no
     // other alias exists until we return it. All writes below go through this
     // pointer exclusively.
@@ -1638,17 +1641,20 @@ pub fn generate_network_task_for_tarball<'a>(
         package_manager: this_backref, // TODO(port): lifetime — BACKREF
         name: strings::StringOrTinyString::init_append_if_needed(
             pkg_name,
-            FileSystem::FilenameStore::instance(),
-        ),
+            &mut crate::network_task::filename_store_appender(),
+        )
+        .expect("unreachable"),
         resolution: package.resolution,
         cache_dir,
         temp_dir,
         dependency_id,
+        skip_verify: false,
         integrity: package.meta.integrity,
         url: strings::StringOrTinyString::init_append_if_needed(
             url,
-            FileSystem::FilenameStore::instance(),
-        ),
+            &mut crate::network_task::filename_store_appender(),
+        )
+        .expect("unreachable"),
     };
 
     network_task.task_id = task_id;
@@ -1659,7 +1665,7 @@ pub fn generate_network_task_for_tarball<'a>(
 
     network_task.for_tarball(&extract_tarball, scope, authorization)?;
 
-    if ExtractTarball::uses_streaming_extraction() {
+    if extract_tarball::uses_streaming_extraction() {
         // Pre-create the extract Task and streaming state here on the
         // main thread: `preallocated_resolve_tasks` is not thread-safe,
         // and the streaming extractor needs a stable `Task` pointer so
@@ -1674,22 +1680,93 @@ pub fn generate_network_task_for_tarball<'a>(
         // `this`. Phase B: have `get_network_task` return a pool index so this
         // intrusive-pointer pattern goes away.
         // SAFETY: see disjointness note above.
-        let extract_task = unsafe {
-            this.create_extract_task_for_streaming(
-                &mut (*net_ptr).callback.extract_mut(),
-                &mut *net_ptr,
-            )
+        let tarball_ref = unsafe {
+            let NetworkTaskCallback::Extract(t) = &(*net_ptr).callback else {
+                unreachable!()
+            };
+            t
         };
+        let extract_task =
+            enqueue::create_extract_task_for_streaming(this, tarball_ref, net_ptr);
         unsafe {
-            (*net_ptr).streaming_extract_task = Some(extract_task);
+            (*net_ptr).streaming_extract_task = extract_task;
             (*net_ptr).tarball_stream =
-                Some(TarballStream::init(extract_task, &mut *net_ptr, this));
+                Some(Box::from_raw(TarballStream::init(extract_task, net_ptr, this)));
         }
     }
 
     // SAFETY: final reborrow of the pool slot for the caller; `net_ptr` is the
     // sole live handle (see above) and outlives nothing past this return.
     Ok(Some(unsafe { &mut *net_ptr }))
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// `impl PackageManager` — method-syntax shims over the free functions above so
+// callers (incl. this file) can write `manager.foo()` matching the Zig spec.
+// ──────────────────────────────────────────────────────────────────────────
+impl PackageManager {
+    #[inline]
+    pub fn drain_dependency_list(&mut self) {
+        drain_dependency_list(self)
+    }
+    #[inline]
+    pub fn flush_dependency_queue(&mut self) {
+        flush_dependency_queue(self)
+    }
+    #[inline]
+    pub fn flush_network_queue(&mut self) {
+        flush_network_queue(self)
+    }
+    #[inline]
+    pub fn flush_patch_task_queue(&mut self) {
+        flush_patch_task_queue(self)
+    }
+    #[inline]
+    pub fn schedule_tasks(&mut self) -> usize {
+        schedule_tasks(self)
+    }
+    #[inline]
+    pub fn has_created_network_task(&mut self, task_id: Task::Id, is_required: bool) -> bool {
+        has_created_network_task(self, task_id, is_required)
+    }
+    #[inline]
+    pub fn is_network_task_required(&self, task_id: Task::Id) -> bool {
+        is_network_task_required(self, task_id)
+    }
+    #[inline]
+    pub fn get_network_task(&mut self) -> *mut NetworkTask {
+        get_network_task(self)
+    }
+    #[inline]
+    pub fn alloc_github_url(&self, repository: &Repository) -> Vec<u8> {
+        alloc_github_url(self, repository)
+    }
+}
+
+/// Adapter wrapping the existing `PackageManager::process_dependency_list` so
+/// it can be driven by a `RunTasksCallbacks` impl (Zig: passes `extract_ctx`
+/// + `callbacks` and dispatches `onResolve` if any root dep changed).
+fn process_dependency_list_for_ctx<C: RunTasksCallbacks>(
+    manager: &mut PackageManager,
+    dependency_list: TaskCallbackList,
+    extract_ctx: &mut C::Ctx,
+    install_peer: bool,
+) -> Result<(), bun_core::Error> {
+    let ctx_ptr: *mut C::Ctx = extract_ctx;
+    manager.process_dependency_list(
+        dependency_list,
+        (),
+        if C::HAS_ON_RESOLVE {
+            Some(move |()| {
+                // SAFETY: `ctx_ptr` derived from a unique `&mut` that outlives
+                // this closure; `process_dependency_list` does not alias it.
+                C::on_resolve(unsafe { &mut *ctx_ptr });
+            })
+        } else {
+            None
+        },
+        install_peer,
+    )
 }
 
 // ──────────────────────────────────────────────────────────────────────────

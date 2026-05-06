@@ -643,6 +643,19 @@ pub enum Step {
     Blocked,
 }
 
+impl Step {
+    /// Decode the `AtomicU32` column repr back into a `Step`. The column is
+    /// only ever stored via `Step::* as u32` (this file) so the value is
+    /// always a valid discriminant.
+    #[inline]
+    pub fn from_u32(raw: u32) -> Step {
+        debug_assert!(raw <= Step::Blocked as u32);
+        // SAFETY: `Step` is `#[repr(u8)]` with contiguous discriminants
+        // 0..=Blocked; `raw` originated from `Step::* as u32`.
+        unsafe { core::mem::transmute(raw as u8) }
+    }
+}
+
 pub enum Yield {
     Yield,
     RunScripts(*mut package::scripts::List), // TODO(port): LIFETIMES.tsv=BORROW_PARAM &'a mut package::scripts::List — kept raw for borrowck (borrow of entry_scripts)

@@ -2184,19 +2184,19 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
         }
 
         if FEATURES.is_main {
-            lockfile.overrides.parse_count(lockfile, &json, &mut string_builder);
+            lockfile.overrides.parse_count(lockfile, json, &mut string_builder);
 
             if let Some(workspaces_expr) = json.get(b"workspaces") {
                 lockfile
                     .catalogs
-                    .parse_count(lockfile, &workspaces_expr, &mut string_builder);
+                    .parse_count(lockfile, workspaces_expr, &mut string_builder);
             }
 
             // Count catalog strings in top-level package.json as well, since parseAppend
             // might process them later if no catalogs were found in workspaces
-            lockfile.catalogs.parse_count(lockfile, &json, &mut string_builder);
+            lockfile.catalogs.parse_count(lockfile, json, &mut string_builder);
 
-            install::PostinstallOptimizer::from_package_json(
+            install::postinstall_optimizer::PostinstallOptimizer::from_package_json(
                 &mut pm.postinstall_optimizer,
                 &json,
             )?;

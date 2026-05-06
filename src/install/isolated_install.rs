@@ -506,7 +506,7 @@ pub fn install_isolated_packages(
 
                             let peer_names = peer_name_idx.keys();
                             let mut hasher = Wyhash11::init(0);
-                            let mut it = leaks.iterator(Default::default());
+                            let mut it = leaks.iterator::<true, true>();
                             while let Some(bit) = it.next() {
                                 let peer_name_hash = peer_names[bit];
                                 let resolved: PackageID = 'resolved: {

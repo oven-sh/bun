@@ -1641,7 +1641,7 @@ pub fn load_npmrc(
         };
 
         let mut iter = ConfigIterator {
-            config: parser.out.data.e_object(),
+            config: out_obj,
             source,
             log,
             prop_idx: 0,

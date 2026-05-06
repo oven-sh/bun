@@ -1225,14 +1225,18 @@ fn transpile_source_code_inner(
 
                 // Spec :468-479 — link import records.
                 let start_count = unsafe { (*jsc_vm).transpiler.linker.import_counter };
+                // PORT NOTE: Zig `link(path, &result, origin, .absolute_path,
+                // comptime ignore_runtime=false, comptime is_bun=true)` — the
+                // two trailing comptime bools became const-generics on
+                // `Linker::link`; `import_path_format` stayed runtime
+                // (see `linker.rs` PORT NOTE: `ImportPathFormat` is not
+                // `ConstParamTy`).
                 unsafe {
-                    (*jsc_vm).transpiler.linker.link(
+                    (*jsc_vm).transpiler.linker.link::<false, true>(
                         path,
                         &mut parse_result,
-                        (*jsc_vm).origin,
-                        bun_bundler::linker::ImportPathFormat::AbsolutePath,
-                        false,
-                        true,
+                        &(*jsc_vm).origin,
+                        options::ImportPathFormat::AbsolutePath,
                     )?;
                 }
 
@@ -1259,7 +1263,6 @@ fn transpile_source_code_inner(
                 let is_commonjs_module = parse_result.ast.has_commonjs_export_names
                     || parse_result.ast.exports_kind == bun_js_parser::ExportsKind::Cjs;
                 // TODO(b2-blocked): `analyze_transpiled_module::ModuleInfo::create`.
-                let module_info: Option<*mut c_void> = None;
 
                 // ── js_printer::print ───────────────────────────────────────
                 // Spec :525-539.
@@ -1268,18 +1271,20 @@ fn transpile_source_code_inner(
                 let printer: &mut bun_js_printer::BufferPrinter =
                     unsafe { &mut *(*extra).source_code_printer };
                 printer.ctx.reset();
-                {
-                    let mapper = unsafe { (*jsc_vm).source_map_handler(printer) };
-                    unsafe {
-                        (*jsc_vm)
-                            .transpiler
-                            .print_with_source_map::<_, { bun_js_printer::Format::EsmAscii }>(
-                                parse_result,
-                                printer,
-                                mapper,
-                                None,
-                            )?;
-                    }
+                // TODO(b2-cycle): `VirtualMachine::source_map_handler` is a
+                // `todo!()` stub returning `()` (VirtualMachine.rs:1566).
+                // Once it returns `js_printer::SourceMapHandler<'_>`, switch
+                // back to `print_with_source_map(parse_result, &mut *printer,
+                // Format::EsmAscii, mapper, None)`. Until then, route through
+                // `print` (same printer body, `ENABLE_SOURCE_MAP = false`).
+                #[cfg(any())]
+                let _mapper = unsafe { (*jsc_vm).source_map_handler(printer) };
+                unsafe {
+                    (*jsc_vm).transpiler.print(
+                        parse_result,
+                        &mut *printer,
+                        bun_js_printer::Format::EsmAscii,
+                    )?;
                 }
 
                 if is_main {

@@ -557,9 +557,9 @@ impl TSConfigJSON {
             // Parse "importsNotUsedAsValues"
             if let Some(jsx_prop) = compiler_opts.expr.as_property(b"importsNotUsedAsValues") {
                 // This should never allocate since it will be utf8
-                if let Some(str) = jsx_prop.expr.as_string() {
+                if let Some(str) = jsx_prop.expr.as_utf8_string_literal() {
                     match IMPORTS_NOT_USED_AS_VALUE_LIST
-                        .get(str.as_ref())
+                        .get(str)
                         .copied()
                         .unwrap_or(ImportsNotUsedAsValue::Invalid)
                     {
@@ -569,11 +569,11 @@ impl TSConfigJSON {
                         ImportsNotUsedAsValue::Remove => {}
                         _ => {
                             let _ = log.add_range_warning_fmt(
-                                source,
+                                Some(source),
                                 source.range_of_string(jsx_prop.loc),
                                 format_args!(
                                     "Invalid value \"{}\" for \"importsNotUsedAsValues\"",
-                                    bstr::BStr::new(&str)
+                                    bstr::BStr::new(str)
                                 ),
                             );
                         }
@@ -588,14 +588,14 @@ impl TSConfigJSON {
                             break 'handle_module_prefixes;
                         };
                         while let Some(element) = array.next() {
-                            if let Some(str) = element.as_string() {
+                            if let Some(str) = element.as_utf8_string_literal() {
                                 if !str.is_empty() {
                                     // Only warn when there is actually content
                                     // Sometimes, people do "moduleSuffixes": [""]
                                     let _ = log.add_warning(
-                                        source,
+                                        Some(source),
                                         prefixes.loc,
-                                        "moduleSuffixes is not supported yet",
+                                        b"moduleSuffixes is not supported yet",
                                     );
                                     break 'handle_module_prefixes;
                                 }
@@ -610,7 +610,8 @@ impl TSConfigJSON {
                 if let js_ast::ExprData::EObject(paths) = &paths_prop.expr.data {
                     // PORT NOTE: Zig `defer { Features.tsconfig_paths += 1 }` hoisted to top of block;
                     // it runs on every exit path either way.
-                    bun_analytics::Features::tsconfig_paths_inc();
+                    bun_analytics::features::tsconfig_paths
+                        .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
                     result.base_url_for_paths = if !result.base_url.is_empty() {
                         result.base_url.clone()
@@ -622,11 +623,11 @@ impl TSConfigJSON {
                         let Some(key_prop) = &property.key else {
                             continue;
                         };
-                        let Some(key) = key_prop.as_string() else {
+                        let Some(key) = key_prop.as_utf8_string_literal() else {
                             continue;
                         };
 
-                        if !Self::is_valid_tsconfig_path_pattern(&key, log, source, key_prop.loc) {
+                        if !Self::is_valid_tsconfig_path_pattern(key, log, source, key_prop.loc) {
                             continue;
                         }
 

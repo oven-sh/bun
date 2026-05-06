@@ -39,12 +39,19 @@ macro_rules! concat_params {
     }};
 }
 
+// PORT NOTE: Zig builds the `--backend` param spec via comptime string `++` against
+// `platform_specific_backend_label`. `clap::param!` is a proc-macro that requires a
+// *literal* token (it parses the spec at compile time), so `const_format::concatcp!`
+// can't feed it. Instead we cfg-select the fully-expanded literal per platform —
+// semantically identical to the Zig comptime concat.
 #[cfg(target_os = "macos")]
-const PLATFORM_SPECIFIC_BACKEND_LABEL: &str =
-    "Possible values: \"clonefile\" (default), \"hardlink\", \"symlink\", \"copyfile\"";
+const BACKEND_PARAM: ParamType = clap::param!(
+    "--backend <STR>                       Platform-specific optimizations for installing dependencies. Possible values: \"clonefile\" (default), \"hardlink\", \"symlink\", \"copyfile\""
+);
 #[cfg(not(target_os = "macos"))]
-const PLATFORM_SPECIFIC_BACKEND_LABEL: &str =
-    "Possible values: \"hardlink\" (default), \"symlink\", \"copyfile\"";
+const BACKEND_PARAM: ParamType = clap::param!(
+    "--backend <STR>                       Platform-specific optimizations for installing dependencies. Possible values: \"hardlink\" (default), \"symlink\", \"copyfile\""
+);
 
 // TODO(port): `clap.parseParam` is comptime in Zig (`catch unreachable`). In Rust this needs a
 // `const fn` parser or a proc-macro (`bun_clap::param!`). Phase B should pick one; written here
@@ -77,7 +84,7 @@ static SHARED_PARAMS: &[ParamType] = &[
     clap::param!("--trust                               Add to trustedDependencies in the project's package.json and install the package(s)"),
     clap::param!("-g, --global                          Install globally"),
     clap::param!("--cwd <STR>                           Set a specific cwd"),
-    clap::param!(const_format::concatcp!("--backend <STR>                       Platform-specific optimizations for installing dependencies. ", PLATFORM_SPECIFIC_BACKEND_LABEL)),
+    BACKEND_PARAM,
     clap::param!("--registry <STR>                      Use a specific registry by default, overriding .npmrc, bunfig.toml and environment variables"),
     clap::param!("--concurrent-scripts <NUM>            Maximum number of concurrent jobs for lifecycle scripts (default: 2x CPU cores)"),
     clap::param!("--network-concurrency <NUM>           Maximum number of concurrent network requests (default 48)"),

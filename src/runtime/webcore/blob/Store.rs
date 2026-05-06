@@ -776,9 +776,9 @@ impl S3 {
         let aws_options = self.get_credentials_with_options(extra_options, global_this)?;
         // `defer aws_options.deinit()` → Drop handles it.
 
-        let options = s3::get_list_objects_options_from_js(global_this, list_options)?;
+        let options = s3_client::get_list_objects_options_from_js(global_this, list_options)?;
 
-        s3::list_objects(
+        s3_client::list_objects(
             &aws_options.credentials,
             options.clone(),
             Wrapper::resolve as *const _,

@@ -1969,25 +1969,21 @@ pub fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
                     );
                 }
                 offset = usize::try_from(offset_value).unwrap();
-                offset = bun_core::mem::align_backward_any_align(offset, bun_sys::page_size());
+                // std.mem.alignBackwardAnyAlign(usize, offset, pageSize())
+                let page = bun_sys::page_size();
+                offset -= offset % page;
             }
         }
 
-        let map = match sys::mmap_file(buf_z, flags, map_size, offset) {
-            sys::Result::Ok(map) => map,
-            sys::Result::Err(err) => {
-                return global_this.throw_value(err.to_js(global_this)?);
-            }
-        };
+        // TODO(port): `bun.sys.mmapFile` — `bun_sys::mmap_file` lives in
+        // `src/sys/lib_draft_b1.rs` and is not yet re-exported from `bun_sys`.
+        let _ = (buf_z, flags, map_size, offset);
+        let map: &'static mut [u8] =
+            todo!("blocked_on: bun_sys::mmap_file (lib_draft_b1.rs not re-exported)");
 
         extern "C" fn munmap_dealloc(ptr: *mut c_void, size: *mut c_void) {
             // SAFETY: ptr is the original mmap base, size is its length stuffed into a pointer.
-            let _ = unsafe {
-                sys::munmap(core::slice::from_raw_parts(
-                    ptr as *const u8,
-                    size as usize,
-                ))
-            };
+            let _ = sys::munmap(ptr as *mut u8, size as usize);
         }
 
         Ok(jsc::array_buffer::make_typed_array_with_bytes_no_copy(

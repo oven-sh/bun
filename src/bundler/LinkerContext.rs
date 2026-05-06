@@ -808,8 +808,9 @@ impl<'a> LinkerContext<'a> {
             _ => unreachable!(),
         };
         // SAFETY: `files` points into `chunk.content.javascript`; `rename_symbols_in_chunk`
-        // does not touch `chunk.content` (it writes `chunk.renamer` only).
-        chunk.renamer = rename_symbols_in_chunk(ctx.c, chunk, unsafe { &*files })
+        // does not touch `chunk.content` (it writes `chunk.renamer` only). `ctx.c` is the
+        // shared `*mut LinkerContext`; this body is the sole accessor for the renamer pass.
+        chunk.renamer = rename_symbols_in_chunk(unsafe { &mut *ctx.c }, chunk, unsafe { &*files })
             .expect("TODO: handle error");
     }
 

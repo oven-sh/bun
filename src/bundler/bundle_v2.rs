@@ -2392,7 +2392,9 @@ impl<'a> BundleV2<'a> {
             side_effects: loader.side_effects(),
             ..Default::default()
         })?;
-        let task = Box::leak(Box::new(ParseTask::init(resolve_result, source_index, self)));
+        // PORT NOTE: `ParseTask::init` takes `bun_js_parser::Index`; both Index newtypes
+        // are `repr(transparent)` u32 so reconstruct via `.get()`.
+        let task = Box::leak(Box::new(ParseTask::init(resolve_result, js_ast::Index::init(source_index.get()), self)));
         task.loader = Some(loader);
         task.jsx = self.transpiler_for_target(known_target).options.jsx.clone();
         task.task.node.next = core::ptr::null_mut();

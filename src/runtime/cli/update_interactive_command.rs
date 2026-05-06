@@ -1043,11 +1043,11 @@ impl UpdateInteractiveCommand {
                     }
 
                     // Print dev/peer/optional tag if applicable
-                    if pkg.behavior.dev {
+                    if pkg.behavior.is_dev() {
                         Output::pretty(format_args!("<r><d> dev<r>"));
-                    } else if pkg.behavior.peer {
+                    } else if pkg.behavior.is_peer() {
                         Output::pretty(format_args!("<r><d> peer<r>"));
-                    } else if pkg.behavior.optional {
+                    } else if pkg.behavior.is_optional() {
                         Output::pretty(format_args!("<r><d> optional<r>"));
                     }
 

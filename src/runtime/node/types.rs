@@ -76,72 +76,11 @@ impl SliceWithUnderlyingString {
     }
 }
 
-// `bun.jsc.MarkedArrayBuffer` (the `Buffer` payload). Opaque until `bun_jsc`
-// is a dep; only `.slice()` is reachable from un-gated code.
-// TODO(b2-blocked): swap to `pub use bun_jsc::MarkedArrayBuffer as Buffer;`.
-#[derive(Default)]
-pub struct Buffer {
-    pub buffer: jsc::ArrayBuffer,
-}
-impl Buffer {
-    #[inline] pub fn slice(&self) -> &[u8] { &[] }
+// `bun.jsc.MarkedArrayBuffer` (the `Buffer` payload).
+pub use jsc::MarkedArrayBuffer as Buffer;
 
-    /// `MarkedArrayBuffer.toNodeBuffer` — wrap the backing bytes in a Node
-    /// `Buffer` (Uint8Array subclass). Ownership of the byte storage transfers
-    /// to JSC via the buffer deallocator.
-    pub fn to_node_buffer(&self, ctx: &JSGlobalObject) -> JSValue {
-        let mut buf = self.buffer;
-        JSValue::create_buffer(ctx, buf.byte_slice_mut())
-    }
-}
-
-// `jsc.ArgumentsSlice` — cursor over CallFrame args. Mirrors the Zig API
-// (`next` peeks without consuming, `eat` advances, `next_eat` does both).
-// TODO(b2-blocked): swap to `pub use bun_jsc::call_frame::ArgumentsSlice;`.
-pub struct ArgumentsSlice {
-    pub remaining: &'static [JSValue],
-    pub will_be_async: bool,
-    pub vm: *mut jsc::VirtualMachineRef,
-}
-impl Default for ArgumentsSlice {
-    fn default() -> Self {
-        Self { remaining: &[], will_be_async: false, vm: core::ptr::null_mut() }
-    }
-}
-impl ArgumentsSlice {
-    /// Peek the current argument without consuming it.
-    #[inline]
-    pub fn next(&self) -> Option<JSValue> {
-        self.remaining.first().copied()
-    }
-    /// Consume the current argument (no-op if empty).
-    #[inline]
-    pub fn eat(&mut self) {
-        if !self.remaining.is_empty() {
-            self.remaining = &self.remaining[1..];
-        }
-    }
-    /// Peek + consume in one step.
-    #[inline]
-    pub fn next_eat(&mut self) -> Option<JSValue> {
-        let v = self.next();
-        if v.is_some() { self.eat(); }
-        v
-    }
-    /// Protect-then-consume — used by callers that need to keep the JS value
-    /// alive across an async boundary.
-    #[inline]
-    pub fn protect_eat_next(&mut self) -> Option<JSValue> {
-        let v = self.next()?;
-        v.protect();
-        self.eat();
-        Some(v)
-    }
-    #[inline]
-    pub fn init(vm: *mut jsc::VirtualMachineRef, args: &'static [JSValue]) -> Self {
-        Self { remaining: args, will_be_async: false, vm }
-    }
-}
+// `jsc.ArgumentsSlice` — cursor over CallFrame args.
+pub use jsc::ArgumentsSlice;
 
 // `Fd::from_js_validated` lives in `bun_sys_jsc::FdJsc`, which is not a
 // dependency of this crate. Provide a thin extension trait so call sites

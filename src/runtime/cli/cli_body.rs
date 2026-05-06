@@ -1201,8 +1201,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/test<r>
                 Output::pretty("\n\n<b>Flags:<r>", format_args!(""));
                 Output::flush();
                 clap::simple_help(arguments::TEST_ONLY_PARAMS);
-                Output::pretty("\n\n", format_args!(""));
-                Output::pretty(OUTRO_TEXT, format_args!(""));
+                Output::pretty(format_args!("\n\n"));
+                Output::pretty(format_args!("{}", OUTRO_TEXT));
                 Output::flush();
             }
             Tag::CreateCommand => {
@@ -1235,8 +1235,8 @@ Learn more: <magenta>https://bun.com/docs/cli/bun-create<r>
 ";
 
                 Output::pretty(format_args!("{}", INTRO_TEXT));
-                Output::pretty("\n\n", format_args!(""));
-                Output::pretty(OUTRO_TEXT, format_args!(""));
+                Output::pretty(format_args!("\n\n"));
+                Output::pretty(format_args!("{}", OUTRO_TEXT));
                 Output::flush();
             }
             Tag::HelpCommand => {
@@ -1274,7 +1274,7 @@ Full documentation is available at <magenta>https://bun.com/docs/installation#up
                 };
 
                 Output::pretty(format_args!("{}", INTRO_TEXT));
-                Output::pretty("\n\n", format_args!(""));
+                Output::pretty(format_args!("\n\n"));
                 Output::flush();
                 Output::pretty(OUTRO_TEXT, format_args!("{}{}{}", args.0, args.1, args.2));
                 // TODO(port): Output::pretty positional substitution

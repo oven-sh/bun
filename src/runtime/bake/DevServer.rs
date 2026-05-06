@@ -1158,7 +1158,7 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
             .render_json(dev, source_id.kind, bake::Side::Client)
             .expect("oom");
         let response = StaticRoute::init_from_any_blob(
-            &Blob::Any::from_owned_slice(json_bytes),
+            &crate::webcore::blob::Any::from_owned_slice(json_bytes),
             StaticRoute::Options {
                 server: dev.server,
                 mime_type: &MimeType::JSON,
@@ -1228,7 +1228,7 @@ pub fn parse_hex_to_int<T: Copy>(slice: &[u8]) -> Option<T> {
 // generic `R: ResponseLike`, which doesn't fit the `Fn(&mut DevServer, &mut
 // Request, AnyResponse)` shape `wrap_generic_request_handler` expects).
 fn on_src_request(_dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
-    if req.header("open-in-editor").is_none() {
+    if req.header(b"open-in-editor").is_none() {
         resp.write_status("501 Not Implemented");
         resp.end(
             "Viewing source without opening in editor is not implemented yet!",
@@ -1574,7 +1574,9 @@ impl DevServer<'_> {
         req: ReqOrSaved,
         resp: AnyResponse,
     ) -> Result<(), bun_core::Error> {
-        let deferred = self.deferred_request_pool.get();
+        let Some(deferred_ptr) = self.deferred_request_pool.get() else { return Ok(()) };
+        // SAFETY: HiveArray::get returns an exclusively-owned, live node ptr.
+        let deferred = unsafe { &mut *deferred_ptr };
         debug_log!("DeferredRequest(0x{:x}).init", &deferred.data as *const _ as usize);
 
         let method = match &req {
@@ -1608,7 +1610,7 @@ impl DevServer<'_> {
                             {
                                 Some(h) => h,
                                 None => {
-                                    self.deferred_request_pool.put(deferred);
+                                    self.deferred_request_pool.put(deferred_ptr);
                                     return Ok(());
                                 }
                             }
@@ -1926,7 +1928,10 @@ impl DevServer<'_> {
         let route_bundle = self.route_bundle_ptr(route_bundle_index);
         debug_assert!(matches!(route_bundle.data, route_bundle::Data::Framework(_)));
 
-        let framework_bundle = route_bundle.data.framework_mut();
+        let framework_bundle = match &mut route_bundle.data {
+            route_bundle::Data::Framework(f) => f,
+            _ => unreachable!(),
+        };
 
         // Extract route params by re-matching the URL
         let mut params: framework_router::MatchedParams = Default::default();
@@ -1996,7 +2001,10 @@ impl DevServer<'_> {
     ) {
         let route_bundle = self.route_bundle_ptr(route_bundle_index);
         debug_assert!(matches!(route_bundle.data, route_bundle::Data::Html(_)));
-        let html = route_bundle.data.html_mut();
+        let html = match &mut route_bundle.data {
+            route_bundle::Data::Html(h) => h,
+            _ => unreachable!(),
+        };
 
         let blob: *mut StaticRoute = match html.cached_response {
             Some(b) => b.as_ptr(),
@@ -2077,7 +2085,8 @@ impl DevServer<'_> {
         self.client_graph.reset();
         self.trace_all_route_imports(route_bundle, &mut gts, TraceImportGoal::FindCss)?;
 
-        let css_ids = &self.client_graph.current_css_files;
+        // TODO(port): IncrementalGraph::current_css_files (gated per-bundle scratch)
+        let css_ids: &[u64] = &[];
 
         let payload_size = bundled_html.len()
             + ("<link rel=\"stylesheet\" href=\"".len() + ASSET_PREFIX.len() + "/0000000000000000.css\">".len())
@@ -2195,7 +2204,8 @@ impl DevServer<'_> {
                 break 'generate route_ptr;
             }
         };
-        self.source_maps.add_weak_ref(route_bundle.source_map_id());
+        // TODO(port): SourceMapStore::add_weak_ref — gated; only remove_or_upgrade_weak_ref is un-gated
+        let _ = route_bundle.source_map_id();
         // SAFETY: client_bundle is a live boxed StaticRoute owned by route_bundle.client_bundle
         unsafe { StaticRoute::on_with_method(client_bundle, method, resp) };
     }
@@ -2353,7 +2363,7 @@ impl DeferredRequest<'_> {
     fn __deinit(&mut self) {
         deferred_request::debug_log_dr!("DeferredRequest(0x{:x}) deinitImpl", self as *const _ as usize);
         match &mut self.handler {
-            Handler::ServerHandler(saved) => saved.deinit(),
+            Handler::ServerHandler(saved) => { saved.js_request.deinit(); }
             Handler::BundledHtmlPage(_) | Handler::Aborted => {}
         }
         // PORT NOTE: SavedRequest::deinit added in src/runtime/server/mod.rs
@@ -3111,7 +3121,10 @@ pub fn finalize_bundle(
         let route_bundle_index = dev.client_graph.html_route_bundle_index(client_index);
         let route_bundle = dev.route_bundle_ptr(route_bundle_index);
         debug_assert!(route_bundle.data.html().bundled_file == client_index);
-        let html = route_bundle.data.html_mut();
+        let html = match &mut route_bundle.data {
+            route_bundle::Data::Html(h) => h,
+            _ => unreachable!(),
+        };
 
         if let Some(_blob) = html.cached_response.take() {
             // Arc<StaticRoute> drop releases the ref.
@@ -3643,11 +3656,11 @@ pub fn finalize_bundle(
 
                     break 'brk match &dev.route_bundle_ptr(route_bundle_index).data {
                         route_bundle::Data::Html(html) => {
-                            Some(dev.relative_path(&mut *buf, &html.html_bundle.data.bundle.data.path))
+                            Some(dev.relative_path(&mut *buf, &unsafe { &*html.html_bundle }.bundle.path))
                         }
                         route_bundle::Data::Framework(fw) => 'file_name: {
                             let route = dev.router.route_ptr(fw.route_index);
-                            let opaque_id = match route.file_page.unwrap_().or(route.file_layout.unwrap_()) {
+                            let opaque_id = match route.file_page.or(route.file_layout) {
                                 Some(id) => id,
                                 None => break 'file_name None,
                             };
@@ -5770,7 +5783,10 @@ fn new_route_params_for_bundle_promise(
     url: &[u8],
 ) -> JsResult<JSValue> {
     let route_bundle = dev.route_bundle_ptr(route_bundle_index);
-    let framework_bundle = route_bundle.data.framework_mut();
+    let framework_bundle = match &mut route_bundle.data {
+            route_bundle::Data::Framework(f) => f,
+            _ => unreachable!(),
+        };
 
     let pathname = extract_pathname_from_url(url);
 

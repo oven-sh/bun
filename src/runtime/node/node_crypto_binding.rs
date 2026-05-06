@@ -1196,11 +1196,12 @@ pub fn set_fips(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
 
 #[bun_jsc::host_fn]
 pub fn set_engine(global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-    global
-        .err_crypto_custom_engine_not_supported(format_args!(
-            "Custom engines not supported by BoringSSL"
-        ))
-        .throw()
+    Err(global
+        .err(
+            ErrorCode::CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED,
+            format_args!("Custom engines not supported by BoringSSL"),
+        )
+        .throw())
 }
 
 extern "C" fn for_each_hash(
@@ -1239,7 +1240,7 @@ fn get_hashes(global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
     let array = JSValue::create_empty_array(global, hashes.count())?;
 
     for (i, hash) in hashes.keys().iter().enumerate() {
-        let str = BunString::create_utf8_for_js(global, hash)?;
+        let str = jsc::bun_string_jsc::create_utf8_for_js(global, hash)?;
         array.put_index(global, u32::try_from(i).unwrap(), str)?;
     }
 

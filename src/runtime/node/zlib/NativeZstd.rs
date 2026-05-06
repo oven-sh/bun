@@ -158,25 +158,24 @@ impl NativeZstd {
         let write_state_value = arguments[2];
         let process_callback_value = arguments[3];
 
-        let Some(write_state) = write_state_value.as_array_buffer(global) else {
-            return global.throw_invalid_argument_type_value("writeState", "Uint32Array", write_state_value);
+        let Some(mut write_state) = write_state_value.as_array_buffer(global) else {
+            return Err(global.throw_invalid_argument_type_value("writeState", "Uint32Array", write_state_value));
         };
-        if write_state.typed_array_type != jsc::TypedArrayType::Uint32Array {
-            return global.throw_invalid_argument_type_value("writeState", "Uint32Array", write_state_value);
+        if write_state.typed_array_type != jsc::JSType::Uint32Array {
+            return Err(global.throw_invalid_argument_type_value("writeState", "Uint32Array", write_state_value));
         }
         this.write_result = Some(write_state.as_u32().as_mut_ptr());
 
-        let write_js_callback = validators::validate_function(global, "processCallback", process_callback_value)?;
+        let write_js_callback = validators::validate_function(global, b"processCallback", process_callback_value)?;
         // js.writeCallbackSetCached — codegen'd cached-property setter on the C++ wrapper.
-        Self::js_write_callback_set_cached(this_value, global, write_js_callback.with_async_context_if_needed(global));
+        js::write_callback_set_cached(this_value, global, write_js_callback.with_async_context_if_needed(global));
 
         let mut pledged_src_size: u64 = u64::MAX;
         if pledged_src_size_value.is_number() {
             pledged_src_size = u64::from(validators::validate_uint32(
                 global,
                 pledged_src_size_value,
-                "pledgedSrcSize",
-                (),
+                format_args!("pledgedSrcSize"),
                 false,
             )?);
         }
@@ -187,11 +186,11 @@ impl NativeZstd {
             return Ok(JSValue::FALSE);
         }
 
-        let Some(params_) = init_params_array_value.as_array_buffer(global) else {
-            return global.throw_invalid_argument_type_value("initParamsArray", "Uint32Array", init_params_array_value);
+        let Some(mut params_) = init_params_array_value.as_array_buffer(global) else {
+            return Err(global.throw_invalid_argument_type_value("initParamsArray", "Uint32Array", init_params_array_value));
         };
-        if params_.typed_array_type != jsc::TypedArrayType::Uint32Array {
-            return global.throw_invalid_argument_type_value("initParamsArray", "Uint32Array", init_params_array_value);
+        if params_.typed_array_type != jsc::JSType::Uint32Array {
+            return Err(global.throw_invalid_argument_type_value("initParamsArray", "Uint32Array", init_params_array_value));
         }
         for (i, &x) in params_.as_u32().iter().enumerate() {
             if x == u32::MAX {

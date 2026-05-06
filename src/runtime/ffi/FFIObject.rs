@@ -572,7 +572,9 @@ pub fn get_ptr_slice(
 
     // Zig: `bun.span(@as([*:0]u8, @ptrFromInt(addr)))` — scan for NUL terminator.
     // SAFETY: caller asserts `addr` points at a NUL-terminated C string.
-    let len = unsafe { bun_str::ZStr::from_ptr(addr as *const u8) }.len();
+    let len = unsafe { core::ffi::CStr::from_ptr(addr as *const core::ffi::c_char) }
+        .to_bytes()
+        .len();
     ValueOrError::Slice(addr as *mut u8, len)
 }
 
@@ -641,7 +643,7 @@ pub fn to_array_buffer(
             // SAFETY: ptr/len came from get_ptr_slice; FFI-owned memory.
             let slice = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
             ArrayBuffer::from_bytes(slice, jsc::JSType::ArrayBuffer)
-                .to_js_with_context(global_this, ctx, callback)
+                .to_js_with_context(global_this, ctx.unwrap_or(core::ptr::null_mut()), callback)
         }
     }
 }

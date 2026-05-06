@@ -176,7 +176,7 @@ pub fn validate_integer_or_big_int(
     }
 
     if !value.is_number() {
-        return Err(throw_invalid_argument_type_value(global_this, name, b"number", value));
+        return Err(throw_invalid_argument_type_value(global_this, name, "number", value));
     }
 
     let num = value.as_number();
@@ -195,7 +195,7 @@ pub fn validate_integer_or_big_int(
 pub fn validate_int32(
     global_this: &JSGlobalObject,
     value: JSValue,
-    name: fmt::Arguments<'_>,
+    name: impl fmt::Display + Copy,
     min_value: Option<i32>,
     max_value: Option<i32>,
 ) -> JsResult<i32> {
@@ -237,7 +237,7 @@ pub fn validate_int32(
 pub fn validate_uint32(
     global_this: &JSGlobalObject,
     value: JSValue,
-    name: fmt::Arguments<'_>,
+    name: impl fmt::Display + Copy,
     greater_than_zero: bool,
 ) -> JsResult<u32> {
     if !value.is_number() {
@@ -277,7 +277,7 @@ pub fn validate_uint32(
 pub fn validate_string(
     global_this: &JSGlobalObject,
     value: JSValue,
-    name: fmt::Arguments<'_>,
+    name: impl fmt::Display,
 ) -> JsResult<()> {
     if !value.is_string() {
         return Err(throw_err_invalid_arg_type(global_this, name, "string", value));

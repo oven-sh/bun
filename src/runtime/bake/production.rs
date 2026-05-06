@@ -1476,20 +1476,27 @@ impl EntryPointMap {
         abs_path: &[u8],
         side: bake::Side,
     ) -> Result<OpaqueFileId, bun_core::Error> {
-        let k = InputFile::init(abs_path, side);
-        let gop = self.files.get_or_put(k)?;
-        let index = gop.index;
-        if !gop.found_existing {
-            // Zig: `gop.key_ptr.* = InputFile.init(try map.allocator.dupe(u8, abs_path), side);`
-            // The Zig `errdefer map.files.swapRemoveAt(gop.index)` only guards the
-            // `allocator.dupe`, which is infallible in Rust, so no rollback guard
-            // is needed. Own the duped bytes in `owned_paths` (Box heap address is
-            // stable across the move) instead of `Box::leak` so they drop with the
-            // map — PORTING.md §Forbidden bans `Box::leak` for `'static` borrows.
-            let owned: Box<[u8]> = Box::<[u8]>::from(abs_path);
-            *gop.key_ptr = InputFile::init(&owned, side);
-            self.owned_paths.push(owned);
+        // PORT NOTE: `ArrayHashMap::get_or_put` requires `V: Default`, which the
+        // upstream `bun_bundler::output_file::Index` does not implement. Reshape
+        // to `get_index` + `put_no_clobber` (neither bound on `V: Default`) to
+        // mirror Zig `getOrPut` semantics without touching the upstream type.
+        let probe = InputFile::init(abs_path, side);
+        if let Some(index) = self.files.get_index(&probe) {
+            return Ok(OpaqueFileId::init(u32::try_from(index).unwrap()));
         }
+        // Zig: `gop.key_ptr.* = InputFile.init(try map.allocator.dupe(u8, abs_path), side);`
+        // The Zig `errdefer map.files.swapRemoveAt(gop.index)` only guards the
+        // `allocator.dupe`, which is infallible in Rust, so no rollback guard
+        // is needed. Own the duped bytes in `owned_paths` (Box heap address is
+        // stable across the move) instead of `Box::leak` so they drop with the
+        // map — PORTING.md §Forbidden bans `Box::leak` for `'static` borrows.
+        let owned: Box<[u8]> = Box::<[u8]>::from(abs_path);
+        let key = InputFile::init(&owned, side);
+        self.owned_paths.push(owned);
+        let index = self.files.count();
+        // Value is the post-bundle output index; left as a placeholder until the
+        // bundle is indexed (production.zig:873 leaves it `undefined`).
+        self.files.put_no_clobber(key, OutputFileIndex(0))?;
         Ok(OpaqueFileId::init(u32::try_from(index).unwrap()))
     }
 

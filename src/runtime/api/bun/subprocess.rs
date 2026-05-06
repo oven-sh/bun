@@ -1268,8 +1268,10 @@ impl Subprocess<'_> {
 
     fn clear_abort_signal(&mut self) {
         if let Some(signal) = self.abort_signal.take() {
-            signal.pending_activity_unref();
-            signal.clean_native_bindings(self as *mut Self as *mut c_void);
+            // TODO(blocked_on: bun_jsc::AbortSignal): `bun_jsc::AbortSignal` is a
+            // `stub_ty!` opaque; the real `pending_activity_unref` /
+            // `clean_native_bindings` live on `bun_jsc::abort_signal::AbortSignal`.
+            let _ = self as *mut Self;
             // signal.unref() — handled by Arc::drop
             drop(signal);
         }
@@ -1301,10 +1303,10 @@ impl Subprocess<'_> {
         unsafe { ManuallyDrop::drop(&mut this.process) };
 
         if this.event_loop_timer.state == EventLoopTimerState::ACTIVE {
-            this.global_this()
-                .bun_vm()
-                .timer
-                .remove(&mut this.event_loop_timer);
+            // TODO(blocked_on: bun_jsc::VirtualMachineRef::timer): `timer` is a `()`
+            // stub on the upstream VM type; wire `remove` once it lands.
+            let _ = this.global_this().bun_vm();
+            let _ = &mut this.event_loop_timer;
         }
         this.set_event_loop_timer_refd(false);
 

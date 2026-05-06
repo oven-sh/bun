@@ -577,20 +577,26 @@ impl UpgradeCommand {
         let use_profile = argv_contains(b"--profile");
 
         let mut version: Version = if !use_canary {
-            let mut refresher = Progress::Progress::default();
-            let mut progress = refresher.start("Fetching version tags", 0);
+            // PORT NOTE: `Progress::start` returns `&mut Node` borrowing `refresher`;
+            // leak the Progress so the Node borrow is `'static` and we can pass
+            // both `&mut refresher` and `&mut progress` to `get_latest_version`.
+            let refresher: &'static mut Progress::Progress =
+                Box::leak(Box::new(Progress::Progress::default()));
+            let progress: *mut Progress::Node = refresher.start(b"Fetching version tags", 0);
 
             let Some(version) = Self::get_latest_version::<false>(
                 &mut env_loader,
-                Some(&mut refresher),
-                Some(&mut progress),
+                Some(refresher),
+                // SAFETY: progress points into `refresher`'s root Node which is leaked.
+                Some(unsafe { &mut *progress }),
                 use_profile,
             )?
             else {
                 return Ok(());
             };
 
-            progress.end();
+            // SAFETY: see above.
+            unsafe { (*progress).end() };
             refresher.refresh();
 
             if !Environment::IS_CANARY {

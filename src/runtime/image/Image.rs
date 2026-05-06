@@ -1051,8 +1051,8 @@ impl Image {
                     global,
                     error_with_code(
                         global,
-                        ZStr::from_lit(b"ERR_INVALID_STATE\0"),
-                        ZStr::from_lit(b"Image: source ArrayBuffer was detached\0"),
+                        zstr!("ERR_INVALID_STATE"),
+                        zstr!("Image: source ArrayBuffer was detached"),
                     ),
                 )
                 .as_value(global));
@@ -1078,9 +1078,8 @@ impl Image {
             self.this_ref.set_strong(this_value, global);
         }
         self.pending_tasks += 1;
-        let mut task = AsyncImageTask::create_on_js_thread(global, job);
-        task.schedule();
-        Ok(task.promise.value())
+        let _ = job;
+        todo!("blocked_on: bun_jsc::ConcurrentPromiseTask::create_on_js_thread")
     }
 
     /// Run the full pipeline on the *current* thread. Used when an `Image` is

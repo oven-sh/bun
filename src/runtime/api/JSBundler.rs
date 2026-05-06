@@ -1230,7 +1230,7 @@ pub mod js_bundler {
                 }
             }
 
-            if let Some(drops) = config.get_own_array(global_this, "drop")? {
+            if let Some(drops) = get_own_array(config, global_this, "drop")? {
                 let mut iter = drops.array_iterator(global_this)?;
                 while let Some(entry) = iter.next()? {
                     let slice = entry.to_slice_or_null(global_this)?;

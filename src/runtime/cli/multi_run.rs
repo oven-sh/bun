@@ -693,12 +693,14 @@ fn add_script_configs(
                 || (cfg!(windows) && raw_name[0] == b'\\')
                 || has_runnable_extension(raw_name));
         let command_z: Box<[u8]> = if is_file {
-            let bun_path = bun::self_exe_path().unwrap_or_else(|_| b"bun".as_slice().into());
+            let bun_path: &[u8] = bun::self_exe_path()
+                .map(|z| z.as_bytes())
+                .unwrap_or(b"bun");
             // Quote the bun path so that backslashes on Windows are not
             // interpreted as escape characters by `bun exec` (Bun's shell).
             let mut v = Vec::with_capacity(bun_path.len() + raw_name.len() + 4);
             v.push(b'"');
-            v.extend_from_slice(bun_path.as_ref());
+            v.extend_from_slice(bun_path);
             v.extend_from_slice(b"\" ");
             v.extend_from_slice(raw_name);
             v.push(0);

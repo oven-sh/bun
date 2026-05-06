@@ -362,8 +362,9 @@ impl ChannelOwner for Worker {
         if self.ipc.is_attached() {
             // Corrupt frame path — kill the worker so onWorkerExit accounts for
             // the in-flight file and the slot can respawn.
-            if let Some(p) = &self.process {
-                let _ = p.kill(9);
+            if let Some(p) = self.process {
+                // SAFETY: `p` is the live intrusive-refcounted *mut Process.
+                let _ = unsafe { (*p).kill(9) };
             }
         }
         // SAFETY: coord backref valid; mutation — see field TODO.

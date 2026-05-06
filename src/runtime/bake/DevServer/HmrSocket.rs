@@ -216,7 +216,7 @@ impl HmrSocket {
                             dev.publish(
                                 HmrTopic::TestingWatchSynchronization,
                                 &[MessageId::TestingWatchSynchronization.char(), 0],
-                                Opcode::Binary,
+                                bun_uws::Opcode::BINARY,
                             );
                         }
                     }
@@ -240,7 +240,7 @@ impl HmrSocket {
                             dev.publish(
                                 HmrTopic::TestingWatchSynchronization,
                                 &[MessageId::TestingWatchSynchronization.char(), 2],
-                                Opcode::Binary,
+                                bun_uws::Opcode::BINARY,
                             );
                             return;
                         }

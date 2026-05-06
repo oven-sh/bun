@@ -1991,61 +1991,62 @@ impl Example {
             // SAFETY: single-threaded CLI access to module-level static path buffer
             let home_dir_buf = unsafe { &mut HOME_DIR_BUF };
             let mut folders: [bun_sys::Dir; 3] = [
-                bun_sys::Fd::invalid().std_dir(),
-                bun_sys::Fd::invalid().std_dir(),
-                bun_sys::Fd::invalid().std_dir(),
+                bun_sys::Dir::from_fd(bun_sys::Fd::invalid()),
+                bun_sys::Dir::from_fd(bun_sys::Fd::invalid()),
+                bun_sys::Dir::from_fd(bun_sys::Fd::invalid()),
             ];
             if let Some(home_dir) = env_loader.map.get(b"BUN_CREATE_DIR") {
                 let parts = [home_dir];
                 let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
-                folders[0] = bun_sys::Fd::cwd()
-                    .open_dir(outdir_path, Default::default())
-                    .unwrap_or(bun_sys::Fd::invalid().std_dir());
+                folders[0] = bun_sys::open_dir_at(bun_sys::Fd::cwd(), outdir_path)
+                    .map(bun_sys::Dir::from_fd)
+                    .unwrap_or(bun_sys::Dir::from_fd(bun_sys::Fd::invalid()));
             }
 
             {
                 let parts = [filesystem.top_level_dir, BUN_CREATE_DIR];
                 let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
-                folders[1] = bun_sys::Fd::cwd()
-                    .open_dir(outdir_path, Default::default())
-                    .unwrap_or(bun_sys::Fd::invalid().std_dir());
+                folders[1] = bun_sys::open_dir_at(bun_sys::Fd::cwd(), outdir_path)
+                    .map(bun_sys::Dir::from_fd)
+                    .unwrap_or(bun_sys::Dir::from_fd(bun_sys::Fd::invalid()));
             }
 
             if let Some(home_dir) = env_loader.map.get(bun_core::env_var::HOME.key()) {
                 let parts = [home_dir, BUN_CREATE_DIR];
                 let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
-                folders[2] = bun_sys::Fd::cwd()
-                    .open_dir(outdir_path, Default::default())
-                    .unwrap_or(bun_sys::Fd::invalid().std_dir());
+                folders[2] = bun_sys::open_dir_at(bun_sys::Fd::cwd(), outdir_path)
+                    .map(bun_sys::Dir::from_fd)
+                    .unwrap_or(bun_sys::Dir::from_fd(bun_sys::Fd::invalid()));
             }
 
             // subfolders with package.json
             for folder in &folders {
-                if folder.fd() != bun_sys::Fd::invalid().cast() {
-                    let mut iter = folder.iterate();
+                if folder.fd() != bun_sys::Fd::invalid() {
+                    let mut iter = bun_sys::dir_iterator::iterate(folder.fd());
 
                     'loop_: while let Some(entry) = iter.next().ok().flatten() {
+                        let entry_name = entry.name.slice_u8();
                         match entry.kind {
                             bun_sys::FileKind::Directory => {
                                 for skip_dir in SKIP_DIRS {
                                     // PORT NOTE: `bun.pathLiteral` is a comptime cast to OSPathSlice
                                     // already applied in the `SKIP_DIRS` literal table; compare directly.
-                                    if entry.name == *skip_dir {
+                                    if entry.name.slice() == *skip_dir {
                                         continue 'loop_;
                                     }
                                 }
 
-                                home_dir_buf[..entry.name.len()].copy_from_slice(entry.name);
-                                home_dir_buf[entry.name.len()] = bun_paths::SEP;
-                                home_dir_buf[entry.name.len() + 1..][..b"package.json".len()]
+                                home_dir_buf[..entry_name.len()].copy_from_slice(entry_name);
+                                home_dir_buf[entry_name.len()] = bun_paths::SEP;
+                                home_dir_buf[entry_name.len() + 1..][..b"package.json".len()]
                                     .copy_from_slice(b"package.json");
-                                home_dir_buf[entry.name.len() + 1 + b"package.json".len()] = 0;
+                                home_dir_buf[entry_name.len() + 1 + b"package.json".len()] = 0;
 
-                                // SAFETY: NUL written at [entry.name.len() + 1 + "package.json".len()]
+                                // SAFETY: NUL written at [entry_name.len() + 1 + "package.json".len()]
                                 let path = unsafe {
                                     bun_str::ZStr::from_raw_mut(
                                         home_dir_buf.as_mut_ptr(),
-                                        entry.name.len() + 1 + b"package.json".len(),
+                                        entry_name.len() + 1 + b"package.json".len(),
                                     )
                                 };
 
@@ -2057,7 +2058,7 @@ impl Example {
                                 }
 
                                 examples.push(Example {
-                                    name: filesystem.filename_store.append(entry.name)?,
+                                    name: filesystem.filename_store.append(entry_name)?,
                                     version: b"",
                                     local: true,
                                     description: b"",

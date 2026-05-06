@@ -1271,7 +1271,7 @@ impl<'a> BundleV2<'a> {
             client_transpiler.options.public_path = b"/".to_vec().into_boxed_slice();
         }
 
-        client_transpiler.set_log(this_transpiler.log);
+        client_transpiler.set_log(this_log);
         client_transpiler.configure_defines()?;
         // TODO(port): resolver.opts/env_loader/caches assignment — lifetime threading.
         self.client_transpiler = Some(NonNull::from(&mut *client_transpiler));

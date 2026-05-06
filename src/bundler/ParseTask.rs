@@ -1839,25 +1839,31 @@ impl<'a> OnBeforeParsePlugin<'a> {
 
             if !wrapper.result.source_ptr.is_null() {
                 let ptr = wrapper.result.source_ptr;
-                if wrapper.result.free_user_context.is_some() {
+                // PORT NOTE: `ExternalFreeFunction.function` is `Option<unsafe extern "C" fn>`;
+                // `OnBeforeParseResult.free_user_context` is `Option<extern "C" fn>` (safe ABI per
+                // the C header). Coerce safe→unsafe via cast.
+                let free_fn = wrapper
+                    .result
+                    .free_user_context
+                    .map(|f| f as unsafe extern "C" fn(*mut c_void));
+                if free_fn.is_some() {
                     self.task.external_free_function = ExternalFreeFunction {
                         ctx: wrapper.result.user_context,
-                        function: wrapper.result.free_user_context,
+                        function: free_fn,
                     };
                 }
                 *from_plugin = true;
                 *self.loader = wrapper.result.loader;
-                // SAFETY: ptr/len set by C plugin; trusted per FFI contract.
-                let contents =
-                    unsafe { core::slice::from_raw_parts(ptr, wrapper.result.source_len) };
                 return Ok(CacheEntry {
-                    contents,
+                    contents: crate::cache::Contents::External {
+                        ptr,
+                        len: wrapper.result.source_len,
+                    },
                     external_free_function: ExternalFreeFunction {
                         ctx: wrapper.result.user_context,
-                        function: wrapper.result.free_user_context,
+                        function: free_fn,
                     },
                     fd: wrapper.original_source_fd,
-                    ..Default::default()
                 });
             }
         }

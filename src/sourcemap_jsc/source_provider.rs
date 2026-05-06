@@ -86,7 +86,7 @@ impl BakeSourceProvider {
 
     /// The last two arguments to this specify loading hints
     pub fn get_source_map(
-        &mut self,
+        &self,
         source_filename: &[u8],
         load_hint: SourceMapLoadHint,
         result: ParseUrlResultHint,

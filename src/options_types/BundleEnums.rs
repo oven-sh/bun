@@ -662,6 +662,14 @@ impl Index {
         self.value = val;
     }
 
+    /// Accessor matching Zig field-style call sites that were ported as
+    /// `Index::RUNTIME.value()`. Distinct from the `value` field so both
+    /// `idx.value` and `idx.value()` resolve.
+    #[inline]
+    pub const fn value(self) -> u32 {
+        self.value
+    }
+
     /// If you are within the parser, use `p.is_source_runtime()` instead, as the
     /// runtime index (0) is used as the id for single-file transforms.
     #[inline]

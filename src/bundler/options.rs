@@ -2931,7 +2931,7 @@ impl PathTemplate {
     }
 
     #[inline]
-    fn write_replacing_slashes_on_windows<W: bun_io::Write>(
+    pub(crate) fn write_replacing_slashes_on_windows<W: bun_io::Write>(
         w: &mut W,
         slice: &[u8],
     ) -> bun_io::Result<()> {

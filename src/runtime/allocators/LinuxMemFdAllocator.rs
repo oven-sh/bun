@@ -306,9 +306,15 @@ impl crate::Allocator for LinuxMemFdAllocator {
                 bun_core::output::debug_warn!("Failed to munmap memfd: {}", err);
             }
         }
-        // SAFETY: `this` points to a Box-allocated `Self` (see
-        // `IntrusiveArc::new`); we own one ref via the allocator vtable's
-        // data pointer. `self` is not accessed after this call.
+        // FIXME(unsound): `this` was derived from `&self` (SharedReadOnly
+        // provenance), so it does NOT carry the `Box::into_raw` *mut provenance
+        // that `deref`'s contract requires — and `self: &Self` is still a live
+        // borrow here, violating "no live `&Self` derived from `this`". Under
+        // Stacked Borrows the `Box::from_raw` → `Drop` write at .rs:92/.rs:49
+        // is UB regardless of whether `self` is accessed afterwards. This is
+        // load-bearing on the TODO above: once `crate::Allocator::free` takes
+        // the raw `*mut ()` data pointer (matching Zig's `*anyopaque`), `this`
+        // can be reconstructed with full Box provenance and this becomes sound.
         unsafe { Self::deref(this) };
     }
 

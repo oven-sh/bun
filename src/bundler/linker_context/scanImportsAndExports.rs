@@ -1376,10 +1376,13 @@ mod __css_validation {
     struct SliceBoxAdapter;
     impl bun_collections::array_hash_map::ArrayHashAdapter<[u8], Box<[u8]>> for SliceBoxAdapter {
         fn hash(&self, key: &[u8]) -> u32 {
-            bun_collections::array_hash_map::DefaultArrayHashContext::default().hash(key)
+            // Match `LocalScope`'s default `AutoContext` hashing for `Box<[u8]>`
+            // (std `Hash` over the byte slice → wyhash truncated to u32).
+            use bun_collections::array_hash_map::{ArrayHashContext, AutoContext};
+            AutoContext::default().hash(key)
         }
         fn eql(&self, a: &[u8], b: &Box<[u8]>, _i: usize) -> bool {
-            a == &***b
+            a == &**b
         }
     }
 
@@ -1402,7 +1405,7 @@ mod __css_validation {
         // Validate cross-file "composes: ... from" named imports
         for composes in css_ast.composes.values() {
             for compose in composes.composes.slice() {
-                let Some(ComposeFrom::ImportRecordIndex(import_record_idx)) = compose.from.as_ref()
+                let Some(Specifier::ImportRecordIndex(import_record_idx)) = compose.from.as_ref()
                 else {
                     continue;
                 };
@@ -1475,6 +1478,7 @@ mod __css_validation {
         import_records_list: *mut [ImportRecordList],
         all_css_asts: *mut [CssCol],
     ) {
+        #[derive(Default)]
         struct PropertyInFile {
             source_index: IndexInt,
             range: Logger::Range,

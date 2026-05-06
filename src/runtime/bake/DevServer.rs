@@ -1497,20 +1497,22 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                                         None
                                     };
 
-                                match dev
-                                    .server
-                                    .as_ref()
-                                    .unwrap()
-                                    .get_or_load_plugins(
-                                        crate::server::ServePluginsCallback::DevServer(
-                                            // SAFETY: dev_server_body::DevServer<'_> and dev_server::DevServer
-                                            // are duplicate Phase-A/keystone shapes pending unification; the
-                                            // callee only stores the pointer for plugin-resolution callback.
-                                            // TODO(port): blocked_on: dev_server_body::DevServer unification
-                                            unsafe { &*(dev as *mut _ as *const crate::bake::dev_server::DevServer) },
-                                        ),
-                                    )
-                                {
+                                // TODO(port): blocked_on: crate::server::AnyServer::get_or_load_plugins
+                                // — only the per-server-type method is ported (server.zig:611), not
+                                // the AnyServer dispatch (server.zig:3454).
+                                let load_result: crate::server::GetOrStartLoadResult = {
+                                    let _ = dev.server.as_ref().unwrap();
+                                    let _ = crate::server::ServePluginsCallback::DevServer(
+                                        // SAFETY: dev_server_body::DevServer<'_> and dev_server::DevServer
+                                        // are duplicate Phase-A/keystone shapes pending unification; the
+                                        // callee only stores the pointer for plugin-resolution callback.
+                                        // TODO(port): blocked_on: dev_server_body::DevServer unification
+                                        unsafe { &*(dev as *mut _ as *const crate::bake::dev_server::DevServer) },
+                                    );
+                                    todo!("blocked_on: crate::server::AnyServer::get_or_load_plugins")
+                                };
+                                #[allow(unreachable_code)]
+                                match load_result {
                                     crate::server::GetOrStartLoadResult::Pending => {
                                         dev.plugin_state = PluginState::Pending;
                                         plugin = PluginState::Pending;
@@ -1809,7 +1811,7 @@ impl DevServer<'_> {
                 self.append_opaque_entry_point::<{ bake::Side::Server }>(
                     server_file_names,
                     entry_points,
-                    router_type.server_file.into(),
+                    OpaqueFileIdOrOptional::Id(router_type.server_file),
                 )?;
                 self.append_opaque_entry_point::<{ bake::Side::Client }>(
                     client_file_names,
@@ -2549,7 +2551,15 @@ impl DevServer<'_> {
             self.server_graph.reset();
         }
 
-        let start_data = bv2.start_from_bake_dev_server(entry_points)?;
+        // PORT NOTE: `bun_bundler::bake_types::EntryPointList` and the local
+        // `dev_server_body::EntryPointList` are nominally distinct (different
+        // `Flags` newtypes / map kinds). Convert in-place once the upstream
+        // shape stabilizes; for now, hand-build the bundler-side value.
+        let start_data = bv2.start_from_bake_dev_server({
+            let _ = &entry_points;
+            todo!("blocked_on: dev_server_body::EntryPointList → bun_bundler::bake_types::EntryPointList conversion")
+        })?;
+        let _ = entry_points;
         self.current_bundle = Some(CurrentBundle {
             bv2,
             timer,
@@ -3575,10 +3585,13 @@ pub fn finalize_bundle(
                 let mut hex = [0u8; 16];
                 let n = bun_core::fmt::bytes_to_hex_lower(&hash(key).to_ne_bytes(), &mut hex);
                 w_all!(&hex[..n]);
-                let css_data = &asset_values[chunk.entry_point.entry_point_id() as usize]
-                    .blob
-                    .internal_blob()
-                    .bytes;
+                // SAFETY: `asset_values[i]` is `*mut StaticRoute` owned by `dev.assets`.
+                let css_data = &unsafe {
+                    &*asset_values[chunk.entry_point.entry_point_id() as usize]
+                }
+                .blob
+                .internal_blob()
+                .bytes;
                 w_int!(u32, u32::try_from(css_data.len()).unwrap());
                 w_all!(css_data);
             }
@@ -4976,7 +4989,10 @@ impl DevServer<'_> {
 
             debug_log!(
                 "{} change: {} {}",
-                <&'static str>::from(kind),
+                match kind {
+                    bun_watcher::Kind::File => "file",
+                    bun_watcher::Kind::Directory => "directory",
+                },
                 bstr::BStr::new(file_path),
                 event.op
             );

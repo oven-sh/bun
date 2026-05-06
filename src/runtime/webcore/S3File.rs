@@ -1,4 +1,5 @@
 use core::fmt::Write as _;
+#[allow(unused_imports)]
 use std::sync::Arc;
 
 use bun_core::output;
@@ -9,8 +10,8 @@ use crate::webcore::blob::{self, Blob};
 use crate::webcore::blob::store::StoreRef;
 use crate::webcore::s3::client as s3;
 use crate::webcore::s3_client::S3CredentialsExt as _;
-#[allow(unused_imports)]
 use crate::webcore::s3::error_jsc::s3_error_to_js_with_async_stack;
+#[allow(unused_imports)]
 use crate::webcore::s3::error_jsc::S3ErrorJsc as _;
 use bun_str::strings;
 
@@ -363,7 +364,15 @@ pub fn construct_s3_file_with_s3_credentials_and_options(
                         blob.content_type_was_set = true;
                         // SAFETY: bun_vm() returns the live VM raw ptr.
                         if let Some(entry) = unsafe { (*global.bun_vm()).mime_type(str.slice()) } {
-                            blob.content_type = &*entry.value as *const [u8];
+                            // PORT NOTE: `MimeType.value` is `Cow<'static, [u8]>`; the
+                            // canonical-table hit is always `Borrowed(&'static)`. Coerce
+                            // through an owned leak so an `Owned` variant (if ever produced
+                            // by a future `mime_type_from_string`) does not dangle.
+                            let value: &'static [u8] = match entry.value {
+                                std::borrow::Cow::Borrowed(s) => s,
+                                std::borrow::Cow::Owned(v) => Box::leak(v.into_boxed_slice()),
+                            };
+                            blob.content_type = value as *const [u8];
                             break 'inner;
                         }
                         let content_type_buf = Box::leak(vec![0u8; slice.len()].into_boxed_slice());
@@ -415,7 +424,15 @@ pub fn construct_s3_file_with_s3_credentials(
                         blob.content_type_was_set = true;
                         // SAFETY: bun_vm() returns the live VM raw ptr.
                         if let Some(entry) = unsafe { (*global.bun_vm()).mime_type(str.slice()) } {
-                            blob.content_type = &*entry.value as *const [u8];
+                            // PORT NOTE: `MimeType.value` is `Cow<'static, [u8]>`; the
+                            // canonical-table hit is always `Borrowed(&'static)`. Coerce
+                            // through an owned leak so an `Owned` variant (if ever produced
+                            // by a future `mime_type_from_string`) does not dangle.
+                            let value: &'static [u8] = match entry.value {
+                                std::borrow::Cow::Borrowed(s) => s,
+                                std::borrow::Cow::Owned(v) => Box::leak(v.into_boxed_slice()),
+                            };
+                            blob.content_type = value as *const [u8];
                             break 'inner;
                         }
                         let content_type_buf = Box::leak(vec![0u8; slice.len()].into_boxed_slice());
@@ -557,7 +574,7 @@ impl S3BlobStatTask {
         let this = S3BlobStatTask::new(S3BlobStatTask {
             promise: bun_jsc::JSPromiseStrong::init(global),
             store: blob.store.as_ref().unwrap().clone(),
-            global,
+            global: global as *const JSGlobalObject,
         });
         // SAFETY: `this` is a freshly leaked Box; valid for the duration of this call
         let this_ref = unsafe { &mut *this };
@@ -584,7 +601,7 @@ impl S3BlobStatTask {
         let this = S3BlobStatTask::new(S3BlobStatTask {
             promise: bun_jsc::JSPromiseStrong::init(global),
             store: blob.store.as_ref().unwrap().clone(),
-            global,
+            global: global as *const JSGlobalObject,
         });
         // SAFETY: `this` is a freshly leaked Box; valid for the duration of this call
         let this_ref = unsafe { &mut *this };
@@ -610,7 +627,7 @@ impl S3BlobStatTask {
         let this = S3BlobStatTask::new(S3BlobStatTask {
             promise: bun_jsc::JSPromiseStrong::init(global),
             store: blob.store.as_ref().unwrap().clone(),
-            global,
+            global: global as *const JSGlobalObject,
         });
         // SAFETY: `this` is a freshly leaked Box; valid for the duration of this call
         let this_ref = unsafe { &mut *this };
@@ -703,7 +720,7 @@ pub fn get_presign_url_from(this: &mut Blob, global: &JSGlobalObject, extra_opti
         Some(bun_s3_signing::SignQueryOptions { expires }),
     ) {
         Ok(r) => r,
-        Err(sign_err) => return Err(s3::throw_sign_error(sign_err, global)),
+        Err(sign_err) => return Err(s3::throw_sign_error(sign_err.into(), global)),
     };
     // SAFETY: `Blob.global_this` is the JSGlobalObject the blob was created with; live for VM lifetime.
     bun_jsc::bun_string_jsc::create_utf8_for_js(unsafe { &*this.global_this }, &result.url)

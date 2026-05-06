@@ -857,12 +857,12 @@ impl StructuredCloneWriter {
     }
 }
 
-// TODO(port): Zig used std.Io.GenericWriter over StructuredCloneWriter. In Rust,
-// implement bun_io::Write for StructuredCloneWriter so write_int_le / write_all work.
+// Zig used std.Io.GenericWriter over StructuredCloneWriter; map onto
+// `bun_io::Write` so `write_int_le` / `write_all` work directly.
 impl bun_io::Write for StructuredCloneWriter {
-    type Error = bun_core::Error;
-    fn write(&mut self, bytes: &[u8]) -> Result<usize, Self::Error> {
-        Ok(StructuredCloneWriter::write(self, bytes))
+    fn write_all(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error> {
+        StructuredCloneWriter::write(self, bytes);
+        Ok(())
     }
 }
 
@@ -1152,12 +1152,15 @@ impl Blob {
         };
         search_params.to_string(&mut converter, URLSearchParamsConverter::convert);
         let store = Store::init(converter.buf);
-        store.mime_type = bun_http_types::MimeType::Compact::from(
-            bun_http_types::MimeType::Table::from_mime_literal(
-                "application/x-www-form-urlencoded;charset=UTF-8",
-            ),
-        )
-        .to_mime_type();
+        // SAFETY: `store` is the sole +1 on this freshly-allocated Store.
+        unsafe {
+            (*store.as_ptr()).mime_type = bun_http_types::MimeType::Compact::from(
+                bun_http_types::MimeType::Table::from_mime_literal(
+                    "application/x-www-form-urlencoded;charset=UTF-8",
+                ),
+            )
+            .to_mime_type();
+        }
         let content_type_ptr = store.mime_type.value.as_ref() as *const [u8];
 
         let mut blob = Blob::init_with_store(store, global_this);
@@ -2989,7 +2992,7 @@ unsafe extern "C" fn on_file_stream_resolve_request_stream_shim(
 ) -> JSValue {
     // SAFETY: JSC guarantees both pointers are live for the host call.
     let (global, callframe) = unsafe { (&*global, &*callframe) };
-    jsc::host_fn::to_js_host_fn_result(global, on_file_stream_resolve_request_stream(global, callframe))
+    bun_jsc::host_fn::to_js_host_fn_result(global, on_file_stream_resolve_request_stream(global, callframe))
 }
 unsafe extern "C" fn on_file_stream_reject_request_stream_shim(
     global: *mut JSGlobalObject,
@@ -2997,7 +3000,7 @@ unsafe extern "C" fn on_file_stream_reject_request_stream_shim(
 ) -> JSValue {
     // SAFETY: JSC guarantees both pointers are live for the host call.
     let (global, callframe) = unsafe { (&*global, &*callframe) };
-    jsc::host_fn::to_js_host_fn_result(global, on_file_stream_reject_request_stream(global, callframe))
+    bun_jsc::host_fn::to_js_host_fn_result(global, on_file_stream_reject_request_stream(global, callframe))
 }
 
 // Local shim for `bun_jsc::AnyPromise::result` (not yet on the upstream enum).

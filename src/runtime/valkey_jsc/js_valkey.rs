@@ -286,8 +286,9 @@ impl SubscriptionCtx {
         channel_name: JSValue,
         callback: JSValue,
     ) -> JsResult<()> {
-        let _guard = scopeguard::guard((), |_| {
-            self.parent().on_new_subscription_callback_insert();
+        let parent_ptr = self.parent() as *mut JSValkeyClient;
+        let _guard = scopeguard::guard(parent_ptr, |p| unsafe {
+            (*p).on_new_subscription_callback_insert();
         });
         // TODO(port): the Zig used `defer` (always-run). scopeguard runs on drop, equivalent here.
         let map = self.subscription_callback_map();
@@ -349,7 +350,9 @@ impl SubscriptionCtx {
         let Some(callbacks) = self.get_callbacks(global_object, channel_name)? else {
             debug!(
                 "No callbacks found for channel {}",
-                channel_name.as_string().get_zig_string(global_object)
+                // SAFETY: `as_string()` returns a live JSString cell when the
+                // value is string-typed (channel names always are here).
+                unsafe { &*channel_name.as_string() }.get_zig_string(global_object)
             );
             return Ok(());
         };
@@ -361,12 +364,14 @@ impl SubscriptionCtx {
         // SAFETY: callback runs on the JS thread; VM is alive for the duration.
         let vm = unsafe { &mut *VirtualMachine::get() };
         let event_loop = vm.event_loop();
-        event_loop.enter();
-        let _exit = scopeguard::guard((), |_| event_loop.exit());
+        // SAFETY: VM-owned; non-null on the JS thread.
+        unsafe { (*event_loop).enter() };
+        let _exit = scopeguard::guard(event_loop, |el| unsafe { (*el).exit() });
 
         // After we go through every single callback, we will have to update the poll ref.
         // The user may, for example, unsubscribe in the callbacks, or even stop the client.
-        let _update = scopeguard::guard((), |_| self.parent().update_poll_ref());
+        let parent_ptr = self.parent() as *mut JSValkeyClient;
+        let _update = scopeguard::guard(parent_ptr, |p| unsafe { (*p).update_poll_ref() });
 
         // If callbacks is an array, iterate and call each one
         let mut iter = callbacks.array_iterator(global_object)?;
@@ -374,7 +379,8 @@ impl SubscriptionCtx {
             if cfg!(debug_assertions) {
                 debug_assert!(callback.is_callable());
             }
-            event_loop.run_callback(callback, global_object, JSValue::UNDEFINED, args);
+            // SAFETY: see above.
+            unsafe { (*event_loop).run_callback(callback, global_object, JSValue::UNDEFINED, args) };
         }
         Ok(())
     }
@@ -411,7 +417,8 @@ impl SubscriptionCtx {
 // ───────────────────────────────────────────────────────────────────────────
 
 /// Valkey client wrapper for JavaScript
-#[bun_jsc::JsClass]
+// PORT NOTE: `#[bun_jsc::JsClass]` is hand-rolled in `mod.rs` (the codegen
+// macro's 2-arg `constructor` shim doesn't fit the `js_this` flow here).
 pub struct JSValkeyClient {
     pub client: valkey::ValkeyClient,
     pub global_object: &'static JSGlobalObject,
@@ -425,25 +432,38 @@ pub struct JSValkeyClient {
 
     pub timer: Timer::EventLoopTimer,
     pub reconnect_timer: Timer::EventLoopTimer,
-    pub ref_count: Cell<u32>,
+    pub ref_count: bun_ptr::RefCount<JSValkeyClient>,
 }
 
 // Codegen alias: `pub const js = jsc.Codegen.JSRedisClient;`
 // TODO(b2-blocked): swap to `jsc::codegen::JSRedisClient` once generate-classes.ts emits .rs.
 pub type Js = codegen_stub::JSRedisClient;
-// `toJS`/`fromJS`/`fromJSDirect` are provided by #[bun_jsc::JsClass] codegen.
+// `toJS`/`fromJS`/`fromJSDirect` are provided by the hand-rolled `JsClass` impl in mod.rs.
 
 // `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` → intrusive refcount.
-pub type RefCount = bun_ptr::IntrusiveRc<JSValkeyClient>;
+impl bun_ptr::RefCounted for JSValkeyClient {
+    type DestructorCtx = ();
+    unsafe fn get_ref_count(this: *mut Self) -> *mut bun_ptr::RefCount<Self> {
+        // SAFETY: caller contract — `this` is live.
+        unsafe { &raw mut (*this).ref_count }
+    }
+    unsafe fn destructor(this: *mut Self, _ctx: ()) {
+        // SAFETY: last ref dropped; sole owner.
+        unsafe { JSValkeyClient::deinit(this) };
+    }
+}
 
 impl JSValkeyClient {
     #[inline]
     pub fn ref_(&self) {
-        RefCount::ref_(self);
+        // SAFETY: `self` is live; intrusive count is interior-mutable.
+        unsafe { bun_ptr::RefCount::ref_(self as *const Self as *mut Self) };
     }
     #[inline]
     pub fn deref(&self) {
-        RefCount::deref(self);
+        // SAFETY: `self` is live; may free on last deref (caller must not
+        // touch `self` afterwards — same contract as Zig).
+        unsafe { bun_ptr::RefCount::deref(self as *const Self as *mut Self) };
     }
     #[inline]
     pub fn new(init: JSValkeyClient) -> *mut JSValkeyClient {
@@ -451,16 +471,25 @@ impl JSValkeyClient {
         Box::into_raw(Box::new(init))
     }
 
+    /// `self.client.vm` is type-erased to `*mut c_void` in the Phase-A struct;
+    /// recover the typed `&mut VirtualMachine` here for method calls.
+    #[inline]
+    fn vm(&self) -> &'static mut VirtualMachine {
+        // SAFETY: `vm` was stored via `global_object.bun_vm().cast()` in
+        // `create_no_js_no_pubsub` and is the per-thread JS VM, alive for the
+        // process lifetime.
+        unsafe { &mut *self.client.vm.cast::<VirtualMachine>() }
+    }
+
     // Factory function to create a new Valkey client from JS
     // PORT NOTE: no `#[bun_jsc::host_fn]` here — the free-fn shim it emits
     // calls `constructor(...)` unqualified (fails inside `impl`). Codegen
-    // wires the constructor via `#[bun_jsc::JsClass]` instead.
+    // wires the constructor via the hand-rolled `JsClass` impl in mod.rs.
     pub fn constructor(
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
-        js_this: JSValue,
     ) -> JsResult<*mut JSValkeyClient> {
-        Self::create(global_object, callframe.arguments(), js_this)
+        Self::create(global_object, callframe.arguments(), callframe.this())
     }
 
     /// Create a Valkey client that does not have an associated JS object nor a SubscriptionCtx.
@@ -471,14 +500,16 @@ impl JSValkeyClient {
         arguments: &[JSValue],
     ) -> JsResult<*mut JSValkeyClient> {
         let vm = global_object.bun_vm();
+        // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
+        let vm_ref = unsafe { &mut *vm };
 
         let url_str = if arguments.len() >= 1 && !arguments[0].is_undefined_or_null() {
             arguments[0].to_bun_string(global_object)?
-        } else if let Some(url) = vm
+        } else if let Some(url) = vm_ref
             .transpiler
             .env
             .get(b"REDIS_URL")
-            .or_else(|| vm.transpiler.env.get(b"VALKEY_URL"))
+            .or_else(|| vm_ref.transpiler.env.get(b"VALKEY_URL"))
         {
             BunString::init(url)
         } else {

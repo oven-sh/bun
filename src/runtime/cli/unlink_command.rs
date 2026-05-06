@@ -6,7 +6,7 @@ use bun_install::Bin;
 use bun_install::Features;
 use bun_install::Lockfile;
 use bun_install::PackageManager;
-use bun_install::package_manager::Options;
+use bun_install::package_manager_real::package_manager_options as Options;
 use bun_paths as path;
 use bun_paths::{AbsPath, PathBuffer};
 use bun_str::strings;

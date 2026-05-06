@@ -181,6 +181,34 @@ pub trait JSGlobalObjectSqlExt {
     /// `VirtualMachine`; SQL callsites need this one instead.
     fn sql_vm(&self) -> &VirtualMachine;
     fn sql_vm_ptr(&self) -> *mut VirtualMachine;
+
+    // ── Ports of gated `bun_jsc::JSGlobalObject` methods (JSGlobalObject.rs is
+    // behind `#![cfg(any())]` in the stub crate, so these are mirrored here so
+    // SQL callsites compile against the local [`IntegerRange`]). ──
+    fn validate_integer_range<T: bun_core::Integer>(
+        &self,
+        value: JSValue,
+        default: T,
+        range: IntegerRange,
+    ) -> JsResult<T>;
+    fn validate_big_int_range<T: bun_core::Integer>(
+        &self,
+        value: JSValue,
+        default: T,
+        range: IntegerRange,
+    ) -> JsResult<T>;
+    /// `Bun__gregorianDateTimeToMS` (local-time variant). Unsigned-arg
+    /// signature matches the SQL `DateTime` field types.
+    fn gregorian_date_time_to_ms(
+        &self,
+        year: u16,
+        month: u8,
+        day: u8,
+        hour: u8,
+        minute: u8,
+        second: u8,
+        millisecond: u32,
+    ) -> JsResult<f64>;
 }
 
 impl JSGlobalObjectSqlExt for JSGlobalObject {
@@ -202,6 +230,147 @@ impl JSGlobalObjectSqlExt for JSGlobalObject {
     fn sql_vm_ptr(&self) -> *mut VirtualMachine {
         // SAFETY: FFI — &self is a valid JSGlobalObject*.
         unsafe { JSC__JSGlobalObject__bunVM(self.as_mut_ptr()) as *mut VirtualMachine }
+    }
+
+    fn validate_integer_range<T: bun_core::Integer>(
+        &self,
+        value: JSValue,
+        default: T,
+        range: IntegerRange,
+    ) -> JsResult<T> {
+        // Port of JSGlobalObject.zig `validateIntegerRange` (gated in bun_jsc).
+        if value.is_undefined() || value.is_empty() {
+            return Ok(default);
+        }
+
+        let min_t: i128 = range.min.max(T::MIN_I128).max(i128::from(bun_jsc::MIN_SAFE_INTEGER));
+        let max_t: i128 = range.max.min(T::MAX_I128).min(i128::from(bun_jsc::MAX_SAFE_INTEGER));
+        debug_assert!(min_t <= max_t, "max must be less than min");
+        let field_name = range.field_name;
+        debug_assert!(!field_name.is_empty(), "field_name must not be empty");
+        let always_allow_zero = range.always_allow_zero;
+
+        let throw_oor = |received: f64| -> JsError {
+            self.throw_range_error(
+                received,
+                bun_core::fmt::OutOfRangeOptions {
+                    field_name,
+                    min: min_t.clamp(i64::MIN as i128, i64::MAX as i128) as i64,
+                    max: max_t.clamp(i64::MIN as i128, i64::MAX as i128) as i64,
+                    ..Default::default()
+                },
+            )
+        };
+
+        if value.is_int32() {
+            let int = value.to_int32();
+            if always_allow_zero && int == 0 {
+                return Ok(T::ZERO);
+            }
+            if i128::from(int) < min_t || i128::from(int) > max_t {
+                return Err(throw_oor(int as f64));
+            }
+            return Ok(T::from_i32(int));
+        }
+
+        if !value.is_number() {
+            // PORT NOTE: gated original used `throw_invalid_property_type_value`
+            // (not on the stub `JSGlobalObject`); fall back to a TypeError.
+            return Err(self.throw_invalid_arguments(format_args!(
+                "The \"{}\" property must be of type number.",
+                bstr::BStr::new(field_name)
+            )));
+        }
+        let f64_val = value.as_number();
+        if always_allow_zero && f64_val == 0.0 {
+            return Ok(T::ZERO);
+        }
+        if f64_val.is_nan() || f64_val.floor() != f64_val {
+            return Err(self.throw_invalid_arguments(format_args!(
+                "The \"{}\" property must be an integer.",
+                bstr::BStr::new(field_name)
+            )));
+        }
+        if f64_val < min_t as f64 || f64_val > max_t as f64 {
+            return Err(throw_oor(f64_val));
+        }
+        Ok(T::from_f64(f64_val))
+    }
+
+    fn validate_big_int_range<T: bun_core::Integer>(
+        &self,
+        value: JSValue,
+        default: T,
+        range: IntegerRange,
+    ) -> JsResult<T> {
+        // Port of JSGlobalObject.zig `validateBigIntRange` (gated in bun_jsc).
+        if value.is_undefined() || value.is_empty() {
+            return Ok(T::ZERO);
+        }
+
+        let min_t: i128 = range.min.max(T::MIN_I128);
+        let max_t: i128 = range.max.min(T::MAX_I128);
+        if value.is_big_int() {
+            if T::SIGNED {
+                if value.is_big_int_in_int64_range(
+                    min_t.clamp(i64::MIN as i128, i64::MAX as i128) as i64,
+                    max_t.clamp(i64::MIN as i128, i64::MAX as i128) as i64,
+                ) {
+                    return Ok(T::from_i64(value.to_int64()));
+                }
+            } else if value.is_big_int_in_uint64_range(
+                min_t.clamp(0, u64::MAX as i128) as u64,
+                max_t.clamp(0, u64::MAX as i128) as u64,
+            ) {
+                return Ok(T::from_u64(value.to_uint64_no_truncate()));
+            }
+            return Err(self
+                .err(
+                    ErrorCode::OUT_OF_RANGE,
+                    format_args!(
+                        "The value is out of range. It must be >= {} and <= {}.",
+                        min_t, max_t
+                    ),
+                )
+                .throw());
+        }
+
+        self.validate_integer_range::<T>(
+            value,
+            default,
+            IntegerRange {
+                min: min_t.max(i128::from(bun_jsc::MIN_SAFE_INTEGER)),
+                max: max_t.min(i128::from(bun_jsc::MAX_SAFE_INTEGER)),
+                field_name: range.field_name,
+                always_allow_zero: range.always_allow_zero,
+            },
+        )
+    }
+
+    fn gregorian_date_time_to_ms(
+        &self,
+        year: u16,
+        month: u8,
+        day: u8,
+        hour: u8,
+        minute: u8,
+        second: u8,
+        millisecond: u32,
+    ) -> JsResult<f64> {
+        // SAFETY: FFI — &self is a valid JSGlobalObject*; all integer args by value.
+        Ok(unsafe {
+            Bun__gregorianDateTimeToMS(
+                self.as_mut_ptr(),
+                year as c_int,
+                month as c_int,
+                day as c_int,
+                hour as c_int,
+                minute as c_int,
+                second as c_int,
+                millisecond as c_int,
+                true,
+            )
+        })
     }
 }
 
@@ -906,6 +1075,17 @@ unsafe extern "C" {
 
     // JSGlobalObject
     fn JSC__JSGlobalObject__bunVM(this: *mut JSGlobalObject) -> *mut c_void;
+    fn Bun__gregorianDateTimeToMS(
+        global: *mut JSGlobalObject,
+        year: c_int,
+        month: c_int,
+        day: c_int,
+        hour: c_int,
+        minute: c_int,
+        second: c_int,
+        millisecond: c_int,
+        local_time: bool,
+    ) -> f64;
 
     // MarkedArgumentBuffer
     fn MarkedArgumentBuffer__run(ctx: *mut c_void, f: extern "C" fn(*mut c_void, *mut c_void));

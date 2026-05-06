@@ -2,10 +2,11 @@
 //! `sql/mysql/MySQLTypes.zig` so the protocol layer keeps the pure
 //! `CharacterSet`/`FieldType` enums without `JSValue` references.
 
-use core::ffi::c_int;
-
-use crate::jsc::{self, bun_string_jsc, IntegerRange, JSGlobalObject, JSType, JSValue, JsError, JsResult, MarkedArgumentBuffer, StringJsc as _};
-use bun_string::{String as BunString, ZigString};
+use crate::jsc::{
+    bun_string_jsc, js_error_to_mysql, IntegerRange, JSGlobalObject, JSGlobalObjectSqlExt as _,
+    JSType, JSValue, JSValueSqlExt as _, JsError, JsResult, MarkedArgumentBuffer, StringJsc as _,
+};
+use bun_string::String as BunString;
 use bun_string::zig_string::Slice as ZigStringSlice;
 
 use bun_sql::mysql::mysql_types::FieldType;

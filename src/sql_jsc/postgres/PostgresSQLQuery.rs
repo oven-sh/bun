@@ -520,7 +520,11 @@ impl PostgresSQLQuery {
                     unsafe { Self::deref_(this_ptr) };
 
                     if !global_object.has_exception() {
-                        return global_object.throw_error(err, "failed to execute query");
+                        return Err(global_object.throw_value(postgres_error_to_js(
+                            global_object,
+                            Some(b"failed to execute query"),
+                            err,
+                        )));
                     }
                     return Err(JsError::Thrown);
                 }
@@ -566,7 +570,7 @@ impl PostgresSQLQuery {
                 // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
                 unsafe { Self::deref_(this_ptr) };
                 if !global_object.has_exception() {
-                    return global_object.throw_error(err, "failed to generate signature");
+                    return Err(global_object.throw_error(err, "failed to generate signature"));
                 }
                 return Err(JsError::Thrown);
             }
@@ -585,7 +589,7 @@ impl PostgresSQLQuery {
                     Ok(e) => e,
                     Err(err) => {
                         drop(signature);
-                        return global_object.throw_error(err, "failed to allocate statement");
+                        return Err(global_object.throw_error(err.into(), "failed to allocate statement"));
                     }
                 };
                 connection_entry_value = Some(entry.value_ptr as *mut *mut PostgresSQLStatement);
@@ -634,7 +638,11 @@ impl PostgresSQLQuery {
                                     unsafe { Self::deref_(this_ptr) };
 
                                     if !global_object.has_exception() {
-                                        return global_object.throw_error(err, "failed to bind and execute query");
+                                        return Err(global_object.throw_value(postgres_error_to_js(
+                                            global_object,
+                                            Some(b"failed to bind and execute query"),
+                                            err,
+                                        )));
                                     }
                                     return Err(JsError::Thrown);
                                 }

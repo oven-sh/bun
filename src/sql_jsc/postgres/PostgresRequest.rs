@@ -7,6 +7,7 @@ use bun_sql::postgres::PostgresTypes as types;
 use bun_sql::postgres::PostgresTypes::{AnyPostgresError, Int4, Short};
 use bun_sql::postgres::protocol::{ReaderContext, WriterContext};
 
+use crate::jsc::js_error_to_postgres;
 use crate::postgres::PostgresSQLConnection;
 use crate::postgres::PostgresSQLQuery;
 use crate::postgres::PostgresSQLStatement;
@@ -79,7 +80,8 @@ pub fn write_bind<Context: WriterContext>(
     // of parameters.
     writer.short(len)?;
 
-    let mut iter = QueryBindingIterator::init(values_array, columns_value, global)?;
+    let mut iter = QueryBindingIterator::init(values_array, columns_value, global)
+        .map_err(js_error_to_postgres)?;
     for i in 0..(len as usize) {
         let parameter_field = parameter_fields[i];
         let is_custom_type = (Short::MAX as Int4) < parameter_field;
@@ -92,7 +94,7 @@ pub fn write_bind<Context: WriterContext>(
         let force_text = is_custom_type
             || (tag.is_binary_format_supported() && 'brk: {
                 iter.to(i as u32);
-                if let Some(value) = iter.next()? {
+                if let Some(value) = iter.next().map_err(js_error_to_postgres)? {
                     break 'brk value.is_string();
                 }
                 if iter.any_failed() {
@@ -121,7 +123,7 @@ pub fn write_bind<Context: WriterContext>(
     bun_core::scoped_log!(Postgres, "Bind: {} ({} args)", bun_fmt::quote(name), len);
     iter.to(0);
     let mut i: usize = 0;
-    while let Some(value) = iter.next()? {
+    while let Some(value) = iter.next().map_err(js_error_to_postgres)? {
         let tag: types::Tag = 'brk: {
             if i >= len as usize {
                 // parameter in array but not in parameter_fields
@@ -165,7 +167,7 @@ pub fn write_bind<Context: WriterContext>(
             types::Tag::jsonb | types::Tag::json => {
                 let mut str = BunString::empty();
                 // Use jsonStringifyFast for SIMD-optimized serialization
-                value.json_stringify_fast(global, &mut str)?;
+                value.json_stringify_fast(global, &mut str).map_err(js_error_to_postgres)?;
                 let slice = str.to_utf8_without_ref();
                 let l = writer.length()?;
                 writer.write(slice.slice())?;
@@ -179,7 +181,10 @@ pub fn write_bind<Context: WriterContext>(
             }
             types::Tag::timestamp | types::Tag::timestamptz => {
                 let l = writer.length()?;
-                writer.int8(crate::postgres::types::date::from_js(global, value)?)?;
+                writer.int8(
+                    crate::postgres::types::date::from_js(global, value)
+                        .map_err(js_error_to_postgres)?,
+                )?;
                 l.write_excluding_self()?;
             }
             types::Tag::bytea => {
@@ -189,23 +194,23 @@ pub fn write_bind<Context: WriterContext>(
             }
             types::Tag::int4 => {
                 let l = writer.length()?;
-                writer.int4(value.coerce::<i32>(global)? as u32)?;
+                writer.int4(value.coerce::<i32>(global).map_err(js_error_to_postgres)? as u32)?;
                 l.write_excluding_self()?;
             }
             types::Tag::int4_array => {
                 let l = writer.length()?;
-                writer.int4(value.coerce::<i32>(global)? as u32)?;
+                writer.int4(value.coerce::<i32>(global).map_err(js_error_to_postgres)? as u32)?;
                 l.write_excluding_self()?;
             }
             types::Tag::float8 => {
                 let l = writer.length()?;
                 // TODO(port): Zig had @bitCast on the f64 — verify writer.f64 param type
-                writer.f64(value.coerce::<f64>(global)?)?;
+                writer.f64(value.to_number(global).map_err(js_error_to_postgres)?)?;
                 l.write_excluding_self()?;
             }
 
             _ => {
-                let str = BunString::from_js(value, global)?;
+                let str = BunString::from_js(value, global).map_err(js_error_to_postgres)?;
                 if str.tag() == bun_string::Tag::Dead {
                     return Err(AnyPostgresError::OutOfMemory);
                 }
@@ -419,8 +424,8 @@ pub fn on_data<Context: ReaderContext>(
         let c = reader.int::<u8>()?;
         bun_core::scoped_log!(Postgres, "read: {}", c as char);
         match c {
-            b'D' => connection.on(M::DataRow, reader)?,
-            b'd' => connection.on(M::CopyData, reader)?,
+            b'D' => connection.on(M::DataRow, reader.reborrow())?,
+            b'd' => connection.on(M::CopyData, reader.reborrow())?,
             b'S' => {
                 if let TlsStatus::MessageSent(n) = connection.tls_status {
                     debug_assert!(n == 8);
@@ -429,21 +434,21 @@ pub fn on_data<Context: ReaderContext>(
                     return Ok(());
                 }
 
-                connection.on(M::ParameterStatus, reader)?;
+                connection.on(M::ParameterStatus, reader.reborrow())?;
             }
-            b'Z' => connection.on(M::ReadyForQuery, reader)?,
-            b'C' => connection.on(M::CommandComplete, reader)?,
-            b'2' => connection.on(M::BindComplete, reader)?,
-            b'1' => connection.on(M::ParseComplete, reader)?,
-            b't' => connection.on(M::ParameterDescription, reader)?,
-            b'T' => connection.on(M::RowDescription, reader)?,
-            b'R' => connection.on(M::Authentication, reader)?,
-            b'n' => connection.on(M::NoData, reader)?,
-            b'K' => connection.on(M::BackendKeyData, reader)?,
-            b'E' => connection.on(M::ErrorResponse, reader)?,
-            b's' => connection.on(M::PortalSuspended, reader)?,
-            b'3' => connection.on(M::CloseComplete, reader)?,
-            b'G' => connection.on(M::CopyInResponse, reader)?,
+            b'Z' => connection.on(M::ReadyForQuery, reader.reborrow())?,
+            b'C' => connection.on(M::CommandComplete, reader.reborrow())?,
+            b'2' => connection.on(M::BindComplete, reader.reborrow())?,
+            b'1' => connection.on(M::ParseComplete, reader.reborrow())?,
+            b't' => connection.on(M::ParameterDescription, reader.reborrow())?,
+            b'T' => connection.on(M::RowDescription, reader.reborrow())?,
+            b'R' => connection.on(M::Authentication, reader.reborrow())?,
+            b'n' => connection.on(M::NoData, reader.reborrow())?,
+            b'K' => connection.on(M::BackendKeyData, reader.reborrow())?,
+            b'E' => connection.on(M::ErrorResponse, reader.reborrow())?,
+            b's' => connection.on(M::PortalSuspended, reader.reborrow())?,
+            b'3' => connection.on(M::CloseComplete, reader.reborrow())?,
+            b'G' => connection.on(M::CopyInResponse, reader.reborrow())?,
             b'N' => {
                 if matches!(connection.tls_status, TlsStatus::MessageSent(_)) {
                     connection.tls_status = TlsStatus::SslNotAvailable;
@@ -458,12 +463,12 @@ pub fn on_data<Context: ReaderContext>(
                     continue;
                 }
 
-                connection.on(M::NoticeResponse, reader)?;
+                connection.on(M::NoticeResponse, reader.reborrow())?;
             }
-            b'I' => connection.on(M::EmptyQueryResponse, reader)?,
-            b'H' => connection.on(M::CopyOutResponse, reader)?,
-            b'c' => connection.on(M::CopyDone, reader)?,
-            b'W' => connection.on(M::CopyBothResponse, reader)?,
+            b'I' => connection.on(M::EmptyQueryResponse, reader.reborrow())?,
+            b'H' => connection.on(M::CopyOutResponse, reader.reborrow())?,
+            b'c' => connection.on(M::CopyDone, reader.reborrow())?,
+            b'W' => connection.on(M::CopyBothResponse, reader.reborrow())?,
 
             _ => {
                 bun_core::scoped_log!(Postgres, "Unknown message: {}", c as char);

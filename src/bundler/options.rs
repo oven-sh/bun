@@ -2174,12 +2174,11 @@ pub struct BundleOptions<'a> {
     pub optimize_imports: Option<&'a StringSet>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ForceNodeEnv {
-    Unspecified,
-    Development,
-    Production,
-}
+// B-3 UNIFIED: was a local dup of `bun_options_types::BundleEnums::ForceNodeEnv`
+// (resolver carried a second FORWARD_DECL copy). Canonical type now lives in
+// bun_options_types; re-exported here so `options::ForceNodeEnv` call sites in
+// bundle_v2.rs / transpiler.rs are unchanged.
+pub use bun_options_types::ForceNodeEnv;
 
 impl<'a> BundleOptions<'a> {
     pub fn is_test(&self) -> bool {

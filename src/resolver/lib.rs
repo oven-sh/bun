@@ -2703,17 +2703,11 @@ mod options {
         }
     }
 
-    /// FORWARD_DECL: `bun_bundler::options::BundleOptions::ForceNodeEnv`
-    /// (options.zig:1815). Set by the process environment to override JSX
-    /// configuration; when `Unspecified`, tsconfig.json drives the choice
-    /// between "react-jsx" and "react-jsx-dev-runtime".
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-    pub enum ForceNodeEnv {
-        #[default]
-        Unspecified,
-        Development,
-        Production,
-    }
+    // B-3 UNIFIED: FORWARD_DECL dropped — canonical type moved down to
+    // `bun_options_types::BundleEnums::ForceNodeEnv`. Re-exported so the
+    // `options::ForceNodeEnv` / `bundle_options::ForceNodeEnv` paths and the
+    // field on the local `BundleOptions` subset stay source-compatible.
+    pub use ::bun_options_types::ForceNodeEnv;
 
     /// FORWARD_DECL: `bun_bundler::options::Framework` (Bake).
     pub struct Framework {

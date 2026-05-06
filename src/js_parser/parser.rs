@@ -218,8 +218,48 @@ pub mod options {
         // static promotion gives the borrow `'static` lifetime.
         pub const DEFAULT: AllowUnresolved = AllowUnresolved;
     }
+    /// Port of `bake.Framework` (src/runtime/bake/mod.rs:129) — TYPE_ONLY
+    /// parser-side mirror. The full struct lives in `bun_runtime::bake` (a
+    /// higher tier we cannot depend on here); the parser only consumes the
+    /// two nested option fields below (see `Parser._parse`, Parser.zig:1415
+    /// and Parser.zig:1433), so `file_system_router_types`/`built_in_modules`
+    /// are intentionally elided.
+    ///
+    /// String fields are `&'static [u8]` (not `Cow`) because the parser only
+    /// *borrows* them: `ReactRefreshImportClause.name` is `&'static [u8]` and
+    /// `generate_react_refresh_import` takes `import_path: &'a [u8]` (which
+    /// `'static` outlives). The bake-side `Cow<'static, [u8]>` ownership is
+    /// an arena concern that does not cross into the parser.
     #[derive(Clone, Default)]
-    pub struct Framework;
+    pub struct Framework {
+        pub is_built_in_react: bool,
+        pub server_components: Option<FrameworkServerComponents>,
+        pub react_fast_refresh: Option<ReactFastRefresh>,
+    }
+    /// Port of `bake.Framework.ServerComponents` (bake/mod.rs:69). Named
+    /// `FrameworkServerComponents` here because `options::ServerComponents`
+    /// is already the `Runtime.Features.ServerComponentsMode` enum alias
+    /// (see re-export above) — both names exist in the Zig source under
+    /// different paths (`bundler/options.ServerComponents` vs
+    /// `bake.Framework.ServerComponents`).
+    #[derive(Clone)]
+    pub struct FrameworkServerComponents {
+        pub separate_ssr_graph: bool,
+        /// REQUIRED — spec (bake.zig:360) gives no default; `fromJS` throws
+        /// if `serverRuntimeImportSource` is absent.
+        pub server_runtime_import: &'static [u8],
+        pub server_register_client_reference: &'static [u8],
+        pub server_register_server_reference: &'static [u8],
+        pub client_register_server_reference: &'static [u8],
+    }
+    /// Port of `bake.Framework.ReactFastRefresh` (bake/mod.rs:101).
+    #[derive(Clone)]
+    pub struct ReactFastRefresh {
+        pub import_source: &'static [u8],
+    }
+    impl Default for ReactFastRefresh {
+        fn default() -> Self { Self { import_source: b"react-refresh/runtime" } }
+    }
     pub type MacroRemap = bun_collections::StringHashMap<bun_collections::StringHashMap<Box<[u8]>>>;
 }
 pub use crate::renamer;

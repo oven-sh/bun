@@ -97,6 +97,20 @@ pub type BundlePackageMap = bun_collections::StringArrayHashMap<BundlePackage>;
 
 // ─── move-in: TYPE_ONLY from bun_bundler::options ─────────────────────────
 
+/// `bundler/options.zig:1815` `BundleOptions.ForceNodeEnv`.
+///
+/// Set by the process environment to override the JSX configuration. When
+/// `Unspecified`, tsconfig.json drives the choice between "react-jsx" and
+/// "react-jsx-dev-runtime".
+#[repr(u8)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+pub enum ForceNodeEnv {
+    #[default]
+    Unspecified,
+    Development,
+    Production,
+}
+
 /// `bundler/options.zig` `ModuleType` — package.json `"type"` field.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]

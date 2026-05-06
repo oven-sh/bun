@@ -1619,7 +1619,12 @@ impl<'a> Transpiler<'a> {
     where
         W: js_printer::WriterTrait,
     {
-        if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS.get() {
+        // PORT NOTE: env_var feature_flag getters return `Option<bool>`
+        // (Some(default) when unset); Zig's `.get()` is plain `bool`.
+        if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS
+            .get()
+            .unwrap_or(false)
+        {
             return self.print_with_source_map_maybe::<W, false>(
                 result.ast,
                 &result.source,

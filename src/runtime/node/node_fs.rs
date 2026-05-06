@@ -1231,7 +1231,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         loop {
             let current = match entry {
                 Maybe::Err(err) => {
-                    this.finish_concurrently(Maybe::Err(err.with_path(nodefs.os_path_into_sync_error_buf(src))));
+                    this_ref.finish_concurrently(Maybe::Err(err.with_path(nodefs.os_path_into_sync_error_buf(src))));
                     return false;
                 }
                 Maybe::Ok(ent) => match ent {
@@ -1247,7 +1247,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
             if (src_dir_len as usize) + 1 + cname.len() >= src_buf.len()
                 || (dest_dir_len as usize) + 1 + cname.len() >= dest_buf.len()
             {
-                this.finish_concurrently(Maybe::Err(sys::Error {
+                this_ref.finish_concurrently(Maybe::Err(sys::Error {
                     errno: E::NAMETOOLONG as _,
                     syscall: sys::Tag::copyfile,
                     path: nodefs.os_path_into_sync_error_buf(&src_buf[..src_dir_len as usize]),
@@ -1275,7 +1275,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
                     if !should_continue { return false; }
                 }
                 _ => {
-                    this.subtask_count.fetch_add(1, Ordering::Relaxed);
+                    this_ref.subtask_count.fetch_add(1, Ordering::Relaxed);
                     let sd = src_dir_len as usize;
                     let dd = dest_dir_len as usize;
                     let total = sd + 1 + cname.len() + 1 + dd + 1 + cname.len() + 1;

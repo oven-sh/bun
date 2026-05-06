@@ -3247,7 +3247,7 @@ pub mod options {
                 extra_cjs_extensions: Box::default(),
                 framework: None,
                 global_cache: Default::default(),
-                install: core::ptr::null_mut(),
+                install: core::ptr::null(),
                 load_package_json: true,
                 load_tsconfig_json: true,
                 main_field_extension_order: owned_string_list(

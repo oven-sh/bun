@@ -4206,9 +4206,8 @@ impl Blob {
         global: &JSGlobalObject,
         raw_bytes: *mut [u8],
     ) -> JsResult<JSValue> {
-        // SAFETY: `raw_bytes` is valid for reads for the duration of this call.
-        let raw_slice: &[u8] = unsafe { &*raw_bytes };
-        let _ = raw_slice; // body reads via `buf`; binding kept for parity with to_string_with_bytes
+        // SAFETY: `raw_bytes` is valid for reads for the duration of this call
+        // (either a leaked Box for `Temporary` or a store-backed view otherwise).
         let (bom, buf) = strings::BOM::detect_and_split(unsafe { &*raw_bytes });
         if buf.is_empty() {
             if LIFETIME == Lifetime::Temporary {

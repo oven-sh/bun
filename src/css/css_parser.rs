@@ -2724,7 +2724,7 @@ impl<AtRule> StyleSheet<AtRule> {
             code,
             options,
             &mut default_at_rule_parser,
-            import_records,
+            import_records.map(core::ptr::NonNull::from),
             source_index,
         )
     }
@@ -2738,7 +2738,7 @@ impl<AtRule> StyleSheet<AtRule> {
         code: &[u8],
         options: ParserOptions<'static>,
         at_rule_parser: &mut P,
-        import_records: Option<&mut BabyList<ImportRecord>>,
+        import_records: Option<core::ptr::NonNull<BabyList<ImportRecord>>>,
         source_index: SrcIndex,
     ) -> Maybe<(Self, StylesheetExtra), Err<ParserError>> {
         // TODO(port): 'bump lifetime threading — every arena-backed slice the

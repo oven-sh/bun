@@ -750,7 +750,7 @@ pub fn on_resolve_impl(_global: &JSGlobalObject, callframe: &CallFrame) -> JsRes
     let [plugins_result, plugins_js] = callframe.arguments_as_array::<2>();
     let plugins = plugins_js.as_promise_ptr::<ServePlugins>();
     // SAFETY: `plugins` was Box::into_raw'd and ref()'d before .then(); deref pairs with that ref
-    let _guard = scopeguard::guard((), |_| unsafe { (*plugins).deref_() });
+    let _guard = scopeguard::guard((), move |_| unsafe { ServePlugins::deref_(plugins) });
     plugins_result.ensure_still_alive();
 
     // SAFETY: pointer was passed via .then() above
@@ -766,7 +766,7 @@ pub fn on_reject_impl(global: &JSGlobalObject, callframe: &CallFrame) -> JsResul
     let [error_js, plugin_js] = callframe.arguments_as_array::<2>();
     let plugins = plugin_js.as_promise_ptr::<ServePlugins>();
     // SAFETY: `plugins` was Box::into_raw'd and ref()'d before .then(); deref pairs with that ref
-    let _guard = scopeguard::guard((), |_| unsafe { (*plugins).deref_() });
+    let _guard = scopeguard::guard((), move |_| unsafe { ServePlugins::deref_(plugins) });
     // SAFETY: pointer was passed via .then() above
     unsafe { &mut *plugins }.handle_on_reject(global, error_js);
 

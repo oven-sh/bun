@@ -111,6 +111,7 @@ impl IndexOptional {
 // - The number of open file handles
 // - Whether or not a file of the same name exists
 // We may use a different system call
+#[derive(Clone)]
 pub struct FileOperation {
     // TODO(port): lifetime — Zig never frees `pathname`; may be borrowed from
     // `Options.output_path`. Using owned `Box<[u8]>` for now.

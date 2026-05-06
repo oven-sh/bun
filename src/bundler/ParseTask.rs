@@ -2209,11 +2209,12 @@ fn run_with_source_code(
     };
     // SAFETY: task.ctx backref valid.
     let task_ctx = unsafe { &*task.ctx };
+    let module_type = opts.module_type;
     let mut ast: JSAst = if !is_empty || loader.handles_empty_file() {
         get_ast(
             log,
-            transpiler,
-            opts.clone(),
+            transpiler_ref,
+            opts,
             bump,
             resolver,
             &source,
@@ -2222,17 +2223,17 @@ fn run_with_source_code(
             &mut unique_key_for_additional_file,
             &task_ctx.linker.has_any_css_locals,
         )?
-    } else if opts.module_type == options::ModuleType::Esm {
+    } else if module_type == options::ModuleType::Esm {
         if loader.is_css() {
-            get_empty_css_ast(log, transpiler, opts, bump, &source)?
+            get_empty_css_ast(log, transpiler_ref, opts, bump, &source)?
         } else {
-            get_empty_ast::<E::Undefined>(log, transpiler, opts, bump, &source)?
+            get_empty_ast::<E::Undefined>(log, transpiler_ref, opts, bump, &source)?
         }
     } else {
         if loader.is_css() {
-            get_empty_css_ast(log, transpiler, opts, bump, &source)?
+            get_empty_css_ast(log, transpiler_ref, opts, bump, &source)?
         } else {
-            get_empty_ast::<E::Object>(log, transpiler, opts, bump, &source)?
+            get_empty_ast::<E::Object>(log, transpiler_ref, opts, bump, &source)?
         }
     };
     // PERF(port): Zig used `switch (bool) { inline else => |as_undefined| ... }`

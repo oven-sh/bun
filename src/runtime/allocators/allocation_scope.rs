@@ -328,9 +328,11 @@ impl<'a, A> Borrowed<'a, A> {
             // `.{ .ptr = self.#state, .vtable = &vtable }`). The const→mut cast here is
             // type-erasure only — `VTABLE`'s consumers (`vtable_alloc` / `vtable_free`) cast
             // `ctx` back to `*const State` and form a `&State`; they never write through
-            // `*mut State`. All mutation of `State` flows through `Guarded<History>::lock`,
-            // i.e. the mutex's interior-mutability path, so no exclusive provenance is
-            // required here.
+            // `*mut State` directly. All mutation of `State` flows through
+            // `Guarded<History>::lock(&self)`, whose `UnsafeCell<History>` provides the
+            // interior-mutability provenance (see `GuardedBy.unsynchronized_value`), so the
+            // shared `&State` borrow held here is sufficient and no exclusive provenance is
+            // required.
             StdAllocator::from_raw(self.state as *const State as *mut c_void, &VTABLE)
         }
         #[cfg(not(feature = "alloc_scopes"))]

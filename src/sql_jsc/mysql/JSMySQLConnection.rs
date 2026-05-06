@@ -41,7 +41,10 @@ pub struct JSMySQLConnection {
     vm: &'static VirtualMachine,
     poll_ref: KeepAlive,
 
-    connection: MySQLConnection,
+    // pub(crate): MySQLRequestQueue::advance projects `connection.queue` via
+    // `addr_of_mut!` from a `*mut JSMySQLConnection` so that the queue pointer
+    // and the connection pointer share one Stacked Borrows provenance tag.
+    pub(crate) connection: MySQLConnection,
 
     pub auto_flusher: AutoFlusher,
 

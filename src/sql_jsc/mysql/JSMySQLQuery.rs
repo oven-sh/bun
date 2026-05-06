@@ -131,8 +131,9 @@ impl JSMySQLQuery {
         let this = Box::into_raw(Box::new(Self {
             this_value: JsRef::empty(),
             ref_count: Cell::new(1),
-            // SAFETY: JS-thread only; pointer stored, no aliased `&mut` retained.
-            vm: NonNull::from(unsafe { global_this.bun_vm() }),
+            // SAFETY: `bun_vm_ptr()` is non-null (asserted in debug builds);
+            // stored with full write provenance for later `&mut *p` at use sites.
+            vm: unsafe { NonNull::new_unchecked(global_this.bun_vm_ptr()) },
             global_object: NonNull::from(global_this),
             query: MySQLQuery::init(query.to_bun_string(global_this)?, bigint, simple),
         }));

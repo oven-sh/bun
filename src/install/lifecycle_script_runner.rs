@@ -470,25 +470,25 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         #[cfg(windows)]
         {
             // SAFETY: all-zero is a valid uv::Pipe (POD libuv handle).
-            self.stdout.source = bun_io::Source::Pipe(Box::into_raw(Box::new(unsafe {
+            (*this).stdout.source = bun_io::Source::Pipe(Box::into_raw(Box::new(unsafe {
                 core::mem::zeroed::<uv::Pipe>()
             })));
             // SAFETY: all-zero is a valid uv::Pipe.
-            self.stderr.source = bun_io::Source::Pipe(Box::into_raw(Box::new(unsafe {
+            (*this).stderr.source = bun_io::Source::Pipe(Box::into_raw(Box::new(unsafe {
                 core::mem::zeroed::<uv::Pipe>()
             })));
         }
 
         let spawn_options = SpawnOptions {
-            stdin: if self.foreground {
+            stdin: if (*this).foreground {
                 bun_spawn::Stdio::Inherit
             } else {
                 bun_spawn::Stdio::Ignore
             },
 
-            stdout: if self.manager.options.log_level == PackageManager::Options::LogLevel::Silent {
+            stdout: if (*this).manager.options.log_level == PackageManager::Options::LogLevel::Silent {
                 bun_spawn::Stdio::Ignore
-            } else if self.manager.options.log_level.is_verbose() || self.foreground {
+            } else if (*this).manager.options.log_level.is_verbose() || (*this).foreground {
                 bun_spawn::Stdio::Inherit
             } else {
                 #[cfg(unix)]
@@ -497,12 +497,12 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 }
                 #[cfg(not(unix))]
                 {
-                    bun_spawn::Stdio::BufferPipe(self.stdout.source.as_ref().unwrap().pipe)
+                    bun_spawn::Stdio::BufferPipe((*this).stdout.source.as_ref().unwrap().pipe)
                 }
             },
-            stderr: if self.manager.options.log_level == PackageManager::Options::LogLevel::Silent {
+            stderr: if (*this).manager.options.log_level == PackageManager::Options::LogLevel::Silent {
                 bun_spawn::Stdio::Ignore
-            } else if self.manager.options.log_level.is_verbose() || self.foreground {
+            } else if (*this).manager.options.log_level.is_verbose() || (*this).foreground {
                 bun_spawn::Stdio::Inherit
             } else {
                 #[cfg(unix)]
@@ -511,7 +511,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 }
                 #[cfg(not(unix))]
                 {
-                    bun_spawn::Stdio::BufferPipe(self.stderr.source.as_ref().unwrap().pipe)
+                    bun_spawn::Stdio::BufferPipe((*this).stderr.source.as_ref().unwrap().pipe)
                 }
             },
             cwd,
@@ -526,15 +526,17 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             ..Default::default()
         };
 
-        self.remaining_fds = 0;
-        self.started_at = bun_core::timespec::now(bun_core::timespec::Mode::AllowMockedTime).ns();
-        self.manager.active_lifecycle_scripts.insert(self);
+        (*this).remaining_fds = 0;
+        (*this).started_at = bun_core::timespec::now(bun_core::timespec::Mode::AllowMockedTime).ns();
+        // Store the allocation-rooted `this` in the intrusive heap — not a `&mut self`
+        // reborrow, whose SB tag would be invalidated by the field accesses below.
+        (*this).manager.active_lifecycle_scripts.insert(this);
         let mut spawned = bun_spawn::spawn_process(
             &spawn_options,
             // SAFETY: argv is a `[?[*:0]const u8; 4]` with trailing null; matches the C layout
             // expected by spawn_process (Zig used @ptrCast here).
             unsafe { &mut *(argv.as_mut_ptr() as *mut _) },
-            self.envp,
+            (*this).envp,
         )??;
         // TODO(port): Zig was `try (try spawnProcess(...)).unwrap()` — outer `!Maybe(Spawned)`.
         // Modeled here as `Result<bun_sys::Result<Spawned>, _>`, hence `??`. Verify in Phase B.

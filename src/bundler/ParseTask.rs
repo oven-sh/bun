@@ -1457,46 +1457,63 @@ impl OnBeforeParseResult {
 
 pub extern "C" fn fetch_source_code(
     args: *mut OnBeforeParseArguments,
-    result: *mut OnBeforeParseResult,
+    result_ptr: *mut OnBeforeParseResult,
 ) -> i32 {
     scoped_log!(ParseTask, "fetchSourceCode");
     // SAFETY: called from C plugin; args/result are valid per FFI contract.
+    // `args` and `*args.context` are disjoint allocations (the
+    // `OnBeforeParseArguments` stack local vs. the `OnBeforeParsePlugin` it
+    // points back to), so holding both `&mut` is sound.
     let args = unsafe { &mut *args };
-    let result = unsafe { &mut *result };
     let this = unsafe { &mut *args.context };
     if this.log.errors > 0 || this.deferred_error.is_some() || *this.should_continue_running != 1 {
         return 1;
     }
 
-    if !result.source_ptr.is_null() {
-        return 0;
-    }
-
-    let entry = match get_code_for_parse_task_without_plugins(
-        this.task,
-        this.log,
-        this.transpiler,
-        this.resolver,
-        this.bump,
-        this.file_path,
-        result.loader,
-    ) {
-        Ok(e) => e,
-        Err(e) => {
-            this.deferred_error = Some(e);
-            *this.should_continue_running = 0;
-            return 1;
+    // SAFETY: `result_ptr` is the `.result` field of an
+    // `OnBeforeParseResultWrapper` (see `OnBeforeParsePlugin::run`). Keep the
+    // raw pointer un-shadowed so `get_wrapper`'s `.sub(offset_of!)` walk-back
+    // retains provenance over the enclosing wrapper; a `&mut *result_ptr` here
+    // would shrink provenance to just the `OnBeforeParseResult` and make the
+    // later offset-walk UB. The `&mut` reborrow below is scoped to end before
+    // any wrapper access so no overlapping `&mut` exists.
+    {
+        let result = unsafe { &mut *result_ptr };
+        if !result.source_ptr.is_null() {
+            return 0;
         }
-    };
-    result.source_ptr = entry.contents.as_ptr();
-    result.source_len = entry.contents.len();
-    result.free_user_context = None;
-    result.user_context = core::ptr::null_mut();
-    // SAFETY: result is always embedded in a wrapper.
-    let wrapper = unsafe { &mut *OnBeforeParseResult::get_wrapper(result) };
-    wrapper.original_source = entry.contents.as_ptr();
-    wrapper.original_source_len = entry.contents.len();
-    wrapper.original_source_fd = entry.fd;
+
+        let entry = match get_code_for_parse_task_without_plugins(
+            this.task,
+            this.log,
+            this.transpiler,
+            this.resolver,
+            this.bump,
+            this.file_path,
+            result.loader,
+        ) {
+            Ok(e) => e,
+            Err(e) => {
+                this.deferred_error = Some(e);
+                *this.should_continue_running = 0;
+                return 1;
+            }
+        };
+        result.source_ptr = entry.contents.as_ptr();
+        result.source_len = entry.contents.len();
+        result.free_user_context = None;
+        result.user_context = core::ptr::null_mut();
+        // SAFETY: result is always embedded in a wrapper. Write wrapper fields
+        // via raw pointer (mirrors Zig `@fieldParentPtr`) — `wrapper.result`
+        // *is* `*result_ptr`, so materializing `&mut *wrapper` here would
+        // overlap the live `result` borrow above (aliased-`&mut` UB).
+        let wrapper = OnBeforeParseResult::get_wrapper(result_ptr);
+        unsafe {
+            (*wrapper).original_source = entry.contents.as_ptr();
+            (*wrapper).original_source_len = entry.contents.len();
+            (*wrapper).original_source_fd = entry.fd;
+        }
+    }
     0
 }
 
@@ -1640,10 +1657,11 @@ impl<'a> OnBeforeParsePlugin<'a> {
                     ..Default::default()
                 };
                 msg.kind = logger::Kind::Err;
-                // SAFETY: args.context == self.
-                let ctx = unsafe { &mut *args.context };
-                ctx.log.errors += 1;
-                ctx.log.add_msg(msg);
+                // `args.context == self` — use `self` directly; materializing
+                // a second `&mut` via `&mut *args.context` while `&mut self`
+                // is live would be aliased-`&mut` UB.
+                self.log.errors += 1;
+                self.log.add_msg(msg);
                 return Err(err!("InvalidNativePlugin"));
             }
 

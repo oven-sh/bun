@@ -774,8 +774,9 @@ pub extern "C" fn PostgresSQLConnection__createInstance(
 
 // TODO(b2-blocked): #[crate::jsc::host_fn] proc-macro attr
 pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    // SAFETY: JS-thread only; sole `&mut VirtualMachine` borrow in this scope.
-    let vm = unsafe { global_object.bun_vm() };
+    // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM via raw ptr,
+    // no other live borrow in this scope.
+    let vm = unsafe { &mut *global_object.bun_vm_ptr() };
     let arguments = callframe.arguments();
     let hostname_str = arguments[0].to_bun_string(global_object)?;
     let port = arguments[1].coerce::<i32>(global_object)?;

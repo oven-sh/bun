@@ -1021,12 +1021,18 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         // Zig: `defer { dependency_list.deinit(); if (any_root) callbacks.onResolve(extract_ctx); }`
                         // `dependency_list` is a Drop type (frees on every path); only the
                         // `on_resolve` side-effect needs the guard so it fires on `?` too.
-                        let any_root_ptr = &mut any_root as *mut bool;
+                        let any_root_ptr: *mut bool = &mut any_root;
+                        // SAFETY: shadow-reborrow so the loop body's `&mut` is a child
+                        // of `any_root_ptr` and the guard's read keeps provenance.
+                        let any_root = unsafe { &mut *any_root_ptr };
                         let _resolve_guard = scopeguard::guard((), move |()| {
-                            // SAFETY: `any_root`/`extract_ctx` outlive this labeled block;
-                            // guard drops at block exit (incl. `?` unwind) after body borrows end.
+                            // SAFETY: `any_root_ptr` outlives this labeled block and the
+                            // body only touches it via the shadow above; `ctx_iter_ptr`
+                            // is a child of the function-scope `extract_ctx` shadow so
+                            // dereffing it does not invalidate that shadow for the next
+                            // loop iteration.
                             if C::HAS_ON_RESOLVE && unsafe { *any_root_ptr } {
-                                C::on_resolve(unsafe { &mut *extract_ctx_ptr });
+                                C::on_resolve(unsafe { &mut *ctx_iter_ptr });
                             }
                         });
 
@@ -1055,7 +1061,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                     }
                                     manager.process_dependency_list_item(
                                         dep,
-                                        &mut any_root,
+                                        any_root,
                                         install_peer,
                                     )?;
                                 }
@@ -1320,11 +1326,16 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             core::mem::take(dependency_list_entry.value_ptr);
 
                         // Zig: `defer { dependency_list.deinit(); if (any_root) callbacks.onResolve(extract_ctx); }`
-                        let any_root_ptr = &mut any_root as *mut bool;
+                        let any_root_ptr: *mut bool = &mut any_root;
+                        // SAFETY: shadow-reborrow so the loop body's `&mut` is a child
+                        // of `any_root_ptr` and the guard's read keeps provenance.
+                        let any_root = unsafe { &mut *any_root_ptr };
                         let _resolve_guard = scopeguard::guard((), move |()| {
-                            // SAFETY: see Extract arm `_resolve_guard`.
+                            // SAFETY: see Extract arm `_resolve_guard` — `any_root_ptr`
+                            // accessed only via the shadow; `ctx_iter_ptr` is a child of
+                            // the function-scope `extract_ctx` shadow.
                             if C::HAS_ON_RESOLVE && unsafe { *any_root_ptr } {
-                                C::on_resolve(unsafe { &mut *extract_ctx_ptr });
+                                C::on_resolve(unsafe { &mut *ctx_iter_ptr });
                             }
                         });
 
@@ -1342,7 +1353,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                     repo.package_name = pkg.name;
                                     manager.process_dependency_list_item(
                                         dep,
-                                        &mut any_root,
+                                        any_root,
                                         install_peer,
                                     )?;
                                 }

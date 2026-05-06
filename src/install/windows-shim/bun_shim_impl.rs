@@ -153,9 +153,9 @@ macro_rules! debug {
     }};
 }
 
-fn unicode_string_to_u16(str: UNICODE_STRING) -> &'static mut [u16] {
-    // SAFETY: UNICODE_STRING.Buffer is valid for Length bytes per Win32 contract.
-    unsafe { core::slice::from_raw_parts_mut(str.Buffer, (str.Length / 2) as usize) }
+unsafe fn unicode_string_to_u16<'a>(str: &'a UNICODE_STRING) -> &'a [u16] {
+    // SAFETY: caller guarantees UNICODE_STRING.Buffer is valid for Length bytes per Win32 contract.
+    unsafe { core::slice::from_raw_parts(str.Buffer, (str.Length / 2) as usize) }
 }
 
 const FILE_GENERIC_READ: u32 =

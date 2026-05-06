@@ -6745,6 +6745,8 @@ impl<'a> Resolver<'a> {
 
                 let absolute_out_path: &[u8] = {
                     if unsafe { &*entry_query.entry }.abs_path.is_empty() {
+                        // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
+                        // evaluated before LHS `&mut Entry` is materialized.
                         unsafe { &mut *entry_query.entry }.abs_path =
                             PathString::init(self.fs_ref().dirname_store.append_slice(abs_esm_path).expect("unreachable"));
                     }
@@ -8346,14 +8348,21 @@ impl<'a> Resolver<'a> {
                             dec_ret!(Some(LoadResult {
                                 path: {
                                     if unsafe { &*query.entry }.abs_path.is_empty() {
-                                        if !unsafe { &*query.entry }.dir.is_empty() && unsafe { &*query.entry }.dir[unsafe { &*query.entry }.dir.len() - 1] == SEP {
-                                            let parts: [&[u8]; 2] = [unsafe { &*query.entry }.dir, &buffer[..]];
-                                            unsafe { &mut *query.entry }.abs_path = PathString::init(self.fs_ref().filename_store.append_parts(&parts).expect("unreachable"));
+                                        // SAFETY: `dir` is `&'static [u8]` (DirnameStore-interned),
+                                        // copied out so no `&Entry` borrow survives into the
+                                        // `&mut Entry` write below.
+                                        let entry_dir = unsafe { &*query.entry }.dir;
+                                        let new_abs = if !entry_dir.is_empty() && entry_dir[entry_dir.len() - 1] == SEP {
+                                            let parts: [&[u8]; 2] = [entry_dir, &buffer[..]];
+                                            PathString::init(self.fs_ref().filename_store.append_parts(&parts).expect("unreachable"))
                                             // the trailing path CAN be missing here
                                         } else {
-                                            let parts: [&[u8]; 3] = [unsafe { &*query.entry }.dir, SEP_STR.as_bytes(), &buffer[..]];
-                                            unsafe { &mut *query.entry }.abs_path = PathString::init(self.fs_ref().filename_store.append_parts(&parts).expect("unreachable"));
-                                        }
+                                            let parts: [&[u8]; 3] = [entry_dir, SEP_STR.as_bytes(), &buffer[..]];
+                                            PathString::init(self.fs_ref().filename_store.append_parts(&parts).expect("unreachable"))
+                                        };
+                                        // SAFETY: EntryStore-owned slot; resolver mutex held. RHS
+                                        // fully evaluated above — sole `&mut Entry` for this write.
+                                        unsafe { &mut *query.entry }.abs_path = new_abs;
                                     }
                                     crate::path_string_static(&unsafe { &*query.entry }.abs_path)
                                 },

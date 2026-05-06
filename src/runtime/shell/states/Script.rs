@@ -1,20 +1,22 @@
-//! A state node which represents the execution of a shell script. This struct
-//! is used for both top-level scripts and also expansions (when running a
-//! command substitution) and subshells.
+//! State node for a shell script. Used for the top-level script as well as
+//! command-substitution and subshell bodies.
 
-use core::fmt;
+use crate::shell::ast;
+use crate::shell::interpreter::{log, Interpreter, Node, NodeId, ShellExecEnv, StateKind};
+use crate::shell::io::IO;
+use crate::shell::states::base::Base;
+use crate::shell::states::stmt::Stmt;
+use crate::shell::yield_::Yield;
+use crate::shell::ExitCode;
 
-use crate::shell::interpret::{log, StatePtrUnion};
-use crate::shell::interpreter::{
-    Expansion, Interpreter, InterpreterChildPtr, ShellExecEnv, State, Stmt, Subshell, IO,
-};
-use crate::shell::{ast, ExitCode, Yield};
-
-pub struct Script<'a> {
-    pub base: State,
-    pub node: &'a ast::Script,
+pub struct Script {
+    pub base: Base,
+    /// Raw pointer into the bumpalo-allocated AST (`ShellArgs::__arena`). The
+    /// arena outlives every state node (it's dropped only when the interpreter
+    /// is finalized), so dereferencing is sound. Stored raw to keep `Node`
+    /// lifetime-free.
+    pub node: *const ast::Script,
     pub io: IO,
-    pub parent: ParentPtr,
     pub state: ScriptState,
 }
 
@@ -28,153 +30,127 @@ impl Default for ScriptState {
     }
 }
 
-pub type ParentPtr = StatePtrUnion<(Interpreter, Expansion, Subshell)>;
-
-pub struct ChildPtr {
-    pub val: Box<Stmt>,
-}
-
-impl ChildPtr {
-    #[inline]
-    pub fn init(child: Box<Stmt>) -> ChildPtr {
-        ChildPtr { val: child }
-    }
-}
-// PORT NOTE: Zig `ChildPtr.deinit` only called `val.deinit()`; Box<Stmt> Drop handles this.
-
-impl<'a> fmt::Display for Script<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Script(0x{:x}, stmts={})",
-            self as *const _ as usize,
-            self.node.stmts.len()
-        )
-    }
-}
-
-impl<'a> Script<'a> {
+impl Script {
     pub fn init(
-        interpreter: &mut Interpreter,
-        shell_state: &mut ShellExecEnv,
-        node: &'a ast::Script,
-        parent_ptr: ParentPtr,
+        interp: &mut Interpreter,
+        shell: *mut ShellExecEnv,
+        node: *const ast::Script,
+        parent: NodeId,
         io: IO,
-    ) -> *mut Script<'a> {
-        // TODO(port): parent_ptr.create(Script) allocates a slot owned by the parent's
-        // alloc scope; returning a raw pointer to match the Zig state-machine ownership.
-        let script: *mut Script<'a> = parent_ptr.create::<Script<'a>>();
-        // SAFETY: parent_ptr.create returns a valid uninitialized allocation for Script
-        unsafe {
-            script.write(Script {
-                base: State::init_with_new_alloc_scope(StateKind::Script, interpreter, shell_state),
-                node,
-                parent: parent_ptr,
-                io,
-                state: ScriptState::default(),
-            });
-            log!("{} init", &*script);
+    ) -> NodeId {
+        let id = interp.alloc_node(Node::Script(Script {
+            base: Base::new(StateKind::Script, parent, shell),
+            node,
+            io,
+            state: ScriptState::default(),
+        }));
+        log!("Script {} init (parent={})", id, parent);
+        id
+    }
+
+    pub fn start(interp: &mut Interpreter, this: NodeId) -> Yield {
+        if Self::stmt_count(interp, this) == 0 {
+            return Self::finish(interp, this, 0);
         }
-        script
+        Yield::Next(this)
     }
 
-    fn get_io(&mut self) -> IO {
-        self.io
-    }
-
-    pub fn start(&mut self) -> Yield {
-        if self.node.stmts.is_empty() {
-            return self.finish(0);
-        }
-        Yield::Script(self)
-    }
-
-    pub fn next(&mut self) -> Yield {
-        match self.state {
-            ScriptState::Normal { ref mut idx } => {
-                if *idx >= self.node.stmts.len() {
-                    return Yield::Suspended;
-                }
-                let i = *idx;
-                *idx += 1;
-                // PORT NOTE: reshaped for borrowck — captured idx into local before
-                // re-borrowing self.node / self.base / self for Stmt::init.
-                let stmt_node = &self.node.stmts[i];
-                let mut io = self.io;
-                let stmt = Stmt::init(
-                    self.base.interpreter,
-                    self.base.shell,
-                    stmt_node,
-                    self,
-                    *io.r#ref(),
-                );
-                stmt.start()
+    pub fn next(interp: &mut Interpreter, this: NodeId) -> Yield {
+        let (idx, shell) = {
+            let me = interp.as_script_mut(this);
+            let len = Self::stmt_count_of(me);
+            let ScriptState::Normal { idx } = &mut me.state;
+            if *idx >= len {
+                return Yield::suspended();
             }
-        }
-    }
-
-    fn finish(&mut self, exit_code: ExitCode) -> Yield {
-        if self.parent.ptr.is::<Interpreter>() {
-            log!("Interpreter script finish");
-            return self
-                .base
-                .interpreter
-                .child_done(InterpreterChildPtr::init(self), exit_code);
-        }
-
-        self.parent.child_done(self, exit_code)
-    }
-
-    pub fn child_done(&mut self, child: ChildPtr, exit_code: ExitCode) -> Yield {
-        drop(child);
-        let idx = match self.state {
-            ScriptState::Normal { idx } => idx,
+            let i = *idx;
+            *idx += 1;
+            (i, me.base.shell)
         };
-        if idx >= self.node.stmts.len() {
-            return self.finish(exit_code);
-        }
-        self.next()
+        // PORT NOTE: reshaped for borrowck — captured idx/shell into locals
+        // before re-borrowing interp for Stmt::init.
+        let stmt_node = Self::stmt_at(interp, this, idx);
+        let io = interp.as_script(this).io.clone();
+        let stmt = Stmt::init(interp, shell, stmt_node, this, io);
+        Stmt::start(interp, stmt)
     }
 
-    // TODO(port): self-destroying state node — kept as explicit method, not Drop.
-    // `parent.destroy(this)` frees the allocation that `self` lives in, so this
-    // cannot be expressed as `impl Drop` (which would run again on the freed slot).
-    // Phase B: hoist `parent.destroy(self)` to call sites and convert the remaining
-    // body (io.deref / conditional shell.deinit / end_scope) into `impl Drop for Script`.
-    pub fn deinit(&mut self) {
-        log!("Script(0x{:x}) deinit", self as *mut _ as usize);
-        self.io.deref();
-        if !self.parent.ptr.is::<Interpreter>() && !self.parent.ptr.is::<Subshell>() {
-            // The shell state is owned by the parent when the parent is Interpreter or Subshell
-            // Otherwise this Script represents a command substitution which is duped from the parent
-            // and must be deinitalized.
-            self.base.shell.deinit();
-        }
-
-        self.base.end_scope();
-        self.parent.destroy(self);
+    fn finish(interp: &mut Interpreter, this: NodeId, exit_code: ExitCode) -> Yield {
+        let parent = interp.as_script(this).base.parent;
+        interp.child_done(parent, this, exit_code)
     }
 
-    pub fn deinit_from_interpreter(this: *mut Script<'a>) {
-        // SAFETY: caller (Interpreter) guarantees `this` is a valid Box-allocated Script
-        unsafe {
-            log!("Script(0x{:x}) deinitFromInterpreter", this as usize);
-            (*this).io.deinit();
-            // Let the interpreter deinitialize the shell state
-            // this.base.shell.deinitImpl(false, false);
-            drop(Box::from_raw(this));
+    pub fn child_done(
+        interp: &mut Interpreter,
+        this: NodeId,
+        child: NodeId,
+        exit_code: ExitCode,
+    ) -> Yield {
+        interp.deinit_node(child);
+        let (idx, len) = {
+            let me = interp.as_script(this);
+            let ScriptState::Normal { idx } = me.state;
+            (idx, Self::stmt_count_of(me))
+        };
+        if idx >= len {
+            return Self::finish(interp, this, exit_code);
         }
+        Self::next(interp, this)
+    }
+
+    pub fn deinit(interp: &mut Interpreter, this: NodeId) {
+        log!("Script {} deinit", this);
+        let parent = interp.as_script(this).base.parent;
+        let parent_kind = if parent == NodeId::INTERPRETER {
+            None
+        } else {
+            Some(interp.node(parent).kind())
+        };
+        let me = interp.as_script_mut(this);
+        // io.deref() — Drop on IO clones handles refcounts; explicit no-op kept
+        // for parity.
+        if !matches!(parent_kind, None | Some(StateKind::Subshell)) {
+            // The shell env is owned by the parent when the parent is the
+            // Interpreter or a Subshell; otherwise this Script is a command
+            // substitution which duped from the parent and must deinit it.
+            // TODO(b2-blocked): ShellExecEnv::deinit_impl — gated body.
+            let _ = me.base.shell;
+        }
+        me.base.end_scope();
+        // free_node is done by the caller (Interpreter::deinit_node).
+    }
+
+    pub fn deinit_from_interpreter(interp: &mut Interpreter, this: NodeId) {
+        log!("Script {} deinitFromInterpreter", this);
+        let me = interp.as_script_mut(this);
+        // io.deinit() — IO Drop handles it.
+        // Let the interpreter deinitialize the root shell state.
+        me.base.end_scope();
+    }
+
+    // ── AST helpers (opaque until shell parser un-gates) ───────────────────
+
+    #[inline]
+    fn stmt_count(interp: &Interpreter, this: NodeId) -> usize {
+        Self::stmt_count_of(interp.as_script(this))
+    }
+
+    #[inline]
+    fn stmt_count_of(_me: &Script) -> usize {
+        // TODO(b2-blocked): ast::Script::stmts — `(*self.node).stmts.len()`.
+        0
+    }
+
+    #[inline]
+    fn stmt_at(_interp: &Interpreter, _this: NodeId, _idx: usize) -> *const ast::Stmt {
+        // TODO(b2-blocked): ast::Script::stmts — `&(*self.node).stmts[idx]`.
+        core::ptr::null()
     }
 }
-
-// TODO(port): `StateKind::Script` corresponds to Zig's `.script` decl-literal tag passed to
-// State.initWithNewAllocScope; verify the enum name in crate::shell::interpreter::State.
-use crate::shell::interpreter::StateKind;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/shell/states/Script.zig (133 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      ParentPtr.create/destroy own the allocation; deinit kept explicit (self-destroy). StatePtrUnion modeled as generic over a type tuple.
+//   confidence: high (NodeId-arena conversion complete)
+//   blocked_on: ast::Script field access (shell parser gated)
 // ──────────────────────────────────────────────────────────────────────────

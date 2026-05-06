@@ -1,182 +1,115 @@
+//! Trampoline continuation for the shell interpreter.
+//!
+//! See the doc comment on `Yield` for the design. The Rust port carries
+//! `NodeId`s (indices into `Interpreter::nodes`) instead of `&mut State`
+//! borrows — the only `&mut` is the `&mut Interpreter` threaded through
+//! `run`.
+
 use core::cell::Cell;
-use core::ptr::NonNull;
 
-use bun_jsc::SystemError;
+use crate::shell::interpreter::{log, Interpreter, NodeId, StateKind};
+use crate::shell::states::pipeline::Pipeline;
 
-use crate::interpreter::{
-    Assigns, Cmd, CondExpr, Expansion, If, Pipeline, Script, Stmt, Subshell,
-};
-use crate::interpreter::io_writer::IOWriterChildPtr;
-
-// TODO(port): `log` is `bun.shell.interpret.log` — a `bun.Output.scoped(.X, ...)` debug logger.
-// Replace with `bun_output::scoped_log!(SHELL, ...)` once the scope name is confirmed.
-use crate::interpret::log;
-
-/// There are constraints on Bun's shell interpreter which are unique to shells in
-/// general:
-/// 1. We try to keep everything in the Bun process as much as possible for
-///    performance reasons and also to leverage Bun's existing IO/FS code
-/// 2. We try to use non-blocking IO as much as possible so the shell
-///    does not block the main JS thread
-/// 3. Zig does not have coroutines (yet)
+/// A "continuation" of the shell interpreter. Shell state-machine functions
+/// return a `Yield`; `Yield::run(&mut Interpreter)` is the trampoline that
+/// drives execution without blowing up the call stack.
 ///
-/// These cause two problems:
-/// 1. Unbounded recursion, if we keep calling .next() on state machine structs
-///    then the call stack could get really deep, we need some mechanism to allow
-///    execution to continue without blowing up the call stack
-///
-/// 2. Correctly handling suspension points. These occur when IO would block so
-///    we must, for example, wait for epoll/kqueue. The easiest solution is to have
-///    functions return some value indicating that they suspended execution of the
-///    interpreter.
-///
-/// This `Yield` struct solves these problems. It represents a "continuation" of
-/// the shell interpreter. Shell interpreter functions must return this value.
-/// At the top-level of execution, `Yield.run(...)` serves as a "trampoline" to
-/// drive execution without blowing up the callstack.
-///
-/// Note that the "top-level of execution" could be in `Interpreter.run` or when
-/// shell execution resumes after suspension in a task callback (for example in
-/// IOWriter.onWritePoll).
+/// Variants name the *next state to step* by `NodeId`. The trampoline looks
+/// up the node and matches on its kind (hoisted dispatch — see
+/// `Interpreter::next_node`).
 #[derive(strum::IntoStaticStr)]
-pub enum Yield<'a> {
-    Script(&'a mut Script),
-    Stmt(&'a mut Stmt),
-    Pipeline(&'a mut Pipeline),
-    Cmd(&'a mut Cmd),
-    Assigns(&'a mut Assigns),
-    Expansion(&'a mut Expansion),
-    If(&'a mut If),
-    Subshell(&'a mut Subshell),
-    CondExpr(&'a mut CondExpr),
-
-    /// This can occur if data is written using IOWriter and it immediately
-    /// completes (e.g. the buf to write was empty or the fd was immediately
-    /// writeable).
-    ///
-    /// When that happens, we return this variant to ensure that the
-    /// `.onIOWriterChunk` is called at the top of the callstack.
-    ///
-    /// TODO: this struct is massive, also I think we can remove this since
-    ///       it is only used in 2 places. we might need to implement signals
-    ///       first tho.
+pub enum Yield {
+    /// Step the node at this id (`Interpreter::next_node`).
+    Next(NodeId),
+    /// Start the node at this id (`Interpreter::start_node`). Used when a
+    /// freshly-created child needs starting at top-of-stack.
+    Start(NodeId),
+    /// IOWriter completed a chunk synchronously; fire `on_io_writer_chunk` on
+    /// the registered child at top-of-stack.
     OnIoWriterChunk {
-        err: Option<SystemError>,
+        child: crate::shell::io_writer::ChildPtr,
         written: usize,
-        /// This type is actually `IOWriterChildPtr`, but because
-        /// of an annoying cyclic Zig compile error we're doing this
-        /// quick fix of making it `*anyopaque`.
-        // TODO(port): the cyclic-import constraint is Zig-specific; in Rust this
-        // can likely be `IOWriterChildPtr` directly.
-        child: NonNull<()>,
+        // TODO(b2-blocked): bun_jsc::SystemError — opaque until jsc compiles.
+        err: Option<bun_sys::SystemError>,
     },
-
+    /// Execution is waiting on async IO (epoll/kqueue/uv). The caller's task
+    /// callback will resume by calling `.run()` again later.
     Suspended,
-    /// Failed and threw a JS error
+    /// Threw a JS error.
     Failed,
     Done,
 }
 
+impl Yield {
+    #[inline]
+    pub const fn suspended() -> Yield { Yield::Suspended }
+    #[inline]
+    pub const fn done() -> Yield { Yield::Done }
+    #[inline]
+    pub const fn failed() -> Yield { Yield::Failed }
+
+    pub fn is_done(&self) -> bool { matches!(self, Yield::Done) }
+}
+
 thread_local! {
-    /// Used in debug builds to ensure the shell is not creating a callstack
-    /// that is too deep.
-    // Zig: `if (Environment.isDebug) usize else u0` — in release the counter is
-    // zero-sized. Here we keep a `usize` always but only touch it under
-    // `cfg!(debug_assertions)`, so release builds elide all accesses.
+    /// Debug-only re-entrancy guard. See Zig `_dbg_catch_exec_within_exec`.
     static DBG_CATCH_EXEC_WITHIN_EXEC: Cell<usize> = const { Cell::new(0) };
 }
 
-impl<'a> Yield<'a> {
-    /// Ideally this should be 1, but since we actually call the `resolve` of the Promise in
-    /// Interpreter.finish it could actually result in another shell script running.
+impl Yield {
+    /// Ideally 1, but resolving the JS Promise in `Interpreter::finish` can
+    /// re-enter another shell script.
     const MAX_DEPTH: usize = 2;
 
-    pub fn is_done(&self) -> bool {
-        matches!(self, Yield::Done)
-    }
-
-    pub fn run(self) {
-        // Capture the tag name of the *original* `self` for debug logging. The Zig
-        // labelled-switch trampoline never reassigns `this`, so the `defer` log uses
-        // the entry tag, not the current state's tag.
+    /// Trampoline: drive the interpreter until it suspends/finishes.
+    pub fn run(self, interp: &mut Interpreter) {
         let tag: &'static str = (&self).into();
-
         if cfg!(debug_assertions) {
             let n = DBG_CATCH_EXEC_WITHIN_EXEC.get();
-            log!("Yield({}) _dbg_catch_exec_within_exec = {} + 1 = {}", tag, n, n + 1);
+            log!("Yield({}) depth = {} + 1", tag, n);
+            debug_assert!(n <= Self::MAX_DEPTH);
+            DBG_CATCH_EXEC_WITHIN_EXEC.set(n + 1);
         }
-        debug_assert!(DBG_CATCH_EXEC_WITHIN_EXEC.get() <= Self::MAX_DEPTH);
-        if cfg!(debug_assertions) {
-            DBG_CATCH_EXEC_WITHIN_EXEC.set(DBG_CATCH_EXEC_WITHIN_EXEC.get() + 1);
-        }
-        // Zig `defer { ... _dbg_catch_exec_within_exec -= 1; }` — side-effect defer.
         let _guard = scopeguard::guard((), move |_| {
             if cfg!(debug_assertions) {
-                let n = DBG_CATCH_EXEC_WITHIN_EXEC.get();
-                log!("Yield({}) _dbg_catch_exec_within_exec = {} - 1 = {}", tag, n, n - 1);
-                DBG_CATCH_EXEC_WITHIN_EXEC.set(n - 1);
+                DBG_CATCH_EXEC_WITHIN_EXEC.set(DBG_CATCH_EXEC_WITHIN_EXEC.get() - 1);
             }
         });
 
-        // A pipeline creates multiple "threads" of execution:
+        // A pipeline starts multiple "threads" of execution (`cmd1 | cmd2 | cmd3`).
+        // We start cmd1, return to the pipeline, start cmd2, etc. — so we keep
+        // a small stack of pipeline NodeIds to resume.
         //
-        // ```bash
-        // cmd1 | cmd2 | cmd3
-        // ```
-        //
-        // We need to start cmd1, go back to the pipeline, start cmd2, and so
-        // on.
-        //
-        // This means we need to store a reference to the pipeline. And
-        // there can be nested pipelines, so we need a stack.
-        //
-        // PERF(port): was stack-fallback (std.heap.stackFallback(@sizeOf(*Pipeline) * 4)) —
-        // profile in Phase B; smallvec::SmallVec<[*mut Pipeline; 4]> may be the right shape.
-        //
-        // PORT NOTE: reshaped for borrowck — the Zig stores `*Pipeline` while *also*
-        // continuing execution via `x.next()` (which holds `&mut Pipeline`). That is
-        // aliased mutable access and cannot be expressed with `&'a mut`. We store raw
-        // pointers (identity-compared, same as `std.mem.indexOfScalar(*Pipeline, ...)`).
-        let mut pipeline_stack: Vec<*mut Pipeline> = Vec::with_capacity(4);
+        // PERF(port): was stack-fallback alloc (4 inline) — profile in Phase B;
+        // smallvec::SmallVec<[NodeId; 4]> is the right shape.
+        let mut pipeline_stack: Vec<NodeId> = Vec::with_capacity(4);
 
-        // Zig uses a labelled `state: switch (this) { ... continue :state expr; }` as a
-        // tail-call trampoline. Rust has no labelled-switch-continue, so we lower it to
-        // an explicit `loop { state = match state { ... } }`.
-        //
-        // Note that we're using labelled switch statements but _not_
-        // re-assigning `this`, so the `this` variable is stale after the first
-        // execution. Don't touch it.
+        // Zig used a labelled `state: switch` as a tail-call trampoline. Rust
+        // lowers it to `loop { state = match state { ... } }`.
         let mut state = self;
         loop {
             state = match state {
-                Yield::Pipeline(x) => {
-                    let x_ptr: *mut Pipeline = x as *mut Pipeline;
-                    if x.state.is_done() {
-                        // remove it from the pipeline stack as calling `.next()` will now deinit it
-                        if let Some(idx) = pipeline_stack.iter().position(|p| *p == x_ptr) {
-                            pipeline_stack.remove(idx);
+                Yield::Next(id) => {
+                    if matches!(interp.node(id).kind(), StateKind::Pipeline) {
+                        let done = Pipeline::is_done(interp, id);
+                        if done {
+                            // remove before stepping (next() will deinit it)
+                            if let Some(idx) = pipeline_stack.iter().position(|p| *p == id) {
+                                pipeline_stack.remove(idx);
+                            }
+                        } else {
+                            debug_assert!(!pipeline_stack.contains(&id));
+                            pipeline_stack.push(id);
                         }
-                        x.next()
-                    } else {
-                        debug_assert_eq!(pipeline_stack.iter().position(|p| *p == x_ptr), None);
-                        pipeline_stack.push(x_ptr);
-                        x.next()
                     }
+                    interp.next_node(id)
                 }
-                Yield::Cmd(x) => x.next(),
-                Yield::Script(x) => x.next(),
-                Yield::Stmt(x) => x.next(),
-                Yield::Assigns(x) => x.next(),
-                Yield::Expansion(x) => x.next(),
-                Yield::If(x) => x.next(),
-                Yield::Subshell(x) => x.next(),
-                Yield::CondExpr(x) => x.next(),
-                Yield::OnIoWriterChunk { err, written, child } => {
-                    let child = IOWriterChildPtr::from_any_opaque(child);
-                    child.on_io_writer_chunk(written, err)
+                Yield::Start(id) => interp.start_node(id),
+                Yield::OnIoWriterChunk { child, written, err } => {
+                    crate::shell::io_writer::on_io_writer_chunk(interp, child, written, err)
                 }
-                Yield::Failed | Yield::Suspended | Yield::Done => {
-                    if let Some(y) = Self::drain_pipelines(&mut pipeline_stack) {
+                Yield::Suspended | Yield::Failed | Yield::Done => {
+                    if let Some(y) = Self::drain_pipelines(interp, &mut pipeline_stack) {
                         y
                     } else {
                         return;
@@ -186,28 +119,18 @@ impl<'a> Yield<'a> {
         }
     }
 
-    pub fn drain_pipelines(pipeline_stack: &mut Vec<*mut Pipeline>) -> Option<Yield<'a>> {
-        if pipeline_stack.is_empty() {
-            return None;
-        }
-        let mut i: i64 = i64::try_from(pipeline_stack.len()).unwrap() - 1;
-        while i >= 0 && usize::try_from(i).unwrap() < pipeline_stack.len() {
-            // SAFETY: `pipeline_stack` only holds pointers pushed in `run()` above from
-            // live `&'a mut Pipeline` borrows that have not yet reached `.done` (which
-            // deinits). The Zig invariant is that a pipeline is removed from the stack
-            // before `.next()` is called on a `.done` pipeline (see the `Pipeline` arm
-            // in `run`), so dereferencing here is sound.
-            // TODO(port): lifetime — revisit once shell state-machine ownership is settled.
-            let pipeline: &mut Pipeline =
-                unsafe { &mut *pipeline_stack[usize::try_from(i).unwrap()] };
-            if pipeline.state.is_starting_cmds() {
-                return Some(pipeline.next());
+    fn drain_pipelines(
+        interp: &mut Interpreter,
+        pipeline_stack: &mut Vec<NodeId>,
+    ) -> Option<Yield> {
+        while let Some(&id) = pipeline_stack.last() {
+            if Pipeline::is_starting_cmds(interp, id) {
+                return Some(interp.next_node(id));
             }
-            let _ = pipeline_stack.pop();
-            if pipeline.state.is_done() {
-                return Some(pipeline.next());
+            pipeline_stack.pop();
+            if Pipeline::is_done(interp, id) {
+                return Some(interp.next_node(id));
             }
-            i -= 1;
         }
         None
     }
@@ -216,7 +139,7 @@ impl<'a> Yield<'a> {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/shell/Yield.zig (172 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      pipeline_stack uses *mut Pipeline (aliased &mut); labelled-switch lowered to loop+match; Pipeline.state matched via .is_done()/.is_starting_cmds() helpers Phase B must add
+//   confidence: high
+//   notes:      `&mut State` → NodeId; pipeline_stack stores ids (no aliased
+//               &mut); labelled-switch lowered to loop+match.
 // ──────────────────────────────────────────────────────────────────────────

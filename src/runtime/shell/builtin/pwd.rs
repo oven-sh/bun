@@ -1,129 +1,81 @@
-use core::mem::offset_of;
-
-use bun_jsc::SystemError;
-use crate::shell::interpreter::Interpreter;
-use crate::shell::Yield;
-
-use super::Builtin;
-// TODO(port): confirm exact path/name for Builtin::Impl and the stdout/stderr output-kind enum
-use super::builtin::Impl as BuiltinImpl;
-use super::builtin::OutputKind;
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum WaitingIoKind {
-    Stdout,
-    Stderr,
-}
-
-enum State {
-    Idle,
-    WaitingIo { kind: WaitingIoKind },
-    Err,
-    Done,
-}
-
-impl Default for State {
-    fn default() -> Self {
-        State::Idle
-    }
-}
+use crate::shell::builtin::{Builtin, IoKind};
+use crate::shell::interpreter::{Interpreter, NodeId};
+use crate::shell::yield_::Yield;
 
 #[derive(Default)]
 pub struct Pwd {
     state: State,
 }
 
+#[derive(Default)]
+enum State {
+    #[default]
+    Idle,
+    WaitingIo { kind: WaitKind },
+    Err,
+    Done,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WaitKind { Stdout, Stderr }
+
 impl Pwd {
-    pub fn start(&mut self) -> Yield {
-        let args = self.bltn().args_slice();
-        if !args.is_empty() {
+    pub fn start(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+        if !Builtin::of(interp, cmd).args_slice().is_empty() {
             let msg: &[u8] = b"pwd: too many arguments\n";
-            if let Some(safeguard) = self.bltn().stderr.needs_io() {
-                self.state = State::WaitingIo { kind: WaitingIoKind::Stderr };
-                return self.bltn().stderr.enqueue(self, msg, safeguard);
+            if Builtin::of(interp, cmd).stderr.needs_io().is_some() {
+                // TODO(b2-blocked): IOWriter::enqueue — async stderr.
+                Self::state_mut(interp, cmd).state = State::WaitingIo { kind: WaitKind::Stderr };
+                return Yield::suspended();
             }
-
-            let _ = self.bltn().write_no_io(OutputKind::Stderr, msg);
-            return self.bltn().done(1);
+            Builtin::write_no_io(interp, cmd, IoKind::Stderr, msg);
+            return Builtin::done(interp, cmd, 1);
         }
 
-        let cwd_str = self.bltn().parent_cmd().base.shell.cwd();
-        if let Some(safeguard) = self.bltn().stdout.needs_io() {
-            self.state = State::WaitingIo { kind: WaitingIoKind::Stdout };
-            return self.bltn().stdout.enqueue_fmt_bltn(
-                self,
-                None,
-                format_args!("{}\n", bstr::BStr::new(cwd_str)),
-                safeguard,
-            );
-        }
-        let buf = self
-            .bltn()
-            .fmt_error_arena(None, format_args!("{}\n", bstr::BStr::new(cwd_str)));
-
-        let _ = self.bltn().write_no_io(OutputKind::Stdout, buf);
-
-        self.state = State::Done;
-        self.bltn().done(0)
-    }
-
-    pub fn next(&mut self) -> Yield {
-        while !matches!(self.state, State::Err | State::Done) {
-            match self.state {
-                State::WaitingIo { .. } => return Yield::Suspended,
-                State::Idle => panic!(
-                    "Unexpected \"idle\" state in Pwd. This indicates a bug in Bun. Please file a GitHub issue."
-                ),
-                State::Done | State::Err => unreachable!(),
-            }
-        }
-
-        match self.state {
-            State::Done => self.bltn().done(0),
-            State::Err => self.bltn().done(1),
-            _ => unreachable!(),
-        }
-    }
-
-    pub fn on_io_writer_chunk(&mut self, _: usize, e: Option<SystemError>) -> Yield {
-        debug_assert!(matches!(self.state, State::WaitingIo { .. }));
-
-        if let Some(_err) = e {
-            // PORT NOTE: Zig had `defer e.?.deref()`; SystemError's Drop handles the deref.
-            self.state = State::Err;
-            return self.next();
-        }
-
-        self.state = match self.state {
-            State::WaitingIo { kind: WaitingIoKind::Stdout } => State::Done,
-            State::WaitingIo { kind: WaitingIoKind::Stderr } => State::Err,
-            // SAFETY: debug_assert above guarantees WaitingIo
-            _ => unreachable!(),
+        let cwd: Vec<u8> = {
+            let mut v = Builtin::shell(interp, cmd).cwd().to_vec();
+            v.push(b'\n');
+            v
         };
-
-        self.next()
+        if Builtin::of(interp, cmd).stdout.needs_io().is_some() {
+            // TODO(b2-blocked): IOWriter::enqueue_fmt_bltn — async stdout.
+            Self::state_mut(interp, cmd).state = State::WaitingIo { kind: WaitKind::Stdout };
+            return Yield::suspended();
+        }
+        Builtin::write_no_io(interp, cmd, IoKind::Stdout, &cwd);
+        Builtin::done(interp, cmd, 0)
     }
 
-    // PORT NOTE: Zig `deinit` was a no-op (`_ = this;`); no Drop impl needed.
+    pub fn on_io_writer_chunk(
+        interp: &mut Interpreter,
+        cmd: NodeId,
+        _: usize,
+        err: Option<bun_sys::SystemError>,
+    ) -> Yield {
+        if err.is_some() {
+            Self::state_mut(interp, cmd).state = State::Err;
+            return Builtin::done(interp, cmd, 1);
+        }
+        let kind = match &Self::state_mut(interp, cmd).state {
+            State::WaitingIo { kind } => *kind,
+            _ => return Builtin::done(interp, cmd, 0),
+        };
+        Self::state_mut(interp, cmd).state = State::Done;
+        Builtin::done(interp, cmd, if kind == WaitKind::Stderr { 1 } else { 0 })
+    }
 
     #[inline]
-    pub fn bltn(&mut self) -> &mut Builtin {
-        // SAFETY: self is the `pwd` field of a Builtin::Impl, which is the `impl` field of a Builtin.
-        unsafe {
-            let impl_ptr = (self as *mut Self as *mut u8)
-                .sub(offset_of!(BuiltinImpl, pwd))
-                .cast::<BuiltinImpl>();
-            &mut *(impl_ptr as *mut u8)
-                .sub(offset_of!(Builtin, impl_))
-                .cast::<Builtin>()
+    fn state_mut(interp: &mut Interpreter, cmd: NodeId) -> &mut Pwd {
+        match &mut Builtin::of_mut(interp, cmd).impl_ {
+            crate::shell::builtin::Impl::Pwd(p) => p,
+            _ => unreachable!(),
         }
     }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
-//   source:     src/shell/builtin/pwd.zig (94 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      Builtin/Impl/OutputKind import paths are guesses; @fieldParentPtr chain ported via offset_of!
+//   source:     src/shell/builtin/pwd.zig (78 lines)
+//   confidence: high
+//   blocked_on: IOWriter::enqueue (async path)
 // ──────────────────────────────────────────────────────────────────────────

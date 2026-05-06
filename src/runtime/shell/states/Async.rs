@@ -1,214 +1,141 @@
-use core::fmt;
-
-use bun_jsc::{EventLoopHandle, EventLoopTask};
 use crate::shell::ast;
-use crate::shell::interpret::{log, StatePtrUnion};
-use crate::shell::interpreter::{
-    Binary, Cmd, CondExpr, If, Interpreter, Pipeline, ShellExecEnv, State, Stmt, IO,
-};
-use crate::shell::{ExitCode, Yield};
+use crate::shell::interpreter::{log, EventLoopHandle, Interpreter, Node, NodeId, ShellExecEnv, StateKind};
+use crate::shell::io::IO;
+use crate::shell::states::base::Base;
+use crate::shell::yield_::Yield;
+use crate::shell::ExitCode;
 
-pub struct Async<'a> {
-    pub base: State,
-    pub node: &'a ast::Expr,
-    pub parent: ParentPtr,
+pub struct Async {
+    pub base: Base,
+    pub node: *const ast::Expr,
     pub io: IO,
     pub state: AsyncState,
     pub event_loop: EventLoopHandle,
-    pub concurrent_task: EventLoopTask,
+    // TODO(b2-blocked): bun_jsc::EventLoopTask — concurrent_task field
 }
 
+#[derive(strum::IntoStaticStr)]
 pub enum AsyncState {
     Idle,
-    Exec { child: Option<ChildPtr> },
+    Exec { child: Option<NodeId> },
     Done(ExitCode),
 }
 
 impl Default for AsyncState {
-    fn default() -> Self {
-        AsyncState::Idle
-    }
+    fn default() -> Self { AsyncState::Idle }
 }
 
-pub type ParentPtr = StatePtrUnion<(Binary, Stmt)>;
-
-pub type ChildPtr = StatePtrUnion<(Pipeline, Cmd, If, CondExpr)>;
-
-impl<'a> fmt::Display for Async<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Async(0x{:x}, child={})",
-            self as *const _ as usize,
-            <&'static str>::from(self.node),
-        )
-    }
-}
-
-impl<'a> Async<'a> {
+impl Async {
     pub fn init(
-        interpreter: &mut Interpreter,
-        shell_state: &mut ShellExecEnv,
-        node: &'a ast::Expr,
-        parent: ParentPtr,
+        interp: &mut Interpreter,
+        shell: *mut ShellExecEnv,
+        node: *const ast::Expr,
+        parent: NodeId,
         io: IO,
-    ) -> *mut Async<'a> {
-        interpreter.async_commands_executing += 1;
-        let async_cmd = parent.create::<Async>();
-        // SAFETY: parent.create returns a freshly allocated, uninitialized slot for Async.
-        // TODO(port): in-place init — parent.create allocates from a pool/arena.
-        unsafe {
-            async_cmd.write(Async {
-                base: State::init_with_new_alloc_scope(StateKind::Async, interpreter, shell_state),
-                node,
-                parent,
-                io,
-                state: AsyncState::Idle,
-                event_loop: interpreter.event_loop,
-                concurrent_task: EventLoopTask::from_event_loop(interpreter.event_loop),
-            });
-            &mut *async_cmd
-        }
+    ) -> NodeId {
+        interp.async_commands_executing += 1;
+        let evtloop = interp.event_loop;
+        interp.alloc_node(Node::Async(Async {
+            base: Base::new(StateKind::Async, parent, shell),
+            node,
+            io,
+            state: AsyncState::Idle,
+            event_loop: evtloop,
+        }))
     }
 
-    pub fn start(&mut self) -> Yield {
-        log!("{} start", self);
-        self.enqueue_self();
-        self.parent.child_done(self, 0)
+    pub fn start(interp: &mut Interpreter, this: NodeId) -> Yield {
+        log!("Async {} start", this);
+        Self::enqueue_self(interp, this);
+        let parent = interp.as_async(this).base.parent;
+        // Appear "done" immediately to the parent so it moves on; the async
+        // body runs in the background via `enqueue_self`.
+        interp.child_done(parent, this, 0)
     }
 
-    pub fn next(&mut self) -> Yield {
-        log!("{} next {}", self, <&'static str>::from(&self.state));
-        match &mut self.state {
-            AsyncState::Idle => {
-                self.state = AsyncState::Exec { child: None };
-                self.enqueue_self();
-                Yield::Suspended
-            }
-            AsyncState::Exec { child } => {
-                if let Some(child) = child {
-                    return child.start();
+    pub fn next(interp: &mut Interpreter, this: NodeId) -> Yield {
+        log!("Async {} next {}", this, <&'static str>::from(&interp.as_async(this).state));
+        let action = {
+            let me = interp.as_async_mut(this);
+            match &mut me.state {
+                AsyncState::Idle => {
+                    me.state = AsyncState::Exec { child: None };
+                    NextAction::Enqueue
                 }
-
-                let new_child: ChildPtr = 'brk: {
-                    match self.node {
-                        ast::Expr::Pipeline(pipeline) => {
-                            break 'brk ChildPtr::init(Pipeline::init(
-                                self.base.interpreter,
-                                self.base.shell,
-                                pipeline,
-                                Pipeline::ParentPtr::init(self),
-                                self.io.copy(),
-                            ));
-                        }
-                        ast::Expr::Cmd(cmd) => {
-                            break 'brk ChildPtr::init(Cmd::init(
-                                self.base.interpreter,
-                                self.base.shell,
-                                cmd,
-                                Cmd::ParentPtr::init(self),
-                                self.io.copy(),
-                            ));
-                        }
-                        ast::Expr::If(if_) => {
-                            break 'brk ChildPtr::init(If::init(
-                                self.base.interpreter,
-                                self.base.shell,
-                                if_,
-                                If::ParentPtr::init(self),
-                                self.io.copy(),
-                            ));
-                        }
-                        ast::Expr::CondExpr(condexpr) => {
-                            break 'brk ChildPtr::init(CondExpr::init(
-                                self.base.interpreter,
-                                self.base.shell,
-                                condexpr,
-                                CondExpr::ParentPtr::init(self),
-                                self.io.copy(),
-                            ));
-                        }
-                        _ => {
-                            panic!("Encountered an unexpected child of an async command, this indicates a bug in Bun. Please open a GitHub issue.");
-                        }
+                AsyncState::Exec { child } => {
+                    if let Some(c) = *child {
+                        NextAction::StartChild(c)
+                    } else {
+                        NextAction::SpawnChild
                     }
-                };
-                // PORT NOTE: reshaped for borrowck — re-match to assign into self.state.exec.child
-                if let AsyncState::Exec { child } = &mut self.state {
-                    *child = Some(new_child);
                 }
-                self.enqueue_self();
-                Yield::Suspended
+                AsyncState::Done(_) => NextAction::Finish,
             }
-            AsyncState::Done(_) => {
-                self.base.interpreter.async_cmd_done(self);
-                Yield::Done
+        };
+        match action {
+            NextAction::Enqueue => {
+                Self::enqueue_self(interp, this);
+                Yield::suspended()
+            }
+            NextAction::StartChild(c) => interp.start_node(c),
+            NextAction::SpawnChild => {
+                // TODO(b2-blocked): ast::Expr — match on `*me.node` and create
+                // Pipeline/Cmd/If/CondExpr child. Body gated until AST is real.
+                #[cfg(any())]
+                {
+                    include!("Async_spawn_body.rs");
+                }
+                Self::enqueue_self(interp, this);
+                Yield::suspended()
+            }
+            NextAction::Finish => {
+                interp.async_cmd_done(this);
+                Yield::done()
             }
         }
     }
 
-    pub fn enqueue_self(&mut self) {
-        // TODO(port): EventLoopHandle/EventLoopTask are tagged unions in Zig; the Rust shapes
-        // (enum variants vs. accessor methods) are owned by bun_jsc. This mirrors the Zig branch.
-        match &self.event_loop {
-            EventLoopHandle::Js(js) => {
-                js.enqueue_task_concurrent(
-                    self.concurrent_task.js().from(self, TaskDeinit::ManualDeinit),
-                );
-            }
-            EventLoopHandle::Mini(mini) => {
-                mini.enqueue_task_concurrent(
-                    self.concurrent_task.mini().from(self, "runFromMainThreadMini"),
-                );
-            }
-        }
+    pub fn child_done(
+        interp: &mut Interpreter,
+        this: NodeId,
+        child: NodeId,
+        exit_code: ExitCode,
+    ) -> Yield {
+        log!("Async {} childDone", this);
+        interp.deinit_node(child);
+        interp.as_async_mut(this).state = AsyncState::Done(exit_code);
+        Self::enqueue_self(interp, this);
+        Yield::suspended()
     }
 
-    pub fn child_done(&mut self, child_ptr: ChildPtr, exit_code: ExitCode) -> Yield {
-        log!("{} childDone", self);
-        child_ptr.deinit();
-        self.state = AsyncState::Done(exit_code);
-        self.enqueue_self();
-        Yield::Suspended
+    fn enqueue_self(_interp: &mut Interpreter, _this: NodeId) {
+        // TODO(b2-blocked): bun_jsc::EventLoopHandle/EventLoopTask — schedule
+        // `run_from_main_thread` on the JS or mini event loop.
     }
 
-    pub fn actually_deinit(&mut self) {
-        self.io.deref();
-        self.base.end_scope();
-        self.parent.destroy(self);
+    /// `deinit` is purposefully empty: an `Async` appears "done" to its parent
+    /// immediately (see `start`), so the parent must not free it. Real cleanup
+    /// happens in `actually_deinit` once the background body finishes.
+    pub fn actually_deinit(interp: &mut Interpreter, this: NodeId) {
+        let me = interp.as_async_mut(this);
+        me.base.end_scope();
     }
 
-    pub fn run_from_main_thread(&mut self) {
-        self.next().run();
-    }
-
-    pub fn run_from_main_thread_mini(&mut self, _: &mut ()) {
-        self.run_from_main_thread();
+    pub fn run_from_main_thread(interp: &mut Interpreter, this: NodeId) {
+        Self::next(interp, this).run(interp);
     }
 }
 
-/// This is purposefully empty as a hack to ensure Async runs in the background while appearing to
-/// the parent that it is done immediately.
-///
-/// For example, in a script like `sleep 1 & echo hello`, the `sleep 1` part needs to appear as done
-/// immediately so the parent doesn't wait for it and instead immediately moves to executing the
-/// next command.
-///
-/// Actual deinitialization is executed once this Async calls
-/// `this.base.interpreter.asyncCmdDone(this)`, where the interpreter will call `.actually_deinit()`
-impl<'a> Drop for Async<'a> {
-    fn drop(&mut self) {}
+enum NextAction {
+    Enqueue,
+    StartChild(NodeId),
+    SpawnChild,
+    Finish,
 }
-
-// TODO(port): StateKind / TaskDeinit are placeholder names for the enum tags `.async` and
-// `.manual_deinit` from the Zig side; resolve to the real types in bun_shell / bun_jsc in Phase B.
-use crate::shell::interpreter::StateKind;
-use bun_jsc::TaskDeinit;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/shell/states/Async.zig (181 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      EventLoopHandle/EventLoopTask variant access + StatePtrUnion generics need Phase B type fixes; Drop is intentionally a no-op (see actually_deinit).
+//   confidence: medium (NodeId conversion; event-loop scheduling gated)
+//   blocked_on: bun_jsc::EventLoopTask, ast::Expr matching
 // ──────────────────────────────────────────────────────────────────────────

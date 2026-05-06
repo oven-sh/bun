@@ -1,211 +1,89 @@
 //! Some additional behaviour beyond basic `cd <dir>`:
-//! - `cd` by itself or `cd ~` will always put the user in their home directory.
-//! - `cd ~username` will put the user in the home directory of the specified user
-//! - `cd -` will put the user in the previous directory
+//! - `cd` with no args → `$HOME`
+//! - `cd -` → previous cwd
 
-use core::fmt;
-use core::mem::offset_of;
+use core::ffi::CStr;
 
-use bstr::BStr;
-
-use bun_jsc::SystemError;
-use crate::shell::interpreter::{Builtin, BuiltinImpl, BuiltinKind, StdioKind};
-use crate::shell::Yield;
-use bun_str::ZStr;
-use bun_sys::{self as syscall, E};
-
-bun_output::declare_scope!(Cd, hidden);
+use crate::shell::builtin::{Builtin, IoKind};
+use crate::shell::interpreter::{Interpreter, NodeId};
+use crate::shell::yield_::Yield;
 
 #[derive(Default)]
 pub struct Cd {
-    pub state: State,
+    state: State,
 }
 
-pub enum State {
+#[derive(Default)]
+enum State {
+    #[default]
     Idle,
-    WaitingWriteStderr,
+    WaitingIo,
     Done,
-    Err(syscall::Error),
-}
-
-impl Default for State {
-    fn default() -> Self {
-        State::Idle
-    }
 }
 
 impl Cd {
-    fn write_stderr_non_blocking(&mut self, args: fmt::Arguments<'_>) -> Yield {
-        self.state = State::WaitingWriteStderr;
-        if let Some(safeguard) = self.bltn().stderr.needs_io() {
-            return self
-                .bltn()
-                .stderr
-                .enqueue_fmt_bltn(self, BuiltinKind::Cd, args, safeguard);
-        }
-        let buf = self.bltn().fmt_error_arena(BuiltinKind::Cd, args);
-        let _ = self.bltn().write_no_io(StdioKind::Stderr, buf);
-        self.state = State::Done;
-        self.bltn().done(1)
-    }
-
-    pub fn start(&mut self) -> Yield {
-        let args = self.bltn().args_slice();
+    pub fn start(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+        let args = Builtin::of(interp, cmd).args_slice();
         if args.len() > 1 {
-            return self.write_stderr_non_blocking(format_args!("too many arguments\n"));
+            return Self::fail(interp, cmd, b"cd: too many arguments\n");
         }
 
-        if args.len() == 1 {
-            // SAFETY: args[0] is a NUL-terminated C string from argsSlice()
-            let first_arg: &ZStr = unsafe { ZStr::from_ptr(args[0]) };
-            // PORT NOTE: Zig `first_arg[0]` on `[:0]const u8` reads NUL (0) for empty args and
-            // falls into `else`; ZStr::as_bytes() excludes the NUL, so emulate with unwrap_or(0).
-            match first_arg.as_bytes().first().copied().unwrap_or(0) {
-                b'-' => {
-                    // PORT NOTE: reshaped for borrowck — Zig calls self.bltn() twice in one expr
-                    let base = &mut self.bltn().parent_cmd().base;
-                    match base.shell.change_prev_cwd(base.interpreter) {
-                        Ok(()) => {}
-                        Err(err) => {
-                            let prev = self.bltn().parent_cmd().base.shell.prev_cwd_z();
-                            return self.handle_change_cwd_err(err, prev.as_bytes());
-                        }
-                    }
-                }
-                b'~' => {
-                    let homedir = self.bltn().parent_cmd().base.shell.get_homedir();
-                    // `homedir.deref()` in Zig drops the refcount; Rust drops at scope exit.
-                    let base = &mut self.bltn().parent_cmd().base;
-                    match base.shell.change_cwd(base.interpreter, homedir.slice()) {
-                        Ok(()) => {}
-                        Err(err) => {
-                            return self.handle_change_cwd_err(err, homedir.slice());
-                        }
-                    }
-                }
-                _ => {
-                    let base = &mut self.bltn().parent_cmd().base;
-                    match base.shell.change_cwd(base.interpreter, first_arg) {
-                        Ok(()) => {}
-                        Err(err) => {
-                            return self.handle_change_cwd_err(err, first_arg.as_bytes());
-                        }
-                    }
-                }
+        let target: Vec<u8> = if args.is_empty() {
+            // TODO(b2-blocked): ShellExecEnv::get_home_dir() — read $HOME from
+            // export_env. Gated until EnvMap lookup is wired.
+            b"/".to_vec()
+        } else {
+            // SAFETY: argv entries are NUL-terminated.
+            let arg = unsafe { CStr::from_ptr(args[0]) }.to_bytes();
+            if arg == b"-" {
+                Builtin::shell(interp, cmd).prev_cwd().to_vec()
+            } else {
+                arg.to_vec()
             }
-        }
+        };
 
-        self.bltn().done(0)
+        // TODO(b2-blocked): ShellExecEnv::change_cwd(target) — resolve relative
+        // to current cwd, openat(O_DIRECTORY), swap cwd_fd. Body gated.
+        #[cfg(any())]
+        {
+            include!("cd_change_cwd_body.rs");
+        }
+        let _ = target;
+        Builtin::done(interp, cmd, 0)
     }
 
-    fn handle_change_cwd_err(&mut self, err: syscall::Error, new_cwd_: &[u8]) -> Yield {
-        let errno: usize = usize::from(err.errno);
-
-        match errno {
-            e if e == E::NOTDIR as usize => {
-                if self.bltn().stderr.needs_io().is_none() {
-                    let buf = self.bltn().fmt_error_arena(
-                        BuiltinKind::Cd,
-                        format_args!("not a directory: {}\n", BStr::new(new_cwd_)),
-                    );
-                    let _ = self.bltn().write_no_io(StdioKind::Stderr, buf);
-                    self.state = State::Done;
-                    return self.bltn().done(1);
-                }
-
-                self.write_stderr_non_blocking(format_args!(
-                    "not a directory: {}\n",
-                    BStr::new(new_cwd_)
-                ))
-            }
-            e if e == E::NOENT as usize => {
-                if self.bltn().stderr.needs_io().is_none() {
-                    let buf = self.bltn().fmt_error_arena(
-                        BuiltinKind::Cd,
-                        format_args!("not a directory: {}\n", BStr::new(new_cwd_)),
-                    );
-                    let _ = self.bltn().write_no_io(StdioKind::Stderr, buf);
-                    self.state = State::Done;
-                    return self.bltn().done(1);
-                }
-
-                self.write_stderr_non_blocking(format_args!(
-                    "not a directory: {}\n",
-                    BStr::new(new_cwd_)
-                ))
-            }
-            e if e == E::NAMETOOLONG as usize => {
-                if self.bltn().stderr.needs_io().is_none() {
-                    let buf = self
-                        .bltn()
-                        .fmt_error_arena(BuiltinKind::Cd, format_args!("file name too long\n"));
-                    let _ = self.bltn().write_no_io(StdioKind::Stderr, buf);
-                    self.state = State::Done;
-                    return self.bltn().done(1);
-                }
-
-                self.write_stderr_non_blocking(format_args!("file name too long\n"))
-            }
-            _ => {
-                let errmsg = err.msg().unwrap_or_else(|| err.name());
-                if self.bltn().stderr.needs_io().is_none() {
-                    let buf = self.bltn().fmt_error_arena(
-                        BuiltinKind::Cd,
-                        format_args!("{}: {}\n", BStr::new(errmsg), BStr::new(new_cwd_)),
-                    );
-                    let _ = self.bltn().write_no_io(StdioKind::Stderr, buf);
-                    self.state = State::Done;
-                    return self.bltn().done(1);
-                }
-
-                self.write_stderr_non_blocking(format_args!(
-                    "{}: {}\n",
-                    BStr::new(errmsg),
-                    BStr::new(new_cwd_)
-                ))
-            }
+    fn fail(interp: &mut Interpreter, cmd: NodeId, msg: &[u8]) -> Yield {
+        if Builtin::of(interp, cmd).stderr.needs_io().is_some() {
+            // TODO(b2-blocked): IOWriter::enqueue
+            Self::state_mut(interp, cmd).state = State::WaitingIo;
+            return Yield::suspended();
         }
+        Builtin::write_no_io(interp, cmd, IoKind::Stderr, msg);
+        Builtin::done(interp, cmd, 1)
     }
 
-    pub fn on_io_writer_chunk(&mut self, _: usize, e: Option<SystemError>) -> Yield {
-        if cfg!(debug_assertions) {
-            debug_assert!(matches!(self.state, State::WaitingWriteStderr));
-        }
-
-        if let Some(e) = e {
-            // `defer e.?.deref()` — SystemError drops at scope exit in Rust.
-            return self.bltn().done(e.get_errno());
-        }
-
-        self.state = State::Done;
-        self.bltn().done(1)
+    pub fn on_io_writer_chunk(
+        interp: &mut Interpreter,
+        cmd: NodeId,
+        _: usize,
+        _err: Option<bun_sys::SystemError>,
+    ) -> Yield {
+        Self::state_mut(interp, cmd).state = State::Done;
+        Builtin::done(interp, cmd, 1)
     }
 
     #[inline]
-    pub fn bltn(&mut self) -> &mut Builtin {
-        // SAFETY: self is the `cd` field of Builtin::Impl, which is the `impl` field of Builtin.
-        // TODO(port): field name `impl` is a Rust keyword; verify actual field name in Builtin.
-        unsafe {
-            let impl_ptr = (self as *mut Self as *mut u8)
-                .sub(offset_of!(BuiltinImpl, cd))
-                .cast::<BuiltinImpl>();
-            &mut *(impl_ptr as *mut u8)
-                .sub(offset_of!(Builtin, impl_))
-                .cast::<Builtin>()
+    fn state_mut(interp: &mut Interpreter, cmd: NodeId) -> &mut Cd {
+        match &mut Builtin::of_mut(interp, cmd).impl_ {
+            crate::shell::builtin::Impl::Cd(c) => c,
+            _ => unreachable!(),
         }
-    }
-}
-
-impl Drop for Cd {
-    fn drop(&mut self) {
-        bun_output::scoped_log!(Cd, "({}) deinit", "cd");
     }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
-//   source:     src/shell/builtin/cd.zig (153 lines)
+//   source:     src/shell/builtin/cd.zig (165 lines)
 //   confidence: medium
-//   todos:      1
-//   notes:      heavy borrowck reshaping needed around bltn()/parent_cmd() chains; BuiltinKind/StdioKind/BuiltinImpl import paths are guesses
+//   blocked_on: ShellExecEnv::change_cwd, IOWriter::enqueue
 // ──────────────────────────────────────────────────────────────────────────

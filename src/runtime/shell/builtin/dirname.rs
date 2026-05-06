@@ -1,108 +1,79 @@
-use core::ffi::{c_char, CStr};
-use core::mem::offset_of;
+use core::ffi::CStr;
 
-use crate::shell::interpreter::Interpreter;
-use crate::shell::interpreter::Builtin;
-use crate::shell::Yield;
-use bun_jsc::SystemError;
-use bun_sys::Result as Maybe;
-use bun_paths;
-
-#[derive(Default, Clone, Copy, PartialEq, Eq)]
-pub enum State {
-    #[default]
-    Idle,
-    Err,
-    Done,
-}
+use crate::shell::builtin::{Builtin, IoKind};
+use crate::shell::interpreter::{Interpreter, NodeId};
+use crate::shell::yield_::Yield;
 
 #[derive(Default)]
 pub struct Dirname {
-    pub state: State,
-    pub buf: Vec<u8>,
+    state: State,
+}
+
+#[derive(Default)]
+enum State {
+    #[default]
+    Idle,
+    WaitingIo,
+    Done,
 }
 
 impl Dirname {
-    pub fn start(&mut self) -> Yield {
-        let args = self.bltn().args_slice();
-
+    pub fn start(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+        let args = Builtin::of(interp, cmd).args_slice();
         if args.is_empty() {
-            return self.fail(Builtin::Kind::usage_string(Builtin::Kind::Dirname));
+            return Self::write(interp, cmd, IoKind::Stderr, b"usage: dirname string\n", 1);
         }
-
-        for item in args.iter() {
-            // SAFETY: argsSlice() yields NUL-terminated [*:0]const u8 pointers
-            let arg = unsafe { CStr::from_ptr(*item as *const c_char) }.to_bytes();
-            let _ = self.print(bun_paths::dirname(arg, bun_paths::Platform::Posix));
-            let _ = self.print(b"\n");
-        }
-
-        self.state = State::Done;
-        if let Some(safeguard) = self.bltn().stdout.needs_io() {
-            // PORT NOTE: reshaped for borrowck — buf slice passed by raw range; Phase B may need
-            // to restructure enqueue() to avoid &mut self + &self.buf overlap.
-            let buf = self.buf.as_slice();
-            return self.bltn().stdout.enqueue(self, buf, safeguard);
-        }
-        self.bltn().done(0)
+        // SAFETY: argv entries are NUL-terminated.
+        let path = unsafe { CStr::from_ptr(args[0]) }.to_bytes();
+        let dir = bun_paths::dirname_simple(path);
+        let dir: &[u8] = if dir.is_empty() { b"." } else { dir };
+        let mut out = dir.to_vec();
+        out.push(b'\n');
+        Self::write(interp, cmd, IoKind::Stdout, &out, 0)
     }
 
-    // `deinit` only freed `self.buf` via the default allocator; Vec<u8> drops
-    // automatically, so no explicit Drop impl is needed.
-    // (was: pub fn deinit(this: *@This()) void { this.buf.deinit(bun.default_allocator); })
-
-    fn fail(&mut self, msg: &[u8]) -> Yield {
-        if let Some(safeguard) = self.bltn().stderr.needs_io() {
-            self.state = State::Err;
-            return self.bltn().stderr.enqueue(self, msg, safeguard);
+    fn write(
+        interp: &mut Interpreter,
+        cmd: NodeId,
+        io_kind: IoKind,
+        buf: &[u8],
+        exit: crate::shell::ExitCode,
+    ) -> Yield {
+        let needs_io = match io_kind {
+            IoKind::Stdout => Builtin::of(interp, cmd).stdout.needs_io().is_some(),
+            _ => Builtin::of(interp, cmd).stderr.needs_io().is_some(),
+        };
+        if needs_io {
+            // TODO(b2-blocked): IOWriter::enqueue
+            Self::state_mut(interp, cmd).state = State::WaitingIo;
+            return Yield::suspended();
         }
-        let _ = self.bltn().write_no_io(Builtin::Io::Stderr, msg);
-        self.bltn().done(1)
+        Builtin::write_no_io(interp, cmd, io_kind, buf);
+        Builtin::done(interp, cmd, exit)
     }
 
-    fn print(&mut self, msg: &[u8]) -> Maybe<()> {
-        if self.bltn().stdout.needs_io().is_some() {
-            self.buf.extend_from_slice(msg);
-            return Maybe::Ok(());
-        }
-        let res = self.bltn().write_no_io(Builtin::Io::Stdout, msg);
-        if let Maybe::Err(err) = res {
-            return Maybe::Err(err);
-        }
-        Maybe::Ok(())
-    }
-
-    pub fn on_io_writer_chunk(&mut self, _: usize, maybe_e: Option<SystemError>) -> Yield {
-        if let Some(e) = maybe_e {
-            e.deref();
-            self.state = State::Err;
-            return self.bltn().done(1);
-        }
-        match self.state {
-            State::Done => self.bltn().done(0),
-            State::Err => self.bltn().done(1),
-            State::Idle => crate::shell::unreachable_state("Dirname.onIOWriterChunk", "idle"),
-        }
+    pub fn on_io_writer_chunk(
+        interp: &mut Interpreter,
+        cmd: NodeId,
+        _: usize,
+        err: Option<bun_sys::SystemError>,
+    ) -> Yield {
+        Self::state_mut(interp, cmd).state = State::Done;
+        Builtin::done(interp, cmd, if err.is_some() { 1 } else { 0 })
     }
 
     #[inline]
-    pub fn bltn(&mut self) -> &mut Builtin {
-        // SAFETY: self is the `dirname` field of Builtin::Impl, which is the `impl` field of Builtin.
-        unsafe {
-            let impl_ptr = (self as *mut Self as *mut u8)
-                .sub(offset_of!(Builtin::Impl, dirname))
-                .cast::<Builtin::Impl>();
-            &mut *(impl_ptr as *mut u8)
-                .sub(offset_of!(Builtin, impl_))
-                .cast::<Builtin>()
+    fn state_mut(interp: &mut Interpreter, cmd: NodeId) -> &mut Dirname {
+        match &mut Builtin::of_mut(interp, cmd).impl_ {
+            crate::shell::builtin::Impl::Dirname(d) => d,
+            _ => unreachable!(),
         }
     }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
-//   source:     src/shell/builtin/dirname.zig (76 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      bltn() container_of + stdout.enqueue(self, &self.buf) overlap will need borrowck reshaping in Phase B
+//   source:     src/shell/builtin/dirname.zig (70 lines)
+//   confidence: high
+//   blocked_on: IOWriter::enqueue (async path)
 // ──────────────────────────────────────────────────────────────────────────

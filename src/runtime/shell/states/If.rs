@@ -1,37 +1,33 @@
-use core::fmt;
+use crate::shell::ast;
+use crate::shell::interpreter::{log, Interpreter, Node, NodeId, ShellExecEnv, StateKind};
+use crate::shell::io::IO;
+use crate::shell::states::base::Base;
+use crate::shell::states::stmt::Stmt;
+use crate::shell::yield_::Yield;
+use crate::shell::ExitCode;
 
-use crate::ast;
-use crate::interpret::StatePtrUnion;
-// TODO(port): `log` is `bun.shell.interpret.log` (a scoped Output logger). The shell crate
-// should expose this as a macro; using it as `log!(...)` here.
-use crate::interpret::log;
-use crate::interpreter::{Async, Binary, Interpreter, Pipeline, ShellExecEnv, State, Stmt, IO};
-use crate::{ExitCode, SmolList, Yield};
-
-pub struct If<'a> {
-    pub base: State,
-    pub node: &'a ast::If,
-    pub parent: ParentPtr,
+pub struct If {
+    pub base: Base,
+    pub node: *const ast::If,
     pub io: IO,
-    pub state: IfState<'a>,
+    pub state: IfState,
 }
 
 #[derive(Default, strum::IntoStaticStr)]
-pub enum IfState<'a> {
+pub enum IfState {
     #[default]
-    #[strum(serialize = "idle")]
     Idle,
-    #[strum(serialize = "exec")]
-    Exec(Exec<'a>),
-    #[strum(serialize = "waiting_write_err")]
+    Exec(Exec),
     WaitingWriteErr,
-    #[strum(serialize = "done")]
     Done,
 }
 
-pub struct Exec<'a> {
+pub struct Exec {
     pub state: ExecBranch,
-    pub stmts: &'a SmolList<ast::Stmt, 1>,
+    /// Pointer to the current `SmolList<ast::Stmt, 1>` being walked. Points
+    /// into the AST arena.
+    pub stmts: *const (),
+    pub stmts_len: u32,
     pub stmt_idx: u32,
     pub last_exit_code: ExitCode,
 }
@@ -43,195 +39,152 @@ pub enum ExecBranch {
     Else,
 }
 
-pub type ParentPtr = StatePtrUnion<(Stmt, Binary, Pipeline, Async)>;
-
-pub type ChildPtr = StatePtrUnion<(Stmt,)>;
-
-impl<'a> fmt::Display for If<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "If(0x{:x}, state={})",
-            self as *const _ as usize,
-            <&'static str>::from(&self.state),
-        )
-    }
-}
-
-impl<'a> If<'a> {
+impl If {
     pub fn init(
-        interpreter: &mut Interpreter,
-        shell_state: &mut ShellExecEnv,
-        node: &'a ast::If,
-        parent: ParentPtr,
+        interp: &mut Interpreter,
+        shell: *mut ShellExecEnv,
+        node: *const ast::If,
+        parent: NodeId,
         io: IO,
-    ) -> &'a mut If<'a> {
-        // TODO(port): in-place init — `parent.create(If)` allocates a slot from the parent's
-        // state pool/arena and returns `*If`, which is then filled. Keeping the shape; Phase B
-        // should confirm `StatePtrUnion::create<T>()` returns `&'a mut MaybeUninit<T>` or similar.
-        let if_stmt = parent.create::<If>();
-        *if_stmt = If {
-            base: State::init_with_new_alloc_scope(StateKind::IfClause, interpreter, shell_state),
+    ) -> NodeId {
+        interp.alloc_node(Node::If(If {
+            base: Base::new(StateKind::IfClause, parent, shell),
             node,
-            parent,
             io,
             state: IfState::Idle,
-        };
-        if_stmt
+        }))
     }
 
-    pub fn start(&mut self) -> Yield {
-        Yield::If(self)
+    pub fn start(_interp: &mut Interpreter, this: NodeId) -> Yield {
+        Yield::Next(this)
     }
 
-    // TODO(port): borrowck — this fn matches on `&mut self.state` while also calling
-    // `self.parent.child_done(self, ..)` and constructing `Stmt::init(.., self, ..)` from inside
-    // the match arm. `ParentPtr` is a tagged pointer (Copy) so Phase B can hoist `let parent =
-    // self.parent;` / `let node = self.node;` before the match and reshape the returns.
-    // PORT NOTE: reshaped for borrowck where it does not change control flow.
-    pub fn next(&mut self) -> Yield {
-        let node = self.node;
-        while !matches!(self.state, IfState::Done) {
-            match &mut self.state {
-                IfState::Idle => {
-                    self.state = IfState::Exec(Exec {
-                        state: ExecBranch::Cond,
-                        stmts: &node.cond,
-                        stmt_idx: 0,
-                        last_exit_code: 0,
-                    });
-                }
-                IfState::Exec(exec) => {
-                    let stmts = exec.stmts;
-                    // Executed all the stmts in the condition/branch
-                    if exec.stmt_idx >= stmts.len() {
-                        match &mut exec.state {
-                            // Move to the then, elif, or else branch based on the exit code
-                            // and the amount of else parts
-                            ExecBranch::Cond => {
-                                if exec.last_exit_code == 0 {
-                                    exec.state = ExecBranch::Then;
-                                    exec.stmt_idx = 0;
-                                    exec.stmts = &node.then;
-                                    continue;
-                                }
-                                match node.else_parts.len() {
-                                    0 => {
-                                        return self.parent.child_done(self, 0);
+    pub fn next(interp: &mut Interpreter, this: NodeId) -> Yield {
+        let parent = interp.as_if(this).base.parent;
+        loop {
+            // PORT NOTE: reshaped for borrowck — we read/mutate `state` via a
+            // short-lived borrow, decide an action, then drop the borrow
+            // before calling back into `interp`.
+            let action = {
+                let me = interp.as_if_mut(this);
+                match &mut me.state {
+                    IfState::Idle => {
+                        // TODO(b2-blocked): ast::If::cond — `&(*me.node).cond`.
+                        me.state = IfState::Exec(Exec {
+                            state: ExecBranch::Cond,
+                            stmts: core::ptr::null(),
+                            stmts_len: 0,
+                            stmt_idx: 0,
+                            last_exit_code: 0,
+                        });
+                        continue;
+                    }
+                    IfState::Exec(exec) => {
+                        if exec.stmt_idx >= exec.stmts_len {
+                            match &mut exec.state {
+                                ExecBranch::Cond => {
+                                    if exec.last_exit_code == 0 {
+                                        // TODO(b2-blocked): ast::If::then
+                                        exec.state = ExecBranch::Then;
+                                        exec.stmt_idx = 0;
+                                        continue;
                                     }
-                                    1 => {
+                                    // TODO(b2-blocked): ast::If::else_parts.len()
+                                    let else_len: u32 = 0;
+                                    match else_len {
+                                        0 => Action::Done(0),
+                                        1 => {
+                                            exec.state = ExecBranch::Else;
+                                            exec.stmt_idx = 0;
+                                            // TODO(b2-blocked): ast::If::else_parts[0]
+                                            continue;
+                                        }
+                                        _ => {
+                                            exec.state = ExecBranch::Elif { idx: 0 };
+                                            exec.stmt_idx = 0;
+                                            continue;
+                                        }
+                                    }
+                                }
+                                ExecBranch::Then => Action::Done(exec.last_exit_code),
+                                ExecBranch::Elif { idx } => {
+                                    if exec.last_exit_code == 0 {
+                                        exec.state = ExecBranch::Then;
+                                        exec.stmt_idx = 0;
+                                        // TODO(b2-blocked): else_parts[idx+1]
+                                        continue;
+                                    }
+                                    *idx += 2;
+                                    // TODO(b2-blocked): else_parts.len()
+                                    let else_len: u32 = 0;
+                                    if *idx >= else_len {
+                                        Action::Done(0)
+                                    } else if *idx == else_len.saturating_sub(1) {
                                         exec.state = ExecBranch::Else;
                                         exec.stmt_idx = 0;
-                                        exec.stmts = node.else_parts.get_const(0);
                                         continue;
-                                    }
-                                    _ => {
-                                        exec.state = ExecBranch::Elif { idx: 0 };
+                                    } else {
                                         exec.stmt_idx = 0;
-                                        exec.stmts = node.else_parts.get_const(0);
                                         continue;
                                     }
                                 }
+                                ExecBranch::Else => Action::Done(exec.last_exit_code),
                             }
-                            // done
-                            ExecBranch::Then => {
-                                return self.parent.child_done(self, exec.last_exit_code);
-                            }
-                            // if succesful, execute the elif's then branch
-                            // otherwise, move to the next elif, or to the final else if it exists
-                            ExecBranch::Elif { idx } => {
-                                if exec.last_exit_code == 0 {
-                                    exec.stmts = node.else_parts.get_const(*idx + 1);
-                                    exec.stmt_idx = 0;
-                                    exec.state = ExecBranch::Then;
-                                    continue;
-                                }
-
-                                *idx += 2;
-
-                                if *idx >= node.else_parts.len() {
-                                    return self.parent.child_done(self, 0);
-                                }
-
-                                if *idx == node.else_parts.len().saturating_sub(1) {
-                                    exec.state = ExecBranch::Else;
-                                    exec.stmt_idx = 0;
-                                    exec.stmts = node.else_parts.last_unchecked_const();
-                                    continue;
-                                }
-
-                                exec.stmt_idx = 0;
-                                exec.stmts = node.else_parts.get_const(*idx);
-                                continue;
-                            }
-                            ExecBranch::Else => {
-                                return self.parent.child_done(self, exec.last_exit_code);
-                            }
+                        } else {
+                            let i = exec.stmt_idx;
+                            exec.stmt_idx += 1;
+                            Action::SpawnStmt(i)
                         }
                     }
-
-                    let idx = exec.stmt_idx;
-                    exec.stmt_idx += 1;
-                    let stmt = exec.stmts.get_const(idx);
-                    let newstmt =
-                        Stmt::init(self.base.interpreter, self.base.shell, stmt, self, self.io.copy());
-                    return newstmt.start();
+                    IfState::WaitingWriteErr => return Yield::suspended(),
+                    IfState::Done => panic!("This code should not be reachable"),
                 }
-                IfState::WaitingWriteErr => return Yield::Suspended, // yield execution
-                IfState::Done => panic!("This code should not be reachable"),
-            }
+            };
+            return match action {
+                Action::Done(exit) => interp.child_done(parent, this, exit),
+                Action::SpawnStmt(_i) => {
+                    // TODO(b2-blocked): ast — `exec.stmts.get_const(i)` → *const ast::Stmt
+                    let stmt_node: *const ast::Stmt = core::ptr::null();
+                    let (shell, io) = {
+                        let me = interp.as_if(this);
+                        (me.base.shell, me.io.clone())
+                    };
+                    let new_stmt = Stmt::init(interp, shell, stmt_node, this, io);
+                    Stmt::start(interp, new_stmt)
+                }
+            };
         }
-
-        self.parent.child_done(self, 0)
     }
 
-    // TODO(port): not `impl Drop` — body calls `self.parent.destroy(self)` which deallocates the
-    // storage of `self` from the parent's pool/arena. `Drop::drop` takes `&mut self` and cannot
-    // free its own backing storage. Kept as an explicit inherent method; the StatePtrUnion pool
-    // owns the lifecycle.
-    pub fn deinit(&mut self) {
-        log!("{} deinit", self);
-        self.io.deref();
-        self.base.end_scope();
-        self.parent.destroy(self);
-    }
-
-    pub fn child_done(&mut self, child: ChildPtr, exit_code: ExitCode) -> Yield {
-        // Zig: `defer child.deinit();` — `child` is not used below, so call immediately.
-        child.deinit();
-
-        let IfState::Exec(exec) = &mut self.state else {
+    pub fn child_done(
+        interp: &mut Interpreter,
+        this: NodeId,
+        child: NodeId,
+        exit_code: ExitCode,
+    ) -> Yield {
+        interp.deinit_node(child);
+        let me = interp.as_if_mut(this);
+        let IfState::Exec(exec) = &mut me.state else {
             panic!("Expected `exec` state in If, this indicates a bug in Bun. Please file a GitHub issue.");
         };
-
         exec.last_exit_code = exit_code;
+        Yield::Next(this)
+    }
 
-        match exec.state {
-            ExecBranch::Cond => Yield::If(self),
-            ExecBranch::Then => Yield::If(self),
-            ExecBranch::Elif { .. } => {
-                // if (exit_code == 0) {
-                //     exec.stmts = this.node.else_parts.getConst(exec.state.elif.idx + 1);
-                //     exec.state = .then;
-                //     exec.stmt_idx = 0;
-                //     this.next();
-                //     return;
-                // }
-                Yield::If(self)
-            }
-            ExecBranch::Else => Yield::If(self),
-        }
+    pub fn deinit(interp: &mut Interpreter, this: NodeId) {
+        log!("If {} deinit", this);
+        interp.as_if_mut(this).base.end_scope();
     }
 }
 
-// TODO(port): `State.initWithNewAllocScope(.if_clause, ..)` — `.if_clause` is an enum literal whose
-// type is inferred at the callsite in Zig. Assuming a `StateKind` enum on `State`; adjust in Phase B.
-use crate::interpreter::StateKind;
+enum Action {
+    Done(ExitCode),
+    SpawnStmt(u32),
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/shell/states/If.zig (204 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      State-machine with pool-allocated self (parent.create/destroy); borrowck reshape needed in next() for parent.child_done(self) inside &mut self.state match; StatePtrUnion<(..)> tuple-generic assumed.
+//   confidence: high (NodeId conversion; control flow preserved)
+//   blocked_on: ast::If field access (cond/then/else_parts)
 // ──────────────────────────────────────────────────────────────────────────

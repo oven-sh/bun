@@ -137,9 +137,10 @@ impl ArrayBuffer {
     // TODO(port): gated — `bun_sys::pread` Result shape + `Error::to_js`.
     
     pub fn to_js_buffer_from_fd(fd: Fd, size: usize, global: &JSGlobalObject) -> JSValue {
-        // SAFETY: FFI — global is a valid &JSGlobalObject; fn accepts null ptr with explicit size.
+        // SAFETY: FFI — `global` is a live &JSGlobalObject (opaque ZST handle, coerces to
+        // *const); fn accepts null ptr with explicit size.
         let buffer_value = unsafe {
-            Bun__createUint8ArrayForCopy(global as *const _ as *mut _, ptr::null(), size, true)
+            Bun__createUint8ArrayForCopy(global, ptr::null(), size, true)
         };
         if buffer_value.is_empty() {
             return JSValue::ZERO;

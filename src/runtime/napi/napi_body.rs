@@ -45,9 +45,22 @@ unsafe extern "C" {
 }
 
 impl NapiEnv {
+    /// Recover the `*mut NapiEnv` FFI pointer from `&self`.
+    ///
+    /// SAFETY rationale: every `&NapiEnv` in this module originates from a
+    /// `napi_env` (`*mut NapiEnv`) passed in by C++ and reborrowed via
+    /// [`get_env!`] / `as_ref()`. The type carries an `UnsafeCell` marker so the
+    /// shared borrow does not impose a read-only restriction, and the underlying
+    /// allocation is owned and mutated by C++. This mirrors Zig's `*NapiEnv`
+    /// (single-pointer, freely aliased) semantics.
+    #[inline(always)]
+    pub fn as_mut_ptr(&self) -> *mut NapiEnv {
+        ptr::from_ref(self).cast_mut()
+    }
+
     pub fn to_js(&self) -> &JSGlobalObject {
         // SAFETY: NapiEnv__globalObject always returns a valid non-null pointer.
-        unsafe { &*NapiEnv__globalObject(self as *const _ as *mut _) }
+        unsafe { &*NapiEnv__globalObject(self.as_mut_ptr()) }
     }
 
     /// Convert err to an extern napi_status, and store the error code in env so that it can be
@@ -56,7 +69,7 @@ impl NapiEnv {
         // SAFETY: napi_set_last_error accepts null env.
         unsafe {
             napi_set_last_error(
-                self_.map(|s| s as *const _ as *mut _).unwrap_or(ptr::null_mut()),
+                self_.map(Self::as_mut_ptr).unwrap_or(ptr::null_mut()),
                 err,
             )
         }

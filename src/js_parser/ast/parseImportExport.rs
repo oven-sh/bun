@@ -280,7 +280,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         p.lexer.expect(T::TCloseBrace)?;
         Ok(ImportClause {
-            items: items.into_bump_slice(),
+            items: items.into_bump_slice_mut(),
             is_single_line,
             had_type_only_imports: if TYPESCRIPT {
                 had_type_only_imports

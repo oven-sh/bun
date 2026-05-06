@@ -1676,8 +1676,13 @@ impl FetchTasklet {
         task_ref.body_size = task_ref.result.body_size;
 
         let success = task_ref.result.is_success();
-        // TODO(port): Zig copied result.body.?.* (MutableString) by value; clone semantics needed
-        task_ref.response_buffer = task_ref.result.body.as_ref().unwrap().clone();
+        // PORT NOTE: Zig copied `result.body.?.*` (MutableString) by value — that's a shallow
+        // bitwise copy of the Vec header (ptr/len/cap), which Rust forbids (would alias the
+        // same allocation across two `Vec`s). The HTTP client side already points
+        // `result.body` at `task_ref.response_buffer` via the `*mut MutableString` passed to
+        // `AsyncHTTP::init`, so the data is already in place; just leave it.
+        // TODO(port): verify aliasing once AsyncHTTP::init is wired.
+        let _ = &task_ref.result.body;
 
         if task_ref.ignore_data {
             task_ref.response_buffer.reset();

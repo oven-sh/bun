@@ -119,16 +119,16 @@ impl AlgorithmValue {
 
                         if let Some(time_value) = value.get_truthy(global_object, "timeCost")? {
                             if !time_value.is_number() {
-                                return global_object
-                                    .throw_invalid_argument_type("hash", "timeCost", "number");
+                                return Err(global_object
+                                    .throw_invalid_argument_type("hash", "timeCost", "number"));
                             }
 
-                            let time_cost = time_value.coerce_i32(global_object)?;
+                            let time_cost = time_value.coerce_to_i32(global_object)?;
 
                             if time_cost < 1 {
-                                return global_object.throw_invalid_arguments(format_args!(
+                                return Err(global_object.throw_invalid_arguments(format_args!(
                                     "Time cost must be greater than 0"
-                                ));
+                                )));
                             }
 
                             argon.time_cost = u32::try_from(time_cost).unwrap();
@@ -138,19 +138,19 @@ impl AlgorithmValue {
                             value.get_truthy(global_object, "memoryCost")?
                         {
                             if !memory_value.is_number() {
-                                return global_object.throw_invalid_argument_type(
+                                return Err(global_object.throw_invalid_argument_type(
                                     "hash",
                                     "memoryCost",
                                     "number",
-                                );
+                                ));
                             }
 
-                            let memory_cost = memory_value.coerce_i32(global_object)?;
+                            let memory_cost = memory_value.coerce_to_i32(global_object)?;
 
                             if memory_cost < 1 {
-                                return global_object.throw_invalid_arguments(format_args!(
+                                return Err(global_object.throw_invalid_arguments(format_args!(
                                     "Memory cost must be greater than 0"
-                                ));
+                                )));
                             }
 
                             argon.memory_cost = u32::try_from(memory_cost).unwrap();

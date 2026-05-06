@@ -4124,6 +4124,8 @@ impl Blob {
                 if LIFETIME == Lifetime::Temporary {
                     unsafe { drop(Box::from_raw(raw_bytes)) };
                 }
+                // Ownership of the UTF-16 buffer transfers to JSC's external-string finalizer.
+                let external = Box::leak(external.into_boxed_slice());
                 return Ok(zig_string_to_external_u16(external.as_ptr(), external.len(), global));
             }
 
@@ -4240,18 +4242,21 @@ impl Blob {
         if bom == Some(strings::BOM::Utf16Le) {
             // SAFETY: BOM::Utf16Le ⇒ buf is UTF-16LE bytes; len is even after BOM strip.
             // Mirrors Zig `bun.reinterpretSlice(u16, buf)`.
-            let out = BunString::clone_utf16(unsafe {
+            let mut out = BunString::clone_utf16(unsafe {
                 core::slice::from_raw_parts(buf.as_ptr() as *const u16, buf.len() / 2)
             });
-            let _free = scopeguard::guard((), |_| {
-                if LIFETIME == Lifetime::Temporary {
-                    unsafe { drop(Box::from_raw(raw_bytes)) };
-                }
-                if LIFETIME == Lifetime::Transfer {
-                    self.detach();
-                }
-            });
-            return out.to_js_by_parse_json(global);
+            // PORT NOTE: Zig used `defer { free; detach }`. Reshaped to compute the
+            // result first, then perform the deferred work explicitly — capturing
+            // `&mut self` in a scopeguard closure conflicts with later uses below.
+            let result = out.to_js_by_parse_json(global);
+            if LIFETIME == Lifetime::Temporary {
+                // SAFETY: `Temporary` ⇒ caller passed a leaked `Box<[u8]>`.
+                unsafe { drop(Box::from_raw(raw_bytes)) };
+            }
+            if LIFETIME == Lifetime::Transfer {
+                self.detach();
+            }
+            return result;
         }
         // null == unknown
         // false == can't be
@@ -4293,21 +4298,15 @@ impl Blob {
             return ZigString::init(b"Invalid encoding").to_error_instance(global);
         };
 
-        // PORT NOTE: `get_form_data_encoding` returns `bun_core::form_data::Encoding`
-        // (tier-0 type); the JSC-touching `FormData::to_js` lives in
-        // `crate::webcore::form_data` and takes its own `Encoding`. Same shape —
-        // re-tag here. TODO(port): unify the two `Encoding` enums in Phase B.
-        let encoding = match encoder.encoding {
-            bun_core::form_data::Encoding::URLEncoded => crate::webcore::form_data::Encoding::URLEncoded,
-            bun_core::form_data::Encoding::Multipart(b) => crate::webcore::form_data::Encoding::Multipart(b),
-        };
+        // PORT NOTE: `crate::webcore::form_data::Encoding` re-exports
+        // `bun_core::form_data::Encoding` — same type, no re-tagging needed.
         // SAFETY: `buf` is valid for reads for the duration of this call (either a
         // leaked Box for `Temporary` or a store-backed view otherwise);
         // `FormData::to_js` only reads it.
-        match crate::webcore::form_data::FormData::to_js(global, unsafe { &*buf }, &encoding) {
+        match crate::webcore::form_data::FormData::to_js(global, unsafe { &*buf }, &encoder.encoding) {
             Ok(v) => v,
             Err(err) => global
-                .create_error_instance(format_args!("FormData encoding failed: {}", err.name())),
+                .create_error_instance(format_args!("FormData encoding failed: {err}")),
         }
     }
 
@@ -4485,10 +4484,12 @@ impl Blob {
 }
 
 // TODO(port): marker types for the comptime fn dispatch through do_read_file/do_read_from_s3.
-pub struct ToStringWithBytesFn;
-pub struct ToJsonWithBytesFn;
-pub struct ToArrayBufferWithBytesFn;
-pub struct ToFormDataWithBytesFn;
+// Currently unused — call sites are `todo!()` until the `Fn`-bound on
+// `do_read_file`/`do_read_from_s3` is reshaped to a trait dispatch.
+#[allow(dead_code)] pub struct ToStringWithBytesFn;
+#[allow(dead_code)] pub struct ToJsonWithBytesFn;
+#[allow(dead_code)] pub struct ToArrayBufferWithBytesFn;
+#[allow(dead_code)] pub struct ToFormDataWithBytesFn;
 
 // ──────────────────────────────────────────────────────────────────────────
 // get / fromJSMove / fromJSClone / fromJSWithoutDeferGC

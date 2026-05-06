@@ -1925,9 +1925,15 @@ impl DevServer<'_> {
     ) -> JsResult<FrameworkRequestArgs> {
         // SAFETY: vm is JSC_BORROW; vm.global is valid for VM lifetime
         let global = unsafe { &*(*self.vm).global };
-        let route_bundle = self.route_bundle_ptr(route_bundle_index);
-        let route_type_idx = self.router.route_ptr(framework_bundle.route_index).r#type;
-        let router_type = self.router.type_ptr(route_type_idx);
+        // PORT NOTE: this method reads/writes several disjoint `self` fields
+        // (`route_bundles[i]`, `router.{routes,types}`, `server_graph`,
+        // `client_graph`); Zig freely reborrowed the heap pointers. Erase to a
+        // raw `*mut Self` so each access can independently reborrow.
+        let self_ptr = self as *mut Self;
+        // SAFETY: each `&mut *self_ptr` below accesses a disjoint field.
+        let route_bundle = unsafe { &mut *self_ptr }.route_bundle_ptr(route_bundle_index);
+        let route_type_idx = unsafe { &*self_ptr }.router.route_ptr(framework_bundle.route_index).r#type;
+        let router_type = unsafe { &mut *self_ptr }.router.type_ptr(route_type_idx);
 
         Ok(FrameworkRequestArgs {
             // routerTypeMain

@@ -522,7 +522,7 @@ impl ByteStream {
 
         if let Some(blob_) = self.to_any_blob() {
             let mut blob = blob_;
-            return blob.to_promise(global_this, action);
+            return Ok(blob.to_promise(global_this, action)?);
         }
 
         self.buffer_action = Some(match action {

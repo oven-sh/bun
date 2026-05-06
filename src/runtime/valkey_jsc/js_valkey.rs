@@ -982,7 +982,7 @@ impl JSValkeyClient {
         this_value: JSValue,
     ) -> JsResult<JSValue> {
         self.ref_();
-        let _d = scopeguard::guard((), |_| self.deref());
+        let _d = deref_guard(self);
 
         // If already connected, resolve immediately
         if self.client.status == valkey::Status::Connected {

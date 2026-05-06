@@ -109,12 +109,13 @@ impl WatcherAtomics {
         // Initialize the timer if it is empty.
         if ev_ref.is_empty() {
             // PORT NOTE: Zig's `std.time.Timer.start()` records a monotonic start time;
-            // `HotReloadEvent.timer` is `MaybeUninit<std::time::Instant>`, so we capture
-            // `Instant::now()` here and compute elapsed at the read site.
-            ev_ref.timer = core::mem::MaybeUninit::new(std::time::Instant::now());
+            // we capture `Instant::now()` here and compute elapsed at the read site.
+            ev_ref.timer = std::time::Instant::now();
         }
 
-        ev_ref.owner.bun_watcher.thread_lock.assert_locked();
+        // SAFETY: `owner` is a BACKREF to the DevServer that owns the WatcherAtomics array
+        // containing this event; DevServer outlives all HotReloadEvents it holds.
+        unsafe { (*ev_ref.owner).bun_watcher.thread_lock.assert_locked() };
 
         #[cfg(debug_assertions)]
         debug_assert!(ev_ref.debug_mutex.try_lock());
@@ -131,7 +132,8 @@ impl WatcherAtomics {
         // the watcher thread has exclusive access until it is submitted below.
         let ev_ref = unsafe { &mut *ev };
 
-        ev_ref.owner.bun_watcher.thread_lock.assert_locked();
+        // SAFETY: `owner` is a BACKREF to the DevServer; valid for the event's lifetime.
+        unsafe { (*ev_ref.owner).bun_watcher.thread_lock.assert_locked() };
 
         #[cfg(debug_assertions)]
         {

@@ -14,9 +14,71 @@
 //!   - Nicknames: @yearly, @annually, @monthly, @weekly, @daily, @midnight, @hourly
 
 
-use bun_jsc::{JSGlobalObject, JsResult}; // TODO(b2-blocked): bun_jsc::JSGlobalObject::ms_to_gregorian_date_time_utc
+use bun_jsc::{JSGlobalObject, JsResult};
 use bun_str::strings;
 use phf::phf_map;
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Local shim: `gregorian_date_time_to_ms_utc` lives in the gated
+// `bun_jsc::JSGlobalObject.rs` draft (behind `#![cfg(any())]`), so mirror it
+// here as an extension trait until that file is enabled upstream.
+// Port of `JSGlobalObject.gregorianDateTimeToMSUTC` (JSGlobalObject.zig:30).
+// ──────────────────────────────────────────────────────────────────────────────
+extern "C" {
+    fn Bun__gregorianDateTimeToMS(
+        global: *const JSGlobalObject,
+        year: core::ffi::c_int,
+        month: core::ffi::c_int,
+        day: core::ffi::c_int,
+        hour: core::ffi::c_int,
+        minute: core::ffi::c_int,
+        second: core::ffi::c_int,
+        millisecond: core::ffi::c_int,
+        input_is_local: bool,
+    ) -> f64;
+}
+
+trait JSGlobalObjectCronExt {
+    fn gregorian_date_time_to_ms_utc(
+        &self,
+        year: i32,
+        month: i32,
+        day: i32,
+        hour: i32,
+        minute: i32,
+        second: i32,
+        millisecond: i32,
+    ) -> JsResult<f64>;
+}
+
+impl JSGlobalObjectCronExt for JSGlobalObject {
+    #[inline]
+    fn gregorian_date_time_to_ms_utc(
+        &self,
+        year: i32,
+        month: i32,
+        day: i32,
+        hour: i32,
+        minute: i32,
+        second: i32,
+        millisecond: i32,
+    ) -> JsResult<f64> {
+        // SAFETY: FFI — `self` is a valid JSGlobalObject*; all integer args by value.
+        Ok(unsafe {
+            Bun__gregorianDateTimeToMS(
+                self,
+                year as core::ffi::c_int,
+                month as core::ffi::c_int,
+                day as core::ffi::c_int,
+                hour as core::ffi::c_int,
+                minute as core::ffi::c_int,
+                second as core::ffi::c_int,
+                millisecond as core::ffi::c_int,
+                false,
+            )
+        })
+    }
+}
 
 #[derive(Clone, Copy)]
 pub struct CronExpression {

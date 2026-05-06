@@ -140,27 +140,20 @@ pub extern "C" fn Bun__NativePromiseContext__destroy(ctx: *mut c_void, tag: u8) 
 /// outside the sweep phase.
 ///
 /// Zero-allocation: the ctx pointer and our Tag are packed into the task's
-/// `_ptr` slot (pointer in high bits, tag in low 3 bits — the target types
+/// `ptr` slot (pointer in high bits, tag in low 3 bits — the target types
 /// are all >= 8-byte aligned). See PosixSignalTask for the same trick with
 /// signal numbers.
 ///
-/// Layout inside jsc.Task's packed u64 after set_uintptr:
+/// Layout of `Task.ptr` (read back as `usize` in dispatch):
 ///
-///     bits 63..49  bits 48..3           bits 2..0
-///     ┌──────────┬────────────────────┬─────────┐
-///     │ data=u15 │ ctx ptr (aligned)  │ our Tag │
-///     └──────────┴────────────────────┴─────────┘
-///          ▲              ▲                 ▲
-///          │              └─────────┬───────┘
-///      Task union           _ptr (u49) — set by set_uintptr
-///      discriminant
-///      (set by init,
-///       untouched)
+///     bits 63..3           bits 2..0
+///     ┌────────────────────┬─────────┐
+///     │ ctx ptr (aligned)  │ our Tag │
+///     └────────────────────┴─────────┘
 ///
-/// set_uintptr only writes _ptr; the Task discriminant in data that
-/// Task::init(&marker) stamped stays put. Truncating to u49 keeps the low
-/// bits, so both the ctx pointer (bits 3..48) and our Tag (bits 0..2)
-/// survive.
+/// Zig packed both into a 49-bit bitfield via `setUintptr`; the Rust `Task`
+/// stores `{ tag, ptr }` as separate fields, so the discriminant is carried
+/// in `Task.tag` and only the ctx|Tag packing remains in `Task.ptr`.
 pub struct DeferredDerefTask;
 
 impl Taskable for DeferredDerefTask {

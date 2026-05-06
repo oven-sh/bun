@@ -289,7 +289,7 @@ impl Entry {
     fn encode_source_map_path(
         side: Side,
         utf8_input: &[u8],
-        array_list: &mut bumpalo::collections::Vec<'_, u8>,
+        array_list: &mut Vec<u8>,
     ) -> Result<(), EncodeSourceMapPathError> {
         // On the client, percent encode everything so it works in the browser
         if side == Side::Client {
@@ -321,12 +321,12 @@ impl Entry {
         let _ = side;
         let map_files = self.files.slice();
 
-        let runtime: bake::HmrRuntime = match kind {
-            ChunkKind::InitialResponse => bake::get_hmr_runtime(Side::Client),
+        let runtime: bun_bundler::bake_types::HmrRuntime = match kind {
+            ChunkKind::InitialResponse => bun_bundler::bake_types::get_hmr_runtime(Side::Client),
             ChunkKind::HmrChunk => {
                 // PORT NOTE: Zig `comptime .init("...")` — HmrRuntime::init must be a const fn.
-                const HMR_CHUNK_RUNTIME: bake::HmrRuntime =
-                    bake::HmrRuntime::init(b"self[Symbol.for(\"bun:hmr\")]({\n");
+                const HMR_CHUNK_RUNTIME: bun_bundler::bake_types::HmrRuntime =
+                    bun_bundler::bake_types::HmrRuntime::init(b"self[Symbol.for(\"bun:hmr\")]({\n");
                 HMR_CHUNK_RUNTIME
             }
         };

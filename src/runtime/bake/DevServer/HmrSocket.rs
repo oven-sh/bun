@@ -5,6 +5,8 @@ use bun_core::{feature_flags, Output};
 use bun_str::strings;
 use bun_uws::{AnyWebSocket, Opcode};
 
+use crate::timer::EventLoopTimerState;
+
 use super::source_map_store::{self, SourceMapStore};
 use super::{
     ConsoleLogKind, DevServer, HmrTopic, IncomingMessageId, MessageId, RouteBundle,

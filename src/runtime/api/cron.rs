@@ -30,10 +30,13 @@ use bun_aio::{KeepAlive, Loop as AsyncLoop};
 use bun_core::env_var;
 use bun_io::BufferedReader as OutputReader;
 use bun_jsc::{
-    self as jsc, CallFrame, EventLoop, EventLoopHandle, JSFunction, JSGlobalObject, JSObject,
-    JSPromise, JSValue, JsRef, JsResult, VirtualMachine,
+    self as jsc, CallFrame, EventLoopHandle, JSFunction, JSGlobalObject, JSObject,
+    JSPromise, JSValue, JsRef, JsResult,
 };
+use bun_jsc::event_loop::EventLoop;
+use bun_jsc::virtual_machine::{VirtualMachine, HOT_RELOAD_HOT};
 use bun_paths::{self as path, PathBuffer};
+use bun_resolver::fs::{FileSystem, RealFS};
 // `Process`/`Rusage`/`SpawnOptions`/`Status`/`spawn_process` live in
 // `api::bun::process` (re-exported under `api::bun::spawn::posix_spawn`, but
 // not at the `spawn` module root). Alias `process` as `spawn` so the
@@ -300,8 +303,8 @@ impl CronRegisterJob {
     fn spawn_cmd(
         &mut self,
         argv: &mut [*const c_char],
-        stdin_opt: SpawnOptions::Stdio,
-        stdout_opt: SpawnOptions::Stdio,
+        stdin_opt: spawn::Stdio,
+        stdout_opt: spawn::Stdio,
     ) {
         spawn_cmd_generic(self, argv, stdin_opt, stdout_opt);
     }
@@ -318,7 +321,7 @@ impl CronRegisterJob {
         };
         let mut argv: [*const c_char; 3] =
             [crontab_path, b"-l\0".as_ptr().cast(), core::ptr::null()];
-        self.spawn_cmd(&mut argv, SpawnOptions::Stdio::Ignore, SpawnOptions::Stdio::Buffer);
+        self.spawn_cmd(&mut argv, spawn::Stdio::Ignore, spawn::Stdio::Buffer);
     }
 
     fn process_crontab_and_install(&mut self) {
@@ -386,7 +389,7 @@ impl CronRegisterJob {
             return Self::finish(self);
         };
         let mut argv: [*const c_char; 3] = [crontab_path, tmp_path_ptr.cast(), core::ptr::null()];
-        self.spawn_cmd(&mut argv, SpawnOptions::Stdio::Ignore, SpawnOptions::Stdio::Ignore);
+        self.spawn_cmd(&mut argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore);
     }
 
     // -- macOS --
@@ -524,7 +527,7 @@ impl CronRegisterJob {
             uid_str.as_ptr().cast(),
             core::ptr::null(),
         ];
-        self.spawn_cmd(&mut argv, SpawnOptions::Stdio::Ignore, SpawnOptions::Stdio::Ignore);
+        self.spawn_cmd(&mut argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore);
         drop(uid_str);
     }
 
@@ -549,7 +552,7 @@ impl CronRegisterJob {
             core::ptr::null(),
         ];
         // self.tmp_path already cleared via take() — don't delete the installed plist
-        self.spawn_cmd(&mut argv, SpawnOptions::Stdio::Ignore, SpawnOptions::Stdio::Ignore);
+        self.spawn_cmd(&mut argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore);
         drop(uid_str);
         drop(plist_path);
     }
@@ -763,7 +766,7 @@ impl CronRegisterJob {
             b"/f\0".as_ptr().cast(),
             core::ptr::null(),
         ];
-        self.spawn_cmd(&mut argv, SpawnOptions::Stdio::Ignore, SpawnOptions::Stdio::Ignore);
+        self.spawn_cmd(&mut argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore);
         drop(task_name);
     }
 }
@@ -958,8 +961,8 @@ impl CronRemoveJob {
     fn spawn_cmd(
         &mut self,
         argv: &mut [*const c_char],
-        stdin_opt: SpawnOptions::Stdio,
-        stdout_opt: SpawnOptions::Stdio,
+        stdin_opt: spawn::Stdio,
+        stdout_opt: spawn::Stdio,
     ) {
         spawn_cmd_generic(self, argv, stdin_opt, stdout_opt);
     }
@@ -974,7 +977,7 @@ impl CronRemoveJob {
         };
         let mut argv: [*const c_char; 3] =
             [crontab_path, b"-l\0".as_ptr().cast(), core::ptr::null()];
-        self.spawn_cmd(&mut argv, SpawnOptions::Stdio::Ignore, SpawnOptions::Stdio::Buffer);
+        self.spawn_cmd(&mut argv, spawn::Stdio::Ignore, spawn::Stdio::Buffer);
     }
 
     fn remove_crontab_entry(&mut self) {
@@ -1024,7 +1027,7 @@ impl CronRemoveJob {
             return Self::finish(self);
         };
         let mut argv: [*const c_char; 3] = [crontab_path, tmp_path_ptr.cast(), core::ptr::null()];
-        self.spawn_cmd(&mut argv, SpawnOptions::Stdio::Ignore, SpawnOptions::Stdio::Ignore);
+        self.spawn_cmd(&mut argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore);
     }
 
     fn start_mac(&mut self) {
@@ -1046,7 +1049,7 @@ impl CronRemoveJob {
             uid_str.as_ptr().cast(),
             core::ptr::null(),
         ];
-        self.spawn_cmd(&mut argv, SpawnOptions::Stdio::Ignore, SpawnOptions::Stdio::Ignore);
+        self.spawn_cmd(&mut argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore);
         drop(uid_str);
     }
 
@@ -1118,7 +1121,7 @@ impl CronRemoveJob {
             b"/f\0".as_ptr().cast(),
             core::ptr::null(),
         ];
-        self.spawn_cmd(&mut argv, SpawnOptions::Stdio::Ignore, SpawnOptions::Stdio::Ignore);
+        self.spawn_cmd(&mut argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore);
         drop(task_name);
     }
 }
@@ -1658,8 +1661,8 @@ impl SpawnCmdTarget for CronRemoveJob {
 fn spawn_cmd_generic<T: SpawnCmdTarget>(
     this: &mut T,
     argv: &mut [*const c_char],
-    stdin_opt: SpawnOptions::Stdio,
-    stdout_opt: SpawnOptions::Stdio,
+    stdin_opt: spawn::Stdio,
+    stdout_opt: spawn::Stdio,
 ) {
     *this.has_called_process_exit_mut() = false;
     *this.exit_status_mut() = None;
@@ -1702,9 +1705,9 @@ fn spawn_cmd_generic<T: SpawnCmdTarget>(
         stdin: stdin_opt,
         stdout: stdout_opt,
         #[cfg(windows)]
-        stderr: SpawnOptions::Stdio::Buffer(this.stderr_reader().source.as_ref().unwrap().pipe()),
+        stderr: spawn::Stdio::Buffer(this.stderr_reader().source.as_ref().unwrap().pipe()),
         #[cfg(not(windows))]
-        stderr: SpawnOptions::Stdio::Ignore,
+        stderr: spawn::Stdio::Ignore,
         cwd,
         argv0: resolved_argv0,
         #[cfg(windows)]

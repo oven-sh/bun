@@ -515,9 +515,9 @@ pub mod command {
             // if we are bunx, but NOT a symlink to bun. when we run `<self> install`, we dont
             // want to recursively run bunx. so this check lets us peek back into bun install.
             if let Some(next) = args_iter.next() {
-                if next == b"add" && bun_core::feature_flag::BUN_INTERNAL_BUNX_INSTALL::get() {
+                if next == b"add" && bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL::get() {
                     return Tag::AddCommand;
-                } else if next == b"exec" && bun_core::feature_flag::BUN_INTERNAL_BUNX_INSTALL::get() {
+                } else if next == b"exec" && bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL::get() {
                     return Tag::ExecCommand;
                 }
             }
@@ -528,7 +528,8 @@ pub mod command {
         }
 
         if is_node(argv0) {
-            bun_clap::streaming::set_warn_on_unrecognized_flag(false);
+            bun_clap::streaming::WARN_ON_UNRECOGNIZED_FLAG
+                .store(false, core::sync::atomic::Ordering::Relaxed);
             // SAFETY: single-threaded startup
             unsafe { PRETEND_TO_BE_NODE = true };
             return Tag::RunAsNodeCommand;
@@ -720,8 +721,8 @@ pub mod command {
         }
 
         // bun build --compile entry point
-        if !bun_core::feature_flag::BUN_BE_BUN::get() {
-            if let Some(graph) = bun_core::StandaloneModuleGraph::from_executable()? {
+        if !bun_core::env_var::feature_flag::BUN_BE_BUN::get() {
+            if let Some(graph) = bun_standalone_graph::Graph::from_executable()? {
                 let mut offset_for_passthrough: usize = 0;
 
                 let ctx: &mut ContextData = 'brk: {

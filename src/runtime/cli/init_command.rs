@@ -881,7 +881,7 @@ impl InitCommand {
                 }
 
                 if !fields.entry_point.is_empty() && !exists(&fields.entry_point) {
-                    if let Some(dirname) = bun_paths::dirname(&fields.entry_point) {
+                    if let Some(dirname) = bun_core::dirname(&fields.entry_point) {
                         if dirname != b"." {
                             let _ = bun_sys::make_path(Fd::cwd(), dirname);
                         }
@@ -900,7 +900,7 @@ impl InitCommand {
                 if steps.write_tsconfig {
                     'brk: {
                         let extname = bun_paths::extension(&fields.entry_point);
-                        let loader = options::default_loaders()
+                        let loader = options::DEFAULT_LOADERS
                             .get(extname)
                             .copied()
                             .unwrap_or(options::Loader::Ts);
@@ -962,16 +962,9 @@ impl InitCommand {
 
                 if exists_z(b"package.json") && need_run_bun_install {
                     Output::prettyln("", format_args!(""));
-                    // TODO(port): std.process.Child → bun_core::spawn_sync (no std::process)
+                    // Zig: std.process.Child .{stderr,stdin,stdout}=.Inherit → spawnAndWait
                     let self_exe = bun::self_exe_path()?;
-                    let _ = bun::spawn_sync(&bun::SpawnSyncOptions {
-                        argv: &[self_exe.as_slice(), b"install"],
-                        envp: None,
-                        stderr: bun::Stdio::Inherit,
-                        stdin: bun::Stdio::Inherit,
-                        stdout: bun::Stdio::Inherit,
-                        ..Default::default()
-                    })?;
+                    let _ = bun::spawn_sync_inherit(&[self_exe.as_bytes(), b"install"])?;
                 }
             }
             _ => {}
@@ -1430,7 +1423,7 @@ impl Template {
             return false;
         }
 
-        let pathbuffer = path_buffer_pool().get();
+        let mut pathbuffer = path_buffer_pool::get();
 
         let Some(path) = env_var::PATH.get() else {
             return false;
@@ -1447,7 +1440,7 @@ impl Template {
     pub fn create_agent_rule() {
         let mut create_claude_md = Self::is_claude_code_installed()
             // Never overwrite CLAUDE.md
-            && !bun_sys::exists(b"CLAUDE.md");
+            && !exists(b"CLAUDE.md");
 
         if let Some(template_file) = Self::get_cursor_rule() {
             let mut did_create_agent_rule = false;
@@ -1649,16 +1642,11 @@ impl Template {
         Output::pretty("\n", format_args!(""));
         Output::flush();
 
-        // TODO(port): std.process.Child → bun_core::spawn_sync (no std::process)
+        // Zig: std.process.Child stdin=.Ignore stdout/stderr=.Inherit → spawnAndWait
+        // TODO(port): spawn_sync_inherit inherits stdin too; full bun.spawnSync
+        // (with Ignore stdin) lives in bun_runtime::api::process::sync.
         let self_exe = bun::self_exe_path()?;
-        let _ = bun::spawn_sync(&bun::SpawnSyncOptions {
-            argv: &[self_exe.as_slice(), b"install"],
-            envp: None,
-            stderr: bun::Stdio::Inherit,
-            stdin: bun::Stdio::Ignore,
-            stdout: bun::Stdio::Inherit,
-            ..Default::default()
-        })?;
+        let _ = bun::spawn_sync_inherit(&[self_exe.as_bytes(), b"install"])?;
 
         Output::prettyln(
             "\n\
@@ -1757,7 +1745,7 @@ static REACT_SHADCN_FILES: &[TemplateFile] = &[
 // ──────────────────────────────────────────────────────────────────────────
 
 #[inline]
-fn exists(path: &[u8]) -> bool {
+pub(crate) fn exists(path: &[u8]) -> bool {
     bun_sys::exists(path)
 }
 

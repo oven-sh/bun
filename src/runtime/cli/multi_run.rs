@@ -806,7 +806,7 @@ pub fn run(ctx: &mut Command::Context) -> Result<core::convert::Infallible, Erro
 
         while let Some(package_json_path) = package_json_iter.next()? {
             let dirpath: Box<[u8]> = Box::from(
-                path::dirname(package_json_path).unwrap_or_else(|| Global::crash()),
+                bun_core::dirname(package_json_path).unwrap_or_else(|| Global::crash()),
             );
             let pkg_path = strings::without_trailing_slash(&dirpath);
 
@@ -815,14 +815,12 @@ pub fn run(ctx: &mut Command::Context) -> Result<core::convert::Infallible, Erro
                 continue;
             }
 
-            // TODO(port): bun.PackageJSON.parse signature & enum args (.invalid, .include_scripts, .main)
-            let Some(pkgjson) = bun_resolver::PackageJSON::parse(
+            let Some(pkgjson) = bun_resolver::PackageJSON::parse::<{ IncludeDependencies::Main }>(
                 &mut this_transpiler.resolver,
                 &dirpath,
-                bun_resolver::HashKind::Invalid,
+                bun_sys::Fd::invalid(),
                 None,
-                bun_resolver::ScriptsOption::IncludeScripts,
-                bun_resolver::MainField::Main,
+                IncludeScripts::IncludeScripts,
             ) else {
                 continue;
             };
@@ -846,12 +844,10 @@ pub fn run(ctx: &mut Command::Context) -> Result<core::convert::Infallible, Erro
                 Box::from(pkgjson.name)
             } else {
                 // Fallback: use relative path from workspace root
-                Box::from(path::relative_platform(
-                    resolve_root,
-                    pkg_path,
-                    path::Platform::Posix,
+                Box::from(bun_paths::resolve_path::relative_platform::<
+                    bun_paths::platform::Posix,
                     false,
-                ))
+                >(resolve_root, pkg_path))
             };
 
             matched_packages.push(MatchedPackage {
@@ -1155,7 +1151,7 @@ pub fn run(ctx: &mut Command::Context) -> Result<core::convert::Infallible, Erro
 
 fn has_runnable_extension(name: &[u8]) -> bool {
     let ext = path::extension(name);
-    let Some(loader) = bun_bundler::options::default_loaders().get(ext) else {
+    let Some(loader) = bun_bundler::options::DEFAULT_LOADERS.get(ext) else {
         return false;
     };
     loader.can_be_run_by_bun()

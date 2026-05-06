@@ -5,9 +5,10 @@ use bun_core::fmt::Table;
 use bun_core::{Global, Output};
 use bun_resolver::fs::FileSystem;
 use bun_glob as glob;
-use bun_install::dependency::Behavior;
-use bun_install::package_manager_real::WorkspaceFilter;
-use bun_install::{invalid_package_id, DependencyID, PackageID, PackageManager};
+use bun_install::dependency::{self, Behavior};
+use bun_install::package_manager::{self, WorkspaceFilter};
+use bun_install::package_manifest_map::CacheBehavior;
+use bun_install::{invalid_package_id, resolution, DependencyID, PackageID, PackageManager};
 use bun_paths::{self as path, PathBuffer};
 use bun_str::strings;
 use bun_wyhash::hash;
@@ -69,13 +70,13 @@ impl OutdatedCommand {
 
         manager.lockfile = match load_lockfile_result {
             bun_install::LoadResult::NotFound => {
-                if manager.options.log_level != bun_install::LogLevel::Silent {
+                if manager.options.log_level != package_manager::Options::LogLevel::Silent {
                     Output::err_generic(format_args!("missing lockfile, nothing outdated"));
                 }
                 Global::crash();
             }
             bun_install::LoadResult::Err(cause) => {
-                if manager.options.log_level != bun_install::LogLevel::Silent {
+                if manager.options.log_level != package_manager::Options::LogLevel::Silent {
                     match cause.step {
                         bun_install::LoadStep::OpenFile => Output::err_generic(format_args!(
                             "failed to open lockfile: {}",
@@ -124,13 +125,13 @@ impl OutdatedCommand {
                 Self::find_matching_workspaces(original_cwd, manager, filters)?;
             // defer bun.default_allocator.free(workspace_pkg_ids) — Drop frees Box<[PackageID]>
 
-            manager.populate_manifest_cache(bun_install::ManifestCacheRequest::Ids(&workspace_pkg_ids))?;
+            manager.populate_manifest_cache(package_manager::populate_manifest_cache::Packages::Ids(&workspace_pkg_ids))?;
             Self::print_outdated_info_table::<ENABLE_ANSI_COLORS>(manager, &workspace_pkg_ids, true)?;
         } else if manager.options.do_.recursive {
             let all_workspaces = Self::get_all_workspaces(manager)?;
             // defer bun.default_allocator.free(all_workspaces) — Drop frees Box<[PackageID]>
 
-            manager.populate_manifest_cache(bun_install::ManifestCacheRequest::Ids(&all_workspaces))?;
+            manager.populate_manifest_cache(package_manager::populate_manifest_cache::Packages::Ids(&all_workspaces))?;
             Self::print_outdated_info_table::<ENABLE_ANSI_COLORS>(manager, &all_workspaces, true)?;
         } else {
             let root_pkg_id = manager
@@ -140,7 +141,7 @@ impl OutdatedCommand {
                 return Ok(());
             }
 
-            manager.populate_manifest_cache(bun_install::ManifestCacheRequest::Ids(&[root_pkg_id]))?;
+            manager.populate_manifest_cache(package_manager::populate_manifest_cache::Packages::Ids(&[root_pkg_id]))?;
             Self::print_outdated_info_table::<ENABLE_ANSI_COLORS>(manager, &[root_pkg_id], false)?;
         }
         Ok(())

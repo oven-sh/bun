@@ -5,6 +5,7 @@
 // - We should not be creating JSFunction's in process.nextTick.
 
 use bun_collections::ArrayHashMap;
+use bun_jsc::ipc::{IsInternal, SerializeAndSendResult};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, Strong, Subprocess};
 use bun_str::{String as BunString, ZigString};
 

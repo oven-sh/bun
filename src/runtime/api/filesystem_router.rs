@@ -136,11 +136,10 @@ impl FileSystemRouter {
                 } else {
                     let parts: [&[u8]; 1] = [path_];
                     root_dir_path = ZigStringSlice::from_utf8_never_free(
-                        path::join_abs_string_buf(
+                        path::resolve_path::join_abs_string_buf::<path::platform::Auto>(
                             Fs::FileSystem::instance().top_level_dir,
                             &mut out_buf,
                             &parts,
-                            path::Platform::Auto,
                         ),
                     );
                 }
@@ -220,14 +219,14 @@ impl FileSystemRouter {
         let mut router = Router::Router::init(
             vm.transpiler.fs,
             &allocator,
-            Router::Config {
-                dir: path_to_use,
+            RouteConfig {
+                dir: Box::from(path_to_use),
                 extensions: if !extensions.is_empty() {
-                    extensions.as_slice()
+                    extensions.iter().map(|s| Box::<[u8]>::from(*s)).collect()
                 } else {
-                    DEFAULT_EXTENSIONS
+                    DEFAULT_EXTENSIONS.iter().map(|s| Box::<[u8]>::from(*s)).collect()
                 },
-                asset_prefix_path: asset_prefix_slice.slice(),
+                asset_prefix_path: Box::from(asset_prefix_slice.slice()),
                 ..Default::default()
             },
         )
@@ -391,10 +390,10 @@ impl FileSystemRouter {
         let mut router = Router::Router::init(
             vm.transpiler.fs,
             &allocator,
-            Router::Config {
-                dir: allocator.dupe(this.router.config.dir),
-                extensions: allocator.dupe_slice(this.router.config.extensions),
-                asset_prefix_path: this.router.config.asset_prefix_path,
+            RouteConfig {
+                dir: this.router.config.dir.clone(),
+                extensions: this.router.config.extensions.clone(),
+                asset_prefix_path: this.router.config.asset_prefix_path.clone(),
                 ..Default::default()
             },
         )

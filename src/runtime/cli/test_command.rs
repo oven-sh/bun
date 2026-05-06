@@ -22,6 +22,9 @@ use bun_str::immutable::paths::without_leading_path_separator;
 use bun_sys::{self, Fd, File};
 use bun_uws as uws;
 
+// Debug log scope for test-runner entrypoint loading (Zig: bun.jsc.Jest.bun_test.debug.group).
+bun_output::declare_scope!(bun_test, hidden);
+
 // ─── coverage façade ────────────────────────────────────────────────────────
 // Thin adapter over `bun_sourcemap_jsc::code_coverage` that preserves the
 // Zig-shaped call paths used in `print_code_coverage` below
@@ -2473,8 +2476,8 @@ impl TestCommand {
 
             reporter.jest.current_file.set(file_title, file_prefix, repeat_count, repeat_index, reporter);
 
-            bun_output::scoped_log!(bun_test_debug_group, "loadEntryPointForTestRunner(\"{}\")", bstr::BStr::new(file_path));
-            // TODO(port): bun.jsc.Jest.bun_test.debug.group.log — declare_scope! in Phase B
+            bun_output::scoped_log!(bun_test, "loadEntryPointForTestRunner(\"{}\")", bstr::BStr::new(file_path));
+            // PORT NOTE: bun.jsc.Jest.bun_test.debug.group.log → local declare_scope!(bun_test).
 
             // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
             vm.wakeup();
@@ -2485,7 +2488,7 @@ impl TestCommand {
             }
 
             match promise.status() {
-                jsc::PromiseStatus::Rejected => {
+                jsc::js_promise::Status::Rejected => {
                     vm.unhandled_rejection(vm.global, promise.result(vm.global.vm()), promise.to_js());
                     reporter.summary().fail += 1;
 

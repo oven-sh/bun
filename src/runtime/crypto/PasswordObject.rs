@@ -5,9 +5,14 @@ use std::io::Write as _;
 use bun_aio::KeepAlive;
 use bun_core::Error;
 use bun_jsc::{
-    self as jsc, AnyTask, CallFrame, ConcurrentTask, EventLoop, JSFunction, JSGlobalObject,
-    JSValue, JsError, JsResult, WorkPoolTask, ZigString,
+    self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsError, JsResult, WorkPoolTask,
+    ZigString,
 };
+// `bun_jsc::{AnyTask, ConcurrentTask, EventLoop}` are *modules* (re-exported from
+// `bun_event_loop`); pull the concrete types out by name.
+use bun_jsc::event_loop::EventLoop;
+use bun_jsc::AnyTask::{AnyTask, JsResult as AnyTaskJsResult};
+use bun_jsc::ConcurrentTask::ConcurrentTask;
 use bun_jsc::{JSPromise, JSPromiseStrong};
 use bun_str::strings;
 use bun_threading::thread_pool::Task as ThreadPoolTask;

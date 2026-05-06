@@ -1577,13 +1577,10 @@ fn any_socket_set_timeout(s: &Socket, seconds: core::ffi::c_uint) {
     }
 }
 
-// TODO(port): QueryResult struct shape — defined inline at call site in Zig; confirm canonical type in Phase B
-pub struct QueryResult {
-    pub result_count: u64,
-    pub last_insert_id: u64,
-    pub affected_rows: u64,
-    pub is_last_result: bool,
-}
+// Canonical type lives in `bun_sql::mysql`; re-export so this module's
+// struct-literal call sites (`QueryResult { .. }`) flow into
+// `JSMySQLConnection::on_query_result(MySQLQueryResult)` without conversion.
+pub use bun_sql::mysql::MySQLQueryResult as QueryResult;
 
 // TODO(port): IdentityContext(u64) hasher — bun_collections::HashMap should support identity hash for u64 keys
 pub type PreparedStatementsMap = HashMap<u64, *mut MySQLStatement>;

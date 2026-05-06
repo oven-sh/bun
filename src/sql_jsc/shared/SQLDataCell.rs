@@ -283,12 +283,15 @@ impl SQLDataCell {
         count: u32,
         flags: Flags,
         result_mode: u8,
-        // Zig: `?[*]ExternColumnIdentifier` — nullable many-pointer maps to a
-        // raw `*mut` (null == None) for FFI; callers pass `ptr::null_mut()`
-        // for the absent case.
-        names_ptr: *mut ExternColumnIdentifier,
+        // Zig: `?[*]ExternColumnIdentifier` — nullable many-pointer. Accepts
+        // both a raw `*mut` (null == None) and an explicit `Option<*mut _>` so
+        // callers can mirror the Zig optional directly; collapsed to a raw
+        // pointer for the FFI call below.
+        names_ptr: impl Into<Option<*mut ExternColumnIdentifier>>,
         names_count: u32,
     ) -> JsResult<JSValue> {
+        let names_ptr: *mut ExternColumnIdentifier =
+            names_ptr.into().unwrap_or(ptr::null_mut());
         // TODO(port): bun.Environment.ci_assert — when set, wrap this call in
         // `ExceptionValidationScope` and `assert_exception_presence_matches`.
         // TODO(b2-blocked): bun_jsc::ExceptionValidationScope (ci_assert path)

@@ -880,17 +880,17 @@ impl JSMySQLConnection {
     ) -> Result<(), OnResultRowError> {
         let result_mode = request.get_result_mode();
         let mut structure: JSValue = JSValue::UNDEFINED;
-        // PORT NOTE: hoisted above `row` — `MySQLStatement::structure` takes
-        // `&mut self`, which would conflict with `row.columns: &statement.columns`.
-        let cached_structure: Option<&CachedStructure> = match result_mode {
-            ResultMode::Objects => {
-                let cs = self
-                    .js_value
-                    .try_get()
-                    .map(|value| &*statement.structure(value, self.global_object));
-                structure = cs.unwrap().js_value().unwrap_or(JSValue::UNDEFINED);
-                cs
-            }
+        // PORT NOTE: `MySQLStatement::structure(&mut self) -> &CachedStructure`
+        // would keep `*statement` exclusively borrowed for the lifetime of the
+        // returned ref, blocking the `&statement.columns` / `fields_flags` reads
+        // below. Stash a raw ptr (Zig holds it by value) and re-borrow at the
+        // `to_js` call site.
+        let cached_structure_ptr: Option<*const CachedStructure> = match result_mode {
+            ResultMode::Objects => self.js_value.try_get().map(|value| {
+                let cs = statement.structure(value, self.global_object);
+                structure = cs.js_value().unwrap_or(JSValue::UNDEFINED);
+                cs as *const CachedStructure
+            }),
             // no need to check for duplicate fields or structure
             ResultMode::Raw | ResultMode::Values => None,
         };
@@ -914,6 +914,9 @@ impl JSMySQLConnection {
             return Ok(());
         }
         let pending_value = request.get_pending_value().unwrap_or(JSValue::UNDEFINED);
+        // SAFETY: points into `*statement.cached_structure`; `statement` is live
+        // and not mutably borrowed for the duration of this `to_js` call.
+        let cached_structure = cached_structure_ptr.map(|p| unsafe { &*p });
         // Process row data
         let row_value = row
             .to_js(

@@ -889,44 +889,54 @@ enum WriteOutcome {
 
 #[cfg(not(windows))]
 impl bun_io::pipe_writer::PosixBufferedWriterParent for IOWriter {
-    fn on_write(&mut self, amount: usize, status: bun_io::WriteStatus) {
-        // PORT NOTE: re-enter via `&self` so the UnsafeCell aliasing model
-        // applies (the trait gives us `&mut self`, but child callbacks may
-        // re-enter `enqueue(&self)`).
-        (*self).on_write_pollable(amount, status);
+    fn on_write(this: *mut Self, amount: usize, status: bun_io::WriteStatus) {
+        // SAFETY: `this` is the BACKREF set via set_parent; the BufferedWriter
+        // holds `&mut writer` (a field of `*this`) but never materializes
+        // `&mut IOWriter`, so we re-enter via `&self` (UnsafeCell aliasing
+        // model — child callbacks may re-enter `enqueue(&self)`).
+        unsafe { (*this).on_write_pollable(amount, status) };
     }
-    fn on_error(&mut self, err: sys::Error) {
-        (*self).on_error(err);
+    fn on_error(this: *mut Self, err: sys::Error) {
+        // SAFETY: see on_write.
+        unsafe { (*this).on_error(err) };
     }
     const HAS_ON_CLOSE: bool = true;
-    fn on_close(&mut self) {
-        (*self).on_close();
+    fn on_close(this: *mut Self) {
+        // SAFETY: see on_write.
+        unsafe { (*this).on_close() };
     }
-    fn get_buffer(&self) -> &[u8] {
-        self.get_buffer()
+    fn get_buffer<'a>(this: *mut Self) -> &'a [u8] {
+        // SAFETY: see on_write. Shared-only borrow of the buffer storage.
+        unsafe { (*this).get_buffer() }
     }
     const HAS_ON_WRITABLE: bool = false;
-    fn event_loop(&self) -> bun_io::EventLoopHandle {
-        self.io_evtloop()
+    fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
+        // SAFETY: see on_write.
+        unsafe { (*this).io_evtloop() }
     }
 }
 
 #[cfg(windows)]
 impl bun_io::pipe_writer::WindowsBufferedWriterParent for IOWriter {
-    fn on_write(&mut self, amount: usize, status: bun_io::WriteStatus) {
-        (*self).on_write_pollable(amount, status);
+    fn on_write(this: *mut Self, amount: usize, status: bun_io::WriteStatus) {
+        // SAFETY: BACKREF set via set_parent; re-enter via `&self` (UnsafeCell model).
+        unsafe { (*this).on_write_pollable(amount, status) };
     }
-    fn on_error(&mut self, err: sys::Error) {
-        (*self).on_error(err);
+    fn on_error(this: *mut Self, err: sys::Error) {
+        // SAFETY: see on_write.
+        unsafe { (*this).on_error(err) };
     }
-    fn on_close(&mut self) {
-        (*self).on_close();
+    fn on_close(this: *mut Self) {
+        // SAFETY: see on_write.
+        unsafe { (*this).on_close() };
     }
-    fn get_buffer(&self) -> &[u8] {
-        self.get_buffer()
+    fn get_buffer<'a>(this: *mut Self) -> &'a [u8] {
+        // SAFETY: see on_write.
+        unsafe { (*this).get_buffer() }
     }
-    fn event_loop(&self) -> bun_io::EventLoopHandle {
-        self.io_evtloop()
+    fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
+        // SAFETY: see on_write.
+        unsafe { (*this).io_evtloop() }
     }
 }
 

@@ -206,6 +206,9 @@ impl<'a> Transpiler<'a> {
 
                     // Spec: `bun.pathLiteral("..")` — `".."` is sep-agnostic.
                     let parts: [&[u8]; 2] = [entry_point, b".."];
+                    // SAFETY: `self.fs` points at the process-lifetime
+                    // `Fs::FileSystem` singleton; never null after
+                    // `Transpiler::init` (see field PORT NOTE).
                     let top_level_dir = unsafe { (*self.fs).top_level_dir };
 
                     let buster_name = bun_paths::resolve_path::join_abs_string_buf_z::<
@@ -1426,12 +1429,19 @@ impl<'a> Transpiler<'a> {
                 opts.features.no_macros = self.options.no_macros;
                 // B-3 UNIFIED: `crate::cache::RuntimeTranspilerCache` IS
                 // `bun_js_parser::RuntimeTranspilerCache`; thread the pointer
-                // directly. Reborrow (`.as_deref_mut()`) so `this_parse`
-                // retains ownership for the `rtc_ptr` capture below.
-                opts.features.runtime_transpiler_cache = this_parse
-                    .runtime_transpiler_cache
-                    .as_deref_mut()
-                    .map(|r| r as *mut RuntimeTranspilerCache);
+                // directly. Spec transpiler.zig:899/957 copies the same
+                // `?*RuntimeTranspilerCache` raw pointer to BOTH
+                // `opts.features` and the returned `ParseResult`. Derive both
+                // from a single reborrow so they share one provenance tag —
+                // re-touching the parent `&mut` after the `*mut` cast would
+                // pop the raw pointer off the borrow stack (Stacked Borrows).
+                let rtc_ptr: Option<core::ptr::NonNull<RuntimeTranspilerCache>> =
+                    this_parse
+                        .runtime_transpiler_cache
+                        .as_deref_mut()
+                        .map(core::ptr::NonNull::from);
+                opts.features.runtime_transpiler_cache =
+                    rtc_ptr.map(core::ptr::NonNull::as_ptr);
 
                 // @bun annotation
                 opts.features.dont_bundle_twice = this_parse.dont_bundle_twice;
@@ -1497,13 +1507,6 @@ impl<'a> Transpiler<'a> {
                         this_parse.macro_js_ctx;
                 }
                 opts.macro_context = self.macro_context.as_mut();
-
-                // Capture the cache pointer for the returned `ParseResult`
-                // before `this_parse` is otherwise consumed.
-                let rtc_ptr: Option<core::ptr::NonNull<RuntimeTranspilerCache>> =
-                    this_parse
-                        .runtime_transpiler_cache
-                        .map(core::ptr::NonNull::from);
 
                 // B-3 UNIFIED: `crate::defines::Define` IS
                 // `bun_js_parser::defines::Define`. Hand the parser the real

@@ -307,7 +307,8 @@ impl<Parent: PosixBufferedWriterParent> PosixPipeWriter for PosixBufferedWriter<
     }
     fn get_buffer(&self) -> &[u8] {
         // SAFETY: parent is BACKREF set via set_parent; valid while writer alive.
-        unsafe { (*self.parent).get_buffer() }
+        // Raw-ptr dispatch — no `&Parent` materialized.
+        unsafe { Parent::get_buffer(self.parent) }
     }
     fn on_write(&mut self, written: usize, status: WriteStatus) {
         self._on_write(written, status);
@@ -1907,7 +1908,8 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
                 self.write_buffer = uv::uv_buf_t::init(bytes);
 
                 if let Some(err) = uv::uv_fs_write(
-                    self.parent().loop_(),
+                    // SAFETY: parent BACKREF valid.
+                    unsafe { Parent::loop_(self.parent()) },
                     &mut file.fs,
                     file.file,
                     &self.write_buffer as *const _,
@@ -1919,7 +1921,8 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
                 {
                     file.complete(false);
                     self.last_write_result = WriteResult::Err(err);
-                    self.parent().on_error(err);
+                    // SAFETY: parent BACKREF valid.
+                    unsafe { Parent::on_error(self.parent(), err) };
                     self.close_without_reporting();
                     return;
                 }
@@ -1933,7 +1936,8 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
                     .as_err()
                 {
                     self.last_write_result = WriteResult::Err(err);
-                    self.parent().on_error(err);
+                    // SAFETY: parent BACKREF valid.
+                    unsafe { Parent::on_error(self.parent(), err) };
                     self.close_without_reporting();
                     return;
                 }
@@ -1943,7 +1947,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         // write is in flight. The matching deref is in on_write_complete
         // or on_fs_write_complete.
         // SAFETY: parent is BACKREF set via set_parent; valid while writer alive.
-        unsafe { (*self.parent).ref_() };
+        unsafe { Parent::ref_(self.parent()) };
         self.last_write_result = WriteResult::Pending(0);
     }
 

@@ -242,8 +242,10 @@ impl FileSystemRouter {
         };
 
         let mut router = Router::Router::init(
-            // SAFETY: `vm.transpiler.fs` is the process-global FileSystem singleton.
-            unsafe { &*vm.transpiler.fs },
+            // PORT NOTE: `vm.transpiler.fs` is the concrete `bun_resolver::fs::FileSystem`;
+            // `bun_router` takes the opaque `bun_sys::fs::FileSystem` handle (same singleton,
+            // erased via the cyclebreak vtable).
+            bun_sys::fs::FileSystem::instance(),
             RouteConfig {
                 dir: Box::from(&path_to_use[..]),
                 extensions: if !extensions.is_empty() {

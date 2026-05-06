@@ -1931,7 +1931,92 @@ impl IPCInstance {
         // `SendQueue` cleans itself up via `Drop`.
         drop(unsafe { Box::from_raw(this) });
     }
+
+    /// Spec VirtualMachine.zig:3940 `IPCInstance.handleIPCMessage`.
+    pub fn handle_ipc_message(
+        &mut self,
+        message: crate::ipc::DecodedIPCMessage,
+        handle: JSValue,
+    ) {
+        crate::mark_binding!();
+        let global_this = self.global_this;
+        // SAFETY: VM singleton + its event loop are process-lifetime.
+        let event_loop = unsafe { &mut *(*VirtualMachine::get()).event_loop() };
+
+        match message {
+            // In future versions we can read this in order to detect version mismatches,
+            // or disable future optimizations if the subprocess is old.
+            crate::ipc::DecodedIPCMessage::Version(v) => {
+                bun_core::scoped_log!(IPC, "Parent IPC version is {}", v);
+            }
+            crate::ipc::DecodedIPCMessage::Data(data) => {
+                bun_core::scoped_log!(IPC, "Received IPC message from parent");
+                event_loop.enter();
+                // SAFETY: extern "C" FFI; `global_this` is the live VM global.
+                unsafe { Process__emitMessageEvent(global_this, data, handle) };
+                event_loop.exit();
+            }
+            crate::ipc::DecodedIPCMessage::Internal(data) => {
+                bun_core::scoped_log!(IPC, "Received IPC internal message from parent");
+                event_loop.enter();
+                if let Some(hooks) = runtime_hooks() {
+                    // SAFETY: hook fn is supplied by `bun_runtime` at startup;
+                    // `global_this` is the live VM global.
+                    unsafe { (hooks.handle_ipc_internal_child)(global_this, data) };
+                }
+                event_loop.exit();
+            }
+        }
+    }
+
+    /// Spec VirtualMachine.zig:3966 `IPCInstance.handleIPCClose`.
+    pub fn handle_ipc_close(&mut self) {
+        bun_core::scoped_log!(IPC, "IPCInstance#handleIPCClose");
+        // SAFETY: VM singleton is process-lifetime.
+        let vm = unsafe { &mut *VirtualMachine::get() };
+        // SAFETY: event loop is process-lifetime.
+        let event_loop = unsafe { &mut *vm.event_loop() };
+        if let Some(hooks) = runtime_hooks() {
+            // SAFETY: hook fn is supplied by `bun_runtime` at startup.
+            unsafe { (hooks.ipc_child_singleton_deinit)() };
+        }
+        event_loop.enter();
+        // SAFETY: extern "C" FFI; `vm.global` is the live VM global.
+        unsafe { Process__emitDisconnectEvent(vm.global) };
+        event_loop.exit();
+        // Group is embedded in RareData and shared with subprocess IPC; nothing
+        // to free here.
+        vm.channel_ref.disable();
+    }
 }
+
+unsafe extern "C" {
+    fn Process__emitMessageEvent(global: *mut JSGlobalObject, value: JSValue, handle: JSValue);
+    fn Process__emitDisconnectEvent(global: *mut JSGlobalObject);
+}
+
+/// `IPC.SendQueue` owner dispatch for the child-side `IPCInstance`. Mirrors
+/// `SUBPROCESS_IPC_OWNER_VTABLE` in `bun_runtime`; lives here because
+/// `IPCInstance` itself is defined in this crate.
+pub static IPCINSTANCE_OWNER_VTABLE: crate::ipc::SendQueueOwnerVTable =
+    crate::ipc::SendQueueOwnerVTable {
+        global_this: |ptr| {
+            // SAFETY: `ptr` was set from a live `*mut IPCInstance` in
+            // `get_ipc_instance` below; the SendQueue is stored inline in
+            // `IPCInstance.data` and dropped before the IPCInstance is freed.
+            unsafe { (*ptr.cast::<IPCInstance>()).global_this }
+        },
+        handle_ipc_close: |ptr| {
+            // SAFETY: see `global_this`.
+            unsafe { (*ptr.cast::<IPCInstance>()).handle_ipc_close() }
+        },
+        handle_ipc_message: |ptr, msg, handle| {
+            // SAFETY: see `global_this`.
+            unsafe { (*ptr.cast::<IPCInstance>()).handle_ipc_message(msg, handle) }
+        },
+        // VM-side owner has no JS-visible `this` (Zig: `.null` arm).
+        this_jsvalue: |_| JSValue::ZERO,
+    };
 
 /// Spec VirtualMachine.zig:1708 `ResolveFunctionResult`.
 #[derive(Default)]

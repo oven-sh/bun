@@ -1123,6 +1123,23 @@ impl AnyPromise {
         }
     }
     /// `AnyPromise.unwrap` (AnyPromise.zig:14).
+    /// `AnyPromise.resolve` (AnyPromise.zig:50).
+    #[inline] pub fn resolve(self, global: &JSGlobalObject, value: JSValue) -> Result<(), JsTerminated> {
+        // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
+        match self {
+            Self::Normal(p) => unsafe { (*p).resolve(global, value) },
+            Self::Internal(p) => unsafe { (*p).resolve(global, value) },
+        }
+    }
+    /// `AnyPromise.reject` (AnyPromise.zig:56). Zig: `JSValue` coerces to
+    /// `JSError!JSValue` implicitly; map that with `Ok(value)`.
+    #[inline] pub fn reject(self, global: &JSGlobalObject, value: JSValue) -> Result<(), JsTerminated> {
+        // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
+        match self {
+            Self::Normal(p) => unsafe { (*p).reject(global, Ok(value)) },
+            Self::Internal(p) => unsafe { (*p).reject(global, Ok(value)) },
+        }
+    }
     #[inline] pub fn unwrap(self, vm: &VM, mode: PromiseUnwrapMode) -> PromiseResult {
         // SAFETY: variants hold a live JSC heap cell; `vm` is the owning VM.
         // `JSPromise::unwrap` takes `&VM` (interior-mutable opaque handle) — no

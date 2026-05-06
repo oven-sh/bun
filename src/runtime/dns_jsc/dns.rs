@@ -1094,10 +1094,9 @@ pub struct GetAddrInfoRequest {
 pub mod get_addr_info_request {
     use super::*;
 
-    // TODO(port): WorkTask is currently an opaque stub in `bun_jsc`; restore the
-    // generic `WorkTask<GetAddrInfoRequest>` parameter once the real type is
-    // un-gated.
-    pub type Task = jsc::WorkTask;
+    /// `bun.jsc.WorkTask(GetAddrInfoRequest)` — runs blocking `getaddrinfo`
+    /// on the work pool, then re-enters the JS thread via `then`.
+    pub type Task = jsc::work_task::WorkTask<super::GetAddrInfoRequest>;
 
     pub struct PendingCacheKey {
         pub hash: u64,

@@ -37,6 +37,7 @@ mod array_buffer_sink_abi {
         ) -> JSValue;
         pub(super) fn ArrayBufferSink__onClose(ptr: JSValue, reason: JSValue);
         pub(super) fn ArrayBufferSink__onReady(ptr: JSValue, amount: JSValue, offset: JSValue);
+        pub(super) fn ArrayBufferSink__detachPtr(ptr: JSValue);
     }
 }
 
@@ -69,6 +70,29 @@ impl JsSinkAbi for ArrayBufferSink {
     }
     unsafe fn on_ready_extern(ptr: JSValue, amount: JSValue, offset: JSValue) {
         unsafe { array_buffer_sink_abi::ArrayBufferSink__onReady(ptr, amount, offset) }
+    }
+}
+
+impl JSSink<ArrayBufferSink> {
+    /// Port of Zig `JSSink.detach` (Sink.zig) for the `ArrayBufferSink`
+    /// instantiation. Unprotects the controller cell stashed in `signal.ptr`
+    /// and tells C++ to drop its back-pointer. Called from
+    /// `Body::ValueBufferer` Drop / reject paths.
+    pub fn detach(&mut self, global: &JSGlobalObject) {
+        let signal = &mut self.sink.signal;
+        if signal.is_dead() {
+            return;
+        }
+        // SAFETY: `SinkSignal::init` stored the controller `JSValue` bits as the
+        // `Signal.ptr` payload (never dereferenced as a Rust pointer).
+        let ptr = signal.ptr.map(|p| p.as_ptr() as usize).unwrap_or(0);
+        signal.clear();
+        let value = JSValue::from_encoded(ptr);
+        value.unprotect();
+        // TODO: properly propagate exception upwards (matches Zig comment).
+        let _ = global;
+        // SAFETY: codegen-emitted C++ glue; `value` is the JS sink controller cell.
+        unsafe { array_buffer_sink_abi::ArrayBufferSink__detachPtr(value) };
     }
 }
 

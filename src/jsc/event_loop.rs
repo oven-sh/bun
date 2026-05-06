@@ -1,12 +1,13 @@
 //! `jsc.EventLoop` — the JS-thread event loop. Port of `src/jsc/event_loop.zig`.
 //!
-//! B-2 un-gate: real `EventLoop` struct + `enter`/`exit`/`tick`/`run_callback`/
-//! concurrent-queue plumbing compile against the `lib.rs` stub surface. Bodies
-//! that reach into `bun_runtime::api::Timer` (cycle) are ``-gated
-//! and replaced with `// TODO(b2-cycle)` stubs that the high-tier crate will
-//! override via the registered hook (see §Dispatch hot-path in PORTING.md).
+//! `tick`/`enter`/`exit`/`drain_microtasks`/`run_callback`/concurrent-queue
+//! plumbing are real. The two hot dispatch loops (`tickQueueWithCount`'s
+//! per-`Task` switch and `ImmediateObject::runImmediateTask`) name
+//! `bun_runtime` types and are hoisted to that tier via [`set_tick_queue_hook`]
+//! / [`set_run_immediate_hook`]; `auto_tick`/`auto_tick_active` likewise
+//! dispatch through `virtual_machine::RuntimeHooks` (need `Timer::All` for the
+//! poll deadline). See PORTING.md §Dispatch.
 
-use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
 

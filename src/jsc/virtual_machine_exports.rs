@@ -78,11 +78,17 @@ pub extern "C" fn Bun__VirtualMachine__exitDuringUncaughtException(this: &mut Vi
 // Zig: comptime { const Bun__Process__send = jsc.toJSHostFn(Bun__Process__send_); @export(...) }
 // The #[bun_jsc::host_fn] attribute emits the callconv(jsc.conv) shim and export.
 #[crate::host_fn(export = "Bun__Process__send")]
-pub fn Bun__Process__send(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub fn Bun__Process__send(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     crate::mark_binding!();
-    // TODO(b2-cycle): `ipc::do_send(vm.get_ipc_instance().map(|i| &mut i.data), global, frame, SendTarget::Process)`
-    // — `vm.ipc` is `Option<()>` until `IPCInstanceUnion` lands.
-    todo!("phase-d: Bun__Process__send — ipc::do_send (IPCInstanceUnion gated)")
+    // SAFETY: bun_vm() never returns null for a Bun-owned global.
+    let vm = unsafe { &mut *global.bun_vm() };
+    // SAFETY: `get_ipc_instance` returns the live boxed `IPCInstance` (or
+    // `None`); the `&mut SendQueue` borrow is scoped to this call and does not
+    // alias `vm` (the instance is heap-allocated, not embedded in `vm`).
+    let ipc = vm
+        .get_ipc_instance()
+        .map(|i| unsafe { &mut (*i).data });
+    crate::ipc::do_send(ipc, global, frame, crate::ipc::FromEnum::Process)
 }
 
 #[unsafe(no_mangle)]
@@ -95,12 +101,11 @@ pub extern "C" fn Bun__isBunMain(global: &JSGlobalObject, str: &BunString) -> bo
 /// but rather we wait for process.on('message') or process.send() to be called, THEN
 /// we open the socket. This is to avoid missing messages at the start of the program.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__ensureProcessIPCInitialized(_global: &JSGlobalObject) {
+pub extern "C" fn Bun__ensureProcessIPCInitialized(global: &JSGlobalObject) {
     // getIPCInstance() will initialize a "waiting" ipc instance so this is enough.
     // it will do nothing if IPC is not enabled.
-    // TODO(b2-cycle): `global.bun_vm().get_ipc_instance()` — gated on
-    // `IPCInstanceUnion`; the env-var detection / lazy-init lives in
-    // VirtualMachine.rs but the variant body is `()`.
+    // SAFETY: bun_vm() never returns null for a Bun-owned global.
+    let _ = unsafe { (*global.bun_vm()).get_ipc_instance() };
 }
 
 /// This function is called on the main thread

@@ -105,6 +105,15 @@ pub mod lib {
         fn archive_write_header(a: *mut Archive, entry: *mut Entry) -> Result;
         fn archive_write_data(a: *mut Archive, data: *const c_void, size: usize) -> la_ssize_t;
         fn archive_write_finish_entry(a: *mut Archive) -> Result;
+        fn archive_write_add_filter_gzip(a: *mut Archive) -> Result;
+        fn archive_write_set_filter_option(
+            a: *mut Archive,
+            module: *const c_char,
+            option: *const c_char,
+            value: *const c_char,
+        ) -> Result;
+        fn archive_write_set_options(a: *mut Archive, opts: *const c_char) -> Result;
+        fn archive_write_open_filename(a: *mut Archive, file: *const c_char) -> Result;
         #[link_name = "archive_write_open2"]
         fn archive_write_open2_raw(
             a: *mut Archive,

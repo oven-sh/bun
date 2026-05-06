@@ -13,6 +13,31 @@
 //!                                       `WindowsSpawnOptions.Stdio`
 //!   - `sync::Options`     → process.zig `sync.Options`
 //!   - `sync::Result`      → process.zig `sync.Result`
+//!   - `WaiterThread` flag → process.zig `WaiterThread.setShouldUseWaiterThread`
+
+/// Process-global "force waiter thread" flag (process.zig:929-934). The waiter
+/// thread itself is implemented in `bun_runtime::api::bun::process`; this flag
+/// lives at this tier so `bun_install` and `bun_jsc` can flip it without a
+/// `bun_runtime` cycle.
+pub mod process {
+    use core::sync::atomic::{AtomicBool, Ordering};
+
+    static SHOULD_USE_WAITER_THREAD: AtomicBool = AtomicBool::new(false);
+
+    pub struct WaiterThread;
+    impl WaiterThread {
+        /// Spec process.zig:929 `setShouldUseWaiterThread`.
+        #[inline]
+        pub fn set_should_use_waiter_thread() {
+            SHOULD_USE_WAITER_THREAD.store(true, Ordering::Relaxed);
+        }
+        /// Spec process.zig:933 `shouldUseWaiterThread`.
+        #[inline]
+        pub fn should_use_waiter_thread() -> bool {
+            SHOULD_USE_WAITER_THREAD.load(Ordering::Relaxed)
+        }
+    }
+}
 
 #![allow(dead_code)]
 

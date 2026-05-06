@@ -423,7 +423,7 @@ pub fn to_throw(
             "\n\nExpected substring: <green>{}<r>\n\n",
             "Received function did not throw\nReceived value: <red>{}<r>\n"
         );
-        return this.throw(
+        return this.throw_fmt(
             global,
             signature,
             expected_fmt,
@@ -440,7 +440,7 @@ pub fn to_throw(
             "\n\nExpected pattern: <green>{}<r>\n\n",
             "Received function did not throw\nReceived value: <red>{}<r>\n"
         );
-        return this.throw(
+        return this.throw_fmt(
             global,
             signature,
             expected_fmt,
@@ -457,7 +457,7 @@ pub fn to_throw(
             "\n\nExpected message: <green>{}<r>\n\n",
             "Received function did not throw\nReceived value: <red>{}<r>\n"
         );
-        return this.throw(
+        return this.throw_fmt(
             global,
             signature,
             expected_fmt,
@@ -475,7 +475,7 @@ pub fn to_throw(
     );
     let mut expected_class = ZigString::EMPTY;
     expected_value.get_class_name(global, &mut expected_class)?;
-    return this.throw(
+    return this.throw_fmt(
         global,
         signature,
         expected_fmt,

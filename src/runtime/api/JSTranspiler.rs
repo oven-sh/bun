@@ -1592,7 +1592,10 @@ impl JSTranspiler {
         let mut ast_memory_allocator = JSAst::ASTMemoryAllocator::new(&arena);
         let _ast_scope = ast_memory_allocator.enter();
 
-        self.transpiler.set_allocator(&arena);
+        // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
+        // allocator is restored to `prev_allocator` before return.
+        self.transpiler
+            .set_allocator(unsafe { &*(&arena as *const Arena) });
         let mut log = logger::Log::init();
         // defer log.deinit() → Drop
         self.transpiler.set_log(&mut log);

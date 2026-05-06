@@ -58,6 +58,10 @@ pub mod options {
     pub enum OutputFormat { #[default] Preserve, Cjs, Esm, Iife, Internal_BakeDev }
     #[derive(Clone, Copy, Default, PartialEq, Eq)]
     pub enum Format { #[default] Preserve, Cjs, Esm }
+    impl Format {
+        #[inline] pub const fn is_esm(self) -> bool { matches!(self, Format::Esm) }
+        #[inline] pub const fn is_cjs(self) -> bool { matches!(self, Format::Cjs) }
+    }
     #[derive(Clone, Default)]
     pub struct AllowUnresolved;
     #[derive(Clone, Default)]
@@ -117,8 +121,34 @@ pub mod Runtime {
         pub standard_decorators: bool,
         pub unwrap_commonjs_to_esm: bool,
     }
-    #[derive(Default, Clone, Copy)]
-    pub struct Imports;
+    /// Stub of `runtime.rs::Imports` — only the fields/methods touched by
+    /// un-gated `P` helpers (`ensure_require_symbol`, `runtime_identifier_ref`).
+    /// Full table arrives when `runtime.rs` un-gates.
+    #[derive(Default, Clone)]
+    pub struct Imports {
+        pub __require: Option<crate::ast::base::Ref>,
+        // TODO(port): remaining named fields — runtime.rs has the full struct.
+        // Un-gated callers only touch __require directly; the rest go through
+        // the by-name accessors below, which fall back to `extra`.
+        extra: std::collections::HashMap<&'static [u8], crate::ast::base::Ref>,
+    }
+    impl Imports {
+        #[inline]
+        pub fn contains(&self, key: &[u8]) -> bool {
+            if key == b"__require" { return self.__require.is_some(); }
+            self.extra.contains_key(key)
+        }
+        #[inline]
+        pub fn at(&self, key: &[u8]) -> Option<crate::ast::base::Ref> {
+            if key == b"__require" { return self.__require; }
+            self.extra.get(key).copied()
+        }
+        #[inline]
+        pub fn put(&mut self, key: &'static [u8], ref_: crate::ast::base::Ref) {
+            if key == b"__require" { self.__require = Some(ref_); return; }
+            self.extra.insert(key, ref_);
+        }
+    }
     #[derive(Default, Clone, Copy)]
     pub struct Names;
     #[derive(Clone)]
@@ -204,6 +234,15 @@ pub enum JSXImport {
     CreateElement,
 }
 
+impl JSXImport {
+    /// Zig: `@tagName(field)` — the import-clause name as it appears in source.
+    #[inline]
+    pub fn tag_name(self) -> &'static [u8] {
+        let s: &'static str = self.into();
+        s.as_bytes()
+    }
+}
+
 #[derive(Default)]
 pub struct JSXImportSymbols {
     pub jsx: Option<LocRef>,
@@ -240,6 +279,16 @@ impl JSXImportSymbols {
             JSXImport::Jsxs => self.jsxs.map(|jsxs| jsxs.ref_.unwrap()),
             JSXImport::Fragment => self.fragment.map(|f| f.ref_.unwrap()),
             JSXImport::CreateElement => self.create_element.map(|c| c.ref_.unwrap()),
+        }
+    }
+
+    pub fn set(&mut self, tag: JSXImport, loc_ref: LocRef) {
+        match tag {
+            JSXImport::Jsx => self.jsx = Some(loc_ref),
+            JSXImport::JsxDEV => self.jsx_dev = Some(loc_ref),
+            JSXImport::Jsxs => self.jsxs = Some(loc_ref),
+            JSXImport::Fragment => self.fragment = Some(loc_ref),
+            JSXImport::CreateElement => self.create_element = Some(loc_ref),
         }
     }
 
@@ -630,9 +679,17 @@ impl IdentifierOpts {
 
     #[inline]
     pub const fn assign_target(self) -> js_ast::AssignTarget {
-        // SAFETY: AssignTarget is #[repr(u2)]-equivalent (#[repr(u8)] with 3 variants);
-        // bits 0-1 are always written via set_assign_target from a valid variant.
-        unsafe { core::mem::transmute::<u8, js_ast::AssignTarget>(self.0 & Self::ASSIGN_TARGET_MASK) }
+        // AssignTarget is #[repr(u8)] with discriminants 0/1/2 only; the 2-bit
+        // mask admits `3`, which would be UB to transmute. Exhaustive match
+        // keeps the packed-u8 layout without the hazard. bits 0-1 are always
+        // written via set_assign_target from a valid variant, so the `_` arm
+        // is unreachable by construction.
+        match self.0 & Self::ASSIGN_TARGET_MASK {
+            0 => js_ast::AssignTarget::None,
+            1 => js_ast::AssignTarget::Replace,
+            2 => js_ast::AssignTarget::Update,
+            _ => unreachable!(),
+        }
     }
     #[inline]
     pub fn set_assign_target(&mut self, v: js_ast::AssignTarget) {
@@ -655,6 +712,32 @@ impl IdentifierOpts {
     #[inline]
     pub fn set_is_call_target(&mut self, v: bool) {
         self.0 = (self.0 & !Self::IS_CALL_TARGET) | ((v as u8) << 4);
+    }
+
+    // Builder-style helpers so call sites can mirror Zig's `.{ .field = ... }`
+    // initialization without paying for a named-field struct (this stays a
+    // packed u8 to match the Zig ABI).
+    #[inline]
+    pub const fn new() -> Self { Self(0) }
+    #[inline]
+    pub const fn with_assign_target(mut self, v: js_ast::AssignTarget) -> Self {
+        self.0 = (self.0 & !Self::ASSIGN_TARGET_MASK) | (v as u8 & Self::ASSIGN_TARGET_MASK);
+        self
+    }
+    #[inline]
+    pub const fn with_is_delete_target(mut self, v: bool) -> Self {
+        self.0 = (self.0 & !Self::IS_DELETE_TARGET) | ((v as u8) << 2);
+        self
+    }
+    #[inline]
+    pub const fn with_was_originally_identifier(mut self, v: bool) -> Self {
+        self.0 = (self.0 & !Self::WAS_ORIGINALLY_IDENTIFIER) | ((v as u8) << 3);
+        self
+    }
+    #[inline]
+    pub const fn with_is_call_target(mut self, v: bool) -> Self {
+        self.0 = (self.0 & !Self::IS_CALL_TARGET) | ((v as u8) << 4);
+        self
     }
 }
 

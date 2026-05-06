@@ -1379,7 +1379,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
 
         // Create an error for assigning to an import namespace
-        if (opts.assign_target != js_ast::AssignTarget::None || opts.is_delete_target)
+        if (opts.assign_target() != js_ast::AssignTarget::None || opts.is_delete_target())
             && self.symbols[ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Import
         {
             let r = js_lexer::range_of_identifier(self.source, loc);
@@ -1395,7 +1395,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
 
         // Substitute an EImportIdentifier now if this has a namespace alias
-        if opts.assign_target == js_ast::AssignTarget::None && !opts.is_delete_target {
+        if opts.assign_target() == js_ast::AssignTarget::None && !opts.is_delete_target() {
             // PORT NOTE: copy the alias out so the &self.symbols borrow is released
             // before the &mut self calls below.
             let ns_alias_opt = self.symbols[ref_.inner_index() as usize]
@@ -1458,7 +1458,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // Substitute an EImportIdentifier now if this is an import item
         if self.is_import_item.contains_key(&ref_) {
             return self.new_expr(
-                E::ImportIdentifier { ref_, was_originally_identifier: opts.was_originally_identifier },
+                E::ImportIdentifier { ref_, was_originally_identifier: opts.was_originally_identifier() },
                 loc,
             );
         }
@@ -1520,7 +1520,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         if let Some(name) = original_name {
             let result = self.find_symbol(loc, name).expect("unreachable");
             let mut id_clone = ident;
-            id_clone.ref_ = result.ref_;
+            id_clone.ref_ = result.r#ref;
             return self.new_expr(id_clone, loc);
         }
 
@@ -2485,10 +2485,25 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         if self.runtime_imports.__require.is_some() {
             return;
         }
-        // PORT NOTE: Zig used `generatedSymbolName("__require")` (comptime concat).
-        // `declare_generated_symbol` performs the runtime-hash equivalent.
+        // Spec P.zig:2224-2229 calls declareSymbolMaybeGenerated with
+        // generatedSymbolName("__require") (the hashed name) directly,
+        // regardless of bundle mode. Do NOT route through
+        // declare_generated_symbol — that helper skips the hash when
+        // `options.bundle == true`, which would let a user-level
+        // `var __require` collide in `current_scope.members` and link the
+        // runtime require to the user symbol via the IS_GENERATED merge path.
+        // Runtime equivalent of `generated_symbol_name!("__require")`:
+        let hash = bun_wyhash::hash(b"__require");
+        let hashed: &'a [u8] = bumpalo::format!(
+            in self.allocator,
+            "{}_{}",
+            bstr::BStr::new(b"__require".as_slice()),
+            bun_core::fmt::truncated_hash32(hash)
+        )
+        .into_bump_str()
+        .as_bytes();
         let ref_ = self
-            .declare_generated_symbol(js_ast::symbol::Kind::Other, b"__require")
+            .declare_symbol_maybe_generated::<true>(js_ast::symbol::Kind::Other, logger::Loc::EMPTY, hashed)
             .expect("oom");
         self.runtime_imports.__require = Some(ref_);
         self.runtime_imports.put(b"__require", ref_);
@@ -3789,21 +3804,28 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // Allocate a new symbol
         let mut ref_ = self.new_symbol(kind, name)?;
 
-        // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        let scope = unsafe { &mut *self.current_scope };
-        // PORT NOTE: reshaped for borrowck — get_or_put borrows scope.members mutably; the
-        // can_merge_symbols call below needs an immutable borrow of `scope`. We re-derive
-        // the &Scope from the raw pointer (disjoint field, same arena object).
-        // SAFETY: members borrow is on a distinct field from kind/kind_stops_hoisting reads.
-        let scope_ro: &Scope = unsafe { &*self.current_scope };
-        let entry = scope.members.get_or_put(name)?;
-        if entry.found_existing {
-            let existing = *entry.value_ptr;
+        // PORT NOTE: reshaped for Stacked Borrows — Zig holds the getOrPut entry
+        // across the canMergeSymbols call. In Rust that required an aliased
+        // `&mut *self.current_scope` / `&*self.current_scope` pair on the same
+        // object, which is UB (creating the shared ref invalidates the unique
+        // tag, so the trailing `*entry.value_ptr = ..` writes through an
+        // invalidated borrow). Instead: read the existing member (if any) under
+        // a short-lived shared borrow, compute the merge, then take a fresh
+        // &mut to write the member back. Two probes instead of one;
+        // PERF(port): single-probe getOrPut — profile in Phase B.
+        let existing_member: Option<js_ast::scope::Member> = {
+            // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; shared borrow only
+            unsafe { &*self.current_scope }.members.get(name).copied()
+        };
+        if let Some(existing) = existing_member {
             let symbol_idx = existing.ref_.inner_index() as usize;
 
             if !IS_GENERATED {
                 use js_ast::scope::SymbolMergeResult as MR;
-                match scope_ro.can_merge_symbols::<TYPESCRIPT>(self.symbols[symbol_idx].kind, kind) {
+                // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; shared borrow only
+                let merge = unsafe { &*self.current_scope }
+                    .can_merge_symbols::<TYPESCRIPT>(self.symbols[symbol_idx].kind, kind);
+                match merge {
                     MR::Forbidden => {
                         // SAFETY: original_name is an arena-owned slice valid for 'a.
                         let orig = unsafe { &*self.symbols[symbol_idx].original_name };
@@ -3840,9 +3862,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 self.symbols[ref_.inner_index() as usize].link = existing.ref_;
             }
         }
-        // PORT NOTE: StringHashMapGetOrPut has no key_ptr (std::HashMap can't hand out &mut K).
+        // PORT NOTE: StringHashMap has no key_ptr (std::HashMap can't hand out &mut K).
         // The key is already `name` (boxed copy) so the Zig `*entry.key_ptr = name` is a no-op here.
-        *entry.value_ptr = js_ast::scope::Member { ref_, loc };
+        // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
+        unsafe { &mut *self.current_scope }
+            .members
+            .put(name, js_ast::scope::Member { ref_, loc })?;
         if IS_GENERATED {
             // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
             unsafe { &mut *self.module_scope }.generated.append(ref_)?;
@@ -3938,18 +3963,21 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
     // load_name_from_ref() lives in the round-C live block above (deduped).
 
+    #[cfg(any())] // blocked_on: ImportRecord Default + fs::Path<'a> (see add_import_record_by_range_and_path)
     #[inline]
     pub fn add_import_record(&mut self, kind: ImportKind, loc: logger::Loc, name: &'a [u8]) -> u32 {
         self.add_import_record_by_range(kind, self.source.range_of_string(loc), name)
     }
 
+    #[cfg(any())] // blocked_on: ImportRecord Default + fs::Path<'a> (see add_import_record_by_range_and_path)
     pub fn add_import_record_by_range(&mut self, kind: ImportKind, range: logger::Range, name: &'a [u8]) -> u32 {
         // TODO(port): fs::Path::init takes &'static [u8] in Phase A; the parser passes
         // arena-owned 'a slices. Thread the lifetime through bun_logger::fs::Path in
         // round-E (or transmute-extend here once that's audited).
-        let _ = (kind, range, name);
-        // blocked_on: ImportRecord field defaults (no Default impl) + fs::Path<'a>
-        todo!("add_import_record_by_range — ImportRecord ctor needs Default/lifetime plumbing")
+        let index = self.import_records.len();
+        let record = ImportRecord { kind, range, path: fs::Path::init(name), ..Default::default() };
+        self.import_records.push(record);
+        u32::try_from(index).unwrap()
     }
 
     #[cfg(any())] // blocked_on: ImportRecord: Default (bun_options_types); fs::Path<'a> lifetime
@@ -4232,11 +4260,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         self.binding_can_be_removed_if_unused_without_dce_check(binding)
     }
 
-    #[cfg(any())] // blocked_on: B::Array/Object payload deref (*mut [..] iteration)
     fn binding_can_be_removed_if_unused_without_dce_check(&mut self, binding: Binding) -> bool {
-        match &binding.data {
-            Binding::Data::BArray(bi) => {
-                for item in bi.items.iter() {
+        match binding.data {
+            js_ast::b::B::BArray(bi) => {
+                // SAFETY: arena-owned `*mut Array` / `*mut [ArrayBinding]` valid for parser 'a; no aliasing &mut.
+                let bi = unsafe { &*bi };
+                for item in unsafe { &*bi.items } {
                     if !self.binding_can_be_removed_if_unused_without_dce_check(item.binding) {
                         return false;
                     }
@@ -4247,8 +4276,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     }
                 }
             }
-            Binding::Data::BObject(bi) => {
-                for property in bi.properties.iter() {
+            js_ast::b::B::BObject(bi) => {
+                // SAFETY: arena-owned `*mut Object` / `*mut [Property]` valid for parser 'a; no aliasing &mut.
+                let bi = unsafe { &*bi };
+                for property in unsafe { &*bi.properties } {
                     if !property.flags.contains(Flags::Property::IsSpread)
                         && !self.expr_can_be_removed_if_unused_without_dce_check(&property.key)
                     {
@@ -4277,7 +4308,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         self.stmts_can_be_removed_if_unused_without_dce_check(stmts)
     }
 
-    #[cfg(any())] // blocked_on: StmtData variant set; S::Try.body/finally; binding_can_be_removed_if_unused
     fn stmts_can_be_removed_if_unused_without_dce_check(&mut self, stmts: &[Stmt]) -> bool {
         for stmt in stmts {
             match &stmt.data {
@@ -4331,9 +4361,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 }
 
                 js_ast::StmtData::STry(try_) => {
-                    if !self.stmts_can_be_removed_if_unused_without_dce_check(try_.body)
+                    // SAFETY: arena-owned `*mut [Stmt]` valid for parser 'a lifetime; no aliasing &mut outstanding
+                    if !self.stmts_can_be_removed_if_unused_without_dce_check(unsafe { &*try_.body })
                         || (try_.finally.is_some()
-                            && !self.stmts_can_be_removed_if_unused_without_dce_check(try_.finally.as_ref().unwrap().stmts))
+                            && !self.stmts_can_be_removed_if_unused_without_dce_check(unsafe {
+                                &*try_.finally.as_ref().unwrap().stmts
+                            }))
                     {
                         return false;
                     }
@@ -4524,22 +4557,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             }
         }
 
-        for property in class.properties.slice() {
+        // SAFETY: arena-owned `*mut [Property]` valid for parser 'a lifetime; no aliasing &mut outstanding
+        for property in unsafe { &*class.properties } {
             if property.kind == js_ast::g::PropertyKind::ClassStaticBlock {
-                // TODO(port): stmts_can_be_removed_if_unused_without_dce_check is gated on
-                // StmtData payload mut access. Conservatively treat static blocks as
-                // having effects until that un-gates.
-                #[cfg(any())] // blocked_on: stmts_can_be_removed_if_unused_without_dce_check
-                {
-                    // SAFETY: arena-owned ClassStaticBlock valid for 'a.
-                    let csb = unsafe { property.class_static_block.unwrap().as_ref() };
-                    if !self.stmts_can_be_removed_if_unused_without_dce_check(csb.stmts.slice()) {
-                        return false;
-                    }
-                    continue;
+                // SAFETY: arena-owned ClassStaticBlock valid for 'a.
+                let csb = unsafe { property.class_static_block.unwrap().as_ref() };
+                if !self.stmts_can_be_removed_if_unused_without_dce_check(csb.stmts.slice()) {
+                    return false;
                 }
-                #[allow(unreachable_code)]
-                return false;
+                continue;
             }
 
             if !self.expr_can_be_removed_if_unused_without_dce_check(property.key.as_ref().expect("unreachable")) {
@@ -4883,7 +4909,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
     pub fn jsx_import_automatic(&mut self, loc: logger::Loc, is_static: bool) -> Expr {
         self.jsx_import(
-            if is_static && !self.options.jsx.development && false /* TODO(b2-blocked): feature_flag */ {
+            if is_static && !self.options.jsx.development && bun_core::feature_flags::SUPPORT_JSXS_IN_JSX_TRANSFORM {
                 JSXImport::Jsxs
             } else if self.options.jsx.development {
                 JSXImport::JsxDEV
@@ -4926,7 +4952,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 ..Default::default()
             },
             None,
-            IdentifierOpts { was_originally_identifier: true, ..Default::default() },
+            IdentifierOpts::new().with_was_originally_identifier(true),
         )
     }
 
@@ -5930,7 +5956,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     loc,
                     *id,
                     define_data.original_name(),
-                    IdentifierOpts { assign_target, is_delete_target, was_originally_identifier: true, ..Default::default() },
+                    IdentifierOpts::new()
+                        .with_assign_target(assign_target)
+                        .with_is_delete_target(is_delete_target)
+                        .with_was_originally_identifier(true),
                 );
             }
             js_ast::ExprData::EString(str_) => {

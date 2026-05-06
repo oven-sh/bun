@@ -255,8 +255,8 @@ impl<C: CompletionStruct> BundleThread<C> {
             }
             // SAFETY: `generation` is only read/written on this (bundle) thread.
             unsafe {
-                let gen = core::ptr::addr_of_mut!((*instance).generation);
-                *gen = (*gen).saturating_add(1);
+                let g = core::ptr::addr_of_mut!((*instance).generation);
+                *g = (*g).saturating_add(1);
             }
 
             if has_bundled {

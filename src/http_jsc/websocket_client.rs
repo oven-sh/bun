@@ -1995,58 +1995,69 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     /// Handle data received from the proxy tunnel (already decrypted).
     /// Called by the WebSocketProxyTunnel when it receives and decrypts data.
-    pub fn handle_tunnel_data(&mut self, data: &[u8]) {
+    ///
+    /// # Safety
+    /// `this_ptr` must point to a live `WebSocket<SSL>` allocated via
+    /// `Box::into_raw`; no `&`/`&mut` borrow of `*this_ptr` may be live across
+    /// this call (the tunnel calls through its raw `connected_websocket` backref).
+    pub unsafe fn handle_tunnel_data(this_ptr: *mut Self, data: &[u8]) {
         // Process the decrypted data as if it came from the socket
         // has_tcp() now returns true for tunnel mode, so this will work correctly
-        // PORT NOTE: reshaped for borrowck — `&mut self` + `&self.tcp` overlap.
-        let tcp: *const Socket<SSL> = &self.tcp;
-        // SAFETY: `tcp` points into `*self`; in tunnel mode `self.tcp` is
-        // `Detached` and `handle_data` never writes it.
-        self.handle_data(unsafe { &*tcp }, data);
+        // SAFETY: forwarded — see `handle_data`'s contract.
+        unsafe { Self::handle_data(this_ptr, data) };
     }
 
     /// Called by the WebSocketProxyTunnel when the underlying socket drains.
     /// Flushes any buffered plaintext data through the tunnel.
-    pub fn handle_tunnel_writable(&mut self) {
-        if self.close_received {
+    ///
+    /// # Safety
+    /// `this_ptr` must point to a live `WebSocket<SSL>` allocated via
+    /// `Box::into_raw`; no `&`/`&mut` borrow of `*this_ptr` may be live across
+    /// this call.
+    pub unsafe fn handle_tunnel_writable(this_ptr: *mut Self) {
+        // SAFETY: caller contract — `this_ptr` is live; raw read of a `Copy` field.
+        if unsafe { (*this_ptr).close_received } {
             return;
         }
         // send_buffer → tunnel.write() can re-enter fail() synchronously
         // (see write_binary_data). The tunnel ref-guards itself in
         // on_writable() but not this struct.
-        self.r#ref();
-        // PORT NOTE: reshaped for borrowck — capture a raw ptr so `self` stays
-        // mutably borrowable below. The ref taken above keeps `self` alive.
-        let _guard = scopeguard::guard(self as *mut Self, |p| {
-            // SAFETY: `p` is `self`, kept alive by the `r#ref()` above;
-            // derived from `&mut Self` so it carries write provenance.
+        // SAFETY: caller contract — `this_ptr` is live; `r#ref` takes `&self`.
+        unsafe { (&*this_ptr).r#ref() };
+        // PORT NOTE: capture the parent raw `this_ptr` so the guard's
+        // `deref(p)` runs after every `&mut *this_ptr` reborrow has ended.
+        let _guard = scopeguard::guard(this_ptr, |p| {
+            // SAFETY: `p` is the `Box::into_raw` pointer, kept alive by the
+            // `r#ref()` above; no Rust borrow of `*p` is live at drop time.
             unsafe { Self::deref(p) }
         });
-        // TODO(port): scopeguard borrowck
 
-        if self.send_buffer.readable_length() == 0 {
+        // SAFETY: caller contract — `this_ptr` is live; brief `&Self` for length read.
+        if unsafe { (*this_ptr).send_buffer.readable_length() } == 0 {
             return;
         }
-        let _ = self.send_buffer_out();
+        // SAFETY: caller contract — `this_ptr` is live, sole owner on this
+        // thread; the auto-ref `&mut *this_ptr` ends before `_guard` drops.
+        let _ = unsafe { (*this_ptr).send_buffer_out() };
     }
 
-    pub extern "C" fn finalize(this: *mut Self) {
+    pub extern "C" fn finalize(this_ptr: *mut Self) {
         // SAFETY: called from C++ with a valid pointer
-        let this = unsafe { &mut *this };
+        let this = unsafe { &mut *this_ptr };
         log!("finalize");
         // clear_data() may drop the tunnel's I/O-layer ref and the block
         // below drops the C++ ref; keep `this` alive until we've finished
         // the tcp close check.
         this.r#ref();
-        // PORT NOTE: reshaped for borrowck — `scopeguard` capturing `&this`
-        // would freeze it for the whole scope. Capture a raw ptr instead;
-        // the ref taken on the line above guarantees `this` outlives the guard.
-        let _guard = scopeguard::guard(this as *mut Self, |p| {
-            // SAFETY: `p` is `this`, kept alive by the `r#ref()` above;
-            // derived from `&mut Self` so it carries write provenance.
+        // PORT NOTE: capture the ORIGINAL raw `this_ptr` (parent provenance of
+        // `this`'s Unique tag) — re-deriving `*mut Self` from `this` would be
+        // popped by later `this.` uses under Stacked Borrows. The `r#ref()`
+        // above guarantees the allocation outlives the guard.
+        let _guard = scopeguard::guard(this_ptr, |p| {
+            // SAFETY: `p` is the C++-owned `Box::into_raw` pointer, kept alive
+            // by the `r#ref()` above; `this`'s borrow has ended (LIFO drop).
             unsafe { Self::deref(p) }
         });
-        // TODO(port): scopeguard borrowck
 
         this.clear_data();
 
@@ -2229,9 +2240,14 @@ impl<const SSL: bool> InitialDataHandler<SSL> {
         let Some(this_socket_ptr) = self.adopted.take() else {
             return;
         };
-        // SAFETY: adopted points to a live WebSocket (backref, no ref taken)
-        let this_socket = unsafe { &mut *this_socket_ptr.as_ptr() };
-        this_socket.initial_data_handler = None;
+        let ws_ptr = this_socket_ptr.as_ptr();
+        // PORT NOTE: this fn is reachable re-entrantly from
+        // `WebSocket::handle_data` while that frame may later form its own
+        // `&mut *ws_ptr`, so never materialize a `&mut WebSocket` here —
+        // touch fields via raw projection only.
+        // SAFETY: `adopted` is a backref to a live WebSocket (Box::into_raw
+        // provenance); raw field write of a `Copy`-sized `Option<NonNull<_>>`.
+        unsafe { core::ptr::addr_of_mut!((*ws_ptr).initial_data_handler).write(None) };
         let ws = self.ws;
         // defer ws.unref() → scopeguard
         let _guard = scopeguard::guard((), |_| {
@@ -2240,13 +2256,16 @@ impl<const SSL: bool> InitialDataHandler<SSL> {
         });
 
         // For tunnel mode, tcp is detached but connection is still active through the tunnel
-        let is_connected = !this_socket.tcp.is_closed() || this_socket.proxy_tunnel.is_some();
-        if this_socket.outgoing_websocket.is_some() && is_connected {
-            // PORT NOTE: reshaped for borrowck — `&mut this_socket` + `&this_socket.tcp` overlap.
-            let tcp: *const Socket<SSL> = &this_socket.tcp;
-            // SAFETY: `tcp` points into `*this_socket`; `handle_data` only reads
-            // the socket handle (no aliasing write to `this_socket.tcp`).
-            this_socket.handle_data(unsafe { &*tcp }, &self.slice);
+        // SAFETY: `ws_ptr` is live (see above); brief shared borrows for
+        // `is_closed()` / `is_some()` — no `&mut` to `*ws_ptr` is live.
+        let is_connected =
+            unsafe { !(*ws_ptr).tcp.is_closed() || (*ws_ptr).proxy_tunnel.is_some() };
+        // SAFETY: `ws_ptr` is live; raw read of a `Copy` field.
+        if unsafe { (*ws_ptr).outgoing_websocket.is_some() } && is_connected {
+            // SAFETY: `ws_ptr` carries `Box::into_raw` provenance; `handle_data`
+            // takes `*mut Self` and forms its own scoped `&mut` internally. No
+            // borrow of `*ws_ptr` is live in this frame across the call.
+            unsafe { WebSocket::<SSL>::handle_data(ws_ptr, &self.slice) };
         }
     }
 

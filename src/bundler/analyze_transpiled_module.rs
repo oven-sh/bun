@@ -335,15 +335,11 @@ fn slice_as_bytes<T: Copy>(s: &[T]) -> &[u8] {
 
 // ──────────────────────────────────────────────────────────────────────────
 // Extension shims over the printer-crate types
-//
-// The bundler-side callers (`postProcessJSChunk`, `generateChunksInParallel`,
-// `RuntimeTranspilerStore`) were written against an earlier `Result`-returning
-// API. The canonical printer-crate `ModuleInfo` returns by value (allocation
-// failure aborts). These extension methods preserve the old call shapes so a
-// single re-export commit doesn't have to touch every call site.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Extension constructor: `StringID::from_raw(u32)`.
+/// Extension constructor: `StringID::from_raw(u32)` — used by
+/// `linker_context::generateChunksInParallel` when rewriting cross-chunk
+/// specifier IDs.
 pub trait StringIDExt {
     fn from_raw(raw: u32) -> StringID;
 }
@@ -354,31 +350,12 @@ impl StringIDExt for StringID {
     }
 }
 
-/// `Result`-shaped wrappers over `bun_js_printer::analyze_transpiled_module::ModuleInfo`.
+/// Bridges the printer-crate `ModuleInfo` to the raw-pointer FFI
+/// `ModuleInfoDeserialized` view kept in this crate.
 pub trait ModuleInfoExt {
-    fn create(is_typescript: bool) -> Result<Box<ModuleInfo>, bun_alloc::AllocError>;
     /// # Safety
     /// `this` must originate from `Box::into_raw(ModuleInfo::create(..))`.
-    unsafe fn destroy(this: *mut ModuleInfo);
-    fn str(&mut self, value: &[u8]) -> Result<StringID, bun_alloc::AllocError>;
-    fn add_var(&mut self, name: StringID, kind: VarKind) -> Result<(), bun_alloc::AllocError>;
-    fn request_module(
-        &mut self,
-        import_record_path: StringID,
-        fetch_parameters: FetchParameters,
-    ) -> Result<(), bun_alloc::AllocError>;
-    fn add_import_info_single(
-        &mut self,
-        module_name: StringID,
-        import_name: StringID,
-        local_name: StringID,
-        only_used_as_type: bool,
-    ) -> Result<(), bun_alloc::AllocError>;
-    fn add_import_info_namespace(
-        &mut self,
-        module_name: StringID,
-        local_name: StringID,
-    ) -> Result<(), bun_alloc::AllocError>;
+    unsafe fn destroy_raw(this: *mut ModuleInfo);
     /// Finalize and box the raw-pointer `ModuleInfoDeserialized` view, taking
     /// ownership of `self`. Replaces the Zig pattern of writing into the
     /// embedded `_deserialized` field and handing out a `&mut` to it.
@@ -387,57 +364,9 @@ pub trait ModuleInfoExt {
 
 impl ModuleInfoExt for ModuleInfo {
     #[inline]
-    fn create(is_typescript: bool) -> Result<Box<ModuleInfo>, bun_alloc::AllocError> {
-        Ok(ModuleInfo::create(is_typescript))
-    }
-    #[inline]
-    unsafe fn destroy(this: *mut ModuleInfo) {
+    unsafe fn destroy_raw(this: *mut ModuleInfo) {
         // SAFETY: caller contract — `this` is `Box::into_raw` output.
         drop(unsafe { Box::from_raw(this) });
-    }
-    #[inline]
-    fn str(&mut self, value: &[u8]) -> Result<StringID, bun_alloc::AllocError> {
-        Ok(ModuleInfo::str(self, value))
-    }
-    #[inline]
-    fn add_var(&mut self, name: StringID, kind: VarKind) -> Result<(), bun_alloc::AllocError> {
-        ModuleInfo::add_var(self, name, kind);
-        Ok(())
-    }
-    #[inline]
-    fn request_module(
-        &mut self,
-        import_record_path: StringID,
-        fetch_parameters: FetchParameters,
-    ) -> Result<(), bun_alloc::AllocError> {
-        ModuleInfo::request_module(self, import_record_path, fetch_parameters);
-        Ok(())
-    }
-    #[inline]
-    fn add_import_info_single(
-        &mut self,
-        module_name: StringID,
-        import_name: StringID,
-        local_name: StringID,
-        only_used_as_type: bool,
-    ) -> Result<(), bun_alloc::AllocError> {
-        ModuleInfo::add_import_info_single(
-            self,
-            module_name,
-            import_name,
-            local_name,
-            only_used_as_type,
-        );
-        Ok(())
-    }
-    #[inline]
-    fn add_import_info_namespace(
-        &mut self,
-        module_name: StringID,
-        local_name: StringID,
-    ) -> Result<(), bun_alloc::AllocError> {
-        ModuleInfo::add_import_info_namespace(self, module_name, local_name);
-        Ok(())
     }
     fn into_deserialized(mut self: Box<Self>) -> Box<ModuleInfoDeserialized> {
         // PORT NOTE: Zig wrote a self-referential `_deserialized` view inside
@@ -445,27 +374,38 @@ impl ModuleInfoExt for ModuleInfo {
         // exposes a borrowed `as_deserialized()` instead; here we materialise the
         // raw-pointer FFI shape and tie its lifetime to the leaked `Box<ModuleInfo>`.
         let _ = self.finalize();
-        let view = self.as_deserialized();
-        let mut flags = Flags::empty();
-        flags.set(Flags::CONTAINS_IMPORT_META, view.flags.contains_import_meta);
-        flags.set(Flags::IS_TYPESCRIPT, view.flags.is_typescript);
-        flags.set(Flags::HAS_TLA, view.flags.has_tla);
-        let res = Box::new(ModuleInfoDeserialized {
-            strings_buf: view.strings_buf as *const [u8],
-            strings_lens: view.strings_lens as *const [u32],
-            requested_modules_keys: view.requested_modules_keys as *const [StringID],
-            requested_modules_values: view.requested_modules_values as *const [FetchParameters],
-            buffer: view.buffer as *const [StringID],
-            // SAFETY: printer's `RecordKind` is `#[repr(u8)]` with the same
-            // discriminant layout as this crate's transparent-newtype `RecordKind`.
-            record_kinds: core::ptr::slice_from_raw_parts(
+        // PORT NOTE: reshaped for borrowck — capture raw pointers before
+        // `Box::into_raw(self)` consumes the box.
+        let (strings_buf, strings_lens, rm_keys, rm_values, buffer, record_kinds, flags);
+        {
+            let view = self.as_deserialized();
+            strings_buf = view.strings_buf as *const [u8];
+            strings_lens = view.strings_lens as *const [u32];
+            rm_keys = view.requested_modules_keys as *const [StringID];
+            rm_values = view.requested_modules_values as *const [FetchParameters];
+            buffer = view.buffer as *const [StringID];
+            // Printer's `RecordKind` is `#[repr(u8)]` with the same discriminant
+            // layout as this crate's transparent-newtype `RecordKind`.
+            record_kinds = core::ptr::slice_from_raw_parts(
                 view.record_kinds.as_ptr().cast::<RecordKind>(),
                 view.record_kinds.len(),
-            ),
+            );
+            let mut f = Flags::empty();
+            f.set(Flags::CONTAINS_IMPORT_META, view.flags.contains_import_meta);
+            f.set(Flags::IS_TYPESCRIPT, view.flags.is_typescript);
+            f.set(Flags::HAS_TLA, view.flags.has_tla);
+            flags = f;
+        }
+        Box::new(ModuleInfoDeserialized {
+            strings_buf,
+            strings_lens,
+            requested_modules_keys: rm_keys,
+            requested_modules_values: rm_values,
+            buffer,
+            record_kinds,
             flags,
             owner: Owner::ModuleInfo(Box::into_raw(self)),
-        });
-        res
+        })
     }
 }
 

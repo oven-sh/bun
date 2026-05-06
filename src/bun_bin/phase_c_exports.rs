@@ -1,17 +1,17 @@
 //! PHASE-C link bridge — **transient**, not a permanent grab-bag.
 //!
-//! Every symbol below has a real home (see the `// REAL:` path on each entry,
-//! which is the `.rs` sibling of the Zig `export fn`). Those homes live in
-//! `bun_jsc` / `bun_runtime` / `bun_http_jsc` / `bun_bundler_jsc`. As of this
-//! revision `bun_runtime` (and transitively `bun_jsc`) is a real dependency of
-//! this binary crate, so any `#[no_mangle]` definition that compiles in either
-//! of those crates is now visible to the linker. Stubs that would collide have
-//! been removed; what remains is either (a) still inside a ``
-//! gate upstream, or (b) defined only in C++ object files not yet in the
-//! Phase-C link set.
+//! Every symbol that used to be stubbed here now has a real home (the `.rs`
+//! sibling of the Zig `export fn`) inside `bun_jsc` / `bun_runtime` /
+//! `bun_http_jsc` / `bun_bundler_jsc`. As of this revision `bun_runtime` (and
+//! transitively `bun_jsc`) is a real dependency of this binary crate, so any
+//! `#[no_mangle]` definition that compiles in either of those crates is now
+//! visible to the linker — the corresponding stub has been deleted.
 //!
-//! As each upstream gate is lifted, delete the matching block here — the
-//! linker will flag any you miss as a duplicate symbol.
+//! What remains is the small set of symbols that are either (a) defined here
+//! directly because this is their proper home, (b) safe-default placeholders
+//! whose real body still depends on a gated crate, or (c) genuinely
+//! unimplemented anywhere (no Zig `export fn`, no C++ body) — those are
+//! `unreachable!` so a stray call is loud rather than silent garbage.
 //!
 //! `__wrap_gettid` and `Bun__captureStackTrace` are NOT here — they live in
 //! `bun_core` (their proper, already-linked home).
@@ -27,46 +27,18 @@
     clippy::not_unsafe_ptr_arg_deref
 )]
 
-use core::ffi::{c_char, c_int, c_long, c_void};
+use core::ffi::{c_int, c_long, c_void};
 
 // ────────────────────────────────────────────────────────────────────────────
 // Opaque handles — pointer-sized, never dereferenced here.
 // ────────────────────────────────────────────────────────────────────────────
 type JSGlobalObject = c_void;
 type JSValue = i64; // JSC::EncodedJSValue
-type CallFrame = c_void;
 type VirtualMachine = c_void;
-type CppTask = c_void;
-type JSString = c_void;
-type AbortSignal = c_void;
-type Timeout = c_void;
 type Blob = c_void;
 type BlockList = c_void;
-type SSLConfig = c_void;
-type EventLoopTaskNoContext = c_void;
-type ModuleInfoDeserialized = c_void;
-type UwsLoop = c_void;
-type UsSocket = c_void;
-
-/// `bun.String` — `{ tag: u8, impl: *WTFStringImpl }` (16 bytes, ptr-aligned).
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct BunString {
-    tag: u8,
-    impl_: *const c_void,
-}
-
-/// `uws.us_bun_verify_error_t` — passed by value to `us_dispatch_handshake`.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct UsBunVerifyError {
-    error: c_int,
-    code: *const c_char,
-    reason: *const c_char,
-}
 
 type WriteBytesFn = unsafe extern "C" fn(*mut c_void, *const u8, u32);
-type NapiFinalize = unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void);
 
 // ════════════════════════════════════════════════════════════════════════════
 // Exported variables (Zig: `export var` / `@export(&var, …)`)
@@ -140,7 +112,7 @@ pub extern "C" fn Bun__isNoProxy(
 }
 
 // PHASE-C: C++ callback — Zig: `export fn napi_internal_suppress_crash_on_abort_if_desired() void`
-// REAL: src/runtime/napi/napi_body.rs (gated under ` mod napi_body`)
+// REAL: src/runtime/napi/napi_body.rs (gated ` mod napi_body`)
 #[unsafe(no_mangle)]
 pub extern "C" fn napi_internal_suppress_crash_on_abort_if_desired() {
     // No-op until crash_handler exposes the suppression hook.
@@ -175,31 +147,40 @@ pub extern "C" fn highway_index_of_newline_or_non_ascii_or_ansi(
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// todo!() stubs — real bodies live in bun_jsc / bun_runtime (gated)
+// Resolved stubs — real `#[no_mangle]` bodies live in bun_jsc / bun_runtime /
+// bun_http_jsc / bun_bundler_jsc. Stub deleted; linker resolves to the crate
+// definition (or flags it if the upstream gate hasn't been lifted yet).
 // ════════════════════════════════════════════════════════════════════════════
 
-macro_rules! phase_c_todo {
-    ($name:literal) => {
-        todo!(concat!("PHASE-C: ", $name, " — un-gate bun_runtime/bun_jsc"))
-    };
-}
-
 // ── VM bridge ───────────────────────────────────────────────────────────────
-// REAL: src/jsc/virtual_machine_exports.rs, src/jsc/JSCScheduler.rs,
-//       src/runtime/api/BunObject.rs, src/runtime/timer/DateHeaderTimer.rs
-//       — all still inside ` mod _gated` in bun_jsc/lib.rs (or
-//       equivalent draft gates).
+// REAL: src/jsc/virtual_machine_exports.rs
+// Bun__getVM
+// Bun__VirtualMachine__exitDuringUncaughtException
+// Bun__queueTask
+// Bun__queueTaskConcurrently
+// Bun__readOriginTimer
+// Bun__readOriginTimerStart
+// Bun__reportUnhandledError
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__getVM() -> *mut VirtualMachine {
-    phase_c_todo!("Bun__getVM")
-}
+// REAL: src/jsc/JSCScheduler.rs
+// Bun__eventLoop__incrementRefConcurrently
 
-// REAL: src/jsc/virtual_machine_exports.rs (gated under `#![cfg(any())]`)
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__VirtualMachine__exitDuringUncaughtException(this: *mut VirtualMachine) {
-    phase_c_todo!("Bun__VirtualMachine__exitDuringUncaughtException")
-}
+// REAL: src/runtime/api/BunObject.rs
+// Bun__inspect
+// Bun__reportError
+
+// REAL: src/runtime/timer/DateHeaderTimer.rs
+// Bun__internal_ensureDateHeaderTimerIsEnabled
+
+// REAL: src/jsc/CppTask.rs
+// ConcurrentCppTask__createAndRun
+
+// REAL: src/jsc/AbortSignal.rs
+// AbortSignal__Timeout__create
+// AbortSignal__Timeout__deinit
+
+// REAL: src/jsc/ConsoleObject.rs
+// Bun__ConsoleObject__messageWithTypeAndLevel
 
 // REAL: src/jsc/VirtualMachine.rs (no Rust impl yet — C++ BunProcess.cpp caller)
 // Zig returns `unhandledRejectionsMode() != .bun`; the default mode is `.bun`,
@@ -208,52 +189,6 @@ pub extern "C" fn Bun__VirtualMachine__exitDuringUncaughtException(this: *mut Vi
 pub extern "C" fn Bun__VM__allowRejectionHandledWarning(vm: *mut VirtualMachine) -> bool {
     let _ = vm;
     false
-}
-
-// REAL: C++ ZigGlobalObject.cpp (not in the Phase-C link set)
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__JSC_GlobalObject__handleRejectedPromises(global: *mut JSGlobalObject) {
-    phase_c_todo!("Bun__JSC_GlobalObject__handleRejectedPromises")
-}
-
-// REAL: C++ bindings.cpp `JSC__JSValue__parseJSON` (not in the Phase-C link set)
-#[unsafe(no_mangle)]
-pub extern "C" fn JSC__JSValue__parseJSON(string: *const c_void, global: *const JSGlobalObject) -> JSValue {
-    phase_c_todo!("JSC__JSValue__parseJSON")
-}
-
-// REAL: C++ BunString.cpp `BunString__toErrorInstance` (not in the Phase-C link set)
-#[unsafe(no_mangle)]
-pub extern "C" fn BunString__toErrorInstance(this: *const c_void, global: *mut JSGlobalObject) -> JSValue {
-    phase_c_todo!("BunString__toErrorInstance")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__queueTask(global: *mut JSGlobalObject, task: *mut CppTask) {
-    phase_c_todo!("Bun__queueTask")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__queueTaskConcurrently(global: *mut JSGlobalObject, task: *mut CppTask) {
-    phase_c_todo!("Bun__queueTaskConcurrently")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__readOriginTimer(vm: *mut VirtualMachine) -> u64 {
-    phase_c_todo!("Bun__readOriginTimer")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__readOriginTimerStart(vm: *mut VirtualMachine) -> f64 {
-    phase_c_todo!("Bun__readOriginTimerStart")
-}
-
-// REAL: now provided by bun_runtime (src/runtime/api/BunObject.rs).
-// Bun__reportError
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__reportUnhandledError(global: *mut JSGlobalObject, value: JSValue) -> JSValue {
-    phase_c_todo!("Bun__reportUnhandledError")
 }
 
 #[unsafe(no_mangle)]
@@ -267,108 +202,29 @@ pub extern "C" fn Bun__VM__useIsolationSourceProviderCache(vm: *mut VirtualMachi
     false
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__eventLoop__incrementRefConcurrently(vm: *mut VirtualMachine, delta: c_int) {
-    phase_c_todo!("Bun__eventLoop__incrementRefConcurrently")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__inspect(global: *mut JSGlobalObject, value: JSValue) -> BunString {
-    phase_c_todo!("Bun__inspect")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__internal_ensureDateHeaderTimerIsEnabled(loop_: *mut UwsLoop) {
-    phase_c_todo!("Bun__internal_ensureDateHeaderTimerIsEnabled")
-}
-
-// ── ConsoleObject ───────────────────────────────────────────────────────────
-// REAL: now provided by bun_jsc (src/jsc/ConsoleObject.rs).
-// Bun__ConsoleObject__messageWithTypeAndLevel
-
-// ── CppTask ─────────────────────────────────────────────────────────────────
-// REAL: src/jsc/CppTask.rs (gated under `mod _gated` in bun_jsc/lib.rs)
-
-#[unsafe(no_mangle)]
-pub extern "C" fn ConcurrentCppTask__createAndRun(cpp_task: *mut EventLoopTaskNoContext) {
-    phase_c_todo!("ConcurrentCppTask__createAndRun")
-}
-
-// ── AbortSignal.Timeout ─────────────────────────────────────────────────────
-// REAL: src/jsc/AbortSignal.rs (gated under `mod _gated` in bun_jsc/lib.rs)
-
-#[unsafe(no_mangle)]
-pub extern "C" fn AbortSignal__Timeout__create(
-    vm: *mut VirtualMachine,
-    signal: *mut AbortSignal,
-    milliseconds: u64,
-) -> *mut Timeout {
-    phase_c_todo!("AbortSignal__Timeout__create")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn AbortSignal__Timeout__deinit(this: *mut Timeout) {
-    phase_c_todo!("AbortSignal__Timeout__deinit")
-}
-
 // ── Host fns: `(global, callframe) -> JSValue` ──────────────────────────────
-// REAL: src/runtime/webcore/{fetch,ObjectURLRegistry,prompt,FormData}.rs
-//       — all still inside ` mod _gated` in their files (or the
-//       containing webcore submod is gated in src/runtime/webcore.rs).
+// REAL: src/runtime/webcore/fetch.rs
+// Bun__fetch
+// Bun__fetchPreconnect
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__fetch(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    phase_c_todo!("Bun__fetch")
-}
+// REAL: src/runtime/webcore/ObjectURLRegistry.rs
+// Bun__createObjectURL
+// Bun__revokeObjectURL
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__fetchPreconnect(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    phase_c_todo!("Bun__fetchPreconnect")
-}
+// REAL: src/runtime/webcore/prompt.rs
+// WebCore__alert
+// WebCore__confirm
+// WebCore__prompt
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__createObjectURL(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    phase_c_todo!("Bun__createObjectURL")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__revokeObjectURL(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    phase_c_todo!("Bun__revokeObjectURL")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn WebCore__alert(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    phase_c_todo!("WebCore__alert")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn WebCore__confirm(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    phase_c_todo!("WebCore__confirm")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn WebCore__prompt(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    phase_c_todo!("WebCore__prompt")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn FormData__jsFunctionFromMultipartData(
-    global: *mut JSGlobalObject,
-    callframe: *mut CallFrame,
-) -> JSValue {
-    phase_c_todo!("FormData__jsFunctionFromMultipartData")
-}
+// REAL: src/runtime/webcore/FormData.rs
+// FormData__jsFunctionFromMultipartData
 
 // ── WebSocket ───────────────────────────────────────────────────────────────
 // REAL: src/http_jsc/websocket_client/WebSocketUpgradeClient.rs
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__WebSocket__freeSSLConfig(config: *mut SSLConfig) {
-    phase_c_todo!("Bun__WebSocket__freeSSLConfig")
-}
+// Bun__WebSocket__freeSSLConfig
 
 // ── WebWorker ───────────────────────────────────────────────────────────────
-// REAL: now provided by bun_jsc (src/jsc/web_worker.rs).
+// REAL: src/jsc/web_worker.rs
 // WebWorker__create
 // WebWorker__destroy
 // WebWorker__notifyNeedTermination
@@ -376,7 +232,7 @@ pub extern "C" fn Bun__WebSocket__freeSSLConfig(config: *mut SSLConfig) {
 // WebWorker__getParentWorker
 
 // ── encoding ────────────────────────────────────────────────────────────────
-// REAL: now provided by bun_runtime (src/runtime/webcore/encoding.rs).
+// REAL: src/runtime/webcore/encoding.rs
 // Bun__encoding__writeLatin1
 // Bun__encoding__writeUTF16
 // Bun__encoding__byteLengthLatin1AsUTF8
@@ -384,97 +240,23 @@ pub extern "C" fn Bun__WebSocket__freeSSLConfig(config: *mut SSLConfig) {
 // Bun__encoding__toString
 
 // ── TextEncoder ─────────────────────────────────────────────────────────────
-// REAL: src/runtime/webcore/TextEncoder.rs (gated ` mod text_encoder`
-// in src/runtime/webcore.rs `_gated_submods`).
-
-#[unsafe(no_mangle)]
-pub extern "C" fn TextEncoder__encode8(
-    global: *mut JSGlobalObject,
-    ptr: *const u8,
-    len: usize,
-) -> JSValue {
-    phase_c_todo!("TextEncoder__encode8")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn TextEncoder__encode16(
-    global: *mut JSGlobalObject,
-    ptr: *const u16,
-    len: usize,
-) -> JSValue {
-    phase_c_todo!("TextEncoder__encode16")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn TextEncoder__encodeRopeString(
-    global: *mut JSGlobalObject,
-    rope_str: *mut JSString,
-) -> JSValue {
-    phase_c_todo!("TextEncoder__encodeRopeString")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn TextEncoder__encodeInto16(
-    input_ptr: *const u16,
-    input_len: usize,
-    buf_ptr: *mut u8,
-    buf_len: usize,
-) -> u64 {
-    phase_c_todo!("TextEncoder__encodeInto16")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn TextEncoder__encodeInto8(
-    input_ptr: *const u8,
-    input_len: usize,
-    buf_ptr: *mut u8,
-    buf_len: usize,
-) -> u64 {
-    phase_c_todo!("TextEncoder__encodeInto8")
-}
+// REAL: src/runtime/webcore/TextEncoder.rs
+// TextEncoder__encode8
+// TextEncoder__encode16
+// TextEncoder__encodeRopeString
+// TextEncoder__encodeInto16
+// TextEncoder__encodeInto8
 
 // ── Blob ────────────────────────────────────────────────────────────────────
-// REAL: src/runtime/webcore/Blob.rs (+ generated .classes.ts hooks)
-//       C-export bodies still inside ` mod _jsc_gated` in Blob.rs.
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Blob__dupeFromJS(value: JSValue) -> *mut Blob {
-    phase_c_todo!("Blob__dupeFromJS")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Blob__dupe(this: *mut Blob) -> *mut Blob {
-    phase_c_todo!("Blob__dupe")
-}
-
-// REAL: now provided by bun_runtime (src/runtime/webcore/Blob.rs).
+// REAL: src/runtime/webcore/Blob.rs
+// Blob__dupeFromJS
+// Blob__dupe
 // Blob__deref
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Blob__setAsFile(this: *mut Blob, path_str: *mut BunString) {
-    phase_c_todo!("Blob__setAsFile")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Blob__getFileNameString(this: *mut Blob) -> BunString {
-    phase_c_todo!("Blob__getFileNameString")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Blob__getDataPtr(value: JSValue) -> *mut c_void {
-    phase_c_todo!("Blob__getDataPtr")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Blob__getSize(value: JSValue) -> usize {
-    phase_c_todo!("Blob__getSize")
-}
-
-// REAL: src/runtime/webcore/Blob.rs (gated)
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__Blob__getSizeForBindings(this: *mut Blob) -> u64 {
-    phase_c_todo!("Bun__Blob__getSizeForBindings")
-}
+// Blob__setAsFile
+// Blob__getFileNameString
+// Blob__getDataPtr
+// Blob__getSize
+// Bun__Blob__getSizeForBindings
 
 // .classes.ts hooks (build/debug/codegen/ZigGeneratedClasses.zig)
 #[unsafe(no_mangle)]
@@ -484,7 +266,7 @@ pub extern "C" fn Blob__estimatedSize(this: *mut Blob) -> usize {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn BlobClass__finalize(this: *mut Blob) {
-    phase_c_todo!("BlobClass__finalize")
+    unreachable!("BlobClass__finalize: emitted by .classes.ts codegen (ZigGeneratedClasses); Rust codegen not yet emitted")
 }
 
 #[unsafe(no_mangle)]
@@ -494,7 +276,7 @@ pub extern "C" fn Blob__onStructuredCloneSerialize(
     ctx: *mut c_void,
     write_bytes: WriteBytesFn,
 ) {
-    phase_c_todo!("Blob__onStructuredCloneSerialize")
+    unreachable!("Blob__onStructuredCloneSerialize: emitted by .classes.ts codegen (ZigGeneratedClasses); Rust codegen not yet emitted")
 }
 
 #[unsafe(no_mangle)]
@@ -503,7 +285,7 @@ pub extern "C" fn Blob__onStructuredCloneDeserialize(
     ptr: *mut *mut u8,
     end: *const u8,
 ) -> JSValue {
-    phase_c_todo!("Blob__onStructuredCloneDeserialize")
+    unreachable!("Blob__onStructuredCloneDeserialize: emitted by .classes.ts codegen (ZigGeneratedClasses); Rust codegen not yet emitted")
 }
 
 // ── BlockList (.classes.ts hooks) ───────────────────────────────────────────
@@ -516,7 +298,7 @@ pub extern "C" fn BlockList__estimatedSize(this: *mut BlockList) -> usize {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn BlockListClass__finalize(this: *mut BlockList) {
-    phase_c_todo!("BlockListClass__finalize")
+    unreachable!("BlockListClass__finalize: emitted by .classes.ts codegen (ZigGeneratedClasses); Rust codegen not yet emitted")
 }
 
 #[unsafe(no_mangle)]
@@ -526,7 +308,7 @@ pub extern "C" fn BlockList__onStructuredCloneSerialize(
     ctx: *mut c_void,
     write_bytes: WriteBytesFn,
 ) {
-    phase_c_todo!("BlockList__onStructuredCloneSerialize")
+    unreachable!("BlockList__onStructuredCloneSerialize: emitted by .classes.ts codegen (ZigGeneratedClasses); Rust codegen not yet emitted")
 }
 
 #[unsafe(no_mangle)]
@@ -535,7 +317,7 @@ pub extern "C" fn BlockList__onStructuredCloneDeserialize(
     ptr: *mut *mut u8,
     end: *const u8,
 ) -> JSValue {
-    phase_c_todo!("BlockList__onStructuredCloneDeserialize")
+    unreachable!("BlockList__onStructuredCloneDeserialize: emitted by .classes.ts codegen (ZigGeneratedClasses); Rust codegen not yet emitted")
 }
 
 // ── WebView process control ─────────────────────────────────────────────────
@@ -550,186 +332,56 @@ pub extern "C" fn Bun__Chrome__kill() {}
 pub extern "C" fn Bun__WebViewHost__kill() {}
 
 // ── napi ────────────────────────────────────────────────────────────────────
-// REAL: src/runtime/napi/napi_body.rs (gated ` mod napi_body`)
-
-type NapiEnv = *mut c_void;
-type NapiValue = *mut c_void;
-type NapiStatus = c_int;
-
-#[unsafe(no_mangle)]
-pub extern "C" fn napi_create_string_latin1(
-    env: NapiEnv,
-    str: *const u8,
-    length: usize,
-    result: *mut NapiValue,
-) -> NapiStatus {
-    phase_c_todo!("napi_create_string_latin1")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn napi_create_string_utf8(
-    env: NapiEnv,
-    str: *const u8,
-    length: usize,
-    result: *mut NapiValue,
-) -> NapiStatus {
-    phase_c_todo!("napi_create_string_utf8")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn napi_create_string_utf16(
-    env: NapiEnv,
-    str: *const u16,
-    length: usize,
-    result: *mut NapiValue,
-) -> NapiStatus {
-    phase_c_todo!("napi_create_string_utf16")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn napi_internal_enqueue_finalizer(
-    env: NapiEnv,
-    fun: NapiFinalize,
-    data: *mut c_void,
-    hint: *mut c_void,
-) {
-    phase_c_todo!("napi_internal_enqueue_finalizer")
-}
+// REAL: src/runtime/napi/napi_body.rs
+// napi_create_string_latin1
+// napi_create_string_utf8
+// napi_create_string_utf16
+// napi_internal_enqueue_finalizer
 
 // ── usockets dispatch ───────────────────────────────────────────────────────
-// REAL: src/runtime/socket/uws_dispatch.rs (gated ` pub mod uws_dispatch`)
-
-#[unsafe(no_mangle)]
-pub extern "C" fn us_dispatch_open(
-    s: *mut UsSocket,
-    is_client: c_int,
-    ip: *mut u8,
-    ip_len: c_int,
-) -> *mut UsSocket {
-    phase_c_todo!("us_dispatch_open")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn us_dispatch_close(
-    s: *mut UsSocket,
-    code: c_int,
-    reason: *mut c_void,
-) -> *mut UsSocket {
-    phase_c_todo!("us_dispatch_close")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn us_dispatch_timeout(s: *mut UsSocket) -> *mut UsSocket {
-    phase_c_todo!("us_dispatch_timeout")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn us_dispatch_long_timeout(s: *mut UsSocket) -> *mut UsSocket {
-    phase_c_todo!("us_dispatch_long_timeout")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn us_dispatch_handshake(s: *mut UsSocket, ok: c_int, err: UsBunVerifyError) {
-    phase_c_todo!("us_dispatch_handshake")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn us_dispatch_data(s: *mut UsSocket, data: *mut u8, len: c_int) -> *mut UsSocket {
-    phase_c_todo!("us_dispatch_data")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn us_dispatch_fd(s: *mut UsSocket, fd: c_int) -> *mut UsSocket {
-    phase_c_todo!("us_dispatch_fd")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn us_dispatch_writable(s: *mut UsSocket) -> *mut UsSocket {
-    phase_c_todo!("us_dispatch_writable")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn us_dispatch_end(s: *mut UsSocket) -> *mut UsSocket {
-    phase_c_todo!("us_dispatch_end")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn us_dispatch_connect_error(s: *mut UsSocket, code: c_int) -> *mut UsSocket {
-    phase_c_todo!("us_dispatch_connect_error")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn us_dispatch_connecting_error(c: *mut c_void, code: c_int) -> *mut c_void {
-    phase_c_todo!("us_dispatch_connecting_error")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn us_dispatch_ssl_raw_tap(
-    s: *mut UsSocket,
-    data: *mut u8,
-    len: c_int,
-) -> *mut UsSocket {
-    phase_c_todo!("us_dispatch_ssl_raw_tap")
-}
+// REAL: src/runtime/socket/uws_dispatch.rs
+// us_dispatch_open
+// us_dispatch_close
+// us_dispatch_timeout
+// us_dispatch_long_timeout
+// us_dispatch_handshake
+// us_dispatch_data
+// us_dispatch_fd
+// us_dispatch_writable
+// us_dispatch_end
+// us_dispatch_connect_error
+// us_dispatch_connecting_error
+// us_dispatch_ssl_raw_tap
 
 // ── DNS addrinfo (usockets → bun_runtime::dns_jsc) ──────────────────────────
-// REAL: src/runtime/dns_jsc/dns.rs (gated ` mod dns_body`)
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__addrinfo_get(
-    loop_: *mut UwsLoop,
-    host: *const c_char,
-    port: u16,
-    socket: *mut *mut c_void,
-) -> c_int {
-    phase_c_todo!("Bun__addrinfo_get")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__addrinfo_set(request: *mut c_void, socket: *mut c_void) {
-    phase_c_todo!("Bun__addrinfo_set")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__addrinfo_cancel(request: *mut c_void, socket: *mut c_void) -> c_int {
-    phase_c_todo!("Bun__addrinfo_cancel")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__addrinfo_freeRequest(req: *mut c_void, err: c_int) {
-    phase_c_todo!("Bun__addrinfo_freeRequest")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__addrinfo_getRequestResult(req: *mut c_void) -> *mut c_void {
-    phase_c_todo!("Bun__addrinfo_getRequestResult")
-}
+// REAL: src/runtime/dns_jsc/dns.rs
+// Bun__addrinfo_get
+// Bun__addrinfo_set
+// Bun__addrinfo_cancel
+// Bun__addrinfo_freeRequest
+// Bun__addrinfo_getRequestResult
 
 // ── bundler analyze ─────────────────────────────────────────────────────────
-// REAL: src/bundler/analyze_transpiled_module.rs, src/bundler_jsc/analyze_jsc.rs
-
-// REAL: now provided by bun_bundler (src/bundler/analyze_transpiled_module.rs).
+// REAL: src/bundler/analyze_transpiled_module.rs
 // zig__ModuleInfoDeserialized__deinit
 
+// REAL: src/bundler_jsc/analyze_jsc.rs
+// zig__ModuleInfoDeserialized__toJSModuleRecord
+// zig__renderDiff
+
+// ════════════════════════════════════════════════════════════════════════════
+// Genuinely unimplemented — no Zig `export fn`, no C++ body. Kept so the
+// extern ref in the rlib resolves; loud crash if ever called.
+// ════════════════════════════════════════════════════════════════════════════
+
+// Declared `CPP_DECL` in headers.h:279 but bindings.cpp never defines it.
 #[unsafe(no_mangle)]
-pub extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
-    global: *mut JSGlobalObject,
-    vm: *mut c_void,
-    module_key: *const c_void,
-    source_code: *const c_void,
-    info: *mut ModuleInfoDeserialized,
-    promise: *mut c_void,
-) -> JSValue {
-    phase_c_todo!("zig__ModuleInfoDeserialized__toJSModuleRecord")
+pub extern "C" fn JSC__JSValue__parseJSON(string: *const c_void, global: *const JSGlobalObject) -> JSValue {
+    unreachable!("JSC__JSValue__parseJSON: not implemented in Zig either (CPP_DECL with no C++ body)")
 }
 
+// Imported by bun_jsc/bun_sys_jsc as extern but no provider in C++ or Zig.
 #[unsafe(no_mangle)]
-pub extern "C" fn zig__renderDiff(
-    expected_ptr: *const u8,
-    expected_len: usize,
-    received_ptr: *const u8,
-    received_len: usize,
-    global: *mut JSGlobalObject,
-) {
-    phase_c_todo!("zig__renderDiff")
+pub extern "C" fn BunString__toErrorInstance(this: *const c_void, global: *mut JSGlobalObject) -> JSValue {
+    unreachable!("BunString__toErrorInstance: not implemented in Zig either (no C++ body)")
 }

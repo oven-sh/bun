@@ -1265,9 +1265,12 @@ fn get_code_for_parse_task_without_plugins(
             // otherwise; the Rust `read_file_with_allocator` always allocates
             // from the global heap (see resolver/lib.rs PORT NOTE).
             let _ = loader.should_copy_for_bundling();
-            // SAFETY: `transpiler.fs` is a live `*mut FileSystem` BACKREF.
-            let fs_ref = unsafe { &mut *transpiler.fs };
-            break 'brk match resolver.caches.fs.read_file_with_allocator(
+            // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`;
+            // `(*transpiler).fs` is a live `*mut FileSystem` BACKREF.
+            let fs_ref = unsafe { &mut *(*transpiler).fs };
+            // SAFETY: `resolver` is a live `*mut Resolver`; `caches.fs` is
+            // disjoint from `(*transpiler).fs` (a backref pointer field).
+            break 'brk match unsafe { &mut (*resolver).caches.fs }.read_file_with_allocator(
                 fs_ref,
                 file_path.text,
                 contents_dir,

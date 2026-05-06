@@ -177,9 +177,10 @@ impl Assets {
             // PERF(port): was assume_capacity-style append in Zig path — profile in Phase B
             *file_index_gop.value_ptr = StaticRoute::init_from_any_blob(
                 contents,
-                StaticRoute::InitOptions {
-                    mime_type,
-                    server: self.owner().server.expect("unreachable"),
+                InitFromBytesOptions {
+                    mime_type: Some(mime_type),
+                    server: self.owner().server,
+                    ..Default::default()
                 },
             );
         } else {
@@ -187,9 +188,10 @@ impl Assets {
             let mut contents_mut = *contents;
             contents_mut.detach();
         }
-        *gop.value_ptr = EntryIndex::init(u32::try_from(file_index_gop.index).unwrap());
+        let entry = EntryIndex::init(u32::try_from(file_index_gop.index).unwrap());
+        *gop.value_ptr = entry;
         debug_assert_eq!(self.files.count(), self.refs.len());
-        Ok(*gop.value_ptr)
+        Ok(entry)
     }
 
     /// Returns a pointer to insert the *StaticRoute. If `None` is returned, then it

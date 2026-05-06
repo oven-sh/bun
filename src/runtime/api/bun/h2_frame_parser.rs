@@ -2462,8 +2462,9 @@ impl H2FrameParser {
         }
         AutoFlusher::unregister_deferred_microtask_with_type_unchecked::<H2FrameParser>(
             self,
-            // SAFETY: global_this is JSC_BORROW (set at construction from &JSGlobalObject); outlives self, never null
-            unsafe { &*self.global_this }.bun_vm(),
+            // SAFETY: global_this is JSC_BORROW (set at construction from &JSGlobalObject); outlives self, never null.
+            // bun_vm() returns *mut VirtualMachine; deref to &VirtualMachine for the AutoFlusher API.
+            unsafe { &*(*self.global_this).bun_vm() },
         );
         self.deref();
     }

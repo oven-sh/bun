@@ -224,20 +224,20 @@ pub fn result_any_to_js(this: &ResultAny, global: &JSGlobalObject) -> JsResult<O
 
 pub fn result_to_js(this: &GaiResult, global: &JSGlobalObject) -> JsResult<JSValue> {
     let obj = JSValue::create_empty_object(global, 3);
-    obj.put(global, ZigString::static_("address"), address_to_js(&this.address, global)?);
+    obj.put(global, b"address", address_to_js(&this.address, global)?);
     obj.put(
         global,
-        ZigString::static_("family"),
+        b"family",
         // PORT NOTE: `this.address.any.family` — Zig's std.net.Address stores a
         // sockaddr union under `.any` with a `.family` field. The Rust
         // `bun_sys::net::Address` exposes `.family() -> i32`.
         match this.address.family() {
-            f if f == libc::AF_INET as _ => JSValue::js_number(4),
-            f if f == libc::AF_INET6 as _ => JSValue::js_number(6),
-            _ => JSValue::js_number(0),
+            f if f == libc::AF_INET as _ => JSValue::js_number(4.0),
+            f if f == libc::AF_INET6 as _ => JSValue::js_number(6.0),
+            _ => JSValue::js_number(0.0),
         },
     );
-    obj.put(global, ZigString::static_("ttl"), JSValue::js_number(this.ttl));
+    obj.put(global, b"ttl", JSValue::js_number(f64::from(this.ttl)));
     Ok(obj)
 }
 

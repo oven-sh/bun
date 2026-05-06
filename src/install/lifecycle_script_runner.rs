@@ -1054,7 +1054,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         // don't rely on side effects of tasks based on this value. (And in the case
         // of hoisted installs it's single-threaded.)
         let _ = self
-            .manager
+            .manager()
             .pending_lifecycle_script_tasks
             .fetch_add(1, Ordering::Relaxed);
     }
@@ -1063,9 +1063,42 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         // .monotonic is okay because this is just used for progress (see
         // `increment_pending_script_tasks`).
         let _ = self
-            .manager
+            .manager()
             .pending_lifecycle_script_tasks
             .fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// BufferedReaderParent — wires the stdout/stderr OutputReaders back to
+// `on_reader_done`/`on_reader_error` via the type-erased vtable.
+// ──────────────────────────────────────────────────────────────────────────
+
+impl<'a> BufferedReaderParent for LifecycleScriptSubprocess<'a> {
+    /// Zig: no `onReadChunk` decl — output is consumed only in `final_buffer`.
+    const HAS_ON_READ_CHUNK: bool = false;
+
+    unsafe fn on_reader_done(this: *mut Self) {
+        // SAFETY: vtable contract — `this` is the live `set_parent` backref;
+        // tail-position call so no `&mut` to the embedded reader survives.
+        unsafe { (*this).on_reader_done() }
+    }
+    unsafe fn on_reader_error(this: *mut Self, err: bun_sys::Error) {
+        // SAFETY: as above.
+        unsafe { (*this).on_reader_error(err) }
+    }
+    unsafe fn loop_(this: *mut Self) -> *mut bun_io::Loop {
+        // SAFETY: as above.
+        unsafe { (*this).loop_() as *mut bun_io::Loop }
+    }
+    unsafe fn event_loop(this: *mut Self) -> EventLoopHandle {
+        // SAFETY: as above. Erase `&AnyEventLoop` → opaque handle (see
+        // CYCLEBREAK note on `bun_io::EventLoopHandle`).
+        unsafe {
+            EventLoopHandle(
+                (*this).event_loop() as *const AnyEventLoop<'static> as *mut c_void,
+            )
+        }
     }
 }
 

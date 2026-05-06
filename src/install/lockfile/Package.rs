@@ -1878,12 +1878,13 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
         }
 
         if let Some(patched_deps) = json.as_property(b"patchedDependencies") {
-            let obj = patched_deps.expr.data.e_object();
-            for prop in obj.properties.slice() {
-                let key = prop.key.unwrap();
-                let value = prop.value.unwrap();
-                if key.is_string() && value.is_string() {
-                    string_builder.count(value.as_string().unwrap());
+            if let bun_js_parser::ast::ExprData::EObject(obj) = &patched_deps.expr.data {
+                for prop in obj.properties.slice() {
+                    let key = prop.key.unwrap();
+                    let value = prop.value.unwrap();
+                    if key.is_string() && value.is_string() {
+                        string_builder.count(value.as_string().unwrap());
+                    }
                 }
             }
         }
@@ -1931,12 +1932,10 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
             }
         }
 
-        Scripts::parse_count(&mut string_builder, &json);
+        Scripts::parse_count(&mut string_builder, json);
 
-        // TODO(port): Zig `if (comptime ResolverContext != void)`. Phase B: trait method
-        // with default no-op so `()` doesn't call it.
         if !R::IS_VOID {
-            resolver.count(&mut string_builder, &json);
+            ResolverContext::count(resolver, &mut string_builder, &json);
         }
 
         // PERF(port): was comptime-computed array — profile in Phase B

@@ -558,27 +558,27 @@ impl NetworkTask {
         // SAFETY: BACKREF — PackageManager owns this task and outlives it.
         let pm = unsafe { &mut *(self.package_manager as *mut PackageManager) };
 
+        let tarball_url = tarball_.url.slice();
+        self.url_buf = if tarball_url.is_empty() {
+            // SAFETY: `value` is the `Npm` variant on this code path —
+            // `for_tarball` is only reached for npm tarball downloads
+            // (callers gate on `resolution.tag == .npm`).
+            let version = unsafe { tarball_.resolution.value.npm }.version;
+            Box::from(extract_tarball::build_url(
+                &scope.url.href,
+                &tarball_.name,
+                version,
+                pm.lockfile.buffers.string_bytes.as_slice(),
+            )?)
+        } else {
+            // TODO(port): Zig aliases `tarball.url` here without copying;
+            // `url_buf: Box<[u8]>` forces an allocation. Revisit ownership.
+            Box::<[u8]>::from(tarball_url)
+        };
         self.callback = Callback::Extract(tarball_);
         let Callback::Extract(tarball) = &self.callback else {
             unreachable!()
         };
-        let tarball_url = tarball.url.slice();
-        if tarball_url.is_empty() {
-            // SAFETY: `value` is the `Npm` variant on this code path —
-            // `for_tarball` is only reached for npm tarball downloads
-            // (callers gate on `resolution.tag == .npm`).
-            let version = unsafe { tarball.resolution.value.npm }.version;
-            self.url_buf = Box::from(extract_tarball::build_url(
-                &scope.url.href,
-                &tarball.name,
-                version,
-                pm.lockfile.buffers.string_bytes.as_slice(),
-            )?);
-        } else {
-            // TODO(port): Zig aliases `tarball.url` here without copying;
-            // `url_buf: Box<[u8]>` forces an allocation. Revisit ownership.
-            self.url_buf = Box::<[u8]>::from(tarball_url);
-        }
 
         if !(self.url_buf.starts_with(b"https://") || self.url_buf.starts_with(b"http://")) {
             pm.log_mut().add_error_fmt(

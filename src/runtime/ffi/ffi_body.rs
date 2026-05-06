@@ -2957,16 +2957,23 @@ impl CompilerRT {
         state
             .add_symbol(b"memcpy", Self::memcpy as *const c_void)
             .expect("unreachable");
+        // Re-declare the C++ NapiHandleScope hooks locally — the canonical
+        // declarations live in `crate::napi::napi_body` which is private, and
+        // we only need the symbol addresses to hand to TCC.
+        unsafe extern "C" {
+            fn NapiHandleScope__open(env: *mut napi::NapiEnv, escapable: bool) -> *mut c_void;
+            fn NapiHandleScope__close(env: *mut napi::NapiEnv, current: *mut c_void);
+        }
         state
             .add_symbol(
                 b"NapiHandleScope__open",
-                napi::NapiHandleScope::NapiHandleScope__open as *const c_void,
+                NapiHandleScope__open as *const c_void,
             )
             .expect("unreachable");
         state
             .add_symbol(
                 b"NapiHandleScope__close",
-                napi::NapiHandleScope::NapiHandleScope__close as *const c_void,
+                NapiHandleScope__close as *const c_void,
             )
             .expect("unreachable");
 

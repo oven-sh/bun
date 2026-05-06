@@ -1634,19 +1634,22 @@ impl<'a> Formatter<'a> {
                             to_json_function.call(self.global_this, value, &[])?,
                             JSType::Object,
                         );
-                    } else if let Some(timer) = value.as_::<bun_runtime::api::timer::TimeoutObject>() {
+                    } else if let Some(timer) = value.as_::<crate::timer::TimeoutObject>() {
+                        // SAFETY: `as_` returned non-null; the GC keeps the cell alive while
+                        // `value` is on the stack (conservative scan).
+                        let timer = unsafe { &*timer };
                         self.add_for_new_line(
                             b"Timeout(# ) ".len()
                                 + bun_fmt::fast_digit_count(
                                     u64::try_from(timer.internals.id.max(0)).unwrap(),
-                                ),
+                                ) as usize,
                         );
-                        if timer.internals.flags.kind == bun_runtime::api::timer::Kind::SetInterval {
+                        if timer.internals.flags.kind() == crate::timer::Kind::SetInterval {
                             self.add_for_new_line(
                                 b"repeats ".len()
                                     + bun_fmt::fast_digit_count(
                                         u64::try_from(timer.internals.id.max(0)).unwrap(),
-                                    ),
+                                    ) as usize,
                             );
                             writer.print(format_args!(
                                 "{}Timeout{} {}(#{}{}{}{}, repeats){}",
@@ -1675,13 +1678,15 @@ impl<'a> Formatter<'a> {
 
                         return Ok(());
                     } else if let Some(immediate) =
-                        value.as_::<bun_runtime::api::timer::ImmediateObject>()
+                        value.as_::<crate::timer::ImmediateObject>()
                     {
+                        // SAFETY: see TimeoutObject branch above.
+                        let immediate = unsafe { &*immediate };
                         self.add_for_new_line(
                             b"Immediate(# ) ".len()
                                 + bun_fmt::fast_digit_count(
                                     u64::try_from(immediate.internals.id.max(0)).unwrap(),
-                                ),
+                                ) as usize,
                         );
                         writer.print(format_args!(
                             "{}Immediate{} {}(#{}{}{}{}){}",
@@ -1696,11 +1701,17 @@ impl<'a> Formatter<'a> {
                         ));
 
                         return Ok(());
-                    } else if let Some(build_log) = value.as_::<bun_runtime::api::BuildMessage>() {
-                        let _ = build_log.msg.write_format::<_, ENABLE_ANSI_COLORS>(writer.ctx);
+                    } else if let Some(build_log) = value.as_::<crate::api::BuildMessage>() {
+                        // SAFETY: non-null JsClass cell, GC-rooted via `value`.
+                        let _ = unsafe { &*build_log }
+                            .msg
+                            .write_format::<ENABLE_ANSI_COLORS>(writer.ctx);
                         return Ok(());
-                    } else if let Some(resolve_log) = value.as_::<bun_runtime::api::ResolveMessage>() {
-                        let _ = resolve_log.msg.write_format::<_, ENABLE_ANSI_COLORS>(writer.ctx);
+                    } else if let Some(resolve_log) = value.as_::<crate::api::ResolveMessage>() {
+                        // SAFETY: non-null JsClass cell, GC-rooted via `value`.
+                        let _ = unsafe { &*resolve_log }
+                            .msg
+                            .write_format::<ENABLE_ANSI_COLORS>(writer.ctx);
                         return Ok(());
                     } else if NAME_BUF.with_borrow(|name_buf| {
                         // TODO(port): printAsymmetricMatcher takes name_buf by value [512]u8;
@@ -2597,22 +2608,20 @@ impl<'a> Formatter<'a> {
 
 impl JestPrettyFormat {
     fn print_asymmetric_matcher_promise_prefix<W: bun_io::Write>(
-        flags: expect::ExpectFlags,
+        flags: expect::Flags,
         matcher: &mut Formatter<'_>,
         writer: &mut WrappedWriter<'_, W>,
     ) {
-        if flags.promise != expect::PromiseFlag::None {
-            match flags.promise {
-                expect::PromiseFlag::Resolves => {
-                    matcher.add_for_new_line(b"promise resolved to ".len());
-                    writer.write_all(b"promise resolved to ");
-                }
-                expect::PromiseFlag::Rejects => {
-                    matcher.add_for_new_line(b"promise rejected to ".len());
-                    writer.write_all(b"promise rejected to ");
-                }
-                _ => {}
+        match flags.promise() {
+            expect::Promise::Resolves => {
+                matcher.add_for_new_line(b"promise resolved to ".len());
+                writer.write_all(b"promise resolved to ");
             }
+            expect::Promise::Rejects => {
+                matcher.add_for_new_line(b"promise rejected to ".len());
+                writer.write_all(b"promise rejected to ");
+            }
+            expect::Promise::None => {}
         }
     }
 
@@ -2623,11 +2632,11 @@ impl JestPrettyFormat {
     >(
         // the Formatter instance
         this: &mut Formatter<'_>,
-        /// The WrappedWriter
+        // The WrappedWriter
         writer: &mut WrappedWriter<'_, W>,
-        /// The raw writer
+        // The raw writer
         writer_: &mut W,
-        /// Buf used to print strings
+        // Buf used to print strings
         name_buf: [u8; 512],
         value: JSValue,
     ) -> JsResult<bool> {

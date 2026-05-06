@@ -3,10 +3,11 @@ use std::io::Write as _;
 
 use bun_collections::{ArrayHashMap, HashMap, StringHashMap};
 use bun_core::{self, Error};
-use bun_jsc::VirtualMachine;
-use bun_js_parser::{self as js_parser, ast as js_ast, lexer as js_lexer, printer as js_printer};
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_js_parser::{self as js_parser, ast as js_ast, lexer as js_lexer};
+use bun_str::printer as js_printer;
 use bun_logger as logger;
-use bun_output;
+use bun_core::output as bun_output;
 use bun_paths::{self, PathBuffer, MAX_PATH_BYTES, SEP};
 use bun_str::{strings, ZStr};
 use bun_sys::{self, Fd};
@@ -19,7 +20,7 @@ use super::jest::{Jest, TestRunner};
 // TestRunner.File.ID — concrete alias from jest.rs (`pub type FileId = u32`).
 type FileId = super::jest::FileId;
 
-bun_output::declare_scope!(inline_snapshot, visible);
+bun_core::declare_scope!(inline_snapshot, visible);
 
 pub struct Snapshots<'a> {
     pub update_snapshots: bool,
@@ -54,10 +55,12 @@ impl<'a> Snapshots<'a> {
     #[cfg(not(windows))]
     const SNAPSHOTS_DIR_NAME: &'static [u8] = b"__snapshots__/";
 
-    // std.HashMap(usize, string, bun.IdentityContext(usize), default_max_load_percentage)
-    // TODO(port): IdentityContext — key is its own hash; Phase B may want `BuildHasherDefault<IdentityHasher>`.
-    pub type ValuesHashMap = HashMap<u64, Box<[u8]>>;
 }
+
+// std.HashMap(usize, string, bun.IdentityContext(usize), default_max_load_percentage)
+// TODO(port): IdentityContext — key is its own hash; Phase B may want `BuildHasherDefault<IdentityHasher>`.
+// PORT NOTE: hoisted out of `impl Snapshots` — inherent associated types are unstable.
+pub type ValuesHashMap = HashMap<u64, Box<[u8]>>;
 
 pub struct InlineSnapshotToWrite {
     pub line: c_ulong,
@@ -140,10 +143,14 @@ impl<'a> Snapshots<'a> {
         match self.get_snapshot_file(bun_test.file_id)? {
             bun_sys::Result::Ok(()) => {}
             bun_sys::Result::Err(err) => {
-                return Err(match err.syscall {
-                    bun_sys::Syscall::Mkdir => bun_core::err!("FailedToMakeSnapshotDirectory"),
-                    bun_sys::Syscall::Open => bun_core::err!("FailedToOpenSnapshotFile"),
-                    _ => bun_core::err!("SnapshotFailed"),
+                // PORT NOTE: `bun_sys::Tag` is a newtype-struct with assoc consts (lowercase),
+                // not an enum — match arms require structural-eq; use if-chain instead.
+                return Err(if err.syscall == bun_sys::Tag::mkdir {
+                    bun_core::err!("FailedToMakeSnapshotDirectory")
+                } else if err.syscall == bun_sys::Tag::open {
+                    bun_core::err!("FailedToOpenSnapshotFile")
+                } else {
+                    bun_core::err!("SnapshotFailed")
                 });
             }
         }
@@ -174,7 +181,7 @@ impl<'a> Snapshots<'a> {
 
         // doesn't exist. append to file bytes and add to hashmap.
         // Prevent snapshot creation in CI environments unless --update-snapshots is used
-        if bun_core::ci::is_ci() {
+        if crate::cli::ci_info::is_ci() {
             if !self.update_snapshots {
                 // Store the snapshot name for error reporting
                 // (old name dropped automatically on reassign)
@@ -192,8 +199,8 @@ impl<'a> Snapshots<'a> {
         write!(
             self.file_buf,
             "\nexports[`{}`] = `{}`;\n",
-            strings::format_escapes(&name_with_counter, strings::FormatEscapesOpts { quote_char: b'`' }),
-            strings::format_escapes(target_value, strings::FormatEscapesOpts { quote_char: b'`' }),
+            strings::format_escapes(&name_with_counter, strings::QuoteEscapeFormatFlags { quote_char: b'`', ..Default::default() }),
+            strings::format_escapes(target_value, strings::QuoteEscapeFormatFlags { quote_char: b'`', ..Default::default() }),
         )
         .map_err(|_| bun_core::err!("WriteError"))?;
 
@@ -208,8 +215,10 @@ impl<'a> Snapshots<'a> {
             return Ok(());
         }
 
-        let vm = VirtualMachine::get();
-        let opts = js_parser::Parser::Options::init(vm.transpiler.options.jsx, js_parser::Loader::Js);
+        // SAFETY: VM is thread-local singleton installed before any test runs; lives for the
+        // duration of the runner. Per `VirtualMachine::get` doc, callers form a short-lived borrow.
+        let vm = unsafe { &mut *VirtualMachine::get() };
+        let opts = js_parser::Parser::Options::init(vm.transpiler.options.jsx, js_parser::options::Loader::Js);
         let mut temp_log = logger::Log::init();
 
         let test_file = Jest::runner().unwrap().files.get(file.id);
@@ -242,7 +251,7 @@ impl<'a> Snapshots<'a> {
 
         let parse_result = parser.parse()?;
         let mut ast = match parse_result {
-            js_parser::ParseResult::Ast(ast) => ast,
+            js_ast::Result::Ast(ast) => ast,
             _ => return Err(bun_core::err!("ParseError")),
         };
         // defer ast.deinit() → Drop
@@ -259,7 +268,7 @@ impl<'a> Snapshots<'a> {
                 match &stmt.data {
                     js_ast::StmtData::SExpr(expr) => {
                         if let js_ast::ExprData::EBinary(e_binary) = &expr.value.data {
-                            if e_binary.op == js_ast::Op::BinAssign {
+                            if e_binary.op == js_ast::Op::Code::BinAssign {
                                 let left = &e_binary.left;
                                 if let js_ast::ExprData::EIndex(e_index) = &left.data {
                                     if let (
@@ -337,8 +346,9 @@ impl<'a> Snapshots<'a> {
         // PORT NOTE: `success` is a Cell so the per-iteration `defer if (log.errors > 0)` guard
         // closure can flip it without holding a &mut across the loop body.
         let success = core::cell::Cell::new(true);
-        let vm = VirtualMachine::get();
-        let opts = js_parser::Parser::Options::init(vm.transpiler.options.jsx, js_parser::Loader::Js);
+        // SAFETY: see `parse_file` — thread-local VM singleton, short-lived reborrow.
+        let vm = unsafe { &mut *VirtualMachine::get() };
+        let opts = js_parser::Parser::Options::init(vm.transpiler.options.jsx, js_parser::options::Loader::Js);
 
         // PORT NOTE: reshaped for borrowck — iterate by index to allow &mut access to values while reading keys.
         let file_ids: Vec<FileId> = self.inline_snapshots_to_write.keys().cloned().collect();
@@ -439,7 +449,7 @@ impl<'a> Snapshots<'a> {
                     continue;
                 }
 
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     inline_snapshot,
                     "Finding byte for {}/{}",
                     ils.line,
@@ -452,7 +462,7 @@ impl<'a> Snapshots<'a> {
                     ils.line,
                     ils.col,
                 ) else {
-                    bun_output::scoped_log!(inline_snapshot, "-> Could not find byte");
+                    bun_core::scoped_log!(inline_snapshot, "-> Could not find byte");
                     log.add_error_fmt(
                         &source,
                         logger::Loc {
@@ -473,7 +483,7 @@ impl<'a> Snapshots<'a> {
                 last_value = &ils.value;
 
                 let mut next_start = last_byte;
-                bun_output::scoped_log!(inline_snapshot, "-> Found byte {}", next_start);
+                bun_core::scoped_log!(inline_snapshot, "-> Found byte {}", next_start);
 
                 let (final_start, final_end, needs_pre_comma): (i32, i32, bool) = 'blk: {
                     if !file_text[next_start..].is_empty() {
@@ -625,7 +635,7 @@ impl<'a> Snapshots<'a> {
                 };
                 let final_start_usize = usize::try_from(final_start).unwrap_or(0);
                 let final_end_usize = usize::try_from(final_end).unwrap_or(0);
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     inline_snapshot,
                     "  -> Found update range {}-{}",
                     final_start_usize,
@@ -715,7 +725,7 @@ impl<'a> Snapshots<'a> {
                     b'`',
                     false,
                     false,
-                    js_printer::Encoding::Utf8,
+                    strings::Encoding::Utf8,
                 )?;
                 result_text.extend_from_slice(b"`");
 

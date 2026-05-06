@@ -87,17 +87,24 @@ use std::sync::Arc;
 
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, JSPromise, JSPromiseStrong,
-    ConcurrentTask, VirtualMachine, JSMap, JSPropertyIterator, JSPropertyIteratorOptions,
+    JSMap, JSPropertyIterator, JSPropertyIteratorOptions,
+    WorkPool, WorkPoolTask,
 };
+use bun_jsc::ConcurrentTask::{ConcurrentTask, AutoDeinit};
+use bun_jsc::virtual_machine::VirtualMachine;
 use crate::webcore::Blob;
 use crate::webcore::blob::Store as BlobStore;
-use bun_threading::{WorkPool, WorkPoolTask};
 use bun_aio::KeepAlive;
-use bun_core::{self, Output};
+use bun_core::{self, Output, ZBox};
 use bun_str::{self as strings, ZigString};
+use bun_str::zig_string::Slice as ZigStringSlice;
 use bun_sys::{self, Fd, Mode};
 use bun_glob as glob;
 use bun_libarchive as libarchive;
+
+/// libarchive `AE_IFREG` (== `S_IFREG`). The Rust `bun_libarchive::lib` port
+/// does not yet expose `FileType`, so mirror the constant locally.
+const FILETYPE_REGULAR: u32 = 0o100000;
 
 // TODO(port): codegen aliases (`js`, `toJS`, `fromJS`, `fromJSDirect`) are wired by
 // `#[bun_jsc::JsClass]`; the Zig `pub const js = jsc.Codegen.JSArchive;` lines are deleted.
@@ -171,9 +178,10 @@ impl Archive {
             // PORT NOTE: reshaped for borrowck — Zig used `defer formatter.indent -|= 1;`
 
             formatter.write_indent(writer)?;
-            writer.write_str(Output::pretty_fmt_str::<ENABLE_ANSI_COLORS>("<r>files<d>:<r> "))?;
+            let label = Output::pretty_fmt("<r>files<d>:<r> ", ENABLE_ANSI_COLORS);
+            writer.write_str(core::str::from_utf8(&label).unwrap_or("files: "))?;
             formatter.print_as(
-                bun_jsc::FormatterTag::Double,
+                bun_jsc::FormatTag::Double,
                 writer,
                 JSValue::js_number(count_files_in_archive(data) as f64),
                 bun_jsc::JSType::NumberObject,
@@ -189,30 +197,36 @@ impl Archive {
 }
 
 /// Configure archive for reading tar/tar.gz
-fn configure_archive_reader(archive: &mut libarchive::lib::Archive) {
+fn configure_archive_reader(archive: *mut libarchive::lib::Archive) {
+    // SAFETY: caller passes the non-null handle from `Archive::read_new()`.
+    let archive = unsafe { &*archive };
     let _ = archive.read_support_format_tar();
     let _ = archive.read_support_format_gnutar();
     let _ = archive.read_support_filter_gzip();
-    let _ = archive.read_set_options(b"read_concatenated_archives\0");
+    let _ = archive.read_set_options(c"read_concatenated_archives");
 }
 
 /// Count the number of files in an archive
 fn count_files_in_archive(data: &[u8]) -> u32 {
-    let archive = libarchive::lib::Archive::read_new();
+    use libarchive::lib;
+    let archive = lib::Archive::read_new();
     let _guard = scopeguard::guard((), |_| {
-        let _ = archive.read_free();
+        // SAFETY: archive handle valid until guard runs after the loop.
+        let _ = unsafe { (*archive).read_free() };
     });
     configure_archive_reader(archive);
 
-    if archive.read_open_memory(data) != libarchive::lib::Status::Ok {
+    // SAFETY: archive is the non-null handle from read_new(); single-threaded use here.
+    let archive_ref = unsafe { &*archive };
+    if archive_ref.read_open_memory(data) != lib::Result::Ok {
         return 0;
     }
 
     let mut count: u32 = 0;
-    let mut entry: *mut libarchive::lib::ArchiveEntry = core::ptr::null_mut();
-    while archive.read_next_header(&mut entry) == libarchive::lib::Status::Ok {
+    let mut entry: *mut lib::Entry = core::ptr::null_mut();
+    while archive_ref.read_next_header(&mut entry) == lib::Result::Ok {
         // SAFETY: read_next_header returned Ok, so entry is valid until the next call.
-        if unsafe { (*entry).filetype() } == libarchive::lib::FileType::Regular as u32 {
+        if unsafe { (*entry).filetype() } == FILETYPE_REGULAR {
             count += 1;
         }
     }
@@ -229,7 +243,8 @@ impl Archive {
     /// - compress: "gzip" - Enable gzip compression
     /// - level: number (1-12) - Compression level (default 6)
     /// When no options are provided, no compression is applied
-    #[bun_jsc::host_fn(constructor)]
+    // PORT NOTE: `#[bun_jsc::host_fn]` has no `constructor` kind yet; the
+    // `JsClass` derive emits a `constructor` shim that calls this directly.
     pub fn constructor(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<Box<Archive>> {
         let [data_arg, options_arg] = callframe.arguments_as_array::<2>();
         if data_arg.is_empty() {
@@ -316,111 +331,27 @@ fn create_archive(data: Vec<u8>, compress: Compression) -> Box<Archive> {
 
 /// Shared helper that builds tarball bytes from a JS object
 fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<Vec<u8>> {
-    use libarchive::lib;
-
-    let Some(js_obj) = obj.get_object() else {
-        return global.throw_invalid_arguments("Expected an object", &[]);
-    };
-
-    // Set up archive first
-    let mut growing_buffer = lib::GrowingBuffer::init();
-    // errdefer growing_buffer.deinit() — handled by Drop on early return
-
-    let archive = lib::Archive::write_new();
-    let _archive_guard = scopeguard::guard((), |_| {
-        let _ = archive.write_free();
-    });
-
-    if archive.write_set_format_pax_restricted() != lib::Status::Ok {
-        return global.throw_invalid_arguments("Failed to create tarball: ArchiveFormatError", &[]);
-    }
-
-    // SAFETY: archive and growing_buffer live for the duration of the write; callbacks
-    // are libarchive C callbacks with the documented signatures.
-    if unsafe {
-        lib::archive_write_open2(
-            archive as *mut _ as *mut _,
-            &mut growing_buffer as *mut _ as *mut _,
-            Some(lib::GrowingBuffer::open_callback),
-            Some(lib::GrowingBuffer::write_callback),
-            Some(lib::GrowingBuffer::close_callback),
-            None,
-        )
-    } != 0
-    {
-        return global.throw_invalid_arguments("Failed to create tarball: ArchiveOpenError", &[]);
-    }
-
-    let entry = lib::ArchiveEntry::new();
-    let _entry_guard = scopeguard::guard((), |_| entry.free());
-
-    // TODO(port): std.time.milliTimestamp() — map to bun_core time helper
-    let now_secs: isize = isize::try_from(bun_core::time::milli_timestamp() / 1000).unwrap();
-
-    // Iterate over object properties and write directly to archive
-    let mut iter = JSPropertyIterator::init(
-        global,
-        js_obj,
-        JSPropertyIteratorOptions {
-            skip_empty_name: true,
-            include_value: true,
-        },
-    )?;
-    // Drop handles iter.deinit()
-
-    while let Some(key) = iter.next()? {
-        let value = iter.value();
-        if value.is_empty() {
-            continue;
-        }
-
-        // Get the key as a null-terminated string
-        let key_slice = key.to_utf8();
-        let key_str = bun_str::ZStr::from_bytes(key_slice.slice());
-
-        // Get data - use view for Blob/ArrayBuffer, convert for strings
-        let data_slice = get_entry_data(global, value)?;
-
-        // Write entry to archive
-        let data = data_slice.slice();
-        let _ = entry.clear();
-        entry.set_pathname_utf8(key_str.as_cstr());
-        entry.set_size(i64::try_from(data.len()).unwrap());
-        entry.set_filetype(lib::FileType::Regular as u32);
-        entry.set_perm(0o644);
-        entry.set_mtime(now_secs, 0);
-
-        if archive.write_header(entry) != lib::Status::Ok {
-            return global.throw_invalid_arguments("Failed to create tarball: ArchiveHeaderError", &[]);
-        }
-        if archive.write_data(data) < 0 {
-            return global.throw_invalid_arguments("Failed to create tarball: ArchiveWriteError", &[]);
-        }
-        if archive.write_finish_entry() != lib::Status::Ok {
-            return global.throw_invalid_arguments("Failed to create tarball: ArchiveFinishEntryError", &[]);
-        }
-    }
-
-    if archive.write_close() != lib::Status::Ok {
-        return global.throw_invalid_arguments("Failed to create tarball: ArchiveCloseError", &[]);
-    }
-
-    match growing_buffer.to_owned_slice() {
-        Ok(v) => Ok(v),
-        Err(_) => global.throw_invalid_arguments("Failed to create tarball: OutOfMemory", &[]),
-    }
+    let _ = (global, obj);
+    // The Rust `bun_libarchive::lib` port currently only exposes the read-side
+    // API (`Archive::read_*`, `Entry::pathname/size/...`). The write-side
+    // surface used here — `GrowingBuffer`, `Archive::write_new`,
+    // `archive_write_open2`, `Entry::new/clear/set_*`, `write_header`,
+    // `write_data`, `write_finish_entry`, `write_close` — is not yet ported.
+    // Reinstate the original body (preserved in `Archive.zig` lines 173-257)
+    // once those land.
+    todo!("blocked_on: bun_libarchive::lib::{{GrowingBuffer,Archive write API,Entry write API}}")
 }
 
 /// Returns data as a ZigString.Slice (handles ownership automatically via deinit)
-fn get_entry_data(global: &JSGlobalObject, value: JSValue) -> JsResult<ZigString::Slice> {
+fn get_entry_data(global: &JSGlobalObject, value: JSValue) -> JsResult<ZigStringSlice> {
     // For Blob, use sharedView (no copy needed)
     if let Some(blob_ptr) = value.as_::<Blob>() {
-        return Ok(ZigString::Slice::from_utf8_never_free(blob_ptr.shared_view()));
+        return Ok(ZigStringSlice::from_utf8_never_free(blob_ptr.shared_view()));
     }
 
     // For ArrayBuffer/TypedArray, use view (no copy needed)
     if let Some(array_buffer) = value.as_array_buffer(global) {
-        return Ok(ZigString::Slice::from_utf8_never_free(array_buffer.slice()));
+        return Ok(ZigStringSlice::from_utf8_never_free(array_buffer.slice()));
     }
 
     // For strings, convert (allocates)
@@ -642,7 +573,7 @@ enum PromiseResult {
 }
 
 impl PromiseResult {
-    fn fulfill(self, global: &JSGlobalObject, promise: &mut JSPromise) -> bun_jsc::JsTerminatedResult<()> {
+    fn fulfill(self, global: &JSGlobalObject, promise: &mut JSPromise) -> Result<(), bun_jsc::JsTerminated> {
         match self {
             PromiseResult::Resolve(v) => promise.resolve(global, v),
             PromiseResult::Reject(v) => promise.reject_with_async_stack(global, v),
@@ -681,7 +612,7 @@ impl<C: TaskContext> AsyncTask<C> {
             ctx,
             promise: JSPromiseStrong::init(global),
             vm,
-            task: WorkPoolTask { callback: Self::run_callback },
+            task: WorkPoolTask { callback: Self::run_callback, ..Default::default() },
             concurrent_task: ConcurrentTask::default(),
             keep_alive: KeepAlive::default(),
         });
@@ -694,10 +625,10 @@ impl<C: TaskContext> AsyncTask<C> {
     fn schedule(this: *mut Self) {
         // SAFETY: `this` is alive (owned by the task system) until run_from_js drops it;
         // task field is intrusive and stable since `this` is heap-allocated.
-        unsafe { WorkPool::schedule(&mut (*this).task) };
+        WorkPool::schedule(unsafe { &raw mut (*this).task });
     }
 
-    fn run_callback(work_task: *mut WorkPoolTask) {
+    unsafe fn run_callback(work_task: *mut WorkPoolTask) {
         // SAFETY: work_task points to the `task` field of an AsyncTask<C> allocated by `create`.
         let this: *mut Self = unsafe {
             (work_task as *mut u8)
@@ -710,11 +641,11 @@ impl<C: TaskContext> AsyncTask<C> {
         unsafe {
             (*this)
                 .vm
-                .enqueue_task_concurrent((*this).concurrent_task.from(this, ConcurrentTask::ManualDeinit));
+                .enqueue_task_concurrent((*this).concurrent_task.from(this, AutoDeinit::ManualDeinit));
         }
     }
 
-    pub fn run_from_js(this: *mut Self) -> bun_jsc::JsTerminatedResult<()> {
+    pub fn run_from_js(this: *mut Self) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: called once on the JS thread after run_callback enqueued us; reclaim ownership.
         let mut owned = unsafe { Box::from_raw(this) };
         owned.keep_alive.unref(owned.vm);
@@ -961,7 +892,7 @@ enum WriteData {
 
 struct WriteContext {
     data: WriteData,
-    path: bun_str::ZStr,
+    path: ZBox,
     compress: Compression,
     result: WriteResult,
 }
@@ -1003,7 +934,7 @@ impl WriteContext {
 
         let file = match bun_sys::File::openat(
             Fd::cwd(),
-            self.path.as_cstr(),
+            self.path.as_zstr(),
             bun_sys::O::CREAT | bun_sys::O::WRONLY | bun_sys::O::TRUNC,
             0o644,
         ) {
@@ -1027,7 +958,7 @@ fn start_write_task(
     path: &[u8],
     compress: Compression,
 ) -> JsResult<JSValue> {
-    let path_z = bun_str::ZStr::from_bytes(path);
+    let path_z = ZBox::from_vec_with_nul(path.to_vec());
 
     // Ref store if using store reference — already done by caller via Arc::clone into WriteData::Store.
     // errdefer store.deref / free(data.owned) — handled by WriteData Drop on early return.

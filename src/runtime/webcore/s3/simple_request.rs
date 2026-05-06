@@ -1,19 +1,22 @@
 use core::ffi::c_void;
 
 use bun_aio::KeepAlive;
-use bun_http::{AsyncHTTP, HTTPClientResult, HTTPThread, Headers, Method};
-use bun_jsc::{ConcurrentTask, JsTerminated, VirtualMachine};
+use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
+use bun_http::async_http::Options as HttpOptions;
+use bun_http::{AsyncHTTP, FetchRedirect, HTTPClientResult, HTTPClientResultCallback, HTTPThread, Headers, Method};
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::JsTerminated;
 use bun_picohttp as picohttp;
 use bun_s3_signing::acl::ACL;
-use bun_s3_signing::credentials::{S3Credentials, SignResult};
+use bun_s3_signing::credentials::{S3Credentials, SignOptions, SignResult};
 use bun_s3_signing::error::{get_sign_error_code_and_message, S3Error};
 use bun_s3_signing::storage_class::StorageClass;
 use bun_str::strings;
 use bun_str::MutableString;
-use bun_threading::ThreadPool;
+use bun_threading::thread_pool;
 use bun_url::URL;
 
-use super::list_objects;
+use crate::webcore::s3::list_objects;
 
 // PORT NOTE: result/options structs below carry borrowed slices that are valid only for the
 // duration of the callback invocation (Zig comments say "not owned and need to be copied if used

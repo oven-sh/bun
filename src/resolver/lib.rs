@@ -2722,12 +2722,11 @@ pub mod options {
     }
     #[derive(Clone)]
     pub struct WildcardPattern { pub prefix: Box<[u8]>, pub suffix: Box<[u8]> }
-    #[derive(Default)]
-    pub struct StringSet;
-    impl StringSet {
-        pub fn count(&self) -> usize { 0 }
-        pub fn contains(&self, _key: &[u8]) -> bool { false }
-    }
+    /// Re-export the real set type so `bun_bundler` can project user-supplied
+    /// `--external` `abs_paths`/`node_modules` through. The previous local ZST
+    /// stub returned `count() == 0` / `contains(..) == false`, so the resolver
+    /// silently ignored every `--external` absolute path / package name.
+    pub use bun_collections::StringSet;
 
     /// FORWARD_DECL: `bun_bundler::options::Conditions`.
     #[derive(Default)]
@@ -2737,19 +2736,72 @@ pub mod options {
         pub style: crate::package_json::ConditionsMap,
     }
 
-    /// FORWARD_DECL: `bun_bundler::options::ExtensionOrder`.
-    #[derive(Default)]
+    /// Raw fat pointer into a `Box<[Box<[u8]>]>` owned by `BundleOptions`
+    /// (`extension_order` / `main_field_extension_order` / `main_fields`).
+    /// `Copy` so the Zig save/restore-of-`r.extension_order` pattern survives;
+    /// the pointee is the heap allocation behind a `Box` held by `Resolver.opts`
+    /// for the resolver's whole lifetime, so the address is stable across moves
+    /// of the `Box` itself.
+    pub type ExtensionSlice = *const [Box<[u8]>];
+
+    /// Convert a `&[&[u8]]` default constant into the owned form the resolver
+    /// stores. Mirrors `bun_bundler::options::owned_string_list`.
+    pub(crate) fn owned_string_list(s: &[&[u8]]) -> Box<[Box<[u8]>]> {
+        s.iter().map(|s| Box::<[u8]>::from(*s)).collect()
+    }
+
+    /// FORWARD_DECL: `bun_bundler::options::ResolveFileExtensions`.
     pub struct ExtensionOrder {
         pub default: ExtensionOrderGroup,
+        pub node_modules: ExtensionOrderGroup,
+        /// Not on the bundler-side struct — the spec resolver reads
+        /// `Defaults.CssExtensionOrder` directly. Stored here so the
+        /// `*const [Box<[u8]>]` borrowed by `Resolver.extension_order` has a
+        /// stable owner with the same lifetime as the other groups.
+        pub css: Box<[Box<[u8]>]>,
     }
-    #[derive(Default)]
     pub struct ExtensionOrderGroup {
-        pub default: &'static [&'static [u8]],
-        pub esm: &'static [&'static [u8]],
+        pub default: Box<[Box<[u8]>]>,
+        pub esm: Box<[Box<[u8]>]>,
+    }
+    impl Default for ExtensionOrderGroup {
+        fn default() -> Self {
+            ExtensionOrderGroup {
+                default: owned_string_list(bundle_options::defaults::EXTENSION_ORDER),
+                esm: owned_string_list(bundle_options::defaults::MODULE_EXTENSION_ORDER),
+            }
+        }
+    }
+    impl Default for ExtensionOrder {
+        fn default() -> Self {
+            ExtensionOrder {
+                default: ExtensionOrderGroup::default(),
+                node_modules: ExtensionOrderGroup {
+                    default: owned_string_list(
+                        bundle_options::defaults::node_modules::EXTENSION_ORDER,
+                    ),
+                    esm: owned_string_list(
+                        bundle_options::defaults::node_modules::MODULE_EXTENSION_ORDER,
+                    ),
+                },
+                css: owned_string_list(bundle_options::defaults::CSS_EXTENSION_ORDER),
+            }
+        }
     }
     impl ExtensionOrder {
-        pub fn kind(&self, _kind: bun_options_types::ImportKind, _is_node_modules: bool) -> &'static [&'static [u8]] {
-            self.default.default
+        /// Port of `options.zig` `ResolveFileExtensions.kind`.
+        pub fn kind(
+            &self,
+            kind: bun_options_types::ImportKind,
+            is_node_modules: bool,
+        ) -> ExtensionSlice {
+            use bun_options_types::ImportKind as K;
+            let group = if is_node_modules { &self.node_modules } else { &self.default };
+            match kind {
+                K::Url | K::AtConditional | K::At => &*self.css,
+                K::Stmt | K::EntryPointBuild | K::EntryPointRun | K::Dynamic => &*group.esm,
+                _ => &*group.default,
+            }
         }
     }
 
@@ -2766,6 +2818,15 @@ pub mod options {
             pub const MODULE_EXTENSION_ORDER: &[&[u8]] = &[
                 b".tsx", b".jsx", b".mts", b".ts", b".mjs", b".js", b".cts", b".cjs", b".json",
             ];
+            /// Mirrors `bun_bundler::options::bundle_options_defaults::node_modules`.
+            pub mod node_modules {
+                pub const EXTENSION_ORDER: &[&[u8]] = &[
+                    b".jsx", b".cjs", b".js", b".mjs", b".mts", b".tsx", b".ts", b".cts", b".json",
+                ];
+                pub const MODULE_EXTENSION_ORDER: &[&[u8]] = &[
+                    b".mjs", b".jsx", b".js", b".mts", b".tsx", b".ts", b".cjs", b".cts", b".json",
+                ];
+            }
         }
     }
 
@@ -2777,7 +2838,7 @@ pub mod options {
 
     /// FORWARD_DECL: `bun_bundler::options::Framework` (Bake).
     pub struct Framework {
-        pub built_in_modules: bun_collections::StringHashMap<bun_options_types::BuiltInModule>,
+        pub built_in_modules: bun_collections::StringArrayHashMap<bun_options_types::BuiltInModule>,
     }
 
     /// FORWARD_DECL: `bun_bundler::options::BundleOptions` — only the fields
@@ -2790,14 +2851,20 @@ pub mod options {
         pub extension_order: ExtensionOrder,
         pub conditions: Conditions,
         pub external: ExternalModules,
-        pub extra_cjs_extensions: Vec<&'static [u8]>,
+        pub extra_cjs_extensions: Box<[Box<[u8]>]>,
         pub framework: Option<Framework>,
         pub global_cache: bun_options_types::GlobalCache::GlobalCache,
         pub install: *mut (), // FORWARD_DECL: *Install.CommandLineArguments
         pub load_package_json: bool,
         pub load_tsconfig_json: bool,
-        pub main_field_extension_order: &'static [&'static [u8]],
-        pub main_fields: &'static [&'static [u8]],
+        pub main_field_extension_order: Box<[Box<[u8]>]>,
+        pub main_fields: Box<[Box<[u8]>]>,
+        /// Spec resolver.zig `auto_main` compares the *pointer* of
+        /// `opts.main_fields` against `Target.DefaultMainFields.get(target)` to
+        /// detect "user did not pass --main-fields". The bundler stores an owned
+        /// `Box<[Box<[u8]>]>` whose pointer can never match a static, so the
+        /// bundler projects this flag explicitly instead.
+        pub main_fields_is_default: bool,
         pub mark_builtins_as_external: bool,
         pub polyfill_node_globals: bool,
         pub prefer_offline_install: bool,
@@ -2818,22 +2885,20 @@ pub mod options {
                 target: Target::default(),
                 packages: Packages::default(),
                 jsx: jsx::Pragma::default(),
-                extension_order: ExtensionOrder {
-                    default: ExtensionOrderGroup {
-                        default: bundle_options::defaults::EXTENSION_ORDER,
-                        esm: bundle_options::defaults::MODULE_EXTENSION_ORDER,
-                    },
-                },
+                extension_order: ExtensionOrder::default(),
                 conditions: Conditions::default(),
                 external: ExternalModules::default(),
-                extra_cjs_extensions: Vec::new(),
+                extra_cjs_extensions: Box::default(),
                 framework: None,
                 global_cache: Default::default(),
                 install: core::ptr::null_mut(),
                 load_package_json: true,
                 load_tsconfig_json: true,
-                main_field_extension_order: bundle_options::defaults::EXTENSION_ORDER,
-                main_fields: DEFAULT_MAIN_FIELDS.get(Target::default()),
+                main_field_extension_order: owned_string_list(
+                    bundle_options::defaults::EXTENSION_ORDER,
+                ),
+                main_fields: owned_string_list(DEFAULT_MAIN_FIELDS.get(Target::default())),
+                main_fields_is_default: true,
                 mark_builtins_as_external: false,
                 polyfill_node_globals: false,
                 prefer_offline_install: false,
@@ -3592,7 +3657,14 @@ pub struct Resolver<'a> {
     pub fs: *mut Fs::FileSystem,
     pub log: *mut logger::Log,
     // allocator: dropped — global mimalloc
-    pub extension_order: &'static [&'static [u8]], // TODO(port): lifetime — points into opts
+    /// PORT NOTE: Zig stores `[]const []const u8` aliasing into `r.opts.extension_order`
+    /// (resolver.zig saves/restores it across nested resolves). Stored as a raw
+    /// fat pointer (`Copy`) because it self-references `self.opts`; the heap
+    /// buffer behind each `Box<[Box<[u8]>]>` is address-stable.
+    /// SAFETY: every value written here points into `self.opts.extension_order`
+    /// (or `.main_field_extension_order` / `.main_fields`), all owned by `self`
+    /// for the resolver's lifetime and never reallocated after `init1`.
+    pub extension_order: options::ExtensionSlice,
     pub timer: Timer,
 
     pub care_about_bin_folder: bool,
@@ -3771,7 +3843,9 @@ impl<'a> Resolver<'a> {
     ) -> Self {
         // resolver_Mutex_loaded check elided; static is const-inited in Rust.
 
-        let extension_order = opts.extension_order.default.default;
+        // Heap behind `Box<[Box<[u8]>]>` is address-stable across the move of
+        // `opts` into the struct below, so taking the pointer here is sound.
+        let extension_order: options::ExtensionSlice = &*opts.extension_order.default.default;
         let care_about_browser_field = opts.target == options::Target::Browser;
         Resolver {
             // allocator dropped
@@ -3942,13 +4016,13 @@ impl<'a> Resolver<'a> {
         // PORT NOTE: reshaped for borrowck — restore happens at all return points below
         self.extension_order = match kind {
             ast::ImportKind::Url | ast::ImportKind::AtConditional | ast::ImportKind::At => {
-                options::bundle_options::defaults::CSS_EXTENSION_ORDER
+                &*self.opts.extension_order.css
             }
             ast::ImportKind::EntryPointBuild
             | ast::ImportKind::EntryPointRun
             | ast::ImportKind::Stmt
-            | ast::ImportKind::Dynamic => self.opts.extension_order.default.esm,
-            _ => self.opts.extension_order.default.default,
+            | ast::ImportKind::Dynamic => &*self.opts.extension_order.default.esm,
+            _ => &*self.opts.extension_order.default.default,
         };
 
         if FeatureFlags::TRACING {
@@ -5334,7 +5408,7 @@ impl<'a> Resolver<'a> {
                         let pkg_dir_info = unsafe { &*pkg_dir_info_ptr };
                         self.extension_order = match kind {
                             ast::ImportKind::Url | ast::ImportKind::AtConditional | ast::ImportKind::At => {
-                                options::bundle_options::defaults::CSS_EXTENSION_ORDER
+                                &*self.opts.extension_order.css
                             }
                             _ => self.opts.extension_order.kind(kind, true),
                         };
@@ -6106,7 +6180,7 @@ impl<'a> Resolver<'a> {
                         return None;
                     }
                 };
-                let extension_order = if kind == ast::ImportKind::At || kind == ast::ImportKind::AtConditional {
+                let extension_order: options::ExtensionSlice = if kind == ast::ImportKind::At || kind == ast::ImportKind::AtConditional {
                     self.extension_order
                 } else {
                     self.opts.extension_order.kind(kind, resolved_dir_info.is_inside_node_modules())
@@ -6123,7 +6197,9 @@ impl<'a> Resolver<'a> {
                         if ends_with_star {
                             let buf = bufs!(load_as_file);
                             buf[..base.len()].copy_from_slice(base);
-                            for ext in extension_order {
+                            // SAFETY: `extension_order` points into `self.opts.extension_order`, owned by `self`.
+                            for ext in unsafe { &*extension_order }.iter() {
+                                let ext: &[u8] = ext;
                                 let file_name = &mut buf[0..base.len() + ext.len()];
                                 file_name[base.len()..].copy_from_slice(ext);
                                 if entries.get(&file_name[..]).is_some() {

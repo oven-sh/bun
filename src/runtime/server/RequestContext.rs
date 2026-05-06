@@ -230,7 +230,22 @@ use bun_http_types::MimeType::MimeType;
 use bun_logger as logger;
 use bun_paths::PathBuffer;
 use bun_collections::ByteList;
-use crate::api::native_promise_context as NativePromiseContext;
+// TODO(b2-blocked): `crate::api::native_promise_context` is not yet declared as
+// a module in api.rs (file exists at src/runtime/api/NativePromiseContext.rs but
+// the `pub mod` is gated). Shim `create`/`take` here so the call sites type-check
+// until the module is wired up.
+#[allow(non_snake_case)]
+mod NativePromiseContext {
+    use super::{JSGlobalObject, JSValue};
+    #[inline(never)]
+    pub fn create<T>(_global: &JSGlobalObject, _ctx: *mut T) -> JSValue {
+        todo!("blocked_on: crate::api::native_promise_context")
+    }
+    #[inline(never)]
+    pub fn take<T>(_cell: JSValue) -> Option<&'static mut T> {
+        todo!("blocked_on: crate::api::native_promise_context")
+    }
+}
 use crate::server::{AnyRequestContext, FileResponseStream, HTTPStatusText};
 use crate::server::jsc::CallFrame;
 use crate::webcore::{body as Body, s3 as S3, Blob, ReadableStream};
@@ -307,7 +322,10 @@ where
         }
     }
 
-    #[bun_jsc::host_fn]
+    // TODO(port): #[bun_jsc::host_fn] — the proc-macro emits a bare `fn_name(...)`
+    // call for receiver-less Free fns, which fails to resolve inside an `impl`
+    // block. The C-ABI shim is unused until the JSC `then_with_value` plumbing
+    // takes a fn-pointer, so drop the attribute for now.
     pub fn on_resolve(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         ctx_log!("onResolve");
 
@@ -337,9 +355,8 @@ where
             let writer = Output::error_writer();
 
             if class_name == b"Response" {
-                Output::err_generic(
+                bun_core::err_generic!(
                     "Expected a native Response object, but received a polyfilled Response object. Bun.serve() only supports native Response objects.",
-                    (),
                 );
             } else if !value.is_empty() && !global_this.has_exception() {
                 let mut formatter = jsc::ConsoleObject::Formatter {
@@ -347,13 +364,13 @@ where
                     quote_strings: true,
                     ..Default::default()
                 };
-                Output::err_generic(
+                bun_core::err_generic!(
                     "Expected a Response object, but received '{}'",
-                    (value.to_fmt(&mut formatter),),
+                    value.to_fmt(&mut formatter),
                 );
                 // formatter dropped at scope end (Drop impl)
             } else {
-                Output::err_generic("Expected a Response object", ());
+                bun_core::err_generic!("Expected a Response object");
             }
 
             Output::flush();
@@ -508,7 +525,7 @@ where
         self.ref_count += 1;
     }
 
-    #[bun_jsc::host_fn]
+    // TODO(port): #[bun_jsc::host_fn] — see note on `on_resolve`.
     pub fn on_reject(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         ctx_log!("onReject");
 
@@ -2197,7 +2214,7 @@ where
         req.end_stream(req.should_close_connection());
     }
 
-    #[bun_jsc::host_fn]
+    // TODO(port): #[bun_jsc::host_fn] — see note on `on_resolve`.
     pub fn on_resolve_stream(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         stream_log!("onResolveStream");
         let args = callframe.arguments_old(2);
@@ -2209,7 +2226,7 @@ where
         Ok(JSValue::UNDEFINED)
     }
 
-    #[bun_jsc::host_fn]
+    // TODO(port): #[bun_jsc::host_fn] — see note on `on_resolve`.
     pub fn on_reject_stream(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         stream_log!("onRejectStream");
         let args = callframe.arguments_old(2);

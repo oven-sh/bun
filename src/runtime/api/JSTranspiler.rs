@@ -656,7 +656,7 @@ impl Config {
 pub struct TransformTask<'a> {
     pub input_code: StringOrBuffer,
     pub output_code: BunString,
-    pub transpiler: Transpiler::Transpiler,
+    pub transpiler: Transpiler::Transpiler<'static>,
     // TODO(port): LIFETIMES.tsv says Arc<JSTranspiler> — reconcile. JSTranspiler uses
     // single-thread intrusive `bun.ptr.RefCount` and crosses FFI as `m_ctx`, so per
     // PORTING.md §Pointers this must be IntrusiveRc, not Arc.
@@ -667,12 +667,14 @@ pub struct TransformTask<'a> {
     pub tsconfig: Option<&'a TSConfigJSON>,
     pub loader: Loader,
     pub global: &'a JSGlobalObject,
-    pub replace_exports: Runtime::Features::ReplaceableExport::Map,
+    pub replace_exports: Runtime::ReplaceableExportMap,
 }
 
-pub type AsyncTransformTask<'a> = jsc::ConcurrentPromiseTask<TransformTask<'a>>;
-pub type AsyncTransformEventLoopTask<'a> = <AsyncTransformTask<'a> as jsc::ConcurrentPromiseTaskTrait>::EventLoopTask;
-// TODO(port): the `EventLoopTask` associated type path above is a guess.
+// TODO(port): `jsc::ConcurrentPromiseTask` is currently a non-generic stub_ty in
+// src/jsc/event_loop.rs. When the real generic lands, restore
+// `ConcurrentPromiseTask<TransformTask<'a>>` and its `EventLoopTask` assoc type.
+pub type AsyncTransformTask = jsc::ConcurrentPromiseTask;
+pub type AsyncTransformEventLoopTask = jsc::ConcurrentPromiseTask;
 
 impl<'a> TransformTask<'a> {
     // `pub const new = bun.TrivialNew(@This())` → Box::new
@@ -682,7 +684,7 @@ impl<'a> TransformTask<'a> {
         input_code: StringOrBuffer,
         global: &'a JSGlobalObject,
         loader: Loader,
-    ) -> Box<AsyncTransformTask<'a>> {
+    ) -> Box<AsyncTransformTask> {
         let mut transform_task = Box::new(TransformTask {
             input_code,
             transpiler: transpiler.transpiler.clone(),
@@ -697,7 +699,7 @@ impl<'a> TransformTask<'a> {
             // count (mirroring Zig `transpiler.ref()`); the matching deref happens in
             // `Drop for TransformTask` / `IntrusiveRc::drop`.
             // TODO(port): LIFETIMES.tsv says Arc — reconcile (see field decl).
-            js_instance: unsafe { bun_ptr::IntrusiveRc::ref_raw(transpiler) },
+            js_instance: unsafe { bun_ptr::IntrusiveRc::init_ref(transpiler) },
             err: None,
             output_code: BunString::empty(),
         });
@@ -777,7 +779,7 @@ impl<'a> TransformTask<'a> {
         let mut printer = JSPrinter::BufferPrinter::init(buffer_writer);
         let printed = match self
             .transpiler
-            .print(parse_result, &mut printer, Transpiler::PrintFormat::EsmAscii)
+            .print(parse_result, &mut printer, Transpiler::transpiler::PrintFormat::EsmAscii)
         {
             Ok(n) => n,
             Err(err) => {
@@ -962,8 +964,8 @@ pub fn constructor(
         transpiler,
         scan_pass_result: ScanPassResult::init(),
         buffer_writer: None,
-        log_level: logger::Log::Level::Err,
-        ref_count: Cell::new(1),
+        log_level: logger::Level::Err,
+        ref_count: bun_ptr::RefCount::init(),
     });
     // errdefer past this point → `this: Box<_>` drops and runs Drop for JSTranspiler.
 
@@ -1016,7 +1018,7 @@ pub fn constructor(
 impl JSTranspiler {
     pub fn finalize(this: *mut JSTranspiler) {
         // SAFETY: called by JSC codegen on the mutator thread with the m_ctx payload.
-        unsafe { bun_ptr::IntrusiveRc::<JSTranspiler>::deref_raw(this) };
+        unsafe { <JSTranspiler as bun_ptr::AnyRefCounted>::rc_deref_with_context(this, ()) };
     }
 }
 
@@ -1227,7 +1229,7 @@ impl JSTranspiler {
         let Some(code) = StringOrBuffer::from_js_with_encoding_maybe_async(
             global,
             code_arg,
-            jsc::node::Encoding::Utf8,
+            Encoding::Utf8,
             true,
             allow_string_object,
         )?
@@ -1369,7 +1371,7 @@ impl JSTranspiler {
         let mut printer = JSPrinter::BufferPrinter::init(buffer_writer);
         if let Err(err) = self
             .transpiler
-            .print(parse_result, &mut printer, Transpiler::PrintFormat::EsmAscii)
+            .print(parse_result, &mut printer, Transpiler::transpiler::PrintFormat::EsmAscii)
         {
             self.buffer_writer = Some(printer.ctx);
             return global.throw_error(err, "Failed to print code");
@@ -1388,7 +1390,7 @@ impl JSTranspiler {
 
 fn named_exports_to_js(
     global: &JSGlobalObject,
-    named_exports: &mut JSAst::Ast::NamedExports,
+    named_exports: &mut JSAst::ast::NamedExports,
 ) -> JsResult<JSValue> {
     if named_exports.count() == 0 {
         return JSValue::create_empty_array(global, 0);
@@ -1397,7 +1399,7 @@ fn named_exports_to_js(
     let mut named_exports_iter = named_exports.iterator();
     // PERF(port): was stack-fallback allocator — profile in Phase B
     let mut names: Vec<BunString> = Vec::with_capacity(named_exports.count());
-    named_exports.sort(strings::StringArrayByIndexSorter {
+    named_exports.sort(strings::immutable::StringArrayByIndexSorter {
         keys: named_exports.keys(),
     });
     // PORT NOTE: reshaped for borrowck — Zig sorts while holding the iterator; here we sort

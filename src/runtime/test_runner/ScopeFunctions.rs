@@ -282,7 +282,10 @@ fn filter_names<R: WriteEnd>(rem: &mut R, description: Option<&[u8]>, parent_in:
     rem.write_end(description.unwrap_or(b""));
     let mut parent = parent_in;
     while let Some(scope) = parent {
-        parent = scope.base.parent.as_deref();
+        // PORTING.md: `BaseScope.parent` is `Option<*const DescribeScope>` (raw backref);
+        // per-use reborrow.
+        // SAFETY: parent backrefs are stable for the lifetime of the collection tree.
+        parent = scope.base.parent.map(|p| unsafe { &*p });
         if scope.base.name.is_none() {
             continue;
         }
@@ -712,8 +715,16 @@ pub fn parse_arguments(
 }
 
 // Codegen bridge — `#[bun_jsc::JsClass]` derive provides `to_js`/`from_js`/`from_js_direct`.
-// TODO(port): `js::each_set_cached` is the codegen'd setter for the C++ `m_each` WriteBarrier.
-pub use bun_jsc::codegen::JSScopeFunctions as js;
+// `js::each_set_cached` is the codegen'd setter for the C++ `m_each` WriteBarrier
+// (see jest.classes.ts `values: ["each"]`).
+// TODO(b2-blocked): re-run generate-classes.ts with .rs output → `bun_jsc::codegen::js_scope_functions`.
+pub mod js {
+    use bun_jsc::{JSGlobalObject, JSValue};
+    #[inline]
+    pub fn each_set_cached(_this: JSValue, _global: &JSGlobalObject, _value: JSValue) {
+        todo!("blocked_on: bun_jsc::codegen::js_scope_functions::each_set_cached")
+    }
+}
 
 impl fmt::Display for ScopeFunctions {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -724,7 +735,7 @@ impl fmt::Display for ScopeFunctions {
             SelfConcurrent::Inherit => {}
         }
         if self.cfg.self_mode != SelfMode::Normal {
-            write!(f, ".{}", <&'static str>::from(self.cfg.self_mode))?;
+            write!(f, ".{}", scope_mode_str(self.cfg.self_mode))?;
         }
         if self.cfg.self_only {
             write!(f, ".only")?;
@@ -784,11 +795,24 @@ pub fn create_bound(
     bind(value, global, name)
 }
 
-// TODO(port): these enum types live on `bun_test::BaseScopeCfg` (`self_mode`, `self_concurrent`).
-// Re-exported here for readability; Phase B should import from their canonical defs.
-use crate::bun_test::{SelfMode, SelfConcurrent};
-// TODO(port): `TestReporterKind` is the enum passed to `debugger.test_reporter_agent.report_test_found`.
-use bun_jsc::debugger::TestReporterKind;
+// These enum types live on `bun_test::BaseScopeCfg` (`self_mode`, `self_concurrent`).
+// The Zig spec named them `SelfMode`/`SelfConcurrent`; bun_test.rs ported them as
+// `ScopeMode`/`ConcurrentMode`. Alias here so the bodies read like the spec.
+use crate::test_runner::bun_test::{ScopeMode as SelfMode, ConcurrentMode as SelfConcurrent};
+// `TestReporterKind` in the spec is `bun_jsc::debugger::TestType` (Test/Describe).
+use bun_jsc::debugger::TestType as TestReporterKind;
+
+/// Local stringifier for `ScopeMode` — sibling `bun_test.rs` does not derive
+/// `IntoStaticStr` on it, so we can't use `<&'static str>::from`.
+fn scope_mode_str(m: SelfMode) -> &'static str {
+    match m {
+        SelfMode::Normal => "normal",
+        SelfMode::Skip => "skip",
+        SelfMode::Todo => "todo",
+        SelfMode::Failing => "failing",
+        SelfMode::FilteredOut => "filtered_out",
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

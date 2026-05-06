@@ -1,16 +1,30 @@
 use core::fmt;
-use std::sync::Arc;
 
 use bun_core::{Output, deprecated};
 use bun_jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsError, JsResult, VirtualMachine, ZigString,
+    CallFrame, JSGlobalObject, JSValue, JsError, JsResult, ZigString,
     ConsoleObject, JSFunction, JSPropertyIterator, JSArrayIterator, JSString,
 };
+use bun_jsc::js_promise;
+use bun_jsc::virtual_machine::VirtualMachine;
 use bun_str::{self as bun_string, strings};
 
-use super::bun_test;
+use super::bun_test::{self, DescribeScope};
 use super::diff_format::DiffFormatter;
-use super::jest::{self, DescribeScope, TestRunner};
+use super::execution::ExpectAssertions;
+use super::jest::{self, Jest, TestRunner};
+
+// `bun_core::deprecated::js_error_to_write_error` is `#[cfg(any())]`-gated
+// (tier-0 cannot depend on bun_jsc). Inlined here at the use-site tier instead.
+// Display impls return `fmt::Error`; the JS exception, if any, remains on the VM.
+#[inline]
+fn js_error_to_write_error(e: JsError) -> fmt::Error {
+    match e {
+        JsError::OutOfMemory => bun_alloc::out_of_memory(),
+        // TODO(port): may swallow Thrown/Terminated — see deprecated::js_error_to_write_error
+        _ => fmt::Error,
+    }
+}
 
 // Matcher submodules are declared in `super::expect` (mod.rs); this file
 // provides only the `Expect` payload + helpers they extend.
@@ -41,12 +55,13 @@ pub trait FlagsGetCached {
 #[bun_jsc::JsClass]
 pub struct Expect {
     pub flags: Flags,
-    pub parent: Option<Arc<bun_test::BunTest::RefData>>,
+    pub parent: Option<bun_test::RefDataPtr>,
     pub custom_label: bun_str::String,
 }
 
 pub struct TestScope<'a> {
-    pub test_id: TestRunner::Test::ID,
+    // Zig: `TestRunner.Test.ID = u32`
+    pub test_id: u32,
     pub describe: &'a DescribeScope,
 }
 
@@ -355,7 +370,7 @@ impl Expect {
 
                     let new_value = promise.result(vm);
                     match promise.status() {
-                        bun_jsc::PromiseStatus::Fulfilled => match resolution {
+                        js_promise::Status::Fulfilled => match resolution {
                             Promise::Resolves => {}
                             Promise::Rejects => {
                                 if !silent {
@@ -375,7 +390,7 @@ impl Expect {
                             }
                             Promise::None => unreachable!(),
                         },
-                        bun_jsc::PromiseStatus::Rejected => match resolution {
+                        js_promise::Status::Rejected => match resolution {
                             Promise::Rejects => {}
                             Promise::Resolves => {
                                 if !silent {
@@ -395,7 +410,7 @@ impl Expect {
                             }
                             Promise::None => unreachable!(),
                         },
-                        bun_jsc::PromiseStatus::Pending => unreachable!(),
+                        js_promise::Status::Pending => unreachable!(),
                     }
 
                     new_value.ensure_still_alive();
@@ -779,15 +794,15 @@ impl Expect {
         if let Some(promise) = return_value.as_any_promise() {
             vm.wait_for_promise(promise);
             scope.apply(vm);
-            match promise.unwrap(global_this.vm(), bun_jsc::UnwrapMode::MarkHandled) {
-                bun_jsc::PromiseUnwrap::Fulfilled(_) => {
+            match promise.unwrap(global_this.vm(), js_promise::UnwrapMode::MarkHandled) {
+                js_promise::Unwrapped::Fulfilled(_) => {
                     return Ok((None, return_value_from_function));
                 }
-                bun_jsc::PromiseUnwrap::Rejected(rejected) => {
+                js_promise::Unwrapped::Rejected(rejected) => {
                     // since we know for sure it rejected, we should always return the error
                     return Ok((Some(rejected.to_error().unwrap_or(rejected)), return_value_from_function));
                 }
-                bun_jsc::PromiseUnwrap::Pending => unreachable!(),
+                js_promise::Unwrapped::Pending => unreachable!(),
             }
         }
 
@@ -983,7 +998,7 @@ impl Expect {
         }
 
         if needs_write {
-            if bun_core::ci::is_ci() {
+            if crate::cli::ci_info::is_ci() {
                 if !update {
                     let signature = Self::get_signature(fn_name, "", false);
                     // Only creating new snapshots can reach here (updating with mismatches errors earlier with diff)
@@ -1351,11 +1366,12 @@ impl Expect {
             result.ensure_still_alive();
             debug_assert!(!result.is_empty());
             match promise.status() {
-                bun_jsc::PromiseStatus::Pending => unreachable!(),
-                bun_jsc::PromiseStatus::Fulfilled => {}
-                bun_jsc::PromiseStatus::Rejected => {
+                js_promise::Status::Pending => unreachable!(),
+                js_promise::Status::Fulfilled => {}
+                js_promise::Status::Rejected => {
                     // TODO: rewrite this code to use .then() instead of blocking the event loop
-                    VirtualMachine::get().run_error_handler(result, None);
+                    // SAFETY: per-use reborrow of the thread-local VM (see VirtualMachine::get docs).
+                    unsafe { &mut *VirtualMachine::get() }.run_error_handler(result, None);
                     return Err(global_this.throw(
                         "Matcher `{f}` returned a promise that rejected",
                         format_args!("{}", matcher_name),
@@ -1513,8 +1529,8 @@ impl Expect {
         let Some(execution) = state_data.sequence(buntest) else {
             return Err(global_this.throw("expect.assertions() is not supported in the describe phase, in concurrent tests, between tests, or after test execution has completed", format_args!("")));
         };
-        if !matches!(execution.expect_assertions, bun_test::ExpectAssertions::Exact(_)) {
-            execution.expect_assertions = bun_test::ExpectAssertions::AtLeastOne;
+        if !matches!(execution.expect_assertions, ExpectAssertions::Exact(_)) {
+            execution.expect_assertions = ExpectAssertions::AtLeastOne;
         }
 
         Ok(JSValue::UNDEFINED)
@@ -1565,7 +1581,7 @@ impl Expect {
         let Some(execution) = state_data.sequence(buntest) else {
             return Err(global_this.throw("expect.assertions() is not supported in the describe phase, in concurrent tests, between tests, or after test execution has completed", format_args!("")));
         };
-        execution.expect_assertions = bun_test::ExpectAssertions::Exact(unsigned_expected_assertions);
+        execution.expect_assertions = ExpectAssertions::Exact(unsigned_expected_assertions);
 
         Ok(JSValue::UNDEFINED)
     }
@@ -2554,7 +2570,7 @@ pub mod mock {
         pub global_this: &'a JSGlobalObject,
         pub calls: JSValue,
         // PORT NOTE: reshaped for borrowck — Display::fmt takes &self but we need &mut Formatter
-        pub formatter: core::cell::RefCell<&'a mut ConsoleObject::Formatter>,
+        pub formatter: core::cell::RefCell<&'a mut ConsoleObject::Formatter<'a>>,
     }
 
     impl fmt::Display for AllCallsWithArgsFormatter<'_> {
@@ -2565,7 +2581,7 @@ pub mod mock {
             let calls_count = u32::try_from(
                 self.calls
                     .get_length(self.global_this)
-                    .map_err(|e| deprecated::js_error_to_write_error(e))?,
+                    .map_err(js_error_to_write_error)?,
             )
             .unwrap();
             if calls_count == 0 {
@@ -2581,7 +2597,7 @@ pub mod mock {
                 let call_args = self
                     .calls
                     .get_index(self.global_this, i)
-                    .map_err(|e| deprecated::js_error_to_write_error(e))?;
+                    .map_err(js_error_to_write_error)?;
                 write!(writer, "{}", call_args.to_fmt(&mut **formatter))?;
             }
             Ok(())
@@ -2613,7 +2629,7 @@ pub mod mock {
         pub global_this: &'a JSGlobalObject,
         pub returns: JSValue,
         // PORT NOTE: reshaped for borrowck — Display::fmt takes &self but we need &mut Formatter
-        pub formatter: core::cell::RefCell<&'a mut ConsoleObject::Formatter>,
+        pub formatter: core::cell::RefCell<&'a mut ConsoleObject::Formatter<'a>>,
     }
 
     impl fmt::Display for AllCallsFormatter<'_> {
@@ -2627,9 +2643,9 @@ pub mod mock {
             let mut iter = self
                 .returns
                 .array_iterator(self.global_this)
-                .map_err(|e| deprecated::js_error_to_write_error(e))?;
+                .map_err(js_error_to_write_error)?;
             loop {
-                let next = iter.next().map_err(|e| deprecated::js_error_to_write_error(e))?;
+                let next = iter.next().map_err(js_error_to_write_error)?;
                 let Some(item) = next else { break };
                 if printed_once { writer.write_str("\n")?; }
                 printed_once = true;
@@ -2638,9 +2654,9 @@ pub mod mock {
                 write!(writer, "           {:>2}: ", num_calls)?;
 
                 let value = jest_mock_return_object_value(self.global_this, item)
-                    .map_err(|e| deprecated::js_error_to_write_error(e))?;
+                    .map_err(js_error_to_write_error)?;
                 match jest_mock_return_object_type(self.global_this, item)
-                    .map_err(|e| deprecated::js_error_to_write_error(e))?
+                    .map_err(js_error_to_write_error)?
                 {
                     ReturnStatus::Return => {
                         write!(writer, "{}", value.to_fmt(&mut **formatter))?;
@@ -2663,7 +2679,7 @@ pub mod mock {
         pub global_this: &'a JSGlobalObject,
         pub successful_returns: &'a Vec<JSValue>,
         // PORT NOTE: reshaped for borrowck — Display::fmt takes &self but we need &mut Formatter
-        pub formatter: core::cell::RefCell<&'a mut ConsoleObject::Formatter>,
+        pub formatter: core::cell::RefCell<&'a mut ConsoleObject::Formatter<'a>>,
     }
 
     impl fmt::Display for SuccessfulReturnsFormatter<'_> {

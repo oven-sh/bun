@@ -17,15 +17,48 @@ use bun_options_types::schema as bun_schema;
 use bun_paths::{self as paths, PathBuffer};
 use bun_str::{strings, ZStr};
 
-// TODO(port): verify crate path for jsc.API.JSBundler.Plugin
-use bun_runtime::api::js_bundler::Plugin;
+// `jsc.API.JSBundler.Plugin` — the real struct lives in
+// `crate::api::js_bundler::_jsc_gated::js_bundler::Plugin` which is still
+// `#[cfg(any())]`-gated. Use an opaque local so the field type-checks; the
+// only call sites (`parse_plugin_array`, `Drop`) are `todo!()`-blocked below.
+// TODO(b2-blocked): crate::api::js_bundler::Plugin — un-gate _jsc_gated.
+#[repr(C)]
+pub struct Plugin {
+    _p: [u8; 0],
+}
 
-pub mod production;
-pub mod dev_server;
-pub mod framework_router;
+// PORT NOTE: parent `mod.rs` already declares `dev_server` / `framework_router`
+// as sibling modules of this file; pull them in instead of re-declaring (which
+// would duplicate the module tree and fail on `framework_router` having no
+// matching filename).
+use super::{dev_server, framework_router};
 
 pub use dev_server as DevServer;
 pub use framework_router as FrameworkRouter;
+
+/// `bun.getcwdAlloc(arena)` — write cwd into a stack `PathBuffer`, then dupe
+/// into the arena as a NUL-terminated slice.
+fn getcwd_alloc(arena: &Arena) -> Result<&'static ZStr, bun_core::Error> {
+    let mut buf = PathBuffer::ZEROED;
+    let z = bun_core::getcwd(&mut buf)?;
+    Ok(arena_dupe_z(arena, z.as_bytes()))
+}
+
+/// `arena.dupeZ(u8, bytes)` — copy `bytes` + trailing NUL into the bump arena.
+/// Returns `&'static ZStr` per the file-level Phase-A `'static` convention
+/// (arena-backed; lifetime erased — see TODO(port) at top of file).
+fn arena_dupe_z(arena: &Arena, bytes: &[u8]) -> &'static ZStr {
+    let buf = arena.alloc_slice_fill_default(bytes.len() + 1);
+    buf[..bytes.len()].copy_from_slice(bytes);
+    buf[bytes.len()] = 0;
+    // SAFETY: buf is NUL-terminated; arena outlives all borrowers per the
+    // self-referential UserOptions pattern. Phase B threads `'bump`.
+    unsafe {
+        core::mem::transmute::<&ZStr, &'static ZStr>(ZStr::from_bytes_unchecked(
+            &buf[..bytes.len()],
+        ))
+    }
+}
 
 /// export default { app: ... };
 pub const API_NAME: &str = "app";
@@ -50,10 +83,11 @@ impl Drop for UserOptions {
     fn drop(&mut self) {
         // arena: dropped by Bump's Drop
         // allocations: dropped by StringRefList's Drop
-        if let Some(p) = self.bundler_options.plugin {
-            // SAFETY: Plugin is FFI-owned; deinit is the destructor for the
+        if let Some(_p) = self.bundler_options.plugin {
+            // SAFETY: Plugin is FFI-owned; destroy is the destructor for the
             // pointer returned by Plugin::create.
-            unsafe { p.as_ref().deinit() };
+            // TODO(b2-blocked): crate::api::js_bundler::Plugin::destroy
+            // unsafe { Plugin::destroy(p.as_ptr()) };
         }
     }
 }
@@ -76,11 +110,8 @@ impl UserOptions {
                 let utf8_string = bunstr.to_utf8();
 
                 if strings::eql(utf8_string.byte_slice(), b"react") {
-                    let root = match bun_core::getcwd_alloc(&arena) {
+                    let root = match getcwd_alloc(&arena) {
                         Ok(r) => r,
-                        Err(e) if e == bun_core::err!("OutOfMemory") => {
-                            return Err(global.throw_out_of_memory().into());
-                        }
                         Err(e) => {
                             return Err(global
                                 .throw_error(e, "while querying current working directory")
@@ -138,11 +169,8 @@ impl UserOptions {
         let root: &[u8] = if let Some(slice) = config.get_optional::<ZigStringSlice>(global, "root")? {
             allocations.track(slice)
         } else {
-            match bun_core::getcwd_alloc(&arena) {
+            match getcwd_alloc(&arena) {
                 Ok(r) => r.as_bytes(),
-                Err(e) if e == bun_core::err!("OutOfMemory") => {
-                    return Err(global.throw_out_of_memory().into());
-                }
                 Err(e) => {
                     return Err(global
                         .throw_error(e, "while querying current working directory")
@@ -155,8 +183,7 @@ impl UserOptions {
             bundler_options.parse_plugin_array(plugin_array, global)?;
         }
 
-        // TODO(port): bumpalo dupeZ equivalent — alloc NUL-terminated copy
-        let root_z = bun_alloc::dupe_z(&arena, root);
+        let root_z = arena_dupe_z(&arena, root);
 
         Ok(UserOptions {
             root: root_z,
@@ -210,12 +237,14 @@ impl SplitBundlerOptions {
         plugin_array: JSValue,
         global: &JSGlobalObject,
     ) -> JsResult<()> {
-        let plugin = match self.plugin {
-            Some(p) => p,
-            None => Plugin::create(global, bun_options::Target::Bun::Bun),
-        };
-        self.plugin = Some(plugin);
+        // The real `Plugin::create` / `add_plugin` live in
+        // `crate::api::js_bundler::_jsc_gated`, which is still
+        // `#[cfg(any())]`-gated. The validation walk below mirrors the spec
+        // (bake.zig:152-196) so error paths are exercised; the FFI calls are
+        // stubbed until the upstream module un-gates.
+        let _ = &mut self.plugin;
         let empty_object = JSValue::create_empty_object(global, 0);
+        let _ = empty_object;
 
         let mut iter = plugin_array.array_iterator(global)?;
         while let Some(plugin_config) = iter.next()? {
@@ -238,7 +267,7 @@ impl SplitBundlerOptions {
                 )));
             }
 
-            let function = match plugin_config.get_function(global, "setup")? {
+            let _function = match plugin_config.get_function(global, "setup")? {
                 Some(f) => f,
                 None => {
                     return Err(global.throw_invalid_arguments(format_args!(
@@ -246,22 +275,10 @@ impl SplitBundlerOptions {
                     )));
                 }
             };
-            // SAFETY: plugin is a valid NonNull<Plugin> created above or earlier.
-            let plugin_result =
-                unsafe { plugin.as_ref() }.add_plugin(function, empty_object, JSValue::NULL, false, true)?;
-            if let Some(promise) = plugin_result.as_any_promise() {
-                promise.set_handled(global.vm());
-                // TODO: remove this call, replace with a promise list that must
-                // be resolved before the first bundle task can begin.
-                global.bun_vm().wait_for_promise(promise);
-                match promise.unwrap(global.vm(), bun_jsc::PromiseUnwrap::MarkHandled) {
-                    bun_jsc::PromiseResult::Pending => unreachable!(),
-                    bun_jsc::PromiseResult::Fulfilled(_val) => {}
-                    bun_jsc::PromiseResult::Rejected(err) => {
-                        return Err(global.throw_value(err));
-                    }
-                }
-            }
+            // TODO(b2-blocked): crate::api::js_bundler::Plugin — un-gate
+            // `_jsc_gated` to wire `Plugin::create` + `add_plugin` +
+            // promise-unwrap (bun_jsc::PromiseUnwrapMode::MarkHandled).
+            todo!("blocked_on: crate::api::js_bundler::Plugin");
         }
         Ok(())
     }
@@ -311,10 +328,9 @@ impl BuildConfigSubset {
                 break 'brk;
             }
 
-            return Err(bun_jsc::node::validators::throw_err_invalid_arg_type(
+            return Err(crate::node::validators::throw_err_invalid_arg_type(
                 global,
-                "sourcemap",
-                format_args!(""),
+                format_args!("sourcemap"),
                 "\"inline\" | \"external\" | \"linked\"",
                 val,
             ));

@@ -35,10 +35,12 @@ pub fn get_sign_error_code_and_message(e: Error) -> ErrorCodeAndMessage {
 // `../runtime/webcore/s3/error_jsc.zig` deleted — in Rust these live as
 // extension-trait methods in the `*_jsc` crate (see PORTING.md §Idiom map).
 
-pub struct S3Error {
-    // TODO(port): verify field ownership — no `deinit` in this file; populated elsewhere
-    pub code: &'static [u8],
-    pub message: &'static [u8],
+// PORT NOTE: Zig `S3Error { code: []const u8, message: []const u8 }` carries borrowed slices
+// that are valid only for the duration of the callback invocation (callers parse them out of an
+// XML response body). Field ownership is *not* `'static` — modeled with an explicit `<'a>`.
+pub struct S3Error<'a> {
+    pub code: &'a [u8],
+    pub message: &'a [u8],
 
     // PORT NOTE: `toJS` / `toJSWithAsyncStack` aliases to `error_jsc.zig` deleted —
     // implemented as extension-trait methods in the `*_jsc` crate.

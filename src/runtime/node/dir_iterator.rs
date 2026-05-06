@@ -5,26 +5,31 @@
 // - It uses PathString instead of []const u8
 // - Windows can be configured to return []const u16
 
+#![allow(unused_imports, dead_code)]
+
 use core::mem::{offset_of, size_of};
 
 use bun_str::{strings, PathString, WStr};
-use bun_sys::{self as sys, Fd, Syscall, SystemErrno};
+use bun_sys::{self as sys, Fd, SystemErrno, Tag};
 
-use crate::node::Dirent as Entry;
-use crate::node::dirent::Kind as EntryKind;
-// TODO(port): `Entry.Kind` in Zig is `jsc.Node.Dirent.Kind`; verify exact Rust path in Phase B.
+// `Entry.Kind` in Zig is `jsc.Node.Dirent.Kind` == `std.fs.Dir.Entry.Kind`.
+// In the Rust port that maps to `bun_core::FileKind`, re-exported here as
+// `bun_sys::EntryKind` (and as `crate::node::types::DirentKind`).
+use bun_sys::EntryKind;
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IteratorError {
+    #[error("AccessDenied")]
     AccessDenied,
+    #[error("SystemResources")]
     SystemResources,
     /// posix.UnexpectedError
+    #[error("Unexpected")]
     Unexpected,
 }
 impl From<IteratorError> for bun_core::Error {
     fn from(e: IteratorError) -> Self {
-        bun_core::err_from_static(<&'static str>::from(e))
-        // TODO(port): use generated `From` derive once `bun_core::Error` registry macro lands
+        bun_core::Error::intern(<&'static str>::from(e))
     }
 }
 
@@ -81,8 +86,6 @@ mod platform {
     }
 
     impl<const USE_WINDOWS_OSPATH: bool> NewIterator<USE_WINDOWS_OSPATH> {
-        pub type Error = IteratorError;
-
         /// Memory such as file names referenced in this returned entry becomes invalid
         /// with subsequent calls to `next`, as well as when this `Dir` is deinitialized.
         pub fn next(&mut self) -> Result {
@@ -90,10 +93,19 @@ mod platform {
         }
 
         fn next_darwin(&mut self) -> Result {
+            unsafe extern "C" {
+                // Private libsystem symbol; same one Zig's `posix.system.__getdirentries64` hits.
+                fn __getdirentries64(
+                    fd: libc::c_int,
+                    buf: *mut u8,
+                    nbytes: usize,
+                    basep: *mut i64,
+                ) -> isize;
+            }
             'start_over: loop {
                 if self.index >= self.end_index {
                     if self.received_eof {
-                        return sys::Result::Ok(None);
+                        return Ok(None);
                     }
 
                     // getdirentries64() writes to the last 4 bytes of the
@@ -111,8 +123,8 @@ mod platform {
 
                     // SAFETY: FFI call into libc __getdirentries64; buf is 8192 bytes
                     let rc = unsafe {
-                        posix_system::__getdirentries64(
-                            self.dir.cast(),
+                        __getdirentries64(
+                            self.dir.native(),
                             self.buf.as_mut_ptr(),
                             self.buf.len(),
                             &mut self.seek,
@@ -122,53 +134,52 @@ mod platform {
                     if rc < 1 {
                         if rc == 0 {
                             self.received_eof = true;
-                            return sys::Result::Ok(None);
+                            return Ok(None);
                         }
-
-                        if let Some(err) = Result::errno_sys(rc, Syscall::Getdirentries64) {
-                            return err;
-                        }
+                        return Err(sys::Error::from_code_int(
+                            sys::last_errno(),
+                            Tag::getdirentries64,
+                        ));
                     }
 
                     self.index = 0;
                     self.end_index = usize::try_from(rc).unwrap();
-                    let eof_flag = u32::from_ne_bytes(
-                        self.buf[len - 4..len].try_into().unwrap(),
-                    );
+                    let eof_flag =
+                        u32::from_ne_bytes(self.buf[len - 4..len].try_into().unwrap());
                     self.received_eof =
                         self.end_index <= (self.buf.len() - 4) && eof_flag == 1;
                 }
                 // SAFETY: self.index < self.end_index <= buf.len(); buf holds packed dirent records
                 let darwin_entry = unsafe {
-                    &*(self.buf.as_ptr().add(self.index) as *const posix_system::dirent)
+                    &*(self.buf.as_ptr().add(self.index) as *const libc::dirent)
                 };
-                let next_index = self.index + darwin_entry.reclen as usize;
+                let next_index = self.index + darwin_entry.d_reclen as usize;
                 self.index = next_index;
 
-                // SAFETY: dirent.name is a [*]u8 of length namlen within the record
+                // SAFETY: dirent.d_name is a [*]u8 of length d_namlen within the record
                 let name = unsafe {
                     core::slice::from_raw_parts(
-                        darwin_entry.name.as_ptr() as *const u8,
-                        darwin_entry.namlen as usize,
+                        darwin_entry.d_name.as_ptr() as *const u8,
+                        darwin_entry.d_namlen as usize,
                     )
                 };
 
-                if name == b"." || name == b".." || darwin_entry.ino == 0 {
+                if name == b"." || name == b".." || darwin_entry.d_ino == 0 {
                     continue 'start_over;
                 }
 
-                let entry_kind = match darwin_entry.r#type {
-                    posix_system::DT::BLK => EntryKind::BlockDevice,
-                    posix_system::DT::CHR => EntryKind::CharacterDevice,
-                    posix_system::DT::DIR => EntryKind::Directory,
-                    posix_system::DT::FIFO => EntryKind::NamedPipe,
-                    posix_system::DT::LNK => EntryKind::SymLink,
-                    posix_system::DT::REG => EntryKind::File,
-                    posix_system::DT::SOCK => EntryKind::UnixDomainSocket,
-                    posix_system::DT::WHT => EntryKind::Whiteout,
+                let entry_kind = match darwin_entry.d_type {
+                    libc::DT_BLK => EntryKind::BlockDevice,
+                    libc::DT_CHR => EntryKind::CharacterDevice,
+                    libc::DT_DIR => EntryKind::Directory,
+                    libc::DT_FIFO => EntryKind::NamedPipe,
+                    libc::DT_LNK => EntryKind::SymLink,
+                    libc::DT_REG => EntryKind::File,
+                    libc::DT_SOCK => EntryKind::UnixDomainSocket,
+                    libc::DT_WHT => EntryKind::Whiteout,
                     _ => EntryKind::Unknown,
                 };
-                return sys::Result::Ok(Some(IteratorResult {
+                return Ok(Some(IteratorResult {
                     name: PathString::init(name),
                     kind: entry_kind,
                 }));
@@ -183,7 +194,6 @@ mod platform {
 #[cfg(target_os = "freebsd")]
 mod platform {
     use super::*;
-    use bun_sys::freebsd as posix_system;
 
     pub struct NewIterator<const USE_WINDOWS_OSPATH: bool> {
         pub dir: Fd,
@@ -194,64 +204,61 @@ mod platform {
     }
 
     impl<const USE_WINDOWS_OSPATH: bool> NewIterator<USE_WINDOWS_OSPATH> {
-        pub type Error = IteratorError;
-
         pub fn next(&mut self) -> Result {
             'start_over: loop {
                 if self.index >= self.end_index {
                     // SAFETY: FFI getdents
                     let rc = unsafe {
-                        posix_system::getdents(
-                            self.dir.cast(),
-                            self.buf.as_mut_ptr(),
+                        libc::getdents(
+                            self.dir.native(),
+                            self.buf.as_mut_ptr() as *mut libc::c_char,
                             self.buf.len(),
                         )
                     };
-                    if let Some(err) = Result::errno_sys(rc, Syscall::Getdents64) {
+                    if rc < 0 {
+                        let e = sys::last_errno();
                         // FreeBSD reports ENOENT when iterating an unlinked
                         // but still-open directory.
-                        if err.get_errno() == SystemErrno::NOENT {
-                            return sys::Result::Ok(None);
+                        if e == libc::ENOENT {
+                            return Ok(None);
                         }
-                        return err;
+                        return Err(sys::Error::from_code_int(e, Tag::getdents64));
                     }
                     if rc == 0 {
-                        return sys::Result::Ok(None);
+                        return Ok(None);
                     }
                     self.index = 0;
                     self.end_index = usize::try_from(rc).unwrap();
                 }
                 // SAFETY: index within filled buf; packed dirent
                 let entry = unsafe {
-                    &*(self.buf.as_ptr().add(self.index) as *const posix_system::dirent)
+                    &*(self.buf.as_ptr().add(self.index) as *const libc::dirent)
                 };
-                // TODO(port): Zig used `if (@hasDecl(dirent, "reclen")) entry.reclen() else entry.reclen`;
-                // assume field access in Rust binding.
-                self.index += entry.reclen as usize;
+                self.index += entry.d_reclen as usize;
 
-                // SAFETY: name is namlen bytes within the record
+                // SAFETY: name is d_namlen bytes within the record
                 let name = unsafe {
                     core::slice::from_raw_parts(
-                        entry.name.as_ptr() as *const u8,
-                        entry.namlen as usize,
+                        entry.d_name.as_ptr() as *const u8,
+                        entry.d_namlen as usize,
                     )
                 };
-                if name == b"." || name == b".." || entry.fileno == 0 {
+                if name == b"." || name == b".." || entry.d_fileno == 0 {
                     continue 'start_over;
                 }
 
-                let entry_kind: EntryKind = match entry.r#type {
-                    posix_system::DT::BLK => EntryKind::BlockDevice,
-                    posix_system::DT::CHR => EntryKind::CharacterDevice,
-                    posix_system::DT::DIR => EntryKind::Directory,
-                    posix_system::DT::FIFO => EntryKind::NamedPipe,
-                    posix_system::DT::LNK => EntryKind::SymLink,
-                    posix_system::DT::REG => EntryKind::File,
-                    posix_system::DT::SOCK => EntryKind::UnixDomainSocket,
-                    posix_system::DT::WHT => EntryKind::Whiteout,
+                let entry_kind: EntryKind = match entry.d_type {
+                    libc::DT_BLK => EntryKind::BlockDevice,
+                    libc::DT_CHR => EntryKind::CharacterDevice,
+                    libc::DT_DIR => EntryKind::Directory,
+                    libc::DT_FIFO => EntryKind::NamedPipe,
+                    libc::DT_LNK => EntryKind::SymLink,
+                    libc::DT_REG => EntryKind::File,
+                    libc::DT_SOCK => EntryKind::UnixDomainSocket,
+                    libc::DT_WHT => EntryKind::Whiteout,
                     _ => EntryKind::Unknown,
                 };
-                return sys::Result::Ok(Some(IteratorResult {
+                return Ok(Some(IteratorResult {
                     name: PathString::init(name),
                     kind: entry_kind,
                 }));
@@ -266,7 +273,6 @@ mod platform {
 #[cfg(target_os = "linux")]
 mod platform {
     use super::*;
-    use bun_sys::linux;
 
     pub struct NewIterator<const USE_WINDOWS_OSPATH: bool> {
         pub dir: Fd,
@@ -279,67 +285,71 @@ mod platform {
     }
 
     impl<const USE_WINDOWS_OSPATH: bool> NewIterator<USE_WINDOWS_OSPATH> {
-        pub type Error = IteratorError;
-
         /// Memory such as file names referenced in this returned entry becomes invalid
         /// with subsequent calls to `next`, as well as when this `Dir` is deinitialized.
         pub fn next(&mut self) -> Result {
             'start_over: loop {
                 if self.index >= self.end_index {
-                    // SAFETY: FFI getdents64; buf is 8192 bytes
+                    // glibc doesn't expose getdents64; go straight to the
+                    // syscall (matches Zig's `linux.getdents64` raw-syscall
+                    // path).
+                    // SAFETY: buf is valid for 8192 bytes; fd is a plain c_int.
                     let rc = unsafe {
-                        linux::getdents64(
-                            self.dir.cast(),
+                        libc::syscall(
+                            libc::SYS_getdents64,
+                            self.dir.native() as libc::c_long,
                             self.buf.as_mut_ptr(),
                             self.buf.len(),
                         )
                     };
-                    if let Some(err) = Result::errno_sys(rc, Syscall::Getdents64) {
-                        return err;
+                    if rc < 0 {
+                        return Err(sys::Error::from_code_int(
+                            sys::last_errno(),
+                            Tag::getdents64,
+                        ));
                     }
                     if rc == 0 {
-                        return sys::Result::Ok(None);
+                        return Ok(None);
                     }
                     self.index = 0;
                     self.end_index = rc as usize;
                 }
                 // SAFETY: index within filled buf; packed dirent64
                 let linux_entry = unsafe {
-                    &*(self.buf.as_ptr().add(self.index) as *const linux::dirent64)
+                    &*(self.buf.as_ptr().add(self.index) as *const libc::dirent64)
                 };
-                let next_index = self.index + linux_entry.reclen as usize;
+                let next_index = self.index + linux_entry.d_reclen as usize;
                 self.index = next_index;
 
-                // SAFETY: dirent64.name is NUL-terminated within the record
+                // SAFETY: dirent64.d_name is NUL-terminated within the record
                 let name = unsafe {
-                    let p = linux_entry.name.as_ptr() as *const u8;
+                    let p = linux_entry.d_name.as_ptr() as *const u8;
                     let mut len = 0usize;
                     while *p.add(len) != 0 {
                         len += 1;
                     }
                     core::slice::from_raw_parts(p, len)
                 };
-                // TODO(port): replace manual strlen with `bun_str::slice_to_nul` once available
 
                 // skip . and .. entries
                 if name == b"." || name == b".." {
                     continue 'start_over;
                 }
 
-                let entry_kind: EntryKind = match linux_entry.r#type {
-                    linux::DT::BLK => EntryKind::BlockDevice,
-                    linux::DT::CHR => EntryKind::CharacterDevice,
-                    linux::DT::DIR => EntryKind::Directory,
-                    linux::DT::FIFO => EntryKind::NamedPipe,
-                    linux::DT::LNK => EntryKind::SymLink,
-                    linux::DT::REG => EntryKind::File,
-                    linux::DT::SOCK => EntryKind::UnixDomainSocket,
+                let entry_kind: EntryKind = match linux_entry.d_type {
+                    libc::DT_BLK => EntryKind::BlockDevice,
+                    libc::DT_CHR => EntryKind::CharacterDevice,
+                    libc::DT_DIR => EntryKind::Directory,
+                    libc::DT_FIFO => EntryKind::NamedPipe,
+                    libc::DT_LNK => EntryKind::SymLink,
+                    libc::DT_REG => EntryKind::File,
+                    libc::DT_SOCK => EntryKind::UnixDomainSocket,
                     // DT_UNKNOWN: Some filesystems (e.g., bind mounts, FUSE, NFS)
                     // don't provide d_type. Callers should use lstatat() to determine
                     // the type when needed (lazy stat pattern for performance).
                     _ => EntryKind::Unknown,
                 };
-                return sys::Result::Ok(Some(IteratorResult {
+                return Ok(Some(IteratorResult {
                     name: PathString::init(name),
                     kind: entry_kind,
                 }));
@@ -367,8 +377,6 @@ mod platform {
 
     /// Helper to select `name_data` element type and result type from the const-bool generic.
     /// Zig: `name_data: if (use_windows_ospath) [257]u16 else [513]u8`.
-    // TODO(port): Rust const generics cannot pick field types directly; this trait
-    // bridges the gap. Phase B may collapse to two concrete structs if preferred.
     pub trait WindowsOsPath {
         type NameData: Sized;
         type ResultT;
@@ -420,209 +428,10 @@ mod platform {
     where
         (): SelectImpl<USE_WINDOWS_OSPATH>,
     {
-        pub type Error = IteratorError;
-
-        type ResultT = <Select<USE_WINDOWS_OSPATH> as WindowsOsPath>::ResultT;
-
         /// Memory such as file names referenced in this returned entry becomes invalid
         /// with subsequent calls to `next`, as well as when this `Dir` is deinitialized.
-        pub fn next(&mut self) -> Self::ResultT {
-            loop {
-                if self.index >= self.end_index {
-                    // The I/O manager only fills the IO_STATUS_BLOCK on IRP
-                    // completion. When NtQueryDirectoryFile fails with an
-                    // NT_ERROR status (e.g. parameter validation), the block
-                    // is left untouched, so zero-initialize it rather than
-                    // reading uninitialized stack if the call fails.
-                    // SAFETY: all-zero is a valid IO_STATUS_BLOCK
-                    let mut io: IO_STATUS_BLOCK = unsafe { core::mem::zeroed() };
-                    if self.first {
-                        // > Any bytes inserted for alignment SHOULD be set to zero, and the receiver MUST ignore them
-                        self.buf.fill(0);
-                    }
-
-                    let mut filter_us: UNICODE_STRING;
-                    let filter_ptr: *mut UNICODE_STRING = if let Some((ptr, len)) = self.name_filter {
-                        filter_us = UNICODE_STRING {
-                            Length: u16::try_from(len * 2).unwrap(),
-                            MaximumLength: u16::try_from(len * 2).unwrap(),
-                            Buffer: ptr as *mut u16,
-                        };
-                        &mut filter_us
-                    } else {
-                        core::ptr::null_mut()
-                    };
-
-                    // SAFETY: FFI call to NtQueryDirectoryFile with valid handle and buffers
-                    let rc = unsafe {
-                        ntdll::NtQueryDirectoryFile(
-                            self.dir.cast(),
-                            core::ptr::null_mut(),
-                            None,
-                            core::ptr::null_mut(),
-                            &mut io,
-                            self.buf.as_mut_ptr().cast(),
-                            self.buf.len() as u32,
-                            w::FILE_INFORMATION_CLASS::FileDirectoryInformation,
-                            FALSE,
-                            filter_ptr,
-                            if self.first { TRUE as BOOLEAN } else { FALSE as BOOLEAN },
-                        )
-                    };
-
-                    self.first = false;
-
-                    // Check the return status before trusting io.Information;
-                    // the IO_STATUS_BLOCK is not written on NT_ERROR statuses.
-
-                    // If the handle is not a directory, we'll get STATUS_INVALID_PARAMETER.
-                    if rc == w::NTSTATUS::INVALID_PARAMETER {
-                        sys::syslog!(
-                            "NtQueryDirectoryFile({}) = {}",
-                            self.dir,
-                            <&'static str>::from(rc)
-                        );
-                        return Self::ResultT::err(sys::Error {
-                            errno: SystemErrno::ENOTDIR as u16,
-                            syscall: Syscall::NtQueryDirectoryFile,
-                            ..Default::default()
-                        });
-                    }
-
-                    // NO_SUCH_FILE is returned on the first call when a FileName filter
-                    // matches nothing; NO_MORE_FILES on subsequent calls. Both mean "done".
-                    if rc == w::NTSTATUS::NO_MORE_FILES || rc == w::NTSTATUS::NO_SUCH_FILE {
-                        sys::syslog!(
-                            "NtQueryDirectoryFile({}) = {}",
-                            self.dir,
-                            <&'static str>::from(rc)
-                        );
-                        return Self::ResultT::ok(None);
-                    }
-
-                    if rc != w::NTSTATUS::SUCCESS {
-                        sys::syslog!(
-                            "NtQueryDirectoryFile({}) = {}",
-                            self.dir,
-                            <&'static str>::from(rc)
-                        );
-
-                        if let Some(errno) = w::Win32Error::from_nt_status(rc).to_system_errno() {
-                            return Self::ResultT::err(sys::Error {
-                                errno: errno as u16,
-                                syscall: Syscall::NtQueryDirectoryFile,
-                                ..Default::default()
-                            });
-                        }
-
-                        return Self::ResultT::err(sys::Error {
-                            errno: SystemErrno::EUNKNOWN as u16,
-                            syscall: Syscall::NtQueryDirectoryFile,
-                            ..Default::default()
-                        });
-                    }
-
-                    if io.Information == 0 {
-                        sys::syslog!("NtQueryDirectoryFile({}) = 0", self.dir);
-                        return Self::ResultT::ok(None);
-                    }
-                    self.index = 0;
-                    self.end_index = io.Information as usize;
-
-                    sys::syslog!("NtQueryDirectoryFile({}) = {}", self.dir, self.end_index);
-                }
-
-                let entry_offset = self.index;
-                // SAFETY: entry_offset < end_index <= buf.len(); align(2) per FILE_DIRECTORY_INFORMATION_PTR comment
-                let dir_info: &FILE_DIRECTORY_INFORMATION = unsafe {
-                    &*(self.buf.as_ptr().add(entry_offset) as *const FILE_DIRECTORY_INFORMATION)
-                };
-                if dir_info.NextEntryOffset != 0 {
-                    self.index = entry_offset + dir_info.NextEntryOffset as usize;
-                } else {
-                    self.index = self.buf.len();
-                }
-
-                // Some filesystem / filter drivers have been observed returning
-                // FILE_DIRECTORY_INFORMATION entries with an out-of-range
-                // FileNameLength (well beyond the 255-WCHAR NTFS component
-                // limit). Clamp to what fits in name_data (destination) and to
-                // what remains in buf (source) so a misbehaving driver cannot
-                // walk us past the end of either buffer.
-                let max_name_u16: usize = if USE_WINDOWS_OSPATH {
-                    257 - 1 // self.name_data.len() - 1
-                } else {
-                    (513 - 1) / 2 // (self.name_data.len() - 1) / 2
-                };
-                let name_byte_offset =
-                    entry_offset + offset_of!(FILE_DIRECTORY_INFORMATION, FileName);
-                let buf_remaining_u16: usize =
-                    (self.buf.len().saturating_sub(name_byte_offset)) / size_of::<u16>();
-                let name_len_u16: usize = (dir_info.FileNameLength as usize / 2)
-                    .min(max_name_u16)
-                    .min(buf_remaining_u16);
-                // SAFETY: FileName is a u16 array of name_len_u16 elements within buf bounds (clamped above)
-                let dir_info_name: &[u16] = unsafe {
-                    core::slice::from_raw_parts(
-                        (&dir_info.FileName as *const _ as *const u16),
-                        name_len_u16,
-                    )
-                };
-
-                if dir_info_name == &[b'.' as u16][..]
-                    || dir_info_name == &[b'.' as u16, b'.' as u16][..]
-                {
-                    continue;
-                }
-
-                let kind = 'blk: {
-                    let attrs = dir_info.FileAttributes;
-                    let isdir = attrs & FILE_ATTRIBUTE_DIRECTORY != 0;
-                    let islink = attrs & FILE_ATTRIBUTE_REPARSE_POINT != 0;
-                    // on windows symlinks can be directories, too. We prioritize the
-                    // "sym_link" kind over the "directory" kind
-                    // this will coerce into either .file or .directory later
-                    // once the symlink is read
-                    if islink {
-                        break 'blk EntryKind::SymLink;
-                    }
-                    if isdir {
-                        break 'blk EntryKind::Directory;
-                    }
-                    EntryKind::File
-                };
-
-                if USE_WINDOWS_OSPATH {
-                    // SAFETY: name_data is [u16; 257] when USE_WINDOWS_OSPATH; name_len_u16 <= 256
-                    let name_data: &mut [u16; 257] = unsafe {
-                        &mut *(&mut self.name_data as *mut _ as *mut [u16; 257])
-                    };
-                    name_data[..name_len_u16].copy_from_slice(dir_info_name);
-                    name_data[name_len_u16] = 0;
-                    let name_utf16le = IteratorResultWName {
-                        data_ptr: name_data.as_ptr(),
-                        data_len: name_len_u16,
-                    };
-
-                    // TODO(port): Self::ResultT unification — when USE_WINDOWS_OSPATH this is ResultW
-                    return Self::ResultT::ok(Some(IteratorResultW {
-                        kind,
-                        name: name_utf16le,
-                    }));
-                }
-
-                // SAFETY: name_data is [u8; 513] when !USE_WINDOWS_OSPATH
-                let name_data: &mut [u8; 513] = unsafe {
-                    &mut *(&mut self.name_data as *mut _ as *mut [u8; 513])
-                };
-                // Trust that Windows gives us valid UTF-16LE
-                let name_utf8 = strings::from_w_path(&mut name_data[..], dir_info_name);
-
-                return Self::ResultT::ok(Some(IteratorResult {
-                    name: PathString::init(name_utf8),
-                    kind,
-                }));
-            }
+        pub fn next(&mut self) -> <Select<USE_WINDOWS_OSPATH> as WindowsOsPath>::ResultT {
+            todo!("blocked_on: bun_sys::windows::ntdll::NtQueryDirectoryFile — Windows path is gated until the bun_sys windows FFI surface lands")
         }
     }
 }
@@ -644,8 +453,6 @@ mod platform {
     }
 
     impl<const USE_WINDOWS_OSPATH: bool> NewIterator<USE_WINDOWS_OSPATH> {
-        pub type Error = IteratorError;
-
         /// Memory such as file names referenced in this returned entry becomes invalid
         /// with subsequent calls to `next`, as well as when this `Dir` is deinitialized.
         pub fn next(&mut self) -> Result {
@@ -658,7 +465,7 @@ mod platform {
                     // SAFETY: FFI fd_readdir
                     let errno = unsafe {
                         w::fd_readdir(
-                            self.dir.cast(),
+                            self.dir.native(),
                             self.buf.as_mut_ptr(),
                             self.buf.len(),
                             self.cookie,
@@ -672,30 +479,20 @@ mod platform {
                         w::Errno::NOTDIR => unreachable!(),
                         w::Errno::INVAL => unreachable!(),
                         w::Errno::NOTCAPABLE => {
-                            // TODO(port): Zig returned `error.AccessDenied` (anyerror) but fn
-                            // returns `Result` (Maybe). Mirroring as sys error EACCES.
-                            return sys::Result::Err(sys::Error {
-                                errno: SystemErrno::EACCES as u16,
-                                syscall: Syscall::FdReaddir,
-                                ..Default::default()
-                            });
+                            return Err(sys::Error::from_code_int(libc::EACCES, Tag::getdents64));
                         }
-                        err => {
-                            // TODO(port): Zig called `posix.unexpectedErrno(err)` returning anyerror;
-                            // map to sys::Result::Err here.
-                            return sys::Result::Err(sys::Error::from_wasi(err, Syscall::FdReaddir));
+                        _ => {
+                            return Err(sys::Error::from_code_int(errno as i32, Tag::getdents64));
                         }
                     }
                     if bufused == 0 {
-                        return sys::Result::Ok(None);
+                        return Ok(None);
                     }
                     self.index = 0;
                     self.end_index = bufused;
                 }
                 // SAFETY: index within filled buf
-                let entry = unsafe {
-                    &*(self.buf.as_ptr().add(self.index) as *const w::dirent_t)
-                };
+                let entry = unsafe { &*(self.buf.as_ptr().add(self.index) as *const w::dirent_t) };
                 let entry_size = size_of::<w::dirent_t>();
                 let name_index = self.index + entry_size;
                 let name = &self.buf[name_index..name_index + entry.d_namlen as usize];
@@ -720,7 +517,7 @@ mod platform {
                     }
                     _ => EntryKind::Unknown,
                 };
-                return sys::Result::Ok(Some(IteratorResult {
+                return Ok(Some(IteratorResult {
                     name: PathString::init(name),
                     kind: entry_kind,
                 }));
@@ -732,56 +529,52 @@ mod platform {
 pub use platform::NewIterator;
 
 // ──────────────────────────────────────────────────────────────────────────
+// Wrapped iterator — selects the underlying `NewIterator<B>` and provides a
+// uniform `init`/`next`/`set_name_filter` surface.
+//
+// Zig parametrized this on a `PathType` enum (`.u8` / `.u16`). Rust's stable
+// const generics don't admit user enums, so we map to a `bool` (`false` ==
+// `.u8`, `true` == `.u16`) and split the `next()` impl per-value to avoid
+// inherent associated types.
+// ──────────────────────────────────────────────────────────────────────────
 
-#[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum PathType {
     U8,
     U16,
 }
 
-// TODO(port): `IteratorType`/`ResultType` selection by const-enum needs an associated-type
-// trait in stable Rust. Phase B may prefer two concrete type aliases instead.
-pub trait PathTypeSelect {
-    type IteratorType;
-    type ResultType;
-}
-pub struct PathTypeU8;
-pub struct PathTypeU16;
-impl PathTypeSelect for PathTypeU8 {
-    type IteratorType = Iterator;
-    type ResultType = Result;
-}
-impl PathTypeSelect for PathTypeU16 {
-    type IteratorType = IteratorW;
-    type ResultType = ResultW;
-}
-pub type SelectPath<const P: PathType> = <() as SelectPathImpl<P>>::T;
-pub trait SelectPathImpl<const P: PathType> { type T: PathTypeSelect; }
-impl SelectPathImpl<{ PathType::U8 }> for () { type T = PathTypeU8; }
-impl SelectPathImpl<{ PathType::U16 }> for () { type T = PathTypeU16; }
-
-pub struct NewWrappedIterator<const PATH_TYPE: PathType>
-where
-    (): SelectPathImpl<PATH_TYPE>,
-{
-    pub iter: <SelectPath<PATH_TYPE> as PathTypeSelect>::IteratorType,
+pub struct NewWrappedIterator<const IS_U16: bool> {
+    pub iter: NewIterator<IS_U16>,
 }
 
-impl<const PATH_TYPE: PathType> NewWrappedIterator<PATH_TYPE>
-where
-    (): SelectPathImpl<PATH_TYPE>,
-{
-    pub type Error = IteratorError;
-
+impl NewWrappedIterator<false> {
     #[inline]
-    pub fn next(&mut self) -> <SelectPath<PATH_TYPE> as PathTypeSelect>::ResultType {
+    pub fn next(&mut self) -> Result {
         self.iter.next()
     }
+}
 
+impl NewWrappedIterator<true> {
+    #[cfg(not(windows))]
+    #[inline]
+    pub fn next(&mut self) -> Result {
+        // On POSIX the underlying iterator ignores `USE_WINDOWS_OSPATH` and
+        // always yields UTF-8 `IteratorResult`s.
+        self.iter.next()
+    }
+    #[cfg(windows)]
+    #[inline]
+    pub fn next(&mut self) -> ResultW {
+        self.iter.next()
+    }
+}
+
+impl<const IS_U16: bool> NewWrappedIterator<IS_U16> {
     pub fn init(dir: Fd) -> Self {
         #[cfg(target_os = "macos")]
         {
-            Self {
+            return Self {
                 iter: NewIterator {
                     dir,
                     seek: 0,
@@ -791,11 +584,11 @@ where
                     buf: unsafe { core::mem::MaybeUninit::uninit().assume_init() },
                     received_eof: false,
                 },
-            }
+            };
         }
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         {
-            Self {
+            return Self {
                 iter: NewIterator {
                     dir,
                     index: 0,
@@ -803,11 +596,11 @@ where
                     // SAFETY: buf is plain [u8; N], any bit pattern valid
                     buf: unsafe { core::mem::MaybeUninit::uninit().assume_init() },
                 },
-            }
+            };
         }
         #[cfg(windows)]
         {
-            Self {
+            return Self {
                 iter: NewIterator {
                     dir,
                     index: 0,
@@ -818,20 +611,20 @@ where
                     name_data: unsafe { core::mem::MaybeUninit::uninit().assume_init() },
                     name_filter: None,
                 },
-            }
+            };
         }
         #[cfg(target_os = "wasi")]
         {
-            Self {
+            return Self {
                 iter: NewIterator {
                     dir,
-                    cookie: bun_sys::wasi::DIRCOOKIE_START,
+                    cookie: 0, // wasi DIRCOOKIE_START
                     index: 0,
                     end_index: 0,
                     // SAFETY: buf is plain [u8; N]
                     buf: unsafe { core::mem::MaybeUninit::uninit().assume_init() },
                 },
-            }
+            };
         }
     }
 
@@ -839,7 +632,6 @@ where
         #[cfg(not(windows))]
         {
             let _ = filter;
-            return;
         }
         #[cfg(windows)]
         {
@@ -848,20 +640,20 @@ where
     }
 }
 
-pub type WrappedIterator = NewWrappedIterator<{ PathType::U8 }>;
-pub type WrappedIteratorW = NewWrappedIterator<{ PathType::U16 }>;
+pub type WrappedIterator = NewWrappedIterator<false>;
+pub type WrappedIteratorW = NewWrappedIterator<true>;
 
-pub fn iterate<const PATH_TYPE: PathType>(self_: Fd) -> NewWrappedIterator<PATH_TYPE>
-where
-    (): SelectPathImpl<PATH_TYPE>,
-{
-    NewWrappedIterator::<PATH_TYPE>::init(self_)
+pub fn iterate<const IS_U16: bool>(self_: Fd) -> NewWrappedIterator<IS_U16> {
+    NewWrappedIterator::<IS_U16>::init(self_)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/node/dir_iterator.zig (564 lines)
 //   confidence: medium
-//   todos:      14
-//   notes:      const-bool/enum → field-type selection done via helper traits (Rust const generics can't pick types); Phase B may flatten to two concrete structs. Buffer alignment attrs and bun_sys platform FFI symbol paths need verification.
+//   todos:      9
+//   notes:      const-enum `PathType` generic flattened to `bool` (stable
+//               const-generics); inherent associated `Error` types dropped;
+//               linux getdents64 goes through libc::syscall raw path. Windows
+//               body is gated on bun_sys::windows FFI surface.
 // ──────────────────────────────────────────────────────────────────────────

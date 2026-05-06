@@ -281,6 +281,22 @@ impl EventLoop {
         // SAFETY: `self` is a live `*EventLoop`.
         unsafe { Bun__EventLoop__exitLoop(self._opaque.get() as *mut EventLoop) }
     }
+    /// `EventLoop.runCallback` (event_loop.zig) — `enter()` → call → report
+    /// any thrown exception as unhandled → `exit()`. Mirrors the inline body
+    /// JSMySQLConnection used before this helper existed.
+    pub fn run_callback(
+        &self,
+        function: JSValue,
+        global: &JSGlobalObject,
+        this_value: JSValue,
+        args: &[JSValue],
+    ) {
+        self.enter();
+        if let Err(e) = function.call(global, this_value, args) {
+            global.report_active_exception_as_unhandled(e);
+        }
+        self.exit();
+    }
 }
 
 /// `bun_jsc::api::Timer::All` — heap of `EventLoopTimer`. Opaque on this side;

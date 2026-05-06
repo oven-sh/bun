@@ -1,7 +1,10 @@
 use core::cell::Cell;
 use core::ptr::NonNull;
 
-use crate::jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, VirtualMachine};
+use crate::jsc::{
+    self as jsc, CallFrame, JSGlobalObject, JSGlobalObjectSqlExt as _, JSValue, JsRef, JsResult,
+    VirtualMachine,
+};
 use crate::jsc::codegen::{js_mysql_connection, js_mysql_query as js};
 use bun_sql::mysql::protocol::any_mysql_error::{self as AnyMySQLError};
 use bun_sql::mysql::MySQLQueryResult;

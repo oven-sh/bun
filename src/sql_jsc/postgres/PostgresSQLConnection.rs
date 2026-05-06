@@ -193,7 +193,7 @@ impl PostgresSQLConnection {
     /// resolves to the same singleton VM stored in `self.vm`.
     #[inline]
     fn vm_ctx(&self) -> bun_aio::EventLoopCtx {
-        bun_aio::get_vm_ctx(bun_aio::AllocatorType::Js)
+        bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js)
     }
 
     #[inline]

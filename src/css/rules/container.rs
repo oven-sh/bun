@@ -112,15 +112,9 @@ impl From<ContainerSizeFeatureId> for &'static str {
     }
 }
 
-// blocked_on: css::enum_property_util EnumProperty derive bounds.
-#[cfg(any())]
 impl ContainerSizeFeatureId {
-    pub fn as_str(&self) -> &'static [u8] {
+    pub fn as_str(&self) -> &'static str {
         css::enum_property_util::as_str(self)
-    }
-
-    pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
-        css::enum_property_util::parse::<Self>(input)
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
@@ -130,6 +124,14 @@ impl ContainerSizeFeatureId {
     pub fn to_css_with_prefix(&self, prefix: &[u8], dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         dest.write_str(prefix)?;
         self.to_css(dest)
+    }
+}
+
+// blocked_on: css::enum_property_util EnumProperty parse bound.
+#[cfg(any())]
+impl ContainerSizeFeatureId {
+    pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
+        css::enum_property_util::parse::<Self>(input)
     }
 }
 
@@ -152,30 +154,52 @@ pub enum StyleQuery {
     },
 }
 
-// ─── StyleQuery behavior ──────────────────────────────────────────────────
-// blocked_on: Property::{to_css,parse}, PropertyId::parse,
-// media_query::{to_css_with_parens_if_needed,operation_to_css},
-// css::parse_important, ParserOptions::default allocator, DeepClone.
-#[cfg(any())]
-impl StyleQuery {
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        use crate::media_query;
+impl ToCss for StyleQuery {
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
             StyleQuery::Feature(f) => f.to_css(dest, false),
             StyleQuery::Not(c) => {
                 dest.write_str("not ")?;
-                media_query::to_css_with_parens_if_needed(
-                    &**c,
-                    dest,
-                    c.needs_parens(None, &dest.targets),
-                )
+                let needs = c.needs_parens(None, &dest.targets);
+                media_query::to_css_with_parens_if_needed(&**c, dest, needs)
             }
             StyleQuery::Operation { operator, conditions } => {
                 media_query::operation_to_css::<StyleQuery>(*operator, conditions, dest)
             }
         }
     }
+}
 
+impl QueryCondition for StyleQuery {
+    fn parse_feature(_input: &mut css::Parser) -> css::Result<Self> {
+        // blocked_on: PropertyId::parse + Property::parse + css::parse_important.
+        todo!("blocked_on: StyleQuery::parse_feature — PropertyId/Property::parse")
+    }
+    fn create_negation(condition: Box<Self>) -> Self {
+        StyleQuery::Not(condition)
+    }
+    fn create_operation(operator: Operator, conditions: Vec<Self>) -> Self {
+        StyleQuery::Operation { operator, conditions }
+    }
+    fn parse_style_query(_input: &mut css::Parser) -> css::Result<Self> {
+        // Zig: `return .{ .err = input.newErrorForNextToken() }` — parse path
+        // gated on Parser::new_error_for_next_token.
+        todo!("blocked_on: StyleQuery::parse_style_query — Parser::new_error_for_next_token")
+    }
+    fn needs_parens(&self, parent_operator: Option<Operator>, _targets: &css::Targets) -> bool {
+        match self {
+            StyleQuery::Not(_) => true,
+            StyleQuery::Operation { operator, .. } => Some(*operator) == parent_operator,
+            StyleQuery::Feature(_) => true,
+        }
+    }
+}
+
+// ─── StyleQuery parse/clone ───────────────────────────────────────────────
+// blocked_on: Property::parse, PropertyId::parse, css::parse_important,
+// ParserOptions::default allocator, DeepClone.
+#[cfg(any())]
+impl StyleQuery {
     pub fn parse_feature(input: &mut css::Parser) -> css::Result<StyleQuery> {
         let property_id = match css::PropertyId::parse(input) {
             Ok(vv) => vv,
@@ -193,26 +217,6 @@ impl StyleQuery {
         });
         let _ = input.try_parse(css::parse_important);
         Ok(feature)
-    }
-
-    pub fn create_negation(condition: Box<StyleQuery>) -> StyleQuery {
-        StyleQuery::Not(condition)
-    }
-
-    pub fn create_operation(operator: Operator, conditions: Vec<StyleQuery>) -> StyleQuery {
-        StyleQuery::Operation { operator, conditions }
-    }
-
-    pub fn needs_parens(&self, parent_operator: Option<Operator>, _targets: &css::Targets) -> bool {
-        match self {
-            StyleQuery::Not(_) => true,
-            StyleQuery::Operation { operator, .. } => Some(*operator) == parent_operator,
-            StyleQuery::Feature(_) => true,
-        }
-    }
-
-    pub fn parse_style_query(input: &mut css::Parser) -> css::Result<Self> {
-        Err(input.new_error_for_next_token())
     }
 
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
@@ -239,32 +243,14 @@ pub enum ContainerCondition {
     Style(StyleQuery),
 }
 
-// ─── ContainerCondition behavior ──────────────────────────────────────────
-// blocked_on: media_query::{parse_query_condition,QueryConditionFlags constructors,
-// to_css_with_parens_if_needed,operation_to_css}, QueryFeature::{parse,to_css,
-// needs_parens}, Parser::{try_parse,parse_nested_block}, StyleQuery behavior,
-// DeepClone.
-#[cfg(any())]
-impl ContainerCondition {
-    pub fn parse(input: &mut css::Parser) -> css::Result<ContainerCondition> {
-        use crate::media_query::{self, QueryConditionFlags};
-        media_query::parse_query_condition::<ContainerCondition>(
-            input,
-            QueryConditionFlags::ALLOW_OR | QueryConditionFlags::ALLOW_STYLE,
-        )
-    }
-
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        use crate::media_query;
+impl ToCss for ContainerCondition {
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
             ContainerCondition::Feature(f) => f.to_css(dest),
             ContainerCondition::Not(c) => {
                 dest.write_str("not ")?;
-                media_query::to_css_with_parens_if_needed(
-                    &**c,
-                    dest,
-                    c.needs_parens(None, &dest.targets),
-                )
+                let needs = c.needs_parens(None, &dest.targets);
+                media_query::to_css_with_parens_if_needed(&**c, dest, needs)
             }
             ContainerCondition::Operation { operator, conditions } => {
                 media_query::operation_to_css::<ContainerCondition>(*operator, conditions, dest)
@@ -276,6 +262,47 @@ impl ContainerCondition {
             }
         }
     }
+}
+
+impl QueryCondition for ContainerCondition {
+    fn parse_feature(_input: &mut css::Parser) -> css::Result<Self> {
+        // blocked_on: QueryFeature::<ContainerSizeFeatureId>::parse.
+        todo!("blocked_on: ContainerCondition::parse_feature — QueryFeature::parse")
+    }
+    fn create_negation(condition: Box<Self>) -> Self {
+        ContainerCondition::Not(condition)
+    }
+    fn create_operation(operator: Operator, conditions: Vec<Self>) -> Self {
+        ContainerCondition::Operation { operator, conditions }
+    }
+    fn parse_style_query(_input: &mut css::Parser) -> css::Result<Self> {
+        // blocked_on: Parser::{try_parse,parse_nested_block} +
+        // media_query::parse_query_condition::<StyleQuery>.
+        todo!("blocked_on: ContainerCondition::parse_style_query — parse_nested_block")
+    }
+    fn needs_parens(&self, parent_operator: Option<Operator>, targets: &css::Targets) -> bool {
+        match self {
+            ContainerCondition::Not(_) => true,
+            ContainerCondition::Operation { operator, .. } => Some(*operator) == parent_operator,
+            ContainerCondition::Feature(f) => f.needs_parens(parent_operator, targets),
+            ContainerCondition::Style(_) => false,
+        }
+    }
+}
+
+// ─── ContainerCondition parse/clone ───────────────────────────────────────
+// blocked_on: media_query::{parse_query_condition,QueryConditionFlags
+// constructors}, QueryFeature::parse, Parser::{try_parse,parse_nested_block},
+// DeepClone.
+#[cfg(any())]
+impl ContainerCondition {
+    pub fn parse(input: &mut css::Parser) -> css::Result<ContainerCondition> {
+        use crate::media_query::{self, QueryConditionFlags};
+        media_query::parse_query_condition::<ContainerCondition>(
+            input,
+            QueryConditionFlags::ALLOW_OR | QueryConditionFlags::ALLOW_STYLE,
+        )
+    }
 
     pub fn parse_feature(input: &mut css::Parser) -> css::Result<ContainerCondition> {
         let feature = match QueryFeature::<ContainerSizeFeatureId>::parse(input) {
@@ -283,14 +310,6 @@ impl ContainerCondition {
             Err(e) => return Err(e),
         };
         Ok(ContainerCondition::Feature(feature))
-    }
-
-    pub fn create_negation(condition: Box<ContainerCondition>) -> ContainerCondition {
-        ContainerCondition::Not(condition)
-    }
-
-    pub fn create_operation(operator: Operator, conditions: Vec<ContainerCondition>) -> ContainerCondition {
-        ContainerCondition::Operation { operator, conditions }
     }
 
     pub fn parse_style_query(input: &mut css::Parser) -> css::Result<ContainerCondition> {
@@ -320,15 +339,6 @@ impl ContainerCondition {
         input.parse_nested_block::<ContainerCondition, ()>((), parse_nested_block_fn)
     }
 
-    pub fn needs_parens(&self, parent_operator: Option<Operator>, targets: &css::Targets) -> bool {
-        match self {
-            ContainerCondition::Not(_) => true,
-            ContainerCondition::Operation { operator, .. } => Some(*operator) == parent_operator,
-            ContainerCondition::Feature(f) => f.needs_parens(parent_operator, targets),
-            ContainerCondition::Style(_) => false,
-        }
-    }
-
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // PERF(port): was css.implementDeepClone (comptime field-walk).
         css::implement_deep_clone(self, bump)
@@ -347,10 +357,6 @@ pub struct ContainerRule<R> {
     pub loc: Location,
 }
 
-// ─── ContainerRule behavior ───────────────────────────────────────────────
-// blocked_on: ContainerName::to_css, ContainerCondition::to_css,
-// CssRuleList::to_css, Printer.targets, css::Features, DeepClone.
-#[cfg(any())]
 impl<R> ContainerRule<R> {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
@@ -378,7 +384,11 @@ impl<R> ContainerRule<R> {
         dest.newline()?;
         dest.write_char(b'}')
     }
+}
 
+// blocked_on: DeepClone.
+#[cfg(any())]
+impl<R> ContainerRule<R> {
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // PERF(port): was css.implementDeepClone (comptime field-walk).
         css::implement_deep_clone(self, bump)

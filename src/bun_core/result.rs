@@ -275,7 +275,7 @@ pub(crate) const SYSTEM_ERRNO_NAMES: &[&str] = &[
 #[cfg(any(target_os = "linux", target_family = "wasm"))]
 const _: () = assert!(SYSTEM_ERRNO_NAMES.len() == 134); // linux_errno.zig: 0..=EHWPOISON(133)
 #[cfg(windows)]
-const _: () = assert!(SYSTEM_ERRNO_NAMES.len() == 138); // windows_errno.zig: 0..=EFTYPE(137); UV_* sparse range excluded
+const _: () = assert!(SYSTEM_ERRNO_NAMES.len() == 138); // windows_errno.zig: 0..=EFTYPE(137); UV_* sparse range in `uv_errno_name`
 #[cfg(target_os = "macos")]
 const _: () = assert!(SYSTEM_ERRNO_NAMES.len() == 107); // darwin_errno.zig: 0..=EQFULL(106)
 #[cfg(target_os = "freebsd")]
@@ -402,7 +402,17 @@ impl Error {
             if errno <= 0 { return Self::UNEXPECTED; }
             errno as u32
         };
-        map.get(n as usize).copied().unwrap_or(Self::UNEXPECTED)
+        if let Some(&e) = map.get(n as usize) {
+            return e;
+        }
+        // Windows: fall through to the sparse UV_* range (3000..=4096) so e.g.
+        // `from_errno(-4058)` → `error.UV_ENOENT`, matching Zig's full-width
+        // `errno_map` (bun.zig:2841-2851 sizes it to `max(@intFromEnum)+1`).
+        #[cfg(windows)]
+        if let Some(name) = uv_errno_name(n) {
+            return Self::intern(name);
+        }
+        Self::UNEXPECTED
     }
 }
 
@@ -418,7 +428,25 @@ impl fmt::Display for Error {
 }
 impl From<std::io::Error> for Error {
     fn from(e: std::io::Error) -> Self {
-        e.raw_os_error().map(Self::from_errno).unwrap_or(Self::UNEXPECTED)
+        match e.raw_os_error() {
+            // POSIX: `raw_os_error()` is already a C `errno`, i.e. a
+            // `SystemErrno`-domain integer — feed it straight through.
+            #[cfg(not(windows))]
+            Some(code) => Self::from_errno(code),
+            // Windows: `raw_os_error()` returns the raw Win32 `GetLastError()`
+            // code (ERROR_ACCESS_DENIED=5, ERROR_SHARING_VIOLATION=32, …),
+            // NOT a `SystemErrno`. Indexing `SYSTEM_ERRNO_NAMES` by it would
+            // alias garbage (5→EIO, 32→EPIPE). The Zig pipeline first runs
+            // `Win32Error.toSystemErrno()` (windows_errno.zig:290) before any
+            // `errno_map` lookup; that table lives in `bun_errno`, which is
+            // tier-above `bun_core` (dep cycle), so we can't call it here.
+            // Fall back to `Unexpected` rather than return a wrong name.
+            // TODO(port): plumb a Win32→SystemErrno hook (or duplicate the
+            // table) so `?`-propagated `io::Error`s name correctly on Windows.
+            #[cfg(windows)]
+            Some(_code) => Self::UNEXPECTED,
+            None => Self::UNEXPECTED,
+        }
     }
 }
 impl From<bun_alloc::AllocError> for Error {
@@ -871,7 +899,16 @@ mod tests {
         #[cfg(any(target_os = "linux", target_family = "wasm"))]
         assert_eq!(SYSTEM_ERRNO_NAMES[133], "EHWPOISON");
         #[cfg(windows)]
-        assert_eq!(SYSTEM_ERRNO_NAMES[137], "EFTYPE");
+        {
+            assert_eq!(SYSTEM_ERRNO_NAMES[137], "EFTYPE");
+            // Sparse UV_* range round-trips (bun.zig errno_map covers 0..=4096).
+            assert_eq!(Error::from_errno(-4058).name(), "UV_ENOENT");
+            assert_eq!(Error::from_errno(-4092).name(), "UV_EACCES");
+            assert_eq!(Error::from_errno(-4095).name(), "UV_EOF");
+            assert_eq!(Error::from_errno(-3008).name(), "UV_EAI_NONAME");
+            assert_eq!(system_errno_name(-4058), Some("UV_ENOENT"));
+            assert_eq!(Error::from_errno(-5000), Error::UNEXPECTED);
+        }
         #[cfg(target_os = "macos")]
         assert_eq!(SYSTEM_ERRNO_NAMES[106], "EQFULL");
         #[cfg(target_os = "freebsd")]
@@ -905,7 +942,8 @@ mod tests {
 //               src/sys/coreutils_error_map.zig
 //               src/bun_core/result.zig (11 lines)
 //   confidence: high
-//   todos:      1 (Windows UV_* sparse range in SYSTEM_ERRNO_NAMES)
+//   todos:      1 (Windows: From<io::Error> needs Win32→SystemErrno translation;
+//               currently falls back to Unexpected to avoid mis-aliasing)
 //   notes:      Error is #[repr(transparent)] NonZeroU16 string-interned;
 //               err!() yields distinct comparable codes; name() round-trips.
 //               errno_map / coreutils_error_map are cfg-gated per target_os

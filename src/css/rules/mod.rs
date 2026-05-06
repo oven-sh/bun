@@ -647,19 +647,51 @@ impl<R> CssRuleList<R> {
     }
 
     /// Zig: `css.implementDeepClone(@This(), this, allocator)`.
+    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self
+    where
+        R: for<'b> css::generics::DeepClone<'b>,
+    {
+        Self { v: self.v.iter().map(|r| r.deep_clone(bump)).collect() }
+    }
+}
+
+impl<R> CssRule<R>
+where
+    R: for<'b> css::generics::DeepClone<'b>,
+{
+    /// Zig: `css.implementDeepClone(@This(), this, allocator)` — variant-wise
+    /// dispatch to each leaf rule's `deep_clone`. Hand-written (not
+    /// `#[derive(DeepClone)]`) because the leaf payloads expose `deep_clone`
+    /// as **inherent** methods rather than `DeepClone` trait impls during the
+    /// staggered Phase-B un-gate; method-syntax dispatch here picks up either.
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // blocked_on: CssRule::deep_clone — every leaf variant's deep_clone is
-        // gated on the crate-wide DeepClone derive.
-        #[cfg(any())]
-        {
-            return css::implement_deep_clone(self, bump);
+        #[allow(unused_imports)]
+        use css::generics::DeepClone as _;
+        match self {
+            CssRule::Media(x) => CssRule::Media(x.deep_clone(bump)),
+            CssRule::Import(x) => CssRule::Import(x.deep_clone(bump)),
+            CssRule::Style(x) => CssRule::Style(x.deep_clone(bump)),
+            CssRule::Keyframes(x) => CssRule::Keyframes(x.deep_clone(bump)),
+            CssRule::FontFace(x) => CssRule::FontFace(x.deep_clone(bump)),
+            CssRule::FontPaletteValues(x) => CssRule::FontPaletteValues(x.deep_clone(bump)),
+            CssRule::Page(x) => CssRule::Page(x.deep_clone(bump)),
+            CssRule::Supports(x) => CssRule::Supports(x.deep_clone(bump)),
+            CssRule::CounterStyle(x) => CssRule::CounterStyle(x.deep_clone(bump)),
+            CssRule::Namespace(x) => CssRule::Namespace(x.deep_clone(bump)),
+            CssRule::MozDocument(x) => CssRule::MozDocument(x.deep_clone(bump)),
+            CssRule::Nesting(x) => CssRule::Nesting(x.deep_clone(bump)),
+            CssRule::Viewport(x) => CssRule::Viewport(x.deep_clone(bump)),
+            CssRule::CustomMedia(x) => CssRule::CustomMedia(x.deep_clone(bump)),
+            CssRule::LayerStatement(x) => CssRule::LayerStatement(x.deep_clone(bump)),
+            CssRule::LayerBlock(x) => CssRule::LayerBlock(x.deep_clone(bump)),
+            CssRule::Property(x) => CssRule::Property(x.deep_clone(bump)),
+            CssRule::Container(x) => CssRule::Container(x.deep_clone(bump)),
+            CssRule::Scope(x) => CssRule::Scope(x.deep_clone(bump)),
+            CssRule::StartingStyle(x) => CssRule::StartingStyle(x.deep_clone(bump)),
+            CssRule::Unknown(x) => CssRule::Unknown(x.deep_clone(bump)),
+            CssRule::Custom(x) => CssRule::Custom(x.deep_clone(bump)),
+            CssRule::Ignored => CssRule::Ignored,
         }
-        let _ = bump;
-        // Returning `Self::default()` here would silently drop every nested
-        // rule (data loss) — PORTING.md §Forbidden: silent no-op. All current
-        // callers are `#[cfg(any())]`-gated, so panic loudly if one un-gates
-        // before the DeepClone derive lands.
-        todo!("blocked_on: CssRule::deep_clone — crate-wide DeepClone derive")
     }
 }
 

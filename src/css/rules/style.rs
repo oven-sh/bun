@@ -71,7 +71,17 @@ impl<R> StyleRule<R> {
     pub fn is_compatible(&self, targets: css::targets::Targets) -> bool {
         selector::is_compatible(self.selectors.v.slice(), targets)
     }
+}
 
+// ─── to_css ───────────────────────────────────────────────────────────────
+// Body is fully ported and self-contained. Gated only because
+// `rules/mod.rs::to_css_shim!(generic: …, StyleRule)` provides an inert
+// duplicate `to_css` until the leaf un-gates; the macro's own doc says
+// "the compiler reports a duplicate `to_css` here; delete that line".
+// blocked_on: rules/mod.rs `to_css_shim!` `StyleRule` entry — drop it and
+// remove this `#[cfg(any())]`.
+#[cfg(any())]
+impl<R> StyleRule<R> {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         if self.vendor_prefix.is_empty() {
             self.to_css_base(dest)?;
@@ -232,7 +242,9 @@ impl<R> StyleRule<R> {
         }
         Ok(())
     }
+}
 
+impl<R> StyleRule<R> {
     pub fn minify(
         &mut self,
         context: &mut MinifyContext<'_>,

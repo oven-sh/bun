@@ -1775,13 +1775,13 @@ impl RealFS {
 
     fn read_file_error(&self, _: &[u8], _: bun_core::Error) {}
 
-    pub fn read_file_with_handle<'p, const USE_SHARED_BUFFER: bool, const STREAM: bool>(
+    pub fn read_file_with_handle<'p, 'buf, const USE_SHARED_BUFFER: bool, const STREAM: bool>(
         &mut self,
         path: &'p [u8],
         size_: Option<usize>,
         file: bun_sys::File,
-        shared_buffer: &mut MutableString,
-    ) -> Result<PathContentsPair<'p>, bun_core::Error> {
+        shared_buffer: &'buf mut MutableString,
+    ) -> Result<PathContentsPair<'p, 'buf>, bun_core::Error> {
         self.read_file_with_handle_and_allocator::<USE_SHARED_BUFFER, STREAM>(
             path,
             size_,
@@ -1790,13 +1790,13 @@ impl RealFS {
         )
     }
 
-    pub fn read_file_with_handle_and_allocator<'p, const USE_SHARED_BUFFER: bool, const STREAM: bool>(
+    pub fn read_file_with_handle_and_allocator<'p, 'buf, const USE_SHARED_BUFFER: bool, const STREAM: bool>(
         &mut self,
         path: &'p [u8],
         size_hint: Option<usize>,
         std_file: bun_sys::File,
-        shared_buffer: &mut MutableString,
-    ) -> Result<PathContentsPair<'p>, bun_core::Error> {
+        shared_buffer: &'buf mut MutableString,
+    ) -> Result<PathContentsPair<'p, 'buf>, bun_core::Error> {
         // PORT NOTE: allocator param dropped (global mimalloc)
         FileSystem::set_max_fd(std_file.handle().native());
         let file = std_file;
@@ -2004,10 +2004,13 @@ impl RealFS {
             return Ok(PathContentsPair { path: Path::init(path), contents: Cow::Owned(buf) });
         }
 
-        // SAFETY: see PORT NOTE above — `file_contents_ptr` borrows `shared_buffer.list`, which
-        // outlives this fn per the caller contract.
-        let file_contents: &'static [u8] =
-            unsafe { core::slice::from_raw_parts(file_contents_ptr, file_contents_len) };
+        // PORT NOTE: `file_contents_ptr` always equals `shared_buffer.list.as_ptr()` on every
+        // shared-buffer path above (read loop and BOM rewrite both anchor at index 0), so we
+        // re-derive the final slice safely from `shared_buffer` with the real `'buf` lifetime
+        // instead of fabricating `'static` via `from_raw_parts`.
+        debug_assert!(core::ptr::eq(file_contents_ptr, shared_buffer.list.as_ptr()));
+        let _ = file_contents_ptr;
+        let file_contents: &'buf [u8] = &shared_buffer.list[..file_contents_len];
         Ok(PathContentsPair { path: Path::init(path), contents: Cow::Borrowed(file_contents) })
     }
 
@@ -2256,13 +2259,12 @@ pub type Implementation = RealFS;
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct PathContentsPair<'a> {
+pub struct PathContentsPair<'a, 'buf> {
     pub path: Path<'a>,
     /// `Owned` for the heap-allocated branch (caller frees on drop); `Borrowed`
     /// for the shared-buffer branch (points into the caller's `MutableString`,
-    /// which the caller contractually keeps alive — see PORT NOTE in
-    /// `read_file_with_handle_and_allocator`).
-    pub contents: Cow<'static, [u8]>,
+    /// tied to `'buf` — see PORT NOTE in `read_file_with_handle_and_allocator`).
+    pub contents: Cow<'buf, [u8]>,
 }
 
 pub struct NodeJSPathName<'a> {

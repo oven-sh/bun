@@ -656,15 +656,40 @@ pub mod fs {
         }
 
         /// Port of `Entry.kind` in `fs.zig` — stat-on-first-use.
-        pub fn kind(&self, _fs: &mut Implementation, _store_fd: bool) -> EntryKind {
-            // TODO(b2-blocked): RealFS::kind stat path (open + fstat + readlink) —
-            // gated in `fs.rs`. Returning the readdir-time hint until then.
+        // PORT NOTE: takes `&self` (not `&mut self`) and mutates through a raw pointer.
+        // `Entry` lives in the EntryStore BSSMap singleton; all access is serialized
+        // through `RealFS.entries_mutex`, and the resolver body holds shared refs to
+        // `lookup.entry` across the call (e.g. `dir_info_uncached` reads
+        // `lookup.entry.cache.symlink` after `entry.symlink()`). Zig used `*Entry`
+        // which is freely aliasing-mutable.
+        pub fn kind(&self, fs: &mut Implementation, store_fd: bool) -> EntryKind {
+            if self.need_stat {
+                // SAFETY: ARENA — Entry is a slot in the EntryStore singleton; `entries_mutex`
+                // serializes access. See PORT NOTE above.
+                let this: &mut Self = unsafe { &mut *(self as *const Self as *mut Self) };
+                this.need_stat = false;
+                // This is technically incorrect, but we are choosing not to handle errors here
+                match fs.kind(this.dir, this.base(), this.cache.fd, store_fd) {
+                    Ok(c) => this.cache = c,
+                    Err(_) => return this.cache.kind,
+                }
+            }
             self.cache.kind
         }
 
         /// Port of `Entry.symlink` in `fs.zig`.
-        pub fn symlink(&self, _fs: &mut Implementation, _store_fd: bool) -> &'static [u8] {
-            // TODO(b2-blocked): RealFS::kind populates cache.symlink on first call.
+        pub fn symlink(&self, fs: &mut Implementation, store_fd: bool) -> &'static [u8] {
+            if self.need_stat {
+                // SAFETY: ARENA — see `Entry::kind` PORT NOTE.
+                let this: &mut Self = unsafe { &mut *(self as *const Self as *mut Self) };
+                this.need_stat = false;
+                // This error can happen if the file was deleted between the time the directory
+                // was scanned and the time it was read
+                match fs.kind(this.dir, this.base(), this.cache.fd, store_fd) {
+                    Ok(c) => this.cache = c,
+                    Err(_) => return b"",
+                }
+            }
             // SAFETY: PathString backs onto the FilenameStore singleton (interned 'static).
             unsafe { core::mem::transmute::<&[u8], &'static [u8]>(self.cache.symlink.slice()) }
         }
@@ -1435,12 +1460,12 @@ pub mod cache {
         /// `Entry` contract above (borrows `shared_buffer` when `use_shared_buffer`,
         /// else owns a `Vec`).
         ///
-        /// `stream` selects the non-seekable path (cache.zig:114-127 / fs.zig
-        /// `readFileWithHandle` `stream=true` arm): skip `get_end_pos()` and
-        /// loop-read until EOF, so pipes / growing files work.
+        /// `stream` selects the HMR path (cache.zig:114-127 / fs.zig
+        /// `readFileWithHandle` `stream=true` arm): after `read_all` hits EOF,
+        /// re-stat via `get_end_pos()` and keep reading if the file grew
+        /// concurrently (fs.zig:1221-1236).
         // TODO(port): switch back to `rfs.read_file_with_handle_and_allocator` once
-        // `fs_full` un-gates; this still drops the BOM-strip refinement that path
-        // carries.
+        // `fs_full` un-gates.
         fn read_handle_into(
             file: &bun_sys::File,
             _path: &[u8],
@@ -1450,48 +1475,54 @@ pub mod cache {
         ) -> Result<Contents, bun_core::Error> {
             if use_shared_buffer {
                 shared.reset();
-                let n = if stream {
-                    // Streaming arm: don't pre-size via fstat (pipes report 0 /
-                    // error); read in chunks until EOF.
-                    const CHUNK: usize = 16 * 1024;
-                    loop {
-                        let len = shared.list.len();
-                        shared.list.reserve(CHUNK);
-                        // SAFETY: capacity reserved above; `read` writes
-                        // initialized bytes and we extend `len` by exactly the
-                        // count returned.
-                        let got = unsafe {
-                            let dst = core::slice::from_raw_parts_mut(
-                                shared.list.as_mut_ptr().add(len),
-                                shared.list.capacity() - len,
-                            );
-                            let got = file.read(dst).map_err(bun_core::Error::from)?;
-                            shared.list.set_len(len + got);
-                            got
-                        };
-                        if got == 0 {
-                            break shared.list.len();
+
+                // Pre-size via fstat (fs.zig:1182-1188).
+                let mut size = file.get_end_pos().map_err(bun_core::Error::from)?;
+                if size == 0 {
+                    return Ok(Contents::Empty);
+                }
+
+                let mut bytes_read: usize = 0;
+                shared.list.reserve(size + 1);
+                // SAFETY: u8 is always-init; `set_len(capacity)` only exposes
+                // uninit-but-valid bytes that `read_all` immediately overwrites
+                // before any read.
+                unsafe { shared.list.set_len(shared.list.capacity()) };
+
+                // if you press save on a large file we might not read all the
+                // bytes in the first few pread() calls. we only handle this on
+                // stream because we assume that this only realistically happens
+                // during HMR (fs.zig:1204-1238).
+                loop {
+                    let read_count = file
+                        .read_all(&mut shared.list[bytes_read..])
+                        .map_err(bun_core::Error::from)?;
+                    shared.list.truncate(read_count + bytes_read);
+
+                    if stream {
+                        // Re-stat to catch concurrent growth (fs.zig:1221-1236).
+                        let new_size = file.get_end_pos().map_err(bun_core::Error::from)?;
+                        bytes_read += read_count;
+                        // don't infinite loop if we're still not reading more
+                        if read_count == 0 {
+                            break;
+                        }
+                        if bytes_read < new_size {
+                            let need = new_size + 1;
+                            if shared.list.capacity() < need {
+                                shared.list.reserve(need - shared.list.len());
+                            }
+                            // SAFETY: see above.
+                            unsafe { shared.list.set_len(shared.list.capacity()) };
+                            size = new_size;
+                            continue;
                         }
                     }
-                } else {
-                    let size = file.get_end_pos().map_err(bun_core::Error::from)?;
-                    if size == 0 {
-                        return Ok(Contents::Empty);
-                    }
-                    shared.list.reserve(size + 1);
-                    // SAFETY: capacity reserved above; `read_all` writes
-                    // initialized bytes and we set_len to exactly the count
-                    // returned.
-                    unsafe {
-                        let dst = core::slice::from_raw_parts_mut(
-                            shared.list.as_mut_ptr(),
-                            shared.list.capacity(),
-                        );
-                        let n = file.read_all(dst).map_err(bun_core::Error::from)?;
-                        shared.list.set_len(n);
-                        n
-                    }
-                };
+                    break;
+                }
+                let _ = size;
+
+                let mut n = shared.list.len();
                 if n == 0 {
                     return Ok(Contents::Empty);
                 }
@@ -1500,6 +1531,12 @@ pub mod cache {
                     // SAFETY: capacity > len, so writing one byte past len is in-bounds.
                     unsafe { *shared.list.as_mut_ptr().add(n) = 0 };
                 }
+                // BOM strip / UTF-16→UTF-8 transcode (fs.zig:1245-1248).
+                if let Some(bom) = fs_mod::BOM::detect(&shared.list[..n]) {
+                    let converted =
+                        bom.remove_and_convert_to_utf8_without_dealloc(&mut shared.list);
+                    n = converted.len();
+                }
                 // ARENA — caller owns `shared` and resets it via
                 // `reset_shared_buffer` before reuse. `Contents::SharedBuffer`
                 // records provenance so `deinit()` is a no-op for this variant.
@@ -1507,7 +1544,11 @@ pub mod cache {
             } else {
                 // `read_to_end` already loop-reads without pre-sizing, so it is
                 // correct for both `stream` and `!stream`.
-                let bytes = file.read_to_end().map_err(bun_core::Error::from)?;
+                let mut bytes = file.read_to_end().map_err(bun_core::Error::from)?;
+                // BOM strip / UTF-16→UTF-8 transcode (fs.zig:1264-1266 / 1299-1301).
+                if let Some(bom) = fs_mod::BOM::detect(&bytes) {
+                    bytes = bom.remove_and_convert_to_utf8_and_free(bytes);
+                }
                 Ok(Contents::from(bytes))
             }
         }
@@ -1817,23 +1858,43 @@ mod bun_paths {
         let d = ::bun_paths::dirname_simple(p);
         if d.is_empty() || d == p { None } else { Some(d) }
     }
-    pub fn dirname_platform(p: &[u8], _platform: Platform) -> &[u8] {
-        ::bun_paths::dirname_simple(p)
+    /// Value-dispatch over `Platform` to the const-generic `PlatformT`
+    /// monomorphizations in `resolve_path`. The resolver body threads
+    /// `Platform::AUTO` / `Platform::Loose` at runtime (carried over from Zig's
+    /// `comptime _platform: Platform` callsites that took a function param).
+    macro_rules! dispatch_platform {
+        ($p:expr, $f:ident::<$($pre:ident,)* P $(, $post:ident)*>($($arg:expr),*)) => {{
+            use ::bun_paths::resolve_path::{self as rp, platform};
+            match $p {
+                rp::Platform::Loose   => rp::$f::<$($pre,)* platform::Loose   $(, $post)*>($($arg),*),
+                rp::Platform::Windows => rp::$f::<$($pre,)* platform::Windows $(, $post)*>($($arg),*),
+                rp::Platform::Posix   => rp::$f::<$($pre,)* platform::Posix   $(, $post)*>($($arg),*),
+                rp::Platform::Nt      => rp::$f::<$($pre,)* platform::Nt      $(, $post)*>($($arg),*),
+            }
+        }};
     }
-    /// Port of `bun.path.joinAbsStringBuf`.
-    // TODO(b2-blocked): bun_paths::join_abs_string_buf — generic-over-PlatformT
-    // in resolve_path.rs; expose a value-dispatched wrapper.
-    pub fn join_abs_string_buf<'b>(_cwd: &[u8], _buf: &'b mut [u8], _parts: &[&[u8]], _platform: Platform) -> &'b [u8] {
-        unimplemented!("bun_paths::join_abs_string_buf value-dispatch (Phase B)")
+    pub fn dirname_platform(p: &[u8], platform: Platform) -> &[u8] {
+        dispatch_platform!(platform, dirname::<P>(p))
     }
-    pub fn join_abs(_cwd: &[u8], _platform: Platform, _part: &[u8]) -> &'static [u8] {
-        unimplemented!("bun_paths::join_abs (Phase B)")
+    /// Port of `bun.path.joinAbsStringBuf` (value-dispatched).
+    pub fn join_abs_string_buf<'b>(cwd: &[u8], buf: &'b mut [u8], parts: &[&[u8]], platform: Platform) -> &'b [u8] {
+        dispatch_platform!(platform, join_abs_string_buf::<P>(cwd, buf, parts))
     }
-    pub fn join<'b>(_parts: &[&[u8]], _platform: Platform) -> &'static [u8] {
-        unimplemented!("bun_paths::join (Phase B)")
+    pub fn join_abs(cwd: &[u8], platform: Platform, part: &[u8]) -> &'static [u8] {
+        // PORT NOTE: `resolve_path::join_abs` ties the result lifetime to `cwd`, but the
+        // returned slice always points into the threadlocal `PARSER_JOIN_INPUT_BUFFER`
+        // (or is `cwd` itself when `parts.is_empty()`, which never happens here — we
+        // pass exactly one part). Re-erase to `'static` so the resolver can hold it
+        // across `&mut self` calls.
+        let s = dispatch_platform!(platform, join_abs::<P>(cwd, part));
+        // SAFETY: see PORT NOTE — slice borrows threadlocal storage, valid 'static per-thread.
+        unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) }
     }
-    pub fn join_string_buf<'b>(_buf: &'b mut [u8], _parts: &[&[u8]], _platform: Platform) -> &'b [u8] {
-        unimplemented!("bun_paths::join_string_buf (Phase B)")
+    pub fn join(parts: &[&[u8]], platform: Platform) -> &'static [u8] {
+        dispatch_platform!(platform, join::<P>(parts))
+    }
+    pub fn join_string_buf<'b>(buf: &'b mut [u8], parts: &[&[u8]], platform: Platform) -> &'b [u8] {
+        dispatch_platform!(platform, join_string_buf::<P>(buf, parts))
     }
     /// Port of `bun.PosixToWinNormalizer` — on POSIX it's a no-op pass-through.
     // TODO(b2-blocked): real Windows long-path / drive-relative normalization.
@@ -1847,8 +1908,7 @@ mod bun_paths {
     /// here; callers pass it to `open_dir_z` which wants a `&ZStr`.
     pub fn path_literal(p: &'static [u8]) -> &'static [u8] { p }
     pub fn windows_filesystem_root(p: &[u8]) -> &[u8] {
-        // TODO(b2-blocked): real impl in resolve_path.rs (not re-exported yet).
-        if p.len() >= 3 && p[1] == b':' { &p[..3] } else { &p[..0] }
+        ::bun_paths::resolve_path::windows_filesystem_root(p)
     }
 }
 // bun_string::strings shim — adds path-flavored helpers the resolver uses that

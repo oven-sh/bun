@@ -2602,3 +2602,12 @@ fn __probe_macros() {
         assert_eq!(n, 1);
     }
 }
+#[test]
+fn __probe_macros2() {
+    if false {
+        // (a) concat! into note!/warn!/debug! — should compile (Zig allows comptime ++)
+        crate::note!(concat!("from ", "two parts {}"), 1);
+        crate::warn!(concat!("w"));
+        crate::debug!(concat!("d"));
+    }
+}

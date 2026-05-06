@@ -2260,20 +2260,22 @@ impl<'a> BundleOptions<'a> {
         self.loaders.get(ext).copied().unwrap_or(Loader::File)
     }
 
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_options_types::schema::api::TransformOptions field
-    // set (still opaque — Jsx/LoaderMap/etc. landed but the struct body has
-    // not) + bun_analytics::Features + ExternalModules::init (resolver) +
-    // Runtime::Features::init_bundler_feature_flags + Fs::FileSystem::get_fd_path.
     pub fn from_api(
         fs: &mut Fs::FileSystem,
         log: &'a mut logger::Log,
         transform: api::TransformOptions,
     ) -> Result<BundleOptions<'a>, bun_core::Error> {
+        use core::sync::atomic::Ordering;
+
         let target = Target::from(transform.target);
         let loaders = loaders_from_transform_options(transform.loaders.clone(), target)?;
-        let bundler_feature_flags =
-            Runtime::Features::init_bundler_feature_flags(&transform.feature_flags);
+        let bundler_feature_flags = Runtime::Features::init_bundler_feature_flags(
+            &transform
+                .feature_flags
+                .iter()
+                .map(|s| s.as_ref())
+                .collect::<Vec<&[u8]>>(),
+        );
 
         // TODO(port): many fields below have Zig defaults via `= ...`; in Rust we initialize
         // each explicitly. Phase B: add a `Default`-ish builder.
@@ -2281,23 +2283,24 @@ impl<'a> BundleOptions<'a> {
             footer: Cow::Borrowed(b""),
             banner: Cow::Borrowed(b""),
             log,
-            // TODO(port): define is initialized as undefined in Zig and filled by loadDefines later.
-            define: defines::Define::empty(),
+            // PORT NOTE: `define` is `undefined` in Zig and filled by `loadDefines` later;
+            // initialize empty so the struct is well-formed before `load_defines` runs.
+            define: Box::new(defines::Define {
+                identifiers: Default::default(),
+                dots: Default::default(),
+                drop_debugger: false,
+            }),
             loaders,
             output_dir: Box::from(transform.output_dir.as_deref().unwrap_or(b"out")),
             target,
             write: transform.write.unwrap_or(false),
-            external: ExternalModules {
-                node_modules: Default::default(),
-                abs_paths: Default::default(),
-                patterns: Box::default(),
-            }, // filled below
-            entry_points: transform.entry_points.clone(),
+            external: ExternalModules::default(), // filled below
+            entry_points: transform.entry_points.clone().into_boxed_slice(),
             out_extensions: StringHashMap::default(), // filled below
             env: Env::init(),
             transform_options: transform.clone(),
             css_chunking: false,
-            drop: transform.drop.clone(),
+            drop: transform.drop.clone().into_boxed_slice(),
             bundler_feature_flags,
 
             resolve_dir: Cow::Borrowed(b"/"),
@@ -2312,7 +2315,7 @@ impl<'a> BundleOptions<'a> {
             hot_module_reloading: false,
             react_fast_refresh: false,
             inject: None,
-            origin: URL::default(),
+            origin: bun_url::OwnedURL::from_href(Box::default()),
             output_dir_handle: None,
             root_dir: Box::default(),
             node_modules_bundle_url: Cow::Borrowed(b""),
@@ -2385,20 +2388,29 @@ impl<'a> BundleOptions<'a> {
             optimize_imports: None,
         };
 
-        analytics::Features::DEFINE.add(usize::from(transform.define.is_some()));
-        analytics::Features::LOADERS.add(usize::from(transform.loaders.is_some()));
+        analytics::features::define
+            .fetch_add(usize::from(transform.define.is_some()), Ordering::Relaxed);
+        analytics::features::loaders
+            .fetch_add(usize::from(transform.loaders.is_some()), Ordering::Relaxed);
 
-        opts.serve_plugins = transform.serve_plugins.clone();
+        opts.serve_plugins = transform
+            .serve_plugins
+            .as_ref()
+            .map(|v| v.clone().into_boxed_slice());
         opts.bunfig_path = transform.bunfig_path.clone();
 
         if !transform.env_files.is_empty() {
-            opts.env.files = transform.env_files.clone();
+            opts.env.files = transform.env_files.clone().into_boxed_slice();
         }
 
         opts.env.disable_default_env_files = transform.disable_default_env_files;
 
         if let Some(origin) = &transform.origin {
-            opts.origin = URL::parse(origin);
+            // PORT NOTE: ownership — `URL<'_>` borrows its input. The Zig
+            // `URL.parse` borrowed `transform.origin` (a sibling of
+            // `opts.transform_options`); here `OwnedURL` owns the href and
+            // callers borrow via `.url()`.
+            opts.origin = bun_url::OwnedURL::from_href(origin.clone());
         }
 
         if let Some(jsx_opts) = &transform.jsx {
@@ -2473,11 +2485,16 @@ impl<'a> BundleOptions<'a> {
                 .collect();
         }
 
-        // PORT NOTE: reshaped for borrowck — pass opts.log via raw mutable borrow
+        // PORT NOTE: reshaped for borrowck — pass opts.log via the existing
+        // `&mut logger::Log` borrow (Zig passed `log` directly).
         opts.external = ExternalModules::init(
             &mut fs.fs,
-            &fs.top_level_dir,
-            &transform.external.iter().map(|s| s.as_ref()).collect::<Vec<_>>(),
+            fs.top_level_dir,
+            &transform
+                .external
+                .iter()
+                .map(|s| s.as_ref())
+                .collect::<Vec<&[u8]>>(),
             opts.log,
             opts.target,
         );
@@ -2493,14 +2510,19 @@ impl<'a> BundleOptions<'a> {
             opts.minify_syntax = true;
         }
 
-        if opts.origin.is_absolute() {
+        if opts.origin.url().is_absolute() {
             opts.import_path_format = ImportPathFormat::AbsoluteUrl;
         }
 
         if opts.write && !opts.output_dir.is_empty() {
-            opts.output_dir_handle = Some(open_output_dir(&opts.output_dir)?);
-            opts.output_dir =
-                fs.get_fd_path(bun_sys::Fd::from_std_dir(opts.output_dir_handle.as_ref().unwrap()))?;
+            let handle = open_output_dir(&opts.output_dir)?;
+            opts.output_dir_handle = Some(handle);
+            // PORT NOTE: Zig `fs.getFdPath(.fromStdDir(handle))` interns into
+            // `dirname_store`; the inline `bun_resolver::fs::FileSystem` does
+            // not yet expose `get_fd_path`, so resolve via `bun_sys` and box.
+            let mut buf = bun_paths::PathBuffer::uninit();
+            let dir = bun_sys::get_fd_path(handle, &mut buf).map_err(bun_core::Error::from)?;
+            opts.output_dir = Box::from(&dir[..]);
         }
 
         opts.polyfill_node_globals = opts.target == Target::Browser;
@@ -2509,19 +2531,23 @@ impl<'a> BundleOptions<'a> {
             opts.tsconfig_override = Some(tsconfig.clone());
         }
 
-        analytics::Features::MACROS.add(usize::from(opts.target == Target::BunMacro));
-        analytics::Features::EXTERNAL.add(usize::from(!transform.external.is_empty()));
+        analytics::features::macros
+            .fetch_add(usize::from(opts.target == Target::BunMacro), Ordering::Relaxed);
+        analytics::features::external
+            .fetch_add(usize::from(!transform.external.is_empty()), Ordering::Relaxed);
         Ok(opts)
     }
 }
 
 impl Drop for BundleOptions<'_> {
     fn drop(&mut self) {
-        // self.define dropped automatically (Box<Define>)
-        // Free bundler_feature_flags if it was allocated (not the static empty set)
-        // TODO(port): Zig compared pointer to &Runtime.Features.empty_bundler_feature_flags;
-        // in Rust the field is always Box-owned, so Drop handles it. If Phase B keeps a
-        // shared static sentinel, switch to Option<Box<StringSet>> or Cow.
+        // self.define dropped automatically (Box<Define>).
+        //
+        // bundler_feature_flags: Zig compared the pointer to
+        // `&Runtime.Features.empty_bundler_feature_flags` and freed iff distinct.
+        // In Rust the field is `Option<&'static StringSet>` produced by
+        // `Box::leak` inside `init_bundler_feature_flags`, so the allocation
+        // intentionally lives for the process lifetime — nothing to free here.
     }
 }
 
@@ -2560,14 +2586,13 @@ pub mod bundle_options_defaults {
     }
 }
 
-#[cfg(any())]
-// TODO(b2-blocked): bun_sys::cwd().open_dir / make_dir + Output::print_errorln
 pub fn open_output_dir(output_dir: &[u8]) -> Result<Dir, bun_core::Error> {
-    // TODO(port): std.fs.cwd().openDir / makeDir — replace with bun_sys equivalents in Phase B
-    match bun_sys::cwd().open_dir(output_dir, Default::default()) {
+    // PORT NOTE: Zig used `std.fs.cwd().openDir/.makeDir`; routed through
+    // `bun_sys` per CLAUDE.md (never `std::fs`).
+    match bun_sys::open_dir_at(bun_sys::Fd::cwd(), output_dir) {
         Ok(d) => Ok(d),
         Err(_) => {
-            if let Err(err) = bun_sys::cwd().make_dir(output_dir) {
+            if let Err(err) = bun_sys::Dir::cwd().make_path(output_dir) {
                 Output::print_errorln(format_args!(
                     "error: Unable to mkdir \"{}\": \"{}\"",
                     bstr::BStr::new(output_dir),
@@ -2576,7 +2601,7 @@ pub fn open_output_dir(output_dir: &[u8]) -> Result<Dir, bun_core::Error> {
                 Global::crash();
             }
 
-            match bun_sys::cwd().open_dir(output_dir, Default::default()) {
+            match bun_sys::open_dir_at(bun_sys::Fd::cwd(), output_dir) {
                 Ok(handle) => Ok(handle),
                 Err(err2) => {
                     Output::print_errorln(format_args!(

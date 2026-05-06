@@ -487,6 +487,22 @@ impl PartialEq for FontFamily {
 }
 impl Eq for FontFamily {}
 
+impl core::hash::Hash for FontFamily {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        // PORT NOTE: Zig `css.implementHash` hashes the active tag then the
+        // payload bytes. With `*const [u8]` a derived Hash would hash the
+        // pointer address, breaking FontFamilyHashMap dedupe semantics.
+        core::mem::discriminant(self).hash(state);
+        match self {
+            FontFamily::Generic(g) => g.hash(state),
+            FontFamily::FamilyName(p) => {
+                // SAFETY: arena-owned slice valid for the parse session.
+                unsafe { (&**p).hash(state) }
+            }
+        }
+    }
+}
+
 impl Clone for FontFamily {
     fn clone(&self) -> Self {
         // PORT NOTE: shallow — arena slice pointers are `Copy`; matches Zig's

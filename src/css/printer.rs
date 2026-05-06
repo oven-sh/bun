@@ -99,6 +99,7 @@ pub use css::targets::Targets;
 
 pub use css::targets::Features;
 
+#[derive(Clone, Copy)]
 pub struct ImportInfo<'a> {
     pub import_records: &'a BabyList<ImportRecord>,
     /// bundle_v2.graph.ast.items(.url_for_css)
@@ -167,23 +168,22 @@ thread_local! {
 }
 
 impl<'a> Printer<'a> {
-    #[cfg(any())] // blocked_on: symbol::Map::follow/get API + LocalsResultsMap key type
-    pub fn lookup_symbol(&self, ref_: bun_logger::Ref) -> &[u8] {
+    pub fn lookup_symbol(&self, ref_: bun_logger::Ref) -> &'a [u8] {
         let symbols = self.symbols;
 
         let final_ref = symbols.follow(ref_);
         if let Some(local_names) = self.local_names {
             if let Some(local_name) = local_names.get(&final_ref) {
-                return local_name;
+                // SAFETY: LocalsResultsMap values are arena-owned slices valid for `'a`.
+                return unsafe { &**local_name };
             }
         }
 
-        let original_name = symbols.get(final_ref).unwrap().original_name;
-        original_name
+        // `original_name` is `&'static [u8]` in bun_logger::Symbol; coerces to `'a`.
+        symbols.get_const(final_ref).unwrap().original_name
     }
 
-    #[cfg(any())] // blocked_on: lookup_symbol
-    pub fn lookup_ident_or_ref(&self, ident: css_values::ident::IdentOrRef) -> &[u8] {
+    pub fn lookup_ident_or_ref(&self, ident: css_values::ident::IdentOrRef) -> &'a [u8] {
         #[cfg(debug_assertions)]
         {
             if IN_DEBUG_FMT.with(|f| f.get()) {
@@ -191,7 +191,8 @@ impl<'a> Printer<'a> {
             }
         }
         if ident.is_ident() {
-            return ident.as_ident().unwrap().v;
+            // SAFETY: Ident.v is an arena-owned slice packed by IdentOrRef::from_ident.
+            return unsafe { &*ident.as_ident().unwrap().v };
         }
         self.lookup_symbol(ident.as_ref().unwrap())
     }
@@ -315,6 +316,28 @@ impl<'a> Printer<'a> {
             ctx: None,
             error_kind: None,
         }
+    }
+
+    /// Construct a `Printer` that writes into an in-memory `Vec<u8>` buffer
+    /// using default `PrinterOptions`. Mirrors the Zig pattern of pairing
+    /// `std.Io.Writer.Allocating` with `Printer.new(..., PrinterOptions.default(), ...)`
+    /// for sub-serialization (e.g. `PseudoClass::toCss`, `Selector` debug fmt).
+    pub fn new_buffered(
+        allocator: &'a Bump,
+        dest: &'a mut Vec<u8>,
+        import_info: Option<ImportInfo<'a>>,
+        local_names: Option<&'a css::LocalsResultsMap>,
+        symbols: &'a SymbolMap,
+    ) -> Self {
+        Printer::new(
+            allocator,
+            BumpVec::new_in(allocator),
+            dest,
+            PrinterOptions::default(),
+            import_info,
+            local_names,
+            symbols,
+        )
     }
 
     #[inline]

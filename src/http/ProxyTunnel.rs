@@ -480,12 +480,20 @@ impl ProxyTunnel {
         // SAFETY: proxy_tunnel is a non-null Box::into_raw result.
         this.proxy_tunnel = Some(unsafe { NonNull::new_unchecked(proxy_tunnel) });
         proxy_tunnel_ref.socket = Socket::from_generic::<IS_SSL>(socket);
+        // Drop the unique &mut borrows before calling into the SSLWrapper: start()
+        // synchronously fires on_open()/write_encrypted(), which re-derive &mut to
+        // both `*this` and `*proxy_tunnel` from the raw ctx pointer. Holding
+        // `proxy_tunnel_ref` (and `this`) live across that call would alias &mut.
+        let _ = proxy_tunnel_ref;
+        let _ = this;
         if !start_payload.is_empty() {
             scoped_log!(http_proxy_tunnel, "proxy tunnel start with payload");
-            proxy_tunnel_ref.wrapper.as_mut().unwrap().start_with_payload(start_payload);
+            // SAFETY: sole live access; callbacks reborrow via ctx, never concurrently with this line.
+            unsafe { (*proxy_tunnel).wrapper.as_mut().unwrap().start_with_payload(start_payload) };
         } else {
             scoped_log!(http_proxy_tunnel, "proxy tunnel start");
-            proxy_tunnel_ref.wrapper.as_mut().unwrap().start();
+            // SAFETY: see above.
+            unsafe { (*proxy_tunnel).wrapper.as_mut().unwrap().start() };
         }
     }
 
@@ -504,31 +512,32 @@ impl ProxyTunnel {
     pub fn on_writable<const IS_SSL: bool>(&mut self, socket: HTTPSocket<IS_SSL>) {
         scoped_log!(http_proxy_tunnel, "ProxyTunnel onWritable");
         self.ref_();
-        let self_ptr = self as *const Self;
+        let self_ptr: *mut Self = self;
         // PORT NOTE: reshaped for borrowck — Zig `defer wrapper.flush()` runs
-        // AFTER the body but BEFORE the `defer deref()` (LIFO). The single
-        // guard below runs flush-then-deref to preserve that order.
-        let _guard = scopeguard::guard((), move |_| {
-            // SAFETY: guard runs before any deref-triggered free; refcount > 0
-            // until deref() below.
-            let this = unsafe { &mut *(self_ptr as *mut Self) };
-            if let Some(wrapper) = &mut this.wrapper {
+        // AFTER the body but BEFORE the `defer deref()` (LIFO). We mirror that
+        // LIFO order explicitly at every exit instead of via a scopeguard, since
+        // a guard's drop would form a fresh `&mut *self_ptr` while the `self`
+        // receiver borrow is still live (locals drop before params) — aliased &mut.
+        let encoded_data = self.write_buffer.slice();
+        if !encoded_data.is_empty() {
+            let written = socket.write(encoded_data);
+            let written = usize::try_from(written).unwrap();
+            if written == encoded_data.len() {
+                self.write_buffer.reset();
+            } else {
+                self.write_buffer.cursor += written;
+            }
+        }
+        // End the receiver borrow before reentering via raw ptr. flush() may call
+        // write_encrypted(ctx) which reborrows this tunnel; deref() may free it.
+        let _ = self;
+        // SAFETY: refcount > 0 until deref() below; sole live access via raw ptr.
+        unsafe {
+            if let Some(wrapper) = &mut (*self_ptr).wrapper {
                 // Cycle to through the SSL state machine
                 let _ = wrapper.flush();
             }
-            this.deref();
-        });
-
-        let encoded_data = self.write_buffer.slice();
-        if encoded_data.is_empty() {
-            return;
-        }
-        let written = socket.write(encoded_data);
-        let written = usize::try_from(written).unwrap();
-        if written == encoded_data.len() {
-            self.write_buffer.reset();
-        } else {
-            self.write_buffer.cursor += written;
+            (*self_ptr).deref();
         }
     }
 

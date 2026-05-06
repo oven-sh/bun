@@ -26,7 +26,8 @@ use bun_core::env_var;
 use bun_uws as uws;
 
 #[allow(unused_imports)]
-use crate::{VirtualMachine, VM};
+use crate::VM;
+use crate::virtual_machine::VirtualMachine;
 
 pub struct GarbageCollectionController {
     // TODO(port): lifetime — FFI handle created by uws::Timer::create_fallthrough, freed in Drop.

@@ -24,8 +24,8 @@ use bun_safety::ThreadLock;
 use super::framework_router::FrameworkRouter;
 use super::jsc;
 use super::{
-    deferred_request, route_bundle, AllocationScope, Assets, CurrentBundle, DebuggerId,
-    DeferredPromise, DevServer, DirectoryWatchStore, EntryPointList, EventLoopTimer, HTMLRouter,
+    deferred_request, route_bundle, Assets, CurrentBundle, DeferredPromise, DevServer,
+    DirectoryWatchStore, EntryPointList, EventLoopTimer, HTMLRouter,
     HotReloadEvent, IncrementalGraph, IncrementalResult, Magic, NextBundle, Options, PluginState,
     SourceMapStore, TestingBatchEvents, TimerTag, WatcherAtomics,
 };

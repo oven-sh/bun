@@ -44,12 +44,12 @@ impl ExecCommand {
                 Global::exit(1);
             }
         };
-        let mini = MiniEventLoop::init_global(bundle.env, cwd);
+        let mini = bun_event_loop::MiniEventLoop::init_global(bundle.env, Some(cwd));
         let parts: [&[u8]; 2] = [
             cwd,
             b"[eval]",
         ];
-        let script_path = bun_paths::join(&parts, Platform::Auto);
+        let script_path = bun_paths::resolve_path::join::<bun_paths::platform::Auto>(&parts);
 
         let code = match Interpreter::init_and_run_from_source(ctx, mini, script_path, script, None) {
             Ok(c) => c,

@@ -340,6 +340,8 @@ pub use framework_router as FrameworkRouter;
 // production
 // ══════════════════════════════════════════════════════════════════════════
 pub mod production {
+    pub use super::production_body::build_command;
+
     /// Data used on each rendering thread. Referred to as `pt` in field
     /// naming, and `Bake::ProductionPerThread` in C++.
     ///

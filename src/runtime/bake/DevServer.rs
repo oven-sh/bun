@@ -4201,14 +4201,15 @@ where
 {
     let mut params: framework_router::MatchedParams = Default::default();
     if let Some(route_index) = dev.router.match_slow(req.url(), &mut params) {
+        let route_bundle_index = dev
+            .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Framework(route_index))
+            .expect("oom");
         let mut ctx = RequestEnsureRouteBundledCtx {
-            dev,
+            dev: dev as *mut DevServer<'_>,
             req: ReqOrSaved::Req(req),
             resp: resp.as_any_response(),
             kind: deferred_request::HandlerKind::ServerHandler,
-            route_bundle_index: dev
-                .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Framework(route_index))
-                .expect("oom"),
+            route_bundle_index,
         };
         let rbi = ctx.route_bundle_index;
         match ensure_route_is_bundled(dev, rbi, &mut ctx) {

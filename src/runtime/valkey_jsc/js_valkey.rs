@@ -1250,7 +1250,7 @@ impl JSValkeyClient {
 
         // Increment ref to ensure 'self' stays alive throughout the function
         self.ref_();
-        let _d = scopeguard::guard((), |_| self.deref());
+        let _d = deref_guard(self);
 
         // Execute reconnection logic
         self.reconnect();

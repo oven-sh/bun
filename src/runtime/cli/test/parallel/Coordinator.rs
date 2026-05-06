@@ -751,9 +751,18 @@ pub mod abort_handler {
         #[cfg(unix)]
         {
             // SAFETY: PREV_* were initialized by install().
+            // PORT NOTE: `&raw const` + cast avoids creating & to a `static mut`.
             unsafe {
-                libc::sigaction(libc::SIGINT, PREV_INT.as_ptr(), core::ptr::null_mut());
-                libc::sigaction(libc::SIGTERM, PREV_TERM.as_ptr(), core::ptr::null_mut());
+                libc::sigaction(
+                    libc::SIGINT,
+                    (&raw const PREV_INT).cast::<libc::sigaction>(),
+                    core::ptr::null_mut(),
+                );
+                libc::sigaction(
+                    libc::SIGTERM,
+                    (&raw const PREV_TERM).cast::<libc::sigaction>(),
+                    core::ptr::null_mut(),
+                );
             }
         }
         #[cfg(windows)]

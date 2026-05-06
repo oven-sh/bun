@@ -139,6 +139,7 @@ impl Default for Compression {
 
 // TODO(port): #[bun_jsc::JsClass] derive — hand-written until the proc-macro
 // grows `no_finalize`/`no_construct` knobs Archive needs (custom `finalize`).
+#[repr(C)]
 pub struct Archive {
     /// The underlying data for the archive - uses Blob.Store for thread-safe ref counting
     store: StoreRef,
@@ -758,7 +759,7 @@ impl PromiseResult {
 ///   - `run` — runs on thread pool, stores result in `self`
 ///   - `run_from_js` — returns value to resolve/reject
 ///   - `Drop` — cleanup
-trait TaskContext: Send {
+pub trait TaskContext: Send {
     /// Dispatch tag for this context's `AsyncTask<Self>` variant.
     const TAG: TaskTag;
     /// Runs on thread pool. Stores its result on `self`.

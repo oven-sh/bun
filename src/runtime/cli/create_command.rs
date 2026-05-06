@@ -1538,7 +1538,7 @@ impl CreateCommand {
 
         if create_options.open {
             // SAFETY: single-threaded CLI access to module-level static path buffer
-            let bun_path_buf = unsafe { &mut BUN_PATH_BUF };
+            let bun_path_buf = unsafe { &mut *(&raw mut BUN_PATH_BUF) };
             if let Some(bin) = which(bun_path_buf, path_env, destination, b"bun") {
                 let argv: [&[u8]; 1] = [bin.as_bytes()];
                 // Zig used `std.process.Child`; PORTING.md bans std::process — route through
@@ -1588,7 +1588,7 @@ impl CreateCommand {
 
         // var unsupported_packages = UnsupportedPackages{};
         // SAFETY: single-threaded CLI access to module-level static path buffer
-        let home_dir_buf = unsafe { &mut HOME_DIR_BUF };
+        let home_dir_buf = unsafe { &mut *(&raw mut HOME_DIR_BUF) };
         let template: &[u8] = 'brk: {
             let positional = positionals[0];
 

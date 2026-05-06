@@ -1867,7 +1867,7 @@ impl ResultListEntryValue {
             ResultListEntryValue::Buffers(res) => {
                 for item in res.iter() {
                     // TODO(port): free item.buffer.byteSlice() — owned bytes
-                    drop(item);
+                    let _ = item;
                 }
                 res.clear();
             }

@@ -740,8 +740,8 @@ impl AF {
 
     pub fn upper(self) -> &'static ZStr {
         match self {
-            AF::INET => ZStr::from_lit(b"IPv4\0"),
-            AF::INET6 => ZStr::from_lit(b"IPv6\0"),
+            AF::INET => bun_core::zstr!("IPv4"),
+            AF::INET6 => bun_core::zstr!("IPv6"),
         }
     }
 }

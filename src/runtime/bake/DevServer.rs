@@ -3694,9 +3694,9 @@ pub fn finalize_bundle(
     // Set all the deferred routes to the .loaded state up front
     {
         let mut node = current_bundle.requests.first;
-        while let Some(n) = node {
-            // SAFETY: n is an intrusive list node valid while current_bundle.requests holds it
-            let n = unsafe { &*n };
+        while !node.is_null() {
+            // SAFETY: node is an intrusive list node valid while current_bundle.requests holds it
+            let n = unsafe { &*node };
             let rb = dev.route_bundle_ptr(n.data.route_bundle_index);
             rb.server_state = route_bundle::State::Loaded;
             node = n.next;
@@ -3708,25 +3708,37 @@ pub fn finalize_bundle(
         current_bundle.promise.set_route_bundle_state(dev, route_bundle::State::Loaded);
         // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
         let vm = unsafe { &*dev.vm };
-        vm.event_loop().enter();
-        let _exit = scopeguard::guard((), |_| vm.event_loop().exit());
-        current_bundle.promise.strong.resolve(vm.global, JSValue::TRUE)?;
+        // SAFETY: vm.event_loop() returns a valid `*mut EventLoop` for the VM lifetime.
+        unsafe { &mut *vm.event_loop() }.enter();
+        let _exit = scopeguard::guard((), |_| unsafe { &mut *vm.event_loop() }.exit());
+        current_bundle.promise.strong.resolve(unsafe { &*vm.global }, JSValue::TRUE)?;
     }
 
     while let Some(node) = current_bundle.requests.pop_first() {
-        let req = &mut node.data;
+        // SAFETY: `pop_first` hands back ownership of the intrusive node;
+        // it stays alive until `deref_()` releases it below.
+        let req = unsafe { &mut (*node).data };
         let _deref = scopeguard::guard((), |_| req.deref_());
 
         let rb = dev.route_bundle_ptr(req.route_bundle_index);
         rb.server_state = route_bundle::State::Loaded;
 
-        match &req.handler {
+        match &mut req.handler {
             Handler::Aborted => continue,
-            Handler::ServerHandler(saved) => dev.on_framework_request_with_bundle(
-                req.route_bundle_index,
-                SavedRequest::Union::Saved(saved.clone()),
-                saved.response,
-            )?,
+            Handler::ServerHandler(saved) => {
+                let response = saved.response;
+                dev.on_framework_request_with_bundle(
+                    req.route_bundle_index,
+                    // TODO(port): `SavedRequest` is move-only; Zig copied the
+                    // pointer-only struct by value. Replace with by-value move
+                    // once `Handler::ServerHandler` stores it by-value.
+                    SavedRequestUnion::Saved(::core::mem::replace(
+                        saved,
+                        todo!("blocked_on: server::SavedRequest by-value move"),
+                    )),
+                    response,
+                )?
+            }
             Handler::BundledHtmlPage(ram) => {
                 dev.on_html_request_with_bundle(req.route_bundle_index, ram.response, ram.method)
             }
@@ -3744,7 +3756,7 @@ impl DevServer<'_> {
 
         // If there were pending requests, begin another bundle.
         if self.next_bundle.reload_event.is_some()
-            || self.next_bundle.requests.first.is_some()
+            || !self.next_bundle.requests.first.is_null()
             || self.next_bundle.promise.strong.has_value()
         {
             // PERF(port): was stack-fallback (4096)
@@ -3756,14 +3768,19 @@ impl DevServer<'_> {
                     let event = unsafe { &mut *event };
                     let reload_event_timer = event.timer;
 
-                    let mut current = event;
+                    let self_ptr: *mut DevServer = self;
+                    let mut current: &mut HotReloadEvent = event;
                     loop {
-                        current.process_file_list(self, &mut entry_points);
-                        let Some(next) = self.watcher_atomics.recycle_event_from_dev_server(current)
+                        current.process_file_list(self_ptr.cast(), &mut entry_points);
+                        let Some(next) = self
+                            .watcher_atomics
+                            .recycle_event_from_dev_server(current as *mut HotReloadEvent)
                         else {
                             break;
                         };
-                        current = next;
+                        // SAFETY: `recycle_event_from_dev_server` returns a slot
+                        // in `self.watcher_atomics.events[..]`, valid for `self`.
+                        current = unsafe { &mut *next };
                         #[cfg(debug_assertions)]
                         debug_assert!(current.debug_mutex.try_lock());
                     }
@@ -3785,7 +3802,7 @@ impl DevServer<'_> {
                 self.start_async_bundle(entry_points, is_reload, timer).expect("oom");
             }
 
-            self.next_bundle.route_queue.clear();
+            self.next_bundle.route_queue.clear_retaining_capacity();
         }
     }
 
@@ -3802,7 +3819,7 @@ impl DevServer<'_> {
         let _g = scopeguard::guard((), |_| self.graph_safety_lock.unlock());
 
         debug_log!(
-            "handleParseTaskFailure({}, .{}, {:?}, {} messages)",
+            "handleParseTaskFailure({}, .{}, {}, {} messages)",
             err.name(),
             <&'static str>::from(graph),
             bun_core::fmt::quote(abs_path),
@@ -3813,9 +3830,9 @@ impl DevServer<'_> {
             // Special-case files being deleted.
             match graph {
                 bake::Graph::Server | bake::Graph::Ssr => {
-                    self.server_graph.on_file_deleted(abs_path, bv2)
+                    self.server_graph.on_file_deleted(abs_path, bv2)?
                 }
-                bake::Graph::Client => self.client_graph.on_file_deleted(abs_path, bv2),
+                bake::Graph::Client => self.client_graph.on_file_deleted(abs_path, bv2)?,
             }
         } else {
             match graph {

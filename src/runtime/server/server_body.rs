@@ -81,16 +81,114 @@ pub use super::request_context::RequestContext as NewRequestContext;
 // this local trait. Only `IS_H3` is consumed for control flow; `Req`/`Resp`
 // are erased to `c_void` to match `super::request_context::{Req, Resp}`.
 pub trait RequestCtx: super::any_request_context::CtxKind {
-    type Req;
-    type Resp;
+    type Req: ReqLike;
+    type Resp: RespLike;
     const IS_H3: bool;
 }
-impl<ThisServer, const SSL: bool, const DBG: bool, const H3: bool> RequestCtx
-    for NewRequestContext<ThisServer, SSL, DBG, H3>
+impl<ThisServer, const SSL: bool, const DBG: bool> RequestCtx
+    for NewRequestContext<ThisServer, SSL, DBG, false>
+where
+    NewRequestContext<ThisServer, SSL, DBG, false>: super::any_request_context::CtxKind,
 {
-    type Req = c_void;
-    type Resp = c_void;
-    const IS_H3: bool = H3;
+    type Req = uws_sys::Request;
+    type Resp = uws_sys::NewAppResponse<SSL>;
+    const IS_H3: bool = false;
+}
+impl<ThisServer, const SSL: bool, const DBG: bool> RequestCtx
+    for NewRequestContext<ThisServer, SSL, DBG, true>
+where
+    NewRequestContext<ThisServer, SSL, DBG, true>: super::any_request_context::CtxKind,
+{
+    type Req = uws_sys::h3::Request;
+    type Resp = uws_sys::h3::Response;
+    const IS_H3: bool = true;
+}
+
+// PORT NOTE: local request/response trait so generic `Ctx::Req` / `Ctx::Resp`
+// call sites can dispatch to either uWS HTTP/1 or HTTP/3 handle types without
+// touching `bun_uws_sys`. Only the surface `prepare_js_request_context_for`
+// actually needs is exposed.
+pub trait ReqLike {
+    fn header(&mut self, name: &[u8]) -> Option<&[u8]>;
+    fn method(&mut self) -> &[u8];
+    fn url(&mut self) -> &[u8];
+    fn set_yield(&mut self, y: bool);
+}
+impl ReqLike for uws_sys::Request {
+    #[inline] fn header(&mut self, name: &[u8]) -> Option<&[u8]> { (*self).header(name) }
+    #[inline] fn method(&mut self) -> &[u8] { (*self).method() }
+    #[inline] fn url(&mut self) -> &[u8] { (*self).url() }
+    #[inline] fn set_yield(&mut self, y: bool) { (*self).set_yield(y) }
+}
+impl ReqLike for uws_sys::h3::Request {
+    #[inline] fn header(&mut self, name: &[u8]) -> Option<&[u8]> { self.header(name) }
+    #[inline] fn method(&mut self) -> &[u8] { self.method() }
+    #[inline] fn url(&mut self) -> &[u8] { self.url() }
+    #[inline] fn set_yield(&mut self, y: bool) { self.set_yield(y) }
+}
+
+pub trait RespLike {
+    fn write_status(&mut self, status: &[u8]);
+    fn end_without_body(&mut self, close_connection: bool);
+    fn timeout(&mut self, seconds: u8);
+    fn on_timeout_warn(&mut self, ud: *mut c_void);
+}
+impl<const SSL: bool> RespLike for uws_sys::NewAppResponse<SSL> {
+    #[inline] fn write_status(&mut self, s: &[u8]) { self.write_status(s) }
+    #[inline] fn end_without_body(&mut self, c: bool) { self.end_without_body(c) }
+    #[inline] fn timeout(&mut self, s: u8) { self.timeout(s) }
+    #[inline] fn on_timeout_warn(&mut self, _ud: *mut c_void) {
+        // TODO(port): wire on_timeout::<c_void>(on_timeout_for_idle_warn, ud) once the
+        // generic `Fn(*mut U, &mut Response<SSL>)` shape can be expressed without
+        // capturing the const-generic ThisServer in the ZST closure type.
+    }
+}
+impl RespLike for uws_sys::h3::Response {
+    #[inline] fn write_status(&mut self, s: &[u8]) { self.write_status(s) }
+    #[inline] fn end_without_body(&mut self, c: bool) { self.end_without_body(c) }
+    #[inline] fn timeout(&mut self, s: u8) { self.timeout(s) }
+    #[inline] fn on_timeout_warn(&mut self, _ud: *mut c_void) {
+        // TODO(port): wire H3::Response::on_timeout once warn handler is generic.
+    }
+}
+
+// Local shim: `SystemError` lives upstream and lacks `Default`; this builds the
+// Zig field-default shape (`errno=0`, `fd=c_int::MIN`, strings empty).
+#[inline]
+fn system_error_default() -> SystemError {
+    SystemError {
+        errno: 0,
+        code: BunString::empty(),
+        message: BunString::empty(),
+        path: BunString::empty(),
+        syscall: BunString::empty(),
+        hostname: BunString::empty(),
+        fd: c_int::MIN,
+        dest: BunString::empty(),
+    }
+}
+
+// Local shim: `Box<ZStr>` constructor for an empty NUL-terminated string.
+// `ZStr` is a DST whose `len()` excludes the NUL; the backing allocation must
+// still own that NUL byte. We allocate `[0u8]` and reinterpret with `len = 0`.
+#[inline]
+fn zstr_empty_boxed() -> Box<ZStr> {
+    // SAFETY: backing `[0u8; 1]` is a valid `ZStr` of length 0 (NUL at index 0).
+    unsafe {
+        let raw: *mut [u8] = Box::into_raw(vec![0u8].into_boxed_slice());
+        Box::from_raw(core::ptr::slice_from_raw_parts_mut((*raw).as_mut_ptr(), 0) as *mut ZStr)
+    }
+}
+#[inline]
+fn zstr_from_boxed_with_nul(buf: Box<[u8]>) -> Box<ZStr> {
+    debug_assert!(buf.last() == Some(&0));
+    let len = buf.len().saturating_sub(1);
+    // SAFETY: caller guarantees trailing NUL; the backing allocation is `len+1`
+    // bytes and the fat pointer's metadata is `len` (NUL excluded).
+    unsafe {
+        let raw: *mut [u8] = Box::into_raw(buf);
+        Box::from_raw(core::ptr::slice_from_raw_parts_mut((*raw).as_mut_ptr(), len) as *mut ZStr)
+    }
 }
 
 // Module-level type aliases replacing the unstable inherent associated types

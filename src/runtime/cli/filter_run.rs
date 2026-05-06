@@ -453,7 +453,7 @@ impl<'a> State<'a> {
             return Ok(());
         }
         self.draw_buf.clear();
-        self.draw_buf.extend_from_slice(Output::SYNCHRONIZED_START);
+        self.draw_buf.extend_from_slice(Output::SYNCHRONIZED_START.as_bytes());
         if self.last_lines_written > 0 {
             // move cursor to the beginning of the line and clear it
             self.draw_buf.extend_from_slice(b"\x1b[0G\x1b[K");

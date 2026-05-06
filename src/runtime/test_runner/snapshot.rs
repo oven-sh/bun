@@ -549,21 +549,41 @@ impl<'a> Snapshots<'a> {
                     }
                     next_start += fn_name.len();
 
-                    let mut lexer = js_lexer::Lexer::init_without_reading(&mut *log, &source, &arena);
+                    // PORT NOTE: Zig passed `&log` to both `Lexer.initWithoutReading` and
+                    // `TSXParser.init` (aliasing `*Log`). Rust forbids two live `&'a mut Log`;
+                    // derive a raw pointer so borrowck doesn't track the lexer/parser borrow,
+                    // matching the pattern in `js_parser::Parser::init`. The unique `&mut`
+                    // logically lives inside `parser.lexer`; `log.add_error_fmt` calls below
+                    // reborrow via the scopeguard between parser uses.
+                    // SAFETY: `log` outlives the `'blk` block; lexer/parser are dropped at
+                    // block exit (or `continue 'ils`). See Parser.rs:214 for the provenance
+                    // discussion.
+                    let log_ptr: *mut logger::Log = &mut *log;
+                    let mut lexer = js_lexer::Lexer::init_without_reading(
+                        unsafe { &mut *log_ptr },
+                        &source,
+                        &arena,
+                    );
                     if next_start > 0 {
                         // equivalent to lexer.consumeRemainderBytes(next_start)
                         lexer.current += next_start - (lexer.current - lexer.end);
                         lexer.step();
                     }
                     lexer.next()?;
+                    // PORT NOTE: `ParserOptions` isn't `Clone`; rebuild per-iteration
+                    // (Zig passed by value-copy).
+                    let opts = js_parser::ParserOptions::init(
+                        vm.transpiler.options.jsx.clone().into(),
+                        js_parser::options::Loader::Js,
+                    );
                     // TODO(port): TSXParser::init takes out-param in Zig; reshaped `-> Result<Self>`.
                     let mut parser = js_parser::TSXParser::init(
                         &arena,
-                        &mut *log,
+                        unsafe { &mut *log_ptr },
                         &source,
                         &vm.transpiler.options.define,
                         lexer,
-                        opts.clone(),
+                        opts,
                     )?;
 
                     parser.lexer.expect(js_lexer::T::TOpenParen)?;

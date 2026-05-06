@@ -1792,7 +1792,7 @@ where
                         // TODO: should this timeout?
                         let body_value = this.response_weakref.get().unwrap().get_body_value();
                         *body_value = Body::Value::Locked(Body::PendingValue {
-                            readable: readable_stream::Strong::init(stream, global_this),
+                            readable: readable_stream::Strong::init(*stream, global_this),
                             global: global_this,
                             ..Default::default()
                         });

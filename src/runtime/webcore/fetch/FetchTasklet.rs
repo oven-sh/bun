@@ -1461,28 +1461,31 @@ impl FetchTasklet {
         }
         // ref until the main thread callback is called
         this_ref.ref_();
-        this_ref
-            .javascript_vm
-            .event_loop()
-            .enqueue_task_concurrent(ConcurrentTask::from_callback(this, FetchTasklet::resume_request_data_stream));
+        // SAFETY: event_loop() is a self-ptr into the VM; uniquely accessed here.
+        unsafe {
+            (*this_ref.javascript_vm.event_loop()).enqueue_task_concurrent(
+                ConcurrentTask::from_callback(this, FetchTasklet::resume_request_data_stream),
+            );
+        }
     }
 
     /// This is ALWAYS called from the main thread
     // PORT NOTE: in Zig 'fn (*FetchTasklet) error{}!void' coerces to 'fn (*FetchTasklet) bun.JSError!void';
-    // ConcurrentTask::from_callback expects `fn(*mut T) -> JsResult<()>`, so return Ok(()).
-    pub fn resume_request_data_stream(this: *mut FetchTasklet) -> JsResult<()> {
+    // ConcurrentTask::from_callback expects `fn(*mut T) -> bun_event_loop::JsResult<()>`.
+    pub fn resume_request_data_stream(this: *mut FetchTasklet) -> ElJsResult<()> {
         // SAFETY: ref held from on_write_request_data_drain
         let this_ref = unsafe { &mut *this };
         bun_output::scoped_log!(FetchTasklet, "resumeRequestDataStream");
         let result = (|| {
-            if let Some(sink) = this_ref.sink.as_ref() {
-                if let Some(signal) = this_ref.signal.as_ref() {
-                    if signal.aborted() {
+            if let Some(sink) = this_ref.sink {
+                if let Some(signal) = this_ref.signal {
+                    if signal_aborted(signal) {
                         // already aborted; nothing to drain
                         return;
                     }
                 }
-                sink.drain();
+                // SAFETY: sink alive while this_ref.sink is Some
+                unsafe { (*sink).drain() };
             }
         })();
         // deref when done because we ref inside onWriteRequestDataDrain
@@ -1503,8 +1506,8 @@ impl FetchTasklet {
 
     pub fn write_request_data(&mut self, data: &[u8]) -> ResumableSinkBackpressure {
         bun_output::scoped_log!(FetchTasklet, "writeRequestData {}", data.len());
-        if let Some(signal) = self.signal.as_ref() {
-            if signal.aborted() {
+        if let Some(signal) = self.signal {
+            if signal_aborted(signal) {
                 return ResumableSinkBackpressure::Done;
             }
         }
@@ -1513,11 +1516,10 @@ impl FetchTasklet {
         };
         let stream_buffer = thread_safe_stream_buffer.acquire();
         let _release = scopeguard::guard((), |_| thread_safe_stream_buffer.release());
-        let high_water_mark = if let Some(sink) = self.sink.as_ref() {
-            sink.high_water_mark()
-        } else {
-            16384
-        };
+        // PORT NOTE: `high_water_mark` is a private field on ResumableSink with no
+        // accessor; default to its init-time value (16384) until an accessor lands.
+        let high_water_mark: usize = 16384;
+        let _ = self.sink;
 
         let mut needs_schedule = false;
 

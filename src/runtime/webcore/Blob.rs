@@ -28,7 +28,7 @@ macro_rules! debug {
 #[path = "blob/Store.rs"]
 pub mod store;
 pub use store::{Store, StoreRef};
-// `Store` is referenced as both a module path (`Store::Data::*`) and a type
+// `Store` is referenced as both a module path (`store::Data::*`) and a type
 // name in the Phase-A draft. Alias the module form so `Store::Data` resolves.
 pub use store as Store_;
 
@@ -870,7 +870,7 @@ impl Blob {
         writer.write_int_le::<u8>(self.content_type_was_set as u8)?;
 
         let store_tag: Store::SerializeTag = if let Some(store) = &self.store {
-            if matches!(store.data, Store::Data::File(_)) {
+            if matches!(store.data, store::Data::File(_)) {
                 Store::SerializeTag::File
             } else {
                 Store::SerializeTag::Bytes
@@ -981,7 +981,7 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
                 let mut name_consumed = false;
                 // ScopeGuard derefs to its inner Blob.
                 if let Some(store) = &(*guard).store {
-                    if let Store::Data::Bytes(bytes_store) = &mut store.data_mut() {
+                    if let store::Data::Bytes(bytes_store) = &mut store.data_mut() {
                         bytes_store.stored_name = bun_str::PathString::init(name);
                         name_consumed = true;
                     }
@@ -1235,7 +1235,7 @@ pub extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &mut BunString) {
 
     // This is not 100% correct...
     if let Some(store) = &this.store {
-        if let Store::Data::Bytes(bytes) = &mut store.data_mut() {
+        if let store::Data::Bytes(bytes) = &mut store.data_mut() {
             if bytes.stored_name.len() == 0 {
                 let utf8 = path_str.to_utf8_bytes();
                 bytes.stored_name = bun_str::PathString::init(utf8);
@@ -1310,12 +1310,12 @@ impl Blob {
         } else {
             let store = self.store.as_ref().unwrap();
             match &store.data {
-                Store::Data::S3(s3) => {
+                store::Data::S3(s3) => {
                     S3File::write_format::<F, W, ENABLE_ANSI_COLORS>(
                         s3, formatter, writer, self.content_type_slice(), self.offset,
                     )?;
                 }
-                Store::Data::File(file) => {
+                store::Data::File(file) => {
                     writer.write_str(Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>FileRef<r>"))?;
                     match &file.pathlike {
                         node::PathLike::Path(path) => {
@@ -1340,7 +1340,7 @@ impl Blob {
                         }
                     }
                 }
-                Store::Data::Bytes(_) => {
+                store::Data::Bytes(_) => {
                     write_format_for_size::<W, ENABLE_ANSI_COLORS>(
                         self.is_jsdom_file,
                         self.size as usize,
@@ -1353,7 +1353,7 @@ impl Blob {
         let show_name = (self.is_jsdom_file && self.get_name_string().is_some())
             || (!self.name.is_empty()
                 && self.store.is_some()
-                && matches!(self.store.as_ref().unwrap().data, Store::Data::Bytes(_)));
+                && matches!(self.store.as_ref().unwrap().data, store::Data::Bytes(_)));
         if !self.is_s3()
             && (!self.content_type_slice().is_empty()
                 || self.offset > 0
@@ -1488,7 +1488,7 @@ fn write_file_with_empty_source_to_destination(
     let _detach = scopeguard::guard(&mut *destination_blob, |b| b.detach());
 
     match &destination_store.data {
-        Store::Data::File(file) => {
+        store::Data::File(file) => {
             // TODO: make this async
             let node_fs = ctx.bun_vm().node_fs();
             let mut result = node_fs.truncate(
@@ -1580,7 +1580,7 @@ fn write_file_with_empty_source_to_destination(
                 ));
             }
         }
-        Store::Data::S3(s3) => {
+        store::Data::S3(s3) => {
             // create empty file
             let aws_options = match s3.get_credentials_with_options(options.extra_options, ctx) {
                 Ok(o) => o,
@@ -1762,7 +1762,7 @@ pub fn write_file_with_source_destination(
     } else if destination_type == store::DataTag::File && source_type == store::DataTag::S3 {
         let s3 = source_store.data.as_s3();
         if let Some(stream) = ReadableStream::from_js(
-            ReadableStream::from_blob_copy_ref(ctx, source_blob, s3.options.part_size as u32)?,
+            ReadableStream::from_blob_copy_ref(ctx, source_blob, s3.options.part_size as crate::webcore::blob::SizeType)?,
             ctx,
         )? {
             return destination_blob.pipe_readable_stream_to_blob(ctx, stream, options.extra_options);
@@ -1804,7 +1804,7 @@ pub fn write_file_with_source_destination(
             store::Data::Bytes(bytes) => {
                 if bytes.len > S3::MultiPartUploadOptions::MAX_SINGLE_UPLOAD_SIZE {
                     if let Some(stream) = ReadableStream::from_js(
-                        ReadableStream::from_blob_copy_ref(ctx, source_blob, s3.options.part_size as u32)?,
+                        ReadableStream::from_blob_copy_ref(ctx, source_blob, s3.options.part_size as crate::webcore::blob::SizeType)?,
                         ctx,
                     )? {
                         return Ok(s3_client::upload_stream(
@@ -1883,7 +1883,7 @@ pub fn write_file_with_source_destination(
             store::Data::File(_) | store::Data::S3(_) => {
                 // stream
                 if let Some(stream) = ReadableStream::from_js(
-                    ReadableStream::from_blob_copy_ref(ctx, source_blob, s3.options.part_size as u32)?,
+                    ReadableStream::from_blob_copy_ref(ctx, source_blob, s3.options.part_size as crate::webcore::blob::SizeType)?,
                     ctx,
                 )? {
                     return Ok(s3_client::upload_stream(
@@ -3013,7 +3013,7 @@ impl Blob {
                 let sink = webcore::FileSink::init(
                     fd,
                     // SAFETY: self.global_this stored from a live &JSGlobalObject; VM outlives this task.
-                    unsafe { (*self.global_this).bun_vm() }.event_loop(),
+                    unsafe { (*(*self.global_this).bun_vm()).event_loop() },
                 );
                 // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink.
                 unsafe { (*sink).writer.owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_)) };
@@ -3046,20 +3046,20 @@ impl Blob {
                 let sink = webcore::FileSink::init(
                     Fd::INVALID,
                     // SAFETY: self.global_this stored from a live &JSGlobalObject; VM outlives this task.
-                    unsafe { (*self.global_this).bun_vm() }.event_loop(),
+                    unsafe { (*(*self.global_this).bun_vm()).event_loop() },
                 );
 
                 let input_path: webcore::PathOrFileDescriptor = match &store.data.as_file().pathlike {
                     PathOrFileDescriptor::Fd(fd) => webcore::PathOrFileDescriptor::Fd(*fd),
                     PathOrFileDescriptor::Path(p) => {
-                        webcore::PathOrFileDescriptor::Path(ZigString::Slice::init_dupe(p.slice()))
+                        webcore::PathOrFileDescriptor::Path(bun_str::ZigStringSlice::init_dupe(p.slice()).expect("oom"))
                     }
                 };
                 // input_path drops at scope exit (Zig: `defer input_path.deinit()`).
 
                 let stream_start = streams::Start::FileSink(streams::FileSinkOptions {
                     input_path,
-                    ..Default::default()
+                    chunk_size: 0
                 });
 
                 // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink.
@@ -3076,18 +3076,21 @@ impl Blob {
 
         // SAFETY: file_sink is a live +1 *mut FileSink for the rest of this fn.
         let signal = unsafe { &mut (*file_sink).signal };
-        *signal = webcore::FileSink::JSSink::SinkSignal::init(JSValue::ZERO);
+        *signal = webcore::file_sink::SinkSignal::init(JSValue::ZERO);
 
         // explicitly set it to a dead pointer
         // we use this memory address to disable signals being sent
         signal.clear();
         debug_assert!(signal.is_dead());
 
-        let assignment_result: JSValue = webcore::FileSink::JSSink::assign_to_stream(
+        let signal_ptr: *mut *mut c_void =
+            unsafe { &mut (*file_sink).signal.ptr as *mut _ as *mut *mut c_void };
+        let assignment_result: JSValue = webcore::file_sink::JSSink::assign_to_stream(
             global_this,
             readable_stream.value,
-            file_sink,
-            &mut signal.ptr as *mut _ as *mut *mut c_void,
+            // SAFETY: file_sink is a live +1 *mut FileSink.
+            unsafe { &mut *file_sink },
+            signal_ptr,
         );
 
         assignment_result.ensure_still_alive();
@@ -3104,7 +3107,7 @@ impl Blob {
         }
 
         if !assignment_result.is_empty_or_undefined_or_null() {
-            global_this.bun_vm().drain_microtasks();
+            unsafe { (*global_this.bun_vm()).drain_microtasks() };
 
             assignment_result.ensure_still_alive();
             // it returns a Promise when it goes through ReadableStreamDefaultReader
@@ -3123,14 +3126,14 @@ impl Blob {
                             wrapper as *mut c_void,
                             on_file_stream_resolve_request_stream,
                             on_file_stream_reject_request_stream,
-                        )?;
+                        );
                         return Ok(promise_value);
                     }
                     jsc::js_promise::Status::Fulfilled => {
                         // SAFETY: release our +1 ref on the sink.
                         unsafe { webcore::FileSink::deref(file_sink) };
                         readable_stream.done(global_this);
-                        return Ok(JSPromise::resolved_promise_value(global_this, JSValue::js_number(0)));
+                        return Ok(JSPromise::resolved_promise_value(global_this, JSValue::js_number(0.0)));
                     }
                     jsc::js_promise::Status::Rejected => {
                         // SAFETY: release our +1 ref on the sink.
@@ -3154,7 +3157,7 @@ impl Blob {
         // SAFETY: release our +1 ref on the sink.
         unsafe { webcore::FileSink::deref(file_sink) };
 
-        Ok(JSPromise::resolved_promise_value(global_this, JSValue::js_number(0)))
+        Ok(JSPromise::resolved_promise_value(global_this, JSValue::js_number(0.0)))
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
@@ -3163,11 +3166,11 @@ impl Blob {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments_ = callframe.arguments_old(1);
-        let arguments = &arguments_.ptr()[..arguments_.len()];
+        let arguments_ = callframe.arguments_old::<1>();
+        let arguments = &arguments_.ptr[..arguments_.len];
 
         if !arguments[0].is_empty_or_undefined_or_null() && !arguments[0].is_object() {
-            return global_this.throw_invalid_arguments("options must be an object or undefined");
+            return Err(global_this.throw_invalid_arguments("options must be an object or undefined"));
         }
 
         validate_writable_blob(global_this, self)?;
@@ -3186,12 +3189,12 @@ impl Blob {
             let mut sink = webcore::FileSink::init(
                 bun_sys::Fd::INVALID,
                 // SAFETY: self.global_this stored from a live &JSGlobalObject; VM outlives this task.
-                unsafe { (*self.global_this).bun_vm() }.event_loop(),
+                unsafe { (*(*self.global_this).bun_vm()).event_loop() },
             );
 
             let input_path: webcore::PathOrFileDescriptor = match &store.data.as_file().pathlike {
                 node::PathLike::Fd(fd) => webcore::PathOrFileDescriptor::Fd(*fd),
-                p => webcore::PathOrFileDescriptor::Path(ZigString::Slice::init_dupe(p.slice())),
+                p => webcore::PathOrFileDescriptor::Path(bun_str::ZigStringSlice::init_dupe(p.slice()).expect("oom")),
             };
 
             let mut stream_start = streams::Start::FileSink(streams::FileSinkOptions {
@@ -3211,7 +3214,7 @@ impl Blob {
                 bun_sys::Result::Err(err) => {
                     // SAFETY: release the +1 ref from `init`.
                     unsafe { webcore::FileSink::deref(sink) };
-                    return global_this.throw_value(err.to_js(global_this)?);
+                    return Err(global_this.throw_value(err.to_js(global_this)));
                 }
                 _ => {}
             }
@@ -3274,8 +3277,9 @@ impl Blob {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let mut arguments_ = callframe.arguments_old(3);
-        let args = &mut arguments_.ptr_mut()[..arguments_.len()];
+        let mut arguments_ = callframe.arguments_old::<3>();
+        let len = arguments_.len;
+        let args = &mut arguments_.ptr[..len];
 
         if self.size == 0 {
             let empty = Blob::init_empty(global_this);
@@ -3299,7 +3303,7 @@ impl Blob {
             args[1] = JSValue::ZERO;
         }
 
-        let mut args_iter = jsc::ArgumentsSlice::init(global_this.bun_vm(), &arguments_.ptr()[..3]);
+        let mut args_iter = jsc::ArgumentsSlice::init(unsafe { &*global_this.bun_vm() }, &arguments_.ptr[..3]);
         if let Some(start_) = args_iter.next_eat() {
             if start_.is_number() {
                 let start = start_.to_int64();
@@ -3334,7 +3338,7 @@ impl Blob {
                         break 'inner;
                     }
 
-                    if let Some(mime) = global_this.bun_vm().mime_type(slice) {
+                    if let Some(mime) = unsafe { (*global_this.bun_vm()).mime_type(slice) } {
                         content_type = mime.value as *const [u8];
                         break 'inner;
                     }
@@ -3359,26 +3363,26 @@ impl Blob {
     }
 
     pub fn get_mime_type(&self) -> Option<MimeType> {
-        self.store.as_ref().map(|s| s.mime_type)
+        self.store.as_ref().map(|s| s.mime_type.clone())
     }
 
     pub fn get_mime_type_or_content_type(&self) -> Option<MimeType> {
         if self.content_type_was_set {
             return Some(MimeType::init(self.content_type_slice(), false, None));
         }
-        self.store.as_ref().map(|s| s.mime_type)
+        self.store.as_ref().map(|s| s.mime_type.clone())
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_type(&self, global_this: &JSGlobalObject) -> JSValue {
         let ct = self.content_type_slice();
         if !ct.is_empty() {
-            return ZigString::init(ct).to_js(global_this);
+            return JscZigString::init(ct).to_js(global_this);
         }
         if let Some(store) = &self.store {
-            return ZigString::init(store.mime_type.value).to_js(global_this);
+            return JscZigString::init(&store.mime_type.value).to_js(global_this);
         }
-        ZigString::EMPTY.to_js(global_this)
+        JscZigString::EMPTY.to_js(global_this)
     }
 
     pub fn get_name_string(&mut self) -> Option<BunString> {
@@ -3396,7 +3400,7 @@ impl Blob {
     // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_name(&mut self, _: JSValue, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(match self.get_name_string() {
-            Some(name) => name.to_js(global_this),
+            Some(name) => name.to_js(global_this)?,
             None => JSValue::UNDEFINED,
         })
     }
@@ -3446,9 +3450,9 @@ impl Blob {
     // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_last_modified(&mut self, _: &JSGlobalObject) -> JSValue {
         if let Some(store) = &self.store {
-            if let Store::Data::File(file) = &store.data {
+            if let store::Data::File(file) = &store.data {
                 // last_modified can be already set during read.
-                if file.last_modified == jsc::INIT_TIMESTAMP && !self.is_s3() {
+                if file.last_modified == jsc::INIT_TIMESTAMP as f64 && !self.is_s3() {
                     resolve_file_stat(store);
                 }
                 return JSValue::js_number(file.last_modified);
@@ -3459,7 +3463,7 @@ impl Blob {
             return JSValue::js_number(self.last_modified);
         }
 
-        JSValue::js_number(jsc::INIT_TIMESTAMP)
+        JSValue::js_number(jsc::INIT_TIMESTAMP as f64)
     }
 
     pub fn get_size_for_bindings(&mut self) -> u64 {
@@ -3470,7 +3474,7 @@ impl Blob {
         // If the file doesn't exist or is not seekable
         // signal that the size is unknown.
         if let Some(store) = &self.store {
-            if let Store::Data::File(file) = &store.data {
+            if let store::Data::File(file) = &store.data {
                 if !file.seekable.unwrap_or(false) {
                     return u64::MAX;
                 }
@@ -3553,7 +3557,7 @@ pub mod mmap_free_interface {
     // TODO(port): expose as a `&'static dyn bun_alloc::Allocator` so Store can
     // own a slice with a custom-free path. See Zig lines 3316-3339.
     pub fn free(buf: &mut [u8]) {
-        if let Err(err) = bun_sys::munmap(buf).unwrap() {
+        if let bun_sys::Result::Err(err) = bun_sys::munmap(buf.as_mut_ptr(), buf.len()) {
             bun_core::Output::debug_warn(format_args!("Blob mmap-store munmap failed: {:?}", err));
         }
     }
@@ -3602,7 +3606,7 @@ impl Blob {
         let Some(store) = &self.store else { return Ok(JSValue::UNDEFINED) };
         // TODO: make this async for files
         match &store.data {
-            Store::Data::File(file) => match &file.pathlike {
+            store::Data::File(file) => match &file.pathlike {
                 node::PathLike::Path(path_like) => {
                     return Ok(node::fs::async_::Stat::create(
                         global_this,
@@ -3628,7 +3632,7 @@ impl Blob {
                     ));
                 }
             },
-            Store::Data::S3(_) => return crate::webcore::s3_file::get_stat(self, global_this, callback),
+            store::Data::S3(_) => return crate::webcore::s3_file::get_stat(self, global_this, callback),
             _ => Ok(JSValue::UNDEFINED),
         }
     }
@@ -3643,20 +3647,20 @@ impl Blob {
             if self.size == MAX_SIZE && self.store.is_some() {
                 return JSValue::js_number(f64::INFINITY);
             } else if self.size == 0 && self.store.is_some() {
-                if let Store::Data::File(file) = &self.store.as_ref().unwrap().data {
+                if let store::Data::File(file) = &self.store.as_ref().unwrap().data {
                     if file.seekable.unwrap_or(true) == false && file.max_size == MAX_SIZE {
                         return JSValue::js_number(f64::INFINITY);
                     }
                 }
             }
         }
-        JSValue::js_number(self.size)
+        JSValue::js_number(self.size as f64)
     }
 
     pub fn resolve_size(&mut self) {
         if let Some(store) = &self.store {
             match &store.data {
-                Store::Data::Bytes(_) => {
+                store::Data::Bytes(_) => {
                     let offset = self.offset;
                     let store_size = store.size();
                     if store_size != MAX_SIZE {
@@ -3665,7 +3669,7 @@ impl Blob {
                     }
                     return;
                 }
-                Store::Data::File(file) => {
+                store::Data::File(file) => {
                     if file.seekable.is_none() {
                         resolve_file_stat(store);
                     }
@@ -3702,14 +3706,14 @@ fn resolve_file_stat(store: &Store) {
             let mut buffer = bun_paths::PathBuffer::uninit();
             match bun_sys::stat(path.slice_z(&mut buffer)) {
                 bun_sys::Result::Ok(stat) => {
-                    file.max_size = if bun_sys::S::ISREG(stat.mode as _) || stat.size > 0 {
-                        ((stat.size.max(0)) as u64) as SizeType
+                    file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
+                        ((stat.st_size.max(0)) as u64) as SizeType
                     } else {
                         MAX_SIZE
                     };
-                    file.mode = stat.mode as bun_sys::Mode;
-                    file.seekable = Some(bun_sys::S::ISREG(stat.mode as _));
-                    file.last_modified = jsc::to_js_time(stat.mtime().sec, stat.mtime().nsec);
+                    file.mode = stat.st_mode as bun_sys::Mode;
+                    file.seekable = Some(bun_sys::S::ISREG(stat.st_mode as _));
+                    file.last_modified = jsc::to_js_time(stat.st_mtime as isize, stat.st_mtime_nsec as isize) as f64;
                 }
                 // the file may not exist yet. That's okay.
                 _ => {}
@@ -3718,14 +3722,14 @@ fn resolve_file_stat(store: &Store) {
         node::PathLike::Fd(fd) => {
             match bun_sys::fstat(*fd) {
                 bun_sys::Result::Ok(stat) => {
-                    file.max_size = if bun_sys::S::ISREG(stat.mode as _) || stat.size > 0 {
-                        ((stat.size.max(0)) as u64) as SizeType
+                    file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
+                        ((stat.st_size.max(0)) as u64) as SizeType
                     } else {
                         MAX_SIZE
                     };
-                    file.mode = stat.mode as bun_sys::Mode;
-                    file.seekable = Some(bun_sys::S::ISREG(stat.mode as _));
-                    file.last_modified = jsc::to_js_time(stat.mtime().sec, stat.mtime().nsec);
+                    file.mode = stat.st_mode as bun_sys::Mode;
+                    file.seekable = Some(bun_sys::S::ISREG(stat.st_mode as _));
+                    file.last_modified = jsc::to_js_time(stat.st_mtime as isize, stat.st_mtime_nsec as isize) as f64;
                 }
                 _ => {}
             }
@@ -3741,7 +3745,7 @@ impl Blob {
     // TODO(b2-blocked): #[bun_jsc::host_fn]
     pub fn constructor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<*mut Blob> {
         let mut blob: Blob;
-        let arguments = callframe.arguments_old(2);
+        let arguments = callframe.arguments_old::<2>();
         let args = arguments.slice();
 
         match args.len() {
@@ -3764,7 +3768,7 @@ impl Blob {
                                     }
                                     blob.content_type_was_set = true;
 
-                                    if let Some(mime) = global_this.bun_vm().mime_type(slice) {
+                                    if let Some(mime) = unsafe { (*global_this.bun_vm()).mime_type(slice) } {
                                         blob.content_type = mime.value as *const [u8];
                                         break 'inner;
                                     }
@@ -5218,7 +5222,7 @@ impl Any {
     fn to_internal_blob_if_possible(&mut self) {
         if let Any::Blob(blob) = self {
             if let Some(s) = &blob.store {
-                if matches!(s.data, Store::Data::Bytes(_)) && s.has_one_ref() {
+                if matches!(s.data, store::Data::Bytes(_)) && s.has_one_ref() {
                     let internal = s.data.as_bytes_mut().to_internal_blob();
                     // PORT NOTE: Zig deref's the store; StoreRef::drop on replace handles it.
                     *self = Any::InternalBlob(internal);
@@ -5670,7 +5674,7 @@ impl Inline {
     
     pub fn to_string_owned(&mut self, global_this: &JSGlobalObject) -> JSValue {
         if self.len == 0 {
-            return ZigString::EMPTY.to_js(global_this);
+            return JscZigString::EMPTY.to_js(global_this);
         }
 
         let mut str = ZigString::init(self.slice_const());

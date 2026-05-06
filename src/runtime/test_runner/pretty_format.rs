@@ -2884,7 +2884,7 @@ impl JestPrettyFormat {
                 writer.write_all(b"Anything");
             }
         } else if let Some(matcher) = value.as_::<expect::ExpectAny>() {
-            let Some(constructor_value) = expect::ExpectAny::js::constructor_value_get_cached(value)
+            let Some(constructor_value) = expect_js::any::constructor_value_get_cached(value)
             else {
                 return Ok(true);
             };
@@ -2910,11 +2910,11 @@ impl JestPrettyFormat {
             this.add_for_new_line(1);
             writer.write_all(b">");
         } else if let Some(matcher) = value.as_::<expect::ExpectCloseTo>() {
-            let Some(number_value) = expect::ExpectCloseTo::js::number_value_get_cached(value)
+            let Some(number_value) = expect_js::close_to::number_value_get_cached(value)
             else {
                 return Ok(true);
             };
-            let Some(digits_value) = expect::ExpectCloseTo::js::digits_value_get_cached(value)
+            let Some(digits_value) = expect_js::close_to::digits_value_get_cached(value)
             else {
                 return Ok(true);
             };
@@ -2938,7 +2938,7 @@ impl JestPrettyFormat {
             ));
         } else if let Some(matcher) = value.as_::<expect::ExpectObjectContaining>() {
             let Some(object_value) =
-                expect::ExpectObjectContaining::js::object_value_get_cached(value)
+                expect_js::object_containing::object_value_get_cached(value)
             else {
                 return Ok(true);
             };
@@ -2956,7 +2956,7 @@ impl JestPrettyFormat {
             )?;
         } else if let Some(matcher) = value.as_::<expect::ExpectStringContaining>() {
             let Some(substring_value) =
-                expect::ExpectStringContaining::js::string_value_get_cached(value)
+                expect_js::string_containing::string_value_get_cached(value)
             else {
                 return Ok(true);
             };
@@ -2973,7 +2973,7 @@ impl JestPrettyFormat {
                 writer.ctx, substring_value, JSType::String,
             )?;
         } else if let Some(matcher) = value.as_::<expect::ExpectStringMatching>() {
-            let Some(test_value) = expect::ExpectStringMatching::js::test_value_get_cached(value)
+            let Some(test_value) = expect_js::string_matching::test_value_get_cached(value)
             else {
                 return Ok(true);
             };

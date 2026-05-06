@@ -146,6 +146,12 @@ pub struct Archive {
     compress: Compression,
 }
 
+impl Archive {
+    /// Borrow the backing `StoreRef` (Zig: `archive.store`).
+    #[inline]
+    pub fn store_ref(&self) -> &StoreRef { &self.store }
+}
+
 // `jsc.Codegen.JSArchive` — what the `#[bun_jsc::JsClass]` derive would emit.
 // Symbol names match generate-classes.ts (`${typeName}__fromJS` / `__create`).
 const _: () = {

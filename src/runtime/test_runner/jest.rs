@@ -1,7 +1,6 @@
 use core::ptr::NonNull;
 #[allow(unused_imports)] use crate::test_runner::expect::{JSValueTestExt, JSGlobalObjectTestExt, make_formatter};
 use std::io::Write as _;
-use std::rc::Rc;
 
 use crate::cli::command::TestOptions;
 use crate::cli::test_command::CommandLineReporter;

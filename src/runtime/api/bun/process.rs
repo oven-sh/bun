@@ -3223,26 +3223,31 @@ pub mod sync {
             Maybe::Result(proces) => proces,
         };
 
-        let process = spawned.to_process((), true);
-        let _detach_guard = scopeguard::guard((), |_| {
-            // SAFETY: unique access during sync spawn
+        // `*mut Process` — intrusive refcount (Box::into_raw in to_process).
+        let process: *mut Process = spawned.to_process((), true);
+        let _detach_guard = scopeguard::guard(process, |process| {
+            // SAFETY: sole owner during sync spawn; loop has drained, so no
+            // uv callback holds a competing `&mut Process`. Mirrors Zig defer
+            // `{ process.detach(); process.deref(); }`.
             unsafe {
-                let p = &mut *(Arc::as_ptr(&process) as *mut Process);
-                p.detach();
+                (*process).detach();
+                (*process).deref();
             }
-            // process.deref() — Arc drops
         });
-        // SAFETY: unique access during sync spawn
+        // SAFETY: just allocated; no other borrow live yet.
         unsafe {
-            (&mut *(Arc::as_ptr(&process) as *mut Process)).enable_keeping_event_loop_alive();
+            (*process).enable_keeping_event_loop_alive();
         }
 
-        while !process.has_exited() {
+        // SAFETY: read-only field access between uv ticks; the uv exit
+        // callback's `&mut Process` does not overlap this `&Process`.
+        while !unsafe { (*process).has_exited() } {
             loop_.run();
         }
 
         Ok(Maybe::Result(Result {
-            status: process.status,
+            // SAFETY: process has exited; no further mutation.
+            status: unsafe { (*process).status.clone() },
             stdout: Vec::new(),
             stderr: Vec::new(),
         }))

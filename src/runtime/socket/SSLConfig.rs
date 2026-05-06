@@ -469,12 +469,13 @@ pub mod GlobalRegistry {
 
         struct MapContext;
         impl MapContext {
-            fn hash(key: *mut SSLConfig) -> u32 {
+            fn hash(key: *const SSLConfig) -> u32 {
                 // SAFETY: key points into a live Arc allocation while held by the
-                // registry mutex (see module doc).
+                // registry mutex (see module doc). `content_hash` takes `&self`
+                // and only mutates via `AtomicU64`, so a shared ref is sound.
                 unsafe { (*key).content_hash() as u32 }
             }
-            fn eql(a: *mut SSLConfig, b: *mut SSLConfig) -> bool {
+            fn eql(a: *const SSLConfig, b: *const SSLConfig) -> bool {
                 // SAFETY: see above.
                 unsafe { (*a).is_same(&*b) }
             }
@@ -487,10 +488,10 @@ pub mod GlobalRegistry {
         /// upheld by that lock (PORTING.md §Concurrency: lock owns data, but
         /// `ArrayHashMap` has no `const fn new()` so it can't sit inside the
         /// `Mutex` directly — lazy `Option` init under the lock instead).
-        fn configs() -> &'static mut ArrayHashMap<*mut SSLConfig, WeakPtr> {
-            // `*mut SSLConfig` key makes the map `!Sync`; `static mut` sidesteps
+        fn configs() -> &'static mut ArrayHashMap<*const SSLConfig, WeakPtr> {
+            // Raw-pointer key makes the map `!Sync`; `static mut` sidesteps
             // the auto-trait bound and matches Zig's plain `var`.
-            static mut CONFIGS: Option<ArrayHashMap<*mut SSLConfig, WeakPtr>> = None;
+            static mut CONFIGS: Option<ArrayHashMap<*const SSLConfig, WeakPtr>> = None;
             // SAFETY: only ever entered while `MUTEX` is held (see `intern` /
             // `remove`), guaranteeing a single live `&mut` at a time.
             #[allow(static_mut_refs)]

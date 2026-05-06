@@ -4,7 +4,7 @@
 #![allow(unused_unsafe, unreachable_code, static_mut_refs, private_interfaces, private_bounds)]
 #![allow(unused_macros, ambiguous_glob_reexports)]
 #![allow(incomplete_features)]
-#![feature(adt_const_params, new_zeroed_alloc, sync_unsafe_cell)]
+#![feature(adt_const_params, sync_unsafe_cell)]
 
 // ──────────────────────────────────────────────────────────────────────────
 // B-2 UN-GATED — Resolver::{resolve, dir_info_cached, load_as_file,
@@ -5553,7 +5553,7 @@ impl<'a> Resolver<'a> {
     pub fn root_node_module_package_json(
         &mut self,
         result: &Result,
-    ) -> Option<RootPathPair> {
+    ) -> Option<RootPathPair<'_>> {
         let path = result.path_const()?;
         let mut absolute = path.text();
         // /foo/node_modules/@babel/standalone/index.js
@@ -6514,10 +6514,9 @@ impl<'a> Resolver<'a> {
 
         // Add the containing package to the lockfile
 
-        let mut package = Package::default();
-
         let is_main = pm.lockfile.packages.len() == 0 && input_package_id == Install::INVALID_PACKAGE_ID;
         if is_main {
+            let mut package: Package;
             if let Some(mut package_json) = package_json_ {
                 // SAFETY: BACKREF — `package_json` is an interned arena slot
                 // (see `intern_package_json`); `NonNull` carries mut-provenance
@@ -6562,10 +6561,9 @@ impl<'a> Resolver<'a> {
                     ..Default::default()
                 };
                 package.meta.set_has_install_script(package.scripts.has_any());
-                package = match pm.lockfile.append_package(package) {
-                    Ok(p) => p,
-                    Err(err) => return DependencyToResolve::Failure(err),
-                };
+                if let Err(err) = pm.lockfile.append_package(package) {
+                    return DependencyToResolve::Failure(err);
+                }
             }
         }
 
@@ -6636,8 +6634,6 @@ impl<'a> Resolver<'a> {
             }
         };
 
-        let mut missing_suffix: &[u8] = b"";
-
         match esm_resolution.status {
             Status::Exact | Status::ExactEndsWithStar => {
                 let resolved_dir_info_ptr = match self.dir_info_cached(bun_paths::dirname(abs_esm_path).unwrap()).ok().flatten() {
@@ -6689,7 +6685,7 @@ impl<'a> Resolver<'a> {
                                         ));
                                     }
                                     esm_resolution.status = Status::ModuleNotFoundMissingExtension;
-                                    missing_suffix = ext;
+                                    let _ = ext; // PORT NOTE: Zig stored `missing_suffix = ext` here; unused after `return null`.
                                     break;
                                 }
                             }
@@ -7253,7 +7249,7 @@ impl<'a> Resolver<'a> {
             };
 
             if !queue_top.fd.is_valid() {
-                Fs::FileSystem::set_max_fd(open_dir.cast());
+                Fs::FileSystem::set_max_fd(open_dir.native());
                 // these objects mostly just wrap the file descriptor, so it's fine to keep it.
                 bufs!(open_dirs)[open_dir_count.get()] = open_dir;
                 open_dir_count.set(open_dir_count.get() + 1);

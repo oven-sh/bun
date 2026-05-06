@@ -6,6 +6,9 @@ edition.workspace = true
 [lib]
 path = "lib.rs"
 
+[features]
+debug_logs = []
+
 [dependencies]
 parking_lot.workspace = true
 strum.workspace = true

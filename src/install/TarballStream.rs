@@ -1096,11 +1096,12 @@ extern "C" fn archive_read_callback(
         // Pull the new bytes into `reading` and retry the read. We are
         // the only consumer of `reading`/`read_pos`, and `take_pending`
         // only touches producer state under the same mutex.
-        // SAFETY: `take_pending` borrows fields disjoint from anything
-        // `step()` holds across the FFI call; the outer `&mut self` is
-        // dormant while libarchive is on the C stack.
+        // SAFETY: `take_pending` takes `*mut Self` and accesses fields via
+        // raw-ptr projection, never forming `&mut TarballStream`, so it
+        // does not alias `step()`'s outer `&mut self` that is dormant on
+        // the stack while libarchive is on the C stack.
         unsafe {
-            let _ = (*this).take_pending();
+            let _ = TarballStream::take_pending(this);
             let again = &(*this).reading[(*this).read_pos..];
             if !again.is_empty() {
                 *out_buffer = again.as_ptr().cast();

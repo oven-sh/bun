@@ -132,12 +132,19 @@ impl PostgresSQLConnection {
     pub fn r#ref(&self) {
         self.ref_count.set(self.ref_count.get() + 1);
     }
-    pub fn deref(&mut self) {
-        let n = self.ref_count.get() - 1;
-        self.ref_count.set(n);
+    /// Raw-pointer receiver: when the count hits zero this path ends in
+    /// `Box::from_raw(this)`, and a `&mut self` argument would hold a Stacked
+    /// Borrows protector across that dealloc (Miri: "deallocating while item is
+    /// protected"). Mirrors Zig's `*@This()` receiver.
+    pub fn deref(this: *mut Self) {
+        // SAFETY: `this` points at a live Box-allocated connection; ref_count is
+        // only touched on the JS thread.
+        let rc = unsafe { &(*this).ref_count };
+        let n = rc.get() - 1;
+        rc.set(n);
         if n == 0 {
             // ref_count hit zero; we are the last owner of this Box-allocated struct.
-            self.deinit();
+            Self::deinit(this);
         }
     }
 
@@ -170,7 +177,7 @@ impl PostgresSQLConnection {
         let keep_flusher_registered = !self.flags.has_backpressure && self.write_buffer.len() > 0;
         debug!("onAutoFlush: keep_flusher_registered: {}", keep_flusher_registered);
         self.auto_flusher.registered = keep_flusher_registered;
-        self.deref();
+        Self::deref(self as *mut Self);
         keep_flusher_registered
     }
 
@@ -434,10 +441,13 @@ impl PostgresSQLConnection {
     pub fn finalize(this: *mut Self) {
         debug!("PostgresSQLConnection finalize");
         // SAFETY: called on mutator thread during lazy sweep; `this` is valid.
-        let this = unsafe { &mut *this };
-        this.stop_timers();
-        this.js_value.finalize();
-        this.deref();
+        // Field access via `(*this)` keeps each `&mut` reborrow scoped to its call
+        // so no protected `&mut Self` is live across the potential dealloc in `deref`.
+        unsafe {
+            (*this).stop_timers();
+            (*this).js_value.finalize();
+        }
+        Self::deref(this);
     }
 
     pub fn flush_data_and_reset_timeout(&mut self) {
@@ -497,7 +507,7 @@ impl PostgresSQLConnection {
             event_loop.exit();
         }
         self.ref_and_close(Some(value));
-        self.deref();
+        Self::deref(self as *mut Self);
         self.update_has_pending_activity();
     }
 
@@ -684,10 +694,10 @@ impl PostgresSQLConnection {
         event_loop.enter();
         SocketMonitor::read(data);
         // reset the head to the last message so remaining reflects the right amount of bytes
-        self.read_buffer.head = self.last_message_start;
+        self.read_buffer.get_mut().head = self.last_message_start.get();
 
         let mut done = false;
-        if self.read_buffer.remaining().is_empty() {
+        if self.read_buffer.get_mut().remaining().is_empty() {
             let mut consumed: usize = 0;
             let mut offset: usize = 0;
             let reader = protocol::StackReader::init(data, &mut consumed, &mut offset);

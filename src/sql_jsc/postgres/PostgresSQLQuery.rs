@@ -253,31 +253,32 @@ impl PostgresSQLQuery {
 
     pub fn on_result(&mut self, command_tag_str: &[u8], global_object: &JSGlobalObject, connection: JSValue, is_last: bool) {
         self.ref_();
-        // SAFETY: raw ptr derived from the exclusive `&mut self`; the guard fires at
-        // end-of-scope after all other borrows of `self` have ended. `ref_()` above
-        // guarantees the count stays >0 until this guard runs.
+        // SAFETY: `this_ptr` is derived from the exclusive `&mut self`. After this cast we
+        // route *every* field access through `this_ptr` and never touch `self` again, so
+        // under Stacked Borrows no parent-`Unique` use pops `this_ptr`'s SharedReadWrite
+        // before the guards fire. `ref_()` above keeps the count >0 until `_deref` runs.
         let this_ptr = self as *mut Self;
         let _deref = scopeguard::guard(this_ptr, |p| unsafe { Self::deref_(p) });
-        if is_last {
-            self.status = Status::Success;
-        } else {
-            self.status = Status::PartialResponse;
+        unsafe {
+            (*this_ptr).status = if is_last { Status::Success } else { Status::PartialResponse };
         }
         let tag = CommandTag::init(command_tag_str);
         let js_tag = match tag.to_js_tag(global_object) {
             Ok(v) => v,
-            Err(e) => return self.on_js_error(global_object.take_exception(e), global_object),
+            Err(e) => return unsafe { (*this_ptr).on_js_error(global_object.take_exception(e), global_object) },
         };
         js_tag.ensure_still_alive();
 
-        let Some(this_value) = self.this_value.try_get() else { return };
-        let _last = scopeguard::guard((), |_| {
+        let Some(this_value) = (unsafe { (*this_ptr).this_value.try_get() }) else { return };
+        // Capture the raw pointer (not `&mut self.this_value`) so the guard holds no
+        // borrow across the `get_target` call below, which itself reads `this_value`.
+        let _last = scopeguard::guard(this_ptr, |p| {
             if is_last {
                 Self::allow_gc(this_value, global_object);
-                self.this_value.downgrade();
+                unsafe { (*p).this_value.downgrade() };
             }
         });
-        let Some(target_value) = self.get_target(global_object, is_last) else { return };
+        let Some(target_value) = (unsafe { (*this_ptr).get_target(global_object, is_last) }) else { return };
 
         // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM, no other live borrow.
         let vm = unsafe { &mut *crate::jsc::VirtualMachine::get() };

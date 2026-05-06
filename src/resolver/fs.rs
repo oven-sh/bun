@@ -1937,8 +1937,10 @@ impl RealFS {
         // slice to `&mut shared_buffer` across the read/truncate/grow loop. The final slice is
         // reconstituted with `from_raw_parts` (matches Zig's `[]const u8` return). The
         // non-shared-buffer branch owns its allocation and returns early with `Cow::Owned`.
-        let mut file_contents_ptr: *const u8 = b"".as_ptr();
-        let mut file_contents_len: usize = 0;
+        // Definite-init: the read `loop` below assigns both before any `break`/read; the
+        // `else` (non-shared-buffer) arm always early-returns.
+        let mut file_contents_ptr: *const u8;
+        let mut file_contents_len: usize;
         // When we're serving a JavaScript-like file over HTTP, we do not want to cache the contents in memory
         // This imposes a performance hit because not reading from disk is faster than reading from disk
         // Part of that hit is allocating a temporary buffer to store the file contents in

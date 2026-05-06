@@ -2314,7 +2314,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if global.has_exception() {
             return Ok(JSValue::ZERO);
         }
-        let mut handlers = Handlers::from_js(global, socket_obj, false)?;
+        let handlers = Handlers::from_js(global, socket_obj, false)?;
         if global.has_exception() {
             return Ok(JSValue::ZERO);
         }
@@ -3425,5 +3425,5 @@ pub fn js_set_socket_options(global: &JSGlobalObject, callframe: &CallFrame) -> 
 //   source:     src/runtime/socket/socket.zig (2286 lines)
 //   confidence: medium
 //   todos:      16
-//   notes:      `twin`/`DuplexUpgradeContext.tls`/`NativeCallbacks::H2` switched to IntrusiveRc (intrusive RefCount + raw *T crosses FFI). `handlers: Rc<UnsafeCell<Handlers>>` for sound interior-mut (reload()/Scope) — Phase B may flatten to raw *mut or IntrusiveRc to converge with Listener.rs. DuplexUpgradeContext upgrade/task need MaybeUninit two-phase init (self-referential ctx). Handlers scope.exit() defer-pattern reshaped to tail-calls; verify ordering vs Zig defers.
+//   notes:      `twin`/`DuplexUpgradeContext.tls`/`NativeCallbacks::H2` switched to IntrusiveRc (intrusive RefCount + raw *T crosses FFI). `handlers: Option<NonNull<Handlers>>` (faithful `?*Handlers`) — server-mode points at embedded `Listener.handlers` so `@fieldParentPtr` arithmetic in get_listener/mark_inactive stays valid; client-mode is `Box::into_raw` freed by `Handlers::mark_inactive`. `get_handlers` returns raw `*mut`; callers reborrow per-access and never hold `&mut Handlers` across `callback.call()` (reload() may overwrite the pointee). DuplexUpgradeContext upgrade/task need MaybeUninit two-phase init (self-referential ctx). Handlers scope.exit() defer-pattern reshaped to tail-calls; verify ordering vs Zig defers.
 // ──────────────────────────────────────────────────────────────────────────

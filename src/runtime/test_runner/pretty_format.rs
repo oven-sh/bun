@@ -385,10 +385,24 @@ impl<'a> Formatter<'a> {
     }
 }
 
-pub struct ZigFormatter<'a> {
-    pub formatter: &'a mut Formatter<'a>,
-    pub global: &'a JSGlobalObject,
+/// `Display` adapter equivalent to Zig's `JestPrettyFormat.Formatter.ZigFormatter`.
+///
+/// The Zig spec (`pretty_format.zig:243-263`) takes `self: ZigFormatter` *by
+/// value* with a raw `*Formatter` field, so writing through `self.formatter.*`
+/// carries no aliasing constraint. `Display::fmt` only gives us `&self`, so the
+/// mutable handle is parked behind a `Cell` and moved out for the duration of
+/// the call — this preserves unique-borrow provenance without the
+/// `&shared → *const → *mut` cast that would be UB under Stacked Borrows.
+pub struct ZigFormatter<'a, 'b> {
+    pub formatter: Cell<Option<&'a mut Formatter<'b>>>,
+    pub global: &'b JSGlobalObject,
     pub value: JSValue,
+}
+
+impl<'a, 'b> ZigFormatter<'a, 'b> {
+    pub fn new(formatter: &'a mut Formatter<'b>, global: &'b JSGlobalObject, value: JSValue) -> Self {
+        Self { formatter: Cell::new(Some(formatter)), global, value }
+    }
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
@@ -397,27 +411,33 @@ pub enum WriteError {
     UhOh,
 }
 
-impl<'a> core::fmt::Display for ZigFormatter<'a> {
+impl core::fmt::Display for ZigFormatter<'_, '_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // TODO(port): UB — &self→&mut cast; Display takes &self but we need &mut Formatter.
-        // Wrap `formatter` in RefCell or change protocol. NOT sound as written.
-        let this = unsafe { &mut *(self as *const Self as *mut Self) };
-        let single = [this.value];
-        this.formatter.remaining_values = &single;
-        // PORT NOTE: defer { self.formatter.remaining_values = &[] }
-        this.formatter.global_this = this.global;
-        let tag = match Tag::get(this.value, this.global) {
-            Ok(t) => t,
-            Err(_) => return Err(core::fmt::Error),
-        };
-        // TODO(port): core::fmt::Formatter is a text sink; format() now takes bun_io::Write.
-        // Phase B should adapt via bun_io::FmtAdapter or rework ZigFormatter to write bytes directly.
-        let mut adapter = bun_io::FmtAdapter::new(f);
-        let result = this
+        // Move the unique `&mut Formatter` out of the cell for the body;
+        // re-seat it (and clear `remaining_values`) on the way out so the
+        // adapter mirrors Zig's `defer` and stays reusable.
+        let formatter: &mut Formatter<'_> = self
             .formatter
-            .format::<_, false>(tag, &mut adapter, this.value, this.global)
-            .map_err(|_| core::fmt::Error);
-        this.formatter.remaining_values = &[];
+            .take()
+            .expect("ZigFormatter::fmt re-entered or used after consumption");
+
+        let single = [self.value];
+        formatter.remaining_values = &single;
+        formatter.global_this = self.global;
+
+        let result = (|| {
+            let tag = Tag::get(self.value, self.global).map_err(|_| core::fmt::Error)?;
+            // TODO(port): core::fmt::Formatter is a text sink; format() takes bun_io::Write.
+            // Bridge via bun_io::FmtAdapter so ZigFormatter can write bytes through `f`.
+            let mut adapter = bun_io::FmtAdapter::new(f);
+            formatter
+                .format::<_, false>(tag, &mut adapter, self.value, self.global)
+                .map_err(|_| core::fmt::Error)
+        })();
+
+        // Mirrors Zig `defer self.formatter.remaining_values = &.{}`.
+        formatter.remaining_values = &[];
+        self.formatter.set(Some(formatter));
         result
     }
 }

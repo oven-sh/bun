@@ -176,7 +176,8 @@ impl FileResponseStream {
         this.reader.set_parent(this);
 
         this.r#ref();
-        let _guard = scopeguard::guard((), |_| this.deref());
+        let this_ptr: *mut FileResponseStream = this;
+        let _guard = scopeguard::guard((), move |_| unsafe { Self::deref(this_ptr) });
 
         let start_result = if opts.offset > 0 {
             this.reader
@@ -511,14 +512,20 @@ impl FileResponseStream {
     pub fn r#ref(&self) {
         self.ref_count.set(self.ref_count.get() + 1);
     }
-    pub fn deref(&self) {
-        let n = self.ref_count.get() - 1;
-        self.ref_count.set(n);
+    /// # Safety
+    /// `this` must point to a live `FileResponseStream` allocated via
+    /// `Box::into_raw` in `start()`. Mirrors Zig `RefCount.deref(*Self)` —
+    /// takes a raw mut pointer (not `&self`) so the `Box::from_raw` on the
+    /// zero-ref path has write provenance back to the original allocation
+    /// instead of being laundered through a `&T -> *const T -> *mut T` cast.
+    pub unsafe fn deref(this: *mut Self) {
+        let n = (*this).ref_count.get() - 1;
+        (*this).ref_count.set(n);
         if n == 0 {
-            // SAFETY: `self` was allocated via Box::into_raw in `start()` and the
-            // intrusive ref_count just reached zero — no other live references.
-            // Dropping the Box runs `impl Drop` (fd close) and field drops.
-            unsafe { drop(Box::from_raw(self as *const Self as *mut Self)) };
+            // SAFETY: intrusive ref_count just reached zero — no other live
+            // references. Dropping the Box runs `impl Drop` (fd close) and
+            // field drops.
+            drop(Box::from_raw(this));
         }
     }
 }

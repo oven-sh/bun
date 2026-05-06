@@ -1223,7 +1223,7 @@ impl RunCommand {
             } else if bun_core::env::GIT_SHA_SHORT.is_empty() {
                 strings::w("bun-node")
             } else {
-                strings::w(const_str::concat!("bun-node-", bun_core::env::GIT_SHA_SHORT))
+                strings::w(const_format::concatcp!("bun-node-", bun_core::env::GIT_SHA_SHORT))
             };
             target_path_buffer[prefix.len() + len..][..dir_name.len()].copy_from_slice(dir_name);
             let dir_slice_len = prefix.len() + len + dir_name.len();

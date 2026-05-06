@@ -232,8 +232,16 @@ impl<const SSL: bool> NewSocket<SSL> {
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         self.ref_();
-        let _guard = scopeguard::guard((), |_| self.deref());
         // PORT NOTE: reshaped for borrowck — Zig used `defer this.deref()`.
+        // Capture as raw *mut so the guard closure doesn't hold a borrow of
+        // `self` across the body's mutations, and so `deref(&mut self)` gets
+        // write provenance for the last-ref free.
+        let self_ptr: *mut Self = self;
+        let _guard = scopeguard::guard((), move |_| {
+            // SAFETY: self_ptr is this fn's `&mut self`; body borrows have ended
+            // by guard-drop time.
+            unsafe { &mut *self_ptr }.deref();
+        });
 
         let vm = self.get_handlers().vm;
         let group = vm.rare_data().bun_connect_group(vm, SSL);

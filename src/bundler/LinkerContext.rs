@@ -2900,11 +2900,9 @@ impl<'a> LinkerContext<'a> {
                         let symbol = unsafe { &mut *self.graph.symbols.get(tracker.import_ref).unwrap() };
                         symbol.import_item_status = ImportItemStatus::Missing;
                         result.kind = MatchImportKind::NormalAndNamespace;
+                        result.namespace_ref = tracker.import_ref;
                         result.alias = named_import.alias.unwrap();
                         result.name_loc = named_import.alias_loc.unwrap_or(Loc::EMPTY);
-                        result.source_index = next_tracker.source_index.get();
-                        result.namespace_ref = next_tracker.import_ref;
-                        result.r#ref = next_tracker.import_ref;
                     }
                 }
 

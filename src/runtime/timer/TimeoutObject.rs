@@ -57,8 +57,11 @@ pub mod js {
     /// Ownership of `this` transfers to the wrapper; freed via `finalize`.
     #[inline]
     pub fn to_js(this: *mut TimeoutObject, global: &JSGlobalObject) -> JSValue {
-        // SAFETY: `global` is live; `this` was `Box::into_raw`'d by caller.
-        let value = unsafe { Timeout__create(global as *const _ as *mut _, this) };
+        // SAFETY: `global.as_ptr()` yields the FFI `*mut` via the opaque
+        // `UnsafeCell` handle (interior-mutable provenance — sound for C++ to
+        // write through; see `JSGlobalObject::as_ptr`). `this` was
+        // `Box::into_raw`'d by caller and ownership transfers to the wrapper.
+        let value = unsafe { Timeout__create(global.as_ptr(), this) };
         #[cfg(debug_assertions)]
         {
             // Zig: `bun.assert(value__.as(Timeout).? == this)` — round-trip ABI check.

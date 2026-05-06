@@ -559,15 +559,15 @@ impl AbortHandler {
     pub fn install() {
         #[cfg(unix)]
         {
-            // TODO(port): std.posix.Sigaction → use bun_sys::posix wrapper or libc directly.
-            let action = bun_sys::posix::Sigaction {
-                handler: bun_sys::posix::SigHandler::SigAction(Self::posix_signal_handler),
-                mask: bun_sys::posix::sigemptyset(),
-                flags: bun_sys::posix::SA::SIGINFO
-                    | bun_sys::posix::SA::RESTART
-                    | bun_sys::posix::SA::RESETHAND,
-            };
-            bun_sys::posix::sigaction(bun_sys::posix::SIG::INT, &action, None);
+            // SAFETY: libc::sigaction is #[repr(C)] POD; all-zero is a valid value (fields overwritten below).
+            let mut act: libc::sigaction = unsafe { core::mem::zeroed() };
+            act.sa_sigaction = Self::posix_signal_handler as *const () as usize;
+            act.sa_flags = libc::SA_SIGINFO | libc::SA_RESTART | libc::SA_RESETHAND;
+            // SAFETY: sa_mask is a valid out-pointer; act is on the stack.
+            unsafe {
+                libc::sigemptyset(&mut act.sa_mask);
+                libc::sigaction(libc::SIGINT, &act, core::ptr::null_mut());
+            }
         }
         #[cfg(not(unix))]
         {

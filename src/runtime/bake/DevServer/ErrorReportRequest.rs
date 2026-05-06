@@ -255,7 +255,7 @@ impl ErrorReportRequest {
                     let file_idx = usize::try_from(index - 1).unwrap();
                     let abs_path = result.file_paths[file_idx];
                     frame.source_url = bun_str::String::init(abs_path);
-                    let relative_path_buf = path_buffer_pool().get();
+                    let mut relative_path_buf = path_buffer_pool::get();
                     let rel_path = ctx.dev().relative_path(&mut relative_path_buf, abs_path);
                     if frame.function_name.value.zig_string().slice() == rel_path {
                         frame.function_name = bun_str::String::EMPTY;

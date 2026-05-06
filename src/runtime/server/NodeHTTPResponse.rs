@@ -1970,9 +1970,7 @@ pub extern "C" fn NodeHTTPResponse__createForJS(
             sec_websocket_protocol: Box::default(),
             sec_websocket_extensions: Box::default(),
         },
-        server: AnyServer {
-            ptr: AnyServer::Ptr::from(any_server_tag as *mut c_void),
-        },
+        server: any_server_from_packed(any_server_tag),
         raw_response: Some(raw_response),
         body_read_state: if *has_body {
             BodyReadState::Pending
@@ -1982,7 +1980,7 @@ pub extern "C" fn NodeHTTPResponse__createForJS(
         flags: Flags::default(),
         poll_ref: jsc::Ref::default(),
         body_read_ref: jsc::Ref::default(),
-        promise: Strong::empty(),
+        promise: StrongOptional::empty(),
         buffered_request_body_data_during_pause: BabyList::default(),
         bytes_written: 0,
         auto_flusher: AutoFlusher::default(),

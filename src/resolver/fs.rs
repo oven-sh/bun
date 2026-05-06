@@ -187,8 +187,19 @@ pub struct FilenameStore(());
 static DIRNAME_STORE_ZST: DirnameStore = DirnameStore(());
 static FILENAME_STORE_ZST: FilenameStore = FilenameStore(());
 
+// PORT NOTE: external locks serializing formation of `&mut *backing()`. The backing's
+// own internal mutex is acquired *inside* `append(&mut self, ...)` — i.e. *after* the
+// `&mut self` auto-ref has already been formed, which is too late under Stacked Borrows:
+// two threads could each materialize a live `&mut BSSStringList` to the same singleton
+// before either takes the inner lock (aliased `&mut`, UB). Zig calls go through a raw
+// `*Self` with no noalias guarantee, so its inner mutex suffices; in Rust we must hold
+// an outer lock across the auto-ref so only one `&mut` exists at a time.
+// TODO(port): `bun_threading::Mutex` has no `const fn new()`; LazyLock until it does.
+static DIRNAME_STORE_MUTEX: std::sync::LazyLock<Mutex> = std::sync::LazyLock::new(Mutex::default);
+static FILENAME_STORE_MUTEX: std::sync::LazyLock<Mutex> = std::sync::LazyLock::new(Mutex::default);
+
 macro_rules! string_store_impl {
-    ($t:ty, $zst:ident, $backing:ident, $bty:ty) => {
+    ($t:ty, $zst:ident, $backing:ident, $bty:ty, $mutex:ident) => {
         impl $t {
             #[inline]
             pub fn instance() -> &'static Self { &$zst }
@@ -202,9 +213,11 @@ macro_rules! string_store_impl {
                 $backing()
             }
             pub fn append(&self, value: &[u8]) -> core::result::Result<&'static [u8], AllocError> {
-                // SAFETY: `$backing()` is the process-lifetime singleton; `append`
-                // serializes mutation through its internal mutex. The `&mut` is
-                // scoped to this call only (no `&'static mut` escapes).
+                $mutex.lock();
+                let _guard = scopeguard::guard((), |_| $mutex.unlock());
+                // SAFETY: `$mutex` is held, so this is the only live `&mut` to the
+                // process-lifetime singleton; `append` further serializes mutation
+                // through its (now-redundant) internal mutex.
                 let s = unsafe { (*Self::backing()).append(value)? };
                 // SAFETY: `append` returns a slice into the singleton's backing storage
                 // (heap-owned by a `'static` `BSSStringList` or a leaked mi_malloc); the
@@ -213,24 +226,34 @@ macro_rules! string_store_impl {
             }
             #[inline]
             pub fn exists(&self, value: &[u8]) -> bool {
-                // SAFETY: see `append` above; `&mut` scoped to this call only.
+                $mutex.lock();
+                let _guard = scopeguard::guard((), |_| $mutex.unlock());
+                // SAFETY: `$mutex` held — no concurrent `&mut` to the singleton.
                 unsafe { (*Self::backing()).exists(value) }
             }
         }
         impl strings::Appender for &'static $t {
             fn append(&mut self, s: &[u8]) -> core::result::Result<&[u8], AllocError> {
-                // SAFETY: see `<$t>::append`; `&mut` scoped to this call only.
-                unsafe { (*<$t>::backing()).append(s) }
+                $mutex.lock();
+                let _guard = scopeguard::guard((), |_| $mutex.unlock());
+                // SAFETY: `$mutex` held — sole live `&mut` to the singleton.
+                let r = unsafe { (*<$t>::backing()).append(s)? };
+                // SAFETY: re-erase to `'static`; storage owned by the process-lifetime singleton.
+                Ok(unsafe { core::slice::from_raw_parts(r.as_ptr(), r.len()) })
             }
             fn append_lower_case(&mut self, s: &[u8]) -> core::result::Result<&[u8], AllocError> {
-                // SAFETY: see `<$t>::append`; `&mut` scoped to this call only.
-                unsafe { (*<$t>::backing()).append_lower_case(s) }
+                $mutex.lock();
+                let _guard = scopeguard::guard((), |_| $mutex.unlock());
+                // SAFETY: `$mutex` held — sole live `&mut` to the singleton.
+                let r = unsafe { (*<$t>::backing()).append_lower_case(s)? };
+                // SAFETY: re-erase to `'static`; storage owned by the process-lifetime singleton.
+                Ok(unsafe { core::slice::from_raw_parts(r.as_ptr(), r.len()) })
             }
         }
     };
 }
-string_store_impl!(DirnameStore, DIRNAME_STORE_ZST, dirname_store_backing, DirnameStoreBacking);
-string_store_impl!(FilenameStore, FILENAME_STORE_ZST, filename_store_backing, FilenameStoreBacking);
+string_store_impl!(DirnameStore, DIRNAME_STORE_ZST, dirname_store_backing, DirnameStoreBacking, DIRNAME_STORE_MUTEX);
+string_store_impl!(FilenameStore, FILENAME_STORE_ZST, filename_store_backing, FilenameStoreBacking, FILENAME_STORE_MUTEX);
 
 pub struct FileSystem {
     pub top_level_dir: &'static [u8],
@@ -405,6 +428,17 @@ pub mod dir_entry {
     /// Port of `DirEntry.EntryStore` (`allocators.BSSList<Entry, files>`).
     /// ZST handle resolving to the `entry_store_backing()` singleton.
     pub struct EntryStore(());
+
+    // PORT NOTE: external lock serializing formation of `&mut *entry_store_backing()`.
+    // `BSSList::append(&mut self, ...)` only acquires its internal mutex *after* the
+    // `&mut self` auto-ref has been formed; concurrent `EntryStore::append` calls (from
+    // `DirEntry::add_entry` across the resolver thread pool) would otherwise each hold a
+    // live `&mut BSSList` to the same singleton — aliased `&mut`, UB. Zig's `*Self` raw
+    // pointer carries no noalias, so its inner mutex suffices there; Rust needs the
+    // outer lock so only one `&mut` exists at a time.
+    static ENTRY_STORE_MUTEX: std::sync::LazyLock<Mutex> =
+        std::sync::LazyLock::new(Mutex::default);
+
     impl EntryStore {
         #[inline]
         pub fn instance() -> *mut EntryStoreBacking {
@@ -415,8 +449,11 @@ pub mod dir_entry {
             entry_store_backing()
         }
         pub fn append(value: Entry) -> core::result::Result<*mut Entry, AllocError> {
-            // SAFETY: process-lifetime singleton; `append` serializes via its internal
-            // mutex. The `&mut` is scoped to this call only (no `&'static mut` escapes).
+            ENTRY_STORE_MUTEX.lock();
+            let _guard = scopeguard::guard((), |_| ENTRY_STORE_MUTEX.unlock());
+            // SAFETY: `ENTRY_STORE_MUTEX` is held, so this is the only live `&mut` to
+            // the process-lifetime singleton; `append` further serializes via its
+            // (now-redundant) internal mutex.
             let r = unsafe { (*Self::instance()).append(value)? };
             Ok(r as *mut Entry)
         }
@@ -930,46 +967,46 @@ impl EntriesMap {
         // `&mut` only for the duration of a single operation at the call site.
         entries_option_map()
     }
-    /// SAFETY: returns `&'static mut` into the BSSMap singleton; two calls
-    /// alias the same slot. Caller must hold `RealFS.entries_mutex` and not
-    /// retain another live `&mut EntriesOption` to the same key.
-    pub unsafe fn get(&self, key: &[u8]) -> Option<&'static mut EntriesOption> {
-        // SAFETY: process-lifetime singleton; `&mut` scoped to this call.
+    /// SAFETY: forms a `&mut BSSMapInner` over the process-global singleton for
+    /// the duration of the call. Caller must hold `RealFS.entries_mutex` so no
+    /// other thread is inside any `EntriesMap` method concurrently. Returns a
+    /// raw `*mut EntriesOption` (matching Zig's `*EntriesOption`) — caller
+    /// forms a short-lived `&mut` at the use site under the same lock; do NOT
+    /// hand out a `&'static mut` (two callers would alias the same slot).
+    pub unsafe fn get(&self, key: &[u8]) -> Option<*mut EntriesOption> {
+        // SAFETY: caller holds `entries_mutex`; sole `&mut` to the singleton.
         let r = unsafe { (*self.inner()).get(key)? };
-        // SAFETY: re-erase to 'static; storage is the BSSMap singleton.
-        Some(unsafe { &mut *(r as *mut EntriesOption) })
+        Some(r as *mut EntriesOption)
     }
     /// SAFETY: see [`get`] — mutates the singleton map.
     pub unsafe fn get_or_put(&self, key: &[u8]) -> core::result::Result<allocators::Result, AllocError> {
-        // SAFETY: see `get` above; `&mut` scoped to this call only.
+        // SAFETY: caller holds `entries_mutex`; sole `&mut` to the singleton.
         unsafe { (*self.inner()).get_or_put(key) }
     }
     /// SAFETY: see [`get`].
-    pub unsafe fn at_index(&self, index: allocators::IndexType) -> Option<&'static mut EntriesOption> {
-        // SAFETY: see `get` above; `&mut` scoped to this call only.
+    pub unsafe fn at_index(&self, index: allocators::IndexType) -> Option<*mut EntriesOption> {
+        // SAFETY: caller holds `entries_mutex`; sole `&mut` to the singleton.
         let r = unsafe { (*self.inner()).at_index(index)? };
-        // SAFETY: re-erase to 'static; storage is the BSSMap singleton.
-        Some(unsafe { &mut *(r as *mut EntriesOption) })
+        Some(r as *mut EntriesOption)
     }
     /// SAFETY: see [`get`].
     pub unsafe fn put(
         &self,
         result: &mut allocators::Result,
         value: EntriesOption,
-    ) -> core::result::Result<&'static mut EntriesOption, AllocError> {
-        // SAFETY: see `get` above; `&mut` scoped to this call only.
+    ) -> core::result::Result<*mut EntriesOption, AllocError> {
+        // SAFETY: caller holds `entries_mutex`; sole `&mut` to the singleton.
         let r = unsafe { (*self.inner()).put(result, value)? };
-        // SAFETY: re-erase to 'static; storage is the BSSMap singleton.
-        Ok(unsafe { &mut *(r as *mut EntriesOption) })
+        Ok(r as *mut EntriesOption)
     }
     /// SAFETY: see [`get`] — mutates the singleton map.
     pub unsafe fn mark_not_found(&self, result: allocators::Result) {
-        // SAFETY: see `get` above; `&mut` scoped to this call only.
+        // SAFETY: caller holds `entries_mutex`; sole `&mut` to the singleton.
         unsafe { (*self.inner()).mark_not_found(result) }
     }
     /// SAFETY: see [`get`] — mutates the singleton map.
     pub unsafe fn remove(&self, key: &[u8]) -> bool {
-        // SAFETY: see `get` above; `&mut` scoped to this call only.
+        // SAFETY: caller holds `entries_mutex`; sole `&mut` to the singleton.
         unsafe { (*self.inner()).remove(key) }
     }
 }
@@ -1093,20 +1130,38 @@ impl RealFS {
         &mut self,
         index: allocators::IndexType,
         generation: Generation,
-    ) -> Option<&'static mut EntriesOption> {
-        // PORT NOTE: reshaped for borrowck — `entries.at_index` returns a `'static` borrow
-        // into the BSSMap singleton, decoupled from `&mut self`, so the readdir/error
-        // paths below can re-borrow `self` without overlap.
-        // SAFETY: `entries_mutex` is held by callers (Zig invariant); no other live
-        // `&mut EntriesOption` for this index exists in this scope.
-        let existing = unsafe { self.entries.at_index(index) }?;
-        if let EntriesOption::Entries(entries) = existing {
+    ) -> Option<*mut EntriesOption> {
+        // PORT NOTE: Zig fs.zig:613 does not lock here; in Rust we must, because every
+        // `EntriesMap` method auto-refs the global `BSSMapInner` to `&mut self`, and a
+        // concurrent `read_directory_with_iterator` (which *does* lock) would otherwise
+        // alias that `&mut` — UB under Stacked Borrows. Take `entries_mutex` for the
+        // whole operation so the `&mut BSSMapInner` is exclusive.
+        self.entries_mutex.lock();
+        let mutex_ptr = core::ptr::addr_of!(self.entries_mutex);
+        let _unlock_guard = scopeguard::guard((), move |_| {
+            // SAFETY: `mutex_ptr` points into `*self`, which outlives this guard.
+            unsafe { (*mutex_ptr).unlock() };
+        });
+
+        // PORT NOTE: `at_index` returns a raw `*mut EntriesOption` (matching Zig's
+        // `*EntriesOption`). Form short-lived `&mut` only at each use site below;
+        // never hand a `&'static mut` back to the caller.
+        // SAFETY: `entries_mutex` held — sole access to the singleton map.
+        let existing_ptr = unsafe { self.entries.at_index(index) }?;
+        // SAFETY: `entries_mutex` held; no other `&mut` to this slot in scope.
+        if let EntriesOption::Entries(entries) = unsafe { &mut *existing_ptr } {
             if entries.generation < generation {
                 let dir_path = entries.dir;
+                // PORT NOTE: capture raw ptrs to the in-place `DirEntry` fields, then
+                // drop the short-lived `&mut` before re-borrowing `self` for
+                // `readdir` / `read_directory_error` (Zig used `*DirEntry` directly).
+                let entries_ptr: *mut DirEntry = &mut **entries;
+                let prev_map_ptr: *mut dir_entry::EntryMap = &mut entries.data;
                 let handle = match bun_sys::open_dir_for_iteration(Fd::cwd(), dir_path) {
                     Ok(h) => h,
                     Err(err) => {
-                        entries.data.clear();
+                        // SAFETY: `entries_mutex` held; sole access to this slot.
+                        unsafe { (*prev_map_ptr).clear() };
                         return Some(
                             self.read_directory_error(dir_path, err.into())
                                 .expect("unreachable"),
@@ -1115,12 +1170,10 @@ impl RealFS {
                 };
                 let handle_dir = bun_sys::Dir::from_fd(handle);
                 // PORT NOTE: defer handle.close() → explicit close at exit points below.
-                // SAFETY: `entries.data` borrows the BSSMap singleton; raw-ptr lets us
-                // hand `&mut EntryMap` to `readdir` while still holding `entries` for
-                // the post-read clear/assign (Zig used `*DirEntry` directly).
-                let prev_map_ptr: *mut dir_entry::EntryMap = &mut entries.data;
                 let new_entry = match self.readdir(
                     false,
+                    // SAFETY: `entries_mutex` held; `readdir` does not touch
+                    // `self.entries`, so this `&mut EntryMap` is unaliased.
                     Some(unsafe { &mut *prev_map_ptr }),
                     dir_path,
                     generation,
@@ -1129,20 +1182,24 @@ impl RealFS {
                 ) {
                     Ok(e) => e,
                     Err(err) => {
-                        entries.data.clear();
+                        // SAFETY: see above.
+                        unsafe { (*prev_map_ptr).clear() };
                         handle_dir.close();
                         return Some(
                             self.read_directory_error(dir_path, err).expect("unreachable"),
                         );
                     }
                 };
-                entries.data.clear();
-                **entries = new_entry;
+                // SAFETY: `entries_mutex` held; sole access to this slot.
+                unsafe {
+                    (*prev_map_ptr).clear();
+                    *entries_ptr = new_entry;
+                }
                 handle_dir.close();
             }
         }
 
-        // SAFETY: see above — sole `&mut` to this slot at this point.
+        // SAFETY: `entries_mutex` held — sole access to the singleton map.
         unsafe { self.entries.at_index(index) }
     }
 

@@ -1352,7 +1352,7 @@ impl ExportStarContext {
 // the Phase-A draft; un-gates with `feature = "css"` once `BundlerStyleSheet`
 // is real.
 // ──────────────────────────────────────────────────────────────────────────
-#[cfg(feature = "css")]
+#[cfg(any())] // blocked_on(phase-c): body has ~10 type errors (DefaultArrayHashContext, MsgKind, ComposeFrom, *const [u8] BStr); not on -e/run critical path — re-gated for rung-1 link
 mod __css_validation {
     use super::*;
     use bun_collections::{ArrayHashMap, StringArrayHashMap};

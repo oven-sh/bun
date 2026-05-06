@@ -1428,16 +1428,19 @@ impl<'a> Transpiler<'a> {
                         let properties: &mut [js_ast::G::Property] = obj.properties.slice_mut();
                         if !properties.is_empty() {
                             let n = properties.len();
-                            let mut decls: Vec<js_ast::G::Decl> = Vec::with_capacity(n);
-                            // SAFETY: capacity reserved; every read below is
-                            // gated on `< count` or via the `visited` index
-                            // (which only ever stores already-written slots).
-                            // Mirrors Zig `expandToCapacity()`.
-                            unsafe { decls.set_len(n) };
+                            // PORT NOTE: Zig `expandToCapacity()` / `allocator.alloc(Symbol, n)`
+                            // leave slots uninitialized, which is inert in Zig.
+                            // The loop below writes sparsely at index `i` and
+                            // `continue`s on `"default"` / duplicate keys, so
+                            // some slots are never assigned. In Rust an uninit
+                            // live `Vec<T>` element is UB the moment it is
+                            // observed (truncate/into_boxed_slice/index-assign),
+                            // so pre-fill every slot with `Default` instead of
+                            // `set_len`. PERF(port): was `expandToCapacity()`.
+                            let mut decls: Vec<js_ast::G::Decl> =
+                                vec![js_ast::G::Decl::default(); n];
 
-                            symbols.reserve_exact(n);
-                            // SAFETY: as above; `Symbol` has no `Drop`.
-                            unsafe { symbols.set_len(n) };
+                            symbols.resize_with(n, Default::default);
                             // PORT NOTE: `S::ExportClause.items: *mut [ClauseItem]`
                             // is arena-owned; `ClauseItem: Default` so
                             // `alloc_slice_fill_default` is fine.

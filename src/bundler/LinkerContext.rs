@@ -2259,12 +2259,72 @@ impl<'a> LinkerContext<'a> {
 // Local imports for the un-gated bodies. Kept here (not at the top of the
 // file) so the still-gated impl block above keeps compiling against its own
 // import set until it's removed.
-use crate::bundle_v2::{ImportTrackerIterator, ImportTrackerStatus};
 use bun_js_parser::ast::bundled_ast::Flags as AstFlags;
 use bun_js_parser::{
     DeclaredSymbolList, DependencyList, ImportItemStatus, PartSymbolUseMap,
 };
 use bun_js_parser::ast::symbol::Use as SymbolUse;
+
+/// `bundle_v2.zig:ImportTracker.Status`. Mirrors the still-gated
+/// `bundle_v2::ImportTrackerStatus` (inside the Phase-A `#[cfg(any())]` draft);
+/// collapses to a re-export once `bundle_v2` un-gates it.
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum ImportTrackerStatus {
+    /// The imported file has no matching export
+    #[default]
+    NoMatch,
+    /// The imported file has a matching export
+    Found,
+    /// The imported file is CommonJS and has unknown exports
+    Cjs,
+    /// The import is missing but there is a dynamic fallback object
+    DynamicFallback,
+    /// The import is missing but there is a dynamic fallback object
+    /// and the file was originally CommonJS.
+    DynamicFallbackInteropDefault,
+    /// The import was treated as a CommonJS import but the file is known to have no exports
+    CjsWithoutExports,
+    /// The imported file was disabled by mapping it to false in the "browser"
+    /// field of package.json
+    Disabled,
+    /// The imported file is external and has unknown exports
+    External,
+    /// This is a missing re-export in a TypeScript file, so it's probably a type
+    ProbablyTypescriptType,
+}
+
+/// `bundle_v2.zig:ImportTracker.Iterator`. See `ImportTrackerStatus` above.
+#[derive(Default)]
+pub struct ImportTrackerIterator {
+    pub status: ImportTrackerStatus,
+    pub value: ImportTracker,
+    pub import_data: Box<[crate::ImportData]>,
+}
+
+/// CYCLEBREAK FORWARD_DECL: `bun_resolve_builtins::HardcodedModule::Alias::has`.
+/// `bun_resolve_builtins` is not yet a dependency of `bun_bundler` (Cargo.toml
+/// `TODO(b2-blocked)`); mirror the resolver's local stub so
+/// `match_import_with_export` type-checks. Real lookup wires up when the dep
+/// lands — until then no browser-polyfill-specific note is emitted (matches
+/// `linker.rs::hardcoded_module`).
+mod resolve_builtins_shim {
+    pub mod HardcodedModule {
+        pub mod Alias {
+            #[inline]
+            pub fn has(_name: &[u8], _target: super::super::RuntimeTarget, _opts: super::AliasOptions) -> bool {
+                // TODO(b2-blocked): bun_resolve_builtins — real lookup table.
+                false
+            }
+        }
+        #[derive(Default, Clone, Copy)]
+        pub struct AliasOptions {
+            pub rewrite_jest_for_tests: bool,
+        }
+    }
+    #[derive(Clone, Copy)]
+    pub enum RuntimeTarget { Bun }
+}
 
 /// Field-wise eq for `ImportTracker` — `crate::ImportTracker` (the
 /// `ungate_support` flavour) intentionally does not derive `PartialEq` so the

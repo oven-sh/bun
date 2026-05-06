@@ -187,7 +187,7 @@ pub mod lib_info {
         // SAFETY: request is live until the FilePoll callback fires.
         debug_assert!(unsafe { (*request).backend.as_libinfo().machport } != 0);
         let poll = FilePoll::init(
-            this.vm,
+            this.vm(),
             // TODO: WHAT?????????
             sys::Fd::from_native(i32::MAX - 1),
             Default::default(),
@@ -199,7 +199,7 @@ pub mod lib_info {
         // SAFETY: see above.
         let machport = unsafe { (*request).backend.as_libinfo().machport };
         let rc = poll.register_with_fd(
-            this.vm.event_loop_handle.unwrap(),
+            this.vm().event_loop_handle.unwrap(),
             Async::PollKind::Machport,
             Async::PollMode::OneShot,
             // SAFETY: bitcast u32 mach_port → i32 fd, matches Zig @bitCast
@@ -207,7 +207,7 @@ pub mod lib_info {
         );
         debug_assert!(matches!(rc, sys::Result::Ok(_)));
 
-        poll.enable_keeping_process_alive(this.vm.event_loop());
+        poll.enable_keeping_process_alive(this.vm().event_loop());
         this.request_sent(global_this.bun_vm());
 
         promise_value
@@ -349,7 +349,7 @@ pub mod lib_uv_backend {
             (*request).backend.as_libc_uv_mut().data = request as *mut c_void;
             let promise = (*request).head.promise.value();
             let rc = libuv::uv_getaddrinfo(
-                this.vm.uv_loop(),
+                this.vm().uv_loop(),
                 (*request).backend.as_libc_uv_mut(),
                 Some(on_raw_libuv_complete),
                 host.as_ptr() as *const c_char,
@@ -505,7 +505,7 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
             head: CAresLookup {
                 // SAFETY: resolver is a live intrusive-RC m_ctx; clone_from_raw bumps the embedded ref_count.
                 resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::clone_from_raw(r) }),
-                global_this,
+                global_this: global_this as *const JSGlobalObject,
                 promise: JSPromise::Strong::init(global_this),
                 poll_ref,
                 allocated: false,
@@ -615,7 +615,7 @@ impl GetHostByAddrInfoRequest {
             head: CAresReverse {
                 // SAFETY: resolver is a live intrusive-RC m_ctx; clone_from_raw bumps the embedded ref_count.
                 resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::clone_from_raw(r) }),
-                global_this,
+                global_this: global_this as *const JSGlobalObject,
                 promise: JSPromise::Strong::init(global_this),
                 poll_ref,
                 allocated: false,
@@ -677,7 +677,7 @@ impl GetHostByAddrInfoRequest {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct CAresNameInfo {
-    pub global_this: &'static JSGlobalObject, // JSC_BORROW
+    pub global_this: *const JSGlobalObject, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
     pub promise: JSPromise::Strong,
     pub poll_ref: KeepAlive,
     pub allocated: bool,
@@ -690,8 +690,7 @@ impl CAresNameInfo {
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(global_this.bun_vm());
         Box::into_raw(Box::new(Self {
-            // SAFETY: JSGlobalObject lives for the program's JS lifetime
-            global_this: unsafe { core::mem::transmute::<&JSGlobalObject, &'static JSGlobalObject>(global_this) },
+            global_this: global_this as *const JSGlobalObject,
             promise: JSPromise::Strong::init(global_this),
             poll_ref,
             allocated: true,
@@ -736,15 +735,13 @@ impl CAresNameInfo {
     }
 
     /// Conditionally free a heap-allocated tail node. Head nodes (`allocated == false`)
-    /// are inline fields of the parent `*Request` and freed when that Box drops.
+    /// are inline fields of the parent `*Request` (or a stack local moved out of it) and
+    /// are dropped exactly once by their owner; this is a no-op for them.
     /// SAFETY: `this` must point at a live node; if `(*this).allocated`, it must be the
     /// exact pointer returned by `Box::into_raw` in `init()`.
-    // TODO(port): callers reach this via &mut self methods — reshape those to *mut Self in Phase B.
     pub unsafe fn destroy(this: *mut Self) {
         if (*this).allocated {
             drop(Box::from_raw(this));
-        } else {
-            core::ptr::drop_in_place(this);
         }
     }
 }
@@ -812,7 +809,7 @@ impl GetNameInfoRequest {
             hash,
             cache: CacheConfig::default(),
             head: CAresNameInfo {
-                global_this: unsafe { core::mem::transmute(global_this) },
+                global_this: global_this as *const JSGlobalObject,
                 promise: JSPromise::Strong::init(global_this),
                 poll_ref,
                 allocated: false,
@@ -1064,8 +1061,7 @@ impl GetAddrInfoRequest {
             head: DNSLookup {
                 // SAFETY: resolver is a live intrusive-RC m_ctx; clone_from_raw bumps the embedded ref_count.
                 resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::clone_from_raw(r) }),
-                // SAFETY: JSGlobalObject lives for the program's JS lifetime
-                global_this: unsafe { core::mem::transmute(global_this) },
+                global_this: global_this as *const JSGlobalObject,
                 promise: JSPromise::Strong::init(global_this),
                 poll_ref,
                 allocated: false,
@@ -1256,7 +1252,7 @@ impl GetAddrInfoRequest {
 
 pub struct CAresReverse {
     pub resolver: Option<bun_ptr::IntrusiveRc<Resolver>>, // SHARED (intrusive — Resolver embeds ref_count and crosses FFI as m_ctx)
-    pub global_this: &'static JSGlobalObject, // JSC_BORROW
+    pub global_this: *const JSGlobalObject, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
     pub promise: JSPromise::Strong,
     pub poll_ref: KeepAlive,
     pub allocated: bool,
@@ -1271,8 +1267,7 @@ impl CAresReverse {
         Box::into_raw(Box::new(Self {
             // SAFETY: resolver is a live intrusive-RC m_ctx; clone_from_raw bumps the embedded ref_count.
             resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::clone_from_raw(r) }),
-            // SAFETY: JSGlobalObject lives for the program's JS lifetime
-            global_this: unsafe { core::mem::transmute(global_this) },
+            global_this: global_this as *const JSGlobalObject,
             promise: JSPromise::Strong::init(global_this),
             poll_ref,
             allocated: true,
@@ -1321,13 +1316,11 @@ impl CAresReverse {
     }
 
     /// SAFETY: `this` must point at a live node; if `(*this).allocated`, it must be the
-    /// exact pointer returned by `Box::into_raw` in `init()`.
-    // TODO(port): callers reach this via &mut self methods — reshape those to *mut Self in Phase B.
+    /// exact pointer returned by `Box::into_raw` in `init()`. Head nodes (`!allocated`)
+    /// are dropped by their owner; this is a no-op for them.
     pub unsafe fn destroy(this: *mut Self) {
         if (*this).allocated {
             drop(Box::from_raw(this));
-        } else {
-            core::ptr::drop_in_place(this);
         }
     }
 }
@@ -1345,7 +1338,7 @@ impl Drop for CAresReverse {
 
 pub struct CAresLookup<T: CAresRecordType> {
     pub resolver: Option<bun_ptr::IntrusiveRc<Resolver>>, // SHARED (intrusive — Resolver embeds ref_count and crosses FFI as m_ctx)
-    pub global_this: &'static JSGlobalObject, // JSC_BORROW
+    pub global_this: *const JSGlobalObject, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
     pub promise: JSPromise::Strong,
     pub poll_ref: KeepAlive,
     pub allocated: bool,
@@ -1366,8 +1359,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
         Self::new(Self {
             // SAFETY: resolver is a live intrusive-RC m_ctx; clone_from_raw bumps the embedded ref_count.
             resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::clone_from_raw(r) }),
-            // SAFETY: JSGlobalObject lives for the program's JS lifetime
-            global_this: unsafe { core::mem::transmute(global_this) },
+            global_this: global_this as *const JSGlobalObject,
             promise: JSPromise::Strong::init(global_this),
             poll_ref,
             allocated: true,
@@ -1426,13 +1418,11 @@ impl<T: CAresRecordType> CAresLookup<T> {
     }
 
     /// SAFETY: `this` must point at a live node; if `(*this).allocated`, it must be the
-    /// exact pointer returned by `Box::into_raw` in `new()`.
-    // TODO(port): callers reach this via &mut self methods — reshape those to *mut Self in Phase B.
+    /// exact pointer returned by `Box::into_raw` in `new()`. Head nodes (`!allocated`)
+    /// are dropped by their owner; this is a no-op for them.
     pub unsafe fn destroy(this: *mut Self) {
         if (*this).allocated {
             drop(Box::from_raw(this));
-        } else {
-            core::ptr::drop_in_place(this);
         }
     }
 }
@@ -1456,7 +1446,7 @@ pub trait CAresRecordTypeExt: CAresRecordType {
 
 pub struct DNSLookup {
     pub resolver: Option<bun_ptr::IntrusiveRc<Resolver>>, // SHARED (intrusive — Resolver embeds ref_count and crosses FFI as m_ctx)
-    pub global_this: &'static JSGlobalObject, // JSC_BORROW
+    pub global_this: *const JSGlobalObject, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
     pub promise: JSPromise::Strong,
     pub allocated: bool,
     pub next: Option<NonNull<DNSLookup>>, // INTRUSIVE
@@ -1473,8 +1463,7 @@ impl DNSLookup {
         Box::into_raw(Box::new(Self {
             // SAFETY: resolver is a live intrusive-RC m_ctx; clone_from_raw bumps the embedded ref_count.
             resolver: Some(unsafe { bun_ptr::IntrusiveRc::clone_from_raw(resolver) }),
-            // SAFETY: JSGlobalObject lives for the program's JS lifetime
-            global_this: unsafe { core::mem::transmute(global_this) },
+            global_this: global_this as *const JSGlobalObject,
             poll_ref,
             promise: JSPromise::Strong::init(global_this),
             allocated: true,
@@ -1559,13 +1548,11 @@ impl DNSLookup {
     }
 
     /// SAFETY: `this` must point at a live node; if `(*this).allocated`, it must be the
-    /// exact pointer returned by `Box::into_raw` in `init()`.
-    // TODO(port): callers reach this via &mut self methods — reshape those to *mut Self in Phase B.
+    /// exact pointer returned by `Box::into_raw` in `init()`. Head nodes (`!allocated`)
+    /// are dropped by their owner; this is a no-op for them.
     pub unsafe fn destroy(this: *mut Self) {
         if (*this).allocated {
             drop(Box::from_raw(this));
-        } else {
-            core::ptr::drop_in_place(this);
         }
     }
 }
@@ -2561,7 +2548,7 @@ type PollsMap = ArrayHashMap<c_ares::ares_socket_t, *mut PollType>;
 pub struct Resolver {
     pub ref_count: bun_ptr::IntrusiveRcField, // bun.ptr.RefCount(@This(), "ref_count", deinit, .{})
     pub channel: Option<*mut c_ares::Channel>, // FFI
-    pub vm: &'static VirtualMachine, // JSC_BORROW
+    pub vm: *const VirtualMachine, // JSC_BORROW (BACKREF — VirtualMachine outlives the resolver)
     pub polls: PollsMap,
     pub options: c_ares::ChannelOptions,
 
@@ -2710,6 +2697,11 @@ struct DNSQuery {
 }
 
 impl Resolver {
+    /// Dereference the back-pointer to the VirtualMachine.
+    /// SAFETY: VirtualMachine outlives the Resolver (BACKREF, see field decl).
+    #[inline]
+    pub fn vm(&self) -> &VirtualMachine { unsafe { &*self.vm } }
+
     // Intrusive refcount forwarders (RefCount.ref / RefCount.deref).
     pub fn ref_(&self) { self.ref_count.ref_(); }
     pub fn deref(&self) {
@@ -2723,8 +2715,7 @@ impl Resolver {
         Self {
             ref_count: bun_ptr::IntrusiveRcField::init(),
             channel: None,
-            // SAFETY: VM lives for program lifetime
-            vm: unsafe { core::mem::transmute(vm) },
+            vm: vm as *const VirtualMachine,
             polls: PollsMap::new(),
             options: c_ares::ChannelOptions::default(),
             event_loop_timer: EventLoopTimer { next: bun::timespec::EPOCH, tag: EventLoopTimer::Tag::DNSResolver, ..Default::default() },
@@ -2817,8 +2808,8 @@ impl Resolver {
         self.ref_();
         let now_ts = now.copied().unwrap_or_else(|| bun::timespec::now(bun::TimeSource::AllowMockedTime));
         self.event_loop_timer.next = now_ts.add_ms(1000);
-        self.vm.timer.increment_timer_ref(1);
-        self.vm.timer.insert(&mut self.event_loop_timer);
+        self.vm().timer.increment_timer_ref(1);
+        self.vm().timer.insert(&mut self.event_loop_timer);
         true
     }
 
@@ -2829,11 +2820,11 @@ impl Resolver {
 
         // Normally checkTimeouts does this, so we have to be sure to do it ourself if we cancel the timer
         let _g = scopeguard::guard((), |_| {
-            self.vm.timer.increment_timer_ref(-1);
+            self.vm().timer.increment_timer_ref(-1);
             self.deref();
         });
 
-        self.vm.timer.remove(&mut self.event_loop_timer);
+        self.vm().timer.remove(&mut self.event_loop_timer);
     }
 
     // ───────────── pending-cache helpers ─────────────
@@ -3266,7 +3257,7 @@ impl Resolver {
     }
 
     pub fn on_dns_poll(&mut self, poll: &mut FilePoll) {
-        let vm = self.vm;
+        let vm = self.vm();
         vm.event_loop().enter();
         let _exit = scopeguard::guard((), |_| vm.event_loop().exit());
         let Some(channel) = self.channel else {
@@ -3316,7 +3307,7 @@ impl Resolver {
         }
         #[cfg(not(windows))]
         {
-            let vm = self.vm;
+            let vm = self.vm();
 
             if !readable && !writable {
                 // read == 0 and write == 0 this is c-ares's way of notifying us that

@@ -1680,7 +1680,7 @@ fn consume_operation_or_colon(
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/css/media_query.zig (1494 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      module un-gated; all data types real; arena-aware deep_clone real (rules::dc bridges unblocked); parse impl bodies internally gated on values/{length,number,resolution,ratio} + IdentFns/CSSNumberFns; PartialEq for MediaFeatureValue/MediaFeatureName hand-rolled until Ident/EnvironmentVariable gain PartialEq
+//   confidence: medium-high
+//   todos:      1
+//   notes:      module fully un-gated; QueryFeature::parse + MediaFeatureName/Value::parse real (values/ calc lattice landed); to_css/add_f32 route through real Length/Resolution/Ratio; PartialEq for MediaFeatureValue::Env still loud-todo on EnvironmentVariable: PartialEq; parse_unknown env() arm skipped (Zig UB — undefined options/depth via tryParse ArgsTuple)
 // ──────────────────────────────────────────────────────────────────────────

@@ -3297,8 +3297,14 @@ impl DebugMeta {
 
 pub struct DirEntryResolveQueueItem {
     pub result: allocators::Result,
-    pub unsafe_path: &'static [u8], // TODO(port): lifetime — points into threadlocal buf
-    pub safe_path: &'static [u8],
+    // PORT NOTE: raw `*const [u8]` (not `&'static [u8]`) — these point into the
+    // threadlocal `dir_info_uncached_path` buffer and are consumed before
+    // `dir_info_cached_maybe_log` returns. A `&'static` lie here is the only
+    // non-zero-safe field in `Bufs`, making `Box::<Bufs>::new_zeroed()` UB even
+    // though the array slot is `MaybeUninit`-wrapped; the raw pointer keeps the
+    // bit-level invariant trivially satisfiable and drops the lifetime forgery.
+    pub unsafe_path: *const [u8],
+    pub safe_path: *const [u8],
     pub fd: FD,
 }
 
@@ -3310,8 +3316,8 @@ impl Default for DirEntryResolveQueueItem {
                 index: allocators::NOT_FOUND,
                 status: allocators::Status::Unknown,
             },
-            unsafe_path: b"",
-            safe_path: b"",
+            unsafe_path: b"" as *const [u8],
+            safe_path: b"" as *const [u8],
             fd: FD::INVALID,
         }
     }

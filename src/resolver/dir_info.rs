@@ -142,11 +142,14 @@ impl DirInfo {
         hash_map_instance().at_index(self.parent).map(|p| p as *mut _)
     }
 
-    /// SAFETY: returns `&'static mut DirInfo` into the BSSMap singleton; two
-    /// calls alias the same slot. Caller must hold the resolver mutex and not
-    /// retain another live `&mut DirInfo` to the same index.
-    pub unsafe fn get_enclosing_browser_scope(&self) -> Option<&'static mut DirInfo> {
-        hash_map_instance().at_index(self.enclosing_browser_scope)
+    /// Returns a raw `*mut DirInfo` into the BSSMap singleton. The enclosing
+    /// browser scope frequently resolves back to *this* slot (resolver.zig:4161),
+    /// so handing out `&'static mut` here would alias the caller's borrow under
+    /// Stacked Borrows. Callers re-borrow narrowly at the use site.
+    ///
+    /// SAFETY: caller must hold the resolver mutex.
+    pub unsafe fn get_enclosing_browser_scope(&self) -> Option<*mut DirInfo> {
+        hash_map_instance().at_index(self.enclosing_browser_scope).map(|p| p as *mut _)
     }
 }
 

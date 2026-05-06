@@ -256,6 +256,20 @@ impl Scripts {
         "postprepare",
     ];
 
+    /// Indexed mutable access matching `NAMES` order — replaces Zig
+    /// `@field(lockfile.scripts, Lockfile.Scripts.names[i])`.
+    pub fn hook_mut(&mut self, i: usize) -> &mut Vec<Box<[u8]>> {
+        match i {
+            0 => &mut self.preinstall,
+            1 => &mut self.install,
+            2 => &mut self.postinstall,
+            3 => &mut self.preprepare,
+            4 => &mut self.prepare,
+            5 => &mut self.postprepare,
+            _ => unreachable!(),
+        }
+    }
+
     /// Iterate (name, &mut entries) pairs in declaration order — replaces Zig `inline for` over field names.
     fn fields_mut(&mut self) -> [(&'static str, &mut Vec<Box<[u8]>>); 6] {
         [
@@ -1906,7 +1920,7 @@ impl Lockfile {
         *self = Self::init_empty_value();
     }
 
-    fn init_empty_value() -> Self {
+    pub fn init_empty_value() -> Self {
         Lockfile {
             format: FormatVersion::current(),
             text_lockfile_version: bun_lock::Version::current(),

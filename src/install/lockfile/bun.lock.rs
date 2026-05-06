@@ -1989,7 +1989,7 @@ pub fn parse_into_binary_lockfile(
 
                     let url = ExtractTarball::build_url(
                         registry_url,
-                        strings::StringOrTinyString::init(name.slice(string_buf.bytes.as_slice())),
+                        &strings::StringOrTinyString::init(name.slice(string_buf.bytes.as_slice())),
                         res.value.npm.version,
                         string_buf.bytes.as_slice(),
                     )?;

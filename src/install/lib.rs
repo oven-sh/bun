@@ -1085,8 +1085,46 @@ pub mod lockfile {
         pub serializer_result: SerializerLoadResult,
         pub format: Format,
     }
+    impl<'a> LoadResult<'a> {
+        /// Panics if not `Ok` — mirrors Zig's `load_result.ok` field access on a
+        /// known-`.ok` payload (callers gate with `matches!`).
+        #[inline]
+        pub fn ok(&self) -> &LoadResultOk<'a> {
+            match self { LoadResult::Ok(ok) => ok, _ => unreachable!("LoadResult::ok() on non-Ok variant") }
+        }
+        /// Port of `LoadResult.loadedFromTextLockfile` (src/install/lockfile.zig).
+        #[inline]
+        pub fn loaded_from_text_lockfile(&self) -> bool {
+            matches!(self, LoadResult::Ok(ok) if ok.format == Format::Text)
+        }
+        /// Port of `LoadResult.migratedFromNpm` (src/install/lockfile.zig).
+        #[inline]
+        pub fn migrated_from_npm(&self) -> bool {
+            matches!(self, LoadResult::Ok(ok) if ok.migrated == Migrated::Npm)
+        }
+        /// Port of `LoadResult.saveFormat` (src/install/lockfile.zig).
+        pub fn save_format(&self, options: &crate::PackageManagerOptionsStub) -> Format {
+            // explicit `--save-text-lockfile` always wins
+            if let Some(true) = options.save_text_lockfile { return Format::Text; }
+            match self {
+                LoadResult::Ok(ok) => ok.format,
+                _ => Format::Text,
+            }
+        }
+        /// Port of `LoadResult.chooseConfigVersion` (src/install/lockfile.zig).
+        /// Returns `(version, changed)` where `changed` means the on-disk
+        /// `saved_config_version` doesn't match the chosen one.
+        pub fn choose_config_version(&self) -> (Option<crate::config_version::ConfigVersion>, bool) {
+            // TODO(port): real impl reads `ok.lockfile.saved_config_version` and
+            // `manager.options.config_version`; stub `Lockfile` lacks the field.
+            (None, false)
+        }
+    }
     /// Stub: `Serializer.LoadResult` (src/install/lockfile/bun.lockb.zig).
-    #[derive(Default)] pub struct SerializerLoadResult;
+    #[derive(Default)] pub struct SerializerLoadResult {
+        pub packages_need_update: bool,
+        pub migrated_from_lockb_v2: bool,
+    }
 
     /// Port of `Lockfile.LoadResult.Migrated` (src/install/lockfile.zig).
     #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -2064,6 +2102,12 @@ impl PackageManager {
     pub lockfile_only: bool,
     /// Zig: `Options.filter_patterns: []const []const u8 = &.{}`.
     pub filter_patterns: Vec<Box<[u8]>>,
+    /// Zig: `Options.hoist_pattern: ?PnpmMatcher = null` — isolated installer
+    /// hidden-hoist matcher (`.npmrc` `hoist-pattern`).
+    pub hoist_pattern: Option<crate::pnpm_matcher::PnpmMatcher>,
+    /// Zig: `Options.public_hoist_pattern: ?PnpmMatcher = null` — isolated
+    /// installer public-hoist matcher.
+    pub public_hoist_pattern: Option<crate::pnpm_matcher::PnpmMatcher>,
 }
 /// Port of `Options.Do` (src/install/PackageManager/PackageManagerOptions.zig).
 /// Field-access shape (Zig packed-struct of bools) so Phase-A drafts written
@@ -2157,6 +2201,9 @@ impl From<Access> for &'static str {
     pub exact_versions: bool,
     /// Zig: `Options.Enable.only_missing: bool`.
     pub only_missing: bool,
+    /// Zig: `Options.Enable.global_virtual_store: bool` — share npm/git/tarball
+    /// entries across projects via `<cache>/links/`.
+    pub global_virtual_store: bool,
 }
 pub struct PackageManagerTmpDirStub {
     pub handle: bun_sys::Fd,
@@ -2219,6 +2266,16 @@ unsafe impl bun_threading::unbounded_queue::Node for PatchTask {
     pub logger: bun_logger::Log,
 }
 impl PatchTask {
+    /// Port of `PatchTask.newCalcPatchHash` (src/install/patch_install.zig).
+    /// Real body lives in the gated `patch_install.rs`; stub allocates a
+    /// default task so `enqueue_patch_task_pre` compiles.
+    pub fn new_calc_patch_hash(
+        _manager: *mut PackageManager,
+        _name_and_version_hash: u64,
+        _dependency_id: Option<DependencyID>,
+    ) -> *mut PatchTask {
+        Box::into_raw(Box::<PatchTask>::default())
+    }
     /// Stub for `PatchTask.apply` (src/install/patch_install.zig). Real body
     /// lives in the gated `patch_install.rs`.
     pub fn apply(&mut self) {}
@@ -3304,6 +3361,8 @@ impl Default for Features {
 }
 
 impl Features {
+    /// Zig: `Features.main` decl-literal (src/install/install.zig).
+    #[inline] pub const fn main() -> Self { Self::MAIN }
     pub fn behavior(self) -> Behavior {
         let mut out: u8 = 0;
         out |= (self.dependencies as u8) << 1;

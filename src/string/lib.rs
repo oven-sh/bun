@@ -548,6 +548,17 @@ impl String {
     }
     pub fn eql_comptime<S: ?Sized + AsRef<[u8]>>(&self, lit: &S) -> bool { self.eql_utf8(lit.as_ref()) }
 
+    /// Port of `bun.String.hasPrefixComptime` (string.zig). ASCII-only prefix
+    /// check that avoids materialising the whole UTF-8 view when the
+    /// underlying encoding is 8-bit; falls back to `to_utf8_without_ref` for
+    /// 16-bit / WTF-backed strings.
+    pub fn has_prefix_comptime(&self, prefix: &'static [u8]) -> bool {
+        if let Some(bytes) = self.as_utf8() {
+            return strings::has_prefix_comptime(bytes, prefix);
+        }
+        strings::has_prefix_comptime(self.to_utf8_without_ref().slice(), prefix)
+    }
+
     #[inline] pub fn is_dead(&self) -> bool { self.tag == Tag::Dead }
 
     /// `bun.String.static` (alt. spelling for callers that prefer `from_*`).

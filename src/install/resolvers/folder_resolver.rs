@@ -44,14 +44,16 @@ impl<'a> Default for PackageWorkspaceSearchPathFormatter<'a> {
 impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut joined = [0u8; MAX_PATH_BYTES + 2];
+        // Zig: `getPtr(@truncate(String.Builder.stringHash(...)))` — key type is
+        // `PackageNameHash` (u64), so the @truncate is identity.
         let str_to_use = self
             .manager
             .lockfile
             .workspace_paths
-            .get_ptr(
-                SemverString::Builder::string_hash(
+            .get(
+                &semver::string::Builder::string_hash(
                     self.manager.lockfile.str(&self.version.value.workspace),
-                ) as u32, // @truncate
+                ),
             )
             .unwrap_or(&self.version.value.workspace);
 
@@ -106,7 +108,11 @@ pub struct NewResolver<'a, const TAG: ResolutionTag> {
 }
 
 impl<'a, const TAG: ResolutionTag> NewResolver<'a, TAG> {
-    pub fn resolve<B>(&self, builder: B, _json: js_ast::Expr) -> Result<Resolution, bun_core::Error> {
+    pub fn resolve<B: semver::StringBuilder>(
+        &self,
+        builder: &mut B,
+        _json: js_ast::Expr,
+    ) -> Result<Resolution, bun_core::Error> {
         // TODO(port): narrow error set
         // Zig: @unionInit(Resolution.Value, @tagName(tag), builder.append(String, this.folder_path))
         let appended = builder.append::<SemverString>(self.folder_path);
@@ -122,7 +128,7 @@ impl<'a, const TAG: ResolutionTag> NewResolver<'a, TAG> {
         Ok(Resolution { tag: TAG, value, ..Default::default() })
     }
 
-    pub fn count<B>(&self, builder: B, _json: js_ast::Expr) {
+    pub fn count<B: semver::StringBuilder>(&self, builder: &mut B, _json: js_ast::Expr) {
         builder.count(self.folder_path);
     }
 
@@ -207,12 +213,12 @@ fn normalize_package_json_path<'a>(
         tempcat[normalized.len() + 1..normalized.len() + PACKAGE_JSON_LEN]
             .copy_from_slice(b"package.json");
         let parts: [&[u8]; 2] = [
-            FileSystem::instance().top_level_dir,
+            FileSystem::instance().top_level_dir(),
             &tempcat[0..normalized.len() + PACKAGE_JSON_LEN],
         ];
         abs = FileSystem::instance().abs_buf(&parts, joined);
         rel = FileSystem::instance().relative(
-            FileSystem::instance().top_level_dir,
+            FileSystem::instance().top_level_dir(),
             &abs[0..abs.len() - PACKAGE_JSON_LEN],
         );
     } else {

@@ -196,6 +196,7 @@ pub fn populate_manifest_cache(
             for &root_pkg_id in ids {
                 let pkg_deps = pkg_dependencies[root_pkg_id as usize];
                 for dep_id in pkg_deps.begin()..pkg_deps.end() {
+                    let dep_id = dep_id as usize;
                     if dep_id >= dependencies.len() {
                         continue;
                     }

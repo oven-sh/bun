@@ -1004,34 +1004,39 @@ fn configure_env_for_scripts_run(
     // Zig spec (run_command.zig:780 `this_transpiler.* = try Transpiler.init(...)`).
     let mut this_transpiler = unsafe { this_transpiler_slot.assume_init() };
 
-    let init_cwd_entry = this.env_mut().map.get_or_put_without_value("INIT_CWD")?;
+    let init_cwd_entry = this.env_mut().map.get_or_put_without_value(b"INIT_CWD")?;
     if !init_cwd_entry.found_existing {
         *init_cwd_entry.key_ptr = Box::<[u8]>::from(&**init_cwd_entry.key_ptr);
-        *init_cwd_entry.value_ptr = dot_env::Value {
+        *init_cwd_entry.value_ptr = dot_env::HashTableValue {
             value: Box::<[u8]>::from(strings::without_trailing_slash(
-                FileSystem::instance().top_level_dir,
+                FileSystem::instance().top_level_dir(),
             )),
             conditional: false,
         };
     }
 
-    this.env_mut().load_ccache_path(this_transpiler.fs);
+    // Zig passes `this_transpiler.fs` (`*Fs.FileSystem`); the resolver-tier
+    // `FileSystem` mirrors `bun_paths::fs::FileSystem` for `top_level_dir`.
+    let paths_fs = bun_paths::fs::FileSystem::instance();
+    this.env_mut().load_ccache_path(paths_fs);
 
     {
         // Run node-gyp jobs in parallel.
         // https://github.com/nodejs/node-gyp/blob/7d883b5cf4c26e76065201f85b0be36d5ebdcc0e/lib/build.js#L150-L184
         let thread_count = bun_core::get_thread_count();
         if thread_count > 2 {
-            if !this_transpiler.env.has("JOBS") {
+            // SAFETY: `this_transpiler.env` was set by `Transpiler::init` and is
+            // never null on the script-config path (mirrors Zig `*DotEnv.Loader`).
+            let t_env = unsafe { &mut *this_transpiler.env };
+            if !t_env.has(b"JOBS") {
                 let mut int_buf = [0u8; 10];
                 let mut cursor = &mut int_buf[..];
                 write!(cursor, "{}", thread_count).expect("unreachable");
                 let written = 10 - cursor.len();
                 let jobs_str = &int_buf[..written];
-                this_transpiler
-                    .env
+                t_env
                     .map
-                    .put_alloc_value("JOBS", jobs_str)
+                    .put_alloc_value(b"JOBS", jobs_str)
                     .expect("unreachable");
             }
         }
@@ -1039,13 +1044,14 @@ fn configure_env_for_scripts_run(
 
     {
         let mut node_path = PathBuffer::uninit();
-        if let Some(node_path_z) = this.env().get_node_path(this_transpiler.fs, &mut node_path) {
+        if let Some(node_path_z) = this.env_mut().get_node_path(paths_fs, &mut node_path) {
+            let node_path_owned: Box<[u8]> = Box::<[u8]>::from(node_path_z.as_ref());
             let _ = this
                 .env_mut()
-                .load_nodejs_config(this_transpiler.fs, Box::<[u8]>::from(node_path_z))?;
+                .load_nodejs_config(paths_fs, &node_path_owned)?;
         } else {
             'brk: {
-                let current_path = this.env().get("PATH").unwrap_or(b"");
+                let current_path = this.env().get(b"PATH").unwrap_or(b"");
                 let mut path_var: Vec<u8> = Vec::with_capacity(current_path.len());
                 path_var.extend_from_slice(current_path);
                 let mut bun_path: &[u8] = b"";
@@ -1054,10 +1060,10 @@ fn configure_env_for_scripts_run(
                 {
                     break 'brk;
                 }
-                this.env_mut().map.put("PATH", &path_var)?;
+                this.env_mut().map.put(b"PATH", &path_var)?;
                 let _ = this
                     .env_mut()
-                    .load_nodejs_config(this_transpiler.fs, Box::<[u8]>::from(bun_path))?;
+                    .load_nodejs_config(paths_fs, bun_path)?;
             }
         }
     }
@@ -1075,30 +1081,30 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
     let tempdir = get_temporary_directory(manager);
     let mut path_buf = PathBuffer::uninit();
     let node_gyp_tempdir_name =
-        fs::FileSystem::tmpname("node-gyp", &mut path_buf, 12345)?;
+        fs::FileSystem::tmpname(b"node-gyp", &mut path_buf.0, 12345)?;
 
     // used later for adding to path for scripts
-    manager.node_gyp_tempdir_name = Box::<[u8]>::from(node_gyp_tempdir_name);
+    manager.node_gyp_tempdir_name = Box::<[u8]>::from(node_gyp_tempdir_name.as_ref());
 
     let node_gyp_tempdir = match tempdir
         .handle
         .make_open_path(&manager.node_gyp_tempdir_name, Default::default())
     {
         Ok(d) => d,
-        Err(e) if e == err!("EEXIST") => {
+        Err(e) if e.errno == bun_sys::E::EXIST => {
             // it should not exist
-            Output::pretty_errorln("<r><red>error<r>: node-gyp tempdir already exists", &[]);
+            Output::pretty_errorln("<r><red>error<r>: node-gyp tempdir already exists");
             Global::crash();
         }
         Err(e) => {
-            Output::pretty_errorln(
-                "<r><red>error<r>: <b><red>{s}<r> creating node-gyp tempdir",
-                &[&e.name()],
-            );
+            Output::pretty_errorln(format_args!(
+                "<r><red>error<r>: <b><red>{}<r> creating node-gyp tempdir",
+                bstr::BStr::new(e.name()),
+            ));
             Global::crash();
         }
     };
-    let _node_gyp_tempdir_guard = scopeguard::guard(node_gyp_tempdir, |mut d| d.close());
+    let _node_gyp_tempdir_guard = scopeguard::guard(node_gyp_tempdir, |d| d.close());
     // PORT NOTE: reshaped for borrowck — `defer node_gyp_tempdir.close()`
 
     #[cfg(windows)]
@@ -1122,14 +1128,14 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
     ) {
         Ok(f) => f,
         Err(e) => {
-            Output::pretty_errorln(
-                "<r><red>error<r>: <b><red>{s}<r> creating node-gyp tempdir",
-                &[&e.name()],
-            );
+            Output::pretty_errorln(format_args!(
+                "<r><red>error<r>: <b><red>{}<r> creating node-gyp tempdir",
+                bstr::BStr::new(e.name()),
+            ));
             Global::crash();
         }
     };
-    let mut node_gyp_file = scopeguard::guard(node_gyp_file, |mut f| f.close());
+    let mut node_gyp_file = scopeguard::guard(node_gyp_file, |f| { let _ = f.close(); });
 
     #[cfg(windows)]
     const CONTENT: &str = "if not defined npm_config_node_gyp (\n  bun x --silent node-gyp %*\n) else (\n  node \"%npm_config_node_gyp%\" %*\n)\n";

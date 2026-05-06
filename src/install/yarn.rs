@@ -1249,8 +1249,10 @@ pub fn migrate_yarn_lockfile<'a>(
         }
     }
 
-    dependencies_list[0] = lockfile::DependencySlice { off: 0, len: actual_root_dep_count };
-    resolution_list[0] = lockfile::DependencyIDSlice { off: 0, len: actual_root_dep_count };
+    this.packages.items_dependencies_mut()[0] =
+        lockfile::DependencySlice::new(0, actual_root_dep_count);
+    this.packages.items_resolutions_mut()[0] =
+        lockfile::DependencyIDSlice::new(0, actual_root_dep_count);
 
     dependencies_buf = &mut dependencies_buf[actual_root_dep_count as usize..];
     resolutions_buf = &mut resolutions_buf[actual_root_dep_count as usize..];
@@ -1334,19 +1336,19 @@ pub fn migrate_yarn_lockfile<'a>(
             (dependencies_buf.as_mut_ptr() as usize) - (dependencies_start as usize)
         };
         let deps_off = unsafe { (dependencies_start as usize) - (dependencies_base_ptr as usize) };
-        dependencies_list[package_id as usize] = lockfile::DependencySlice {
-            off: u32::try_from(deps_off / core::mem::size_of::<Dependency>()).unwrap(),
-            len: u32::try_from(deps_len / core::mem::size_of::<Dependency>()).unwrap(),
-        };
+        this.packages.items_dependencies_mut()[package_id as usize] = lockfile::DependencySlice::new(
+            u32::try_from(deps_off / core::mem::size_of::<Dependency>()).unwrap(),
+            u32::try_from(deps_len / core::mem::size_of::<Dependency>()).unwrap(),
+        );
         let res_off =
             unsafe { (resolutions_start as usize) - (resolutions_base_ptr as usize) };
         let res_len = unsafe {
             (resolutions_buf.as_mut_ptr() as usize) - (resolutions_start as usize)
         };
-        resolution_list[package_id as usize] = lockfile::DependencyIDSlice {
-            off: u32::try_from(res_off / core::mem::size_of::<PackageID>()).unwrap(),
-            len: u32::try_from(res_len / core::mem::size_of::<PackageID>()).unwrap(),
-        };
+        this.packages.items_resolutions_mut()[package_id as usize] = lockfile::DependencyIDSlice::new(
+            u32::try_from(res_off / core::mem::size_of::<PackageID>()).unwrap(),
+            u32::try_from(res_len / core::mem::size_of::<PackageID>()).unwrap(),
+        );
     }
 
     let final_deps_len = unsafe {

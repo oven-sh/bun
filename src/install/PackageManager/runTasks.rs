@@ -752,13 +752,13 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 }
 
                 if log_level.is_verbose() {
-                    Output::pretty_error("    ");
+                    bun_core::pretty_error!("    ");
                     Output::print_elapsed(
-                        (task.unsafe_http_client.elapsed as f64) / bun_core::time::NS_PER_MS,
+                        (task.unsafe_http_client.elapsed as f64) / bun_core::time::NS_PER_MS as f64,
                     );
-                    Output::pretty_error(
+                    bun_core::pretty_error!(
                         "<d> Downloaded <r><green>{}<r> tarball\n",
-                        format_args!("{}", bstr::BStr::new(extract.name.slice())),
+                        bstr::BStr::new(extract.name.slice()),
                     );
                     Output::flush();
                 }
@@ -775,16 +775,20 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 }
 
                 manager.task_batch.push(ThreadPoolBatch::from(
-                    manager.enqueue_extract_npm_package(extract, task),
+                    enqueue::enqueue_extract_npm_package(manager, extract, task_ptr),
                 ));
             }
             _ => unreachable!(),
         }
     }
 
-    let mut resolve_tasks_batch = manager.resolve_tasks.pop_batch();
+    let resolve_tasks_batch = manager.resolve_tasks.pop_batch();
     let mut resolve_tasks_iter = resolve_tasks_batch.iterator();
-    while let Some(task) = resolve_tasks_iter.next() {
+    loop {
+        let task_ptr = resolve_tasks_iter.next();
+        if task_ptr.is_null() {
+            break;
+        }
         if cfg!(debug_assertions) {
             debug_assert!(manager.pending_task_count() > 0);
         }
@@ -792,10 +796,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         // PORT NOTE: raw-ptr capture — borrowck would reject overlapping `&mut`
         // with the loop body. Guard runs on every `continue`/`?`/fallthrough.
         // Phase B: have the iterator yield a pool guard that puts back on Drop.
-        let task_ptr = task as *mut Task::Task<'static>;
-        // SAFETY: shadow-reborrow so every body access to `task` is a child of
-        // `task_ptr`'s tag — provenance is preserved for the guard derefs because
-        // the body never touches the iterator's original `&mut`.
+        // SAFETY: `task_ptr` non-null per loop guard; node exclusively owned by this batch.
         let task = unsafe { &mut *task_ptr };
         // Iteration-local raw ptrs derived from the *shadows* (not the function-
         // scope `manager_ptr`/`extract_ctx_ptr`). Under Stacked Borrows these are
@@ -809,7 +810,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
             // SAFETY: `mgr_iter_ptr`/`task_ptr` are live for the whole iteration;
             // body accesses go through reborrows of these pointers, so their tags
             // are still on the borrow stack when the guard fires.
-            unsafe { (*mgr_iter_ptr).preallocated_resolve_tasks.put(&mut *task_ptr) };
+            unsafe { (*mgr_iter_ptr).preallocated_resolve_tasks.put(task_ptr) };
         });
         manager.decrement_pending_tasks();
 

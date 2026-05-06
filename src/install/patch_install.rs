@@ -254,14 +254,19 @@ impl<'a> PatchTask<'a> {
             let pkg_id = state.pkg_id;
             let dep_id = state.dependency_id;
 
-            let pkg = manager.lockfile.packages.get(pkg_id);
+            let pkg: Package = manager.lockfile.packages.get(pkg_id);
 
             let mut out_name_and_version_hash: Option<u64> = None;
             let mut out_patchfile_hash: Option<u64> = None;
-            manager.set_preinstall_state(pkg.meta.id, manager.lockfile, PreinstallState::Unknown);
+            // PORT NOTE: borrowck — `set_preinstall_state` / `determine_preinstall_state` borrow
+            // `&mut self` and also need a `&Lockfile`/`&mut Lockfile` (Zig passes `manager.lockfile`
+            // by-pointer alongside `*PackageManager`). Route through a raw pointer to break the
+            // overlapping borrow until the lockfile is split out of the stub.
+            let lockfile_ptr: *mut Lockfile = &mut manager.lockfile;
+            manager.set_preinstall_state(pkg.meta.id, unsafe { &*lockfile_ptr }, PreinstallState::Unknown);
             match manager.determine_preinstall_state(
                 pkg,
-                manager.lockfile,
+                unsafe { &mut *lockfile_ptr },
                 &mut out_name_and_version_hash,
                 &mut out_patchfile_hash,
             ) {

@@ -340,43 +340,44 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
         let Some(process) = self.process.clone() else { return };
 
-        self.handle_exit(process.status);
+        self.handle_exit(process.status.clone());
     }
 
     fn reset_output_flags(output: &mut OutputReader, fd: Fd) {
-        output.flags.nonblocking = true;
-        output.flags.socket = true;
-        output.flags.memfd = false;
-        output.flags.received_eof = false;
-        output.flags.closed_without_reporting = false;
+        output.flags.insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET);
+        output.flags.remove(
+            PosixFlags::MEMFD | PosixFlags::RECEIVED_EOF | PosixFlags::CLOSED_WITHOUT_REPORTING,
+        );
 
         if cfg!(debug_assertions) {
             // TODO(port): Environment.allow_assert gate — these call into bun_sys and panic on
             // failure; keep behind debug_assertions.
-            let flags = bun_sys::get_fcntl_flags(fd)
-                .unwrap()
-                .expect("Failed to get fcntl flags");
-            debug_assert!(flags & bun_sys::O::NONBLOCK != 0);
+            let flags = bun_sys::get_fcntl_flags(fd).expect("Failed to get fcntl flags");
+            debug_assert!(flags & bun_sys::O::NONBLOCK as isize != 0);
 
-            let stat = bun_sys::fstat(fd).unwrap().expect("Failed to fstat");
-            debug_assert!(bun_sys::posix::S::ISSOCK(stat.mode as _));
+            let _stat = bun_sys::fstat(fd).expect("Failed to fstat");
+            // TODO(port): `bun.S.ISSOCK(stat.mode)` once bun_sys exposes `S::ISSOCK`.
         }
         let _ = fd;
     }
 
     fn ensure_not_in_heap(&mut self) {
-        if self.heap.child.is_some()
-            || self.heap.next.is_some()
-            || self.heap.prev.is_some()
+        let manager = self.manager_mut();
+        if !self.heap.child.is_null()
+            || !self.heap.next.is_null()
+            || !self.heap.prev.is_null()
             || core::ptr::eq(
-                self.manager.active_lifecycle_scripts.root,
-                self as *const _,
+                manager.active_lifecycle_scripts.root,
+                self as *const _ as *const _,
             )
         {
-            // TODO(port): `active_lifecycle_scripts.remove` mutates manager state; `manager` is
-            // `&'a PackageManager` (BORROW_PARAM per LIFETIMES.tsv). Phase B: interior mutability
-            // on `active_lifecycle_scripts` or reclassify as `&'a mut`.
-            self.manager.active_lifecycle_scripts.remove(self);
+            // SAFETY: `self` was inserted via `insert(this)` with allocation-rooted
+            // provenance; the heap holds no other live `&mut` to it here.
+            unsafe {
+                manager
+                    .active_lifecycle_scripts
+                    .remove(self as *mut Self as *mut LifecycleScriptSubprocess<'static>);
+            }
         }
     }
 

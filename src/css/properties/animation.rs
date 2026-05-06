@@ -286,8 +286,12 @@ impl AnimationName {
         if input.try_parse(|i| i.expect_ident_matching(b"none")).is_ok() {
             return Ok(AnimationName::None);
         }
-        if let Ok(s) = input.try_parse(|i| i.expect_string()) {
-            return Ok(AnimationName::String(s));
+        // PORT NOTE: `expect_string` returns a slice borrowing `&mut self`, which
+        // `try_parse`'s `R` type param can't carry. Erase the lifetime through a
+        // raw pointer inside the closure; the slice lives in the input arena and
+        // outlives this parse (CSSString = &'static [u8]).
+        if let Ok(s) = input.try_parse(|i| i.expect_string().map(|s| s as *const [u8])) {
+            return Ok(AnimationName::String(unsafe { &*s }));
         }
         let ident = CustomIdent::parse(input)?;
         Ok(AnimationName::Ident(ident))

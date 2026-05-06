@@ -753,12 +753,15 @@ struct FlushContext<'a, 'bump, 'ctx> {
 }
 
 // `f.logicalProp(ltr, ltr_key, rtl, rtl_key, val)` — ltr_key/rtl_key were unused.
+// PORT NOTE: `$val` is evaluated *before* reborrowing `$f` so callers may pass
+// expressions that read `f.allocator` without tripping E0502.
 macro_rules! fc_logical_prop {
     ($f:expr, $ltr:ident, $rtl:ident, $val:expr) => {{
+        let __val = $val;
         let f = &mut *$f;
         f.ctx.add_logical_rule(
-            Property::$ltr($val.deep_clone(f.allocator)),
-            Property::$rtl($val.deep_clone(f.allocator)),
+            Property::$ltr(__val.deep_clone(f.allocator)),
+            Property::$rtl(__val.deep_clone(f.allocator)),
         );
     }};
 }
@@ -769,18 +772,19 @@ macro_rules! fc_logical_prop {
 // the bitflags const is derived via try_from_property_id so a single ident suffices.
 macro_rules! fc_push {
     ($f:expr, $p:ident, $val:expr) => {{
+        let __val = $val;
         let f = &mut *$f;
         f.flushed_properties
             .insert(BorderProperty::try_from_property_id(PropertyIdTag::$p).unwrap());
-        f.dest.push(Property::$p($val.deep_clone(f.allocator)));
+        f.dest.push(Property::$p(__val.deep_clone(f.allocator)));
     }};
 }
 
 // `f.fallbacks(p, _val)`
 macro_rules! fc_fallbacks {
     ($f:expr, $p:ident, $val:expr) => {{
-        let f = &mut *$f;
         let mut val = $val;
+        let f = &mut *$f;
         if !f
             .flushed_properties
             .contains(BorderProperty::try_from_property_id(PropertyIdTag::$p).unwrap())

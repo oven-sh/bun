@@ -386,7 +386,7 @@ fn serialize_line_names(names: &[CustomIdent], dest: &mut Printer) -> Result<(),
     dest.write_char(b']')
 }
 
-fn write_ident(name: &[u8], dest: &mut Printer) -> Result<(), PrintErr> {
+fn write_ident<'a>(name: &'a [u8], dest: &mut Printer<'a>) -> Result<(), PrintErr> {
     let css_module_grid_enabled = if let Some(css_module) = &dest.css_module {
         css_module.config.grid
     } else {
@@ -500,7 +500,15 @@ impl GridTemplateAreas {
         let mut row: u32 = 0;
         let mut columns: u32 = 0;
 
-        if let Some(s) = input.try_parse(Parser::expect_string).ok() {
+        // PORT NOTE: `expect_string` returns a slice borrowing `&mut self`, which
+        // `try_parse`'s `R` type param can't carry. Erase the lifetime through a
+        // raw pointer inside the closure; the slice lives in the input arena and
+        // outlives this parse.
+        if let Some(s) = input
+            .try_parse(|i| i.expect_string().map(|s| s as *const [u8]))
+            .ok()
+        {
+            let s = unsafe { &*s };
             let parsed_columns = match Self::parse_string(input.allocator(), s, &mut tokens) {
                 Ok(v) => v,
                 Err(()) => {

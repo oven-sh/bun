@@ -998,8 +998,14 @@ impl BackgroundHandler {
 
         if let Some(mut images) = maybe_images.take() {
             if !self.flushed_properties.contains(BackgroundProperty::IMAGE) {
-                let fallbacks = images.get_fallbacks(allocator, context.targets);
-                for fallback in fallbacks.into_iter() {
+                let mut fallbacks = images.get_fallbacks(allocator, context.targets);
+                // PORT NOTE: BabyList has no owning iterator; pop in reverse then
+                // re-reverse via a temp Vec to preserve order.
+                let mut tmp: Vec<SmallList<Image, 1>> = Vec::with_capacity(fallbacks.len as usize);
+                while let Some(fb) = fallbacks.pop() {
+                    tmp.push(fb);
+                }
+                for fallback in tmp.into_iter().rev() {
                     push_property!(self, dest, BackgroundImage, BackgroundProperty::BACKGROUND_IMAGE, fallback);
                 }
             }

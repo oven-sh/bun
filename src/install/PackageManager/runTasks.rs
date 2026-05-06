@@ -1570,7 +1570,6 @@ pub fn generate_network_task_for_tarball(
     // `get_network_task()` borrows `&mut this.preallocated_network_tasks`, so we
     // compute every value that needs `this` *before* taking that borrow, then
     // populate `network_task` without touching `this`.
-    let this_ptr: *mut PackageManager = this; // TODO(port): lifetime — BACKREF
     let apply_patch_task = if let Some(h) = patch_name_and_version_hash {
         'brk: {
             let patch_hash = this

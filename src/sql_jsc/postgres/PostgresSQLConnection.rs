@@ -1173,25 +1173,34 @@ impl PostgresSQLConnection {
     // Not `impl Drop` because it frees `self`'s own Box and is also called directly on the
     // connect-fail path before any JS wrapper exists. Non-pub: callers are `deref()` and the
     // connect-fail path in `call()`, both in this file.
-    fn deinit(&mut self) {
-        self.disconnect();
-        self.stop_timers();
-        for stmt_ptr in self.statements.values() {
-            // SAFETY: statements map owns a ref to each statement.
-            unsafe { (**stmt_ptr).deref() };
-        }
-        // statements/requests/write_buffer/read_buffer/backend_parameters dropped below.
-        // PORT NOTE: Zig called .deinit() on each; Rust Drop handles Vec/HashMap/OffsetByteList.
+    //
+    // Raw-pointer receiver: this function ends in `Box::from_raw(this)`. A `&mut self`
+    // argument would carry a Stacked Borrows protector for the whole frame, and freeing
+    // the allocation while that protector is live is UB ("deallocating while item is
+    // protected"). Taking `*mut Self` and reborrowing per-call keeps each `&mut` scoped
+    // strictly before the dealloc — direct mapping of Zig's `*@This()`.
+    fn deinit(this: *mut Self) {
+        // SAFETY: sole remaining owner; `this` is a live Box-allocated connection.
+        unsafe {
+            (*this).disconnect();
+            (*this).stop_timers();
+            for stmt_ptr in (*this).statements.values() {
+                // statements map owns a ref to each statement.
+                (**stmt_ptr).deref();
+            }
+            // statements/requests/write_buffer/read_buffer/backend_parameters dropped below.
+            // PORT NOTE: Zig called .deinit() on each; Rust Drop handles Vec/HashMap/OffsetByteList.
 
-        bun_core::free_sensitive(&mut self.options_buf);
+            bun_core::free_sensitive(&mut *core::ptr::addr_of_mut!((*this).options_buf));
 
-        // tls_config dropped by Box drop below.
-        if let Some(s) = self.secure {
-            // SAFETY: SSL_CTX_free on a valid SSL_CTX*.
-            unsafe { BoringSSL::c::SSL_CTX_free(s) };
+            // tls_config dropped by Box drop below.
+            if let Some(s) = (*this).secure {
+                // SSL_CTX_free on a valid SSL_CTX*.
+                BoringSSL::c::SSL_CTX_free(s);
+            }
+            // Box-allocated in `call()`; ref_count is 0; reclaim.
+            drop(Box::from_raw(this));
         }
-        // SAFETY: self was Box-allocated in `call()`; ref_count is 0; reclaim.
-        unsafe { drop(Box::from_raw(self as *mut Self)) };
     }
 
     fn clean_up_requests(&mut self, js_reason: Option<JSValue>) {
@@ -1355,18 +1364,22 @@ impl Reader {
     #[inline]
     fn read_buffer(&self) -> &mut OffsetByteList {
         // SAFETY: see struct-level PORT NOTE — connection outlives the Reader.
-        // Raw-pointer field projection (`addr_of_mut!`) avoids materializing
-        // `&mut PostgresSQLConnection`: `on()` already holds `&mut self` to the same
-        // struct, so a full `&mut *self.connection` would be aliased UB. `read_buffer`
-        // and `last_message_start` are the only fields touched here, and `on()` never
-        // accesses them through its `&mut self` while a Reader is live.
-        unsafe { &mut *core::ptr::addr_of_mut!((*self.connection).read_buffer) }
+        // `on()` already holds `&mut PostgresSQLConnection` to the same struct, and
+        // under Stacked Borrows that retag covers every byte of the struct. The
+        // field is `UnsafeCell<OffsetByteList>`, so that retag inserts SharedRW
+        // (not Unique) for these bytes and the raw `*mut` stored in `self.connection`
+        // remains a valid tag to derive `&mut` to the cell's interior from. `on()`
+        // never touches `read_buffer` through its own `&mut self` while a Reader is
+        // live, so no two `&mut OffsetByteList` coexist.
+        unsafe { &mut *(*self.connection).read_buffer.get() }
     }
 
     pub fn mark_message_start(&mut self) {
         let head = self.read_buffer().head;
-        // SAFETY: same justification as `read_buffer()` — disjoint field, raw projection.
-        unsafe { *core::ptr::addr_of_mut!((*self.connection).last_message_start) = head };
+        // SAFETY: same justification as `read_buffer()` — `last_message_start` is a
+        // `Cell<u32>` so the sibling `&mut PostgresSQLConnection` retag leaves a
+        // SharedRW tag for these bytes; raw read of the cell pointer is valid.
+        unsafe { (*self.connection).last_message_start.set(head) };
     }
 
     pub fn ensure_length(&self, count: usize) -> bool {

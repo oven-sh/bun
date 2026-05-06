@@ -556,7 +556,7 @@ impl PostgresSQLQuery {
                             let error_response = stmt.error_response.as_ref().unwrap().to_js(global_object)?;
                             drop(stmt);
                             // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                            unsafe { Self::deref_(this) };
+                            unsafe { Self::deref_(this_ptr) };
                             return global_object.throw_value(error_response);
                         }
                         PostgresSQLStatement::Status::Prepared => {
@@ -576,7 +576,7 @@ impl PostgresSQLQuery {
                                     this.statement = None;
                                     drop(stmt);
                                     // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                                    unsafe { Self::deref_(this) };
+                                    unsafe { Self::deref_(this_ptr) };
 
                                     if !global_object.has_exception() {
                                         return global_object.throw_value(postgres_error_to_js(global_object, Some("failed to bind and execute query"), err));
@@ -619,7 +619,7 @@ impl PostgresSQLQuery {
                             drop(stmt);
                         }
                         // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                        unsafe { Self::deref_(this) };
+                        unsafe { Self::deref_(this_ptr) };
                         if !global_object.has_exception() {
                             return global_object.throw_value(postgres_error_to_js(global_object, Some("failed to prepare and query"), err));
                         }
@@ -648,7 +648,7 @@ impl PostgresSQLQuery {
                             drop(stmt);
                         }
                         // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                        unsafe { Self::deref_(this) };
+                        unsafe { Self::deref_(this_ptr) };
                         if !global_object.has_exception() {
                             return global_object.throw_value(postgres_error_to_js(global_object, Some("failed to write query"), err));
                         }
@@ -685,8 +685,12 @@ impl PostgresSQLQuery {
                     });
                     this.statement = Some(stmt.clone());
 
-                    // SAFETY: entry_value points into connection.statements; not mutated since get_or_put.
-                    unsafe { *entry_value = stmt };
+                    // SAFETY: `entry_value` points into `connection.statements` and the map has
+                    // not been mutated since `get_or_put`. This arm is reached only when
+                    // `!entry.found_existing`, so the slot is uninitialized — use `ptr::write`
+                    // (no drop of prior contents) instead of `*entry_value = stmt`, which would
+                    // run `Drop` on a garbage `Rc`.
+                    unsafe { entry_value.write(stmt) };
                 } else {
                     let stmt = Rc::new(PostgresSQLStatement {
                         signature,
@@ -698,7 +702,7 @@ impl PostgresSQLQuery {
             }
         }
 
-        if let Err(_) = connection.requests.write_item(this) {
+        if let Err(_) = connection.requests.write_item(this_ptr) {
             return global_object.throw_out_of_memory();
         }
         this.this_value.upgrade(global_object);
@@ -730,5 +734,5 @@ impl PostgresSQLQuery {
 //   source:     src/sql_jsc/postgres/PostgresSQLQuery.zig (539 lines)
 //   confidence: medium
 //   todos:      10
-//   notes:      Intrusive RefCount + Rc<PostgresSQLStatement> (per LIFETIMES.tsv) conflict — Phase B should pick IntrusiveRc; do_run holds *mut into connection.statements across &mut connection (borrowck reshape needed); deref_ now takes *mut Self (was &self const→mut UB) — scopeguard sites capture raw ptr derived from &mut self, sound at drop time but Phase B IntrusiveRc should subsume.
+//   notes:      Intrusive RefCount + Rc<PostgresSQLStatement> (per LIFETIMES.tsv) conflict — Phase B should pick IntrusiveRc; do_run holds *mut into connection.statements across &mut connection (borrowck reshape needed); deref_ takes *mut Self and on_* scopeguards/do_run now route all access through the derived raw ptr (SB-safe) — Phase B IntrusiveRc should subsume.
 // ──────────────────────────────────────────────────────────────────────────

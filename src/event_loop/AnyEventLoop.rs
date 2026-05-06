@@ -209,6 +209,62 @@ impl<'a> AnyEventLoop<'a> {
         }
     }
 
+    /// Raw-pointer variant of [`Self::tick`] for callers whose `is_done`
+    /// callback may reborrow the struct that *contains* this `AnyEventLoop`
+    /// (e.g. `bun_install::PackageManager::sleep_until`, where the closure's
+    /// `is_done` does `&mut *closure.manager` and that `PackageManager` owns
+    /// `event_loop` by value). Holding a `&mut Self` across `is_done` in that
+    /// case is UB under Stacked Borrows — the callback's whole-struct Unique
+    /// retag pops the field borrow. This variant reborrows `*this`
+    /// per-iteration *after* `is_done` returns, so no `&mut Self` is live
+    /// while the callback runs. Zig spec (`jsc.EventLoop.tick`) has no such
+    /// constraint because Zig `*T` is non-exclusive.
+    ///
+    /// SAFETY: `this` must be valid for `&mut` access for the duration of the
+    /// call, *except* while `is_done` is executing (when the callback may hold
+    /// a competing `&mut` to a parent struct).
+    pub unsafe fn tick_raw(
+        this: *mut Self,
+        context: *mut core::ffi::c_void,
+        is_done: fn(*mut core::ffi::c_void) -> bool,
+    ) {
+        while !is_done(context) {
+            // SAFETY: per fn contract — reborrow strictly after `is_done`
+            // returns; the borrow ends at the bottom of this loop body before
+            // the next `is_done` call.
+            match unsafe { &mut *this } {
+                AnyEventLoop::Js { owner, vtable } => {
+                    // SAFETY: vtable contract.
+                    unsafe {
+                        (vtable.tick)(*owner);
+                        (vtable.auto_tick)(*owner);
+                    }
+                }
+                AnyEventLoop::Mini(mini) => {
+                    // Inline one iteration of `MiniEventLoop::tick` so the
+                    // `&mut MiniEventLoop` borrow does not straddle the next
+                    // `is_done`. Spec: MiniEventLoop.zig `tick` loop body.
+                    if mini.tick_concurrent_with_count() == 0
+                        && mini.tasks.readable_length() == 0
+                    {
+                        // SAFETY: `loop_` is the live C-owned uws loop set in
+                        // `MiniEventLoop::init()`.
+                        unsafe {
+                            (*mini.loop_).inc();
+                            (*mini.loop_).tick();
+                            (*mini.loop_).dec();
+                        }
+                        mini.on_after_event_loop();
+                    }
+                    while let Some(task) = mini.tasks.read_item() {
+                        // SAFETY: see `MiniEventLoop::tick_once`.
+                        unsafe { (*task).run(context) };
+                    }
+                }
+            }
+        }
+    }
+
     pub fn tick_once(&mut self, context: *mut core::ffi::c_void) {
         match self {
             AnyEventLoop::Js { owner, vtable } => {

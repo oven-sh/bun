@@ -85,12 +85,10 @@ impl OutKind {
     }
 }
 
-// The full body (to_subproc_stdio, memory_cost, enqueue, etc.) is preserved
-// gated — depends on subproc::Stdio and IOWriter::enqueue.
-
-mod io_body {
-    include!("IO_body_gated.rs");
-}
+// The full body (to_subproc_stdio, memory_cost, enqueue, etc.) is deferred —
+// depends on subproc::Stdio and IOWriter::enqueue. See PORT STATUS below.
+// TODO(blocked_on: subproc::Stdio, IOWriter::enqueue): port to_subproc_stdio /
+// memory_cost / enqueue once those land.
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

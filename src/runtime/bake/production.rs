@@ -495,7 +495,7 @@ pub fn build_with_vm(
     // PORT NOTE: reshaped for borrowck — copy out so root_dir_buf can drop.
     let root_dir_path: Box<[u8]> = Box::from(root_dir_path);
 
-    let mut router_types: Vec<framework_router::Type> =
+    let mut router_types: Vec<fr::Type> =
         Vec::with_capacity(options.framework.file_system_router_types.len());
 
     let mut entry_points: EntryPointMap = EntryPointMap {

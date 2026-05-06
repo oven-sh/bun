@@ -1065,7 +1065,6 @@ impl BackgroundHandler {
     }
 
     pub fn finalize(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
-        let allocator = context.allocator;
         // If the last declaration is prefixed, pop the last value
         // so it isn't duplicated when we flush.
         if self.has_prefix {
@@ -1073,11 +1072,37 @@ impl BackgroundHandler {
             // Drop handles deinit.
         }
 
-        dest.extend_from_slice(&self.decls);
-        self.decls.clear();
+        let allocator = dest.bump();
+        for decl in self.decls.drain(..) {
+            // PORT NOTE: Zig was `appendSlice` (bitwise copy of arena-backed
+            // values). `Property` is not `Clone` here, so move out via drain.
+            let _ = allocator;
+            dest.push(decl);
+        }
 
-        self.flush(allocator, dest, context);
+        self.flush(dest, context);
         self.flushed_properties = BackgroundProperty::empty();
+    }
+}
+
+// `Background` participates in `SmallList::get_fallbacks` via the duck-typed
+// `ImageFallback` protocol (Zig dispatched on `@hasDecl(T, "getImage")`).
+impl crate::small_list::ImageFallback for Background {
+    #[inline]
+    fn get_image(&self) -> &Image {
+        Background::get_image(self)
+    }
+    #[inline]
+    fn with_image(&self, allocator: &Bump, image: Image) -> Self {
+        Background::with_image(self, allocator, image)
+    }
+    #[inline]
+    fn get_fallback(&self, allocator: &Bump, kind: ColorFallbackKind) -> Self {
+        Background::get_fallback(self, allocator, kind)
+    }
+    #[inline]
+    fn get_necessary_fallbacks(&self, targets: css::targets::Targets) -> ColorFallbackKind {
+        Background::get_necessary_fallbacks(self, targets)
     }
 }
 

@@ -237,34 +237,12 @@ impl Image {
         }
         ImageSet::parse(input).map(Image::ImageSet)
     }
-    #[cfg(any())]
-    pub fn parse(input: &mut css::Parser) -> Result<Image> {
-        if input.try_parse(|i| i.expect_ident_matching(b"none")).is_ok() {
-            return Ok(Image::None);
-        }
-        // Url::parse blocked_on Parser::add_import_record — skip arm for now.
-        if let Ok(g) = input.try_parse(Gradient::parse) {
-            return Ok(Image::Gradient(Box::new(g)));
-        }
-        ImageSet::parse(input).map(Image::ImageSet)
-    }
 
-    // TODO(port): `css.DeriveToCss(@This()).toCss` — hand-expanded.
-    // blocked_on: `Url::to_css` (gated on Printer::print_import_record path).
-    
+    // PORT: `css.DeriveToCss(@This()).toCss` — hand-expanded over enum variants.
     pub fn to_css(&self, dest: &mut css::Printer) -> core::result::Result<(), css::PrintErr> {
         match self {
             Image::None => dest.write_str(b"none"),
             Image::Url(u) => u.to_css(dest),
-            Image::Gradient(g) => g.to_css(dest),
-            Image::ImageSet(s) => s.to_css(dest),
-        }
-    }
-    #[cfg(any())]
-    pub fn to_css(&self, dest: &mut css::Printer) -> core::result::Result<(), css::PrintErr> {
-        match self {
-            Image::None => dest.write_str(b"none"),
-            Image::Url(_) => todo!("Image::Url::to_css — blocked on values::url::Url::to_css un-gate"),
             Image::Gradient(g) => g.to_css(dest),
             Image::ImageSet(s) => s.to_css(dest),
         }

@@ -83,19 +83,29 @@ impl ContextData {
     /// Takes `&mut self` (not `&self`) so the borrow checker ties the returned
     /// `&mut Log` to an exclusive borrow of the `ContextData` — Zig's `*Log`
     /// freely aliases, but in Rust a `&self -> &mut Log` accessor would let two
-    /// live `&mut Log` overlap (UB). The `Log` is only reachable via this
-    /// struct, so exclusive `self` ⇒ exclusive `Log`.
+    /// live `&mut Log` overlap (UB). Note this is *necessary but not
+    /// sufficient*: the same `*Log` is borrowed (not owned) from the CLI
+    /// caller and is also fanned out to and stored by the transpiler/bundler
+    /// (`bundler/options.zig`), the install pipeline (`install/migration.zig`,
+    /// `install/PackageManagerOptions.zig`), JSON parsing
+    /// (`interchange/json.zig`), etc. Exclusive `self` does NOT exclude those
+    /// aliases — see `# Safety` for the full precondition.
     ///
     /// # Safety
-    /// `self.log` must have been populated by `create_context_data()` (i.e. this
-    /// `ContextData` is the global CLI context) and remain valid for the
-    /// lifetime of the returned reference.
+    /// - `self.log` must have been populated by `create_context_data()` (i.e.
+    ///   this `ContextData` is the global CLI context) and remain valid for the
+    ///   lifetime of the returned reference.
+    /// - No other reference (`&` or `&mut`) to the pointed-to `Log` — including
+    ///   any derived from the CLI caller's original `*Log` or from copies held
+    ///   by the transpiler/bundler/install/JSON subsystems — may be live for
+    ///   the lifetime of the returned `&mut`.
     #[inline]
     pub unsafe fn log(&mut self) -> &mut logger::Log {
         debug_assert!(!self.log.is_null());
         // SAFETY: single-threaded CLI startup writes a process-lifetime pointer
-        // and never invalidates it; `&mut self` guarantees no other borrow of
-        // the Log (only reachable via this field) overlaps the returned `&mut`.
+        // and never invalidates it; the caller's `# Safety` contract guarantees
+        // no overlapping borrow of the same `Log` (which is aliased elsewhere —
+        // `&mut self` alone cannot prove exclusivity here).
         unsafe { &mut *self.log }
     }
 

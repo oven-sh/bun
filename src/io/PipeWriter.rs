@@ -388,7 +388,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         }
 
         // SAFETY: parent BACKREF valid.
-        unsafe { (*parent).on_write(written, status) };
+        unsafe { Parent::on_write(parent, written, status) };
         if status == WriteStatus::EndOfFile && !was_done {
             self.close();
         }
@@ -400,17 +400,20 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         }
 
         if Parent::HAS_ON_WRITABLE {
-            self.parent().on_writable();
+            // SAFETY: parent BACKREF set via set_parent; outlives this writer.
+            unsafe { Parent::on_writable(self.parent()) };
         }
     }
 
     pub fn register_poll(&mut self) {
         let Some(poll) = self.get_poll() else { return };
         // Use the event loop from the parent, not the global one
-        let loop_ = self.parent().event_loop().loop_();
+        // SAFETY: parent BACKREF set via set_parent; outlives this writer.
+        let loop_ = unsafe { Parent::event_loop(self.parent()) }.loop_();
         match poll.register_with_fd(loop_, FilePollKind::Writable, poll.fd()) {
             sys::Result::Err(err) => {
-                self.parent().on_error(err);
+                // SAFETY: parent BACKREF valid.
+                unsafe { Parent::on_error(self.parent(), err) };
             }
             sys::Result::Ok(()) => {}
         }
@@ -435,8 +438,8 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
 
     fn get_buffer_internal(&self) -> &[u8] {
         // SAFETY: parent is a BACKREF set via set_parent; valid while writer is
-        // alive. Shared-only access via raw ptr — no `&mut` materialized.
-        unsafe { (*self.parent).get_buffer() }
+        // alive. Raw-ptr dispatch — no `&Parent` materialized.
+        unsafe { Parent::get_buffer(self.parent()) }
     }
 
     pub fn end(&mut self) {
@@ -462,13 +465,14 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         if Parent::HAS_ON_CLOSE {
             if self.closed_without_reporting {
                 self.closed_without_reporting = false;
-                self.parent().on_close();
+                // SAFETY: parent BACKREF valid.
+                unsafe { Parent::on_close(self.parent()) };
             } else {
                 let parent = self.parent;
                 self.handle.close_impl(
                     Some(parent.cast()),
                     // SAFETY: parent was set via set_parent with a *mut Parent.
-                    Some(|ctx: *mut c_void| unsafe { (*ctx.cast::<Parent>()).on_close() }),
+                    Some(|ctx: *mut c_void| unsafe { Parent::on_close(ctx.cast::<Parent>()) }),
                     self.close_fd,
                 );
             }
@@ -520,14 +524,16 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
                 p
             }
         };
-        let loop_ = self.parent().event_loop().loop_();
+        // SAFETY: parent BACKREF set via set_parent; outlives this writer.
+        let loop_ = unsafe { Parent::event_loop(self.parent()) }.loop_();
 
         match poll.register_with_fd(loop_, FilePollKind::Writable, fd) {
             sys::Result::Err(err) => {
                 return sys::Result::Err(err);
             }
             sys::Result::Ok(()) => {
-                let event_loop = self.parent().event_loop();
+                // SAFETY: parent BACKREF valid.
+                let event_loop = unsafe { Parent::event_loop(self.parent()) };
                 self.enable_keeping_process_alive(event_loop);
             }
         }

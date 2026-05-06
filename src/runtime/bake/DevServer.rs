@@ -1359,7 +1359,11 @@ fn on_memory_visualizer_corked(resp: AnyResponse) {
 }
 
 struct RequestEnsureRouteBundledCtx<'a> {
-    dev: &'a mut DevServer<'a>,
+    // PORT NOTE: erased to raw pointer — the inner `DevServer<'_>` lifetime is
+    // invariant, and stacking `&'a mut DevServer<'a>` collapses every borrow at
+    // the call site into `'a`, wedging borrowck. The Zig code freely re-borrowed
+    // `dev` across the ctx.
+    dev: *mut DevServer<'a>,
     req: ReqOrSaved,
     resp: AnyResponse,
     kind: deferred_request::HandlerKind,
@@ -1367,54 +1371,75 @@ struct RequestEnsureRouteBundledCtx<'a> {
 }
 
 impl<'a> RequestEnsureRouteBundledCtx<'a> {
+    /// Reborrow the erased `dev` pointer.
+    /// # Safety
+    /// `self.dev` is set from a live `&mut DevServer` at ctx construction and
+    /// outlives the ctx (the ctx is stack-local in the request handler scope).
+    #[inline]
+    fn dev_mut(&mut self) -> &mut DevServer<'a> {
+        unsafe { &mut *self.dev }
+    }
+
     fn on_defer(&mut self, bundle_field: BundleQueueType) -> JsResult<()> {
         // PORT NOTE: reshaped for borrowck — captured args before re-borrowing dev
         let route_bundle_index = self.route_bundle_index;
         let kind = self.kind;
         let req = ::core::mem::replace(&mut self.req, ReqOrSaved::Aborted); // TODO(port): ReqOrSaved moved into deferRequest
         let resp = self.resp;
+        let dev = self.dev_mut();
         let requests_array: *mut deferred_request::List<'_> = match bundle_field {
-            BundleQueueType::CurrentBundle => &mut self.dev.current_bundle.as_mut().unwrap().requests,
-            BundleQueueType::NextBundle => &mut self.dev.next_bundle.requests,
+            BundleQueueType::CurrentBundle => &mut dev.current_bundle.as_mut().unwrap().requests,
+            BundleQueueType::NextBundle => &mut dev.next_bundle.requests,
         };
         // SAFETY: requests_array points into self.dev which is still valid
-        self.dev
+        self.dev_mut()
             .defer_request(unsafe { &mut *requests_array }, route_bundle_index, kind, req, resp)?;
         Ok(())
     }
 
     fn on_loaded(&mut self) -> JsResult<()> {
         match self.kind {
-            deferred_request::HandlerKind::ServerHandler => self.dev.on_framework_request_with_bundle(
-                self.route_bundle_index,
-                match &self.req {
+            deferred_request::HandlerKind::ServerHandler => {
+                let route_bundle_index = self.route_bundle_index;
+                let resp = self.resp;
+                let req = match &self.req {
                     ReqOrSaved::Req(r) => SavedRequestUnion::Stack(unsafe { &mut **r }),
                     // TODO(port): SavedRequest is not Clone; move semantics needed here.
                     ReqOrSaved::Saved(_s) => todo!("blocked_on: SavedRequestUnion::Saved (SavedRequest not Clone)"),
                     _ => unreachable!(),
-                },
-                self.resp,
-            ),
+                };
+                self.dev_mut().on_framework_request_with_bundle(route_bundle_index, req, resp)
+            }
             deferred_request::HandlerKind::BundledHtmlPage => {
-                self.dev
-                    .on_html_request_with_bundle(self.route_bundle_index, self.resp, self.req.method());
+                let route_bundle_index = self.route_bundle_index;
+                let resp = self.resp;
+                let method = self.req.method();
+                self.dev_mut()
+                    .on_html_request_with_bundle(route_bundle_index, resp, method);
                 Ok(())
             }
         }
     }
 
     fn on_failure(&mut self) -> JsResult<()> {
+        // PORT NOTE: Zig held two `*DevServer`-derived borrows at once
+        // (route_bundle slot + send_serialized_failures). Reborrow via raw
+        // pointer so the failure slice and the `&mut DevServer` don't alias.
+        let route_bundle_index = self.route_bundle_index;
         let failure = self
-            .dev
-            .route_bundle_ptr(self.route_bundle_index)
+            .dev_mut()
+            .route_bundle_ptr(route_bundle_index)
             .data
             .framework()
             .evaluate_failure
             .as_ref()
-            .unwrap();
-        let failures = ::core::slice::from_ref(failure);
-        self.dev
-            .send_serialized_failures(DevResponse::Http(self.resp), failures, ErrorPageKind::Evaluation, None)?;
+            .unwrap() as *const SerializedFailure;
+        // SAFETY: `failure` points into `route_bundles[i].data` which is not
+        // mutated by `send_serialized_failures`.
+        let failures = ::core::slice::from_ref(unsafe { &*failure });
+        let resp = self.resp;
+        self.dev_mut()
+            .send_serialized_failures(DevResponse::Http(resp), failures, ErrorPageKind::Evaluation, None)?;
         Ok(())
     }
 
@@ -1434,7 +1459,10 @@ impl<'a> EnsureRouteCtx for RequestEnsureRouteBundledCtx<'a> {
     fn on_failure(&mut self) -> JsResult<()> { Self::on_failure(self) }
     fn on_plugin_error(&mut self) -> JsResult<()> { Self::on_plugin_error(self) }
     fn to_dev_response(&mut self) -> DevResponse { Self::to_dev_response(self) }
-    fn dev(&mut self) -> &mut DevServer { self.dev }
+    // SAFETY: `self.dev` is set from a live `&mut DevServer` at ctx
+    // construction and outlives the ctx (the ctx is stack-local in the request
+    // handler scope).
+    fn dev(&mut self) -> &mut DevServer { unsafe { &mut *self.dev } }
     fn route_bundle_index(&self) -> route_bundle::Index { self.route_bundle_index }
 }
 
@@ -1753,16 +1781,24 @@ fn check_route_failures(
     // PERF(port): was stack-fallback (65536)
     let mut gts = dev.init_graph_trace_state(0)?;
     let _gts_guard = scopeguard::guard((), |_| {});
-    let _failures_guard =
-        scopeguard::guard((), |_| dev.incremental_result.failures_added.clear());
+    // PORT NOTE: scopeguard captured `&mut dev`, wedging every later borrow.
+    // Erase to a raw pointer; the closures only fire on scope exit when no
+    // other borrow of `dev` is live.
+    let dev_ptr = dev as *mut DevServer<'_>;
+    let _failures_guard = scopeguard::guard((), move |_| {
+        // SAFETY: see PORT NOTE above.
+        unsafe { (*dev_ptr).incremental_result.failures_added.clear() }
+    });
     dev.graph_safety_lock.lock();
-    let _lock_guard = scopeguard::guard((), |_| dev.graph_safety_lock.unlock());
-    // TODO(port): scopeguard borrowing dev — Phase B reshape
-    dev.trace_all_route_imports(
-        dev.route_bundle_ptr(route_bundle_index),
-        &mut gts,
-        TraceImportGoal::FindErrors,
-    )?;
+    let _lock_guard = scopeguard::guard((), move |_| {
+        // SAFETY: see PORT NOTE above.
+        unsafe { (*dev_ptr).graph_safety_lock.unlock() }
+    });
+    let route_bundle = dev.route_bundle_ptr(route_bundle_index) as *mut RouteBundle;
+    // SAFETY: `trace_all_route_imports` reads `route_bundle.data` but never
+    // mutates `route_bundles`; the raw-pointer reborrow sidesteps the
+    // overlapping `&mut self`.
+    dev.trace_all_route_imports(unsafe { &*route_bundle }, &mut gts, TraceImportGoal::FindErrors)?;
     if !dev.incremental_result.failures_added.is_empty() {
         // See comment on this field for information
         if !dev.assume_perfect_incremental_bundling {
@@ -1783,12 +1819,11 @@ fn check_route_failures(
             return Ok(CheckResult::Rebuild);
         }
 
-        dev.send_serialized_failures(
-            resp,
-            &dev.incremental_result.failures_added,
-            ErrorPageKind::Bundler,
-            None,
-        )?;
+        // SAFETY: `send_serialized_failures` does not mutate
+        // `incremental_result.failures_added`; reborrow through raw ptr to
+        // satisfy borrowck.
+        let failures = unsafe { &(*dev_ptr).incremental_result.failures_added };
+        dev.send_serialized_failures(resp, failures, ErrorPageKind::Bundler, None)?;
         Ok(CheckResult::Stop)
     } else {
         // Failures are unreachable by this route, so it is OK to load.

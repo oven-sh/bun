@@ -653,9 +653,9 @@ impl JSValkeyClient {
 
         // Copy strings into a persistent buffer since the URL object will be deinitialized
         let mut connection_strings: Box<[u8]> = Box::default();
-        let mut username: &[u8] = b"";
-        let mut password: &[u8] = b"";
-        let mut hostname: &[u8] = b"";
+        let mut username: Box<[u8]> = Box::default();
+        let mut password: Box<[u8]> = Box::default();
+        let mut hostname: Box<[u8]> = Box::default();
 
         // errdefer free(connection_strings) — handled by Box drop on `?`.
 
@@ -668,12 +668,16 @@ impl JSValkeyClient {
             b.count(password_utf8.slice());
             b.count(hostname_slice);
             b.allocate()?;
-            username = b.append(username_utf8.slice());
-            password = b.append(password_utf8.slice());
-            hostname = b.append(hostname_slice);
-            b.move_to_slice(&mut connection_strings);
-            // TODO(port): username/password/hostname are slices into connection_strings; in Rust
-            // these need to be raw `*const [u8]` or rebased indices to avoid the self-borrow.
+            let user_sp = b.append(username_utf8.slice());
+            let pass_sp = b.append(password_utf8.slice());
+            let host_sp = b.append(hostname_slice);
+            connection_strings = b.move_to_slice();
+            // PORT NOTE: in Zig these were `&[u8]` slices into
+            // `connection_strings` (self-referential). The Rust `ValkeyClient`
+            // owns each field as `Box<[u8]>`, so re-slice from the pointers.
+            username = Box::<[u8]>::from(user_sp.slice(&connection_strings));
+            password = Box::<[u8]>::from(pass_sp.slice(&connection_strings));
+            hostname = Box::<[u8]>::from(host_sp.slice(&connection_strings));
         }
 
         // Parse database number from pathname (e.g., "/1" -> database 1)
@@ -697,24 +701,24 @@ impl JSValkeyClient {
         // TODO(port): Zig used `undefined` for _subscription_ctx; using zeroed POD here.
 
         Ok(JSValkeyClient::new(JSValkeyClient {
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             _subscription_ctx: subscription_ctx_uninit,
             client: valkey::ValkeyClient {
-                vm,
+                vm: vm.cast(),
                 address: match uri {
                     valkey::Protocol::StandaloneUnix | valkey::Protocol::StandaloneTlsUnix => {
-                        valkey::Address::Unix(hostname.into())
+                        valkey::Address::Unix(hostname)
                     }
-                    _ => valkey::Address::Host { host: hostname.into(), port },
+                    _ => valkey::Address::Host { host: hostname, port },
                 },
                 protocol: uri,
                 username,
                 password,
-                in_flight: Default::default(),
-                queue: Default::default(),
+                in_flight: LinearFifo::init(),
+                queue: LinearFifo::init(),
                 status: valkey::Status::Disconnected,
                 connection_strings,
-                socket: Socket::SocketTCP(uws::SocketTCP {
+                socket: Socket::SocketTcp(uws::SocketTCP {
                     socket: uws::InternalSocket::Detached,
                 }),
                 tls: if options.tls != valkey::TLS::None {
@@ -725,7 +729,6 @@ impl JSValkeyClient {
                     valkey::TLS::None
                 },
                 database,
-                allocator: (), // TODO(port): allocator param dropped (global mimalloc)
                 flags: valkey::ConnectionFlags {
                     enable_auto_reconnect: options.enable_auto_reconnect,
                     enable_offline_queue: options.enable_offline_queue,
@@ -735,22 +738,19 @@ impl JSValkeyClient {
                 max_retries: options.max_retries,
                 connection_timeout_ms: options.connection_timeout_ms,
                 idle_timeout_interval_ms: options.idle_timeout_ms,
-                ..Default::default()
+                write_buffer: Default::default(),
+                read_buffer: Default::default(),
+                retry_attempts: 0,
+                auto_flusher: (),
             },
             global_object,
             this_value: JsRef::empty(),
             poll_ref: KeepAlive::default(),
             _secure: None,
-            timer: Timer::EventLoopTimer {
-                tag: Timer::Tag::ValkeyConnectionTimeout,
-                next: timespec::EPOCH,
-                ..Default::default()
-            },
-            reconnect_timer: Timer::EventLoopTimer {
-                tag: Timer::Tag::ValkeyConnectionReconnect,
-                next: timespec::EPOCH,
-                ..Default::default()
-            },
+            timer: Timer::EventLoopTimer::init_paused(Timer::Tag::ValkeyConnectionTimeout),
+            reconnect_timer: Timer::EventLoopTimer::init_paused(
+                Timer::Tag::ValkeyConnectionReconnect,
+            ),
         }))
     }
 
@@ -803,16 +803,20 @@ impl JSValkeyClient {
             bun_alloc::memory::rebase_slice(orig_hostname, base_ptr, new_base)
         });
         // TODO: we could ref count it instead of cloning it
-        let tls: valkey::TLS = self.client.tls.clone();
+        let tls: valkey::TLS = match &self.client.tls {
+            valkey::TLS::None => valkey::TLS::None,
+            valkey::TLS::Enabled => valkey::TLS::Enabled,
+            valkey::TLS::Custom(cfg) => valkey::TLS::Custom(cfg.clone()),
+        };
 
         // SAFETY: zeroed POD for placeholder _subscription_ctx
         let subscription_ctx_uninit: SubscriptionCtx = unsafe { core::mem::zeroed() };
 
         Ok(JSValkeyClient::new(JSValkeyClient {
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             _subscription_ctx: subscription_ctx_uninit,
             client: valkey::ValkeyClient {
-                vm,
+                vm: vm.cast(),
                 address: match self.client.protocol {
                     valkey::Protocol::StandaloneUnix | valkey::Protocol::StandaloneTlsUnix => {
                         valkey::Address::Unix(hostname)
@@ -828,16 +832,15 @@ impl JSValkeyClient {
                 protocol: self.client.protocol,
                 username,
                 password,
-                in_flight: Default::default(),
-                queue: Default::default(),
+                in_flight: LinearFifo::init(),
+                queue: LinearFifo::init(),
                 status: valkey::Status::Disconnected,
                 connection_strings: connection_strings_copy,
-                socket: Socket::SocketTCP(uws::SocketTCP {
+                socket: Socket::SocketTcp(uws::SocketTCP {
                     socket: uws::InternalSocket::Detached,
                 }),
                 tls,
                 database: self.client.database,
-                allocator: (), // TODO(port): allocator param dropped
                 flags: valkey::ConnectionFlags {
                     // Because this starts in the disconnected state, we need to reset some flags.
                     is_authenticated: false,
@@ -864,22 +867,19 @@ impl JSValkeyClient {
                 max_retries: self.client.max_retries,
                 connection_timeout_ms: self.client.connection_timeout_ms,
                 idle_timeout_interval_ms: self.client.idle_timeout_interval_ms,
-                ..Default::default()
+                write_buffer: Default::default(),
+                read_buffer: Default::default(),
+                retry_attempts: 0,
+                auto_flusher: (),
             },
             global_object,
             this_value: JsRef::empty(),
             poll_ref: KeepAlive::default(),
             _secure: None,
-            timer: Timer::EventLoopTimer {
-                tag: Timer::Tag::ValkeyConnectionTimeout,
-                next: timespec::EPOCH,
-                ..Default::default()
-            },
-            reconnect_timer: Timer::EventLoopTimer {
-                tag: Timer::Tag::ValkeyConnectionReconnect,
-                next: timespec::EPOCH,
-                ..Default::default()
-            },
+            timer: Timer::EventLoopTimer::init_paused(Timer::Tag::ValkeyConnectionTimeout),
+            reconnect_timer: Timer::EventLoopTimer::init_paused(
+                Timer::Tag::ValkeyConnectionReconnect,
+            ),
         }))
     }
 
@@ -890,7 +890,7 @@ impl JSValkeyClient {
         );
         debug_assert!(self.client.status == valkey::Status::Connected);
         self.ref_();
-        let _d = scopeguard::guard((), |_| self.deref());
+        let _d = deref_guard(self);
 
         if !self._subscription_ctx.is_subscriber {
             self._subscription_ctx.original_enable_offline_queue =
@@ -916,7 +916,7 @@ impl JSValkeyClient {
                 .unwrap_or(false)
         );
         self.ref_();
-        let _d = scopeguard::guard((), |_| self.deref());
+        let _d = deref_guard(self);
 
         // This is the last subscription, restore original flags
         if !self
@@ -973,7 +973,7 @@ impl JSValkeyClient {
     #[bun_jsc::host_fn(getter)]
     pub fn get_buffered_amount(&self, _global: &JSGlobalObject) -> JSValue {
         let len = self.client.write_buffer.len() + self.client.read_buffer.len();
-        JSValue::js_number(len)
+        JSValue::js_number(f64::from(len))
     }
 
     pub fn do_connect(

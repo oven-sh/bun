@@ -17,7 +17,8 @@ pub fn to_match_object(
     let mut this = scopeguard::guard(this, |t| t.post_match(global));
 
     let this_value = frame.this();
-    let args = frame.arguments_old::<1>().slice();
+    let args_buf = frame.arguments_old::<1>();
+    let args = args_buf.slice();
 
     this.increment_expect_call_counter();
 

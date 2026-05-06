@@ -3254,7 +3254,7 @@ pub fn js_upgrade_duplex_to_tls(
     if let Some(tls) = opts.get_truthy(global, "tls")? {
         if !tls.is_boolean() {
             ssl_opts =
-                SSLConfig::from_js(VirtualMachine::get(), global, tls)?;
+                SSLConfig::from_js(unsafe { &*VirtualMachine::get() }, global, tls)?;
         } else if tls.to_boolean() {
             ssl_opts = Some(SSLConfig::default());
         }

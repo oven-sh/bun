@@ -1294,7 +1294,7 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> AtRuleParser for TopLevelRuleParser<
                 None
             };
 
-            let media = parse_media_list(input)?;
+            let media = parse_media_list(input, this.options)?;
 
             return Ok(AtRulePrelude::Import { url: url_str, media, supports, layer });
         }
@@ -1322,7 +1322,7 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> AtRuleParser for TopLevelRuleParser<
         }
         if strings::eql_case_insensitive_ascii::<true>(name, b"custom-media") {
             let custom_media_name = DashedIdentFns::parse(input)?;
-            let media = parse_media_list(input)?;
+            let media = parse_media_list(input, this.options)?;
             return Ok(AtRulePrelude::CustomMedia { name: custom_media_name, media });
         }
         if strings::eql_case_insensitive_ascii::<true>(name, b"property") {
@@ -2198,14 +2198,14 @@ impl<'a, T: CustomAtRuleParser> DeclarationParser for NestedRuleParser<'a, T> {
 
 /// `MediaList::parse` thunk. The body lives in `media_query.rs` in Zig; the
 /// Rust port hasn't landed it yet. Kept local so the rule-parser arms above
-/// type-check; becomes a one-line `MediaList::parse(input)` forwarder once
-/// `media_query::MediaList::parse` un-gates.
+/// type-check; becomes a one-line `MediaList::parse(input, options)` forwarder
+/// once `media_query::MediaList::parse` un-gates.
 // blocked_on: media_query::{MediaList,MediaQuery}::parse
 #[inline]
-fn parse_media_list(input: &mut Parser) -> CssResult<MediaList> {
+fn parse_media_list(input: &mut Parser, options: &ParserOptions) -> CssResult<MediaList> {
     #[cfg(any())]
-    { return MediaList::parse(input); }
-    let _ = input;
+    { return MediaList::parse(input, options); }
+    let _ = (input, options);
     todo("MediaList::parse — media_query.rs parse surface gated")
 }
 

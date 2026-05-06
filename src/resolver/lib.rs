@@ -4759,8 +4759,7 @@ impl<'a> Resolver<'a> {
                             });
                         }
 
-                        // SAFETY: ARENA — DirInfo ptr is a BSSMap slot; uniquely re-borrowed mutably here.
-                        match self.resolve_without_remapping(unsafe { &mut *import_dir_info }, remap, kind, global_cache) {
+                        match self.resolve_without_remapping(import_dir_info, remap, kind, global_cache) {
                             MatchResultUnion::Success(match_result) => {
                                 let mut flags = ResultFlags::default();
                                 flags.set_is_external(match_result.is_external);
@@ -4869,8 +4868,7 @@ impl<'a> Resolver<'a> {
                         if remapped.is_empty() {
                             // "browser": {"module": false}
                             // does the module exist in the filesystem?
-                            // SAFETY: ARENA — DirInfo ptr is a BSSMap slot; uniquely re-borrowed mutably here (see LIFETIMES.tsv).
-                            match self.load_node_modules(import_path, kind, unsafe { &mut *source_dir_info }, global_cache, false) {
+                            match self.load_node_modules(import_path, kind, source_dir_info, global_cache, false) {
                                 MatchResultUnion::Success(node_module) => {
                                     let mut pair = node_module.path_pair;
                                     pair.primary.is_disabled = true;
@@ -4909,8 +4907,7 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        // SAFETY: ARENA — DirInfo ptr is a BSSMap slot; uniquely re-borrowed mutably (see LIFETIMES.tsv).
-        match self.resolve_without_remapping(unsafe { &mut *source_dir_info }, import_path, kind, global_cache) {
+        match self.resolve_without_remapping(source_dir_info, import_path, kind, global_cache) {
             MatchResultUnion::Success(res) => {
                 let mut result = Result {
                     path_pair: PathPair { primary: Path::empty(), secondary: None },
@@ -4951,8 +4948,7 @@ impl<'a> Resolver<'a> {
                                 result.path_pair.primary.is_disabled = true;
                                 result.path_pair.primary = Fs::Path::init_with_namespace(remap, b"file");
                             } else {
-                                // SAFETY: ARENA — uniquely re-borrowed mutably here.
-                                match self.resolve_without_remapping(unsafe { &mut *browser_scope }, remap, kind, global_cache) {
+                                match self.resolve_without_remapping(browser_scope, remap, kind, global_cache) {
                                     MatchResultUnion::Success(remapped) => {
                                         result.path_pair = remapped.path_pair;
                                         result.dirname_fd = remapped.dirname_fd;
@@ -5141,7 +5137,12 @@ impl<'a> Resolver<'a> {
         &mut self,
         import_path: &[u8],
         kind: ast::ImportKind,
-        _dir_info: &mut DirInfo::DirInfo,
+        // PORT NOTE: raw `*mut` (not `&mut`) — body re-enters `dir_cache` via
+        // `dir_info_cached()` which, in the self-reference branch, returns the
+        // SAME BSSMap slot. A `&mut` param carries an FnEntry protector under
+        // Stacked Borrows; the inner retag would pop it (aliased-&mut UB).
+        // Spec resolver.zig:1761 takes raw `*DirInfo`; re-borrow narrowly.
+        _dir_info: *mut DirInfo::DirInfo,
         global_cache: GlobalCache,
         forbid_imports: bool,
     ) -> MatchResultUnion {
@@ -5207,8 +5208,7 @@ impl<'a> Resolver<'a> {
             let package_json = unsafe { &*_dir_info_package_json }.package_json.unwrap();
 
             if import_path.starts_with(b"#") && !forbid_imports && package_json.imports.is_some() {
-                // SAFETY: see function-wide note above.
-                let r = self.load_package_imports(import_path, unsafe { &mut *_dir_info_package_json }, kind, global_cache);
+                let r = self.load_package_imports(import_path, _dir_info_package_json, kind, global_cache);
                 if let Some(d) = self.debug_logs.as_mut() { d.decrease_indent(); }
                 return r;
             }
@@ -6178,7 +6178,10 @@ impl<'a> Resolver<'a> {
 
     pub fn resolve_without_remapping(
         &mut self,
-        source_dir_info: &mut DirInfo::DirInfo,
+        // PORT NOTE: raw `*mut` (not `&mut`) — forwards into `load_node_modules`
+        // which re-enters `dir_cache` and may re-derive the same DirInfo slot.
+        // Spec resolver.zig:2584 takes raw `*DirInfo`; re-borrow narrowly.
+        source_dir_info: *mut DirInfo::DirInfo,
         import_path: &[u8],
         kind: ast::ImportKind,
         global_cache: GlobalCache,
@@ -6186,7 +6189,8 @@ impl<'a> Resolver<'a> {
         if is_package_path(import_path) {
             self.load_node_modules(import_path, kind, source_dir_info, global_cache, false)
         } else {
-            let Some(resolved) = unsafe { &mut *self.fs() }.abs_buf_checked(&[source_dir_info.abs_path, import_path], bufs!(resolve_without_remapping)) else {
+            // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver (see LIFETIMES.tsv).
+            let Some(resolved) = unsafe { &mut *self.fs() }.abs_buf_checked(&[unsafe { &*source_dir_info }.abs_path, import_path], bufs!(resolve_without_remapping)) else {
                 return MatchResultUnion::NotFound;
             };
             if let Some(result) = self.load_as_file_or_directory(resolved, kind) {
@@ -6938,11 +6942,18 @@ impl<'a> Resolver<'a> {
     pub fn load_package_imports(
         &mut self,
         import_path: &[u8],
-        dir_info: &mut DirInfo::DirInfo,
+        // PORT NOTE: raw `*mut` (not `&mut`) — `handle_esm_resolution` re-enters
+        // `dir_cache` via `dir_info_cached(dirname(abs_esm_path))`; for any
+        // imports-map entry resolving to `./<file>` that dirname equals
+        // `dir_info.abs_path`, re-deriving `&mut` to the SAME slot while a
+        // `&mut` param's FnEntry protector is live is aliased-&mut UB.
+        // Spec resolver.zig:3182 takes raw `*DirInfo`; re-borrow narrowly.
+        dir_info: *mut DirInfo::DirInfo,
         kind: ast::ImportKind,
         global_cache: GlobalCache,
     ) -> MatchResultUnion {
-        let package_json = dir_info.package_json.unwrap();
+        // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver (see LIFETIMES.tsv).
+        let package_json = unsafe { &*dir_info }.package_json.unwrap();
         if let Some(debug) = self.debug_logs.as_mut() {
             debug.add_note_fmt(format_args!(
                 "Looking for {} in \"imports\" map in {}",

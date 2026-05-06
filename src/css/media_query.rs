@@ -1097,7 +1097,10 @@ impl MediaFeatureValue {
         })
     }
 
-    pub fn parse_unknown(input: &mut Parser) -> Result<MediaFeatureValue> {
+    pub fn parse_unknown(
+        input: &mut Parser,
+        options: &css::ParserOptions,
+    ) -> Result<MediaFeatureValue> {
         // Ratios are ambiguous with numbers because the second param is optional (e.g. 2/1 == 2).
         // We require the / delimiter when parsing ratios so that 2/1 ends up as a ratio and 2 is
         // parsed as a number.
@@ -1118,14 +1121,13 @@ impl MediaFeatureValue {
             return Ok(MediaFeatureValue::Resolution(res));
         }
 
-        // PORT NOTE(suspect): Zig `input.tryParse(EnvironmentVariable.parse, .{})`
-        // leaves the `options`/`depth` params **undefined** (tryParse builds
-        // `ArgsTuple` and only fills index 0). That is UB at runtime;
-        // `MediaFeatureValue::parse` has no `ParserOptions` threaded, so the
-        // env() arm is unreachable in any well-defined execution. Ported
-        // faithfully by skipping the arm with this loud breadcrumb — revisit
-        // when `options` threads through `QueryFeature::parse`.
-        // if let Ok(env) = input.try_parse(|i| EnvironmentVariable::parse(i, options, 0)) { .. }
+        // PORT NOTE: Zig `input.tryParse(EnvironmentVariable.parse, .{})` left
+        // `options`/`depth` undefined (tryParse builds `ArgsTuple` and only
+        // fills index 0) — UB. Fixed here by threading the real `ParserOptions`
+        // down from `QueryFeature::parse` and passing `depth = 0`.
+        if let Ok(env) = input.try_parse(|i| EnvironmentVariable::parse(i, options, 0)) {
+            return Ok(MediaFeatureValue::Env(env));
+        }
 
         let ident = Ident::parse(input)?;
         Ok(MediaFeatureValue::Ident(ident))
@@ -1357,11 +1359,13 @@ impl MediaType {
 
 impl MediaList {
     /// Parse a media query list from CSS.
-    pub fn parse(input: &mut Parser) -> Result<MediaList> {
+    pub fn parse(input: &mut Parser, options: &css::ParserOptions) -> Result<MediaList> {
         // PERF(port): was ArrayListUnmanaged(input.allocator())
         let mut media_queries: Vec<MediaQuery> = Vec::new();
         loop {
-            match input.parse_until_before(css::Delimiters::COMMA, MediaQuery::parse) {
+            match input
+                .parse_until_before(css::Delimiters::COMMA, |i| MediaQuery::parse(i, options))
+            {
                 Ok(mq) => media_queries.push(mq),
                 Err(e) => {
                     if matches!(
@@ -1394,7 +1398,7 @@ impl MediaList {
 }
 
 impl MediaQuery {
-    pub fn parse(input: &mut Parser) -> Result<MediaQuery> {
+    pub fn parse(input: &mut Parser, options: &css::ParserOptions) -> Result<MediaQuery> {
         // Zig: `Fn.tryParseFn` returning `(?Qualifier, ?MediaType)`.
         let (qualifier, explicit_media_type) = input
             .try_parse(|i| -> Result<(Option<Qualifier>, Option<MediaType>)> {
@@ -1408,6 +1412,7 @@ impl MediaQuery {
             Some(MediaCondition::parse_with_flags(
                 input,
                 QueryConditionFlags::ALLOW_OR,
+                options,
             )?)
         } else if input
             .try_parse(|i| i.expect_ident_matching(b"and"))
@@ -1416,6 +1421,7 @@ impl MediaQuery {
             Some(MediaCondition::parse_with_flags(
                 input,
                 QueryConditionFlags::empty(),
+                options,
             )?)
         } else {
             None
@@ -1429,15 +1435,33 @@ impl MediaQuery {
 
 impl MediaCondition {
     #[inline]
-    pub fn parse_with_flags(input: &mut Parser, flags: QueryConditionFlags) -> Result<Self> {
-        parse_query_condition::<MediaCondition>(input, flags)
+    pub fn parse_with_flags(
+        input: &mut Parser,
+        flags: QueryConditionFlags,
+        options: &css::ParserOptions,
+    ) -> Result<Self> {
+        parse_query_condition_with_options::<MediaCondition>(input, flags, options)
     }
 }
 
 /// Parse a single query condition.
+///
+/// Forwarder kept for callers that don't yet thread `ParserOptions`
+/// (e.g. `rules::container`); routes through `ParserOptions::default(None)`.
+#[inline]
 pub fn parse_query_condition<C: QueryCondition>(
     input: &mut Parser,
     flags: QueryConditionFlags,
+) -> Result<C> {
+    parse_query_condition_with_options::<C>(input, flags, &css::ParserOptions::default(None))
+}
+
+/// Parse a single query condition with `ParserOptions` threaded so the
+/// `env()` arm of `MediaFeatureValue::parse_unknown` is reachable.
+pub fn parse_query_condition_with_options<C: QueryCondition>(
+    input: &mut Parser,
+    flags: QueryConditionFlags,
+    options: &css::ParserOptions,
 ) -> Result<C> {
     use bun_string::strings;
     let location = input.current_source_location();
@@ -1465,15 +1489,15 @@ pub fn parse_query_condition<C: QueryCondition>(
     // (is_negation, is_style)
     let first_condition: C = match (is_negation, is_style) {
         (true, false) => {
-            let inner_condition = parse_parens_or_function::<C>(input, flags)?;
+            let inner_condition = parse_parens_or_function::<C>(input, flags, options)?;
             return Ok(C::create_negation(Box::new(inner_condition)));
         }
         (true, true) => {
-            let inner_condition = C::parse_style_query(input)?;
+            let inner_condition = C::parse_style_query_with_options(input, options)?;
             return Ok(C::create_negation(Box::new(inner_condition)));
         }
-        (false, false) => parse_paren_block::<C>(input, flags)?,
-        (false, true) => C::parse_style_query(input)?,
+        (false, false) => parse_paren_block::<C>(input, flags, options)?,
+        (false, true) => C::parse_style_query_with_options(input, options)?,
     };
 
     let operator: Operator = match input.try_parse(Operator::parse) {
@@ -1488,7 +1512,7 @@ pub fn parse_query_condition<C: QueryCondition>(
     // PERF(port): was ArrayListUnmanaged(input.allocator())
     let mut conditions: Vec<C> = Vec::new();
     conditions.push(first_condition);
-    conditions.push(parse_parens_or_function::<C>(input, flags)?);
+    conditions.push(parse_parens_or_function::<C>(input, flags, options)?);
 
     let delim: &[u8] = match operator {
         Operator::And => b"and",
@@ -1499,7 +1523,7 @@ pub fn parse_query_condition<C: QueryCondition>(
         if input.try_parse(|i| i.expect_ident_matching(delim)).is_err() {
             return Ok(C::create_operation(operator, conditions));
         }
-        conditions.push(parse_parens_or_function::<C>(input, flags)?);
+        conditions.push(parse_parens_or_function::<C>(input, flags, options)?);
     }
 }
 
@@ -1507,17 +1531,18 @@ pub fn parse_query_condition<C: QueryCondition>(
 pub fn parse_parens_or_function<C: QueryCondition>(
     input: &mut Parser,
     flags: QueryConditionFlags,
+    options: &css::ParserOptions,
 ) -> Result<C> {
     use bun_string::strings;
     let location = input.current_source_location();
     let t = input.next()?.clone();
     match &t {
-        css::Token::OpenParen => return parse_paren_block::<C>(input, flags),
+        css::Token::OpenParen => return parse_paren_block::<C>(input, flags, options),
         css::Token::Function(f) => {
             if flags.allow_style()
                 && strings::eql_case_insensitive_ascii_check_length(f, b"style")
             {
-                return C::parse_style_query(input);
+                return C::parse_style_query_with_options(input, options);
             }
         }
         _ => {}
@@ -1528,14 +1553,17 @@ pub fn parse_parens_or_function<C: QueryCondition>(
 fn parse_paren_block<C: QueryCondition>(
     input: &mut Parser,
     flags: QueryConditionFlags,
+    options: &css::ParserOptions,
 ) -> Result<C> {
     // Zig: `Closure { flags }.parseNestedBlockFn` — collapsed to a closure
-    // capturing `flags` by copy.
+    // capturing `flags`/`options` by copy/reborrow.
     input.parse_nested_block(|i| {
-        if let Ok(inner) = i.try_parse(|i2| parse_query_condition::<C>(i2, flags)) {
+        if let Ok(inner) =
+            i.try_parse(|i2| parse_query_condition_with_options::<C>(i2, flags, options))
+        {
             return Ok(inner);
         }
-        C::parse_feature(i)
+        C::parse_feature_with_options(i, options)
     })
 }
 
@@ -1543,8 +1571,18 @@ impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
     /// Parse a media/container feature inside `(` `)`.
     ///
     /// Zig: `QueryFeature.parse` (media_query.zig:945).
+    ///
+    /// Forwarder kept for callers that don't yet thread `ParserOptions`
+    /// (e.g. `rules::container::ContainerCondition::parse_feature`).
+    #[inline]
     pub fn parse(input: &mut Parser) -> Result<Self> {
-        match input.try_parse(Self::parse_name_first) {
+        Self::parse_with_options(input, &css::ParserOptions::default(None))
+    }
+
+    /// `QueryFeature.parse` with `ParserOptions` threaded so the `env()`
+    /// arm of `MediaFeatureValue::parse_unknown` is reachable.
+    pub fn parse_with_options(input: &mut Parser, options: &css::ParserOptions) -> Result<Self> {
+        match input.try_parse(|i| Self::parse_name_first(i, options)) {
             Ok(res) => Ok(res),
             Err(e) => {
                 if matches!(
@@ -1553,13 +1591,13 @@ impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
                 ) {
                     return Err(e);
                 }
-                Self::parse_value_first(input)
+                Self::parse_value_first(input, options)
             }
         }
     }
 
     /// Zig: `QueryFeature.parseNameFirst`.
-    pub fn parse_name_first(input: &mut Parser) -> Result<Self> {
+    pub fn parse_name_first(input: &mut Parser, options: &css::ParserOptions) -> Result<Self> {
         let (name, legacy_op) = MediaFeatureName::<FeatureId>::parse(input)?;
 
         let operator = match input.try_parse(|i| consume_operation_or_colon(i, true)) {
@@ -1571,7 +1609,7 @@ impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
             return Err(input.new_custom_error(css::ParserError::invalid_media_query));
         }
 
-        let value = MediaFeatureValue::parse(input, name.value_type())?;
+        let value = MediaFeatureValue::parse(input, name.value_type(), options)?;
         if !value.check_type(name.value_type()) {
             return Err(input.new_custom_error(css::ParserError::invalid_media_query));
         }
@@ -1588,7 +1626,7 @@ impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
     }
 
     /// Zig: `QueryFeature.parseValueFirst`.
-    pub fn parse_value_first(input: &mut Parser) -> Result<Self> {
+    pub fn parse_value_first(input: &mut Parser, options: &css::ParserOptions) -> Result<Self> {
         // We need to find the feature name first so we know the type.
         let start = input.state();
         // PORT NOTE: Zig loops `MediaFeatureName.parse` then checks
@@ -1613,7 +1651,7 @@ impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
         input.reset(&start);
 
         // Now we can parse the first value.
-        let value = MediaFeatureValue::parse(input, name.value_type())?;
+        let value = MediaFeatureValue::parse(input, name.value_type(), options)?;
         let operator = consume_operation_or_colon(input, false)?;
 
         // Skip over the feature name again.
@@ -1650,7 +1688,7 @@ impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
                 }
             }
 
-            let end_value = MediaFeatureValue::parse(input, name.value_type())?;
+            let end_value = MediaFeatureValue::parse(input, name.value_type(), options)?;
             if !end_value.check_type(name.value_type()) {
                 return Err(input.new_custom_error(css::ParserError::invalid_media_query));
             }
@@ -1711,5 +1749,5 @@ fn consume_operation_or_colon(
 //   source:     src/css/media_query.zig (1494 lines)
 //   confidence: medium-high
 //   todos:      1
-//   notes:      module fully un-gated; QueryFeature::parse + MediaFeatureName/Value::parse real (values/ calc lattice landed); to_css/add_f32 route through real Length/Resolution/Ratio; PartialEq for MediaFeatureValue::Env still loud-todo on EnvironmentVariable: PartialEq; parse_unknown env() arm skipped (Zig UB — undefined options/depth via tryParse ArgsTuple)
+//   notes:      module fully un-gated; QueryFeature::parse + MediaFeatureName/Value::parse real (values/ calc lattice landed); to_css/add_f32 route through real Length/Resolution/Ratio; PartialEq for MediaFeatureValue::Env still loud-todo on EnvironmentVariable: PartialEq; parse_unknown env() arm restored — ParserOptions threaded from MediaList::parse → QueryFeature::parse_with_options (fixes Zig UB: undefined options/depth via tryParse ArgsTuple)
 // ──────────────────────────────────────────────────────────────────────────

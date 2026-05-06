@@ -91,16 +91,111 @@ pub mod lib {
         pub fn error_string(_this: *mut Archive) -> &'static [u8] {
             todo!("bun_libarchive_sys gated")
         }
+
+        // ── write side ─────────────────────────────────────────────────────
+        pub fn write_new() -> *mut Archive { todo!("bun_libarchive_sys gated") }
+        pub fn write_free(&self) -> Result { todo!("bun_libarchive_sys gated") }
+        pub fn write_close(&self) -> Result { todo!("bun_libarchive_sys gated") }
+        pub fn write_set_format_pax_restricted(&self) -> Result {
+            todo!("bun_libarchive_sys gated")
+        }
+        pub fn write_header(&self, _entry: &Entry) -> Result { todo!("bun_libarchive_sys gated") }
+        pub fn write_data(&self, _data: &[u8]) -> isize { todo!("bun_libarchive_sys gated") }
+        pub fn write_finish_entry(&self) -> Result { todo!("bun_libarchive_sys gated") }
     }
 
     impl Entry {
         pub fn pathname(&self) -> &ZStr { todo!("bun_libarchive_sys gated") }
+        pub fn pathname_utf8(&self) -> &ZStr { todo!("bun_libarchive_sys gated") }
         #[cfg(windows)]
         pub fn pathname_w(&self) -> &bun_core::WStr { todo!("bun_libarchive_sys gated") }
         pub fn symlink(&self) -> &ZStr { todo!("bun_libarchive_sys gated") }
         pub fn perm(&self) -> u32 { todo!("bun_libarchive_sys gated") }
         pub fn size(&self) -> i64 { todo!("bun_libarchive_sys gated") }
         pub fn filetype(&self) -> u32 { todo!("bun_libarchive_sys gated") }
+        pub fn mtime(&self) -> i64 { todo!("bun_libarchive_sys gated") }
+
+        // ── write side ─────────────────────────────────────────────────────
+        pub fn new() -> *mut Entry { todo!("bun_libarchive_sys gated") }
+        pub fn free(&self) { todo!("bun_libarchive_sys gated") }
+        pub fn clear(&self) -> *mut Entry { todo!("bun_libarchive_sys gated") }
+        pub fn set_pathname_utf8(&self, _name: &ZStr) { todo!("bun_libarchive_sys gated") }
+        pub fn set_size(&self, _s: i64) { todo!("bun_libarchive_sys gated") }
+        pub fn set_filetype(&self, _t: u32) { todo!("bun_libarchive_sys gated") }
+        pub fn set_perm(&self, _p: u32) { todo!("bun_libarchive_sys gated") }
+        pub fn set_mtime(&self, _secs: isize, _nsecs: core::ffi::c_long) {
+            todo!("bun_libarchive_sys gated")
+        }
+    }
+
+    // ── write-open callback surface (libarchive `archive_write_open2`) ─────
+    pub type archive_open_callback = unsafe extern "C" fn(*mut Archive, *mut c_void) -> c_int;
+    pub type archive_write_callback =
+        unsafe extern "C" fn(*mut Archive, *mut c_void, *const c_void, usize) -> la_ssize_t;
+    pub type archive_close_callback = unsafe extern "C" fn(*mut Archive, *mut c_void) -> c_int;
+    pub type archive_free_callback = unsafe extern "C" fn(*mut Archive, *mut c_void) -> c_int;
+
+    pub fn archive_write_open2(
+        _a: *mut Archive,
+        _client_data: *mut c_void,
+        _open: Option<archive_open_callback>,
+        _write: Option<archive_write_callback>,
+        _close: Option<archive_close_callback>,
+        _free: Option<archive_free_callback>,
+    ) -> c_int {
+        todo!("bun_libarchive_sys gated")
+    }
+
+    /// Growing memory buffer for archive writes with libarchive callbacks.
+    pub struct GrowingBuffer {
+        pub list: Vec<u8>,
+        pub had_error: bool,
+    }
+
+    impl GrowingBuffer {
+        pub fn init() -> GrowingBuffer {
+            GrowingBuffer { list: Vec::new(), had_error: false }
+        }
+
+        pub fn to_owned_slice(&mut self) -> core::result::Result<Vec<u8>, bun_core::OOM> {
+            if self.had_error {
+                return Err(bun_core::OOM);
+            }
+            Ok(core::mem::take(&mut self.list))
+        }
+
+        pub unsafe extern "C" fn open_callback(_a: *mut Archive, client_data: *mut c_void) -> c_int {
+            // SAFETY: client_data is a *mut GrowingBuffer registered via archive_write_open2.
+            let this = unsafe { &mut *(client_data as *mut GrowingBuffer) };
+            this.list.clear();
+            this.had_error = false;
+            0
+        }
+
+        pub unsafe extern "C" fn write_callback(
+            _a: *mut Archive,
+            client_data: *mut c_void,
+            buff: *const c_void,
+            length: usize,
+        ) -> la_ssize_t {
+            // SAFETY: client_data is a *mut GrowingBuffer registered via archive_write_open2.
+            let this = unsafe { &mut *(client_data as *mut GrowingBuffer) };
+            if buff.is_null() || length == 0 {
+                return 0;
+            }
+            // SAFETY: buff[0..length] is valid for reads per libarchive contract.
+            let data = unsafe { core::slice::from_raw_parts(buff.cast::<u8>(), length) };
+            if this.list.try_reserve(length).is_err() {
+                this.had_error = true;
+                return -1;
+            }
+            this.list.extend_from_slice(data);
+            la_ssize_t::try_from(length).unwrap()
+        }
+
+        pub unsafe extern "C" fn close_callback(_a: *mut Archive, _client_data: *mut c_void) -> c_int {
+            0
+        }
     }
 }
 

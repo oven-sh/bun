@@ -331,15 +331,102 @@ fn create_archive(data: Vec<u8>, compress: Compression) -> Box<Archive> {
 
 /// Shared helper that builds tarball bytes from a JS object
 fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<Vec<u8>> {
-    let _ = (global, obj);
-    // The Rust `bun_libarchive::lib` port currently only exposes the read-side
-    // API (`Archive::read_*`, `Entry::pathname/size/...`). The write-side
-    // surface used here — `GrowingBuffer`, `Archive::write_new`,
-    // `archive_write_open2`, `Entry::new/clear/set_*`, `write_header`,
-    // `write_data`, `write_finish_entry`, `write_close` — is not yet ported.
-    // Reinstate the original body (preserved in `Archive.zig` lines 173-257)
-    // once those land.
-    todo!("blocked_on: bun_libarchive::lib::{{GrowingBuffer,Archive write API,Entry write API}}")
+    use libarchive::lib;
+
+    let Some(js_obj) = obj.get_object() else {
+        return global.throw_invalid_arguments("Expected an object", &[]);
+    };
+
+    // Set up archive first
+    let mut growing_buffer = lib::GrowingBuffer::init();
+    // errdefer growing_buffer.deinit() — handled by Drop on Vec<u8>
+
+    let archive = lib::Archive::write_new();
+    let _archive_guard = scopeguard::guard((), |_| {
+        // SAFETY: archive handle valid until guard runs.
+        let _ = unsafe { (*archive).write_free() };
+    });
+
+    // SAFETY: archive is the non-null handle from write_new(); single-threaded use here.
+    let archive_ref = unsafe { &*archive };
+
+    if archive_ref.write_set_format_pax_restricted() != lib::Result::Ok {
+        return global.throw_invalid_arguments("Failed to create tarball: ArchiveFormatError", &[]);
+    }
+
+    if lib::archive_write_open2(
+        archive,
+        (&raw mut growing_buffer).cast(),
+        Some(lib::GrowingBuffer::open_callback),
+        Some(lib::GrowingBuffer::write_callback),
+        Some(lib::GrowingBuffer::close_callback),
+        None,
+    ) != 0
+    {
+        return global.throw_invalid_arguments("Failed to create tarball: ArchiveOpenError", &[]);
+    }
+
+    let entry = lib::Entry::new();
+    let _entry_guard = scopeguard::guard((), |_| {
+        // SAFETY: entry handle valid until guard runs.
+        unsafe { (*entry).free() };
+    });
+    // SAFETY: entry is the non-null handle from Entry::new(); single-threaded use here.
+    let entry_ref = unsafe { &*entry };
+
+    let now_secs: isize = isize::try_from(bun_core::time::milli_timestamp() / 1000).unwrap_or(0);
+
+    // Iterate over object properties and write directly to archive
+    let mut iter = jsc::JSPropertyIterator::init(
+        global,
+        js_obj,
+        jsc::PropertyIteratorOptions { skip_empty_name: true, include_value: true },
+    )?;
+    // defer iter.deinit() — handled by Drop
+
+    while let Some(key) = iter.next()? {
+        let value = iter.value;
+        if value == JSValue::ZERO {
+            continue;
+        }
+
+        // Get the key as a null-terminated string
+        let key_slice = key.to_utf8();
+        let key_str = ZBox::from_vec_with_nul(key_slice.slice().to_vec());
+        // defer free(key_str)/key_slice.deinit() — handled by Drop
+
+        // Get data - use view for Blob/ArrayBuffer, convert for strings
+        let data_slice = get_entry_data(global, value)?;
+        // defer data_slice.deinit() — handled by Drop
+
+        // Write entry to archive
+        let data = data_slice.slice();
+        let _ = entry_ref.clear();
+        entry_ref.set_pathname_utf8(key_str.as_zstr());
+        entry_ref.set_size(i64::try_from(data.len()).unwrap());
+        entry_ref.set_filetype(FILETYPE_REGULAR);
+        entry_ref.set_perm(0o644);
+        entry_ref.set_mtime(now_secs, 0);
+
+        if archive_ref.write_header(entry_ref) != lib::Result::Ok {
+            return global.throw_invalid_arguments("Failed to create tarball: ArchiveHeaderError", &[]);
+        }
+        if archive_ref.write_data(data) < 0 {
+            return global.throw_invalid_arguments("Failed to create tarball: ArchiveWriteError", &[]);
+        }
+        if archive_ref.write_finish_entry() != lib::Result::Ok {
+            return global.throw_invalid_arguments("Failed to create tarball: ArchiveFinishEntryError", &[]);
+        }
+    }
+
+    if archive_ref.write_close() != lib::Result::Ok {
+        return global.throw_invalid_arguments("Failed to create tarball: ArchiveCloseError", &[]);
+    }
+
+    match growing_buffer.to_owned_slice() {
+        Ok(v) => Ok(v),
+        Err(_) => global.throw_invalid_arguments("Failed to create tarball: OutOfMemory", &[]),
+    }
 }
 
 /// Returns data as a ZigString.Slice (handles ownership automatically via deinit)

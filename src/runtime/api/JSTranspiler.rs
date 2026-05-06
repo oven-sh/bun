@@ -582,7 +582,7 @@ impl Config {
                 // SAFETY: `replace_obj` is non-null (just returned by get_object()).
                 let replace_obj_ref = unsafe { &*replace_obj };
                 let mut iter =
-                    JSPropertyIterator::<{ PROP_ITER_OPTS }>::init(global, replace_obj_ref)?;
+                    JSPropertyIterator::init(global, replace_obj_ref, PROP_ITER_OPTS)?;
                 // defer iter.deinit() → Drop
 
                 if iter.len > 0 {

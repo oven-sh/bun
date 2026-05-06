@@ -525,12 +525,12 @@ pub fn encode(rgba: &[u8], width: u32, height: u32, opts: EncodeOptions) -> Resu
         // profile to be interpreted correctly (see PNG spec §11.3.3.3).
         Format::Png => {
             if opts.palette {
-                png::encode_indexed(rgba, width, height, opts.compression_level, opts.colors, opts.dither, opts.icc_profile)
+                png::encode_indexed(rgba, width, height, opts.compression_level, opts.colors, opts.dither, icc)
             } else {
-                png::encode(rgba, width, height, opts.compression_level, opts.icc_profile)
+                png::encode(rgba, width, height, opts.compression_level, icc)
             }
         }
-        Format::Webp => webp::encode(rgba, width, height, opts.quality, opts.lossless, opts.icc_profile),
+        Format::Webp => webp::encode(rgba, width, height, opts.quality, opts.lossless, icc),
         // Same routing rationale as decode(): the OS encoder is a capability
         // fallback, not a fast path — ImageIO's quality scale doesn't match
         // libjpeg-turbo's, and it can't honour compressionLevel/palette/

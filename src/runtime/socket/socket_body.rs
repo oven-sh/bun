@@ -643,11 +643,14 @@ impl<const SSL: bool> NewSocket<SSL> {
         };
 
         let initial_delay: u32 = if args.len > 1 {
+            // TODO(port): `JSGlobalObject::validate_integer_range` is gated
+            // upstream (`JSGlobalObject.rs` is `#![cfg(any())]`); reuse the
+            // `bun_sql_jsc` extension-trait port until it's un-gated.
             use bun_sql_jsc::jsc::JSGlobalObjectSqlExt as _;
             u32::try_from(global.validate_integer_range(
                 args.ptr[1],
                 0i32,
-                jsc::IntegerRange {
+                bun_sql_jsc::jsc::IntegerRange {
                     min: 0,
                     field_name: b"initialDelay",
                     ..Default::default()

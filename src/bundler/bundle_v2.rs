@@ -1139,6 +1139,26 @@ pub fn generic_path_with_pretty_initialized<'a>(
     }
 }
 
+/// PORT NOTE: `bun_logger::fs::Path`, `bun_resolver::fs::Path<'a>`, and
+/// `bun_paths::fs::Path<'a>` are field-identical mirrors of `fs.zig:Path` that
+/// haven't been unified yet (TYPE_ONLY split). These shims bit-cast between
+/// them at the few construction sites in this file.
+/// SAFETY: all three share the *exact* same field set (`pretty`/`text`/
+/// `namespace`/`name{dir,base,ext,filename}`/`is_disabled`/`is_symlink`);
+/// callers feed slices interned in `FilenameStore`/`DirnameStore`
+/// (process-static), so the `'static` bound on `bun_logger::fs::Path` holds.
+#[inline]
+pub(crate) fn fs_path_to_logger(p: Fs::Path<'_>) -> Logger::fs::Path {
+    // SAFETY: see fn doc — identical layout, slices are interned `'static`.
+    unsafe { core::mem::transmute::<Fs::Path<'_>, Logger::fs::Path>(p) }
+}
+#[inline]
+#[allow(dead_code)]
+pub(crate) fn logger_path_to_paths(p: &Logger::fs::Path) -> bun_paths::fs::Path<'static> {
+    // SAFETY: see `fs_path_to_logger` — identical layout.
+    unsafe { core::mem::transmute::<Logger::fs::Path, bun_paths::fs::Path<'static>>(p.clone()) }
+}
+
 struct EscapedNamespace<'a>(&'a [u8]);
 impl core::fmt::Display for EscapedNamespace<'_> {
     fn fmt(&self, w: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -1190,14 +1210,17 @@ impl<'a> BundleV2<'a> {
         // `BundleV2`. Allocate via Box::leak (lifetime tied to `graph.heap` in
         // practice; freed in `deinit_without_freeing_arena`). The body mirrors
         // bundle_v2.zig:310-360.
-        let this_transpiler: *mut Transpiler<'a> = &mut *self.transpiler;
-        // SAFETY: `this_transpiler` is live for `'a`; we read fields by value.
-        let this_transpiler = unsafe { &mut *this_transpiler };
-        let client_transpiler: &'a mut Transpiler<'a> =
-            Box::leak(Box::new(Transpiler::shallow_clone_for_client(this_transpiler)));
+        let _this_transpiler: *mut Transpiler<'a> = &mut *self.transpiler;
+        todo!("blocked_on: Transpiler::shallow_clone_for_client");
+        #[allow(unreachable_code)]
+        let client_transpiler: &'a mut Transpiler<'a> = unreachable!();
 
         client_transpiler.options.target = Target::Browser;
-        client_transpiler.options.main_fields = Target::Browser.default_main_fields();
+        client_transpiler.options.main_fields = Target::Browser
+            .default_main_fields()
+            .iter()
+            .map(|s| s.as_bytes().to_vec().into_boxed_slice())
+            .collect();
         client_transpiler.options.conditions = options::ESMConditions::init(
             Target::Browser.default_conditions(),
             false,
@@ -1245,7 +1268,10 @@ pub struct ReachableFileVisitor<'a> {
     pub all_loaders: &'a [Loader],
     pub all_urls_for_css: &'a [&'a [u8]],
     pub redirects: &'a [u32],
-    pub redirect_map: PathToSourceIndexMap,
+    // PORT NOTE: Zig copied the map by value (cheap shallow copy). The Rust
+    // `PathToSourceIndexMap` is `!Clone` and the field is unread in `visit`, so
+    // store a raw backref to satisfy the struct shape without forcing `Clone`.
+    pub redirect_map: *const PathToSourceIndexMap,
     pub dynamic_import_entry_points: &'a mut ArrayHashMap<IndexInt, ()>,
     /// Files which are Server Component Boundaries
     pub scb_bitset: Option<DynamicBitSetUnmanaged>,
@@ -1269,7 +1295,7 @@ impl<'a> ReachableFileVisitor<'a> {
             return;
         }
 
-        if self.visited.is_set(source_index.get()) {
+        if self.visited.is_set(source_index.get() as usize) {
             if CHECK_DYNAMIC_IMPORTS {
                 if was_dynamic_import {
                     self.dynamic_import_entry_points.put(source_index.get(), ()).expect("unreachable");
@@ -1277,13 +1303,13 @@ impl<'a> ReachableFileVisitor<'a> {
             }
             return;
         }
-        self.visited.set(source_index.get());
+        self.visited.set(source_index.get() as usize);
 
         if let Some(scb_bitset) = &self.scb_bitset {
-            if scb_bitset.is_set(source_index.get()) {
+            if scb_bitset.is_set(source_index.get() as usize) {
                 let scb_index = self.scb_list.get_index(source_index.get()).expect("unreachable");
-                self.visit::<CHECK_DYNAMIC_IMPORTS>(Index::init(self.scb_list.list.items_reference_source_index()[scb_index]), false);
-                self.visit::<CHECK_DYNAMIC_IMPORTS>(Index::init(self.scb_list.list.items_ssr_source_index()[scb_index]), false);
+                self.visit::<CHECK_DYNAMIC_IMPORTS>(Index::init(self.scb_list.list.reference_source_index()[scb_index]), false);
+                self.visit::<CHECK_DYNAMIC_IMPORTS>(Index::init(self.scb_list.list.ssr_source_index()[scb_index]), false);
             }
         }
 
@@ -1294,7 +1320,7 @@ impl<'a> ReachableFileVisitor<'a> {
         // when there are no import records, v index will be invalid
         if (import_record_list_id.get() as usize) < self.all_import_records.len() {
             // PORT NOTE: reshaped for borrowck — split borrow of all_import_records
-            let import_records_len = self.all_import_records[import_record_list_id.get() as usize].len();
+            let import_records_len = self.all_import_records[import_record_list_id.get() as usize].len as usize;
             for ir_idx in 0..import_records_len {
                 let import_record = &mut self.all_import_records[import_record_list_id.get() as usize].slice_mut()[ir_idx];
                 let mut other_source = import_record.source_index;
@@ -1306,7 +1332,7 @@ impl<'a> ReachableFileVisitor<'a> {
                         // PORT NOTE: reshaped for borrowck — re-borrow import_record
                         let import_record = &mut self.all_import_records[import_record_list_id.get() as usize].slice_mut()[ir_idx];
                         import_record.source_index = other_import_record.source_index;
-                        import_record.path = other_import_record.path.dupe_alloc().expect("oom");
+                        import_record.path = other_import_record.path.clone();
                         other_source = other_import_record.source_index;
                         if redirect_count == Self::MAX_REDIRECTS {
                             import_record.path.is_disabled = true;
@@ -1327,9 +1353,9 @@ impl<'a> ReachableFileVisitor<'a> {
                     let is_inlined = import_record.source_index.is_valid()
                         && !self.all_urls_for_css[import_record.source_index.get() as usize].is_empty();
                     if is_js && is_inlined {
-                        self.additional_files_imported_by_js_and_inlined_in_css.set(import_record.source_index.get());
+                        self.additional_files_imported_by_js_and_inlined_in_css.set(import_record.source_index.get() as usize);
                     } else if is_css && is_inlined {
-                        self.additional_files_imported_by_css_and_inlined.set(import_record.source_index.get());
+                        self.additional_files_imported_by_css_and_inlined.set(import_record.source_index.get() as usize);
                     }
 
                     let next_source = import_record.source_index;
@@ -1384,7 +1410,7 @@ impl<'a> BundleV2<'a> {
             all_import_records: self.graph.ast.items_import_records_mut(),
             all_loaders: self.graph.input_files.items_loader(),
             all_urls_for_css,
-            redirect_map: self.path_to_source_index_map(self.transpiler.options.target).clone(),
+            redirect_map: self.path_to_source_index_map(self.transpiler.options.target) as *const _,
             dynamic_import_entry_points: &mut self.dynamic_import_entry_points,
             scb_bitset,
             scb_list: if scb_bitset.is_some() {
@@ -1404,11 +1430,11 @@ impl<'a> BundleV2<'a> {
 
         if self.transpiler.options.code_splitting {
             for entry_point in self.graph.entry_points.iter().copied() {
-                visitor.visit::<true>(entry_point, false);
+                visitor.visit::<true>(entry_point.into(), false);
             }
         } else {
             for entry_point in self.graph.entry_points.iter().copied() {
-                visitor.visit::<false>(entry_point, false);
+                visitor.visit::<false>(entry_point.into(), false);
             }
         }
 
@@ -1436,10 +1462,10 @@ impl<'a> BundleV2<'a> {
             if !url_for_css.is_empty() {
                 // We like to inline additional files in CSS if they fit a size threshold
                 // If we do inline a file in CSS, and it is not imported by JS, then we don't need to copy the additional file into the output directory
-                if additional_files_imported_by_css_and_inlined.is_set(index as u32)
-                    && !additional_files_imported_by_js_and_inlined_in_css.is_set(index as u32)
+                if additional_files_imported_by_css_and_inlined.is_set(index)
+                    && !additional_files_imported_by_js_and_inlined_in_css.is_set(index)
                 {
-                    additional_files[index].clear();
+                    additional_files[index].clear_retaining_capacity();
                     unique_keys[index] = b"".as_slice().into();
                     content_hashes[index] = 0;
                 }
@@ -1453,7 +1479,13 @@ impl<'a> BundleV2<'a> {
         self.thread_lock.assert_locked();
 
         if self.graph.pending_items == 0 {
-            if self.graph.drain_deferred_tasks(self) {
+            // PORT NOTE: reshaped for borrowck — Zig passed `&self.graph` and
+            // `self` to the same call. Take a raw ptr so the two `&mut` don't
+            // overlap from rustc's view.
+            // SAFETY: `drain_deferred_tasks` only touches `self.graph.deferred_*`
+            // fields and the `BundleV2` callback surface; no aliasing UB.
+            let this: *mut Self = self;
+            if unsafe { (*this).graph.drain_deferred_tasks(&mut *this) } {
                 return false;
             }
             return true;
@@ -1471,7 +1503,7 @@ impl<'a> BundleV2<'a> {
     pub fn scan_for_secondary_paths(&mut self) {
         if !self.graph.has_any_secondary_paths {
             // Assert the boolean is accurate.
-            #[cfg(feature = "ci_assert")]
+            #[cfg(debug_assertions)]
             for secondary_path in self.graph.input_files.items_secondary_path() {
                 if !secondary_path.is_empty() {
                     panic!("secondary_path is not empty");
@@ -1504,12 +1536,12 @@ impl<'a> BundleV2<'a> {
                 if source_index >= max_valid_source_index.get() {
                     continue;
                 }
-                let secondary_path = secondary_paths[source_index as usize];
+                let secondary_path: &[u8] = &secondary_paths[source_index as usize];
                 if !secondary_path.is_empty() {
                     let Some(secondary_source_index) = path_to_source_index_map.get(secondary_path) else { continue };
                     import_record.source_index = Index::init(secondary_source_index);
                     // Keep path in sync for determinism, diagnostics, and dev tooling.
-                    import_record.path = self.graph.input_files.items_source()[secondary_source_index as usize].path.clone();
+                    import_record.path = logger_path_to_paths(&self.graph.input_files.items_source()[secondary_source_index as usize].path);
                 }
             }
         }
@@ -1619,16 +1651,18 @@ impl<'a> BundleV2<'a> {
                                     ).expect("unreachable");
                                 } else {
                                     add_error(
-                                        log, source, import_record.range, self.allocator(),
+                                        log, source, import_record.range,
                                         format_args!("Could not resolve: \"{}\". Maybe you need to \"bun install\"?", bstr::BStr::new(path_to_use)),
-                                        import_record.kind,
+                                        path_to_use,
+                                        import_record.kind.into(),
                                     ).expect("unreachable");
                                 }
                             } else {
                                 add_error(
-                                    log, source, import_record.range, self.allocator(),
+                                    log, source, import_record.range,
                                     format_args!("Could not resolve: \"{}\"", bstr::BStr::new(path_to_use)),
-                                    import_record.kind,
+                                    path_to_use,
+                                    import_record.kind.into(),
                                 ).expect("unreachable");
                             }
                         }
@@ -1661,7 +1695,9 @@ impl<'a> BundleV2<'a> {
 
         if path.pretty.as_ptr() == path.text.as_ptr() {
             // TODO: outbase
-            let rel = bun_paths::resolve_path::relative_platform::<bun_paths::resolve_path::platform::Loose, false>(&transpiler.fs.top_level_dir, &path.text);
+            let rel = bun_paths::resolve_path::relative_platform::<bun_paths::resolve_path::platform::Loose, false>(
+                // SAFETY: `transpiler.fs` is a live `*mut FileSystem` for the bundle pass.
+                unsafe { (*transpiler.fs).top_level_dir }, &path.text);
             path.pretty = self.allocator().alloc_slice_copy(rel);
         }
         path.assert_pretty_is_valid();
@@ -1750,7 +1786,7 @@ impl<'a> BundleV2<'a> {
         };
         let mut path = result.path_pair.primary.clone();
         self.increment_scan_counter();
-        let source_index = Index::source(self.graph.input_files.len());
+        let source_index = Index::source(self.graph.input_files.len() as u32);
         let loader = path.loader(&self.transpiler.options.loaders).unwrap_or(Loader::File);
 
         path = self.path_with_pretty_initialized(path, target)?;
@@ -1760,8 +1796,8 @@ impl<'a> BundleV2<'a> {
 
         self.graph.input_files.append(crate::Graph::InputFile {
             source: Logger::Source {
-                path,
-                contents: &b""[..],
+                path: fs_path_to_logger(path),
+                contents: std::borrow::Cow::Borrowed(&b""[..]),
                 index: bun_logger::Index(source_index.get()),
                 ..Default::default()
             },
@@ -1769,7 +1805,7 @@ impl<'a> BundleV2<'a> {
             side_effects: result.primary_side_effects_data,
             ..Default::default()
         })?;
-        let task = Box::leak(Box::new(ParseTask::init(&result, source_index, self)));
+        let task = Box::leak(Box::new(ParseTask::init(&result, source_index.into(), self)));
         task.loader = Some(loader);
         task.task.node.next = core::ptr::null_mut();
         task.tree_shaking = self.linker.options.tree_shaking;
@@ -1809,7 +1845,7 @@ impl<'a> BundleV2<'a> {
             return Ok(None);
         }
         self.increment_scan_counter();
-        let source_index = Index::source(self.graph.input_files.len());
+        let source_index = Index::source(self.graph.input_files.len() as u32);
 
         let loader = path.loader(&self.transpiler.options.loaders).unwrap_or(Loader::File);
 
@@ -1820,8 +1856,8 @@ impl<'a> BundleV2<'a> {
 
         self.graph.input_files.append(crate::Graph::InputFile {
             source: Logger::Source {
-                path: path.dupe_alloc().expect("oom"),
-                contents: &b""[..],
+                path: fs_path_to_logger(path.dupe_alloc().expect("oom")),
+                contents: std::borrow::Cow::Borrowed(&b""[..]),
                 index: bun_logger::Index(source_index.get()),
                 ..Default::default()
             },
@@ -1829,7 +1865,7 @@ impl<'a> BundleV2<'a> {
             side_effects: result.primary_side_effects_data,
             ..Default::default()
         })?;
-        let task = Box::leak(Box::new(ParseTask::init(&result, source_index, self)));
+        let task = Box::leak(Box::new(ParseTask::init(&result, source_index.into(), self)));
         task.loader = Some(loader);
         task.task.node.next = core::ptr::null_mut();
         task.tree_shaking = self.linker.options.tree_shaking;

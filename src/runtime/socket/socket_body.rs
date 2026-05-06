@@ -2123,9 +2123,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         })?;
 
         // TODO(port): mutation through Rc<Handlers>. In Zig `this_handlers.* = handlers`
-        // overwrites the pointee. Phase B: interior mutability or raw `*mut Handlers`.
-        let this_handlers = this.get_handlers();
-        let prev_mode = this_handlers.mode;
+        // overwrites the pointee so listener + all sockets observe the new
+        // callbacks. Phase B: change field to `*mut Handlers` / `IntrusiveRc<UnsafeCell<_>>`.
+        let rc = this.handlers.as_ref().expect("No handlers set on Socket");
+        let prev_mode = rc.mode;
         let handlers = Handlers::from_js(global, socket_obj, prev_mode == SocketMode::Server)?;
         // Preserve runtime state across the struct assignment. `Handlers.fromJS` returns a
         // fresh struct with `active_connections = 0` and `mode` limited to `.server`/`.client`,
@@ -2134,13 +2135,19 @@ impl<const SSL: bool> NewSocket<SSL> {
         // `.duplex_server`. Losing the counter causes the next `markInactive` to either free
         // the heap-allocated client `Handlers` while the socket still points at it, or
         // underflow on the server path.
-        let active_connections = this_handlers.active_connections;
-        // SAFETY: this_handlers points into a heap allocation we conceptually own.
-        // TODO(port): Rc<Handlers> aliasing — see field note.
+        let active_connections = rc.active_connections;
+        // Raw-ptr-only access: derive *mut from the Rc's stored allocation
+        // pointer, NOT from a live `&Handlers` — `&T as *const T as *mut T`
+        // followed by a write is UB (frozen tag). No `&Handlers` borrow is
+        // live across the writes below (NLL ends `rc`'s Deref temporaries).
+        let p = Rc::as_ptr(rc) as *mut Handlers;
+        // SAFETY: `p` points into the `Rc<Handlers>` heap payload. The Zig
+        // spec mutates `*Handlers` in place; `Rc<T>`'s payload is not
+        // `UnsafeCell`-wrapped so this remains a known soundness gap pending
+        // the Phase-B field-type change (see PORT STATUS at end of file).
         unsafe {
-            let p = this_handlers as *const Handlers as *mut Handlers;
-            (*p).deinit();
-            *p = handlers;
+            core::ptr::drop_in_place(p); // Zig: this_handlers.deinit()
+            core::ptr::write(p, handlers);
             (*p).mode = prev_mode;
             (*p).active_connections = active_connections;
         }

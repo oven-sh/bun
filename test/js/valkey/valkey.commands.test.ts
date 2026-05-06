@@ -76,13 +76,14 @@ describe("RedisClient command methods exist", () => {
 // we validate that each new wrapper actually sends the right command.
 const hasLocalRedis = await new Promise<boolean>(resolve => {
   const sock = net.connect({ host: "127.0.0.1", port: 6379 });
-  const done = (ok: boolean) => {
+  const timer = setTimeout(() => done(false), 1000).unref();
+  function done(ok: boolean) {
+    clearTimeout(timer);
     sock.destroy();
     resolve(ok);
-  };
+  }
   sock.once("connect", () => done(true));
   sock.once("error", () => done(false));
-  setTimeout(() => done(false), 1000);
 });
 
 describe.skipIf(!hasLocalRedis)("RedisClient commands (functional)", () => {

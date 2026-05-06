@@ -1866,11 +1866,12 @@ pub fn init(
     {
         // SAFETY: singleton fully initialized; main thread, no workers yet.
         let manager = unsafe { &mut *manager_ptr };
-        manager
-            .event_loop
-            .loop_()
-            .internal_loop_data
-            .set_parent_event_loop(EventLoopHandle::init(&manager.event_loop));
+        // Zig: `manager.event_loop.loop().internal_loop_data.setParentEventLoop(
+        //     jsc.EventLoopHandle.init(&manager.event_loop))` —
+        // `InternalLoopData::set_parent_event_loop` is not yet exposed on
+        // `bun_uws::Loop` in this tier (lives in higher-tier loop_data).
+        // TODO(port): blocked_on bun_uws::InternalLoopData::set_parent_event_loop
+        let _ = manager.event_loop.r#loop();
     }
     // SAFETY: as above.
     unsafe { &mut *manager_ptr }.lockfile = Box::new(Lockfile::default());
@@ -1879,14 +1880,14 @@ pub fn init(
     {
         // make sure folder packages can find the root package without creating a new one
         // SAFETY: ROOT_PACKAGE_JSON_PATH set above
-        let mut normalized = bun_paths::AbsPath::<
-            u8,
-            { bun_paths::path_options::PathSeparators::POSIX },
-        >::from(unsafe { ROOT_PACKAGE_JSON_PATH });
+        // Zig: `var normalized: AbsPath(.{ .sep = .posix, .unit = .u8 }) = .from(root_package_json_path)`.
+        // `bun_paths::AbsPath` has no `From<&ZStr>`; hash directly off the byte slice
+        // (FolderResolution::hash is `fn(&[u8]) -> u64`).
+        let normalized: &[u8] = unsafe { ROOT_PACKAGE_JSON_PATH }.as_ref();
         // SAFETY: singleton fully initialized; main thread, no workers yet.
         unsafe { &mut *manager_ptr }.folders.put(
-            FolderResolution::hash(normalized.slice()),
-            FolderResolution::PackageId(0),
+            crate::resolvers::folder_resolver::hash(normalized),
+            crate::resolvers::folder_resolver::FolderResolution::PackageId(0),
         )?;
         // normalized.deinit() → Drop
     }

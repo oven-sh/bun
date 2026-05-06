@@ -2257,32 +2257,32 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
 
         if !FEATURES.is_main {
             if !R::IS_VOID {
-                self.resolution = resolver.resolve(&mut string_builder, &json)?;
+                self.resolution = resolver.resolve::<SemverIntType>(&mut string_builder, &json)?;
             }
         } else {
             self.resolution = Resolution::<SemverIntType>::init(TaggedValue::Root);
         }
 
         if let Some(patched_deps) = json.as_property(b"patchedDependencies") {
-            let obj = patched_deps.expr.data.e_object();
-            lockfile
-                .patched_dependencies
-                .ensure_total_capacity(obj.properties.len)
-                .expect("unreachable");
-            for prop in obj.properties.slice() {
-                let key = prop.key.unwrap();
-                let value = prop.value.unwrap();
-                if key.is_string() && value.is_string() {
-                    // PERF(port): was stack-fallback
-                    let keyhash = key
-                        .as_string_hash(String::Builder::string_hash)?
-                        .expect("unreachable");
-                    let patch_path =
-                        string_builder.append::<String>(value.as_string().unwrap());
-                    lockfile
-                        .patched_dependencies
-                        .put(keyhash, PatchedDep { path: patch_path, ..Default::default() })
-                        .expect("unreachable");
+            if let bun_js_parser::ast::ExprData::EObject(obj) = &patched_deps.expr.data {
+                lockfile
+                    .patched_dependencies
+                    .ensure_total_capacity(obj.properties.len as usize)
+                    .expect("unreachable");
+                for prop in obj.properties.slice() {
+                    let key = prop.key.unwrap();
+                    let value = prop.value.unwrap();
+                    if key.is_string() && value.is_string() {
+                        // PERF(port): was stack-fallback
+                        let keyhash =
+                            semver::string::Builder::string_hash(key.as_string().unwrap());
+                        let patch_path =
+                            string_builder.append::<String>(value.as_string().unwrap());
+                        lockfile
+                            .patched_dependencies
+                            .put(keyhash, PatchedDep { path: patch_path, ..Default::default() })
+                            .expect("unreachable");
+                    }
                 }
             }
         }
@@ -2294,23 +2294,23 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                         match obj.properties.len {
                             0 => {}
                             1 => {
-                                let Some(bin_name) =
-                                    obj.properties.ptr[0].key.unwrap().as_string()
-                                else {
+                                let first = &obj.properties.slice()[0];
+                                let Some(bin_name) = first.key.unwrap().as_string() else {
                                     break 'bin;
                                 };
-                                let Some(value) =
-                                    obj.properties.ptr[0].value.unwrap().as_string()
-                                else {
+                                let Some(value) = first.value.unwrap().as_string() else {
                                     break 'bin;
                                 };
 
                                 self.bin = Bin {
-                                    tag: Bin::Tag::NamedFile,
-                                    value: Bin::Value::named_file([
-                                        string_builder.append::<String>(bin_name),
-                                        string_builder.append::<String>(value),
-                                    ]),
+                                    tag: bin::Tag::NamedFile,
+                                    value: bin::Value {
+                                        named_file: [
+                                            string_builder.append::<String>(bin_name),
+                                            string_builder.append::<String>(value),
+                                        ],
+                                    },
+                                    ..Default::default()
                                 };
                             }
                             _ => {

@@ -899,14 +899,14 @@ pub fn install_isolated_packages(
         let mut res_fmt_buf: Vec<u8> = Vec::new();
 
         let nodes_slice = nodes.slice();
-        let node_pkg_ids = nodes_slice.items().pkg_id;
-        let node_dep_ids = nodes_slice.items().dep_id;
-        let node_peers: &[store::node::Peers] = nodes_slice.items().peers;
-        let node_nodes = nodes_slice.items().nodes;
+        let node_pkg_ids = nodes_slice.pkg_id();
+        let node_dep_ids = nodes_slice.dep_id();
+        let node_peers: &[store::node::Peers] = nodes_slice.peers();
+        let node_nodes = nodes_slice.nodes();
 
         let mut store_entries: store::entry::List = store::entry::List::default();
 
-        let mut entry_queue: LinearFifo<QueuedEntry> = LinearFifo::new();
+        let mut entry_queue: LinearFifo<QueuedEntry, DynamicBuffer<QueuedEntry>> = LinearFifo::init();
 
         entry_queue.write_item(QueuedEntry {
             node_id: store::node::Id::from(0),
@@ -921,7 +921,7 @@ pub fn install_isolated_packages(
         'next_entry: while let Some(entry) = entry_queue.read_item() {
             let pkg_id = node_pkg_ids[entry.node_id.get()];
 
-            let dedupe_entry = dedupe.get_or_put(pkg_id);
+            let dedupe_entry = dedupe.get_or_put(pkg_id)?;
             if !dedupe_entry.found_existing {
                 *dedupe_entry.value_ptr = Vec::new();
             } else {
@@ -956,8 +956,20 @@ pub fn install_isolated_packages(
                         // dedupe! depend on the already created entry
 
                         let entries = store_entries.slice();
-                        let entry_dependencies = entries.items_mut().dependencies;
-                        let entry_parents = entries.items_mut().parents;
+                        // PORT NOTE: disjoint-column raw views (see above).
+                        let entries_len = entries.len();
+                        let entry_dependencies: &mut [store::entry::Dependencies] = unsafe {
+                            core::slice::from_raw_parts_mut(
+                                entries.items_raw::<store::entry::Dependencies>(store::EntryField::dependencies),
+                                entries_len,
+                            )
+                        };
+                        let entry_parents: &mut [Vec<store::entry::Id>] = unsafe {
+                            core::slice::from_raw_parts_mut(
+                                entries.items_raw::<Vec<store::entry::Id>>(store::EntryField::parents),
+                                entries_len,
+                            )
+                        };
 
                         let parents = &mut entry_parents[info.entry_id.get()];
 
@@ -997,7 +1009,8 @@ pub fn install_isolated_packages(
                     hasher.update(pkg_name.slice(string_buf));
                     let pkg_res = &pkg_resolutions[peer_ids.pkg_id as usize];
                     res_fmt_buf.clear();
-                    write!(&mut res_fmt_buf, "{}", pkg_res.fmt(string_buf, bun_fmt::PathSep::Posix))?;
+                    write!(&mut res_fmt_buf, "{}", pkg_res.fmt(string_buf, bun_fmt::PathSep::Posix))
+                        .expect("Vec<u8> write is infallible");
                     hasher.update(&res_fmt_buf);
                 }
                 break 'peer_hash store::entry::PeerHash::from(hasher.final_());

@@ -165,13 +165,13 @@ pub fn run_tasks<C: RunTasksCallbacks>(
             manager.start_progress_bar_if_none();
 
             if C::PROGRESS_BAR {
-                let completed_items = manager.total_tasks - manager.pending_task_count();
+                let completed_items = (manager.total_tasks - manager.pending_task_count()) as usize;
                 // SAFETY: `downloads_node` set by `start_progress_bar_if_none`;
                 // points into `manager.progress` which is live.
                 let node = unsafe { &mut *manager.downloads_node.unwrap() };
                 if completed_items != node.completed_items || has_updated_this_run {
                     node.set_completed_items(completed_items);
-                    node.set_estimated_total_items(manager.total_tasks);
+                    node.set_estimated_total_items(manager.total_tasks as usize);
                 }
             }
             // SAFETY: see above.

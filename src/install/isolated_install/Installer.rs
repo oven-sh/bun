@@ -125,7 +125,7 @@ impl<'a> Installer<'a> {
     }
 
     pub fn on_package_extracted(&mut self, task_id: crate::package_manager_task::Id) {
-        if let Some(removed) = self.manager.task_queue.fetch_remove(task_id) {
+        if let Some(removed) = self.manager.task_queue.remove(&task_id) {
             let store = self.store;
 
             let node_pkg_ids = store.nodes.items_pkg_id();
@@ -139,7 +139,7 @@ impl<'a> Installer<'a> {
             let pkg_name_hashes = pkgs.items_name_hash();
             let pkg_resolutions = pkgs.items_resolution();
 
-            for install_ctx in removed.value.as_slice() {
+            for install_ctx in removed.as_slice() {
                 let entry_id = install_ctx.isolated_package_install_context;
 
                 let node_id = entry_node_ids[entry_id.get() as usize];
@@ -181,8 +181,8 @@ impl<'a> Installer<'a> {
         err: bun_core::Error,
         url: &[u8],
     ) {
-        if let Some(removed) = self.manager.task_queue.fetch_remove(task_id) {
-            let callbacks = removed.value;
+        if let Some(removed) = self.manager.task_queue.remove(&task_id) {
+            let callbacks = removed;
 
             let entry_steps = self.store.entries.items_step();
             for install_ctx in callbacks.as_slice() {

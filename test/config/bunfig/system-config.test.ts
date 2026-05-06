@@ -242,10 +242,16 @@ describe("system-wide bunfig.toml", () => {
     await Bun.write(join(String(dir), "xdg", ".bunfig.toml"), `[install]\ncache = ${JSON.stringify(homeCachePath)}\n`);
 
     // System + home: home wins (matches documented "later overrides earlier").
+    // Explicitly unset `BUN_INSTALL_CACHE_DIR` and `BUN_INSTALL` — the test
+    // runner sets the former to a shared tempdir, and both short-circuit the
+    // bunfig `[install].cache` lookup in fetchCacheDirectoryPath. Undefined
+    // values drop the var from the spawn env.
     await using mergeProc = Bun.spawn({
       cmd: [bunExe(), "pm", "cache"],
       env: {
         ...bunEnv,
+        BUN_INSTALL_CACHE_DIR: undefined,
+        BUN_INSTALL: undefined,
         BUN_SYSTEM_CONFIG: join(String(dir), "sys.toml"),
         XDG_CONFIG_HOME: join(String(dir), "xdg"),
       },
@@ -269,6 +275,8 @@ describe("system-wide bunfig.toml", () => {
       cmd: [bunExe(), "pm", "cache"],
       env: {
         ...bunEnv,
+        BUN_INSTALL_CACHE_DIR: undefined,
+        BUN_INSTALL: undefined,
         BUN_SYSTEM_CONFIG: join(String(dir), "sys.toml"),
         XDG_CONFIG_HOME: join(String(dir), "nonexistent"),
       },

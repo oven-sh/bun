@@ -801,7 +801,7 @@ pub fn build_with_vm(
         let any_client_chunks = 'any_client_chunks: {
             for file in bundled_outputs {
                 if let Some(s) = file.side {
-                    if s == bake::Side::Client
+                    if s == bun_bundler::options::Side::Client
                         && file.src_path.text.as_ref() != b"bun-framework-react/client.tsx"
                     {
                         break 'any_client_chunks true;

@@ -803,10 +803,18 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
 
             types.push(framework_router::Type {
                 abs_root: strings::without_trailing_slash(entry.abs_path).into(),
-                prefix: fsr.prefix.clone(),
+                prefix: fsr.prefix.clone().into(),
                 ignore_underscores: fsr.ignore_underscores,
-                ignore_dirs: fsr.ignore_dirs.clone(),
-                extensions: fsr.extensions.clone(),
+                ignore_dirs: fsr
+                    .ignore_dirs
+                    .iter()
+                    .map(|d| Box::<[u8]>::from(d.as_ref()))
+                    .collect(),
+                extensions: fsr
+                    .extensions
+                    .iter()
+                    .map(|e| Box::<[u8]>::from(e.as_ref()))
+                    .collect(),
                 style: fsr.style,
                 allow_layouts: fsr.allow_layouts,
                 server_file: to_opaque_file_id::<{ bake::Side::Server }>(server_file),
@@ -816,17 +824,17 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
                     )
                     .to_optional()
                 } else {
-                    OpaqueFileId::Optional::NONE
+                    None
                 },
-                server_file_string: jsc::StrongOptional::EMPTY,
+                server_file_string: jsc::StrongOptional::empty(),
             });
 
             dev.route_lookup.put(
                 server_file,
-                RouteIndexAndRecurseFlag {
-                    route_index: framework_router::Route::Index::init(u32::try_from(i).unwrap()),
-                    should_recurse_when_visiting: true,
-                },
+                RouteIndexAndRecurseFlag::new(
+                    framework_router::RouteIndex::init(u32::try_from(i).unwrap()),
+                    true,
+                ),
             )?;
         }
 

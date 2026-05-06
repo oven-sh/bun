@@ -3576,6 +3576,32 @@ pub const Formatter = struct {
     }
 };
 
+/// Write the active `console.group()` indentation (two spaces per level)
+/// to a `*std.Io.Writer`. Used to make output produced outside of the
+/// `messageWithTypeAndLevel` formatter (e.g. `count`, `time*`) follow
+/// `console.group()` indentation, per the WHATWG Console spec.
+fn writeGroupIndentTo(indent: u16, writer: *std.Io.Writer) void {
+    const indentation_buf = [_]u8{' '} ** 64;
+    var total_remain: u32 = indent;
+    while (total_remain > 0) {
+        const written: u8 = @min(32, total_remain);
+        writer.writeAll(indentation_buf[0 .. written * 2]) catch return;
+        total_remain -|= written;
+    }
+}
+
+/// Write the active `console.group()` indentation to stderr via the global
+/// `Output.printError` helper.
+fn writeGroupIndentToError(indent: u16) void {
+    const indentation_buf = [_]u8{' '} ** 64;
+    var total_remain: u32 = indent;
+    while (total_remain > 0) {
+        const written: u8 = @min(32, total_remain);
+        Output.printError("{s}", .{indentation_buf[0 .. written * 2]});
+        total_remain -|= written;
+    }
+}
+
 pub fn count(
     // console
     _: *ConsoleObject,
@@ -3595,6 +3621,7 @@ pub fn count(
     counter.value_ptr.* = current;
 
     const writer = this.writer;
+    writeGroupIndentTo(this.default_indent, writer);
     if (Output.enable_ansi_colors_stdout)
         writer.print(comptime Output.prettyFmt("<r>{s}<d>: <r><yellow>{d}<r>\n", true), .{ slice, current }) catch unreachable
     else
@@ -3647,7 +3674,7 @@ pub fn timeEnd(
     // console
     _: *ConsoleObject,
     // global
-    _: *JSGlobalObject,
+    global: *JSGlobalObject,
     chars: [*]const u8,
     len: usize,
 ) callconv(jsc.conv) void {
@@ -3660,6 +3687,7 @@ pub fn timeEnd(
     var value: std.time.Timer = result.value orelse return;
     // get the duration in microseconds
     // then display it in milliseconds
+    writeGroupIndentToError(global.bunVM().console.default_indent);
     Output.printElapsed(@as(f64, @floatFromInt(value.read() / std.time.ns_per_us)) / std.time.us_per_ms);
     switch (len) {
         0 => Output.printErrorln("\n", .{}),
@@ -3690,6 +3718,7 @@ pub fn timeLog(
     var value: std.time.Timer = (pending_time_logs.get(id) orelse return) orelse return;
     // get the duration in microseconds
     // then display it in milliseconds
+    writeGroupIndentToError(global.bunVM().console.default_indent);
     Output.printElapsed(@as(f64, @floatFromInt(value.read() / std.time.ns_per_us)) / std.time.us_per_ms);
     switch (len) {
         0 => {},

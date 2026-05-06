@@ -415,8 +415,14 @@ pub fn run_task(
             BakeHotReloadEvent::run(cast!(BakeHotReloadEvent));
         }
         task_tag::FSWatchTask => {
-            // Body: `t.run(); defer t.deinit();`
-            todo!("blocked_on: crate::node::node_fs_watcher::FSWatchTask");
+            // Zig: `defer t.deinit(); t.run();` — the task is heap-allocated
+            // (cloned from `FSWatcher.current_task` at enqueue), so `deinit`
+            // == drop the Box.
+            let t = cast_ptr!(FSWatchTask);
+            // SAFETY: tag identifies pointee; live Box'd FSWatchTask.
+            unsafe { (*t).run() };
+            // SAFETY: paired with Box::into_raw in `FSWatchTask::enqueue`.
+            drop(unsafe { Box::from_raw(t) });
         }
 
         // ── DNS ──────────────────────────────────────────────────────────
@@ -425,10 +431,12 @@ pub fn run_task(
             panic!("This should not be reachable on Windows");
             #[cfg(not(windows))]
             {
-                // Body: `defer t.deinit(); try t.runFromJS();` over
-                // `WorkTask<GetAddrInfoRequest>` — type lives in the gated
-                // `dns_jsc::dns_body` draft, not the public `dns_jsc` surface.
-                todo!("blocked_on: crate::dns_jsc::get_addr_info_request::Task");
+                let t = cast_ptr!(get_addr_info_request::Task);
+                // SAFETY: tag identifies pointee; Box::into_raw'd in WorkTask::create.
+                let r = bun_jsc::work_task::WorkTask::run_from_js(t);
+                // SAFETY: paired with `create_on_js_thread` Box::into_raw.
+                unsafe { bun_jsc::work_task::WorkTask::destroy(t) };
+                r?;
             }
         }
 

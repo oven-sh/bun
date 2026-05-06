@@ -1452,12 +1452,14 @@ pub fn get_workspace_filters(
 /// The error is logged to manager.log, and the install will fail later when
 /// manager.log.hasErrors() is checked.
 fn add_dependency_error(manager: &mut PackageManager, dependency: &Dependency, err: bun_core::Error) {
-    let lockfile = &manager.lockfile;
-    let note_fmt = "error occurred while resolving {}";
+    // PORT NOTE: reshaped for borrowck — capture the realname slice before
+    // taking `&mut` on `manager.log` (Zig held both via shared `*` pointers).
+    let realname = dependency.realname();
+    let path = manager.lockfile.str(&realname).to_vec();
     let note_args = format_args!(
-        "{}",
+        "error occurred while resolving {}",
         bun_core::fmt::fmt_path(
-            lockfile.str(&dependency.realname()),
+            &path,
             bun_core::fmt::PathFormatOptions {
                 path_sep: match dependency.version.tag {
                     DependencyVersionTag::Folder => bun_core::fmt::PathSep::Auto,
@@ -1469,15 +1471,14 @@ fn add_dependency_error(manager: &mut PackageManager, dependency: &Dependency, e
     );
 
     if dependency.behavior.is_optional() || dependency.behavior.is_peer() {
-        manager
-            .log_mut()
-            .add_warning_with_note(None, Default::default(), err.name(), note_fmt, note_args)
-            .expect("unreachable");
+        bun_core::handle_oom(manager.log_mut().add_warning_with_note(
+            None,
+            Default::default(),
+            err.name().as_bytes(),
+            note_args,
+        ));
     } else {
-        manager
-            .log_mut()
-            .add_zig_error_with_note(err, note_fmt, note_args)
-            .expect("unreachable");
+        bun_core::handle_oom(manager.log_mut().add_zig_error_with_note(err, note_args));
     }
 }
 

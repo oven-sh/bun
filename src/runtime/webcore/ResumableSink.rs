@@ -164,7 +164,9 @@ impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<'a, J
             err_instance.ensure_still_alive();
             this_ref.status = Status::Done;
             Self::on_end(this_ref.context, Some(err_instance));
-            this_ref.deref_();
+            // SAFETY: `this` allocated above; may free here (see Zig — caller
+            // gets a dangling ptr in the error path and must not deref it).
+            unsafe { Self::deref_(this) };
             return this;
         }
         if let crate::webcore::readable_stream::Source::Bytes(byte_stream_ptr) = stream.ptr {
@@ -173,12 +175,8 @@ impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<'a, J
             // if pipe is empty, we can pipe
             if byte_stream.pipe.is_empty() {
                 // equivalent to onStart to get the highWaterMark
-                this_ref.high_water_mark = if byte_stream.high_water_mark < i64::MAX as u64 {
-                    // TODO(port): exact integer types — Zig used @intCast from byte_stream.highWaterMark
-                    i64::try_from(byte_stream.high_water_mark).unwrap()
-                } else {
-                    i64::MAX
-                };
+                this_ref.high_water_mark =
+                    byte_stream.high_water_mark.min(i64::MAX as u64) as i64;
 
                 if byte_stream.has_received_last_chunk {
                     this_ref.status = Status::Done;
@@ -201,7 +199,8 @@ impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<'a, J
                     scoped_log!(ResumableSink, "onWrite {}", bytes.len);
                     let _ = Self::on_write(this_ref.context, bytes.slice());
                     Self::on_end(this_ref.context, err);
-                    this_ref.deref_();
+                    // SAFETY: see the locked/disturbed branch above.
+                    unsafe { Self::deref_(this) };
                     return this;
                 }
                 // We can pipe but we also wanna to drain as much as possible first

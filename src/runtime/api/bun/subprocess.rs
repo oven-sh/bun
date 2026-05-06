@@ -158,7 +158,10 @@ pub struct Subprocess<'a> {
 
     // TODO(port): lifetime — weak observer, nulled in onStdinDestroyed; no ownership
     pub weak_file_sink_stdin_ptr: Option<NonNull<FileSink>>,
-    pub abort_signal: Option<Arc<AbortSignal>>,
+    /// +1 C++-intrusive ref held; released in `clear_abort_signal` via
+    /// `AbortSignal::unref()`. Not `Arc` — `AbortSignal` is an opaque FFI
+    /// handle whose refcount lives on the C++ side.
+    pub abort_signal: Option<NonNull<AbortSignal>>,
 
     pub event_loop_timer_refd: bool,
     pub event_loop_timer: EventLoopTimer,

@@ -819,17 +819,98 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
             if !IS_SYNC {
                 if let Some(terminal_val) = args.get_truthy(global_this, "terminal")? {
-                    // TODO(port): `Terminal` body (flags / slave_fd / from_js / Options /
-                    // create_from_spawn / get_slave_fd / get_pseudoconsole) is gated
-                    // behind `bun_terminal_body`. Reject until that module is un-gated.
-                    let _ = (&mut existing_terminal, &mut terminal_js_value, terminal_val);
-                    let _ = terminal_info;
-                    return Err(global_this.throw_invalid_arguments(
-                        "terminal must be a Terminal object or options object",
-                    ));
-                    #[allow(unreachable_code)]
+                    // Check if it's an existing Terminal object
+                    if let Some(terminal) = terminal_body::js::from_js(terminal_val) {
+                        // SAFETY: `from_js` returns a live `*mut Terminal` borrowed
+                        // from the JS wrapper's `m_ctx`; it stays valid for as long
+                        // as `terminal_val` is reachable (kept alive below via
+                        // `terminal_js_value`).
+                        let term = unsafe { &*terminal };
+                        if term.is_closed() {
+                            return Err(global_this.throw_invalid_arguments("terminal is closed"));
+                        }
+                        if term.is_inline_spawned() {
+                            return Err(global_this.throw_invalid_arguments(
+                                "terminal was created inline by a previous spawn and cannot be reused",
+                            ));
+                        }
+                        #[cfg(unix)]
+                        if term.get_slave_fd() == Fd::INVALID {
+                            return Err(global_this
+                                .throw_invalid_arguments("terminal slave fd is no longer valid"));
+                        }
+                        #[cfg(not(unix))]
+                        if term.get_pseudoconsole().is_none() {
+                            return Err(global_this
+                                .throw_invalid_arguments("terminal pseudoconsole is no longer valid"));
+                        }
+                        existing_terminal = Some(terminal.cast::<Terminal>());
+                        terminal_js_value = terminal_val;
+                    } else if terminal_val.is_object() {
+                        // Create a new terminal from options
+                        let mut term_options =
+                            TerminalOptions::parse_from_js(global_this, terminal_val)?;
+                        match TerminalImpl::create_from_spawn(global_this, &mut term_options) {
+                            Ok(created) => {
+                                **terminal_info = Some(TerminalCreateResult {
+                                    // Transfer the +1 ref to `Subprocess.terminal` (released
+                                    // in `Subprocess::finalize`); the scopeguard's
+                                    // `abandon_from_spawn` path covers the error case.
+                                    terminal: created.terminal.into_raw().cast::<Terminal>(),
+                                    js_value: created.js_value,
+                                });
+                            }
+                            Err(err) => {
+                                drop(term_options);
+                                return Err(match err {
+                                    TerminalInitError::OpenPtyFailed => {
+                                        global_this.throw("Failed to open PTY")
+                                    }
+                                    TerminalInitError::DupFailed => global_this
+                                        .throw("Failed to duplicate PTY file descriptor"),
+                                    TerminalInitError::NotSupported => {
+                                        global_this.throw("PTY not supported on this platform")
+                                    }
+                                    TerminalInitError::WriterStartFailed => {
+                                        global_this.throw("Failed to start terminal writer")
+                                    }
+                                    TerminalInitError::ReaderStartFailed => {
+                                        global_this.throw("Failed to start terminal reader")
+                                    }
+                                });
+                            }
+                        }
+                    } else {
+                        return Err(global_this.throw_invalid_arguments(
+                            "terminal must be a Terminal object or options object",
+                        ));
+                    }
+
+                    #[cfg(unix)]
                     {
-                        todo!("blocked_on: bun_runtime::api::bun::terminal::Terminal body")
+                        let terminal = existing_terminal
+                            .unwrap_or_else(|| terminal_info.as_ref().unwrap().terminal);
+                        // SAFETY: `terminal` was just produced above from a live
+                        // wrapper or freshly-created `IntrusiveRc`.
+                        let slave_fd = unsafe { terminal_impl(terminal) }.get_slave_fd();
+                        stdio[0] = Stdio::Fd(slave_fd);
+                        stdio[1] = Stdio::Fd(slave_fd);
+                        stdio[2] = Stdio::Fd(slave_fd);
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        // On Windows, ConPTY supplies stdio via PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE.
+                        // Set stdio to .ignore so spawnProcessWindows doesn't allocate pipes.
+                        stdio[0] = Stdio::Ignore;
+                        stdio[1] = Stdio::Ignore;
+                        stdio[2] = Stdio::Ignore;
+                        // ConPTY spawns with bInheritHandles=FALSE and no stdio buffer,
+                        // so extra fds and IPC pipes can't be passed to the child.
+                        if maybe_ipc_mode.is_some() || !extra_fds.is_empty() {
+                            return Err(global_this.throw_invalid_arguments(
+                                "ipc and extra stdio are not supported with terminal on Windows",
+                            ));
+                        }
                     }
                 }
             }

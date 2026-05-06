@@ -622,7 +622,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     method = 'extract_method: {
         if let Some(options) = options_object {
             if let Some(method_) = options.get_truthy(global_this, "method")? {
-                break 'extract_method method_from_js(global_this, method_)?;
+                break 'extract_method method_jsc::from_js(global_this, method_)?;
             }
         }
 
@@ -632,7 +632,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         if let Some(req) = request_init_object {
             if let Some(method_) = req.get_truthy(global_this, "method")? {
-                break 'extract_method method_from_js(global_this, method_)?;
+                break 'extract_method method_jsc::from_js(global_this, method_)?;
             }
         }
 

@@ -327,19 +327,11 @@ impl EventLoopDelayMonitor {
 pub mod timer_object_internals;
 pub use timer_object_internals::{Flags as TimerFlags, TimerObjectInternals};
 
-/// `jsc.WebCore.AbortSignal.Timeout` — struct-only stub so `All::update`'s
-/// `@fieldParentPtr` epoch-bump (spec EventLoopTimer.zig:157-160) can resolve
-/// the `flags` slot. The real type lives in the gated `bun_jsc::abort_signal`
-/// Phase-A draft; field order/layout MUST match `src/jsc/AbortSignal.rs:Timeout`.
-// TODO(b2-blocked): replace with `pub use crate::jsc::abort_signal::Timeout as
-// AbortSignalTimeout;` once that module is un-gated.
-#[repr(C)]
-pub struct AbortSignalTimeout {
-    pub event_loop_timer: EventLoopTimer,
-    pub signal: *mut core::ffi::c_void, // *mut AbortSignal (opaque here)
-    pub flags: TimerFlags,
-    pub generation: u32,
-}
+/// `jsc.WebCore.AbortSignal.Timeout` — real struct lives in `bun_jsc` (which
+/// this crate depends on). Re-exported here so `All::update`'s
+/// `@fieldParentPtr` epoch-bump and `dispatch::fire_timer` resolve the same
+/// `event_loop_timer`/`flags` offsets the low tier wrote.
+pub use crate::jsc::abort_signal::Timeout as AbortSignalTimeout;
 
 pub struct TimeoutObject {
     pub ref_count: core::cell::Cell<u32>,

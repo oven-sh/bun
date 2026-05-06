@@ -20,10 +20,42 @@ pub struct SystemError {
     pub dest: String,
 }
 
-// TODO(port): Zig `extern struct` field defaults allowed `.{ .message = m }` partial init
-// (errno=0, code/path/syscall/hostname/dest=.empty, fd=c_int::MIN). Rust has no per-field
-// defaults at construction; callers must build the whole struct. Consider a `fn new(message)`
-// helper in Phase B if call sites need it.
+// Zig `extern struct` field defaults: `errno=0, code/path/syscall/hostname/dest=.empty,
+// fd=c_int::MIN`. Provide `Default` so call sites can `..Default::default()`-init the
+// way Zig partial-inits.
+impl Default for SystemError {
+    fn default() -> Self {
+        Self {
+            errno: 0,
+            code: String::default(),
+            message: String::default(),
+            path: String::default(),
+            syscall: String::default(),
+            hostname: String::default(),
+            fd: c_int::MIN,
+            dest: String::default(),
+        }
+    }
+}
+
+/// Reshape the T1 `bun_sys::SystemError` (non-`#[repr(C)]`, different field
+/// order) into the `#[repr(C)]` extern layout C++ reads. In Zig there is one
+/// `jsc.SystemError`; the Rust port split data (T1) from the JSC bridge (T6) —
+/// this `From` is the canonical layering seam (see PORTING.md §_jsc bridge).
+impl From<bun_sys::SystemError> for SystemError {
+    fn from(e: bun_sys::SystemError) -> Self {
+        Self {
+            errno: e.errno as c_int,
+            code: e.code,
+            message: e.message,
+            path: e.path,
+            syscall: e.syscall,
+            hostname: e.hostname,
+            fd: e.fd as c_int,
+            dest: e.dest,
+        }
+    }
+}
 
 /// `union(enum) { err: SystemError, result: Result }`
 pub enum Maybe<R> {

@@ -4033,7 +4033,7 @@ impl<'a> BundleV2<'a> {
         // Then all the distinct CSS bundles (these are JS->CSS, not CSS->CSS)
         for entry_point in start.css_entry_points.keys() {
             #[cfg(feature = "css")]
-            let order = crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order(&mut self.linker, self.allocator(), &[*entry_point]);
+            let order = crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order(&mut self.linker, &self.graph.heap, &[*entry_point]);
             #[cfg(not(feature = "css"))]
             let order: BabyList<chunk::CssImportOrder> = BabyList::default();
             let order_len = order.len as usize;

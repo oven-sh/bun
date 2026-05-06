@@ -257,7 +257,7 @@ where
             w.object_field(b"path")?;
             w.print(format_args!(
                 "\"{}\"",
-                bun_fmt::fmt_path(relative_path, bun_fmt::PathFmtOpts { path_sep: bun_fmt::PathSep::Posix })
+                bun_fmt::fmt_path(relative_path, bun_fmt::PathFormatOptions { path_sep: bun_fmt::PathSep::Posix, ..Default::default() })
             ))?;
 
             w.object_field(b"depth")?;

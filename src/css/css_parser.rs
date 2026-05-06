@@ -1001,6 +1001,11 @@ pub enum TopLevelState {
 }
 
 pub struct TopLevelRuleParser<'a, AtRuleParserT: CustomAtRuleParser> {
+    // PORT NOTE: Zig threaded `input.allocator()` at every call site; the Rust
+    // `DeclarationList = bumpalo::Vec<'bump, Property>` needs the arena up
+    // front, so cache it here (same `'static`-erased borrow `DeclarationBlock`
+    // already uses crate-wide).
+    pub allocator: &'a Bump,
     pub options: &'a ParserOptions<'a>,
     pub state: TopLevelState,
     pub at_rule_parser: &'a mut AtRuleParserT,
@@ -1013,6 +1018,7 @@ pub struct TopLevelRuleParser<'a, AtRuleParserT: CustomAtRuleParser> {
 
 impl<'a, AtRuleParserT: CustomAtRuleParser> TopLevelRuleParser<'a, AtRuleParserT> {
     pub fn new(
+        allocator: &'a Bump,
         options: &'a ParserOptions<'a>,
         at_rule_parser: &'a mut AtRuleParserT,
         rules: &'a mut CssRuleList<AtRuleParserT::AtRule>,
@@ -1020,6 +1026,7 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> TopLevelRuleParser<'a, AtRuleParserT
         local_properties: &'a mut LocalPropertyUsage,
     ) -> Self {
         Self {
+            allocator,
             options,
             state: TopLevelState::Start,
             at_rule_parser,
@@ -1031,11 +1038,15 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> TopLevelRuleParser<'a, AtRuleParserT
     }
 
     pub fn nested(&mut self) -> NestedRuleParser<'_, AtRuleParserT> {
+        // SAFETY: same `'static` erasure used by `DeclarationBlock::parse` —
+        // the arena outlives every `DeclarationList` produced here.
+        let bump: &'static Bump = unsafe { &*(self.allocator as *const Bump) };
         NestedRuleParser {
+            allocator: self.allocator,
             options: self.options,
             at_rule_parser: &mut *self.at_rule_parser,
-            declarations: DeclarationList::default(),
-            important_declarations: DeclarationList::default(),
+            declarations: DeclarationList::new_in(bump),
+            important_declarations: DeclarationList::new_in(bump),
             rules: &mut *self.rules,
             is_in_style_rule: false,
             allow_declarations: false,

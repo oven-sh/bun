@@ -150,12 +150,11 @@ mod ext {
 
     /// Inline of `DashedIdentReference::parse_with_options` (gated in
     /// `values/ident.rs`).
-    // blocked_on: properties::css_modules::Specifier::parse — the real
-    // `properties::css_modules` module is still `gated_prop!`-stubbed
-    // (properties/mod.rs:144), so the CSS-Modules `from <specifier>` suffix
-    // is not parsed yet. Non-CSS-Modules callers (the only callers while
-    // that gate holds) never set `options.css_modules.dashed_idents`, so
-    // `from` is always `None` anyway.
+    // `properties::css_modules::Specifier::parse` is real now; the CSS-Modules
+    // `from <specifier>` suffix path is still routed through the gated
+    // `DashedIdentReference::parse_with_options` (ident.rs) — this inline stub
+    // covers the non-CSS-Modules callers, which never set
+    // `options.css_modules.dashed_idents`, so `from` is always `None` here.
     pub(super) fn dashed_ident_ref_parse(
         input: &mut Parser,
         _options: &ParserOptions,

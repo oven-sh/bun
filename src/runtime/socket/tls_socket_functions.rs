@@ -354,7 +354,7 @@ pub fn get_shared_sigalgs(this: &mut This, global: &JSGlobalObject, _frame: &Cal
 
     // SAFETY: ssl_ptr is a live *mut SSL; passing null out-params requests only the count.
     let nsig = unsafe {
-        boringssl::SSL_get_shared_sigalgs(
+        ffi::SSL_get_shared_sigalgs(
             ssl_ptr,
             0,
             core::ptr::null_mut(),
@@ -374,7 +374,7 @@ pub fn get_shared_sigalgs(this: &mut This, global: &JSGlobalObject, _frame: &Cal
 
         // SAFETY: ssl_ptr is a live *mut SSL; i is in [0, nsig); out-params are valid stack locals or null.
         unsafe {
-            boringssl::SSL_get_shared_sigalgs(
+            ffi::SSL_get_shared_sigalgs(
                 ssl_ptr,
                 c_int::try_from(i).unwrap(),
                 &mut sign_nid,

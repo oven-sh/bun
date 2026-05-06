@@ -856,7 +856,7 @@ impl Value {
                 ));
             }
 
-            if let Some(image) = value.as_::<crate::api::Image>() {
+            if let Some(image) = value.as_::<crate::image::Image>() {
                 // Body init is synchronous, so encode now and wrap as a Blob
                 // with the right MIME type. The off-thread path is still
                 // available via `await image.blob()`.
@@ -1004,7 +1004,7 @@ impl Value {
                             if let Some(content_type) = fetch_headers.fast_get(HTTPHeaderName::ContentType) {
                                 let content_slice = content_type.to_slice();
                                 let mut allocated = false;
-                                let mime_type = bun_http_types::MimeType::init(content_slice.slice(), &mut allocated);
+                                let mime_type = MimeType::init(content_slice.slice(), true, Some(&mut allocated));
                                 blob.content_type = mime_type.value;
                                 blob.content_type_allocated = allocated;
                                 blob.content_type_was_set = true;
@@ -1838,7 +1838,7 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
                 if let Some(content_type) = fetch_headers.fast_get(HTTPHeaderName::ContentType) {
                     let content_slice = content_type.to_slice();
                     let mut allocated = false;
-                    let mime_type = bun_http_types::MimeType::init(content_slice.slice(), &mut allocated);
+                    let mime_type = MimeType::init(content_slice.slice(), true, Some(&mut allocated));
                     blob.content_type = mime_type.value;
                     blob.content_type_allocated = allocated;
                     blob.content_type_was_set = true;

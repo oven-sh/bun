@@ -380,13 +380,17 @@ impl<'a> CopyFile<'a> {
                             // make() can set STDOUT / STDERR to O_APPEND
                             // this messes up sendfile()
                             has_unset_append = true;
-                            let flags = linux::fcntl(dest_fd.cast(), linux::F::GETFL, 0 as c_int);
+                            // SAFETY: dest_fd is a valid open fd; raw fcntl(2).
+                            let flags = unsafe { libc::fcntl(dest_fd.cast(), libc::F_GETFL, 0 as c_int) };
                             if (flags & bun_sys::O::APPEND) != 0 {
-                                let _ = linux::fcntl(
-                                    dest_fd.cast(),
-                                    linux::F::SETFL,
-                                    flags ^ bun_sys::O::APPEND,
-                                );
+                                // SAFETY: dest_fd is a valid open fd; raw fcntl(2).
+                                let _ = unsafe {
+                                    libc::fcntl(
+                                        dest_fd.cast(),
+                                        libc::F_SETFL,
+                                        flags ^ bun_sys::O::APPEND,
+                                    )
+                                };
                                 continue;
                             }
                         }

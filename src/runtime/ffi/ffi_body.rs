@@ -1862,7 +1862,7 @@ pub fn generate_symbol_for_function(
 
         let mut array = args.array_iterator(global)?;
 
-        abi_types.reserve_exact(array.len);
+        abi_types.reserve_exact(array.len as usize);
         while let Some(val) = array.next()? {
             if val.is_empty_or_undefined_or_null() {
                 return Ok(Some(

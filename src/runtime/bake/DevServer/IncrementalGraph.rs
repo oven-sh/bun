@@ -1816,9 +1816,8 @@ impl<S: GraphSide> IncrementalGraph<S> {
                     unsafe { &mut *(self as *mut Self as *mut IncrementalGraph<Server>) };
                 let file = g.get_file_by_index(file_index);
                 if file.is_client_component_boundary || file.kind == FileKind::Css {
-                    let dev = g.owner();
                     let key = g.bundled_files.keys()[file_index.get() as usize].clone();
-                    let _ = (&key, &dev.client_graph, gts, goal);
+                    let _ = (&key, &g.owner().client_graph, &mut *gts, goal);
                     // TODO(port): blocked_on: dev_server::incremental_graph::IncrementalGraph::get_file_index/trace_imports
 
                     if cfg!(debug_assertions) && file.kind == FileKind::Css {

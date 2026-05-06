@@ -4154,9 +4154,9 @@ impl DevServer<'_> {
             let failures_encoded = &buf[failures_start_buf_pos..];
             // base64 output is pure ASCII so a UTF-8 borrow is byte-identical to
             // Zig's `BunString.initLatin1OrASCIIView`.
-            let mut s = BunString::borrow_utf8(failures_encoded);
-            let _deref = scopeguard::guard((), |_| s.deref_());
-            let _ = (&mut s, &agent, self.inspector_server_id);
+            let s = BunString::borrow_utf8(failures_encoded);
+            let _deref = scopeguard::guard((), |_| s.deref());
+            let _ = (&s, &agent, self.inspector_server_id);
             todo!("blocked_on: bun_jsc::debugger::BunFrontendDevServerAgent::notify_bundle_failed");
         }
         Ok(())

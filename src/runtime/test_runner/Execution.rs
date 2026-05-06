@@ -462,43 +462,43 @@ impl Execution {
         &mut self,
         data: &RefDataValue,
     ) -> Option<(NonNull<ExecutionSequence>, NonNull<ConcurrentGroup>)> {
-        let _scope = group_log::begin();
+        group_begin!();
 
         group_log::log(format_args!("runOneCompleted: data: {}", data));
 
         let RefDataValue::Execution { group_index, entry_data } = data else {
-            group_log::log("runOneCompleted: the data is not execution");
+            group_log::log(format_args!("runOneCompleted: the data is not execution"));
             return None;
         };
         let Some(entry_data) = entry_data.as_ref() else {
-            group_log::log(
+            group_log::log(format_args!(
                 "runOneCompleted: the data did not know which entry was active in the group",
-            );
+            ));
             return None;
         };
         // Spec compares `this.activeGroup() != data.group(buntest)` by pointer; both index into
         // `self.groups`, so equality is exactly `group_index == self.group_index`. Comparing the
         // index avoids materializing a `&mut BunTest` that would alias `&mut self`.
         if self.group_index >= self.groups.len() || *group_index != self.group_index {
-            group_log::log("runOneCompleted: the data is for a different group");
+            group_log::log(format_args!("runOneCompleted: the data is for a different group"));
             return None;
         }
         if *group_index >= self.groups.len() {
-            group_log::log("runOneCompleted: the data did not know the group");
+            group_log::log(format_args!("runOneCompleted: the data did not know the group"));
             return None;
         }
         // Disjoint split-borrow of `self.groups` and `self.sequences`.
         let group = &mut self.groups[*group_index];
         let seq_abs = group.sequence_start + entry_data.sequence_index;
         if seq_abs >= group.sequence_end {
-            group_log::log("runOneCompleted: the data did not know the sequence");
+            group_log::log(format_args!("runOneCompleted: the data did not know the sequence"));
             return None;
         }
         let sequence = &mut self.sequences[seq_abs];
         if i64::from(sequence.remaining_repeat_count) != entry_data.remaining_repeat_count {
-            group_log::log(
+            group_log::log(format_args!(
                 "runOneCompleted: the data is for a previous repeat count (outdated)",
-            );
+            ));
             return None;
         }
         if sequence
@@ -506,12 +506,12 @@ impl Execution {
             .map_or(core::ptr::null(), |p| p.as_ptr() as *const ())
             != entry_data.entry
         {
-            group_log::log(
+            group_log::log(format_args!(
                 "runOneCompleted: the data is for a different sequence index (outdated)",
-            );
+            ));
             return None;
         }
-        group_log::log("runOneCompleted: the data is valid and current");
+        group_log::log(format_args!("runOneCompleted: the data is valid and current"));
         Some((NonNull::from(sequence), NonNull::from(group)))
     }
 

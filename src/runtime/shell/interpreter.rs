@@ -730,7 +730,8 @@ impl Interpreter {
             interp.deinit_from_exec();
             bun_core::output::err(
                 name,
-                format_args!("Failed to run script <b>{}<r>", bstr::BStr::new(path_for_errors)),
+                "Failed to run script <b>{}<r>",
+                (bstr::BStr::new(path_for_errors),),
             );
             bun_core::Global::exit(1);
         }

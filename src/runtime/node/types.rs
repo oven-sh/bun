@@ -943,7 +943,9 @@ impl Drop for PathLike {
             // TODO(port): if SliceWithUnderlyingString / ZigStringSlice gain Drop, these become implicit.
             Self::SliceWithUnderlyingString(str) => str.deinit(),
             Self::ThreadsafeString(str) => str.deinit(),
-            Self::EncodedSlice(str) => str.deinit(),
+            // `ZigStringSlice` already releases its WTF ref / owned buffer in
+            // its own `Drop`; nothing to do here.
+            Self::EncodedSlice(_) => {}
         }
     }
 }

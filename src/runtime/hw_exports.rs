@@ -8,6 +8,7 @@
 //! are intentionally **not** re-declared here to avoid duplicate-symbol link
 //! errors:
 //!   - `Bun__getTLSDefaultCiphers` / `Bun__setTLSDefaultCiphers`
+//!   - `Bun__Process__getStdinFdType`
 //!       → `src/jsc/rare_data.rs`
 //!   - `Resolver__nodeModulePathsForJS` / `Resolver__nodeModulePathsJSValue`
 //!       → `src/jsc/resolver_jsc.rs`

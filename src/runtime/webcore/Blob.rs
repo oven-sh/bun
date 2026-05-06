@@ -33,108 +33,9 @@ pub use store::{Store, StoreRef};
 // name in the Phase-A draft. Alias the module form so `Store::Data` resolves.
 pub use store as Store_;
 
-// blob/{read_file,write_file}.rs un-gated (heavy bodies re-gated inside each
-// file). copy_file.rs remains gated — depends on `ConstParamTy` adt const
-// generics + node_fs/NodeFS surface not yet wired.
 #[path = "blob/read_file.rs"]  pub mod read_file;
 #[path = "blob/write_file.rs"] pub mod write_file;
- #[path = "blob/copy_file.rs"]  pub mod copy_file;
-
-// deps), which cfg's out the `mod` *item itself* — so `read_file::` is an
-// unresolved path everywhere. Body.rs / Image.rs / this file only need the
-// public result types, so re-declare a thin module with those until the real
-// `#[path]`-decl above win and this becomes a duplicate to delete).
-#[allow(dead_code)]
-pub mod read_file {
-    use super::SizeType;
-    use bun_jsc::SystemError;
-
-    /// Zig: `ReadFile.Read` payload handed to the on-read callback.
-    pub struct ReadFileRead {
-        // TODO(port): Zig `[]u8` owned-if-`is_temporary`; modeled as Vec for
-        // uniform ownership on the Rust side.
-        pub buf: Vec<u8>,
-        pub is_temporary: bool,
-        pub total_size: SizeType,
-    }
-
-    /// Zig: `SystemError.Maybe(ReadFileRead)`
-    pub enum ReadFileResultType {
-        Result(ReadFileRead),
-        Err(SystemError),
-    }
-}
-
-// + WorkTask deps), which cfg's out the `mod` *item itself* — so
-// `super::write_file` resolves to the *function* `write_file` below instead of
-// the module. `_jsc_gated` only needs the public façade types
-// (`WriteFilePromise`, `WriteFileWaitFromLockedValueTask`, `WriteFile{,Task}`),
-// so re-declare a thin module with `todo!()` bodies until the real body
-#[allow(dead_code, unused_variables)]
-pub mod write_file {
-    use super::{jsc, Blob, JSGlobalObject, SizeType};
-    use core::ffi::c_void;
-
-    /// Zig: `SystemError.Maybe(SizeType)`
-    pub enum WriteFileResultType {
-        Result(SizeType),
-        Err(bun_jsc::SystemError),
-    }
-
-    pub type WriteFileOnWriteFileCallback<C> =
-        fn(ctx: *mut C, count: WriteFileResultType) -> Result<(), bun_jsc::JsTerminated>;
-
-    pub struct WriteFilePromise<'a> {
-        pub promise: jsc::JSPromiseStrong,
-        pub global_this: &'a JSGlobalObject,
-    }
-    impl<'a> WriteFilePromise<'a> {
-        pub fn run(
-            _handler: *mut Self,
-            _count: WriteFileResultType,
-        ) -> Result<(), bun_jsc::JsTerminated> {
-            todo!("blocked_on: write_file::WriteFilePromise::run")
-        }
-    }
-
-    pub struct WriteFileWaitFromLockedValueTask<'a> {
-        pub file_blob: Blob,
-        pub global_this: &'a JSGlobalObject,
-        pub promise: jsc::JSPromiseStrong,
-        pub mkdirp_if_not_exists: bool,
-    }
-    impl<'a> WriteFileWaitFromLockedValueTask<'a> {
-        pub fn then_wrap(_this: *mut c_void, _value: &mut crate::webcore::body::Value) {
-            todo!("blocked_on: write_file::WriteFileWaitFromLockedValueTask::then_wrap")
-        }
-    }
-
-    pub struct WriteFile;
-    impl WriteFile {
-        pub fn create<C>(
-            _dest: Blob,
-            _src: Blob,
-            _ctx: *mut C,
-            _cb: WriteFileOnWriteFileCallback<C>,
-            _mkdirp: bool,
-        ) -> Result<Box<WriteFile>, bun_core::Error> {
-            todo!("blocked_on: write_file::WriteFile::create")
-        }
-    }
-
-    pub struct WriteFileTask;
-    impl WriteFileTask {
-        pub fn create_on_js_thread(
-            _global: &JSGlobalObject,
-            _wf: Box<WriteFile>,
-        ) -> Box<WriteFileTask> {
-            todo!("blocked_on: write_file::WriteFileTask::create_on_js_thread")
-        }
-        pub fn schedule(&self) {
-            todo!("blocked_on: write_file::WriteFileTask::schedule")
-        }
-    }
-}
+#[path = "blob/copy_file.rs"]  pub mod copy_file;
 
 /// Deallocator for `ArrayBuffer`s backed by a `Blob::Store` ref. Passed as a C
 /// callback to `ArrayBuffer::to_js_with_context`; the `ctx` is a raw `Store*`
@@ -142,7 +43,7 @@ pub mod write_file {
 ///
 /// Mirrors Zig `jsc.array_buffer.BlobArrayBuffer_deallocator`; defined here
 /// (rather than in `bun_jsc`) because `Store` is a `bun_runtime` type and the
-/// `bun_jsc` copy is a forward-dep `todo!()` stub.
+/// `bun_jsc` copy is a forward-dep placeholder.
 pub unsafe extern "C" fn blob_store_array_buffer_deallocator(
     _bytes: *mut c_void,
     ctx: *mut c_void,
@@ -645,25 +546,23 @@ impl Blob {
     /// only call this when it's empty.
     pub fn read_bytes_to_handler<H: ReadBytesHandler>(
         &mut self,
-        ctx: &mut H,
+        ctx: *mut H,
         global: &JSGlobalObject,
     ) -> JsTerminatedResult<()> {
         if self.needs_to_read_file() {
-            // Adapter mapping ReadFileResultType → ReadBytesResult, type-level
-            // so it monomorphizes per `H` (Zig: local `Adapter.run`).
             struct Adapter<H>(core::marker::PhantomData<H>);
             impl<H: ReadBytesHandler> InternalReadFileFn<H> for Adapter<H> {
                 fn call(c: *mut H, r: read_file::ReadFileResultType) {
-                    // SAFETY: `c` is the `&mut H` round-tripped through
-                    // `*anyopaque`; caller guarantees it outlives the read.
+                    // SAFETY: `c` is the `*mut H` passed by the caller and kept
+                    // alive across the async read by contract.
                     let c = unsafe { &mut *c };
                     H::on_read_bytes(
                         c,
                         match r {
                             // `is_temporary` ⇒ `r.buf` is the ReadFile Vec's
                             // items handed over (default allocator) — we own it.
-                            // SAFETY: `b.buf` is a leaked default-allocator
-                            // `Box<[u8]>` per the `ReadFileRead.is_temporary` contract.
+                            // SAFETY: `buf` was leaked from a `Box<[u8]>` by the
+                            // ReadFile finisher; reclaim it here.
                             read_file::ReadFileResultType::Result(b) => ReadBytesResult::Ok(
                                 unsafe { Box::from_raw(b.buf as *mut [u8]) }.into_vec(),
                             ),
@@ -672,96 +571,85 @@ impl Blob {
                     );
                 }
             }
-            self.do_read_file_internal::<H, Adapter<H>>(ctx as *mut H, global);
+            self.do_read_file_internal::<H, Adapter<H>>(ctx, global);
             return Ok(());
         }
         if self.is_s3() {
-            // Heap-allocated Task { ctx, blob, poll, vm } whose `cb` runs on
-            // the JS thread once the S3 download completes (Zig: local `Task`).
             struct Task<H> {
                 ctx: *mut H,
                 blob: Blob, // dupe for store ref + offset/size
                 poll: bun_aio::KeepAlive,
-                #[allow(dead_code)]
-                vm: *mut VirtualMachine,
             }
             impl<H: ReadBytesHandler> Task<H> {
-                fn done(t: *mut Self, r: ReadBytesResult) {
-                    // SAFETY: `t` was Box::into_raw'd below; sole owner here.
-                    let mut t = unsafe { Box::from_raw(t) };
-                    t.poll.unref(vm_ctx());
-                    Blob::deinit(&mut t.blob);
-                    let c = t.ctx;
-                    drop(t);
-                    // SAFETY: `c` is the original `&mut H` raw-cast; caller
-                    // contract is that it outlives the async download.
-                    H::on_read_bytes(unsafe { &mut *c }, r);
+                fn done(mut self: Box<Self>, r: ReadBytesResult) {
+                    self.poll.unref(vm_ctx());
+                    self.blob.deinit();
+                    // SAFETY: caller-owned ctx, kept alive by contract.
+                    let c = unsafe { &mut *self.ctx };
+                    drop(self);
+                    H::on_read_bytes(c, r);
                 }
                 fn cb(
-                    result: s3_client::S3DownloadResult<'_>,
+                    result: crate::webcore::__s3_client::S3DownloadResult,
                     opaque_self: *mut c_void,
                 ) -> JsTerminatedResult<()> {
-                    let t = opaque_self.cast::<Self>();
+                    // SAFETY: `opaque_self` was Box::into_raw'd below.
+                    let t = unsafe { Box::from_raw(opaque_self.cast::<Task<H>>()) };
                     match result {
-                        // `body` is owned by us; take the Vec's items as-is.
-                        s3_client::S3DownloadResult::Success(response) => {
-                            Self::done(t, ReadBytesResult::Ok(response.body.list))
+                        // `body` is owned by us (simple_request.rs); take the Vec's items as-is.
+                        crate::webcore::__s3_client::S3DownloadResult::Success(response) => {
+                            t.done(ReadBytesResult::Ok(response.body.list));
                         }
                         // S3Error has its own JS-error builder; flatten to a
                         // SystemError so the callback has one shape to handle.
-                        s3_client::S3DownloadResult::NotFound(e)
-                        | s3_client::S3DownloadResult::Failure(e) => {
-                            // SAFETY: `t` is the Box::into_raw'd Task; valid
-                            // until `done` consumes it below.
-                            let path = unsafe { &*t }
+                        crate::webcore::__s3_client::S3DownloadResult::NotFound(e)
+                        | crate::webcore::__s3_client::S3DownloadResult::Failure(e) => {
+                            let path = t
                                 .blob
                                 .store
                                 .as_ref()
                                 .and_then(|s| s.get_path())
                                 .unwrap_or(b"");
-                            Self::done(
-                                t,
-                                ReadBytesResult::Err(bun_jsc::SystemError {
-                                    code: BunString::clone_utf8(e.code),
-                                    message: BunString::clone_utf8(e.message),
-                                    path: BunString::clone_utf8(path),
-                                    syscall: BunString::static_("fetch"),
-                                    ..Default::default()
-                                }),
-                            )
+                            t.done(ReadBytesResult::Err(bun_jsc::SystemError {
+                                code: BunString::clone_utf8(e.code),
+                                message: BunString::clone_utf8(e.message),
+                                path: BunString::clone_utf8(path),
+                                syscall: BunString::static_("fetch"),
+                                ..Default::default()
+                            }));
                         }
                     }
                     Ok(())
                 }
             }
-            let t = Box::into_raw(Box::new(Task::<H> {
+            let mut t = Box::new(Task::<H> {
                 ctx,
                 blob: self.dupe(),
                 poll: bun_aio::KeepAlive::default(),
-                vm: global.bun_vm(),
-            }));
-            // SAFETY: `t` was just allocated.
-            unsafe { (*t).poll.ref_(vm_ctx()) };
-            let proxy_owned = http_proxy_href(global);
-            let proxy = proxy_owned.as_deref();
-            // SAFETY: `t` is live; store/data were populated from a live S3 blob.
-            let (cred, path, payer) = unsafe {
-                let s3 = (*t).blob.store.as_ref().unwrap().data.as_s3();
-                (s3.get_credentials(), s3.path(), s3.request_payer)
-            };
+            });
+            t.poll.ref_(vm_ctx());
+            let proxy = http_proxy_href(global);
+            let (cred, path, payer);
+            {
+                let s3 = t.blob.store.as_ref().unwrap().data.as_s3();
+                cred = s3.get_credentials();
+                path = s3.path() as *const [u8];
+                payer = s3.request_payer;
+            }
+            // SAFETY: `path` borrows the store held by `t.blob` (a fresh +1 ref);
+            // it stays valid until `Task::done` deinits the blob in the callback.
+            let path = unsafe { &*path };
+            let t_ptr = Box::into_raw(t).cast::<c_void>();
             if self.offset > 0 || self.size != MAX_SIZE {
-                let len: Option<usize> = if self.size != MAX_SIZE {
-                    Some(usize::try_from(self.size).unwrap())
-                } else {
-                    None
-                };
-                s3_client::download_slice(
-                    cred, path, usize::try_from(self.offset).unwrap(), len,
-                    Task::<H>::cb, t.cast::<c_void>(), proxy, payer,
+                let len: Option<usize> =
+                    if self.size != MAX_SIZE { Some(self.size as usize) } else { None };
+                crate::webcore::__s3_client::download_slice(
+                    cred, path, self.offset as usize, len,
+                    Task::<H>::cb, t_ptr, proxy.as_deref(), payer,
                 )?;
             } else {
-                s3_client::download(
-                    cred, path, Task::<H>::cb, t.cast::<c_void>(), proxy, payer,
+                crate::webcore::__s3_client::download(
+                    cred, path, Task::<H>::cb, t_ptr, proxy.as_deref(), payer,
                 )?;
             }
             return Ok(());
@@ -769,7 +657,8 @@ impl Blob {
         // In-memory or detached.
         let view = self.shared_view();
         let owned = view.to_vec(); // PERF(port): was allocator.dupe — global mimalloc
-        H::on_read_bytes(ctx, ReadBytesResult::Ok(owned));
+        // SAFETY: caller-owned ctx.
+        H::on_read_bytes(unsafe { &mut *ctx }, ReadBytesResult::Ok(owned));
         Ok(())
     }
 
@@ -782,39 +671,37 @@ impl Blob {
         Image::from_blob_js(global, cf.this(), cf.argument(0))
     }
 
-    pub fn do_read_file_internal<H>(
+    pub fn do_read_file_internal<C, F: InternalReadFileFn<C>>(
         &mut self,
-        ctx: H,
-        function: fn(H, read_file::ReadFileResultType),
+        ctx: *mut C,
         global: &JSGlobalObject,
     ) {
-        let _ = (ctx, function, global);
-        todo!("blocked_on: read_file::ReadFile / ReadFileTask / ReadFileUV (gated in blob/read_file.rs)");
-        {
         #[cfg(windows)]
         {
             return read_file::ReadFileUV::start(
-                global.bun_vm().event_loop(),
+                // SAFETY: `bun_vm()` returns the live VM for this global.
+                unsafe { &*global.bun_vm() }.event_loop(),
                 self.store.as_ref().unwrap().clone(),
                 self.offset,
                 self.size,
-                // TODO(port): NewInternalReadFileHandler<H, function>
-                ctx,
+                NewInternalReadFileHandler::<C, F>::run,
+                ctx.cast::<c_void>(),
             );
         }
         #[cfg(not(windows))]
         {
             let file_read = read_file::ReadFile::create_with_ctx(
                 self.store.as_ref().unwrap().clone(),
-                ctx,
-                function,
+                ctx.cast::<c_void>(),
+                NewInternalReadFileHandler::<C, F>::run,
                 self.offset,
                 self.size,
-            );
-            let read_file_task = read_file::ReadFileTask::create_on_js_thread(global, file_read);
-            read_file_task.schedule();
+            )
+            .unwrap_or_else(|e| bun_core::handle_oom(Err(e)));
+            let read_file_task =
+                read_file::ReadFileTask::create_on_js_thread(global, Box::into_raw(file_read));
+            read_file::ReadFileTask::schedule(read_file_task);
         }
-        } // end cfg(any())
     }
 }
 
@@ -3241,9 +3128,8 @@ impl AnyPromiseResultExt for jsc::AnyPromise {
         match self {
             // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
             jsc::AnyPromise::Normal(p) => unsafe { (*p).result(vm) },
-            jsc::AnyPromise::Internal(_p) => {
-                todo!("blocked_on: bun_jsc::JSInternalPromise::result")
-            }
+            // `JSInternalPromise` is now a transparent alias for `JSPromise`.
+            jsc::AnyPromise::Internal(p) => unsafe { (*p).result(vm) },
         }
     }
 }
@@ -3941,16 +3827,14 @@ pub extern "C" fn Blob__fromMmapWithType(
     }
     #[cfg(unix)]
     {
-        // TODO(port): Store::init with a custom allocator vtable that munmap's on free.
-        // SAFETY: caller guarantees [ptr, ptr+len) is a valid mmap'd region.
-        let _ = (ptr, len);
-        todo!("blocked_on: Store::init_with_allocator / bun_alloc::AllocatorVTable::mmap");
-        #[allow(unreachable_code)]
-        let blob: *mut Blob = core::ptr::null_mut();
+        // SAFETY: caller (C++ WebKit screenshot path) guarantees `[ptr, ptr+len)`
+        // is a valid page-aligned mmap'd region we now own.
+        let store = Store::init_mmap(unsafe { core::slice::from_raw_parts_mut(ptr, len) });
+        let blob = Blob::new(Blob::init_with_store(store, global_this));
         // SAFETY: caller (C++) passes a valid NUL-terminated C string.
         let mime_slice = unsafe { core::ffi::CStr::from_ptr(mime) }.to_bytes();
         if !mime_slice.is_empty() {
-            // SAFETY: blob was just produced by Box::into_raw in Blob::new.
+            // SAFETY: `blob` was just produced by Box::into_raw in Blob::new.
             unsafe {
                 (*blob).content_type = mime_slice as *const [u8];
                 (*blob).content_type_was_set = true;
@@ -3973,12 +3857,38 @@ impl Blob {
                 let file = self.store.as_ref().unwrap().data.as_file();
                 match &file.pathlike {
                     PathOrFileDescriptor::Path(path_like) => {
-                        let _ = (path_like, global_this);
-                        todo!("blocked_on: node::fs::async_::Stat::create (FsArgument bound)")
+                        // SAFETY: bun_vm() returns the live VM for this global.
+                        let vm = unsafe { &mut *global_this.bun_vm() };
+                        // SAFETY: lazily-initialised per-VM NodeFS binding; never null after init.
+                        let binding = unsafe { &mut *vm.node_fs().cast::<crate::node::node_fs_binding::Binding>() };
+                        Ok(crate::node::fs::async_::Stat::create(
+                            global_this,
+                            binding,
+                            crate::node::fs::args::Stat {
+                                path: crate::node::types::PathLike::EncodedSlice(match path_like {
+                                    // Already UTF-8 — take an owned copy.
+                                    crate::node::types::PathLike::EncodedSlice(slice) => {
+                                        ZigStringSlice::init_owned(slice.slice().to_vec())
+                                    }
+                                    other => ZigStringSlice::init_owned(other.slice().to_vec()),
+                                }),
+                                big_int: false,
+                                throw_if_no_entry: true,
+                            },
+                            vm,
+                        ))
                     }
                     PathOrFileDescriptor::Fd(fd) => {
-                        let _ = (fd, global_this);
-                        todo!("blocked_on: node::fs::async_::Fstat::create (FsArgument bound)")
+                        // SAFETY: bun_vm() returns the live VM for this global.
+                        let vm = unsafe { &mut *global_this.bun_vm() };
+                        // SAFETY: lazily-initialised per-VM NodeFS binding; never null after init.
+                        let binding = unsafe { &mut *vm.node_fs().cast::<crate::node::node_fs_binding::Binding>() };
+                        Ok(crate::node::fs::async_::Fstat::create(
+                            global_this,
+                            binding,
+                            crate::node::fs::args::Fstat { fd: *fd, big_int: false },
+                            vm,
+                        ))
                     }
                 }
             }
@@ -4588,13 +4498,10 @@ impl Blob {
 
     pub fn to_string(&mut self, global: &JSGlobalObject, lifetime: Lifetime) -> JsResult<JSValue> {
         if self.needs_to_read_file() {
-            // TODO(port): do_read_file is monomorphized over the WithBytes fn.
-            let _ = global;
-            todo!("blocked_on: do_read_file<toStringWithBytes>");
+            return Ok(self.do_read_file::<ToStringWithBytesFn>(global));
         }
         if self.is_s3() {
-            let _ = global;
-            todo!("blocked_on: do_read_from_s3<toStringWithBytes>");
+            return self.do_read_from_s3::<ToStringWithBytesFn>(global).map_err(Into::into);
         }
 
         // PORT NOTE: reshaped for borrowck — Zig @constCast'd shared_view().
@@ -4622,12 +4529,10 @@ impl Blob {
 
     pub fn to_json(&mut self, global: &JSGlobalObject, _lifetime: Lifetime) -> JsResult<JSValue> {
         if self.needs_to_read_file() {
-            let _ = global;
-            todo!("blocked_on: do_read_file<toJSONWithBytes>");
+            return Ok(self.do_read_file::<ToJsonWithBytesFn>(global));
         }
         if self.is_s3() {
-            let _ = global;
-            todo!("blocked_on: do_read_from_s3<toJSONWithBytes>");
+            return self.do_read_from_s3::<ToJsonWithBytesFn>(global).map_err(Into::into);
         }
 
         // `shared_view_raw` yields a `*mut [u8]` with mutable provenance (via
@@ -4839,13 +4744,16 @@ impl Blob {
         lifetime: Lifetime,
     ) -> JsResult<JSValue> {
         if self.needs_to_read_file() {
-            // TODO(port): select WithBytesFn by TYPED_ARRAY_VIEW; Zig dispatched at comptime.
-            let _ = global;
-            todo!("blocked_on: do_read_file<toArrayBufferWithBytes>");
+            return Ok(match TYPED_ARRAY_VIEW {
+                jsc::JSType::ArrayBuffer => self.do_read_file::<ToArrayBufferWithBytesFn>(global),
+                _ => self.do_read_file::<ToUint8ArrayWithBytesFn>(global),
+            });
         }
         if self.is_s3() {
-            let _ = global;
-            todo!("blocked_on: do_read_from_s3<toArrayBufferWithBytes>");
+            return match TYPED_ARRAY_VIEW {
+                jsc::JSType::ArrayBuffer => self.do_read_from_s3::<ToArrayBufferWithBytesFn>(global),
+                _ => self.do_read_from_s3::<ToUint8ArrayWithBytesFn>(global),
+            }.map_err(Into::into);
         }
 
         // PORT NOTE: reshaped for borrowck — Zig @constCast'd shared_view().
@@ -4876,12 +4784,10 @@ impl Blob {
 
     pub fn to_form_data(&mut self, global: &JSGlobalObject, _lifetime: Lifetime) -> Result<JSValue, jsc::JsTerminated> {
         if self.needs_to_read_file() {
-            let _ = global;
-            todo!("blocked_on: do_read_file<toFormDataWithBytes>");
+            return Ok(self.do_read_file::<ToFormDataWithBytesFn>(global));
         }
         if self.is_s3() {
-            let _ = global;
-            todo!("blocked_on: do_read_from_s3<toFormDataWithBytes>");
+            return self.do_read_from_s3::<ToFormDataWithBytesFn>(global);
         }
 
         // PORT NOTE: reshaped for borrowck — Zig @constCast'd shared_view().
@@ -4893,25 +4799,66 @@ impl Blob {
         // `@constCast(this.sharedView())`.
         let view_ptr = self.shared_view_raw();
         if view_ptr.len() == 0 {
-            // PORT NOTE: `bun_jsc::DOMFormData` is currently the `stub_ty!`
-            // symbol directly until it un-gates.
-            unsafe extern "C" {
-                fn WebCore__DOMFormData__create(global: *mut JSGlobalObject) -> JSValue;
-            }
-            // SAFETY: `global` is live; FFI does not retain the pointer.
-            return Ok(unsafe { WebCore__DOMFormData__create(global.as_ptr()) });
+            return Ok(jsc::DOMFormData::create(global));
         }
         Ok(self.to_form_data_with_bytes::<{ Lifetime::Temporary }>(global, view_ptr))
     }
 }
 
-// TODO(port): marker types for the comptime fn dispatch through do_read_file/do_read_from_s3.
-// Currently unused — call sites are `todo!()` until the `Fn`-bound on
-// `do_read_file`/`do_read_from_s3` is reshaped to a trait dispatch.
-#[allow(dead_code)] pub struct ToStringWithBytesFn;
-#[allow(dead_code)] pub struct ToJsonWithBytesFn;
-#[allow(dead_code)] pub struct ToArrayBufferWithBytesFn;
-#[allow(dead_code)] pub struct ToFormDataWithBytesFn;
+// Marker types for the comptime fn dispatch through do_read_file/do_read_from_s3.
+// Each implements `ReadFileToJs` so a plain fn-pointer monomorphizes per `*WithBytes` body.
+pub struct ToStringWithBytesFn;
+pub struct ToJsonWithBytesFn;
+pub struct ToArrayBufferWithBytesFn;
+pub struct ToUint8ArrayWithBytesFn;
+pub struct ToFormDataWithBytesFn;
+
+impl read_file::ReadFileToJs for ToStringWithBytesFn {
+    fn call(b: &mut Blob, g: &JSGlobalObject, by: &mut [u8], l: Lifetime) -> JsResult<JSValue> {
+        match l {
+            Lifetime::Clone => b.to_string_with_bytes::<{ Lifetime::Clone }>(g, by as *mut [u8]),
+            Lifetime::Temporary => b.to_string_with_bytes::<{ Lifetime::Temporary }>(g, by as *mut [u8]),
+            Lifetime::Share => b.to_string_with_bytes::<{ Lifetime::Share }>(g, by as *mut [u8]),
+            Lifetime::Transfer => b.to_string_with_bytes::<{ Lifetime::Transfer }>(g, by as *mut [u8]),
+        }
+    }
+}
+impl read_file::ReadFileToJs for ToJsonWithBytesFn {
+    fn call(b: &mut Blob, g: &JSGlobalObject, by: &mut [u8], l: Lifetime) -> JsResult<JSValue> {
+        match l {
+            Lifetime::Clone => b.to_json_with_bytes::<{ Lifetime::Clone }>(g, by as *mut [u8]),
+            Lifetime::Temporary => b.to_json_with_bytes::<{ Lifetime::Temporary }>(g, by as *mut [u8]),
+            Lifetime::Share => b.to_json_with_bytes::<{ Lifetime::Share }>(g, by as *mut [u8]),
+            Lifetime::Transfer => b.to_json_with_bytes::<{ Lifetime::Transfer }>(g, by as *mut [u8]),
+        }
+    }
+}
+impl read_file::ReadFileToJs for ToArrayBufferWithBytesFn {
+    fn call(b: &mut Blob, g: &JSGlobalObject, by: &mut [u8], l: Lifetime) -> JsResult<JSValue> {
+        match l {
+            Lifetime::Clone => b.to_array_buffer_with_bytes::<{ Lifetime::Clone }>(g, by as *mut [u8]),
+            Lifetime::Temporary => b.to_array_buffer_with_bytes::<{ Lifetime::Temporary }>(g, by as *mut [u8]),
+            Lifetime::Share => b.to_array_buffer_with_bytes::<{ Lifetime::Share }>(g, by as *mut [u8]),
+            Lifetime::Transfer => b.to_array_buffer_with_bytes::<{ Lifetime::Transfer }>(g, by as *mut [u8]),
+        }
+    }
+}
+impl read_file::ReadFileToJs for ToUint8ArrayWithBytesFn {
+    fn call(b: &mut Blob, g: &JSGlobalObject, by: &mut [u8], l: Lifetime) -> JsResult<JSValue> {
+        match l {
+            Lifetime::Clone => b.to_uint8_array_with_bytes::<{ Lifetime::Clone }>(g, by as *mut [u8]),
+            Lifetime::Temporary => b.to_uint8_array_with_bytes::<{ Lifetime::Temporary }>(g, by as *mut [u8]),
+            Lifetime::Share => b.to_uint8_array_with_bytes::<{ Lifetime::Share }>(g, by as *mut [u8]),
+            Lifetime::Transfer => b.to_uint8_array_with_bytes::<{ Lifetime::Transfer }>(g, by as *mut [u8]),
+        }
+    }
+}
+impl read_file::ReadFileToJs for ToFormDataWithBytesFn {
+    fn call(b: &mut Blob, g: &JSGlobalObject, by: &mut [u8], l: Lifetime) -> JsResult<JSValue> {
+        let _ = l; // FormData ignores lifetime — bytes are read-only.
+        Ok(b.to_form_data_with_bytes::<{ Lifetime::Temporary }>(g, by as *mut [u8]))
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // get / fromJSMove / fromJSClone / fromJSWithoutDeferGC
@@ -5039,23 +4986,30 @@ impl Blob {
                             } else {
                                 return Ok(blob.dupe());
                             }
-                        } else if {
-                            // PORT NOTE: `crate::api::BuildArtifact` is the `stub_ty!`
-                            // opaque (real type gated in JSBundler.rs `_jsc_gated`) and
-                            // lacks a `JsClass` impl, so `as_::<BuildArtifact>()` cannot
-                            // type-check yet. Fall through; the body is a `todo!` anyway.
-                            let _ = top_value;
-                            false
-                        } {
-                            todo!("blocked_on: crate::api::BuildArtifact JsClass (gated in JSBundler.rs)");
+                        } else if let Some(artifact_ptr) = top_value.as_::<crate::api::BuildArtifact>() {
+                            // SAFETY: `as_` returns a live `*mut BuildArtifact` rooted by `top_value`.
+                            let blob = unsafe { &mut (*artifact_ptr).blob };
+                            if MOVE {
+                                let mut _blob = blob.dupe_with_content_type(false);
+                                blob.transfer();
+                                return Ok(_blob);
+                            } else {
+                                return Ok(blob.dupe());
+                            }
                         } else {
                             let sliced = current.to_slice_clone(global)?;
                             // PORT NOTE: Zig checked `sliced.allocator.get()` to detect
-                            // an owned (heap) slice; `ZigStringSlice` collapsed that into
-                            // an enum, so we check for the owned variant directly.
-                            // TODO(port): re-derive allocator identity once available.
-                            let _ = sliced;
-                            todo!("blocked_on: bun_str::ZigStringSlice::allocator_get");
+                            // an owned (heap) slice; `ZigStringSlice` collapsed the
+                            // allocator-vtable into an enum, so dispatch on the variant.
+                            match sliced {
+                                ZigStringSlice::Owned(v) => {
+                                    return Ok(Blob::init(v, global));
+                                }
+                                _ => {
+                                    return Blob::try_create(sliced.slice(), global, false)
+                                        .map_err(Into::into);
+                                }
+                            }
                         }
                     }
                 }
@@ -6393,12 +6347,10 @@ pub trait FileCloser: Sized {
     #[cfg(windows)]
     fn loop_(&self) -> *mut bun_uv_sys::uv_loop_t;
 
-    fn schedule_close(_request: &mut bun_io::Request) -> bun_io::Action<'_> {
-        // TODO(port): Zig used `@fieldParentPtr("io_request", request)` — Rust
-        // `offset_of!` can't name fields on a trait `Self`. Implementors must
-        // override this with a concrete container_of recovery + CloseAction.
-        todo!("blocked_on: container_of(Self, io_request) in trait default")
-    }
+    /// `@fieldParentPtr("io_request", request)` — Rust `offset_of!` cannot name
+    /// fields on a trait `Self`, so each concrete impl supplies its own
+    /// container_of recovery (no default body).
+    fn schedule_close(request: &mut bun_io::Request) -> bun_io::Action<'_>;
 
     fn on_io_request_closed(this: &mut Self) {
         this.io_poll().flags.remove(bun_aio::PollFlag::WasEverRegistered);
@@ -6409,13 +6361,9 @@ pub trait FileCloser: Sized {
         bun_jsc::WorkPool::schedule(this.task());
     }
 
-    unsafe fn on_close_io_request(_task: *mut bun_jsc::WorkPoolTask) {
-        debug!("onCloseIORequest()");
-        // TODO(port): Zig used `@fieldParentPtr("task", task)` — Rust
-        // `offset_of!` can't name fields on a trait `Self`. Implementors must
-        // override this with a concrete container_of recovery.
-        todo!("blocked_on: container_of(Self, task) in trait default")
-    }
+    /// `@fieldParentPtr("task", task)` — concrete impl supplies its own
+    /// container_of recovery (no default body).
+    unsafe fn on_close_io_request(task: *mut bun_jsc::WorkPoolTask);
 
     fn do_close(&mut self, is_allowed_to_close_fd: bool) -> bool {
         // PORT NOTE: Zig nests `if (@hasField(This, "io_request")) { if (this.close_after_io) … }`.

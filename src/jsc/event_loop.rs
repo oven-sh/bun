@@ -665,6 +665,12 @@ impl EventLoop {
         let _ = self.tasks.write_item(task);
     }
 
+    pub fn deinit(&mut self) {
+        self.tasks.deinit();
+        self.immediate_tasks = Vec::new();
+        self.next_immediate_tasks = Vec::new();
+    }
+
     pub fn enqueue_immediate_task(&mut self, task: *mut ImmediateObject) {
         self.immediate_tasks.push(task);
     }

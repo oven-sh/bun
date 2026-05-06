@@ -201,15 +201,16 @@ impl StaticRoute {
 
     /// Direct field constructor — mirrors Zig `bun.new(StaticRoute, .{...})`.
     /// Used by `HTMLBundle.Route.onComplete` to materialize routes for each
-    /// bundler output file.
-    pub fn new(
+    /// bundler output file. Returns an `Rc` so the route can be cloned into
+    /// both `AnyRoute::Static` and `HTMLBundle.Route.State::Html`.
+    pub fn new_rc(
         blob: AnyBlob,
         server: Option<AnyServer>,
         status_code: u16,
         headers: Headers,
         cached_blob_size: u64,
-    ) -> *mut StaticRoute {
-        Box::into_raw(Box::new(StaticRoute {
+    ) -> std::rc::Rc<StaticRoute> {
+        std::rc::Rc::new(StaticRoute {
             ref_count: Cell::new(1),
             blob,
             cached_blob_size,
@@ -217,7 +218,7 @@ impl StaticRoute {
             headers,
             server: Cell::new(server),
             status_code,
-        }))
+        })
     }
 
     /// Ownership of `blob` is transferred to this function.

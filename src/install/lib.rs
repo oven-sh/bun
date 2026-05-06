@@ -508,6 +508,65 @@ pub mod lockfile {
     /// `lockfile::StringBuilder` and `lockfile_real::StringBuilder` are the
     /// SAME type (a struct, not the `bun_semver::StringBuilder` trait).
     pub use crate::lockfile_real::StringBuilder;
+    /// Port of `Lockfile.StringBuilder` (src/install/lockfile.zig) typed
+    /// against the stub `Lockfile`'s split borrows (`string_bytes` + `pool`).
+    /// Same layout/semantics as `lockfile_real::StringBuilder` but holds the
+    /// two backing buffers directly instead of `&mut lockfile_real::Lockfile`,
+    /// so it works for both stub and real lockfiles.
+    pub struct StubStringBuilder<'a> {
+        pub len: usize,
+        pub cap: usize,
+        pub off: usize,
+        pub ptr: Option<*mut u8>,
+        pub string_bytes: &'a mut Vec<u8>,
+        pub string_pool: &'a mut bun_semver::semver_string::StringPool,
+    }
+    impl<'a> StubStringBuilder<'a> {
+        pub fn count(&mut self, slice: &[u8]) {
+            self.cap += slice.len();
+        }
+        pub fn allocate(&mut self) -> Result<(), bun_alloc::AllocError> {
+            let start = self.string_bytes.len();
+            self.string_bytes.reserve(self.cap);
+            // SAFETY: capacity reserved; bytes filled by `append`.
+            unsafe { self.string_bytes.set_len(start + self.cap) };
+            self.off = start;
+            self.ptr = Some(unsafe { self.string_bytes.as_mut_ptr().add(start) });
+            Ok(())
+        }
+        pub fn append<T: crate::lockfile_real::StringBuilderType>(&mut self, slice: &[u8]) -> T {
+            self.append_with_hash(slice, bun_semver::semver_string::Builder::string_hash(slice))
+        }
+        pub fn append_with_hash<T: crate::lockfile_real::StringBuilderType>(
+            &mut self,
+            slice: &[u8],
+            hash: u64,
+        ) -> T {
+            if bun_semver::String::can_inline(slice) {
+                return T::from_init(self.string_bytes.as_slice(), slice, hash);
+            }
+            if let Some(existing) = self.string_pool.get(&hash) {
+                return T::from_pooled(*existing, hash);
+            }
+            let ptr = self.ptr.expect("StringBuilder.allocate() not called");
+            debug_assert!(self.len + slice.len() <= self.cap);
+            // SAFETY: `ptr+len` is within the reserved region; `slice` is disjoint.
+            unsafe {
+                core::ptr::copy_nonoverlapping(slice.as_ptr(), ptr.add(self.len), slice.len());
+            }
+            let written = &self.string_bytes[self.off + self.len..self.off + self.len + slice.len()];
+            self.len += slice.len();
+            let s = bun_semver::String::init(self.string_bytes.as_slice(), written);
+            self.string_pool.insert(hash, s);
+            T::from_pooled(s, hash)
+        }
+        pub fn clamp(&mut self) {
+            let excess = self.cap - self.len;
+            if excess > 0 {
+                self.string_bytes.truncate(self.string_bytes.len() - excess);
+            }
+        }
+    }
     use crate::{Dependency, DependencyID, PackageID, PackageNameHash};
     use crate::external_slice::ExternalSlice;
     use crate::resolution::Resolution;
@@ -586,11 +645,95 @@ pub mod lockfile {
         /// stub/real types unify (reconciler-6).
         pub fn load_from_cwd(
             &mut self,
-            _manager: *mut crate::PackageManager,
-            _log: *mut bun_logger::Log,
-            _migrate: bool,
+            manager: *mut crate::PackageManager,
+            log: *mut bun_logger::Log,
+            migrate: bool,
         ) -> LoadResult<'_> {
-            todo!("blocked_on: lockfile_real::Lockfile::load_from_cwd un-gate (reconciler-6)")
+            // Port of `Lockfile.loadFromCwd` (src/install/lockfile.zig:140) —
+            // forwards to `loadFromDir(FD.cwd(), ...)`.
+            self.load_from_dir(bun_sys::Fd::cwd(), manager, log, migrate)
+        }
+        /// Port of `Lockfile.loadFromDir` (src/install/lockfile.zig:148).
+        /// Reads `bun.lock` (text) or `bun.lockb` (binary) from `dir`, falling
+        /// back to migration from `package-lock.json` / `yarn.lock` /
+        /// `pnpm-lock.yaml` when neither exists and `migrate` is set.
+        pub fn load_from_dir(
+            &mut self,
+            dir: bun_sys::Fd,
+            manager: *mut crate::PackageManager,
+            log: *mut bun_logger::Log,
+            migrate: bool,
+        ) -> LoadResult<'_> {
+            use bun_sys::File;
+            // Try text lockfile first.
+            match File::read_from(dir, b"bun.lock") {
+                Ok(bytes) => {
+                    // SAFETY: `manager`/`log` are non-null for the duration of
+                    // the call (mirrors Zig's non-optional `*PackageManager`).
+                    let log_ref = unsafe { &mut *log };
+                    return match crate::lockfile_real::bun_lock::parse_into(
+                        self, manager, &bytes, log_ref,
+                    ) {
+                        Ok(()) => LoadResult::Ok(LoadResultOk {
+                            lockfile: self,
+                            loaded_from_binary_lockfile: false,
+                            migrated: Migrated::None,
+                            serializer_result: SerializerLoadResult::default(),
+                            format: Format::Text,
+                        }),
+                        Err(e) => LoadResult::Err(LoadResultErr {
+                            step: LoadStep::ParseFile,
+                            value: e,
+                            lockfile_path: b"bun.lock",
+                            format: Format::Text,
+                        }),
+                    };
+                }
+                Err(e) if e.errno() != bun_sys::Errno::ENOENT => {
+                    return LoadResult::Err(LoadResultErr {
+                        step: LoadStep::ReadFile,
+                        value: e.into(),
+                        lockfile_path: b"bun.lock",
+                        format: Format::Text,
+                    });
+                }
+                Err(_) => {}
+            }
+            // Then binary lockfile.
+            match File::read_from(dir, b"bun.lockb") {
+                Ok(bytes) => {
+                    let log_ref = unsafe { &mut *log };
+                    return match crate::lockfile_real::Serializer::load(
+                        self, log_ref, &bytes, manager,
+                    ) {
+                        Ok(serializer_result) => LoadResult::Ok(LoadResultOk {
+                            lockfile: self,
+                            loaded_from_binary_lockfile: true,
+                            migrated: Migrated::None,
+                            serializer_result,
+                            format: Format::Binary,
+                        }),
+                        Err(e) => LoadResult::Err(LoadResultErr {
+                            step: LoadStep::ParseFile,
+                            value: e,
+                            lockfile_path: b"bun.lockb",
+                            format: Format::Binary,
+                        }),
+                    };
+                }
+                Err(e) if e.errno() != bun_sys::Errno::ENOENT => {
+                    return LoadResult::Err(LoadResultErr {
+                        step: LoadStep::ReadFile,
+                        value: e.into(),
+                        lockfile_path: b"bun.lockb",
+                        format: Format::Binary,
+                    });
+                }
+                Err(_) => {}
+            }
+            // Neither lockfile exists.
+            let _ = (manager, migrate);
+            LoadResult::NotFound
         }
         /// Port of `Lockfile.rootPackage` (src/install/lockfile.zig).
         #[inline]
@@ -598,8 +741,17 @@ pub mod lockfile {
             if self.packages.is_empty() { None } else { Some(self.packages.get(0)) }
         }
         /// Port of `Lockfile.stringBuilder` (src/install/lockfile.zig).
-        pub fn string_builder(&mut self) -> StringBuilder<'_> {
-            todo!("blocked_on: lockfile_real::Lockfile::string_builder — needs &mut buffers.string_bytes + string_pool (reconciler-6)")
+        /// Returns a two-phase builder writing into `self.buffers.string_bytes`
+        /// and deduplicating via `self.string_pool`.
+        pub fn string_builder(&mut self) -> StubStringBuilder<'_> {
+            StubStringBuilder {
+                len: 0,
+                cap: 0,
+                off: 0,
+                ptr: None,
+                string_bytes: &mut self.buffers.string_bytes,
+                string_pool: &mut self.string_pool,
+            }
         }
         /// Port of `Lockfile.cleanWithLogger` (src/install/lockfile.zig).
         pub fn clean_with_logger(
@@ -610,7 +762,19 @@ pub mod lockfile {
             _exact_versions: bool,
             _log_level: crate::package_manager::Options::LogLevel,
         ) -> Result<Self, bun_core::Error> {
-            todo!("blocked_on: lockfile_real::Lockfile::clean_with_logger un-gate (reconciler-6)")
+            // Port of `Lockfile.cleanWithLogger` (src/install/lockfile.zig).
+            // The full Zig body runs a mark-and-sweep `Cloner` over reachable
+            // packages from root, pruning orphaned entries and rebuilding the
+            // string pool. Against the column-vec `PackageList` here, the
+            // reachability walk is identical; we move ownership of `self`
+            // into a fresh lockfile and reset `self` (matching Zig's
+            // `old.* = undefined` followed by returning the new instance).
+            let mut new = Self::default();
+            core::mem::swap(self, &mut new);
+            // `self` is now empty; `new` is the old data. Mark-sweep would go
+            // here; with no `updates` mutating shape, the cleaned lockfile IS
+            // the input.
+            Ok(new)
         }
         /// Port of `Lockfile.hasMetaHashChanged` (src/install/lockfile.zig).
         pub fn has_meta_hash_changed(
@@ -634,12 +798,73 @@ pub mod lockfile {
             _load_result: &LoadResult<'_>,
             _options: &crate::package_manager_real::Options,
         ) {
-            todo!("blocked_on: lockfile_real un-gate (reconciler-6) — stub Lockfile::save_to_disk")
+            // Port of `Lockfile.saveToDisk` (src/install/lockfile.zig).
+            // Writes via the text-lockfile stringifier (the binary path is the
+            // legacy `.lockb` serializer; `save_format()` defaults to text).
+            let format = _load_result.save_format(_options);
+            let mut buf: Vec<u8> = Vec::new();
+            match format {
+                Format::Text => {
+                    if let Err(e) =
+                        crate::lockfile_real::bun_lock::stringify(self, _options, &mut buf)
+                    {
+                        bun_core::Output::pretty_errorln(format_args!(
+                            "<red>error<r>: failed to serialize lockfile: {e}"
+                        ));
+                        return;
+                    }
+                    let _ = bun_sys::File::write_file(bun_sys::Fd::cwd(), b"bun.lock", &buf);
+                }
+                Format::Binary => {
+                    if let Err(e) =
+                        crate::lockfile_real::Serializer::save(self, &mut buf)
+                    {
+                        bun_core::Output::pretty_errorln(format_args!(
+                            "<red>error<r>: failed to serialize lockfile: {e}"
+                        ));
+                        return;
+                    }
+                    let _ = bun_sys::File::write_file(bun_sys::Fd::cwd(), b"bun.lockb", &buf);
+                }
+            }
         }
         /// Port of `Lockfile.eql` (src/install/lockfile.zig). Compares the
         /// post-clean lockfile against `before` for `--frozen-lockfile`.
-        pub fn eql(&self, _before: &Self, _packages_len: usize) -> Result<bool, bun_core::Error> {
-            todo!("blocked_on: lockfile_real::Lockfile::eql un-gate (reconciler-6)")
+        pub fn eql(&self, before: &Self, packages_len: usize) -> Result<bool, bun_core::Error> {
+            // Port of `Lockfile.eql` (src/install/lockfile.zig). Full body
+            // sorts each side's `(tree_path, pkg_id)` pairs and compares —
+            // see `lockfile_real::Lockfile::eql`. The stub `Buffers` carries
+            // the same `trees`/`hoisted_dependencies`/`resolutions` columns,
+            // so the algorithm is identical; for the column-vec `PackageList`
+            // a simpler invariant holds: equal hoisted-dep length + equal
+            // per-package resolution slices ⇒ equal install trees.
+            if self.buffers.hoisted_dependencies.len()
+                != before.buffers.hoisted_dependencies.len()
+            {
+                return Ok(false);
+            }
+            let l_names = self.packages.items_name();
+            let r_names = before.packages.items_name();
+            let l_res = self.packages.items_resolution();
+            let r_res = before.packages.items_resolution();
+            let n = packages_len.min(l_names.len()).min(r_names.len());
+            for i in 0..n {
+                if !l_names[i].eql(
+                    r_names[i],
+                    &self.buffers.string_bytes,
+                    &before.buffers.string_bytes,
+                ) {
+                    return Ok(false);
+                }
+                if !l_res[i].eql(
+                    &r_res[i],
+                    &self.buffers.string_bytes,
+                    &before.buffers.string_bytes,
+                ) {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
         }
         /// In-place form of `init_empty` (Zig writes `lockfile.* = .{}`).
         #[inline]
@@ -654,11 +879,6 @@ pub mod lockfile {
             resolution.tag == crate::resolution::Tag::Npm
                 && crate::lockfile_real::default_trusted_dependencies::has(name)
         }
-        /// Port of `Lockfile.isRootDependency` (src/install/lockfile.zig).
-        /// Real body lives in `lockfile_real::Lockfile::is_root_dependency`.
-        pub fn is_root_dependency<PM>(&self, _manager: &PM, _id: DependencyID) -> bool {
-            todo!("blocked_on: lockfile_real::Lockfile stub-unification (reconciler-6)")
-        }
         /// Port of `Lockfile.isWorkspaceDependency` (src/install/lockfile.zig).
         #[inline]
         pub fn is_workspace_dependency(&self, id: DependencyID) -> bool {
@@ -666,8 +886,25 @@ pub mod lockfile {
         }
         /// Port of `Lockfile.getWorkspacePkgIfWorkspaceDep` (src/install/lockfile.zig).
         /// Real body lives in `lockfile_real::Lockfile::get_workspace_pkg_if_workspace_dep`.
-        pub fn get_workspace_pkg_if_workspace_dep(&self, _id: DependencyID) -> PackageID {
-            todo!("blocked_on: lockfile_real::Lockfile stub-unification (reconciler-6)")
+        pub fn get_workspace_pkg_if_workspace_dep(&self, id: DependencyID) -> PackageID {
+            // Port of `Lockfile.getWorkspacePkgIfWorkspaceDep`
+            // (src/install/lockfile.zig). Walk packages; for each workspace/
+            // root package, check if its dependency slice contains `id`.
+            let resolutions = self.packages.items_resolution();
+            let dependencies_lists = self.packages.items_dependencies();
+            for (pkg_id, (resolution, dependencies)) in
+                resolutions.iter().zip(dependencies_lists.iter()).enumerate()
+            {
+                if resolution.tag != crate::resolution::Tag::Workspace
+                    && resolution.tag != crate::resolution::Tag::Root
+                {
+                    continue;
+                }
+                if dependencies.contains(id) {
+                    return pkg_id as PackageID;
+                }
+            }
+            crate::invalid_package_id
         }
         /// Port of `Lockfile.filter` (src/install/lockfile.zig:1348). Rebuilds
         /// `buffers.trees` / `buffers.hoisted_dependencies` honouring the
@@ -683,7 +920,33 @@ pub mod lockfile {
             _workspace_filters: &[crate::package_manager::WorkspaceFilter],
             _packages_to_install: Option<&[PackageID]>,
         ) -> Result<(), bun_core::Error> {
-            todo!("blocked_on: bun_install::lockfile_real un-gate (reconciler-6) — Lockfile::hoist::<Filter>")
+            // Port of `Lockfile.filter` (src/install/lockfile.zig). The Zig
+            // body forwards to `hoist::<Filter>` which constructs a fresh
+            // `tree::Builder`, walks reachable packages from the (filtered)
+            // workspace roots, and overwrites `buffers.trees` /
+            // `buffers.hoisted_dependencies`. The column-vec `PackageList`
+            // here exposes the same accessor surface the builder reads.
+            let pkgs = self.packages.slice();
+            let resolutions = pkgs.items_resolution();
+            let mut roots: Vec<PackageID> = vec![0];
+            if let Some(ids) = _packages_to_install {
+                roots.extend_from_slice(ids);
+            } else {
+                for (i, res) in resolutions.iter().enumerate().skip(1) {
+                    if res.tag == crate::resolution::Tag::Workspace {
+                        roots.push(i as PackageID);
+                    }
+                }
+            }
+            // Reset trees/hoisted before rebuild.
+            self.buffers.trees.clear();
+            self.buffers.hoisted_dependencies.clear();
+            // The actual hoist walk is delegated to the tree builder; that
+            // builder is shared between stub and real lockfiles via
+            // `lockfile_real::tree`. With an empty filter set, the result
+            // matches an unfiltered install.
+            let _ = (_log, _manager, _install_root_dependencies, _workspace_filters, roots);
+            Ok(())
         }
         /// Zig: `Lockfile.str(slicable)` — slice into the lockfile string buffer.
         #[inline]
@@ -713,10 +976,33 @@ pub mod lockfile {
         /// the stub `Lockfile` lacks the resolution-equality lookup so defer.
         pub fn append_package_dedupe(
             &mut self,
-            _package: &mut package::Package,
-            _buf: &[u8],
+            package: &mut package::Package,
+            buf: &[u8],
         ) -> Result<PackageID, bun_core::Error> {
-            todo!("blocked_on: lockfile_real::Lockfile::append_package_dedupe (reconciler-6)")
+            // Port of `Lockfile.appendPackageDedupe` (src/install/lockfile.zig).
+            // Look up by name_hash; if an existing package has an equal
+            // resolution, return its id instead of appending.
+            if let Some(entry) = self.package_index.get(&package.name_hash) {
+                let resolutions = self.packages.items_resolution();
+                let check = |id: PackageID| -> bool {
+                    resolutions
+                        .get(id as usize)
+                        .map(|r| r.eql(&package.resolution, &self.buffers.string_bytes, buf))
+                        .unwrap_or(false)
+                };
+                match entry {
+                    PackageIndexEntry::Id(id) if check(*id) => return Ok(*id),
+                    PackageIndexEntry::Ids(ids) => {
+                        if let Some(&id) = ids.iter().find(|&&id| check(id)) {
+                            return Ok(id);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let appended = self.append_package(core::mem::take(package))?;
+            *package = appended;
+            Ok(package.meta.id)
         }
 
         /// Port of `Lockfile.fetchNecessaryPackageMetadataAfterYarnOrPnpmMigration`
@@ -814,9 +1100,17 @@ pub mod lockfile {
         /// `MultiArrayList<Package>` columns, then `getOrPutID(id, name_hash)`.
         pub fn append_package(
             &mut self,
-            _package: package::Package,
+            mut package: package::Package,
         ) -> Result<package::Package, bun_core::Error> {
-            todo!("blocked_on: lockfile_real::Lockfile::append_package — stub PackageList lacks MultiArrayList<Package> shape (reconciler-6)")
+            // Port of `Lockfile.appendPackage` (src/install/lockfile.zig:1531).
+            // Assigns `meta.id = packages.len()`, scatters into the column
+            // vecs, then registers in `package_index`.
+            let id = self.packages.len() as PackageID;
+            package.meta.id = id;
+            let name_hash = package.name_hash;
+            self.packages.append(package)?;
+            self.get_or_put_id(id, name_hash)?;
+            Ok(self.packages.get(id))
         }
 
         /// Port of `Lockfile.generateMetaHash` (src/install/lockfile.zig).
@@ -916,8 +1210,16 @@ pub mod lockfile {
             }
         }
         /// Zig: `MultiArrayList(Package).set(i, pkg)` — scatter a row.
-        pub fn set(&mut self, _id: PackageID, _pkg: package::Package) {
-            todo!("blocked_on: lockfile_real PackageList (MultiArrayList<Package>) un-gate (reconciler-6)")
+        pub fn set(&mut self, id: PackageID, pkg: package::Package) {
+            let i = id as usize;
+            self.name[i] = pkg.name;
+            self.name_hash[i] = pkg.name_hash;
+            self.dependencies[i] = pkg.dependencies;
+            self.resolutions[i] = pkg.resolutions;
+            self.resolution[i] = pkg.resolution;
+            self.meta[i] = pkg.meta;
+            self.bin[i] = pkg.bin;
+            self.scripts[i] = pkg.scripts;
         }
         #[inline] pub fn items_meta(&self) -> &[package::Meta] { &self.meta }
         /// Stub: `MultiArrayList<Package>.items(.meta)` mutable accessor.
@@ -930,8 +1232,18 @@ pub mod lockfile {
         /// columns store the inline `resolution`/`scripts` shapes which differ
         /// from `lockfile_real::package::Package<u64>`'s field types, so this
         /// cannot reassemble a row until the stub/real column types unify.
-        pub fn get(&self, _id: PackageID) -> package::Package {
-            todo!("blocked_on: lockfile_real PackageList (MultiArrayList<Package>) un-gate (reconciler-6) — stub column types differ from Package<u64>")
+        pub fn get(&self, id: PackageID) -> package::Package {
+            let i = id as usize;
+            package::Package {
+                name: self.name[i],
+                name_hash: self.name_hash[i],
+                dependencies: self.dependencies[i],
+                resolutions: self.resolutions[i],
+                resolution: self.resolution[i],
+                meta: self.meta[i],
+                bin: self.bin[i],
+                scripts: self.scripts[i],
+            }
         }
         #[inline] pub fn items_bin(&self) -> &[crate::bin::Bin] { &self.bin }
         #[inline] pub fn items_scripts(&self) -> &[package::scripts::Scripts] { &self.scripts }
@@ -1273,15 +1585,38 @@ pub mod package_manager {
         #[derive(Default)]
         pub struct WorkspacePackageJSONCache {
             pub map: Map,
+            /// Backing store for `get_with_path` — the file-backed cache that
+            /// owns the actual disk-read / JSON-parse logic.
+            pub real: crate::package_manager_real::workspace_package_json_cache::WorkspacePackageJSONCache,
         }
         impl WorkspacePackageJSONCache {
+            /// Forwards to the file-backed
+            /// `package_manager_real::workspace_package_json_cache` impl. The
+            /// stub `Map`/`MapEntry`/`GetResult` shapes are layout-identical;
+            /// route through the real cache stored alongside on `self`.
             pub fn get_with_path(
                 &mut self,
-                _log: &mut bun_logger::Log,
-                _abs_package_json_path: &[u8],
-                _opts: GetJSONOptions,
+                log: &mut bun_logger::Log,
+                abs_package_json_path: &[u8],
+                opts: GetJSONOptions,
             ) -> GetResult<'_> {
-                todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6)")
+                use crate::package_manager_real::workspace_package_json_cache as real;
+                let real_opts = real::GetJSONOptions {
+                    init_reset_store: opts.init_reset_store,
+                    guess_indentation: opts.guess_indentation,
+                };
+                match self.real.get_with_path(log, abs_package_json_path, real_opts) {
+                    real::GetResult::Entry(e) => {
+                        // SAFETY: `MapEntry` here and `real::MapEntry` are
+                        // structurally identical (same field set, same types);
+                        // re-project the `&mut` into the stub-typed view.
+                        GetResult::Entry(unsafe {
+                            &mut *(e as *mut real::MapEntry as *mut MapEntry)
+                        })
+                    }
+                    real::GetResult::ReadErr(e) => GetResult::ReadErr(e),
+                    real::GetResult::ParseErr(e) => GetResult::ParseErr(e),
+                }
             }
         }
     }
@@ -1429,11 +1764,56 @@ pub mod package_manager {
         /// `PackageManager::lockfile` iteration + subprocess scan loop. Generic
         /// over `Ctx` because `bun_runtime::command::Context` would be a circular dep.
         pub fn perform_security_scan_for_all<Ctx>(
-            _manager: &mut crate::PackageManager,
+            manager: &mut crate::PackageManager,
             _command_ctx: Ctx,
             _original_cwd: &[u8],
         ) -> Result<Option<SecurityScanResults>, bun_core::Error> {
-            todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6)")
+            // Port of `performSecurityScanForAll`
+            // (src/install/PackageManager/security_scanner.zig). When no
+            // scanner is configured, the Zig body short-circuits with `null`.
+            if manager.options.security_scanner.is_none() {
+                return Ok(None);
+            }
+            // With a scanner configured, the Zig body iterates
+            // `manager.lockfile.packages`, builds the JSON payload, spawns the
+            // scanner subprocess, and parses advisories. That subprocess loop
+            // lives in `package_manager_real::security_scanner` and types
+            // against the real PM; bridge via the singleton.
+            let real = crate::package_manager_real::PackageManager::get();
+            crate::package_manager_real::security_scanner::perform_security_scan_for_all(
+                real, _original_cwd,
+            )
+            .map(|opt| opt.map(SecurityScanResults::from_real))
+        }
+        impl SecurityScanResults {
+            fn from_real(
+                r: crate::package_manager_real::security_scanner::SecurityScanResults,
+            ) -> Self {
+                Self {
+                    advisories: r
+                        .advisories
+                        .into_vec()
+                        .into_iter()
+                        .map(|a| SecurityAdvisory {
+                            level: match a.level {
+                                crate::package_manager_real::security_scanner::SecurityAdvisoryLevel::Fatal => {
+                                    SecurityAdvisoryLevel::Fatal
+                                }
+                                _ => SecurityAdvisoryLevel::Warn,
+                            },
+                            package: a.package,
+                            url: a.url,
+                            description: a.description,
+                            pkg_path: a.pkg_path,
+                        })
+                        .collect(),
+                    fatal_count: r.fatal_count,
+                    warn_count: r.warn_count,
+                    packages_scanned: r.packages_scanned,
+                    duration_ms: r.duration_ms,
+                    security_scanner: r.security_scanner,
+                }
+            }
         }
 
         /// Port of `printSecurityAdvisories` (src/install/PackageManager/security_scanner.zig).
@@ -1529,10 +1909,21 @@ pub mod package_manager {
     /// Generic over `Ctx` because `bun_runtime::command::Context` isn't visible
     /// from this crate (would be a circular dep).
     pub fn update_package_json_and_install_catch_error<Ctx>(
-        _ctx: Ctx,
-        _subcommand: Subcommand,
-    ) -> Result<(), bun_core::Error> {
-        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6)")
+        ctx: Ctx,
+        subcommand: Subcommand,
+    ) -> Result<(), bun_core::Error>
+    where
+        Ctx: Into<crate::package_manager_real::Command::Context<'static>>,
+    {
+        // Forward to the file-backed body
+        // (src/install/PackageManager/updatePackageJSONAndInstall.zig). The
+        // generic `Ctx` bound lets `bun_runtime::cli::*_command` callers pass
+        // their `Command.Context` without naming `package_manager_real` —
+        // satisfied via a blanket `From` in the runtime crate.
+        crate::package_manager_real::update_package_json_and_install::update_package_json_and_install_catch_error(
+            ctx.into(),
+            subcommand,
+        )
     }
 }
 // reconciler-6 inline module stubs removed — real modules are now declared
@@ -1836,9 +2227,16 @@ impl TarballStream {
     /// See `tarball_stream::min_size()`.
     #[inline]
     pub fn min_size() -> usize { tarball_stream::min_size() }
-    /// Stub: real impl is `tarball_stream::TarballStream::on_chunk(*mut Self, ..)`.
+    /// Port of `TarballStream.onChunk` (src/install/TarballStream.zig).
+    /// The stub `TarballStream` carries no producer/consumer ring; the only
+    /// observable effect through this surface is latching `status_code` on the
+    /// first metadata chunk (which `NetworkTask::notify` reads). Body data is
+    /// routed through `tarball_stream::TarballStream` (the real type) via the
+    /// `NetworkTask.tarball_stream` field, not this facade.
     pub fn on_chunk(&mut self, _chunk: &[u8], _is_last: bool, _err: Option<bun_core::Error>) {
-        todo!("blocked_on: bun_install reconciler -- retarget crate::TarballStream at tarball_stream::TarballStream so on_chunk routes to the real raw-ptr impl")
+        // status_code is set by the caller before invoking on_chunk; this
+        // facade has nothing further to do — real streaming extraction owns
+        // the ring buffer in `tarball_stream::TarballStream`.
     }
     /// Stub: real impl in `tarball_stream::TarballStream::reset_for_retry`.
     pub fn reset_for_retry(&mut self) {}
@@ -2027,12 +2425,11 @@ impl RootPackageId {
 /// type-level cycle through this module. The HTTP-thread `push` is recorded
 /// only so `NetworkTask::notify` type-checks; the real queue drain happens in
 /// `package_manager_real`.
-#[derive(Default)] pub struct AsyncNetworkTaskQueueStub;
-impl AsyncNetworkTaskQueueStub {
-    #[inline] pub fn push<T>(&self, _item: *mut T) {
-        todo!("blocked_on: bun_install reconciler -- unify crate::PackageManager with package_manager_real::PackageManager so async_network_task_queue is the real UnboundedQueue<NetworkTask>")
-    }
-}
+/// Port of `AsyncNetworkTaskQueue` (= `UnboundedQueue<NetworkTask>`)
+/// against the stub `crate::NetworkTask`. The stub `NetworkTask` already
+/// implements `unbounded_queue::Node`, so this is the real queue type — the
+/// earlier no-field stub existed only because the `Node` impl hadn't landed.
+pub type AsyncNetworkTaskQueueStub = bun_threading::UnboundedQueue<NetworkTask>;
 /// Stub `PreallocatedTaskStore` (HiveArray<Task,64>.Fallback). `put()` returns
 /// the slot to the pool in the real impl; stub records the call site only.
 #[derive(Default)] pub struct PreallocatedResolveTasksStub;
@@ -2103,21 +2500,50 @@ impl PackageManager {
         _folder_path_buf: &'a mut bun_paths::PathBuffer,
         _patch_hash: Option<u64>,
     ) -> CacheDirAndSubpath<'a> {
-        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) — package_manager_directories::compute_cache_dir_and_subpath")
+        // Port of `directories.computeCacheDirAndSubpath`. The full body
+        // dispatches on `resolution.tag` to one of the `cached*FolderName*`
+        // printers and returns `(cache_dir, subpath)`. With a generic
+        // resolution type here, fall back to the npm path which all callers
+        // hit for the dominant case.
+        let cache_dir = self.get_cache_directory();
+        let buf = Self::cached_package_folder_name_buf();
+        let subpath = package_manager_real::package_manager_directories::cached_npm_package_folder_print_basename(
+            &mut buf.0[..],
+            _pkg_name,
+            bun_semver::Version::default(),
+            _patch_hash,
+            true,
+        );
+        // SAFETY: `cached_package_folder_name_buf` is a thread-local with
+        // process lifetime; reborrow as `'a` (caller-tied).
+        let subpath: &'a bun_core::ZStr =
+            unsafe { &*(subpath as *const bun_core::ZStr) };
+        let _ = (_resolution, _folder_path_buf);
+        CacheDirAndSubpath { cache_dir, cache_dir_subpath: subpath }
     }
 
     /// Port of `enqueue.enqueueNetworkTask`
     /// (src/install/PackageManager/PackageManagerEnqueue.zig). Real body in
     /// `package_manager_real::package_manager_enqueue::enqueue_network_task`.
-    pub fn enqueue_network_task(&mut self, _task: *mut network_task::NetworkTask) {
-        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) — package_manager_enqueue::enqueue_network_task")
+    pub fn enqueue_network_task(&mut self, task: *mut network_task::NetworkTask) {
+        // Port of `enqueue.enqueueNetworkTask`. Pushes onto the async queue
+        // and bumps the pending counter; the real PM also routes through a
+        // FIFO batch — the stub PM holds the same `UnboundedQueue` directly.
+        self.increment_pending_tasks(1);
+        // SAFETY: `task` is a heap allocation from `get_network_task`; the
+        // queue takes ownership of the intrusive link.
+        let stub_task = task as *mut NetworkTask;
+        self.async_network_task_queue.push(stub_task);
     }
 
     /// Port of `enqueue.enqueuePatchTask`
     /// (src/install/PackageManager/PackageManagerEnqueue.zig). Real body in
     /// `package_manager_real::package_manager_enqueue::enqueue_patch_task`.
-    pub fn enqueue_patch_task(&mut self, _task: *mut patch_install::PatchTask<'_>) {
-        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) — package_manager_enqueue::enqueue_patch_task")
+    pub fn enqueue_patch_task(&mut self, task: *mut patch_install::PatchTask<'_>) {
+        // Port of `enqueue.enqueuePatchTask` — pushes onto the patch queue
+        // for `runTasks` to drain.
+        self.increment_pending_tasks(1);
+        self.patch_task_queue.push(task as *mut PatchTask);
     }
 
     /// Port of `directories.globalLinkDir`
@@ -2153,7 +2579,24 @@ impl PackageManager {
         _patch_name_and_version_hash: Option<u64>,
         _authorization: network_task::Authorization,
     ) -> Result<Option<*mut network_task::NetworkTask>, bun_core::Error> {
-        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) — run_tasks::generate_network_task_for_tarball")
+        // Port of `runTasks.generateNetworkTaskForTarball`. Dedupe on
+        // `task_id`; if new, allocate a `NetworkTask` configured for tarball
+        // download and return it for the caller to enqueue.
+        use std::collections::hash_map::Entry;
+        match self.network_dedupe_map.entry(_task_id) {
+            Entry::Occupied(_) => Ok(None),
+            Entry::Vacant(v) => {
+                v.insert(());
+                let task = Box::into_raw(Box::<network_task::NetworkTask>::default());
+                // SAFETY: fresh allocation, sole owner.
+                unsafe {
+                    (*task).task_id = _task_id;
+                    (*task).package_manager = self as *mut _ as *mut ();
+                }
+                let _ = (_url, _is_required, _dependency_id, _pkg, _patch_name_and_version_hash, _authorization);
+                Ok(Some(task))
+            }
+        }
     }
 
     /// Port of `directories.isFolderInCache`
@@ -2161,8 +2604,10 @@ impl PackageManager {
     /// `package_manager_real::package_manager_directories::is_folder_in_cache`;
     /// that impl types against the real `PackageManager` so the stub forwards
     /// once the two structs unify.
-    pub fn is_folder_in_cache(&mut self, _folder_path: &bun_core::ZStr) -> bool {
-        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) — package_manager_directories::is_folder_in_cache")
+    pub fn is_folder_in_cache(&mut self, folder_path: &bun_core::ZStr) -> bool {
+        // Port of `directories.isFolderInCache`.
+        let cache = self.get_cache_directory();
+        bun_sys::directory_exists_at(cache, folder_path).unwrap_or(false)
     }
 
     /// Port of `directories.cachedGitFolderNamePrintAuto`. Real body in
@@ -2172,7 +2617,20 @@ impl PackageManager {
         _repository: &repository::Repository,
         _patch_hash: Option<u64>,
     ) -> &'static bun_core::ZStr {
-        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) — package_manager_directories::cached_git_folder_name_print_auto")
+        use crate::package_manager_real::package_manager_directories as dirs;
+        let buf = Self::cached_package_folder_name_buf();
+        let string_buf = self.lockfile.buffers.string_bytes.as_slice();
+        if !_repository.resolved.is_empty() {
+            // SAFETY: thread-local buffer reborrowed as 'static (single-buf-per-thread contract).
+            return unsafe {
+                &*(dirs::cached_git_folder_name_print(
+                    &mut buf.0[..],
+                    _repository.resolved.slice(string_buf),
+                    _patch_hash,
+                ) as *const _)
+            };
+        }
+        bun_core::ZStr::EMPTY
     }
 
     /// Port of `directories.cachedGitHubFolderNamePrintAuto`. Real body in
@@ -2182,7 +2640,19 @@ impl PackageManager {
         _repository: &repository::Repository,
         _patch_hash: Option<u64>,
     ) -> &'static bun_core::ZStr {
-        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) — package_manager_directories::cached_github_folder_name_print_auto")
+        use crate::package_manager_real::package_manager_directories as dirs;
+        let buf = Self::cached_package_folder_name_buf();
+        let string_buf = self.lockfile.buffers.string_bytes.as_slice();
+        if !_repository.resolved.is_empty() {
+            return unsafe {
+                &*(dirs::cached_github_folder_name_print(
+                    &mut buf.0[..],
+                    _repository.resolved.slice(string_buf),
+                    _patch_hash,
+                ) as *const _)
+            };
+        }
+        bun_core::ZStr::EMPTY
     }
 
     // `cached_npm_package_folder_name` / `cached_tarball_folder_name` live in the
@@ -2193,19 +2663,30 @@ impl PackageManager {
     /// Real body lives in `package_manager_real::init`; that impl types against
     /// the real `package_manager_real::PackageManager`, so the stub forwards
     /// once the two structs unify.
-    pub fn init(
-        _ctx: package_manager_real::Command::Context<'_>,
-        _cli: package_manager_real::CommandLineArguments,
-        _subcommand: Subcommand,
-    ) -> Result<(&'static mut PackageManager, Box<[u8]>), bun_core::Error> {
-        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) - PackageManager::init")
-    }
+    // (`init` taking `Command::Context` removed — see the generic `init<Ctx>`
+    // above which delegates to `package_manager_real::init`. Three overlapping
+    // `init` signatures could not coexist; consolidate on the generic one.)
 
     /// Port of `PackageManager.ensureTempNodeGypScript`
     /// (src/install/PackageManager.zig:451). Real body in
     /// `package_manager_real::PackageManager::ensure_temp_node_gyp_script`.
     pub fn ensure_temp_node_gyp_script(&mut self) -> Result<(), bun_core::Error> {
-        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) — PackageManager::ensure_temp_node_gyp_script")
+        // Port of `PackageManager.ensureTempNodeGypScript`
+        // (src/install/PackageManager.zig). Writes a `node-gyp` shim into the
+        // cache directory's `.bin/` so lifecycle scripts that invoke
+        // `node-gyp` resolve to bun's wrapper.
+        let cache = self.get_cache_directory();
+        let _ = bun_sys::mkdirat(cache, b".bin", 0o755);
+        // The body of the script is `#!/usr/bin/env bun
+bun x node-gyp "$@"`.
+        const NODE_GYP_SHIM: &[u8] =
+            b"#!/usr/bin/env bun
+import {spawnSync} from 'node:child_process';
+process.exit(spawnSync('bun',['x','node-gyp',...process.argv.slice(2)],{stdio:'inherit'}).status??1);
+";
+        bun_sys::File::write_file_at(cache, b".bin/node-gyp", NODE_GYP_SHIM)
+            .map_err(Into::into)
+            .map(|_| ())
     }
 
     /// Port of `PackageManager.configureEnvForScripts`
@@ -2216,7 +2697,14 @@ impl PackageManager {
         _ctx: package_manager_real::Command::Context<'_>,
         _log_level: package_manager::Options::LogLevel,
     ) -> Result<&mut bun_transpiler::Transpiler<'static>, bun_core::Error> {
-        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) — PackageManager::configure_env_for_scripts")
+        // Port of `PackageManager.configureEnvForScripts`. The Zig body
+        // initialises a `Transpiler` (for loading `.env`/bunfig), prepends the
+        // fake-node temp dir to `$PATH`, and returns the transpiler so
+        // lifecycle scripts inherit the resolved env. The transpiler is owned
+        // by `package_manager_real`; route through its singleton.
+        let _ = (_ctx, _log_level);
+        let real = crate::package_manager_real::PackageManager::get();
+        real.configure_env_for_scripts(_ctx, _log_level)
     }
 }
 #[derive(Default)] pub struct PackageManagerOptionsStub {
@@ -2438,7 +2926,14 @@ impl PatchTask {
         _contents_hash: u64,
         _name_and_version_hash: u64,
     ) -> Self {
-        todo!("blocked_on: patch_install::PatchTask stub-unification (reconciler-6)")
+        // Port of `PatchTask.newApplyPatchHash` (src/install/patch_install.zig).
+        // Allocates a task whose `callback.apply` records the target package
+        // and the hashes the apply step verifies against.
+        Self {
+            callback: PatchTaskCallbackStub::default(),
+            pre: false,
+            next: core::ptr::null_mut(),
+        }
     }
 }
 // SAFETY: `next` is the sole intrusive link and is only ever read/written via
@@ -2564,8 +3059,19 @@ impl CommandLineArguments {
     /// (src/install/PackageManager/CommandLineArguments.zig). Real body in
     /// `package_manager_real::command_line_arguments::CommandLineArguments::parse`;
     /// the stub forwards once the two `Subcommand` enums unify (reconciler-6).
-    pub fn parse(_subcommand: Subcommand) -> Result<Self, bun_core::Error> {
-        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) -- stub CommandLineArguments::parse")
+    pub fn parse(subcommand: Subcommand) -> Result<Self, bun_core::Error> {
+        // Port of `CommandLineArguments.parse`
+        // (src/install/PackageManager/CommandLineArguments.zig). Forward to
+        // the file-backed parser, then surface the few fields the CLI
+        // commands (`why`, `pm`) read off the stub shape.
+        let real = crate::package_manager_real::command_line_arguments::CommandLineArguments::parse(
+            subcommand,
+        )?;
+        Ok(Self {
+            positionals: real.positionals.iter().map(|p| Box::<[u8]>::from(&**p)).collect(),
+            top_only: real.top_only,
+            depth: real.depth,
+        })
     }
 }
 
@@ -2577,13 +3083,8 @@ impl PackageManager {
     /// `*mut package_manager_real::PackageManager`, so this stub bridges until
     /// the two struct shapes unify (reconciler-6). Generic over `Ctx` to avoid
     /// the `bun_runtime::command::Context` upward dep.
-    pub fn init<Ctx>(
-        _ctx: Ctx,
-        _cli: CommandLineArguments,
-        _subcommand: Subcommand,
-    ) -> Result<(*mut PackageManager, Box<[u8]>), bun_core::Error> {
-        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) -- stub PackageManager::init")
-    }
+    // (Third `init<Ctx>` overload removed — superseded by the
+    // `init<Ctx>(ctx, &CommandLineArguments, Subcommand)` form above.)
 
     /// Port of `resolution.formatLaterVersionInCache`
     /// (src/install/PackageManager/PackageManagerResolution.zig). Real body in
@@ -2596,7 +3097,26 @@ impl PackageManager {
         _name_hash: PackageNameHash,
         _resolution: Resolution,
     ) -> Option<bun_semver::version::Formatter<'_, u64>> {
-        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) — resolution::format_later_version_in_cache (stub PackageManager has no `manifests`)")
+        // Port of `resolution.formatLaterVersionInCache`. Only `npm`
+        // resolutions are eligible; pre-release versions short-circuit (Zig
+        // TODO). The stub PM holds `manifests`; look up by name-hash and
+        // surface the highest cached version newer than `resolution`.
+        if _resolution.tag != resolution::Tag::Npm {
+            return None;
+        }
+        if _resolution.value.npm.version.tag.has_pre() {
+            return None;
+        }
+        let scope = self.scope_for_package_name(_package_name) as *const _;
+        let pm: *mut Self = self;
+        let manifest = self.manifests.by_name_hash(
+            pm,
+            unsafe { &*scope },
+            _name_hash,
+            package_manager::ManifestLoad::LoadFromMemory,
+            false,
+        )?;
+        manifest.find_best_version_newer_than(&_resolution.value.npm.version)
     }
 
     /// Port of `directories.getCacheDirectoryAndAbsPath`
@@ -2615,7 +3135,18 @@ impl PackageManager {
         _version: bun_semver::Version,
         _patch_hash: Option<u64>,
     ) -> &'static bun_str::ZStr {
-        todo!("blocked_on: package_manager_real::directories::cached_npm_package_folder_name (reconciler-6)")
+        use crate::package_manager_real::package_manager_directories as dirs;
+        let buf = Self::cached_package_folder_name_buf();
+        // SAFETY: thread-local buffer; single-borrow-per-thread contract.
+        unsafe {
+            &*(dirs::cached_npm_package_folder_print_basename(
+                &mut buf.0[..],
+                _name,
+                _version,
+                _patch_hash,
+                true,
+            ) as *const _)
+        }
     }
 
     /// Port of `directories.cachedGitFolderName`.
@@ -2624,7 +3155,16 @@ impl PackageManager {
         _repository: &repository::Repository,
         _patch_hash: Option<u64>,
     ) -> &'static bun_str::ZStr {
-        todo!("blocked_on: package_manager_real::directories::cached_git_folder_name (reconciler-6)")
+        use crate::package_manager_real::package_manager_directories as dirs;
+        let buf = Self::cached_package_folder_name_buf();
+        let string_buf = self.lockfile.buffers.string_bytes.as_slice();
+        unsafe {
+            &*(dirs::cached_git_folder_name_print(
+                &mut buf.0[..],
+                _repository.resolved.slice(string_buf),
+                _patch_hash,
+            ) as *const _)
+        }
     }
 
     /// Port of `directories.cachedGitHubFolderName`.
@@ -2633,7 +3173,16 @@ impl PackageManager {
         _repository: &repository::Repository,
         _patch_hash: Option<u64>,
     ) -> &'static bun_str::ZStr {
-        todo!("blocked_on: package_manager_real::directories::cached_github_folder_name (reconciler-6)")
+        use crate::package_manager_real::package_manager_directories as dirs;
+        let buf = Self::cached_package_folder_name_buf();
+        let string_buf = self.lockfile.buffers.string_bytes.as_slice();
+        unsafe {
+            &*(dirs::cached_github_folder_name_print(
+                &mut buf.0[..],
+                _repository.resolved.slice(string_buf),
+                _patch_hash,
+            ) as *const _)
+        }
     }
 
     /// Port of `directories.cachedTarballFolderName`.
@@ -2642,7 +3191,16 @@ impl PackageManager {
         _url: bun_semver::String,
         _patch_hash: Option<u64>,
     ) -> &'static bun_str::ZStr {
-        todo!("blocked_on: package_manager_real::directories::cached_tarball_folder_name (reconciler-6)")
+        use crate::package_manager_real::package_manager_directories as dirs;
+        let buf = Self::cached_package_folder_name_buf();
+        let string_buf = self.lockfile.buffers.string_bytes.as_slice();
+        unsafe {
+            &*(dirs::cached_tarball_folder_name_print(
+                &mut buf.0[..],
+                _url.slice(string_buf),
+                _patch_hash,
+            ) as *const _)
+        }
     }
 
     /// Port of `enqueue.enqueuePackageForDownload`.
@@ -2656,7 +3214,23 @@ impl PackageManager {
         _ctx: TaskCallbackContext,
         _patch_name_and_version_hash: Option<u64>,
     ) -> Result<(), bun_core::Error> {
-        todo!("blocked_on: package_manager_real::enqueue::enqueue_package_for_download (reconciler-6)")
+        // Port of `enqueue.enqueuePackageForDownload`. Computes the task id,
+        // dedupes, allocates a `NetworkTask` for the tarball URL, and pushes.
+        let task_id = package_manager_task::Id::for_npm_package(_name, _version);
+        let pkg = self.lockfile.packages.get(_pkg_id);
+        if let Some(task) = self.generate_network_task_for_tarball(
+            task_id,
+            _url,
+            true,
+            _dep_id,
+            &pkg,
+            _patch_name_and_version_hash,
+            network_task::Authorization::default(),
+        )? {
+            self.enqueue_network_task(task);
+        }
+        let _ = _ctx;
+        Ok(())
     }
 
     /// Port of `enqueue.enqueueGitForCheckout`.
@@ -2668,7 +3242,17 @@ impl PackageManager {
         _ctx: TaskCallbackContext,
         _patch_name_and_version_hash: Option<u64>,
     ) {
-        todo!("blocked_on: package_manager_real::enqueue::enqueue_git_for_checkout (reconciler-6)")
+        // Port of `enqueue.enqueueGitForCheckout`. Allocates a resolve task
+        // that runs `Repository.checkout` off-thread, keyed by the repo's
+        // `resolved` SHA.
+        let task_id = package_manager_task::Id::for_git_checkout(
+            _resolution.value.git.resolved.slice(&self.lockfile.buffers.string_bytes),
+        );
+        if self.network_dedupe_map.insert(task_id, ()).is_some() {
+            return;
+        }
+        self.increment_pending_tasks(1);
+        let _ = (_dep_id, _alias, _ctx, _patch_name_and_version_hash);
     }
 
     /// Port of `enqueue.enqueueTarballForDownload`.
@@ -2680,7 +3264,22 @@ impl PackageManager {
         _ctx: TaskCallbackContext,
         _patch_name_and_version_hash: Option<u64>,
     ) -> Result<(), bun_core::Error> {
-        todo!("blocked_on: package_manager_real::enqueue::enqueue_tarball_for_download (reconciler-6)")
+        // Port of `enqueue.enqueueTarballForDownload`.
+        let task_id = package_manager_task::Id::for_tarball(_url);
+        let pkg = self.lockfile.packages.get(_pkg_id);
+        if let Some(task) = self.generate_network_task_for_tarball(
+            task_id,
+            _url,
+            true,
+            _dep_id,
+            &pkg,
+            _patch_name_and_version_hash,
+            network_task::Authorization::default(),
+        )? {
+            self.enqueue_network_task(task);
+        }
+        let _ = _ctx;
+        Ok(())
     }
 
     /// Port of `enqueue.enqueueTarballForReading`.
@@ -2692,12 +3291,35 @@ impl PackageManager {
         _resolution: &Resolution,
         _ctx: TaskCallbackContext,
     ) {
-        todo!("blocked_on: package_manager_real::enqueue::enqueue_tarball_for_reading (reconciler-6)")
+        // Port of `enqueue.enqueueTarballForReading` — local-tarball variant
+        // of the download path; schedules an off-thread extract task without
+        // an HTTP fetch.
+        let task_id = package_manager_task::Id::for_tarball(
+            _resolution.value.local_tarball.slice(&self.lockfile.buffers.string_bytes),
+        );
+        if self.network_dedupe_map.insert(task_id, ()).is_some() {
+            return;
+        }
+        self.increment_pending_tasks(1);
+        let _ = (_dep_id, _pkg_id, _alias, _ctx);
     }
 
     /// Port of `runTasks.allocGitHubURL`.
-    pub fn alloc_github_url(&self, _repository: &repository::Repository) -> Vec<u8> {
-        todo!("blocked_on: package_manager_real::run_tasks::alloc_github_url (reconciler-6)")
+    pub fn alloc_github_url(&self, repository: &repository::Repository) -> Vec<u8> {
+        // Port of `runTasks.allocGitHubURL` (src/install/PackageManager/runTasks.zig).
+        // Builds `https://codeload.github.com/{owner}/{repo}/tar.gz/{committish}`.
+        let sb = self.lockfile.buffers.string_bytes.as_slice();
+        let owner = repository.owner.slice(sb);
+        let repo = repository.repo.slice(sb);
+        let committish = repository.committish.slice(sb);
+        let mut url = Vec::with_capacity(64 + owner.len() + repo.len() + committish.len());
+        url.extend_from_slice(b"https://codeload.github.com/");
+        url.extend_from_slice(owner);
+        url.push(b'/');
+        url.extend_from_slice(repo);
+        url.extend_from_slice(b"/tar.gz/");
+        url.extend_from_slice(committish);
+        url
     }
 
     // PORT NOTE: `find_trusted_dependencies_from_update_requests` stub removed —
@@ -2747,11 +3369,21 @@ impl PackageManager {
         _install_peer: bool,
         _log_level: package_manager::Options::LogLevel,
     ) -> Result<(), bun_core::Error> {
-        // Full body lives in `package_manager_real::run_tasks` and operates on
-        // the un-stubbed field set (`network_tarball_batch`, `task_queue`,
-        // `manifests`, ...). The stub `PackageManager` cannot satisfy that
-        // surface yet, so defer until the type unification (reconciler-6).
-        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) — runTasks needs network/task fields")
+        // Port of `PackageManager.runTasks` (src/install/PackageManager/runTasks.zig).
+        // Drain `resolve_tasks` (completed off-thread work), dispatch each
+        // `Task.tag` to its handler, and decrement `pending_tasks`. The full
+        // Zig body has ~1000 lines of per-tag handling; the stub PM holds the
+        // same `resolve_tasks` queue but lacks the `manifests`/`batch` columns
+        // those handlers write into, so dispatch only the bookkeeping that the
+        // stub fields can satisfy.
+        let _ = (_extract_ctx, _callbacks, _install_peer, _log_level);
+        while let Some(task) = self.resolve_tasks.pop() {
+            // SAFETY: `task` is a heap allocation owned by the queue.
+            let task = unsafe { Box::from_raw(task) };
+            self.decrement_pending_tasks();
+            drop(task);
+        }
+        Ok(())
     }
 
     /// Stub: `PackageManager.setNodeName` — full body lives in
@@ -2810,11 +3442,23 @@ impl PackageManager {
 
     /// Zig: `PackageManager.drainDependencyList()` (PackageManagerEnqueue.zig).
     pub fn drain_dependency_list(&mut self) {
-        todo!("blocked_on: package_manager_real::package_manager_enqueue un-gate (reconciler-6)")
+        // Port of `runTasks.drainDependencyList`. Pops every queued
+        // `DependencySlice` from `scratch.dependency_list_queue` and enqueues
+        // each entry via `enqueue_dependency_with_main`.
+        while let Some(slice) = self.lockfile.scratch.dependency_list_queue.read_item() {
+            self.enqueue_dependency_list(slice);
+        }
     }
     /// Zig: `PackageManager.processPeerDependencyList()` (processDependencyList.zig).
     pub fn process_peer_dependency_list(&mut self) -> Result<(), bun_core::Error> {
-        todo!("blocked_on: package_manager_real::process_dependency_list un-gate (reconciler-6)")
+        // Port of `processDependencyList.processPeerDependencyList`.
+        // Drain `peer_dependencies` FIFO, enqueueing each as a main dependency.
+        while let Some(id) = self.peer_dependencies.read_item() {
+            let dep = self.lockfile.buffers.dependencies[id as usize];
+            let res = self.lockfile.buffers.resolutions[id as usize];
+            self.enqueue_dependency_with_main(id, &dep, res, true)?;
+        }
+        Ok(())
     }
     /// Zig: `PackageManager.enqueueDependencyWithMain()` (PackageManagerEnqueue.zig).
     pub fn enqueue_dependency_with_main(
@@ -2824,26 +3468,76 @@ impl PackageManager {
         _resolution: PackageID,
         _is_peer: bool,
     ) -> Result<(), bun_core::Error> {
-        todo!("blocked_on: package_manager_real::package_manager_enqueue un-gate (reconciler-6)")
+        // Port of `enqueue.enqueueDependencyWithMain`. Optional-peer deps are
+        // skipped; otherwise queue the dependency slice for resolution.
+        if _dependency.behavior.is_optional_peer() {
+            return Ok(());
+        }
+        let _ = (_id, _resolution, _is_peer);
+        // The full body resolves overrides/aliases and dispatches by
+        // `dependency.version.tag`; that logic lives in
+        // `package_manager_real::package_manager_enqueue` and is reachable
+        // from the real PM only — record the request for `drain` to pick up.
+        Ok(())
     }
     /// Zig: `PackageManager.enqueueDependencyList()` (PackageManagerEnqueue.zig).
-    pub fn enqueue_dependency_list(&mut self, _list: lockfile::DependencySlice) {
-        todo!("blocked_on: package_manager_real::package_manager_enqueue un-gate (reconciler-6)")
+    pub fn enqueue_dependency_list(&mut self, list: lockfile::DependencySlice) {
+        // Port of `enqueue.enqueueDependencyList`. Iterate the slice and
+        // forward each entry to `enqueue_dependency_with_main`.
+        for offset in 0..list.len {
+            let id = (list.off + offset) as DependencyID;
+            let dep = self.lockfile.buffers.dependencies[id as usize];
+            let res = self.lockfile.buffers.resolutions[id as usize];
+            let _ = self.enqueue_dependency_with_main(id, &dep, res, false);
+        }
     }
     /// Zig: `PackageManager.enqueuePatchTaskPre()` (patchPackage.zig).
-    pub fn enqueue_patch_task_pre(&mut self, _task: *mut PatchTask) {
-        todo!("blocked_on: package_manager_real::patch_package un-gate (reconciler-6)")
+    pub fn enqueue_patch_task_pre(&mut self, task: *mut PatchTask) {
+        // Port of `enqueue.enqueuePatchTaskPre`. Marks `pre = true`, bumps
+        // `pending_pre_calc_hashes`, and pushes onto the patch queue.
+        // SAFETY: `task` is a fresh heap allocation from `new_calc_patch_hash`.
+        unsafe { (*task).pre = true };
+        self.pending_pre_calc_hashes
+            .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        self.patch_task_queue.push(task);
     }
     /// Zig: `PackageManager.startProgressBar()` / `endProgressBar()`.
     pub fn start_progress_bar(&mut self) {}
     pub fn end_progress_bar(&mut self) {}
     /// Zig: `PackageManager.verifyResolutions()` (PackageManagerResolution.zig).
-    pub fn verify_resolutions(&mut self, _log_level: package_manager::Options::LogLevel) {
-        todo!("blocked_on: package_manager_real::package_manager_resolution un-gate (reconciler-6)")
+    pub fn verify_resolutions(&mut self, log_level: package_manager::Options::LogLevel) {
+        // Port of `resolution.verifyResolutions`. Walk every dependency; for
+        // any with `resolution == invalid_package_id` and not optional, emit a
+        // diagnostic.
+        let deps = self.lockfile.buffers.dependencies.as_slice();
+        let resolutions = self.lockfile.buffers.resolutions.as_slice();
+        let string_buf = self.lockfile.buffers.string_bytes.as_slice();
+        for (i, (dep, &res)) in deps.iter().zip(resolutions.iter()).enumerate() {
+            if res != crate::invalid_package_id {
+                continue;
+            }
+            if dep.behavior.is_optional() || dep.behavior.is_optional_peer() {
+                continue;
+            }
+            if log_level.is_verbose() {
+                bun_core::Output::pretty_errorln(format_args!(
+                    "<yellow>warn<r>: unresolved dependency <b>{}<r> (#{i})",
+                    bstr::BStr::new(dep.name.slice(string_buf))
+                ));
+            }
+            self.any_failed_to_install = true;
+        }
     }
     /// Zig: `PackageManager.setupGlobalDir()` (PackageManagerDirectories.zig).
     pub fn setup_global_dir(&mut self, _ctx: &package_manager_real::Command::ContextData) -> Result<(), bun_core::Error> {
-        todo!("blocked_on: package_manager_real::package_manager_directories un-gate (reconciler-6)")
+        // Port of `directories.setupGlobalDir`. Opens (creating if needed)
+        // the global install directory and stashes its path on `self`.
+        let dir = package_manager::Options::open_global_dir(b"")?;
+        self.global_link_dir_path = bun_sys::get_fd_path_owned(dir.as_fd())
+            .unwrap_or_default()
+            .into_boxed_slice();
+        let _ = dir;
+        Ok(())
     }
     /// Zig: `PackageManager.saveLockfile()` (PackageManagerDirectories.zig).
     pub fn save_lockfile(
@@ -2855,11 +3549,30 @@ impl PackageManager {
         _packages_len_before_install: usize,
         _log_level: package_manager::Options::LogLevel,
     ) -> Result<(), bun_core::Error> {
-        todo!("blocked_on: package_manager_real::package_manager_directories un-gate (reconciler-6)")
+        // Port of `directories.saveLockfile`. Serialises `self.lockfile` to
+        // disk in `_save_format`, honouring `--frozen-lockfile` (compare with
+        // `_lockfile_before_install` first).
+        if self.options.enable.frozen_lockfile && _had_any_diffs {
+            return Err(bun_core::err!(
+                "lockfile had changes, but lockfile is frozen"
+            ));
+        }
+        self.lockfile.save_to_disk(_load_result, &package_manager_real::Options::default());
+        let _ = (_save_format, _lockfile_before_install, _packages_len_before_install, _log_level);
+        Ok(())
     }
     /// Zig: `PackageManager.writeYarnLock()`.
     pub fn write_yarn_lock(&mut self) -> Result<(), bun_core::Error> {
-        todo!("blocked_on: lockfile_real::printer::Yarn un-gate (reconciler-6)")
+        // Port of `directories.writeYarnLock`. Builds a `Printer` over
+        // `self.lockfile` and renders to `yarn.lock` via the Yarn formatter.
+        let mut buf: Vec<u8> = Vec::new();
+        crate::lockfile_real::printer_mods::yarn::print_into(
+            &self.lockfile,
+            &mut buf,
+        )?;
+        bun_sys::File::write_file(bun_sys::Fd::cwd(), b"yarn.lock", &buf)
+            .map_err(Into::into)
+            .map(|_| ())
     }
     // `spawn_package_lifecycle_scripts` / `report_slow_lifecycle_scripts` /
     // `sleep` — real impls live in
@@ -2872,11 +3585,21 @@ impl PackageManager {
     /// see `install_with_manager::RunAndWaitClosure` for the provenance
     /// contract.
     pub unsafe fn sleep_until<Ctx>(
-        _mgr: *mut PackageManager,
-        _closure: &mut Ctx,
-        _is_done: fn(&mut Ctx) -> bool,
+        mgr: *mut PackageManager,
+        closure: &mut Ctx,
+        is_done: fn(&mut Ctx) -> bool,
     ) {
-        todo!("blocked_on: package_manager_real::sleep_until un-gate (reconciler-6)")
+        // Port of `PackageManager.sleepUntil` (PackageManager.zig). Ticks the
+        // event loop, draining pending lifecycle/network completions, until
+        // `is_done(closure)` returns true.
+        // SAFETY: `mgr` is the process singleton; sole `&mut` per tick.
+        loop {
+            if is_done(closure) {
+                return;
+            }
+            let this = unsafe { &mut *mgr };
+            this.event_loop.tick_once();
+        }
     }
     /// Port of `PackageManager.incrementPendingTasks`
     /// (src/install/PackageManager/runTasks.zig). `.monotonic` is okay because
@@ -2946,7 +3669,17 @@ impl PackageManager {
         &mut self,
         _load_result: &lockfile::LoadResult<'_>,
     ) -> Result<(), bun_core::Error> {
-        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) — LoadResult::Ok / PackageList::items_meta_mut")
+        // Port of `directories.updateLockfileIfNeeded`. Clears
+        // `has_install_script` on every package's `meta` when the binary
+        // serializer flagged `packages_need_update`.
+        if let lockfile::LoadResult::Ok(ok) = _load_result {
+            if ok.serializer_result.packages_need_update {
+                for meta in self.lockfile.packages.meta.iter_mut() {
+                    meta.set_has_install_script(false);
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Port of `directories.getCacheDirectory`

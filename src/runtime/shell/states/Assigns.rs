@@ -58,13 +58,10 @@ impl Assigns {
     }
 
     pub fn next(interp: &mut Interpreter, this: NodeId) -> Yield {
-        // TODO(b2-blocked): ast::Assign::{name, value} — full body (~130
+        // TODO(b2-blocked): ast::Assign::{label, value} — full body (~130
         // lines) gated. Shape: for each assign, run an Expansion on the value,
-        // then `shell.set_var(ctx, name, expanded)` and advance.
-        
-        {
-            include!("Assigns_next_body.rs");
-        }
+        // then `shell.assign_var(ctx, label, expanded)` and advance.
+        // See Assigns.zig:next() for the reference loop.
         let _ = EnvStr::init_slice;
         let parent = interp.as_assigns(this).base.parent;
         interp.child_done(parent, this, 0)

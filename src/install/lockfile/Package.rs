@@ -45,8 +45,10 @@ pub use workspace_map as WorkspaceMap;
 bun_output::declare_scope!(Lockfile, hidden);
 
 // Zig: `pub fn Package(comptime SemverIntType: type) type { return extern struct { ... } }`
+// Defaulted to `u64` so bare `Package` matches Zig's primary `Package(u64)`
+// instantiation (the only one the lockfile/PM call sites name unqualified).
 #[repr(C)]
-pub struct Package<SemverIntType> {
+pub struct Package<SemverIntType = u64> {
     pub name: String,
     pub name_hash: PackageNameHash,
 
@@ -1278,7 +1280,7 @@ impl<SemverIntType> Package<SemverIntType> {
         log: &mut logger::Log,
         source: &logger::Source,
         group: &DependencyGroup,
-        string_builder: &mut impl StringBuilder,
+        string_builder: &mut StringBuilder<'_>,
         package_dependencies: &mut [Dependency],
         dependencies_count: u32,
         tag: Option<dependency::version::Tag>,

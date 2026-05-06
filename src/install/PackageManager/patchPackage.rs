@@ -299,7 +299,7 @@ pub fn do_patch_commit(
             break 'has_nested_node_modules true;
         };
 
-        let patch_tag_tmpname = match bun_fs::FileSystem::tmpname("patch_tmp", &mut buf3[..], bun_core::fast_random()) {
+        let patch_tag_tmpname = match bun_paths::fs::FileSystem::tmpname(b"patch_tmp", &mut buf3[..], bun_core::fast_random()) {
             Ok(s) => s,
             Err(e) => {
                 Output::err(e, "failed to make tempdir", format_args!(""));
@@ -400,7 +400,7 @@ pub fn do_patch_commit(
         let paths = bun_patch::git_diff_preprocess_paths(old_folder, new_folder, false);
         let opts = bun_patch::spawn_opts(paths[0], paths[1], cwd.as_bytes(), git, &manager.event_loop);
 
-        let mut spawn_result = match bun_core::spawn_sync(&opts) {
+        let mut spawn_result = match bun_spawn::sync::spawn(&opts) {
             Err(e) => {
                 Output::pretty_error(
                     "<r><red>error<r>: failed to make diff {s}<r>\n",
@@ -458,7 +458,7 @@ pub fn do_patch_commit(
 
     // write the patch contents to temp file then rename
     let mut tmpname_buf = [0u8; 1024];
-    let tempfile_name = bun_fs::FileSystem::tmpname("tmp", &mut tmpname_buf, bun_core::fast_random())?;
+    let tempfile_name = bun_paths::fs::FileSystem::tmpname(b"tmp", &mut tmpname_buf, bun_core::fast_random())?;
     let tmpdir = manager.get_temporary_directory().handle;
     let tmpfd = match sys::openat(
         Fd::from_std_dir(&tmpdir),
@@ -494,22 +494,19 @@ pub fn do_patch_commit(
     // `defer if (deinit) manager.allocator.free(patch_filename);` — Drop of escaped_owned
     let _ = (deinit, &escaped_owned);
 
-    let path_in_patches_dir = path::join_z(
+    let path_in_patches_dir = resolve_path::join_z::<platform::Posix>(
         &[
             &manager.options.patch_features.commit.patches_dir,
             patch_filename,
         ],
-        path::Style::Posix,
     );
 
-    // MOVE_DOWN(b0): bun_jsc::node::fs::NodeFS → bun_sys::node_fs (mkdir_recursive needs no JS).
-    let mut nodefs = bun_sys::node_fs::NodeFS::default();
-    let args = bun_sys::node_fs::Arguments::Mkdir {
-        path: bun_sys::node_fs::PathLike::String(bun_str::PathString::init(&manager.options.patch_features.commit.patches_dir)),
-        ..Default::default()
-    };
-    if let Some(e) = nodefs.mkdir_recursive(&args).as_err() {
-        Output::err(e, "failed to make patches dir {f}", format_args!("{}", bun_fmt::quote(args.path.slice())));
+    // MOVE_DOWN(b0): `bun.jsc.Node.fs.NodeFS{}.mkdirRecursive(args)` — only the
+    // mkdir-p syscall is used here, no JS surface; route directly through
+    // `bun_sys::mkdir_recursive` to avoid the `bun_runtime` dep cycle.
+    let patches_dir: &[u8] = manager.options.patch_features.commit.patches_dir.as_ref();
+    if let Some(e) = sys::mkdir_recursive(patches_dir).as_err() {
+        Output::err(e, "failed to make patches dir {f}", format_args!("{}", bun_fmt::quote(patches_dir)));
         Global::crash();
     }
 
@@ -529,7 +526,7 @@ pub fn do_patch_commit(
     write!(&mut patch_key, "{}", bstr::BStr::new(resolution_label)).unwrap();
     let patch_key: Box<[u8]> = patch_key.into_boxed_slice();
     let patchfile_path: Box<[u8]> = Box::<[u8]>::from(path_in_patches_dir.as_bytes());
-    let _ = sys::unlink(path::join_z(&[changes_dir, b".bun-patch-tag"], path::Style::Auto).as_bytes());
+    let _ = sys::unlink(resolve_path::join_z::<platform::Auto>(&[changes_dir, b".bun-patch-tag"]).as_bytes());
 
     Ok(Some(PatchCommitResult {
         patch_key,
@@ -634,7 +631,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
     let arg_kind: PatchArgKind = PatchArgKind::from_arg(argument);
 
     let mut folder_path_buf = PathBuffer::uninit();
-    let mut iterator = Lockfile::Tree::Iterator::<{ Lockfile::Tree::IterKind::NodeModules }>::init(manager.lockfile);
+    let mut iterator = tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(manager.lockfile);
     let mut resolution_buf = [0u8; 1024];
 
     #[cfg(windows)]
@@ -665,7 +662,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
             let lockfile = manager.lockfile;
 
             let package_json_source: logger::Source = 'src: {
-                let package_json_path = path::join_z(&[argument, b"package.json"], path::Style::Auto);
+                let package_json_path = resolve_path::join_z::<platform::Auto>(&[argument, b"package.json"]);
 
                 match sys::File::to_source(&package_json_path, Default::default()) {
                     sys::Result::Ok(s) => break 'src s,
@@ -718,7 +715,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
                     for &id in ids.as_slice() {
                         let pkg = lockfile.packages.get(id);
                         let mut cursor: &mut [u8] = &mut resolution_buf[..];
-                        write!(&mut cursor, "{}", pkg.resolution.fmt(lockfile.buffers.string_bytes.as_slice(), path::Style::Posix)).expect("unreachable");
+                        write!(&mut cursor, "{}", pkg.resolution.fmt(lockfile.buffers.string_bytes.as_slice(), PathSep::Posix)).expect("unreachable");
                         let written = resolution_buf.len() - cursor.len();
                         let resolution_label = &resolution_buf[..written];
                         if resolution_label == version {
@@ -736,7 +733,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
             let existing_patchfile_hash: Option<u64> = 'existing_patchfile_hash: {
                 // PERF(port): was stack-fallback alloc — profile in Phase B
                 let mut name_and_version = Vec::new();
-                write!(&mut name_and_version, "{}@{}", bstr::BStr::new(name), actual_package.resolution.fmt(strbuf, path::Style::Posix)).expect("unreachable");
+                write!(&mut name_and_version, "{}@{}", bstr::BStr::new(name), actual_package.resolution.fmt(strbuf, PathSep::Posix)).expect("unreachable");
                 let name_and_version_hash = SemverString::Builder::string_hash(&name_and_version);
                 if let Some(patched_dep) = lockfile.patched_dependencies.get(&name_and_version_hash) {
                     if let Some(hash) = patched_dep.patchfile_hash() {
@@ -778,7 +775,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
             let existing_patchfile_hash: Option<u64> = 'existing_patchfile_hash: {
                 // PERF(port): was stack-fallback alloc — profile in Phase B
                 let mut name_and_version = Vec::new();
-                write!(&mut name_and_version, "{}@{}", bstr::BStr::new(name), pkg.resolution.fmt(strbuf, path::Style::Posix)).expect("unreachable");
+                write!(&mut name_and_version, "{}@{}", bstr::BStr::new(name), pkg.resolution.fmt(strbuf, PathSep::Posix)).expect("unreachable");
                 let name_and_version_hash = SemverString::Builder::string_hash(&name_and_version);
                 if let Some(patched_dep) = manager.lockfile.patched_dependencies.get(&name_and_version_hash) {
                     if let Some(hash) = patched_dep.patchfile_hash() {
@@ -798,7 +795,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
             let cache_dir = cache_result.cache_dir;
             let cache_dir_subpath = cache_result.cache_dir_subpath;
 
-            let module_folder_ = path::join(&[folder.relative_path, name], path::Style::Auto);
+            let module_folder_ = resolve_path::join::<platform::Auto>(&[folder.relative_path, name]);
             #[cfg(windows)]
             let buf = path::path_to_posix_buf::<u8>(module_folder_, &mut win_normalizer[..]);
             #[cfg(not(windows))]
@@ -843,14 +840,14 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
             format_args!(
                 "{} {}",
                 bstr::BStr::new(pkg_name),
-                bstr::BStr::new(path::join_string_buf(&mut bufn[..], &[bun_fs::FileSystem::instance().top_level_dir_without_trailing_slash(), module_folder], path::Style::Posix)),
+                bstr::BStr::new(resolve_path::join_string_buf::<platform::Posix>(&mut bufn[..], &[FileSystem::instance().top_level_dir_without_trailing_slash(), module_folder])),
             ),
         );
         Output::pretty(
             "\nOnce you're done with your changes, run:\n\n  <cyan>bun patch --commit '{s}'<r>\n",
             format_args!(
                 "{}",
-                bstr::BStr::new(path::join_string_buf(&mut bufn[..], &[bun_fs::FileSystem::instance().top_level_dir_without_trailing_slash(), module_folder], path::Style::Posix)),
+                bstr::BStr::new(resolve_path::join_string_buf::<platform::Posix>(&mut bufn[..], &[FileSystem::instance().top_level_dir_without_trailing_slash(), module_folder])),
             ),
         );
     } else {
@@ -878,7 +875,7 @@ fn detach_module_folder_from_shared_store(module_folder: &[u8]) {
     #[cfg(not(windows))]
     let native: &[u8] = module_folder;
 
-    let mut p = bun_paths::Path::<{ path::Sep::Auto }>::from(native);
+    let mut p = bun_paths::Path::<u8, { PathKind::ANY }, { PathSeparators::AUTO }>::from(native).unwrap();
     // `defer path.deinit();` — Drop
     let mut components: usize = 1;
     for &c in native {
@@ -937,7 +934,7 @@ fn detach_module_folder_from_shared_store(module_folder: &[u8]) {
             }
             // Re-create the now-missing path segments below the removed
             // symlink so `module_folder`'s parent exists for the copy.
-            let parent = path::dirname(native, path::Style::Auto);
+            let parent = resolve_path::dirname::<platform::Auto>(native);
             if !parent.is_empty() {
                 let _ = Fd::cwd().make_path::<u8>(parent);
             }
@@ -955,16 +952,16 @@ fn overwrite_package_in_node_modules_folder(
 ) -> Result<(), bun_core::Error> {
     let _ = Fd::cwd().delete_tree(node_modules_folder_path);
 
-    let mut dest_subpath = bun_paths::Path::<{ path::Sep::Auto }, { path::Unit::Os }>::from(node_modules_folder_path);
+    let mut dest_subpath = bun_paths::Path::<OsUnit, { PathKind::ANY }, { PathSeparators::AUTO }>::from(node_modules_folder_path).unwrap();
     // `defer dest_subpath.deinit();` — Drop
 
-    let src_path: bun_paths::AbsPath<{ path::Sep::Auto }, { path::Unit::Os }> = 'src_path: {
+    let src_path: bun_paths::AbsPath<OsUnit, { PathSeparators::AUTO }> = 'src_path: {
         #[cfg(windows)]
         {
             let mut path_buf = bun_paths::WPathBuffer::uninit();
             let abs_path = bun_sys::get_fd_path_w(Fd::from_std_dir(&cache_dir), &mut path_buf)?;
 
-            let mut src_path = bun_paths::AbsPath::<{ path::Sep::Auto }, { path::Unit::Os }>::from(abs_path);
+            let mut src_path = bun_paths::AbsPath::<OsUnit, { PathSeparators::AUTO }>::from(abs_path).unwrap();
             src_path.append(cache_dir_subpath);
 
             break 'src_path src_path;
@@ -981,7 +978,7 @@ fn overwrite_package_in_node_modules_folder(
     let cached_package_folder = cache_dir.open_dir(cache_dir_subpath, sys::OpenDirOptions { iterate: true, ..Default::default() })?;
     // `defer cached_package_folder.close();` — Drop
 
-    let ignore_directories: &[&bun_paths::OsPathSlice] = &[
+    let ignore_directories: &[&bun_paths::OSPathSlice] = &[
         bun_paths::os_path_literal!("node_modules"),
         bun_paths::os_path_literal!(".git"),
         bun_paths::os_path_literal!("CMakeFiles"),
@@ -999,10 +996,8 @@ fn overwrite_package_in_node_modules_folder(
     Ok(())
 }
 
-// TODO(port): Lockfile::Tree::Iterator generic over IterKind enum const param
-type NodeModulesIterator = Lockfile::Tree::Iterator<{ Lockfile::Tree::IterKind::NodeModules }>;
-type NodeModulesNext = <NodeModulesIterator as Iterator>::Next;
-// TODO(port): the above `Next` associated type is a guess — Phase B should verify against lockfile/Tree.
+type NodeModulesIterator<'a> = tree::Iterator<'a, { tree::IteratorPathStyle::NodeModules }>;
+type NodeModulesNext<'a> = tree::IteratorNext<'a>;
 
 fn node_modules_folder_for_dependency_ids(iterator: &mut NodeModulesIterator, ids: &[IdPair]) -> Result<Option<NodeModulesNext>, bun_core::Error> {
     while let Some(node_modules) = iterator.next(None) {
@@ -1057,7 +1052,7 @@ fn pkg_info_for_name_and_version(
         let pkg = lockfile.packages.get(pkg_id);
         if let Some(v) = version {
             let mut cursor: &mut [u8] = &mut buf[..];
-            write!(&mut cursor, "{}", pkg.resolution.fmt(strbuf, path::Style::Posix)).expect("Resolution name too long");
+            write!(&mut cursor, "{}", pkg.resolution.fmt(strbuf, PathSep::Posix)).expect("Resolution name too long");
             let written = buf.len() - cursor.len();
             let label = &buf[..written];
             if label == v {
@@ -1173,7 +1168,7 @@ fn pkg_info_for_name_and_version(
 
         let pkg = lockfile.packages.get(pkgid);
 
-        Output::pretty_error("  {s}@<blue>{f}<r>\n", format_args!("{} {}", bstr::BStr::new(pkg.name.slice(strbuf)), pkg.resolution.fmt(strbuf, path::Style::Posix)));
+        Output::pretty_error("  {s}@<blue>{f}<r>\n", format_args!("{} {}", bstr::BStr::new(pkg.name.slice(strbuf)), pkg.resolution.fmt(strbuf, PathSep::Posix)));
 
         if i + 1 < pairs.len() {
             for p in &mut pairs[i + 1..] {
@@ -1194,7 +1189,7 @@ fn path_argument_relative_to_root_workspace_package(manager: &PackageManager, lo
     }
     let workspace_res = &lockfile.packages.items(Lockfile::PackageField::Resolution)[workspace_package_id as usize];
     let rel_path: &[u8] = workspace_res.value.workspace.slice(lockfile.buffers.string_bytes.as_slice());
-    Some(Box::<[u8]>::from(path::join(&[rel_path, argument], path::Style::Posix)))
+    Some(Box::<[u8]>::from(resolve_path::join::<platform::Posix>(&[rel_path, argument])))
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]

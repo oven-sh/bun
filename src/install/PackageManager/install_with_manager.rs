@@ -44,7 +44,7 @@ pub fn install_with_manager(
             let hostname = bun_str::ZStr::from_bytes(&manager.options.scope.url.hostname);
             bun_dns::internal::prefetch(
                 manager.event_loop.loop_(),
-                &hostname,
+                hostname.as_bytes(),
                 manager.options.scope.url.get_port_auto(),
             );
         }
@@ -958,7 +958,7 @@ pub fn install_with_manager(
             // make sure old versions are updated
             || load_result.ok().format == lockfile::Format::Text
                 && save_format == lockfile::Format::Text
-                && manager.lockfile.text_lockfile_version != TextLockfile::Version::current()))
+                && manager.lockfile.text_lockfile_version != TextLockfile::Version::CURRENT))
         // check `save_lockfile` after checking if loaded from binary and save format is text
         // because `save_lockfile` is set to false for `--frozen-lockfile`
         || (manager.options.do_.save_lockfile
@@ -1279,7 +1279,7 @@ fn print_install_summary(
     if this.options.do_.summary {
         if !printed_timestamp {
             Output::print_start_end_stdout(ctx.start_time, nano_timestamp());
-            Output::pretty_ln("<d> done<r>", format_args!(""));
+            Output::prettyln(format_args!("<d> done<r>"));
             printed_timestamp = true;
             let _ = printed_timestamp;
         }
@@ -1288,7 +1288,7 @@ fn print_install_summary(
     Ok(())
 }
 
-fn print_blocked_packages_info(summary: &PackageInstall::Summary, global: bool) {
+fn print_blocked_packages_info(summary: &PackageInstallSummary, global: bool) {
     let packages_count = summary.packages_with_blocked_scripts.len();
     let mut scripts_count: usize = 0;
     for count in summary.packages_with_blocked_scripts.values() {
@@ -1303,15 +1303,12 @@ fn print_blocked_packages_info(summary: &PackageInstall::Summary, global: bool) 
     }
 
     if packages_count > 0 {
-        Output::pretty_ln(
+        Output::prettyln(format_args!(
             "\n\n<d>Blocked {} postinstall{}. Run `bun pm {}untrusted` for details.<r>\n",
-            format_args!(
-                "{}{}{}",
-                scripts_count,
-                if scripts_count > 1 { "s" } else { "" },
-                if global { "-g " } else { "" },
-            ),
-        );
+            scripts_count,
+            if scripts_count > 1 { "s" } else { "" },
+            if global { "-g " } else { "" },
+        ));
         // TODO(port): Output::pretty multi-arg formatting
     } else {
         Output::pretty("<r>\n", format_args!(""));
@@ -1322,7 +1319,7 @@ pub fn get_workspace_filters(
     manager: &mut PackageManager,
     original_cwd: &[u8],
 ) -> Result<(Vec<WorkspaceFilter>, bool), bun_core::Error> {
-    let path_buf = bun_paths::path_buffer_pool().get();
+    let mut path_buf = bun_paths::path_buffer_pool::get();
     // RAII: guard puts the buffer back on Drop.
 
     let mut workspace_filters: Vec<WorkspaceFilter> = Vec::new();
@@ -1368,7 +1365,7 @@ pub fn get_workspace_filters(
                 }
             };
 
-            match glob::match_(pattern, path_or_name) {
+            match glob::r#match(pattern, path_or_name) {
                 glob::MatchResult::Match | glob::MatchResult::NegateMatch => {
                     install_root_dependencies = true;
                 }
@@ -1396,9 +1393,9 @@ fn add_dependency_error(manager: &mut PackageManager, dependency: &Dependency, e
     let note_fmt = "error occurred while resolving {}";
     let note_args = format_args!(
         "{}",
-        bun_core::fmt::fmt_path::<u8>(
+        bun_core::fmt::fmt_path(
             lockfile.str(&dependency.realname()),
-            bun_core::fmt::PathOptions {
+            bun_core::fmt::PathFormatOptions {
                 path_sep: match dependency.version.tag {
                     Dependency::VersionTag::Folder => bun_core::fmt::PathSep::Auto,
                     _ => bun_core::fmt::PathSep::Any,

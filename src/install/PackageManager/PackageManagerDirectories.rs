@@ -6,13 +6,14 @@ use bun_alloc::AllocError;
 use bun_core::{env_var, fmt as bun_fmt, Error, Global, Output, Progress};
 use bun_dotenv::Loader as DotEnvLoader;
 use crate::bun_fs::FileSystem;
-use bun_install::lockfile::Lockfile;
+use bun_install::lockfile::{self, Lockfile, LoadResult, LockfileFormat};
 use bun_install::{PackageID, Repository, Resolution};
 use bun_paths::{self as path, AbsPath, PathBuffer, MAX_PATH_BYTES, SEP};
 use bun_semver::{self as Semver, String as SemverString};
 use bun_str::{strings, ZStr};
 use bun_sys::{self as sys, Dir, Fd, File};
 
+use super::options::LogLevel;
 use super::{Command, Options, PackageManager, ProgressStrings};
 
 // ───────────────────────────── cache directory ────────────────────────────────
@@ -58,14 +59,14 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
     let cache_directory = get_cache_directory(manager);
     // The chosen tempdir must be on the same filesystem as the cache directory
     // This makes renameat() work
-    let temp_dir_name = bun_fs::file_system::RealFS::get_default_temp_dir();
+    let temp_dir_name = FileSystem::get_default_temp_dir();
 
     let mut tried_dot_tmp = false;
     let mut tempdir: Dir = match sys::make_path::make_open_path(Dir::cwd(), temp_dir_name, Default::default()) {
         Ok(d) => d,
         Err(_) => {
             tried_dot_tmp = true;
-            match sys::make_path::make_open_path(cache_directory, bun_paths::path_literal(".tmp"), Default::default()) {
+            match sys::make_path::make_open_path(cache_directory, bun_paths::path_literal!(".tmp"), Default::default()) {
                 Ok(d) => d,
                 Err(err) => {
                     Output::pretty_errorln(
@@ -88,7 +89,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
     };
 
     'brk: loop {
-        let file = match tempdir.create_file_z(tmpname, sys::CreateFileOptions { truncate: true, ..Default::default() }) {
+        let file = match tempdir.create_file_z(tmpname, sys::CreateFlags { truncate: true, ..Default::default() }) {
             Ok(f) => f,
             Err(err2) => {
                 if !tried_dot_tmp {
@@ -96,7 +97,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
 
                     tempdir = match sys::make_path::make_open_path(
                         cache_directory,
-                        bun_paths::path_literal(".tmp"),
+                        bun_paths::path_literal!(".tmp"),
                         Default::default(),
                     ) {
                         Ok(d) => d,

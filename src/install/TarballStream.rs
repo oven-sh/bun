@@ -647,8 +647,7 @@ impl TarballStream {
         // Strip the leading `package/` (or `<repo>-<sha>/` for GitHub) and
         // normalise. Same transformation as Archiver.extractToDir so both
         // paths produce identical on-disk layouts.
-        let mut tokenizer = pathname
-            .as_slice()
+        let mut tokenizer = pathname[..]
             .split(|c| *c == ('/' as OSPathChar))
             .filter(|s| !s.is_empty());
         if tokenizer.next().is_none() {
@@ -656,22 +655,22 @@ impl TarballStream {
             self.out_fd = None;
             return Ok(());
         }
-        // TODO(port): tokenizeScalar.rest() — need byte offset of remainder, not
-        // just iterator. `split().filter()` loses that. Phase B: use a manual
+        // tokenizeScalar.rest() — need byte offset of remainder, not just
+        // iterator. `split().filter()` loses that, so use a manual
         // index-of-first-'/' + skip-leading-'/' instead.
-        let rest: &[OSPathChar] = tokenizer_rest_placeholder(pathname.as_slice());
+        let rest: &[OSPathChar] = tokenizer_rest_placeholder(&pathname[..]);
         // SAFETY: `rest` is a suffix of the original NUL-terminated `pathname`;
         // `rest.ptr[rest.len]` is the same NUL byte.
-        pathname = unsafe { bun_paths::OSPathZStr::from_raw(rest.as_ptr(), rest.len()) };
+        pathname = unsafe { OSPathSliceZ::from_raw(rest.as_ptr(), rest.len()) };
 
         let mut norm_buf = OSPathBuffer::uninit();
         let normalized =
-            bun_paths::normalize_buf_t::<OSPathChar>(pathname.as_slice(), norm_buf.as_mut_slice(), bun_paths::Style::Auto);
+            resolve_path::normalize_buf_t::<OSPathChar, platform::Auto>(&pathname[..], &mut norm_buf[..]);
         let norm_len = normalized.len();
-        norm_buf.as_mut_slice()[norm_len] = 0;
+        norm_buf[norm_len] = 0;
         // SAFETY: norm_buf[norm_len] == 0 written above.
         let path: OSPathZMut =
-            unsafe { bun_paths::OSPathZStr::from_raw_mut(norm_buf.as_mut_ptr(), norm_len) };
+            unsafe { OSPathSliceZ::from_raw_mut(norm_buf.as_mut_ptr(), norm_len) };
         if path.is_empty() || (path.len() == 1 && path[0] == ('.' as OSPathChar)) {
             self.phase = Phase::WantData;
             self.out_fd = None;
@@ -693,7 +692,7 @@ impl TarballStream {
         }
         #[cfg(windows)]
         {
-            if bun_paths::is_absolute_windows_wtf16(path.as_slice()) {
+            if bun_paths::is_absolute_windows_wtf16(&path[..]) {
                 self.phase = Phase::WantData;
                 self.out_fd = None;
                 return Ok(());
@@ -703,7 +702,10 @@ impl TarballStream {
             }
         }
 
-        let path_slice: &[OSPathChar] = path.as_slice();
+        // Mutation (Windows escape rewrite) is done; reborrow as shared so
+        // `path` and `path_slice` can coexist.
+        let path: OSPathZ = &*path;
+        let path_slice: &[OSPathChar] = &path[..];
         let dest = self.dest.unwrap();
 
         match kind {
@@ -799,7 +801,7 @@ impl TarballStream {
             if block.offset > self.entry_actual_offset {
                 let zero_count: usize =
                     usize::try_from(block.offset - self.entry_actual_offset).unwrap();
-                match lib::Archive::write_zeros_to_file(file, zero_count) {
+                match lib::Archive::write_zeros_to_file(&file, zero_count) {
                     lib::Result::Ok => {
                         self.entry_actual_offset = block.offset;
                     }
@@ -815,7 +817,7 @@ impl TarballStream {
                 self.entry_actual_offset += i64::try_from(data.len()).unwrap();
                 Ok(())
             }
-            Err(e) => Err(bun_sys::errno_to_error(e.errno)),
+            Err(e) => Err(e.to_zig_err()),
         }
     }
 
@@ -856,7 +858,7 @@ impl TarballStream {
         // `task.request.extract.tarball.temp_dir` become invalid once
         // `Drop` runs / the main thread recycles the Task.
         // SAFETY: task is live (see above).
-        if (*task).status != TaskStatus::Success && !(*this).tmpname.to_bytes().is_empty() {
+        if (*task).status != TaskStatus::Success && !(*this).tmpname.is_empty() {
             // `populate_result` closes `dest` on the success path before the
             // rename; the early-return failure paths leave it open, so close
             // it here first — Windows can't remove an open directory.
@@ -870,7 +872,7 @@ impl TarballStream {
                 .extract
                 .tarball
                 .temp_dir
-                .delete_tree((*this).tmpname.to_bytes());
+                .delete_tree((*this).tmpname.as_bytes());
         }
 
         // SAFETY: `this` was allocated via Box::into_raw in `init()`; this is
@@ -891,13 +893,13 @@ impl TarballStream {
         // is `*mut` (Zig spec: mutable `*PackageManager`) and shared across
         // threads, so we mutate via raw-ptr deref without forming a
         // long-lived `&mut PackageManager`.
-        (*manager).resolve_tasks.push(&mut *task);
+        (*manager).resolve_tasks.push(task);
         (*manager).wake();
     }
 
     fn populate_result(&mut self, task: &mut Task) {
         let tarball = &task.request.extract.tarball;
-        task.data = TaskData::Extract(Default::default());
+        task.data = TaskData { extract: ManuallyDrop::new(Default::default()) };
 
         if let Some(err) = self.fail {
             task.log
@@ -964,7 +966,7 @@ impl TarballStream {
 
         let mut result = match tarball.move_to_cache_directory(
             &mut task.log,
-            self.tmpname.to_bytes(),
+            self.tmpname.as_bytes(),
             name,
             basename,
             self.resolved_github_dirname,
@@ -998,7 +1000,7 @@ impl TarballStream {
             Output::flush();
         }
 
-        task.data = TaskData::Extract(result);
+        task.data = TaskData { extract: ManuallyDrop::new(result) };
         task.status = TaskStatus::Success;
     }
 
@@ -1153,16 +1155,16 @@ fn open_output_file(
     {
         match bun_sys::openat(dest_fd, path, flags, mode) {
             Ok(fd) => Ok(fd),
-            Err(e) => match e.errno() {
-                bun_sys::E::ACCES | bun_sys::E::NOENT => 'brk: {
+            Err(e) => match e.get_errno() {
+                bun_sys::E::EACCES | bun_sys::E::ENOENT => 'brk: {
                     let Some(dir) = bun_paths::dirname(path_slice) else {
-                        return Err(bun_sys::errno_to_error(e.errno));
+                        return Err(e.to_zig_err());
                     };
-                    let _ = dest_fd.make_path::<u8>(dir);
+                    let _ = dest_fd.make_path(dir);
                     break 'brk bun_sys::openat(dest_fd, path, flags, mode)
-                        .map_err(|e| bun_sys::errno_to_error(e.errno));
+                        .map_err(|e| e.to_zig_err());
                 }
-                _ => Err(bun_sys::errno_to_error(e.errno)),
+                _ => Err(e.to_zig_err()),
             },
         }
     }

@@ -1307,6 +1307,31 @@ pub mod resolvers {
 
 pub use npm as Npm;
 pub use resolution::Resolution;
+
+/// MOVE_DOWN: `bun_resolver::package_json::PackageJSON` — the resolver crate
+/// depends on `bun_install` (for `Dependency`), so re-importing `PackageJSON`
+/// from there would create a cycle. Mounted here with the install-side field
+/// surface (`name`/`version`/`dependencies`/`arch`/`os`) so
+/// `lockfile::Package::from_package_json` can type-check; the resolver-only
+/// fields (`browser_map`, `exports`, …) stay in `bun_resolver` until the type
+/// is split into install-layer / resolver-layer halves.
+#[derive(Default)]
+pub struct PackageJSON {
+    pub name: Box<[u8]>,
+    pub version: Box<[u8]>,
+    pub arch: npm::Architecture,
+    pub os: npm::OperatingSystem,
+    pub package_manager_package_id: PackageID,
+    pub dependencies: PackageJSONDependencyMap,
+}
+
+/// Port of `bun.PackageJSON.DependencyMap` (src/resolver/package_json.zig).
+#[derive(Default)]
+pub struct PackageJSONDependencyMap {
+    pub map: bun_collections::ArrayHashMap<bun_semver::String, Dependency>,
+    // TODO(port): lifetime — borrows the package.json source contents
+    pub source_buf: &'static [u8],
+}
 pub use pnpm_matcher::PnpmMatcher;
 #[derive(Default)] pub struct PackageManifestMap;
 #[derive(Default)] pub struct PostinstallOptimizer;

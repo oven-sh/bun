@@ -1,6 +1,7 @@
 use bun_collections::ArrayHashMap;
 use bun_logger as logger;
 use bun_paths as path;
+use bun_paths::resolve_path;
 use bun_paths::{PathBuffer, MAX_PATH_BYTES, SEP_STR};
 use bun_str::{strings, ZStr};
 use bun_glob as glob;
@@ -8,7 +9,7 @@ use bun_js_parser as js_ast;
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bstr::BStr;
 
-use crate::PackageManager;
+use crate::package_manager::workspace_package_json_cache::{WorkspacePackageJSONCache, GetJSONOptions};
 use crate::lockfile::StringBuilder;
 
 bun_output::declare_scope!(Lockfile, hidden);
@@ -79,7 +80,7 @@ impl WorkspaceMap {
 // — Rust drops them automatically; no explicit `deinit` body needed.
 
 fn process_workspace_name(
-    json_cache: &mut PackageManager::WorkspacePackageJSONCache,
+    json_cache: &mut WorkspacePackageJSONCache,
     abs_package_json_path: &ZStr,
     log: &mut logger::Log,
 ) -> Result<Entry, bun_core::Error> {
@@ -87,7 +88,7 @@ fn process_workspace_name(
         .get_with_path(
             log,
             abs_package_json_path,
-            PackageManager::WorkspacePackageJSONCache::GetJSONOptions {
+            GetJSONOptions {
                 init_reset_store: false,
                 guess_indentation: true,
                 ..Default::default()
@@ -128,7 +129,7 @@ fn process_workspace_name(
 impl WorkspaceMap {
     pub fn process_names_array(
         workspace_names: &mut WorkspaceMap,
-        json_cache: &mut PackageManager::WorkspacePackageJSONCache,
+        json_cache: &mut WorkspacePackageJSONCache,
         log: &mut logger::Log,
         arr: &mut js_ast::E::Array,
         source: &logger::Source,
@@ -172,11 +173,10 @@ impl WorkspaceMap {
                 continue;
             }
 
-            let abs_package_json_path: &ZStr = path::join_abs_string_buf_z(
+            let abs_package_json_path: &ZStr = resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
                 source.path.name.dir(),
                 filepath_buf,
                 &[input_path.as_bytes(), b"package.json"],
-                path::Platform::Auto,
             );
 
             // skip root package.json
@@ -235,14 +235,12 @@ impl WorkspaceMap {
                 continue;
             }
 
-            let rel_input_path = path::relative_platform(
+            let rel_input_path = resolve_path::relative_platform::<path::platform::Auto, true>(
                 source.path.name.dir(),
-                strings::without_suffix(
+                strings::without_suffix_comptime(
                     abs_package_json_path.as_bytes(),
                     const_format::concatcp!(SEP_STR, "package.json").as_bytes(),
                 ),
-                path::Platform::Auto,
-                true,
             );
             #[cfg(windows)]
             {
@@ -288,29 +286,40 @@ impl WorkspaceMap {
                     b"package.json"
                 } else {
                     let parts: [&[u8]; 2] = [user_pattern, b"package.json"];
-                    arena.alloc_slice_copy(path::join(&parts, path::Platform::Auto))
+                    arena.alloc_slice_copy(resolve_path::join::<path::platform::Auto>(&parts))
                 };
 
-                let mut walker = GlobWalker::default();
-                let mut cwd = path::dirname(&source.path.text, path::Platform::Auto);
+                let mut cwd = resolve_path::dirname::<path::platform::Auto>(&source.path.text);
                 if cwd.is_empty() {
-                    cwd = bun_fs::FileSystem::instance().top_level_dir();
+                    cwd = bun_sys::fs::FileSystem::instance().top_level_dir();
                 }
-                if let Some(e) = walker
-                    .init_with_cwd(&arena, glob_pattern, cwd, false, false, false, false, true)?
-                    .as_err()
-                {
-                    let _ = log.add_error_fmt(
-                        Some(source),
-                        loc,
-                        format_args!(
-                            "Failed to run workspace pattern <b>{}<r> due to error <b>{}<r>",
-                            BStr::new(user_pattern),
-                            <&'static str>::from(e.get_errno()),
-                        ),
-                    );
-                    return Err(bun_core::err!("GlobError"));
-                }
+                // PORT NOTE: GlobWalker::init_with_cwd is now an associated constructor
+                // returning `Result<Maybe<Self>>`; arena param dropped (Phase A: heap-backed),
+                // ignore filter supplied as final arg (was comptime fn param in Zig).
+                let mut walker = match GlobWalker::init_with_cwd(
+                    glob_pattern,
+                    cwd,
+                    false,
+                    false,
+                    false,
+                    false,
+                    true,
+                    Some(ignored_workspace_paths),
+                )? {
+                    Ok(w) => w,
+                    Err(e) => {
+                        let _ = log.add_error_fmt(
+                            Some(source),
+                            loc,
+                            format_args!(
+                                "Failed to run workspace pattern <b>{}<r> due to error <b>{}<r>",
+                                BStr::new(user_pattern),
+                                <&'static str>::from(e.get_errno()),
+                            ),
+                        );
+                        return Err(bun_core::err!("GlobError"));
+                    }
+                };
                 // walker dropped at end of loop iter (Drop impl handles deinit(false))
                 // TODO(port): GlobWalker::deinit(false) — Drop cannot take params; assume default Drop matches `false`
 
@@ -358,7 +367,7 @@ impl WorkspaceMap {
 
                     {
                         let matched_path_without_package_json = strings::without_trailing_slash(
-                            strings::without_suffix(matched_path, b"package.json"),
+                            strings::without_suffix_comptime(matched_path, b"package.json"),
                         );
 
                         // check if it's negated by any remaining patterns
@@ -388,14 +397,13 @@ impl WorkspaceMap {
                         BStr::new(entry_dir)
                     );
 
-                    let abs_package_json_path = path::join_abs_string_buf_z(
+                    let abs_package_json_path = resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
                         cwd,
                         filepath_buf,
                         &[entry_dir, b"package.json"],
-                        path::Platform::Auto,
                     );
                     let abs_workspace_dir_path: &[u8] =
-                        strings::without_suffix(abs_package_json_path.as_bytes(), b"package.json");
+                        strings::without_suffix_comptime(abs_package_json_path.as_bytes(), b"package.json");
 
                     let workspace_entry = match process_workspace_name(
                         json_cache,
@@ -444,11 +452,9 @@ impl WorkspaceMap {
                         continue;
                     }
 
-                    let workspace_path: &[u8] = path::relative_platform(
+                    let workspace_path: &[u8] = resolve_path::relative_platform::<path::platform::Auto, true>(
                         source.path.name.dir(),
                         abs_workspace_dir_path,
-                        path::Platform::Auto,
-                        true,
                     );
                     #[cfg(windows)]
                     {
@@ -514,11 +520,11 @@ fn ignored_workspace_paths(path: &[u8]) -> bool {
     false
 }
 
-// TODO(port): Zig `glob.GlobWalker(ignoredWorkspacePaths, glob.walk.SyscallAccessor, false)` —
-// comptime fn param threaded as const fn-pointer generic so node_modules/.git/CMakeFiles are
-// skipped. Phase B: confirm `bun_glob::GlobWalker` exposes this as `<const IGNORE: fn(&[u8])->bool, A, const ERR_ON_BROKEN: bool>`
-// or accepts the callback via `init_with_cwd`.
-type GlobWalker = glob::GlobWalker<{ ignored_workspace_paths as fn(&[u8]) -> bool }, glob::walk::SyscallAccessor, false>;
+// PORT NOTE: Zig `glob.GlobWalker(ignoredWorkspacePaths, glob.walk.SyscallAccessor, false)` —
+// the comptime ignore-filter fn param was lowered to a runtime fn-pointer field on
+// `bun_glob::GlobWalker` (const-generic fn ptrs are unstable). Supplied via
+// `init_with_cwd(..., Some(ignored_workspace_paths))`.
+type GlobWalker = glob::GlobWalker<glob::walk::SyscallAccessor, false>;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

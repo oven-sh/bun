@@ -93,15 +93,15 @@ pub type DependencyIDList = Vec<DependencyID>;
 pub type StringBuffer = Vec<u8>;
 pub type ExternalStringBuffer = Vec<ExternalString>;
 
-pub type NameHashMap = ArrayHashMap<PackageNameHash, SemverString, ArrayIdentityContext<u64>>;
+pub type NameHashMap = ArrayHashMap<PackageNameHash, SemverString, ArrayIdentityContext>;
 pub type TrustedDependenciesSet =
-    ArrayHashMap<TruncatedPackageNameHash, (), ArrayIdentityContext<u32>>;
-pub type VersionHashMap = ArrayHashMap<PackageNameHash, Semver::Version, ArrayIdentityContext<u64>>;
+    ArrayHashMap<TruncatedPackageNameHash, (), ArrayIdentityContext>;
+pub type VersionHashMap = ArrayHashMap<PackageNameHash, Semver::Version, ArrayIdentityContext>;
 pub type PatchedDependenciesMap =
-    ArrayHashMap<PackageNameAndVersionHash, PatchedDep, ArrayIdentityContext<u64>>;
+    ArrayHashMap<PackageNameAndVersionHash, PatchedDep, ArrayIdentityContext>;
 
-pub type StringPool = <SemverString as bun_semver::StringExt>::Builder::StringPool;
-// TODO(port): `String.Builder.StringPool` — verify path in bun_semver
+pub type StringPool = bun_semver::string::StringPool;
+// Zig: `String.Builder.StringPool` — `bun_semver::semver_string::StringPool`.
 
 pub type MetaHash = [u8; 32]; // Sha512T256.digest_length
 pub const ZERO_HASH: MetaHash = [0u8; 32];
@@ -164,11 +164,11 @@ pub struct Lockfile {
     /// The version of the lockfile format, intended to prevent data corruption for format changes.
     pub format: FormatVersion,
 
-    pub text_lockfile_version: TextLockfile::Version,
+    pub text_lockfile_version: bun_lock::Version,
 
     pub meta_hash: MetaHash,
 
-    pub packages: <Package as PackageListProvider>::List,
+    pub packages: PackageList,
     // TODO(port): Lockfile.Package.List is a MultiArrayList<Package>
     pub buffers: Buffers,
 
@@ -197,6 +197,10 @@ pub struct Lockfile {
 pub trait PackageListProvider {
     type List;
 }
+/// Zig: `Lockfile.Package.List` — `MultiArrayList(Package)`. Aliased here so the
+/// `<Package as PackageListProvider>::List` projection (which has no impl yet)
+/// is not load-bearing.
+pub type PackageList = self::package::List<u64>;
 
 // ────────────────────────────────────────────────────────────────────────────
 // DepSorter
@@ -376,7 +380,7 @@ impl<'a> LoadResult<'a> {
         }
     }
 
-    pub fn save_format(&self, options: &PackageManager::Options) -> LockfileFormat {
+    pub fn save_format(&self, options: &PackageManagerOptions) -> LockfileFormat {
         match self {
             LoadResult::NotFound => {
                 // saving a lockfile for a new project. default to text lockfile
@@ -446,7 +450,7 @@ impl<'a> LoadResult<'a> {
 pub struct InstallResult {
     pub lockfile: Option<NonNull<Lockfile>>,
     // TODO(port): lifetime — no construction sites found in src/install/
-    pub summary: PackageInstall::Summary,
+    pub summary: PackageInstallSummary,
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -708,13 +712,13 @@ impl Lockfile {
     /// Warning: This potentially modifies the existing lockfile in-place. That is
     /// safe to do because at this stage, the lockfile has already been saved to disk.
     /// Our in-memory representation is all that's left.
-    pub fn maybe_clone_filtering_root_packages(
-        old: &mut Lockfile,
-        manager: &mut PackageManager,
+    pub fn maybe_clone_filtering_root_packages<'a>(
+        old: &'a mut Lockfile,
+        manager: &'a mut PackageManager,
         features: Features,
         exact_versions: bool,
-        log_level: PackageManager::Options::LogLevel,
-    ) -> Result<Cleaned<'_>, BunError> {
+        log_level: LogLevel,
+    ) -> Result<Cleaned<'a>, BunError> {
         // TODO(port): narrow error set
         let old_packages = old.packages.slice();
         let old_dependencies_lists = old_packages.items_dependencies();
@@ -762,7 +766,7 @@ impl Lockfile {
     fn preprocess_update_requests(
         old: &mut Lockfile,
         manager: &mut PackageManager,
-        updates: &mut [PackageManager::UpdateRequest],
+        updates: &mut [UpdateRequest],
         exact_versions: bool,
     ) -> Result<(), BunError> {
         // TODO(port): narrow error set
@@ -909,9 +913,9 @@ impl Lockfile {
     pub fn clean(
         old: &mut Lockfile,
         manager: &mut PackageManager,
-        updates: &mut [PackageManager::UpdateRequest],
+        updates: &mut [UpdateRequest],
         exact_versions: bool,
-        log_level: PackageManager::Options::LogLevel,
+        log_level: LogLevel,
     ) -> Result<Box<Lockfile>, BunError> {
         // TODO(port): narrow error set
         // This is wasteful, but we rarely log anything so it's fine.
@@ -1003,15 +1007,17 @@ impl Lockfile {
     pub fn clean_with_logger(
         old: &mut Lockfile,
         manager: &mut PackageManager,
-        updates: &mut [PackageManager::UpdateRequest],
+        updates: &mut [UpdateRequest],
         log: &mut logger::Log,
         exact_versions: bool,
-        log_level: PackageManager::Options::LogLevel,
+        log_level: LogLevel,
     ) -> Result<Box<Lockfile>, BunError> {
         // TODO(port): narrow error set
-        let mut timer = bun_core::Timer::default();
+        // Zig: `var timer: std.time.Timer = undefined;` — model the
+        // uninitialized sentinel with `Option`.
+        let mut timer: Option<Timer> = None;
         if log_level.is_verbose() {
-            timer = bun_core::Timer::start()?;
+            timer = Some(Timer::start()?);
         }
 
         let old_trusted_dependencies = old.trusted_dependencies.take();
@@ -1253,10 +1259,10 @@ impl<'a> fmt::Display for MetaHashFormatter<'a> {
         write!(
             f,
             "{}-{}-{}-{}",
-            bun_core::fmt::HexUpper(&remain[0..8]),
-            bun_core::fmt::HexLower(&remain[8..16]),
-            bun_core::fmt::HexUpper(&remain[16..24]),
-            bun_core::fmt::HexLower(&remain[24..32]),
+            bun_core::fmt::HexBytes::<false>(&remain[0..8]),
+            bun_core::fmt::HexBytes::<true>(&remain[8..16]),
+            bun_core::fmt::HexBytes::<false>(&remain[16..24]),
+            bun_core::fmt::HexBytes::<true>(&remain[24..32]),
         )
     }
 }
@@ -1278,7 +1284,7 @@ pub struct Cloner<'a> {
     pub lockfile: &'a mut Lockfile,
     pub old: &'a mut Lockfile,
     pub mapping: &'a mut [PackageID],
-    pub trees: Tree::List,
+    pub trees: tree::List,
     pub trees_count: u32,
     pub log: &'a mut logger::Log,
     pub old_preinstall_state: Vec<Install::PreinstallState>,
@@ -1358,14 +1364,17 @@ impl Lockfile {
     // TODO(port): Zig uses `comptime method` to make several params conditionally `void`.
     // Rust const-generic enums need #[derive(ConstParamTy)] on Tree::BuilderMethod and the
     // value-level branching can't change param types. Phase B may want two monomorphized fns.
-    pub fn hoist<const METHOD: Tree::BuilderMethod>(
+    pub fn hoist<const METHOD: tree::BuilderMethod>(
         &mut self,
         log: &mut logger::Log,
-        manager: impl Tree::MaybeManager<METHOD>,
-        install_root_dependencies: impl Tree::MaybeBool<METHOD>,
-        workspace_filters: impl Tree::MaybeWorkspaceFilters<METHOD>,
-        packages_to_install: impl Tree::MaybePackagesToInstall<METHOD>,
-    ) -> Result<(), Tree::SubtreeError> {
+        // PORT NOTE: Zig used `comptime method` to make these params `void` for
+        // non-`.filter` builds. `tree::Builder` stores them unconditionally
+        // (Option/slice), so accept the concrete shapes for all `METHOD`s.
+        manager: Option<&PackageManager>,
+        install_root_dependencies: bool,
+        workspace_filters: &[WorkspaceFilter],
+        packages_to_install: Option<&[PackageID]>,
+    ) -> Result<(), tree::SubtreeError> {
         let slice = self.packages.slice();
 
         let mut builder = Tree::Builder::<METHOD> {
@@ -1425,7 +1434,7 @@ impl Lockfile {
         &mut self,
         manager: &mut PackageManager,
     ) -> Result<(), AllocError> {
-        if manager.populate_manifest_cache(Install::ManifestCacheMode::All).is_err() {
+        if manager.populate_manifest_cache(populate_manifest_cache::Packages::All).is_err() {
             return Ok(());
         }
 
@@ -1547,9 +1556,9 @@ impl Lockfile {
 
 pub struct Printer<'a> {
     pub lockfile: &'a mut Lockfile,
-    pub options: PackageManager::Options,
+    pub options: PackageManagerOptions,
     pub successfully_installed: Option<DynamicBitSet>,
-    pub updates: &'a [PackageManager::UpdateRequest],
+    pub updates: &'a [UpdateRequest],
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1665,7 +1674,7 @@ impl<'a> Printer<'a> {
     ) -> Result<(), BunError> {
         // TODO(port): narrow error set
         let fs = FileSystem::instance_mut();
-        let mut options = PackageManager::Options {
+        let mut options = PackageManagerOptions {
             max_concurrent_lifecycle_scripts: 1,
             ..Default::default()
         };
@@ -1750,7 +1759,7 @@ impl Lockfile {
         Ok(())
     }
 
-    pub fn save_to_disk(&mut self, load_result: &LoadResult<'_>, options: &PackageManager::Options) {
+    pub fn save_to_disk(&mut self, load_result: &LoadResult<'_>, options: &PackageManagerOptions) {
         let save_format = load_result.save_format(options);
         if cfg!(debug_assertions) {
             if let Err(e) = self.verify_data() {

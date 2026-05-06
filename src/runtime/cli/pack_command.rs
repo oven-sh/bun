@@ -2624,7 +2624,7 @@ fn edit_root_package_json(
                             Default::default(),
                         ));
                     } else if let Some(catalog_name_str) =
-                        strings::without_prefix_if_possible(package_spec, b"catalog:")
+                        strings::without_prefix_if_possible_comptime(package_spec, b"catalog:")
                     {
                         let dep_name_str = dependency.key.as_ref().unwrap().as_string().unwrap();
 

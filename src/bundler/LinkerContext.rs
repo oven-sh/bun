@@ -205,6 +205,43 @@ pub struct LinkerContext<'a> {
     pub mangled_props: MangledProps,
 }
 
+// SAFETY: `LinkerContext` is shared across the worker pool via `each_ptr` /
+// `SourceMapDataTask`. The raw-pointer fields (`parse_graph`, `resolver`,
+// `r#loop`, `framework`) are backrefs into `BundleV2`/`Transpiler` whose
+// lifetimes strictly outlive every parallel section, and per-thread writes go
+// to disjoint SoA slots (see `compute_line_offsets`). This mirrors Zig's
+// freely-aliased `*LinkerContext`.
+unsafe impl<'a> Send for LinkerContext<'a> {}
+unsafe impl<'a> Sync for LinkerContext<'a> {}
+
+impl<'a> Default for LinkerContext<'a> {
+    fn default() -> Self {
+        Self {
+            parse_graph: core::ptr::null_mut(),
+            graph: Default::default(),
+            // SAFETY: callers overwrite `log` in `load()` before any use; this
+            // dangling sentinel mirrors Zig's `undefined`.
+            log: unsafe { &mut *core::ptr::NonNull::<Log>::dangling().as_ptr() },
+            resolver: core::ptr::null_mut(),
+            cycle_detector: Vec::new(),
+            cjs_runtime_ref: Ref::NONE,
+            esm_runtime_ref: Ref::NONE,
+            unbound_module_ref: Ref::NONE,
+            promise_all_runtime_ref: Ref::NONE,
+            options: Default::default(),
+            r#loop: None,
+            unique_key_buf: Box::default(),
+            unique_key_prefix: Box::default(),
+            source_maps: Default::default(),
+            pending_task_count: AtomicU32::new(0),
+            has_any_css_locals: AtomicU32::new(0),
+            dev_server: None,
+            framework: None,
+            mangled_props: Default::default(),
+        }
+    }
+}
+
 impl<'a> LinkerContext<'a> {
     pub fn mark_pending_task_done(&self) {
         // Zig: `.monotonic` → Rust `Relaxed` (LLVM `monotonic` == C11 `relaxed`).
@@ -407,7 +444,9 @@ impl<'a> LinkerContext<'a> {
         self.source_maps.quoted_contents_tasks =
             (0..reachable.len()).map(|_| SourceMapDataTask::default()).collect::<Vec<_>>().into_boxed_slice();
 
-        let ctx: *mut LinkerContext = self;
+        // PORT NOTE: erase `'a` → `'static` for the task backref. The tasks are
+        // joined before `self` is dropped (see `SourceMapData.*_wait_group`).
+        let ctx: *mut LinkerContext<'static> = (self as *mut LinkerContext<'a>).cast();
         let mut batch = ThreadPoolLib::Batch::default();
         let mut second_batch = ThreadPoolLib::Batch::default();
         debug_assert_eq!(reachable.len(), self.source_maps.line_offset_tasks.len());
@@ -816,7 +855,9 @@ impl<'a> LinkerContext<'a> {
 
                 if path.is_file() {
                     let rel_path = bun_paths::resolve_path::relative_alloc(chunk_abs_dir, &path.text)?;
-                    path.pretty = rel_path;
+                    // PORT NOTE: `Path.pretty` is `&'static [u8]` (interned in Zig);
+                    // leak the relative path into the bump-equivalent global heap.
+                    path.pretty = Box::leak(rel_path);
                 }
 
                 let mut quote_buf = MutableString::init(path.pretty.len() + 2)?;
@@ -840,7 +881,7 @@ impl<'a> LinkerContext<'a> {
 
                 if path.is_file() {
                     let rel_path = bun_paths::resolve_path::relative_alloc(chunk_abs_dir, &path.text)?;
-                    path.pretty = rel_path;
+                    path.pretty = Box::leak(rel_path);
                 }
 
                 let mut quote_buf = MutableString::init(path.pretty.len() + ", ".len() + 2)?;

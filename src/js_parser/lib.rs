@@ -796,7 +796,7 @@ impl DeclaredSymbolList {
 
 impl DeclaredSymbol {
     fn for_each_top_level_symbol_with_type<C>(
-        decls: &mut DeclaredSymbolList,
+        decls: &DeclaredSymbolList,
         ctx: &mut C,
         f: impl Fn(&mut C, Ref),
     ) {
@@ -816,7 +816,7 @@ impl DeclaredSymbol {
     }
 
     pub fn for_each_top_level_symbol<C>(
-        decls: &mut DeclaredSymbolList,
+        decls: &DeclaredSymbolList,
         ctx: &mut C,
         f: impl Fn(&mut C, Ref),
     ) {

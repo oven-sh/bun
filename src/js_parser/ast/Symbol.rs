@@ -431,13 +431,8 @@ impl Map {
                 unsafe { (*symbol).chunk_index = self.chunk_index };
             }
         }
-        // SAFETY: `for_each_top_level_symbol` only reads from `decls`; the `&mut`
-        // is a port artifact of Zig's by-value param. Sole caller passes a borrow
-        // of `part.declared_symbols` which it cannot move out of.
-        let decls = unsafe { &mut *(decls_ as *const _ as *mut crate::DeclaredSymbolList) };
-
         DeclaredSymbol::for_each_top_level_symbol(
-            decls,
+            decls_,
             &mut Iterator { map: self, chunk_index },
             Iterator::next,
         );

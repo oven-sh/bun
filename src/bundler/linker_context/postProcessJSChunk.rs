@@ -231,21 +231,22 @@ pub fn post_process_js_chunk(
         let all_flags = c.graph.meta.items_flags();
         let all_import_records = c.graph.ast.items_import_records();
         for part_range in chunk.content.javascript().parts_in_chunk_in_order.iter() {
-            if all_flags[part_range.source_index.get()].wrap == crate::WrapKind::Cjs {
+            if all_flags[part_range.source_index.get() as usize].wrap == crate::WrapKind::Cjs {
                 continue;
             }
-            let source_parts = all_parts[part_range.source_index.get()].slice();
-            let source_import_records = all_import_records[part_range.source_index.get()].slice();
+            let source_parts = all_parts[part_range.source_index.get() as usize].slice();
+            let source_import_records = all_import_records[part_range.source_index.get() as usize].slice();
             let mut part_i = part_range.part_index_begin;
             while part_i < part_range.part_index_end {
-                for stmt in source_parts[part_i as usize].stmts.iter() {
+                // SAFETY: Part.stmts is a non-null arena `*mut [Stmt]` valid for the bundler arena lifetime.
+                for stmt in unsafe { (*source_parts[part_i as usize].stmts).iter() } {
                     match &stmt.data {
-                        Stmt::Data::SImport(s) => {
+                        StmtData::SImport(s) => {
                             let record = &source_import_records[s.import_record_index as usize];
                             if record.path.is_disabled {
                                 continue;
                             }
-                            if record.tag == ImportRecord::Tag::Bun {
+                            if record.tag == ImportRecordTag::Bun {
                                 continue;
                             }
                             // Skip bundled imports — these are converted to cross-chunk
@@ -257,53 +258,47 @@ pub fn post_process_js_chunk(
                             // Skip barrel-optimized-away imports — marked is_unused by
                             // barrel_imports.zig. Never resolved (source_index invalid),
                             // and removed by convertStmtsForChunk. Not in emitted code.
-                            if record.flags.is_unused {
+                            if record.flags.contains(ImportRecordFlags::IS_UNUSED) {
                                 continue;
                             }
 
-                            let import_path = &record.path.text;
-                            let Ok(irp_id) = mi.str(import_path) else { continue };
-                            if mi.request_module(irp_id, analyze_transpiled_module::ImportAttributes::None).is_err() {
-                                continue;
-                            }
+                            let import_path = record.path.text;
+                            let irp_id = mi.str(import_path);
+                            mi.request_module(irp_id, analyze_transpiled_module::ImportAttributes::None);
 
                             if let Some(name) = &s.default_name {
-                                if let Some(name_ref) = name.r#ref {
-                                    let local_name = chunk.renamer.name_for_symbol(name_ref);
-                                    let Ok(local_name_id) = mi.str(local_name) else { continue };
-                                    if mi.add_var(local_name_id, analyze_transpiled_module::VarKind::Lexical).is_err() {
-                                        continue;
-                                    }
-                                    let Ok(default_id) = mi.str(b"default") else { continue };
-                                    if mi.add_import_info_single(irp_id, default_id, local_name_id, false).is_err() {
-                                        continue;
-                                    }
+                                if let Some(name_ref) = name.ref_ {
+                                    let local_name_id = {
+                                        let local_name = chunk.renamer.name_for_symbol(name_ref);
+                                        mi.str(local_name)
+                                    };
+                                    mi.add_var(local_name_id, analyze_transpiled_module::VarKind::Lexical);
+                                    let default_id = mi.str(b"default");
+                                    mi.add_import_info_single(irp_id, default_id, local_name_id, false);
                                 }
                             }
 
-                            for item in s.items.iter() {
-                                if let Some(name_ref) = item.name.r#ref {
-                                    let local_name = chunk.renamer.name_for_symbol(name_ref);
-                                    let Ok(local_name_id) = mi.str(local_name) else { continue };
-                                    if mi.add_var(local_name_id, analyze_transpiled_module::VarKind::Lexical).is_err() {
-                                        continue;
-                                    }
-                                    let Ok(alias_id) = mi.str(item.alias) else { continue };
-                                    if mi.add_import_info_single(irp_id, alias_id, local_name_id, false).is_err() {
-                                        continue;
-                                    }
+                            // SAFETY: S::Import.items is arena-owned `*mut [ClauseItem]`; never null.
+                            for item in unsafe { (*s.items).iter() } {
+                                if let Some(name_ref) = item.name.ref_ {
+                                    let local_name_id = {
+                                        let local_name = chunk.renamer.name_for_symbol(name_ref);
+                                        mi.str(local_name)
+                                    };
+                                    mi.add_var(local_name_id, analyze_transpiled_module::VarKind::Lexical);
+                                    // SAFETY: ClauseItem.alias is an arena `*const [u8]`; never null.
+                                    let alias_id = mi.str(unsafe { &*item.alias });
+                                    mi.add_import_info_single(irp_id, alias_id, local_name_id, false);
                                 }
                             }
 
-                            if record.flags.contains_import_star {
-                                let local_name = chunk.renamer.name_for_symbol(s.namespace_ref);
-                                let Ok(local_name_id) = mi.str(local_name) else { continue };
-                                if mi.add_var(local_name_id, analyze_transpiled_module::VarKind::Lexical).is_err() {
-                                    continue;
-                                }
-                                if mi.add_import_info_namespace(irp_id, local_name_id).is_err() {
-                                    continue;
-                                }
+                            if record.flags.contains(ImportRecordFlags::CONTAINS_IMPORT_STAR) {
+                                let local_name_id = {
+                                    let local_name = chunk.renamer.name_for_symbol(s.namespace_ref);
+                                    mi.str(local_name)
+                                };
+                                mi.add_var(local_name_id, analyze_transpiled_module::VarKind::Lexical);
+                                mi.add_import_info_namespace(irp_id, local_name_id);
                             }
                         }
                         _ => {}
@@ -317,17 +312,16 @@ pub fn post_process_js_chunk(
         // not in any part statement.
         let all_wrapper_refs = c.graph.ast.items_wrapper_ref();
         for part_range in chunk.content.javascript().parts_in_chunk_in_order.iter() {
-            let source_index = part_range.source_index.get();
+            let source_index = part_range.source_index.get() as usize;
             if all_flags[source_index].wrap != crate::WrapKind::None {
                 let wrapper_ref = all_wrapper_refs[source_index];
                 if !wrapper_ref.is_empty() {
-                    let name = chunk.renamer.name_for_symbol(wrapper_ref);
-                    if !name.is_empty() {
-                        let Ok(string_id) = mi.str(name) else { continue };
-                        if mi.add_var(string_id, analyze_transpiled_module::VarKind::Declared).is_err() {
-                            continue;
-                        }
-                    }
+                    let string_id = {
+                        let name = chunk.renamer.name_for_symbol(wrapper_ref);
+                        if name.is_empty() { continue; }
+                        mi.str(name)
+                    };
+                    mi.add_var(string_id, analyze_transpiled_module::VarKind::Declared);
                 }
             }
         }
@@ -343,14 +337,21 @@ pub fn post_process_js_chunk(
                 to_common_js_ref,
                 to_esm_ref,
                 chunk.entry_point.source_index(),
-                worker.allocator,
+                worker_allocator,
                 &arena,
-                chunk.renamer,
+                chunk.renamer.as_renamer(),
                 module_info.as_deref_mut(),
             );
         }
 
-        break 'brk CompileResult::EMPTY;
+        break 'brk CompileResult::Javascript {
+            source_index: Index::INVALID.value,
+            result: PrintResult::Result(js_printer::PrintResultSuccess {
+                code: Box::default(),
+                source_map: None,
+            }),
+            decls: Box::default(),
+        };
     };
 
     // Store unserialized ModuleInfo on the chunk. Serialization is deferred to

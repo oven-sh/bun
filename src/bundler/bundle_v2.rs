@@ -3788,8 +3788,8 @@ impl<'a> BundleV2<'a> {
             ..Default::default()
         }); // PERF(port): was assume_capacity
 
-        debug_assert!(self.graph.input_files.items_source()[Index::BAKE_SERVER_DATA.get() as usize].index.get() == Index::BAKE_SERVER_DATA.get());
-        debug_assert!(self.graph.input_files.items_source()[Index::BAKE_CLIENT_DATA.get() as usize].index.get() == Index::BAKE_CLIENT_DATA.get());
+        debug_assert!(self.graph.input_files.items_source()[Index::BAKE_SERVER_DATA.get() as usize].index.0 == Index::BAKE_SERVER_DATA.get());
+        debug_assert!(self.graph.input_files.items_source()[Index::BAKE_CLIENT_DATA.get() as usize].index.0 == Index::BAKE_CLIENT_DATA.get());
 
         self.graph.ast.append(JSAst::empty()); // PERF(port): was assume_capacity
         self.graph.ast.append(JSAst::empty()); // PERF(port): was assume_capacity
@@ -3844,13 +3844,13 @@ impl<'a> BundleV2<'a> {
             // bounds crashes in BundleV2.onResolve / runResolver. The linker
             // never runs because `transpiler.log.errors > 0` aborts the
             // build before link time, so saving the AST is safe.
-            this.graph.ast.items_import_records_mut()[source_index.get() as usize] = core::mem::take(&mut result.ast.import_records);
+            this.graph.ast.items_import_records_mut()[source_index.0 as usize] = core::mem::take(&mut result.ast.import_records);
 
             parse_result.value = parse_task::ResultValue::Err(parse_task::ResultError {
                 err,
                 step: crate::parse_task::Step::Resolve,
                 log: Logger::Log::init(),
-                source_index,
+                source_index: js_ast::Index { value: source_index.0 },
                 target,
             });
         }
@@ -3869,6 +3869,60 @@ pub struct ResolveImportRecordCtx<'a> {
 pub struct ResolveImportRecordResult {
     pub resolve_queue: ResolveQueue,
     pub last_error: Option<Error>,
+}
+
+// CYCLEBREAK TYPE_ONLY: `bun_paths::fs::Path` / `bun_resolver::fs::Path` /
+// `bun_logger::fs::Path` are field-identical mirrors of the same Zig `Fs.Path`.
+// Re-construct field-by-field rather than transmute non-`repr(C)` structs.
+#[inline]
+fn ir_path_from_fs(p: &Fs::Path<'static>) -> bun_paths::fs::Path<'static> {
+    bun_paths::fs::Path {
+        pretty: p.pretty,
+        text: p.text,
+        namespace: p.namespace,
+        name: bun_paths::fs::PathName {
+            base: p.name.base,
+            dir: p.name.dir,
+            ext: p.name.ext,
+            filename: p.name.filename,
+        },
+        is_disabled: p.is_disabled,
+        is_symlink: p.is_symlink,
+    }
+}
+
+#[inline]
+fn ir_path_from_logger(p: &bun_logger::fs::Path) -> bun_paths::fs::Path<'static> {
+    bun_paths::fs::Path {
+        pretty: p.pretty,
+        text: p.text,
+        namespace: p.namespace,
+        name: bun_paths::fs::PathName {
+            base: p.name.base,
+            dir: p.name.dir,
+            ext: p.name.ext,
+            filename: p.name.filename,
+        },
+        is_disabled: p.is_disabled,
+        is_symlink: p.is_symlink,
+    }
+}
+
+#[inline]
+fn logger_path_from_fs(p: &Fs::Path<'static>) -> bun_logger::fs::Path {
+    bun_logger::fs::Path {
+        pretty: p.pretty,
+        text: p.text,
+        namespace: p.namespace,
+        name: bun_logger::fs::PathName {
+            base: p.name.base,
+            dir: p.name.dir,
+            ext: p.name.ext,
+            filename: p.name.filename,
+        },
+        is_disabled: p.is_disabled,
+        is_symlink: p.is_symlink,
+    }
 }
 
 impl<'a> BundleV2<'a> {

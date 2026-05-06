@@ -1,16 +1,29 @@
 use std::io::Write as _;
 use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
+#[allow(unused_imports)]
 use crate::ungate_support::js_meta::JSMetaListExt as _;
 use crate::Graph::InputFileListExt as _;
+#[allow(unused_imports)]
 use crate::linker_graph::FileListExt as _;
+#[allow(unused_imports)]
 use crate::ungate_support::EntryPointListExt as _;
 
-use bun_alloc::{AllocError, Arena};
+use bun_alloc::AllocError;
+#[cfg(feature = "css")]
+use bun_alloc::Arena;
+#[cfg(feature = "css")]
 use bun_collections::{ArrayHashMap, BabyList, DynamicBitSetUnmanaged};
+#[cfg(feature = "css")]
 use bun_core::fmt as bun_fmt;
-use bun_js_parser::ast::{self as js_ast, B, Binding, E, Expr, ExprData, G, Part, S, Stmt, StmtData, Symbol};
-use bun_js_parser::{js_lexer, Ref};
+use bun_js_parser::ast::{self as js_ast, B, Binding, E, Expr, ExprData, G, Part, S, Stmt, StmtData};
+#[cfg(feature = "css")]
+use bun_js_parser::ast::Symbol;
+use bun_js_parser::js_lexer;
+#[cfg(feature = "css")]
+use bun_js_parser::Ref;
+#[cfg(feature = "css")]
 use bun_logger::{Loc, Log, Source};
+#[cfg(feature = "css")]
 use bun_options_types::ImportRecord;
 
 #[cfg(feature = "css")]
@@ -19,7 +32,9 @@ use crate::bun_css::{self, BundlerStyleSheet, CssRef, CssRefTag};
 use crate::bun_css::properties::css_modules::Specifier as CssSpecifier;
 use crate::{Index, IndexInt, LinkerContext};
 
+#[cfg(feature = "css")]
 type BitSet = DynamicBitSetUnmanaged;
+#[cfg(feature = "css")]
 type SymbolList = BabyList<Symbol>;
 
 pub fn generate_code_for_lazy_export(

@@ -5,10 +5,10 @@ use bun_core::Output;
 use bun_logger as logger;
 use bun_str::strings;
 
-// PORT NOTE: `use super::{self as lockfile, ...}` is rejected by rustc (E0432:
-// "no `super` in the root" — rust-lang/rust#48067), so the parent-module alias
-// is hoisted to its own `use super as lockfile;` line.
-use super as lockfile;
+// PORT NOTE: `use super::{self as lockfile, ...}` and bare `use super as lockfile;`
+// are both rejected by rustc (E0432: "no `super` in the root" — rust-lang/rust#48067),
+// so the parent-module alias is spelled via its crate path instead.
+use crate::lockfile_real as lockfile;
 use super::{
     assert_no_uninitialized_padding, tree, DependencyIDList, DependencyList,
     ExternalStringBuffer, Lockfile, PackageIDList, Stream, StringBuffer, Tree,

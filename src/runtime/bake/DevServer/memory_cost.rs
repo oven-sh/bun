@@ -162,8 +162,7 @@ pub fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
         while let Some(request) = r {
             // SAFETY: intrusive singly-linked list; nodes are valid while DevServer holds them.
             let request = unsafe { request.as_ref() };
-            other_bytes += size_of::<<DeferredRequest as crate::dev_server::DeferredRequestNode>::Node>();
-            // TODO(port): `DeferredRequest.Node` — verify Rust type name for the linked-list node wrapper.
+            other_bytes += size_of::<crate::bake::dev_server::deferred_request::Node>();
             let _ = request; // suppress unused if Node size is all we need
             r = request.next;
         }
@@ -174,8 +173,7 @@ pub fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
         while let Some(request) = r {
             // SAFETY: intrusive singly-linked list; nodes are valid while DevServer holds them.
             let request = unsafe { request.as_ref() };
-            other_bytes += size_of::<<DeferredRequest as crate::dev_server::DeferredRequestNode>::Node>();
-            // TODO(port): `DeferredRequest.Node` — verify Rust type name for the linked-list node wrapper.
+            other_bytes += size_of::<crate::bake::dev_server::deferred_request::Node>();
             r = request.next;
         }
         other_bytes += memory_cost_array_hash_map(&dev.next_bundle.route_queue);

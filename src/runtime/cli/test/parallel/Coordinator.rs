@@ -256,9 +256,8 @@ impl<'a> Coordinator<'a> {
     }
 
     pub fn rel_path(&self, file_idx: u32) -> &[u8] {
-        // TODO(port): bun.fs.FileSystem.instance.top_level_dir — verify accessor.
-        bun_paths::relative(
-            bun_fs::FileSystem::instance().top_level_dir(),
+        bun_paths::resolve_path::relative(
+            bun_paths::fs::FileSystem::instance().top_level_dir(),
             self.files[file_idx as usize].slice(),
         )
     }
@@ -452,8 +451,8 @@ impl<'a> Coordinator<'a> {
             // TODO(port): explicit deinit of ipc/out/err — in Rust these become
             // Drop on assignment; verify no double-free with Default::default().
             w.ipc = Default::default();
-            w.out = super::worker::StreamCapture::new(super::worker::Role::Stdout, w as *mut Worker);
-            w.err = super::worker::StreamCapture::new(super::worker::Role::Stderr, w as *mut Worker);
+            w.out = WorkerPipe::new(PipeRole::Stdout, w as *const Worker);
+            w.err = WorkerPipe::new(PipeRole::Stderr, w as *const Worker);
             w.process = None;
             match w.start() {
                 Ok(()) => {
@@ -556,8 +555,8 @@ impl<'a> Coordinator<'a> {
                     "<r><red>✗<r> <b>{}<r> <d>({})<r>\n",
                     // PORT NOTE: reshaped for borrowck — inline rel_path body
                     // since `self.workers` is mutably borrowed.
-                    bstr::BStr::new(bun_paths::relative(
-                        bun_fs::FileSystem::instance().top_level_dir(),
+                    bstr::BStr::new(bun_paths::resolve_path::relative(
+                        bun_paths::fs::FileSystem::instance().top_level_dir(),
                         self.files[idx as usize].slice(),
                     )),
                     bstr::BStr::new(reason),

@@ -4,7 +4,7 @@ use bun_bundler::Transpiler;
 use bun_core::{Global, Output};
 use bun_options_types::schema::api;
 
-use bun_paths::{self, PathBuffer, Platform};
+use bun_paths::{self, PathBuffer};
 use crate::shell::Interpreter;
 use bun_sys;
 

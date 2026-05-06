@@ -809,15 +809,17 @@ impl PmPkgCommand {
 
             let temp_source = Source::init_path_string(b"package.json", value);
             let mut temp_log = Log::init();
-            if let Ok(json_expr) = json::parse_package_json_utf8(&temp_source, &mut temp_log) {
-                return Ok(json_expr);
+            if let Ok(json_expr) =
+                json::parse_package_json_utf8(&temp_source, &mut temp_log, dummy_bump())
+            {
+                return Ok(json_expr.into());
             } else {
                 let data = Box::<[u8]>::from(value);
-                return Ok(Expr::init(E::String::init(data), Loc::EMPTY));
+                return Ok(Expr::init(E::String::init(&data), Loc::EMPTY));
             }
         } else {
             let data = Box::<[u8]>::from(value);
-            Ok(Expr::init(E::String::init(data), Loc::EMPTY))
+            Ok(Expr::init(E::String::init(&data), Loc::EMPTY))
         }
     }
 
@@ -873,7 +875,10 @@ impl PmPkgCommand {
         let deleted = Self::delete_nested(&mut nested, remaining_path)?;
 
         if deleted {
-            root.as_e_object_mut().put(current_key, nested)?;
+            root.data
+                .e_object_mut()
+                .unwrap()
+                .put(dummy_bump(), current_key, nested)?;
         }
 
         Ok(deleted)
@@ -910,8 +915,7 @@ impl PmPkgCommand {
                     }
                 }
             }
-            new_props.push(*prop);
-            // PERF(port): was appendAssumeCapacity — profile in Phase B
+            new_props.append_assume_capacity(*prop);
         }
         e_obj.properties = new_props;
 

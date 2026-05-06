@@ -213,17 +213,19 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
         match File::openat(Fd::cwd(), out_path, O::CREAT | O::WRONLY | O::TRUNC | O::CLOEXEC, 0o644) {
             bun_sys::Result::Err(e) => Output::err(
                 err!("lcovCoverageError"),
-                format_args!("Failed to write merged lcov.info\n{}", e),
+                "Failed to write merged lcov.info\n{}",
+                (e,),
             ),
             bun_sys::Result::Ok(f) => {
                 // TODO(port): Zig used a 64KiB-buffered writer adapter; building in Vec then one write_all
                 let mut w: Vec<u8> = Vec::with_capacity(64 * 1024);
-                for fc in by_file.values() {
+                for &i in &order {
+                    let fc = &by_file.values()[i];
                     let mut sorted: Vec<u32> = fc.da.keys().to_vec();
                     sorted.sort_unstable();
                     let _ = write!(&mut w, "TN:\nSF:{}\nFNF:{}\nFNH:{}\n", BStr::new(&fc.path), fc.fnf, fc.fnh);
                     for &ln in &sorted {
-                        let _ = write!(&mut w, "DA:{},{}\n", ln, fc.da.get(ln).expect("unreachable"));
+                        let _ = write!(&mut w, "DA:{},{}\n", ln, fc.da.get(&ln).expect("unreachable"));
                     }
                     let _ = write!(&mut w, "LF:{}\nLH:{}\nend_of_record\n", fc.da.count(), fc.lh());
                 }
@@ -238,8 +240,9 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
     let mut avg = CoverageFraction { functions: 0.0, lines: 0.0, stmts: 0.0, ..Default::default() };
     let mut avg_n: f64 = 0.0;
     let mut fracs: Vec<CoverageFraction> = vec![CoverageFraction::default(); by_file.count()];
-    debug_assert_eq!(by_file.values().len(), fracs.len());
-    for (fc, frac) in by_file.values().iter().zip(fracs.iter_mut()) {
+    debug_assert_eq!(order.len(), fracs.len());
+    for (&i, frac) in order.iter().zip(fracs.iter_mut()) {
+        let fc = &by_file.values()[i];
         let lf: f64 = fc.da.count() as f64;
         let lh_: f64 = fc.lh() as f64;
         *frac = CoverageFraction {

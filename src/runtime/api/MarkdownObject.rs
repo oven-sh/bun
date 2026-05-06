@@ -95,25 +95,27 @@ fn js_to_parser_err(e: bun_jsc::JsError) -> ParserError {
 
 pub fn create(global_this: &JSGlobalObject) -> JSValue {
     let object = JSValue::create_empty_object(global_this, 4);
+    // `#[bun_jsc::host_fn]` emits a `__jsc_host_{name}` shim with the raw
+    // C-ABI `JSHostFn` signature; pass that to JSFunction::create.
     object.put(
         global_this,
         b"html",
-        bun_jsc::JSFunction::create(global_this, "html", render_to_html, 1, Default::default()),
+        bun_jsc::JSFunction::create(global_this, "html", __jsc_host_render_to_html, 1, Default::default()),
     );
     object.put(
         global_this,
         b"ansi",
-        bun_jsc::JSFunction::create(global_this, "ansi", render_to_ansi, 2, Default::default()),
+        bun_jsc::JSFunction::create(global_this, "ansi", __jsc_host_render_to_ansi, 2, Default::default()),
     );
     object.put(
         global_this,
         b"render",
-        bun_jsc::JSFunction::create(global_this, "render", render, 3, Default::default()),
+        bun_jsc::JSFunction::create(global_this, "render", __jsc_host_render, 3, Default::default()),
     );
     object.put(
         global_this,
         b"react",
-        bun_jsc::JSFunction::create(global_this, "react", render_react, 3, Default::default()),
+        bun_jsc::JSFunction::create(global_this, "react", __jsc_host_render_react, 3, Default::default()),
     );
     object
 }

@@ -616,12 +616,14 @@ impl InitCommand {
                 logger::Loc::EMPTY,
             )
             .data
-            .e_object_mut();
+            .e_object_mut()
+            .map(|r| r as *mut _)
+            .unwrap_or(core::ptr::null_mut());
         }
 
         if !auto_yes {
             if !did_load_package_json {
-                Output::pretty("\n", format_args!(""));
+                Output::pretty(format_args!("\n"));
 
                 let selected = Self::radio::<ProjectTemplateChoice>(b"Select a project template")?;
                 match selected {
@@ -655,13 +657,10 @@ impl InitCommand {
                     ProjectTemplateChoice::Blank => template = Template::Blank,
                 }
 
-                Output::print("\n", format_args!(""));
+                Output::print(format_args!("\n"));
                 Output::flush();
             } else {
-                Output::note(
-                    "package.json already exists, configuring existing project",
-                    format_args!(""),
-                );
+                Output::note("package.json already exists, configuring existing project");
                 template = Template::Blank;
             }
         }

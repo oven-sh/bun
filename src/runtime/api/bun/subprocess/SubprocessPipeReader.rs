@@ -188,12 +188,17 @@ impl PipeReader {
                             drop(guard);
                             return bun_sys::Result::Ok(());
                         }
-                        let poll = &mut self.reader.handle.poll;
-                        poll.flags.insert(bun_aio::PollFlag::Socket);
-                        self.reader.flags.socket = true;
-                        self.reader.flags.nonblocking = true;
-                        self.reader.flags.pollable = true;
-                        poll.flags.insert(bun_aio::PollFlag::Nonblocking);
+                        // PORT NOTE: `PollOrFd` is an enum in the Rust port; the Zig
+                        // `this.reader.handle.poll` field projection becomes a variant
+                        // pattern. `FilePoll` is an opaque vtable-backed handle (Copy)
+                        // with `set_flag` standing in for `poll.flags.insert(...)`.
+                        if let Some(poll) = self.reader.handle.get_poll() {
+                            poll.set_flag(FilePollFlag::Socket);
+                            poll.set_flag(FilePollFlag::Nonblocking);
+                        }
+                        self.reader.flags.insert(
+                            PosixFlags::SOCKET | PosixFlags::NONBLOCKING | PosixFlags::POLLABLE,
+                        );
                     }
 
                     drop(guard);

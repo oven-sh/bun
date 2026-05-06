@@ -686,8 +686,8 @@ pub struct Repl<'a> {
     stdin_buf_end: usize,
 
     // JavaScript VM (JSC_BORROW per LIFETIMES.tsv)
-    vm: Option<&'a VirtualMachine>,
-    global: Option<&'a JSGlobalObject>,
+    pub(super) vm: Option<&'a VirtualMachine>,
+    pub(super) global: Option<&'a JSGlobalObject>,
 
     // Special REPL variables
     // PORT NOTE: bare JSValue fields are safe here because Repl is stack-allocated

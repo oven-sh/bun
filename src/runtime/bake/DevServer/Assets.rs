@@ -111,16 +111,18 @@ impl Assets {
         // Zig: `defer assert(assets.files.count() == assets.refs.items.len);`
         // PORT NOTE: reshaped for borrowck — invariant re-checked before each return below.
 
+        // Zig `std.fmt.bytesToHex(std.mem.asBytes(&content_hash), .lower)` —
+        // hex-encodes the *native-endian bytes* of the u64.
+        let mut hex_buf = [0u8; 16];
+        let hex_len = bun_fmt::bytes_to_hex_lower(&content_hash.to_ne_bytes(), &mut hex_buf);
         bun_output::scoped_log!(
             DevServer,
             "replacePath {} {} - {}/{} ({})",
             bun_fmt::quote(abs_path),
             content_hash,
-            DevServer::ASSET_PREFIX,
-            // TODO(port): Zig `std.fmt.bytesToHex(std.mem.asBytes(&content_hash), .lower)` —
-            // hex-encodes the *native-endian bytes* of the u64. Provide a helper in bun_core::fmt.
-            bun_fmt::bytes_to_hex_lower(&content_hash.to_ne_bytes()),
-            bstr::BStr::new(mime_type.value()),
+            super::ASSET_PREFIX,
+            bstr::BStr::new(&hex_buf[..hex_len]),
+            bstr::BStr::new(mime_type.value),
         );
 
         let gop = self.path_map.get_or_put(abs_path)?;
@@ -129,11 +131,13 @@ impl Assets {
             let owner = self.owner_mut();
             // SAFETY: accessing disjoint field `client_graph` via parent ptr; `assets` (self) is
             // not touched through `owner` for the duration of this borrow.
-            let stable_abs_path = unsafe { &mut (*owner).client_graph }
-                .insert_empty(abs_path, bun_bundler::options::Loader::Unknown)?
-                .key;
-            // TODO(port): writing a borrowed slice key back into the map entry — see PORT NOTE on `path_map`.
-            *gop.key_ptr = stable_abs_path;
+            // PORT NOTE: in Zig, `path_map` keys borrow `client_graph`'s interned key storage
+            // (the `gop.key_ptr.* = stable_abs_path` write below shared the slice). Rust
+            // `StringArrayHashMap` owns its keys as `Box<[u8]>`, and `get_or_put` already
+            // boxed `abs_path` on insert, so the reassignment is a no-op here — we still call
+            // `insert_empty` for its side effect of registering the file in `client_graph`.
+            let _ = unsafe { &mut (*owner).client_graph }
+                .insert_empty(abs_path, super::FileKind::Unknown)?;
         } else {
             let entry_index = *gop.value_ptr;
             // When there is one reference to the asset, the entry can be

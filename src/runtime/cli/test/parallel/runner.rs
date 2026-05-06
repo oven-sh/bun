@@ -487,9 +487,12 @@ impl<'a> WorkerLoop<'a> {
 
             // Workers always run with --isolate; every file is its own
             // complete run from the preload's perspective.
+            // SAFETY: VirtualMachine is the per-process singleton handle; TestCommand::run
+            // needs `&mut` only to pump the event loop / write VM scratch fields.
+            let vm_mut = unsafe { &mut *(self.vm as *const VirtualMachine as *mut VirtualMachine) };
             if let Err(err) = TestCommand::run(
                 self.reporter,
-                self.vm,
+                vm_mut,
                 self.cmds.pending_path.as_slice(),
                 TestCommand::RunPosition { first: true, last: true },
             ) {

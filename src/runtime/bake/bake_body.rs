@@ -1229,7 +1229,6 @@ impl Framework {
         out.options.server_components = self.server_components.is_some();
 
         out.options.conditions = bun_bundler::options::ESMConditions::init(
-            arena,
             out.options.target.default_conditions(),
             out.options.target.is_server_side(),
             bundler_options.conditions.keys(),
@@ -1253,7 +1252,13 @@ impl Framework {
         out.options.minify_identifiers = minify_identifiers.unwrap_or(mode != Mode::Development);
         out.options.minify_whitespace = minify_whitespace.unwrap_or(mode != Mode::Development);
         out.options.css_chunking = true;
-        out.options.framework = self;
+        // TODO(port): `out.options.framework` is `Option<&bun_bundler::options::Framework>`
+        // (the TYPE_ONLY moved-down subset), not `bake_body::Framework`. A
+        // proper conversion needs the full Framework→bake_types::Framework
+        // bridge; until then leave the bundler's view unset.
+        out.options.framework = None;
+        // todo!("blocked_on: bun_bundler::options::Framework <- bake_body::Framework")
+        let _ = &*self;
         out.options.inline_entrypoint_import_meta_main = true;
         if let Some(ignore) = bundler_options.ignore_dce_annotations {
             out.options.ignore_dce_annotations = ignore;

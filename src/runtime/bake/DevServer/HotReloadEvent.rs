@@ -255,7 +255,7 @@ impl HotReloadEvent {
         // TODO(port): LIFETIMES.tsv classifies owner as *const, but run() mutates DevServer —
         // verify field should be *mut in Phase B.
         let dev: &mut DevServer = unsafe { &mut *(first.owner as *mut DevServer) };
-        debug_assert!(dev.magic == DevServer::Magic::Valid);
+        debug_assert!(dev.magic == Magic::Valid);
         bun_output::scoped_log!(DevServer, "HMR Task start");
         // PORT NOTE: `defer debug.log("HMR Task end")` — use scopeguard for the trailing log.
         let _end_log = scopeguard::guard((), |_| {
@@ -269,7 +269,11 @@ impl HotReloadEvent {
         }
 
         if dev.current_bundle.is_some() {
-            dev.next_bundle.reload_event = Some(first as *mut HotReloadEvent);
+            // TODO(port): `dev_server::HotReloadEvent` (mod.rs keystone) and this body
+            // module's `HotReloadEvent` are duplicate definitions pending unification;
+            // cast through the keystone type for now.
+            dev.next_bundle.reload_event =
+                Some((first as *mut HotReloadEvent).cast::<super::HotReloadEvent>());
             return;
         }
 

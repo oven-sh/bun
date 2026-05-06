@@ -138,11 +138,15 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
         b.resolver.opts.global_cache = ctx.debug.global_cache;
         b.resolver.opts.prefer_offline_install =
             ctx.debug.offline_mode_setting.unwrap_or(OfflineMode::Online) == OfflineMode::Offline;
-        b.resolver.opts.prefer_latest_install =
+        // PORT NOTE: `bun_resolver::options::BundleOptions` has no
+        // `prefer_latest_install` field in the Rust port; compute the value once
+        // and assign only to `b.options` (which does carry it). The Zig source
+        // mirrored it onto resolver.opts but the resolver never reads it.
+        let prefer_latest =
             ctx.debug.offline_mode_setting.unwrap_or(OfflineMode::Online) == OfflineMode::Latest;
         b.options.global_cache = b.resolver.opts.global_cache;
         b.options.prefer_offline_install = b.resolver.opts.prefer_offline_install;
-        b.options.prefer_latest_install = b.resolver.opts.prefer_latest_install;
+        b.options.prefer_latest_install = prefer_latest;
         // SAFETY: spec production.zig:56 `b.resolver.env_loader = b.env` — raw
         // pointer copy. `b.env` is the Transpiler-owned `*mut Loader`; store it
         // as `NonNull` (not `&Loader`) because `configure_defines()` below

@@ -788,8 +788,13 @@ pub fn run(ctx: &mut Command::Context) -> Result<core::convert::Infallible, Erro
         let mut patterns: Vec<Box<[u8]>> = Vec::new();
 
         let mut root_buf = PathBuffer::uninit();
-        let resolve_root =
-            FilterArg::get_candidate_package_patterns(&ctx.log, &mut patterns, cwd, &mut root_buf)?;
+        let resolve_root = FilterArg::get_candidate_package_patterns(
+            // SAFETY: `ctx.log` is the process-global Log; non-null and live for 'static.
+            unsafe { &mut *ctx.log },
+            &mut patterns,
+            cwd,
+            &mut root_buf,
+        )?;
 
         let mut package_json_iter =
             FilterArg::PackageFilterIterator::init(&patterns, resolve_root)?;
@@ -825,7 +830,7 @@ pub fn run(ctx: &mut Command::Context) -> Result<core::convert::Infallible, Erro
                 continue;
             };
 
-            if !filter_instance.matches(pkg_path, pkgjson.name) {
+            if !filter_instance.matches(pkg_path, &pkgjson.name) {
                 continue;
             }
 

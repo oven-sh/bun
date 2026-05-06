@@ -24,10 +24,36 @@ type CowString = CowSlice<u8>;
 use bun_semver as Semver;
 use bun_sha_hmac::sha;
 use bun_str::{ZStr, strings};
-use bun_sys::{self, dir_iterator as DirIterator, Fd, FdExt as _, File, Dir};
+use bun_sys::{self, dir_iterator as DirIterator, Fd, FdExt as _, FdDirExt as _, File, Dir};
 use bun_glob::matcher::MatchResult as GlobMatchResult;
 use bun_paths::resolve_path;
+use bun_core::ZBox;
 use crate::cli::run_command::RunCommand;
+
+// ───────────────────────────────────────────────────────────────────────────
+// local shims for upstream-stub gaps
+// ───────────────────────────────────────────────────────────────────────────
+
+/// `LogLevel::isVerbose()` — upstream stub `bun_install::package_manager::LogLevel`
+/// has no inherent methods (real impl gated behind `package_manager_real`).
+trait LogLevelExt {
+    fn is_verbose(self) -> bool;
+}
+impl LogLevelExt for LogLevel {
+    #[inline]
+    fn is_verbose(self) -> bool {
+        matches!(self, LogLevel::Verbose | LogLevel::VerboseNoProgress)
+    }
+}
+
+/// `std.fs.Dir.openDirZ(path, .{ .iterate = true })` — `bun_sys::Dir` has no
+/// such inherent method; route through `bun_sys::open_dir_at`.
+#[inline]
+fn dir_open_dir_z(dir: &Dir, path: &ZStr, _opts: bun_sys::OpenDirOptions) -> Result<Dir, bun_core::Error> {
+    bun_sys::open_dir_at(dir.fd, path.as_bytes())
+        .map(Dir::from_fd)
+        .map_err(Into::into)
+}
 
 // type aliases matching Zig `string`/`stringZ`
 // (used as `&[u8]` / `&ZStr` at fn boundaries; owned forms use Box<[u8]> / Box<ZStr>)

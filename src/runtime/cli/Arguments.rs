@@ -993,7 +993,7 @@ fn load_bunfig<const CMD: Command::Tag>(
     });
     ctx.log.level = logger::Level::Warn;
     ctx.debug.loaded_bunfig = true;
-    Bunfig::parse::<CMD>(&source, ctx)
+    Bunfig::parse(CMD, &source, ctx)
 }
 
 fn get_home_config_path(buf: &mut PathBuffer) -> Option<&ZStr> {

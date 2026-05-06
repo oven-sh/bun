@@ -618,7 +618,7 @@ pub mod bun_object {
     // --- Callbacks ---
     export_callbacks! {
         BunObject_callback_allocUnsafe => super::alloc_unsafe,
-        BunObject_callback_build => JSBundler::build_fn,
+        BunObject_callback_build => super::static_adapters::js_bundler_build,
         // phase-c: bun_css feature-gated off the bun_bin path; Bun.color()
         // export only emitted when the `css` feature is enabled.
         #[cfg(feature = "css")]
@@ -626,10 +626,10 @@ pub mod bun_object {
         #[cfg(not(feature = "css"))]
         BunObject_callback_color => super::super::color_unsupported,
         BunObject_callback_connect => super::static_adapters::listener_connect,
-        BunObject_callback_createParsedShellScript => crate::shell::ParsedShellScript::create_parsed_shell_script,
-        BunObject_callback_createShellInterpreter => crate::shell::Interpreter::create_shell_interpreter,
+        BunObject_callback_createParsedShellScript => super::static_adapters::parsed_shell_script_create,
+        BunObject_callback_createShellInterpreter => super::static_adapters::shell_interpreter_create,
         BunObject_callback_deflateSync => JSZlib::deflate_sync,
-        BunObject_callback_file => WebCore::Blob::construct_bun_file,
+        BunObject_callback_file => crate::webcore::blob::construct_bun_file,
         BunObject_callback_gunzipSync => JSZlib::gunzip_sync,
         BunObject_callback_gzipSync => JSZlib::gzip_sync,
         BunObject_callback_indexOfLine => super::index_of_line,
@@ -652,7 +652,7 @@ pub mod bun_object {
         BunObject_callback_spawnSync => super::static_adapters::subprocess_spawn_sync,
         BunObject_callback_udpSocket => super::static_adapters::udp_socket,
         BunObject_callback_which => super::which,
-        BunObject_callback_write => WebCore::Blob::write_file,
+        BunObject_callback_write => crate::webcore::blob::write_file,
         BunObject_callback_zstdCompressSync => JSZstd::compress_sync,
         BunObject_callback_zstdDecompressSync => JSZstd::decompress_sync,
         BunObject_callback_zstdCompress => JSZstd::compress,

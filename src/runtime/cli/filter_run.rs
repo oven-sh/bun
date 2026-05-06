@@ -632,13 +632,14 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
     }
 
     let mut filter_instance =
-        FilterArg::FilterSet::init(filters_to_use, fsinstance.top_level_dir)?;
+        FilterArg::FilterSet::init(&filters_to_use, fsinstance.top_level_dir)?;
     let mut patterns: Vec<Box<[u8]>> = Vec::new();
 
     // Find package.json at workspace root
     let mut root_buf = bun_paths::PathBuffer::uninit();
     let resolve_root = FilterArg::get_candidate_package_patterns(
-        &ctx.log,
+        // SAFETY: `ctx.log` is the process-global Log; non-null and live for 'static.
+        unsafe { &mut *ctx.log },
         &mut patterns,
         fsinstance.top_level_dir,
         &mut root_buf,

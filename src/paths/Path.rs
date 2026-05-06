@@ -832,6 +832,21 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         &U::buffer_as_slice(&self._buf.pooled)[..self._buf.len]
     }
 
+    /// Reinterpret this path under a different `SEP_OPT` const parameter.
+    /// Zig's `bun.Path(.{ .sep = .auto })` and `bun.Path(.{})` are
+    /// structurally identical at runtime — the option only affects how
+    /// `append`/`append_join` normalize separators going forward — so
+    /// passing a built path to a callee typed with a different `sep`
+    /// option is sound. Rust's const-generic monomorphization makes them
+    /// nominally distinct, hence this explicit cast.
+    #[inline]
+    pub fn into_sep<const NEW_SEP: u8>(self) -> Path<U, KIND, NEW_SEP, CHECK> {
+        // SAFETY: `Path<U, KIND, *, CHECK>` differs only in a phantom const
+        // parameter; field layout (`_buf: Buf<U, *>`, `_unit: PhantomData`)
+        // is byte-identical across `SEP_OPT` values.
+        unsafe { core::mem::transmute_copy(&core::mem::ManuallyDrop::new(self)) }
+    }
+
     pub fn slice_z(&mut self) -> &U::ZSlice {
         // match BufType::Pool
         // PORT NOTE: reshaped for borrowck (Zig took *const and wrote NUL via @constCast).

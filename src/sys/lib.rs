@@ -2515,6 +2515,26 @@ impl File {
         let _ = close(f.handle);
         v
     }
+    /// `bun.sys.File.readFileFrom` (File.zig:381) — open + read; returns BOTH
+    /// the open `File` handle and the bytes. Caller owns the fd and must
+    /// `close()` it. On read error the fd is closed before returning (no leak).
+    pub fn read_file_from(dir: Fd, path: &[u8]) -> core::result::Result<(Self, Vec<u8>), bun_core::Error> {
+        let f = Self::openat(dir, path, O::RDONLY, 0).map_err(Into::<bun_core::Error>::into)?;
+        match f.read_to_end() {
+            Ok(bytes) => Ok((f, bytes)),
+            Err(e) => {
+                let _ = close(f.handle);
+                Err(e.into())
+            }
+        }
+    }
+    /// `bun.sys.File.getPath` — `getFdPath(self.handle, buf)`.
+    #[inline]
+    pub fn get_path<'a>(&self, buf: &'a mut bun_paths::PathBuffer)
+        -> core::result::Result<&'a [u8], bun_core::Error>
+    {
+        get_fd_path(self.handle, buf).map(|s| &*s).map_err(Into::into)
+    }
     /// `bun.sys.File.readFromUserInput` (File.zig:367) — normalize a
     /// user-provided relative path against the resolver's cached
     /// `top_level_dir` (NOT a fresh `getcwd()`), then `readFrom`.
@@ -4800,6 +4820,14 @@ impl Dir {
     #[inline]
     pub fn delete_file_z(&self, sub_path: &ZStr) -> core::result::Result<(), bun_core::Error> {
         unlinkat(self.fd, sub_path).map_err(Into::into)
+    }
+
+    /// `std.fs.Dir.openDirZ` — open `sub_path` (NUL-terminated) relative to
+    /// this dir as a `Dir` handle. Zig stdlib semantics: `O_DIRECTORY |
+    /// O_RDONLY | O_CLOEXEC` (handled by `open_dir_at`).
+    #[inline]
+    pub fn open_dir_z(&self, sub_path: &ZStr) -> core::result::Result<Dir, bun_core::Error> {
+        open_dir_at(self.fd, sub_path.as_bytes()).map(Dir::from_fd).map_err(Into::into)
     }
 }
 

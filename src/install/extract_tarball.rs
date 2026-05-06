@@ -246,7 +246,7 @@ impl ExtractTarball {
             bun_core::fast_random(),
         )?;
         {
-            let extract_destination = match bun_sys::make_path::make_open_path(tmpdir, tmpname, Default::default()) {
+            let extract_destination = match bun_sys::make_path::make_open_path(tmpdir, tmpname.as_bytes(), Default::default()) {
                 Ok(d) => d,
                 Err(err) => {
                     log.add_error_fmt(
@@ -744,22 +744,22 @@ impl ExtractTarball {
             };
             if needs_json {
                 let read_result = sys::File::read_file_from(
-                    Fd::from_std_dir(cache_dir),
+                    cache_dir.fd(),
                     path::resolve_path::join_z_buf::<path::platform::Auto>(
                         &mut bufs.json_path_buf.0,
                         &[folder_name, b"package.json"],
-                    ),
-                )
-                .unwrap();
+                    )
+                    .as_bytes(),
+                );
                 let (json_file, buf) = match read_result {
                     Ok(pair) => pair,
                     Err(err) => {
-                        if self.resolution.tag == Resolution::Tag::Github
-                            && err == bun_core::err!("ENOENT")
+                        if self.resolution.tag == ResolutionTag::Github
+                            && err.get_errno() == sys::E::NOENT
                         {
                             // allow git dependencies without package.json
                             return Ok(ExtractData {
-                                url,
+                                url: url.into(),
                                 resolved: resolved.into(),
                                 ..Default::default()
                             });
@@ -771,7 +771,7 @@ impl ExtractTarball {
                             format_args!(
                                 "\"package.json\" for \"{}\" failed to open: {}",
                                 BStr::new(name),
-                                err.name(),
+                                BStr::new(err.name()),
                             ),
                         )
                         .expect("unreachable");
@@ -779,33 +779,38 @@ impl ExtractTarball {
                     }
                 };
                 json_buf = buf;
-                // `defer json_file.close()` → Drop on File
-                json_path = match json_file.get_path(&mut bufs.json_path_buf).unwrap() {
+                // `defer json_file.close()` → close after resolving path.
+                json_path = match json_file.get_path(&mut bufs.json_path_buf) {
                     Ok(p) => p,
                     Err(err) => {
+                        let _ = json_file.close();
                         log.add_error_fmt(
                             None,
                             logger::Loc::EMPTY,
                             format_args!(
                                 "\"package.json\" for \"{}\" failed to resolve: {}",
                                 BStr::new(name),
-                                err.name(),
+                                BStr::new(err.name()),
                             ),
                         )
                         .expect("unreachable");
                         return Err(bun_core::err!("InstallFailed"));
                     }
                 };
+                let _ = json_file.close();
             }
 
-            if !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_INSTALL_INDEX.get() {
+            if !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_INSTALL_INDEX
+                .get()
+                .unwrap_or(false)
+            {
                 // create an index storing each version of a package installed
                 if strings::index_of_char(basename, b'/').is_none() {
                     'create_index: {
                         let dest_name: &[u8] = match self.resolution.tag {
-                            Resolution::Tag::Github => &folder_name[b"@GH@".len()..],
+                            ResolutionTag::Github => &folder_name[b"@GH@".len()..],
                             // trim "name@" from the prefix
-                            Resolution::Tag::Npm => &folder_name[name.len() + 1..],
+                            ResolutionTag::Npm => &folder_name[name.len() + 1..],
                             _ => folder_name,
                         };
 
@@ -844,24 +849,30 @@ impl ExtractTarball {
                             ) else {
                                 break 'create_index;
                             };
-                            let index_dir = Fd::from_std_dir(index_dir_std);
-                            // `defer index_dir.close()` → Drop on Fd guard
-                            // TODO(port): ensure Fd close-on-drop semantics here
+                            let index_dir = index_dir_std.fd();
+                            // `defer index_dir.close()` → close explicitly after symlinkat.
 
-                            let _ = sys::symlinkat(final_path.as_bytes(), index_dir, dest_name)
-                                .unwrap();
+                            let mut dest_buf = PathBuffer::uninit();
+                            dest_buf[..dest_name.len()].copy_from_slice(dest_name);
+                            dest_buf[dest_name.len()] = 0;
+                            // SAFETY: NUL-terminated above.
+                            let dest_z = unsafe {
+                                ZStr::from_raw(dest_buf.as_ptr(), dest_name.len())
+                            };
+                            let _ = sys::symlinkat(final_path, index_dir, dest_z);
+                            let _ = sys::close(index_dir);
                         }
                     }
                 }
             }
 
-            let ret_json_path = FileSystem::instance().dirname_store.append(json_path)?;
+            let ret_json_path = FileSystem::instance().dirname_store().append(json_path)?;
 
             Ok(ExtractData {
-                url,
+                url: url.into(),
                 resolved: resolved.into(),
                 json: Some(Install::ExtractDataJson {
-                    path: ret_json_path,
+                    path: ret_json_path.into(),
                     buf: json_buf,
                 }),
                 ..Default::default()

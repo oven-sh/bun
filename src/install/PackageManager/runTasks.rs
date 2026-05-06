@@ -240,67 +240,27 @@ pub fn run_tasks<C: RunTasksCallbacks>(
     }
 
     if C::IS_STORE_INSTALLER {
-        // TODO(port): downcast `extract_ctx` to `&mut Store::Installer` (see note above).
-        let installer: &mut Store::Installer = Store::Installer::from_ctx_mut(extract_ctx);
-        let batch = installer.task_queue.pop_batch();
-        let mut iter = batch.iterator();
-        while let Some(task) = iter.next() {
-            match &task.result {
-                Store::TaskResult::None => {
-                    if cfg!(debug_assertions) {
-                        debug_assert!(false);
-                    }
-                    installer.on_task_complete(task.entry_id, Store::CompleteStatus::Success);
-                }
-                Store::TaskResult::Err(err) => {
-                    installer.on_task_fail(task.entry_id, err.clone());
-                }
-                Store::TaskResult::Blocked => {
-                    installer.on_task_blocked(task.entry_id);
-                }
-                Store::TaskResult::RunScripts(list) => {
-                    let entries = installer.store.entries.slice();
-
-                    let node_id = entries.items_node_id()[task.entry_id.get()];
-                    let dep_id = installer.store.nodes.items_dep_id()[node_id.get()];
-                    let dep = &installer.lockfile.buffers.dependencies[dep_id as usize];
-                    if let Err(err) = installer.manager.spawn_package_lifecycle_scripts(
-                        &installer.command_ctx,
-                        list.clone(),
-                        dep.behavior.optional,
-                        false,
-                        Store::ScriptCtx {
-                            entry_id: task.entry_id,
-                            installer,
-                        },
-                    ) {
-                        // .monotonic is okay for the same reason as `.done`: we popped this
-                        // task from the `UnboundedQueue`, and the task is no longer running.
-                        entries.items_step()[task.entry_id.get()]
-                            .store(Store::Step::Done, Ordering::Relaxed);
-                        installer.on_task_fail(
-                            task.entry_id,
-                            Store::TaskError::RunScripts(err),
-                        );
-                    }
-                }
-                Store::TaskResult::Done => {
-                    if cfg!(debug_assertions) {
-                        // .monotonic is okay because we should have already synchronized with the
-                        // completed task thread by virtue of popping from the `UnboundedQueue`.
-                        let step = installer.store.entries.items_step()[task.entry_id.get()]
-                            .load(Ordering::Relaxed);
-                        debug_assert!(step == Store::Step::Done);
-                    }
-                    installer.on_task_complete(task.entry_id, Store::CompleteStatus::Success);
-                }
-            }
-        }
+        // blocked_on(isolated_install::Installer): the `Store.Installer`
+        // task-result drain loop wires `installer.task_queue` results into
+        // `on_task_complete` / `on_task_fail` / `on_task_blocked` /
+        // `spawn_package_lifecycle_scripts`. The Rust `Installer` port has not
+        // yet exposed `Task.result` / `TaskResult` / `ScriptCtx` with the
+        // shapes the Zig spec uses here (see `Installer.rs` lines 102-480).
+        // Phase B: drain `installer.task_queue.pop_batch()` and dispatch on
+        // `task.result` once those types land.
+        let _ = &extract_ctx;
+        todo!("blocked_on(isolated_install::Installer task-result drain)");
     }
 
-    let mut network_tasks_batch = manager.async_network_task_queue.pop_batch();
+    let network_tasks_batch = manager.async_network_task_queue.pop_batch();
     let mut network_tasks_iter = network_tasks_batch.iterator();
-    while let Some(task) = network_tasks_iter.next() {
+    loop {
+        let task_ptr = network_tasks_iter.next();
+        if task_ptr.is_null() {
+            break;
+        }
+        // SAFETY: `next()` returned non-null; node is exclusively owned by this batch.
+        let task = unsafe { &mut *task_ptr };
         if cfg!(debug_assertions) {
             debug_assert!(manager.pending_task_count() > 0);
         }
@@ -309,8 +269,12 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         // It may continue to be referenced in a future task.
 
         match &mut task.callback {
-            NetworkTask::Callback::PackageManifest(manifest_req) => {
-                let name = manifest_req.name.clone();
+            NetworkTaskCallback::PackageManifest {
+                loaded_manifest,
+                name,
+                is_extended_manifest,
+            } => {
+                let name = name.clone();
                 if log_level.show_progress() {
                     if !*has_updated_this_run {
                         manager.set_node_name(
@@ -344,9 +308,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         manager.enqueue_network_task(task);
 
                         if manager.options.log_level.is_verbose() {
-                            manager
-                                .log
-                                .add_warning_fmt(
+                            unsafe { &mut *manager.log }.add_warning_fmt(
                                     None,
                                     logger::Loc::EMPTY,
                                     format_args!(
@@ -378,7 +340,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     } else {
                         let fmt_args = (err.name(), name.slice());
                         if manager.is_network_task_required(task.task_id) {
-                            let _ = manager.log.add_error_fmt(
+                            let _ = unsafe { &mut *manager.log }.add_error_fmt(
                                 None,
                                 logger::Loc::EMPTY,
                                 format_args!(
@@ -388,7 +350,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 ),
                             );
                         } else {
-                            let _ = manager.log.add_warning_fmt(
+                            let _ = unsafe { &mut *manager.log }.add_warning_fmt(
                                 None,
                                 logger::Loc::EMPTY,
                                 format_args!(
@@ -399,13 +361,13 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             );
                         }
 
-                        if manager.subcommand != PackageManager::Subcommand::Remove {
+                        if manager.subcommand != Subcommand::Remove {
                             for request in manager.update_requests.iter_mut() {
                                 if strings::eql(&request.name, name.slice()) {
                                     request.failed = true;
-                                    manager.options.do_.save_lockfile = false;
-                                    manager.options.do_.save_yarn_lock = false;
-                                    manager.options.do_.install_packages = false;
+                                    manager.options.do_.remove(Do::SAVE_LOCKFILE);
+                                    manager.options.do_.remove(Do::SAVE_YARN_LOCK);
+                                    manager.options.do_.remove(Do::INSTALL_PACKAGES);
                                 }
                             }
                         }
@@ -438,7 +400,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
 
                     if manager.is_network_task_required(task.task_id) {
-                        let _ = manager.log.add_error_fmt(
+                        let _ = unsafe { &mut *manager.log }.add_error_fmt(
                             None,
                             logger::Loc::EMPTY,
                             format_args!(
@@ -448,7 +410,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             ),
                         );
                     } else {
-                        let _ = manager.log.add_warning_fmt(
+                        let _ = unsafe { &mut *manager.log }.add_warning_fmt(
                             None,
                             logger::Loc::EMPTY,
                             format_args!(
@@ -458,13 +420,13 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             ),
                         );
                     }
-                    if manager.subcommand != PackageManager::Subcommand::Remove {
+                    if manager.subcommand != Subcommand::Remove {
                         for request in manager.update_requests.iter_mut() {
                             if strings::eql(&request.name, name.slice()) {
                                 request.failed = true;
-                                manager.options.do_.save_lockfile = false;
-                                manager.options.do_.save_yarn_lock = false;
-                                manager.options.do_.install_packages = false;
+                                manager.options.do_.remove(Do::SAVE_LOCKFILE);
+                                manager.options.do_.remove(Do::SAVE_YARN_LOCK);
+                                manager.options.do_.remove(Do::INSTALL_PACKAGES);
                             }
                         }
                     }
@@ -510,7 +472,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             .pkg
                             .public_max_age = timestamp_this_tick.unwrap();
 
-                        if manager.options.enable.manifest_cache {
+                        if manager.options.enable.contains(Enable::MANIFEST_CACHE) {
                             Npm::PackageManifest::Serializer::save_async(
                                 entry.value_ptr.manifest_mut(),
                                 manager.scope_for_package_name(name.slice()),
@@ -524,7 +486,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         }
 
                         let dependency_list_entry =
-                            manager.task_queue.get_entry(task.task_id).unwrap();
+                            manager.task_queue.get_mut(&task.task_id).unwrap();
 
                         let dependency_list = core::mem::take(dependency_list_entry.value_ptr);
 
@@ -538,11 +500,11 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
                 }
 
-                manager.task_batch.push(ThreadPool::Batch::from(
+                manager.task_batch.push(ThreadPoolBatch::from(
                     manager.enqueue_parse_npm_package(task.task_id, &name, task),
                 ));
             }
-            NetworkTask::Callback::Extract(extract) => {
+            NetworkTaskCallback::Extract(extract) => {
                 // Streaming extraction never pushes its NetworkTask to
                 // `async_network_task_queue` once committed — the
                 // extract Task published by `TarballStream.finish()`
@@ -577,9 +539,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         manager.enqueue_network_task(task);
 
                         if manager.options.log_level.is_verbose() {
-                            manager
-                                .log
-                                .add_warning_fmt(
+                            unsafe { &mut *manager.log }.add_warning_fmt(
                                     None,
                                     logger::Loc::EMPTY,
                                     format_args!(
@@ -656,7 +616,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
 
                     if is_required {
-                        let _ = manager.log.add_error_fmt(
+                        let _ = unsafe { &mut *manager.log }.add_error_fmt(
                             None,
                             logger::Loc::EMPTY,
                             format_args!(
@@ -670,7 +630,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             ),
                         );
                     } else {
-                        let _ = manager.log.add_warning_fmt(
+                        let _ = unsafe { &mut *manager.log }.add_warning_fmt(
                             None,
                             logger::Loc::EMPTY,
                             format_args!(
@@ -684,18 +644,18 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             ),
                         );
                     }
-                    if manager.subcommand != PackageManager::Subcommand::Remove {
+                    if manager.subcommand != Subcommand::Remove {
                         for request in manager.update_requests.iter_mut() {
                             if strings::eql(&request.name, extract.name.slice()) {
                                 request.failed = true;
-                                manager.options.do_.save_lockfile = false;
-                                manager.options.do_.save_yarn_lock = false;
-                                manager.options.do_.install_packages = false;
+                                manager.options.do_.remove(Do::SAVE_LOCKFILE);
+                                manager.options.do_.remove(Do::SAVE_YARN_LOCK);
+                                manager.options.do_.remove(Do::INSTALL_PACKAGES);
                             }
                         }
                     }
 
-                    if let Some(removed) = manager.task_queue.fetch_remove(&task.task_id) {
+                    if let Some(removed) = manager.task_queue.remove(&task.task_id) {
                         drop(removed.value);
                     }
 
@@ -752,7 +712,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
 
                     if is_required {
-                        let _ = manager.log.add_error_fmt(
+                        let _ = unsafe { &mut *manager.log }.add_error_fmt(
                             None,
                             logger::Loc::EMPTY,
                             format_args!(
@@ -762,7 +722,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             ),
                         );
                     } else {
-                        let _ = manager.log.add_warning_fmt(
+                        let _ = unsafe { &mut *manager.log }.add_warning_fmt(
                             None,
                             logger::Loc::EMPTY,
                             format_args!(
@@ -772,18 +732,18 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             ),
                         );
                     }
-                    if manager.subcommand != PackageManager::Subcommand::Remove {
+                    if manager.subcommand != Subcommand::Remove {
                         for request in manager.update_requests.iter_mut() {
                             if strings::eql(&request.name, extract.name.slice()) {
                                 request.failed = true;
-                                manager.options.do_.save_lockfile = false;
-                                manager.options.do_.save_yarn_lock = false;
-                                manager.options.do_.install_packages = false;
+                                manager.options.do_.remove(Do::SAVE_LOCKFILE);
+                                manager.options.do_.remove(Do::SAVE_YARN_LOCK);
+                                manager.options.do_.remove(Do::INSTALL_PACKAGES);
                             }
                         }
                     }
 
-                    if let Some(removed) = manager.task_queue.fetch_remove(&task.task_id) {
+                    if let Some(removed) = manager.task_queue.remove(&task.task_id) {
                         drop(removed.value);
                     }
 
@@ -814,7 +774,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
                 }
 
-                manager.task_batch.push(ThreadPool::Batch::from(
+                manager.task_batch.push(ThreadPoolBatch::from(
                     manager.enqueue_extract_npm_package(extract, task),
                 ));
             }
@@ -886,7 +846,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             &task.request.package_manifest().network.url_buf,
                         );
                     } else {
-                        let _ = manager.log.add_error_fmt(
+                        let _ = unsafe { &mut *manager.log }.add_error_fmt(
                             None,
                             logger::Loc::EMPTY,
                             format_args!(
@@ -907,7 +867,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     continue;
                 }
 
-                let dependency_list_entry = manager.task_queue.get_entry(task.id).unwrap();
+                let dependency_list_entry = manager.task_queue.get_mut(&task.id).unwrap();
                 let dependency_list = core::mem::take(dependency_list_entry.value_ptr);
 
                 manager.process_dependency_list::<C>(dependency_list, extract_ctx, install_peer)?;
@@ -993,7 +953,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         continue;
                     }
 
-                    let _ = manager.log.add_error_fmt(
+                    let _ = unsafe { &mut *manager.log }.add_error_fmt(
                         None,
                         logger::Loc::EMPTY,
                         format_args!(
@@ -1006,7 +966,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     // Void-callback fallback (resolve phase): drain the
                     // `task_queue` entry too so a later install-phase
                     // `enqueuePackageForDownload` doesn't wedge on `found_existing`.
-                    if let Some(removed) = manager.task_queue.fetch_remove(&task.id) {
+                    if let Some(removed) = manager.task_queue.remove(&task.id) {
                         drop(removed.value);
                     }
 
@@ -1045,7 +1005,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         // We need to make sure we resolve the dependencies first before calling the onExtract callback
                         // TODO: move this into a separate function
                         let mut any_root = false;
-                        let Some(dependency_list_entry) = manager.task_queue.get_entry(task.id)
+                        let Some(dependency_list_entry) = manager.task_queue.get_mut(&task.id)
                         else {
                             break 'handle_pkg;
                         };
@@ -1110,7 +1070,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         }
                     }
                 } else if let Some(dependency_list_entry) =
-                    manager.task_queue.get_entry(Task::Id::for_manifest(
+                    manager.task_queue.get_mut(&Task::Id::for_manifest(
                         manager
                             .lockfile
                             .str(&manager.lockfile.packages.items_name()[package_id as usize]),
@@ -1161,7 +1121,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         // checkout for this repo or the install loop blocks
                         // forever on the entry's pending-task slot.
                         let mut drained_any = false;
-                        if let Some(removed) = manager.task_queue.fetch_remove(&task.id) {
+                        if let Some(removed) = manager.task_queue.remove(&task.id) {
                             let waiters = removed.value;
                             // Zig: defer waiters.deinit() — Drop at end of `if` scope.
                             let pkg_resolutions = manager.lockfile.packages.items_resolution();
@@ -1213,7 +1173,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             );
                         }
                     } else if log_level != Options::LogLevel::Silent {
-                        let _ = manager.log.add_error_fmt(
+                        let _ = unsafe { &mut *manager.log }.add_error_fmt(
                             None,
                             logger::Loc::EMPTY,
                             format_args!(
@@ -1253,7 +1213,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         continue;
                     }
 
-                    manager.task_batch.push(ThreadPool::Batch::from(
+                    manager.task_batch.push(ThreadPoolBatch::from(
                         manager.enqueue_git_checkout(
                             checkout_id,
                             repo_fd,
@@ -1266,7 +1226,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     ));
                 } else {
                     // Resolving!
-                    let dependency_list_entry = manager.task_queue.get_entry(task.id).unwrap();
+                    let dependency_list_entry = manager.task_queue.get_mut(&task.id).unwrap();
                     let dependency_list = core::mem::take(dependency_list_entry.value_ptr);
 
                     manager.process_dependency_list::<C>(
@@ -1307,7 +1267,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             manager.lockfile.str(&resolution.value.git().repo),
                         );
                     } else {
-                        let _ = manager.log.add_error_fmt(
+                        let _ = unsafe { &mut *manager.log }.add_error_fmt(
                             None,
                             logger::Loc::EMPTY,
                             format_args!(
@@ -1352,7 +1312,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 ) {
                     'handle_pkg: {
                         let mut any_root = false;
-                        let Some(dependency_list_entry) = manager.task_queue.get_entry(task.id)
+                        let Some(dependency_list_entry) = manager.task_queue.get_mut(&task.id)
                         else {
                             break 'handle_pkg;
                         };
@@ -1463,7 +1423,7 @@ pub fn flush_network_queue(this: &mut PackageManager) {
     let network = &mut this.network_task_fifo;
 
     while let Some(network_task) = network.read_item() {
-        network_task.schedule(if matches!(network_task.callback, NetworkTask::Callback::Extract(_)) {
+        network_task.schedule(if matches!(network_task.callback, NetworkTaskCallback::Extract(_)) {
             &mut this.network_tarball_batch
         } else {
             &mut this.network_resolve_batch
@@ -1475,7 +1435,7 @@ pub fn flush_patch_task_queue(this: &mut PackageManager) {
     let patch_task_fifo = &mut this.patch_task_fifo;
 
     while let Some(patch_task) = patch_task_fifo.read_item() {
-        patch_task.schedule(if matches!(patch_task.callback, PatchTask::Callback::Apply(_)) {
+        patch_task.schedule(if matches!(patch_task.callback, PatchTaskCallback::Apply(_)) {
             &mut this.patch_apply_batch
         } else {
             &mut this.patch_calc_hash_batch

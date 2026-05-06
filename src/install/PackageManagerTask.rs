@@ -112,7 +112,7 @@ unsafe impl<'a> bun_threading::unbounded_queue::Node for Task<'a> {
 
 /// An ID that lets us register a callback without keeping the same pointer around
 #[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Id(u64);
 
 impl core::fmt::Display for Id {

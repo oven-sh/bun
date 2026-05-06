@@ -1,19 +1,39 @@
-use core::ptr;
+use core::ptr::{self, NonNull};
 use core::sync::atomic::Ordering;
 
 use bstr::{BStr, ByteSlice};
 
 use bun_collections::HashMap;
-use bun_core::{self, fmt::quote, StringBuilder as GlobalStringBuilder};
-use bun_http::{self as http, AsyncHTTP, HeaderBuilder, HTTPClientResult, HTTPVerboseLevel};
+use bun_core::{self, fmt::quote};
+use bun_http::{
+    self as http, async_http::Options as AsyncHTTPOptions, AsyncHTTP, HeaderBuilder,
+    HTTPClientResult, HTTPClientResultCallback, HTTPVerboseLevel,
+};
 use bun_logger as logger;
-use bun_str::{self, strings, MutableString};
-use bun_threading::ThreadPool;
+use bun_str::{self, strings, MutableString, StringBuilder};
+use bun_threading::thread_pool::Batch;
 use bun_url::URL;
-use crate::bun_fs::FileSystem;
+use crate::bun_fs::{DirnameStore, FileSystem};
 
+use crate::extract_tarball;
 use crate::npm::{self as npm, PackageManifest};
 use crate::{ExtractTarball, PackageManager, PatchTask, TarballStream, Task};
+
+// Adapter so `StringOrTinyString::init_append_if_needed` can intern overflow
+// names into the resolver's filename/dirname arena (Zig:
+// `*FileSystem.FilenameStore`). The bun_sys-level `DirnameStore` exposes
+// `append`/`append_lower_case` but doesn't itself implement
+// `strings::Appender` (that impl lives in `bun_resolver`, which this crate
+// can't reach without a cycle).
+struct DirnameStoreAppender<'a>(&'a DirnameStore);
+impl strings::Appender for DirnameStoreAppender<'_> {
+    fn append(&mut self, s: &[u8]) -> Result<&[u8], bun_alloc::AllocError> {
+        self.0.append(s)
+    }
+    fn append_lower_case(&mut self, s: &[u8]) -> Result<&[u8], bun_alloc::AllocError> {
+        self.0.append_lower_case(s)
+    }
+}
 
 pub struct NetworkTask {
     pub unsafe_http_client: AsyncHTTP,
@@ -80,8 +100,18 @@ pub struct DedupeMapEntry {
 pub type DedupeMap = HashMap<crate::package_manager_task::Id, DedupeMapEntry>;
 
 impl NetworkTask {
-    pub fn notify(&mut self, async_http: &mut AsyncHTTP, result: HTTPClientResult) {
-        if let Some(stream) = self.tarball_stream.as_deref_mut() {
+    // PORT NOTE: signature matches `HTTPClientResultCallback::new::<NetworkTask>`'s
+    // `fn(*mut T, *mut AsyncHTTP, HTTPClientResult<'_>)` shape so it can be
+    // installed directly without a separate trampoline.
+    pub fn notify(this: *mut NetworkTask, async_http: *mut AsyncHTTP, mut result: HTTPClientResult<'_>) {
+        // SAFETY: `this` is the `&mut NetworkTask` that was erased into the
+        // callback ctx in `get_completion_callback`; the HTTP thread is the
+        // sole writer for the duration of this call.
+        let this = unsafe { &mut *this };
+        // SAFETY: `async_http` is the threadlocal AsyncHTTP the HTTP client
+        // passes to every completion callback; live for this call.
+        let async_http = unsafe { &mut *async_http };
+        if let Some(stream) = this.tarball_stream.as_deref_mut() {
             // Runs on the HTTP thread. With response-body streaming enabled,
             // `notify` is called once per body chunk (has_more=true) and once
             // more at the end (has_more=false). `result.body` is our own
@@ -91,12 +121,12 @@ impl NetworkTask {
             // `metadata` is only populated on the first callback that
             // carries response headers. Cache the status code so both the
             // main thread and later chunk callbacks can see it.
-            if let Some(m) = &result.metadata {
-                self.response.metadata = Some(m.clone());
+            if let Some(m) = result.metadata.take() {
                 stream.status_code = m.response.status_code;
+                this.response.metadata = Some(m);
             }
 
-            let chunk = self.response_buffer.list.as_slice();
+            let chunk = this.response_buffer.list.as_slice();
 
             // Only commit to streaming extraction once we've seen a 2xx
             // status *and* the tarball is large enough to be worth the
@@ -110,7 +140,7 @@ impl NetworkTask {
                 // front, so stream — it avoids an unbounded buffer.
                 _ => true,
             };
-            let committed = self.streaming_committed;
+            let committed = this.streaming_committed;
 
             if committed || (ok_status && big_enough && result.fail.is_none()) {
                 if result.has_more {
@@ -125,11 +155,11 @@ impl NetworkTask {
                         // its `incrementPendingTasks()` is satisfied by
                         // the extract Task that `TarballStream.finish()`
                         // publishes to `resolve_tasks`.
-                        self.streaming_committed = true;
+                        this.streaming_committed = true;
                         stream.on_chunk(chunk, false, None);
                         // Hand the buffer back to the HTTP client empty so
                         // the next chunk starts at offset 0.
-                        self.response_buffer.reset();
+                        this.response_buffer.reset();
                     }
                     return;
                 }
@@ -142,7 +172,7 @@ impl NetworkTask {
                 // handles it.
                 if committed {
                     stream.on_chunk(chunk, true, result.fail);
-                    // Do NOT touch `self` — or anything it owns — after
+                    // Do NOT touch `this` — or anything it owns — after
                     // this point: `on_chunk(…, true, …)` sets `closed` and
                     // schedules a drain that may reach `finish()` on a
                     // worker thread before we return here. `finish()`
@@ -169,7 +199,7 @@ impl NetworkTask {
         }
 
         // SAFETY: BACKREF — PackageManager owns this task and outlives it.
-        let pm = unsafe { &*(self.package_manager as *mut PackageManager) };
+        let pm = unsafe { &*(this.package_manager as *mut PackageManager) };
         // Zig: `defer this.package_manager.wake();` — moved to end of fn (no
         // early returns past this point).
 
@@ -178,18 +208,18 @@ impl NetworkTask {
         // TODO(port): Zig does a struct-value copy `real.* = async_http.*` —
         // requires `AsyncHTTP: Clone` or a bitwise copy helper.
         unsafe {
-            let real = async_http.real.expect("unreachable");
+            let real = async_http.real.expect("unreachable").as_ptr();
             ptr::write(real, ptr::read(async_http));
             (*real).response_buffer = async_http.response_buffer;
         }
         // Preserve metadata captured on an earlier streaming callback; the
         // final `result` won't have it.
-        let saved_metadata = self.response.metadata.take();
-        self.response = result;
-        if self.response.metadata.is_none() {
-            self.response.metadata = saved_metadata;
+        let saved_metadata = this.response.metadata.take();
+        this.response = result;
+        if this.response.metadata.is_none() {
+            this.response.metadata = saved_metadata;
         }
-        pm.async_network_task_queue.push(self);
+        pm.async_network_task_queue.push(this);
         pm.wake();
     }
 }
@@ -273,7 +303,7 @@ impl NetworkTask {
         needs_extended: bool,
     ) -> Result<(), ForManifestError> {
         // SAFETY: BACKREF — PackageManager owns this task and outlives it.
-        let pm = unsafe { &*(self.package_manager as *mut PackageManager) };
+        let pm = unsafe { &mut *(self.package_manager as *mut PackageManager) };
 
         self.url_buf = 'blk: {
             // Not all registries support scoped package names when fetching the manifest.
@@ -291,11 +321,11 @@ impl NetworkTask {
 
             // MOVE_DOWN(b0): bun_jsc::url::join → bun_url::join (WHATWG URL FFI moves out of jsc).
             let tmp = bun_url::join(
-                bun_str::String::borrow_utf8(&scope.url.href),
-                bun_str::String::borrow_utf8(encoded_name),
+                &bun_str::String::borrow_utf8(&scope.url.href),
+                &bun_str::String::borrow_utf8(encoded_name),
             );
 
-            if tmp.tag == bun_str::Tag::Dead {
+            if tmp.tag() == bun_str::Tag::Dead {
                 if !is_optional {
                     pm.log.add_error_fmt(
                         None,

@@ -47,6 +47,16 @@ impl MutableString {
 
     // Zig `deinit` only freed `list`; `Vec<u8>` drops automatically — no `Drop` impl needed.
 
+    /// Zig: `self.list.expandToCapacity()` — set `len = capacity` so callers
+    /// can index into the spare region (e.g. `read()` into `&mut list[n..]`).
+    /// PORT NOTE: Zig leaves the new tail `undefined`; we zero-fill to keep
+    /// the `Vec<u8>` bytes initialized.
+    #[inline]
+    pub fn expand_to_capacity(&mut self) {
+        let cap = self.list.capacity();
+        self.list.resize(cap, 0);
+    }
+
     pub fn owns(&self, items: &[u8]) -> bool {
         // Zig: bun.isSliceInBuffer(items, this.list.items.ptr[0..this.list.capacity])
         bun_alloc::is_slice_in_buffer(items, self.allocated_slice())

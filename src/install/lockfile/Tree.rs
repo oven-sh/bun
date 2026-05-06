@@ -143,6 +143,12 @@ impl From<AllocError> for SubtreeError {
     }
 }
 
+impl From<SubtreeError> for bun_core::Error {
+    fn from(e: SubtreeError) -> Self {
+        bun_core::Error::from_name(<&'static str>::from(&e))
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Iterator
 // ──────────────────────────────────────────────────────────────────────────
@@ -233,7 +239,9 @@ impl<'a, const PATH_STYLE: IteratorPathStyle> Iterator<'a, PATH_STYLE> {
             .get(self.lockfile.buffers.hoisted_dependencies.as_slice());
 
         let (relative_path, depth) = relative_path_and_depth::<PATH_STYLE>(
-            self.lockfile,
+            trees,
+            self.lockfile.buffers.dependencies.as_slice(),
+            self.lockfile.buffers.string_bytes.as_slice(),
             current_tree_id,
             &mut self.path_buf,
             &mut self.depth_stack,
@@ -251,13 +259,17 @@ impl<'a, const PATH_STYLE: IteratorPathStyle> Iterator<'a, PATH_STYLE> {
 }
 
 /// Returns relative path and the depth of the tree
+// PORT NOTE: reshaped — Zig takes `*const Lockfile`; here we take the three
+// buffer slices directly so callers from both `crate::lockfile` (stub) and
+// `crate::lockfile_real` can use this without a shared `Lockfile` type.
 pub fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
-    lockfile: &Lockfile,
+    trees: &[Tree],
+    dependencies: &[Dependency],
+    string_buf: &[u8],
     tree_id: Id,
     path_buf: &'b mut PathBuffer,
     depth_buf: &mut DepthBuf,
 ) -> (&'b ZStr, usize) {
-    let trees = lockfile.buffers.trees.as_slice();
     let mut depth: usize = 0;
 
     let tree = trees[tree_id as usize];
@@ -271,8 +283,7 @@ pub fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
     depth_buf[0] = 0;
 
     if tree.id > 0 {
-        let dependencies = lockfile.buffers.dependencies.as_slice();
-        let buf = lockfile.buffers.string_bytes.as_slice();
+        let buf = string_buf;
         let mut depth_buf_len: usize = 1;
 
         while parent_id > 0 && (parent_id as usize) < trees.len() {
@@ -363,6 +374,7 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub packages_to_install: Option<&'a [PackageID]>,
 }
 
+#[derive(bun_collections::MultiArrayElement)]
 pub struct BuilderEntry {
     pub tree: Tree,
     pub dependencies: DependencyIDList,

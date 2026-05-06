@@ -11,12 +11,17 @@ use bun_install::integrity::Integrity;
 // LoadResult enum, so import from `lockfile_real` and alias it back to
 // `lockfile` so the qualified `lockfile::DependencySlice` etc. paths below
 // resolve against the ported types.
-use crate::lockfile_real::{self as lockfile, LoadResult, Lockfile, tree::Tree};
-use crate::lockfile_real::package::{Package as LockfilePackage, Meta as PackageMeta};
+use crate::lockfile_real::{self as lockfile, LoadResult, Lockfile, tree, tree::Tree};
+use crate::lockfile_real::package::{Package as LockfilePackage, Meta as PackageMeta, PackageListExt as _};
 use crate::lockfile_real::package::meta::HasInstallScript;
 use crate::Origin;
 use bun_install::npm;
-use bun_install::resolution::Resolution;
+// PORT NOTE: `Package.resolution` is the file-backed `resolution_real::ResolutionType<u64>`
+// (tag + zero-padded `Value` union), constructed via `init(TaggedValue::*)`; the
+// `bun_install::resolution` stub keeps `Value` as a struct-of-fields and has no `init`.
+use crate::resolution_real::{Resolution, TaggedValue as ResolutionValue, Tag as ResolutionTag};
+use crate::repository::Repository;
+use crate::versioned_url::VersionedURL;
 use crate::bun_json;
 use bun_logger as logger;
 use bun_paths::PathBuffer;
@@ -581,10 +586,9 @@ fn process_deps(
     let mut count: usize = 0;
     // PERF(port): was stack-fallback alloc (1024 bytes) — profile in Phase B
 
-    let mut deps_it = deps.iterator();
-    while let Some(dep) = deps_it.next() {
-        let dep_name = *dep.key_ptr;
-        let dep_version = *dep.value_ptr;
+    for (dep_name_key, dep_version_ref) in deps.iter() {
+        let dep_name: &[u8] = dep_name_key.as_ref();
+        let dep_version: &[u8] = *dep_version_ref;
         let mut dep_spec = Vec::new();
         write!(&mut dep_spec, "{}@{}", bstr::BStr::new(dep_name), bstr::BStr::new(dep_version))
             .expect("unreachable");
@@ -606,21 +610,14 @@ fn process_deps(
                 name_hash: dep_name_hash,
                 version: Dependency::parse(
                     dep_name_str,
-                    dep_name_hash,
+                    Some(dep_name_hash),
                     parsed_version,
                     &SlicedString::init(parsed_version, parsed_version),
-                    log,
-                    manager,
+                    Some(log),
+                    Some(manager),
                 )
                 .unwrap_or_default(),
-                behavior: dependency::Behavior {
-                    prod: dep_type == DependencyType::Production,
-                    optional: dep_type == DependencyType::Optional,
-                    dev: dep_type == DependencyType::Development,
-                    peer: dep_type == DependencyType::Peer,
-                    workspace: dep_entry_workspace,
-                    ..Default::default()
-                },
+                behavior: behavior_for(dep_type, dep_entry_workspace),
             };
             let mut found_package_id: Option<PackageID> = None;
             'outer: for (yarn_idx, entry_) in yarn_lock_.entries.iter().enumerate() {
@@ -693,17 +690,18 @@ pub fn migrate_yarn_lockfile<'a>(
     {
         // read package.json to get specified dependencies
         let Ok(package_json_fd) =
-            bun_sys::File::openat(dir, b"package.json", bun_sys::O::RDONLY, 0).unwrap_result()
+            bun_sys::File::openat(dir, b"package.json", bun_sys::O::RDONLY, 0)
         else {
             return Err(bun_core::err!("InvalidPackageJSON"));
         };
-        let package_json_contents = match package_json_fd.read_to_end() {
-            Ok(c) => c,
-            Err(_) => {
-                package_json_fd.close();
-                return Err(bun_core::err!("InvalidPackageJSON"));
-            }
-        };
+        // PORT NOTE: `File::read_to_end` returns the `{ err, bytes }` pair
+        // (Zig: `Maybe(ArrayList(u8))`-like) rather than `Result`.
+        let read = package_json_fd.read_to_end();
+        if read.err.is_some() {
+            package_json_fd.close();
+            return Err(bun_core::err!("InvalidPackageJSON"));
+        }
+        let package_json_contents = read.bytes;
         // package_json_fd closed on drop / explicit close below
         // TODO(port): explicit close ordering — Zig closes fd via defer after readToEnd
 
@@ -714,7 +712,10 @@ pub fn migrate_yarn_lockfile<'a>(
             else {
                 return Err(bun_core::err!("InvalidPackageJSON"));
             };
-            break 'brk logger::Source::init_path_string(package_json_path, &package_json_contents);
+            break 'brk logger::Source::init_path_string(
+                &*package_json_path,
+                package_json_contents.as_slice(),
+            );
         };
         package_json_fd.close();
 
@@ -2058,7 +2059,20 @@ pub fn migrate_yarn_lockfile<'a>(
 
 #[inline]
 fn string_hash(s: &[u8]) -> u64 {
-    SemverString::Builder::string_hash(s)
+    Semver::string::Builder::string_hash(s)
+}
+
+/// Port of Zig's packed-struct `Behavior { .prod = …, .dev = … }` literal.
+/// Rust's bitflags-backed `Behavior` has no named fields, so build via
+/// `with(FLAG, cond)` chaining instead.
+#[inline]
+fn behavior_for(dep_type: DependencyType, workspace: bool) -> dependency::Behavior {
+    dependency::Behavior::default()
+        .with(dependency::Behavior::PROD, dep_type == DependencyType::Production)
+        .with(dependency::Behavior::OPTIONAL, dep_type == DependencyType::Optional)
+        .with(dependency::Behavior::DEV, dep_type == DependencyType::Development)
+        .with(dependency::Behavior::PEER, dep_type == DependencyType::Peer)
+        .with(dependency::Behavior::WORKSPACE, workspace)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

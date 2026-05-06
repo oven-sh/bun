@@ -297,6 +297,29 @@ impl<K, V, C> ArrayHashMap<K, V, C> {
         Ok(())
     }
 
+    /// Zig: `map.entries.len = n` after `ensureTotalCapacity(n)` — bulk-resize
+    /// the backing columns so callers can `keys_mut().copy_from_slice(...)` /
+    /// `values_mut().copy_from_slice(...)` and then `re_index()`. Mirrors the
+    /// pattern in `lockfile/bun.lockb.zig`'s `Serializer.load`.
+    ///
+    /// # Safety
+    /// `n` must not exceed reserved capacity, and every element in
+    /// `old_len..n` of each column must be fully written before any read
+    /// (including `re_index`, which reads `keys`). For `Copy` POD keys/values
+    /// (the only callers today) the intermediate uninit window is sound as
+    /// long as it is filled immediately.
+    pub unsafe fn set_entries_len(&mut self, n: usize) {
+        debug_assert!(n <= self.keys.capacity());
+        debug_assert!(n <= self.values.capacity());
+        debug_assert!(n <= self.hashes.capacity());
+        // SAFETY: caller contract above; matches Zig `.entries.len = n`.
+        unsafe {
+            self.keys.set_len(n);
+            self.values.set_len(n);
+            self.hashes.set_len(n);
+        }
+    }
+
     /// Zig `ensureTotalCapacityContext`: same as `ensure_total_capacity` but
     /// takes an explicit `ctx` for the stored key type. This port maintains no
     /// separate index header (lookup scans the cached `hashes` vec), so the

@@ -691,7 +691,9 @@ impl Version {
             tag,
             &sliced,
             Some(ctx.log),
-            ctx.package_manager.as_deref_mut(),
+            ctx.package_manager
+                .as_deref_mut()
+                .map(|m| m as &mut dyn NpmAliasRegistry),
         )
         .unwrap_or_default()
     }
@@ -1236,14 +1238,16 @@ pub union Value {
 impl Value {
     // TODO(port): `clone` is called in Version::clone but not defined in
     // dependency.zig — likely lives elsewhere or relies on Zig copy semantics.
-    pub fn clone<SB: StringBuilderLike>(
+    pub fn clone_in<SB: StringBuilderLike>(
         &self,
         _tag: Tag,
         _buf: &[u8],
         _builder: &mut SB,
     ) -> Result<Value, bun_core::Error> {
-        // TODO(port): implement Value::clone (not in source file)
-        unreachable!("Value::clone: port pending")
+        // Zig copies the union by value into the new builder context; the only
+        // builder-dependent piece is `literal`, which `Version::clone_in`
+        // already re-appends. Match Zig's shallow copy here.
+        Ok(Clone::clone(self))
     }
 }
 
@@ -1271,36 +1275,48 @@ pub fn is_windows_abs_path_with_leading_slashes(dep: &[u8]) -> Option<&[u8]> {
 }
 
 #[inline]
-pub fn parse(
+pub fn parse<'a, 'b>(
     alias: String,
-    alias_hash: Option<PackageNameHash>,
+    alias_hash: impl Into<Option<PackageNameHash>>,
     dependency: &[u8],
     sliced: &SlicedString,
-    log: Option<&mut logger::Log>,
-    manager: Option<&mut PackageManager>,
-) -> Option<Version> {
-    let dep = strings::trim_left(dependency, b" \t\n\r");
-    parse_with_tag(alias, alias_hash, dep, Tag::infer(dep), sliced, log, manager)
-}
-
-pub fn parse_with_optional_tag(
-    alias: String,
-    alias_hash: Option<PackageNameHash>,
-    dependency: &[u8],
-    tag: Option<Tag>,
-    sliced: &SlicedString,
-    log: Option<&mut logger::Log>,
-    package_manager: Option<&mut PackageManager>,
+    log: impl Into<Option<&'a mut logger::Log>>,
+    manager: impl Into<Option<&'b mut PackageManager>>,
 ) -> Option<Version> {
     let dep = strings::trim_left(dependency, b" \t\n\r");
     parse_with_tag(
         alias,
-        alias_hash,
+        alias_hash.into(),
+        dep,
+        Tag::infer(dep),
+        sliced,
+        log.into(),
+        manager
+            .into()
+            .map(|m| m as &mut dyn NpmAliasRegistry),
+    )
+}
+
+pub fn parse_with_optional_tag<'a, 'b>(
+    alias: String,
+    alias_hash: impl Into<Option<PackageNameHash>>,
+    dependency: &[u8],
+    tag: Option<Tag>,
+    sliced: &SlicedString,
+    log: impl Into<Option<&'a mut logger::Log>>,
+    package_manager: impl Into<Option<&'b mut PackageManager>>,
+) -> Option<Version> {
+    let dep = strings::trim_left(dependency, b" \t\n\r");
+    parse_with_tag(
+        alias,
+        alias_hash.into(),
         dep,
         tag.unwrap_or_else(|| Tag::infer(dep)),
         sliced,
-        log,
-        package_manager,
+        log.into(),
+        package_manager
+            .into()
+            .map(|m| m as &mut dyn NpmAliasRegistry),
     )
 }
 
@@ -1311,7 +1327,7 @@ pub fn parse_with_tag(
     tag: Tag,
     sliced: &SlicedString,
     log_: Option<&mut logger::Log>,
-    package_manager: Option<&mut PackageManager>,
+    package_manager: Option<&mut dyn NpmAliasRegistry>,
 ) -> Option<Version> {
     match tag {
         Tag::Npm => {
@@ -1371,10 +1387,8 @@ pub fn parse_with_tag(
 
             if is_alias {
                 if let Some(pm) = package_manager {
-                    // TODO(port): Zig moves `result` into the map by value; here we
-                    // can't both store and return ownership. Phase B: clone or
-                    // change map value type to track keys only.
-                    pm.known_npm_aliases.insert(alias_hash.unwrap(), ());
+                    // Zig: `pm.known_npm_aliases.put(alias_hash.?, result)`.
+                    pm.record_npm_alias(alias_hash.unwrap(), &result);
                 }
             }
 
@@ -1768,6 +1782,18 @@ bitflags::bitflags! {
 }
 
 impl Behavior {
+    /// (name, getter) table mirroring Zig's `@typeInfo(Behavior).@"struct".fields`
+    /// iteration (skipping the leading `_unused_1` and trailing `_unused_2` padding
+    /// bits). Used by debug JSON serialization in place of comptime field reflection.
+    pub const NAMED_FLAGS: &'static [(&'static str, fn(&Behavior) -> bool)] = &[
+        ("prod", |b| b.contains(Behavior::PROD)),
+        ("optional", |b| b.contains(Behavior::OPTIONAL)),
+        ("dev", |b| b.contains(Behavior::DEV)),
+        ("peer", |b| b.contains(Behavior::PEER)),
+        ("workspace", |b| b.contains(Behavior::WORKSPACE)),
+        ("bundled", |b| b.contains(Behavior::BUNDLED)),
+    ];
+
     #[inline]
     pub fn is_prod(self) -> bool {
         self.contains(Behavior::PROD)
@@ -1809,8 +1835,8 @@ impl Behavior {
     }
 
     #[inline]
-    pub fn includes(lhs: Behavior, rhs: Behavior) -> bool {
-        lhs.bits() & rhs.bits() != 0
+    pub fn includes(self, rhs: Behavior) -> bool {
+        self.bits() & rhs.bits() != 0
     }
 
     #[inline]
@@ -1827,9 +1853,18 @@ impl Behavior {
         new
     }
 
+    /// Zig: `Behavior.setOptional(this, value)` — toggles the OPTIONAL bit
+    /// in place. Named `set_optional` (not `set`) so it doesn't collide with
+    /// `bitflags::Flags::set`.
     #[inline]
-    pub fn cmp(self, rhs: Behavior) -> Ordering {
-        if Behavior::eq(self, rhs) {
+    pub fn set_optional(&mut self, value: bool) {
+        self.set(Behavior::OPTIONAL, value);
+    }
+
+    #[inline]
+    pub fn cmp(&self, rhs: &Behavior) -> Ordering {
+        let rhs = *rhs;
+        if Behavior::eq(*self, rhs) {
             return Ordering::Equal;
         }
 

@@ -201,6 +201,18 @@ impl<K, V, C> HashMap<K, V, C> {
         self.inner = std::collections::HashMap::default();
     }
 
+    /// Zig `ensureTotalCapacity` — reserve so the map can hold at least `n`
+    /// entries without reallocating. `Result` kept for call-site `?` symmetry
+    /// with the Zig OOM-propagating API; `std::HashMap::reserve` aborts on OOM.
+    pub fn ensure_total_capacity(&mut self, n: usize) -> Result<(), bun_alloc::AllocError>
+    where
+        K: Eq + core::hash::Hash,
+    {
+        let need = n.saturating_sub(self.inner.len());
+        self.inner.reserve(need);
+        Ok(())
+    }
+
     /// Zig `lockPointers` — debug-mode pointer-stability assertion. The std
     /// `HashMap` backing has no such mode; no-op stub kept so the Zig
     /// lock/unlock bracketing translates without `#[cfg]` noise at every call

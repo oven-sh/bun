@@ -790,17 +790,27 @@ impl PackageManager {
         &mut self,
         ctx: Command::Context,
         log_level: package_manager_options::LogLevel,
-    ) -> Result<transpiler::Transpiler<'static>, Error> {
+    ) -> Result<&mut transpiler::Transpiler<'static>, Error> {
         // TODO(port): narrow error set
-        CONFIGURE_ENV_FOR_SCRIPTS_ONCE.call((self, ctx, log_level))
+        // PORT NOTE: Zig `bun.once` caches the `Transpiler` value and returns it on
+        // subsequent calls. `Transpiler` is non-`Copy` (and self-referential via
+        // `linker.options = &options`), so cache by pointer in a process-static.
+        // SAFETY: `PackageManager` is a leaked singleton; main-thread-only call site.
+        unsafe {
+            if CONFIGURE_ENV_FOR_SCRIPTS_ONCE.is_null() {
+                let t = configure_env_for_scripts_run(self, ctx, log_level)?;
+                CONFIGURE_ENV_FOR_SCRIPTS_ONCE = Box::into_raw(Box::new(t));
+            }
+            Ok(&mut *CONFIGURE_ENV_FOR_SCRIPTS_ONCE)
+        }
     }
 
-    pub fn http_proxy(&self, url: URL) -> Option<URL> {
-        self.env().get_http_proxy_for(url)
+    pub fn http_proxy<'u>(&mut self, url: &'u URL<'u>) -> Option<URL<'u>> {
+        self.env_mut().get_http_proxy_for(url)
     }
 
-    pub fn tls_reject_unauthorized(&self) -> bool {
-        self.env().get_tls_reject_unauthorized()
+    pub fn tls_reject_unauthorized(&mut self) -> bool {
+        self.env_mut().get_tls_reject_unauthorized()
     }
 
     pub fn compute_is_continuous_integration(&self) -> bool {
@@ -827,9 +837,11 @@ impl PackageManager {
         err: Error,
     ) {
         if let Some(ctx) = self.on_wake.context {
+            // Disambiguate `Clone::clone` from the inherent
+            // `Dependency::clone(&self, pm, buf, builder)` rebuilder.
             (self.on_wake.geton_dependency_error())(
                 ctx.as_ptr(),
-                dependency.clone(),
+                Clone::clone(dependency),
                 dependency_id,
                 err,
             );
@@ -927,7 +939,13 @@ impl PackageManager {
 
     pub fn ensure_temp_node_gyp_script(&mut self) -> Result<(), Error> {
         // TODO(port): narrow error set
-        ENSURE_TEMP_NODE_GYP_SCRIPT_ONCE.call((self,))
+        // PORT NOTE: Zig `bun.once` caches the `()` result. The body itself is
+        // already idempotent (early-returns when `node_gyp_tempdir_name` is
+        // non-empty), so a simple `AtomicBool` ran-flag matches semantics.
+        if ENSURE_TEMP_NODE_GYP_SCRIPT_ONCE.swap(true, Ordering::AcqRel) {
+            return Ok(());
+        }
+        ensure_temp_node_gyp_script_run(self)
     }
 
     // Helper: deref env (UNKNOWN ownership wrapper)
@@ -948,10 +966,10 @@ impl PackageManager {
 // ──────────────────────────────────────────────────────────────────────────
 
 // TODO(port): bun.once returns a struct whose .call() runs the closure exactly once
-// and caches the result. Mapping to bun_core::Once with the run fn below.
-pub static CONFIGURE_ENV_FOR_SCRIPTS_ONCE: Once<
-    fn(&mut PackageManager, Command::Context, package_manager_options::LogLevel) -> Result<transpiler::Transpiler<'static>, Error>,
-> = Once::new(configure_env_for_scripts_run);
+// and caches the result. `Transpiler` is non-`Copy` and self-referential, so cache
+// a process-static raw pointer (mirrors Zig `var ..: Transpiler = undefined;`).
+static mut CONFIGURE_ENV_FOR_SCRIPTS_ONCE: *mut transpiler::Transpiler<'static> =
+    core::ptr::null_mut();
 
 fn configure_env_for_scripts_run(
     this: &mut PackageManager,
@@ -1046,8 +1064,7 @@ fn configure_env_for_scripts_run(
     Ok(this_transpiler)
 }
 
-static ENSURE_TEMP_NODE_GYP_SCRIPT_ONCE: Once<fn(&mut PackageManager) -> Result<(), Error>> =
-    Once::new(ensure_temp_node_gyp_script_run);
+static ENSURE_TEMP_NODE_GYP_SCRIPT_ONCE: AtomicBool = AtomicBool::new(false);
 
 fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), Error> {
     if !manager.node_gyp_tempdir_name.is_empty() {

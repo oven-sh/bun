@@ -14,20 +14,21 @@ use bun_str::strings;
 use bun_sys::File;
 
 use crate::{
-    self as install, bun_json, default_trusted_dependencies, dependency, initialize_store,
+    self as install, bin, bun_json, default_trusted_dependencies, dependency, initialize_store,
     invalid_package_id, Aligner, Bin, Dependency, ExternalStringList, ExternalStringMap, Features,
     Npm, PackageID, PackageJSON, PackageManager, PackageNameHash, Repository,
     TruncatedPackageNameHash, UpdateRequest,
 };
+use crate::bun_json::ExprAccessors as _;
 use crate::dependency::Behavior;
 // `Package.rs` is mounted as `crate::lockfile_real::package`; the parent module
 // (`super`) is the real `lockfile.rs`, distinct from the `crate::lockfile`
 // stub that lib.rs exposes for downstream crates during the staged port.
-// PORT NOTE: `use super::{self as lockfile, ...}` is rejected by rustc (E0432:
-// "no `super` in the root" — rust-lang/rust#48067), so the parent-module alias
-// is hoisted to its own `use super as lockfile;` line.
-use super as lockfile;
-use super::{
+// PORT NOTE: bare `use super as lockfile;` fails when this file is reached via
+// `#[path]` from a non-module context (rust-lang/rust#48067). Name the parent
+// module by its absolute crate path instead.
+use crate::lockfile_real as lockfile;
+use crate::lockfile_real::{
     assert_no_uninitialized_padding, Cloner, DependencySlice, Lockfile,
     PackageIDSlice, PatchedDep, PendingResolution, PositionalStream, Stream, StringBuilder,
     TrustedDependenciesSet,
@@ -52,7 +53,14 @@ bun_output::declare_scope!(Lockfile, hidden);
 // Zig: `pub fn Package(comptime SemverIntType: type) type { return extern struct { ... } }`
 // Defaulted to `u64` so bare `Package` matches Zig's primary `Package(u64)`
 // instantiation (the only one the lockfile/PM call sites name unqualified).
+//
+// `#[derive(MultiArrayElement)]` generates `PackageField` (column enum),
+// `PackageListExt` (`items_<field>{,_mut}()` on `MultiArrayList<Package<_>>`)
+// and `PackageSliceExt` (`<field>{,_mut}()` on `Slice<Package<_>>`) so the
+// SoA column accessors used throughout `lockfile.rs` / `Tree.rs` / migrators
+// resolve. Mirrors Zig's `MultiArrayList(Package).items(.field)`.
 #[repr(C)]
+#[derive(bun_collections::MultiArrayElement)]
 pub struct Package<SemverIntType: VersionInt = u64> {
     pub name: String,
     pub name_hash: PackageNameHash,
@@ -94,10 +102,159 @@ pub struct Package<SemverIntType: VersionInt = u64> {
 
 type Resolution<SemverIntType> = ResolutionType<SemverIntType>;
 
+// ─── ResolverContext ─────────────────────────────────────────────────────────
+//
+// Zig used `comptime ResolverContext: type` for `parse`/`parseWithJSON` and
+// branched on `ResolverContext == void` / `== PackageManager.GitResolver` at
+// comptime. Rust models this as a trait with associated consts; concrete
+// resolvers (folder/cache/git) override what they need. The `()` impl gives
+// the `void` semantics.
+pub trait ResolverContext {
+    /// Zig: `comptime ResolverContext == void`.
+    const IS_VOID: bool = false;
+    /// Zig: `comptime ResolverContext == PackageManager.GitResolver`.
+    const IS_GIT_RESOLVER: bool = false;
+
+    /// Zig: `ResolverContext.checkBundledDependencies()`.
+    fn check_bundled_dependencies() -> bool { false }
+
+    /// Zig: `resolver.count(builder, json)` — counts strings to be appended by
+    /// `resolve`. Default no-op for void/folder resolvers that don't need it.
+    fn count(&mut self, _builder: &mut StringBuilder<'_>, _json: &Expr) {}
+
+    /// Zig: `resolver.resolve(builder, json)` — produces the package's
+    /// `Resolution`. Only called when `!IS_VOID`.
+    fn resolve<SemverIntType: VersionInt>(
+        &mut self,
+        _builder: &mut StringBuilder<'_>,
+        _json: &Expr,
+    ) -> Result<ResolutionType<SemverIntType>, bun_core::Error> {
+        // Default: callers gate on `!IS_VOID`; non-void resolvers must override.
+        todo!("blocked_on: ResolverContext::resolve impl for {}", core::any::type_name::<Self>())
+    }
+
+    // ── GitResolver-only surface ────────────────────────────────────────────
+    // Zig accessed `resolver.resolved`, `resolver.new_name`, `resolver.dep_id`
+    // directly when `ResolverContext == GitResolver`. Trait methods so non-git
+    // resolvers don't need the fields; default impls are dead code (gated on
+    // `IS_GIT_RESOLVER`).
+    fn resolution<SemverIntType: VersionInt>(&self) -> &ResolutionType<SemverIntType> {
+        unreachable!("ResolverContext::resolution called on non-git resolver")
+    }
+    fn dep_id(&self) -> install::DependencyID {
+        unreachable!("ResolverContext::dep_id called on non-git resolver")
+    }
+    fn new_name(&self) -> &[u8] { b"" }
+    fn set_new_name(&mut self, _name: Vec<u8>) {}
+    fn take_new_name(&mut self) -> Vec<u8> { Vec::new() }
+}
+
+impl ResolverContext for () {
+    const IS_VOID: bool = true;
+}
+
+// ─── MultiArrayElement ───────────────────────────────────────────────────────
+//
+// Zig got per-field metadata via `@typeInfo(Package)`; the Rust
+// `MultiArrayList` requires the `MultiArrayElement` trait. The derive macro
+// can't be used here because `Package` is generic over `SemverIntType`, so
+// expand it by hand. Field order matches struct declaration; alignment-sorted
+// indices computed at first use by the serializer.
+#[repr(usize)]
+#[derive(Copy, Clone)]
+pub enum PackageField {
+    Name = 0,
+    NameHash = 1,
+    Resolution = 2,
+    Dependencies = 3,
+    Resolutions = 4,
+    Meta = 5,
+    Bin = 6,
+    Scripts = 7,
+}
+
+impl PackageField {
+    pub const ALL: [PackageField; 8] = [
+        PackageField::Name,
+        PackageField::NameHash,
+        PackageField::Resolution,
+        PackageField::Dependencies,
+        PackageField::Resolutions,
+        PackageField::Meta,
+        PackageField::Bin,
+        PackageField::Scripts,
+    ];
+
+    pub fn name(self) -> &'static [u8] {
+        match self {
+            PackageField::Name => b"name",
+            PackageField::NameHash => b"name_hash",
+            PackageField::Resolution => b"resolution",
+            PackageField::Dependencies => b"dependencies",
+            PackageField::Resolutions => b"resolutions",
+            PackageField::Meta => b"meta",
+            PackageField::Bin => b"bin",
+            PackageField::Scripts => b"scripts",
+        }
+    }
+}
+
+impl<SemverIntType: VersionInt> bun_collections::MultiArrayElement for Package<SemverIntType> {
+    type Field = PackageField;
+    const FIELD_COUNT: usize = 8;
+    const ALIGN: usize = mem::align_of::<Package<SemverIntType>>();
+    // TODO(port): SIZES_BYTES/SIZES_FIELDS must be alignment-sorted per
+    // `std.MultiArrayList`. Const-evaluating that sort is awkward in stable
+    // Rust; the binary lockfile serializer recomputes sizes itself, so use
+    // declaration order here and revisit once `Serializer` lands.
+    const SIZES_BYTES: &'static [usize] = &[
+        mem::size_of::<String>(),
+        mem::size_of::<PackageNameHash>(),
+        mem::size_of::<ResolutionType<SemverIntType>>(),
+        mem::size_of::<DependencySlice>(),
+        mem::size_of::<PackageIDSlice>(),
+        mem::size_of::<Meta>(),
+        mem::size_of::<Bin>(),
+        mem::size_of::<Scripts>(),
+    ];
+    const SIZES_FIELDS: &'static [usize] = &[0, 1, 2, 3, 4, 5, 6, 7];
+
+    #[inline]
+    fn field_index(field: Self::Field) -> usize { field as usize }
+
+    unsafe fn scatter(self, ptrs: &[*mut u8], index: usize) {
+        unsafe {
+            (ptrs[0] as *mut String).add(index).write(self.name);
+            (ptrs[1] as *mut PackageNameHash).add(index).write(self.name_hash);
+            (ptrs[2] as *mut ResolutionType<SemverIntType>).add(index).write(self.resolution);
+            (ptrs[3] as *mut DependencySlice).add(index).write(self.dependencies);
+            (ptrs[4] as *mut PackageIDSlice).add(index).write(self.resolutions);
+            (ptrs[5] as *mut Meta).add(index).write(self.meta);
+            (ptrs[6] as *mut Bin).add(index).write(self.bin);
+            (ptrs[7] as *mut Scripts).add(index).write(self.scripts);
+        }
+    }
+
+    unsafe fn gather(ptrs: &[*mut u8], index: usize) -> Self {
+        unsafe {
+            Self {
+                name: (ptrs[0] as *const String).add(index).read(),
+                name_hash: (ptrs[1] as *const PackageNameHash).add(index).read(),
+                resolution: (ptrs[2] as *const ResolutionType<SemverIntType>).add(index).read(),
+                dependencies: (ptrs[3] as *const DependencySlice).add(index).read(),
+                resolutions: (ptrs[4] as *const PackageIDSlice).add(index).read(),
+                meta: (ptrs[5] as *const Meta).add(index).read(),
+                bin: (ptrs[6] as *const Bin).add(index).read(),
+                scripts: (ptrs[7] as *const Scripts).add(index).read(),
+            }
+        }
+    }
+}
+
 /// `Package.List` (Zig: `MultiArrayList(Package)`). The associated-type
 /// indirection lets `lockfile.rs` name `<Package as PackageListProvider>::List`
 /// without instantiating the generic at the field site.
-impl<SemverIntType: VersionInt> super::PackageListProvider for Package<SemverIntType> {
+impl<SemverIntType: VersionInt> lockfile::PackageListProvider for Package<SemverIntType> {
     type List = MultiArrayList<Package<SemverIntType>>;
 }
 

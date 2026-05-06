@@ -788,14 +788,14 @@ impl Repository {
                 );
 
                 let repo_path = bun_sys::get_fd_path(
-                    bun_sys::Fd::from_std_dir(repo_dir),
+                    bun_sys::Fd::from_std_dir(&repo_dir),
                     // SAFETY: raw-ptr field projection — disjoint from `folder_name_buf`
                     // borrow above. See tl_bufs().
                     unsafe { &mut (*bufs).final_path_buf },
                 )?;
 
                 if let Err(err) = Self::exec(
-                    env.clone(),
+                    env,
                     &[
                         b"git",
                         b"clone",
@@ -839,13 +839,13 @@ impl Repository {
                 if !resolved.is_empty() {
                     'insert_tag: {
                         let Ok(git_tag) = dir.create_file_z(
-                            b".bun-tag\0",
+                            bun_core::zstr!(".bun-tag"),
                             bun_sys::CreateFlags { truncate: true, ..Default::default() },
                         ) else {
                             break 'insert_tag;
                         };
                         if git_tag.write_all(resolved).is_err() {
-                            let _ = dir.delete_file_z(b".bun-tag\0");
+                            let _ = dir.delete_file_z(bun_core::zstr!(".bun-tag"));
                         }
                         git_tag.close();
                     }
@@ -858,7 +858,7 @@ impl Repository {
         // expose RAII close; for now closed explicitly below on all paths.
 
         let (json_file, json_buf) =
-            match bun_sys::File::read_file_from(package_dir, b"package.json").unwrap() {
+            match bun_sys::File::read_file_from(package_dir.fd(), b"package.json") {
                 Ok(v) => v,
                 Err(err) => {
                     if err == err!("ENOENT") {
@@ -887,7 +887,7 @@ impl Repository {
             };
 
         // SAFETY: raw-ptr field projection — retags only `json_path_buf`. See tl_bufs().
-        let json_path = match json_file.get_path(unsafe { &mut (*bufs).json_path_buf }).unwrap() {
+        let json_path = match json_file.get_path(unsafe { &mut (*bufs).json_path_buf }) {
             Ok(p) => p,
             Err(err) => {
                 log.add_error_fmt(
@@ -908,7 +908,7 @@ impl Repository {
 
         // MOVE_DOWN(b0): bun_resolver::fs → bun_sys::fs
         let ret_json_path = bun_sys::fs::FileSystem::instance()
-            .dirname_store
+            .dirname_store()
             .append(json_path)?;
 
         json_file.close();
@@ -918,9 +918,10 @@ impl Repository {
             url: url.into(),
             resolved: resolved.into(),
             json: Some(Install::ExtractDataJson {
-                path: ret_json_path,
+                path: ret_json_path.into(),
                 buf: json_buf,
             }),
+            ..Default::default()
         })
     }
 }

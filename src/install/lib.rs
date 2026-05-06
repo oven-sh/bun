@@ -199,6 +199,54 @@ pub mod resolution {
             }
         }
     }
+
+    impl Resolution {
+        /// Port of `Resolution.init` (src/install/resolution.zig). Constructs a
+        /// `Resolution` with the given tagged value (Zig used a tagged-union
+        /// init; here `Value` is a flat struct so the tag selects which field
+        /// is meaningful).
+        pub fn init(tag: Tag, value: Value) -> Self {
+            Resolution { tag, _padding: [0; 7], value }
+        }
+
+        /// Port of `Resolution.eql` (src/install/resolution.zig:122).
+        pub fn eql(&self, rhs: &Self, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool {
+            if self.tag != rhs.tag {
+                return false;
+            }
+            match self.tag {
+                Tag::Npm => {
+                    self.value.npm.version.eql(rhs.value.npm.version)
+                        && self.value.npm.url.eql(&rhs.value.npm.url, lhs_buf, rhs_buf)
+                }
+                Tag::Folder => self.value.folder.eql(&rhs.value.folder, lhs_buf, rhs_buf),
+                Tag::LocalTarball => {
+                    self.value.local_tarball.eql(&rhs.value.local_tarball, lhs_buf, rhs_buf)
+                }
+                Tag::RemoteTarball => {
+                    self.value.remote_tarball.eql(&rhs.value.remote_tarball, lhs_buf, rhs_buf)
+                }
+                Tag::Workspace => {
+                    self.value.workspace.eql(&rhs.value.workspace, lhs_buf, rhs_buf)
+                }
+                Tag::Symlink => self.value.symlink.eql(&rhs.value.symlink, lhs_buf, rhs_buf),
+                Tag::Git => self.value.git.eql(&rhs.value.git, lhs_buf, rhs_buf),
+                Tag::Github => self.value.github.eql(&rhs.value.github, lhs_buf, rhs_buf),
+                Tag::Root | Tag::Uninitialized | Tag::SingleFileModule => true,
+            }
+        }
+
+        /// Port of `Resolution.fromTextLockfile` (src/install/resolution.zig).
+        /// Real body lives in `resolution_real::ResolutionType::from_text_lockfile`;
+        /// this stub bridges until the stub/real `Resolution` types unify
+        /// (reconciler-6).
+        pub fn from_text_lockfile(
+            _res_str: &[u8],
+            _string_buf: &mut bun_semver::semver_string::Buf,
+        ) -> Result<Self, bun_core::Error> {
+            todo!("blocked_on: resolution stub/real unify (reconciler-6)")
+        }
+    }
 }
 #[path = "PnpmMatcher.rs"]
 pub mod pnpm_matcher;
@@ -869,6 +917,8 @@ pub mod lockfile {
         #[inline] pub fn items_resolutions(&self) -> &[ExternalSlice<PackageID>] { &self.resolutions }
         #[inline] pub fn items_resolution(&self) -> &[Resolution] { &self.resolution }
         #[inline] pub fn items_meta(&self) -> &[package::Meta] { &self.meta }
+        #[inline] pub fn items_bin(&self) -> &[crate::bin::Bin] { &self.bin }
+        #[inline] pub fn items_scripts(&self) -> &[package::scripts::Scripts] { &self.scripts }
         /// Reserve capacity across all column vecs (Zig: `MultiArrayList.ensureUnusedCapacity`).
         pub fn reserve(&mut self, additional: usize) {
             self.name.reserve(additional);
@@ -910,6 +960,10 @@ pub mod lockfile {
         pub dependencies: Vec<Dependency>,
         pub resolutions: Vec<PackageID>,
         pub extern_strings: Vec<bun_semver::ExternalString>,
+        /// Zig: `Buffers.trees: Tree.List` (src/install/lockfile/Buffers.zig).
+        pub trees: Vec<tree::Tree>,
+        /// Zig: `Buffers.hoisted_dependencies: DependencyID.List`.
+        pub hoisted_dependencies: Vec<DependencyID>,
     }
     #[derive(Default)] pub struct PatchedDep;
     /// Port of `Lockfile.LoadResult.Err.step` (src/install/lockfile.zig).
@@ -1687,6 +1741,14 @@ impl RootPackageId {
     pub root_package_id: RootPackageId,
     /// Zig: `workspace_name_hash: ?PackageNameHash = null`.
     pub workspace_name_hash: Option<PackageNameHash>,
+    /// Zig: `updating_packages: bun.StringArrayHashMapUnmanaged(PackageUpdateInfo)`
+    /// — dependency name → original version info, populated by
+    /// `PackageJSONEditor` for `bun update` without explicit names.
+    pub updating_packages:
+        bun_collections::StringArrayHashMap<package_manager_real::PackageUpdateInfo>,
+    /// Zig: `track_installed_bin: TrackInstalledBin = .none` — tree printer
+    /// records the first installed binary's basename for `bunx` follow-up.
+    pub track_installed_bin: package_manager_real::TrackInstalledBin,
     /// Zig: `env: *DotEnv.Loader` (src/install/PackageManager.zig:11) — set
     /// once by `PackageManager.init()` and never null afterward. `Option` is
     /// only the `Default`-derive sentinel; accessors `env()`/`env_mut()` unwrap
@@ -1725,6 +1787,30 @@ impl RootPackageId {
     pub update_requests: Box<[update_request::UpdateRequest]>,
     /// Zig: `event_loop: jsc.AnyEventLoop`.
     pub event_loop: bun_event_loop::AnyEventLoop<'static>,
+    /// Zig: `progress: Progress = .{}` (src/install/PackageManager.zig).
+    pub progress: bun_progress::Progress,
+    /// Zig: `downloads_node: ?*Progress.Node = null` — points into `progress`.
+    pub downloads_node: Option<*mut bun_progress::Node>,
+    /// Zig: `scripts_node: ?*Progress.Node = null` — caller stack-local.
+    pub scripts_node: Option<core::ptr::NonNull<bun_progress::Node>>,
+    /// Zig: `log: *logger.Log` — borrowed from `Command.Context`. Stored as
+    /// `Option<NonNull>` (not `*mut`) so the struct keeps `#[derive(Default)]`;
+    /// callers deref via `self.log.unwrap().as_ptr()` mirroring Zig's
+    /// non-optional `*Log` (set once at `init()`).
+    pub log: Option<core::ptr::NonNull<bun_logger::Log>>,
+    /// Zig: `pending_tasks: std.atomic.Value(u32) = .init(0)`.
+    pub pending_tasks: core::sync::atomic::AtomicU32,
+    /// Zig: `total_tasks: u32 = 0`.
+    pub total_tasks: u32,
+    /// Zig: `finished_installing: std.atomic.Value(bool) = .init(false)`.
+    pub finished_installing: core::sync::atomic::AtomicBool,
+    /// Zig: `pending_lifecycle_script_tasks: std.atomic.Value(u32) = .init(0)`.
+    pub pending_lifecycle_script_tasks: core::sync::atomic::AtomicU32,
+    /// Zig: `active_lifecycle_scripts: LifecycleScriptSubprocess.List` —
+    /// intrusive min-heap of currently-running lifecycle subprocesses.
+    pub active_lifecycle_scripts: lifecycle_script_runner::List<'static>,
+    /// Zig: `lifecycle_script_time_log: LifecycleScriptTimeLog`.
+    pub lifecycle_script_time_log: package_manager_real::LifecycleScriptTimeLog,
 }
 #[derive(Default)] pub struct PackageManagerOptionsStub {
     pub log_level: package_manager::Options::LogLevel,
@@ -1791,6 +1877,8 @@ impl From<Access> for &'static str {
 }
 #[derive(Default)] pub struct PackageManagerEnableStub {
     pub manifest_cache: bool,
+    /// Zig: `Options.Enable.force_install: bool`.
+    pub force_install: bool,
     pub manifest_cache_control: bool,
     /// Zig: `Options.Enable.cache` — drives the `ensureCacheDirectory`
     /// fallback to `node_modules/.cache`.
@@ -1885,6 +1973,92 @@ static mut PACKAGE_MANAGER_INSTANCE: *mut PackageManager = core::ptr::null_mut()
 
 impl PackageManager {
     pub fn verbose_install() -> bool { false }
+
+    /// Port of `PackageManager.pendingTaskCount`
+    /// (src/install/PackageManager/runTasks.zig). Method form so call sites
+    /// (`hoisted_install`, `isolated_install`, `PopulateManifestCache`) match
+    /// the Zig spelling `manager.pendingTaskCount()`.
+    #[inline]
+    pub fn pending_task_count(&self) -> u32 {
+        self.pending_tasks.load(core::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Port of `TimePasser.hasEnoughTimePassedBetweenWaitingMessages`
+    /// (src/install/PackageManager.zig). Debounces "waiting for N tasks" log
+    /// lines to once per event-loop iteration. Main-thread only.
+    pub fn has_enough_time_passed_between_waiting_messages() -> bool {
+        // SAFETY: only ever called from the main thread inside the install
+        // tick loop (Zig spec uses a plain `pub var`).
+        static mut LAST_TIME: u64 = 0;
+        let iter = Self::get().event_loop.iteration_number();
+        unsafe {
+            if LAST_TIME < iter {
+                LAST_TIME = iter;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Port of `PackageManager.sleepUntil` (src/install/PackageManager.zig:424).
+    ///
+    /// Associated fn taking `*mut PackageManager` (NOT `&mut self`): every
+    /// `is_done_fn` body in this crate reborrows the *whole* `PackageManager`
+    /// from a raw pointer stashed in `C` (`&mut *closure.manager`). If this
+    /// were a `&mut self` method, that whole-struct Unique retag would pop
+    /// `self`'s tag under Stacked Borrows, making the next loop-iteration
+    /// deref UB. Zig spec has no such constraint because Zig `*T` is
+    /// non-exclusive.
+    ///
+    /// SAFETY: `this` must be valid for `&mut` access between callback
+    /// invocations; while `is_done_fn` runs, the callback owns the unique
+    /// `&mut PackageManager` and `sleep_until`/`tick_raw` hold no borrow.
+    pub unsafe fn sleep_until<C>(
+        this: *mut PackageManager,
+        closure: &mut C,
+        is_done_fn: fn(&mut C) -> bool,
+    ) {
+        bun_core::Output::flush();
+        // SAFETY: caller contract — `this` is valid for the loop duration; we
+        // only touch `event_loop` between `is_done_fn` invocations.
+        unsafe {
+            (*this).event_loop.tick_raw(closure, is_done_fn);
+        }
+    }
+
+    /// Port of `PackageManager.runTasks` (src/install/PackageManager/runTasks.zig).
+    /// The Zig signature is `runTasks(comptime Ctx: type, ctx: Ctx, comptime
+    /// callbacks: anytype, install_peer: bool, log_level)` — duck-typed
+    /// callbacks struct with optional `void` slots. Method form so call sites
+    /// keep `manager.runTasks(...)`.
+    pub fn run_tasks<Ctx, E, R, M, D>(
+        &mut self,
+        _extract_ctx: &mut Ctx,
+        _callbacks: RunTasksCallbacks<E, R, M, D>,
+        _install_peer: bool,
+        _log_level: package_manager::Options::LogLevel,
+    ) -> Result<(), bun_core::Error> {
+        // Full body lives in `package_manager_real::run_tasks` and operates on
+        // the un-stubbed field set (`network_tarball_batch`, `task_queue`,
+        // `manifests`, ...). The stub `PackageManager` cannot satisfy that
+        // surface yet, so defer until the type unification (reconciler-6).
+        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) — runTasks needs network/task fields")
+    }
+
+    /// Stub: `PackageManager.setNodeName` — full body lives in
+    /// `package_manager_real::progress_mod` (ProgressStrings.rs); the stub
+    /// `bun_progress::Node` carries no name buffer, so this is a no-op until
+    /// the real `PackageManager` un-gates.
+    pub fn set_node_name(
+        &self,
+        _node: &bun_progress::Node,
+        _name: &[u8],
+        _emoji: &str,
+        _is_first: bool,
+    ) {
+        // TODO(port): blocked_on package_manager_real un-gate — real impl
+        // writes into self.progress_name_buf and sets node.name.
+    }
 
     /// Port of `PackageManager.sleepUntil` (src/install/PackageManager.zig).
     /// Spins the event loop, calling `is_done_fn(closure)` between ticks until

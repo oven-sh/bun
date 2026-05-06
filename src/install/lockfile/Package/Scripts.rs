@@ -4,10 +4,10 @@ use bstr::BStr;
 
 use bun_core::{output, ZBox};
 use bun_core::fmt::PathSep;
-use bun_install::lockfile::{Lockfile, StringBuilder as LockfileStringBuilder};
+use bun_install::lockfile::Lockfile;
 use bun_install::lockfile::package::Package;
 use bun_install::lockfile::Scripts as LockfileScripts;
-use bun_install::{initialize_store, Resolution};
+use bun_install::{initialize_store, Resolution, ResolutionTag};
 use bun_js_parser::Expr;
 use bun_logger as logger;
 use bun_paths::{self, AbsPath, PathBuffer, SEP_STR};
@@ -16,6 +16,10 @@ use bun_str::strings;
 use bun_sys::{self, Fd};
 
 use crate::bun_json;
+// PORT NOTE: Zig used `comptime Builder: type` duck-typing for the builder
+// param. The only concrete instantiation in install is `*Lockfile.StringBuilder`,
+// so we take `crate::lockfile_real::StringBuilder` directly (matches Meta.rs).
+use crate::lockfile_real::{Lockfile as RealLockfile, StringBuilder as LockfileStringBuilder};
 
 bun_output::declare_scope!(Lockfile, hidden);
 
@@ -74,21 +78,17 @@ impl Scripts {
     }
 
     pub fn eql(l: &Scripts, r: &Scripts, l_buf: &[u8], r_buf: &[u8]) -> bool {
-        l.preinstall.eql(&r.preinstall, l_buf, r_buf)
-            && l.install.eql(&r.install, l_buf, r_buf)
-            && l.postinstall.eql(&r.postinstall, l_buf, r_buf)
-            && l.preprepare.eql(&r.preprepare, l_buf, r_buf)
-            && l.prepare.eql(&r.prepare, l_buf, r_buf)
-            && l.postprepare.eql(&r.postprepare, l_buf, r_buf)
+        l.preinstall.eql(r.preinstall, l_buf, r_buf)
+            && l.install.eql(r.install, l_buf, r_buf)
+            && l.postinstall.eql(r.postinstall, l_buf, r_buf)
+            && l.preprepare.eql(r.preprepare, l_buf, r_buf)
+            && l.prepare.eql(r.prepare, l_buf, r_buf)
+            && l.postprepare.eql(r.postprepare, l_buf, r_buf)
     }
 
-    // TODO(port): Zig signature is `(comptime Builder: type, builder: Builder)`.
-    // Callers pass either `*Lockfile.StringBuilder` or similar; bound left loose
-    // for Phase B to tighten (needs `.append::<SemverString>(&[u8]) -> SemverString`).
-    pub fn clone<B>(&self, buf: &[u8], builder: &mut B) -> Scripts
-    where
-        B: LockfileStringBuilderLike,
-    {
+    /// Named `clone_into` (not `clone`) to avoid shadowing `Clone::clone`.
+    /// Mirrors Zig `Scripts.clone(buf, Builder, builder)`.
+    pub fn clone_into(&self, buf: &[u8], builder: &mut LockfileStringBuilder<'_>) -> Scripts {
         if !self.filled {
             return Scripts::default();
         }
@@ -97,16 +97,13 @@ impl Scripts {
             ..Scripts::default()
         };
         for (dst, src) in scripts.hooks_mut().into_iter().zip(self.hooks()) {
-            *dst = builder.append_string(src.slice(buf));
+            *dst = builder.append::<SemverString>(src.slice(buf));
         }
         // PERF(port): was `inline for` over comptime name list — profile in Phase B
         scripts
     }
 
-    pub fn count<B>(&self, buf: &[u8], builder: &mut B)
-    where
-        B: LockfileStringBuilderLike,
-    {
+    pub fn count(&self, buf: &[u8], builder: &mut LockfileStringBuilder<'_>) {
         for hook in self.hooks() {
             builder.count(hook.slice(buf));
         }
@@ -127,7 +124,7 @@ impl Scripts {
         &self,
         lockfile: &Lockfile,
         lockfile_buf: &[u8],
-        resolution_tag: Resolution::Tag,
+        resolution_tag: ResolutionTag,
         add_node_gyp_rebuild_script: bool,
     ) -> (i8, u8, [Option<Box<[u8]>>; SCRIPT_NAMES_LEN]) {
         // `lockfile.allocator` dropped — global mimalloc; `Box::from` dupes.
@@ -177,7 +174,7 @@ impl Scripts {
         }
 
         match resolution_tag {
-            Resolution::Tag::Git | Resolution::Tag::Github | Resolution::Tag::Root => {
+            ResolutionTag::Git | ResolutionTag::Github | ResolutionTag::Root => {
                 let prepare_scripts = [&self.preprepare, &self.prepare, &self.postprepare];
 
                 for script in prepare_scripts {
@@ -193,7 +190,7 @@ impl Scripts {
                 }
                 // PERF(port): was `inline for` over tuple — profile in Phase B
             }
-            Resolution::Tag::Workspace => {
+            ResolutionTag::Workspace => {
                 script_index += 1;
                 if !self.prepare.is_empty() {
                     if first_script_index == -1 {

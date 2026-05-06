@@ -264,6 +264,22 @@ impl<T> Default for MultiArrayList<T> {
     }
 }
 
+// Unconstrained accessors so downstream can name `MultiArrayList<Foo>` and
+// query length before `Foo: MultiArrayElement` is derived (see PORT NOTE on
+// the struct above).
+impl<T> MultiArrayList<T> {
+    /// Number of elements. Kept unconstrained — does not need column layout.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+}
+
 impl<T: MultiArrayElement> MultiArrayList<T> {
     pub const EMPTY: Self = Self {
         bytes: ptr::null_mut(),
@@ -847,11 +863,6 @@ impl<T: MultiArrayElement> MultiArrayList<T> {
             // SAFETY: `bytes` was allocated with exactly `layout`.
             unsafe { alloc::dealloc(self.bytes, layout) };
         }
-    }
-
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.len
     }
 
     /// Zig `self.len = new_len`. Exposed for callers that pre-reserve capacity

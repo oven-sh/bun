@@ -45,8 +45,8 @@ impl OverrideMap {
         impl<'a> Ctx<'a> {
             pub fn less_than(&self, l: usize, r: usize) -> bool {
                 let deps = self.override_deps;
-                let l_dep = deps[l];
-                let r_dep = deps[r];
+                let l_dep = &deps[l];
+                let r_dep = &deps[r];
 
                 let buf = self.buf;
                 l_dep.name.order(&r_dep.name, buf, buf) == core::cmp::Ordering::Less

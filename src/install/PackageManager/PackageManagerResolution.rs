@@ -6,8 +6,12 @@ use bun_str::strings;
 
 use crate::{
     invalid_package_id, Dependency, DependencyID, FolderResolution, Lockfile, Npm, PackageID,
-    PackageManager, PackageNameHash, Resolution,
+    PackageNameHash, Resolution,
 };
+// `impl PackageManager` here targets the real `package_manager_real::PackageManager`
+// (which carries `.manifests` / `.options.registries`), not the lib.rs stub —
+// matches `ProgressStrings.rs` / `PackageManagerLifecycle.rs`.
+use super::PackageManager;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Free-function re-export surface — Zig declares these at file scope with an

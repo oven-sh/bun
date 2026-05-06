@@ -2371,7 +2371,7 @@ impl PostgresSQLConnection {
                 statement.fields = description.fields.into_vec();
             }
             MessageType::Authentication => {
-                let auth = protocol::Authentication::decode_internal(reader).map_err(pg_err)?;
+                let auth = protocol::Authentication::decode_internal(&mut reader).map_err(pg_err)?;
 
                 match &auth {
                     protocol::Authentication::SASL => {

@@ -558,8 +558,13 @@ pub mod api {
         }
         impl SSLConfig {
             pub fn server_name(&self) -> *const c_char { self.server_name }
-            pub fn from_js(
-                _vm: &mut VirtualMachine,
+            /// Generic over the VM handle so it accepts both the local
+            /// [`VirtualMachine`] and `bun_jsc`'s (callers pass
+            /// `global.bun_vm()`, which yields `&mut bun_jsc::VirtualMachine`).
+            /// The VM is not dereferenced — it's carried only for API parity
+            /// with the Zig `SSLConfig.fromJS(vm, global, value)` signature.
+            pub fn from_js<V>(
+                _vm: V,
                 global: &JSGlobalObject,
                 value: JSValue,
             ) -> JsResult<Option<Self>> {

@@ -2267,7 +2267,7 @@ impl Element {
             return Ok(JSValue::NULL);
         }
         if function.is_undefined_or_null() || !function.is_callable() {
-            return Ok(ZigString::init(b"Expected a function").with_encoding().to_js(global_object));
+            return Ok(ZigString::init_utf8(b"Expected a function").to_js(global_object));
         }
 
         // SAFETY: JSC_BORROW — JSGlobalObject outlives the EndTagHandler

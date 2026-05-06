@@ -93,8 +93,9 @@ impl<'a> bun_io::pipe_reader::BufferedReaderParent for PipeReader<'a> {
     }
 
     unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
-        // SAFETY: backref; see on_read_chunk.
-        unsafe { (*(*this).event_loop_ptr()).loop_.cast() }
+        // SAFETY: backref; see on_read_chunk. `MiniEventLoop.loop_` is `*mut bun_uws::Loop`;
+        // cast through c_void to the sys-level handle.
+        unsafe { (*(*this).event_loop_ptr()).loop_ as *mut c_void as *mut bun_uws_sys::Loop }
     }
 }
 
@@ -136,7 +137,7 @@ impl<'a> ProcessHandle<'a> {
 
         // TODO(port): argv as null-terminated array of `?[*:0]const u8` — exact ABI for
         // spawnProcess. Using *const c_char placeholders.
-        let mut argv: [*const c_char; 4] = [
+        let argv: [*const c_char; 4] = [
             state.shell_bin.as_ptr() as *const c_char,
             if cfg!(unix) { b"-c\0".as_ptr() } else { b"exec\0".as_ptr() } as *const c_char,
             self.config.command.as_ptr() as *const c_char,

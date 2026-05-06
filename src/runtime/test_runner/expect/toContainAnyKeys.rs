@@ -28,7 +28,7 @@ pub fn to_contain_any_keys(
     let value: JSValue = this.get_value(global, this_value, "toContainAnyKeys", "<green>expected<r>")?;
 
     if !expected.js_type().is_array() {
-        return global.throw_invalid_argument_type("toContainAnyKeys", "expected", "array");
+        return Err(global.throw_invalid_argument_type("toContainAnyKeys", "expected", "array"));
     }
 
     let not = this.flags.not();
@@ -39,7 +39,7 @@ pub fn to_contain_any_keys(
     if value.is_object() {
         let mut i: u32 = 0;
 
-        while i < count {
+        while u64::from(i) < count {
             let key = expected.get_index(global, i)?;
 
             if value.has_own_property_value(global, key)? {

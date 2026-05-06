@@ -243,6 +243,49 @@ pub mod expect {
         fn to_u32(self) -> u32 {
             self.to_int32() as u32
         }
+        #[inline]
+        fn bind(
+            self,
+            global: &JSGlobalObject,
+            bind_this: JSValue,
+            name: &bun_str::String,
+            length: f64,
+            args: &[JSValue],
+        ) -> JsResult<JSValue> {
+            // TODO(port): land as inherent `JSValue::bind` in bun_jsc once
+            // the upstream surface catches up. Shimmed here so DoneCallback /
+            // ScopeFunctions compile against the Zig spec unchanged.
+            extern "C" {
+                // bindings.cpp: Bun__JSValue__bind — [[ZIG_EXPORT(zero_is_throw)]]
+                fn Bun__JSValue__bind(
+                    function: JSValue,
+                    global: *const JSGlobalObject,
+                    bind_this: JSValue,
+                    name: *const bun_str::String,
+                    length: f64,
+                    args: *const JSValue,
+                    args_len: usize,
+                ) -> JSValue;
+            }
+            // SAFETY: `global`/`name` outlive the call; `args` is a contiguous
+            // slice of `JSValue` (repr(transparent) over EncodedJSValue).
+            let result = unsafe {
+                Bun__JSValue__bind(
+                    self,
+                    global,
+                    bind_this,
+                    name,
+                    length,
+                    args.as_ptr(),
+                    args.len(),
+                )
+            };
+            if result == JSValue::ZERO {
+                Err(JsError::Thrown)
+            } else {
+                Ok(result)
+            }
+        }
     }
 
     /// Result of `JSValue::as_big_int_compare` (Zig `JSBigInt.CompareResult`).

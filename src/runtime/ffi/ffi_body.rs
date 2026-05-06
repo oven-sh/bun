@@ -2226,13 +2226,13 @@ impl Function {
             return Ok(());
         }
 
-        let Some(symbol) = state.get_symbol(b"JSFunctionCall") else {
+        let Some(symbol) = state.get_symbol(zstr!(b"JSFunctionCall")) else {
             self.fail(b"missing generated symbol in source code");
             return Ok(());
         };
 
         self.step = Step::Compiled(Compiled {
-            ptr: symbol,
+            ptr: symbol.as_ptr() as *mut c_void,
             ..Default::default()
         });
         Ok(())

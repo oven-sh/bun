@@ -615,15 +615,20 @@ where
     #[inline(never)]
     pub fn on_file_update(
         &mut self,
-        events: &[bun_watcher::WatchEvent],
-        changed_files: &mut [Option<&mut ZStr>],
-        watchlist: bun_watcher::WatchList,
+        events: &mut [bun_watcher::WatchEvent],
+        changed_files: &[ChangedFilePath],
+        watchlist: &bun_watcher::WatchList,
     ) {
-         // TODO(b2-blocked): bun_watcher::{WatchList::slice, WatchEvent fields, Kind, Watcher::{get_hash, remove_at_index, flush_evictions}}, bun_resolver::fs::{FileSystem::{instance, relative_to}, RealFS, real_fs::EntriesOption, PathName::find_extname}, bun_sys::{faccessat, access, F_OK}, bun_string::{strings::{without_trailing_slash_windows_path, trim_right}, PathString}, HotReloaderCtx::{bust_dir_cache, get_loaders}
-        {
         let slice = watchlist.slice();
         let file_paths = slice.items_file_path();
-        let counts = slice.items_count();
+        // PORT NOTE: `WatchItemColumns` doesn't expose a `count` accessor; reach
+        // through the generic SoA column directly. Zig mutates this in place
+        // (`counts[index] = update_count`) — cast away const to match.
+        // SAFETY: column 4 (`Count`) is `u32`; the watcher thread is the sole
+        // writer of this column for the loop's duration.
+        let counts: &mut [u32] = unsafe {
+            &mut *(slice.items::<u32>(WatchItemField::Count) as *const [u32] as *mut [u32])
+        };
         let kinds = slice.items_kind();
         let hashes = slice.items_hash();
         let parents = slice.items_parent_hash();
@@ -651,12 +656,12 @@ where
             // in the guard.
         });
 
-        for event in events {
+        for event in events.iter() {
             // Stale udata: kevent.udata can outlive a swapRemove in flushEvictions.
             if event.index as usize >= file_paths.len() {
                 continue;
             }
-            let file_path = file_paths[event.index as usize];
+            let file_path: &[u8] = &file_paths[event.index as usize];
             let update_count = counts[event.index as usize] + 1;
             counts[event.index as usize] = update_count;
             let kind = kinds[event.index as usize];
@@ -668,21 +673,25 @@ where
 
             match kind {
                 bun_watcher::Kind::File => {
-                    if event.op.delete || (event.op.rename && IS_KQUEUE) {
-                        ctx.remove_at_index(event.index, 0, &[], bun_watcher::Kind::File);
+                    if event.op.contains(WatchOp::DELETE)
+                        || (event.op.contains(WatchOp::RENAME) && IS_KQUEUE)
+                    {
+                        ctx.remove_at_index(bun_watcher::Kind::File, event.index, 0, &[]);
                     }
 
                     if self.verbose {
                         Self::debug(format_args!(
                             "File changed: {}",
-                            bstr::BStr::new(fs.relative_to(file_path))
+                            // TODO(port): Zig used `fs.relativeTo(file_path)`; resolver's
+                            // inline `fs::FileSystem` doesn't expose `relative_to` yet.
+                            bstr::BStr::new(bun_paths::relative(fs.top_level_dir, file_path))
                         ));
                     }
 
-                    if event.op.write || event.op.delete || event.op.rename {
+                    if event.op.intersects(WatchOp::WRITE | WatchOp::DELETE | WatchOp::RENAME) {
                         record_changed_path(file_path);
                         if IS_KQUEUE {
-                            if event.op.rename {
+                            if event.op.contains(WatchOp::RENAME) {
                                 // Special case for entrypoint: defer reload until we get
                                 // a directory write event confirming the file exists.
                                 // This handles vim's save process which renames the old file
@@ -732,21 +741,23 @@ where
                         // `?[:0]u8` on inotify). Split into two locals; only one is
                         // populated per cfg.
                         let mut affected_kqueue: &[&[u8]] = &[];
-                        let mut affected_inotify: &[Option<&mut ZStr>] = &[];
+                        let mut affected_inotify: &[ChangedFilePath] = &[];
                         let _ = (&mut affected_kqueue, &mut affected_inotify);
 
                         let affected_len: usize = 'brk: {
                             if IS_KQUEUE {
                                 // SAFETY: hot-reload runs single-threaded on the JS thread;
                                 // no other live `&mut EntriesOption` for this key here.
-                                if let Some(existing) = unsafe { rfs.entries.get(file_path) } {
+                                if let Some(existing) = rfs.entries.get(file_path) {
+                                    let existing =
+                                        existing as *mut Fs::EntriesOption as *mut core::ffi::c_void;
                                     self.put_tombstone(file_path, existing);
-                                    entries_option = Some(existing);
+                                    entries_option = Some(existing as *mut Fs::EntriesOption);
                                 } else if let Some(existing) = self.get_tombstone(file_path) {
-                                    entries_option = Some(existing);
+                                    entries_option = Some(existing as *mut Fs::EntriesOption);
                                 }
 
-                                if event.op.write {
+                                if event.op.contains(WatchOp::WRITE) {
                                     // Check if the entrypoint now exists after an atomic save.
                                     // If we previously got a NOTE_RENAME on the entrypoint (vim renamed
                                     // the file), this directory write event signals that the new

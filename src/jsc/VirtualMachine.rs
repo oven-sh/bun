@@ -2328,9 +2328,16 @@ impl VirtualMachine {
     }
 
     /// Spec VirtualMachine.zig:751 `packageManager`.
+    ///
+    /// TODO(b2-cycle): real return type is `&mut bun_install::PackageManager`,
+    /// but `transpiler.get_package_manager()` returns the resolver's
+    /// forward-decl stub (`bun_resolver` cannot depend on `bun_install`).
+    /// Callers in `bun_runtime` reach `transpiler.resolver.get_package_manager()`
+    /// directly until the cycle break lands.
     #[inline]
     pub fn package_manager(&mut self) -> &mut bun_install::PackageManager {
-        self.transpiler.get_package_manager()
+        let _ = self.transpiler.get_package_manager();
+        todo!("blocked_on: bun_resolver::PackageManager -> bun_install::PackageManager (b2-cycle)")
     }
 
     /// Spec VirtualMachine.zig:769 `reload`.
@@ -2372,9 +2379,14 @@ impl VirtualMachine {
         }
 
         // TODO(b2-cycle): `bun_runtime::api::cron::CronJob::clear_all_for_vm(self, .reload)`.
-        // SAFETY: `global` valid for VM lifetime.
-        if unsafe { (*self.global).reload() }.is_err() {
-            panic!("Failed to reload");
+        // SAFETY: `global` valid for VM lifetime; FFI drains microtasks +
+        // collects async + clears the JSC module loader registry.
+        // PORT NOTE: `JSGlobalObject::reload` lives in the gated
+        // JSGlobalObject.rs sibling; inline its body here.
+        unsafe {
+            // TODO(b2): `vm().drain_microtasks()` — gated in VM.rs.
+            (*self.global).vm().collect_async();
+            JSC__JSGlobalObject__reload(self.global);
         }
         self.hot_reload_counter += 1;
         if self.pending_internal_promise_is_protected {
@@ -3582,12 +3594,17 @@ impl VirtualMachine {
         allow_ansi_color: bool,
         allow_side_effects: bool,
     ) -> Result<(), bun_core::Error> {
-        let mut exception_holder = ZigException::Holder::init();
-        let exception = exception_holder.zig_exception();
-        let mut source_code_slice: Option<jsc::ZigString::Slice> = None;
+        let mut exception_holder = crate::zig_exception::Holder::init();
+        // PORT NOTE: reshaped for borrowck — `zig_exception()` returns a
+        // `&mut` into the holder; we need to also borrow
+        // `need_to_clear_parser_arena_on_deinit` disjointly. Route through a
+        // raw pointer (the holder is stack-pinned for the call).
+        let exception: *mut ZigException = exception_holder.zig_exception();
+        let mut source_code_slice: Option<bun_string::ZigStringSlice> = None;
 
         self.remap_zig_exception(
-            exception,
+            // SAFETY: `exception` points into stack-local `exception_holder`.
+            unsafe { &mut *exception },
             error_instance,
             exception_list,
             &mut exception_holder.need_to_clear_parser_arena_on_deinit,
@@ -3596,11 +3613,18 @@ impl VirtualMachine {
         );
         error_instance.ensure_still_alive();
 
-        let result =
-            self.print_error_instance_zig(exception, formatter, writer, allow_ansi_color, allow_side_effects);
+        let result = self.print_error_instance_zig(
+            // SAFETY: see above.
+            unsafe { &mut *exception },
+            formatter,
+            writer,
+            allow_ansi_color,
+            allow_side_effects,
+        );
 
         drop(source_code_slice);
-        exception_holder.deinit(self);
+        // TODO(port): `Holder::deinit` — parser-arena reset plumbing gated.
+        let _ = exception_holder;
         result
     }
 
@@ -3655,12 +3679,21 @@ impl VirtualMachine {
     #[cold]
     #[inline(never)]
     pub fn print_github_annotation(exception: &ZigException) {
+        // TODO(port): blocked_on `ZigStackTrace`/`ZigStackFrame` stub +
+        // `bun_string::String::github_action()` — the body walks
+        // `exception.stack.frames()` and emits the GitHub `::error` annotation.
+        // Full body preserved under `#[cfg(any())]`; un-gate when the real
+        // `#[repr(C)]` stack types land.
+        let _ = exception;
+        return;
+        #[cfg(any())]
+        {
         let name = &exception.name;
         let message = &exception.message;
         let frames = exception.stack.frames();
         let top_frame = frames.first();
         let dir = bun_core::env_var::GITHUB_WORKSPACE::get()
-            .unwrap_or_else(|| bun_fs::FileSystem::instance().top_level_dir);
+            .unwrap_or_else(|| bun_bundler::bun_fs::FileSystem::instance().top_level_dir);
         bun_core::Output::flush();
 
         let writer = bun_core::Output::error_writer();
@@ -3669,11 +3702,11 @@ impl VirtualMachine {
         if let Some(frame) = top_frame {
             if !frame.position.is_invalid() {
                 let source_url = frame.source_url.to_utf8();
-                let file = bun_paths::relative(dir, source_url.slice());
+                let file = bun_paths::resolve_path::relative(dir, source_url.slice());
                 let _ = write!(
                     writer,
                     "\n::error file={},line={},col={},title=",
-                    bun_string::strings::FmtBytes(file),
+                    bstr::BStr::new(file),
                     frame.position.line.one_based(),
                     frame.position.column.one_based(),
                 );
@@ -3732,7 +3765,7 @@ impl VirtualMachine {
             let origin = if vm.is_from_devserver { Some(&vm.origin) } else { None };
             for frame in frames {
                 let source_url = frame.source_url.to_utf8();
-                let file = bun_paths::relative(dir, source_url.slice());
+                let file = bun_paths::resolve_path::relative(dir, source_url.slice());
                 let func = frame.function_name.to_utf8();
                 if file.is_empty() && func.slice().is_empty() {
                     continue;
@@ -3740,9 +3773,9 @@ impl VirtualMachine {
                 let name_fmt = frame.name_formatter(false);
                 let has_name = {
                     use core::fmt::Write as _;
-                    let mut probe = bun_string::CountingWriter::default();
+                    let mut probe = String::new();
                     let _ = write!(probe, "{name_fmt}");
-                    probe.len() > 0
+                    !probe.is_empty()
                 };
                 if has_name {
                     let _ = write!(

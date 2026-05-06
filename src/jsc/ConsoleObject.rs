@@ -3907,7 +3907,7 @@ pub mod formatter {
             // still print. Restored once the runtime types implement a
             // dyn-erased `WriteFormat` hook this crate can call without naming
             // them.
-            
+            #[cfg(any())]
             if let Some(response) = value.as_::<bun_runtime::webcore::Response>() {
                 let _ = response.write_format::<C>(self, writer_);
                 return Ok(());
@@ -3988,7 +3988,11 @@ pub mod formatter {
             }
 
             let _ = (&mut writer, pf!("<r>")); // silence unused while gated above
-            if value.as_::<crate::DOMFormData>().is_some() {
+            // TODO(port-cycle): `crate::DOMFormData` is a `stub_ty!` placeholder
+            // (no `JsClass` impl yet); the real downcast lives behind the
+            // gated `bun_runtime` block above. Hard-disabled until the
+            // `DOMFormData` JsClass derive lands.
+            if false /* value.as_::<crate::DOMFormData>().is_some() */ {
                 if let Some(to_json_function) = value.get(self.global_this, "toJSON")? {
                     let prev_quote_keys = self.quote_keys;
                     self.quote_keys = true;
@@ -4034,7 +4038,7 @@ pub mod formatter {
             let length_value = value
                 .get(self.global_this, "size")?
                 .unwrap_or_else(|| JSValue::js_number_from_int32(0));
-            let length = length_value.coerce_i32(self.global_this)?;
+            let length = length_value.coerce_to_i32(self.global_this)?;
 
             let prev_quote_strings = self.quote_strings;
             self.quote_strings = true;
@@ -4138,7 +4142,7 @@ pub mod formatter {
             let length_value = value
                 .get(self.global_this, "size")?
                 .unwrap_or_else(|| JSValue::js_number_from_int32(0));
-            let length = length_value.coerce_i32(self.global_this)?;
+            let length = length_value.coerce_to_i32(self.global_this)?;
 
             let prev_quote_strings = self.quote_strings;
             self.quote_strings = true;
@@ -4203,10 +4207,17 @@ pub mod formatter {
                 JSValue::UNDEFINED
             };
 
-            let event_type = match EventType::map()
-                .from_js(self.global_this, event_type_value)?
-                .unwrap_or(EventType::Unknown)
-            {
+            // PORT NOTE: Zig `EventType.map.fromJS` is `ComptimeEnumMap.fromJS`;
+            // here the value is already known to be a JS string (or `undefined`),
+            // so we coerce to a `ZigString` and look it up in the static `phf`
+            // map directly.
+            let event_type = match {
+                let mut s = ZigString::init(b"");
+                if event_type_value.is_string() {
+                    event_type_value.to_zig_string(&mut s, self.global_this)?;
+                }
+                EventType::MAP.get(s.slice()).copied().unwrap_or(EventType::unknown)
+            } {
                 evt @ (EventType::MessageEvent | EventType::ErrorEvent) => evt,
                 _ => {
                     if *remove_before_recurse {
@@ -4327,13 +4338,12 @@ pub mod formatter {
             let mut needs_space = false;
             let mut tag_name_str = ZigString::init(b"");
 
-            let mut tag_name_slice: ZigString::Slice = ZigString::Slice::empty();
+            // PORT NOTE: Zig spelled this `ZigString.Slice` with an explicit
+            // `defer if (tag_name_slice.isAllocated()) tag_name_slice.deinit()`.
+            // The Rust `ZigStringSlice` enum frees on `Drop`, so the scopeguard
+            // is unnecessary.
+            let mut tag_name_slice = strings::ZigStringSlice::empty();
             let mut is_tag_kind_primitive = false;
-
-            let tag_name_ptr: *mut ZigString::Slice = &mut tag_name_slice;
-            let _tag_name_guard = scopeguard::guard((), move |_| unsafe {
-                if (*tag_name_ptr).is_allocated() { (*tag_name_ptr).deinit(); }
-            });
 
             if let Some(type_value) = value.get(self.global_this, "type")? {
                 let _tag = Tag::get_advanced(type_value, self.global_this, self.tag_opts())?;

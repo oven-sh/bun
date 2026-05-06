@@ -28,7 +28,7 @@ fn attr_value(head: &[u8], name: &'static [u8]) -> u32 {
     let Some(q) = strings::index_of_char(&head[start..], b'"') else { return 0 };
     let end = start + q;
     // TODO(port): narrow error set
-    bun_str::parse_int::<u32>(&head[start..end], 10).unwrap_or(0)
+    strings::parse_int::<u32>(&head[start..end], 10).unwrap_or(0)
 }
 
 pub fn merge_junit_fragments(coord: &mut Coordinator, outfile: &[u8], summary: &Summary) {

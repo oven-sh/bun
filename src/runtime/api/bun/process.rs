@@ -2012,7 +2012,19 @@ pub(crate) mod spawn_sys {
     pub const TAG_FCNTL: bun_sys::Tag = bun_sys::Tag(0);
     pub const TAG_MEMFD_CREATE: bun_sys::Tag = bun_sys::Tag(0);
 
-    pub const INVALID_FD: Fd = Fd::INVALID;
+    pub const INVALID_FD: Fd = Fd::INSVALID;
+
+    /// Raw libc `environ` global (null-terminated `char **`). The `libc` crate
+    /// doesn't export the `environ` static on all targets, so declare it here.
+    /// Unlike `bun_sys::environ()` (which returns a counted slice), this
+    /// returns the underlying null-terminated array pointer suitable for
+    /// `posix_spawn` envp.
+    #[cfg(unix)]
+    pub fn raw_environ() -> *const *const c_char {
+        unsafe extern "C" { static mut environ: *const *const c_char; }
+        // SAFETY: `environ` is the process-global C environment array.
+        unsafe { environ }
+    }
 
     // ── set_close_on_exec — fcntl(FD_CLOEXEC). ──
     #[cfg(unix)]

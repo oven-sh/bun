@@ -248,7 +248,7 @@ impl Worker {
         unsafe { (*(self.coord as *mut Coordinator<'static>)).on_worker_exit(self, status) };
     }
 
-    pub fn event_loop(&self) -> &jsc::EventLoop {
+    pub fn event_loop(&self) -> *mut jsc::event_loop::EventLoop {
         // SAFETY: coord backref valid for worker lifetime.
         unsafe { (*self.coord).vm.event_loop() }
     }

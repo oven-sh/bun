@@ -475,12 +475,11 @@ pub fn generate_code_for_lazy_export(
                     parts[generated.1 as usize].stmts[0] = Stmt::alloc(
                         S::Local {
                             is_export: true,
-                            decls: js_ast::G::Decl::List::from_slice(
-                                this.allocator(),
+                            decls: G::DeclList::from_slice(
                                 &[G::Decl {
                                     binding: Binding::alloc(
                                         this.allocator(),
-                                        B::Identifier { ref_: generated.0 },
+                                        B::Identifier { r#ref: generated.0 },
                                         expr.loc,
                                     ),
                                     value: property.value,

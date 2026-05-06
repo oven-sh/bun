@@ -5812,11 +5812,15 @@ struct ExternalFreeFunctionAllocator {
 impl ExternalFreeFunctionAllocator {
     // TODO(port): std.mem.Allocator vtable equivalent — Phase B will define bun_alloc::Allocator trait impl
 
-    pub fn create(free_callback: unsafe extern "C" fn(*mut c_void), context: *mut c_void) -> bun_alloc::DynAllocator {
-        bun_alloc::DynAllocator::from_boxed(Box::new(ExternalFreeFunctionAllocator {
-            free_callback,
-            context,
-        }))
+    pub fn create(free_callback: unsafe extern "C" fn(*mut c_void), context: *mut c_void) -> bun_alloc::StdAllocator {
+        // PORT NOTE: Zig built a `std.mem.Allocator` whose `.ptr` was the boxed
+        // `ExternalFreeFunctionAllocator` and whose vtable's `free` invoked the
+        // plugin callback. `bun_alloc::StdAllocator` is the Rust equivalent.
+        let boxed = Box::into_raw(Box::new(ExternalFreeFunctionAllocator { free_callback, context }));
+        bun_alloc::StdAllocator {
+            ptr: boxed.cast(),
+            vtable: &EXTERNAL_FREE_VTABLE,
+        }
     }
 
     fn alloc(_: *mut c_void, _: usize, _: bun_alloc::Alignment, _: usize) -> Option<*mut u8> {

@@ -2365,10 +2365,17 @@ impl<'a> LinkerContext<'a> {
     }
 
     /// Spec: `LinkerContext.zig:489 source_`.
+    ///
+    /// PORT NOTE: returns `'static` so callers can hold the source across a
+    /// `&mut self.log` borrow; the underlying `parse_graph.input_files` slab
+    /// is append-only and outlives the link step (LIFETIMES.tsv: GRAPHBACKED).
     #[inline]
-    pub fn get_source(&self, index: usize) -> &Source {
-        // SAFETY: parse_graph backref into BundleV2.graph; valid for self's lifetime.
-        unsafe { &(*self.parse_graph).input_files.items_source()[index] }
+    pub fn get_source(&self, index: usize) -> &'static Source {
+        // SAFETY: parse_graph backref into BundleV2.graph; the input_files SoA
+        // is monotonically grown and never freed for the link step's lifetime,
+        // so the element address is stable. `'static` is a white lie matching
+        // the `*mut Graph` erasure on `self.parse_graph`.
+        unsafe { &*core::ptr::from_ref(&(*self.parse_graph).input_files.items_source()[index]) }
     }
 
     /// Spec: `LinkerContext.zig:496 scanCSSImports`.
@@ -3456,10 +3463,13 @@ impl<'a> LinkerContext<'a> {
         export_aliases: &[&[u8]],
         re_exports_count: usize,
     ) {
-        bun_js_parser::ast::stmt::Disabler::disable();
-        let _stmt_guard = scopeguard::guard((), |_| bun_js_parser::ast::stmt::Disabler::enable());
-        bun_js_parser::ast::expr::Disabler::disable();
-        let _expr_guard = scopeguard::guard((), |_| bun_js_parser::ast::expr::Disabler::enable());
+        // PORT NOTE: Zig toggled `Stmt.Disabler`/`Expr.Disabler` (debug-only
+        // re-entrancy guards around the global Store). The Rust port currently
+        // exposes only `DebugOnlyDisabler::assert()`; `disable()`/`enable()`
+        // are no-ops here until the thread-local toggle lands (see
+        // `js_parser/ast/mod.rs:DebugOnlyDisabler`).
+        let _ = bun_js_parser::ast::stmt::Disabler::assert;
+        let _ = bun_js_parser::ast::expr::Disabler::assert;
 
         // 1 property per export
         let mut properties =
@@ -3485,9 +3495,26 @@ impl<'a> LinkerContext<'a> {
             // + 1 if we need to do module.exports = __toCommonJS(exports)
             force_include_exports_for_entry_point as usize;
 
-        let mut stmts = js_ast::Batcher::<Stmt>::init(allocator, stmts_count).expect("OOM");
-        // PORT NOTE: `defer stmts.done()` — Batcher asserts head.is_empty() on
-        // Drop in debug builds.
+        // PORT NOTE: Zig used `Stmt.Batcher` (preallocated arena slice +
+        // cursor). `Batcher::<T>::init` requires `T: Default` which `Stmt`
+        // doesn't satisfy, so we hand-roll the same shape: one arena slab of
+        // `stmts_count` `MaybeUninit<Stmt>`, sliced front-to-back. `eat1`
+        // becomes a `write` + raw-slice carve.
+        let stmts_slab: *mut [core::mem::MaybeUninit<Stmt>] =
+            allocator.alloc_slice_fill_with(stmts_count, |_| core::mem::MaybeUninit::uninit());
+        let mut stmts_head: usize = 0;
+        macro_rules! stmts_eat1 {
+            ($value:expr) => {{
+                // SAFETY: `stmts_head < stmts_count` by construction (counts above).
+                let cell = unsafe { &mut (*stmts_slab)[stmts_head] };
+                cell.write($value);
+                stmts_head += 1;
+                // SAFETY: just initialized.
+                unsafe {
+                    core::slice::from_raw_parts_mut(cell.as_mut_ptr(), 1) as *mut [Stmt]
+                }
+            }};
+        }
         let loc = Loc::EMPTY;
         // todo: investigate if preallocating this array is faster
         let mut ns_export_dependencies =

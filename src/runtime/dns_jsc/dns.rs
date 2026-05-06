@@ -2923,12 +2923,12 @@ impl Resolver {
         let Some(addr) = result else {
             unsafe {
                 let mut pending = (*key.lookup).head.next;
-                (*key.lookup).head.process_resolve(err, timeout, None);
+                CAresLookup::<T>::process_resolve(ptr::addr_of_mut!((*key.lookup).head), err, timeout, None);
                 drop(Box::from_raw(key.lookup));
 
                 while let Some(value) = pending {
                     pending = (*value.as_ptr()).next;
-                    (*value.as_ptr()).process_resolve(err, timeout, None);
+                    CAresLookup::<T>::process_resolve(value.as_ptr(), err, timeout, None);
                 }
             }
             return;
@@ -2937,11 +2937,11 @@ impl Resolver {
         unsafe {
             let mut pending = (*key.lookup).head.next;
             let mut prev_global = (*key.lookup).head.global_this;
-            let mut array = (*addr).to_js_response(prev_global, T::TYPE_NAME).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+            let mut array = (*addr).to_js_response(&*prev_global, T::TYPE_NAME).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
             // SAFETY: addr is the c-ares-allocated reply; freed once after all consumers run.
             let _free_addr = scopeguard::guard((), |_| T::destroy(addr));
             array.ensure_still_alive();
-            (*key.lookup).head.on_complete(array);
+            CAresLookup::<T>::on_complete(ptr::addr_of_mut!((*key.lookup).head), array);
             drop(Box::from_raw(key.lookup));
 
             array.ensure_still_alive();
@@ -2949,13 +2949,13 @@ impl Resolver {
             while let Some(value) = pending {
                 let new_global = (*value.as_ptr()).global_this;
                 if !core::ptr::eq(prev_global, new_global) {
-                    array = (*addr).to_js_response(new_global, T::TYPE_NAME).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+                    array = (*addr).to_js_response(&*new_global, T::TYPE_NAME).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
                     prev_global = new_global;
                 }
                 pending = (*value.as_ptr()).next;
 
                 array.ensure_still_alive();
-                (*value.as_ptr()).on_complete(array);
+                CAresLookup::<T>::on_complete(value.as_ptr(), array);
                 array.ensure_still_alive();
             }
         }
@@ -2976,12 +2976,12 @@ impl Resolver {
         let Some(addr) = result else {
             unsafe {
                 let mut pending = (*key.lookup).head.next;
-                (*key.lookup).head.process_get_addr_info(err, timeout, None);
+                DNSLookup::process_get_addr_info(ptr::addr_of_mut!((*key.lookup).head), err, timeout, None);
                 drop(Box::from_raw(key.lookup));
 
                 while let Some(value) = pending {
                     pending = (*value.as_ptr()).next;
-                    (*value.as_ptr()).process_get_addr_info(err, timeout, None);
+                    DNSLookup::process_get_addr_info(value.as_ptr(), err, timeout, None);
                 }
             }
             return;
@@ -2990,11 +2990,11 @@ impl Resolver {
         unsafe {
             let mut pending = (*key.lookup).head.next;
             let mut prev_global = (*key.lookup).head.global_this;
-            let mut array = (*addr).to_js_array(prev_global).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+            let mut array = (*addr).to_js_array(&*prev_global).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
             // SAFETY: addr is the c-ares-allocated AddrInfo; freed once after all consumers run.
             let _free_addr = scopeguard::guard((), |_| c_ares::AddrInfo::destroy(addr));
             array.ensure_still_alive();
-            (*key.lookup).head.on_complete_with_array(array);
+            DNSLookup::on_complete_with_array(ptr::addr_of_mut!((*key.lookup).head), array);
             drop(Box::from_raw(key.lookup));
 
             array.ensure_still_alive();
@@ -3003,13 +3003,13 @@ impl Resolver {
             while let Some(value) = pending {
                 let new_global = (*value.as_ptr()).global_this;
                 if !core::ptr::eq(prev_global, new_global) {
-                    array = (*addr).to_js_array(new_global).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+                    array = (*addr).to_js_array(&*new_global).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
                     prev_global = new_global;
                 }
                 pending = (*value.as_ptr()).next;
 
                 array.ensure_still_alive();
-                (*value.as_ptr()).on_complete_with_array(array);
+                DNSLookup::on_complete_with_array(value.as_ptr(), array);
                 array.ensure_still_alive();
             }
         }
@@ -3037,11 +3037,11 @@ impl Resolver {
                     // `ptr::read` + `Box::from_raw` would double-Drop `DNSLookup`.
                     let owned = *Box::from_raw(key.lookup);
                     let mut head = owned.head;
-                    head.process_get_addr_info_native(err, ptr::null_mut());
+                    DNSLookup::process_get_addr_info_native(&mut head, err, ptr::null_mut());
 
                     while let Some(value) = pending {
                         pending = (*value.as_ptr()).next;
-                        (*value.as_ptr()).process_get_addr_info_native(err, ptr::null_mut());
+                        DNSLookup::process_get_addr_info_native(value.as_ptr(), err, ptr::null_mut());
                     }
                 }
                 return;
@@ -3053,7 +3053,7 @@ impl Resolver {
 
             {
                 array.ensure_still_alive();
-                (*key.lookup).head.on_complete_with_array(array);
+                DNSLookup::on_complete_with_array(ptr::addr_of_mut!((*key.lookup).head), array);
                 drop(Box::from_raw(key.lookup));
                 array.ensure_still_alive();
             }
@@ -3064,12 +3064,12 @@ impl Resolver {
                 let new_global = (*value.as_ptr()).global_this;
                 pending = (*value.as_ptr()).next;
                 if !core::ptr::eq(prev_global, new_global) {
-                    array = result.to_js(new_global).unwrap_or(JSValue::ZERO).unwrap(); // TODO: properly propagate exception upwards
+                    array = result.to_js(&*new_global).unwrap_or(JSValue::ZERO).unwrap(); // TODO: properly propagate exception upwards
                     prev_global = new_global;
                 }
 
                 array.ensure_still_alive();
-                (*value.as_ptr()).on_complete_with_array(array);
+                DNSLookup::on_complete_with_array(value.as_ptr(), array);
                 array.ensure_still_alive();
             }
         }

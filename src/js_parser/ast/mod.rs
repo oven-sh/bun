@@ -70,6 +70,18 @@ impl<T> DebugOnlyDisabler<T> {
         // TODO(port): wire to a thread-local `disabled: bool` if any caller
         // actually toggles it; Zig sites only call `assert()`.
     }
+    /// Zig: `disable()` flips a thread-local `disabled = true` so any
+    /// subsequent `assert()` panics. Phase-A surface keeps the call shape
+    /// (LinkerContext brackets store mutation with `disable()`/`enable()`)
+    /// but the guard itself is a no-op until the thread-local is wired.
+    #[inline]
+    pub fn disable() {
+        // TODO(port): set thread-local `disabled = true` (debug builds only).
+    }
+    #[inline]
+    pub fn enable() {
+        // TODO(port): set thread-local `disabled = false` (debug builds only).
+    }
 }
 
 // ── flat re-exports (the rest of lib.rs/ast/ expects these at `crate::ast::X`) ──

@@ -542,12 +542,9 @@ impl Builtin {
 }
 
 // Remaining body (~700 lines: redirect handling, stdin/stdout/stderr open,
-// write_failing_error_fmt, OutputSrc) is preserved gated — depends on
-// IOWriter::enqueue, bun_sys open flags.
-
-mod builtin_body {
-    include!("Builtin_body_gated.rs");
-}
+// write_failing_error_fmt, OutputSrc) — depends on IOWriter::enqueue,
+// bun_sys open flags. The gated include was removed (file never materialised);
+// port the remainder inline as the upstream pieces land.
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

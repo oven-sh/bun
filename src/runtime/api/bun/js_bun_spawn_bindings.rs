@@ -456,11 +456,11 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                                     };
                                 } else {
                                     if !global_this.has_exception() {
-                                        return global_this.throw_invalid_argument_type(
+                                        return Err(global_this.throw_invalid_argument_type(
                                             "spawn",
                                             "serialization",
                                             "string",
-                                        );
+                                        ));
                                     }
                                     return Ok(JSValue::ZERO);
                                 }

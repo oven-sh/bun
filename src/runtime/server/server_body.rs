@@ -1180,7 +1180,7 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// So we have to store it.
     pub user_routes: Vec<UserRoute<SSL, DEBUG>>,
 
-    pub on_clienterror: Strong,
+    pub on_clienterror: jsc::StrongOptional,
 
     pub inspector_server_id: DebuggerId,
 }
@@ -2417,21 +2417,23 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             h3_alt_svc: zstr_empty_boxed(),
             js_value: JsRef::empty(),
             pending_requests: 0,
-            request_pool_allocator: ServerRequestContext::<SSL, DEBUG>::pool_get_or_init(),
-            h3_request_pool_allocator: if Self::HAS_H3 {
-                ServerH3RequestContext::<SSL, DEBUG>::pool_get_or_init()
-            } else {
-                // TODO(port): conditional field — placeholder static
-                ServerH3RequestContext::<SSL, DEBUG>::pool_get_or_init()
-            },
+            // TODO(port): RequestContext.pool is a per-monomorphization threadlocal in Zig;
+            // Rust thread_local! cannot be generic. Leak a fresh Fallback for now until the
+            // ThisServerImpl::request_pool() trait shim is wired through.
+            request_pool_allocator: Box::leak(Box::new(
+                RequestContextStackAllocator::<SSL, DEBUG, false>::init(),
+            )),
+            h3_request_pool_allocator: Box::leak(Box::new(
+                RequestContextStackAllocator::<SSL, DEBUG, true>::init(),
+            )),
             all_closed_promise: jsc::JSPromiseStrong::default(),
             listen_callback: jsc::AnyTask::AnyTask::default(),
             poll_ref: KeepAlive::default(),
             flags: ServerFlags::default(),
             plugins: None,
             user_routes: Vec::new(),
-            on_clienterror: Strong::empty(),
-            inspector_server_id: DebuggerId::init(0),
+            on_clienterror: jsc::StrongOptional::empty(),
+            inspector_server_id: DebuggerId::new(0),
         }));
 
         // TODO(port): RequestContext.pool is a process-global static; pool_get_or_init() above

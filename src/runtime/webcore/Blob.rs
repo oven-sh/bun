@@ -2548,7 +2548,7 @@ impl Blob {
         let recommended_chunk_size_value = callframe.argument(0);
         if !recommended_chunk_size_value.is_undefined_or_null() {
             if !recommended_chunk_size_value.is_number() {
-                return global_this.throw_invalid_arguments("chunkSize must be a number");
+                return Err(global_this.throw_invalid_arguments("chunkSize must be a number"));
             }
             // PERF(port): Zig used @truncate to i52 then @intCast to SizeType.
             recommended_chunk_size = SizeType::try_from(
@@ -2556,11 +2556,11 @@ impl Blob {
             )
             .unwrap();
         }
-        let stream = ReadableStream::from_blob_copy_ref(global_this, self, recommended_chunk_size as u32)?;
+        let stream = ReadableStream::from_blob_copy_ref(global_this, self, recommended_chunk_size)?;
 
         if let Some(store) = &self.store {
-            if let Store::Data::File(f) = &store.data {
-                if let node::PathLike::Fd(_) = f.pathlike {
+            if let store::Data::File(f) = &store.data {
+                if let PathOrFileDescriptor::Fd(_) = f.pathlike {
                     // in the case we have a file descriptor store, we want to de-duplicate
                     // readable streams. in every other case we want `.stream()` to be its
                     // own stream.

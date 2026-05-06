@@ -2831,32 +2831,41 @@ where
         // `Api::JsException` + `render_default_error`; gated until bun_schema/
         // bun_js_parser surfaces are in. Falls through to the production path.
         
+        // SAFETY: see drain_microtasks() re: const→mut cast.
+        let vm = unsafe { &mut *(vm as *const VirtualMachine as *mut VirtualMachine) };
         if DEBUG_MODE {
             // PERF(port): was arena bulk-free — profile in Phase B
-            let mut exception_list: Vec<Api::JsException> = Vec::new();
+            // Upstream `ExceptionList = Vec<()>`; once it carries
+            // `Api::JsException`, swap the local back in.
+            let mut exception_list_upstream: jsc::ExceptionList = Vec::new();
             let prev_exception_list = vm.on_unhandled_rejection_exception_list;
-            vm.on_unhandled_rejection_exception_list = Some(&mut exception_list);
+            vm.on_unhandled_rejection_exception_list =
+                Some(NonNull::from(&mut exception_list_upstream));
             (vm.on_unhandled_rejection)(vm, global_this, value);
             vm.on_unhandled_rejection_exception_list = prev_exception_list;
 
+            let exception_list: Vec<Api::JsException> = Vec::new();
+            // SAFETY: vm.log is set during VM init and live for the VM lifetime.
+            let log = unsafe { vm.log.unwrap().as_mut() };
             self.render_default_error(
-                vm.log,
+                log,
                 bun_core::err!("ExceptionOcurred"),
                 &exception_list,
                 format_args!(
-                    "<r><red>{}<r> - <b>{}<r> failed",
-                    <&'static str>::from(self.method),
+                    "<r><red>{:?}<r> - <b>{}<r> failed",
+                    self.method,
                     self.ensure_pathname()
                 ),
             );
-            vm.log.reset();
+            log.reset();
             return;
         }
         if status != 404 {
             (vm.on_unhandled_rejection)(vm, global_this, value);
         }
         self.render_production_error(status);
-        vm.log.reset();
+        // SAFETY: vm.log is set during VM init and live for the VM lifetime.
+        unsafe { vm.log.unwrap().as_mut() }.reset();
     }
 
     pub fn run_error_handler_with_status_code_dont_check_responded(

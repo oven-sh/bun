@@ -512,20 +512,14 @@ impl ShellSubprocess {
 
         // SAFETY: cmd_parent backref is valid for the lifetime of the spawn call.
         let cmd_parent = unsafe { &mut *spawn_args.cmd_parent };
-        if cmd_parent.args.try_push(core::ptr::null()).is_err() {
-            spawn_options.deinit();
-            return Err(ShError::Custom(Box::<[u8]>::from(
-                b"out of memory" as &[u8],
-            )));
-        }
+        // PORT NOTE: Zig pushed a NULL terminator onto the C-string argv array.
+        // The Rust port stores `args: Vec<Vec<u8>>`, so a contiguous
+        // `*const *const c_char` view has to be built separately. That
+        // belongs in `Cmd` once subprocess spawning is wired in the NodeId
+        // port.
+        // TODO(port): build `[*:null]const [*:0]const u8` argv from cmd_parent.args.
 
-        if spawn_args.env_array.try_push(core::ptr::null()).is_err() {
-            // TODO(port): Vec::push cannot fail without try_reserve; mirror Zig OOM path.
-            spawn_options.deinit();
-            return Err(ShError::Custom(Box::<[u8]>::from(
-                b"out of memory" as &[u8],
-            )));
-        }
+        spawn_args.env_array.push(core::ptr::null());
 
         let spawn_result = match bun_process::spawn_process(
             &spawn_options,
@@ -533,7 +527,7 @@ impl ShellSubprocess {
             spawn_args.env_array.as_ptr() as *const *const c_char,
         ) {
             Err(err) => {
-                spawn_options.deinit();
+                drop(spawn_options);
                 let mut msg = Vec::<u8>::new();
                 use std::io::Write;
                 let _ = write!(&mut msg, "Failed to spawn process: {}", err.name());
@@ -541,7 +535,7 @@ impl ShellSubprocess {
             }
             Ok(r) => match r {
                 bun_sys::Result::Err(err) => {
-                    spawn_options.deinit();
+                    drop(spawn_options);
                     return Err(ShError::Sys(err.to_shell_system_error()));
                 }
                 bun_sys::Result::Ok(result) => result,

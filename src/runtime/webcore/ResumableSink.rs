@@ -200,7 +200,7 @@ impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<'a, J
                     let bytes = byte_stream.drain();
                     // PORT NOTE: `defer bytes.deinit(bun.default_allocator)` deleted — `bytes`
                     // owns its buffer and Drop frees it.
-                    scoped_log!(ResumableSink, "onWrite {}", bytes.len());
+                    scoped_log!(ResumableSink, "onWrite {}", bytes.len);
                     let _ = Self::on_write(this_ref.context, bytes.slice());
                     Self::on_end(this_ref.context, err);
                     this_ref.deref_();

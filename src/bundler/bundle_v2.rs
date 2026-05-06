@@ -171,14 +171,11 @@ impl<'a> BundleV2<'a> {
     // Callers go through these accessors so the unsafe deref is centralized.
     #[inline]
     pub fn transpiler(&self) -> &Transpiler<'a> {
-        // SAFETY: `transpiler` is set in `init` from a live `&mut Transpiler`
-        // and outlives `BundleV2` (`'a` bound on the field type).
-        unsafe { &*self.transpiler }
+        &*self.transpiler
     }
     #[inline]
     pub fn transpiler_mut(&mut self) -> &mut Transpiler<'a> {
-        // SAFETY: see `transpiler()`; `&mut self` enforces exclusive access.
-        unsafe { &mut *self.transpiler }
+        &mut *self.transpiler
     }
 
     #[inline]

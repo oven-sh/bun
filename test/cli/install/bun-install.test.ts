@@ -6705,7 +6705,7 @@ cache = false
       await withContext(defaultOpts, async ctx => {
         await setupFrozenBunfigCtx(ctx);
 
-        const { stderr, exited } = spawn({
+        const { stdout, stderr, exited } = spawn({
           cmd: [bunExe(), "add", "bar@0.0.2"],
           cwd: ctx.package_dir,
           stdout: "pipe",
@@ -6713,8 +6713,9 @@ cache = false
           stderr: "pipe",
           env,
         });
-        const err = await stderr.text();
+        const [out, err] = await Promise.all([stdout.text(), stderr.text()]);
         expect(err).not.toContain("lockfile is frozen");
+        expect(out).toContain("installed bar@0.0.2");
         expect(await exited).toBe(0);
 
         // package.json must now list bar as a dependency and bar must be installed
@@ -6731,7 +6732,7 @@ cache = false
       await withContext(defaultOpts, async ctx => {
         await setupFrozenBunfigCtx(ctx);
 
-        const { stderr, exited } = spawn({
+        const { stdout, stderr, exited } = spawn({
           cmd: [bunExe(), "install", "bar@0.0.2"],
           cwd: ctx.package_dir,
           stdout: "pipe",
@@ -6739,8 +6740,9 @@ cache = false
           stderr: "pipe",
           env,
         });
-        const err = await stderr.text();
+        const [out, err] = await Promise.all([stdout.text(), stderr.text()]);
         expect(err).not.toContain("lockfile is frozen");
+        expect(out).toContain("installed bar@0.0.2");
         expect(await exited).toBe(0);
 
         // `bun install <pkg>` behaves like `bun add` — package.json and
@@ -6758,7 +6760,7 @@ cache = false
       await withContext(defaultOpts, async ctx => {
         await setupFrozenBunfigCtx(ctx);
 
-        const { stderr, exited } = spawn({
+        const { stdout, stderr, exited } = spawn({
           cmd: [bunExe(), "remove", "baz"],
           cwd: ctx.package_dir,
           stdout: "pipe",
@@ -6766,8 +6768,9 @@ cache = false
           stderr: "pipe",
           env,
         });
-        const err = await stderr.text();
+        const [out, err] = await Promise.all([stdout.text(), stderr.text()]);
         expect(err).not.toContain("lockfile is frozen");
+        expect(out).toContain("bun remove");
         expect(await exited).toBe(0);
 
         // baz must be gone from package.json and node_modules
@@ -6783,7 +6786,7 @@ cache = false
 
         // `bun update --latest baz` forces a version change (0.0.3 -> 0.0.5)
         // so the lockfile MUST change — this exercises the frozen check.
-        const { stderr, exited } = spawn({
+        const { stdout, stderr, exited } = spawn({
           cmd: [bunExe(), "update", "--latest", "baz"],
           cwd: ctx.package_dir,
           stdout: "pipe",
@@ -6791,8 +6794,9 @@ cache = false
           stderr: "pipe",
           env,
         });
-        const err = await stderr.text();
+        const [out, err] = await Promise.all([stdout.text(), stderr.text()]);
         expect(err).not.toContain("lockfile is frozen");
+        expect(out).toContain("bun update");
         expect(await exited).toBe(0);
 
         // baz must now be pinned to the latest version in both places
@@ -6815,7 +6819,7 @@ cache = false
           JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: "0.0.5" } }),
         );
 
-        const { stderr, exited } = spawn({
+        const { stdout, stderr, exited } = spawn({
           cmd: [bunExe(), "install"],
           cwd: ctx.package_dir,
           stdout: "pipe",
@@ -6823,8 +6827,9 @@ cache = false
           stderr: "pipe",
           env,
         });
-        const err = await stderr.text();
+        const [out, err] = await Promise.all([stdout.text(), stderr.text()]);
         expect(err).toContain("error: lockfile had changes, but lockfile is frozen");
+        expect(out).toContain("bun install");
         expect(await exited).toBe(1);
       });
     });
@@ -6854,7 +6859,7 @@ cache = false
           }).exited,
         ).toBe(0);
 
-        const { stderr, exited } = spawn({
+        const { stdout, stderr, exited } = spawn({
           cmd: [bunExe(), "add", "--frozen-lockfile", "bar@0.0.2"],
           cwd: ctx.package_dir,
           stdout: "pipe",
@@ -6862,8 +6867,51 @@ cache = false
           stderr: "pipe",
           env,
         });
-        const err = await stderr.text();
+        const [out, err] = await Promise.all([stdout.text(), stderr.text()]);
         expect(err).toContain("error: lockfile had changes, but lockfile is frozen");
+        expect(out).not.toContain("installed bar");
+        expect(await exited).toBe(1);
+      });
+    });
+
+    it("--production CLI flag still forces frozen on `bun add`", async () => {
+      await withContext(defaultOpts, async ctx => {
+        // `--production` implies frozen. Even on `bun add`, the user is
+        // opting in to frozen behavior for this invocation, so it must
+        // still fire the frozen-lockfile check.
+        setContextHandler(
+          ctx,
+          dummyRegistryForContext(ctx, [], {
+            "0.0.2": { as: "0.0.2" },
+            "0.0.3": { as: "0.0.3" },
+          }),
+        );
+        await writeFile(
+          join(ctx.package_dir, "package.json"),
+          JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: "0.0.3" } }),
+        );
+        expect(
+          await spawn({
+            cmd: [bunExe(), "install"],
+            cwd: ctx.package_dir,
+            stdout: "ignore",
+            stdin: "ignore",
+            stderr: "ignore",
+            env,
+          }).exited,
+        ).toBe(0);
+
+        const { stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "add", "--production", "bar@0.0.2"],
+          cwd: ctx.package_dir,
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        const [out, err] = await Promise.all([stdout.text(), stderr.text()]);
+        expect(err).toContain("error: lockfile had changes, but lockfile is frozen");
+        expect(out).not.toContain("installed bar");
         expect(await exited).toBe(1);
       });
     });

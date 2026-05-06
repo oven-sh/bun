@@ -3194,7 +3194,9 @@ impl Resolver {
         let key = self.get_key_host(index, PendingCacheField::PendingHostCacheNative);
 
         self.ref_();
-        let _g = scopeguard::guard((), |_| self.deref());
+        let this: *mut Self = self;
+        // SAFETY: `this` derived from `&mut self`; paired with `ref_()` above so count stays > 0.
+        let _g = scopeguard::guard((), move |_| unsafe { Self::deref(this) });
 
         let mut array = match result.to_js(global_object).unwrap_or(JSValue::ZERO) { // TODO: properly propagate exception upwards
             Some(a) => a,
@@ -3253,7 +3255,9 @@ impl Resolver {
         let key = self.get_key_addr(index);
 
         self.ref_();
-        let _g = scopeguard::guard((), |_| self.deref());
+        let this: *mut Self = self;
+        // SAFETY: `this` derived from `&mut self`; paired with `ref_()` above so count stays > 0.
+        let _g = scopeguard::guard((), move |_| unsafe { Self::deref(this) });
 
         let Some(addr) = result else {
             unsafe {
@@ -3307,7 +3311,9 @@ impl Resolver {
         let key = self.get_key_nameinfo(index);
 
         self.ref_();
-        let _g = scopeguard::guard((), |_| self.deref());
+        let this: *mut Self = self;
+        // SAFETY: `this` derived from `&mut self`; paired with `ref_()` above so count stays > 0.
+        let _g = scopeguard::guard((), move |_| unsafe { Self::deref(this) });
 
         let Some(mut name_info) = result else {
             unsafe {
@@ -3442,7 +3448,8 @@ impl Resolver {
             vm.event_loop().enter();
             let _exit = scopeguard::guard((), |_| vm.event_loop().exit());
             (*parent).ref_();
-            let _deref = scopeguard::guard((), |_| (*parent).deref());
+            // SAFETY: `parent` is the live heap-allocated Resolver back-ptr; paired with `ref_()` above.
+            let _deref = scopeguard::guard((), move |_| Self::deref(parent));
             // channel must be non-null here as c_ares must have been initialized if we're receiving callbacks
             let channel = (*parent).channel.unwrap();
             if status < 0 {

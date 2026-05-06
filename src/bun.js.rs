@@ -440,7 +440,8 @@ impl Run {
                 interval: cpu_prof_opts.interval,
             });
             CPUProfiler::set_sampling_interval(cpu_prof_opts.interval);
-            CPUProfiler::start_cpu_profiler(vm.jsc_vm);
+            // SAFETY: `jsc_vm` is the live per-thread JSC VM pointer.
+            CPUProfiler::start_cpu_profiler(unsafe { &mut *vm.jsc_vm });
             bun_analytics::Features::cpu_profile_inc();
         }
 

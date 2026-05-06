@@ -1229,13 +1229,18 @@ impl Kqueue {
     fn thread_main(manager: &'static PathWatcherManager) {
         use bun_sys::c::{Kevent, NOTE};
         Output::Source::configure_named_thread("fs.watch");
-        // SAFETY: see Linux::thread_main.
-        let plat = unsafe { &*(&manager.platform as *const Kqueue) };
+        let plat: *mut Kqueue = manager.platform.get();
+        // SAFETY: `kq` and `running` are set in `init()` before this thread spawns and
+        // never reassigned. Borrow only these disjoint fields so the `&mut entries`
+        // projections taken under `manager.mutex` (here and in `add_one`/`remove_watch`)
+        // never alias them — we never form `&Kqueue` / `&mut Kqueue` over the whole struct.
+        let kq = unsafe { (*plat).kq };
+        let running: &AtomicBool = unsafe { &(*plat).running };
         // SAFETY: Kevent is POD; uninitialized array filled by kernel before read.
         let mut events: [Kevent; 128] = unsafe { core::mem::zeroed() };
-        while plat.running.load(Ordering::Acquire) {
+        while running.load(Ordering::Acquire) {
             let count = sys::syscall::kevent(
-                plat.kq.native(),
+                kq.native(),
                 events.as_mut_ptr(),
                 0,
                 events.as_mut_ptr(),
@@ -1247,8 +1252,9 @@ impl Kqueue {
             }
 
             manager.mutex.lock();
-            // SAFETY: holding manager.mutex.
-            let plat_mut = unsafe { &mut *(&manager.platform as *const _ as *mut Kqueue) };
+            // SAFETY: holding manager.mutex; exclusive access to `entries`. This loop
+            // never mutates `entries`, so a shared borrow suffices.
+            let entries = unsafe { &(*plat).entries };
             let mut touched: ArrayHashMap<*mut PathWatcher, ()> = ArrayHashMap::default();
 
             for kev in &events[..usize::try_from(count).unwrap()] {
@@ -1259,15 +1265,15 @@ impl Kqueue {
                 // set to a monotonic generation at registration and survives in the
                 // already-delivered event, so compare it to the current entry's gen
                 // to reject stale fd-reuse hits.
-                let Some(entry) = plat_mut.entries.get(&(i32::try_from(kev.ident).unwrap())) else {
+                let Some(entry) = entries.get(&(i32::try_from(kev.ident).unwrap())) else {
                     continue;
                 };
                 if entry.gen != kev.udata {
                     continue;
                 }
-                // SAFETY: entry.watcher live under manager.mutex.
-                let watcher =
-                    unsafe { &mut *(entry.watcher as *const PathWatcher as *mut PathWatcher) };
+                // SAFETY: entry.watcher live under manager.mutex; PathWatcher is a
+                // separate heap allocation, disjoint from the `entries` borrow above.
+                let watcher = unsafe { &mut *entry.watcher };
 
                 let event_type: EventType = if kev.fflags
                     & (NOTE::DELETE | NOTE::RENAME | NOTE::REVOKE | NOTE::LINK)

@@ -930,6 +930,16 @@ impl JSGlobalObject {
         unsafe { JSC__JSGlobalObject__bunVM(self) }
     }
 
+    /// Raw-pointer variant of [`Self::bun_vm`]. Returns the FFI
+    /// `*mut VirtualMachine` directly so callers that need to mutate VM fields
+    /// don't launder provenance through `&VirtualMachine -> *mut` (which is UB
+    /// to write through under Stacked Borrows). Spec `JSGlobalObject.zig:617`
+    /// returns `*VirtualMachine` (mutable); this preserves that intent.
+    #[inline]
+    pub fn bun_vm_ptr(&self) -> *mut VirtualMachine {
+        self.bun_vm_unsafe() as *mut VirtualMachine
+    }
+
     pub fn bun_vm(&self) -> &VirtualMachine {
         #[cfg(debug_assertions)]
         {

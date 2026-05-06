@@ -932,31 +932,40 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
     /// `SingleTask` when it is done touching `this`. The last caller (count
     /// drops to zero) enqueues `runFromJSThread`, which resolves the promise
     /// and destroys `this`.
-    fn on_subtask_done(&self) {
-        let old_count = self.subtask_count.fetch_sub(1, Ordering::AcqRel);
+    ///
+    /// Takes a raw `*mut Self` (not `&self`) so the pointer retains the
+    /// mutable provenance from the original `Box::leak`; the JS-thread
+    /// callback later materializes `&mut *this`, which would be UB if the
+    /// pointer were derived from a shared reference.
+    fn on_subtask_done(this: *mut Self) {
+        // SAFETY: `this` is a live Box-leaked task; shared access only here —
+        // other workpool threads may concurrently hold `&Self` until the
+        // refcount reaches zero below.
+        let this_ref = unsafe { &*this };
+        let old_count = this_ref.subtask_count.fetch_sub(1, Ordering::AcqRel);
         debug_assert!(old_count > 0);
         if old_count != 1 { return; }
 
         // All subtasks have finished. If none reported an error, the copy succeeded.
-        if !self.has_result.load(Ordering::Relaxed) {
-            self.has_result.store(true, Ordering::Relaxed);
+        if !this_ref.has_result.load(Ordering::Relaxed) {
+            this_ref.has_result.store(true, Ordering::Relaxed);
             // SAFETY: count reached zero ⇒ this thread now has exclusive access.
-            unsafe { *self.result.get() = Maybe::SUCCESS; }
+            unsafe { *this_ref.result.get() = Maybe::SUCCESS; }
         }
 
-        // SAFETY: count reached zero ⇒ exclusive access; promote to `*mut` for
-        // the enqueue (which will eventually call `run_from_js_thread(&mut self)`).
-        let this_mut = self as *const Self as *mut Self;
-        if matches!(self.evtloop, EventLoopHandle::Js(_)) {
+        // Count reached zero ⇒ exclusive access. `this` carries mutable
+        // provenance from `Box::leak`, so the enqueued callback may safely
+        // form `&mut *this` on the JS thread.
+        if matches!(this_ref.evtloop, EventLoopHandle::Js(_)) {
             // PORT NOTE: `ConcurrentTask::from_callback` expects `fn(*mut T) -> JsResult<()>`;
             // Zig accepted `fn(*T) JSError!void` directly. Adapt the signature inline.
-            self.evtloop.enqueue_task_concurrent(ConcurrentTask::from_callback(
-                this_mut,
+            this_ref.evtloop.enqueue_task_concurrent(ConcurrentTask::from_callback(
+                this,
                 |p| unsafe { (&mut *p).run_from_js_thread().map_err(Into::into) },
             ));
         } else {
-            self.evtloop.enqueue_task_concurrent(
-                AnyTaskWithExtraContext::from_callback_auto_deinit(this_mut, Self::run_from_js_thread_mini),
+            this_ref.evtloop.enqueue_task_concurrent(
+                AnyTaskWithExtraContext::from_callback_auto_deinit(this, Self::run_from_js_thread_mini),
             );
         }
     }
@@ -1028,9 +1037,9 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         // (initialized to 1 in create*). Drop it on return. `runFromJSThread`
         // (which destroys `this`) is only enqueued once this reference and
         // every spawned SingleTask's reference have been dropped.
-        // SAFETY: `this` is the live Box-leaked task; on_subtask_done only enqueues destruction
+        // `this` is the live Box-leaked task; on_subtask_done only enqueues destruction
         // once every reference (including this one) has been dropped.
-        let _done = scopeguard::guard(this, |p| unsafe { (*p).on_subtask_done() });
+        let _done = scopeguard::guard(this, |p| Self::on_subtask_done(p));
         // SAFETY: same pointer as above; valid for the duration of this fn.
         // Shared borrow only — once `_cp_async_directory` spawns `CpSingleTask`s,
         // other workpool threads concurrently hold `&Self` to this same allocation.

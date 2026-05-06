@@ -735,10 +735,15 @@ fn resolver_bundle_options_subset(
             ropts::Framework { built_in_modules: m }
         }),
         global_cache: src.global_cache,
+        // SAFETY: spec `options.zig:1753` types this `?*api.BunInstall`, but the
+        // sole consumer (`PackageManagerOptions.zig:load`) only reads through it
+        // — never writes — so the bundler-side `Option<&api::BunInstall>` is the
+        // faithful Rust shape and the resolver FORWARD_DECL field is `*const ()`.
+        // No const→mut provenance laundering: `&T as *const T as *const ()`.
         install: src
             .install
-            .map(|p| p as *const _ as *mut ())
-            .unwrap_or(core::ptr::null_mut()),
+            .map(|p| p as *const _ as *const ())
+            .unwrap_or(core::ptr::null()),
         load_package_json: src.load_package_json,
         load_tsconfig_json: src.load_tsconfig_json,
         main_field_extension_order: ropts::owned_string_list(src.main_field_extension_order),

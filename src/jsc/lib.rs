@@ -2042,6 +2042,54 @@ pub mod WebCore {
             // the Blob's store is alive (held by `&self`'s JS owner).
             unsafe { core::slice::from_raw_parts(ptr, len) }
         }
+
+        /// `Blob.initWithStore(store, globalThis)`
+        /// (src/runtime/webcore/Blob.zig:3649). Wraps an existing
+        /// heap-allocated `Store` (from `Store::init_file`/`init_bytes`).
+        pub fn init_with_store(
+            store: *mut crate::webcore::blob::Store,
+            global_this: &crate::JSGlobalObject,
+        ) -> Blob {
+            Blob {
+                store: core::ptr::NonNull::new(store),
+                global_this,
+                ..Default::default()
+            }
+        }
+
+        /// `Blob.init(bytes, allocator, globalThis)`
+        /// (src/runtime/webcore/Blob.zig:3577). Creates a bytes-backed Blob.
+        /// Ownership of `bytes` moves into a freshly-allocated `Store` via the
+        /// `Bun__Blob__Store__initBytes` C-ABI trampoline (exported by
+        /// `bun_runtime`; breaks the dep cycle).
+        pub fn init(bytes: Box<[u8]>, global_this: &crate::JSGlobalObject) -> Blob {
+            unsafe extern "C" {
+                fn Bun__Blob__Store__initBytes(
+                    ptr: *mut u8,
+                    len: usize,
+                ) -> *mut crate::webcore::blob::Store;
+            }
+            if bytes.is_empty() {
+                return Blob { global_this, ..Default::default() };
+            }
+            let len = bytes.len();
+            let ptr = Box::into_raw(bytes) as *mut u8;
+            // SAFETY: trampoline takes ownership of `ptr[..len]` and returns a
+            // `Box::into_raw` `Store` (or null on OOM).
+            let store = unsafe { Bun__Blob__Store__initBytes(ptr, len) };
+            Blob {
+                size: len as crate::webcore::blob::SizeType,
+                store: core::ptr::NonNull::new(store),
+                global_this,
+                ..Default::default()
+            }
+        }
+
+        /// Inherent `to_js` so callers don't need `JsClass` in scope.
+        #[inline]
+        pub fn to_js(self, global: &crate::JSGlobalObject) -> crate::JSValue {
+            <Self as crate::JsClass>::to_js(self, global)
+        }
     }
 }
 /// `jsc.webcore` — lower-case alias for [`WebCore`] plus the nested `blob`
@@ -2049,6 +2097,10 @@ pub mod WebCore {
 pub mod webcore {
     pub use super::WebCore::{Blob, Request, Response};
     pub mod blob {
+        /// `webcore.Blob.SizeType` (src/runtime/webcore/Blob.zig:60) — Zig
+        /// `u52`; widened to `u64` here (Rust has no native `u52`).
+        pub type SizeType = u64;
+
         /// `webcore.Blob.Store` — backing store (bytes / file / S3). Full impl
         /// lives in `bun_webcore` (forward-dep, not at this tier).
         #[repr(C)]
@@ -2057,6 +2109,26 @@ pub mod webcore {
             _opaque: [u8; 0],
         }
         impl Store {
+            /// `Store.mime_type` setter — C-ABI trampoline so lower-tier crates
+            /// can stamp a MIME type onto an opaque `Store` without depending
+            /// on its layout.
+            pub fn set_mime_type(&mut self, mime: &bun_http::MimeType::MimeType) {
+                unsafe extern "C" {
+                    fn Bun__Blob__Store__setMimeType(
+                        store: *mut Store,
+                        mime: *const core::ffi::c_void,
+                    );
+                }
+                // SAFETY: `self` is a live `*mut Store` from `init_file`/
+                // `init_bytes`; trampoline copies `*mime` into `store.mime_type`.
+                unsafe {
+                    Bun__Blob__Store__setMimeType(
+                        self,
+                        mime as *const _ as *const core::ffi::c_void,
+                    )
+                }
+            }
+
             /// `Store.initFile(pathlike, mime_type, allocator)`
             /// (src/runtime/webcore/blob/Store.zig:125). Allocates a new
             /// file-backed `Store`.
@@ -2091,10 +2163,8 @@ pub mod webcore {
                     )
                 };
                 // Ownership of `pathlike`'s payload moved across FFI via
-                // `ptr::read` on the callee side. `PathOrFileDescriptor` is
-                // `Copy` (no `Drop` impl), so there is nothing to `forget` —
-                // the binding is dead past this point.
-                let _ = pathlike;
+                // `ptr::read` on the callee side; suppress the local drop.
+                core::mem::forget(pathlike);
                 if store.is_null() {
                     Err(bun_core::AllocError)
                 } else {
@@ -2111,9 +2181,50 @@ pub mod blob {
 #[deprecated]
 pub use bun_api as API;
 pub mod api {
-    // `bun_api::BuildArtifact` is defined in bun_runtime (not at this tier).
-    // Surface an opaque placeholder so dependents type-check.
-    crate::stub_ty!(BuildArtifact);
+    /// `jsc.API.BuildArtifact` (src/runtime/api/JSBundler.zig:1786). Ported to
+    /// this tier so `bun_bundler_jsc` can construct artifacts without a
+    /// `bun_runtime` forward-dep cycle.
+    // TODO(port): unify with bun_runtime::api::BuildArtifact (single nominal type).
+    #[repr(C)]
+    pub struct BuildArtifact {
+        pub blob: crate::WebCore::Blob,
+        pub loader: bun_bundler::options::Loader,
+        pub path: Box<[u8]>,
+        pub hash: u64,
+        pub output_kind: bun_bundler::options::OutputKind,
+        pub sourcemap: crate::strong::Optional,
+    }
+
+    impl Default for BuildArtifact {
+        fn default() -> Self {
+            Self {
+                blob: crate::WebCore::Blob::default(),
+                loader: bun_bundler::options::Loader::File,
+                path: Box::default(),
+                hash: u64::MAX,
+                output_kind: bun_bundler::options::OutputKind::Chunk,
+                sourcemap: crate::strong::Optional::default(),
+            }
+        }
+    }
+
+    unsafe extern "C" {
+        fn BuildArtifact__create(
+            ptr: *mut BuildArtifact,
+            global: *mut crate::JSGlobalObject,
+        ) -> crate::JSValue;
+    }
+
+    impl BuildArtifact {
+        /// `BuildArtifact.toJS` (codegen `JSBuildArtifact.toJS`). Heap-promotes
+        /// `self` and hands the pointer to the codegen `BuildArtifact__create`
+        /// extern.
+        pub fn to_js(self: Box<Self>, global: &crate::JSGlobalObject) -> crate::JSValue {
+            // SAFETY: codegen extern takes ownership of the boxed artifact and
+            // wraps it in a `JSBuildArtifact`.
+            unsafe { BuildArtifact__create(Box::into_raw(self), global.as_ptr()) }
+        }
+    }
 
     /// `bun.api.NewSocket(comptime ssl)` — type-generator for the JS `Socket`
     /// wrapper (src/runtime/socket/socket.zig:39). Real impl lives in
@@ -2132,11 +2243,30 @@ pub mod api {
 pub use bun_api::node as Node;
 #[allow(non_snake_case)]
 pub mod Node {
-    // `node.PathLike` / `node.PathOrFileDescriptor` / `node.BlobOrStringOrBuffer`
-    // are defined in bun_runtime (forward-dep on bun_jsc). Surface opaque
-    // placeholders so this crate's dependents (which import them via
-    // `bun_jsc::Node::*`) type-check.
-    crate::stub_ty!(PathLike, PathOrFileDescriptor, BlobOrStringOrBuffer);
+    // `node.BlobOrStringOrBuffer` is defined in bun_runtime (forward-dep on
+    // bun_jsc). Surface an opaque placeholder so dependents type-check.
+    crate::stub_ty!(BlobOrStringOrBuffer);
+
+    /// `node.PathLike` (src/runtime/node/types.zig:532). Ported to this tier
+    /// so lower-tier crates (e.g. `bun_bundler_jsc`) can construct file-backed
+    /// Blob stores without a `bun_runtime` forward-dep cycle.
+    // TODO(port): unify with bun_runtime::node::types::PathLike — only the
+    // `String` variant is constructed at this tier; the remaining variants are
+    // payload-compatible by ABI contract with the `bun_runtime` definition.
+    pub enum PathLike {
+        String(bun_string::PathString),
+        Buffer(crate::MarkedArrayBuffer),
+        // TODO(port): SliceWithUnderlyingString / ThreadsafeString variants —
+        // `bun_string::SliceWithUnderlyingString` is not yet exported at this
+        // tier. Only `String` is constructed by lower-tier callers.
+        EncodedSlice(bun_string::ZigStringSlice),
+    }
+
+    /// `node.PathOrFileDescriptor` (src/runtime/node/types.zig:903).
+    pub enum PathOrFileDescriptor {
+        Fd(bun_sys::Fd),
+        Path(PathLike),
+    }
 }
 pub use self::Node as node;
 

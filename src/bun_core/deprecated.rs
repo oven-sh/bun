@@ -590,10 +590,23 @@ impl RapidHash {
 // misc
 // ──────────────────────────────────────────────────────────────────────────
 
-// TODO(b2-blocked): `JsError` is `bun_jsc::JsError` (tier-6). bun_core (tier-0)
-// cannot depend on it. The fn body is preserved for the bun_jsc move-in pass to
-// take ownership of (it converts JsError → write Error for Console formatting).
-// Gated out until bun_jsc takes ownership; test_runner/expect.rs carries a local copy.
+// `bun.JSError` — tier-0 mirror of the canonical JS error union
+// (`error{JSError, OutOfMemory, JSTerminated}` in Zig). The richer copy with
+// `From<JsTerminated>` etc. lives in `bun_jsc` (tier-6); this bare enum exists
+// so `js_error_to_write_error` can compile here without an upward dep cycle.
+// `bun_jsc` is expected to take ownership of the function in a later pass.
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum JsError {
+    /// A JavaScript exception is pending in the VM's exception scope.
+    Thrown,
+    /// Allocation failure; caller must throw an `OutOfMemoryError`.
+    OutOfMemory,
+    /// The VM is terminating (worker shutdown / `process.exit`).
+    Terminated,
+}
+
+// Converts `bun.JSError` → `std.Io.Writer.Error` for Console formatting paths.
+// test_runner/expect.rs carries a local copy bound to `bun_jsc::JsError`.
 pub fn js_error_to_write_error(e: JsError) -> crate::Error {
     match e {
         // TODO: this might lose a JSTerminated, causing m_terminationException problems

@@ -279,6 +279,14 @@ impl Default for Mutex {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AllocError;
 
+impl AllocError {
+    /// Port of Zig `@errorName(error.OutOfMemory)`.
+    #[inline]
+    pub const fn name(self) -> &'static str {
+        "OutOfMemory"
+    }
+}
+
 /// The mimalloc-backed `#[global_allocator]` payload.
 ///
 /// Per PORTING.md "Prereq for every crate":

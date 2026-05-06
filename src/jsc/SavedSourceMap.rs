@@ -52,30 +52,21 @@ impl SavedSourceMap {
             last_ism: None,
         });
 
-         // TODO(b2-blocked): bun_collections::HashMap::lock_pointers
-        {
-            // SAFETY: `map` is a valid pointer to the sibling HashTable on VirtualMachine.
-            unsafe { (*map).lock_pointers() };
-        }
+        // SAFETY: `map` is a valid pointer to the sibling HashTable on VirtualMachine.
+        unsafe { (*map).lock_pointers() };
     }
 
     #[inline]
     pub fn lock(&mut self) {
         self.mutex.lock();
-         // TODO(b2-blocked): bun_collections::HashMap::unlock_pointers
-        {
-            // SAFETY: `map` points at the live sibling HashTable on VirtualMachine.
-            unsafe { (*self.map).unlock_pointers() };
-        }
+        // SAFETY: `map` points at the live sibling HashTable on VirtualMachine.
+        unsafe { (*self.map).unlock_pointers() };
     }
 
     #[inline]
     pub fn unlock(&mut self) {
-         // TODO(b2-blocked): bun_collections::HashMap::lock_pointers
-        {
-            // SAFETY: `map` points at the live sibling HashTable on VirtualMachine.
-            unsafe { (*self.map).lock_pointers() };
-        }
+        // SAFETY: `map` points at the live sibling HashTable on VirtualMachine.
+        unsafe { (*self.map).lock_pointers() };
         self.mutex.unlock();
     }
 }
@@ -280,24 +271,25 @@ pub type SourceMapHandler<'a> = bun_js_printer::SourceMapHandler<'a>;
 
 impl Drop for SavedSourceMap {
     fn drop(&mut self) {
-         // TODO(b2-blocked): bun_collections::HashMap::{value_iterator, unlock_pointers, deinit}, bun_sourcemap::{ParsedSourceMap::deref_, InternalSourceMap::deinit}
-        {
         {
             self.lock();
             // SAFETY: `map` points at the live sibling HashTable on VirtualMachine.
             let map = unsafe { &mut *self.map };
-            let mut iter = map.value_iterator();
-            while let Some(val) = iter.next() {
-                let value = Value::from(*val);
+            // Zig `valueIterator()` → std `values()`.
+            for val in map.values() {
+                let value = Value::from(Some(*val));
                 if let Some(source_map) = value.get::<ParsedSourceMap>() {
-                    source_map.deref_();
+                    // SAFETY: pointer was stored by us and is live until table teardown.
+                    unsafe {
+                        bun_ptr::ThreadSafeRefCount::<ParsedSourceMap>::deref(source_map)
+                    };
                 } else if let Some(_provider) = value.get::<SourceProviderMap>() {
                     // do nothing, we did not hold a ref to ZigSourceProvider
                 } else if let Some(ism) = value.get::<InternalSourceMap>() {
-                    (InternalSourceMap {
-                        data: ism as *mut _ as *mut u8,
-                    })
-                    .deinit();
+                    // SAFETY: blob was heap-allocated via `put_mappings`
+                    // (`Box<[u8]>::into_raw`); the tagged pointer's address IS
+                    // the blob's data pointer (InternalSourceMap is a thin view).
+                    (InternalSourceMap { data: ism as *const u8 }).free_owned();
                 }
             }
             self.unlock();
@@ -309,7 +301,6 @@ impl Drop for SavedSourceMap {
             (*self.map).deinit();
             // TODO(port): deinit() on a backref-owned HashMap — ownership lives on VirtualMachine; verify Phase B.
         }
-        } // end 
     }
 }
 

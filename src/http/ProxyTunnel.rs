@@ -100,14 +100,24 @@ impl ProxyTunnel {
     pub fn ref_(&self) {
         self.ref_count.set(self.ref_count.get() + 1);
     }
+    /// # Safety
+    /// `this` must point to a live `ProxyTunnel` allocated by `start`/`adopt`
+    /// (i.e. originated from `Box::into_raw`). Takes a raw `*mut` so the
+    /// `Box::from_raw` on the zero-count path inherits write provenance from
+    /// the original allocation — a `&self` receiver here would force a
+    /// `*const → *mut` cast, which is UB to deallocate through.
     #[inline]
-    pub fn deref(&self) {
-        let n = self.ref_count.get() - 1;
-        self.ref_count.set(n);
+    pub unsafe fn deref(this: *mut Self) {
+        // SAFETY: caller contract — `this` is live; `ref_count` is a `Cell`
+        // so the shared borrow taken by `.get()/.set()` is sound even if other
+        // raw aliases exist on this single thread.
+        let rc = unsafe { &(*this).ref_count };
+        let n = rc.get() - 1;
+        rc.set(n);
         if n == 0 {
             // SAFETY: every live ProxyTunnel was created by `start` (Box::into_raw);
             // ref_count hitting 0 means no other alias remains.
-            unsafe { drop(Box::from_raw(self as *const Self as *mut Self)) };
+            drop(unsafe { Box::from_raw(this) });
         }
     }
 }
@@ -128,7 +138,7 @@ fn on_open(ctx: *mut HTTPClient) {
     proxy.ref_();
     let _guard = scopeguard::guard(proxy_nn, |p| {
         // SAFETY: balances the ref_ above; tunnel still allocated until count hits 0.
-        unsafe { (*p.as_ptr()).deref() };
+        unsafe { ProxyTunnel::deref(p.as_ptr()) };
     });
     if let Some(wrapper) = &mut proxy.wrapper {
         let Some(ssl_ptr) = wrapper.ssl else { return };
@@ -176,7 +186,7 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
     proxy.ref_();
     let _guard = scopeguard::guard(proxy_nn, |p| {
         // SAFETY: balances the ref_ above.
-        unsafe { (*p.as_ptr()).deref() };
+        unsafe { ProxyTunnel::deref(p.as_ptr()) };
     });
     match this.state.response_stage {
         HTTPStage::Body => {
@@ -247,7 +257,7 @@ fn on_handshake(ctx: *mut HTTPClient, handshake_success: bool, ssl_error: uws::u
     proxy.ref_();
     let _guard = scopeguard::guard(proxy_nn, |p| {
         // SAFETY: balances the ref_ above.
-        unsafe { (*p.as_ptr()).deref() };
+        unsafe { ProxyTunnel::deref(p.as_ptr()) };
     });
     this.state.response_stage = HTTPStage::ProxyHeaders;
     this.state.request_stage = HTTPStage::ProxyHeaders;
@@ -537,16 +547,16 @@ impl ProxyTunnel {
                 // Cycle to through the SSL state machine
                 let _ = wrapper.flush();
             }
-            (*self_ptr).deref();
+            ProxyTunnel::deref(self_ptr);
         }
     }
 
     pub fn receive(&mut self, buf: &[u8]) {
         self.ref_();
-        let self_ptr = self as *const Self;
+        let self_ptr: *mut Self = self;
         let _guard = scopeguard::guard((), move |_| {
             // SAFETY: balances the ref_ above; tunnel still allocated.
-            unsafe { (*self_ptr).deref() };
+            unsafe { ProxyTunnel::deref(self_ptr) };
         });
         if let Some(wrapper) = &mut self.wrapper {
             wrapper.receive_data(buf);
@@ -573,7 +583,10 @@ impl ProxyTunnel {
         // Zig: detachSocket() BEFORE deref() — if refcount > 1 the tunnel
         // outlives this call and must not retain a dangling socket handle.
         self.detach_socket();
-        self.deref();
+        // SAFETY: `&mut self` was derived (transitively) from the `Box::into_raw`
+        // pointer in `start`/`adopt`; coercing it back to `*mut` preserves write
+        // provenance for the dealloc path.
+        unsafe { ProxyTunnel::deref(self) };
     }
 
     /// Detach the tunnel from its current HTTPClient owner so it can be safely

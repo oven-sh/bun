@@ -1,6 +1,7 @@
 //! Node-API (N-API) implementation.
 //! Port of src/napi/napi.zig.
 
+use core::cell::UnsafeCell;
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU8, Ordering};
@@ -22,9 +23,15 @@ const TODO_EXCEPTION: jsc::c_api::ExceptionRef = ptr::null_mut();
 // ──────────────────────────────────────────────────────────────────────────
 
 /// This is `struct napi_env__` from napi.h
+///
+/// Opaque C++ object. The `UnsafeCell` marker makes this type `!Freeze` so that
+/// `&NapiEnv` does not assert immutability — C++ mutates the underlying object
+/// (e.g. `napi_set_last_error`, handle-scope push/pop) through pointers derived
+/// from `&self`. See [`Self::as_mut_ptr`].
 #[repr(C)]
 pub struct NapiEnv {
     _p: [u8; 0],
+    _cell: UnsafeCell<()>,
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 

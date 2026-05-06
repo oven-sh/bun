@@ -447,14 +447,14 @@ pub enum AsyncCallType {
 // TODO(port): move to jsc_sys
 unsafe extern "C" {
     fn Debugger__didScheduleAsyncCall(
-        global: *mut JSGlobalObject,
+        global: *const JSGlobalObject,
         call: AsyncCallType,
         id: u64,
         single_shot: bool,
     );
-    fn Debugger__didCancelAsyncCall(global: *mut JSGlobalObject, call: AsyncCallType, id: u64);
-    fn Debugger__didDispatchAsyncCall(global: *mut JSGlobalObject, call: AsyncCallType, id: u64);
-    fn Debugger__willDispatchAsyncCall(global: *mut JSGlobalObject, call: AsyncCallType, id: u64);
+    fn Debugger__didCancelAsyncCall(global: *const JSGlobalObject, call: AsyncCallType, id: u64);
+    fn Debugger__didDispatchAsyncCall(global: *const JSGlobalObject, call: AsyncCallType, id: u64);
+    fn Debugger__willDispatchAsyncCall(global: *const JSGlobalObject, call: AsyncCallType, id: u64);
 }
 
 pub fn did_schedule_async_call(
@@ -464,30 +464,34 @@ pub fn did_schedule_async_call(
     single_shot: bool,
 ) {
     jsc::mark_binding(core::panic::Location::caller());
-    // SAFETY: global_object is live
+    // SAFETY: `global_object` is a live opaque JSC handle (ZST on the Rust side);
+    // any mutation happens in C++-owned memory outside Rust's aliasing model.
     unsafe {
-        Debugger__didScheduleAsyncCall(global_object as *const _ as *mut _, call, id, single_shot);
+        Debugger__didScheduleAsyncCall(global_object, call, id, single_shot);
     }
 }
 pub fn did_cancel_async_call(global_object: &JSGlobalObject, call: AsyncCallType, id: u64) {
     jsc::mark_binding(core::panic::Location::caller());
-    // SAFETY: global_object is live
+    // SAFETY: `global_object` is a live opaque JSC handle (ZST on the Rust side);
+    // any mutation happens in C++-owned memory outside Rust's aliasing model.
     unsafe {
-        Debugger__didCancelAsyncCall(global_object as *const _ as *mut _, call, id);
+        Debugger__didCancelAsyncCall(global_object, call, id);
     }
 }
 pub fn did_dispatch_async_call(global_object: &JSGlobalObject, call: AsyncCallType, id: u64) {
     jsc::mark_binding(core::panic::Location::caller());
-    // SAFETY: global_object is live
+    // SAFETY: `global_object` is a live opaque JSC handle (ZST on the Rust side);
+    // any mutation happens in C++-owned memory outside Rust's aliasing model.
     unsafe {
-        Debugger__didDispatchAsyncCall(global_object as *const _ as *mut _, call, id);
+        Debugger__didDispatchAsyncCall(global_object, call, id);
     }
 }
 pub fn will_dispatch_async_call(global_object: &JSGlobalObject, call: AsyncCallType, id: u64) {
     jsc::mark_binding(core::panic::Location::caller());
-    // SAFETY: global_object is live
+    // SAFETY: `global_object` is a live opaque JSC handle (ZST on the Rust side);
+    // any mutation happens in C++-owned memory outside Rust's aliasing model.
     unsafe {
-        Debugger__willDispatchAsyncCall(global_object as *const _ as *mut _, call, id);
+        Debugger__willDispatchAsyncCall(global_object, call, id);
     }
 }
 
@@ -527,7 +531,7 @@ pub struct TestReporterHandle {
 unsafe extern "C" {
     fn Bun__TestReporterAgentReportTestFound(
         agent: *mut TestReporterHandle,
-        call_frame: *mut CallFrame,
+        call_frame: *const CallFrame,
         test_id: c_int,
         name: *mut BunString,
         item_type: TestType,

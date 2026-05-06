@@ -424,9 +424,11 @@ impl Map {
         impl Iterator<'_> {
             pub fn next(&mut self, ref_: Ref) {
                 // SAFETY: ref_ is a valid top-level symbol ref produced by the parser; Map
-                // contains an entry for it.
-                let symbol = unsafe { &mut *self.map.get(ref_).unwrap() };
-                symbol.chunk_index = self.chunk_index;
+                // contains an entry for it. `get()` derives *mut from BabyList's raw NonNull
+                // (write provenance preserved); storage is not reallocated during iteration.
+                // Raw-ptr write — no `&mut` materialized.
+                let symbol = self.map.get(ref_).unwrap();
+                unsafe { (*symbol).chunk_index = self.chunk_index };
             }
         }
         let mut decls = decls_;

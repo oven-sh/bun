@@ -16,26 +16,29 @@ pub struct URL {
 }
 
 // TODO(port): move to jsc_sys
+// PORT NOTE: getters take `*const URL` — the C++ side (BunString.cpp) never mutates the
+// WTF::URL on read. `JSGlobalObject` is an opaque FFI handle whose state Rust never
+// observes directly, so it is passed `*const` per the JSGlobalObject.rs convention.
 unsafe extern "C" {
-    fn URL__fromJS(value: JSValue, global: *mut JSGlobalObject) -> *mut URL;
+    fn URL__fromJS(value: JSValue, global: *const JSGlobalObject) -> *mut URL;
     fn URL__fromString(input: *mut String) -> *mut URL;
-    fn URL__protocol(url: *mut URL) -> String;
-    fn URL__href(url: *mut URL) -> String;
-    fn URL__username(url: *mut URL) -> String;
-    fn URL__password(url: *mut URL) -> String;
-    fn URL__search(url: *mut URL) -> String;
-    fn URL__host(url: *mut URL) -> String;
-    fn URL__hostname(url: *mut URL) -> String;
-    fn URL__port(url: *mut URL) -> u32;
+    fn URL__protocol(url: *const URL) -> String;
+    fn URL__href(url: *const URL) -> String;
+    fn URL__username(url: *const URL) -> String;
+    fn URL__password(url: *const URL) -> String;
+    fn URL__search(url: *const URL) -> String;
+    fn URL__host(url: *const URL) -> String;
+    fn URL__hostname(url: *const URL) -> String;
+    fn URL__port(url: *const URL) -> u32;
     fn URL__deinit(url: *mut URL);
-    fn URL__pathname(url: *mut URL) -> String;
-    fn URL__getHrefFromJS(value: JSValue, global: *mut JSGlobalObject) -> String;
+    fn URL__pathname(url: *const URL) -> String;
+    fn URL__getHrefFromJS(value: JSValue, global: *const JSGlobalObject) -> String;
     fn URL__getHref(input: *mut String) -> String;
     fn URL__getFileURLString(input: *mut String) -> String;
     fn URL__getHrefJoin(base: *mut String, relative: *mut String) -> String;
     fn URL__pathFromFileURL(input: *mut String) -> String;
-    fn URL__hash(url: *mut URL) -> String;
-    fn URL__fragmentIdentifier(url: *mut URL) -> String;
+    fn URL__hash(url: *const URL) -> String;
+    fn URL__fragmentIdentifier(url: *const URL) -> String;
 
     fn URL__originLength(latin1_slice: *const u8, len: usize) -> u32;
 }

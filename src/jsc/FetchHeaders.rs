@@ -108,10 +108,11 @@ impl FetchHeaders {
         buf: &ZigString,
         count_: u32,
     ) -> Option<NonNull<FetchHeaders>> {
-        // SAFETY: forwarding caller-provided buffers to C++; global is a valid borrowed ref
+        // SAFETY: forwarding caller-provided buffers to C++; `global` is an opaque ZST handle
+        // passed by address only.
         let p = unsafe {
             WebCore__FetchHeaders__createValueNotJS(
-                global as *const _ as *mut _,
+                global,
                 names,
                 values,
                 buf,
@@ -128,10 +129,11 @@ impl FetchHeaders {
         buf: &ZigString,
         count_: u32,
     ) -> JSValue {
-        // SAFETY: forwarding caller-provided buffers to C++; global is a valid borrowed ref
+        // SAFETY: forwarding caller-provided buffers to C++; `global` is an opaque ZST handle
+        // passed by address only.
         unsafe {
             WebCore__FetchHeaders__createValue(
-                global as *const _ as *mut _,
+                global,
                 names,
                 values,
                 buf,
@@ -192,13 +194,14 @@ impl FetchHeaders {
     }
 
     pub fn append(&mut self, name_: &ZigString, value: &ZigString, global: &JSGlobalObject) {
-        // SAFETY: all pointers are valid for the duration of the call
+        // SAFETY: all pointers are valid for the duration of the call; `global` is an opaque
+        // ZST handle passed by address only.
         unsafe {
             WebCore__FetchHeaders__append(
                 self,
                 name_,
                 value,
-                global as *const _ as *mut _,
+                global,
             )
         }
     }
@@ -207,19 +210,21 @@ impl FetchHeaders {
         // TODO(port): bun.jsc.fromJSHostCallGeneric — wraps the FFI call and converts a pending VM exception into JsError
         host_fn::from_js_host_call_generic(global, || {
             let zs = ZigString::init(value);
-            // SAFETY: self/global are valid; &zs lives across the call
-            unsafe { WebCore__FetchHeaders__put(self, name_, &zs, global as *const _ as *mut _) }
+            // SAFETY: self/global are valid; &zs lives across the call; `global` is an opaque
+            // ZST handle passed by address only.
+            unsafe { WebCore__FetchHeaders__put(self, name_, &zs, global) }
         })
     }
 
     pub fn get_(&mut self, name_: &ZigString, out: &mut ZigString, global: &JSGlobalObject) {
-        // SAFETY: all pointers are valid for the duration of the call
+        // SAFETY: all pointers are valid for the duration of the call; `global` is an opaque
+        // ZST handle passed by address only.
         unsafe {
             WebCore__FetchHeaders__get_(
                 self,
                 name_,
                 out,
-                global as *const _ as *mut _,
+                global,
             )
         }
     }
@@ -238,12 +243,13 @@ impl FetchHeaders {
     }
 
     pub fn has(&mut self, name_: &ZigString, global: &JSGlobalObject) -> bool {
-        // SAFETY: all pointers are valid for the duration of the call
+        // SAFETY: all pointers are valid for the duration of the call; `global` is an opaque
+        // ZST handle passed by address only.
         unsafe {
             WebCore__FetchHeaders__has(
                 self,
                 name_,
-                global as *const _ as *mut _,
+                global,
             )
         }
     }
@@ -298,19 +304,20 @@ impl FetchHeaders {
     }
 
     pub fn remove(&mut self, name_: &ZigString, global: &JSGlobalObject) {
-        // SAFETY: all pointers are valid for the duration of the call
+        // SAFETY: all pointers are valid for the duration of the call; `global` is an opaque
+        // ZST handle passed by address only.
         unsafe {
             WebCore__FetchHeaders__remove(
                 self,
                 name_,
-                global as *const _ as *mut _,
+                global,
             )
         }
     }
 
     pub fn cast_(value: JSValue, vm: &VM) -> Option<NonNull<FetchHeaders>> {
-        // SAFETY: vm is a valid borrowed ref
-        let p = unsafe { WebCore__FetchHeaders__cast_(value, vm as *const _ as *mut _) };
+        // SAFETY: `vm` is an opaque ZST handle passed by address only.
+        let p = unsafe { WebCore__FetchHeaders__cast_(value, vm) };
         NonNull::new(p)
     }
 
@@ -322,8 +329,9 @@ impl FetchHeaders {
     }
 
     pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
-        // SAFETY: self/global are valid for the duration of the call
-        unsafe { WebCore__FetchHeaders__toJS(self, global_this as *const _ as *mut _) }
+        // SAFETY: self/global are valid for the duration of the call; `global_this` is an opaque
+        // ZST handle passed by address only.
+        unsafe { WebCore__FetchHeaders__toJS(self, global_this) }
     }
 
     pub fn count(&mut self, names: &mut u32, buf_len: &mut u32) {
@@ -338,11 +346,12 @@ impl FetchHeaders {
     }
 
     pub fn clone(&mut self, global: &JSGlobalObject) -> JSValue {
-        // SAFETY: self/global are valid for the duration of the call
+        // SAFETY: self/global are valid for the duration of the call; `global` is an opaque
+        // ZST handle passed by address only.
         unsafe {
             WebCore__FetchHeaders__clone(
                 self,
-                global as *const _ as *mut _,
+                global,
             )
         }
     }

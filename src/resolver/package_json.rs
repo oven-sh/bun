@@ -208,8 +208,8 @@ pub mod install_stubs {
         }
         pub fn append_package(
             &mut self,
-            pkg: super::resolver::__phase_a_body::__forward_decls::Package,
-        ) -> Result<super::resolver::__phase_a_body::__forward_decls::Package, bun_core::Error> {
+            pkg: crate::__phase_a_body::__forward_decls::Package,
+        ) -> Result<crate::__phase_a_body::__forward_decls::Package, bun_core::Error> {
             // FORWARD_DECL: real impl is `bun_install::lockfile::Lockfile::appendPackage`.
             // Unreachable until `r.package_manager` is set by bun_install.
             Ok(pkg)
@@ -225,7 +225,7 @@ pub mod install_stubs {
         pub fn len(&self) -> usize { 0 }
         pub fn items_dependencies(&self) -> &[DependencySlice] { &[] }
         pub fn items_resolutions(&self) -> &[ResolutionSlice] { &[] }
-        pub fn items_resolution(&self) -> &[super::resolver::__phase_a_body::__forward_decls::Resolution] { &[] }
+        pub fn items_resolution(&self) -> &[crate::__phase_a_body::__forward_decls::Resolution] { &[] }
     }
     /// `bun_install::lockfile::Buffers` projection — flat backing buffers for
     /// `LockfilePackages` columns.
@@ -270,15 +270,18 @@ pub mod install_stubs {
     #[repr(C)]
     pub struct PackageManager {
         pub lockfile: Lockfile,
-        pub on_wake: super::resolver::__phase_a_body::__forward_decls::Install::WakeHandler,
+        pub on_wake: crate::__phase_a_body::__forward_decls::Install::WakeHandler,
     }
     impl PackageManager {
         /// FORWARD_DECL: `bun_install::PackageManager::initWithRuntime`.
-        pub fn init_with_runtime(
+        /// Signature mirrors the resolver call site (`get_package_manager`);
+        /// `install`/`env_loader` are passed through opaquely until bun_install
+        /// links and replaces this body.
+        pub fn init_with_runtime<E>(
             _log: &mut bun_logger::Log,
-            _install: Option<&bun_options_types::schema::api::BunInstall>,
+            _install: *mut (),
             _: (),
-            _env_loader: NonNull<bun_env_loader::Loader>,
+            _env_loader: E,
         ) -> *mut PackageManager {
             // Unreachable: only entered when auto-install is on, which requires
             // bun_install to have replaced this hook. See `INSTALL_HOOKS` note.
@@ -287,7 +290,7 @@ pub mod install_stubs {
         pub fn path_for_resolution<'b>(
             &self,
             _package_id: PackageID,
-            _resolution: &super::resolver::__phase_a_body::__forward_decls::Resolution,
+            _resolution: &crate::__phase_a_body::__forward_decls::Resolution,
             _buf: &'b mut [u8],
         ) -> Result<&'b [u8], bun_core::Error> {
             Err(bun_core::err!("FileNotFound"))
@@ -295,8 +298,8 @@ pub mod install_stubs {
         pub fn get_preinstall_state(
             &self,
             _package_id: PackageID,
-        ) -> super::resolver::__phase_a_body::__forward_decls::Install::PreinstallState {
-            super::resolver::__phase_a_body::__forward_decls::Install::PreinstallState::Unknown
+        ) -> crate::__phase_a_body::__forward_decls::Install::PreinstallState {
+            crate::__phase_a_body::__forward_decls::Install::PreinstallState::Unknown
         }
         pub fn enqueue_package_for_download(
             &mut self,
@@ -305,7 +308,7 @@ pub mod install_stubs {
             _package_id: PackageID,
             _version: (),
             _url: &[u8],
-            _ctx: super::resolver::__phase_a_body::__forward_decls::Install::TaskCallbackContext,
+            _ctx: crate::__phase_a_body::__forward_decls::Install::TaskCallbackContext,
             _patch_name_and_version_hash: Option<u64>,
         ) -> Result<(), bun_core::Error> {
             Ok(())
@@ -323,8 +326,8 @@ pub mod install_stubs {
             _version: &Version::Version,
             _version_buf: &[u8],
             _behavior: DepBehavior,
-        ) -> super::resolver::__phase_a_body::__forward_decls::Install::EnqueueResult {
-            super::resolver::__phase_a_body::__forward_decls::Install::EnqueueResult::NotFound
+        ) -> crate::__phase_a_body::__forward_decls::Install::EnqueueResult {
+            crate::__phase_a_body::__forward_decls::Install::EnqueueResult::NotFound
         }
     }
 }

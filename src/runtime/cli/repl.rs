@@ -1067,10 +1067,11 @@ impl<'a> Repl<'a> {
 
         // Evaluate the transformed code
         let mut exception: JSValue = JSValue::UNDEFINED;
-        // SAFETY: global is a valid JSGlobalObject; pointers/lengths are valid for the call
+        // SAFETY: `global` is a live opaque `JSGlobalObject` handle; slice ptr/len pairs
+        // are valid for the duration of the call; `exception` is a stack local.
         let result = unsafe {
             Bun__REPL__evaluate(
-                global as *const _ as *mut _,
+                global,
                 transformed_code.as_ptr(),
                 transformed_code.len(),
                 b"[repl]".as_ptr(),
@@ -1208,10 +1209,11 @@ impl<'a> Repl<'a> {
         let Some(transformed_code) = self.transform_for_repl(code) else {
             // Transform failed — fall back to raw evaluation for the error message
             let mut exception: JSValue = JSValue::UNDEFINED;
-            // SAFETY: global is valid; pointers/lengths are valid for the call
+            // SAFETY: `global` is a live opaque `JSGlobalObject` handle; slice ptr/len pairs
+            // are valid for the duration of the call; `exception` is a stack local.
             unsafe {
                 let _ = Bun__REPL__evaluate(
-                    global as *const _ as *mut _,
+                    global,
                     code.as_ptr(),
                     code.len(),
                     b"[eval]".as_ptr(),
@@ -1226,10 +1228,11 @@ impl<'a> Repl<'a> {
         };
 
         let mut exception: JSValue = JSValue::UNDEFINED;
-        // SAFETY: global is valid; pointers/lengths are valid for the call
+        // SAFETY: `global` is a live opaque `JSGlobalObject` handle; slice ptr/len pairs
+        // are valid for the duration of the call; `exception` is a stack local.
         let result = unsafe {
             Bun__REPL__evaluate(
-                global as *const _ as *mut _,
+                global,
                 transformed_code.as_ptr(),
                 transformed_code.len(),
                 b"[eval]".as_ptr(),
@@ -1312,10 +1315,11 @@ impl<'a> Repl<'a> {
         let Some(global) = self.global else { return; };
 
         let mut exception: JSValue = JSValue::UNDEFINED;
-        // SAFETY: global is valid; pointers/lengths are valid for the call
+        // SAFETY: `global` is a live opaque `JSGlobalObject` handle; slice ptr/len pairs
+        // are valid for the duration of the call; `exception` is a stack local.
         let result = unsafe {
             Bun__REPL__evaluate(
-                global as *const _ as *mut _,
+                global,
                 code.as_ptr(),
                 code.len(),
                 b"[repl]".as_ptr(),
@@ -1356,10 +1360,11 @@ impl<'a> Repl<'a> {
         };
 
         let mut exception: JSValue = JSValue::UNDEFINED;
-        // SAFETY: global is valid; pointers/lengths are valid for the call
+        // SAFETY: `global` is a live opaque `JSGlobalObject` handle; slice ptr/len pairs
+        // are valid for the duration of the call; `exception` is a stack local.
         let result = unsafe {
             Bun__REPL__evaluate(
-                global as *const _ as *mut _,
+                global,
                 transformed_code.as_ptr(),
                 transformed_code.len(),
                 b"[repl]".as_ptr(),
@@ -2026,10 +2031,11 @@ impl<'a> Repl<'a> {
         let prefix = &line[word_start..];
 
         // Get completions from global object
-        // SAFETY: global is valid; prefix pointer/len are valid for the call
+        // SAFETY: `global` is a live opaque `JSGlobalObject` handle; `prefix` ptr/len
+        // are valid for the duration of the call.
         let completions = unsafe {
             Bun__REPL__getCompletions(
-                global as *const _ as *mut _,
+                global,
                 JSValue::UNDEFINED,
                 prefix.as_ptr(),
                 prefix.len(),

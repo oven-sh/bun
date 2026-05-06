@@ -45,30 +45,38 @@ impl Default for ArrayBuffer {
 }
 
 // TODO(port): move to <jsc>_sys
+//
+// PORT NOTE (aliasing): Zig declares these with `*jsc.JSGlobalObject` (mutable
+// pointer), but `JSGlobalObject` is an opaque ZST handle on the Rust side — the
+// `&JSGlobalObject` reference covers zero bytes, and all mutation happens inside
+// C++ on memory Rust never observes. Declaring the FFI parameter as
+// `*const JSGlobalObject` (ABI-identical) lets `&JSGlobalObject` coerce directly
+// without a `&T as *const T as *mut T` provenance laundering cast. This matches
+// the pattern used by `JSGlobalObject`'s own extern block in `JSGlobalObject.rs`.
 unsafe extern "C" {
-    fn JSBuffer__fromMmap(global: *mut JSGlobalObject, addr: *mut c_void, len: usize) -> JSValue;
+    fn JSBuffer__fromMmap(global: *const JSGlobalObject, addr: *mut c_void, len: usize) -> JSValue;
     fn ArrayBuffer__fromSharedMemfd(
         fd: i64,
-        global: *mut JSGlobalObject,
+        global: *const JSGlobalObject,
         byte_offset: usize,
         byte_length: usize,
         total_size: usize,
         ty: JSType,
     ) -> JSValue;
-    fn Bun__allocUint8ArrayForCopy(global: *mut JSGlobalObject, len: usize, out: *mut *mut c_void) -> JSValue;
-    fn Bun__allocArrayBufferForCopy(global: *mut JSGlobalObject, len: usize, out: *mut *mut c_void) -> JSValue;
+    fn Bun__allocUint8ArrayForCopy(global: *const JSGlobalObject, len: usize, out: *mut *mut c_void) -> JSValue;
+    fn Bun__allocArrayBufferForCopy(global: *const JSGlobalObject, len: usize, out: *mut *mut c_void) -> JSValue;
     fn Bun__createUint8ArrayForCopy(global: *const JSGlobalObject, ptr: *const c_void, len: usize, buffer: bool) -> JSValue;
-    fn Bun__createArrayBufferForCopy(global: *mut JSGlobalObject, ptr: *const c_void, len: usize) -> JSValue;
-    fn JSArrayBuffer__fromDefaultAllocator(global: *mut JSGlobalObject, ptr: *mut u8, len: usize) -> JSValue;
+    fn Bun__createArrayBufferForCopy(global: *const JSGlobalObject, ptr: *const c_void, len: usize) -> JSValue;
+    fn JSArrayBuffer__fromDefaultAllocator(global: *const JSGlobalObject, ptr: *mut u8, len: usize) -> JSValue;
     fn Bun__makeArrayBufferWithBytesNoCopy(
-        global: *mut JSGlobalObject,
+        global: *const JSGlobalObject,
         ptr: *mut c_void,
         len: usize,
         dealloc: jsc_c::JSTypedArrayBytesDeallocator,
         ctx: *mut c_void,
     ) -> JSValue;
     fn Bun__makeTypedArrayWithBytesNoCopy(
-        global: *mut JSGlobalObject,
+        global: *const JSGlobalObject,
         ty: TypedArrayType,
         ptr: *mut c_void,
         len: usize,
@@ -81,7 +89,7 @@ unsafe extern "C" {
     // From <JavaScriptCore/JSTypedArray.h> — `array_type` is the C enum
     // `JSTypedArrayType` (ABI: `c_uint`, see `TypedArrayType::to_c`).
     fn JSObjectMakeTypedArrayWithArrayBuffer(
-        ctx: *mut JSGlobalObject,
+        ctx: *const JSGlobalObject,
         array_type: c_uint,
         buffer: jsc_c::JSObjectRef,
         exception: jsc_c::ExceptionRef,

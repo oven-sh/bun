@@ -5806,8 +5806,12 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
             self.p = Some(unsafe { strong.get() } as *mut _);
             self.promise = Some(strong);
         }
-        let _value = self.promise.as_ref().unwrap().value();
-        todo!("blocked_on: bun_jsc::JSPromiseStrong::from_value")
+        // PORT NOTE: Zig returned the `Strong` by bitwise copy (shared
+        // HandleSlot). Rust `Strong` owns its slot, so allocate a second
+        // handle to the same JSPromise instead — both `self.promise` and the
+        // returned value root the same cell.
+        let value = self.promise.as_ref().unwrap().value();
+        jsc::JSPromiseStrong::from_value(value, self.global)
     }
 
     fn on_defer(&mut self, bundle_field: BundleQueueType) -> JsResult<()> {

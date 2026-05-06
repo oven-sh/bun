@@ -48,25 +48,9 @@ pub const FETCH_TYPE_ERROR_STRINGS: [&str; 8] = FETCH_TYPE_ERROR_STRING_VALUES;
 pub mod fetch_tasklet;
 
 // ──────────────────────────────────────────────────────────────────────────
-// fetch() implementation — gated.
-//
-// TODO(b2-blocked): the ~1.5kL `fetch_impl` body depends on a large surface
-// that is not yet wired:
-//   - `bun_http::{Headers, FetchRedirect}` (only `bun_http_types` is a dep)
-//   - `bun_s3` (no such workspace crate; only `bun_s3_signing`)
-//   - `crate::api::server::ServerConfig::SSLConfig` (server.rs gated)
-//   - `crate::webcore::ObjectURLRegistry` (object_url_registry gated)
-//   - `bun_resolver::data_url::DataURL::decode_data` (Phase-A draft)
-//   - `jsc::URL::href_from_js`, `JSPromise::Strong`, `jsc::mark_binding`
-//   - `fetch_tasklet::{FetchTasklet, HTTPRequestBody}`
-//   - `bun_paths::PosixToWinNormalizer` (gated on Windows-only build)
-// Un-gate by deleting `` once the above type-check.
+// fetch() implementation
 // ──────────────────────────────────────────────────────────────────────────
 
-mod _gated {
-use super::*;
-
-use core::ffi::c_int;
 use core::ptr::NonNull;
 use std::io::Write as _;
 
@@ -77,28 +61,30 @@ use bun_sys::FdExt as _;
 use bun_str::{strings, String as BunString, ZigString, ZigStringSlice, Tag as BunStringTag};
 use bun_paths::{self, PathBuffer};
 use bun_http::{self as http, FetchRedirect, Headers, MimeType};
-use bun_http::headers::{Options as HeadersOptions, FetchHeadersRef};
+use bun_http::headers::Options as HeadersOptions;
 use bun_http_types::Method::Method;
+use bun_http_jsc::method_jsc;
+// `FromJsEnum for FetchRedirect` lives in bun_http_jsc; importing the impl crate
+// brings the trait impl into scope for `JSValue::get_optional_enum::<FetchRedirect>`.
+use bun_http_jsc as _;
 use bun_url::URL as ZigURL;
 use bun_url::PercentEncoding;
 use bun_resolver::data_url::DataURL;
 use crate::socket::ssl_config::SSLConfig;
-#[allow(unused_imports)]
-use crate::socket::ssl_config;
 use crate::webcore::{AbortSignal, Blob, Body, FetchHeaders, ObjectURLRegistry, ReadableStream, Request, Response};
-use crate::api::h2_frame_parser_body::abort_signal_shim::AbortSignalExt as _;
 use crate::webcore::{body, response, readable_stream, blob};
 use crate::webcore::body::{Value as BodyValue, Action as BodyValueLockedAction, InternalBlob};
-use crate::webcore::s3_client::S3CredentialsExt as _;
+use crate::webcore::headers_ref::{any_blob_ref_opt, fetch_headers_ref};
 use crate::node;
+use crate::node::types::{Encoding, PathOrFileDescriptor};
 #[cfg(windows)]
 use bun_paths::resolve_path::PosixToWinNormalizer;
 use bun_picohttp as picohttp;
 use crate::webcore::s3::client as s3;
 use bun_s3_signing::{SignOptions, SignResult};
 
-pub use super::fetch_tasklet::FetchTasklet;
-use super::fetch_tasklet::{HTTPRequestBody, FetchOptions};
+pub use self::fetch_tasklet::FetchTasklet;
+use self::fetch_tasklet::{HTTPRequestBody, FetchOptions};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Local extension shims (upstream methods not yet ported / not in scope)

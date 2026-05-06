@@ -3325,10 +3325,13 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         }
         let prev_quote_state = self.chars.state;
         let mut sublexer = self.make_sublexer(kind);
-        sublexer.lex()?;
+        // PORT NOTE: make_sublexer moves strpool/tokens/errors/string_refs into the
+        // sublexer; if lex() errors we must restore them before bubbling up so the
+        // parent lexer's accumulated state (errors, tokens) isn't lost.
+        let result = sublexer.lex();
         self.continue_from_sublexer(&mut sublexer);
         self.chars.state = prev_quote_state;
-        Ok(())
+        result
     }
 
     fn append_string_to_str_pool(&mut self, bunstr: BunString) -> Result<(), LexerError> {

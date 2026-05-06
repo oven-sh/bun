@@ -463,6 +463,15 @@ impl<K, V, C> ArrayHashMap<K, V, C> {
         self.keys.iter().zip(self.values.iter())
     }
 
+    /// Zig `getIndexContext` for callers whose context is an inherent-method
+    /// struct (no `ArrayHashAdapter` impl). Takes the precomputed `u32` hash
+    /// plus an `eql` closure so e.g. `bun_semver::String::ArrayHashContext`
+    /// (which needs `arg_buf`/`existing_buf`) can drive a `&self` lookup.
+    #[inline]
+    pub fn get_index_adapted_raw<F: Fn(&K, usize) -> bool>(&self, h: u32, eq: F) -> Option<usize> {
+        self.find_hash(h, eq)
+    }
+
     // ── internal lookup ───────────────────────────────────────────────────
 
     #[inline]

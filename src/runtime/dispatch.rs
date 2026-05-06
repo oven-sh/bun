@@ -59,7 +59,8 @@ use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
 use crate::webcore::s3::simple_request::S3HttpSimpleTask;
 use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
 use crate::webcore::blob::copy_file::CopyFilePromiseTask;
-// `read_file::ReadFileTask` / `write_file::WriteFileTask` — module bodies are
+use crate::webcore::blob::read_file::ReadFileTask;
+use crate::webcore::blob::write_file::WriteFileTask;
 use crate::webcore::file_sink::{FlushPendingTask as FlushPendingFileSinkTask, Poll as FileSinkPoll};
 use crate::webcore::streams::Pending as StreamPending;
 
@@ -74,9 +75,8 @@ use crate::api::bun_subprocess::static_pipe_writer::Poll as StaticPipeWriterPoll
 
 use crate::napi::{napi_async_work, NapiFinalizerTask, ThreadSafeFunction};
 
-use bun_jsc::CppTask;
-// `bun_jsc::jsc_scheduler::JSCDeferredWorkTask` — module sits in the gated
-// `_gated` block of `bun_jsc/lib.rs`; arm below stubbed.
+use bun_jsc::cpp_task::CppTask;
+use bun_jsc::jsc_scheduler::JSCDeferredWorkTask;
 use bun_jsc::PosixSignalTask;
 use bun_jsc::RuntimeTranspilerStore;
 use bun_jsc::module_loader::AsyncModule;

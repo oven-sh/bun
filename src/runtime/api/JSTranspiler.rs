@@ -826,23 +826,21 @@ impl<'a> TransformTask<'a> {
         self.transpiler.set_log(&mut self.log);
         // self.log.msgs.allocator = bun.default_allocator → no-op
 
-        // TODO(port): `bun_resolver::TSConfigJSON::merge_jsx` and
-        // `bun_bundler::options_impl::jsx::Pragma` are currently distinct nominal
-        // types. Reconcile in Phase B once the bundler re-exports the resolver's
-        // Pragma (or vice versa).
-        let jsx = self.transpiler.options.jsx.clone();
-        let _ = self.tsconfig; // merge_jsx blocked — see above.
+        let jsx = match self.tsconfig {
+            Some(ts) => ts.merge_jsx(self.transpiler.options.jsx.clone().into()).into(),
+            None => self.transpiler.options.jsx.clone(),
+        };
 
         let parse_options = ParseOptions {
             allocator: &arena,
-            macro_remappings: MacroMap::default(), // TODO(port): blocked_on MacroMap::clone
+            macro_remappings: clone_macro_map(&self.macro_map),
             dirname_fd: bun_sys::Fd::INVALID,
             file_descriptor: None,
             loader: self.loader,
             jsx,
             path: source.path.clone(),
             virtual_source: Some(&source),
-            replace_exports: Default::default(), // TODO(port): blocked_on ReplaceableExportMap::clone
+            replace_exports: self.replace_exports.entries.clone().expect("OOM"),
             experimental_decorators: self.tsconfig.map_or(false, |ts| ts.experimental_decorators),
             emit_decorator_metadata: self.tsconfig.map_or(false, |ts| ts.emit_decorator_metadata),
             macro_js_ctx: core::ptr::null_mut(),

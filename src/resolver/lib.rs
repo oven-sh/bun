@@ -1534,14 +1534,14 @@ pub mod fs {
                         // doesn't conflict with the `&mut self.entries` borrow above.
                         let cached_ptr = cached_result as *mut EntriesOption;
                         // SAFETY: BSSMap-owned slot; uniquely held under `entries_mutex`.
+                        // Single `&mut` reborrow — the catch-all arm binds and returns the
+                        // scrutinee directly so no second `&mut *cached_ptr` is materialized
+                        // while the first is on the borrow stack (Stacked Borrows hygiene).
                         match unsafe { &mut *cached_ptr } {
-                            EntriesOption::Err(_) => return Ok(unsafe { &mut *cached_ptr }),
-                            EntriesOption::Entries(e) if e.generation >= generation => {
-                                return Ok(unsafe { &mut *cached_ptr });
-                            }
-                            EntriesOption::Entries(e) => {
+                            EntriesOption::Entries(e) if e.generation < generation => {
                                 in_place = Some(*e as *mut DirEntry);
                             }
+                            cached => return Ok(cached),
                         }
                     } else if cr.status == bun_alloc::ItemStatus::NotFound && generation == 0 {
                         return Ok(temp_entries_option_write(EntriesOption::Err(dir_entry::Err {
@@ -6616,12 +6616,16 @@ impl<'a> Resolver<'a> {
         // which gets overwritten on the next auto-install resolution. `dirInfoUncached` stores
         // its `path` argument directly as `DirInfo.abs_path` in the permanent `dir_cache`, so
         // pass the interned copy from `DirEntry.dir` (always backed by `DirnameStore`) instead.
+        // SAFETY: ARENA — `dir_entries_option` is a slot in `rfs.entries` (BSSMap) and
+        // outlives the resolver. Hoist the `&'static [u8] dir` read out so no `&EntriesOption`
+        // temporary is live when the raw `*mut` is passed below (avoids a needless Unique
+        // retag that would pop the shared tag mid-argument-list under Stacked Borrows).
+        let dir_entries_dir = unsafe { &*dir_entries_option }.entries().dir;
         self.dir_info_uncached(
             dir_info_ptr,
-            // SAFETY: ARENA — `dir_entries_option` is a slot in `rfs.entries` (BSSMap) and outlives the resolver.
-            unsafe { &*dir_entries_option }.entries().dir,
-            // SAFETY: same as above; uniquely re-borrowed mutably for the call.
-            unsafe { &mut *dir_entries_option },
+            dir_entries_dir,
+            // already `*mut EntriesOption` — pass raw, no intermediate `&mut` retag
+            dir_entries_option,
             dir_cache_info_result,
             cached_dir_entry_result.index,
             // Packages in the global disk cache are top-level, we shouldn't try
@@ -6803,8 +6807,11 @@ impl<'a> Resolver<'a> {
                 // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver (see LIFETIMES.tsv).
                 let resolved_dir_info = unsafe { &*resolved_dir_info_ptr };
                 let entries = match resolved_dir_info.get_entries(self.generation) {
-                    // SAFETY: ARENA — slot in the BSSMap-backed EntriesOptionMap singleton; outlives the resolver.
-                    Some(e) => unsafe { &mut *e },
+                    // SAFETY: ARENA — slot in the BSSMap-backed EntriesOptionMap singleton;
+                    // outlives the resolver. Read-only (`.get()` / `.fd`) — shared borrow only,
+                    // so the `&mut Entry` writes below (separate EntryStore allocation) cannot
+                    // alias it.
+                    Some(e) => unsafe { &*e },
                     None => {
                         esm_resolution.status = Status::ModuleNotFound;
                         return None;

@@ -1203,9 +1203,13 @@ pub struct SelectorParser<'a> {
     // PERF(port): was arena bulk-free — Phase B re-threads `&'bump Bump`.
 }
 
-impl<'a> SelectorParser<'a> {
-    pub type Impl = impl_::Selectors;
+// Zig: `pub const Impl = impl_.Selectors;` lived inside the struct for
+// `ValidSelectorParser`'s comptime decl-probe. Rust inherent associated types
+// are unstable (rust#8995); the equivalent contract is the `BunSelectorImpl`
+// blanket impl above, so expose the alias at module scope instead.
+pub type SelectorParserImpl = impl_::Selectors;
 
+impl<'a> SelectorParser<'a> {
     pub fn new_local_identifier(
         &mut self,
         input: &mut CssParser,

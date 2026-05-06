@@ -53,11 +53,13 @@ impl PathToSourceIndexMap {
         self.put(path.path_text(), value)
     }
 
-    pub fn put(&mut self, text: impl AsRef<[u8]>, value: IndexInt) -> Result<(), bun_alloc::AllocError> {
+    // Takes `&[u8]` (not `impl AsRef<[u8]>`) to mirror Zig's `text: []const u8`
+    // and to avoid E0283 inference ambiguity at `.into()` call sites in bundle_v2.
+    pub fn put(&mut self, text: &[u8], value: IndexInt) -> Result<(), bun_alloc::AllocError> {
         // PERF(port): Zig used StringHashMapUnmanaged with arena-borrowed keys (no copy);
         // bun_collections::StringHashMap is keyed by `Box<[u8]>`, so we dupe here.
         // Revisit once StringHashMap gains a borrowed-key variant.
-        self.map.insert(Box::<[u8]>::from(text.as_ref()), value);
+        self.map.insert(Box::<[u8]>::from(text), value);
         Ok(())
     }
 

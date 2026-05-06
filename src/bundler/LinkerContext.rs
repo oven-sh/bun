@@ -1074,6 +1074,7 @@ pub enum LinkerOptionsMode {
 }
 
 #[derive(Default)]
+#[derive(Default)]
 pub struct SourceMapData {
     pub line_offset_wait_group: WaitGroup,
     pub line_offset_tasks: Box<[SourceMapDataTask]>,

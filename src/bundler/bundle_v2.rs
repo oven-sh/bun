@@ -2021,7 +2021,7 @@ impl<'a> BundleV2<'a> {
 
     // PORT NOTE: split because data type varies by variant — cannot express `switch(variant)`-typed param with const-generic enum on stable
     // TODO(port): comptime variant enum param + dependent data type — split into three monomorphic fns
-    pub fn enqueue_entry_points_normal(&mut self, data: &[&[u8]]) -> Result<(), Error> {
+    pub fn enqueue_entry_points_normal<P: AsRef<[u8]>>(&mut self, data: &[P]) -> Result<(), Error> {
         self.enqueue_entry_points_common()?;
         // (variant != .dev_server)
         self.reserve_source_indexes_for_bake()?;
@@ -2032,6 +2032,7 @@ impl<'a> BundleV2<'a> {
         self.graph.input_files.ensure_unused_capacity(num_entry_points)?;
 
         for entry_point in data {
+            let entry_point: &[u8] = entry_point.as_ref();
             if self.enqueue_entry_point_on_resolve_plugin_if_needed(entry_point, self.transpiler.options.target) {
                 continue;
             }
@@ -2598,7 +2599,11 @@ impl<'a> BundleV2<'a> {
             return Err(bun_core::err!("BuildFailed"));
         }
 
-        this.enqueue_entry_points_normal(&this.transpiler.options.entry_points)?;
+        // SAFETY: `transpiler.options.entry_points` is borrowed only for the duration
+        // of `enqueue_entry_points_normal`, which never frees/reallocates it; raw-ptr
+        // sidestep for the `&mut self` overlap (Zig stored both as raw `*Transpiler`).
+        let entry_points: *const [Box<[u8]>] = &*this.transpiler.options.entry_points;
+        this.enqueue_entry_points_normal(unsafe { &*entry_points })?;
 
         if unsafe { (*this.transpiler.log).has_errors() } {
             return Err(bun_core::err!("BuildFailed"));
@@ -2717,7 +2722,7 @@ impl<'a> BundleV2<'a> {
 
     pub fn generate_from_bake_production_cli(
         entry_points: bake_types::production::EntryPointMap,
-        server_transpiler: &'a mut Transpiler,
+        server_transpiler: &'a mut Transpiler<'a>,
         bake_options: BakeOptions<'a>,
         alloc: &bun_alloc::Arena,
         event_loop: EventLoop,

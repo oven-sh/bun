@@ -12,6 +12,7 @@ use crate::LinkerContext;
 use crate::options;
 use crate::options_impl::{LoaderExt as _, TargetExt as _};
 use crate::bun_renamer as renamer;
+#[allow(unused_imports)]
 use crate::bundle_v2::__phase_a_draft::{get_hmr_runtime, HmrRuntimeSide};
 use crate::{
     Chunk, CompileResult, CompileResultForSourceMap, Index, JSAst, JSMeta, RefImportData,
@@ -768,16 +769,16 @@ fn add_binding_vars_to_module_info(
             }
         }
         B::B::BArray(b) => {
-            // SAFETY: arena `*mut B::Array` is always non-null.
+            // SAFETY: arena `*mut B::Array` and its `items` slice are always non-null.
             let b = unsafe { &*b };
-            for item in b.items.iter() {
+            for item in unsafe { (*b.items).iter() } {
                 add_binding_vars_to_module_info(mi, item.binding, var_kind, r, symbols);
             }
         }
         B::B::BObject(b) => {
-            // SAFETY: arena `*mut B::Object` is always non-null.
+            // SAFETY: arena `*mut B::Object` and its `properties` slice are always non-null.
             let b = unsafe { &*b };
-            for prop in b.properties.iter() {
+            for prop in unsafe { (*b.properties).iter() } {
                 add_binding_vars_to_module_info(mi, prop.value, var_kind, r, symbols);
             }
         }

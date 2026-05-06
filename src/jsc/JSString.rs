@@ -15,21 +15,30 @@ pub struct JSString {
 }
 
 // TODO(port): move to jsc_sys
+//
+// NOTE: Zig declares several of these params as `*JSString` / `*JSGlobalObject`
+// (mutable), but the C ABI does not distinguish `*const T` from `*mut T`. We
+// intentionally declare them `*const` here — matching the convention in
+// JSGlobalObject.rs / JSValue.rs — so that callers can pass `&self` / `&global`
+// directly without an `as *const _ as *mut _` cast. `JSString` and
+// `JSGlobalObject` are opaque zero-sized handles in Rust, so a shared `&` borrow
+// covers zero bytes and C++ mutating the underlying GC cell does not violate
+// Rust's aliasing rules.
 unsafe extern "C" {
-    fn JSC__JSString__toObject(this: *mut JSString, global: *mut JSGlobalObject) -> *mut JSObject;
+    fn JSC__JSString__toObject(this: *const JSString, global: *const JSGlobalObject) -> *mut JSObject;
     fn JSC__JSString__toZigString(
-        this: *mut JSString,
-        global: *mut JSGlobalObject,
+        this: *const JSString,
+        global: *const JSGlobalObject,
         zig_str: *mut ZigString,
     );
     fn JSC__JSString__eql(
         this: *const JSString,
-        global: *mut JSGlobalObject,
-        other: *mut JSString,
+        global: *const JSGlobalObject,
+        other: *const JSString,
     ) -> bool;
     fn JSC__JSString__iterator(
-        this: *mut JSString,
-        global_object: *mut JSGlobalObject,
+        this: *const JSString,
+        global_object: *const JSGlobalObject,
         iter: *mut c_void,
     );
     fn JSC__JSString__length(this: *const JSString) -> usize;
@@ -42,25 +51,16 @@ impl JSString {
     }
 
     pub fn to_object<'a>(&self, global: &'a JSGlobalObject) -> Option<&'a JSObject> {
-        // SAFETY: JSC__JSString__toObject returns either null or a valid JSObject* owned by the GC.
-        unsafe {
-            JSC__JSString__toObject(
-                self as *const Self as *mut Self,
-                global as *const _ as *mut _,
-            )
-            .as_ref()
-        }
+        // SAFETY: `self`/`global` are valid opaque GC-cell handles (zero-sized in
+        // Rust; C++ may mutate the underlying cell without violating Rust aliasing).
+        // Returns either null or a valid GC-owned JSObject*.
+        unsafe { JSC__JSString__toObject(self, global).as_ref() }
     }
 
     pub fn to_zig_string(&self, global: &JSGlobalObject, zig_str: &mut ZigString) {
-        // SAFETY: self/global are valid GC cells; zig_str is a valid out-param.
-        unsafe {
-            JSC__JSString__toZigString(
-                self as *const Self as *mut Self,
-                global as *const _ as *mut _,
-                zig_str,
-            )
-        }
+        // SAFETY: `self`/`global` are valid opaque GC-cell handles; `zig_str` is a
+        // uniquely-borrowed out-param.
+        unsafe { JSC__JSString__toZigString(self, global, zig_str) }
     }
 
     pub fn ensure_still_alive(&self) {

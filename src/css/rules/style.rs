@@ -55,7 +55,7 @@ impl<R> StyleRule<R> {
         hasher.final_()
     }
 
-    pub fn update_prefix(&mut self, context: &mut MinifyContext<'_>) {
+    pub fn update_prefix(&mut self, context: &mut MinifyContext<'_, '_>) {
         self.vendor_prefix = selector::get_prefix(&self.selectors);
         if self.vendor_prefix.contains(VendorPrefix::NONE)
             && context.targets.should_compile_selectors()
@@ -242,7 +242,7 @@ impl<R> StyleRule<R> {
 impl<R> StyleRule<R> {
     pub fn minify(
         &mut self,
-        context: &mut MinifyContext<'_>,
+        context: &mut MinifyContext<'_, '_>,
         parent_is_unused: bool,
     ) -> Result<bool, MinifyErr>
     where

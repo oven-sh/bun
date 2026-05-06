@@ -68,13 +68,18 @@ impl ClientSession {
     pub fn ref_(&self) {
         self.ref_count.set(self.ref_count.get() + 1);
     }
-    pub fn deref(&self) {
-        let n = self.ref_count.get() - 1;
-        self.ref_count.set(n);
+    // Takes `*mut Self` (not `&self`) so the `Box::from_raw` on the zero-ref path
+    // inherits write-capable provenance from the original `Box::into_raw` pointer
+    // — deriving it from a `&self` would be a `*const → *mut` cast (UB on drop).
+    pub fn deref(this: *mut Self) {
+        // SAFETY: `this` is a live heap allocation produced by `new` (Box::into_raw);
+        // ref_count is `Cell<u32>` so the autoref'd `&Cell` access is sound.
+        let n = unsafe { (*this).ref_count.get() } - 1;
+        unsafe { (*this).ref_count.set(n) };
         if n == 0 {
-            // SAFETY: every live ClientSession was created by `new` (Box::into_raw);
-            // ref_count hitting 0 means no other alias remains.
-            unsafe { drop(Box::from_raw(self as *const Self as *mut Self)) };
+            // SAFETY: ref_count hitting 0 means no other alias remains; `this` carries
+            // the original Box provenance so reclaiming it here is sound.
+            unsafe { drop(Box::from_raw(this)) };
         }
     }
 
@@ -178,7 +183,7 @@ impl ClientSession {
         // SAFETY: stream was Box::into_raw'd by Stream::new; ownership is reclaimed
         // here. `Stream::Drop` decrements live_streams.
         unsafe { drop(Box::from_raw(stream)) };
-        self.deref();
+        ClientSession::deref(self);
     }
 
     pub fn fail(&mut self, stream: *mut Stream, err: bun_core::Error) {

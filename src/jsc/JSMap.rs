@@ -25,14 +25,17 @@ unsafe extern "C" {
 
 impl JSMap {
     pub fn create(global: &JSGlobalObject) -> JSValue {
-        // SAFETY: global is a valid borrowed JSGlobalObject; FFI takes it as raw.
+        // SAFETY: `JSGlobalObject` is an opaque ZST FFI handle (Nomicon pattern); the
+        // shared `&JSGlobalObject` covers zero bytes, so passing it as `*mut` to C++
+        // via `as_ptr()` does not violate Rust's aliasing/immutability guarantees.
         // `create` is `nothrow` in the codegen (raw `extern fn`, no error wrapper).
-        unsafe { JSC__JSMap__create(global as *const _ as *mut _) }
+        unsafe { JSC__JSMap__create(global.as_ptr()) }
     }
 
     pub fn set(&mut self, global: &JSGlobalObject, key: JSValue, value: JSValue) -> JsResult<()> {
-        // SAFETY: self is a valid *JSMap cell on the GC heap.
-        unsafe { JSC__JSMap__set(self, global as *const _ as *mut _, key, value) };
+        // SAFETY: `self` is a uniquely-borrowed *JSMap cell on the GC heap; `global`
+        // is an opaque ZST FFI handle (see `JSGlobalObject::as_ptr`).
+        unsafe { JSC__JSMap__set(self, global.as_ptr(), key, value) };
         // Mirrors cpp.zig wrapper: `Bun__RETURN_IF_EXCEPTION` after the raw call.
         if global.has_exception() { Err(JsError::Thrown) } else { Ok(()) }
     }
@@ -42,40 +45,45 @@ impl JSMap {
     /// Note this shares semantics with the JS `Map.prototype.get` method, and
     /// will return `JSValue::UNDEFINED` if a value is not found.
     pub fn get(&mut self, global: &JSGlobalObject, key: JSValue) -> JsResult<JSValue> {
-        // SAFETY: self is a valid *JSMap cell on the GC heap.
-        let value = unsafe { JSC__JSMap__get(self, global as *const _ as *mut _, key) };
+        // SAFETY: `self` is a uniquely-borrowed *JSMap cell on the GC heap; `global`
+        // is an opaque ZST FFI handle (see `JSGlobalObject::as_ptr`).
+        let value = unsafe { JSC__JSMap__get(self, global.as_ptr(), key) };
         // Mirrors cpp.zig wrapper: `value == .zero` ⇔ exception thrown.
         if value == JSValue::ZERO { Err(JsError::Thrown) } else { Ok(value) }
     }
 
     /// Test whether this JS Map object has a given key.
     pub fn has(&mut self, global: &JSGlobalObject, key: JSValue) -> JsResult<bool> {
-        // SAFETY: self is a valid *JSMap cell on the GC heap.
-        let result = unsafe { JSC__JSMap__has(self, global as *const _ as *mut _, key) };
+        // SAFETY: `self` is a uniquely-borrowed *JSMap cell on the GC heap; `global`
+        // is an opaque ZST FFI handle (see `JSGlobalObject::as_ptr`).
+        let result = unsafe { JSC__JSMap__has(self, global.as_ptr(), key) };
         // Mirrors cpp.zig wrapper: `Bun__RETURN_IF_EXCEPTION` after the raw call.
         if global.has_exception() { Err(JsError::Thrown) } else { Ok(result) }
     }
 
     /// Attempt to remove a key from this JS Map object.
     pub fn remove(&mut self, global: &JSGlobalObject, key: JSValue) -> JsResult<bool> {
-        // SAFETY: self is a valid *JSMap cell on the GC heap.
-        let result = unsafe { JSC__JSMap__remove(self, global as *const _ as *mut _, key) };
+        // SAFETY: `self` is a uniquely-borrowed *JSMap cell on the GC heap; `global`
+        // is an opaque ZST FFI handle (see `JSGlobalObject::as_ptr`).
+        let result = unsafe { JSC__JSMap__remove(self, global.as_ptr(), key) };
         // Mirrors cpp.zig wrapper: `Bun__RETURN_IF_EXCEPTION` after the raw call.
         if global.has_exception() { Err(JsError::Thrown) } else { Ok(result) }
     }
 
     /// Clear all entries from this JS Map object.
     pub fn clear(&mut self, global: &JSGlobalObject) -> JsResult<()> {
-        // SAFETY: self is a valid *JSMap cell on the GC heap.
-        unsafe { JSC__JSMap__clear(self, global as *const _ as *mut _) };
+        // SAFETY: `self` is a uniquely-borrowed *JSMap cell on the GC heap; `global`
+        // is an opaque ZST FFI handle (see `JSGlobalObject::as_ptr`).
+        unsafe { JSC__JSMap__clear(self, global.as_ptr()) };
         // Mirrors cpp.zig wrapper: `Bun__RETURN_IF_EXCEPTION` after the raw call.
         if global.has_exception() { Err(JsError::Thrown) } else { Ok(()) }
     }
 
     /// Retrieve the number of entries in this JS Map object.
     pub fn size(&mut self, global: &JSGlobalObject) -> JsResult<u32> {
-        // SAFETY: self is a valid *JSMap cell on the GC heap.
-        let result = unsafe { JSC__JSMap__size(self, global as *const _ as *mut _) };
+        // SAFETY: `self` is a uniquely-borrowed *JSMap cell on the GC heap; `global`
+        // is an opaque ZST FFI handle (see `JSGlobalObject::as_ptr`).
+        let result = unsafe { JSC__JSMap__size(self, global.as_ptr()) };
         // Mirrors cpp.zig wrapper: `Bun__RETURN_IF_EXCEPTION` after the raw call.
         if global.has_exception() { Err(JsError::Thrown) } else { Ok(result) }
     }

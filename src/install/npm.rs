@@ -341,7 +341,7 @@ pub mod registry {
             if registry.token.is_empty() {
                 'outer: {
                     if registry.password.is_empty() {
-                        let mut pathname = url.pathname.as_slice();
+                        let mut pathname: &[u8] = url.pathname;
                         // defer { url.pathname = pathname; url.path = pathname; } — applied below
                         let mut needs_to_check_slash = true;
                         while let Some(colon) = strings::last_index_of_char(pathname, b':') {

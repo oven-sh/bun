@@ -405,7 +405,7 @@ pub(super) fn dashed_ident_to_css(
 impl<R> media::MediaRule<R> {
     pub fn minify(
         &mut self,
-        context: &mut MinifyContext<'_>,
+        context: &mut MinifyContext<'_, '_>,
         parent_is_unused: bool,
     ) -> Result<bool, MinifyErr>
     where
@@ -531,7 +531,7 @@ impl<R> CssRuleList<R> {
 
     pub fn minify(
         &mut self,
-        context: &mut MinifyContext<'_>,
+        context: &mut MinifyContext<'_, '_>,
         parent_is_unused: bool,
     ) -> Result<(), MinifyErr>
     where
@@ -707,7 +707,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
     rule: &mut CssRule<R>,
     rules: &mut Vec<CssRule<R>>,
     style_rules: &mut StyleRuleKeyMap,
-    context: &mut MinifyContext<'_>,
+    context: &mut MinifyContext<'_, '_>,
     parent_is_unused: bool,
 ) -> Result<(), MinifyErr> {
     use css::SmallList;
@@ -962,7 +962,7 @@ impl StyleRuleKeyMap {
 pub fn merge_style_rules<R>(
     sty: &mut style::StyleRule<R>,
     last_style_rule: &mut style::StyleRule<R>,
-    context: &mut MinifyContext<'_>,
+    context: &mut MinifyContext<'_, '_>,
 ) -> bool {
     use css::VendorPrefix;
         // Merge declarations if the selectors are equivalent, and both are compatible with all targets.

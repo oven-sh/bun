@@ -22,7 +22,7 @@ use bun_logger as logger;
 use bun_ptr::{RefCount, RefCounted};
 use bun_threading::WorkPool;
 
-use crate::api::js_bundler::js_bundler::{Config as JSBundlerConfig, Plugin};
+use crate::api::js_bundler::js_bundler::{Config as JSBundlerConfig, Plugin, PluginJscExt as _};
 use crate::server::html_bundle;
 
 /// Mirrors Zig `BundleV2.JSBundleCompletionTask`. See module doc for the
@@ -194,13 +194,15 @@ impl CompletionStruct for JSBundleCompletionTask {
         self.transpiler = this.cast();
     }
     fn plugins(&self) -> Option<NonNull<JSBundlerPlugin>> {
-        self.plugins.map(|p| p.cast())
+        // `Plugin` and `JSBundlerPlugin` are the same `bun_bundler` opaque.
+        self.plugins
     }
     fn file_map(&mut self) -> Option<NonNull<Bv2FileMap>> {
-        if self.config.files.map.count() > 0 {
-            Some(NonNull::from(&mut self.config.files).cast())
-        } else {
+        // `FileMap` and `Bv2FileMap` are the same `bun_bundler` type.
+        if self.config.files.map.is_empty() {
             None
+        } else {
+            Some(NonNull::from(&mut self.config.files))
         }
     }
     fn as_js_bundle_completion_task(&mut self) -> NonNull<Bv2OpaqueCompletion> {

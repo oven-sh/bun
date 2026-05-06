@@ -386,7 +386,10 @@ pub mod garbage_collection_controller;
 
 /// Binding for JSCInitialize in ZigGlobalObject.cpp
 pub fn initialize(eval_mode: bool) {
-    // TODO(port): bun_core::analytics::Features::jsc_inc — analytics counter not yet wired.
+    // Spec jsc.zig:251 — `bun.analytics.Features.jsc += 1`. Counter lives in
+    // `bun_core` (MOVE_DOWN per CYCLEBREAK) so this crate doesn't depend on
+    // `bun_analytics`.
+    bun_core::analytics::Features::jsc_inc();
     let env = bun_sys::environ();
     // SAFETY: `env` borrows the libc `environ` global for the duration of the
     // call; `on_jsc_invalid_env_var` is `extern "C"` and only reads the (ptr,len)
@@ -1162,6 +1165,47 @@ impl AnyPromise {
         match self {
             Self::Normal(p) => unsafe { (*p).reject(global, Ok(value)) },
             Self::Internal(p) => unsafe { (*p).reject(global, Ok(value)) },
+        }
+    }
+    /// `AnyPromise.rejectWithAsyncStack` (AnyPromise.zig:62) — like `reject`
+    /// but first attaches async stack frames from this promise's await chain
+    /// to the error. Use when rejecting from native code at the top of the
+    /// event loop.
+    #[inline] pub fn reject_with_async_stack(
+        self,
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) -> Result<(), JsTerminated> {
+        // SAFETY: variants hold a live JSC heap cell; `as_js_promise` is sound for both.
+        value.attach_async_stack_from_promise(global, unsafe { &*self.as_js_promise() });
+        self.reject(global, value)
+    }
+    /// JSInternalPromise subclasses JSPromise in C++ — this cast is safe for
+    /// any C++ function taking JSPromise*.
+    #[inline] pub fn as_js_promise(self) -> *mut JSPromise {
+        match self {
+            Self::Normal(p) => p,
+            // SAFETY: JSInternalPromise subclasses JSPromise in C++; pointer
+            // reinterpretation is valid for any C++ API taking JSPromise*.
+            Self::Internal(p) => p as *mut JSPromise,
+        }
+    }
+    /// `AnyPromise.wrap` (AnyPromise.zig) — run `f` through the host-call
+    /// wrapper so a thrown exception is converted to an Err, then resolve/
+    /// reject this existing promise with the outcome.
+    ///
+    /// Zig used `std.meta.ArgsTuple(@TypeOf(Function))` to forward arbitrary
+    /// argument tuples; Rust takes a closure capturing those arguments.
+    pub fn wrap<F>(self, global: &JSGlobalObject, f: F) -> Result<(), JsTerminated>
+    where
+        F: FnOnce(&JSGlobalObject) -> JsResult<JSValue>,
+    {
+        match f(global) {
+            Ok(v) => self.resolve(global, v),
+            Err(_) => {
+                let err = global.try_take_exception().unwrap_or(JSValue::UNDEFINED);
+                self.reject(global, err)
+            }
         }
     }
     /// `AnyPromise.unwrap` (AnyPromise.zig:14).

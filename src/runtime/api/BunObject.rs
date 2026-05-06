@@ -1384,12 +1384,23 @@ pub fn get_argv(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
 // into `bun_jsc`'s graph. Zig stored it on `rareData()`; semantically it is
 // per-JS-thread state (one VM per thread), so a `thread_local` here is
 // equivalent and breaks the cycle without type erasure.
+//
+// `name_storage` owns the user-supplied editor name so `EditorContext.name`
+// (typed `&'static [u8]` to match the Zig dirname-store backing) can borrow it
+// without leaking; the borrow lives as long as the thread.
+struct EditorContextSlot {
+    ctx: crate::cli::open::EditorContext,
+    name_storage: Vec<u8>,
+}
 thread_local! {
-    static EDITOR_CONTEXT: core::cell::RefCell<crate::cli::open::EditorContext> =
-        const { core::cell::RefCell::new(crate::cli::open::EditorContext {
-            editor: None,
-            name: b"",
-            path: b"",
+    static EDITOR_CONTEXT: core::cell::RefCell<EditorContextSlot> =
+        const { core::cell::RefCell::new(EditorContextSlot {
+            ctx: crate::cli::open::EditorContext {
+                editor: None,
+                name: b"",
+                path: b"",
+            },
+            name_storage: Vec::new(),
         }) };
 }
 

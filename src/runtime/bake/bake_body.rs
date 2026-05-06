@@ -22,6 +22,7 @@ use bun_str::{strings, ZStr};
 // Re-exported from `crate::api::js_bundler` so `SplitBundlerOptions.plugin`
 // shares the same type the bundler pipeline uses.
 pub use crate::api::js_bundler::Plugin;
+use crate::api::js_bundler::js_bundler::PluginJscExt as _;
 
 // PORT NOTE: parent `mod.rs` already declares `dev_server` / `framework_router`
 // as sibling modules of this file; pull them in instead of re-declaring (which

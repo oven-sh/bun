@@ -189,7 +189,7 @@ pub enum State {
     Pending,
     Building(Option<*mut JSBundleCompletionTask>),
     Err(Log),
-    /// Intrusive-refcounted; freed via `StaticRoute::deref_` in `Drop`.
+    /// Intrusive-refcounted; freed via `StaticRoute::deref_` in `State::deinit`.
     Html(*mut StaticRoute),
 }
 
@@ -287,7 +287,9 @@ impl Route {
                 match req {
                     AnyRequest::H1(h1) => {
                         // SAFETY: `h1` is the live uWS request handle for this callback.
-                        let _ = dev.respond_for_html_bundle(route, unsafe { &mut *h1 }, resp);
+                        bun_core::handle_oom(
+                            dev.respond_for_html_bundle(route, unsafe { &mut *h1 }, resp),
+                        );
                     }
                     AnyRequest::H3(_) => {
                         resp.write_status(b"503 Service Unavailable");
@@ -299,9 +301,9 @@ impl Route {
 
             // Simpler development workflow which rebundles on every request.
             if matches!(route.state, State::Html(_)) {
-                route.state = State::Pending; // old `State::Html` Drop derefs the static route
+                route.state.deinit(); // derefs the static route, leaves `Pending`
             } else if matches!(route.state, State::Err(_)) {
-                route.state = State::Pending; // old `State::Err` Drop drops the Log
+                route.state.deinit(); // drops the Log, leaves `Pending`
             }
         }
 
@@ -758,7 +760,10 @@ impl Drop for Route {
     fn drop(&mut self) {
         // pending responses keep a ref to the route
         debug_assert!(self.pending_responses.is_empty());
-        // `pending_responses` (Vec), `bundle` (IntrusiveRc), `state` (Drop) auto-drop.
+        // `pending_responses` (Vec) and `bundle` (IntrusiveRc) auto-drop.
+        // `state` has no `Drop` glue for the intrusive-pointer variants — release
+        // them explicitly (mirrors Zig `Route.deinit` calling `this.state.deinit()`).
+        self.state.deinit();
         // `bun.destroy(this)` handled by IntrusiveRc dealloc.
     }
 }

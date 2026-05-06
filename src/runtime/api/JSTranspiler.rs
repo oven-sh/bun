@@ -734,15 +734,9 @@ impl<'a> TransformTask<'a> {
         // `transform_task.transpiler = transpiler.transpiler`. Heap-owned fields
         // are shared with `js_instance` (kept alive via IntrusiveRc); the copy is
         // wrapped in `ManuallyDrop` so only the original frees them.
-        let mut transpiler_copy = core::mem::ManuallyDrop::new(unsafe {
+        let transpiler_copy = core::mem::ManuallyDrop::new(unsafe {
             core::ptr::read(&transpiler.transpiler)
         });
-        // Zig: `transform_task.transpiler.linker.resolver = &transform_task.transpiler.resolver`
-        // — re-point the linker's resolver backref into the copy. The Rust
-        // `Linker` stores raw pointers (see transpiler.rs:467 PORT NOTE), so a
-        // post-move fixup is required just like Zig.
-        let resolver_ptr: *mut _ = &mut transpiler_copy.resolver;
-        transpiler_copy.linker.resolver = resolver_ptr;
 
         let mut transform_task = Box::new(TransformTask {
             input_code,
@@ -768,6 +762,11 @@ impl<'a> TransformTask<'a> {
             js_instance: unsafe { bun_ptr::IntrusiveRc::init_ref(transpiler) },
         });
 
+        // Zig: `transform_task.transpiler.linker.resolver = &transform_task.transpiler.resolver`
+        // — re-point the linker's resolver backref into the heap-allocated copy.
+        // Must happen AFTER the move into the Box so the address is stable.
+        let resolver_ptr: *mut _ = core::ptr::addr_of_mut!(transform_task.transpiler.resolver).cast();
+        transform_task.transpiler.linker.resolver = resolver_ptr;
         transform_task.transpiler.set_log(&mut transform_task.log);
         // `set_allocator(bun.default_allocator)` — Rust `Transpiler` carries an
         // `&Arena`, not a generic allocator. The work-thread `run()` immediately

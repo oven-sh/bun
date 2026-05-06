@@ -159,6 +159,231 @@ impl Default for Framework {
     }
 }
 
+impl Framework {
+    /// `bake.Framework.initTranspiler` (bake.zig:778). Sets up a per-graph
+    /// `Transpiler` in place. The full body lives in
+    /// `bake_body::Framework::init_transpiler_with_options`; this keystone
+    /// version operates on the keystone `BuildConfigSubset` (which omits
+    /// `conditions`/`env`/`define`/`drop` until the schema types are
+    /// const-constructible — those paths default).
+    pub fn init_transpiler<'a>(
+        &mut self,
+        arena: &'a bun_alloc::Arena,
+        log: &mut bun_logger::Log,
+        mode: Mode,
+        renderer: Graph,
+        out: &mut core::mem::MaybeUninit<bun_bundler::Transpiler<'a>>,
+        bundler_options: &BuildConfigSubset,
+    ) -> Result<(), bun_core::Error> {
+        use bun_options_types::schema as bun_schema;
+
+        let mut ast_memory_allocator =
+            bun_js_parser::ASTMemoryAllocator::new_without_stack(arena);
+        let ast_scope = ast_memory_allocator.enter();
+        let _guard = scopeguard::guard(ast_scope, |s| s.exit());
+
+        let out: &mut bun_bundler::Transpiler = out.write(bun_bundler::Transpiler::init(
+            arena,
+            log,
+            bun_schema::api::TransformOptions::default(),
+            None,
+        )?);
+
+        out.options.target = match renderer {
+            Graph::Client => bun_bundler::options::Target::Browser,
+            Graph::Server | Graph::Ssr => bun_bundler::options::Target::Bun,
+        };
+        out.options.public_path = match renderer {
+            Graph::Client => dev_server::CLIENT_PREFIX.as_bytes().into(),
+            Graph::Server | Graph::Ssr => Box::default(),
+        };
+        out.options.entry_points = Box::default();
+        out.options.log = log;
+        out.options.output_format = match mode {
+            Mode::Development => bun_bundler::options::Format::InternalBakeDev,
+            Mode::ProductionDynamic | Mode::ProductionStatic => bun_bundler::options::Format::Esm,
+        };
+        out.options.out_extensions = bun_collections::StringHashMap::new();
+        out.options.hot_module_reloading = mode == Mode::Development;
+        out.options.code_splitting = mode != Mode::Development;
+        out.options.output_dir = Box::default();
+
+        out.options.react_fast_refresh =
+            mode == Mode::Development && renderer == Graph::Client && self.react_fast_refresh.is_some();
+        out.options.server_components = self.server_components.is_some();
+
+        out.options.conditions = bun_bundler::options::ESMConditions::init(
+            out.options.target.default_conditions(),
+            out.options.target.is_server_side(),
+            &[],
+        )?;
+        if renderer == Graph::Server && self.server_components.is_some() {
+            out.options.conditions.append_slice(&[b"react-server"])?;
+        }
+        if mode == Mode::Development {
+            out.options.conditions.append_slice(&[b"development"])?;
+        }
+        if matches!(renderer, Graph::Server | Graph::Ssr) {
+            out.options.conditions.append_slice(&[b"node"])?;
+        }
+
+        out.options.production = mode != Mode::Development;
+        out.options.tree_shaking = mode != Mode::Development;
+        out.options.minify_syntax =
+            bundler_options.minify_syntax.unwrap_or(mode != Mode::Development);
+        out.options.minify_identifiers =
+            bundler_options.minify_identifiers.unwrap_or(mode != Mode::Development);
+        out.options.minify_whitespace =
+            bundler_options.minify_whitespace.unwrap_or(mode != Mode::Development);
+        out.options.css_chunking = true;
+        out.options.framework = None;
+        out.options.inline_entrypoint_import_meta_main = true;
+        if let Some(ignore) = bundler_options.ignore_dce_annotations {
+            out.options.ignore_dce_annotations = ignore;
+        }
+        out.options.source_map = bun_bundler::options::SourceMapOption::External;
+
+        out.configure_linker();
+        out.configure_defines()?;
+        out.options.jsx.development = mode == Mode::Development;
+
+        bake_body::add_import_meta_defines(
+            &mut out.options.define,
+            mode,
+            match renderer {
+                Graph::Client => Side::Client,
+                Graph::Server | Graph::Ssr => Side::Server,
+            },
+        )?;
+
+        if mode != Mode::Development {
+            out.options.entry_naming = b"_bun/[hash].[ext]".as_slice().into();
+            out.options.chunk_naming = b"_bun/[hash].[ext]".as_slice().into();
+            out.options.asset_naming = b"_bun/[hash].[ext]".as_slice().into();
+        }
+
+        Ok(())
+    }
+
+    /// `bake.Framework.resolve` (bake.zig:401). Resolves built-in module
+    /// specifiers and entry points against the resolvers; returns a clone
+    /// with resolved paths. Errors written into `r.log`.
+    pub fn resolve(
+        &mut self,
+        server: &mut bun_resolver::Resolver,
+        client: &mut bun_resolver::Resolver,
+        arena: &bun_alloc::Arena,
+    ) -> Result<(), bun_core::Error> {
+        let mut had_errors = false;
+
+        if let Some(rfr) = &mut self.react_fast_refresh {
+            Self::resolve_helper(
+                &self.built_in_modules,
+                client,
+                &mut rfr.import_source,
+                &mut had_errors,
+                b"react refresh runtime",
+            );
+        }
+        if let Some(sc) = &mut self.server_components {
+            Self::resolve_helper(
+                &self.built_in_modules,
+                server,
+                &mut sc.server_runtime_import,
+                &mut had_errors,
+                b"server components runtime",
+            );
+        }
+        for fsr in self.file_system_router_types.iter_mut() {
+            // SAFETY: `Resolver.fs` is the `*mut FileSystem` singleton (LIFETIMES.tsv
+            // JSC_BORROW), live for the resolver's lifetime.
+            let top_level_dir = unsafe { (*server.fs).top_level_dir };
+            fsr.root = Cow::Owned(
+                bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(
+                    top_level_dir,
+                    &fsr.root,
+                )
+                .to_vec(),
+            );
+            let _ = arena;
+            if let Some(entry_client) = &mut fsr.entry_client {
+                Self::resolve_helper(
+                    &self.built_in_modules,
+                    client,
+                    entry_client,
+                    &mut had_errors,
+                    b"client side entrypoint",
+                );
+            }
+            Self::resolve_helper(
+                &self.built_in_modules,
+                client,
+                &mut fsr.entry_server,
+                &mut had_errors,
+                b"server side entrypoint",
+            );
+        }
+
+        if had_errors {
+            return Err(bun_core::err!("ModuleNotFound"));
+        }
+        Ok(())
+    }
+
+    fn resolve_helper(
+        built_in_modules: &bun_collections::StringArrayHashMap<BuiltInModule>,
+        r: &mut bun_resolver::Resolver,
+        path: &mut Cow<'static, [u8]>,
+        had_errors: &mut bool,
+        desc: &[u8],
+    ) {
+        if let Some(module) = built_in_modules.get(path) {
+            if let BuiltInModule::Import(p) = module {
+                *path = Cow::Owned(p.to_vec());
+            }
+            return;
+        }
+        // SAFETY: `Resolver.fs` is the `*mut FileSystem` singleton, live for
+        // the resolver's lifetime.
+        let top_level_dir = unsafe { (*r.fs).top_level_dir };
+        match r.resolve(top_level_dir, path, bun_options_types::ImportKind::Stmt) {
+            Ok(mut result) => {
+                let p = result.path().expect("just resolved");
+                *path = Cow::Owned(p.text.to_vec());
+            }
+            Err(err) => {
+                // SAFETY: `Resolver.log` is a `*mut Log` JSC_BORROW set at init
+                // (LIFETIMES.tsv); valid for the resolver's lifetime.
+                let log = unsafe { &mut *r.log };
+                bun_core::handle_oom(log.add_errorf(
+                    None,
+                    bun_logger::Loc::EMPTY,
+                    format_args!(
+                        "Failed to resolve {} for {}: {}",
+                        bstr::BStr::new(path),
+                        bstr::BStr::new(desc),
+                        err,
+                    ),
+                ));
+                *had_errors = true;
+            }
+        }
+    }
+
+    /// `bake.Framework.addReactInstallCommandNote` (bake.zig).
+    pub fn add_react_install_command_note(log: &mut bun_logger::Log) {
+        bun_core::handle_oom(log.add_msg(bun_logger::Msg {
+            kind: bun_logger::Kind::Note,
+            data: bun_logger::range_data(
+                None,
+                bun_logger::Range::NONE,
+                b"Install the built-in React framework dependencies:\n  bun i react@experimental react-dom@experimental react-refresh@experimental react-server-dom-bun\n".as_slice().into(),
+            ),
+            ..Default::default()
+        }));
+    }
+}
+
 /// `bake.SplitBundlerOptions` — per-graph bundler config + shared plugin.
 pub struct SplitBundlerOptions {
     /// FFI: `jsc.API.JSBundler.Plugin` (`JSBundlerPlugin__create`); deinit

@@ -32,7 +32,7 @@ pub mod SpawnSyncEventLoop;
 
 // ─── public surface ─────────────────────────────────────────────────────────
 
-pub use AnyTask::JsResult;
+pub use AnyTask::{ErasedJsError, JsResult};
 pub use ConcurrentTask::{Task, TaskTag, Taskable, task_tag};
 
 // snake_case alias for the file-level-struct module so higher tiers can

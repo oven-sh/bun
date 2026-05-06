@@ -7,11 +7,27 @@ use core::ptr::NonNull;
 
 use crate::Task;
 
-// TODO(b0): `JsResult<T>` was `bun_jsc::JsResult` (== `Result<T, jsc::Error>`).
-// event_loop is tier-3 and may not name `bun_jsc`; the error payload is opaque
-// at this layer (callbacks just propagate it). Erased to `*mut ()` — Phase B
-// move-in may relocate the real alias here or to `bun_core`.
-pub type JsResult<T> = core::result::Result<T, *mut () /* SAFETY: erased jsc::Error */>;
+/// Low-tier discriminant for `bun_jsc::JsError`. `event_loop` is tier-3 and may
+/// not name `bun_jsc`, so callbacks return this 1-byte tag and the high-tier
+/// dispatcher recovers the real enum via `From` (defined in `bun_jsc`). The
+/// `#[repr(u8)]` discriminants match `bun_jsc::JsError` exactly so the
+/// conversion is a no-op transmute.
+#[repr(u8)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum ErasedJsError {
+    /// A JavaScript exception is pending in the VM's exception scope.
+    Thrown = 0,
+    /// Allocation failure; caller must throw an `OutOfMemoryError`.
+    OutOfMemory = 1,
+    /// The VM is terminating (worker shutdown / `process.exit`).
+    Terminated = 2,
+}
+
+/// `bun.JSError!T` for tier-3 callbacks. Error payload is [`ErasedJsError`]
+/// (layout-identical to `bun_jsc::JsError`) so the discriminant survives the
+/// round-trip through `AnyTask`/`ManagedTask` and `report_error_or_terminate`
+/// can branch on `Terminated` correctly.
+pub type JsResult<T> = core::result::Result<T, ErasedJsError>;
 
 pub struct AnyTask {
     // TODO(port): lifetime — type-erased callback context; raw by design.

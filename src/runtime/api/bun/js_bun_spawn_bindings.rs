@@ -984,8 +984,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         && !stdio[1].is_piped()
         && !stdio[2].is_piped()
         && extra_fds.is_empty()
-        // TODO(port): `auto_killer` and `jsc_vm.has_execution_time_limit()` are
-        // gated cycle-breaker stubs on `VirtualMachineRef`; treat as disabled.
+        && !jsc_vm.auto_killer.enabled
+        // SAFETY: `jsc_vm.jsc_vm` is the live JSC::VM* set in `VirtualMachine::init`.
+        && !unsafe { (*jsc_vm.jsc_vm).has_execution_time_limit() }
         && !jsc_vm.is_inspector_enabled()
         && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH
             .get()
@@ -999,21 +1000,27 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     // also pass `jsc_vm` into `spawn_sync_event_loop`/`prepare`/`cleanup` while
     // holding it. Route through a raw `*mut VirtualMachineRef` for the duration.
     let jsc_vm_ptr: *mut jsc::VirtualMachineRef = jsc_vm;
-    // TODO(port): SpawnSyncEventLoop's inner `event_loop` is an erased private
-    // `*mut ()`; until an accessor is exposed, fall back to the main loop and
-    // let `prepare()` swap the VM's loop handle internally.
-    let event_loop: *mut jsc::event_loop::EventLoop = jsc_vm.event_loop();
-
-    if IS_SYNC {
+    // For IS_SYNC, use the isolated loop's `event_loop` (created by
+    // `SpawnSyncEventLoop::init`) so stdio readers/writers register on it
+    // instead of the main loop — matches Zig
+    // `&jsc_vm.rareData().spawnSyncEventLoop(jsc_vm).event_loop`.
+    let event_loop: *mut jsc::event_loop::EventLoop = if IS_SYNC {
         // SAFETY: see PORT NOTE above; `spawn_sync_event_loop` re-borrows the
         // same VM via the raw pointer for its `vm` arg.
         unsafe {
-            (*jsc_vm_ptr)
+            let sync_loop = (*jsc_vm_ptr)
                 .rare_data()
-                .spawn_sync_event_loop(&mut *jsc_vm_ptr)
-                .prepare(jsc_vm_ptr.cast());
+                .spawn_sync_event_loop(&mut *jsc_vm_ptr);
+            sync_loop.prepare(jsc_vm_ptr.cast());
+            // `SpawnSyncEventLoop.event_loop` is type-erased to `*mut ()`
+            // (bun_event_loop is below bun_jsc); the accessor returns the
+            // concrete `jsc::EventLoop` allocation created via the runtime
+            // vtable in `SpawnSyncEventLoop::init`.
+            sync_loop.event_loop_ptr().cast::<jsc::event_loop::EventLoop>()
         }
-    }
+    } else {
+        jsc_vm.event_loop()
+    };
 
     let _sync_loop_cleanup = scopeguard::guard((), move |_| {
         if IS_SYNC {

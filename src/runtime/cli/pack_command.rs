@@ -2818,13 +2818,9 @@ fn add_archive_entry(
         _ => {}
     }
 
-    // PORT NOTE: `BufferedReader<_, File>` is unusable until `bun_sys::File`
-    // implements `DeprecatedRead`; the read_buf is already 512 KiB so a direct
-    // `read()` loop is equivalent to the Zig buffered path here.
-    let _ = file_reader;
-    let file_h = File::from_fd(file);
+    reset_buffered_file_reader(file_reader, File::from_fd(file));
 
-    let mut read = match file_h.read(read_buf) {
+    let mut read = match buffered_file_reader_read(file_reader, read_buf) {
         Ok(n) => n,
         Err(err) => {
             Output::err(bun_core::Error::from(err), "failed to read file: \"{}\"", format_args!("{}", bstr::BStr::new(filename.as_bytes())));
@@ -2833,7 +2829,7 @@ fn add_archive_entry(
     };
     while read > 0 {
         ctx.stats.unpacked_size += usize::try_from(archive.write_data(&read_buf[..read])).unwrap();
-        read = match file_h.read(read_buf) {
+        read = match buffered_file_reader_read(file_reader, read_buf) {
             Ok(n) => n,
             Err(err) => {
                 Output::err(bun_core::Error::from(err), "failed to read file: \"{}\"", format_args!("{}", bstr::BStr::new(filename.as_bytes())));
@@ -2905,15 +2901,19 @@ fn edit_root_package_json(
                                         b'*' => b"",
                                         _ => unreachable!(),
                                     };
-                                    let data: Box<[u8]> = format!(
+                                    // Zig: `try std.fmt.allocPrint(allocator, "{s}{}", ...)`.
+                                    // Allocate into the pack arena (`ctx.allocator` analog);
+                                    // `EString::init` erases the lifetime.
+                                    let data: &[u8] = bumpalo::format!(
+                                        in pack_bump(),
                                         "{}{}",
                                         bstr::BStr::new(prefix),
                                         workspace_version.fmt(lockfile.buffers.string_bytes.as_slice()),
                                     )
-                                    .into_bytes()
-                                    .into_boxed_slice();
+                                    .into_bump_str()
+                                    .as_bytes();
                                     dependency.value = Some(Expr::init(
-                                        E::EString::init(Box::leak(data)),
+                                        E::EString::init(data),
                                         Default::default(),
                                     ));
                                     true
@@ -2935,8 +2935,10 @@ fn edit_root_package_json(
                             }
                         }
 
+                        // Zig: `try allocator.dupe(u8, without_workspace_protocol)`.
+                        let dup = pack_bump().alloc_slice_copy(without_workspace_protocol);
                         dependency.value = Some(Expr::init(
-                            E::EString::init(Box::leak(Box::<[u8]>::from(without_workspace_protocol))),
+                            E::EString::init(dup),
                             Default::default(),
                         ));
                     } else if let Some(catalog_name_str) =
@@ -2997,9 +2999,10 @@ fn edit_root_package_json(
                         };
                         let dep: &Dependency = &catalog.values()[dep_idx];
 
-                        let literal: Box<[u8]> = Box::from(dep.version.literal.slice(map_buf));
+                        // Zig: `try allocator.dupe(u8, literal.slice(buf))`.
+                        let literal = pack_bump().alloc_slice_copy(dep.version.literal.slice(map_buf));
                         dependency.value = Some(Expr::init(
-                            E::EString::init(Box::leak(literal)),
+                            E::EString::init(literal),
                             Default::default(),
                         ));
                     }

@@ -2941,21 +2941,32 @@ impl RunCommand {
             let Ok(response_buffer) = bun_string::MutableString::init(8 * 1024) else {
                 continue;
             };
-            let mut d = Box::new(RemoteImageDownload {
-                // SAFETY: `AsyncHTTP` has no drop side-effects on the zeroed
-                // placeholder; overwritten before first use below.
-                async_http: unsafe { ::core::mem::zeroed() },
-                response_buffer,
-                url: raw_url,
-                done: &done_channel,
-            });
-            // SAFETY: `d.url` is heap-owned and outlives the AsyncHTTP (freed
-            // only when `downloads` drops after the channel drains).
-            let url_static: &'static [u8] =
-                unsafe { ::core::slice::from_raw_parts(d.url.as_ptr(), d.url.len()) };
-            let response_buffer_ptr: *mut bun_string::MutableString = &mut d.response_buffer;
-            let d_ptr: *mut RemoteImageDownload = &mut *d;
-            d.async_http = bun_http::AsyncHTTP::init(
+            // PORT NOTE: Zig wrote `.async_http = undefined` then overwrote it.
+            // `AsyncHTTP` holds non-nullable `fn()` pointers (result_callback,
+            // task.callback), so `mem::zeroed()` would be instant UB. Allocate
+            // an uninit `Box`, write the cheap fields first to obtain stable
+            // heap addresses for `url`/`response_buffer`, then `ptr::write`
+            // the fully-formed `AsyncHTTP` last.
+            let mut d: Box<::core::mem::MaybeUninit<RemoteImageDownload>> =
+                Box::new(::core::mem::MaybeUninit::uninit());
+            let slot = d.as_mut_ptr();
+            // SAFETY: writing to uninitialized fields of a freshly-allocated
+            // `MaybeUninit` slot; no prior value is dropped.
+            unsafe {
+                ::core::ptr::addr_of_mut!((*slot).response_buffer).write(response_buffer);
+                ::core::ptr::addr_of_mut!((*slot).url).write(raw_url);
+                ::core::ptr::addr_of_mut!((*slot).done).write(&done_channel);
+            }
+            // SAFETY: `(*slot).url` is heap-owned and outlives the AsyncHTTP
+            // (freed only when `downloads` drops after the channel drains).
+            let url_static: &'static [u8] = unsafe {
+                let url = &*::core::ptr::addr_of!((*slot).url);
+                ::core::slice::from_raw_parts(url.as_ptr(), url.len())
+            };
+            let response_buffer_ptr: *mut bun_string::MutableString =
+                unsafe { ::core::ptr::addr_of_mut!((*slot).response_buffer) };
+            let d_ptr: *mut RemoteImageDownload = slot;
+            let async_http = bun_http::AsyncHTTP::init(
                 bun_http::Method::GET,
                 bun_url::URL::parse(url_static),
                 Default::default(),
@@ -2969,6 +2980,12 @@ impl RunCommand {
                 bun_http::FetchRedirect::Follow,
                 Default::default(),
             );
+            // SAFETY: last field — all four fields are now initialized.
+            unsafe { ::core::ptr::addr_of_mut!((*slot).async_http).write(async_http) };
+            // SAFETY: every field of `RemoteImageDownload` was `ptr::write`n above.
+            let mut d: Box<RemoteImageDownload> = unsafe {
+                Box::from_raw(Box::into_raw(d).cast::<RemoteImageDownload>())
+            };
             d.async_http.schedule(&mut batch);
             downloads.push(d);
         }
@@ -3575,14 +3592,35 @@ impl BunXFastPath {
         let mut wbuf = [0u16; bun_paths::MAX_WPATH];
         let warg = strings::convert_utf8_to_utf16_in_buffer(&mut wbuf, arg);
 
-        let needs_quote = warg.is_empty()
-            || warg.iter().any(|&c| matches!(c as u8, b' ' | b'\t' | b'"' | b'\n' | b'\x0b'));
+        if warg.is_empty() {
+            // Empty argument needs quotes.
+            buffer[0] = b'"' as u16;
+            buffer[1] = b'"' as u16;
+            return 2;
+        }
+
+        // Spec (run_command.zig:2042-2044): trigger quoting only on
+        // space/tab/quote — compare the FULL u16, not the truncated low byte.
+        let needs_quote = warg
+            .iter()
+            .any(|&c| c == b' ' as u16 || c == b'\t' as u16 || c == b'"' as u16);
 
         if !needs_quote {
             buffer[..warg.len()].copy_from_slice(warg);
             return warg.len();
         }
 
+        // Fast path: no embedded `"`/`\` → simple wrap (zig:2052-2062).
+        let has_quote_or_backslash =
+            warg.iter().any(|&c| c == b'"' as u16 || c == b'\\' as u16);
+        if !has_quote_or_backslash {
+            buffer[0] = b'"' as u16;
+            buffer[1..1 + warg.len()].copy_from_slice(warg);
+            buffer[warg.len() + 1] = b'"' as u16;
+            return warg.len() + 2;
+        }
+
+        // Complex case: libuv reverse-walk backslash escaping.
         let mut pos: usize = 0;
         buffer[pos] = b'"' as u16;
         pos += 1;

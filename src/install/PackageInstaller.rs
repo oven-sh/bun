@@ -20,6 +20,9 @@ use crate::lockfile_real::{self as lockfile, DependencySlice, Lockfile, Tree};
 use crate::lockfile_real::package::{self as Package, scripts::Scripts as PackageScripts};
 use crate::package_install::{self, PackageInstall};
 use crate::package_manager::{self, Options, PackageManager};
+// PORT NOTE: `Options` above is the namespace module (`Options::LogLevel`); the
+// concrete `PackageManager.Options` struct lives in `package_manager_real`.
+use crate::package_manager_real::Options as PackageManagerOptions;
 use crate::package_manager_task as task;
 use crate::patch_install::PatchTask;
 use crate::postinstall_optimizer::PostinstallOptimizer;
@@ -52,7 +55,7 @@ pub struct PackageInstaller<'a> {
     pub force_install: bool,
     pub root_node_modules_folder: Dir,
     pub summary: &'a mut package_install::Summary,
-    pub options: &'a Options,
+    pub options: &'a PackageManagerOptions,
     // TODO(port): the following slice fields alias into `self.lockfile.packages` (BACKREF);
     // borrowck will reject `&'a mut Lockfile` + `&'a [T]` into it. Phase B: store as raw
     // `*const [T]` or re-fetch via `fix_cached_lockfile_package_slices` helper accessors.

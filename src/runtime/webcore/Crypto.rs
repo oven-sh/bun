@@ -8,9 +8,9 @@ use crate::node::Encoding;
 
 // `.classes.ts`-backed type: the C++ JSCell wrapper stays generated C++.
 // This struct is the `m_ctx` payload. `toJS`/`fromJS`/`fromJSDirect` are
-// provided by the derive — do not hand-port the `pub const js = jsc.Codegen.JSCrypto`
+// provided by the attribute macro — do not hand-port the `pub const js = jsc.Codegen.JSCrypto`
 // alias block.
-#[derive(bun_jsc::JsClass)]
+#[bun_jsc::JsClass]
 pub struct Crypto {
     garbage: i32,
 }
@@ -153,7 +153,7 @@ impl Crypto {
         str.to_js(global)
     }
 
-    #[bun_jsc::host_fn(constructor)]
+    // `#[JsClass]` emits `CryptoClass__construct` calling this.
     pub fn constructor(global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<*mut Crypto> {
         Err(bun_jsc::Error::ILLEGAL_CONSTRUCTOR.throw(global, format_args!("Crypto is not constructable")))
     }
@@ -163,10 +163,11 @@ fn random_data(global: &JSGlobalObject, ptr: *mut u8, len: usize) {
     // SAFETY: caller guarantees `ptr` is valid for `len` writable bytes.
     let slice = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
 
+    const ENTROPY_CACHE_FAST_PATH_MAX: usize = bun_jsc::RareData::EntropyCache::SIZE / 8;
     match slice.len() {
         0 => {}
         // 512 bytes or less we reuse from the same cache as UUID generation.
-        1..=const { bun_jsc::RareData::EntropyCache::SIZE / 8 } => {
+        1..=ENTROPY_CACHE_FAST_PATH_MAX => {
             let src = global.bun_vm().rare_data().entropy_slice(slice.len());
             slice[..src.len()].copy_from_slice(src);
         }

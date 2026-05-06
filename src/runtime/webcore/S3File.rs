@@ -107,7 +107,7 @@ where
         formatter.print_comma(writer, ENABLE_ANSI_COLORS)?;
         formatter.indent = formatter.indent.saturating_sub(1);
     }
-    s3_client::write_format_credentials::<F, W, ENABLE_ANSI_COLORS>(credentials, s3.options, s3.acl, formatter, writer)?;
+    s3_client::write_format_credentials::<F, W, ENABLE_ANSI_COLORS>(&**credentials, s3.options, s3.acl, formatter, writer)?;
     formatter.write_indent(writer)?;
     writer.write_str("}")?;
     formatter.reset_line();

@@ -660,7 +660,7 @@ impl Expect {
         // SAFETY: to_js takes ownership of the m_ctx pointer
         let expect_js_value = unsafe { (*expect_ptr).to_js(global_this) };
         expect_js_value.ensure_still_alive();
-        Self::js::captured_value_set_cached(expect_js_value, global_this, value);
+        super::expect::js::captured_value_set_cached(expect_js_value, global_this, value);
         expect_js_value.ensure_still_alive();
 
         // SAFETY: expect_ptr is the m_ctx payload kept alive by expect_js_value (ensure_still_alive above)

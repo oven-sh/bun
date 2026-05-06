@@ -411,17 +411,15 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // url_proxy_buffer/headers/body/hostname/range/ssl_config on every exit path.
     // In Rust, all of these are owning types whose Drop runs on early return.
     // The explicit `signal.unref()` is the only side-effect not covered by Drop:
-    let _signal_guard = scopeguard::guard((), |_| {
-        if let Some(sig) = signal {
-            // SAFETY: sig was obtained via .ref() below; matched unref() here.
-            unsafe { sig.as_ref().unref() };
-        }
-    });
-    // TODO(port): errdefer — `_signal_guard` captures `signal` by ref across many
-    // mutations; verify borrowck in Phase B (may need Cell/RefCell).
+    // TODO(port): errdefer — Zig had `defer if (signal) |sig| sig.unref();` capturing
+    // `signal` by ref across many mutations. Borrowck forbids guard-by-ref here; the
+    // matched unref() is now done explicitly on the early-return paths via the Drop
+    // of FetchTasklet (which adopts the ref) or, on error, leaked until Phase B.
+    let _ = &signal;
 
     let options_object: Option<JSValue> = 'brk: {
         if let Some(options) = args.next_eat() {
+            let options: JSValue = options;
             if options.is_object() || options.js_type() == jsc::JSType::DOMWrapper {
                 break 'brk Some(options);
             }

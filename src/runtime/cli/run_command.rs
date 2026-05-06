@@ -1985,9 +1985,11 @@ use crate::shell_completions::ShellCompletions;
 mod bun_bun_js {
     #[allow(non_snake_case)]
     pub mod Run {
-        pub fn boot(
-            _ctx: impl ::core::any::Any,
-            _entry: impl ::core::any::Any,
+        // PORT NOTE: generic with no bounds (instead of `impl Any`) so non-'static
+        // refs (`&Command::Context`) can be passed without tripping `Any: 'static`.
+        pub fn boot<C, E>(
+            _ctx: C,
+            _entry: E,
             _loader: Option<bun_bundler::options::Loader>,
         ) -> Result<(), bun_core::Error> {
             todo!("blocked_on: bun_js::Run::boot (higher-tier crate)")

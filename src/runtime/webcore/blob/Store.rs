@@ -660,15 +660,12 @@ impl S3 {
         options: Option<JSValue>,
         global_object: &JSGlobalObject,
     ) -> JsResult<S3CredentialsWithOptions> {
-        S3Credentials::get_credentials_with_options(
-            (**self.get_credentials()).clone(),
-            self.options,
-            options,
-            self.acl,
-            self.storage_class,
-            self.request_payer,
-            global_object,
-        )
+        let _ = (options, global_object, &self.options, self.acl, self.storage_class, self.request_payer);
+        // The trait shim in `webcore/S3Client.rs` (`S3CredentialsExt`) is itself
+        // `todo!()` until `s3/credentials_jsc.rs` is mounted; inlining the same
+        // marker here avoids the `S3Credentials: !Clone` move-out and keeps the
+        // stub→real type migration compiling.
+        todo!("blocked_on: crate::webcore::s3::credentials_jsc::get_credentials_with_options")
     }
 
     pub fn unlink(
@@ -694,7 +691,7 @@ impl S3 {
             }
 
             fn resolve(
-                result: S3DeleteResult,
+                result: S3DeleteResult<'_>,
                 opaque_self: *mut c_void,
             ) -> Result<(), bun_jsc::JsTerminated> {
                 // SAFETY: opaque_self was created via Box::into_raw(Wrapper::new(..)) below.
@@ -780,7 +777,7 @@ impl S3 {
 
         impl Wrapper {
             fn resolve(
-                result: S3ListObjectsResult,
+                result: S3ListObjectsResult<'_>,
                 opaque_self: *mut c_void,
             ) -> Result<(), bun_jsc::JsTerminated> {
                 // SAFETY: opaque_self was created via Box::into_raw below.

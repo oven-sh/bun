@@ -4666,8 +4666,15 @@ impl Blob {
                             } else {
                                 return Ok(blob.dupe());
                             }
-                        } else if top_value.as_::<crate::api::BuildArtifact>().is_some() {
-                            todo!("blocked_on: crate::api::BuildArtifact.blob (gated in JSBundler.rs)");
+                        } else if {
+                            // PORT NOTE: `crate::api::BuildArtifact` is the `stub_ty!`
+                            // opaque (real type gated in JSBundler.rs `_jsc_gated`) and
+                            // lacks a `JsClass` impl, so `as_::<BuildArtifact>()` cannot
+                            // type-check yet. Fall through; the body is a `todo!` anyway.
+                            let _ = top_value;
+                            false
+                        } {
+                            todo!("blocked_on: crate::api::BuildArtifact JsClass (gated in JSBundler.rs)");
                         } else {
                             let sliced = current.to_slice_clone(global)?;
                             // PORT NOTE: Zig checked `sliced.allocator.get()` to detect

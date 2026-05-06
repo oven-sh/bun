@@ -525,45 +525,40 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                 match c.options.output_format {
                     OutputFormat::Esm => {
                         let import_record_index =
-                            u32::try_from(cross_chunk_imports.len()).unwrap();
+                            u32::try_from(cross_chunk_imports.len as usize).unwrap();
 
                         let mut clauses = bumpalo::collections::Vec::<js_ast::ClauseItem>::with_capacity_in(
-                            cross_chunk_import.sorted_import_items.len() as usize,
+                            cross_chunk_import.sorted_import_items.len as usize,
                             c.allocator(),
                         );
-                        // TODO(port): arena-backed Vec — c.allocator() returns &'bump Bump; thread
-                        // 'bump lifetime through this fn in Phase B.
                         for item in cross_chunk_import.sorted_import_items.slice() {
                             clauses.push(js_ast::ClauseItem {
                                 name: js_ast::LocRef {
-                                    ref_: item.r#ref,
+                                    ref_: Some(item.r#ref),
                                     loc: Logger::Loc::EMPTY,
                                 },
-                                alias: item.export_alias,
+                                alias: item.export_alias.as_ref() as *const [u8],
                                 alias_loc: Logger::Loc::EMPTY,
-                                ..Default::default()
+                                original_name: b"" as &[u8] as *const [u8],
                             });
                             // PERF(port): was appendAssumeCapacity — profile in Phase B
                         }
 
-                        cross_chunk_imports.push(chunk::ChunkImport {
+                        cross_chunk_imports.append(chunk::ChunkImport {
                             import_kind: bun_options_types::ImportKind::Stmt,
                             chunk_index: cross_chunk_import.chunk_index,
-                        });
-                        // TODO(port): BabyList::push allocator — Zig passes c.allocator()
-                        let import = c.allocator().alloc(js_ast::S::Import {
-                            items: clauses.into_bump_slice(),
-                            // TODO(port): Zig passes `clauses.items` (slice); decide ownership
-                            import_record_index,
-                            namespace_ref: Ref::NONE,
-                            ..Default::default()
-                        });
-                        // PORT NOTE: c.allocator() → &'bump Bump; Bump::alloc returns &'bump mut T
-                        cross_chunk_prefix_stmts.push(js_ast::Stmt {
-                            data: js_ast::Stmt::Data::SImport(import),
-                            loc: Logger::Loc::EMPTY,
-                        });
-                        // TODO(port): BabyList::push allocator — Zig passes c.allocator()
+                        })?;
+                        let items_ptr: *mut [js_ast::ClauseItem] =
+                            clauses.into_bump_slice_mut() as *mut [js_ast::ClauseItem];
+                        cross_chunk_prefix_stmts.append(js_ast::Stmt::alloc(
+                            js_ast::S::Import {
+                                items: items_ptr,
+                                import_record_index,
+                                namespace_ref: Ref::NONE,
+                                ..Default::default()
+                            },
+                            Logger::Loc::EMPTY,
+                        ))?;
                     }
                     _ => {}
                 }

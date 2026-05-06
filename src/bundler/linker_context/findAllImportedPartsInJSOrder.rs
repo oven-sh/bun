@@ -157,7 +157,7 @@ fn run_visits<const WITH_CODE_SPLITTING: bool, const WITH_SCB: bool>(
 
 pub struct FindImportedPartsVisitor<'a, 'ctx> {
     pub entry_bits: &'a AutoBitSet,
-    pub flags: &'a [JSMeta::Flags],
+    pub flags: &'a [crate::js_meta::Flags],
     pub parts: &'a [BabyList<Part>],
     pub import_records: &'a [BabyList<ImportRecord>],
     pub files: Vec<IndexInt>,

@@ -1307,6 +1307,26 @@ pub mod dispatch {
         AtomicPtr::new(null_mut());
     pub static PLUGIN_LOAD_HOOK: AtomicPtr<unsafe fn(*mut super::api::JSBundler::Load)> =
         AtomicPtr::new(null_mut());
+
+    /// CYCLEBREAK GENUINE: `bun.jsc.hot_reloader.NewHotReloader<BundleV2, …>` is
+    /// a T6 generic instantiated over a T5 type. The bundler stores it as an
+    /// erased `NonNull<()>`; this hook lets `on_load_complete` register watched
+    /// files without naming the concrete reloader type.
+    pub struct WatcherVTable {
+        /// `watcher.add_file(fd, path, hash, loader, dir_fd, package_json, copy)`
+        /// (Watcher.zig:addFile).
+        pub add_file: unsafe fn(
+            watcher: *mut (),
+            fd: bun_sys::Fd,
+            file_path: &[u8],
+            hash: u32,
+            loader: bun_options_types::Loader,
+            dir_fd: bun_sys::Fd,
+            package_json: Option<*const ()>,
+            copy_file_path: bool,
+        ) -> Result<(), bun_core::Error>,
+    }
+    pub static WATCHER_HOOK: AtomicPtr<WatcherVTable> = AtomicPtr::new(null_mut());
 }
 
 // CYCLEBREAK GENUINE: jsc::hot_reloader::NewHotReloader<BundleV2, EventLoop, true>
@@ -3192,10 +3212,13 @@ impl<'a> BundleV2<'a> {
                         // TODO: support explicit watchFiles array. this is not done
                         // right now because DevServer requires a table to map
                         // watched files and dirs to their respective dependants.
-                        let fd = if bun_core::Watcher::REQUIRES_FILE_DESCRIPTORS {
-                            // TODO(port): toPosixPath — bun_paths nul-terminate helper
-                            let Ok(posix_path) = bun_paths::resolve_path::path_to_posix_in_place(&load.path) else { break 'add_watchers };
-                            match bun_sys::open(&posix_path, bun_core::Watcher::WATCH_OPEN_FLAGS, 0) {
+                        // PORT NOTE: `Watcher.REQUIRES_FILE_DESCRIPTORS` is `true`
+                        // only on macOS (kqueue needs an open fd per file).
+                        let fd = if cfg!(target_os = "macos") {
+                            let mut buf = bun_paths::path_buffer_pool::get();
+                            let posix_path = bun_paths::resolve_path::path_to_posix_buf(load.path.as_ref(), &mut **buf);
+                            // PORT NOTE: `Watcher.WATCH_OPEN_FLAGS` = `O_EVTONLY` on macOS.
+                            match bun_sys::open(bun_paths::z(posix_path, &mut **buf), 0x8000 /* O_EVTONLY */, 0) {
                                 bun_sys::Result::Ok(fd) => fd,
                                 bun_sys::Result::Err(_) => break 'add_watchers,
                             }
@@ -3203,16 +3226,27 @@ impl<'a> BundleV2<'a> {
                             bun_sys::Fd::INVALID
                         };
 
-                        // SAFETY: bun_watcher NonNull is valid while bundle is running
-                        let _ = unsafe { watcher.as_ref() }.add_file(
-                            fd,
-                            &load.path,
-                            bun_core::Watcher::get_hash(&load.path),
-                            code.loader,
-                            bun_sys::Fd::INVALID,
-                            None,
-                            true,
-                        );
+                        // CYCLEBREAK GENUINE: `bun_watcher` is an erased
+                        // `Option<NonNull<()>>`; the `add_file` call goes through
+                        // the runtime-registered watcher hook.
+                        let hook = dispatch::WATCHER_HOOK.load(core::sync::atomic::Ordering::Acquire);
+                        if !hook.is_null() {
+                            // SAFETY: `hook` is a leaked `&'static WatcherVTable`
+                            // registered at runtime init; `watcher` is valid while
+                            // the bundle is running.
+                            let _ = unsafe {
+                                ((*hook).add_file)(
+                                    watcher.as_ptr(),
+                                    fd,
+                                    &load.path,
+                                    bun_wyhash::hash(load.path.as_ref()) as u32,
+                                    code.loader,
+                                    bun_sys::Fd::INVALID,
+                                    None,
+                                    true,
+                                )
+                            };
+                        }
                     }
                 }
             }

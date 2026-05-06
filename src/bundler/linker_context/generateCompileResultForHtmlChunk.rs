@@ -14,9 +14,9 @@ use bun_logger::Log;
 use bun_lolhtml_sys::lol_html as lol;
 use bun_options_types::{ImportKind, ImportRecord, ImportRecordFlags};
 use bun_string::strings;
-use bun_threading::Task as ThreadPoolLibTask;
+use bun_threading::thread_pool::Task as ThreadPoolLibTask;
 
-use crate::linker_context::{LinkerContext, PendingPartRange};
+use crate::linker_context_mod::{LinkerContext, LinkerCtx, PendingPartRange};
 use crate::options::Loader;
 use crate::thread_pool::Worker;
 use crate::HTMLScanner::{HTMLProcessor, HTMLProcessorHandler};

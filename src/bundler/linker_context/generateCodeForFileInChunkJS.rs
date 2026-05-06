@@ -57,7 +57,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             list.slice_mut()[part_range.part_index_begin as usize..part_range.part_index_end as usize]
         )
     };
-    let flags: JSMeta::Flags = c.graph.meta.items_flags()[source_index];
+    let flags: crate::js_meta::Flags = c.graph.meta.items_flags()[source_index];
     let wrapper_part_index = if flags.wrap != WrapKind::None {
         c.graph.meta.items_wrapper_part_index()[source_index]
     } else {

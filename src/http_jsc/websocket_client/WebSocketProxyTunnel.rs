@@ -500,7 +500,8 @@ impl WebSocketProxyTunnel {
         let connected_websocket = unsafe { (*this).connected_websocket };
         if !connected_websocket.is_null() {
             // SAFETY: BACKREF — WebSocket owns tunnel via ref(); cleared before WebSocket frees.
-            unsafe { (*connected_websocket).handle_tunnel_writable() };
+            // No `&`/`&mut WebSocket` is live in this frame across the call.
+            unsafe { WebSocketClient::handle_tunnel_writable(connected_websocket) };
         }
     }
 

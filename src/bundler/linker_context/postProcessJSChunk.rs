@@ -196,7 +196,7 @@ pub fn post_process_js_chunk(
                 if idx >= tla_keywords.len() {
                     continue;
                 }
-                if wraps[idx].wrap != JSMeta::Wrap::None {
+                if wraps[idx].wrap != crate::WrapKind::None {
                     continue;
                 }
                 if !tla_keywords[idx].is_empty() {
@@ -216,7 +216,7 @@ pub fn post_process_js_chunk(
         let all_flags = c.graph.meta.items_flags();
         let all_import_records = c.graph.ast.items_import_records();
         for part_range in chunk.content.javascript().parts_in_chunk_in_order.iter() {
-            if all_flags[part_range.source_index.get()].wrap == JSMeta::Wrap::Cjs {
+            if all_flags[part_range.source_index.get()].wrap == crate::WrapKind::Cjs {
                 continue;
             }
             let source_parts = all_parts[part_range.source_index.get()].slice();
@@ -303,7 +303,7 @@ pub fn post_process_js_chunk(
         let all_wrapper_refs = c.graph.ast.items_wrapper_ref();
         for part_range in chunk.content.javascript().parts_in_chunk_in_order.iter() {
             let source_index = part_range.source_index.get();
-            if all_flags[source_index].wrap != JSMeta::Wrap::None {
+            if all_flags[source_index].wrap != crate::WrapKind::None {
                 let wrapper_ref = all_wrapper_refs[source_index];
                 if !wrapper_ref.is_empty() {
                     let name = chunk.renamer.name_for_symbol(wrapper_ref);
@@ -766,7 +766,7 @@ pub fn generate_entry_point_tail_js(
     r: renamer::Renamer,
     mut module_info: Option<&mut ModuleInfo>,
 ) -> CompileResult {
-    let flags: JSMeta::Flags = c.graph.meta.items_flags()[source_index as usize];
+    let flags: crate::js_meta::Flags = c.graph.meta.items_flags()[source_index as usize];
     // PERF(port): was arena-backed ArrayList(Stmt) — profile in Phase B
     let mut stmts: Vec<Stmt> = Vec::new();
     let ast: JSAst = c.graph.ast.get(source_index);
@@ -774,7 +774,7 @@ pub fn generate_entry_point_tail_js(
     match c.options.output_format {
         options::OutputFormat::Esm => {
             match flags.wrap {
-                JSMeta::Wrap::Cjs => {
+                crate::WrapKind::Cjs => {
                     stmts.push(Stmt::alloc(
                         // "export default require_foo();"
                         S::ExportDefault {
@@ -794,7 +794,7 @@ pub fn generate_entry_point_tail_js(
                     ));
                 }
                 _ => {
-                    if flags.wrap == JSMeta::Wrap::Esm && ast.wrapper_ref.is_valid() {
+                    if flags.wrap == crate::WrapKind::Esm && ast.wrapper_ref.is_valid() {
                         if flags.is_async_or_has_async_dependency {
                             // "await init_foo();"
                             stmts.push(Stmt::alloc(
@@ -1088,7 +1088,7 @@ pub fn generate_entry_point_tail_js(
 
         options::OutputFormat::Cjs => {
             match flags.wrap {
-                JSMeta::Wrap::Cjs => {
+                crate::WrapKind::Cjs => {
                     // "module.exports = require_foo();"
                     stmts.push(Stmt::assign(
                         Expr::init(
@@ -1109,7 +1109,7 @@ pub fn generate_entry_point_tail_js(
                         ),
                     ));
                 }
-                JSMeta::Wrap::Esm => {
+                crate::WrapKind::Esm => {
                     // "init_foo();"
                     stmts.push(Stmt::alloc(
                         S::SExpr {

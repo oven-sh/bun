@@ -109,14 +109,14 @@ fn generate_compile_result_for_js_chunk_impl(
     stmt_list.reset();
 
     let runtime_scope: &mut Scope =
-        &mut c.graph.ast.items_module_scope_mut()[c.graph.files.items_input_file()[Index::RUNTIME.value].get()];
+        &mut c.graph.ast.items_module_scope_mut()[c.graph.files.items_input_file()[Index::RUNTIME.get() as usize].get() as usize];
     let runtime_members = &runtime_scope.members;
-    let to_common_js_ref = c.graph.symbols.follow(runtime_members.get(b"__toCommonJS").unwrap().r#ref);
-    let to_esm_ref = c.graph.symbols.follow(runtime_members.get(b"__toESM").unwrap().r#ref);
+    let to_common_js_ref = c.graph.symbols.follow(runtime_members.get(b"__toCommonJS").unwrap().ref_);
+    let to_esm_ref = c.graph.symbols.follow(runtime_members.get(b"__toESM").unwrap().ref_);
     let runtime_require_ref = if c.options.output_format == OutputFormat::Cjs {
         None
     } else {
-        Some(c.graph.symbols.follow(runtime_members.get(b"__require").unwrap().r#ref))
+        Some(c.graph.symbols.follow(runtime_members.get(b"__require").unwrap().ref_))
     };
 
     let collect_decls = c.options.generate_bytecode_cache
@@ -132,7 +132,7 @@ fn generate_compile_result_for_js_chunk_impl(
     let result = generate_code_for_file_in_chunk_js(
         c,
         &mut buffer_writer,
-        chunk.renamer,
+        &mut chunk.renamer,
         chunk,
         part_range,
         to_common_js_ref,

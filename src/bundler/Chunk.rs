@@ -571,13 +571,6 @@ impl IntermediateOutput {
                                     ));
                                     continue;
                                 }
-                                #[cfg(any())]
-                                // TODO(b2-blocked): `HTMLImportManifest` is gated; no
-                                // un-gated producer constructs `QueryKind::HtmlImport`
-                                // pieces, so this arm is unreachable until it un-gates.
-                                QueryKind::HtmlImport => {
-                                    unreachable!("b2-blocked: HTMLImportManifest gated")
-                                }
                                 QueryKind::None => unreachable!(),
                             };
 
@@ -751,11 +744,6 @@ impl IntermediateOutput {
                                         shifts.push(shift);
                                     }
                                     continue;
-                                }
-                                #[cfg(any())]
-                                // TODO(b2-blocked): see counting-pass arm above.
-                                QueryKind::HtmlImport => {
-                                    unreachable!("b2-blocked: HTMLImportManifest gated")
                                 }
                                 _ => unreachable!(),
                             };

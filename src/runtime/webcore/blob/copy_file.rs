@@ -215,7 +215,17 @@ impl<'a> CopyFile<'a> {
 
         if matches!(WHICH, IOWhich::Both | IOWhich::Destination) {
             loop {
-                let dest = self.destination_file_store.pathlike.path().slice_z(&mut path_buf1);
+                // PORT NOTE: detach `dest` lifetime from `self` (borrowck) — slice_z
+                // copies into path_buf1, so build the ZStr directly from the buffer.
+                let dest_len = {
+                    let s = self.destination_file_store.pathlike.path().slice();
+                    let n = s.len().min(path_buf1.len() - 1);
+                    path_buf1[..n].copy_from_slice(&s[..n]);
+                    path_buf1[n] = 0;
+                    n
+                };
+                // SAFETY: path_buf1[dest_len] == 0 written above.
+                let dest: &bun_str::ZStr = unsafe { bun_str::ZStr::from_raw(path_buf1.as_ptr(), dest_len) };
                 let mode = self.destination_mode.unwrap_or(node_fs::DEFAULT_PERMISSION);
                 match bun_sys::open(dest, OPEN_DESTINATION_FLAGS, mode) {
                     bun_sys::Result::Ok(result) => {
@@ -533,15 +543,11 @@ impl<'a> CopyFile<'a> {
                 dest,
             ) {
                 bun_sys::Result::Err(errno) => {
-                    match Blob::mkdir_if_not_exists(
-                        self,
-                        &errno,
-                        dest,
-                        self.destination_file_store.pathlike.path().slice(),
-                    ) {
-                        Blob::MkdirResult::Continue => continue,
-                        Blob::MkdirResult::Fail => {}
-                        Blob::MkdirResult::No => {}
+                    let err_path = self.destination_file_store.pathlike.path().slice().to_vec();
+                    match blob::mkdir_if_not_exists(self, errno.clone(), dest, &err_path) {
+                        Retry::Continue => continue,
+                        Retry::Fail => {}
+                        Retry::No => {}
                     }
                     self.system_error = Some(errno.to_system_error());
                     return Err(bun_sys::errno_to_error(errno.errno));

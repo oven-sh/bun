@@ -2875,8 +2875,10 @@ impl JestPrettyFormat {
         // raw `&mut W` via `writer.ctx` for `print_as` calls — single borrow chain.
 
         if let Some(matcher) = value.as_::<expect::ExpectAnything>() {
-            Self::print_asymmetric_matcher_promise_prefix(matcher.flags, this, writer);
-            if matcher.flags.not {
+            // SAFETY: `as_` returned non-null; GC keeps the cell alive while `value` is on stack.
+            let flags = unsafe { (*matcher).flags };
+            Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
+            if flags.not {
                 this.add_for_new_line(b"NotAnything".len());
                 writer.write_all(b"NotAnything");
             } else {

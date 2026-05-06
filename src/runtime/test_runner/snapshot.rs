@@ -169,7 +169,7 @@ impl<'a> Snapshots<'a> {
 
         let mut name_with_counter: Vec<u8> =
             Vec::with_capacity(name.len() + 1 + counter_string.len());
-        name_with_counter.extend_from_slice(name);
+        name_with_counter.extend_from_slice(&name);
         name_with_counter.push(b' ');
         name_with_counter.extend_from_slice(counter_string);
         // defer free → Drop

@@ -95,16 +95,16 @@ impl AlgorithmValue {
 
                         if let Some(rounds_value) = value.get_truthy(global_object, "cost")? {
                             if !rounds_value.is_number() {
-                                return global_object
-                                    .throw_invalid_argument_type("hash", "cost", "number");
+                                return Err(global_object
+                                    .throw_invalid_argument_type("hash", "cost", "number"));
                             }
 
-                            let rounds = rounds_value.coerce_i32(global_object)?;
+                            let rounds = rounds_value.coerce_to_i32(global_object)?;
 
                             if rounds < 4 || rounds > 31 {
-                                return global_object.throw_invalid_arguments(
+                                return Err(global_object.throw_invalid_arguments(
                                     format_args!("Rounds must be between 4 and 31"),
-                                );
+                                ));
                             }
 
                             algorithm =

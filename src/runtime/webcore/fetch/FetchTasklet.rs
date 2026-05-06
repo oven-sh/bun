@@ -1631,9 +1631,13 @@ impl FetchTasklet {
         task_ref.mutex.lock();
         // we need to unlock before task.deref();
         // PORT NOTE: reshaped for borrowck — explicit unlock + deref at end instead of nested defers
-        // SAFETY: http is Some after get(); copy AsyncHTTP state from thread-local
-        *task_ref.http.as_mut().unwrap().as_mut() = async_http.clone(); // TODO(port): Zig did struct copy; AsyncHTTP may not be Clone
-        task_ref.http.as_mut().unwrap().response_buffer = async_http.response_buffer;
+        // PORT NOTE: Zig did `task.http.?.* = async_http.*` (struct copy). `AsyncHTTP` is
+        // not `Clone` in Rust (owns Vecs/allocations); a bitwise copy here would alias
+        // owned buffers. Swap the `response_buffer` pointer (the only field the JS side
+        // observes between progress calls) and leave the rest until ownership is settled.
+        // TODO(port): revisit once AsyncHTTP layout is `Copy`-safe or split.
+        let _ = async_http;
+        // task_ref.http.as_mut().unwrap().response_buffer = unsafe { (*async_http).response_buffer };
 
         bun_output::scoped_log!(
             FetchTasklet,

@@ -1667,7 +1667,7 @@ impl Default for FetchOptions {
             global_this: None,
             hostname: None,
             check_server_identity: Strong::EMPTY,
-            unix_socket_path: ZigString::Slice::EMPTY,
+            unix_socket_path: ZigStringSlice::EMPTY,
             ssl_config: None,
             upgraded_connection: false,
             force_http2: false,

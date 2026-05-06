@@ -3175,13 +3175,13 @@ impl RunCommand {
             let mut remain = cwd;
             while let Some(i) = strings::last_index_of_char(remain, SEP) {
                 new_path.extend_from_slice(strings::without_trailing_slash(remain));
-                new_path.extend_from_slice(bun_paths::path_literal!("/node_modules/.bin"));
+                new_path.extend_from_slice(path_literal!(b"/node_modules/.bin", b"\\node_modules\\.bin"));
                 new_path.push(DELIMITER);
                 remain = &remain[..i as usize];
             }
             // Zig `else` clause runs once after loop ends naturally
             new_path.extend_from_slice(strings::without_trailing_slash(remain));
-            new_path.extend_from_slice(bun_paths::path_literal!("/node_modules/.bin"));
+            new_path.extend_from_slice(path_literal!(b"/node_modules/.bin", b"\\node_modules\\.bin"));
             new_path.push(DELIMITER);
 
             new_path.extend_from_slice(path);
@@ -4117,7 +4117,7 @@ impl RunCommand {
             ctx.runtime_options.eval.script = list.into_boxed_slice();
             // TODO(port): ctx mutability — Zig Context is mutable through pointer
 
-            const TRIGGER: &[u8] = bun_paths::path_literal!("/[stdin]");
+            const TRIGGER: &[u8] = path_literal!(b"/[stdin]", b"\\[stdin]");
             let mut entry_point_buf = [0u8; MAX_PATH_BYTES + TRIGGER.len()];
             // TODO(port): std.posix.getcwd → bun_sys
             let cwd = sys::getcwd_buf(&mut entry_point_buf[..MAX_PATH_BYTES])?;

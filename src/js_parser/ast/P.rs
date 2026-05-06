@@ -3458,8 +3458,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // We handle it here at parse time (similar to macros) rather than at visit time.
         if path.text == b"bun:bundle" {
             // Look for the "feature" import and validate specifiers
-            // SAFETY: arena-owned `*mut [ClauseItem]` valid for parser 'a lifetime.
-            for item in unsafe { &mut *stmt.items }.iter_mut() {
+            // SAFETY: arena-owned `*mut [ClauseItem]` valid for parser 'a lifetime;
+            // loop body only reads from `item`, so a shared borrow suffices and
+            // avoids holding a unique borrow across `&mut self` method calls.
+            for item in unsafe { &*stmt.items }.iter() {
                 // In ClauseItem from parseImportClause:
                 // - alias is the name from the source module ("feature")
                 // - original_name is the local binding name
@@ -4110,9 +4112,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         name: &'static [u8],
     ) -> Result<Ref, bun_core::Error> {
         let name_hash = Scope::get_member_hash(name);
-        // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        let module_scope = unsafe { &mut *self.module_scope };
-        let member = module_scope.get_member_with_hash(name, name_hash);
+        // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; shared
+        // borrow only (`get_member_with_hash` takes `&self`), so the later
+        // re-derivations at L4149/L4160 cannot overlap a stale unique tag.
+        let member = unsafe { &*self.module_scope }.get_member_with_hash(name, name_hash);
 
         // If the code declared this symbol using "var name", then this is actually
         // not a collision. For example, node will let you do this:
@@ -4409,8 +4412,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     }
 
     pub fn pop_scope(&mut self) {
-        // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        let current_scope = unsafe { &mut *self.current_scope };
+        // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; shared
+        // borrow only — the loop body writes to `self.symbols` (disjoint alloc)
+        // and we never mutate `*current_scope`, so no unique tag is needed.
+        let current_scope = unsafe { &*self.current_scope };
         // We cannot rename anything inside a scope containing a direct eval() call
         if current_scope.contains_direct_eval {
             let mut iter = current_scope.members.iter();

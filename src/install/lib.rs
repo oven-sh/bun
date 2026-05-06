@@ -839,6 +839,10 @@ pub mod lockfile {
     /// `Lockfile.Scripts` (src/install/lockfile.zig) — re-export the real
     /// impl so `Lockfile::Scripts::NAMES` resolves for lifecycle scripts.
     pub use crate::lockfile_real::Scripts;
+    /// `Lockfile.LoadResult.LockfileFormat` (src/install/lockfile.zig) —
+    /// re-export the real enum so `PackageManagerDirectories::save_lockfile`
+    /// can branch on `.Text` / `.Binary` without reaching into `lockfile_real`.
+    pub use crate::lockfile_real::LockfileFormat;
     pub mod tree {
         use crate::DependencyID;
         use super::DependencyIDSlice;

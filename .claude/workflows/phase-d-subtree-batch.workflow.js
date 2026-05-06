@@ -139,7 +139,7 @@ ${seen[g.subtree] > 1 ? `**Seen ${seen[g.subtree]}× — likely cross-subtree ty
 3. **Shared types in your subtree**: change once, fix all callers in your subtree.
 4. **#[cfg(any())] / todo!() in your subtree**: remove, port REAL body from .zig spec. NEVER add new gates or todo!().
 5. **Type mismatch with sibling subtree**: adapt YOUR side.
-6. **Missing lower-tier symbol**: GO ADD IT to that crate (note in files_touched). If it's a dep-cycle (lower tier needs higher tier): add a fn-ptr/vtable hook in the lower tier per docs/PORTING.md §Dispatch.
+6. **Missing lower-tier symbol**: GO ADD IT to that crate (note in files_touched). **Dep-cycle (lower tier importing higher tier)**: code is in WRONG crate — MOVE it to the right crate, or strip the bogus dependency. No hooks, no gates.
 7. Commit (can be multiple). DO NOT run cargo — next survey checks your work.
 
 ${HARD}

@@ -383,11 +383,11 @@ Never write these. The verify gate flags them as `logic-bug`.
 - **`todo!()` / `unimplemented!()` / `unreachable!()` as a stub** — NEVER. Port
   the real body from the `.zig` spec. There is no "blocked_on" deferral.
 - **`#[cfg(any())]` / `#![cfg(any())]`** — NEVER. There is no legitimate gate.
-  If a lower-tier crate needs a higher-tier symbol (dep cycle), use the
-  §Dispatch pattern: lower tier defines a fn-ptr/vtable hook, higher tier
-  registers it at startup. The hook's null-state default panics with a clear
-  "hook not registered" message — that is a *runtime* contract, not a compile
-  deferral.
+- **Dep-cycle "fixes" via fn-ptr hooks** — NEVER. If `bun_alloc` imports
+  `bun_runtime`, the code is in the WRONG CRATE. Fix the architecture:
+  **(a)** move the code to the crate it actually belongs in, OR **(b)** strip
+  the bogus dependency by porting whatever it needs locally. A dep cycle is a
+  layering bug, not something to route around.
 
 ## Concurrency
 

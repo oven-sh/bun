@@ -315,21 +315,26 @@ impl<'a> LinkerContext<'a> {
     pub fn load(
         &mut self,
         bundle: &mut BundleV2,
-        entry_points: &mut [Index],
+        entry_points: &[Index],
         server_component_boundaries: js_ast::server_component_boundary::List,
-        reachable: &mut [Index],
+        reachable: &[Index],
     ) -> Result<(), BunError> {
         let _trace = bun::perf::trace("Bundler.CloneLinkerGraph");
         self.parse_graph = &mut bundle.graph;
 
-        self.graph.code_splitting = bundle.transpiler.options.code_splitting;
+        // SAFETY: `bundle.transpiler` is a `*mut Transpiler` backref valid for
+        // the bundle's lifetime; `resolver`/`log`/`options` are stable fields.
+        let transpiler = unsafe { &mut *bundle.transpiler };
+        self.graph.code_splitting = transpiler.options.code_splitting;
         // TODO(port): lifetime — log is &'a mut Log; reassigning here mirrors Zig's pointer assignment
-        self.log = bundle.transpiler.log;
+        self.log = transpiler.log;
 
-        self.resolver = &mut bundle.transpiler.resolver;
+        self.resolver = &mut transpiler.resolver;
         self.cycle_detector = Vec::new();
 
-        self.graph.reachable_files = reachable;
+        // PORT NOTE: `reachable_files` is `BabyList<Index>`; the caller owns
+        // the backing storage (`reachable`), so borrow it as a BabyList view.
+        self.graph.reachable_files = BabyList::from_slice_borrowed(reachable);
 
         // SAFETY: parse_graph is valid backref just assigned above
         let sources: &[Source] = unsafe { (*self.parse_graph).input_files.items_source() };
@@ -340,33 +345,40 @@ impl<'a> LinkerContext<'a> {
             server_component_boundaries,
             bundle.dynamic_import_entry_points.keys(),
             // SAFETY: parse_graph backref
-            unsafe { &mut (*self.parse_graph).entry_point_original_names },
+            unsafe { &(*self.parse_graph).entry_point_original_names },
         )?;
-        bundle.dynamic_import_entry_points.deinit();
+        // PERF(port): was arena bulk-free — `dynamic_import_entry_points` is
+        // now a global-alloc `ArrayHashMap`; clearing drops it.
+        bundle.dynamic_import_entry_points.clear();
 
-        let runtime_named_exports = &mut self.graph.ast.items_named_exports_mut()[Index::RUNTIME.get() as usize];
+        let runtime_named_exports = &self.graph.ast.items_named_exports()[Index::RUNTIME.get() as usize];
 
-        self.esm_runtime_ref = runtime_named_exports.get(b"__esm").unwrap().r#ref;
-        self.cjs_runtime_ref = runtime_named_exports.get(b"__commonJS").unwrap().r#ref;
-        self.promise_all_runtime_ref = runtime_named_exports.get(b"__promiseAll").unwrap().r#ref;
+        self.esm_runtime_ref = runtime_named_exports.get(b"__esm").unwrap().ref_;
+        self.cjs_runtime_ref = runtime_named_exports.get(b"__commonJS").unwrap().ref_;
+        self.promise_all_runtime_ref = runtime_named_exports.get(b"__promiseAll").unwrap().ref_;
 
         if self.options.output_format == Format::Cjs {
             self.unbound_module_ref = self.graph.generate_new_symbol(Index::RUNTIME.get(), js_ast::ast::symbol::Kind::Unbound, b"module");
         }
 
         if self.options.output_format == Format::Cjs || self.options.output_format == Format::Iife {
-            // PORT NOTE: reshaped for borrowck — fetch slices once
-            let exports_kind = self.graph.ast.items_exports_kind_mut();
-            let ast_flags_list = self.graph.ast.items_flags_mut();
+            // PORT NOTE: reshaped for borrowck — `items_*_mut()` columns are
+            // physically disjoint SoA slabs but Rust can't see that through
+            // `&mut MultiArrayList`. Route through raw column pointers.
+            let ast_slice = self.graph.ast.slice_mut();
+            // SAFETY: SoA columns are disjoint; the underlying slab does not
+            // reallocate for the duration of this loop.
+            let exports_kind: &mut [ExportsKind] = unsafe { &mut *ast_slice.items_raw_mut(js_ast::ast::bundled_ast::BundledAstField::exports_kind) };
+            let ast_flags_list: &mut [AstFlags] = unsafe { &mut *ast_slice.items_raw_mut(js_ast::ast::bundled_ast::BundledAstField::flags) };
             let meta_flags_list = self.graph.meta.items_flags_mut();
 
             for entry_point in entry_points.iter() {
-                let mut ast_flags: js_ast::ast::bundled_ast::Flags = ast_flags_list[entry_point.get() as usize];
+                let ast_flags: AstFlags = ast_flags_list[entry_point.get() as usize];
 
                 // Loaders default to CommonJS when they are the entry point and the output
                 // format is not ESM-compatible since that avoids generating the ESM-to-CJS
                 // machinery.
-                if ast_flags.has_lazy_export {
+                if ast_flags.contains(AstFlags::HAS_LAZY_EXPORT) {
                     exports_kind[entry_point.get() as usize] = ExportsKind::Cjs;
                 }
 
@@ -374,9 +386,8 @@ impl<'a> LinkerContext<'a> {
                 // targeting non-ES6 formats. Note that the IIFE format only needs this
                 // when the global name is present, since that's the only way the exports
                 // can actually be observed externally.
-                if ast_flags.uses_export_keyword {
-                    ast_flags.uses_exports_ref = true;
-                    ast_flags_list[entry_point.get() as usize] = ast_flags;
+                if ast_flags.contains(AstFlags::USES_EXPORT_KEYWORD) {
+                    ast_flags_list[entry_point.get() as usize].insert(AstFlags::USES_EXPORTS_REF);
                     meta_flags_list[entry_point.get() as usize].force_include_exports_for_entry_point = true;
                 }
             }

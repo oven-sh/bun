@@ -261,10 +261,15 @@ impl<'a> Transpiler<'a> {
 
         // PORT NOTE: reshaped for borrowck — Zig passed `&this.options.env`
         // into `this.options.loadDefines(...)`. Rust forbids `&self.options.env`
-        // while `&mut self.options` is live, so clone the POD `Env` value.
-        let env_snapshot = self.options.env.clone();
+        // while `&mut self.options` is live; `Env` is not `Clone`
+        // (contains `MultiArrayList`). `load_defines` only *reads* `env` and
+        // never touches `self.env`, so a raw-pointer reborrow is sound.
+        // SAFETY: `self.options.env` is a stable field of `BundleOptions`; not
+        // moved or dropped by `load_defines` (it writes `self.define` /
+        // `self.defines_loaded` only).
+        let env_ptr: *const options::Env = &self.options.env;
         self.options
-            .load_defines(Some(env_loader), Some(&env_snapshot))?;
+            .load_defines(Some(env_loader), Some(unsafe { &*env_ptr }))?;
 
         let mut is_development = false;
         if let Some(node_env) = self.options.define.dots.get(b"NODE_ENV".as_slice()) {
@@ -301,11 +306,12 @@ impl<'a> Transpiler<'a> {
         // `.indent_2` whitespace option.
         bun_core::Output::flush();
         // SAFETY: `self.env` is non-null after `init`.
-        let env = unsafe { &*self.env };
-        let mut w = bun_core::Output::writer();
+        let env = unsafe { &mut *self.env };
+        let w = bun_core::Output::writer();
         let _ = w.write_all(b"{\n");
         let mut first = true;
-        for (k, v) in env.map.iter() {
+        let mut it = env.map.map.iterator();
+        while let Some(pair) = it.next() {
             if !first {
                 let _ = w.write_all(b",\n");
             }
@@ -313,8 +319,8 @@ impl<'a> Transpiler<'a> {
             let _ = write!(
                 w,
                 "  \"{}\": \"{}\"",
-                bstr::BStr::new(k),
-                bstr::BStr::new(v)
+                bstr::BStr::new(pair.key_ptr),
+                bstr::BStr::new(&pair.value_ptr.value)
             );
         }
         let _ = w.write_all(b"\n}\n");
@@ -1059,13 +1065,16 @@ impl<'a> Transpiler<'a> {
         //     .allocator = allocator,
         // });
 
-        // SAFETY: `from_api` only reads `log` to push diagnostics; the same
-        // raw `log` is aliased into `Resolver::init1` and the struct field
-        // below (see header PORT NOTE — Zig aliased `*Log` everywhere).
-        // `fs` is the process-lifetime `Fs::FileSystem` singleton from
-        // `init_file_system` above; `&mut *fs` here is the only live borrow.
+        // `log` stays raw — `from_api` stores it in `BundleOptions.log: *mut`
+        // and the same pointer is aliased into `Resolver::init1` / `Linker`
+        // / the struct field below (Zig aliased `*Log` everywhere). No `&'a
+        // mut Log` is materialized here, so the sibling raw pointers don't
+        // invalidate a long-lived unique borrow under stacked borrows.
+        // SAFETY: `fs` is the process-lifetime `Fs::FileSystem` singleton from
+        // `init_file_system` above; this short `&mut *fs` is the only live
+        // borrow for the duration of `from_api`.
         let bundle_options =
-            options::BundleOptions::from_api(unsafe { &mut *fs }, unsafe { &mut *log }, opts)?;
+            options::BundleOptions::from_api(unsafe { &mut *fs }, log, opts)?;
 
         // CYCLEBREAK: `Resolver.opts` is the resolver-crate FORWARD_DECL subset
         // (`bun_resolver::options::BundleOptions`), nominally distinct from this

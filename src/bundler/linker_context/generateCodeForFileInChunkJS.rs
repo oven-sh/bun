@@ -1,50 +1,66 @@
 use bun_alloc::Arena as Bump; // bumpalo::Bump re-export (AST crate: arenas are load-bearing)
 use bun_collections::{BabyList, BoundedArray};
 use bun_logger as logger;
-use bun_str::strings;
 
-use bun_bundler::js_printer::{self, PrintResult};
-use bun_bundler::renamer;
-use bun_bundler::{
-    generic_path_with_pretty_initialized, Chunk, CompileResult, Index, JSAst, JSMeta, LinkerContext,
-    Part, PartRange,
+use bun_js_printer::{self as js_printer, PrintResult, PrintResultSuccess};
+use bun_js_printer::renamer;
+
+use crate::{
+    Chunk, DeclInfo, DeclInfoKind, Index, JSAst, JSMeta, LinkerContext, Part, PartRange, WrapKind,
 };
-use bun_bundler::linker_context::StmtList;
+use crate::bundle_v2::generic_path_with_pretty_initialized;
+use crate::linker_context_mod::{StmtList, StmtListWhich};
+use crate::options::Format as OutputFormat;
 
 use bun_js_parser::ast as js_ast;
 use bun_js_parser::ast::{Binding, Expr, Ref, Stmt, B, E, G, S};
+use bun_js_parser::ast::binding::ToExprWrapper;
 use bun_js_parser::lexer as js_lexer;
+use bun_js_parser::StoreRef;
 
-// TODO(port): MultiArrayList column access — Zig `list.items(.field)` is mapped here as
-// `list.items_field()` method calls; Phase B should align with whatever
-// `bun_collections::MultiArrayList` actually exposes.
+use super::convert_stmts_for_chunk::convert_stmts_for_chunk;
+use super::convert_stmts_for_chunk_for_dev_server::convert_stmts_for_chunk_for_dev_server;
 
-pub fn generate_code_for_file_in_chunk_js<'bump>(
+// PORT NOTE: MultiArrayList column access — Zig `list.items(.field)` is mapped here as
+// `list.items_field()` method calls (codegen'd accessors on the SoA wrappers).
+
+#[allow(clippy::too_many_arguments)]
+pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     c: &mut LinkerContext,
     writer: &mut js_printer::BufferWriter,
-    r: renamer::Renamer,
+    r: renamer::Renamer<'r, 'src>,
     chunk: &mut Chunk,
     part_range: PartRange,
     to_common_js_ref: Ref,
     to_esm_ref: Ref,
     runtime_require_ref: Option<Ref>,
     stmts: &mut StmtList,
-    allocator: &'bump Bump,
-    temp_allocator: &'bump Bump,
-    decl_collector: Option<&mut DeclCollector<'bump>>,
+    allocator: &Bump,
+    temp_allocator: &Bump,
+    decl_collector: Option<&mut DeclCollector>,
 ) -> js_printer::PrintResult {
-    let parts: &mut [Part] = &mut c.graph.ast.items_parts()[part_range.source_index.get()].as_mut_slice()
-        [part_range.part_index_begin as usize..part_range.part_index_end as usize];
-    let all_flags: &[JSMeta::Flags] = c.graph.meta.items_flags();
-    let flags = all_flags[part_range.source_index.get()];
-    let wrapper_part_index = if flags.wrap != Wrap::None {
-        c.graph.meta.items_wrapper_part_index()[part_range.source_index.get()]
+    let source_index = part_range.source_index.get() as usize;
+
+    // PORT NOTE: reshaped for borrowck — grab raw pointers to the SoA columns up front so
+    // subsequent `&mut c` borrows (convert_stmts_for_chunk, print_code_for_file_in_chunk_js)
+    // don't conflict. Matches Zig which slices once at the top.
+    // SAFETY: the underlying MultiArrayList storage is not resized for the duration of this
+    // function (linking has already sized everything).
+    let parts: *mut [Part] = unsafe {
+        let list = &mut c.graph.ast.items_parts_mut()[source_index];
+        core::ptr::addr_of_mut!(
+            list.slice_mut()[part_range.part_index_begin as usize..part_range.part_index_end as usize]
+        )
+    };
+    let flags: JSMeta::Flags = c.graph.meta.items_flags()[source_index];
+    let wrapper_part_index = if flags.wrap != WrapKind::None {
+        c.graph.meta.items_wrapper_part_index()[source_index]
     } else {
         Index::INVALID
     };
 
     // referencing everything by array makes the code a lot more annoying :(
-    let mut ast: JSAst = c.graph.ast.get(part_range.source_index.get());
+    let mut ast: JSAst = c.graph.ast.get(source_index);
 
     // For HMR, part generation is entirely special cased.
     // - export wrapping is already done.
@@ -60,11 +76,13 @@ pub fn generate_code_for_file_in_chunk_js<'bump>(
 
             let hmr_api_ref = ast.wrapper_ref;
 
-            for part in parts.iter() {
+            // SAFETY: see `parts` raw-pointer note above.
+            for part in unsafe { (*parts).iter() } {
+                let part_stmts: &[Stmt] = unsafe { &*part.stmts };
                 if let Err(err) =
-                    c.convert_stmts_for_chunk_for_dev_server(stmts, part.stmts, allocator, &mut ast)
+                    convert_stmts_for_chunk_for_dev_server(c, stmts, part_stmts, allocator, &mut ast)
                 {
-                    return PrintResult::Err(err);
+                    return PrintResult::Err(err.into());
                 }
             }
 
@@ -82,44 +100,52 @@ pub fn generate_code_for_file_in_chunk_js<'bump>(
                 .extend_from_slice(stmts.inside_wrapper_suffix.as_slice());
 
             // PORT NOTE: reshaped for borrowck — capture pointer/len now, re-slice after pushes.
-            let inner_ptr = stmts.all_stmts.as_ptr();
             // SAFETY: `inner` aliases the first `main_stmts_len` elements of `all_stmts`;
             // subsequent pushes only append past this range and capacity was reserved above
             // so no reallocation occurs. Matches Zig which slices then continues appending.
-            let inner: &[Stmt] =
-                unsafe { core::slice::from_raw_parts(inner_ptr, main_stmts_len) };
+            let inner: *mut [Stmt] =
+                core::ptr::addr_of_mut!(stmts.all_stmts.as_mut_slice()[0..main_stmts_len]);
 
-            let mut clousure_args: BoundedArray<G::Arg, 3> = BoundedArray::from_slice(&[G::Arg {
+            let mut clousure_args: BoundedArray<G::Arg, 3> = BoundedArray::default();
+            clousure_args.append_assume_capacity(G::Arg {
                 binding: Binding::alloc(
                     temp_allocator,
-                    B::Identifier { ref_: hmr_api_ref },
+                    B::Identifier { r#ref: hmr_api_ref },
                     logger::Loc::EMPTY,
                 ),
                 ..Default::default()
-            }])
-            .expect("unreachable"); // is within bounds
+            });
 
             if ast.flags.uses_module_ref || ast.flags.uses_exports_ref {
-                // PERF(port): was appendSliceAssumeCapacity
-                clousure_args.extend_from_slice(&[
-                    G::Arg {
-                        binding: Binding::alloc(
-                            temp_allocator,
-                            B::Identifier { ref_: ast.module_ref },
-                            logger::Loc::EMPTY,
-                        ),
-                        ..Default::default()
-                    },
-                    G::Arg {
-                        binding: Binding::alloc(
-                            temp_allocator,
-                            B::Identifier { ref_: ast.exports_ref },
-                            logger::Loc::EMPTY,
-                        ),
-                        ..Default::default()
-                    },
-                ]);
+                clousure_args.append_assume_capacity(G::Arg {
+                    binding: Binding::alloc(
+                        temp_allocator,
+                        B::Identifier { r#ref: ast.module_ref },
+                        logger::Loc::EMPTY,
+                    ),
+                    ..Default::default()
+                });
+                clousure_args.append_assume_capacity(G::Arg {
+                    binding: Binding::alloc(
+                        temp_allocator,
+                        B::Identifier { r#ref: ast.exports_ref },
+                        logger::Loc::EMPTY,
+                    ),
+                    ..Default::default()
+                });
             }
+
+            // PERF(port): was temp_allocator.dupe — `G::Arg` is not Copy in Rust
+            let dup_args: &mut [G::Arg] = {
+                let mut v = bumpalo::collections::Vec::with_capacity_in(
+                    clousure_args.const_slice().len(),
+                    temp_allocator,
+                );
+                for a in clousure_args.slice().iter_mut() {
+                    v.push(core::mem::take(a));
+                }
+                v.into_bump_slice_mut()
+            };
 
             // PERF(port): was appendAssumeCapacity
             stmts.all_stmts.push(Stmt::allocate_expr(
@@ -127,7 +153,7 @@ pub fn generate_code_for_file_in_chunk_js<'bump>(
                 Expr::init(
                     E::Function {
                         func: G::Fn {
-                            args: temp_allocator.alloc_slice_copy(clousure_args.as_slice()),
+                            args: dup_args as *mut [G::Arg],
                             body: G::FnBody {
                                 stmts: inner,
                                 loc: logger::Loc::EMPTY,
@@ -147,22 +173,23 @@ pub fn generate_code_for_file_in_chunk_js<'bump>(
 
             // TODO: there is a weird edge case where the pretty path is not computed
             // it does not reproduce when debugging.
-            let mut source = *c.get_source(part_range.source_index.get());
+            let mut source = *c.get_source(source_index);
             if core::ptr::eq(source.path.text.as_ptr(), source.path.pretty.as_ptr()) {
-                source.path = generic_path_with_pretty_initialized(
+                // SAFETY: `c.resolver` is set by BundleV2 before linking begins.
+                let top_level_dir = unsafe { (*c.resolver).fs.top_level_dir };
+                source.path = bun_core::handle_oom(generic_path_with_pretty_initialized(
                     source.path,
                     c.options.target,
-                    c.resolver.fs.top_level_dir,
+                    top_level_dir,
                     allocator,
-                )
-                .unwrap_or_oom();
+                ));
             }
 
             return c.print_code_for_file_in_chunk_js(
                 r,
                 allocator,
                 writer,
-                &stmts.all_stmts[main_stmts_len..],
+                &mut stmts.all_stmts[main_stmts_len..],
                 &ast,
                 flags,
                 Ref::NONE,
@@ -182,24 +209,22 @@ pub fn generate_code_for_file_in_chunk_js<'bump>(
 
     let part_index_for_lazy_default_export: u32 = 'brk: {
         if ast.flags.has_lazy_export {
-            if let Some(default) = c.graph.meta.items_resolved_exports()
-                [part_range.source_index.get()]
-            .get(b"default")
+            if let Some(default) =
+                c.graph.meta.items_resolved_exports()[source_index].get(b"default")
             {
                 break 'brk c
                     .graph
-                    .top_level_symbol_to_parts(part_range.source_index.get(), default.data.import_ref)
-                    [0];
+                    .top_level_symbol_to_parts(source_index as u32, default.data.import_ref)[0];
             }
         }
-        break 'brk u32::MAX;
+        u32::MAX
     };
 
     let output_format = c.options.output_format;
 
     // The top-level directive must come first (the non-wrapped case is handled
     // by the chunk generation code, although only for the entry point)
-    if flags.wrap != Wrap::None
+    if flags.wrap != WrapKind::None
         && ast.flags.has_explicit_use_strict_directive
         && !chunk.is_entry_point()
         && !output_format.is_always_strict_mode()
@@ -208,7 +233,7 @@ pub fn generate_code_for_file_in_chunk_js<'bump>(
             .inside_wrapper_prefix
             .append_non_dependency(Stmt::alloc(
                 S::Directive {
-                    value: b"use strict",
+                    value: b"use strict" as *const [u8],
                 },
                 logger::Loc::EMPTY,
             ))
@@ -218,32 +243,42 @@ pub fn generate_code_for_file_in_chunk_js<'bump>(
     // TODO: handle directive
     if namespace_export_part_index >= part_range.part_index_begin
         && namespace_export_part_index < part_range.part_index_end
-        && parts[namespace_export_part_index as usize].is_live
+        // SAFETY: see `parts` raw-pointer note above.
+        && unsafe { (*parts)[namespace_export_part_index as usize].is_live }
     {
-        if let Err(err) = c.convert_stmts_for_chunk(
-            part_range.source_index.get(),
+        let ns_part_stmts: &[Stmt] =
+            unsafe { &*(*parts)[namespace_export_part_index as usize].stmts };
+        if let Err(err) = convert_stmts_for_chunk(
+            c,
+            source_index as u32,
             stmts,
-            parts[namespace_export_part_index as usize].stmts,
+            ns_part_stmts,
             chunk,
             temp_allocator,
             flags.wrap,
-            &mut ast,
+            &ast,
         ) {
             // TODO(port): bun.handleErrorReturnTrace — no Rust equivalent
             return PrintResult::Err(err);
         }
 
         match flags.wrap {
-            Wrap::Esm => {
+            WrapKind::Esm => {
+                // PORT NOTE: reshaped for borrowck — append_slice borrows `stmts` mutably while
+                // also reading from a sibling field.
+                let suffix = core::mem::take(&mut stmts.inside_wrapper_suffix);
                 stmts
-                    .append_slice(StmtListKind::OutsideWrapperPrefix, stmts.inside_wrapper_suffix.as_slice())
+                    .append_slice(StmtListWhich::OutsideWrapperPrefix, suffix.as_slice())
                     .expect("unreachable");
+                stmts.inside_wrapper_suffix = suffix;
             }
             _ => {
+                let suffix = core::mem::take(&mut stmts.inside_wrapper_suffix);
                 stmts
                     .inside_wrapper_prefix
-                    .append_non_dependency_slice(stmts.inside_wrapper_suffix.as_slice())
+                    .append_non_dependency_slice(suffix.as_slice())
                     .expect("unreachable");
+                stmts.inside_wrapper_suffix = suffix;
             }
         }
 
@@ -251,7 +286,11 @@ pub fn generate_code_for_file_in_chunk_js<'bump>(
     }
 
     // Add all other parts in this chunk
-    for (index_, part) in parts.iter().enumerate() {
+    // SAFETY: see `parts` raw-pointer note above.
+    let parts_len = unsafe { (*parts).len() };
+    for index_ in 0..parts_len {
+        // SAFETY: index in bounds.
+        let part: &Part = unsafe { &(*parts)[index_] };
         let index = part_range.part_index_begin + (index_ as u32);
         if !part.is_live {
             // Skip the part if it's not in this chunk
@@ -269,9 +308,8 @@ pub fn generate_code_for_file_in_chunk_js<'bump>(
             continue;
         }
 
-        // TODO(port): Zig used `[1]Stmt{undefined}` — using a default-init placeholder here.
         let mut single_stmts_list: [Stmt; 1] = [Stmt::empty()];
-        let mut part_stmts = part.stmts;
+        let mut part_stmts: &[Stmt] = unsafe { &*part.stmts };
 
         // If this could be a JSON or TOML file that exports a top-level object literal, go
         // over the non-default top-level properties that ended up being imported
@@ -309,26 +347,31 @@ pub fn generate_code_for_file_in_chunk_js<'bump>(
                 panic!("expected Lazy default export to be an export default statement");
             };
 
-            let mut default_expr = default_export.value.expr;
+            let mut default_expr = match default_export.value {
+                js_ast::StmtOrExpr::Expr(e) => e,
+                js_ast::StmtOrExpr::Stmt(_) => {
+                    panic!("expected Lazy default export value to be an expression")
+                }
+            };
 
             // Be careful: the top-level value in a JSON file is not necessarily an object
             if let ExprData::EObject(e_object) = default_expr.data {
                 let mut new_properties =
-                    e_object.properties.clone_in(temp_allocator).expect("unreachable");
+                    e_object.properties.clone().expect("unreachable");
 
                 let resolved_exports =
-                    &c.graph.meta.items_resolved_exports()[part_range.source_index.get()];
+                    &c.graph.meta.items_resolved_exports()[source_index];
 
                 // If any top-level properties ended up being imported directly, change
                 // the property to just reference the corresponding variable instead
-                for prop in new_properties.as_mut_slice() {
+                for prop in new_properties.slice_mut() {
                     if prop.key.is_none()
                         || !matches!(prop.key.as_ref().unwrap().data, ExprData::EString(_))
                         || prop.value.is_none()
                     {
                         continue;
                     }
-                    let name = match &prop.key.as_ref().unwrap().data {
+                    let name = match &mut prop.key.as_mut().unwrap().data {
                         ExprData::EString(s) => s.slice(temp_allocator),
                         _ => unreachable!(),
                     };
@@ -341,11 +384,11 @@ pub fn generate_code_for_file_in_chunk_js<'bump>(
 
                     if let Some(export_data) = resolved_exports.get(name) {
                         let export_ref = export_data.data.import_ref;
-                        let export_part = &ast.parts.as_slice()[c
+                        let part_idx = c
                             .graph
-                            .top_level_symbol_to_parts(part_range.source_index.get(), export_ref)
-                            [0]
-                            as usize];
+                            .top_level_symbol_to_parts(source_index as u32, export_ref)[0]
+                            as usize;
+                        let export_part = &ast.parts.slice()[part_idx];
                         if export_part.is_live {
                             *prop = G::Property {
                                 key: prop.key,
@@ -373,21 +416,22 @@ pub fn generate_code_for_file_in_chunk_js<'bump>(
                 temp_allocator,
                 S::ExportDefault {
                     default_name: default_export.default_name,
-                    value: js_ast::ExportDefaultValue::Expr(default_expr),
+                    value: js_ast::StmtOrExpr::Expr(default_expr),
                 },
                 stmt.loc,
             );
             part_stmts = &single_stmts_list[..];
         }
 
-        if let Err(err) = c.convert_stmts_for_chunk(
-            part_range.source_index.get(),
+        if let Err(err) = convert_stmts_for_chunk(
+            c,
+            source_index as u32,
             stmts,
             part_stmts,
             chunk,
             temp_allocator,
             flags.wrap,
-            &mut ast,
+            &ast,
         ) {
             return PrintResult::Err(err);
         }
@@ -416,12 +460,12 @@ pub fn generate_code_for_file_in_chunk_js<'bump>(
         merge_adjacent_local_stmts(&mut stmts.all_stmts, temp_allocator);
     }
 
-    let mut out_stmts: &mut [js_ast::Stmt] = stmts.all_stmts.as_mut_slice();
+    let mut out_stmts: *mut [Stmt] = stmts.all_stmts.as_mut_slice() as *mut [Stmt];
 
     // Optionally wrap all statements in a closure
     if needs_wrapper {
         match flags.wrap {
-            Wrap::Cjs => {
+            WrapKind::Cjs => {
                 // Only include the arguments that are actually used
                 let mut args: bumpalo::collections::Vec<'_, G::Arg> =
                     bumpalo::collections::Vec::with_capacity_in(
@@ -438,7 +482,7 @@ pub fn generate_code_for_file_in_chunk_js<'bump>(
                     args.push(G::Arg {
                         binding: Binding::alloc(
                             temp_allocator,
-                            B::Identifier { ref_: ast.exports_ref },
+                            B::Identifier { r#ref: ast.exports_ref },
                             logger::Loc::EMPTY,
                         ),
                         ..Default::default()
@@ -449,7 +493,7 @@ pub fn generate_code_for_file_in_chunk_js<'bump>(
                         args.push(G::Arg {
                             binding: Binding::alloc(
                                 temp_allocator,
-                                B::Identifier { ref_: ast.module_ref },
+                                B::Identifier { r#ref: ast.module_ref },
                                 logger::Loc::EMPTY,
                             ),
                             ..Default::default()
@@ -458,17 +502,23 @@ pub fn generate_code_for_file_in_chunk_js<'bump>(
                 }
 
                 // TODO: variants of the runtime functions
-                let cjs_args = temp_allocator.alloc_slice_copy(&[Expr::init(
+                let body_stmts: *mut [Stmt] = stmts.all_stmts.as_mut_slice() as *mut [Stmt];
+                // SAFETY: arena-backed args slice outlives the AST node; the AST crate erases
+                // arena lifetimes to `'static` (see `E::Arrow.args` field comment).
+                let args_static: &'static [G::Arg] = unsafe {
+                    core::mem::transmute::<&[G::Arg], &'static [G::Arg]>(args.into_bump_slice())
+                };
+                let cjs_args = bun_core::handle_oom(BabyList::<Expr>::from_slice(&[Expr::init(
                     E::Arrow {
-                        args: args.into_bump_slice(),
+                        args: args_static,
                         body: G::FnBody {
-                            stmts: stmts.all_stmts.as_slice(),
+                            stmts: body_stmts,
                             loc: logger::Loc::EMPTY,
                         },
                         ..Default::default()
                     },
                     logger::Loc::EMPTY,
-                )]);
+                )]));
 
                 let commonjs_wrapper_definition = Expr::init(
                     E::Call {
@@ -479,7 +529,7 @@ pub fn generate_code_for_file_in_chunk_js<'bump>(
                             },
                             logger::Loc::EMPTY,
                         ),
-                        args: BabyList::<Expr>::from_owned_slice(cjs_args),
+                        args: cjs_args,
                         ..Default::default()
                     },
                     logger::Loc::EMPTY,
@@ -487,21 +537,21 @@ pub fn generate_code_for_file_in_chunk_js<'bump>(
 
                 // "var require_foo = __commonJS(...);"
                 {
-                    let decls = temp_allocator.alloc_slice_copy(&[G::Decl {
+                    let decls = bun_core::handle_oom(G::DeclList::from_slice(&[G::Decl {
                         binding: Binding::alloc(
                             temp_allocator,
-                            B::Identifier { ref_: ast.wrapper_ref },
+                            B::Identifier { r#ref: ast.wrapper_ref },
                             logger::Loc::EMPTY,
                         ),
                         value: Some(commonjs_wrapper_definition),
-                    }]);
+                    }]));
 
                     stmts
                         .append(
-                            StmtListKind::OutsideWrapperPrefix,
+                            StmtListWhich::OutsideWrapperPrefix,
                             Stmt::alloc(
                                 S::Local {
-                                    decls: G::DeclList::from_owned_slice(decls),
+                                    decls,
                                     ..Default::default()
                                 },
                                 logger::Loc::EMPTY,
@@ -510,24 +560,26 @@ pub fn generate_code_for_file_in_chunk_js<'bump>(
                         .expect("unreachable");
                 }
             }
-            Wrap::Esm => {
+            WrapKind::Esm => {
                 // The wrapper only needs to be "async" if there is a transitive async
                 // dependency. For correctness, we must not use "async" if the module
                 // isn't async because then calling "require()" on that module would
                 // swallow any exceptions thrown during module initialization.
                 let is_async = flags.is_async_or_has_async_dependency;
 
-                struct ExportHoist<'bump> {
-                    decls: bumpalo::collections::Vec<'bump, G::Decl>,
-                    allocator: &'bump Bump,
+                struct ExportHoist {
+                    decls: Vec<G::Decl>,
+                    allocator: *const Bump,
                 }
 
-                impl<'bump> ExportHoist<'bump> {
-                    pub fn wrap_identifier(&mut self, loc: logger::Loc, ref_: Ref) -> Expr {
+                impl ExportHoist {
+                    fn wrap_identifier(&mut self, loc: logger::Loc, ref_: Ref) -> Expr {
+                        // SAFETY: `allocator` was set from a live &Bump that outlives this struct.
+                        let bump = unsafe { &*self.allocator };
                         self.decls.push(G::Decl {
                             binding: Binding::alloc(
-                                self.allocator,
-                                B::Identifier { ref_ },
+                                bump,
+                                B::Identifier { r#ref: ref_ },
                                 loc,
                             ),
                             value: None,
@@ -535,21 +587,29 @@ pub fn generate_code_for_file_in_chunk_js<'bump>(
 
                         Expr::init_identifier(ref_, loc)
                     }
+
+                    /// Trampoline matching `ToExprWrapper`'s erased fn-pointer signature.
+                    fn wrap_trampoline(ctx: *mut core::ffi::c_void, loc: logger::Loc, ref_: Ref) -> Expr {
+                        // SAFETY: `ctx` is `&mut ExportHoist` derived at the call site.
+                        let this = unsafe { &mut *(ctx as *mut ExportHoist) };
+                        this.wrap_identifier(loc, ref_)
+                    }
                 }
 
                 let mut hoist = ExportHoist {
-                    decls: bumpalo::collections::Vec::new_in(temp_allocator),
-                    allocator: temp_allocator,
+                    decls: Vec::new(),
+                    allocator: temp_allocator as *const Bump,
                 };
+                let hoist_wrapper = ToExprWrapper::new(temp_allocator, ExportHoist::wrap_trampoline);
 
-                let mut inner_stmts = stmts.all_stmts.as_mut_slice();
+                let mut inner_stmts: *mut [Stmt] = stmts.all_stmts.as_mut_slice() as *mut [Stmt];
 
                 // Hoist all top-level "var" and "function" declarations out of the closure
                 {
                     let mut end: usize = 0;
                     // PORT NOTE: reshaped for borrowck — iterate by index since we mutate
                     // `inner_stmts[end]` and call `stmts.append(...)` inside the loop.
-                    for i in 0..stmts.all_stmts.len() {
+                    'hoist: for i in 0..stmts.all_stmts.len() {
                         let stmt = stmts.all_stmts[i];
                         let transformed = match stmt.data {
                             StmtData::SLocal(local) => 'stmt: {
@@ -563,61 +623,72 @@ pub fn generate_code_for_file_in_chunk_js<'bump>(
 
                                 // Convert the declarations to assignments
                                 let mut value = Expr::EMPTY;
-                                for decl in local.decls.as_slice() {
+                                for decl in local.decls.slice() {
                                     if let Some(initializer) = decl.value {
                                         let can_be_moved = initializer.can_be_moved();
                                         if can_be_moved {
                                             // if the value can be moved, move the decl directly to preserve destructuring
                                             // ie `const { main } = class { static main() {} }` => `var {main} = class { static main() {} }`
-                                            hoist.decls.push(*decl);
+                                            hoist.decls.push(G::Decl {
+                                                binding: decl.binding,
+                                                value: decl.value,
+                                            });
                                         } else {
                                             // if the value cannot be moved, add every destructuring key separately
                                             // ie `var { append } = { append() {} }` => `var append; __esm(() => ({ append } = { append() {} }))`
-                                            let binding = decl.binding.to_expr(&mut hoist);
+                                            let binding = Binding::to_expr(
+                                                &decl.binding,
+                                                &mut hoist as *mut _ as *mut core::ffi::c_void,
+                                                hoist_wrapper,
+                                            );
                                             value = value.join_with_comma(
-                                                binding.assign(initializer),
-                                                temp_allocator,
+                                                Expr::assign(binding, initializer),
                                             );
                                         }
                                     } else {
-                                        let _ = decl.binding.to_expr(&mut hoist);
+                                        let _ = Binding::to_expr(
+                                            &decl.binding,
+                                            &mut hoist as *mut _ as *mut core::ffi::c_void,
+                                            hoist_wrapper,
+                                        );
                                     }
                                 }
 
                                 if value.is_empty() {
-                                    continue;
+                                    continue 'hoist;
                                 }
 
                                 break 'stmt Stmt::allocate_expr(temp_allocator, value);
                             }
                             StmtData::SFunction(_) => {
-                                stmts
-                                    .append(StmtListKind::OutsideWrapperPrefix, stmt)
-                                    .unwrap_or_oom();
-                                continue;
+                                bun_core::handle_oom(
+                                    stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt),
+                                );
+                                continue 'hoist;
                             }
-                            StmtData::SClass(class) => 'stmt: {
-                                // TODO(port): `class` must borrow the arena-allocated S.Class (Zig's
-                                // Stmt.Data.s_class is `*S.Class`), so `&mut class.class` below points
-                                // into arena memory — not a stack-local copy. Ensure this match arm
-                                // binds by reference (e.g. `StmtData::SClass(class /* &'bump mut S::Class */)`)
-                                // or the EClass payload will dangle once this arm exits.
+                            StmtData::SClass(mut class) => 'stmt: {
+                                // PORT NOTE: `class` is `StoreRef<S::Class>` — an arena-owned pointer.
+                                // `&mut class.class` (via DerefMut) yields a `&mut G::Class` into arena
+                                // memory, so wrapping it in a StoreRef for `EClass` is sound and matches
+                                // Zig's `&class.class`.
                                 if class.class.can_be_moved() {
-                                    stmts
-                                        .append(StmtListKind::OutsideWrapperPrefix, stmt)
-                                        .unwrap_or_oom();
-                                    continue;
+                                    bun_core::handle_oom(
+                                        stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt),
+                                    );
+                                    continue 'hoist;
                                 }
 
+                                let class_name_loc = class.class.class_name.unwrap().loc;
+                                let class_name_ref = class.class.class_name.unwrap().ref_.unwrap();
+                                let lhs = hoist.wrap_identifier(class_name_loc, class_name_ref);
+                                let class_ref: StoreRef<E::Class> =
+                                    StoreRef::from_bump(&mut class.class);
                                 break 'stmt Stmt::allocate_expr(
                                     temp_allocator,
                                     Expr::assign(
-                                        hoist.wrap_identifier(
-                                            class.class.class_name.unwrap().loc,
-                                            class.class.class_name.unwrap().ref_.unwrap(),
-                                        ),
+                                        lhs,
                                         Expr {
-                                            data: ExprData::EClass(&mut class.class),
+                                            data: ExprData::EClass(class_ref),
                                             loc: stmt.loc,
                                         },
                                     ),
@@ -626,19 +697,23 @@ pub fn generate_code_for_file_in_chunk_js<'bump>(
                             _ => stmt,
                         };
 
-                        inner_stmts[end] = transformed;
+                        // SAFETY: `inner_stmts` aliases `stmts.all_stmts.items` which is not
+                        // resized in this loop; `end <= i < len`.
+                        unsafe { (*inner_stmts)[end] = transformed };
                         end += 1;
                     }
-                    inner_stmts = &mut inner_stmts[..end];
+                    inner_stmts = core::ptr::addr_of_mut!(unsafe { &mut *inner_stmts }[..end]);
                 }
 
                 if !hoist.decls.is_empty() {
                     stmts
                         .append(
-                            StmtListKind::OutsideWrapperPrefix,
+                            StmtListWhich::OutsideWrapperPrefix,
                             Stmt::alloc(
                                 S::Local {
-                                    decls: G::DeclList::move_from_list(&mut hoist.decls),
+                                    decls: G::DeclList::move_from_list(core::mem::take(
+                                        &mut hoist.decls,
+                                    )),
                                     ..Default::default()
                                 },
                                 logger::Loc::EMPTY,
@@ -648,13 +723,15 @@ pub fn generate_code_for_file_in_chunk_js<'bump>(
                     hoist.decls.clear();
                 }
 
-                if !inner_stmts.is_empty() {
+                // SAFETY: `inner_stmts` is a sub-slice of `stmts.all_stmts.items` (still live).
+                let inner_len = unsafe { (*inner_stmts).len() };
+                if inner_len > 0 {
                     // See the comment in needsWrapperRef for why the symbol
                     // is sometimes not generated.
                     debug_assert!(!ast.wrapper_ref.is_empty()); // js_parser's needsWrapperRef thought wrapper was not needed
 
                     // "__esm(() => { ... })"
-                    let esm_args = temp_allocator.alloc_slice_copy(&[Expr::init(
+                    let esm_args = bun_core::handle_oom(BabyList::<Expr>::from_slice(&[Expr::init(
                         E::Arrow {
                             args: &[],
                             is_async,
@@ -665,39 +742,37 @@ pub fn generate_code_for_file_in_chunk_js<'bump>(
                             ..Default::default()
                         },
                         logger::Loc::EMPTY,
-                    )]);
+                    )]));
 
                     // "var init_foo = __esm(...);"
                     let value = Expr::init(
                         E::Call {
                             target: Expr::init_identifier(c.esm_runtime_ref, logger::Loc::EMPTY),
-                            args: BabyList::<Expr>::from_owned_slice(esm_args),
+                            args: esm_args,
                             ..Default::default()
                         },
                         logger::Loc::EMPTY,
                     );
 
-                    let decls = temp_allocator.alloc_slice_copy(&[G::Decl {
+                    let decls = bun_core::handle_oom(G::DeclList::from_slice(&[G::Decl {
                         binding: Binding::alloc(
                             temp_allocator,
-                            B::Identifier { ref_: ast.wrapper_ref },
+                            B::Identifier { r#ref: ast.wrapper_ref },
                             logger::Loc::EMPTY,
                         ),
                         value: Some(value),
-                    }]);
+                    }]));
 
-                    stmts
-                        .append(
-                            StmtListKind::OutsideWrapperPrefix,
-                            Stmt::alloc(
-                                S::Local {
-                                    decls: G::DeclList::from_owned_slice(decls),
-                                    ..Default::default()
-                                },
-                                logger::Loc::EMPTY,
-                            ),
-                        )
-                        .unwrap_or_oom();
+                    bun_core::handle_oom(stmts.append(
+                        StmtListWhich::OutsideWrapperPrefix,
+                        Stmt::alloc(
+                            S::Local {
+                                decls,
+                                ..Default::default()
+                            },
+                            logger::Loc::EMPTY,
+                        ),
+                    ));
                 } else {
                     // // If this fails, then there will be places we reference
                     // // `init_foo` without it actually existing.
@@ -730,43 +805,43 @@ pub fn generate_code_for_file_in_chunk_js<'bump>(
                             logger::Loc::EMPTY,
                         );
 
-                        stmts
-                            .append(
-                                StmtListKind::OutsideWrapperPrefix,
-                                Stmt::alloc(
-                                    S::Local {
-                                        decls: G::DeclList::from_slice(
-                                            temp_allocator,
-                                            &[G::Decl {
-                                                binding: Binding::alloc(
-                                                    temp_allocator,
-                                                    B::Identifier { ref_: ast.wrapper_ref },
-                                                    logger::Loc::EMPTY,
-                                                ),
-                                                value: Some(value),
-                                            }],
-                                        )
-                                        .unwrap_or_oom(),
-                                        ..Default::default()
-                                    },
-                                    logger::Loc::EMPTY,
-                                ),
-                            )
-                            .unwrap_or_oom();
+                        bun_core::handle_oom(stmts.append(
+                            StmtListWhich::OutsideWrapperPrefix,
+                            Stmt::alloc(
+                                S::Local {
+                                    decls: bun_core::handle_oom(G::DeclList::from_slice(&[
+                                        G::Decl {
+                                            binding: Binding::alloc(
+                                                temp_allocator,
+                                                B::Identifier { r#ref: ast.wrapper_ref },
+                                                logger::Loc::EMPTY,
+                                            ),
+                                            value: Some(value),
+                                        },
+                                    ])),
+                                    ..Default::default()
+                                },
+                                logger::Loc::EMPTY,
+                            ),
+                        ));
                     }
                 }
             }
             _ => {}
         }
 
-        out_stmts = stmts.outside_wrapper_prefix.as_mut_slice();
+        out_stmts = stmts.outside_wrapper_prefix.as_mut_slice() as *mut [Stmt];
     }
 
+    // SAFETY: `out_stmts` aliases either `stmts.all_stmts` or `stmts.outside_wrapper_prefix`,
+    // both of which remain live for the rest of this function.
+    let out_stmts: &mut [Stmt] = unsafe { &mut *out_stmts };
+
     if out_stmts.is_empty() {
-        return PrintResult::Result {
-            code: b"",
+        return PrintResult::Result(PrintResultSuccess {
+            code: Box::new([]),
             source_map: None,
-        };
+        });
     }
 
     // Collect top-level declarations from the converted statements.
@@ -774,8 +849,9 @@ pub fn generate_code_for_file_in_chunk_js<'bump>(
     // postProcessJSChunk, because convertStmtsForChunk transforms the AST
     // (e.g. export default expr → var, export stripping) and the converted
     // statements reflect what actually gets printed.
+    let mut r = r;
     if let Some(dc) = decl_collector {
-        dc.collect_from_stmts(out_stmts, r, c);
+        dc.collect_from_stmts(out_stmts, &mut r, c);
     }
 
     c.print_code_for_file_in_chunk_js(
@@ -789,16 +865,22 @@ pub fn generate_code_for_file_in_chunk_js<'bump>(
         to_common_js_ref,
         runtime_require_ref,
         part_range.source_index,
-        c.get_source(part_range.source_index.get()),
+        c.get_source(source_index),
     )
 }
 
-pub struct DeclCollector<'bump> {
-    pub decls: bumpalo::collections::Vec<'bump, CompileResult::DeclInfo>,
-    pub allocator: &'bump Bump,
+pub struct DeclCollector {
+    pub decls: Vec<DeclInfo>,
+    pub allocator: *const Bump,
 }
 
-impl<'bump> DeclCollector<'bump> {
+impl Default for DeclCollector {
+    fn default() -> Self {
+        Self { decls: Vec::new(), allocator: core::ptr::null() }
+    }
+}
+
+impl DeclCollector {
     /// Collect top-level declarations from **converted** statements (after
     /// `convertStmtsForChunk`). At that point, export statements have already
     /// been transformed:
@@ -812,32 +894,32 @@ impl<'bump> DeclCollector<'bump> {
     pub fn collect_from_stmts(
         &mut self,
         stmts: &[Stmt],
-        r: renamer::Renamer,
+        r: &mut renamer::Renamer<'_, '_>,
         c: &LinkerContext,
     ) {
         for stmt in stmts {
             match stmt.data {
                 StmtData::SLocal(s) => {
-                    let kind: CompileResult::DeclInfoKind = if s.kind == LocalKind::KVar {
-                        CompileResult::DeclInfoKind::Declared
+                    let kind: DeclInfoKind = if s.kind == LocalKind::KVar {
+                        DeclInfoKind::Declared
                     } else {
-                        CompileResult::DeclInfoKind::Lexical
+                        DeclInfoKind::Lexical
                     };
-                    for decl in s.decls.as_slice() {
+                    for decl in s.decls.slice() {
                         self.collect_from_binding(decl.binding, kind, r, c);
                     }
                 }
                 StmtData::SFunction(s) => {
                     if let Some(name_loc_ref) = s.func.name {
                         if let Some(name_ref) = name_loc_ref.ref_ {
-                            self.add_ref(name_ref, CompileResult::DeclInfoKind::Lexical, r, c);
+                            self.add_ref(name_ref, DeclInfoKind::Lexical, r, c);
                         }
                     }
                 }
                 StmtData::SClass(s) => {
                     if let Some(class_name) = s.class.class_name {
                         if let Some(name_ref) = class_name.ref_ {
-                            self.add_ref(name_ref, CompileResult::DeclInfoKind::Lexical, r, c);
+                            self.add_ref(name_ref, DeclInfoKind::Lexical, r, c);
                         }
                     }
                 }
@@ -849,33 +931,39 @@ impl<'bump> DeclCollector<'bump> {
     fn collect_from_binding(
         &mut self,
         binding: Binding,
-        kind: CompileResult::DeclInfoKind,
-        r: renamer::Renamer,
+        kind: DeclInfoKind,
+        r: &mut renamer::Renamer<'_, '_>,
         c: &LinkerContext,
     ) {
         match binding.data {
             BindingData::BIdentifier(b) => {
-                self.add_ref(b.ref_, kind, r, c);
+                // SAFETY: `b` is an arena-owned `*mut b::Identifier` valid for the AST lifetime.
+                let b = unsafe { &*b };
+                self.add_ref(b.r#ref, kind, r, c);
             }
             BindingData::BArray(b) => {
-                for item in b.items {
+                // SAFETY: arena-owned `*mut b::Array` valid for the AST lifetime.
+                let b = unsafe { &*b };
+                for item in unsafe { (*b.items).iter() } {
                     self.collect_from_binding(item.binding, kind, r, c);
                 }
             }
             BindingData::BObject(b) => {
-                for prop in b.properties {
+                // SAFETY: arena-owned `*mut b::Object` valid for the AST lifetime.
+                let b = unsafe { &*b };
+                for prop in unsafe { (*b.properties).iter() } {
                     self.collect_from_binding(prop.value, kind, r, c);
                 }
             }
-            BindingData::BMissing => {}
+            BindingData::BMissing(_) => {}
         }
     }
 
     fn add_ref(
         &mut self,
         ref_: Ref,
-        kind: CompileResult::DeclInfoKind,
-        r: renamer::Renamer,
+        kind: DeclInfoKind,
+        r: &mut renamer::Renamer<'_, '_>,
         c: &LinkerContext,
     ) {
         let followed = c.graph.symbols.follow(ref_);
@@ -883,16 +971,16 @@ impl<'bump> DeclCollector<'bump> {
         if name.is_empty() {
             return;
         }
-        // Zig: `catch return` — silently drop on alloc failure. With bumpalo Vec
-        // push is infallible (aborts on OOM), so there is nothing to catch.
-        self.decls.push(CompileResult::DeclInfo { name, kind });
+        // Zig: `catch return` — silently drop on alloc failure. With std Vec
+        // push aborts on OOM, so there is nothing to catch.
+        self.decls.push(DeclInfo {
+            name: name.to_vec().into_boxed_slice(),
+            kind,
+        });
     }
 }
 
-fn merge_adjacent_local_stmts<'bump>(
-    stmts: &mut bumpalo::collections::Vec<'bump, Stmt>,
-    allocator: &'bump Bump,
-) {
+fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _allocator: &Bump) {
     if stmts.is_empty() {
         return;
     }
@@ -906,40 +994,38 @@ fn merge_adjacent_local_stmts<'bump>(
         let stmt = stmts[i];
         // Try to merge with the previous variable statement
         if let StmtData::SLocal(after) = stmt.data {
-            if let StmtData::SLocal(before) = stmts[end - 1].data {
+            if let StmtData::SLocal(mut before) = stmts[end - 1].data {
                 // It must be the same kind of variable statement (i.e. let/var/const)
-                if before.can_merge_with(after) {
+                if before.can_merge_with(&after) {
                     if did_merge_with_previous_local {
                         // Avoid O(n^2) behavior for repeated variable declarations
                         // Appending to this decls list is safe because did_merge_with_previous_local is true
                         before
                             .decls
-                            .append_slice(allocator, after.decls.as_slice())
+                            .append_slice(after.decls.slice())
                             .expect("unreachable");
                     } else {
                         // Append the declarations to the previous variable statement
                         did_merge_with_previous_local = true;
 
                         let mut clone = BabyList::<G::Decl>::init_capacity(
-                            allocator,
                             (before.decls.len + after.decls.len) as usize,
                         )
                         .expect("unreachable");
                         // PERF(port): was appendSliceAssumeCapacity
-                        clone.append_slice_assume_capacity(before.decls.as_slice());
-                        clone.append_slice_assume_capacity(after.decls.as_slice());
+                        clone.append_slice_assume_capacity(before.decls.slice());
+                        clone.append_slice_assume_capacity(after.decls.slice());
                         // we must clone instead of overwrite in-place incase the same S.Local is used across threads
                         // https://github.com/oven-sh/bun/issues/2942
                         let prev_loc = stmts[end - 1].loc;
                         stmts[end - 1] = Stmt::allocate(
-                            allocator,
+                            _allocator,
                             S::Local {
                                 decls: clone,
                                 is_export: before.is_export,
                                 was_commonjs_export: before.was_commonjs_export,
                                 was_ts_import_equals: before.was_ts_import_equals,
                                 kind: before.kind,
-                                ..Default::default()
                             },
                             prev_loc,
                         );
@@ -956,21 +1042,18 @@ fn merge_adjacent_local_stmts<'bump>(
     stmts.truncate(end);
 }
 
-// TODO(port): these type aliases reference enums/variants from sibling modules whose
-// exact Rust paths are decided in Phase B. They exist so the match arms above read
-// the same as the Zig.
-use bun_bundler::linker_context::StmtListKind;
-use bun_bundler::options::OutputFormat;
+// Type aliases / re-imports for readability of match arms (mirrors Zig naming).
 use bun_js_parser::ast::stmt::Data as StmtData;
 use bun_js_parser::ast::expr::Data as ExprData;
 use bun_js_parser::ast::binding::Data as BindingData;
-use bun_js_parser::ast::s::LocalKind;
-use bun_bundler::JSMeta::Wrap;
+use bun_js_parser::ast::LocalKind;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/bundler/linker_context/generateCodeForFileInChunkJS.zig (802 lines)
 //   confidence: medium
-//   todos:      5
-//   notes:      AST-crate arena threading assumed; MultiArrayList column accessors + Stmt/Expr/Binding Data enum paths are placeholders; ESM hoist loop reshaped for borrowck (overlapping &mut on stmts.all_stmts vs stmts.append); ESM hoist .s_class arm must bind arena pointer by-ref so EClass(&mut class.class) doesn't dangle.
+//   notes:      AST-crate arena threading erased to raw pointers / 'static; SoA column
+//               accessors assumed codegen'd (items_*); ESM hoist loop reshaped for borrowck
+//               via raw-pointer aliasing of stmts.all_stmts; ExportHoist routed through
+//               ToExprWrapper trampoline (Zig used anytype duck-typing).
 // ──────────────────────────────────────────────────────────────────────────

@@ -1599,17 +1599,20 @@ impl<'a> BundleV2<'a> {
 
     #[cold]
     fn initialize_client_transpiler(&mut self) -> Result<&mut Transpiler<'a>, Error> {
-        let alloc = self.allocator();
-
-        let this_transpiler = &mut *self.transpiler;
-        // TODO(port): allocator.create(Transpiler) — using arena alloc here; lifetime is 'a
-        let client_transpiler: &'a mut Transpiler = alloc.alloc(this_transpiler.clone());
-        client_transpiler.options = this_transpiler.options.clone();
+        // PORT NOTE: `Transpiler<'a>` is not `Clone` (owns resolver/log) and the
+        // arena's lifetime can't be threaded as `'a` here without restructuring
+        // `BundleV2`. Allocate via Box::leak (lifetime tied to `graph.heap` in
+        // practice; freed in `deinit_without_freeing_arena`). The body mirrors
+        // bundle_v2.zig:310-360.
+        let this_transpiler: *mut Transpiler<'a> = &mut *self.transpiler;
+        // SAFETY: `this_transpiler` is live for `'a`; we read fields by value.
+        let this_transpiler = unsafe { &mut *this_transpiler };
+        let client_transpiler: &'a mut Transpiler<'a> =
+            Box::leak(Box::new(Transpiler::shallow_clone_for_client(this_transpiler)));
 
         client_transpiler.options.target = Target::Browser;
-        client_transpiler.options.main_fields = options::Target::DEFAULT_MAIN_FIELDS.get(Target::Browser);
+        client_transpiler.options.main_fields = Target::Browser.default_main_fields();
         client_transpiler.options.conditions = options::ESMConditions::init(
-            alloc,
             Target::Browser.default_conditions(),
             false,
             &[],
@@ -1617,27 +1620,20 @@ impl<'a> BundleV2<'a> {
 
         // We need to make sure it has [hash] in the names so we don't get conflicts.
         if this_transpiler.options.compile {
-            client_transpiler.options.asset_naming = options::PathTemplate::ASSET.data;
-            client_transpiler.options.chunk_naming = options::PathTemplate::CHUNK.data;
-            client_transpiler.options.entry_naming = b"./[name]-[hash].[ext]";
+            client_transpiler.options.asset_naming = options::PathTemplate::ASSET.data.to_vec().into_boxed_slice();
+            client_transpiler.options.chunk_naming = options::PathTemplate::CHUNK.data.to_vec().into_boxed_slice();
+            client_transpiler.options.entry_naming = b"./[name]-[hash].[ext]".to_vec().into_boxed_slice();
 
             // Use "/" so that asset URLs in HTML are absolute (e.g. "/chunk-abc.js"
             // instead of "./chunk-abc.js"). Relative paths break when the HTML is
             // served from a nested route like "/foo/".
-            client_transpiler.options.public_path = b"/";
+            client_transpiler.options.public_path = b"/".to_vec().into_boxed_slice();
         }
 
         client_transpiler.set_log(this_transpiler.log);
-        client_transpiler.set_allocator(alloc);
-        client_transpiler.linker.resolver = &mut client_transpiler.resolver;
-        client_transpiler.macro_context = js_ast::Macro::MacroContext::init(client_transpiler);
-        client_transpiler.resolver.caches = crate::cache::Set::init(alloc);
-
         client_transpiler.configure_defines()?;
-        client_transpiler.resolver.opts = client_transpiler.options.clone();
-        client_transpiler.resolver.env_loader = client_transpiler.env;
-        // TODO(port): storing arena-allocated &mut into self.client_transpiler — lifetime is tied to graph.heap
-        self.client_transpiler = Some(client_transpiler);
+        // TODO(port): resolver.opts/env_loader/caches assignment — lifetime threading.
+        self.client_transpiler = Some(NonNull::from(&mut *client_transpiler));
         Ok(client_transpiler)
     }
 
@@ -1647,13 +1643,14 @@ impl<'a> BundleV2<'a> {
     /// Note that .log, .allocator, and other things are shared
     /// between the three transpiler configurations
     #[inline]
-    pub fn transpiler_for_target(&mut self, target: options::Target) -> &mut Transpiler {
+    pub fn transpiler_for_target(&mut self, target: options::Target) -> &mut Transpiler<'a> {
         if !self.transpiler.options.server_components && self.linker.dev_server.is_none() {
             if target == Target::Browser && self.transpiler.options.target.is_server_side() {
-                if let Some(ct) = self.client_transpiler.as_deref_mut() {
-                    return ct;
+                if let Some(mut ct) = self.client_transpiler {
+                    // SAFETY: client_transpiler lives for 'a (set in init/initialize).
+                    return unsafe { ct.as_mut() };
                 }
-                return self.initialize_client_transpiler().unwrap_or_else(|e| {
+                return self.initialize_client_transpiler().unwrap_or_else(|e: Error| {
                     panic!("Failed to initialize client transpiler: {}", e.name());
                 });
             }
@@ -1661,8 +1658,9 @@ impl<'a> BundleV2<'a> {
         }
 
         match target {
-            Target::Browser => self.client_transpiler.as_deref_mut().unwrap(),
-            Target::BakeServerComponentsSsr => self.ssr_transpiler,
+            // SAFETY: ptrs live for 'a (set in init).
+            Target::Browser => unsafe { self.client_transpiler.unwrap().as_mut() },
+            Target::BakeServerComponentsSsr => unsafe { &mut *self.ssr_transpiler },
             _ => self.transpiler,
         }
     }
@@ -2421,21 +2419,24 @@ impl<'a> BundleV2<'a> {
 
         this.linker.dev_server = this.dev_server;
 
-        let pool = this.allocator().alloc(ThreadPool::default()); // TODO(port): allocator.create
+        // TODO(port): allocator.create — Box-allocate the ThreadPool until the
+        // arena gains a `create<T>()` helper.
+        let pool = Box::leak(Box::new(ThreadPool::default()));
         if cli_watch_flag {
-            Watcher::enable_hot_module_reloading(&mut *this, None);
+            // CYCLEBREAK GENUINE: hot_reloader is T6; runtime registers a
+            // watcher hook and writes `bun_watcher` directly.
         }
         // errdefer pool.destroy();
         // TODO(port): errdefer this.graph.heap.deinit() — Drop handles arena teardown
 
         *pool = ThreadPool::init(&mut *this, thread_pool)?;
-        this.graph.pool = pool;
+        this.graph.pool = NonNull::from(pool);
         pool.start();
         Ok(this)
     }
 
     pub fn allocator(&self) -> &bun_alloc::Arena {
-        self.graph.heap.allocator()
+        &self.graph.heap
     }
 
     pub fn increment_scan_counter(&mut self) {

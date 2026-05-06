@@ -1377,6 +1377,29 @@ impl RunCommand {
         todo!("blocked_on: RunCommand::configure_path_for_run_with_package_json_dir (phase_a_draft)")
     }
 
+    /// Port of `runBinary` (run_command.zig). Spawns `executable` with the
+    /// passthrough argv + env, then `Global::exit`s with the child's status —
+    /// hence the `Infallible` Ok arm (this only returns on spawn-setup error).
+    ///
+    /// On Windows this first probes for a sibling `.bunx` shim and direct-
+    /// launches it via `BunXFastPath` to skip the wrapper exe.
+    ///
+    /// Real body lives in `phase_a_draft::RunCommand::run_binary` (depends on
+    /// `crate::api::bun_process::sync` spawn surface + `BunXFastPath`, both
+    /// still draft-gated).
+    #[allow(unused_variables)]
+    pub fn run_binary(
+        ctx: &Command::Context,
+        executable: &[u8],
+        executable_z: &ZStr,
+        cwd: &[u8],
+        env: &mut DotEnv::Loader,
+        passthrough: &[&[u8]],
+        original_script_for_bun_run: Option<&[u8]>,
+    ) -> Result<::core::convert::Infallible, bun_core::Error> {
+        todo!("blocked_on: RunCommand::run_binary (phase_a_draft)")
+    }
+
     /// Dispatch `bun run <target>`: classify as file path vs. package.json
     /// script, then either boot the VM or spawn the script.
     ///

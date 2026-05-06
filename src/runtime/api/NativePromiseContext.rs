@@ -20,7 +20,7 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_jsc::{JSGlobalObject, JSValue, Task};
+use bun_jsc::{JSGlobalObject, JSValue, Task, Taskable, task_tag};
 use bun_jsc::virtual_machine::VirtualMachine;
 
 use crate::api::html_rewriter;

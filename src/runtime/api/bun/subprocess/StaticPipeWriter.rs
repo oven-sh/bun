@@ -104,7 +104,9 @@ impl<P: StaticPipeWriterProcess> bun_io::pipe_writer::PosixBufferedWriterParent
     }
     unsafe fn get_buffer<'a>(this: *mut Self) -> &'a [u8] {
         // SAFETY: see on_write. Shared-only borrow of `self.source`'s storage.
-        unsafe { (*this).get_buffer() }
+        // Deref the raw `*const [u8]` directly (rather than via `&self`) so the
+        // returned lifetime `'a` is unbound from `P`'s lifetime parameter.
+        unsafe { &*(*this).buffer }
     }
     const HAS_ON_WRITABLE: bool = false;
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
@@ -148,7 +150,8 @@ impl<P: StaticPipeWriterProcess> bun_io::pipe_writer::WindowsBufferedWriterParen
     }
     unsafe fn get_buffer<'a>(this: *mut Self) -> &'a [u8] {
         // SAFETY: see on_write. Shared-only borrow of `self.source`'s storage.
-        unsafe { (*this).get_buffer() }
+        // Deref the raw `*const [u8]` directly so `'a` is unbound from `P`.
+        unsafe { &*(*this).buffer }
     }
     const HAS_ON_WRITABLE: bool = false;
 }

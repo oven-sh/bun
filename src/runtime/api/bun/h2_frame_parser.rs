@@ -5573,7 +5573,8 @@ impl H2FrameParser {
         bun_output::scoped_log!(H2FrameParser, "deinit");
 
         self.detach();
-        self.strong_this.deinit();
+        // PORT NOTE: JsRef::deinit() dropped — overwrite with empty(); Drop releases the Strong slot.
+        self.strong_this = JsRef::empty();
         for (_, item) in self.streams.iter() {
             let stream = *item;
             // SAFETY: stream is *mut Stream from self.streams; this is final teardown, freed exactly once via Box::from_raw
@@ -5600,7 +5601,8 @@ impl H2FrameParser {
         bun_output::scoped_log!(H2FrameParser, "finalize");
         // SAFETY: called by JSC finalizer on mutator thread
         unsafe {
-            (*this).strong_this.deinit();
+            // PORT NOTE: JsRef::deinit() dropped — overwrite with empty(); Drop releases the Strong slot.
+            (*this).strong_this = JsRef::empty();
             (*this).deref();
         }
     }

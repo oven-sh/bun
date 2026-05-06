@@ -51,6 +51,68 @@ pub struct ResolveMessage {
     pub logged: bool,
 }
 
+// `jsc.Codegen.JS{Build,Resolve}Message` — hand-expansion of what the
+// `#[bun_jsc::JsClass]` derive would emit. Symbol names match
+// generate-classes.ts (`${typeName}__fromJS` / `__fromJSDirect` /
+// `__create` / `__getConstructor`). Kept local (rather than re-exported from
+// `bun_jsc`) to avoid the bun_jsc → bun_runtime → bun_jsc dep cycle noted
+// above; the C++ side links by symbol name regardless of which crate declares
+// the extern.
+macro_rules! impl_js_class_codegen {
+    ($ty:ident) => {
+        const _: () = {
+            use bun_jsc::{JSGlobalObject, JSValue};
+            #[cfg(all(windows, target_arch = "x86_64"))]
+            unsafe extern "sysv64" {
+                #[link_name = concat!(stringify!($ty), "__fromJS")]
+                fn __from_js(value: JSValue) -> *mut $ty;
+                #[link_name = concat!(stringify!($ty), "__fromJSDirect")]
+                fn __from_js_direct(value: JSValue) -> *mut $ty;
+                #[link_name = concat!(stringify!($ty), "__create")]
+                fn __create(global: *mut JSGlobalObject, ptr: *mut $ty) -> JSValue;
+                #[link_name = concat!(stringify!($ty), "__getConstructor")]
+                fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
+            }
+            #[cfg(not(all(windows, target_arch = "x86_64")))]
+            unsafe extern "C" {
+                #[link_name = concat!(stringify!($ty), "__fromJS")]
+                fn __from_js(value: JSValue) -> *mut $ty;
+                #[link_name = concat!(stringify!($ty), "__fromJSDirect")]
+                fn __from_js_direct(value: JSValue) -> *mut $ty;
+                #[link_name = concat!(stringify!($ty), "__create")]
+                fn __create(global: *mut JSGlobalObject, ptr: *mut $ty) -> JSValue;
+                #[link_name = concat!(stringify!($ty), "__getConstructor")]
+                fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
+            }
+
+            impl bun_jsc::JsClass for $ty {
+                fn from_js(value: JSValue) -> Option<*mut Self> {
+                    // SAFETY: pure FFI downcast; returns null on type mismatch.
+                    let p = unsafe { __from_js(value) };
+                    if p.is_null() { None } else { Some(p) }
+                }
+                fn from_js_direct(value: JSValue) -> Option<*mut Self> {
+                    // SAFETY: exact-structure FFI downcast; null on miss.
+                    let p = unsafe { __from_js_direct(value) };
+                    if p.is_null() { None } else { Some(p) }
+                }
+                fn to_js(self, global: &JSGlobalObject) -> JSValue {
+                    let ptr = Box::into_raw(Box::new(self));
+                    // SAFETY: `global` is live; ownership of `ptr` transfers to the
+                    // C++ wrapper (freed via `${typeName}Class__finalize`).
+                    unsafe { __create(global.as_ptr(), ptr) }
+                }
+                fn get_constructor(global: &JSGlobalObject) -> JSValue {
+                    // SAFETY: `global` is live; codegen extern returns the cached ctor.
+                    unsafe { __get_constructor(global.as_ptr()) }
+                }
+            }
+        };
+    };
+}
+impl_js_class_codegen!(BuildMessage);
+impl_js_class_codegen!(ResolveMessage);
+
 // ─── compiling submodules (api/ dir) ─────────────────────────────────────────
 #[path = "api/cron_parser.rs"]
 pub mod cron_parser;

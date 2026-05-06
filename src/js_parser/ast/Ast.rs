@@ -176,15 +176,18 @@ impl Ast {
         }
     }
 
-    // Zig `initTest` borrowed `parts` and relied on explicit `deinit` never
-    // being called. In Rust `Ast` has implicit Drop, and release builds lack
-    // the `Origin::Borrowed` debug guard — unwrapping `ManuallyDrop` here
-    // would free the caller's slice. Gate until test callers are surveyed and
-    // can switch to owned input (see Symbol::init_with_one_list, same issue).
-    
+    // Zig `initTest` borrowed `parts` via `Part.List.fromBorrowedSliceDangerous`
+    // and relied on explicit `deinit` never being called. `BabyList::drop` now
+    // unconditionally guards on `Origin::Borrowed` (not debug-only), so unwrapping
+    // the `ManuallyDrop` is safe — the caller's slice is never freed by `Ast`'s Drop.
     pub fn init_test(parts: &[Part]) -> Ast {
         Ast {
-            parts: PartList::from_owned_slice(parts.into_boxed_slice()),
+            // SAFETY: test-only helper; the borrowed list is tagged
+            // `Origin::Borrowed`, so `BabyList::drop` skips the free, and no
+            // grow/free path is reached on `Ast.parts` before the borrow ends.
+            parts: std::mem::ManuallyDrop::into_inner(unsafe {
+                PartList::from_borrowed_slice_dangerous(parts)
+            }),
             runtime_imports: Default::default(),
             ..Default::default()
         }

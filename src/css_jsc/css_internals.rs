@@ -110,7 +110,7 @@ pub fn testing_impl(
 
     let mut browsers: Option<Browsers> = None;
     let parser_options = {
-        let mut opts = ParserOptions::default(&arena, &mut log);
+        let mut opts = ParserOptions::default(Some(&mut log));
         // if (test_kind == .prefix) break :parser_options opts;
 
         match test_category {

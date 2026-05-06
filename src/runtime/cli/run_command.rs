@@ -456,60 +456,149 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             return Ok(());
         }
 
-        let argv: [&[u8]; 3] = [
-            shell_bin.as_bytes(),
-            if cfg!(windows) { b"/c" } else { b"-c" },
-            &copy_script,
+        use crate::api::bun_process::{sync, Status as SpawnStatus};
+
+        let argv: Vec<Box<[u8]>> = vec![
+            shell_bin.as_bytes().to_vec().into_boxed_slice(),
+            if cfg!(windows) { b"/c".as_slice() } else { b"-c".as_slice() }
+                .to_vec()
+                .into_boxed_slice(),
+            copy_script.clone().into_boxed_slice(),
         ];
 
-        // TODO(b2-blocked): full `bun.spawnSync` (`SpawnSyncOptions { argv0,
-        // envp, cwd, stdio, ipc, windows.loop }` + `SpawnStatus::{Exited,
-        // Signaled, Err}`) — bun_core only exposes `spawn_sync_inherit` and a
-        // flat `SpawnStatus { code }` so far. Preserved verbatim in
-        // `phase_a_draft::run_package_script_foreground`.
-        
-        {
-            let ipc_fd: Option<bun_sys::Fd> = if !cfg!(windows) {
-                bun_core::env_var::NODE_CHANNEL_FD.get().and_then(|s| {
-                    ::core::str::from_utf8(s).ok()?.parse::<u32>().ok().and_then(|fd| {
-                        i32::try_from(fd).ok().map(bun_sys::Fd::from_native)
-                    })
+        let ipc_fd: Option<bun_sys::Fd> = if !cfg!(windows) {
+            bun_core::env_var::NODE_CHANNEL_FD.get().and_then(|s| {
+                ::core::str::from_utf8(s).ok()?.parse::<u32>().ok().and_then(|fd| {
+                    i32::try_from(fd).ok().map(bun_sys::Fd::from_native)
                 })
-            } else {
-                None // TODO: implement on Windows
-            };
+            })
+        } else {
+            None // TODO: implement on Windows
+        };
 
-            let spawn_result = match bun_core::spawn_sync(&bun_core::SpawnSyncOptions {
-                argv: &argv,
-                argv0: Some(shell_bin.as_ptr()),
-                envp: env.map.create_null_delimited_env_map()?,
-                cwd: Some(cwd),
-                stderr: bun_core::Stdio::Inherit,
-                stdout: bun_core::Stdio::Inherit,
-                stdin: bun_core::Stdio::Inherit,
-                ipc: ipc_fd,
+        // TODO: remember to free this when we add --filter or --concurrent
+        // in the meantime we don't need to free it.
+        let envp = env.map.create_null_delimited_env_map()?;
+
+        let spawn_result = match sync::spawn(&sync::Options {
+            argv,
+            argv0: Some(shell_bin.as_ptr() as *const ::core::ffi::c_char),
+            envp: Some(envp.as_ptr() as *const *const ::core::ffi::c_char),
+            cwd: cwd.to_vec().into_boxed_slice(),
+            stderr: sync::SyncStdio::Inherit,
+            stdout: sync::SyncStdio::Inherit,
+            stdin: sync::SyncStdio::Inherit,
+            ipc: ipc_fd,
+            #[cfg(windows)]
+            windows: crate::api::bun_process::WindowsOptions {
+                loop_: bun_jsc::EventLoopHandle::init(
+                    bun_event_loop::MiniEventLoop::init_global(
+                        Some(unsafe { &mut *(env as *mut _) }),
+                        None,
+                    ),
+                ),
                 ..Default::default()
-            }) {
-                Err(err) => {
-                    if !silent {
-                        pretty_errorln!(
-                            "<r><red>error<r>: Failed to run script <b>{}<r> due to error <b>{}<r>",
-                            bstr::BStr::new(name),
-                            bstr::BStr::new(err.name()),
-                        );
-                    }
-                    Output::flush();
-                    return Ok(());
+            },
+            ..Default::default()
+        }) {
+            Err(err) => {
+                if !silent {
+                    pretty_errorln!(
+                        "<r><red>error<r>: Failed to run script <b>{}<r> due to error <b>{}<r>",
+                        bstr::BStr::new(name),
+                        bstr::BStr::new(err.name()),
+                    );
                 }
-                Ok(r) => r,
-            };
-            // … exited / signaled / err handling — see phase_a_draft.
+                Output::flush();
+                return Ok(());
+            }
+            Ok(bun_sys::Result::Err(err)) => {
+                if !silent {
+                    pretty_errorln!(
+                        "<r><red>error<r>: Failed to run script <b>{}<r> due to error:\n{}",
+                        bstr::BStr::new(name),
+                        err,
+                    );
+                }
+                Output::flush();
+                return Ok(());
+            }
+            Ok(bun_sys::Result::Ok(result)) => result,
+        };
+
+        match spawn_result.status {
+            SpawnStatus::Exited(exit_code) => {
+                // Zig: `exit_code.signal.valid() && != .SIGINT` — `.signal` is a
+                // raw `u8` here; `signal_code()` range-checks 1..=31 (i.e. valid).
+                if let Some(sig) = spawn_result.status.signal_code() {
+                    if sig != bun_core::SignalCode::SIGINT && !silent {
+                        pretty_errorln!(
+                            "<r><red>error<r><d>:<r> script <b>\"{}\"<r> was terminated by signal {}<r>",
+                            bstr::BStr::new(name),
+                            bun_sys::SignalCode(sig as u8)
+                                .fmt(Output::enable_ansi_colors_stderr()),
+                        );
+                        Output::flush();
+
+                        if bun_core::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get() {
+                            bun_crash_handler::suppress_reporting();
+                        }
+
+                        Global::raise_ignoring_panic_handler(sig);
+                    }
+                }
+
+                if exit_code.code != 0 {
+                    if exit_code.code != 2 && !silent {
+                        pretty_errorln!(
+                            "<r><red>error<r><d>:<r> script <b>\"{}\"<r> exited with code {}<r>",
+                            bstr::BStr::new(name),
+                            exit_code.code,
+                        );
+                        Output::flush();
+                    }
+
+                    Global::exit(exit_code.code as u32);
+                }
+            }
+
+            SpawnStatus::Signaled(_) => {
+                if let Some(sig) = spawn_result.status.signal_code() {
+                    if sig != bun_core::SignalCode::SIGINT && !silent {
+                        pretty_errorln!(
+                            "<r><red>error<r><d>:<r> script <b>\"{}\"<r> was terminated by signal {}<r>",
+                            bstr::BStr::new(name),
+                            bun_sys::SignalCode(sig as u8)
+                                .fmt(Output::enable_ansi_colors_stderr()),
+                        );
+                        Output::flush();
+                    }
+
+                    if bun_core::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get() {
+                        bun_crash_handler::suppress_reporting();
+                    }
+
+                    Global::raise_ignoring_panic_handler(sig);
+                }
+            }
+
+            SpawnStatus::Err(ref err) => {
+                if !silent {
+                    pretty_errorln!(
+                        "<r><red>error<r>: Failed to run script <b>{}<r> due to error:\n{}",
+                        bstr::BStr::new(name),
+                        err,
+                    );
+                }
+
+                Output::flush();
+                return Ok(());
+            }
+
+            _ => {}
         }
-        let _ = argv;
-        todo!(
-            "RunCommand::run_package_script_foreground: system-shell spawn — \
-             bun_core::spawn_sync full options gated"
-        );
+
+        Ok(())
     }
 
     /// Port of `configureEnvForRun` (run_command.zig:772). Allocates a

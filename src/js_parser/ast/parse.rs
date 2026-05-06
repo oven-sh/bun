@@ -576,17 +576,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     },
                     ..Default::default()
                 };
-                // PORT NOTE: parse_arrow_body's active signature takes ExprNodeList;
-                // the [G::Arg] payload is reinterpreted by the callee until the
-                // round-D body lands (parseFn.rs).
-                let arg_list = unsafe {
-                    ExprNodeList::from_bump_slice(core::slice::from_raw_parts_mut(
-                        args.as_mut_ptr() as *mut Expr,
-                        0,
-                    ))
-                };
-                mem::forget(args);
-                let mut arrow = p.parse_arrow_body(arg_list, &mut arrow_data)?;
+                let args_slice: &'a mut [G::Arg] = args.into_bump_slice_mut();
+                let mut arrow = p.parse_arrow_body(args_slice, &mut arrow_data)?;
                 arrow.is_async = opts.is_async;
                 arrow.has_rest_arg = spread_range.len > 0;
                 p.pop_scope();

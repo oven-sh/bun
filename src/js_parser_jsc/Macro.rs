@@ -254,32 +254,52 @@ pub struct MacroResult {
 // Macro
 // ══════════════════════════════════════════════════════════════════════════
 
-pub struct Macro<'a> {
-    pub resolver: &'a mut Resolver,
-    pub vm: &'static VirtualMachine,
+// PORT NOTE: Zig stores `*Resolver` / `*VirtualMachine` and leaves them `undefined`
+// for the disabled sentinel (`Macro{ .resolver = undefined, .disabled = true }`).
+// Rust references cannot be uninitialised, so both are carried as `Option<..>`; they
+// are `Some` for every live macro and `None` only when `disabled == true`, which is
+// checked before any access (see `MacroContext::call`).
+pub struct Macro {
+    pub resolver: Option<NonNull<Resolver>>,
+    pub vm: Option<&'static VirtualMachine>,
 
     pub resolved: ResolveResult,
     pub disabled: bool,
 }
 
-impl<'a> Macro<'a> {
-    // TODO(port): see note in MacroContext::call — Zig uses an undefined-resolver sentinel.
+impl Macro {
+    /// Sentinel stored in the `MacroMap` when `Macro::init` fails, so subsequent
+    /// calls with the same hash short-circuit instead of retrying the load.
+    /// Mirrors Zig's `Macro{ .resolver = undefined, .disabled = true }`.
     fn disabled_sentinel() -> Self {
-        // Null `&mut Resolver` / `&'static VirtualMachine` are immediate UB in Rust regardless
-        // of whether they are dereferenced, so `core::mem::zeroed()` is not an option here.
-        todo!("port: disabled sentinel — restructure resolver/vm as Option<NonNull<_>> or enum {{ Disabled, Loaded(..) }}")
+        Macro {
+            resolver: None,
+            vm: None,
+            resolved: ResolveResult::default(),
+            disabled: true,
+        }
+    }
+
+    /// Unwrap the VM handle. Only valid when `!self.disabled` — `MacroContext::call`
+    /// returns early on `disabled` before any `vm()` access, mirroring Zig where the
+    /// raw pointer is left `undefined` and never dereferenced on that path.
+    #[inline]
+    pub fn vm(&self) -> &'static VirtualMachine {
+        debug_assert!(!self.disabled);
+        // SAFETY-adjacent: `Some` for every non-disabled Macro; see struct PORT NOTE.
+        self.vm.expect("Macro.vm accessed on disabled sentinel")
     }
 
     pub fn init(
         // allocator param deleted — always default_allocator
-        resolver: &'a mut Resolver,
+        resolver: &mut Resolver,
         input_specifier: &[u8],
         log: &mut Log,
         env: &mut DotEnvLoader,
         function_name: &[u8],
         specifier: &[u8],
         hash: i32,
-    ) -> Result<Macro<'a>, Error> {
+    ) -> Result<Macro, Error> {
         // TODO(b2-blocked): bun_jsc::VirtualMachine::VirtualMachine (init / jsc_vm / load_macro_entry_point byte-slice sig)
         // TODO(b2-blocked): bun_jsc::PromiseResult
         // TODO(b2-blocked): bun_resolver::Resolver (real `opts` field — currently opaque stub)

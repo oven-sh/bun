@@ -577,43 +577,43 @@ impl ServerWebSocket {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old(4);
-        if args.len() < 1 {
+        let args = callframe.arguments_old::<4>();
+        if args.len < 1 {
             bun_output::scoped_log!(WebSocketServer, "publish()");
-            return global_this.throw("publish requires at least 1 argument");
+            return Err(global_this.throw("publish requires at least 1 argument"));
         }
 
-        let Some(app) = self.handler.app else {
+        let Some(app) = self.handler().app else {
             bun_output::scoped_log!(WebSocketServer, "publish() closed");
-            return Ok(JSValue::js_number(0));
+            return Ok(JSValue::js_number(0.0));
         };
-        let flags = self.handler.flags;
-        let ssl = flags.ssl;
-        let publish_to_self = flags.publish_to_self;
+        let flags = self.handler().flags;
+        let ssl = flags.contains(HandlerFlags::SSL);
+        let publish_to_self = flags.contains(HandlerFlags::PUBLISH_TO_SELF);
 
-        let topic_value = args.ptr(0);
-        let message_value = args.ptr(1);
-        let compress_value = args.ptr(2);
+        let topic_value = args.ptr[0];
+        let message_value = args.ptr[1];
+        let compress_value = args.ptr[2];
 
         if topic_value.is_empty_or_undefined_or_null() || !topic_value.is_string() {
             bun_output::scoped_log!(WebSocketServer, "publish() topic invalid");
-            return global_this.throw("publish requires a topic string");
+            return Err(global_this.throw("publish requires a topic string"));
         }
 
         let topic_slice = topic_value.to_slice(global_this)?;
         if topic_slice.len() == 0 {
-            return global_this.throw("publish requires a non-empty topic");
+            return Err(global_this.throw("publish requires a non-empty topic"));
         }
 
         if !compress_value.is_boolean() && !compress_value.is_undefined() && !compress_value.is_empty()
         {
-            return global_this.throw("publish expects compress to be a boolean");
+            return Err(global_this.throw("publish expects compress to be a boolean"));
         }
 
-        let compress = args.len() > 1 && compress_value.to_boolean();
+        let compress = args.len > 1 && compress_value.to_boolean();
 
         if message_value.is_empty_or_undefined_or_null() {
-            return global_this.throw("publish requires a non-empty message");
+            return Err(global_this.throw("publish requires a non-empty message"));
         }
 
         if let Some(array_buffer) = message_value.as_array_buffer(global_this) {
@@ -637,9 +637,9 @@ impl ServerWebSocket {
                 // if 0, return 0
                 // else return number of bytes sent
                 if result {
-                    i32::try_from(buffer.len() as u32 & 0x7FFF_FFFF).unwrap()
+                    (buffer.len() as u32 & 0x7FFF_FFFF) as f64
                 } else {
-                    0i32
+                    0.0
                 },
             ));
         }
@@ -669,9 +669,9 @@ impl ServerWebSocket {
                 // if 0, return 0
                 // else return number of bytes sent
                 if result {
-                    i32::try_from(buffer.len() as u32 & 0x7FFF_FFFF).unwrap()
+                    (buffer.len() as u32 & 0x7FFF_FFFF) as f64
                 } else {
-                    0i32
+                    0.0
                 },
             );
             js_string.ensure_still_alive();
@@ -685,41 +685,41 @@ impl ServerWebSocket {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old(4);
+        let args = callframe.arguments_old::<4>();
 
-        if args.len() < 1 {
+        if args.len < 1 {
             bun_output::scoped_log!(WebSocketServer, "publish()");
-            return global_this.throw("publish requires at least 1 argument");
+            return Err(global_this.throw("publish requires at least 1 argument"));
         }
 
-        let Some(app) = self.handler.app else {
+        let Some(app) = self.handler().app else {
             bun_output::scoped_log!(WebSocketServer, "publish() closed");
-            return Ok(JSValue::js_number(0));
+            return Ok(JSValue::js_number(0.0));
         };
-        let flags = self.handler.flags;
-        let ssl = flags.ssl;
-        let publish_to_self = flags.publish_to_self;
+        let flags = self.handler().flags;
+        let ssl = flags.contains(HandlerFlags::SSL);
+        let publish_to_self = flags.contains(HandlerFlags::PUBLISH_TO_SELF);
 
-        let topic_value = args.ptr(0);
-        let message_value = args.ptr(1);
-        let compress_value = args.ptr(2);
+        let topic_value = args.ptr[0];
+        let message_value = args.ptr[1];
+        let compress_value = args.ptr[2];
 
         if topic_value.is_empty_or_undefined_or_null() || !topic_value.is_string() {
             bun_output::scoped_log!(WebSocketServer, "publish() topic invalid");
-            return global_this.throw("publishText requires a topic string");
+            return Err(global_this.throw("publishText requires a topic string"));
         }
 
         let topic_slice = topic_value.to_slice(global_this)?;
 
         if !compress_value.is_boolean() && !compress_value.is_undefined() && !compress_value.is_empty()
         {
-            return global_this.throw("publishText expects compress to be a boolean");
+            return Err(global_this.throw("publishText expects compress to be a boolean"));
         }
 
-        let compress = args.len() > 1 && compress_value.to_boolean();
+        let compress = args.len > 1 && compress_value.to_boolean();
 
         if message_value.is_empty_or_undefined_or_null() || !message_value.is_string() {
-            return global_this.throw("publishText requires a non-empty message");
+            return Err(global_this.throw("publishText requires a non-empty message"));
         }
 
         let js_string = message_value.to_js_string(global_this)?;
@@ -761,47 +761,47 @@ impl ServerWebSocket {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old(4);
+        let args = callframe.arguments_old::<4>();
 
-        if args.len() < 1 {
+        if args.len < 1 {
             bun_output::scoped_log!(WebSocketServer, "publishBinary()");
-            return global_this.throw("publishBinary requires at least 1 argument");
+            return Err(global_this.throw("publishBinary requires at least 1 argument"));
         }
 
-        let Some(app) = self.handler.app else {
+        let Some(app) = self.handler().app else {
             bun_output::scoped_log!(WebSocketServer, "publish() closed");
-            return Ok(JSValue::js_number(0));
+            return Ok(JSValue::js_number(0.0));
         };
-        let flags = self.handler.flags;
-        let ssl = flags.ssl;
-        let publish_to_self = flags.publish_to_self;
-        let topic_value = args.ptr(0);
-        let message_value = args.ptr(1);
-        let compress_value = args.ptr(2);
+        let flags = self.handler().flags;
+        let ssl = flags.contains(HandlerFlags::SSL);
+        let publish_to_self = flags.contains(HandlerFlags::PUBLISH_TO_SELF);
+        let topic_value = args.ptr[0];
+        let message_value = args.ptr[1];
+        let compress_value = args.ptr[2];
 
         if topic_value.is_empty_or_undefined_or_null() || !topic_value.is_string() {
             bun_output::scoped_log!(WebSocketServer, "publishBinary() topic invalid");
-            return global_this.throw("publishBinary requires a topic string");
+            return Err(global_this.throw("publishBinary requires a topic string"));
         }
 
         let topic_slice = topic_value.to_slice(global_this)?;
         if topic_slice.len() == 0 {
-            return global_this.throw("publishBinary requires a non-empty topic");
+            return Err(global_this.throw("publishBinary requires a non-empty topic"));
         }
 
         if !compress_value.is_boolean() && !compress_value.is_undefined() && !compress_value.is_empty()
         {
-            return global_this.throw("publishBinary expects compress to be a boolean");
+            return Err(global_this.throw("publishBinary expects compress to be a boolean"));
         }
 
-        let compress = args.len() > 1 && compress_value.to_boolean();
+        let compress = args.len > 1 && compress_value.to_boolean();
 
         if message_value.is_empty_or_undefined_or_null() {
-            return global_this.throw("publishBinary requires a non-empty message");
+            return Err(global_this.throw("publishBinary requires a non-empty message"));
         }
 
         let Some(array_buffer) = message_value.as_array_buffer(global_this) else {
-            return global_this.throw("publishBinary expects an ArrayBufferView");
+            return Err(global_this.throw("publishBinary expects an ArrayBufferView"));
         };
         let buffer = array_buffer.slice();
 
@@ -843,8 +843,8 @@ impl ServerWebSocket {
             return Ok(JSValue::js_number(0.0));
         };
         let flags = handler.flags;
-        let ssl = flags.ssl;
-        let publish_to_self = flags.publish_to_self;
+        let ssl = flags.contains(HandlerFlags::SSL);
+        let publish_to_self = flags.contains(HandlerFlags::PUBLISH_TO_SELF);
 
         let topic_slice = topic_str.to_slice(global_this);
         if topic_slice.slice().is_empty() {
@@ -896,8 +896,8 @@ impl ServerWebSocket {
             return Ok(JSValue::js_number(0.0));
         };
         let flags = handler.flags;
-        let ssl = flags.ssl;
-        let publish_to_self = flags.publish_to_self;
+        let ssl = flags.contains(HandlerFlags::SSL);
+        let publish_to_self = flags.contains(HandlerFlags::PUBLISH_TO_SELF);
 
         let topic_slice = topic_str.to_slice(global_this);
         if topic_slice.slice().is_empty() {

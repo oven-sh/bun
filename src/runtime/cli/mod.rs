@@ -833,17 +833,17 @@ pub mod command {
                 ctx.args.target = Some(bun_options_types::schema::api::Target::Bun);
 
                 if ctx.parallel || ctx.sequential {
-                    if let Err(err) = super::multi_run::run(ctx) {
-                        pretty_errorln!("<r><red>error<r>: {}", err.name());
-                        Global::exit(1);
-                    }
+                    // Result<Infallible, _>: if this returns at all, it's Err.
+                    let Err(err) = super::multi_run::run(ctx);
+                    pretty_errorln!("<r><red>error<r>: {}", err.name());
+                    Global::exit(1);
                 }
 
                 if !ctx.filters.is_empty() || ctx.workspaces {
-                    if let Err(err) = super::filter_run::run_scripts_with_filter(ctx) {
-                        pretty_errorln!("<r><red>error<r>: {}", err.name());
-                        Global::exit(1);
-                    }
+                    // Result<Infallible, _>: if this returns at all, it's Err.
+                    let Err(err) = super::filter_run::run_scripts_with_filter(ctx);
+                    pretty_errorln!("<r><red>error<r>: {}", err.name());
+                    Global::exit(1);
                 }
 
                 if tag == Tag::AutoCommand && !ctx.runtime_options.eval.script.is_empty() {

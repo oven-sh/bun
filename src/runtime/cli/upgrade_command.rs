@@ -29,7 +29,7 @@ use crate::cli::Command;
 // in `resolver/lib.rs`) does not yet expose `tmpdir()`; the full impl lives in
 // the un-exported `fs_full` module. Shim it locally — open
 // `RealFS::tmpdir_path()` as a `sys::Dir`, mirroring `RealFS::open_tmp_dir`.
-trait FileSystemTmpdirExt {
+pub trait FileSystemTmpdirExt {
     fn tmpdir(&mut self) -> Result<sys::Dir, bun_core::Error>;
 }
 impl FileSystemTmpdirExt for fs::FileSystem {

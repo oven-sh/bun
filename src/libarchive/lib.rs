@@ -120,20 +120,6 @@ pub mod lib {
         fn archive_entry_set_mtime(e: *mut Entry, secs: time_t, nsecs: c_long);
     }
 
-    // The real C symbol is `archive_write_open2`; we expose a Rust wrapper of
-    // the same name below, so the extern uses a `#[link_name]` alias.
-    #[link_name = "archive_write_open2"]
-    unsafe extern "C" {
-        fn archive_write_open2_raw(
-            a: *mut Archive,
-            client_data: *mut c_void,
-            open: Option<archive_open_callback>,
-            write: Option<archive_write_callback>,
-            close: Option<archive_close_callback>,
-            free: Option<archive_free_callback>,
-        ) -> c_int;
-    }
-
     /// `bun.sliceTo(ptr, 0)` — make a `&ZStr` from a possibly-null C string.
     /// SAFETY: `p` must be either null or point at a NUL-terminated buffer
     /// that outlives `'a` (libarchive owns these and keeps them alive for the

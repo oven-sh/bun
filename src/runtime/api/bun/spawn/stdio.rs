@@ -499,7 +499,7 @@ impl Stdio {
 
             if file_fd >= i32::MAX as _ {
                 use crate::test_runner::expect::JSValueTestExt as _;
-                let mut formatter = jsc::console_object::Formatter { global_this: global, ..Default::default() };
+                let mut formatter = jsc::console_object::Formatter::new(global);
                 // `defer formatter.deinit()` — handled by Drop.
                 return Err(global.throw_invalid_arguments(format_args!(
                     "file descriptor must be a valid integer, received: {}",

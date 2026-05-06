@@ -12,9 +12,9 @@ pub fn to_be_greater_than_or_equal(
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     // Zig: `defer this.postMatch(globalThis);` — side-effect on all exit paths.
-    let _post = scopeguard::guard((), |_| this.post_match(global));
-    // TODO(port): errdefer — scopeguard borrows `this`/`global`; Phase B may need to
-    // restructure if borrowck rejects the overlapping &mut on `this` below.
+    // PORT NOTE: reshaped for borrowck — wrap `this` in a scopeguard so `post_match` runs on
+    // every exit path while the body still has `&mut Expect` access via DerefMut.
+    let mut this = scopeguard::guard(this, |this| this.post_match(global));
 
     let this_value = frame.this();
     let arguments_ = frame.arguments_old::<1>(); let arguments: &[JSValue] = arguments_.slice();

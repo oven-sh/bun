@@ -1595,11 +1595,6 @@ impl PathLike {
     }
 }
 
-impl Clone for PathLike {
-    #[inline]
-    fn clone(&self) -> Self { self.dupe() }
-}
-
 impl PathOrFileDescriptor {
     #[inline]
     pub fn dupe(&self) -> Self {
@@ -1608,11 +1603,6 @@ impl PathOrFileDescriptor {
             Self::Path(p) => Self::Path(p.dupe()),
         }
     }
-}
-
-impl Clone for PathOrFileDescriptor {
-    #[inline]
-    fn clone(&self) -> Self { self.dupe() }
 }
 
 // Drop: unref()s the path string if it is a PathLike (via PathLike's Drop).

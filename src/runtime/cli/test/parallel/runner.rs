@@ -85,11 +85,6 @@ pub fn run_as_coordinator(
     if Output::enable_ansi_colors_stderr() {
         let _ = env.map.put(b"FORCE_COLOR", b"1");
     }
-    let _tmpdir_guard = scopeguard::guard((), |_| {
-        if let Some(d) = &worker_tmpdir {
-            let _ = Fd::cwd().delete_tree(d);
-        }
-    });
     if ctx.test_options.reporters.junit || coverage_opts.enabled {
         let pid: i64 = {
             #[cfg(windows)]

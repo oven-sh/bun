@@ -627,7 +627,10 @@ pub fn get_presign_url_from(this: &mut Blob, global: &JSGlobalObject, extra_opti
             // `credentials_with_options`, which lives for the duration of this call.
             content_disposition: credentials_with_options.content_disposition.map(|p| unsafe { &*p }),
             content_type: credentials_with_options.content_type.map(|p| unsafe { &*p }),
-            ..Default::default()
+            content_hash: None,
+            content_md5: None,
+            search_params: None,
+            content_encoding: None,
         },
         Some(bun_s3_signing::SignQueryOptions { expires }),
     ) {

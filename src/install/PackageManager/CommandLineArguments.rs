@@ -25,6 +25,17 @@ use std::sync::LazyLock;
 
 use super::package_manager_options as Options;
 
+/// `Output.pretty(text, .{})` — runtime `<tag>` → ANSI rewrite of a help-text
+/// literal then write to stdout. The Zig version did this at comptime; here the
+/// help strings are runtime `&str`s so we use the runtime expander.
+#[inline]
+fn pretty_help(text: &str) {
+    Output::pretty(format_args!(
+        "{}",
+        Output::pretty_fmt_rt(text, Output::enable_ansi_colors_stdout())
+    ));
+}
+
 type ParamType = clap::Param<clap::Help>;
 
 // PORT NOTE: Zig `++` does comptime array concatenation. Rust has no const slice
@@ -463,9 +474,9 @@ impl CommandLineArguments {
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/install<r>.
 ";
-                Output::pretty(intro_text);
+                pretty_help(intro_text);
                 clap::simple_help(&INSTALL_PARAMS);
-                Output::pretty(outro_text);
+                pretty_help(outro_text);
                 Output::flush();
             }
             Subcommand::Update => {
@@ -492,9 +503,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/install<r>.
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/update<r>.
 ";
-                Output::pretty(intro_text);
+                pretty_help(intro_text);
                 clap::simple_help(&UPDATE_PARAMS);
-                Output::pretty(outro_text);
+                pretty_help(outro_text);
                 Output::flush();
             }
             Subcommand::Patch => {
@@ -520,9 +531,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/update<r>.
 Full documentation is available at <magenta>https://bun.com/docs/install/patch<r>.
 ";
 
-                Output::pretty(intro_text);
+                pretty_help(intro_text);
                 clap::simple_help(&PATCH_PARAMS);
-                Output::pretty(outro_text);
+                pretty_help(outro_text);
                 Output::flush();
             }
             Subcommand::PatchCommit => {
@@ -543,9 +554,9 @@ Full documentation is available at <magenta>https://bun.com/docs/install/patch<r
 
 Full documentation is available at <magenta>https://bun.com/docs/install/patch<r>.
 "#;
-                Output::pretty(intro_text);
+                pretty_help(intro_text);
                 clap::simple_help(&PATCH_PARAMS);
-                Output::pretty(outro_text);
+                pretty_help(outro_text);
                 Output::flush();
             }
             Subcommand::Pm => {
@@ -574,9 +585,9 @@ Full documentation is available at <magenta>https://bun.com/docs/install/patch<r
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/add<r>.
 ";
-                Output::pretty(intro_text);
+                pretty_help(intro_text);
                 clap::simple_help(&ADD_PARAMS);
-                Output::pretty(outro_text);
+                pretty_help(outro_text);
                 Output::flush();
             }
             Subcommand::Remove => {
@@ -595,9 +606,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/add<r>.
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/remove<r>.
 ";
-                Output::pretty(intro_text);
+                pretty_help(intro_text);
                 clap::simple_help(&REMOVE_PARAMS);
-                Output::pretty(outro_text);
+                pretty_help(outro_text);
                 Output::flush();
             }
             Subcommand::Link => {
@@ -619,9 +630,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/remove<r>.
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/link<r>.
 ";
-                Output::pretty(intro_text);
+                pretty_help(intro_text);
                 clap::simple_help(&LINK_PARAMS);
-                Output::pretty(outro_text);
+                pretty_help(outro_text);
                 Output::flush();
             }
             Subcommand::Unlink => {
@@ -641,9 +652,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/link<r>.
 Full documentation is available at <magenta>https://bun.com/docs/cli/unlink<r>.
 ";
 
-                Output::pretty(intro_text);
+                pretty_help(intro_text);
                 clap::simple_help(&UNLINK_PARAMS);
-                Output::pretty(outro_text);
+                pretty_help(outro_text);
                 Output::flush();
             }
             Subcommand::Outdated => {
@@ -673,9 +684,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/unlink<r>.
 Full documentation is available at <magenta>https://bun.com/docs/cli/outdated<r>.
 "#;
 
-                Output::pretty(intro_text);
+                pretty_help(intro_text);
                 clap::simple_help(&OUTDATED_PARAMS);
-                Output::pretty(outro_text);
+                pretty_help(outro_text);
                 Output::flush();
             }
             Subcommand::Pack => {
@@ -694,9 +705,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/outdated<r>
 Full documentation is available at <magenta>https://bun.com/docs/cli/pm#pack<r>.
 ";
 
-                Output::pretty(intro_text);
+                pretty_help(intro_text);
                 clap::simple_help(&PACK_PARAMS);
-                Output::pretty(outro_text);
+                pretty_help(outro_text);
                 Output::flush();
             }
             Subcommand::Publish => {
@@ -725,9 +736,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#pack<r>.
 Full documentation is available at <magenta>https://bun.com/docs/cli/publish<r>.
 ";
 
-                Output::pretty(intro_text);
+                pretty_help(intro_text);
                 clap::simple_help(&PUBLISH_PARAMS);
-                Output::pretty(outro_text);
+                pretty_help(outro_text);
                 Output::flush();
             }
             Subcommand::Audit => {
@@ -750,9 +761,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/publish<r>.
 Full documentation is available at <magenta>https://bun.com/docs/install/audit<r>.
 ";
 
-                Output::pretty(intro_text);
+                pretty_help(intro_text);
                 clap::simple_help(AUDIT_PARAMS);
-                Output::pretty(outro_text);
+                pretty_help(outro_text);
                 Output::flush();
             }
             Subcommand::Info => {
@@ -778,9 +789,9 @@ Full documentation is available at <magenta>https://bun.com/docs/install/audit<r
 Full documentation is available at <magenta>https://bun.com/docs/cli/info<r>.
 ";
 
-                Output::pretty(intro_text);
+                pretty_help(intro_text);
                 clap::simple_help(&INFO_PARAMS);
-                Output::pretty(outro_text);
+                pretty_help(outro_text);
                 Output::flush();
             }
             Subcommand::Why => {
@@ -801,9 +812,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/info<r>.
 Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>.
 "#;
 
-                Output::pretty(intro_text);
+                pretty_help(intro_text);
                 clap::simple_help(&WHY_PARAMS);
-                Output::pretty(outro_text);
+                pretty_help(outro_text);
                 Output::flush();
             }
             Subcommand::Scan => {
@@ -826,9 +837,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>.
 Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
 ";
 
-                Output::pretty(intro_text);
+                pretty_help(intro_text);
                 clap::simple_help(&PM_PARAMS);
-                Output::pretty(outro_text);
+                pretty_help(outro_text);
                 Output::flush();
             }
         }
@@ -865,6 +876,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
 
         let args = match clap::parse::<clap::Help>(params, clap::ParseOptions {
             diagnostic: Some(&mut diag),
+            stop_after_positional_at: 0,
         }) {
             Ok(a) => a,
             Err(err) => {
@@ -874,92 +886,92 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
             }
         };
 
-        if args.flag("--help") {
+        if args.flag(b"--help") {
             Self::print_help(SUBCOMMAND);
             Global::exit(0);
         }
 
         let mut cli = CommandLineArguments::default();
         cli.positionals = args.positionals();
-        cli.yarn = args.flag("--yarn");
-        cli.production = args.flag("--production") || args.flag("--prod");
-        cli.frozen_lockfile = args.flag("--frozen-lockfile")
+        cli.yarn = args.flag(b"--yarn");
+        cli.production = args.flag(b"--production") || args.flag(b"--prod");
+        cli.frozen_lockfile = args.flag(b"--frozen-lockfile")
             || (!cli.positionals.is_empty() && cli.positionals[0] == b"ci");
-        cli.no_progress = args.flag("--no-progress");
-        cli.dry_run = args.flag("--dry-run");
-        cli.global = args.flag("--global");
-        cli.force = args.flag("--force");
-        cli.no_verify = args.flag("--no-verify");
-        cli.no_cache = args.flag("--no-cache");
-        cli.silent = args.flag("--silent");
-        cli.quiet = args.flag("--quiet");
-        cli.verbose = args.flag("--verbose") || Output::is_verbose();
-        cli.ignore_scripts = args.flag("--ignore-scripts");
-        cli.trusted = args.flag("--trust");
-        cli.no_summary = args.flag("--no-summary");
-        cli.ca = args.options("--ca");
-        cli.lockfile_only = args.flag("--lockfile-only");
+        cli.no_progress = args.flag(b"--no-progress");
+        cli.dry_run = args.flag(b"--dry-run");
+        cli.global = args.flag(b"--global");
+        cli.force = args.flag(b"--force");
+        cli.no_verify = args.flag(b"--no-verify");
+        cli.no_cache = args.flag(b"--no-cache");
+        cli.silent = args.flag(b"--silent");
+        cli.quiet = args.flag(b"--quiet");
+        cli.verbose = args.flag(b"--verbose") || Output::is_verbose();
+        cli.ignore_scripts = args.flag(b"--ignore-scripts");
+        cli.trusted = args.flag(b"--trust");
+        cli.no_summary = args.flag(b"--no-summary");
+        cli.ca = args.options(b"--ca");
+        cli.lockfile_only = args.flag(b"--lockfile-only");
 
-        if let Some(linker) = args.option("--linker") {
+        if let Some(linker) = args.option(b"--linker") {
             cli.node_linker = Some(match Options::NodeLinker::from_str(linker) {
                 Some(l) => l,
                 None => {
-                    Output::err_generic("Expected --linker to be one of 'isolated' or 'hoisted'");
+                    Output::err_generic("Expected --linker to be one of 'isolated' or 'hoisted'", ());
                     Global::exit(1);
                 }
             });
         }
 
-        if let Some(cache_dir) = args.option("--cache-dir") {
+        if let Some(cache_dir) = args.option(b"--cache-dir") {
             cli.cache_dir = Some(cache_dir);
         }
 
-        if let Some(ca_file_name) = args.option("--cafile") {
+        if let Some(ca_file_name) = args.option(b"--cafile") {
             cli.ca_file_name = ca_file_name;
         }
 
-        if let Some(network_concurrency) = args.option("--network-concurrency") {
+        if let Some(network_concurrency) = args.option(b"--network-concurrency") {
             // TODO(port): parse u16 from &[u8] — bun_str helper or core::str::from_utf8 + parse
             cli.network_concurrency = Some(match strings::parse_int::<u16>(network_concurrency, 10) {
                 Ok(n) => n,
                 Err(_) => {
-                    Output::err_generic(format_args!(
+                    Output::err_generic(
                         "Expected --network-concurrency to be a number between 0 and 65535: {}",
-                        bstr::BStr::new(network_concurrency)
-                    ));
+                        (bstr::BStr::new(network_concurrency),),
+                    );
                     Global::crash();
                 }
             });
         }
 
-        if args.flag("--save-text-lockfile") {
+        if args.flag(b"--save-text-lockfile") {
             cli.save_text_lockfile = Some(true);
         }
 
-        if let Some(min_age_secs) = args.option("--minimum-release-age") {
+        if let Some(min_age_secs) = args.option(b"--minimum-release-age") {
             // TODO(port): parse f64 from &[u8]
             let secs: f64 = match bun_str::parse_double(min_age_secs) {
                 Ok(s) => s,
                 Err(_) => {
-                    Output::err_generic(format_args!(
+                    Output::err_generic(
                         "Expected --minimum-release-age to be a positive number: {}",
-                        bstr::BStr::new(min_age_secs)
-                    ));
+                        (bstr::BStr::new(min_age_secs),),
+                    );
                     Global::crash();
                 }
             };
             if secs < 0.0 {
-                Output::err_generic(format_args!(
+                Output::err_generic(
                     "Expected --minimum-release-age to be a positive number: {}",
-                    bstr::BStr::new(min_age_secs)
-                ));
+                    (bstr::BStr::new(min_age_secs),),
+                );
                 Global::crash();
             }
             const MS_PER_S: f64 = 1000.0;
             cli.minimum_release_age_ms = Some(secs * MS_PER_S);
         }
 
-        let omit_values = args.options("--omit");
+        let omit_values = args.options(b"--omit");
 
         if !omit_values.is_empty() {
             let mut omit = Omit::default();
@@ -971,10 +983,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
                 } else if *omit_value == *b"peer" {
                     omit.peer = true;
                 } else {
-                    Output::err_generic(format_args!(
+                    Output::err_generic(
                         "invalid `omit` value: '{}'",
-                        bstr::BStr::new(omit_value)
-                    ));
+                        (bstr::BStr::new(omit_value),),
+                    );
                     Global::crash();
                 }
             }
@@ -983,86 +995,86 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
 
         // commands that support --filter
         if SUBCOMMAND.supports_workspace_filtering() {
-            cli.filters = args.options("--filter");
+            cli.filters = args.options(b"--filter");
         }
 
         if SUBCOMMAND.supports_json_output() {
-            cli.json_output = args.flag("--json");
+            cli.json_output = args.flag(b"--json");
         }
 
         if SUBCOMMAND == Subcommand::Outdated {
             // fake --dry-run, we don't actually resolve+clean the lockfile
             cli.dry_run = true;
-            cli.recursive = args.flag("--recursive");
-            // cli.json_output = args.flag("--json");
+            cli.recursive = args.flag(b"--recursive");
+            // cli.json_output = args.flag(b"--json");
         }
 
         if matches!(SUBCOMMAND, Subcommand::Pack | Subcommand::Pm | Subcommand::Publish) {
             if SUBCOMMAND != Subcommand::Publish {
-                if let Some(dest) = args.option("--destination") {
+                if let Some(dest) = args.option(b"--destination") {
                     cli.pack_destination = dest;
                 }
-                if let Some(file) = args.option("--filename") {
+                if let Some(file) = args.option(b"--filename") {
                     cli.pack_filename = file;
                 }
             }
 
-            if let Some(level) = args.option("--gzip-level") {
+            if let Some(level) = args.option(b"--gzip-level") {
                 cli.pack_gzip_level = Some(level);
             }
         }
 
         if SUBCOMMAND == Subcommand::Publish {
-            if let Some(tag) = args.option("--tag") {
+            if let Some(tag) = args.option(b"--tag") {
                 cli.publish_config.tag = tag;
             }
 
-            if let Some(access) = args.option("--access") {
+            if let Some(access) = args.option(b"--access") {
                 cli.publish_config.access = Some(match Options::Access::from_str(access) {
                     Some(a) => a,
                     None => {
-                        Output::err_generic(format_args!(
+                        Output::err_generic(
                             "invalid `access` value: '{}'",
-                            bstr::BStr::new(access)
-                        ));
+                            (bstr::BStr::new(access),),
+                        );
                         Global::crash();
                     }
                 });
             }
 
-            if let Some(otp) = args.option("--otp") {
+            if let Some(otp) = args.option(b"--otp") {
                 cli.publish_config.otp = otp;
             }
 
-            if let Some(auth_type) = args.option("--auth-type") {
+            if let Some(auth_type) = args.option(b"--auth-type") {
                 cli.publish_config.auth_type = Some(match Options::AuthType::from_str(auth_type) {
                     Some(a) => a,
                     None => {
-                        Output::err_generic(format_args!(
+                        Output::err_generic(
                             "invalid `auth-type` value: '{}'",
-                            bstr::BStr::new(auth_type)
-                        ));
+                            (bstr::BStr::new(auth_type),),
+                        );
                         Global::crash();
                     }
                 });
             }
 
-            cli.tolerate_republish = args.flag("--tolerate-republish");
+            cli.tolerate_republish = args.flag(b"--tolerate-republish");
         }
 
         // link and unlink default to not saving, all others default to
         // saving.
         if matches!(SUBCOMMAND, Subcommand::Link | Subcommand::Unlink) {
-            cli.no_save = !args.flag("--save");
+            cli.no_save = !args.flag(b"--save");
         } else {
-            cli.no_save = args.flag("--no-save");
+            cli.no_save = args.flag(b"--no-save");
         }
 
         if SUBCOMMAND == Subcommand::Patch {
-            let patch_commit = args.flag("--commit");
+            let patch_commit = args.flag(b"--commit");
             if patch_commit {
                 cli.patch = PatchOpts::Commit {
-                    patches_dir: args.option("--patches-dir").unwrap_or(b"patches"),
+                    patches_dir: args.option(b"--patches-dir").unwrap_or(b"patches"),
                 };
             } else {
                 cli.patch = PatchOpts::Patch;
@@ -1070,33 +1082,33 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         }
         if SUBCOMMAND == Subcommand::PatchCommit {
             cli.patch = PatchOpts::Commit {
-                patches_dir: args.option("--patches-dir").unwrap_or(b"patches"),
+                patches_dir: args.option(b"--patches-dir").unwrap_or(b"patches"),
             };
         }
 
         if SUBCOMMAND == Subcommand::Audit {
-            if let Some(level) = args.option("--audit-level") {
+            if let Some(level) = args.option(b"--audit-level") {
                 cli.audit_level = Some(match AuditLevel::from_string(level) {
                     Some(l) => l,
                     None => {
-                        Output::err_generic(format_args!(
+                        Output::err_generic(
                             "invalid `--audit-level` value: '{}'. Valid values are: low, moderate, high, critical",
-                            bstr::BStr::new(level)
-                        ));
+                            (bstr::BStr::new(level),),
+                        );
                         Global::crash();
                     }
                 });
             }
 
-            cli.audit_ignore_list = args.options("--ignore");
+            cli.audit_ignore_list = args.options(b"--ignore");
         }
 
-        if let Some(opt) = args.option("--config") {
+        if let Some(opt) = args.option(b"--config") {
             cli.config = Some(opt);
         }
 
         // Parse multiple --cpu flags and combine them using Negatable
-        let cpu_values = args.options("--cpu");
+        let cpu_values = args.options(b"--cpu");
         if !cpu_values.is_empty() {
             let mut cpu_negatable = Npm::Architecture::NONE.negatable();
             for cpu_str in cpu_values {
@@ -1112,10 +1124,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
                     && *cpu_str != *b"none"
                 {
                     // Only error for truly unrecognized values (not "any" or "none")
-                    Output::err_generic(format_args!(
+                    Output::err_generic(
                         "Invalid CPU architecture: '{}'. Valid values are: *, any, arm, arm64, ia32, mips, mipsel, ppc, ppc64, s390, s390x, x32, x64. Use !name to negate.",
-                        bstr::BStr::new(cpu_str)
-                    ));
+                        (bstr::BStr::new(cpu_str),),
+                    );
                     Global::crash();
                 }
             }
@@ -1123,7 +1135,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         }
 
         // Parse multiple --os flags and combine them using Negatable
-        let os_values = args.options("--os");
+        let os_values = args.options(b"--os");
         if !os_values.is_empty() {
             let mut os_negatable = Npm::OperatingSystem::NONE.negatable();
             for os_str in os_values {
@@ -1139,10 +1151,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
                     && *os_str != *b"none"
                 {
                     // Only error for truly unrecognized values (not "any" or "none")
-                    Output::err_generic(format_args!(
+                    Output::err_generic(
                         "Invalid operating system: '{}'. Valid values are: *, any, aix, darwin, freebsd, linux, openbsd, sunos, win32, android. Use !name to negate.",
-                        bstr::BStr::new(os_str)
-                    ));
+                        (bstr::BStr::new(os_str),),
+                    );
                     Global::crash();
                 }
             }
@@ -1150,19 +1162,19 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         }
 
         if matches!(SUBCOMMAND, Subcommand::Add | Subcommand::Install) {
-            cli.development = args.flag("--development") || args.flag("--dev");
-            cli.optional = args.flag("--optional");
-            cli.peer = args.flag("--peer");
-            cli.exact = args.flag("--exact");
-            cli.analyze = args.flag("--analyze");
-            cli.only_missing = args.flag("--only-missing");
+            cli.development = args.flag(b"--development") || args.flag(b"--dev");
+            cli.optional = args.flag(b"--optional");
+            cli.peer = args.flag(b"--peer");
+            cli.exact = args.flag(b"--exact");
+            cli.analyze = args.flag(b"--analyze");
+            cli.only_missing = args.flag(b"--only-missing");
         }
 
-        if let Some(concurrency) = args.option("--concurrent-scripts") {
+        if let Some(concurrency) = args.option(b"--concurrent-scripts") {
             cli.concurrent_scripts = strings::parse_int::<usize>(concurrency, 10).ok();
         }
 
-        if let Some(cwd_) = args.option("--cwd") {
+        if let Some(cwd_) = args.option(b"--cwd") {
             let mut buf = PathBuffer::uninit();
             let mut buf2 = PathBuffer::uninit();
             let final_path: &mut bun_str::ZStr;
@@ -1191,13 +1203,13 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         }
 
         if SUBCOMMAND == Subcommand::Update {
-            cli.latest = args.flag("--latest");
-            cli.interactive = args.flag("--interactive");
-            cli.recursive = args.flag("--recursive");
+            cli.latest = args.flag(b"--latest");
+            cli.interactive = args.flag(b"--interactive");
+            cli.recursive = args.flag(b"--recursive");
         }
 
         let specified_backend: Option<package_install::Method> = 'brk: {
-            if let Some(backend_) = args.option("--backend") {
+            if let Some(backend_) = args.option(b"--backend") {
                 break 'brk package_install::METHOD_MAP.get(backend_).copied();
             }
             break 'brk None;
@@ -1209,12 +1221,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
             }
         }
 
-        if let Some(registry) = args.option("--registry") {
+        if let Some(registry) = args.option(b"--registry") {
             if !strings::has_prefix(registry, b"https://") && !strings::has_prefix(registry, b"http://") {
-                Output::err_generic(format_args!(
+                Output::err_generic(
                     "Registry URL must start with 'https://' or 'http://': {}\n",
-                    bun_core::fmt::quote(registry)
-                ));
+                    (bun_core::fmt::quote(registry),),
+                );
                 Global::crash();
             }
             cli.registry = registry;
@@ -1247,30 +1259,30 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
 
         if SUBCOMMAND == Subcommand::Pm {
             // `bun pm version` command options
-            if let Some(git_tag_version) = args.option("--git-tag-version") {
+            if let Some(git_tag_version) = args.option(b"--git-tag-version") {
                 if git_tag_version == b"true" {
                     cli.git_tag_version = true;
                 } else if git_tag_version == b"false" {
                     cli.git_tag_version = false;
                 }
-            } else if args.flag("--no-git-tag-version") {
+            } else if args.flag(b"--no-git-tag-version") {
                 cli.git_tag_version = false;
             } else {
                 cli.git_tag_version = true;
             }
-            cli.allow_same_version = args.flag("--allow-same-version");
-            if let Some(preid) = args.option("--preid") {
+            cli.allow_same_version = args.flag(b"--allow-same-version");
+            if let Some(preid) = args.option(b"--preid") {
                 cli.preid = preid;
             }
-            if let Some(message) = args.option("--message") {
+            if let Some(message) = args.option(b"--message") {
                 cli.message = Some(message);
             }
         }
 
         // `bun pm why` and `bun why` options
         if matches!(SUBCOMMAND, Subcommand::Pm | Subcommand::Why) {
-            cli.top_only = args.flag("--top");
-            if let Some(depth) = args.option("--depth") {
+            cli.top_only = args.flag(b"--top");
+            if let Some(depth) = args.option(b"--depth") {
                 cli.depth = Some(match strings::parse_int::<usize>(depth, 10) {
                     Ok(d) => d,
                     Err(_) => {

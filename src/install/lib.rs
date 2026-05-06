@@ -760,29 +760,10 @@ pub mod lockfile {
         use crate::integrity::Integrity;
         use crate::{Origin, PackageID};
 
-        /// Port of `Package.Meta` (src/install/lockfile/Package/Meta.zig).
-        #[derive(Default, Clone, Copy)]
-        pub struct Meta {
-            pub origin: Origin,
-            pub arch: crate::npm::Architecture,
-            pub os: crate::npm::OperatingSystem,
-            pub id: PackageID,
-            pub man_dir: String,
-            pub integrity: Integrity,
-            pub has_install_script: HasInstallScript,
-        }
-
-        /// Port of `Package.Meta.HasInstallScript`
-        /// (src/install/lockfile/Package/Meta.zig).
-        #[derive(Default, Clone, Copy, PartialEq, Eq)]
-        #[repr(u8)]
-        pub enum HasInstallScript {
-            /// Legacy lockfiles wrote 0 unconditionally; treated as "unknown".
-            Old = 0,
-            #[default]
-            False = 1,
-            True = 2,
-        }
+        /// Port of `Package.Meta` (src/install/lockfile/Package/Meta.zig) —
+        /// re-exported from the real file-backed module so callers naming
+        /// `bun_install::lockfile::Meta` and `Package.meta`'s field type agree.
+        pub use crate::lockfile_real::package::meta::{Meta, HasInstallScript};
 
         /// Port: `Lockfile.Package` (src/install/lockfile/Package.zig) — the
         /// real generic instantiated at `u64` (matches Zig `Package(u64)`).

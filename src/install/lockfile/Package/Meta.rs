@@ -3,12 +3,15 @@ use bun_install::npm::{Architecture, OperatingSystem};
 use bun_install::{Origin, PackageID, INVALID_PACKAGE_ID};
 use bun_semver::String;
 
+use crate::lockfile_real::StringBuilder as LockfileStringBuilder;
+
 // TODO: when we bump the lockfile version, we should reorder this to:
 // id(32), arch(16), os(16), id(8), man_dir(8), has_install_script(8), integrity(72 align 8)
 // should allow us to remove padding bytes
 
 // TODO: remove origin. it doesnt do anything and can be inferred from the resolution
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct Meta {
     pub origin: Origin,
     pub _padding_origin: u8,
@@ -34,9 +37,10 @@ pub struct Meta {
 }
 
 #[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Default)]
 pub enum HasInstallScript {
     Old = 0,
+    #[default]
     False,
     True,
 }
@@ -81,13 +85,11 @@ impl Meta {
         self.has_install_script == HasInstallScript::Old
     }
 
-    // TODO(port): StringBuilder trait — Zig used `comptime StringBuilderType: type` duck-typing
-    // for `.count(slice)` and `.append(String, slice)`. Phase B should define this trait in
-    // bun_install::lockfile and bound B on it.
-    pub fn count<B>(&self, buf: &[u8], builder: &mut B)
-    where
-        B: StringBuilder,
-    {
+    // PORT NOTE: Zig used `comptime StringBuilderType: type` duck-typing for the
+    // builder param. The only concrete instantiation in install is
+    // `*Lockfile.StringBuilder`, so we take it directly here instead of a
+    // placeholder trait that nothing implements.
+    pub fn count(&self, buf: &[u8], builder: &mut LockfileStringBuilder<'_>) {
         builder.count(self.man_dir.slice(buf));
     }
 
@@ -95,10 +97,14 @@ impl Meta {
         Meta::default()
     }
 
-    pub fn clone<B>(&self, id: PackageID, buf: &[u8], builder: &mut B) -> Meta
-    where
-        B: StringBuilder,
-    {
+    /// Named `clone_into` (not `clone`) to avoid shadowing `Clone::clone` now
+    /// that `Meta: Clone + Copy`. Mirrors Zig `Meta.clone(id, buf, Builder, builder)`.
+    pub fn clone_into(
+        &self,
+        id: PackageID,
+        buf: &[u8],
+        builder: &mut LockfileStringBuilder<'_>,
+    ) -> Meta {
         Meta {
             id,
             man_dir: builder.append::<String>(self.man_dir.slice(buf)),
@@ -112,17 +118,10 @@ impl Meta {
     }
 }
 
-// TODO(port): placeholder trait for the `comptime StringBuilderType` pattern used across
-// install/lockfile. Move to a shared module in Phase B.
-pub trait StringBuilder {
-    fn count(&mut self, slice: &[u8]);
-    fn append<T>(&mut self, slice: &[u8]) -> T;
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/install/lockfile/Package/Meta.zig (81 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      StringBuilder trait is a placeholder for Zig's comptime duck-typed builder param; inline anon enum hoisted to HasInstallScript
+//   confidence: high
+//   todos:      0
+//   notes:      comptime StringBuilderType param resolved to concrete Lockfile.StringBuilder; inline anon enum hoisted to HasInstallScript
 // ──────────────────────────────────────────────────────────────────────────

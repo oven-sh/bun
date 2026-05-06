@@ -245,20 +245,24 @@ impl TarballStream {
         is_last: bool,
         err: Option<bun_core::Error>,
     ) {
-        (*this).mutex.lock();
-        if !chunk.is_empty() {
-            (*this).pending.extend_from_slice(chunk);
-            (*this).bytes_received += chunk.len();
-        }
-        if is_last {
-            (*this).closed = true;
-        }
-        if let Some(e) = err {
-            (*this).http_err = Some(e);
-        }
-        (*this).mutex.unlock();
+        // SAFETY: see fn-level # Safety — `this` is live, raw-ptr field
+        // projection only (no `&mut TarballStream` formed).
+        unsafe {
+            (*this).mutex.lock();
+            if !chunk.is_empty() {
+                (*this).pending.extend_from_slice(chunk);
+                (*this).bytes_received += chunk.len();
+            }
+            if is_last {
+                (*this).closed = true;
+            }
+            if let Some(e) = err {
+                (*this).http_err = Some(e);
+            }
+            (*this).mutex.unlock();
 
-        Self::schedule_drain(this);
+            Self::schedule_drain(this);
+        }
     }
 
     /// # Safety
@@ -266,15 +270,17 @@ impl TarballStream {
     /// `drain()` concurrently when `draining.swap` returns `true`, so this
     /// never forms `&mut TarballStream`.
     unsafe fn schedule_drain(this: *mut Self) {
-        if (*this).draining.swap(true, Ordering::AcqRel) {
-            return;
-        }
-        // SAFETY: `package_manager` outlives this stream (it owns the thread
-        // pool that runs us); Zig stores mutable `*PackageManager`. Field
+        // SAFETY: see fn-level # Safety — `this` is live; `package_manager`
+        // outlives this stream (it owns the thread pool that runs us). Field
         // projections via raw ptr — no `&mut TarballStream` is formed.
-        (*(*this).package_manager)
-            .thread_pool
-            .schedule(thread_pool::Batch::from(&mut (*this).drain_task));
+        unsafe {
+            if (*this).draining.swap(true, Ordering::AcqRel) {
+                return;
+            }
+            (*(*this).package_manager)
+                .thread_pool
+                .schedule(thread_pool::Batch::from(&mut (*this).drain_task));
+        }
     }
 
     /// Pull whatever compressed bytes are available into libarchive, writing

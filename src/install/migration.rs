@@ -669,6 +669,8 @@ pub fn migrate_npm_lockfile(
                 } else {
                     Integrity::default()
                 },
+
+                ..lockfile::Meta::default()
             },
             bin: if let Some(bin) = pkg.get(b"bin") {
                 'bin: {

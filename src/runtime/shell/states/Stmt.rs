@@ -52,7 +52,7 @@ impl Stmt {
         }
         // SAFETY: `node` points into the AST arena (lives for the interpreter's
         // lifetime); `idx` was bounds-checked against `expr_count` above.
-        let expr: ast::Expr = unsafe { (*(*interp.as_stmt(this).node).exprs)[idx] };
+        let expr: ast::Expr = unsafe { (&*(*interp.as_stmt(this).node).exprs)[idx] };
         let io = interp.as_stmt(this).io.clone();
         let (child, y) = interp.spawn_expr(shell, &expr, this, io);
         interp.as_stmt_mut(this).currently_executing = child;

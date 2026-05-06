@@ -327,7 +327,7 @@ const MAX_CUSTOM_SETTINGS: usize = 10;
 const MAX_CUSTOM_SETTING_ID: f64 = 0xFFFF as f64;
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
-enum PaddingStrategy {
+pub enum PaddingStrategy {
     #[default]
     None,
     Aligned,

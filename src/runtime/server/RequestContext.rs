@@ -1799,8 +1799,8 @@ where
                         effective_result.then_with_value(
                             global_this,
                             cell,
-                            Self::on_resolve_stream,
-                            Self::on_reject_stream,
+                            Self::ON_RESOLVE_STREAM,
+                            Self::ON_REJECT_STREAM,
                         ); // TODO: properly propagate exception upwards
                         // the response_stream should be GC'd
                     }

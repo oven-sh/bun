@@ -2961,8 +2961,13 @@ impl S3BlobDownloadTask {
                 this.promise.resolve(global, value)?;
             }
             crate::webcore::__s3_client::S3DownloadResult::NotFound(err) | crate::webcore::__s3_client::S3DownloadResult::Failure(err) => {
-                let _ = (err, &this.blob);
-                todo!("blocked_on: bun_s3::S3Error::to_js_with_async_stack");
+                let path = this.blob.store.as_ref().and_then(|s| s.get_path());
+                // SAFETY: sole `&mut JSPromise` borrow; consumed by `reject` below.
+                let promise = unsafe { this.promise.get() };
+                let value = crate::webcore::s3::client::error_jsc::s3_error_to_js_with_async_stack(
+                    &err, global, path, promise,
+                );
+                this.promise.reject(global, Ok(value))?;
             }
         }
         Ok(())

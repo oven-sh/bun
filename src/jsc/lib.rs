@@ -1922,13 +1922,56 @@ unsafe extern "C" {
     fn SystemError__toErrorInstance(this: *const SystemError, global: *mut JSGlobalObject) -> JSValue;
 }
 impl SystemError {
-    pub fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        // SAFETY: `self` is a valid extern-layout SystemError; `global` is live.
-        unsafe { SystemError__toErrorInstance(self, global.as_ptr()) }
+    pub fn deref(&self) {
+        self.code.deref();
+        self.message.deref();
+        self.path.deref();
+        self.syscall.deref();
+        self.hostname.deref();
+        self.dest.deref();
     }
-    pub fn to_error_instance_with_async_stack(&self, global: &JSGlobalObject, _promise: &JSPromise) -> JSValue {
-        // TODO(b2): JSValue::attach_async_stack_from_promise — gated.
-        self.to_error_instance(global)
+    pub fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue {
+        // Zig: `defer this.deref();` — C++ clones each `bun.String` into a
+        // JSString, so we release the refs `self` holds afterward.
+        // SAFETY: `self` is a valid extern-layout SystemError; `global` is live.
+        let result = unsafe { SystemError__toErrorInstance(self, global.as_ptr()) };
+        self.deref();
+        result
+    }
+    pub fn to_error_instance_with_async_stack(&self, global: &JSGlobalObject, promise: &JSPromise) -> JSValue {
+        let value = self.to_error_instance(global);
+        value.attach_async_stack_from_promise(global, promise);
+        value
+    }
+}
+
+/// `JSValue.toEnumFromMap(global, "signal", SignalCode, SignalCode.Map)`
+/// (JSValue.zig:1703). Lives here (not in `bun_sys_jsc`) because the orphan
+/// rule requires either the trait or the type to be local; `FromJsEnum` is.
+impl FromJsEnum for bun_sys::SignalCode {
+    fn from_js_value(
+        v: JSValue,
+        global: &JSGlobalObject,
+        property_name: &'static str,
+    ) -> JsResult<Self> {
+        if !v.is_string() {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "{property_name} must be a string"
+            )));
+        }
+        let s = bun_string_jsc::from_js(v, global)?;
+        let utf8 = s.to_utf8();
+        let hit = bun_sys::signal_code::MAP.get(utf8.slice()).copied();
+        drop(utf8);
+        s.deref();
+        match hit {
+            Some(code) => Ok(code),
+            // Zig builds the `'SIGHUP', 'SIGINT' or ...` list at comptime; at
+            // 31 variants the runtime port keeps the message terse.
+            None => Err(global.throw_invalid_arguments(format_args!(
+                "{property_name} must be one of the SignalCode names"
+            ))),
+        }
     }
 }
 

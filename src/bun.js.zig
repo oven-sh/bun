@@ -38,6 +38,10 @@ pub const Run = struct {
         if (!ctx.debug.loaded_bunfig and !graph_ptr.flags.disable_autoload_bunfig) {
             try bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
         }
+        // Standalone executables don't go through `Arguments.parse`, so apply the
+        // bunfig-sourced CA store here. `applyBunfigCAStore` no-ops if a CLI flag
+        // or NODE_USE_SYSTEM_CA already locked the value upstream.
+        bun.cli.Arguments.applyBunfigCAStore(ctx);
 
         run = .{
             .vm = try VirtualMachine.initWithModuleGraph(.{
@@ -161,6 +165,11 @@ pub const Run = struct {
         if (!ctx.debug.loaded_bunfig) {
             try bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
         }
+        // Apply the bunfig-sourced CA store whether or not we just loaded it —
+        // it might have been parsed earlier (before the precedence block ran)
+        // or here. `applyBunfigCAStore` respects the CA-locked flag set by
+        // higher-precedence CLI flag / env var sources.
+        bun.cli.Arguments.applyBunfigCAStore(ctx);
 
         // The shell does not need to initialize JSC.
         // JSC initialization costs 1-3ms. We skip this if we know it's a shell script.

@@ -1705,12 +1705,12 @@ pub const RunCommand = struct {
 
         if (!ctx.debug.loaded_bunfig) {
             bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
-            // Arguments.parse already ran the CA-store precedence block, but
-            // `.RunCommand` defers its bunfig load until now — re-apply so a
-            // `CA = "system"` from the local bunfig.toml is honored by
-            // `bun run file.ts`.
-            bun.cli.Arguments.applyBunfigCAStore(ctx);
         }
+        // Always apply — `.RunCommand` defers its bunfig load until now so the
+        // CA-store precedence block in `Arguments.parse` can't see `ca_store`.
+        // Even when bunfig was preloaded earlier (e.g. `--config`), the
+        // CA-locked flag prevents this from clobbering a CLI/env selection.
+        bun.cli.Arguments.applyBunfigCAStore(ctx);
 
         // try fast run (check if the file exists and is not a folder, then run it)
         if (try_fast_run and maybeOpenWithBunJS(ctx)) return true;

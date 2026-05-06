@@ -6973,15 +6973,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 .expect("hot_module_reloading parse always has at least one part");
             let mut hmr_transform_ctx = ConvertESMExportsForHmr {
                 last_part,
-                // PORT NOTE: `fs::Path::is_node_module` not yet on bun_logger::fs::Path;
-                // inline its real body (src/resolver/fs.zig:2002):
-                //   strings.lastIndexOf(this.name.dir, sep_str ++ "node_modules" ++ sep_str) != null
-                // — checks `path.name.dir` (not `path.text`) and uses the platform separator.
-                is_in_node_modules: strings::last_index_of(
-                    self.source.path.name.dir,
-                    const_format::concatcp!(bun_paths::SEP_STR, "node_modules", bun_paths::SEP_STR).as_bytes(),
-                )
-                .is_some(),
+                // Spec P.zig:6390: `p.source.path.isNodeModule()`.
+                // Round-G fix: `bun_logger::fs::Path::is_node_module` is now real
+                // (checks `name.dir` for `<sep>node_modules<sep>` with the
+                // platform separator); the former inline copy mis-handled the
+                // Windows separator via a cross-crate `const_format` const.
+                is_in_node_modules: self.source.path.is_node_module(),
                 imports_seen: Default::default(),
                 export_star_props: Vec::new(),
                 export_props: Vec::new(),

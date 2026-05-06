@@ -364,6 +364,7 @@ impl AspectRatio {
     }
 }
 
+#[cfg(any())] // blocked_on: LengthPercentage::parse
 fn parse_fit_content(input: &mut css::Parser) -> css::Result<LengthPercentage> {
     if let Err(e) = input.expect_function_matching("fit-content") {
         return Err(e);
@@ -431,6 +432,42 @@ pub struct SizeHandler {
     pub category: PropertyCategory,
 }
 
+impl Default for SizeHandler {
+    fn default() -> Self {
+        Self {
+            width: None, height: None, min_width: None, min_height: None,
+            max_width: None, max_height: None, block_size: None, inline_size: None,
+            min_block_size: None, min_inline_size: None, max_block_size: None,
+            max_inline_size: None, has_any: false,
+            flushed_properties: SizeProperty::empty(),
+            category: PropertyCategory::default(),
+        }
+    }
+}
+
+impl SizeHandler {
+    // No-op stubs so `DeclarationHandler` compiles; real bodies are gated below.
+    #[inline]
+    pub fn handle_property(
+        &mut self,
+        _property: &Property,
+        _dest: &mut DeclarationList<'_>,
+        _context: &mut PropertyHandlerContext<'_>,
+    ) -> bool {
+        false
+    }
+    #[inline]
+    pub fn finalize(
+        &mut self,
+        _dest: &mut DeclarationList<'_>,
+        _context: &mut PropertyHandlerContext<'_>,
+    ) {
+    }
+}
+
+#[cfg(any())] // blocked_on: prefixes::Feature method names + Property variant payloads + UnparsedProperty surface
+mod size_handler_body {
+use super::*;
 use css::Feature;
 
 // ─── helper macros (Zig used `inline fn` + `comptime []const u8` field names + @field/@unionInit) ───
@@ -792,3 +829,5 @@ impl SizeHandler {
 //   todos:      10
 //   notes:      Heavy comptime reflection (@field/@unionInit/@tagName, ComptimeStringMap case-insensitive) replaced with macro_rules! + explicit matches; css::Result/Printer/Property variant names assumed; implement_deep_clone/EnumProperty trait stubs need Phase-B wiring.
 // ──────────────────────────────────────────────────────────────────────────
+
+} // mod size_handler_body

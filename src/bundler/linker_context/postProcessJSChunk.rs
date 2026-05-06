@@ -11,10 +11,7 @@ use crate::linker_context_mod::{GenerateChunkCtx, LinkerOptionsMode};
 use crate::LinkerContext;
 use crate::options;
 use crate::options_impl::{LoaderExt as _, TargetExt as _};
-#[allow(unused_imports)]
-use crate::bun_renamer as renamer;
-#[allow(unused_imports)]
-use crate::bundle_v2::__phase_a_draft::{get_hmr_runtime, HmrRuntimeSide};
+use crate::bundle_v2::{get_hmr_runtime, HmrRuntimeSide};
 use crate::{
     Chunk, CompileResult, CompileResultForSourceMap, Index, JSAst, JSMeta, RefImportData,
     ResolvedExports, ThreadPool,

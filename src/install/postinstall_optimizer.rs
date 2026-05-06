@@ -138,15 +138,15 @@ pub struct List {
 }
 
 #[derive(Clone, Copy)]
-pub struct PkgInfo {
+pub struct PkgInfo<'a> {
     pub name_hash: PackageNameHash,
     pub version: Option<semver::Version>,
-    // TODO(port): lifetime — borrows lockfile string buffer at call sites; Phase A forbids
-    // struct lifetime params, so use &'static [u8] (default `""`, never freed). Revisit in Phase B.
-    pub version_buf: &'static [u8],
+    // Borrows the lockfile string buffer at call sites; only used to resolve
+    // pre/build tags inside `Version::order`, never stored.
+    pub version_buf: &'a [u8],
 }
 
-impl Default for PkgInfo {
+impl Default for PkgInfo<'_> {
     fn default() -> Self {
         Self {
             name_hash: 0,
@@ -178,7 +178,7 @@ impl List {
 
     pub fn should_ignore_lifecycle_scripts(
         &self,
-        pkg_info: PkgInfo,
+        pkg_info: PkgInfo<'_>,
         resolutions: &[PackageID],
         metas: &[Meta],
         target_cpu: npm::Architecture,
@@ -221,7 +221,7 @@ impl List {
         }
     }
 
-    fn from_default(pkg_info: PkgInfo) -> Option<PostinstallOptimizer> {
+    fn from_default(pkg_info: PkgInfo<'_>) -> Option<PostinstallOptimizer> {
         for &hash in DEFAULT_NATIVE_BINLINKS_NAME_HASHES.iter() {
             if hash == pkg_info.name_hash {
                 return Some(PostinstallOptimizer::NativeBinlink);

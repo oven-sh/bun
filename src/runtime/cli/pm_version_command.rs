@@ -66,47 +66,6 @@ impl VersionType {
     }
 }
 
-// ── PackageManager option shims ─────────────────────────────────────────────
-// `bun_install::PackageManagerOptionsStub` is a partial stub that doesn't yet
-// expose the version-command fields. These shims keep this file compiling and
-// document the upstream gap; they panic at runtime until the real fields land.
-#[allow(dead_code, unreachable_code)]
-mod pm_shims {
-    use super::*;
-    #[inline(never)]
-    pub fn preid<'a>(_pm: &'a PackageManager) -> &'a [u8] {
-        todo!("blocked_on: bun_install::PackageManagerOptionsStub::preid")
-    }
-    #[inline(never)]
-    pub fn run_scripts(_pm: &PackageManager) -> bool {
-        todo!("blocked_on: bun_install::PackageManagerOptionsStub::do_.run_scripts")
-    }
-    #[inline(never)]
-    pub fn allow_same_version(_pm: &PackageManager) -> bool {
-        todo!("blocked_on: bun_install::PackageManagerOptionsStub::allow_same_version")
-    }
-    #[inline(never)]
-    pub fn git_tag_version(_pm: &PackageManager) -> bool {
-        todo!("blocked_on: bun_install::PackageManagerOptionsStub::git_tag_version")
-    }
-    #[inline(never)]
-    pub fn set_git_tag_version(_pm: &mut PackageManager, _v: bool) {
-        todo!("blocked_on: bun_install::PackageManagerOptionsStub::git_tag_version")
-    }
-    #[inline(never)]
-    pub fn force(_pm: &PackageManager) -> bool {
-        todo!("blocked_on: bun_install::PackageManagerOptionsStub::force")
-    }
-    #[inline(never)]
-    pub fn message<'a>(_pm: &'a PackageManager) -> Option<&'a [u8]> {
-        todo!("blocked_on: bun_install::PackageManagerOptionsStub::message")
-    }
-    #[inline]
-    pub fn env<'a>(pm: &'a mut PackageManager) -> &'a mut DotEnv::Loader<'static> {
-        pm.env_mut()
-    }
-}
-
 impl PmVersionCommand {
     pub fn exec(
         ctx: command::Context<'_>,
@@ -186,7 +145,7 @@ impl PmVersionCommand {
             Global::exit(1);
         }
 
-        let scripts = if pm_shims::run_scripts(pm) {
+        let scripts = if pm.options.do_.run_scripts {
             json.as_property(b"scripts")
         } else {
             None
@@ -212,7 +171,7 @@ impl PmVersionCommand {
                         script_command,
                         b"preversion",
                         &package_json_dir,
-                        pm_shims::env(pm),
+                        pm.env_mut(),
                         &[],
                         silent,
                         use_system_shell,

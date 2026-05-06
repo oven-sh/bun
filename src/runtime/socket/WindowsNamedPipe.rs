@@ -43,6 +43,15 @@ pub type CertError = crate::socket::upgraded_duplex::CertError;
 
 type WrapperType = SSLWrapper<*mut WindowsNamedPipe>;
 
+/// Recover this thread's `timer::All` heap (b2-cycle: `vm.timer` is `()` in
+/// the low-tier `VirtualMachine`; the real value lives in `RuntimeState`).
+#[inline]
+fn timer_all<'a>() -> &'a mut crate::timer::All {
+    // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
+    // single JS thread, raw-ptr-per-field re-entry pattern (jsc_hooks.rs).
+    unsafe { &mut (*crate::jsc_hooks::runtime_state()).timer }
+}
+
 pub struct WindowsNamedPipe {
     pub wrapper: Option<WrapperType>,
     #[cfg(windows)]
@@ -847,9 +856,7 @@ impl WindowsNamedPipe {
 
     pub fn set_timeout_in_milliseconds(&mut self, ms: c_uint) {
         if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {
-            // self.vm.timer.remove(&mut self.event_loop_timer);
-            let _ = &mut self.event_loop_timer;
-            todo!("blocked_on: bun_jsc::VirtualMachine::timer");
+            timer_all().remove(&mut self.event_loop_timer);
         }
         self.current_timeout = ms;
 
@@ -859,12 +866,11 @@ impl WindowsNamedPipe {
         }
 
         // reschedule the timer
+        // PORT NOTE: `EventLoopTimer.next` is the lower-tier `ElTimespec` stub;
+        // bridge from `bun_core::Timespec` until the lower tier switches.
         let next = timespec::ms_from_now(bun_core::TimespecMockMode::AllowMockedTime, ms as i64);
-        // TODO(b2-blocked): `bun_event_loop` carries a local `Timespec` stub instead of
-        // `bun_core::Timespec`; same `{sec,nsec}` shape, so re-pack until the lower tier unifies.
         self.event_loop_timer.next = ElTimespec { sec: next.sec, nsec: next.nsec };
-        // self.vm.timer.insert(&mut self.event_loop_timer);
-        todo!("blocked_on: bun_jsc::VirtualMachine::timer");
+        timer_all().insert(&mut self.event_loop_timer);
     }
 
     pub fn set_timeout(&mut self, seconds: c_uint) {

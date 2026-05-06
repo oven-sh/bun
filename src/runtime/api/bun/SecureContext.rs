@@ -22,46 +22,23 @@ use crate::socket::uws_jsc::create_bun_socket_error_to_js;
 use bun_str::strings;
 use bun_uws as uws;
 
-/// Local shim: `digest()`/`approx_cert_bytes()` live on
+/// Local shim: `approx_cert_bytes()` lives on
 /// `bun_uws_sys::socket_context::BunSocketContextOptions`, but `as_usockets()`
 /// returns the (layout-identical, `#[repr(C)]`) `bun_uws::SocketContext`
 /// duplicate. Bridge here so call sites match the .zig spec without touching
-/// upstream crates.
+/// upstream crates. `digest()` is now native on the `bun_uws` copy.
 trait BunSocketContextOptionsExt {
-    fn digest(&self) -> [u8; 32];
     fn approx_cert_bytes(&self) -> usize;
 }
 impl BunSocketContextOptionsExt for uws::SocketContext::BunSocketContextOptions {
     #[inline]
-    fn digest(&self) -> [u8; 32] {
+    fn approx_cert_bytes(&self) -> usize {
         // SAFETY: both structs are `#[repr(C)]` with identical field order and
         // types (see src/uws/lib.rs:1452 and src/uws_sys/SocketContext.rs:22).
         let sys: &bun_uws_sys::socket_context::BunSocketContextOptions =
             unsafe { core::mem::transmute(self) };
-        sys.digest()
-    }
-    #[inline]
-    fn approx_cert_bytes(&self) -> usize {
-        // SAFETY: see `digest` above — identical `#[repr(C)]` layouts.
-        let sys: &bun_uws_sys::socket_context::BunSocketContextOptions =
-            unsafe { core::mem::transmute(self) };
         sys.approx_cert_bytes()
     }
-}
-
-/// Local free-fn shim: `RareData::ssl_ctx_cache()` returns the private
-/// `bun_jsc::rare_data::high_tier::SSLContextCache` opaque stub (cycle-break
-/// placeholder), so we cannot name it to write an extension trait. The real
-/// implementation is `crate::api::SSLContextCache::get_or_create_digest`; this
-/// keeps the call-site shape from the .zig spec compiling until the rare-data
-/// type-carrier wires the concrete cache through.
-#[inline(never)]
-fn ssl_ctx_cache_get_or_create_digest(
-    _opts: &uws::SocketContext::BunSocketContextOptions,
-    _d: [u8; 32],
-    _err: &mut bun_uws_sys::create_bun_socket_error_t,
-) -> Option<*mut boringssl::SSL_CTX> {
-    todo!("blocked_on: bun_jsc::rare_data::SSLContextCache::get_or_create_digest")
 }
 
 // Codegen (`.classes.ts`) wires `to_js`/`from_js`/`from_js_direct` via this derive.

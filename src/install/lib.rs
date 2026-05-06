@@ -2512,6 +2512,16 @@ impl PackageManager {
     pub link_workspace_packages: bool,
     /// Zig: `Options.dry_run: bool = false`.
     pub dry_run: bool,
+    /// Zig: `Options.git_tag_version: bool = true`.
+    pub git_tag_version: bool,
+    /// Zig: `Options.allow_same_version: bool = false`.
+    pub allow_same_version: bool,
+    /// Zig: `Options.preid: string = ""`.
+    pub preid: &'static [u8],
+    /// Zig: `Options.message: ?string = null`.
+    pub message: Option<&'static [u8]>,
+    /// Zig: `Options.force: bool = false`.
+    pub force: bool,
     /// Zig: `Options.cache_directory` — bunfig override.
     pub cache_directory: Vec<u8>,
     /// Zig: `Options.scope: Npm.Registry.Scope`.

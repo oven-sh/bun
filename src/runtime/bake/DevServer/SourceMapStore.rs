@@ -303,10 +303,16 @@ impl Entry {
                 } else {
                     b"latest_hmr.js.map"
                 };
-                let _ = (dump_dir, rel_path_escaped, &json_bytes);
-                // TODO(port): `dump_bundle` takes `&mut sys::Dir` but `DevServer.dump_dir` is
-                // `Option<bun_sys::Fd>`; bridge once the Dir/Fd unification lands.
-                todo!("blocked_on: bun_sys::Dir from Fd for dump_bundle");
+                if let Err(err) = dump_bundle(
+                    dump_dir,
+                    if side == Side::Client { bake::Graph::Client } else { bake::Graph::Server },
+                    rel_path_escaped,
+                    &json_bytes,
+                    false,
+                ) {
+                    // PORT NOTE: Zig `bun.handleErrorReturnTrace` is a no-op in Rust (no error-return-trace).
+                    Output::warn(format_args!("Could not dump bundle: {}", err));
+                }
             }
         }
         #[cfg(not(feature = "bake_debugging_features"))]
@@ -504,6 +510,17 @@ impl SourceMapStore {
         }
     }
 
+    /// Recover this thread's `timer::All` heap (b2-cycle: `vm.timer` is `()` in
+    /// the low-tier `VirtualMachine`; the real value lives in `RuntimeState`).
+    /// PORT NOTE: Zig `store.owner().vm.timer.*` — routed through `runtime_state()`
+    /// instead to avoid an aliased `&mut DevServer` while `&mut self` is live.
+    #[inline]
+    fn timer_all<'a>() -> &'a mut crate::timer::All {
+        // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
+        // single JS thread, raw-ptr-per-field re-entry pattern (jsc_hooks.rs).
+        unsafe { &mut (*crate::jsc_hooks::runtime_state()).timer }
+    }
+
     fn dev_allocator(&self) -> DevAllocator {
         // SAFETY: same container_of invariant as `owner`; const-only access.
         let dev_server: &DevServer = unsafe {
@@ -607,9 +624,7 @@ impl SourceMapStore {
                 if self.weak_ref_sweep_timer.state == EventLoopTimerState::ACTIVE
                     && self.weak_ref_sweep_timer.next.sec == first.expire
                 {
-                    // `(*owner.vm).timer` is `()` upstream; the real `timer::All` lives behind
-                    // an opaque per-VM handle that bun_runtime hasn't bridged yet.
-                    todo!("blocked_on: bun_jsc::VirtualMachine::timer.remove");
+                    Self::timer_all().remove(core::ptr::addr_of_mut!(self.weak_ref_sweep_timer));
                 }
             }
         }
@@ -624,8 +639,7 @@ impl SourceMapStore {
 
         if self.weak_ref_sweep_timer.state != EventLoopTimerState::ACTIVE {
             map_log!("arming weak ref sweep timer");
-            let _ = &expire;
-            todo!("blocked_on: bun_jsc::VirtualMachine::timer.update");
+            Self::timer_all().update(core::ptr::addr_of_mut!(self.weak_ref_sweep_timer), &expire);
         }
         map_log!("addWeakRef {:x}, ref_count: {}", key.get(), entry_ref_count);
     }
@@ -699,13 +713,12 @@ impl SourceMapStore {
                     .unget(&[item])
                     .expect("unreachable"); // there is enough space since the last item was just removed.
                 store.weak_ref_sweep_timer.state = EventLoopTimerState::FIRED;
-                let _ = bun_core::Timespec { sec: item.expire + 1, nsec: 0 };
-                todo!("blocked_on: bun_jsc::VirtualMachine::timer.update");
-                #[allow(unreachable_code)]
-                {
-                    store.owner().emit_memory_visualizer_message_if_needed();
-                    return;
-                }
+                Self::timer_all().update(
+                    core::ptr::addr_of_mut!(store.weak_ref_sweep_timer),
+                    &bun_core::Timespec { sec: item.expire + 1, nsec: 0 },
+                );
+                store.owner().emit_memory_visualizer_message_if_needed();
+                return;
             }
         }
 

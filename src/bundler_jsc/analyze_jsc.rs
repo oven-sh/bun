@@ -1,31 +1,18 @@
 //! JSC bridge for analyze_transpiled_module.rs — converts the parsed
 //! `ModuleInfoDeserialized` into a `JSC::JSModuleRecord`. Aliased back so the
 //! `extern "C"` symbol names are still discoverable from C++.
+//!
+//! Note: the `zig__renderDiff` export from `analyze_jsc.zig` lives in
+//! `bun_runtime::test_runner::diff_format` instead — `DiffFormatter` is a
+//! higher-tier type this crate cannot depend on, and the C++ caller only needs
+//! the symbol at link time, not a particular crate.
 
-use core::ffi::c_char;
 use core::marker::{PhantomData, PhantomPinned};
 
 use crate::{JSGlobalObject, VM};
 
 use bun_bundler::analyze_transpiled_module as analyze;
 use analyze::{ModuleInfoDeserialized, RecordKind, RequestedModuleValue, StringID};
-
-#[unsafe(no_mangle)]
-pub extern "C" fn zig__renderDiff(
-    expected_ptr: *const c_char,
-    expected_len: usize,
-    received_ptr: *const c_char,
-    received_len: usize,
-    global_this: &JSGlobalObject,
-) {
-    // TODO(b2-blocked): bun_runtime::test_runner::diff_format::DiffFormatter lives in a
-    // higher-tier crate (`bun_runtime`) that this crate cannot depend on. The Zig original
-    // builds a `DiffFormatter{ received_string, expected_string, globalThis }` and prints it
-    // to `Output.errorWriter()`. Re-enable once the crate-layering allows the dependency or
-    // DiffFormatter is moved to a lower tier.
-    let _ = (expected_ptr, expected_len, received_ptr, received_len, global_this);
-    todo!("blocked_on: bun_runtime::test_runner::diff_format::DiffFormatter")
-}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(

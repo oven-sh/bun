@@ -157,8 +157,22 @@ impl HmrSocket {
                                             dev.memory_visualizer_timer.state
                                                 != EventLoopTimerState::ACTIVE
                                         );
-                                        let _ = &mut dev.memory_visualizer_timer;
-                                        todo!("blocked_on: bun_jsc::VirtualMachine::timer");
+                                        // PORT NOTE (b2-cycle): `vm.timer` is `()` on the
+                                        // low-tier `VirtualMachine`; the real `timer::All`
+                                        // lives in `RuntimeState` (see jsc_hooks.rs).
+                                        let state = crate::jsc_hooks::runtime_state();
+                                        let next = bun_core::Timespec::ms_from_now(
+                                            bun_core::TimespecMockMode::AllowMockedTime,
+                                            1000,
+                                        );
+                                        // SAFETY: `runtime_state()` is non-null after
+                                        // `bun_runtime::init()`; JS-thread only, sole
+                                        // `&mut` to `timer` in this scope.
+                                        unsafe {
+                                            (*state)
+                                                .timer
+                                                .update(&mut dev.memory_visualizer_timer, &next);
+                                        }
                                     }
                                 }
                                 _ => {}
@@ -331,8 +345,14 @@ impl HmrSocket {
                 if dev.emit_incremental_visualizer_events == 0
                     && dev.memory_visualizer_timer.state == EventLoopTimerState::ACTIVE
                 {
-                    let _ = &mut dev.memory_visualizer_timer;
-                    todo!("blocked_on: bun_jsc::VirtualMachine::timer");
+                    // PORT NOTE (b2-cycle): `vm.timer` is `()` on the low-tier
+                    // `VirtualMachine`; the real `timer::All` lives in `RuntimeState`.
+                    let state = crate::jsc_hooks::runtime_state();
+                    // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
+                    // JS-thread only, sole `&mut` to `timer` in this scope.
+                    unsafe {
+                        (*state).timer.remove(&mut dev.memory_visualizer_timer);
+                    }
                 }
             }
         }
@@ -404,6 +424,6 @@ impl HmrSocket {
 // PORT STATUS
 //   source:     src/bake/DevServer/HmrSocket.zig (295 lines)
 //   confidence: medium
-//   todos:      2
+//   todos:      0
 //   notes:      `dev` backref kept as NonNull (no LIFETIMES.tsv row); inline-for over HmrTopic fields lowered to HmrTopic::ALL/from_u8 helpers; line-96 dead else-if ported verbatim (upstream bug?); on_close takes *mut Self for Box::from_raw self-destroy.
 // ──────────────────────────────────────────────────────────────────────────

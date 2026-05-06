@@ -46,13 +46,13 @@ fn packages(
     writer: &mut impl bun_io::Write,
 ) -> Result<(), bun_core::Error> {
     let slice = this.lockfile.packages.slice();
-    let names: &[SemverString] = slice.name();
-    let resolved: &[Resolution] = slice.resolution();
-    let metas: &[package::Meta] = slice.meta();
+    let names: &[SemverString] = slice.items_name();
+    let resolved: &[Resolution] = slice.items_resolution();
+    let metas: &[package::Meta] = slice.items_meta();
     if names.is_empty() {
         return Ok(());
     }
-    let dependency_lists = slice.dependencies();
+    let dependency_lists = slice.items_dependencies();
     let resolutions_buffer: &[PackageID] = this.lockfile.buffers.resolutions.as_slice();
     let dependencies_buffer: &[Dependency] = this.lockfile.buffers.dependencies.as_slice();
 

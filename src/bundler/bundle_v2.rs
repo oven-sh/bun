@@ -1577,15 +1577,9 @@ pub struct BakeOptions<'a> {
 }
 
 impl<'a> BundleV2<'a> {
-    /// `bundle_v2.zig:loop()` — opaque event-loop handle stored on the linker.
-    /// PORT NOTE: `linker.r#loop` is `Option<NonNull<()>>` (erased); the draft
-    /// `EventLoop` enum lives separately on the bundler so plugin dispatch can
-    /// distinguish JS vs Mini loops.
-    pub r#loop: EventLoop,
-
     #[inline]
-    pub fn r#loop(&mut self) -> &mut EventLoop {
-        &mut self.r#loop
+    pub fn r#loop(&mut self) -> &mut crate::ungate_support::EventLoop {
+        &mut self.linker.r#loop
     }
 
     /// Returns the jsc.EventLoop where plugin callbacks can be queued up on
@@ -1595,16 +1589,13 @@ impl<'a> BundleV2<'a> {
         if let Some(completion) = self.completion {
             // From Bun.build
             // SAFETY: completion is a valid backref while bundle is running
-            unsafe { &(*completion).jsc_event_loop }
-        } else {
-            match &self.r#loop {
-                // From bake where the loop running the bundle is also the loop
-                // running the plugins.
-                EventLoop::Js(jsc_event_loop) => jsc_event_loop,
-                // The CLI currently has no jsc event loop; for now, no plugin support
-                EventLoop::Mini(_) => panic!("No JavaScript event loop for transpiler plugins to run on"),
-            }
+            return unsafe { &(*completion).jsc_event_loop };
         }
+        // From bake where the loop running the bundle is also the loop running
+        // the plugins. PORT NOTE: `linker.r#loop` is an erased `Option<NonNull<()>>`
+        // — the Js/Mini discriminant lives in T6. Without a completion task the
+        // CLI path has no JS event loop.
+        panic!("No JavaScript event loop for transpiler plugins to run on")
     }
 
     fn ensure_client_transpiler(&mut self) {

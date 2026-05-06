@@ -214,6 +214,8 @@ pub mod options {
     /// `OutputFile.init` argument struct (`options.zig:OutputFile.Options`).
     pub use super::output_file::Options as OutputFileInit;
     pub use super::output_file::OptionsData as OutputFileData;
+    pub use super::output_file::BakeExtra;
+    pub use super::output_file::IndexOptional;
     /// `options.Format` — many ported call-sites spell this `OutputFormat`.
     pub use bun_options_types::Format as OutputFormat;
     pub type Options<'a> = super::BundleOptions<'a>;
@@ -401,5 +403,39 @@ pub mod dispatch {
             source: &[u8],
             source_url: &[u8],
         ) -> Option<(Box<[u8]>, Box<[u8]>)>,
+    }
+}
+
+// `OutputFile.Options` defaults (`options.zig:OutputFile.Options` field
+// default-initializers). Kept here rather than in `OutputFile.rs` so the
+// derive-free struct stays codegen-friendly while every `init(..)` call site
+// can use struct-update syntax.
+impl Default for output_file::OptionsData {
+    fn default() -> Self {
+        output_file::OptionsData::Buffer { data: Box::default() }
+    }
+}
+impl Default for output_file::Options {
+    fn default() -> Self {
+        output_file::Options {
+            loader: options::Loader::default(),
+            input_loader: options::Loader::default(),
+            hash: None,
+            source_map_index: None,
+            bytecode_index: None,
+            module_info_index: None,
+            output_path: Box::default(),
+            source_index: output_file::IndexOptional::NONE,
+            size: None,
+            input_path: Box::default(),
+            display_size: 0,
+            output_kind: options::OutputKind::Chunk,
+            is_executable: false,
+            data: output_file::OptionsData::default(),
+            side: None,
+            entry_point_index: None,
+            referenced_css_chunks: Box::default(),
+            bake_extra: output_file::BakeExtra::default(),
+        }
     }
 }

@@ -37,12 +37,14 @@ pub mod fs {
 
     #[inline]
     fn is_sep_any(c: u8) -> bool {
-        if cfg!(windows) { c == b'/' || c == b'\\' } else { c == b'/' }
+        // Spec `bun.path.isSepAny` (resolve_path.zig) matches BOTH separators on every platform.
+        c == b'/' || c == b'\\'
     }
 
     #[inline]
     fn last_index_of_sep(path: &[u8]) -> Option<usize> {
-        path.iter().rposition(|&c| is_sep_any(c))
+        // Spec `bun.path.lastIndexOfSep` (resolve_path.zig) IS platform-gated, unlike isSepAny.
+        path.iter().rposition(|&c| c == b'/' || (cfg!(windows) && c == b'\\'))
     }
 
     #[derive(Clone, Default)]

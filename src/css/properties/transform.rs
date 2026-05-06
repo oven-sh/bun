@@ -1,6 +1,6 @@
 use bumpalo::collections::Vec as BumpVec;
 use bun_alloc::Arena as Bump;
-use bun_str::strings;
+use bun_string::strings;
 
 use crate::css_properties::{Property, PropertyId};
 use crate::css_values::angle::Angle;
@@ -19,7 +19,7 @@ pub struct TransformList<'bump> {
 }
 
 impl<'bump> TransformList<'bump> {
-    pub fn parse(input: &mut Parser<'bump, '_>) -> Result<Self> {
+    pub fn parse(input: &mut Parser<'_>) -> Result<Self> {
         if input
             .try_parse(|i| i.expect_ident_matching("none"))
             .is_ok()

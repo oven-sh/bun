@@ -10,16 +10,20 @@ use crate::ast::{
 };
 use crate::ast::b::B as BData;
 use crate::ast::G::{Arg, Decl, Property, PropertyKind};
-use crate::ast::p::P;
+use crate::ast::p::{LowerUsingDeclarationsContext, P};
+use crate::ast::s::Kind as LocalKind;
+use crate::ast::OpCode;
 use crate::ast::scope::{Kind as ScopeKind, Member as ScopeMember};
 use crate::ast::symbol::Kind as SymbolKind;
 use crate::flags;
 use crate::lexer as js_lexer;
 use crate::parser::{
     is_eval_or_arguments, ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap,
-    JsxT, PrependTempRefsOpts, Ref, RuntimeFeatures, SideEffects, StmtsKind, StrictModeFeature,
-    StringVoidMap, TempRef, VisitArgsOpts,
+    JsxT, PrependTempRefsOpts, Ref, RelocateVarsMode, RuntimeFeatures, ScopeOrder, SideEffects,
+    StmtsKind, StrictModeFeature, StringVoidMap, TempRef, VisitArgsOpts,
 };
+use bun_collections::HashMap;
+use core::ptr::NonNull;
 use crate::StrictModeKind;
 use bun_logger as logger;
 

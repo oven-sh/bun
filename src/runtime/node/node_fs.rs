@@ -3222,18 +3222,82 @@ impl NodeFS {
 
         #[cfg(target_os = "freebsd")]
         {
-            // TODO(port): FreeBSD copyFileInner — see node_fs.zig:3639-3709. Logic preserved structurally below.
             let mut src_buf = PathBuffer::uninit();
             let mut dest_buf = PathBuffer::uninit();
             let src = args.src.slice_z(&mut src_buf);
             let dest = args.dest.slice_z(&mut dest_buf);
+
             if args.mode.is_force_clone() {
                 return Maybe::Err(sys::Error { errno: SystemErrno::EOPNOTSUPP as _, syscall: sys::Tag::copyfile, ..Default::default() });
             }
-            // ... (open src, fstat, open dest, same-inode check, ftruncate(0), copy_file_range loop, fallback)
-            // TODO(port): full FreeBSD body
-            let _ = (src, dest);
-            return Maybe::<ret::CopyFile>::todo();
+
+            let src_fd = match Syscall::open(src, sys::O::RDONLY, 0) {
+                Maybe::Ok(result) => result,
+                Maybe::Err(err) => return Maybe::Err(err.with_path(args.src.slice())),
+            };
+            let _close_src = scopeguard::guard(src_fd, |fd| fd.close());
+
+            let stat_ = match Syscall::fstat(src_fd) {
+                Maybe::Ok(result) => result,
+                Maybe::Err(err) => return Maybe::Err(err),
+            };
+            if !sys::S::isreg(stat_.mode) {
+                return Maybe::Err(sys::Error { errno: SystemErrno::EOPNOTSUPP as _, syscall: sys::Tag::copyfile, ..Default::default() });
+            }
+
+            let mut flags: i32 = sys::O::CREAT | sys::O::WRONLY;
+            if args.mode.shouldnt_overwrite() { flags |= sys::O::EXCL; }
+            let dest_fd = match Syscall::open(dest, flags, DEFAULT_PERMISSION) {
+                Maybe::Ok(result) => result,
+                Maybe::Err(err) => return Maybe::Err(err),
+            };
+            let _close_dest = scopeguard::guard(dest_fd, |fd| fd.close());
+
+            // Don't O_TRUNC at open: if src and dest resolve to the same
+            // inode, that would zero the file before the first read. Match
+            // Node by checking inodes after both are open and refusing.
+            if let Maybe::Ok(dst_stat) = Syscall::fstat(dest_fd) {
+                if stat_.ino == dst_stat.ino && stat_.dev == dst_stat.dev {
+                    return Maybe::Err(sys::Error {
+                        errno: SystemErrno::EINVAL as _, syscall: sys::Tag::copyfile,
+                        path: args.src.slice().into(), ..Default::default()
+                    });
+                }
+            }
+            let _ = Syscall::ftruncate(dest_fd, 0);
+
+            // FreeBSD 13+ has copy_file_range(2). Try the kernel-side copy
+            // first; fall back to read/write on cross-device or unsupported
+            // fd types. std.c declares it returning usize on FreeBSD, so
+            // bitcast to isize before getErrno.
+            let mut off_in: i64 = 0;
+            let mut off_out: i64 = 0;
+            'cfr: loop {
+                // SAFETY: src_fd/dest_fd are valid open fds; copy_file_range is the libc FFI
+                let rc: isize = unsafe { sys::freebsd::copy_file_range(src_fd.native(), &mut off_in, dest_fd.native(), &mut off_out, (i32::MAX - 1) as usize, 0) } as isize;
+                match sys::get_errno(rc) {
+                    E::SUCCESS => {
+                        if rc == 0 {
+                            let _ = Syscall::fchmod(dest_fd, stat_.mode);
+                            return Maybe::SUCCESS;
+                        }
+                    }
+                    E::INTR => continue,
+                    E::XDEV | E::INVAL | E::OPNOTSUPP | E::BADF => break 'cfr,
+                    e => {
+                        let _ = sys::unlink(dest);
+                        return Maybe::Err(sys::Error { errno: e as _, syscall: sys::Tag::copyfile, ..Default::default() });
+                    }
+                }
+            }
+
+            let mut wrote: u64 = 0;
+            if let Maybe::Err(err) = Self::copy_file_using_read_write_loop(src, dest, src_fd, dest_fd, stat_.size.max(0) as usize, &mut wrote) {
+                let _ = sys::unlink(dest);
+                return Maybe::Err(err);
+            }
+            let _ = Syscall::fchmod(dest_fd, stat_.mode);
+            return Maybe::SUCCESS;
         }
 
         #[cfg(target_os = "linux")]

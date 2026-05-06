@@ -420,7 +420,7 @@ pub mod fs {
         /// Zig: `topLevelDirWithoutTrailingSlash`.
         pub fn top_level_dir_without_trailing_slash(&self) -> &[u8] {
             let d = self.top_level_dir.as_bytes();
-            if d.len() > 1 && matches!(d.last(), Some(b'/') | Some(b'\\')) {
+            if d.len() > 1 && d.last() == Some(&crate::SEP) {
                 &d[..d.len() - 1]
             } else {
                 d

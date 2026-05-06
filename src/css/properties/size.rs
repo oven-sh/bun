@@ -1,4 +1,4 @@
-use bun_css as css;
+use crate as css;
 
 use css::Printer;
 use css::PrintErr;

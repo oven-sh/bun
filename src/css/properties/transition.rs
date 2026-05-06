@@ -1,21 +1,21 @@
-use bun_css::SmallList;
-use bun_css::Printer;
-use bun_css::PrintErr;
-use bun_css::Parser;
-use bun_css::Result as CssResult;
-use bun_css::DeclarationList;
-use bun_css::PropertyHandlerContext;
-use bun_css::PropertyIdTag;
+use crate::SmallList;
+use crate::Printer;
+use crate::PrintErr;
+use crate::Parser;
+use crate::Result as CssResult;
+use crate::DeclarationList;
+use crate::PropertyHandlerContext;
+use crate::PropertyIdTag;
 
-use bun_css::css_properties::Property;
-use bun_css::css_properties::PropertyId;
-use bun_css::css_properties::masking;
-use bun_css::css_values::time::Time;
-use bun_css::css_values::easing::EasingFunction;
+use crate::css_properties::Property;
+use crate::css_properties::PropertyId;
+use crate::css_properties::masking;
+use crate::css_values::time::Time;
+use crate::css_values::easing::EasingFunction;
 
-use bun_css::VendorPrefix;
-use bun_css::prefixes::Feature;
-use bun_css::compat;
+use crate::VendorPrefix;
+use crate::prefixes::Feature;
+use crate::compat;
 
 /// A value for the [transition](https://www.w3.org/TR/2018/WD-css-transitions-1-20181011/#transition-shorthand-property) property.
 #[derive(Clone, PartialEq)]

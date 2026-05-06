@@ -1,11 +1,11 @@
-use bun_css as css;
-use bun_css::{Parser, Printer, PrintErr, Result as CssResult, Token};
-use bun_css::css_values::length::LengthPercentage;
-use bun_css::{VendorPrefix, Property, PropertyId, PropertyIdTag, DeclarationList, PropertyHandlerContext};
-use bun_css::prefixes::Feature;
-use bun_css::compat;
+use crate as css;
+use crate::{Parser, Printer, PrintErr, Result as CssResult, Token};
+use crate::css_values::length::LengthPercentage;
+use crate::{VendorPrefix, Property, PropertyId, PropertyIdTag, DeclarationList, PropertyHandlerContext};
+use crate::prefixes::Feature;
+use crate::compat;
 
-use bun_css::css_properties::flex::{FlexLinePack, BoxPack, FlexPack, BoxAlign, FlexAlign, FlexItemAlign, BoxOrdinalGroup};
+use crate::css_properties::flex::{FlexLinePack, BoxPack, FlexPack, BoxAlign, FlexAlign, FlexItemAlign, BoxOrdinalGroup};
 
 // ──────────────────────────────────────────────────────────────────────────────
 // AlignContent
@@ -75,12 +75,12 @@ impl BaselinePosition {
 
         // TODO(port): bun.ComptimeEnumMap(..).getASCIIICaseInsensitive — using
         // css::match_ignore_ascii_case! (lightningcss-style) in Phase B.
-        if bun_str::strings::eql_case_insensitive_ascii(ident, b"baseline", true) {
+        if bun_string::strings::eql_case_insensitive_ascii(ident, b"baseline", true) {
             return Ok(BaselinePosition::First);
-        } else if bun_str::strings::eql_case_insensitive_ascii(ident, b"first", true) {
+        } else if bun_string::strings::eql_case_insensitive_ascii(ident, b"first", true) {
             input.expect_ident_matching("baseline")?;
             return Ok(BaselinePosition::First);
-        } else if bun_str::strings::eql_case_insensitive_ascii(ident, b"last", true) {
+        } else if bun_string::strings::eql_case_insensitive_ascii(ident, b"last", true) {
             input.expect_ident_matching("baseline")?;
             return Ok(BaselinePosition::Last);
         } else {
@@ -160,9 +160,9 @@ impl JustifyContent {
         let ident = input.expect_ident()?;
 
         // TODO(port): bun.ComptimeEnumMap getASCIIICaseInsensitive
-        if bun_str::strings::eql_case_insensitive_ascii(ident, b"left", true) {
+        if bun_string::strings::eql_case_insensitive_ascii(ident, b"left", true) {
             Ok(JustifyContent::Left { overflow })
-        } else if bun_str::strings::eql_case_insensitive_ascii(ident, b"right", true) {
+        } else if bun_string::strings::eql_case_insensitive_ascii(ident, b"right", true) {
             Ok(JustifyContent::Right { overflow })
         } else {
             Err(location.new_unexpected_token_error(Token::Ident(ident)))
@@ -322,9 +322,9 @@ impl JustifySelf {
         let location = input.current_source_location();
         let ident = input.expect_ident()?;
         // TODO(port): bun.ComptimeEnumMap getASCIIICaseInsensitive
-        if bun_str::strings::eql_case_insensitive_ascii(ident, b"left", true) {
+        if bun_string::strings::eql_case_insensitive_ascii(ident, b"left", true) {
             Ok(JustifySelf::Left { overflow })
-        } else if bun_str::strings::eql_case_insensitive_ascii(ident, b"right", true) {
+        } else if bun_string::strings::eql_case_insensitive_ascii(ident, b"right", true) {
             Ok(JustifySelf::Right { overflow })
         } else {
             Err(location.new_unexpected_token_error(Token::Ident(ident)))
@@ -485,9 +485,9 @@ impl JustifyItems {
         let ident = input.expect_ident()?;
 
         // TODO(port): bun.ComptimeEnumMap getASCIIICaseInsensitive
-        if bun_str::strings::eql_case_insensitive_ascii(ident, b"left", true) {
+        if bun_string::strings::eql_case_insensitive_ascii(ident, b"left", true) {
             Ok(JustifyItems::Left { overflow })
-        } else if bun_str::strings::eql_case_insensitive_ascii(ident, b"right", true) {
+        } else if bun_string::strings::eql_case_insensitive_ascii(ident, b"right", true) {
             Ok(JustifyItems::Right { overflow })
         } else {
             Err(location.new_unexpected_token_error(Token::Ident(ident)))
@@ -546,25 +546,25 @@ impl LegacyJustify {
         let ident = input.expect_ident()?;
 
         // TODO(port): bun.ComptimeEnumMap getASCIIICaseInsensitive
-        if bun_str::strings::eql_case_insensitive_ascii(ident, b"legacy", true) {
+        if bun_string::strings::eql_case_insensitive_ascii(ident, b"legacy", true) {
             let inner_location = input.current_source_location();
             let inner_ident = input.expect_ident()?;
-            if bun_str::strings::eql_case_insensitive_ascii(inner_ident, b"left", true) {
+            if bun_string::strings::eql_case_insensitive_ascii(inner_ident, b"left", true) {
                 return Ok(LegacyJustify::Left);
-            } else if bun_str::strings::eql_case_insensitive_ascii(inner_ident, b"right", true) {
+            } else if bun_string::strings::eql_case_insensitive_ascii(inner_ident, b"right", true) {
                 return Ok(LegacyJustify::Right);
-            } else if bun_str::strings::eql_case_insensitive_ascii(inner_ident, b"center", true) {
+            } else if bun_string::strings::eql_case_insensitive_ascii(inner_ident, b"center", true) {
                 return Ok(LegacyJustify::Center);
             } else {
                 return Err(inner_location.new_unexpected_token_error(Token::Ident(inner_ident)));
             }
-        } else if bun_str::strings::eql_case_insensitive_ascii(ident, b"left", true) {
+        } else if bun_string::strings::eql_case_insensitive_ascii(ident, b"left", true) {
             input.expect_ident_matching("legacy")?;
             return Ok(LegacyJustify::Left);
-        } else if bun_str::strings::eql_case_insensitive_ascii(ident, b"right", true) {
+        } else if bun_string::strings::eql_case_insensitive_ascii(ident, b"right", true) {
             input.expect_ident_matching("legacy")?;
             return Ok(LegacyJustify::Right);
-        } else if bun_str::strings::eql_case_insensitive_ascii(ident, b"center", true) {
+        } else if bun_string::strings::eql_case_insensitive_ascii(ident, b"center", true) {
             input.expect_ident_matching("legacy")?;
             return Ok(LegacyJustify::Center);
         }

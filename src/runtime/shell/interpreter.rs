@@ -873,9 +873,12 @@ pub use crate::shell::builtin::Builtin;
 pub use crate::shell::io_reader::IOReader;
 pub use crate::shell::io_writer::IOWriter;
 
+/// Spec: interpreter.zig `closefd` → `fd.closeAllowingBadFileDescriptor`.
+/// Tolerates EBADF (already-closed) so cleanup paths that may double-close
+/// don't panic; skips stdin/stdout/stderr.
 pub fn closefd(fd: Fd) {
-    // TODO(b2-blocked): bun_sys::Fd::close — once Fd has the close method
-    let _ = fd;
+    use bun_sys::FdExt;
+    let _ = fd.close_allowing_bad_file_descriptor(None);
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -902,8 +905,17 @@ pub enum ParseFlagResult {
     ShowUsage,
 }
 
-/// Spec: interpreter.zig `unsupportedFlag`. Zig concatenates at comptime; in
-/// Rust we just hand back the flag and let the caller `fmt_error_arena` it.
+/// Spec: interpreter.zig `unsupportedFlag` (interpreter.zig:2063-2065) returns
+/// the comptime-concatenated `"unsupported option, please open a GitHub issue
+/// -- " ++ name ++ "\n"`. Every caller then wraps that AGAIN in the same
+/// prefix via `fmtErrorArena`, so Zig's stderr prints the prefix twice.
+///
+/// PORT NOTE — intentional spec-bug fix: we return just `name` and let the
+/// caller's `fmt_error_arena` add the prefix once. This diverges from Zig's
+/// observable doubled output; update Zig (or any snapshot tests asserting the
+/// doubled message) rather than reproducing the duplication here. Reproducing
+/// it would require runtime allocation (`Box::leak` is forbidden — see
+/// PORTING.md §Forbidden) since Rust can't comptime-concat a non-const arg.
 #[inline]
 pub const fn unsupported_flag(name: &'static [u8]) -> *const [u8] {
     name as *const [u8]

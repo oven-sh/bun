@@ -27,57 +27,8 @@ macro_rules! gated_rule {
     };
 }
 
-gated_rule!(import, {
-    use crate::{PrintErr, Printer};
-    /// `@import` rule. Data-only stub of `rules/import.rs::ImportRule`.
-    #[derive(Default)]
-    pub struct ImportRule {
-        pub url: &'static [u8],
-        pub import_record_idx: u32,
-        pub supports: Option<super::supports::SupportsCondition>,
-        pub media: crate::media_query::MediaList,
-        pub layer: Option<Option<super::layer::LayerName>>,
-        pub loc: super::Location,
-    }
-    impl ImportRule {
-        pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
-            todo!("blocked_on: rules/import.rs un-gate")
-        }
-    }
-    /// `layer(...) supports(...) <media>` tail of an `@import`.
-    #[derive(Default)]
-    pub struct ImportConditions;
-});
-gated_rule!(layer, {
-    use crate::{PrintErr, Printer, SmallList};
-    /// Dotted layer name (`a.b.c`). `SmallList<[]const u8, 1>` newtype.
-    #[derive(Default)]
-    pub struct LayerName {
-        pub v: SmallList<&'static [u8], 1>,
-    }
-    /// `@layer a, b.c;` statement form.
-    #[derive(Default)]
-    pub struct LayerStatementRule {
-        pub names: SmallList<LayerName, 1>,
-        pub loc: super::Location,
-    }
-    impl LayerStatementRule {
-        pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
-            todo!("blocked_on: rules/layer.rs un-gate")
-        }
-    }
-    /// `@layer name { ... }` block form.
-    pub struct LayerBlockRule<R> {
-        pub name: Option<LayerName>,
-        pub rules: super::CssRuleList<R>,
-        pub loc: super::Location,
-    }
-    impl<R> LayerBlockRule<R> {
-        pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
-            todo!("blocked_on: rules/layer.rs un-gate")
-        }
-    }
-});
+pub mod import;
+pub mod layer;
 pub mod style;
 pub mod keyframes;
 pub mod font_face;
@@ -100,32 +51,8 @@ gated_rule!(custom_media, {
         }
     }
 });
-gated_rule!(namespace, {
-    use crate::{PrintErr, Printer};
-    #[derive(Default)]
-    pub struct NamespaceRule;
-    impl NamespaceRule {
-        pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
-            todo!("blocked_on: rules/namespace.rs un-gate")
-        }
-    }
-});
-gated_rule!(unknown, {
-    use crate::{PrintErr, Printer};
-    /// An at-rule the parser didn't recognize. Preserved as raw token list.
-    #[derive(Default)]
-    pub struct UnknownAtRule {
-        pub name: &'static [u8],
-        pub prelude: crate::properties::custom::TokenList,
-        pub block: Option<crate::properties::custom::TokenList>,
-        pub loc: super::Location,
-    }
-    impl UnknownAtRule {
-        pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
-            todo!("blocked_on: rules/unknown.rs un-gate")
-        }
-    }
-});
+pub mod namespace;
+pub mod unknown;
 pub mod document;
 pub mod nesting;
 pub mod viewport;

@@ -1,13 +1,13 @@
-use bun_css as css;
-use bun_css::{
+use crate as css;
+use crate::{
     DeclarationList, Feature, Parser, ParserError, PrintErr, Printer, Property,
     PropertyCategory, PropertyHandlerContext, PropertyId, PropertyIdTag, Result as CssResult,
     SmallList, Targets,
 };
-use bun_css::css_values::color::{ColorFallbackKind, CssColor};
-use bun_css::css_values::length::Length;
-use bun_css::css_properties::custom::UnparsedProperty;
-use bun_css::targets::Browsers;
+use crate::css_values::color::{ColorFallbackKind, CssColor};
+use crate::css_values::length::Length;
+use crate::css_properties::custom::UnparsedProperty;
+use crate::targets::Browsers;
 
 use super::border_image::BorderImageHandler;
 use super::border_radius::BorderRadiusHandler;

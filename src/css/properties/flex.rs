@@ -1,4 +1,4 @@
-use bun_css as css;
+use crate as css;
 
 use css::{Printer, PrintErr, Property, PropertyId, PropertyIdTag, VendorPrefix};
 use css::css_values::number::{CSSNumber, CSSNumberFns, CSSInteger};

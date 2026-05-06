@@ -1,11 +1,11 @@
-use bun_css::{self as css, Parser, Printer, PrintErr, Property, PropertyId, PropertyIdTag, VendorPrefix, SmallList, DeclarationList, PropertyHandlerContext, ColorFallbackKind};
-use bun_css::css_values::length::LengthPercentageOrAuto;
-use bun_css::css_values::image::Image;
-use bun_css::css_values::color::CssColor;
-use bun_css::css_values::ratio::Ratio;
-use bun_css::css_values::position::{HorizontalPosition, VerticalPosition, Position};
+use crate::{self as css, Parser, Printer, PrintErr, Property, PropertyId, PropertyIdTag, VendorPrefix, SmallList, DeclarationList, PropertyHandlerContext, ColorFallbackKind};
+use crate::css_values::length::LengthPercentageOrAuto;
+use crate::css_values::image::Image;
+use crate::css_values::color::CssColor;
+use crate::css_values::ratio::Ratio;
+use crate::css_values::position::{HorizontalPosition, VerticalPosition, Position};
 use bun_alloc::Arena as Bump;
-use bun_str::strings;
+use bun_string::strings;
 
 /// A value for the [background](https://www.w3.org/TR/css-backgrounds-3/#background) shorthand property.
 #[derive(Clone)]

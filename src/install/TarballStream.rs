@@ -1227,11 +1227,10 @@ fn make_symlink(
     {
         let symlink_dir = bun_paths::dirname(path_slice).unwrap_or(b"");
         let mut join_buf = PathBuffer::uninit();
-        let resolved = bun_paths::join_abs_string_buf(
+        let resolved = resolve_path::join_abs_string_buf::<platform::Posix>(
             b"/packages/",
-            join_buf.as_mut_slice(),
+            &mut join_buf[..],
             &[symlink_dir, target],
-            bun_paths::Style::Posix,
         );
         if !resolved.starts_with(b"/packages/") {
             return;
@@ -1239,11 +1238,11 @@ fn make_symlink(
     }
     match bun_sys::symlinkat(target, dest_fd, path) {
         Ok(()) => {}
-        Err(e) if e == bun_core::err!("EPERM") || e == bun_core::err!("ENOENT") => {
+        Err(e) if matches!(e.get_errno(), bun_sys::E::EPERM | bun_sys::E::ENOENT) => {
             let Some(dir) = bun_paths::dirname(path_slice) else {
                 return;
             };
-            let _ = dest_fd.make_path::<u8>(dir);
+            let _ = dest_fd.make_path(dir);
             let _ = bun_sys::symlinkat(target, dest_fd, path);
         }
         Err(_) => {}
@@ -1294,9 +1293,9 @@ fn tokenizer_rest_placeholder(s: &[OSPathChar]) -> &[OSPathChar] {
 }
 
 // Resolved Phase-B paths: Resolution::Tag is the real npm/git/tarball
-// discriminant; TaskData/TaskStatus live on the PackageManagerTask stub.
+// discriminant; Data/Status live on PackageManagerTask.
 use crate::resolution::Tag as ResolutionTag;
-use crate::package_manager_task::{TaskData, TaskStatus};
+use crate::package_manager_task::{Data as TaskData, Status as TaskStatus};
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

@@ -397,8 +397,8 @@ pub fn do_patch_commit(
                 Global::crash();
             }
         };
-        let paths = bun_patch::git_diff_preprocess_paths(old_folder, new_folder, false);
-        let opts = bun_patch::spawn_opts(paths[0], paths[1], cwd.as_bytes(), git, &manager.event_loop);
+        let paths = bun_patch::git_diff_preprocess_paths::<false>(old_folder, new_folder);
+        let (opts, _envp_guard) = bun_patch::spawn_opts(paths[0], paths[1], cwd, git, &mut manager.event_loop);
 
         let mut spawn_result = match bun_spawn::sync::spawn(&opts) {
             Err(e) => {

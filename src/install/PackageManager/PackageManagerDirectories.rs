@@ -310,7 +310,7 @@ pub fn cached_git_folder_name_print_auto(this: &PackageManager, repository: &Rep
     ZStr::EMPTY
 }
 
-pub fn cached_github_folder_name_print(buf: &mut [u8], resolved: &[u8], patch_hash: Option<u64>) -> &ZStr {
+pub fn cached_github_folder_name_print<'a>(buf: &'a mut [u8], resolved: &[u8], patch_hash: Option<u64>) -> &'a ZStr {
     buf_print_z(
         buf,
         format_args!(
@@ -500,7 +500,7 @@ pub fn cached_npm_package_folder_print_basename<'a>(
     .expect("unreachable")
 }
 
-pub fn cached_tarball_folder_name_print(buf: &mut [u8], url: &[u8], patch_hash: Option<u64>) -> &ZStr {
+pub fn cached_tarball_folder_name_print<'a>(buf: &'a mut [u8], url: &[u8], patch_hash: Option<u64>) -> &'a ZStr {
     buf_print_z(
         buf,
         format_args!(
@@ -572,7 +572,7 @@ pub fn global_link_dir(this: &mut PackageManager) -> Dir {
             Global::exit(1);
         }
     };
-    this.global_link_dir_path = bun_fs::file_system::DirnameStore::instance().append(path_);
+    this.global_link_dir_path = bun_core::handle_oom(FileSystem::instance().dirname_store().append(path_));
     this.global_link_dir.unwrap()
 }
 
@@ -772,7 +772,7 @@ pub fn attempt_to_create_package_json_and_open() -> Result<File, Error> {
     // TODO(port): narrow error set
     let package_json_file = match Dir::cwd().create_file_z(
         ZStr::from_static(b"package.json\0"),
-        sys::CreateFileOptions { read: true, ..Default::default() },
+        sys::CreateFlags { read: true, ..Default::default() },
     ) {
         Ok(f) => f,
         Err(err) => {

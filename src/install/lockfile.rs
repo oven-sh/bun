@@ -1816,10 +1816,10 @@ impl Lockfile {
             let mut cursor: &mut [u8] = &mut tmpname_buf[..];
             let start_len = cursor.len();
             if save_format == LockfileFormat::Text {
-                write!(cursor, ".lock-{:x}.tmp\0", bun_core::fmt::HexBytes(&base64_bytes))
+                write!(cursor, ".lock-{}.tmp\0", bun_core::fmt::HexBytes::<true>(&base64_bytes))
                     .expect("unreachable");
             } else {
-                write!(cursor, ".lockb-{:x}.tmp\0", bun_core::fmt::HexBytes(&base64_bytes))
+                write!(cursor, ".lockb-{}.tmp\0", bun_core::fmt::HexBytes::<true>(&base64_bytes))
                     .expect("unreachable");
             }
             let written = start_len - cursor.len();
@@ -1893,7 +1893,7 @@ impl Lockfile {
     }
 
     #[inline]
-    pub fn str<T: bun_semver::Slicable>(&self, slicable: &T) -> &[u8] {
+    pub fn str<'a, T: bun_semver::Slicable>(&'a self, slicable: &'a T) -> &'a [u8] {
         // PORT NOTE: Zig had compile-time guards rejecting by-value String/ExternalString.
         // In Rust we just take &T; the temporary-pointer hazard does not exist.
         slicable.slice(self.buffers.string_bytes.as_slice())
@@ -2778,7 +2778,7 @@ impl Lockfile {
             let _ = string_builder.fmt(format_args!(
                 "{}@{}\n",
                 bstr::BStr::new(names[i as usize].slice(bytes)),
-                resolutions[i as usize].fmt(bytes, Path::Style::Any)
+                resolutions[i as usize].fmt(bytes, PathSep::Any)
             ));
         }
 

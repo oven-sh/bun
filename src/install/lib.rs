@@ -932,10 +932,10 @@ impl PackageManager {
         {
             Ok(d) => d,
             Err(err) => {
-                bun_core::Output::pretty_errorln(
+                bun_core::Output::pretty_errorln(format_args!(
                     "<r><red>error<r>: bun is unable to access tempdir: {}",
-                    (err,),
-                );
+                    err,
+                ));
                 bun_core::Global::crash();
             }
         };

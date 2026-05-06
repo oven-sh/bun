@@ -374,12 +374,13 @@ impl ZlibAllocator {
     pub unsafe extern "C" fn alloc(_: *mut c_void, items: uInt, len: uInt) -> *mut c_void {
         if bun_alloc::heap_breakdown::ENABLED {
             let zone = bun_alloc::get_zone!("zlib");
-            // SAFETY: zone is a valid malloc zone; calloc returns null on OOM.
-            let p = unsafe { bun_alloc::heap_breakdown::malloc_zone_calloc(zone as *const _ as *mut _, items as usize, len as usize) };
-            if p.is_null() {
-                bun::out_of_memory();
-            }
-            return p;
+            // Zig: `zone.malloc_zone_calloc(items, len) orelse bun.outOfMemory()`.
+            // The method derives its `*mut Zone` through `UnsafeCell` (see
+            // `Zone::as_mut_ptr`), so no `*const → *mut` cast is needed here.
+            return match zone.malloc_zone_calloc(items as usize, len as usize) {
+                Some(p) => p,
+                None => bun::out_of_memory(),
+            };
         }
 
         // SAFETY: mi_calloc is a plain C allocator; null on OOM.

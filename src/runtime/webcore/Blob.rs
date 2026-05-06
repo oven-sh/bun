@@ -4178,18 +4178,25 @@ impl Blob {
         }
 
         // PORT NOTE: reshaped for borrowck — Zig @constCast'd shared_view().
-        // SAFETY: `to_string_with_bytes` only frees `raw_bytes` in the
-        // `Temporary` arm, which by Zig invariant is never reached from this
-        // call site (the bytes are store-owned, not a leaked Box). For all
-        // other arms the pointer is read-only, so the const→mut cast is never
-        // written through. Mirrors Zig `@constCast(this.sharedView())`.
+        // SAFETY: `view_ptr` is derived from a shared borrow into the Store's
+        // byte allocation (via `StoreRef::deref` → `NonNull::as_ref`, so its
+        // provenance is rooted in the Store heap, not in `self`). It is *only
+        // ever read* by `to_string_with_bytes` (`&*raw_bytes`); the sole write
+        // path — `Box::from_raw` in the `Temporary` arm — is statically
+        // unreachable below, so the const→mut cast is never written through.
+        // Mirrors Zig `@constCast(this.sharedView())`.
         let view_ptr = view_ as *const [u8] as *mut [u8];
         // TODO(port): dispatch on `lifetime` (was comptime in Zig). Phase B.
         match lifetime {
             Lifetime::Clone => self.to_string_with_bytes::<{ Lifetime::Clone }>(global, view_ptr),
             Lifetime::Transfer => self.to_string_with_bytes::<{ Lifetime::Transfer }>(global, view_ptr),
             Lifetime::Share => self.to_string_with_bytes::<{ Lifetime::Share }>(global, view_ptr),
-            Lifetime::Temporary => self.to_string_with_bytes::<{ Lifetime::Temporary }>(global, view_ptr),
+            // UB guard: `Temporary` would `Box::from_raw(view_ptr)`, but
+            // `view_ptr` has read-only provenance and points at a store-owned
+            // interior slice (not a leaked `Box<[u8]>`). No Zig caller passes
+            // `.temporary` to `toString`; the leaked-buffer path calls
+            // `to_string_with_bytes` directly with a real `*mut [u8]`.
+            Lifetime::Temporary => unreachable!("Blob::to_string: store-owned bytes are never Temporary"),
         }
     }
 

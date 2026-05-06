@@ -4292,10 +4292,10 @@ pub mod sync {
         let mut ppid_fd = spawn_sys::INVALID_FD;
         if ppid > 1 {
             match spawn_sys::pidfd_open(ppid, 0) {
-                Maybe::Result(fd) => ppid_fd = Fd::from_native(fd),
+                Maybe::Ok(fd) => ppid_fd = Fd::from_native(fd),
                 Maybe::Err(e) => {
-                    if e.get_errno() == bun_sys::E::SRCH {
-                        Global::exit(ParentDeathWatchdog::EXIT_CODE);
+                    if e.get_errno() == bun_sys::E::ESRCH {
+                        Global::exit(ParentDeathWatchdog::EXIT_CODE as u32);
                     }
                 }
             }

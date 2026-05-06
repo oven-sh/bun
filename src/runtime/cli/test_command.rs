@@ -957,12 +957,12 @@ impl CommandLineReporter {
                 R::Pending | R::Pass | R::Skip | R::SkippedBecauseLabel | R::Todo | R::Fail => {}
 
                 R::FailBecauseFailingTestPassed => { let _ = writer.write_all(&Output::pretty_fmt_rt("  <d>^<r> <red>this test is marked as failing but it passed.<r> <d>Remove `.failing` if tested behavior now works<r>\n", colors)); }
-                R::FailBecauseTodoPassed => { let _ = writer.write_all(&Output::pretty_fmt("  <d>^<r> <red>this test is marked as todo but passes.<r> <d>Remove `.todo` if tested behavior now works<r>\n", colors)); }
+                R::FailBecauseTodoPassed => { let _ = writer.write_all(&Output::pretty_fmt_rt("  <d>^<r> <red>this test is marked as todo but passes.<r> <d>Remove `.todo` if tested behavior now works<r>\n", colors)); }
                 R::FailBecauseExpectedAssertionCount | R::FailBecauseExpectedHasAssertions => {} // printed above
                 R::FailBecauseTimeout => { let _ = write!(writer, "{}", Output::pretty_fmt_args("  <d>^<r> <red>this test timed out after {}ms.<r>\n", colors, (test_entry.timeout,))); }
-                R::FailBecauseHookTimeout => { let _ = writer.write_all(&Output::pretty_fmt("  <d>^<r> <red>a beforeEach/afterEach hook timed out for this test.<r>\n", colors)); }
+                R::FailBecauseHookTimeout => { let _ = writer.write_all(&Output::pretty_fmt_rt("  <d>^<r> <red>a beforeEach/afterEach hook timed out for this test.<r>\n", colors)); }
                 R::FailBecauseTimeoutWithDoneCallback => { let _ = write!(writer, "{}", Output::pretty_fmt_args("  <d>^<r> <red>this test timed out after {}ms, before its done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the test callback function<r>\n", colors, (test_entry.timeout,))); }
-                R::FailBecauseHookTimeoutWithDoneCallback => { let _ = writer.write_all(&Output::pretty_fmt("  <d>^<r> <red>a beforeEach/afterEach hook timed out before its done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the hook callback function<r>\n", colors)); }
+                R::FailBecauseHookTimeoutWithDoneCallback => { let _ = writer.write_all(&Output::pretty_fmt_rt("  <d>^<r> <red>a beforeEach/afterEach hook timed out before its done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the hook callback function<r>\n", colors)); }
             }
         }
     }
@@ -984,7 +984,7 @@ impl CommandLineReporter {
         let line_number = test_entry.base.line_no;
 
         let file: &[u8] = if let Some(runner) = jest::Jest::runner() {
-            runner.files.get(buntest.file_id).source.path.text
+            runner.files.items_source()[buntest.file_id as usize].path.text
         } else {
             b""
         };
@@ -1152,11 +1152,11 @@ impl CommandLineReporter {
                 let colors = Output::enable_ansi_colors_stderr();
                 // PERF(port): was comptime bool dispatch — profile in Phase B
                 match basic {
-                    bun_test::BasicResult::Pass => { let _ = writer.write_all(&Output::pretty_fmt("<r><green>.<r>", colors)); }
-                    bun_test::BasicResult::Skip => { let _ = writer.write_all(&Output::pretty_fmt("<r><yellow>.<d>", colors)); }
-                    bun_test::BasicResult::Todo => { let _ = writer.write_all(&Output::pretty_fmt("<r><magenta>.<r>", colors)); }
-                    bun_test::BasicResult::Pending => { let _ = writer.write_all(&Output::pretty_fmt("<r><d>.<r>", colors)); }
-                    bun_test::BasicResult::Fail => { let _ = writer.write_all(&Output::pretty_fmt("<r><red>.<r>", colors)); }
+                    bun_test::BasicResult::Pass => { let _ = writer.write_all(&Output::pretty_fmt_rt("<r><green>.<r>", colors)); }
+                    bun_test::BasicResult::Skip => { let _ = writer.write_all(&Output::pretty_fmt_rt("<r><yellow>.<d>", colors)); }
+                    bun_test::BasicResult::Todo => { let _ = writer.write_all(&Output::pretty_fmt_rt("<r><magenta>.<r>", colors)); }
+                    bun_test::BasicResult::Pending => { let _ = writer.write_all(&Output::pretty_fmt_rt("<r><d>.<r>", colors)); }
+                    bun_test::BasicResult::Fail => { let _ = writer.write_all(&Output::pretty_fmt_rt("<r><red>.<r>", colors)); }
                 }
                 buntest.reporter.as_ref().unwrap().last_printed_dot.set(true);
             } else if basic != bun_test::BasicResult::Fail
@@ -1164,7 +1164,7 @@ impl CommandLineReporter {
             {
                 // when using --only-failures, only print failures
             } else {
-                buntest.bun_test_root.on_before_print();
+                unsafe { (*buntest.bun_test_root).on_before_print(); }
 
                 // TODO(port): write_test_status_line takes comptime status in Zig
                 if Output::enable_ansi_colors_stderr() {
@@ -1312,10 +1312,10 @@ impl CommandLineReporter {
         }
         byte_ranges.sort_by(coverage::is_less_than_cmp);
 
-        let relative_dir = vm.transpiler.fs.top_level_dir;
+        let relative_dir = unsafe { (*vm.transpiler.fs).top_level_dir };
         let file = match File::openat(Fd::cwd(), out_path, bun_sys::O::CREAT | bun_sys::O::WRONLY | bun_sys::O::TRUNC | bun_sys::O::CLOEXEC, 0o644) {
             bun_sys::Result::Err(e) => {
-                Output::err(bun_core::err!("lcovCoverageError"), format_args!("failed to open coverage fragment {}\n{}", bstr::BStr::new(out_path.as_bytes()), e));
+                Output::err(bun_core::err!("lcovCoverageError"), "failed to open coverage fragment {}\n{}", (bstr::BStr::new(out_path.as_bytes()), e));
                 return Err(bun_core::err!("OpenFailed"));
             }
             bun_sys::Result::Ok(f) => f,
@@ -1330,7 +1330,7 @@ impl CommandLineReporter {
             if !opts.ignore_patterns.is_empty() {
                 let rel = resolve_path::relative(relative_dir, entry.source_url.slice());
                 let mut skip = false;
-                for p in &opts.ignore_patterns {
+                for p in opts.ignore_patterns {
                     if bun_glob::r#match(p, rel).matches() {
                         skip = true;
                         break;
@@ -1340,7 +1340,7 @@ impl CommandLineReporter {
                     continue;
                 }
             }
-            let Some(mut report) = CodeCoverageReport::generate(vm.global, entry, opts.ignore_sourcemap) else { continue; };
+            let Some(mut report) = CodeCoverageReport::generate(unsafe { &*vm.global }, entry, opts.ignore_sourcemap) else { continue; };
             // report dropped at end of iteration
             if coverage::Lcov::write_format(&report, relative_dir, writer).is_err() {
                 continue;
@@ -1373,7 +1373,7 @@ impl CommandLineReporter {
             unreachable!("No reporters enabled");
         }
 
-        let relative_dir = vm.transpiler.fs.top_level_dir;
+        let relative_dir = unsafe { (*vm.transpiler.fs).top_level_dir };
 
         // --- Text ---
         let max_filepath_length: usize = if REPORTERS_TEXT {
@@ -1386,7 +1386,7 @@ impl CommandLineReporter {
                     // Check if this file should be ignored based on coveragePathIgnorePatterns
                     if !opts.ignore_patterns.is_empty() {
                         let mut should_ignore = false;
-                        for pattern in &opts.ignore_patterns {
+                        for pattern in opts.ignore_patterns {
                             if bun_glob::r#match(pattern, relative_path).matches() {
                                 should_ignore = true;
                                 break;
@@ -1412,16 +1412,16 @@ impl CommandLineReporter {
         let mut failing = false;
 
         if REPORTERS_TEXT {
-            if console.write_all(&Output::pretty_fmt("<r><d>", ENABLE_ANSI_COLORS)).is_err() { return Ok(()); }
+            if console.write_all(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><d>")).is_err() { return Ok(()); }
             if console.splat_byte_all(b'-', max_filepath_length + 2).is_err() { return Ok(()); }
-            if console.write_all(&Output::pretty_fmt("|---------|---------|-------------------<r>\n", ENABLE_ANSI_COLORS)).is_err() { return Ok(()); }
+            if console.write_all(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("|---------|---------|-------------------<r>\n")).is_err() { return Ok(()); }
             if console.write_all(b"File").is_err() { return Ok(()); }
             if console.splat_byte_all(b' ', max_filepath_length - b"File".len() + 1).is_err() { return Ok(()); }
             // writer.writeAll(Output.prettyFmt(" <d>|<r> % Funcs <d>|<r> % Blocks <d>|<r> % Lines <d>|<r> Uncovered Line #s\n", enable_ansi_colors)) catch return;
-            if console.write_all(&Output::pretty_fmt(" <d>|<r> % Funcs <d>|<r> % Lines <d>|<r> Uncovered Line #s\n", ENABLE_ANSI_COLORS)).is_err() { return Ok(()); }
-            if console.write_all(&Output::pretty_fmt("<d>", ENABLE_ANSI_COLORS)).is_err() { return Ok(()); }
+            if console.write_all(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>(" <d>|<r> % Funcs <d>|<r> % Lines <d>|<r> Uncovered Line #s\n")).is_err() { return Ok(()); }
+            if console.write_all(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<d>")).is_err() { return Ok(()); }
             if console.splat_byte_all(b'-', max_filepath_length + 2).is_err() { return Ok(()); }
-            if console.write_all(&Output::pretty_fmt("|---------|---------|-------------------<r>\n", ENABLE_ANSI_COLORS)).is_err() { return Ok(()); }
+            if console.write_all(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("|---------|---------|-------------------<r>\n")).is_err() { return Ok(()); }
         }
 
         let mut console_buffer: Vec<u8> = Vec::new();
@@ -1478,7 +1478,7 @@ impl CommandLineReporter {
 
                 match file {
                     bun_sys::Result::Err(err) => {
-                        Output::err(bun_core::err!("lcovCoverageError"), format_args!("Failed to create lcov file"));
+                        Output::err(bun_core::err!("lcovCoverageError"), "Failed to create lcov file", ());
                         Output::print_error(format_args!("\n{}", err));
                         Global::exit(1);
                     }
@@ -1515,7 +1515,7 @@ impl CommandLineReporter {
                 let relative_path = resolve_path::relative(relative_dir, utf8);
 
                 let mut should_ignore = false;
-                for pattern in &opts.ignore_patterns {
+                for pattern in opts.ignore_patterns {
                     if bun_glob::r#match(pattern, relative_path).matches() {
                         should_ignore = true;
                         break;
@@ -1527,7 +1527,7 @@ impl CommandLineReporter {
                 }
             }
 
-            let Some(mut report) = CodeCoverageReport::generate(vm.global, entry, opts.ignore_sourcemap) else { continue; };
+            let Some(mut report) = CodeCoverageReport::generate(unsafe { &*vm.global }, entry, opts.ignore_sourcemap) else { continue; };
 
             if REPORTERS_TEXT {
                 let mut fraction = base_fraction;
@@ -1542,7 +1542,7 @@ impl CommandLineReporter {
                     failing = true;
                 }
 
-                if console_writer.extend_from_slice(b"\n").is_err() { /* TODO(port): writeAll catch continue */ }
+                console_writer.extend_from_slice(b"\n");
             }
 
             if REPORTERS_LCOV {
@@ -1586,14 +1586,14 @@ impl CommandLineReporter {
                     ENABLE_ANSI_COLORS,
                 )?;
 
-                console.write_all(&Output::pretty_fmt("<r><d> |<r>\n", ENABLE_ANSI_COLORS))?;
+                console.write_all(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><d> |<r>\n"))?;
             }
 
             // TODO(port): console_writer.flush() — Vec<u8> has nothing to flush
             console.write_all(&console_buffer)?;
-            console.write_all(&Output::pretty_fmt("<r><d>", ENABLE_ANSI_COLORS))?;
+            console.write_all(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><d>"))?;
             if console.splat_byte_all(b'-', max_filepath_length + 2).is_err() { return Ok(()); }
-            if console.write_all(&Output::pretty_fmt("|---------|---------|-------------------<r>\n", ENABLE_ANSI_COLORS)).is_err() { return Ok(()); }
+            if console.write_all(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("|---------|---------|-------------------<r>\n")).is_err() { return Ok(()); }
 
             opts.fractions.failing = failing;
             Output::flush();
@@ -1615,7 +1615,7 @@ impl CommandLineReporter {
                         &[&opts.reports_directory, b"lcov.info"],
                     ),
                 ) {
-                    Output::err(err, format_args!("Failed to save lcov.info file"));
+                    Output::err(err, "Failed to save lcov.info file", ());
                     Global::exit(1);
                 }
             }

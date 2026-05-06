@@ -3224,7 +3224,14 @@ impl RunCommand {
         // SAFETY: `Transpiler::init` always sets `env`/`fs` (process-lifetime singletons).
         let env_loader = unsafe { &mut *this_transpiler.env };
         let fs_ref = unsafe { &*this_transpiler.fs };
-        let path = env_loader.get(b"PATH").unwrap_or(b"");
+        // PORT NOTE: detach the lifetime — env-map values live for the process
+        // (Zig returned a raw `[]const u8`); the subsequent `&mut` borrow for
+        // `load_node_js_config` would otherwise conflict with `path`/`*op`.
+        let path: &[u8] = match env_loader.get(b"PATH") {
+            // SAFETY: env-map storage is process-lifetime (see DotEnv::Map).
+            Some(p) => unsafe { ::core::slice::from_raw_parts(p.as_ptr(), p.len()) },
+            None => b"",
+        };
         if let Some(op) = original_path {
             *op = path;
         }

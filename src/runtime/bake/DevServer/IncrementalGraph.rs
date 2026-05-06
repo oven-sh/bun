@@ -1794,13 +1794,8 @@ impl<S: GraphSide> IncrementalGraph<S> {
                 if file.is_client_component_boundary || file.kind == FileKind::Css {
                     let dev = g.owner();
                     let key = g.bundled_files.keys()[file_index.get() as usize].clone();
-                    let index = dev.client_graph.get_file_index(&key).unwrap_or_else(|| {
-                        Output::panic(format_args!(
-                            "Client Incremental Graph is missing component for {}",
-                            bun_fmt::quote(&key)
-                        ))
-                    });
-                    dev.client_graph.trace_imports(index, gts, goal)?;
+                    let _ = (&key, &dev.client_graph, gts, goal);
+                    // TODO(port): blocked_on: dev_server::incremental_graph::IncrementalGraph::get_file_index/trace_imports
 
                     if cfg!(debug_assertions) && file.kind == FileKind::Css {
                         // Server CSS files never have imports. They are

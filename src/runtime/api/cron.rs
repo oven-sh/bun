@@ -697,8 +697,8 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
         let abs_path = match resolve_path(global, frame, path_slice.slice()) {
             Ok(p) => p,
             Err(_) => {
-                return global
-                    .throw_invalid_arguments(format_args!("Failed to resolve path"))
+                return Err(global
+                    .throw_invalid_arguments(format_args!("Failed to resolve path")))
             }
         };
 
@@ -706,31 +706,31 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
         // percent signs (cron interprets % as newline before the shell sees it)
         for &c in abs_path.as_bytes() {
             if c == b'\'' {
-                return global.throw_invalid_arguments(format_args!(
+                return Err(global.throw_invalid_arguments(format_args!(
                     "Path must not contain single quotes"
-                ));
+                )));
             }
             if c == b'%' {
-                return global.throw_invalid_arguments(format_args!(
+                return Err(global.throw_invalid_arguments(format_args!(
                     "Path must not contain percent signs (cron interprets % as newline)"
-                ));
+                )));
             }
         }
 
         let bun_exe = match bun_core::self_exe_path() {
             Ok(p) => p,
             Err(_) => {
-                return global.throw(format_args!("Failed to get bun executable path"));
+                return Err(global.throw("{}", format_args!("Failed to get bun executable path")));
             }
         };
         if bun_str::strings::index_of_any(bun_exe.as_bytes(), b"'%").is_some() {
-            return global.throw_invalid_arguments(format_args!(
+            return Err(global.throw_invalid_arguments(format_args!(
                 "Bun executable path '{}' contains characters (' or %) that cannot be safely embedded in a crontab entry",
                 bstr::BStr::new(bun_exe.as_bytes())
-            ));
+            )));
         }
         let job = Box::into_raw(Box::new(CronRegisterJob {
-            promise: JSPromise::Strong::init(global),
+            promise: jsc::JSPromiseStrong::init(global),
             // SAFETY: global outlives the job; JSC_BORROW per LIFETIMES.tsv.
             global: unsafe { core::mem::transmute::<&JSGlobalObject, &'static JSGlobalObject>(global) },
             poll: KeepAlive::default(),
@@ -753,7 +753,7 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
         let job_ref = unsafe { &mut *job };
 
         let promise_value = job_ref.promise.value();
-        job_ref.poll.ref_(VirtualMachine::get());
+        job_ref.poll.ref_(vm_ctx());
 
         #[cfg(target_os = "macos")]
         job_ref.start_mac();

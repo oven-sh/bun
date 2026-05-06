@@ -661,7 +661,9 @@ impl CreateCommand {
                         };
 
                         package_json_contents = MutableString::init(usize::try_from(size).unwrap())?;
-                        package_json_contents.list.expand_to_capacity();
+                        // Zig: list.expandToCapacity() — set len to capacity so the buffer is readable.
+                        let cap = package_json_contents.list.capacity();
+                        package_json_contents.list.resize(cap, 0);
 
                         #[cfg(windows)]
                         let prev_file_pos = pkg.get_pos()?;

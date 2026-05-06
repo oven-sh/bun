@@ -2422,28 +2422,32 @@ fn add_archive_entry(
     entry.set_mtime(499162500, 0);
 
     match archive.write_header(entry) {
-        Archive::Status::Failed | Archive::Status::Fatal => {
-            Output::err_generic("failed to write tarball header: {}", format_args!("{}", bstr::BStr::new(archive.error_string())));
+        ArchiveStatus::Failed | ArchiveStatus::Fatal => {
+            Output::err_generic("failed to write tarball header: {}", format_args!("{}", bstr::BStr::new(Archive::error_string(archive as *mut Archive))));
             Global::crash();
         }
         _ => {}
     }
 
-    *file_reader = BufferedFileReader::new(File::from(file).reader());
+    // PORT NOTE: `BufferedReader<_, File>` is unusable until `bun_sys::File`
+    // implements `DeprecatedRead`; the read_buf is already 512 KiB so a direct
+    // `read()` loop is equivalent to the Zig buffered path here.
+    let _ = file_reader;
+    let file_h = File::from_fd(file);
 
-    let mut read = match file_reader.read(read_buf) {
+    let mut read = match file_h.read(read_buf) {
         Ok(n) => n,
         Err(err) => {
-            Output::err(err, "failed to read file: \"{}\"", format_args!("{}", bstr::BStr::new(filename.as_bytes())));
+            Output::err(bun_core::Error::from(err), "failed to read file: \"{}\"", format_args!("{}", bstr::BStr::new(filename.as_bytes())));
             Global::crash();
         }
     };
     while read > 0 {
         ctx.stats.unpacked_size += usize::try_from(archive.write_data(&read_buf[..read])).unwrap();
-        read = match file_reader.read(read_buf) {
+        read = match file_h.read(read_buf) {
             Ok(n) => n,
             Err(err) => {
-                Output::err(err, "failed to read file: \"{}\"", format_args!("{}", bstr::BStr::new(filename.as_bytes())));
+                Output::err(bun_core::Error::from(err), "failed to read file: \"{}\"", format_args!("{}", bstr::BStr::new(filename.as_bytes())));
                 Global::crash();
             }
         };

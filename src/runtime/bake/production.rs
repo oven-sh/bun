@@ -1036,13 +1036,13 @@ pub fn build_with_vm(
         next = route.parent;
         file_count = 1;
         css_file_count = 0;
-        file_list.put_index(global, 0, pt.preload_bundled_module(main_file_route_index)?)?;
+        file_list.put_index(global, 0, pt.preload_bundled_module(main_file_route_index).map_err(js_err)?).map_err(js_err)?;
         for r#ref in main_file.referenced_css_chunks.iter() {
             styles.put_index(
                 global,
                 css_file_count,
                 css_chunk_js_strings[r#ref.0 as usize - css_chunks_first],
-            )?;
+            ).map_err(js_err)?;
             css_file_count += 1;
         }
         if let Some(file) = route.file_layout {

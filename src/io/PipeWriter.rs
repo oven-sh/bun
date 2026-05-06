@@ -15,7 +15,6 @@ use crate::pipes::{FileType, PollOrFd};
 #[cfg(windows)]
 use crate::source::Source;
 
-#[allow(non_upper_case_globals)]
 bun_core::declare_scope!(PipeWriter, hidden);
 macro_rules! log {
     ($($args:tt)*) => { bun_core::scoped_log!(PipeWriter, $($args)*) };

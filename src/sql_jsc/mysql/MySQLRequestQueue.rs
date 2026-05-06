@@ -189,7 +189,9 @@ impl MySQLRequestQueue {
                 }
                 if req.is_being_prepared() {
                     debug!("isBeingPrepared");
-                    // SAFETY: caller contract; touches timer state, not the queue.
+                    // SAFETY: fresh `&mut *connection` reborrow (child of the
+                    // shared raw tag); touches timer state outside the queue,
+                    // and no `(*this)` access overlaps its lifetime.
                     unsafe { (*connection).reset_connection_timeout() };
                     unsafe {
                         (*this).is_ready_for_query = false;
@@ -197,7 +199,9 @@ impl MySQLRequestQueue {
                     }
                     break 'advance;
                 } else if req.is_running() {
-                    // SAFETY: caller contract; touches timer state, not the queue.
+                    // SAFETY: fresh `&mut *connection` reborrow (child of the
+                    // shared raw tag); touches timer state outside the queue,
+                    // and no `(*this)` access overlaps its lifetime.
                     unsafe { (*connection).reset_connection_timeout() };
                     debug!("isRunning after run");
                     unsafe { (*this).is_ready_for_query = false };

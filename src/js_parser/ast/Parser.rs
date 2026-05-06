@@ -828,8 +828,8 @@ impl<'a> Parser<'a> {
             // `scopes_in_order_for_enum` lookups linear-scan `keys()` —
             // matches Zig's ArrayHashMap linear behaviour at small N (one
             // entry per top-level `enum`). `scope_order_to_visit` is `&'a mut
-            // [_]` (not Copy), so save/restore round-trips through a raw
-            // pointer (Zig held a plain `[]ScopeOrder` slice).
+            // [_]`; save/restore moves the unique borrow out into a local and
+            // back (Zig held a plain `[]ScopeOrder` slice value).
             let allocator = p.allocator;
             let mut preprocessed_enums: BumpVec<BumpVec<'a, js_ast::Part>> =
                 BumpVec::new_in(allocator);
@@ -837,18 +837,23 @@ impl<'a> Parser<'a> {
             if p.scopes_in_order_for_enum.count() > 0 {
                 for stmt in stmts.iter_mut() {
                     if matches!(stmt.data, js_ast::StmtData::SEnum(_)) {
-                        // SAFETY: stash the unique `&'a mut [_]` as a raw ptr.
-                        let old_scopes_in_order =
-                            core::mem::replace(&mut p.scope_order_to_visit, &mut []) as *mut [_];
+                        // Stash the unique `&'a mut [_]` by value — no raw ptr needed.
+                        let old_scopes_in_order: &'a mut [_] =
+                            core::mem::replace(&mut p.scope_order_to_visit, &mut []);
                         let idx = p
                             .scopes_in_order_for_enum
                             .keys()
                             .iter()
                             .position(|k| *k == stmt.loc)
                             .expect("enum scope-order entry recorded during parse");
-                        // SAFETY: reborrow the map-stored `&'a mut [_]` for the
-                        // duration of `append_part`; nothing else reads the map
-                        // entry until we restore below.
+                        // SAFETY: Zig's `[]ScopeOrder` map values freely alias
+                        // with `scope_order_to_visit`. Rust models both as
+                        // `&'a mut [_]`, so this materializes a second `&'a mut`
+                        // to the same arena slice. Kept raw-ptr-shaped pending
+                        // a P.rs field-type change (`scopes_in_order_for_enum`
+                        // values → `*mut [ScopeOrder]`); `append_part →
+                        // visit_stmts` re-reads the map entry, so it cannot be
+                        // moved out here.
                         p.scope_order_to_visit = unsafe {
                             let slot: &mut &'a mut [_] =
                                 &mut p.scopes_in_order_for_enum.values_mut()[idx];
@@ -860,8 +865,8 @@ impl<'a> Parser<'a> {
                         p.append_part(&mut enum_parts, sliced)?;
                         preprocessed_enums.push(enum_parts);
 
-                        // SAFETY: restore the unique borrow stashed above.
-                        p.scope_order_to_visit = unsafe { &mut *old_scopes_in_order };
+                        // Restore the unique borrow stashed above (no unsafe).
+                        p.scope_order_to_visit = old_scopes_in_order;
                     }
                 }
             }

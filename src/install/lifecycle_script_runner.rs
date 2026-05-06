@@ -443,17 +443,17 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         bun_output::scoped_log!(
             Script,
             "{} - {} $ {}",
-            bstr::BStr::new(self.package_name),
-            bstr::BStr::new(self.script_name()),
+            bstr::BStr::new((*this).package_name),
+            bstr::BStr::new((*this).script_name()),
             bstr::BStr::new(combined_script.as_bytes())
         );
 
         // TODO(port): `[_]?[*:0]const u8` argv array with trailing null. Using a fixed array of
         // `Option<*const c_char>` to match the Zig layout passed to spawnProcess via @ptrCast.
         let mut argv: [Option<*const c_char>; 4] =
-            if self.shell_bin.is_some() && !cfg!(windows) {
+            if (*this).shell_bin.is_some() && !cfg!(windows) {
                 [
-                    Some(self.shell_bin.unwrap().as_ptr() as *const c_char),
+                    Some((*this).shell_bin.unwrap().as_ptr() as *const c_char),
                     Some(b"-c\0".as_ptr() as *const c_char),
                     Some(combined_script.as_ptr() as *const c_char),
                     None,

@@ -1177,6 +1177,7 @@ fn get_code_for_parse_task_without_plugins(
     file_path: &mut Fs::Path,
     loader: Loader,
 ) -> core::result::Result<CacheEntry, AnyError> {
+    let _ = bump; // TODO(port): allocator routing for read_file_with_allocator
     match &task.contents_or_fd {
         ContentsOrFd::Fd { dir, file } => 'brk: {
             let contents_dir = *dir;
@@ -1188,9 +1189,13 @@ fn get_code_for_parse_task_without_plugins(
 
             // Check FileMap for in-memory files first
             if let Some(file_map) = &ctx.file_map {
-                if let Some(file_contents) = file_map.get(file_path.text) {
+                // SAFETY: `file_map` is a live BACKREF for the bundle pass.
+                if let Some(file_contents) = unsafe { file_map.as_ref() }.get(file_path.text) {
                     break 'brk Ok(CacheEntry {
-                        contents: file_contents,
+                        contents: crate::cache::Contents::SharedBuffer {
+                            ptr: file_contents.as_ptr(),
+                            len: file_contents.len(),
+                        },
                         fd: Fd::INVALID,
                         ..Default::default()
                     });
@@ -1204,7 +1209,10 @@ fn get_code_for_parse_task_without_plugins(
                             match file {
                                 crate::bake_types::BuiltInModule::Code(code) => {
                                     break 'brk Ok(CacheEntry {
-                                        contents: code,
+                                        contents: crate::cache::Contents::SharedBuffer {
+                                            ptr: code.as_ptr(),
+                                            len: code.len(),
+                                        },
                                         fd: Fd::INVALID,
                                         ..Default::default()
                                     });
@@ -1217,41 +1225,51 @@ fn get_code_for_parse_task_without_plugins(
                         }
                     }
 
+                    let fallback = NodeFallbackModules::contents_from_path(file_path.text)
+                        .unwrap_or(b"");
                     break 'brk Ok(CacheEntry {
-                        contents: NodeFallbackModules::contents_from_path(file_path.text)
-                            .unwrap_or(b""),
+                        contents: crate::cache::Contents::SharedBuffer {
+                            ptr: fallback.as_ptr(),
+                            len: fallback.len(),
+                        },
                         fd: Fd::INVALID,
                         ..Default::default()
                     });
                 }
             }
 
+            // TODO: this allocator may be wrong for native plugins
+            // TODO(port): bun.default_allocator vs bump distinction — Zig passed
+            // `bun.default_allocator` for copy-for-bundling and the worker arena
+            // otherwise; the Rust `read_file_with_allocator` always allocates
+            // from the global heap (see resolver/lib.rs PORT NOTE).
+            let _ = loader.should_copy_for_bundling();
+            // SAFETY: `transpiler.fs` is a live `*mut FileSystem` BACKREF.
+            let fs_ref = unsafe { &mut *transpiler.fs };
             break 'brk match resolver.caches.fs.read_file_with_allocator(
-                // TODO: this allocator may be wrong for native plugins
-                if loader.should_copy_for_bundling() {
-                    // The OutputFile will own the memory for the contents
-                    // TODO(port): bun.default_allocator vs bump distinction
-                    None
-                } else {
-                    Some(bump)
-                },
-                &transpiler.fs,
+                fs_ref,
                 file_path.text,
                 contents_dir,
                 false,
                 contents_file.unwrap_valid(),
             ) {
-                Ok(e) => Ok(e),
+                Ok(e) => Ok(CacheEntry {
+                    contents: crate::cache::Contents::SharedBuffer {
+                        ptr: e.contents.as_ptr(),
+                        len: e.contents.len(),
+                    },
+                    fd: e.fd,
+                    ..Default::default()
+                }),
                 Err(e) => {
                     let source = Source::init_empty_file(
                         // TODO(port): zig duped via log.msgs.allocator
-                        bump.alloc_slice_copy(file_path.text),
+                        leak_static(file_path.text),
                     );
                     if e == err!("ENOENT") || e == err!("FileNotFound") {
                         let _ = log.add_error_fmt(
                             Some(&source),
                             Loc::EMPTY,
-                            bump,
                             format_args!(
                                 "File not found {}",
                                 bun_core::fmt::quote(file_path.text)
@@ -1262,7 +1280,6 @@ fn get_code_for_parse_task_without_plugins(
                         let _ = log.add_error_fmt(
                             Some(&source),
                             Loc::EMPTY,
-                            bump,
                             format_args!(
                                 "{} reading file: {}",
                                 e.name(),
@@ -1275,7 +1292,10 @@ fn get_code_for_parse_task_without_plugins(
             };
         }
         ContentsOrFd::Contents(contents) => Ok(CacheEntry {
-            contents,
+            contents: crate::cache::Contents::SharedBuffer {
+                ptr: contents.as_ptr(),
+                len: contents.len(),
+            },
             fd: Fd::INVALID,
             ..Default::default()
         }),
@@ -1310,7 +1330,8 @@ fn get_code_for_parse_task(
         // SAFETY: ctx backref is valid for ParseTask lifetime.
         let ctx = unsafe { &*task.ctx };
         let Some(plugin) = &ctx.plugins else { break 'brk false };
-        if !plugin.has_on_before_parse_plugins() {
+        // SAFETY: `plugin` is a live BACKREF for the bundle pass.
+        if !unsafe { plugin.as_ref() }.has_on_before_parse_plugins() {
             break 'brk false;
         }
 
@@ -1340,8 +1361,9 @@ fn get_code_for_parse_task(
     };
 
     // SAFETY: task.ctx backref valid for the duration of the parse.
-    let plugins = unsafe { &*ctx.task.ctx }.plugins.as_ref().expect("unreachable");
-    ctx.run(plugins, from_plugin)
+    let plugins = unsafe { &*ctx.task.ctx }.plugins.expect("unreachable");
+    // SAFETY: `plugins` is a live BACKREF for the bundle pass.
+    ctx.run(unsafe { plugins.as_ref() }, from_plugin)
 }
 
 // ───────────────────────────────────────────────────────────────────────────

@@ -606,15 +606,17 @@ pub extern "C" fn getTests(opts_array: u64) -> u64 {
     };
 
     let Ok(()) = response.encode(&mut encoder) else { return 0 };
-    // SAFETY: wasm32 — pack (ptr, len) into u64; output is leaked to JS via bun_free.
-    let packed = unsafe {
+    let boxed = output.into_boxed_slice();
+    let len = boxed.len();
+    let ptr = Box::into_raw(boxed) as *mut u8;
+    // SAFETY: wasm32 — pack (ptr, len) into u64; boxed slice (len == capacity) is leaked
+    // to JS and freed via bun_free's Box::<[u8]>::from_raw, so dealloc layout matches.
+    unsafe {
         core::mem::transmute::<[u32; 2], u64>([
-            output.as_ptr() as usize as u32,
-            u32::try_from(output.len()).unwrap(),
+            ptr as usize as u32,
+            u32::try_from(len).unwrap(),
         ])
-    };
-    core::mem::forget(output);
-    packed
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -682,9 +684,6 @@ pub extern "C" fn transform(opts_array: u64) -> u64 {
             .unwrap_or(0);
 
             OUTPUT_FILES[0].write(api::OutputFile { data: writer.ctx.written, path });
-            writer.ctx.reset();
-            writer.written = 0;
-            BUFFER_WRITER.write(core::ptr::read(&writer.ctx));
         } else {
             OUTPUT_FILES[0].write(api::OutputFile { data: b"", path });
         }
@@ -695,6 +694,8 @@ pub extern "C" fn transform(opts_array: u64) -> u64 {
             } else {
                 api::TransformResponseStatus::Fail
             },
+            // SAFETY: OUTPUT_FILES[0] was written on both branches above; len=1 so the
+            // whole array is init, and casting *const MaybeUninit<T> → *const T is sound.
             files: core::slice::from_raw_parts(OUTPUT_FILES.as_ptr() as *const api::OutputFile, 1),
             errors: log.to_api(&arena).expect("unreachable").msgs,
         });
@@ -702,12 +703,25 @@ pub extern "C" fn transform(opts_array: u64) -> u64 {
         let mut output: Vec<u8> = Vec::new();
         let mut encoder = ApiWriter::init(&mut output);
         let _ = TRANSFORM_RESPONSE.assume_init_ref().encode(&mut encoder);
-        let packed = core::mem::transmute::<[u32; 2], u64>([
-            output.as_ptr() as usize as u32,
-            u32::try_from(output.len()).unwrap(),
-        ]);
-        core::mem::forget(output);
-        packed
+
+        // Reset the printer *after* encode so taking `&mut writer.ctx` cannot invalidate
+        // the shared borrow stored in OUTPUT_FILES[0].data under stacked borrows.
+        if matches!(result, js_parser::ParseResult::Ast(_)) && log.errors == 0 {
+            let writer = WRITER.assume_init_mut();
+            writer.ctx.reset();
+            writer.written = 0;
+            BUFFER_WRITER.write(core::ptr::read(&writer.ctx));
+        }
+
+        let boxed = output.into_boxed_slice();
+        let len = boxed.len();
+        let ptr = Box::into_raw(boxed) as *mut u8;
+        // SAFETY: wasm32 — pack (ptr, len) into u64; boxed slice (len == capacity) is leaked
+        // to JS and freed via bun_free's Box::<[u8]>::from_raw, so dealloc layout matches.
+        core::mem::transmute::<[u32; 2], u64>([
+            ptr as usize as u32,
+            u32::try_from(len).unwrap(),
+        ])
     }
 }
 
@@ -755,8 +769,7 @@ pub extern "C" fn scan(opts_array: u64) -> u64 {
     parser.options.features.top_level_await = true;
     let result = parser.parse().expect("unreachable");
     if log.errors == 0 {
-        // SAFETY: all-zero is a valid api::ScanResult (slices = (null, 0)).
-        let mut scan_result: api::ScanResult = unsafe { core::mem::zeroed() };
+        let mut scan_result = api::ScanResult { exports: &[], imports: &[], errors: &[] };
         let mut output: Vec<u8> = Vec::new();
 
         // PORT NOTE: reshaped for borrowck — Zig arena-owned scanned_imports; keep the Vec
@@ -783,15 +796,17 @@ pub extern "C" fn scan(opts_array: u64) -> u64 {
 
         let mut encoder = ApiWriter::init(&mut output);
         scan_result.encode(&mut encoder).expect("unreachable");
-        // SAFETY: wasm32 — pack (ptr, len) into u64; output is leaked to JS via bun_free.
-        let packed = unsafe {
+        let boxed = output.into_boxed_slice();
+        let len = boxed.len();
+        let ptr = Box::into_raw(boxed) as *mut u8;
+        // SAFETY: wasm32 — pack (ptr, len) into u64; boxed slice (len == capacity) is leaked
+        // to JS and freed via bun_free's Box::<[u8]>::from_raw, so dealloc layout matches.
+        unsafe {
             core::mem::transmute::<[u32; 2], u64>([
-                output.as_ptr() as usize as u32,
-                u32::try_from(output.len()).unwrap(),
+                ptr as usize as u32,
+                u32::try_from(len).unwrap(),
             ])
-        };
-        core::mem::forget(output);
-        packed
+        }
     } else {
         let mut output: Vec<u8> = Vec::new();
         let scan_result = api::ScanResult {
@@ -801,15 +816,17 @@ pub extern "C" fn scan(opts_array: u64) -> u64 {
         };
         let mut encoder = ApiWriter::init(&mut output);
         scan_result.encode(&mut encoder).expect("unreachable");
-        // SAFETY: wasm32 — pack (ptr, len) into u64; output is leaked to JS via bun_free.
-        let packed = unsafe {
+        let boxed = output.into_boxed_slice();
+        let len = boxed.len();
+        let ptr = Box::into_raw(boxed) as *mut u8;
+        // SAFETY: wasm32 — pack (ptr, len) into u64; boxed slice (len == capacity) is leaked
+        // to JS and freed via bun_free's Box::<[u8]>::from_raw, so dealloc layout matches.
+        unsafe {
             core::mem::transmute::<[u32; 2], u64>([
-                output.as_ptr() as usize as u32,
-                u32::try_from(output.len()).unwrap(),
+                ptr as usize as u32,
+                u32::try_from(len).unwrap(),
             ])
-        };
-        core::mem::forget(output);
-        packed
+        }
     }
 }
 

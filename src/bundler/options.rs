@@ -942,9 +942,15 @@ pub fn get_loader_and_virtual_source<'a>(
             }
 
             if !unsafe { (vt.blob_needs_read_file)(blob) } {
+                // SAFETY: `path.text` aliases jsc_vm-owned storage (blob filename
+                // or normalized specifier), which outlives the `virtual_source`
+                // returned to the caller — matches Zig `getLoaderAndVirtualSource`
+                // where `Fs.Path` and `logger.Source.path` share one type.
+                let static_text: &'static [u8] =
+                    unsafe { core::mem::transmute::<&[u8], &'static [u8]>(path.text) };
                 *virtual_source_to_use = Some(logger::Source {
-                    path: path.clone(),
-                    contents: unsafe { (vt.blob_shared_view)(blob) },
+                    path: logger::fs::Path::init(static_text),
+                    contents: Cow::Borrowed(unsafe { (vt.blob_shared_view)(blob) }),
                     ..Default::default()
                 });
                 virtual_source = virtual_source_to_use.as_ref();
@@ -1437,7 +1443,7 @@ pub fn defines_from_transform_options(
     user_defines.reserve(input_user_define.keys.len() + 4);
     for (i, key) in input_user_define.keys.iter().enumerate() {
         // PERF(port): was assume_capacity
-        user_defines.insert(key.clone(), input_user_define.values[i].clone());
+        user_defines.insert(key.as_ref(), input_user_define.values[i].clone());
     }
 
     let mut environment_defines = defines::UserDefinesArray::default();
@@ -1459,11 +1465,32 @@ pub fn defines_from_transform_options(
             break 'load_env;
         }
 
+        // PORT NOTE: `copy_for_define` was vtable-ified (T2 dotenv may not name
+        // bundler/js_parser types — PORTING.md §Dispatch). Build the two
+        // `DefineStoreRef` adapters here and flatten `api::StringMap` into
+        // parallel borrowed slices, mapping `api::DotEnvBehavior` → the local
+        // dotenv mirror enum (same wire values, see env_loader.rs:33).
+        let api_defaults = framework.to_api().defaults;
+        let default_keys: Vec<&[u8]> =
+            api_defaults.keys.iter().map(|k| k.as_ref()).collect();
+        let default_values: Vec<&[u8]> =
+            api_defaults.values.iter().map(|v| v.as_ref()).collect();
+        let dotenv_behavior = match framework.behavior {
+            api::DotEnvBehavior::disable | api::DotEnvBehavior::_none => {
+                DotEnv::DotEnvBehavior::Disable
+            }
+            api::DotEnvBehavior::prefix => DotEnv::DotEnvBehavior::Prefix,
+            api::DotEnvBehavior::load_all => DotEnv::DotEnvBehavior::LoadAll,
+            api::DotEnvBehavior::load_all_without_inlining => {
+                DotEnv::DotEnvBehavior::LoadAllWithoutInlining
+            }
+        };
         env.copy_for_define(
-            &mut user_defines,
-            &mut environment_defines,
-            framework.to_api().defaults,
-            framework.behavior,
+            defines::env_define_json_store_ref(&mut user_defines),
+            defines::env_define_string_store_ref(&mut environment_defines),
+            &default_keys,
+            &default_values,
+            dotenv_behavior,
             &framework.prefix,
         )?;
     }
@@ -1515,8 +1542,9 @@ pub fn defines_from_transform_options(
                 b"window",
                 defines::DefineData::init(defines::DefineDataInit {
                     valueless: true,
-                    original_name: b"window".into(),
+                    original_name: Some(b"window".as_slice()),
                     value: defines::DefineValue::EUndefined(Default::default()),
+                    ..Default::default()
                 }),
             )?;
         }
@@ -1526,12 +1554,12 @@ pub fn defines_from_transform_options(
 
     let drop_debugger = drop.iter().any(|item| *item == b"debugger");
 
-    defines::Define::init(
-        resolved_defines,
-        environment_defines,
+    Ok(defines::Define::init(
+        Some(resolved_defines),
+        Some(environment_defines),
         drop_debugger,
         omit_unused_global_calls,
-    )
+    )?)
 }
 
 const DEFAULT_LOADER_EXT_BUN: &[&[u8]] = &[b".node", b".html"];
@@ -2005,6 +2033,10 @@ impl<'a> BundleOptions<'a> {
             // TODO(port): &self.drop is Box<[Box<[u8]>]>, callee wants &[&[u8]]
             &self.drop.iter().map(|s| s.as_ref()).collect::<Vec<_>>(),
             self.dead_code_elimination && self.minify_syntax,
+            // PORT NOTE: per-load_defines arena. Zig threads `bun.default_allocator`;
+            // here `from_input` only uses it for transient JSON-parse scratch.
+            // PERF(port): was bun.default_allocator
+            &bun_alloc::Arena::new(),
         )?;
         self.defines_loaded = true;
         Ok(())
@@ -2399,10 +2431,7 @@ pub struct TransformOptions {
     pub inject: Option<Box<[Box<[u8]>]>>,
     pub origin: &'static [u8],
     pub preserve_symlinks: bool,
-    // TODO(b2-blocked): bun_resolver::fs::File — `bun_logger::fs` does not
-    // expose a `File` type. Field gated until resolver fs is real.
-    
-    pub entry_point: Fs::File,
+    pub entry_point: EntryPointFile,
     pub resolve_paths: bool,
     pub tsconfig_override: Option<Box<[u8]>>,
 

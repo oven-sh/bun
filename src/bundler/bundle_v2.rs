@@ -1379,7 +1379,7 @@ pub fn generic_path_with_pretty_initialized(
         } else {
             path_clone.pretty = rel;
         }
-        Ok(path_clone.dupe_alloc_fix_pretty(bump))
+        Ok(path_clone.dupe_alloc_fix_pretty()?)
     } else {
         // in non-file namespaces, standard filesystem rules do not apply.
         let mut path_clone = path;
@@ -1396,7 +1396,7 @@ pub fn generic_path_with_pretty_initialized(
         );
         let written = buf_len - cursor.len();
         path_clone.pretty = &buf.0[..written];
-        Ok(path_clone.dupe_alloc_fix_pretty(bump))
+        Ok(path_clone.dupe_alloc_fix_pretty()?)
     }
 }
 
@@ -2031,7 +2031,7 @@ impl<'a> BundleV2<'a> {
 
         if path.pretty.as_ptr() == path.text.as_ptr() {
             // TODO: outbase
-            let rel = bun_paths::resolve_path::relative_platform::<bun_paths::platform::Loose, false>(&transpiler.fs.top_level_dir, &path.text, bun_paths::Platform::Loose, false);
+            let rel = bun_paths::resolve_path::relative_platform::<bun_paths::platform::Loose, false>(&transpiler.fs.top_level_dir, &path.text);
             path.pretty = self.allocator().alloc_slice_copy(rel);
         }
         path.assert_pretty_is_valid();
@@ -2917,7 +2917,7 @@ impl<'a> BundleV2<'a> {
             event_loop,
             enable_reloading,
             None,
-            ThreadLocalArena::init(),
+            ThreadLocalArena::new(),
         )?;
         this.unique_key = generate_unique_key();
 
@@ -3018,7 +3018,7 @@ impl<'a> BundleV2<'a> {
             event_loop,
             false,
             None,
-            ThreadLocalArena::init(),
+            ThreadLocalArena::new(),
         )?;
         this.unique_key = generate_unique_key();
 
@@ -3056,7 +3056,7 @@ impl<'a> BundleV2<'a> {
             event_loop,
             false,
             None,
-            ThreadLocalArena::init(),
+            ThreadLocalArena::new(),
         )?;
         this.unique_key = generate_unique_key();
 
@@ -3161,7 +3161,7 @@ impl<'a> BundleV2<'a> {
                         pathname = Fs::PathName::init(bun_paths::resolve_path::relative_platform::<bun_paths::platform::Loose, false>(
                             &self.transpiler.options.root_dir,
                             &source.path.text,
-                            bun_paths::Platform::Loose,
+                            bun_paths::platform::Loose,
                             false,
                         ));
 
@@ -3188,9 +3188,9 @@ impl<'a> BundleV2<'a> {
 
                     let loader = loaders[index];
 
-                    additional_output_files.push(options::OutputFile::init(options::OutputFileInit {
+                    additional_output_files.push(options::OutputFile::init(crate::output_file::Options {
                         source_index: Some(Index::init(index as u32)),
-                        data: options::OutputFileData::Buffer {
+                        data: crate::output_file::OptionsData::Buffer {
                             data: source.contents,
                             allocator: file_allocators[index],
                         },
@@ -3198,7 +3198,7 @@ impl<'a> BundleV2<'a> {
                         output_path,
                         input_path: Box::<[u8]>::from(source.path.text.as_ref()),
                         input_loader: Loader::File,
-                        output_kind: jsc_api::build_artifact::OutputKind::Asset,
+                        output_kind: crate::options::OutputKind::Asset,
                         loader,
                         hash: Some(content_hashes_for_additional_files[index]),
                         side: Some(bake::Side::Client),
@@ -3667,12 +3667,12 @@ impl<'a> BundleV2<'a> {
         let outdir = &self.linker.resolver.opts.output_dir;
         if !self.linker.options.metafile_json_path.is_empty() {
             if let Some(mf) = &metafile {
-                write_metafile_output(&mut output_files, outdir, &self.linker.options.metafile_json_path, mf, jsc_api::build_artifact::OutputKind::MetafileJson)?;
+                write_metafile_output(&mut output_files, outdir, &self.linker.options.metafile_json_path, mf, crate::options::OutputKind::MetafileJson)?;
             }
         }
         if !self.linker.options.metafile_markdown_path.is_empty() {
             if let Some(md) = &metafile_markdown {
-                write_metafile_output(&mut output_files, outdir, &self.linker.options.metafile_markdown_path, md, jsc_api::build_artifact::OutputKind::MetafileMarkdown)?;
+                write_metafile_output(&mut output_files, outdir, &self.linker.options.metafile_markdown_path, md, crate::options::OutputKind::MetafileMarkdown)?;
             }
         }
 
@@ -3691,7 +3691,7 @@ fn write_metafile_output(
     outdir: &[u8],
     file_path: &[u8],
     content: &[u8],
-    output_kind: jsc_api::build_artifact::OutputKind,
+    output_kind: crate::options::OutputKind,
 ) -> Result<(), Error> {
     if !outdir.is_empty() {
         // Open the output directory
@@ -3705,7 +3705,7 @@ fn write_metafile_output(
         // root_dir closed on drop
 
         // Create parent directories if needed (relative to outdir)
-        if let Some(parent) = bun_paths::resolve_path::dirname::<bun_paths::platform::Loose>(file_path, bun_paths::Platform::Loose) {
+        if let Some(parent) = bun_paths::resolve_path::dirname::<bun_paths::platform::Loose>(file_path, bun_paths::platform::Loose) {
             if !parent.is_empty() {
                 let _ = root_dir.make_path(parent);
             }
@@ -3731,13 +3731,13 @@ fn write_metafile_output(
     }
 
     // Add as OutputFile so it appears in result.outputs
-    let is_json = output_kind == jsc_api::build_artifact::OutputKind::MetafileJson;
-    output_files.push(options::OutputFile::init(options::OutputFileInit {
+    let is_json = output_kind == crate::options::OutputKind::MetafileJson;
+    output_files.push(options::OutputFile::init(crate::output_file::Options {
         loader: if is_json { Loader::Json } else { Loader::File },
         input_loader: if is_json { Loader::Json } else { Loader::File },
         input_path: Box::<[u8]>::from(if is_json { b"metafile.json".as_slice() } else { b"metafile.md".as_slice() }),
         output_path: Box::<[u8]>::from(file_path),
-        data: options::OutputFileData::Saved(content.len()),
+        data: crate::output_file::OptionsData::Saved(content.len()),
         output_kind,
         is_executable: false,
         side: None,
@@ -3832,7 +3832,7 @@ impl<'a> BundleV2<'a> {
                             sources,
                             loaders,
                             &mut log,
-                        ) == LinkerContext::ScanCssResult::Errors {
+                        ) == crate::linker_context_mod::ScanCssResult::Errors {
                             // TODO: it could be possible for a plugin to change
                             // the type of loader from whatever it was into a
                             // css-compatible loader.
@@ -4616,7 +4616,7 @@ impl<'a> BundleV2<'a> {
                     import_record.source_index = Index::INVALID;
 
                     if let Some(entry) = dev_server.is_file_cached(&path.text, bake_graph) {
-                        let rel = bun_paths::resolve_path::relative_platform::<bun_paths::platform::Loose, false>(&self.transpiler.fs.top_level_dir, &path.text, bun_paths::Platform::Loose, false);
+                        let rel = bun_paths::resolve_path::relative_platform::<bun_paths::platform::Loose, false>(&self.transpiler.fs.top_level_dir, &path.text);
                         if loader == Loader::Html && entry.kind == bake_types::CacheKind::Asset {
                             // Overload `path.text` to point to the final URL
                             // This information cannot be queried while printing because a lock wouldn't get held.
@@ -5417,10 +5417,10 @@ pub enum EntryPointKind {
 }
 
 impl EntryPointKind {
-    pub fn output_kind(self) -> jsc_api::build_artifact::OutputKind {
+    pub fn output_kind(self) -> crate::options::OutputKind {
         match self {
-            Self::UserSpecified => jsc_api::build_artifact::OutputKind::EntryPoint,
-            _ => jsc_api::build_artifact::OutputKind::Chunk,
+            Self::UserSpecified => crate::options::OutputKind::EntryPoint,
+            _ => crate::options::OutputKind::Chunk,
         }
     }
 

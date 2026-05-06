@@ -1,6 +1,6 @@
 //! This type is a `GenericAllocator`; see `src/allocators.zig`.
 
-use core::cell::RefCell;
+use core::cell::UnsafeCell;
 use core::ffi::{c_char, c_void};
 use core::marker::PhantomData;
 use core::ptr::{self, NonNull};
@@ -81,23 +81,31 @@ impl<'a> Borrowed<'a> {
         }
         #[cfg(feature = "ci_assert")]
         {
+            // Zig: `threadlocal var dbg: ?DebugHeap = null;` — written exactly once, then
+            // `&S.dbg.?` is returned on every call. We must derive the escaped pointer
+            // directly from `UnsafeCell::get()` (SharedReadWrite provenance) and never via an
+            // intermediate `&mut`, so that multiple live `Borrowed<'static>` values do not
+            // invalidate each other under Stacked Borrows.
             thread_local! {
-                static DBG: RefCell<Option<DebugHeap>> = const { RefCell::new(None) };
+                static DBG: UnsafeCell<Option<DebugHeap>> = const { UnsafeCell::new(None) };
             }
-            // TODO(port): returning a borrow into a thread_local requires raw-pointer
-            // escape; safe because DebugHeap is never dropped for the thread's lifetime.
             DBG.with(|slot| {
-                let mut s = slot.borrow_mut();
-                if s.is_none() {
-                    *s = Some(DebugHeap {
+                let cell: *mut Option<DebugHeap> = slot.get();
+                // SAFETY: thread-local; no other access to `*cell` is live during this
+                // one-time init. `get_or_insert` writes the Some variant in place exactly
+                // once and returns a pointer into the UnsafeCell's storage. The Option is
+                // never reset to None and the thread_local is never dropped before thread
+                // exit, so the pointer remains valid for the thread's lifetime. Its
+                // provenance is rooted at the UnsafeCell, so subsequent `get_default()`
+                // calls (which re-derive from the same `slot.get()`) do not invalidate it.
+                let p: *mut DebugHeap = unsafe {
+                    (*cell).get_or_insert(DebugHeap {
                         // SAFETY: mi_heap_main() never returns null.
-                        inner: unsafe { NonNull::new_unchecked(heap) },
+                        inner: NonNull::new_unchecked(heap),
                         thread_lock: crate::stubs::ThreadLock::init_locked(),
-                    });
-                }
-                let p: *mut DebugHeap = s.as_mut().unwrap();
-                // SAFETY: the Option is never reset to None, so the pointer is valid
-                // for the remainder of the thread's lifetime.
+                    }) as *mut DebugHeap
+                };
+                // SAFETY: `p` is non-null (points into the Some payload just ensured above).
                 Borrowed { heap: unsafe { NonNull::new_unchecked(p) }, _lt: PhantomData }
             })
         }

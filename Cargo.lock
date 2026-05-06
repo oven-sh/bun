@@ -2161,6 +2161,7 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
+ "bun_bundler",
  "const_format",
  "enum-map",
  "enumset",

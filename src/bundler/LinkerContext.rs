@@ -719,69 +719,74 @@ impl<'a> LinkerContext<'a> {
     }
 
     pub fn generate_chunk(ctx: GenerateChunkCtx, chunk: &mut Chunk, chunk_index: usize) {
-        // SAFETY: ctx.c points into BundleV2.linker; container_of pattern
-        let bundle = unsafe {
-            &mut *((ctx.c as *mut LinkerContext as *mut u8)
+        // SAFETY: ctx.c points into BundleV2.linker; container_of pattern.
+        // `Worker::get` only reads `bundle.graph.pool` (shared), so a `&` is
+        // sufficient and avoids aliasing the `&mut LinkerContext` in `ctx.c`.
+        let bundle: *const BundleV2 = unsafe {
+            (ctx.c as *const LinkerContext as *const u8)
                 .sub(offset_of!(BundleV2, linker))
-                .cast::<BundleV2>())
+                .cast::<BundleV2>()
         };
-        let worker = crate::thread_pool::Worker::get(bundle);
-        let _guard = scopeguard::guard((), |_| worker.unget());
-        match &chunk.content {
-            crate::chunk::Content::Javascript(_) => {
-                if let Err(err) = post_process_js_chunk(ctx, worker, chunk, chunk_index) {
-                    Output::panic(format_args!("TODO: handle error: {}", err.name()));
-                }
-            }
-            crate::chunk::Content::Css(_) => {
-                if let Err(err) = post_process_css_chunk(ctx, worker, chunk) {
-                    Output::panic(format_args!("TODO: handle error: {}", err.name()));
-                }
-            }
-            crate::chunk::Content::Html(_) => {
-                if let Err(err) = post_process_html_chunk(ctx, worker, chunk) {
-                    Output::panic(format_args!("TODO: handle error: {}", err.name()));
-                }
-            }
+        let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
+        let worker = scopeguard::guard(worker, |w| w.unget());
+        let worker: &mut crate::thread_pool::Worker = scopeguard::ScopeGuard::into_inner_mut(&mut *worker);
+        // PORT NOTE: dispatch on a discriminant copy so `chunk` isn't borrowed
+        // across the post-process call (which takes `&mut Chunk`).
+        let result = match chunk.content {
+            crate::chunk::Content::Javascript(_) => post_process_js_chunk(ctx, worker, chunk, chunk_index),
+            crate::chunk::Content::Css(_) => post_process_css_chunk(ctx, worker, chunk),
+            crate::chunk::Content::Html(_) => post_process_html_chunk(ctx, worker, chunk),
+        };
+        if let Err(err) = result {
+            Output::panic(format_args!("TODO: handle error: {}", err.name()));
         }
     }
 
     pub fn generate_js_renamer(ctx: GenerateChunkCtx, chunk: &mut Chunk, chunk_index: usize) {
-        // SAFETY: container_of pattern, ctx.c is &mut BundleV2.linker
-        let bundle = unsafe {
-            &mut *((ctx.c as *mut LinkerContext as *mut u8)
+        // SAFETY: container_of pattern, ctx.c is &mut BundleV2.linker; see
+        // `generate_chunk` above for the aliasing discipline.
+        let bundle: *const BundleV2 = unsafe {
+            (ctx.c as *const LinkerContext as *const u8)
                 .sub(offset_of!(BundleV2, linker))
-                .cast::<BundleV2>())
+                .cast::<BundleV2>()
         };
-        let worker = crate::thread_pool::Worker::get(bundle);
-        let _guard = scopeguard::guard((), |_| worker.unget());
-        match &chunk.content {
-            crate::chunk::Content::Javascript(_) => Self::generate_js_renamer_(ctx, worker, chunk, chunk_index),
-            crate::chunk::Content::Css(_) => {}
-            crate::chunk::Content::Html(_) => {}
+        let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
+        let worker = scopeguard::guard(worker, |w| w.unget());
+        if let crate::chunk::Content::Javascript(_) = chunk.content {
+            Self::generate_js_renamer_(ctx, &mut *worker, chunk, chunk_index);
         }
     }
 
-    fn generate_js_renamer_(ctx: GenerateChunkCtx, worker: &mut crate::thread_pool::Worker, chunk: &mut Chunk, chunk_index: usize) {
+    fn generate_js_renamer_(ctx: GenerateChunkCtx, _worker: &mut crate::thread_pool::Worker, chunk: &mut Chunk, chunk_index: usize) {
         let _ = chunk_index;
-        chunk.renamer = ctx.c.rename_symbols_in_chunk(
-            worker.allocator,
-            chunk,
-            &chunk.content.javascript().files_in_chunk_order,
-        ).expect("TODO: handle error");
+        // PORT NOTE: reshaped for borrowck — `rename_symbols_in_chunk` needs
+        // `&mut Chunk` and a borrow of `chunk.content.javascript.files_in_chunk_order`
+        // simultaneously; cache the files slice via raw pointer (it lives in
+        // the chunk arena, address-stable for the renamer pass).
+        let files: *const [u32] = match &chunk.content {
+            crate::chunk::Content::Javascript(js) => js.files_in_chunk_order.slice() as *const [u32],
+            _ => unreachable!(),
+        };
+        // SAFETY: `files` points into `chunk.content.javascript`; `rename_symbols_in_chunk`
+        // does not touch `chunk.content` (it writes `chunk.renamer` only).
+        chunk.renamer = rename_symbols_in_chunk(ctx.c, chunk, unsafe { &*files })
+            .expect("TODO: handle error");
     }
 
     pub fn generate_source_map_for_chunk(
         &mut self,
         isolated_hash: u64,
-        worker: &mut crate::thread_pool::Worker,
+        _worker: &mut crate::thread_pool::Worker,
         results: MultiArrayList<CompileResultForSourceMap>,
         chunk_abs_dir: &[u8],
         can_have_shifts: bool,
     ) -> Result<SourceMapPieces, BunError> {
         let _trace = bun::perf::trace("Bundler.generateSourceMapForChunk");
 
-        let mut j = StringJoiner { allocator: worker.allocator, ..Default::default() };
+        // PERF(port): Zig threaded `worker.allocator` through StringJoiner /
+        // MutableString; the Rust ports use the global mimalloc, so the joiner
+        // is allocator-free here. Revisit when arena threading lands.
+        let mut j = StringJoiner::default();
 
         // SAFETY: parse_graph backref
         let sources = unsafe { (*self.parse_graph).input_files.items_source() };
@@ -809,13 +814,15 @@ impl<'a> LinkerContext<'a> {
                 source_id_map.put_no_clobber(index, 0)?;
 
                 if path.is_file() {
-                    let rel_path = bun_paths::resolve_path::relative_alloc(worker.allocator, chunk_abs_dir, &path.text)?;
+                    let rel_path = bun_paths::resolve_path::relative_alloc(chunk_abs_dir, &path.text)?;
                     path.pretty = rel_path;
                 }
 
-                let mut quote_buf = MutableString::init(worker.allocator, path.pretty.len() + 2)?;
+                let mut quote_buf = MutableString::init(path.pretty.len() + 2)?;
                 js_printer::quote_for_json(&path.pretty, &mut quote_buf, false)?;
-                j.push_static(quote_buf.slice()); // freed by arena
+                // PERF(port): was arena-backed; `to_default_owned` moves the
+                // buffer into the joiner (joiner owns it until `done`).
+                j.push(&quote_buf.to_default_owned(), true);
             }
 
             let mut next_mapping_source_index: i32 = 1;
@@ -831,14 +838,14 @@ impl<'a> LinkerContext<'a> {
                 let mut path = sources[index as usize].path.clone();
 
                 if path.is_file() {
-                    let rel_path = bun_paths::resolve_path::relative_alloc(worker.allocator, chunk_abs_dir, &path.text)?;
+                    let rel_path = bun_paths::resolve_path::relative_alloc(chunk_abs_dir, &path.text)?;
                     path.pretty = rel_path;
                 }
 
-                let mut quote_buf = MutableString::init(worker.allocator, path.pretty.len() + ", ".len() + 2)?;
+                let mut quote_buf = MutableString::init(path.pretty.len() + ", ".len() + 2)?;
                 quote_buf.append_assume_capacity(b", "); // PERF(port): was assume_capacity
                 js_printer::quote_for_json(&path.pretty, &mut quote_buf, false)?;
-                j.push_static(quote_buf.slice()); // freed by arena
+                j.push(&quote_buf.to_default_owned(), true);
             }
         }
 
@@ -848,12 +855,14 @@ impl<'a> LinkerContext<'a> {
         if !source_indices_for_contents.is_empty() {
             j.push_static(b"\n    ");
             j.push_static(
-                quoted_source_map_contents[source_indices_for_contents[0] as usize].get().unwrap_or(b""),
+                quoted_source_map_contents[source_indices_for_contents[0] as usize]
+                    .as_deref()
+                    .unwrap_or(b""),
             );
 
             for &index in &source_indices_for_contents[1..] {
                 j.push_static(b",\n    ");
-                j.push_static(quoted_source_map_contents[index as usize].get().unwrap_or(b""));
+                j.push_static(quoted_source_map_contents[index as usize].as_deref().unwrap_or(b""));
             }
         }
         j.push_static(b"\n  ],\n  \"mappings\": \"");
@@ -880,7 +889,7 @@ impl<'a> LinkerContext<'a> {
                 start_state.generated_column += prev_column_offset;
             }
 
-            SourceMap::append_source_map_chunk(&mut j, worker.allocator, prev_end_state, start_state, &chunk.buffer.list)?;
+            SourceMap::append_source_map_chunk(&mut j, prev_end_state, start_state, &chunk.buffer.list)?;
 
             prev_end_state = chunk.end_state;
             prev_end_state.source_index = mapping_source_index;
@@ -896,19 +905,19 @@ impl<'a> LinkerContext<'a> {
         if FeatureFlags::SOURCE_MAP_DEBUG_ID {
             j.push_static(b"\",\n  \"debugId\": \"");
             // TODO(port): allocPrint into arena — using Vec<u8> + write!
-            let mut buf = Vec::new();
+            let mut buf = Vec::<u8>::new();
             use std::io::Write;
             write!(&mut buf, "{}", DebugIDFormatter { id: isolated_hash }).unwrap();
-            j.push(worker.allocator.alloc_slice_copy(&buf), worker.allocator);
+            j.push(&buf, true);
             j.push_static(b"\",\n  \"names\": []\n}");
         } else {
             j.push_static(b"\",\n  \"names\": []\n}");
         }
 
-        let done = j.done(worker.allocator)?;
+        let done = j.done()?;
         debug_assert!(done[0] == b'{');
 
-        let mut pieces = SourceMapPieces::init(worker.allocator);
+        let mut pieces = SourceMapPieces::init();
         if can_have_shifts {
             pieces.prefix.extend_from_slice(&done[0..mapping_start]);
             pieces.mappings.extend_from_slice(&done[mapping_start..mapping_end]);

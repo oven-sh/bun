@@ -2421,9 +2421,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         // The flag flips once ownership transfers so the errdefer is a no-op
         // on success.
         let mut handlers_guard = scopeguard::guard(Some(handlers), |h| {
-            if let Some(mut h) = h {
-                h.deinit();
-            }
+            // PORT NOTE: Zig `handlers.deinit()` → `Drop for Handlers`
+            // (unprotect + Strong drop). Explicit drop for clarity.
+            drop(h);
         });
 
         // Resolve the `SSL_CTX*`. Prefer a passed `SecureContext` (the

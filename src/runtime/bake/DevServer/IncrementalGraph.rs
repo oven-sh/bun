@@ -1751,8 +1751,9 @@ impl<S: GraphSide> IncrementalGraph<S> {
                     // If the HTML file itself was modified, or an asset was
                     // modified, this must be a hard reload. Otherwise just
                     // invalidate the script tag.
-                    let list = if from_file_index == file_index
-                        || matches!(g.get_file_by_index(from_file_index).content, Content::Asset(_))
+                    let is_asset = matches!(g.get_file_by_index(from_file_index).content, Content::Asset(_));
+                    let dev = g.owner();
+                    let list = if from_file_index == file_index || is_asset
                     {
                         &mut dev.incremental_result.html_routes_hard_affected
                     } else {

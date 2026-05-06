@@ -482,7 +482,7 @@ fn cpus_impl_darwin(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
     if !(unsafe { c::sysctlbyname(c"machdep.cpu.brand_string".as_ptr(), model_name_buf.as_mut_ptr() as *mut c_void, &mut len, core::ptr::null_mut(), 0) } == 0
         || unsafe { c::sysctlbyname(c"hw.model".as_ptr(), model_name_buf.as_mut_ptr() as *mut c_void, &mut len, core::ptr::null_mut(), 0) } == 0)
     {
-        return Err(bun_core::err!("no_processor_info"));
+        return Err(OsError::Any);
     }
     // NOTE: sysctlbyname doesn't update len if it was large enough, so we
     // still have to find the null terminator.  All cpus can share the same

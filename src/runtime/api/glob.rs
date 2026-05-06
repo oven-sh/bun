@@ -4,9 +4,9 @@ use bun_alloc::Arena;
 use bun_glob::BunGlobWalker as GlobWalker;
 use bun_jsc::{
     ArgumentsSlice, CallFrame, ConcurrentPromiseTask, JSGlobalObject, JSPromise, JSValue, JsResult,
-    JsTerminated,
+    JsTerminated, StringJsc as _, SysErrorJsc as _,
 };
-use bun_string::ZigString;
+use bun_jsc::bun_string_jsc;
 use bun_paths::{self as resolve_path, platform, PathBuffer, MAX_PATH_BYTES};
 use bun_paths::resolve_path::join_string_buf;
 use bun_str::String as BunString;

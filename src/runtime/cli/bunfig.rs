@@ -265,13 +265,8 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    // TODO(b2-blocked): api::NpmRegistry (peechy codegen) — parse_registry,
-    // parse_registry_url_string, parse_registry_object bodies preserved in the
-    // gated draft below until the schema fields land.
-    
-    fn parse_registry(&mut self, _expr: &Expr) -> Result<api::NpmRegistry, bun_core::Error> {
-        unreachable!()
-    }
+    // parse_registry / parse_registry_url_string / parse_registry_object bodies
+    // live in the `phase_a_draft` impl block below.
 
     fn load_env_config(&mut self, expr: &Expr) -> Result<(), bun_core::Error> {
         match &expr.data {
@@ -508,8 +503,11 @@ impl<'a> Parser<'a> {
                     // accept a parsed value.
                     
                     {
+                        // PORT NOTE: `reports_directory: &'static [u8]` upstream;
+                        // leak the parsed value to satisfy the lifetime until the
+                        // schema field is retyped to `Box<[u8]>`.
                         self.ctx.test_options.coverage.reports_directory =
-                            estring_to_owned(expr.data.e_string().unwrap().get(), self.bump);
+                            Box::leak(estring_to_owned(expr.data.e_string().unwrap().get(), self.bump));
                     }
                 }
 

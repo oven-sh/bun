@@ -2,25 +2,43 @@ use bun_alloc::Arena;
 use bun_interchange::toml::TOML;
 use bun_js_parser::ASTMemoryAllocator;
 use bun_js_printer as js_printer;
-use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsError, JsResult, LogJsc, StringJsc};
 use bun_logger as logger;
-use bun_str::{String as BunString, ZigString};
+use bun_str::String as BunString;
 
 pub fn create(global: &JSGlobalObject) -> JSValue {
     let object = JSValue::create_empty_object(global, 1);
     object.put(
         global,
-        ZigString::static_(b"parse"),
+        b"parse",
         JSFunction::create(
             global,
             b"parse",
-            parse,
+            __jsc_host_parse,
             1,
             Default::default(),
         ),
     );
 
     object
+}
+
+// Local shim: `JSGlobalObject::throw_stack_overflow` lives in the still-gated
+// `src/jsc/JSGlobalObject.rs`. Re-declare the FFI symbol and wrap it here so
+// the StackOverflow branch can throw without depending on the gated module.
+unsafe extern "C" {
+    fn JSGlobalObject__throwStackOverflow(this: *const JSGlobalObject);
+}
+trait JSGlobalObjectStackOverflowExt {
+    fn throw_stack_overflow(&self) -> JsError;
+}
+impl JSGlobalObjectStackOverflowExt for JSGlobalObject {
+    #[inline]
+    fn throw_stack_overflow(&self) -> JsError {
+        // SAFETY: FFI — `self` is a valid JSGlobalObject*; C++ side has no extra preconditions.
+        unsafe { JSGlobalObject__throwStackOverflow(self) };
+        JsError::Thrown
+    }
 }
 
 #[bun_jsc::host_fn]
@@ -33,12 +51,12 @@ pub fn parse(
 
     // TODO(port): ASTMemoryAllocator is the typed Expr/Stmt slab; verify enter()/scope RAII shape in Phase B
     let ast_memory_allocator = arena.alloc(ASTMemoryAllocator::default());
-    let _ast_scope = ast_memory_allocator.enter(&arena);
+    let _ast_scope = ast_memory_allocator.enter();
 
     let mut log = logger::Log::init();
     let input_value = frame.argument(0);
     if input_value.is_empty_or_undefined_or_null() {
-        return global.throw_invalid_arguments(format_args!("Expected a string to parse"));
+        return Err(global.throw_invalid_arguments(format_args!("Expected a string to parse")));
     }
 
     let input_slice = input_value.to_slice(global)?;
@@ -46,30 +64,31 @@ pub fn parse(
     let parse_result = match TOML::parse(source, &mut log, &arena, false) {
         Ok(v) => v,
         Err(e) if e == bun_core::err!("StackOverflow") => {
-            return global.throw_stack_overflow();
+            return Err(global.throw_stack_overflow());
         }
         Err(_) => {
-            return global.throw_value(log.to_js(global, b"Failed to parse toml")?);
+            return Err(global.throw_value(log.to_js(global, "Failed to parse toml")?));
         }
     };
 
     // for now...
-    let buffer_writer = js_printer::BufferWriter::init(&arena);
+    let buffer_writer = js_printer::BufferWriter::init();
     let mut writer = js_printer::BufferPrinter::init(buffer_writer);
     // PORT NOTE: Zig passed `*js_printer.BufferPrinter` as a comptime type param; dropped per (comptime X: type, arg: X) rule
     if let Err(_) = js_printer::print_json(
         &mut writer,
-        parse_result,
+        parse_result.into(),
         source,
         js_printer::PrintJsonOptions {
+            indent: Default::default(),
             mangled_props: None,
         },
     ) {
-        return global.throw_value(log.to_js(global, b"Failed to print toml")?);
+        return Err(global.throw_value(log.to_js(global, "Failed to print toml")?));
     }
 
     let slice = writer.ctx.buffer.slice();
-    let out = BunString::borrow_utf8(slice);
+    let mut out = BunString::borrow_utf8(slice);
 
     out.to_js_by_parse_json(global)
 }
@@ -79,5 +98,5 @@ pub fn parse(
 //   source:     src/runtime/api/TOMLObject.zig (79 lines)
 //   confidence: medium
 //   todos:      1
-//   notes:      arena/ASTMemoryAllocator threading into bun_interchange/bun_js_printer needs Phase B API alignment; log.to_js extension-trait import
+//   notes:      arena/ASTMemoryAllocator threading into bun_interchange/bun_js_printer needs Phase B API alignment; throw_stack_overflow shimmed locally pending upstream un-gate
 // ──────────────────────────────────────────────────────────────────────────

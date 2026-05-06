@@ -1628,25 +1628,25 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             }
         }
 
-        ctx.debug.offline_mode_setting = if args.flag(b"--prefer-offline") {
-            Bunfig::OfflineMode::Offline
+        ctx.debug.offline_mode_setting = Some(if args.flag(b"--prefer-offline") {
+            bun_options_types::OfflineMode::OfflineMode::Offline
         } else if args.flag(b"--prefer-latest") {
-            Bunfig::OfflineMode::Latest
+            bun_options_types::OfflineMode::OfflineMode::Latest
         } else {
-            Bunfig::OfflineMode::Online
-        };
+            bun_options_types::OfflineMode::OfflineMode::Online
+        });
 
         if args.flag(b"--no-install") {
-            ctx.debug.global_cache = options::GlobalCache::Disable;
+            ctx.debug.global_cache = options::GlobalCache::disable;
         } else if args.flag(b"-i") {
-            ctx.debug.global_cache = options::GlobalCache::Fallback;
+            ctx.debug.global_cache = options::GlobalCache::fallback;
         } else if let Some(enum_value) = args.option(b"--install") {
             // -i=auto --install=force, --install=disable
             if let Some(result) = options::GlobalCache::MAP.get(enum_value) {
                 ctx.debug.global_cache = *result;
                 // -i, --install
             } else if enum_value.is_empty() {
-                ctx.debug.global_cache = options::GlobalCache::Force;
+                ctx.debug.global_cache = options::GlobalCache::force;
             } else {
                 Output::err_generic("Invalid value for --install: \"{}\". Must be either \"auto\", \"fallback\", \"force\", or \"disable\"\n", format_args!("{}", BStr::new(enum_value)));
                 Global::exit(1);

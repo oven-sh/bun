@@ -229,30 +229,28 @@ impl InstallCompletionsCommand {
             shell = Shell::from_env(shell_name);
         }
 
-        let cwd: &[u8] = match bun_sys::getcwd(&mut cwd_buf) {
-            Ok(cwd) => cwd,
+        let cwd_len = match bun_sys::getcwd(&mut cwd_buf) {
+            Ok(len) => len,
             Err(_) => {
                 // don't fail on this if we don't actually need to
                 if fail_exit_code == 1 {
-                    if !stdout.is_tty() {
+                    if !bun_sys::isatty(stdout.handle) {
                         if let Err(err) = stdout.write_all(shell.completions()) {
-                            if err == bun_core::err!("BrokenPipe") {
+                            if err.get_errno() == E::EPIPE {
                                 Global::exit(0);
                             } else {
-                                return Err(err);
+                                return Err(err.into());
                             }
                         }
                         Global::exit(0);
                     }
                 }
 
-                Output::pretty_errorln(
-                    "<r><red>error<r>: Could not get current working directory",
-                    format_args!(""),
-                );
+                pretty_errorln!("<r><red>error<r>: Could not get current working directory");
                 Global::exit(fail_exit_code);
             }
         };
+        let cwd: &[u8] = &cwd_buf[..cwd_len];
 
         let _ = Self::install_bunx_symlink(cwd);
 
@@ -275,19 +273,19 @@ impl InstallCompletionsCommand {
                     "Unknown or unsupported shell. Please set $SHELL to one of zsh, fish, or bash.",
                     format_args!(""),
                 );
-                Output::note("To manually output completions, run 'bun getcompletes'", format_args!(""));
+                note!("To manually output completions, run 'bun getcompletes'");
                 Global::exit(fail_exit_code);
             }
             _ => {}
         }
 
-        if !env_var::IS_BUN_AUTO_UPDATE.get() {
-            if !stdout.is_tty() {
+        if !env_var::IS_BUN_AUTO_UPDATE.get().unwrap_or(false) {
+            if !bun_sys::isatty(stdout.handle) {
                 if let Err(err) = stdout.write_all(shell.completions()) {
-                    if err == bun_core::err!("BrokenPipe") {
+                    if err.get_errno() == E::EPIPE {
                         Global::exit(0);
                     } else {
-                        return Err(err);
+                        return Err(err.into());
                     }
                 }
                 Global::exit(0);

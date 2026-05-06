@@ -14,6 +14,33 @@ use bun_sys;
 
 pub struct PmPkgCommand;
 
+/// Process-lifetime bump arena for E::Object::put() calls. The CLI is one-shot
+/// and `put()` currently ignores its `_bump` parameter; this avoids threading
+/// an arena through every helper.
+fn dummy_bump() -> &'static bumpalo::Bump {
+    use std::sync::OnceLock;
+    static BUMP: OnceLock<bumpalo::Bump> = OnceLock::new();
+    BUMP.get_or_init(bumpalo::Bump::new)
+}
+
+/// `bun_logger::js_printer::Indentation` and `bun_js_printer::Indentation` are
+/// nominally distinct (split for crate-layering) but field-identical; convert
+/// here rather than introduce an upstream `From` impl.
+fn convert_indentation(src: logger::js_printer::Indentation) -> js_printer::options::Indentation {
+    js_printer::options::Indentation {
+        scalar: src.scalar,
+        count: src.count,
+        character: match src.character {
+            logger::js_printer::IndentationCharacter::Tab => {
+                js_printer::options::IndentationCharacter::Tab
+            }
+            logger::js_printer::IndentationCharacter::Space => {
+                js_printer::options::IndentationCharacter::Space
+            }
+        },
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, strum::EnumString, strum::IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 enum SubCommand {
@@ -51,10 +78,10 @@ impl PmPkgCommand {
         }
 
         let Some(subcommand) = SubCommand::from_string(positionals[1]) else {
-            Output::err_generic(format_args!(
-                "Unknown subcommand: {}",
-                bstr::BStr::new(positionals[1])
-            ));
+            Output::err_generic(
+                "Unknown subcommand: {s}",
+                (bstr::BStr::new(positionals[1]),),
+            );
             Self::print_help();
             Global::exit(1);
         };
@@ -70,14 +97,14 @@ impl PmPkgCommand {
     }
 
     fn print_help() {
-        Output::prettyln(
+        Output::prettyln(format_args!(
+            "{}",
             const_format::concatcp!(
                 "<r><b>bun pm pkg<r> <d>v",
                 Global::package_json_version_with_sha,
                 "<r>"
-            ),
-            format_args!(""),
-        );
+            )
+        ));
         // Note: Zig `{{` / `}}` escapes are for std.fmt; Rust raw string keeps literal braces.
         const HELP_TEXT: &str = r#"  Manage data in package.json
 
@@ -100,7 +127,7 @@ impl PmPkgCommand {
 
 <b>More info<r>: <magenta>https://bun.com/docs/cli/pm#pkg<r>
 "#;
-        Output::pretty(HELP_TEXT, format_args!(""));
+        Output::pretty(format_args!("{}", HELP_TEXT));
         Output::flush();
     }
 
@@ -125,7 +152,7 @@ impl PmPkgCommand {
             current_dir = parent;
         }
 
-        Output::err_generic(format_args!("No package.json found"));
+        Output::err_generic("No package.json found", ());
         Global::exit(1);
     }
 

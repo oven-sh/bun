@@ -178,7 +178,7 @@ impl<'a> LockedState<'a> {
     }
 
     fn track_allocation(&mut self, buf: &[u8], ret_addr: usize, extra: Extra) -> Result<(), AllocError> {
-        let trace = StoredTrace::capture(ret_addr);
+        let trace = StoredTrace::capture(Some(ret_addr));
         // TODO(port): `putNoClobber` asserts the key is new. `bun_collections::HashMap` should expose
         // an equivalent; using `insert` + debug_assert for now.
         let prev = self.history.allocations.insert(
@@ -192,7 +192,10 @@ impl<'a> LockedState<'a> {
 
     fn track_free(&mut self, buf: &[u8], ret_addr: usize) -> Result<(), FreeError> {
         let Some(entry) = self.history.allocations.remove(&buf.as_ptr()) else {
-            Output::err_generic(format_args!("Invalid free, pointer {:p}, len {}", buf.as_ptr(), buf.len()));
+            Output::err_generic(
+                "Invalid free, pointer {}, len {}",
+                (format_args!("{:p}", buf.as_ptr()), buf.len()),
+            );
 
             if let Some(free_entry) = self.history.frees.get(&buf.as_ptr()) {
                 Output::print_errorln(format_args!("Pointer allocated here:"));
@@ -220,7 +223,7 @@ impl<'a> LockedState<'a> {
         // Zig: `catch |err| bun.handleOom(err)` — Rust HashMap insert aborts on OOM by default.
         self.history.frees.insert(
             buf.as_ptr(),
-            Free { allocated_at: entry.allocated_at, freed_at: StoredTrace::capture(ret_addr) },
+            Free { allocated_at: entry.allocated_at, freed_at: StoredTrace::capture(Some(ret_addr)) },
         );
         Ok(())
     }
@@ -285,11 +288,13 @@ impl Drop for State {
         if count == 0 {
             return;
         }
-        Output::err_generic(format_args!(
+        Output::err_generic(
             "Allocation scope leaked {} allocations ({})",
-            count,
-            bun_core::fmt::size(history.total_memory_allocated, Default::default()),
-        ));
+            (
+                count,
+                bun_core::fmt::size(history.total_memory_allocated, Default::default()),
+            ),
+        );
 
         let mut n: usize = 0;
         for (key, value) in history.allocations.iter() {

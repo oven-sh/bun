@@ -69,7 +69,11 @@ impl AllocScope {
         // parity; Phase B should decide whether `AllocScope` survives at all.
         #[cfg(debug_assertions)]
         {
-            return self.__scope.allocator();
+            let _ = &self.__scope;
+            // `bun_alloc::AllocationScope` is a unit stub (CYCLEBREAK); the real
+            // `AllocationScope` lives in `crate::allocators::allocation_scope` and
+            // returns `StdAllocator`, not `&dyn Allocator`. Phase B re-threads this.
+            todo!("blocked_on: bun_alloc::AllocationScope::allocator")
         }
         #[cfg(not(debug_assertions))]
         {

@@ -76,7 +76,9 @@ pub fn intern(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValu
     let args = callframe.arguments();
     let opts = if args.len() > 0 { args[0] } else { JSValue::UNDEFINED };
 
-    let config = SSLConfig::from_js(global.bun_vm(), global, opts)?.unwrap_or_else(SSLConfig::zero);
+    // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
+    let vm = unsafe { &mut *global.bun_vm() };
+    let config = SSLConfig::from_js(vm, global, opts)?.unwrap_or_else(SSLConfig::zero);
     // `defer config.deinit()` — handled by Drop.
 
     let ctx_opts = config.as_usockets();
@@ -89,14 +91,15 @@ pub fn intern(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValu
         if let Some(existing) = SecureContext::from_js(cached) {
             // 64-bit key collision is ~2⁻⁶⁴ but a false hit hands the wrong
             // cert to a connection. Full-digest compare is 32 bytes; cheap.
-            if strings::eql_long(&existing.digest, &d, false) {
+            // SAFETY: `from_js` returns a live `m_ctx` pointer owned by the JS wrapper.
+            if strings::eql_long(unsafe { &(*existing).digest }, &d, false) {
                 return Ok(cached);
             }
         }
     }
 
     let sc = SecureContext::create_with_digest(global, ctx_opts, d)?;
-    let value = sc.to_js(global);
+    let value = (*sc).to_js(global);
     // SAFETY: FFI; `global` is valid, `value` is a live JSValue rooted on the stack.
     unsafe { cpp::Bun__SecureContextCache__set(global, key, value) };
     Ok(value)

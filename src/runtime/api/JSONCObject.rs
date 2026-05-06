@@ -51,7 +51,7 @@ pub fn parse(
     let mut log = logger::Log::new();
     let input_value = frame.argument(0);
     if input_value.is_empty_or_undefined_or_null() {
-        return global.throw_invalid_arguments(format_args!("Expected a string to parse"));
+        return Err(global.throw_invalid_arguments(format_args!("Expected a string to parse")));
     }
 
     let input_slice = input_value.to_slice(global)?;
@@ -59,18 +59,23 @@ pub fn parse(
     let parse_result = match json::parse_ts_config::<true>(&source, &mut log, &arena) {
         Ok(v) => v,
         Err(e) => {
-            if e == err!(StackOverflow) {
-                return global.throw_stack_overflow();
+            if e == bun_core::err!(StackOverflow) {
+                // SAFETY: FFI — `global` is a valid live JSGlobalObject*.
+                unsafe { JSGlobalObject__throwStackOverflow(global) };
+                return Err(JsError::Thrown);
             }
-            return global.throw_value(log.to_js(global, b"Failed to parse JSONC")?);
+            return Err(global.throw_value(log.to_js(global, "Failed to parse JSONC")?));
         }
     };
 
-    match parse_result.to_js(&arena, global) {
+    // `ExprJsc::to_js` (bun_js_parser_jsc) drops the allocator param — Rust port
+    // threads the arena via the AST nodes themselves.
+    let _ = &arena;
+    match parse_result.to_js(global) {
         Ok(v) => Ok(v),
-        Err(e) if e == err!(OutOfMemory) => Err(bun_jsc::JsError::OutOfMemory),
-        Err(e) if e == err!(JSError) => Err(bun_jsc::JsError::Thrown),
-        Err(e) if e == err!(JSTerminated) => Err(bun_jsc::JsError::Terminated),
+        Err(ToJSError::OutOfMemory) => Err(JsError::OutOfMemory),
+        Err(ToJSError::JSError) => Err(JsError::Thrown),
+        Err(ToJSError::JSTerminated) => Err(JsError::Terminated),
         // JSONC parsing does not produce macros or identifiers
         Err(_) => unreachable!(),
     }

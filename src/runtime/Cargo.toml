@@ -50,6 +50,7 @@ bun_interchange.workspace = true
 bun_io.workspace = true
 bun_js.workspace = true
 bun_js_parser.workspace = true
+bun_js_parser_jsc.workspace = true
 bun_js_printer.workspace = true
 bun_jsc.workspace = true
 bun_libarchive.workspace = true

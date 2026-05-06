@@ -67,6 +67,27 @@ impl SourceMapStore {
     pub fn remove_or_upgrade_weak_ref(&mut self, _key: Key, _mode: RemoveOrUpgradeMode) -> bool {
         todo!("blocked_on: SourceMapStore::remove_or_upgrade_weak_ref")
     }
+
+    pub fn unref(&mut self, key: Key) {
+        self.unref_count(key, 1);
+    }
+
+    pub fn unref_count(&mut self, key: Key, count: u32) {
+        let Some(index) = self.entries.get_index(&key) else {
+            debug_assert!(false);
+            return;
+        };
+        self.unref_at_index(index, count);
+    }
+
+    fn unref_at_index(&mut self, index: usize, count: u32) {
+        let e = &mut self.entries.values_mut()[index];
+        e.ref_count -= count;
+        if e.ref_count == 0 {
+            // Drop runs Entry::drop (was e.deinit()).
+            self.entries.swap_remove_at(index);
+        }
+    }
 }
 impl Default for SourceMapStore {
     fn default() -> Self {

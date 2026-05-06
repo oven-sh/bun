@@ -2402,33 +2402,40 @@ impl Example {
         };
 
         if response.status_code != 200 {
-            Output::pretty_errorln(
-                "<r><red>{}<r> fetching examples :( {}",
-                format_args!("{} {}", response.status_code, bstr::BStr::new(mutable.list.as_slice())),
-            );
+            Output::pretty_errorln(format_args!(
+                "<r><red>{} {}<r> fetching examples :( ",
+                response.status_code,
+                bstr::BStr::new(mutable.list.as_slice()),
+            ));
             Global::exit(1);
         }
 
         initialize_store();
         let source = logger::Source::init_path_string(b"examples.json", mutable.list.as_slice());
-        let examples_object = match JSON::parse_utf8(&source, ctx.log) {
+        // PORT NOTE: Zig passed `ctx.allocator`; ContextData dropped the allocator field
+        // (global mimalloc), so allocate a leaked Bump arena — examples slices borrow from it
+        // and the CLI exits shortly after.
+        let bump: &'static bumpalo::Bump = Box::leak(Box::new(bumpalo::Bump::new()));
+        // SAFETY: ctx.log is set by Command::create() before any subcommand runs.
+        let log = unsafe { &mut *ctx.log };
+        let examples_object = match JSON::parse_utf8(&source, log, bump) {
             Ok(e) => e,
             Err(err) => {
-                if ctx.log.errors > 0 {
-                    ctx.log.print(Output::error_writer())?;
+                if log.errors > 0 {
+                    log.print(Output::error_writer())?;
                     Global::exit(1);
                 } else {
-                    Output::pretty_errorln(
+                    Output::pretty_errorln(format_args!(
                         "Error parsing examples: <r><red>{}<r>",
-                        format_args!("{}", err.name()),
-                    );
+                        err.name(),
+                    ));
                     Global::exit(1);
                 }
             }
         };
 
-        if ctx.log.errors > 0 {
-            ctx.log.print(Output::error_writer())?;
+        if log.errors > 0 {
+            log.print(Output::error_writer())?;
             Global::exit(1);
         }
 

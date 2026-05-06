@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use bun_jsc::Strong;
+use bun_jsc::StrongOptional;
 use bun_ptr::RefPtr;
 
 use super::{incremental_graph, source_map_store, DevServer, SerializedFailure};
@@ -47,13 +47,13 @@ pub struct Framework {
 
     /// Cached to avoid re-creating the array every request.
     /// TODO: Invalidated when a layout is added or removed from this route.
-    pub cached_module_list: Strong,
+    pub cached_module_list: StrongOptional,
     /// Cached to avoid re-creating the string every request.
     /// TODO: Invalidated when any client file associated with the route is updated.
-    pub cached_client_bundle_url: Strong,
+    pub cached_client_bundle_url: StrongOptional,
     /// Cached to avoid re-creating the array every request.
     /// Invalidated when the list of CSS files changes.
-    pub cached_css_file_array: Strong,
+    pub cached_css_file_array: StrongOptional,
 
     /// When state == .evaluation_failure, this is populated with the route
     /// evaluation error mirrored in the dev server hash map

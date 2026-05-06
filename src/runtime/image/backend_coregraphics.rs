@@ -124,7 +124,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendE
         CG_OK => {}
         rc => return Err(map_err(rc)),
     }
-    Ok(codecs::Decoded { rgba: out, width: w, height: h })
+    Ok(codecs::Decoded { rgba: out, width: w, height: h, icc_profile: None })
 }
 
 pub fn encode(

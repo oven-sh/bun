@@ -77,8 +77,6 @@ impl WaiterThread {
     }
 }
 
-// MOVE_DOWN(b0): bun_runtime::cli::Arguments → bun_bunfig::Arguments (config loading is bunfig-tier).
-use crate::bun_bunfig::Arguments as BunArguments;
 // TODO(b0): RunCommand arrives from move-in (bun_runtime::cli::RunCommand → install).
 use crate::RunCommand;
 
@@ -685,6 +683,14 @@ impl WakeHandler {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub static mut VERBOSE_INSTALL: bool = false;
+
+/// Hook (GENUINE b0): `bun.cli.Arguments.loadConfig(_, cli.config, ctx, .InstallCommand)`
+/// (PackageManager.zig:801). The bunfig loader lives in tier-6 `bun_cli`;
+/// install can't depend on it without a cycle. bun_cli registers this once at
+/// startup with the `.InstallCommand` overload baked in.
+pub static LOAD_CONFIG_HOOK: std::sync::OnceLock<
+    fn(Option<&[u8]>, Command::Context) -> Result<(), Error>,
+> = std::sync::OnceLock::new();
 
 struct TimePasser;
 impl TimePasser {

@@ -655,9 +655,11 @@ pub struct PriorityQueue<'a> {
     context: PriorityQueueContext<'a>,
 }
 
-impl<'a> PriorityQueue<'a> {
-    pub type Context = PriorityQueueContext<'a>;
+// PORT NOTE: Zig's `Bin.PriorityQueue.Context` is an inherent associated type;
+// `inherent_associated_types` is unstable, so callers use `Bin::PriorityQueueContext`.
+pub type Context<'a> = PriorityQueueContext<'a>;
 
+impl<'a> PriorityQueue<'a> {
     pub fn init(context: PriorityQueueContext<'a>) -> Self {
         Self { items: Vec::new(), context }
     }

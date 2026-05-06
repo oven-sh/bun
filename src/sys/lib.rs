@@ -5053,7 +5053,7 @@ pub fn renameat_concurrently_without_fallback(
             {
                 // Fallback path: the folder exists in the cache dir, it might be in a strange state
                 // let's attempt to atomically replace it with the temporary folder's version
-                if matches!(err.get_errno(), E::EXIST | E::NOTEMPTY | E::OPNOTSUPP) {
+                if matches!(err.get_errno(), E::EEXIST | E::ENOTEMPTY | E::EOPNOTSUPP) {
                     did_atomically_replace = true;
                     match renameat2(
                         from_dir_fd,

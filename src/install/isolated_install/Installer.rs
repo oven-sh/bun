@@ -2182,12 +2182,11 @@ impl<'a> Installer<'a> {
         buf: &mut impl paths::PathLike,
         entry_id: StoreEntryId,
     ) {
+        buf.append(NODE_MODULES_BUN.as_bytes());
         buf.append_fmt(format_args!(
-            concat!("node_modules/", "{}", "/{}"),
-            store::MODULES_DIR_NAME,
+            "/{}",
             store::entry::fmt_store_path(entry_id, self.store, self.lockfile),
         ));
-        // TODO(port): Zig used compile-time string concat with Store.modules_dir_name
     }
 
     /// Create the project-level symlink `node_modules/.bun/<storepath>` →
@@ -2298,12 +2297,11 @@ impl<'a> Installer<'a> {
                 buf.append(b"node_modules");
             }
             _ => {
+                buf.append(NODE_MODULES_BUN.as_bytes());
                 buf.append_fmt(format_args!(
-                    "node_modules/{}/{}/node_modules",
-                    store::MODULES_DIR_NAME,
+                    "/{}/node_modules",
                     store::entry::fmt_store_path(entry_id, self.store, self.lockfile),
                 ));
-                // TODO(port): Zig used compile-time concat with Store.modules_dir_name
             }
         }
     }

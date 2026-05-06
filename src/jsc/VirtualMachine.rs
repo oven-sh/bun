@@ -2730,6 +2730,22 @@ impl VirtualMachine {
         result
     }
 
+    /// Spec VirtualMachine.zig:1724 `_resolve`.
+    ///
+    /// PORT NOTE: Zig has `comptime is_a_file_path: bool`; folded to a runtime
+    /// arg here to avoid duplicating the body for both monomorphizations.
+    #[allow(unused_variables)]
+    pub fn _resolve(
+        &mut self,
+        ret: &mut ResolveFunctionResult,
+        specifier: &[u8],
+        source: &[u8],
+        is_esm: bool,
+        is_a_file_path: bool,
+    ) -> Result<(), bun_core::Error> {
+        todo!("blocked_on: VirtualMachine._resolve (resolver/transpiler integration, b2-cycle)")
+    }
+
     /// Spec VirtualMachine.zig:1854 `resolve`.
     pub fn resolve(
         res: &mut ErrorableString,
@@ -2850,23 +2866,23 @@ impl VirtualMachine {
                 .find_map(|m| {
                     if let logger::Metadata::Resolve(r) = &m.metadata {
                         err = r.err;
-                        Some(m.clone())
+                        Some(bun_core::handle_oom(m.clone()))
                     } else {
                         None
                     }
                 })
                 .unwrap_or_else(|| {
-                    let printed = crate::ResolveMessage::fmt(
+                    let printed = bun_core::handle_oom(crate::ResolveMessage::fmt(
                         specifier_utf8.slice(),
                         source_utf8.slice(),
                         err,
-                        import_kind,
-                    );
+                        import_kind.into(),
+                    ));
                     logger::Msg {
                         data: logger::range_data(None, logger::Range::NONE, printed.clone()),
                         metadata: logger::Metadata::Resolve(logger::MetadataResolve {
-                            specifier: logger::BabyString::in_(&printed, specifier_utf8.slice()),
-                            import_kind,
+                            specifier: logger::BabyString::r#in(&printed, specifier_utf8.slice()),
+                            import_kind: import_kind.into(),
                             err,
                         }),
                         ..Default::default()
@@ -2924,13 +2940,8 @@ impl VirtualMachine {
         writer: &mut bun_core::io::Writer,
         allow_side_effects: bool,
     ) {
-        let mut formatter = crate::console_object::Formatter {
-            global_this: self.global,
-            quote_strings: false,
-            single_line: false,
-            stack_check: bun_core::StackCheck::init(),
-            ..Default::default()
-        };
+        // SAFETY: `self.global` is valid for VM lifetime.
+        let mut formatter = crate::console_object::Formatter::new(unsafe { &*self.global });
         let colors = bun_core::Output::enable_ansi_colors_stderr();
         self.print_errorlike_object(
             exception.value(),
@@ -2951,7 +2962,8 @@ impl VirtualMachine {
         }
         let str = jsc::ZigString::init(MAIN_FILE_NAME);
         // SAFETY: `global` valid for VM lifetime.
-        unsafe { (*self.global).delete_module_registry_entry(&str) }
+        let _ = (&str, self.global);
+        todo!("blocked_on: JSGlobalObject::delete_module_registry_entry (JSGlobalObject.rs gated)")
     }
 
     /// Spec VirtualMachine.zig:2363 `useIsolationSourceProviderCache`.
@@ -3113,7 +3125,11 @@ impl VirtualMachine {
                 // SAFETY: `group` is a live `us_socket_group_t` linked in the loop.
                 let next = unsafe { (*group.as_ptr()).next };
                 let g = group.as_ptr();
-                if g != skip_spawn_ipc && g != skip_process_ipc && g != skip_test_parallel_ipc {
+                // PORT NOTE: `head` is `*mut bun_uws_sys::SocketGroup`; the
+                // skip-set placeholders above are typed against the
+                // `bun_uws::SocketGroup` mirror — `.cast()` for the
+                // pointer-equality check until the duplicate collapses.
+                if g != skip_spawn_ipc.cast() && g != skip_process_ipc.cast() && g != skip_test_parallel_ipc.cast() {
                     // SAFETY: see above.
                     unsafe { (*g).close_all() };
                 }
@@ -3127,9 +3143,9 @@ impl VirtualMachine {
             }
         }
         if let Some(rare) = self.rare_data.as_deref_mut() {
-            rare.listening_sockets_for_watch_mode_lock.lock();
+            let _guard = rare.listening_sockets_for_watch_mode_lock.lock();
             rare.listening_sockets_for_watch_mode.clear();
-            rare.listening_sockets_for_watch_mode_lock.unlock();
+            drop(_guard);
         }
         // SAFETY: `event_loop` is a self-pointer into this VM.
         let _ = unsafe { (*self.event_loop()).drain_microtasks() };
@@ -3158,10 +3174,12 @@ impl VirtualMachine {
         let old_global = self.global;
         // SAFETY: `old_global` valid for VM lifetime; `console` is the live
         // per-VM ConsoleObject.
-        let new_global = JSGlobalObject::create_for_test_isolation(
-            unsafe { &*old_global },
-            self.console.cast(),
-        );
+        let new_global: *mut JSGlobalObject = {
+            let _ = (old_global, self.console);
+            todo!("blocked_on: JSGlobalObject::create_for_test_isolation (JSGlobalObject.rs gated)")
+        };
+        #[allow(unreachable_code)]
+        {
         self.global = new_global;
         VMHolder::CACHED_GLOBAL_OBJECT.set(Some(new_global));
         self.regular_event_loop.global = NonNull::new(new_global);
@@ -3176,6 +3194,7 @@ impl VirtualMachine {
                 }
             }
         }
+        } // end #[allow(unreachable_code)]
     }
 
     /// Spec VirtualMachine.zig:2641 `_loadMacroEntryPoint`.

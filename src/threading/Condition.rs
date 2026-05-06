@@ -223,10 +223,11 @@ mod windows_impl {
         }
 
         pub(super) fn wake(&self, notify: Notify) {
-            // SAFETY: condition is a valid OS handle.
+            // SAFETY: `condition` is an UnsafeCell-wrapped OS sync primitive; kernel32
+            // mutates it internally and provides its own synchronization.
             match notify {
-                Notify::One => unsafe { kernel32::WakeConditionVariable(&self.condition as *const _ as *mut _) },
-                Notify::All => unsafe { kernel32::WakeAllConditionVariable(&self.condition as *const _ as *mut _) },
+                Notify::One => unsafe { kernel32::WakeConditionVariable(self.condition.get()) },
+                Notify::All => unsafe { kernel32::WakeAllConditionVariable(self.condition.get()) },
             }
         }
     }

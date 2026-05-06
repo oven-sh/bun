@@ -34,16 +34,21 @@ pub mod lib {
     type time_t = isize;
 
     /// Opaque libarchive `struct archive`. Always used behind `*mut Archive`.
+    /// Contains `UnsafeCell` so that `&Archive` does not assert immutability
+    /// (libarchive mutates through every call), making `&self -> *mut Self`
+    /// sound under Stacked Borrows.
     #[repr(C)]
     pub struct Archive {
-        _p: [u8; 0],
+        _p: core::cell::UnsafeCell<[u8; 0]>,
         _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
     }
 
     /// Opaque libarchive `struct archive_entry`. Always used behind `*mut Entry`.
+    /// Contains `UnsafeCell` for the same reason as `Archive` — the C side
+    /// mutates through getter/setter calls that take `&self` here.
     #[repr(C)]
     pub struct Entry {
-        _p: [u8; 0],
+        _p: core::cell::UnsafeCell<[u8; 0]>,
         _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
     }
 

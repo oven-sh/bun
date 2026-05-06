@@ -2,6 +2,7 @@
 
 use core::cell::RefCell;
 use core::ffi::{c_char, c_void};
+use core::marker::PhantomData;
 use core::ptr::{self, NonNull};
 
 use crate::mimalloc;
@@ -46,16 +47,22 @@ impl Default {
 /// This type is a `GenericAllocator`; see `src/allocators.zig`.
 #[derive(Clone, Copy)]
 pub struct Borrowed<'a> {
+    // Zig's `BorrowedHeap` is `*mimalloc.Heap` / `*DebugHeap` — a freely-aliasing raw
+    // pointer. We keep it raw here (not `&'a Heap`) because the FFI mutates the heap
+    // (mi_heap_malloc, mi_heap_collect, …); deriving `*mut` from a shared `&` would be UB.
     #[cfg(feature = "ci_assert")]
-    heap: &'a DebugHeap,
+    heap: NonNull<DebugHeap>,
     #[cfg(not(feature = "ci_assert"))]
-    heap: &'a mimalloc::Heap,
+    heap: NonNull<mimalloc::Heap>,
+    _lt: PhantomData<&'a ()>,
 }
 
 impl<'a> Borrowed<'a> {
     pub fn allocator(self) -> ZigAllocator {
         ZigAllocator {
-            ptr: self.heap as *const _ as *mut c_void,
+            // SAFETY: `heap` is a live owned mi_heap_t* (or DebugHeap*) for `'a`; the vtable
+            // round-trips it through `from_opaque` without ever forming a Rust `&mut`.
+            ptr: self.heap.as_ptr().cast::<c_void>(),
             vtable: &HEAP_ALLOCATOR_VTABLE,
         }
     }

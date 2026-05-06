@@ -1,3 +1,4 @@
+use core::cell::UnsafeCell;
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 use std::sync::OnceLock;
@@ -133,13 +134,32 @@ fn get_zone_runtime(name: &str) -> &'static Zone {
 /// Zig: `pub const Zone = opaque { ... };`
 ///
 /// Opaque FFI handle for a macOS `malloc_zone_t`.
+///
+/// The `UnsafeCell` field makes `Zone: !Freeze`, so a `&Zone` does not assert
+/// immutability of the pointee. This is required because every malloc-zone FFI
+/// call (`malloc_zone_memalign`, `malloc_zone_free`, …) mutates the zone's
+/// internal state, and Zig models the handle as a freely-aliasing `*Zone`.
+/// Without `UnsafeCell`, casting `&Zone as *const _ as *mut _` and writing
+/// through it (via FFI) is UB under Stacked Borrows.
 #[repr(C)]
 pub struct Zone {
-    _p: [u8; 0],
+    _p: UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
 impl Zone {
+    /// Recover the raw `*mut Zone` from a shared reference.
+    ///
+    /// Sound because `Zone` contains `UnsafeCell` (is `!Freeze`): a `&Zone`
+    /// grants permission to mutate the opaque C state behind it, matching the
+    /// Zig spec where every method takes `*Zone`.
+    #[inline(always)]
+    fn as_ptr(&self) -> *mut Zone {
+        // SAFETY: see type-level doc — `Zone: !Freeze`, so deriving a mutable
+        // raw pointer from `&self` for FFI does not violate aliasing rules.
+        self as *const Zone as *mut Zone
+    }
+
     /// Zig: `pub fn init(comptime name: [:0]const u8) *Zone`
     ///
     /// # Safety

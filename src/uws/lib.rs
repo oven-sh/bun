@@ -2226,6 +2226,15 @@ impl AnySocket {
             AnySocket::SocketTls(s) => &s.socket,
         }
     }
+    /// `*SSL` for `SocketTls`, fd-as-ptr for `SocketTcp`. Type-erased; callers
+    /// `cast()` immediately. Mirrors Zig `AnySocket.getNativeHandle`.
+    #[inline]
+    pub fn get_native_handle(&self) -> Option<*mut c_void> {
+        match self {
+            AnySocket::SocketTcp(s) => s.get_native_handle(),
+            AnySocket::SocketTls(s) => s.get_native_handle(),
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

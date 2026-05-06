@@ -417,12 +417,12 @@ impl BuildCommand {
                     && this_transpiler.options.minify_syntax,
             )?;
 
-            crate::bake::add_import_meta_defines(
+            crate::bake::bake_body::add_import_meta_defines(
                 &mut this_transpiler.options.define,
                 crate::bake::Mode::Development,
                 crate::bake::Side::Server,
             )?;
-            crate::bake::add_import_meta_defines(
+            crate::bake::bake_body::add_import_meta_defines(
                 &mut ct.options.define,
                 crate::bake::Mode::Development,
                 crate::bake::Side::Client,

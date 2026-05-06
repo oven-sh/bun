@@ -1127,7 +1127,7 @@ pub fn set_engine(global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
 }
 
 extern "C" fn for_each_hash(
-    _: *const boringssl::EVP_MD,
+    _: *const boringssl::c::EVP_MD,
     maybe_from: *const c_char,
     _: *const c_char,
     ctx: *mut c_void,

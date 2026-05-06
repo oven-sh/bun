@@ -1612,14 +1612,20 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                 }
             };
             if size == 0 {
-                bun_http::set_max_http_header_size(1024 * 1024 * 1024);
+                // SAFETY: single-threaded startup; mirrors Zig `http.max_http_header_size = …`
+                unsafe { bun_http::MAX_HTTP_HEADER_SIZE = 1024 * 1024 * 1024 };
             } else {
-                bun_http::set_max_http_header_size(size);
+                // SAFETY: single-threaded startup
+                unsafe { bun_http::MAX_HTTP_HEADER_SIZE = size };
             }
         }
 
         if let Some(user_agent) = args.option("--user-agent") {
-            bun_http::set_overridden_default_user_agent(user_agent);
+            // SAFETY: single-threaded startup; argv slices are process-lifetime.
+            unsafe {
+                bun_http::OVERRIDDEN_DEFAULT_USER_AGENT =
+                    core::mem::transmute::<&[u8], &'static [u8]>(user_agent);
+            }
         }
 
         ctx.debug.offline_mode_setting = if args.flag("--prefer-offline") {

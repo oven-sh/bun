@@ -883,15 +883,17 @@ impl UpgradeCommand {
                     if use_canary { b"--revision" } else { b"--version" },
                 ];
 
-                // TODO(port): Zig used std.process.Child.run; bans std::process — use bun_core::spawn_sync with .buffer
-                let result = match bun_core::spawn_sync(&bun_core::SpawnOptions {
-                    argv: &verify_argv,
-                    cwd: &tmpdir_path_buf[..tmpdir_path_len],
-                    max_output_bytes: 512,
-                    stdout: bun_core::Stdio::Buffer,
-                    ..Default::default()
-                }) {
-                    Ok(r) => r,
+                // TODO(port): Zig used std.process.Child.run with max_output_bytes=512;
+                // PORTING.md bans std::process. The buffered/cwd-aware spawn_sync helper
+                // (with stdout capture + max_output_bytes) is not yet available at this layer.
+                #[allow(unreachable_code)]
+                let result: crate::api::bun::process::sync::Result = {
+                    let _ = (&verify_argv, &tmpdir_path_buf[..tmpdir_path_len]);
+                    todo!("blocked_on: bun_core::spawn_sync (std.process.Child.run port)")
+                };
+                #[allow(unreachable_code)]
+                match Ok::<(), bun_core::Error>(()) {
+                    Ok(()) => {}
                     Err(err) => {
                         let _delete_guard = scopeguard::guard((), |_| {
                             let _ = save_dir_.delete_tree(&version_name);

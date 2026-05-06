@@ -155,7 +155,7 @@ pub struct CurrentBundle<'a> {
     /// Information BundleV2 needs to finalize the bundle
     pub start_data: bundler::bundle_v2::__phase_a_draft::DevServerInput,
     /// Started when the bundle was queued
-    pub timer: Instant, // TODO(port): std.time.Timer → Instant; .read() becomes .elapsed()
+    pub timer: Instant, // TODO(port): std.time.Timer â Instant; .read() becomes .elapsed()
     /// If any files in this bundle were due to hot-reloading, some extra work
     /// must be done to inform clients to reload routes. When this is false,
     /// all entry points do not have bundles yet.
@@ -224,7 +224,7 @@ pub struct DevServer<'a> {
     /// may have changed. Populated by applyBarrelOptimization.
     pub barrel_files_with_deferrals: ArrayHashMap<Box<[u8]>, ()>,
     /// Accumulated barrel export requests across all builds. Maps barrel file
-    /// path → set of export names that have been requested. This ensures that
+    /// path â set of export names that have been requested. This ensures that
     /// when a barrel is re-parsed in an incremental build, exports requested
     /// by non-stale files (from previous builds) are still kept.
     pub barrel_needed_exports: ArrayHashMap<Box<[u8]>, StringHashMap<()>>,
@@ -296,7 +296,7 @@ pub struct DevServer<'a> {
 
     // Debugging
     #[cfg(feature = "bake_debugging_features")]
-    pub dump_dir: Option<sys::Dir>, // TODO(port): std.fs.Dir → bun_sys equivalent
+    pub dump_dir: Option<sys::Dir>, // TODO(port): std.fs.Dir â bun_sys equivalent
     #[cfg(not(feature = "bake_debugging_features"))]
     pub dump_dir: (),
     /// Reference count to number of active sockets with the incremental_visualizer enabled.
@@ -370,7 +370,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     };
     #[cfg(not(feature = "bake_debugging_features"))]
     let dump_dir = ();
-    // TODO(port): errdefer dump_dir.close() — handled by Drop on sys::Dir
+    // TODO(port): errdefer dump_dir.close() â handled by Drop on sys::Dir
 
     let separate_ssr_graph = options
         .framework
@@ -393,7 +393,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     let mut dev_uninit: Box<MaybeUninit<DevServer>> = Box::new(MaybeUninit::uninit());
     let p: *mut DevServer = dev_uninit.as_mut_ptr();
 
-    /// `addr_of_mut!((*p).$field).write($value)` — writes a single field of the
+    /// `addr_of_mut!((*p).$field).write($value)` â writes a single field of the
     /// partially-initialized `DevServer` without materializing `&mut DevServer`.
     macro_rules! w {
         ($field:ident, $value:expr) => {
@@ -487,7 +487,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         w!(log, Log::init());
         w!(deferred_request_pool, HiveArray::init());
 
-        // `.router = undefined` — placeholder until the real router is built below
+        // `.router = undefined` â placeholder until the real router is built below
         // (after transpilers + framework.resolve). Constructed empty so the field
         // is valid for `assume_init()`; overwritten by `dev.router = 'router: {..}`.
         w!(
@@ -503,7 +503,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         );
     }
 
-    // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime; `global` is the
+    // SAFETY: vm is JSC_BORROW â valid for DevServer lifetime; `global` is the
     // per-VM `*mut JSGlobalObject`, always non-null once the VM is initialized.
     let global = unsafe { &*options.vm.global };
 
@@ -517,7 +517,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         Err(err) => return Err(global.throw_error(err, generic_action)),
     };
 
-    // `.bun_watcher = undefined` → `Watcher.init(DevServer, dev, fs, ...)`
+    // `.bun_watcher = undefined` â `Watcher.init(DevServer, dev, fs, ...)`
     // SAFETY: `Watcher::init` only stores `p` as an opaque `*mut ()` ctx; it does
     // not dereference it until `start()` spawns the watcher thread, by which point
     // every `DevServer` field is initialized (`assume_init` below precedes
@@ -532,19 +532,19 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     };
     // SAFETY: per-field write into uninit struct; see `w!` SAFETY above.
     unsafe { w!(bun_watcher, bun_watcher) };
-    // errdefer dev.bun_watcher.deinit(false) — handled by `Drop for Watcher` when
+    // errdefer dev.bun_watcher.deinit(false) â handled by `Drop for Watcher` when
     // `dev_uninit` is dropped on an error path after `assume_init()`.
 
-    // `.watcher_atomics = undefined` → `WatcherAtomics.init(dev)`
+    // `.watcher_atomics = undefined` â `WatcherAtomics.init(dev)`
     // SAFETY: `WatcherAtomics::init` / `HotReloadEvent::init_empty` only store `p`
     // as `*const DevServer` for later `concurrent_task.from(dev)`; not dereferenced
     // during construction.
     unsafe { w!(watcher_atomics, WatcherAtomics::init(p)) };
 
     // This causes a memory leak, but the allocator is otherwise used on multiple threads.
-    // (allocator param dropped — global mimalloc)
+    // (allocator param dropped â global mimalloc)
 
-    // `.server_transpiler/.client_transpiler/.ssr_transpiler = undefined` →
+    // `.server_transpiler/.client_transpiler/.ssr_transpiler = undefined` â
     // `Framework.initTranspiler(..., &dev.X_transpiler, ...)`.
     //
     // SAFETY: `init_transpiler` writes the slot via `MaybeUninit::write` (see
@@ -592,7 +592,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             // `!separate_ssr_graph` and never read it. Rust must still write a
             // valid value before `assume_init()`. Bitwise-alias the server
             // transpiler (it is never independently dropped: `Drop for DevServer`
-            // does not free transpiler heap fields — see `useAllFields` mapping
+            // does not free transpiler heap fields â see `useAllFields` mapping
             // where `.ssr_transpiler = {}` is a no-op in Zig).
             ::core::ptr::copy_nonoverlapping(
                 addr_of_mut!((*p).server_transpiler).cast_const(),
@@ -602,7 +602,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         }
     }
 
-    // ── every field is now written ───────────────────────────────────────────
+    // ââ every field is now written âââââââââââââââââââââââââââââââââââââââââââ
     // SAFETY: all fields of `*p` were written exactly once above via
     // `addr_of_mut!().write()` / `copy_nonoverlapping`; no field remains uninit.
     let mut dev: Box<DevServer> = unsafe { dev_uninit.assume_init() };
@@ -655,7 +655,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     };
 
     // errdefer dev.route_lookup.clearAndFree() / client_graph.deinit() / server_graph.deinit()
-    // — handled by Drop
+    // â handled by Drop
 
     dev.configuration_hash_key = 'hash_key: {
         let mut h = Wyhash::init(128);
@@ -851,12 +851,12 @@ impl Drop for DevServer<'_> {
         }
 
         if self.memory_visualizer_timer.state == EventLoopTimer::State::ACTIVE {
-            // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
+            // SAFETY: vm is JSC_BORROW â valid for DevServer lifetime
             unsafe { (*self.vm).timer.remove(&mut self.memory_visualizer_timer) };
         }
         self.graph_safety_lock.lock();
-        // bun_watcher is Box<Watcher> — Drop handles, but Zig passed `true` for stop-thread.
-        // TODO(port): Watcher::deinit(true) semantics — ensure Drop stops thread.
+        // bun_watcher is Box<Watcher> â Drop handles, but Zig passed `true` for stop-thread.
+        // TODO(port): Watcher::deinit(true) semantics â ensure Drop stops thread.
 
         #[cfg(feature = "bake_debugging_features")]
         if let Some(dir) = self.dump_dir.take() {
@@ -894,7 +894,7 @@ impl Drop for DevServer<'_> {
             value.deinit();
         }
         if self.source_maps.weak_ref_sweep_timer.state == EventLoopTimer::State::ACTIVE {
-            // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
+            // SAFETY: vm is JSC_BORROW â valid for DevServer lifetime
             unsafe { (*self.vm).timer.remove(&mut self.source_maps.weak_ref_sweep_timer) };
         }
 
@@ -909,7 +909,7 @@ impl Drop for DevServer<'_> {
         }
 
         debug_assert!(self.magic == Magic::Valid);
-        // self.magic = undefined — no Rust equivalent; freed memory.
+        // self.magic = undefined â no Rust equivalent; freed memory.
 
         // allocation_scope dropped last automatically by field order.
         // TODO(port): if AllocationScope::ENABLED, deinit happens via Drop.
@@ -949,7 +949,7 @@ impl DevServer<'_> {
         ) {
             Ok(v) => v,
             Err(err) => {
-                // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
+                // SAFETY: vm is JSC_BORROW â valid for DevServer lifetime
                 unsafe { &*self.vm }.print_error_like_object_to_console(global.take_exception(err));
                 panic!("Server runtime failed to start. The above error is always a bug in Bun");
             }
@@ -995,7 +995,7 @@ impl DevServer<'_> {
     /// Returns true if a catch-all handler was attached.
     pub fn set_routes<S>(&mut self, server: &mut S) -> Result<bool, bun_core::Error>
     where
-        S: uws::ServerLike, // TODO(port): `server: anytype` — bound by methods called below
+        S: uws::ServerLike, // TODO(port): `server: anytype` â bound by methods called below
     {
         // TODO: all paths here must be prefixed with publicPath if set.
         self.server = Some(AnyServer::from(server));
@@ -1006,7 +1006,7 @@ impl DevServer<'_> {
                 app.$method($path, self as *mut _, wrap_generic_request_handler::<_, { S::IS_SSL }>($handler));
             };
         }
-        // TODO(port): comptime string concat → const_format::concatcp!
+        // TODO(port): comptime string concat â const_format::concatcp!
         route!(get, const_format::concatcp!(CLIENT_PREFIX, "/:route"), on_js_request);
         route!(get, const_format::concatcp!(ASSET_PREFIX, "/:asset"), on_asset_request);
         route!(get, const_format::concatcp!(INTERNAL_PREFIX, "/src/*"), on_src_request);
@@ -1099,7 +1099,7 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
         let Some(entry) = dev.source_maps.entries.get_mut(&source_map_store::Key::init(id)) else {
             return not_found(resp);
         };
-        // PERF(port): was ArenaAllocator — using global heap
+        // PERF(port): was ArenaAllocator â using global heap
         let json_bytes = entry
             .render_json(dev, source_id.kind, bake::Side::Client)
             .expect("oom");
@@ -1234,7 +1234,7 @@ struct RequestEnsureRouteBundledCtx<'a> {
 
 impl<'a> RequestEnsureRouteBundledCtx<'a> {
     fn on_defer(&mut self, bundle_field: BundleQueueType) -> JsResult<()> {
-        // PORT NOTE: reshaped for borrowck — captured args before re-borrowing dev
+        // PORT NOTE: reshaped for borrowck â captured args before re-borrowing dev
         let route_bundle_index = self.route_bundle_index;
         let kind = self.kind;
         let req = core::mem::replace(&mut self.req, ReqOrSaved::Aborted); // TODO(port): ReqOrSaved moved into deferRequest
@@ -1343,7 +1343,7 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                                 // TODO: implement a proper solution here
                                 dev.has_tailwind_plugin_hack =
                                     if let Some(serve_plugins) =
-                                        // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
+                                        // SAFETY: vm is JSC_BORROW â valid for DevServer lifetime
                                         unsafe { &(*dev.vm).transpiler.options.serve_plugins }
                                     {
                                         serve_plugins
@@ -1584,7 +1584,7 @@ fn check_route_failures(
         scopeguard::guard((), |_| dev.incremental_result.failures_added.clear());
     dev.graph_safety_lock.lock();
     let _lock_guard = scopeguard::guard((), |_| dev.graph_safety_lock.unlock());
-    // TODO(port): scopeguard borrowing dev — Phase B reshape
+    // TODO(port): scopeguard borrowing dev â Phase B reshape
     dev.trace_all_route_imports(
         dev.route_bundle_ptr(route_bundle_index),
         &mut gts,
@@ -1594,7 +1594,7 @@ fn check_route_failures(
         // See comment on this field for information
         if !dev.assume_perfect_incremental_bundling {
             // Cache bust EVERYTHING reachable
-            // TODO(port): inline for over .{ {graph, bits}, ... } — unrolled
+            // TODO(port): inline for over .{ {graph, bits}, ... } â unrolled
             {
                 let mut it = gts.client_bits.iter_ones();
                 while let Some(file_index) = it.next() {
@@ -1691,7 +1691,7 @@ impl DevServer<'_> {
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    // TODO(port): callconv(jsc.conv) — needs #[bun_jsc::host_call] ABI
+    // TODO(port): callconv(jsc.conv) â needs #[bun_jsc::host_call] ABI
     fn Bake__getEnsureAsyncLocalStorageInstanceJSFunction(global: *const JSGlobalObject) -> JSValue;
     fn Bake__getBundleNewRouteJSFunction(global: *const JSGlobalObject) -> JSValue;
     fn Bake__getNewRouteParamsJSFunction(global: *const JSGlobalObject) -> JSValue;
@@ -1983,7 +1983,7 @@ impl DevServer<'_> {
 
         self.graph_safety_lock.lock();
         let _lock = scopeguard::guard((), |_| self.graph_safety_lock.unlock());
-        // TODO(port): scopeguard borrow conflict — Phase B reshape
+        // TODO(port): scopeguard borrow conflict â Phase B reshape
 
         // Prepare bitsets for tracing
         // PERF(port): was stack-fallback (65536)
@@ -2329,7 +2329,7 @@ impl DevServer<'_> {
         let mut heap = bun_alloc::MimallocArena::init();
         // TODO(port): heap is moved into BundleV2; errdefer heap.deinit() handled by Drop
         let alloc = heap.allocator();
-        // TODO(port): ASTMemoryAllocator scope — bake is an AST crate; arena threading required
+        // TODO(port): ASTMemoryAllocator scope â bake is an AST crate; arena threading required
         let ast_memory_allocator = alloc.alloc(bun_js_parser::ASTMemoryAllocator::default());
         let _ast_scope = ast_memory_allocator.enter(alloc);
 
@@ -2342,7 +2342,7 @@ impl DevServer<'_> {
                 plugins: self.bundler_options.plugin.clone(),
             },
             alloc,
-            // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
+            // SAFETY: vm is JSC_BORROW â valid for DevServer lifetime
             bundler::EventLoop::Js(unsafe { &*self.vm }.event_loop()),
             false, // watching is handled separately
             bun_threading::WorkPool::get(),
@@ -2560,7 +2560,7 @@ impl DevServer<'_> {
         match self.source_maps.put_or_increment_ref_count(script_id, 1)? {
             source_map_store::PutResult::Uninitialized(entry) => {
                 let _guard = scopeguard::guard((), |_| self.source_maps.unref(script_id));
-                // TODO(port): errdefer — disarm on success
+                // TODO(port): errdefer â disarm on success
                 gts.clear_and_free();
                 // PERF(port): was ArenaAllocator
                 self.client_graph.take_source_map(entry)?;
@@ -2627,7 +2627,7 @@ impl DevServer<'_> {
         Ok(arr)
     }
 
-    // PERF(port): was comptime monomorphization (`comptime goal: TraceImportGoal`) — profile in Phase B
+    // PERF(port): was comptime monomorphization (`comptime goal: TraceImportGoal`) â profile in Phase B
     fn trace_all_route_imports(
         &mut self,
         route_bundle: &RouteBundle,
@@ -3016,7 +3016,7 @@ pub fn finalize_bundle(
         chunk.entry_point.entry_point_id = u32::try_from(route_bundle_index.get()).unwrap();
     }
 
-    // gts already initialized above; PORT NOTE: reshaped — Zig assigned ctx.gts here
+    // gts already initialized above; PORT NOTE: reshaped â Zig assigned ctx.gts here
     ctx.server_seen_bit_set = DynamicBitSet::init_empty(dev.server_graph.bundled_files.len())?;
 
     dev.incremental_result.had_adjusted_edges = false;
@@ -3133,7 +3133,7 @@ pub fn finalize_bundle(
             ) {
                 Ok(v) => v,
                 Err(err) => {
-                    // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
+                    // SAFETY: vm is JSC_BORROW â valid for DevServer lifetime
                     unsafe { &*dev.vm }
                         .print_error_like_object_to_console(global.take_exception(err));
                     panic!("Error thrown while evaluating server code. This is always a bug in the bundler.");
@@ -3143,7 +3143,7 @@ pub fn finalize_bundle(
             match c::bake_load_server_hmr_patch(global, BunString::clone_latin1(&server_bundle)) {
                 Ok(v) => v,
                 Err(err) => {
-                    // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
+                    // SAFETY: vm is JSC_BORROW â valid for DevServer lifetime
                     unsafe { &*dev.vm }
                         .print_error_like_object_to_console(global.take_exception(err));
                     panic!("Error thrown while evaluating server code. This is always a bug in the bundler.");
@@ -3171,7 +3171,7 @@ pub fn finalize_bundle(
             ) {
             Ok(v) => v,
             Err(err) => {
-                // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
+                // SAFETY: vm is JSC_BORROW â valid for DevServer lifetime
                 unsafe { &*dev.vm }.print_error_like_object_to_console(global.take_exception(err));
                 panic!(
                     "Error thrown in Hot-module-replacement code. This is always a bug in the HMR runtime."
@@ -3470,7 +3470,7 @@ pub fn finalize_bundle(
     if dev.bundling_failures.is_empty() {
         if current_bundle.had_reload_event {
             let clear_terminal = !bun_output::scope_is_visible!(DevServer)
-                // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
+                // SAFETY: vm is JSC_BORROW â valid for DevServer lifetime
                 && !unsafe { &*dev.vm }
                     .transpiler
                     .env
@@ -3587,7 +3587,7 @@ pub fn finalize_bundle(
     if current_bundle.promise.strong.has_value() {
         let _deinit = scopeguard::guard((), |_| current_bundle.promise.deinit_idempotently());
         current_bundle.promise.set_route_bundle_state(dev, route_bundle::State::Loaded);
-        // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
+        // SAFETY: vm is JSC_BORROW â valid for DevServer lifetime
         let vm = unsafe { &*dev.vm };
         vm.event_loop().enter();
         let _exit = scopeguard::guard((), |_| vm.event_loop().exit());
@@ -3725,7 +3725,7 @@ impl DevServer<'_> {
         self.graph_safety_lock.lock();
         let _g = scopeguard::guard((), |_| self.graph_safety_lock.unlock());
 
-        // TODO(port): `switch (graph == .client) { inline else => |is_client| ... }` — unrolled
+        // TODO(port): `switch (graph == .client) { inline else => |is_client| ... }` â unrolled
         let owner = if graph == bake::Graph::Client {
             serialized_failure::Owner::Client(self.client_graph.insert_stale(abs_path, false)?).encode()
         } else {
@@ -3757,7 +3757,7 @@ impl DevServer<'_> {
         self.graph_safety_lock.lock();
         let _g = scopeguard::guard((), |_| self.graph_safety_lock.unlock());
 
-        // TODO(port): switch (side) { inline else => |side_comptime| ... } — unrolled
+        // TODO(port): switch (side) { inline else => |side_comptime| ... } â unrolled
         macro_rules! check {
             ($g:expr) => {{
                 let g = $g;
@@ -3974,7 +3974,7 @@ impl DevServer<'_> {
         let bundle_index = self.get_or_put_route_bundle(route_bundle::UnresolvedIndex::Html(html))?;
         self.html_router.fallback = bundle_index.to_optional();
         // TODO(port): Zig set `.fallback = bundle_index.toOptional()` but field type is
-        // `?*HTMLBundle.HTMLBundleRoute` per LIFETIMES.tsv — likely the LIFETIMES row is
+        // `?*HTMLBundle.HTMLBundleRoute` per LIFETIMES.tsv â likely the LIFETIMES row is
         // for an older version. Following Zig source: fallback stores RouteBundle.Index.Optional
         Ok(())
     }
@@ -4042,7 +4042,7 @@ impl DevServer<'_> {
         let mut buf: Vec<u8> = Vec::with_capacity(2048);
 
         // TODO(port): switch (kind) { inline else => |k| std.fmt.comptimePrint(...) }
-        // → const_format would need const enum-dependent string; using match on runtime kind.
+        // â const_format would need const enum-dependent string; using match on runtime kind.
         let page_title = match kind {
             ErrorPageKind::Bundler => "Build Failed",
             ErrorPageKind::Evaluation | ErrorPageKind::Runtime => "Runtime Error",
@@ -4127,7 +4127,7 @@ impl DevServer<'_> {
                     BunString::EMPTY,
                     false,
                 );
-                // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
+                // SAFETY: vm is JSC_BORROW â valid for DevServer lifetime
                 let vm = unsafe { &*self.vm };
                 vm.event_loop().enter();
                 let _exit = scopeguard::guard((), |_| vm.event_loop().exit());
@@ -4257,7 +4257,7 @@ impl GraphTraceState {
     }
 }
 
-// GraphTraceState::deinit → Drop on DynamicBitSet (allocator param dropped)
+// GraphTraceState::deinit â Drop on DynamicBitSet (allocator param dropped)
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum TraceImportGoal {
@@ -4295,15 +4295,14 @@ pub fn dump_bundle(
     chunk: &[u8],
     wrap: bool,
 ) -> Result<(), bun_core::Error> {
-    let buf = paths::path_buffer_pool::get();
-    let name = &paths::join_abs_string_buf(
+    let mut buf = paths::path_buffer_pool::get();
+    let name = &paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
         b"/",
         &mut *buf,
         &[<&'static str>::from(graph).as_bytes(), rel_path],
-        paths::Style::Auto,
     )[1..];
     // TODO(port): std.fs.Dir.makeOpenPath / createFile — use bun_sys
-    let mut inner_dir = dump_dir.make_open_path(paths::dirname(name).unwrap())?;
+    let mut inner_dir = dump_dir.make_open_path(paths::resolve_path::dirname::<paths::platform::Auto>(name))?;
 
     let file = inner_dir.create_file(paths::basename(name))?;
     let mut file_buffer = [0u8; 1024];
@@ -4408,7 +4407,7 @@ impl DevServer<'_> {
         debug_assert!(dev.magic == Magic::Valid);
         dev.emit_memory_visualizer_message();
         timer.state = EventLoopTimer::State::FIRED;
-        // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
+        // SAFETY: vm is JSC_BORROW â valid for DevServer lifetime
         unsafe { &*dev.vm }
             .timer
             .update(timer, &bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::AllowMockedTime, 1000));
@@ -4503,7 +4502,7 @@ impl DevServer<'_> {
         payload.push(MessageId::Visualizer.char());
         // PERF(port): was assume_capacity
 
-        // TODO(port): inline for over [2]bake.Side + .{client_graph, server_graph} — unrolled
+        // TODO(port): inline for over [2]bake.Side + .{client_graph, server_graph} â unrolled
         macro_rules! emit_files {
             ($side:expr, $g:expr) => {{
                 let g = $g;
@@ -4631,7 +4630,7 @@ pub enum IncomingMessageId {
     ConsoleLog = b'l',
     /// Tells the DevServer to unref a source map.
     UnrefSourceMap = b'u',
-    // _ => Invalid data — TODO(port): Zig non-exhaustive enum
+    // _ => Invalid data â TODO(port): Zig non-exhaustive enum
 }
 
 #[repr(u8)]
@@ -4650,7 +4649,7 @@ pub enum HmrTopic {
     IncrementalVisualizer = b'v',
     MemoryVisualizer = b'M',
     TestingWatchSynchronization = b'r',
-    // _ => Invalid data — TODO(port): Zig non-exhaustive enum
+    // _ => Invalid data â TODO(port): Zig non-exhaustive enum
 }
 
 impl HmrTopic {
@@ -4746,7 +4745,7 @@ mod c {
     }
 }
 
-// PERF(port): was comptime monomorphization (`comptime n: comptime_int, bits: [n]*DynamicBitSetUnmanaged`) — profile in Phase B
+// PERF(port): was comptime monomorphization (`comptime n: comptime_int, bits: [n]*DynamicBitSetUnmanaged`) â profile in Phase B
 fn mark_all_route_children(
     router: &FrameworkRouter,
     bits: &mut [&mut DynamicBitSet],
@@ -4784,7 +4783,7 @@ impl DevServer<'_> {
     /// the same agent. Caller must not hold another live `&mut` to it.
     /// JS-thread only.
     pub unsafe fn inspector(&self) -> Option<&mut BunFrontendDevServerAgent> {
-        // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
+        // SAFETY: vm is JSC_BORROW â valid for DevServer lifetime
         if let Some(debugger) = unsafe { &*self.vm }.debugger.as_ref() {
             #[cold]
             fn cold() {}
@@ -4907,7 +4906,7 @@ impl DevServer<'_> {
     }
 }
 
-// TODO(port): packed struct(u32) with non-bool fields → repr(transparent) + manual accessors
+// TODO(port): packed struct(u32) with non-bool fields â repr(transparent) + manual accessors
 #[repr(transparent)]
 #[derive(Copy, Clone)]
 struct SafeFileId(u32);
@@ -5050,7 +5049,7 @@ fn dump_state_due_to_crash(dev: &mut DevServer) -> Result<(), bun_core::Error> {
         ZStr::from_bytes_until_nul(&filepath_buf)
             .unwrap_or_else(|_| ZStr::from_static("incremental-graph-crash-dump.html"))
     };
-    // TODO(port): std.fs.cwd().createFileZ — use bun_sys
+    // TODO(port): std.fs.cwd().createFileZ â use bun_sys
     let file = match sys::File::create(sys::Fd::cwd(), filepath) {
         Ok(f) => f,
         Err(err) => {
@@ -5064,7 +5063,7 @@ fn dump_state_due_to_crash(dev: &mut DevServer) -> Result<(), bun_core::Error> {
 
     // TODO(port): comptime brk: { @setEvalBranchQuota; @embedFile; lastIndexOf }
     const VISUALIZER: &[u8] = include_bytes!("incremental_visualizer.html");
-    // TODO(port): const split at compile time — Phase B
+    // TODO(port): const split at compile time â Phase B
     let i = strings::last_index_of(VISUALIZER, b"<script>").unwrap() + b"<script>".len();
     let (start, end) = (&VISUALIZER[..i], &VISUALIZER[i..]);
 
@@ -5090,7 +5089,7 @@ fn dump_state_due_to_crash(dev: &mut DevServer) -> Result<(), bun_core::Error> {
     Ok(())
 }
 
-// TODO(port): packed struct(u32) — Route.Index is 31 bits + 1 bool bit
+// TODO(port): packed struct(u32) â Route.Index is 31 bits + 1 bool bit
 #[repr(transparent)]
 #[derive(Copy, Clone)]
 pub struct RouteIndexAndRecurseFlag(u32);
@@ -5189,7 +5188,7 @@ impl<'a> HTMLRouter<'a> {
     }
 }
 
-// HTMLRouter::deinit → Drop on map
+// HTMLRouter::deinit â Drop on map
 
 impl DevServer<'_> {
     pub fn put_or_overwrite_asset(
@@ -5404,7 +5403,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
         let _ = self.ensure_promise();
         // SAFETY: p was set by ensure_promise
         unsafe { &mut *self.p.unwrap() }.resolve(self.global, JSValue::TRUE)?;
-        // SAFETY: dev.vm is JSC_BORROW — valid for DevServer lifetime
+        // SAFETY: dev.vm is JSC_BORROW â valid for DevServer lifetime
         unsafe { &*self.dev.vm }.drain_microtasks();
         Ok(())
     }
@@ -5437,7 +5436,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
         // SAFETY: p was set by ensure_promise
         unsafe { &mut *self.p.unwrap() }
             .reject(self.global, BunString::static_("Plugin error").to_js(self.global))?;
-        // SAFETY: dev.vm is JSC_BORROW — valid for DevServer lifetime
+        // SAFETY: dev.vm is JSC_BORROW â valid for DevServer lifetime
         unsafe { &*self.dev.vm }.drain_microtasks();
         Ok(())
     }
@@ -5493,7 +5492,7 @@ fn bundle_new_route_js_function_impl(
         ));
     };
 
-    // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
+    // SAFETY: vm is JSC_BORROW â valid for DevServer lifetime
     let vm = unsafe { &*dev.vm };
     vm.event_loop().enter();
     let _exit = scopeguard::guard((), |_| vm.event_loop().exit());
@@ -5690,10 +5689,10 @@ use crate::bake::dev_server::incremental_graph;
 type DebuggerId = jsc::debugger::DebuggerId;
 type BunFrontendDevServerAgent = jsc::debugger::BunFrontendDevServerAgent;
 
-// ──────────────────────────────────────────────────────────────────────────
+// ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 // PORT STATUS
 //   source:     src/bake/DevServer.zig (4783 lines)
 //   confidence: low
 //   todos:      76
 //   notes:      Heavy borrowck reshaping needed in Phase B: init() late-init fields now use Box<MaybeUninit<DevServer>> + addr_of_mut!().write() per field; DevServer/HTMLRouter/PromiseResponse now carry `<'a>` per LIFETIMES.tsv but impl blocks still need the param threaded; many scopeguard closures capture &mut dev across other &mut borrows; finalize_bundle has self-referential ptrs into dev. ensure_route_is_bundled uses trait pattern for Zig comptime Ctx duck-typing. Several `anytype` params (set_routes, on_request, on_src_request) bound by placeholder traits.
-// ──────────────────────────────────────────────────────────────────────────
+// ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ

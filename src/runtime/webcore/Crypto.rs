@@ -294,7 +294,7 @@ pub fn bun_random_uuid_v7(global: &JSGlobalObject, callframe: &CallFrame) -> JsR
         return str.transfer_to_js(global);
     }
 
-    encoding.encode_with_max_size::<32>(global, &uuid.bytes)
+    encoding.encode_with_max_size(global, 32, &uuid.bytes)
 }
 
 // Zig: `comptime { @export(&jsc.toJSHostFn(Bun__randomUUIDv5_), .{ .name = "Bun__randomUUIDv5" }) }`
@@ -423,7 +423,7 @@ pub fn bun_random_uuid_v5(global: &JSGlobalObject, callframe: &CallFrame) -> JsR
         return str.transfer_to_js(global);
     }
 
-    encoding.encode_with_max_size::<32>(global, &uuid.bytes)
+    encoding.encode_with_max_size(global, 32, &uuid.bytes)
 }
 
 #[unsafe(no_mangle)]

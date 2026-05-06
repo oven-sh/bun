@@ -708,7 +708,7 @@ pub enum WritableInitError {
 pub enum Writable {
     Pipe(Arc<FileSink>),
     Fd(Fd),
-    Buffer(Arc<StaticPipeWriter>),
+    Buffer(RefPtr<StaticPipeWriter>),
     Memfd(Fd),
     Inherit,
     Ignore,

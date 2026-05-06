@@ -1002,7 +1002,7 @@ impl ServePlugins {
             // SAFETY: route was ref'd when stored; pair with that ref
             unsafe { bun_ptr::RefCount::<html_bundle::Route>::deref(route) };
         }
-        if let Some(server) = dev_server {
+        if let Some(mut server) = dev_server {
             // SAFETY: dev_server outlives plugin load
             unsafe { server.as_mut() }.on_plugins_rejected();
         }

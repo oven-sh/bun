@@ -687,7 +687,7 @@ impl ValkeyClient {
                         // After draining, check if the *new* head is pipelineable and schedule flush if needed.
                         // This covers sequences like NON_PIPE -> PIPE -> PIPE ...
                         if self.queue.readable_length() > 0
-                            && self.queue.peek_item(0).meta.supports_auto_pipelining
+                            && self.queue.readable_slice(0)[0].meta.supports_auto_pipelining
                         {
                             self.register_auto_flusher(self.vm);
                         }

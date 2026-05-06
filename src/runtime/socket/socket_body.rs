@@ -949,7 +949,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // `handlers.markInactive()` frees the Handlers allocation
             // entirely, and for the last server-side connection on a
             // stopped listener it releases the listener's own strong ref.
-            if !self.this_value.is_finalized() {
+            if !matches!(self.this_value, JsRef::Finalized) {
                 self.this_value.downgrade();
             }
             // During VM shutdown, the Listener (which embeds `handlers`

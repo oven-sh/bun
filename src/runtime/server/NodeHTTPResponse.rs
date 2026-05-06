@@ -1680,7 +1680,7 @@ impl NodeHTTPResponse {
             value.with_async_context_if_needed(global_object),
         );
         self.flags.insert(Flags::HAS_CUSTOM_ON_DATA);
-        if let Some(raw_response) = &self.raw_response {
+        if let Some(raw_response) = self.raw_response {
             raw_response.on_data(on_data_shim, self as *mut Self);
         }
         self.flags.remove(Flags::IS_DATA_BUFFERED_DURING_PAUSE);

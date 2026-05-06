@@ -184,7 +184,7 @@ impl NativeBrotli {
             .as_u32()
             .as_mut_ptr();
         let write_callback =
-            validators::validate_function(global_this, b"writeCallback", arguments.ptr[2])?;
+            validators::validate_function(global_this, "writeCallback", arguments.ptr[2])?;
 
         this.write_result = NonNull::new(write_result);
 

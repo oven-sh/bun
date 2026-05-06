@@ -11,23 +11,27 @@ use bun_http as http;
 use bun_http::HeaderBuilder;
 use bun_install::{self as install, Dependency, Lockfile, Npm, PackageManager};
 use bun_libarchive::lib::Archive;
-use bun_fs::FileSystem;
+use bun_resolver::fs::FileSystem;
 use bun_dotenv as dotenv;
-use bun_sha as sha;
-use bun_json as json_mod;
+use bun_sha_hmac as sha;
+use bun_interchange::json as json_mod;
 use bun_url::URL;
-use bun_collections::MutableString;
-use bun_js_parser::Expr;
-use bun_ast::{E, G};
-use bun_ci as ci;
-use bun_simdutf as simdutf;
-use bun_dir_iterator::DirIterator;
+use bun_string::MutableString;
+use bun_js_parser::{Expr, E, G};
+use crate::cli::ci_info as ci;
+use bun_simdutf_sys as simdutf;
+use bun_sys::DirIterator;
 
 use crate::Command;
-use crate::pack_command::{self as pack, PackCommand as Pack};
+use crate::cli::pack_command::{self as pack, PackCommand as Pack};
 use crate::run_command::RunCommand as Run;
-use crate::init_command::prompt;
-use crate::open;
+use crate::cli::init_command::InitCommand;
+use crate::cli::open;
+
+// TODO(port): inherent associated type `Digest = [u8; N]` requires nightly
+// `inherent_associated_types`; mirror pack_command.rs and spell the array out.
+type SHA1Digest = [u8; sha::SHA1::DIGEST];
+type SHA512Digest = [u8; sha::SHA512::DIGEST];
 
 pub struct PublishCommand;
 

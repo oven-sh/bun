@@ -275,16 +275,16 @@ pub struct DevServer<'a> {
     pub framework: bake::Framework,
     pub bundler_options: bake::SplitBundlerOptions,
     // Each logical graph gets its own bundler configuration
-    pub server_transpiler: Transpiler,
-    pub client_transpiler: Transpiler,
-    pub ssr_transpiler: Transpiler,
+    pub server_transpiler: Transpiler<'a>,
+    pub client_transpiler: Transpiler<'a>,
+    pub ssr_transpiler: Transpiler<'a>,
     /// The log used by all `server_transpiler`, `client_transpiler` and `ssr_transpiler`.
     /// Note that it is rarely correct to write messages into it. Instead, associate
     /// messages with the IncrementalGraph file or Route using `SerializedFailure`
     pub log: Log,
     pub plugin_state: PluginState,
     /// See `CurrentBundle` doc comment.
-    pub current_bundle: Option<CurrentBundle>,
+    pub current_bundle: Option<CurrentBundle<'a>>,
     /// When `current_bundle` is non-null and new requests to bundle come in,
     /// those are temporaried here. When the current bundle is finished, it
     /// will immediately enqueue this.

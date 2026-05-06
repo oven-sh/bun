@@ -401,7 +401,8 @@ impl All {
         // Read `in_heap` and write the post-remove bookkeeping via raw deref.
         match unsafe { (*timer).in_heap } {
             InHeap::None => {
-                #[cfg(feature = "ci_assert")]
+                // PORT NOTE: `Environment.ci_assert` → `debug_assertions` (see ptr/ref_count.rs).
+                // can't remove a timer that was not inserted
                 debug_assert!(false);
             }
             // SAFETY: timer is in `self.timers` per `in_heap`

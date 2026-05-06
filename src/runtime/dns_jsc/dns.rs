@@ -3076,7 +3076,9 @@ impl Resolver {
     ) {
         // cache_name = format!("pending_{}_cache_cares", T::TYPE_NAME)
         self.ref_();
-        let _g = scopeguard::guard((), |_| self.deref());
+        let this: *mut Self = self;
+        // SAFETY: `this` derived from `&mut self`; paired with `ref_()` above so count stays > 0.
+        let _g = scopeguard::guard((), move |_| unsafe { Self::deref(this) });
 
         // TODO(port): generic getKey over T::CACHE_FIELD
         let cache = self.pending_cache_for::<T>(T::CACHE_FIELD);

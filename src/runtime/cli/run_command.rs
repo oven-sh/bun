@@ -3151,7 +3151,7 @@ impl RunCommand {
         let mut package_json_dir: &[u8] = b"";
 
         if let Some(package_json) = root_dir_info.enclosing_package_json {
-            if root_dir_info.package_json.is_none() {
+            if root_dir_info.package_json.is_none() { // raw field -- `is_none()` only
                 // no trailing slash
 
                 package_json_dir = strings::without_trailing_slash(package_json.source.path.name.dir);

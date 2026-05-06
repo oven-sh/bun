@@ -581,10 +581,19 @@ pub mod lockfile {
     }
     pub mod bun_lock {}
 }
+/// `UpdateRequest` — mounted directly (sibling of the gated
+/// `package_manager_real`) so `bunx_command` / `outdated_command` can name
+/// `bun_install::update_request::{UpdateRequest, Array}` while
+/// `PackageManager.rs` itself remains `#![cfg(any())]`-gated.
+#[path = "PackageManager/UpdateRequest.rs"]
+pub mod update_request;
+pub use update_request::UpdateRequest;
+
 /// Stub: `package_manager` — `PackageManager` struct + `Subcommand` enum only.
 pub mod package_manager {
     pub use super::PackageManager;
     pub use super::Subcommand;
+    pub use super::update_request;
     /// Stub: `PackageManager.Options` (src/install/PackageManager/PackageManagerOptions.zig).
     /// Real body gated behind `package_manager_real` (`#![cfg(any())]` reconciler-6).
     #[allow(non_snake_case)]

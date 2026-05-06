@@ -25,7 +25,7 @@ pub fn create_bun_socket_error_to_js(
         // `createSSLContext(...) orelse return err.toJS()` site correct.
         create_bun_socket_error_t::none => {
             // SAFETY: ERR_get_error is thread-local queue read, always safe to call.
-            boringssl::err_to_js(global_object, unsafe {
+            crate::crypto::boringssl_jsc::err_to_js(global_object, unsafe {
                 bun_boringssl_sys::ERR_get_error()
             })
         }

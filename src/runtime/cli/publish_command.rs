@@ -1732,7 +1732,7 @@ impl PublishCommand {
             write!(
                 &mut buf,
                 ",\"_attachments\":{{\"{}\":{{\"content_type\":\"{}\",\"data\":\"",
-                Pack::fmt_tarball_filename(&ctx.package_name, &ctx.package_version, pack::TarballFilenameStyle::Raw),
+                pack::fmt_tarball_filename(&ctx.package_name, &ctx.package_version, pack::TarballNameStyle::Raw),
                 "application/octet-stream",
             )?;
 

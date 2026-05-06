@@ -1,6 +1,7 @@
 use core::mem::offset_of;
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, Strong, VirtualMachine};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, Strong};
+use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::generated::{SocketConfig as GeneratedSocketConfig, SocketConfigHandlers as GeneratedSocketConfigHandlers};
 use bun_str::zig_string::Slice as ZigStringSlice;

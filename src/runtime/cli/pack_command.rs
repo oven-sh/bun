@@ -1960,7 +1960,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
     let mut entry = ArchiveEntry::new2(archive);
 
     {
-        let mut progress = Progress::default();
+        let mut progress = Progress::Progress::default();
         let mut node: Option<&mut Progress::Node> = None;
         if log_level.show_progress() {
             progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();

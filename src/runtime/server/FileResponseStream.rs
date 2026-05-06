@@ -259,7 +259,7 @@ impl FileResponseStream {
         }
 
         match self.resp.write(chunk) {
-            bun_uws::WriteResult::Backpressure => {
+            bun_uws::WriteResult::Backpressure(_) => {
                 // release the read ref; on_writable re-takes it
                 let _guard2 = scopeguard::guard((), move |_| unsafe { Self::deref(this) });
                 self.resp

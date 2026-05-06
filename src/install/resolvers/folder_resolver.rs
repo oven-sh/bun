@@ -254,7 +254,7 @@ fn normalize_package_json_path<'a>(
         abs = &joined[0..abs_len];
         // We store the folder name without package.json
         rel = FileSystem::instance().relative(
-            FileSystem::instance().top_level_dir,
+            FileSystem::instance().top_level_dir(),
             &abs[0..abs.len() - PACKAGE_JSON_LEN],
         );
     }
@@ -283,74 +283,88 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
     let mut package = LockfilePackage::default();
 
     if R::IS_WORKSPACE {
-        let _tracer = bun_perf::trace("FolderResolver.readPackageJSONFromDisk.workspace");
+        let _tracer = bun_perf::trace(
+            bun_perf::PerfEvent::FolderResolverReadPackageJSONFromDiskWorkspace,
+        );
 
-        let json = manager
+        // SAFETY: `log` is set by `PackageManager::init()` before any resolver
+        // path runs (mirrors Zig's non-optional `*logger.Log`).
+        let log: &mut logger::Log = unsafe { manager.log.unwrap().as_mut() };
+        let json = match manager
             .workspace_package_json_cache
-            .get_with_path(manager.log, abs, Default::default())
-            .unwrap()?;
+            .get_with_path(log, abs.as_bytes(), Default::default())
+        {
+            crate::package_manager::workspace_package_json_cache::GetResult::Entry(e) => e,
+            crate::package_manager::workspace_package_json_cache::GetResult::ReadErr(e)
+            | crate::package_manager::workspace_package_json_cache::GetResult::ParseErr(e) => {
+                return Err(e);
+            }
+        };
 
-        package.parse_with_json(
-            manager.lockfile,
-            manager,
-            manager.log,
-            &json.source,
-            json.root,
-            resolver,
-            features,
-        )?;
+        // TODO(port): `Package::parse_with_json::<R, FEATURES>` is typed against
+        // `lockfile_real::Lockfile`, but the stub `PackageManager.lockfile` is
+        // `crate::lockfile::Lockfile`. The aliasing borrows
+        // (`&mut manager.lockfile` + `&mut *manager` + `&mut *manager.log`)
+        // also need a raw-pointer split. Body deferred until the stub/real
+        // Lockfile types unify.
+        let _ = (&mut package, &json.source, json.root, &mut *resolver, features);
+        todo!("blocked_on: Package::parse_with_json — stub PackageManager.lockfile vs lockfile_real::Lockfile type mismatch (reconciler-6)");
     } else {
-        let _tracer = bun_perf::trace("FolderResolver.readPackageJSONFromDisk.folder");
+        let _tracer =
+            bun_perf::trace(bun_perf::PerfEvent::FolderResolverReadPackageJSONFromDiskFolder);
 
         let source = &'brk: {
             let file = File::from(
-                bun_sys::openat_a(Fd::cwd(), abs.as_bytes(), O::RDONLY, 0).unwrap()?,
+                bun_sys::openat_a(Fd::cwd(), abs.as_bytes(), O::RDONLY, 0)?,
             );
             // defer file.close() — TODO(port): File should impl Drop to close
 
             {
                 body.data.reset();
                 // TODO(port): toManaged/moveToUnmanaged dance is a no-op in Rust (Vec owns its allocator)
-                file.read_to_end_with_array_list(&mut body.data.list, bun_sys::SizeHint::ProbablySmall)
-                    .unwrap()?;
+                let _ = file
+                    .read_to_end_with_array_list(&mut body.data.list, bun_sys::SizeHint::ProbablySmall)?;
             }
 
             break 'brk logger::Source::init_path_string(abs.as_bytes(), body.data.list.as_slice());
         };
 
-        package.parse(
-            manager.lockfile,
-            manager,
-            manager.log,
-            source,
-            resolver,
-            features,
-        )?;
+        // TODO(port): see note above on `parse_with_json` — same stub/real
+        // `Lockfile` type mismatch and triple-borrow split applies to `parse`.
+        let _ = (&mut package, source, &mut *resolver, features);
+        todo!("blocked_on: Package::parse — stub PackageManager.lockfile vs lockfile_real::Lockfile type mismatch (reconciler-6)");
     }
 
-    let has_scripts = package.scripts.has_any() || 'brk: {
-        let dir = bun_paths::dirname(abs.as_bytes()).unwrap_or(b"");
-        let binding_dot_gyp_path =
-            bun_paths::resolve_path::join_abs_string_z::<bun_paths::platform::Auto>(
-                dir,
-                &[b"binding.gyp" as &[u8]],
-            );
-        break 'brk bun_sys::exists(binding_dot_gyp_path.as_bytes());
-    };
-
-    package.meta.set_has_install_script(has_scripts);
-
-    if let Some(existing_id) =
-        manager
-            .lockfile
-            .get_package_id(package.name_hash, version, &package.resolution)
+    #[allow(unreachable_code)]
     {
-        package.meta.id = existing_id;
-        manager.lockfile.packages.set(existing_id, package);
-        return Ok(manager.lockfile.packages.get(existing_id));
-    }
+        let has_scripts = package.scripts.has_any() || 'brk: {
+            let dir = bun_paths::dirname(abs.as_bytes()).unwrap_or(b"");
+            let binding_dot_gyp_path =
+                bun_paths::resolve_path::join_abs_string_z::<bun_paths::platform::Auto>(
+                    dir,
+                    &[b"binding.gyp" as &[u8]],
+                );
+            break 'brk bun_sys::exists(binding_dot_gyp_path.as_bytes());
+        };
 
-    manager.lockfile.append_package(package)
+        package.meta.set_has_install_script(has_scripts);
+
+        // TODO(port): `package.resolution` is `resolution_real::ResolutionType<u64>`,
+        // stub `Lockfile::get_package_id` wants `&crate::resolution::Resolution`.
+        // Pass a defaulted stub-typed resolution until the types unify.
+        let resolution_stub = crate::resolution::Resolution::default();
+        if let Some(existing_id) = manager.lockfile.get_package_id(
+            package.name_hash,
+            Some(&version),
+            &resolution_stub,
+        ) {
+            package.meta.id = existing_id;
+            manager.lockfile.packages.set(existing_id, package);
+            return Ok(manager.lockfile.packages.get(existing_id));
+        }
+
+        manager.lockfile.append_package(package)
+    }
 }
 
 #[derive(Copy, Clone)]

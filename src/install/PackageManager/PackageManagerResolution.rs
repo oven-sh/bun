@@ -1,16 +1,19 @@
+use core::mem::ManuallyDrop;
+
 use bun_core::Output;
 use bun_paths::PathBuffer;
 use bun_semver as semver;
 use bun_semver::{SlicedString, String as SemverString};
 use bun_str::strings;
 
-use crate::{
-    invalid_package_id, Dependency, DependencyID, FolderResolution, Lockfile, Npm, PackageID,
-    PackageNameHash, Resolution,
-};
-// `impl PackageManager` here targets the real `package_manager_real::PackageManager`
-// (which carries `.manifests` / `.options.registries`), not the lib.rs stub —
-// matches `ProgressStrings.rs` / `PackageManagerLifecycle.rs`.
+use crate::dependency;
+use crate::lockfile::{DependencyIDSlice, DependencySlice};
+use crate::npm;
+use crate::resolution::Tag as ResolutionTag;
+use crate::_folder_resolver::{self as folder_resolver, GlobalOrRelative};
+use crate::{invalid_package_id, DependencyID, PackageID, PackageNameHash, Resolution};
+
+use super::options::LogLevel;
 use super::PackageManager;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -34,7 +37,7 @@ pub fn format_later_version_in_cache<'a>(
 pub fn scope_for_package_name<'a>(
     this: &'a PackageManager,
     name: &[u8],
-) -> &'a Npm::Registry::Scope {
+) -> &'a npm::registry::Scope {
     this.scope_for_package_name(name)
 }
 
@@ -51,7 +54,7 @@ pub fn get_installed_versions_from_disk_cache(
 pub fn resolve_from_disk_cache(
     this: &mut PackageManager,
     package_name: &[u8],
-    version: crate::dependency::Version,
+    version: dependency::Version,
 ) -> Option<PackageID> {
     this.resolve_from_disk_cache(package_name, version)
 }
@@ -71,7 +74,7 @@ pub fn assign_root_resolution(
 }
 
 #[inline]
-pub fn verify_resolutions(this: &mut PackageManager, log_level: crate::package_manager::Options::LogLevel) {
+pub fn verify_resolutions(this: &mut PackageManager, log_level: LogLevel) {
     this.verify_resolutions(log_level)
 }
 
@@ -83,37 +86,48 @@ impl PackageManager {
         resolution: Resolution,
     ) -> Option<semver::version::Formatter<'_, u64>> {
         match resolution.tag {
-            Resolution::Tag::Npm => {
+            ResolutionTag::Npm => {
                 if resolution.value.npm.version.tag.has_pre() {
                     // TODO:
                     return None;
                 }
 
-                let manifest = self.manifests.by_name_hash(
-                    self,
-                    self.scope_for_package_name(package_name),
-                    name_hash,
-                    crate::package_manifest_map::CacheBehavior::LoadFromMemory,
-                    self.options.minimum_release_age_ms.is_some(),
-                )?;
+                // PORT NOTE: reshaped for borrowck — Zig passed `this` to
+                // `manifests.byNameHash` while also borrowing `this.manifests`.
+                // Compute `scope`/`needs_ext` first, then split the borrow via
+                // a raw self-pointer (singleton; matches Zig's non-exclusive `*PackageManager`).
+                let needs_extended = self.options.minimum_release_age_ms.is_some();
+                let scope = self.scope_for_package_name(package_name) as *const npm::registry::Scope;
+                // SAFETY: `manifests` and the rest of `*self` are disjoint; `by_name_hash`
+                // only touches `pm.options.enable` / `pm.get_cache_directory()`.
+                let pm: *mut PackageManager = self;
+                let manifest = unsafe {
+                    (*pm).manifests.by_name_hash(
+                        &mut *pm,
+                        &*scope,
+                        name_hash,
+                        crate::package_manifest_map::CacheBehavior::LoadFromMemory,
+                        needs_extended,
+                    )
+                }?;
 
                 if let Some(latest_version) = manifest
                     .find_by_dist_tag_with_filter(
                         b"latest",
                         self.options.minimum_release_age_ms,
-                        &self.options.minimum_release_age_excludes,
+                        self.options.minimum_release_age_excludes,
                     )
-                    .unwrap_opt()
+                    .unwrap()
                 {
                     if latest_version.version.order(
                         resolution.value.npm.version,
-                        manifest.string_buf,
+                        &manifest.string_buf,
                         self.lockfile.buffers.string_bytes.as_slice(),
                     ) != core::cmp::Ordering::Greater
                     {
                         return None;
                     }
-                    return Some(latest_version.version.fmt(manifest.string_buf));
+                    return Some(latest_version.version.fmt(&manifest.string_buf));
                 }
 
                 None
@@ -122,13 +136,13 @@ impl PackageManager {
         }
     }
 
-    pub fn scope_for_package_name(&self, name: &[u8]) -> &Npm::Registry::Scope {
+    pub fn scope_for_package_name(&self, name: &[u8]) -> &npm::registry::Scope {
         if name.is_empty() || name[0] != b'@' {
             return &self.options.scope;
         }
         self.options
             .registries
-            .get_ptr(Npm::Registry::Scope::hash(Npm::Registry::Scope::get_name(
+            .get(&npm::registry::Scope::hash(npm::registry::Scope::get_name(
                 name,
             )))
             .unwrap_or(&self.options.scope)
@@ -141,12 +155,9 @@ impl PackageManager {
     ) -> Result<Vec<semver::Version>, bun_core::Error> {
         // TODO(port): narrow error set
         let mut list: Vec<semver::Version> = Vec::new();
-        // TODO(port): `getCacheDirectory().openDir(...)` uses std.fs in Zig; map to bun_sys
-        // directory iteration once the PackageManager cache-dir API is ported.
-        let mut dir = match self
-            .get_cache_directory()
-            .open_dir(package_name, bun_sys::OpenDirOptions { iterate: true })
-        {
+        // Zig: `getCacheDirectory().openDir(package_name, .{ .iterate = true })`.
+        let cache_dir = super::get_cache_directory(self);
+        let dir = match bun_sys::open_dir(cache_dir, package_name) {
             Ok(d) => d,
             Err(e)
                 if e == bun_core::err!("FileNotFound")
@@ -158,16 +169,24 @@ impl PackageManager {
             }
             Err(e) => return Err(e),
         };
-        // `defer dir.close()` → handled by Drop on `dir`.
-        let mut iter = dir.iterate();
+        // `defer dir.close()` → explicit close after iteration (Dir has no Drop).
+        let mut iter = bun_sys::iterate_dir(dir.fd);
 
-        while let Some(entry) = iter.next()? {
+        loop {
+            let entry = match iter.next() {
+                Ok(Some(e)) => e,
+                Ok(None) => break,
+                Err(e) => {
+                    dir.close();
+                    return Err(e.into());
+                }
+            };
             if entry.kind != bun_sys::EntryKind::Directory
                 && entry.kind != bun_sys::EntryKind::SymLink
             {
                 continue;
             }
-            let name: &[u8] = entry.name;
+            let name: &[u8] = entry.name.slice_u8();
             let sliced = SlicedString::init(name, name);
             let parsed = semver::Version::parse(sliced);
             if !parsed.valid || parsed.wildcard != semver::query::Wildcard::None {
@@ -199,15 +218,16 @@ impl PackageManager {
             // PERF(port): was `catch unreachable` on append — Vec::push aborts on OOM
         }
 
+        dir.close();
         Ok(list)
     }
 
     pub fn resolve_from_disk_cache(
         &mut self,
         package_name: &[u8],
-        version: Dependency::Version,
+        version: dependency::Version,
     ) -> Option<PackageID> {
-        if version.tag != Dependency::Version::Tag::Npm {
+        if version.tag != dependency::Tag::Npm {
             // only npm supported right now
             // tags are more ambiguous
             return None;
@@ -241,52 +261,54 @@ impl PackageManager {
             });
             // TODO(port): verify sort_gt signature/ordering matches Semver.Version.sortGt exactly.
         }
+        // SAFETY: tag-guarded union access (`version.tag == Npm` checked above).
+        let npm_query = unsafe { &*version.value.npm };
         for installed_version in installed_versions.iter().copied() {
-            if version.value.npm.version.satisfies(
+            if npm_query.version.satisfies(
                 installed_version,
                 self.lockfile.buffers.string_bytes.as_slice(),
                 tags_buf.as_slice(),
             ) {
                 let mut buf = PathBuffer::uninit();
                 let npm_package_path =
-                    match self.path_for_cached_npm_path(&mut buf, package_name, installed_version) {
+                    match super::path_for_cached_npm_path(self, &mut buf, package_name, installed_version) {
                         Ok(p) => p,
                         Err(err) => {
                             Output::debug(format_args!(
                                 "error getting path for cached npm path: {}",
-                                err.name()
+                                bun_core::Error::from(err).name()
                             ));
                             return None;
                         }
                     };
-                let dependency = Dependency::Version {
-                    tag: Dependency::Version::Tag::Npm,
-                    value: Dependency::Version::Value {
-                        npm: Dependency::NpmInfo {
+                let dep_version = dependency::Version {
+                    tag: dependency::Tag::Npm,
+                    literal: SemverString::default(),
+                    value: dependency::Value {
+                        npm: ManuallyDrop::new(dependency::NpmInfo {
                             name: SemverString::init(package_name, package_name),
-                            version: semver::Query::Group::from(installed_version),
-                        },
+                            version: semver::query::Group::from(installed_version),
+                            is_alias: false,
+                        }),
                     },
                 };
-                match FolderResolution::get_or_put(
-                    FolderResolution::Key::CacheFolder(npm_package_path),
-                    dependency,
+                match folder_resolver::get_or_put(
+                    GlobalOrRelative::CacheFolder(npm_package_path),
+                    dep_version,
                     b".",
                     self,
                 ) {
-                    FolderResolution::Result::NewPackageId(id) => {
-                        self.enqueue_dependency_list(
-                            self.lockfile.packages.items_dependencies()[id as usize],
-                        );
+                    folder_resolver::FolderResolution::NewPackageId(id) => {
+                        let deps = self.lockfile.packages.items_dependencies()[id as usize];
+                        super::enqueue_dependency_list(self, deps);
                         return Some(id);
                     }
-                    FolderResolution::Result::PackageId(id) => {
-                        self.enqueue_dependency_list(
-                            self.lockfile.packages.items_dependencies()[id as usize],
-                        );
+                    folder_resolver::FolderResolution::PackageId(id) => {
+                        let deps = self.lockfile.packages.items_dependencies()[id as usize];
+                        super::enqueue_dependency_list(self, deps);
                         return Some(id);
                     }
-                    FolderResolution::Result::Err(err) => {
+                    folder_resolver::FolderResolution::Err(err) => {
                         Output::debug(format_args!(
                             "error getting or putting folder resolution: {}",
                             err.name()
@@ -345,11 +367,10 @@ impl PackageManager {
         }
     }
 
-    pub fn verify_resolutions(&mut self, log_level: crate::package_manager::Options::LogLevel) {
+    pub fn verify_resolutions(&mut self, log_level: LogLevel) {
         let lockfile = &self.lockfile;
-        let resolutions_lists: &[Lockfile::DependencyIDSlice] =
-            lockfile.packages.items_resolutions();
-        let dependency_lists: &[Lockfile::DependencySlice] = lockfile.packages.items_dependencies();
+        let resolutions_lists: &[DependencyIDSlice] = lockfile.packages.items_resolutions();
+        let dependency_lists: &[DependencySlice] = lockfile.packages.items_dependencies();
         let pkg_resolutions = lockfile.packages.items_resolution();
         let dependencies_buffer = lockfile.buffers.dependencies.as_slice();
         let resolutions_buffer = lockfile.buffers.resolutions.as_slice();
@@ -379,7 +400,7 @@ impl PackageManager {
                 }
 
                 let features = match pkg_resolutions[parent_id].tag {
-                    Resolution::Tag::Root | Resolution::Tag::Workspace | Resolution::Tag::Folder => {
+                    ResolutionTag::Root | ResolutionTag::Workspace | ResolutionTag::Folder => {
                         self.options.local_package_features
                     }
                     _ => self.options.remote_package_features,
@@ -389,7 +410,7 @@ impl PackageManager {
                     continue;
                 }
 
-                if log_level != crate::package_manager::Options::LogLevel::Silent {
+                if log_level != LogLevel::Silent {
                     if failed_dep.name.is_empty()
                         || strings::eql_long(
                             failed_dep.name.slice(string_buf),
@@ -397,16 +418,18 @@ impl PackageManager {
                             true,
                         )
                     {
-                        Output::err_generic(format_args!(
+                        Output::err_generic(
                             "<b>{}<r><d> failed to resolve<r>",
-                            failed_dep.version.literal.fmt(string_buf),
-                        ));
+                            (failed_dep.version.literal.fmt(string_buf),),
+                        );
                     } else {
-                        Output::err_generic(format_args!(
+                        Output::err_generic(
                             "<b>{}<r><d>@<b>{}<r><d> failed to resolve<r>",
-                            bstr::BStr::new(failed_dep.name.slice(string_buf)),
-                            failed_dep.version.literal.fmt(string_buf),
-                        ));
+                            (
+                                bstr::BStr::new(failed_dep.name.slice(string_buf)),
+                                failed_dep.version.literal.fmt(string_buf),
+                            ),
+                        );
                     }
                 }
                 // track this so we can log each failure instead of just the first
@@ -425,5 +448,5 @@ impl PackageManager {
 //   source:     src/install/PackageManager/PackageManagerResolution.zig (243 lines)
 //   confidence: medium
 //   todos:      3
-//   notes:      MultiArrayList field accessors (.items(.field)) ported as items_<field>(); FolderResolution/Dependency variant paths need Phase-B fixup; arena/stack-fallback dropped per guide.
+//   notes:      MultiArrayList field accessors (.items(.field)) ported as items_<field>(); FolderResolution/Dependency variant paths fixed; arena/stack-fallback dropped per guide.
 // ──────────────────────────────────────────────────────────────────────────

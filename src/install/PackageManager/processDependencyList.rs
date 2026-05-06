@@ -265,6 +265,10 @@ impl PackageManager {
                             Global::crash();
                         }
                     };
+                    // PORT NOTE: `bun_json` returns the T2 `bun_logger::js_ast::Expr`;
+                    // `Scripts::parse_*` are typed against `bun_js_parser::Expr`. The
+                    // logger AST has an `Into` lift (see js_parser/ast/Expr.rs).
+                    let json_root: bun_js_parser::Expr = json_root.into();
                     let mut builder = self.lockfile.string_builder();
                     Scripts::parse_count(&mut builder, &json_root);
                     builder.allocate().expect("unreachable");

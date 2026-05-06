@@ -1368,9 +1368,9 @@ pub fn migrate_yarn_lockfile<'a>(
 
     this.buffers.trees.push(Tree {
         id: 0,
-        parent: Tree::INVALID_ID,
-        dependency_id: Tree::ROOT_DEP_ID,
-        dependencies: lockfile::DependencyIDSlice { off: 0, len: 0 },
+        parent: tree::INVALID_ID,
+        dependency_id: tree::ROOT_DEP_ID,
+        dependencies: lockfile::DependencyIDSlice::new(0, 0),
     });
 
     let mut package_dependents: Vec<Vec<PackageID>> =
@@ -1388,10 +1388,9 @@ pub fn migrate_yarn_lockfile<'a>(
 
         for maybe_deps in dep_maps.iter() {
             if let Some(deps) = maybe_deps {
-                let mut deps_it = deps.iterator();
-                while let Some(dep) = deps_it.next() {
-                    let dep_name = *dep.key_ptr;
-                    let dep_version = *dep.value_ptr;
+                for (dep_name_key, dep_version_ref) in deps.iter() {
+                    let dep_name: &[u8] = dep_name_key.as_ref();
+                    let dep_version: &[u8] = *dep_version_ref;
                     let mut dep_spec = Vec::new();
                     write!(
                         &mut dep_spec,
@@ -1468,42 +1467,35 @@ pub fn migrate_yarn_lockfile<'a>(
         }
     }
 
-    let mut packages_slice = this.packages.slice();
-
-    let mut scoped_it = scoped_packages.iterator();
-    while let Some(entry) = scoped_it.next() {
-        let base_name = entry.key_ptr;
-        let versions = entry.value_ptr;
+    for (base_name, versions) in scoped_packages.iter_mut() {
+        let base_name: &[u8] = base_name.as_ref();
 
         versions.sort_by(|a, b| a.package_id.cmp(&b.package_id));
 
         let original_name_hash = string_hash(base_name);
-        if let Some(original_entry) = this.package_index.get_ptr(original_name_hash) {
+        if let Some(original_entry) = this.package_index.get_mut(&original_name_hash) {
             match original_entry {
                 lockfile::PackageIndexEntry::Id(_) => {
-                    let _ = this.package_index.remove(original_name_hash);
+                    let _ = this.package_index.remove(&original_name_hash);
                 }
                 lockfile::PackageIndexEntry::Ids(existing_ids) => {
                     drop(core::mem::take(existing_ids));
-                    let _ = this.package_index.remove(original_name_hash);
+                    let _ = this.package_index.remove(&original_name_hash);
                 }
             }
         } else {
         }
     }
 
-    let mut final_check_it = scoped_packages.iterator();
-    while let Some(entry) = final_check_it.next() {
-        let base_name = entry.key_ptr;
-        let versions = entry.value_ptr;
+    for (base_name, versions) in scoped_packages.iter() {
+        let base_name: &[u8] = base_name.as_ref();
 
         for version_info in versions.iter() {
             let package_id = version_info.package_id;
 
             let mut found_in_index = false;
-            let mut check_it = this.package_index.iterator();
-            while let Some(index_entry) = check_it.next() {
-                match index_entry.value_ptr {
+            for (_, index_value) in this.package_index.iter() {
+                match index_value {
                     lockfile::PackageIndexEntry::Id(id) => {
                         if *id == package_id {
                             found_in_index = true;
@@ -1561,9 +1553,8 @@ pub fn migrate_yarn_lockfile<'a>(
 
         for dep_entry in yarn_lock.entries.iter() {
             if let Some(deps) = &dep_entry.dependencies {
-                let mut deps_iter = deps.iterator();
-                while let Some(dep) = deps_iter.next() {
-                    if *dep.key_ptr == base_name {
+                for (dep_name_key, _) in deps.iter() {
+                    if dep_name_key.as_ref() == base_name {
                         let count = usage_count.get(base_name).copied().unwrap_or(0);
                         usage_count.put(base_name, count + 1)?;
                     }
@@ -1611,9 +1602,8 @@ pub fn migrate_yarn_lockfile<'a>(
             }
 
             if let Some(deps) = &dep_entry.dependencies {
-                let mut deps_iter = deps.iterator();
-                while let Some(dep) = deps_iter.next() {
-                    if *dep.key_ptr == base_name {
+                for (dep_name_key, _) in deps.iter() {
+                    if dep_name_key.as_ref() == base_name {
                         if dep_package_id != package_id {
                             let parent_name = package_names[dep_package_id as usize];
 
@@ -1627,8 +1617,7 @@ pub fn migrate_yarn_lockfile<'a>(
                             .expect("unreachable");
 
                             let mut name_already_used = false;
-                            let mut value_iter = scoped_names.value_iterator();
-                            while let Some(existing_name) = value_iter.next() {
+                            for existing_name in scoped_names.values() {
                                 if existing_name.as_slice() == potential_name.as_slice() {
                                     name_already_used = true;
                                     break;

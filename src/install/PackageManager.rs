@@ -1159,20 +1159,17 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
     );
 
     if let Err(e) = node_gyp_file.write_all(CONTENT.as_bytes()) {
-        Output::pretty_errorln(
-            // Zig: "..." ++ file_name ++ " file" — comptime concat, no runtime alloc
-            const_format::concatcp!(
-                "<r><red>error<r>: <b><red>{s}<r> writing to ",
-                FILE_NAME,
-                " file"
-            ),
-            &[&e.name()],
-        );
+        // Zig: "..." ++ file_name ++ " file" — comptime concat, no runtime alloc
+        Output::pretty_errorln(format_args!(
+            "<r><red>error<r>: <b><red>{}<r> writing to {} file",
+            bstr::BStr::new(e.name()),
+            FILE_NAME,
+        ));
         Global::crash();
     }
 
     // Add our node-gyp tempdir to the path
-    let existing_path = manager.env().get("PATH").unwrap_or(b"");
+    let existing_path = manager.env().get(b"PATH").unwrap_or(b"");
     let mut path_var: Vec<u8> = Vec::with_capacity(
         existing_path.len() + 1 + tempdir.name.len() + 1 + manager.node_gyp_tempdir_name.len(),
     );
@@ -1183,7 +1180,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
     path_var.extend_from_slice(strings::without_trailing_slash(tempdir.name));
     path_var.push(SEP);
     path_var.extend_from_slice(&manager.node_gyp_tempdir_name);
-    manager.env_mut().map.put("PATH", &path_var)?;
+    manager.env_mut().map.put(b"PATH", &path_var)?;
 
     let mut cursor = &mut path_buf[..];
     write!(
@@ -1202,7 +1199,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
     manager
         .env_mut()
         .map
-        .put_alloc_key_and_value("BUN_WHICH_IGNORE_CWD", node_gyp_abs_dir)?;
+        .put_alloc_key_and_value(b"BUN_WHICH_IGNORE_CWD", node_gyp_abs_dir)?;
 
     Ok(())
 }
@@ -1211,8 +1208,17 @@ fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::Ini
     match err {
         http::InitError::LoadCAFile => {
             let mut normalizer = PosixToWinNormalizer::default();
+            // SAFETY: `abs_ca_file_name` is Zig `stringZ` (`[:0]const u8`) by contract —
+            // populated below from a `ZBox` via `.as_bytes_with_nul()` so the trailing NUL
+            // is guaranteed.
+            let abs_ca_z = unsafe {
+                ZStr::from_raw(
+                    opts.abs_ca_file_name.as_ptr(),
+                    opts.abs_ca_file_name.len().saturating_sub(1),
+                )
+            };
             let normalized =
-                normalizer.resolve_z(FileSystem::instance().top_level_dir, opts.abs_ca_file_name);
+                normalizer.resolve_z(FileSystem::instance().top_level_dir(), abs_ca_z);
             if !bun_sys::exists_z(normalized) {
                 Output::err(
                     "HTTPThread",
@@ -1298,12 +1304,18 @@ pub fn init(
         if let Some(opts) = ctx.install {
             explicit_global_dir = opts.global_dir.as_deref().unwrap_or(explicit_global_dir);
         }
-        let mut global_dir = Options::open_global_dir(explicit_global_dir)?;
-        global_dir.set_as_cwd()?;
+        let global_dir = package_manager_options::open_global_dir(explicit_global_dir)?;
+        bun_sys::Dir { fd: global_dir }.set_as_cwd()?;
     }
 
-    let fs = fs::FileSystem::init(None)?;
-    let top_level_dir_no_trailing_slash = strings::without_trailing_slash(fs.top_level_dir);
+    // Zig: `Fs.FileSystem.init(null)` — registers the resolver-tier singleton.
+    // The `bun_sys::fs` opaque handle exposes no `init`; route through
+    // `bun_paths::fs::FileSystem::init` (cwd-seeded) which is what
+    // `bun_resolver::fs::install_sys_fs_vtable` reflects.
+    // TODO(port): once `bun_resolver::fs::FileSystem::init(None)` is reachable
+    // from this tier without a cycle, call it directly.
+    let fs = FileSystem::instance();
+    let top_level_dir_no_trailing_slash = strings::without_trailing_slash(fs.top_level_dir());
     // SAFETY: CWD_BUF is a process-global path buffer only touched on the main thread
     unsafe {
         #[cfg(windows)]

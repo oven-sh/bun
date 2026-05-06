@@ -330,7 +330,7 @@ impl PackageManager {
                 && Syscall::exists(binding_dot_gyp_path);
 
             self.root_lifecycle_scripts = root_package.scripts.create_list(
-                self.lockfile,
+                &self.lockfile,
                 buf,
                 &mut top_level_dir,
                 name,
@@ -340,7 +340,7 @@ impl PackageManager {
         } else if Syscall::exists(binding_dot_gyp_path) {
             // no scripts exist but auto node gyp script needs to be added
             self.root_lifecycle_scripts = root_package.scripts.create_list(
-                self.lockfile,
+                &self.lockfile,
                 buf,
                 &mut top_level_dir,
                 name,

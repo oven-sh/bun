@@ -10,19 +10,21 @@ use crate::package_manager_real::Command::Context as CommandContext;
 use bun_collections::ArrayHashMap;
 use bun_core::{self, err, Error, Output};
 use crate::bun_fs::FileSystem;
+use crate::bun_json::ExprAccessors as _;
 use bun_paths::fs::Path as FsPath;
 use bun_install::{
     invalid_dependency_id, invalid_package_id, DependencyID, PackageID, PackageManager,
 };
 use bun_io::{BufferedReader, ReadState};
+use bun_io::pipe_reader::{BufferedReaderParent, PosixFlags};
 // MOVE_DOWN(b0): bun_jsc::subprocess → bun_spawn::subprocess; bun_jsc::EventLoopHandle → bun_event_loop.
 use bun_spawn::subprocess::{self, StdioResult};
 use bun_event_loop::{AnyEventLoop, EventLoopHandle};
-use bun_js_parser::Expr;
+use bun_js_parser::{Expr, ExprData};
 use bun_logger as logger;
 use bun_spawn::{self as spawn, Process, Rusage, SpawnOptions, Status, Stdio};
 use bun_str::strings;
-use bun_sys::{self, Fd};
+use bun_sys::{self, Fd, FdExt as _};
 
 use crate::hoisted_install as HoistedInstall;
 use crate::isolated_install as IsolatedInstall;
@@ -77,7 +79,7 @@ impl SecurityScanResults {
 pub fn do_partial_install_of_security_scanner(
     manager: &mut PackageManager,
     ctx: CommandContext,
-    log_level: crate::package_manager_real::options::LogLevel,
+    log_level: crate::package_manager::Options::LogLevel,
     security_scanner_pkg_id: PackageID,
     original_cwd: &[u8],
 ) -> Result<(), Error> {
@@ -97,9 +99,9 @@ pub fn do_partial_install_of_security_scanner(
     let packages_to_install: Option<&[PackageID]> = Some(&[security_scanner_pkg_id]);
 
     let summary = match manager.options.node_linker {
-        crate::package_manager_real::options::NodeLinker::Hoisted
+        bun_install_types::NodeLinker::NodeLinker::Hoisted
         // TODO
-        | crate::package_manager_real::options::NodeLinker::Auto => {
+        | bun_install_types::NodeLinker::NodeLinker::Auto => {
             HoistedInstall::install_hoisted_packages(
                 manager,
                 ctx,
@@ -109,7 +111,7 @@ pub fn do_partial_install_of_security_scanner(
                 packages_to_install,
             )?
         }
-        crate::package_manager_real::options::NodeLinker::Isolated => {
+        bun_install_types::NodeLinker::NodeLinker::Isolated => {
             IsolatedInstall::install_isolated_packages(
                 manager,
                 ctx,
@@ -232,10 +234,11 @@ pub fn perform_security_scan_after_resolution(
             Output::prettyln(format_args!(
                 "<r><yellow>Attempting to install security scanner from npm...<r>"
             ));
+            let log_level = manager.options.log_level;
             do_partial_install_of_security_scanner(
                 manager,
                 command_ctx,
-                manager.options.log_level,
+                log_level,
                 pkg_id,
                 original_cwd,
             )?;
@@ -277,10 +280,11 @@ pub fn perform_security_scan_for_all(
             Output::prettyln(format_args!(
                 "<r><yellow>Attempting to install security scanner from npm...<r>"
             ));
+            let log_level = manager.options.log_level;
             do_partial_install_of_security_scanner(
                 manager,
                 command_ctx,
-                manager.options.log_level,
+                log_level,
                 pkg_id,
                 original_cwd,
             )?;
@@ -717,12 +721,19 @@ impl<'a> JSONBuilder<'a> {
         let pkg_names = pkgs.items_name();
         let pkg_resolutions = pkgs.items_resolution();
         let string_buf = self.manager.lockfile.buffers.string_bytes.as_slice();
+        let json_opts = bun_core::fmt::JSONFormatterUTF8Options::default();
 
         json_buf.extend_from_slice(b"[\n");
 
         let mut first = true;
-        for (pkg_id, paths) in self.collector.package_paths.iter() {
+        // PORT NOTE: `ArrayHashMap::iterator()` takes `&mut self`, but we only
+        // need shared access. Iterate by index over the parallel key/value
+        // slices instead (insertion-ordered, matches Zig's `iterator()`).
+        let path_keys = self.collector.package_paths.keys();
+        let path_values = self.collector.package_paths.values();
+        for (i, pkg_id) in path_keys.iter().enumerate() {
             let pkg_id = *pkg_id;
+            let paths = &path_values[i];
 
             let dep_id = if !paths.dep_path.is_empty() {
                 paths.dep_path[paths.dep_path.len() - 1]
@@ -741,10 +752,10 @@ impl<'a> JSONBuilder<'a> {
                 write!(
                     &mut json_buf,
                     "  {{\n    \"name\": {},\n    \"version\": \"{}\",\n    \"requestedRange\": \"{}\",\n    \"tarball\": {}\n  }}",
-                    bun_core::fmt::format_json_string_utf8(pkg_name.slice(string_buf)),
+                    bun_core::fmt::format_json_string_utf8(pkg_name.slice(string_buf), json_opts),
                     pkg_res.value.npm.version.fmt(string_buf),
                     pkg_res.value.npm.version.fmt(string_buf),
-                    bun_core::fmt::format_json_string_utf8(pkg_res.value.npm.url.slice(string_buf)),
+                    bun_core::fmt::format_json_string_utf8(pkg_res.value.npm.url.slice(string_buf), json_opts),
                 )?;
             } else {
                 let dep_version =
@@ -752,10 +763,10 @@ impl<'a> JSONBuilder<'a> {
                 write!(
                     &mut json_buf,
                     "  {{\n    \"name\": {},\n    \"version\": \"{}\",\n    \"requestedRange\": {},\n    \"tarball\": {}\n  }}",
-                    bun_core::fmt::format_json_string_utf8(pkg_name.slice(string_buf)),
+                    bun_core::fmt::format_json_string_utf8(pkg_name.slice(string_buf), json_opts),
                     pkg_res.value.npm.version.fmt(string_buf),
-                    bun_core::fmt::format_json_string_utf8(dep_version.literal.slice(string_buf)),
-                    bun_core::fmt::format_json_string_utf8(pkg_res.value.npm.url.slice(string_buf)),
+                    bun_core::fmt::format_json_string_utf8(dep_version.literal.slice(string_buf), json_opts),
+                    bun_core::fmt::format_json_string_utf8(pkg_res.value.npm.url.slice(string_buf), json_opts),
                 )?;
             }
 
@@ -790,7 +801,7 @@ fn attempt_security_scan_with_retry(
     original_cwd: &[u8],
     is_retry: bool,
 ) -> Result<ScanAttemptResult, Error> {
-    if manager.options.log_level == crate::package_manager_real::options::LogLevel::Verbose {
+    if manager.options.log_level == crate::package_manager::Options::LogLevel::Verbose {
         Output::pretty_errorln(format_args!(
             "<d>[SecurityProvider]<r> Running at '{}'",
             BStr::new(security_scanner)
@@ -818,7 +829,7 @@ fn attempt_security_scan_with_retry(
     let security_scanner_pkg_id = finder.find_in_root_dependencies();
     // Suppress JavaScript error output unless in verbose mode
     let suppress_error_output =
-        manager.options.log_level != crate::package_manager_real::options::LogLevel::Verbose;
+        manager.options.log_level != crate::package_manager::Options::LogLevel::Verbose;
 
     let mut collector = PackageCollector::init(manager);
 
@@ -932,11 +943,35 @@ impl<'a> Drop for SecurityScanSubprocess<'a> {
     }
 }
 
+// Wire the buffered-reader vtable to this type so `BufferedReader::init::<Self>()`
+// resolves. The reader stores `*mut Self` (set via `set_parent`) and calls back
+// through these raw-pointer hooks.
+impl<'a> BufferedReaderParent for SecurityScanSubprocess<'a> {
+    unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], has_more: ReadState) -> bool {
+        // SAFETY: `this` was registered via `set_parent(self)`; live for the
+        // duration of the read loop and not aliased by another `&mut`.
+        unsafe { (*this).on_read_chunk(chunk, has_more) }
+    }
+    unsafe fn on_reader_done(this: *mut Self) {
+        unsafe { (*this).on_reader_done() }
+    }
+    unsafe fn on_reader_error(this: *mut Self, err: bun_sys::Error) {
+        unsafe { (*this).on_reader_error(err) }
+    }
+    unsafe fn loop_(this: *mut Self) -> *mut AsyncLoop {
+        unsafe { (*this).loop_() }
+    }
+    unsafe fn event_loop(this: *mut Self) -> EventLoopHandle {
+        unsafe { EventLoopHandle::from_any(&mut (*this).manager.event_loop) }
+    }
+}
+
 impl<'a> SecurityScanSubprocess<'a> {
     pub fn spawn(&mut self) -> Result<(), Error> {
         self.ipc_data = Vec::new();
         self.stderr_data = Vec::new();
-        self.ipc_reader.set_parent(self);
+        let parent: *mut Self = self;
+        self.ipc_reader.set_parent(parent.cast());
 
         // Two extra pipes for communicating with the scanner subprocess:
         // - fd 3: child writes JSON response, parent reads
@@ -948,23 +983,28 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         // fd 3 output pipe: bun.sys.pipe() + .pipe (inherit_fd) on both platforms.
         let ipc_output_fds = match bun_sys::pipe() {
-            bun_sys::Result::Err(_) => return Err(err!("IPCPipeFailed")),
-            bun_sys::Result::Ok(fds) => fds,
+            Err(_) => return Err(err!("IPCPipeFailed")),
+            Ok(fds) => fds,
         };
 
         let exec_path = bun_core::self_exe_path()?;
 
         // TODO(port): argv as null-terminated C-string array for spawnProcess FFI.
-        let argv0 = bun_str::ZStr::from_bytes(&exec_path);
-        let argv3 = bun_str::ZStr::from_bytes(&self.code);
+        // Zig: `try allocator.dupeZ(u8, exec_path)` / `dupeZ(u8, code)`. Route
+        // through `bun_core::dupe_z` (libc-malloc'd, NUL-terminated) so the
+        // pointers stay valid across the `spawn_process` FFI boundary.
+        let argv0 = bun_core::dupe_z(exec_path.as_bytes());
+        let argv3 = bun_core::dupe_z(&self.code);
+        // `defer { allocator.free(span(argv[0/3])) }` — free after spawn.
+        let _argv0_guard = scopeguard::guard(argv0, |p| unsafe { bun_core::free_z(p) });
+        let _argv3_guard = scopeguard::guard(argv3, |p| unsafe { bun_core::free_z(p) });
         let mut argv: [Option<*const core::ffi::c_char>; 5] = [
-            Some(argv0.as_ptr().cast()),
+            Some(argv0),
             Some(b"--no-install\0".as_ptr().cast()),
             Some(b"-e\0".as_ptr().cast()),
-            Some(argv3.as_ptr().cast()),
+            Some(argv3),
             None,
         ];
-        // `defer { allocator.free(span(argv[0/3])) }` — argv0/argv3 are owned ZStr, drop at scope exit.
 
         #[cfg(windows)]
         {
@@ -988,7 +1028,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         argv: &mut [Option<*const core::ffi::c_char>; 5],
         ipc_output_fds: [Fd; 2],
     ) -> Result<(), Error> {
-        let extra_fds = [
+        let extra_fds = vec![
             Stdio::Pipe(ipc_output_fds[1]), // fd 3: child inherits write end
             Stdio::Buffer,                  // fd 4: socketpair, parent's end in extra_pipes
         ];
@@ -998,29 +1038,32 @@ impl<'a> SecurityScanSubprocess<'a> {
             stderr: Stdio::Inherit,
             stdin: Stdio::Inherit,
             cwd: FileSystem::instance().top_level_dir(),
-            extra_fds: &extra_fds,
+            extra_fds,
             ..Default::default()
         };
 
         // TODO(port): @ptrCast(argv) / @ptrCast(std.os.environ.ptr) — raw FFI argv/envp arrays.
-        let mut spawned = spawn::spawn_process(
+        let mut spawned = match spawn::spawn_process(
             &spawn_options,
             argv.as_mut_ptr().cast(),
             bun_sys::environ_ptr(),
-        )?
-        .unwrap()?;
+        )? {
+            Ok(s) => s,
+            Err(e) => return Err(Error::from(e)),
+        };
         // `defer spawned.extra_pipes.deinit()` — drops at scope exit.
 
         ipc_output_fds[1].close();
 
         let _ = bun_sys::set_nonblocking(ipc_output_fds[0]);
-        self.ipc_reader.flags.nonblocking = true;
-        self.ipc_reader.flags.socket = false;
+        self.ipc_reader.flags.insert(PosixFlags::NONBLOCKING);
+        self.ipc_reader.flags.remove(PosixFlags::SOCKET);
 
+        let json_fd = spawned.extra_pipes[1];
         self.finish_spawn(
             &mut spawned,
             ipc_output_fds[0],
-            StdioResult::from_fd(spawned.extra_pipes[1].fd()),
+            StdioResult::from_fd(json_fd),
         )
     }
 
@@ -1074,7 +1117,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         unsafe { (*pipe).open(fds.1.unwrap()) }.unwrap()?;
         fds.1 = None; // pipe owns it now
 
-        let extra_fds = [
+        let extra_fds = vec![
             Stdio::Pipe(ipc_output_fds[1]), // fd 3: child inherits write end
             Stdio::Pipe(fds.0.unwrap()), // fd 4: child inherits non-overlapped read end
         ];
@@ -1084,31 +1127,33 @@ impl<'a> SecurityScanSubprocess<'a> {
             stderr: Stdio::Inherit,
             stdin: Stdio::Inherit,
             cwd: FileSystem::instance().top_level_dir(),
-            extra_fds: &extra_fds,
+            extra_fds,
             windows: spawn::WindowsOptions {
-                loop_: EventLoopHandle::init(&self.manager.event_loop),
+                loop_: EventLoopHandle::from_any(&mut self.manager.event_loop),
             },
             ..Default::default()
         };
 
-        let mut spawned = spawn::spawn_process(
+        let mut spawned = match spawn::spawn_process(
             &spawn_options,
             argv.as_mut_ptr().cast(),
             bun_sys::environ_ptr(),
-        )?
-        .unwrap()?;
+        )? {
+            Ok(s) => s,
+            Err(e) => return Err(Error::from(e)),
+        };
         // `defer spawned.extra_pipes.deinit()` — drops at scope exit.
 
         ipc_output_fds[1].close();
         fds.0.unwrap().close();
         fds.0 = None;
 
-        self.ipc_reader.flags.nonblocking = true;
+        self.ipc_reader.flags.insert(PosixFlags::NONBLOCKING);
 
         // Disarm errdefer on success — both slots are None by now.
         scopeguard::ScopeGuard::into_inner(fds);
 
-        self.finish_spawn(&mut spawned, ipc_output_fds[0], StdioResult::Buffer(pipe))
+        self.finish_spawn(&mut spawned, ipc_output_fds[0], StdioResult::Buffer(pipe.cast()))
     }
 
     /// Common post-spawn setup: start the fd 3 reader, attach the process,
@@ -1133,15 +1178,24 @@ impl<'a> SecurityScanSubprocess<'a> {
         // isDone() returns true, otherwise we risk freeing this struct while
         // StaticPipeWriter still holds a pointer to it (child crash case).
         self.remaining_fds = 2;
-        self.ipc_reader.start(ipc_read_fd, true).unwrap()?;
+        if let Err(e) = self.ipc_reader.start(ipc_read_fd, true) {
+            return Err(Error::from(e));
+        }
 
-        let process = spawned.to_process(&self.manager.event_loop, false);
-        process.set_exit_handler(self);
+        // PORT NOTE: `to_process` consumes `SpawnResult` by value in the
+        // bun_spawn shape; reconstruct from the pid since the only field we
+        // need has already been read above (`extra_pipes`).
+        let process = std::mem::take(spawned).to_process(
+            EventLoopHandle::from_any(&mut self.manager.event_loop),
+            false,
+        );
+        let parent: *mut Self = self;
+        process.set_exit_handler(parent);
         self.process = Some(process);
 
         let writer = StaticPipeWriter::create(
-            &self.manager.event_loop,
-            self,
+            EventLoopHandle::from_any(&mut self.manager.event_loop),
+            parent.cast(),
             json_stdio_result,
             json_source,
         );
@@ -1155,19 +1209,19 @@ impl<'a> SecurityScanSubprocess<'a> {
         });
 
         match writer.start() {
-            bun_sys::Result::Err(e) => {
-                Output::err_generic(format_args!(
+            Err(e) => {
+                Output::err_generic(
                     "Failed to start security scanner JSON pipe writer: {}",
-                    e
-                ));
+                    (e,),
+                );
                 return Err(err!("JSONPipeWriterFailed"));
             }
-            bun_sys::Result::Ok(()) => {}
+            Ok(()) => {}
         }
 
         match self.process.as_ref().unwrap().watch_or_reap() {
-            bun_sys::Result::Err(_) => return Err(err!("ProcessWatchFailed")),
-            bun_sys::Result::Ok(()) => {}
+            Err(_) => return Err(err!("ProcessWatchFailed")),
+            Ok(_) => {}
         }
 
         self.json_writer = Some(scopeguard::ScopeGuard::into_inner(writer));
@@ -1190,7 +1244,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         &self.manager.event_loop
     }
 
-    pub fn loop_(&self) -> *mut AsyncLoop {
+    pub fn loop_(&mut self) -> *mut AsyncLoop {
         #[cfg(windows)]
         {
             return self.manager.event_loop.loop_().uv_loop;
@@ -1207,7 +1261,7 @@ impl<'a> SecurityScanSubprocess<'a> {
     }
 
     pub fn on_reader_error(&mut self, err: bun_sys::Error) {
-        Output::err_generic(format_args!("Failed to read security scanner IPC: {}", err));
+        Output::err_generic("Failed to read security scanner IPC: {}", (err,));
         self.has_received_ipc = true;
         self.remaining_fds -= 1;
     }
@@ -1246,8 +1300,9 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         if !self.has_received_ipc {
             // TODO(port): ipc_reader.deinit() — explicit teardown of BufferedReader; Drop may not
-            // be safe to call mid-lifecycle. Phase B: confirm BufferedReader has explicit close().
-            self.ipc_reader.deinit();
+            // be safe to call mid-lifecycle. Route through `close()` (Zig `deinit` ≈ `close` +
+            // free of owned fields).
+            self.ipc_reader.close();
             self.remaining_fds -= 1;
         }
     }
@@ -1266,87 +1321,88 @@ impl<'a> SecurityScanSubprocess<'a> {
         // `defer { ipc_data.deinit(); stderr_data.deinit(); }` — Vec fields drop with self.
 
         if self.exit_status.is_none() {
-            Output::err_generic(format_args!(
-                "Security scanner terminated without an exit status. This is a bug in Bun."
-            ));
+            Output::err_generic(
+                "Security scanner terminated without an exit status. This is a bug in Bun.",
+                (),
+            );
             return Err(err!("SecurityScannerProcessFailedWithoutExitStatus"));
         }
 
-        let status = self.exit_status.unwrap();
+        let status = self.exit_status.clone().unwrap();
 
         if self.ipc_data.is_empty() {
-            match status {
-                Status::Exited(exit) => {
-                    Output::err_generic(format_args!(
+            match &status {
+                Status::Exited { code, .. } => {
+                    Output::err_generic(
                         "Security scanner exited with code {} without sending data",
-                        exit.code
-                    ));
+                        (*code,),
+                    );
                 }
                 Status::Signaled(sig) => {
-                    Output::err_generic(format_args!(
+                    Output::err_generic(
                         "Security scanner terminated by signal {} without sending data",
-                        <&'static str>::from(sig)
-                    ));
+                        (sig.name().unwrap_or("unknown"),),
+                    );
                 }
                 _ => {
-                    Output::err_generic(format_args!(
-                        "Security scanner terminated abnormally without sending data"
-                    ));
+                    Output::err_generic(
+                        "Security scanner terminated abnormally without sending data",
+                        (),
+                    );
                 }
             }
             return Err(err!("NoSecurityScanData"));
         }
 
-        let json_source = logger::Source {
-            contents: self.ipc_data.as_slice(),
-            path: FsPath::init(b"ipc-message.json"),
-            ..Default::default()
-        };
+        let json_source =
+            logger::Source::init_path_string("ipc-message.json", self.ipc_data.as_slice());
 
         let mut temp_log = logger::Log::init();
+        let bump = bumpalo::Bump::new();
 
-        let json_expr = match crate::bun_json::parse_utf8(&json_source, &mut temp_log) {
+        let json_expr = match crate::bun_json::parse_utf8(&json_source, &mut temp_log, &bump) {
             Ok(e) => e,
             Err(e) => {
-                Output::err_generic(format_args!(
+                Output::err_generic(
                     "Security scanner sent invalid JSON: {}",
-                    e.name()
-                ));
+                    (e.name(),),
+                );
                 if self.ipc_data.len() < 1000 {
-                    Output::err_generic(format_args!("Response: {}", BStr::new(&self.ipc_data)));
+                    Output::err_generic("Response: {}", (BStr::new(&self.ipc_data),));
                 }
                 return Err(err!("InvalidIPCMessage"));
             }
         };
 
-        if !json_expr.data.is_e_object() {
-            Output::err_generic(format_args!(
-                "Security scanner IPC message must be a JSON object"
-            ));
+        if !matches!(json_expr.data, ExprData::EObject(_)) {
+            Output::err_generic(
+                "Security scanner IPC message must be a JSON object",
+                (),
+            );
             return Err(err!("InvalidIPCFormat"));
         }
 
-        let obj = json_expr.data.e_object();
-        let Some(type_expr) = obj.get(b"type") else {
-            Output::err_generic(format_args!(
-                "Security scanner IPC message missing 'type' field"
-            ));
+        let Some(type_expr) = json_expr.get(b"type") else {
+            Output::err_generic(
+                "Security scanner IPC message missing 'type' field",
+                (),
+            );
             return Err(err!("MissingIPCType"));
         };
 
         let Some(type_str) = type_expr.as_string() else {
-            Output::err_generic(format_args!("Security scanner IPC 'type' must be a string"));
+            Output::err_generic("Security scanner IPC 'type' must be a string", ());
             return Err(err!("InvalidIPCType"));
         };
 
         if type_str == b"error" {
-            let Some(code_expr) = obj.get(b"code") else {
-                Output::err_generic(format_args!("Security scanner error missing 'code' field"));
+            let Some(code_expr) = json_expr.get(b"code") else {
+                Output::err_generic("Security scanner error missing 'code' field", ());
                 return Err(err!("MissingErrorCode"));
             };
 
             let Some(code_str) = code_expr.as_string() else {
-                Output::err_generic(format_args!("Security scanner error 'code' must be a string"));
+                Output::err_generic("Security scanner error 'code' must be a string", ());
                 return Err(err!("InvalidErrorCode"));
             };
 
@@ -1356,7 +1412,7 @@ impl<'a> SecurityScanSubprocess<'a> {
                 InvalidVersion,
                 ScanFailed,
             }
-            let error_code = match &*code_str {
+            let error_code = match code_str {
                 b"MODULE_NOT_FOUND" => Some(ErrorCode::ModuleNotFound),
                 b"INVALID_VERSION" => Some(ErrorCode::InvalidVersion),
                 b"SCAN_FAILED" => Some(ErrorCode::ScanFailed),
@@ -1364,10 +1420,10 @@ impl<'a> SecurityScanSubprocess<'a> {
             };
 
             let Some(error_code) = error_code else {
-                Output::err_generic(format_args!(
+                Output::err_generic(
                     "Unknown security scanner error code: {}",
-                    BStr::new(&code_str)
-                ));
+                    (BStr::new(code_str),),
+                );
                 return Err(err!("UnknownErrorCode"));
             };
 
@@ -1382,17 +1438,17 @@ impl<'a> SecurityScanSubprocess<'a> {
                         if is_package_name {
                             // For npm packages, after install they should be resolvable
                             // If not, there was a real problem with the installation
-                            Output::err_generic(format_args!(
+                            Output::err_generic(
                                 "Security scanner '{}' could not be found after installation attempt.\n  <d>If this is a local file, please check that the file exists and the path is correct.<r>",
-                                BStr::new(security_scanner)
-                            ));
+                                (BStr::new(security_scanner),),
+                            );
                             return Err(err!("SecurityScannerNotFound"));
                         } else {
                             // For local files, the error is expected - they can't be installed
-                            Output::err_generic(format_args!(
+                            Output::err_generic(
                                 "Security scanner '{}' is configured in bunfig.toml but the file could not be found.\n  <d>Please check that the file exists and the path is correct.<r>",
-                                BStr::new(security_scanner)
-                            ));
+                                (BStr::new(security_scanner),),
+                            );
                             return Err(err!("SecurityScannerNotFound"));
                         }
                     }
@@ -1405,73 +1461,72 @@ impl<'a> SecurityScanSubprocess<'a> {
                         let is_package_name = bun_paths::is_package_path(security_scanner);
 
                         if is_package_name {
-                            Output::err_generic(format_args!(
+                            Output::err_generic(
                                 "Security scanner '{}' is configured in bunfig.toml but is not installed.\n  <d>To install it, run: bun add --dev {}<r>",
-                                BStr::new(security_scanner),
-                                BStr::new(security_scanner)
-                            ));
+                                (BStr::new(security_scanner), BStr::new(security_scanner)),
+                            );
                         } else {
-                            Output::err_generic(format_args!(
+                            Output::err_generic(
                                 "Security scanner '{}' is configured in bunfig.toml but the file could not be found.\n  <d>Please check that the file exists and the path is correct.<r>",
-                                BStr::new(security_scanner)
-                            ));
+                                (BStr::new(security_scanner),),
+                            );
                         }
                         return Err(err!("SecurityScannerNotInDependencies"));
                     }
                 }
                 ErrorCode::InvalidVersion => {
-                    if let Some(msg) = obj.get(b"message") {
+                    if let Some(msg) = json_expr.get(b"message") {
                         if let Some(msg_str) = msg.as_string() {
-                            Output::err_generic(format_args!(
+                            Output::err_generic(
                                 "Security scanner error: {}",
-                                BStr::new(&msg_str)
-                            ));
+                                (BStr::new(msg_str),),
+                            );
                         }
                     }
                     return Err(err!("InvalidScannerVersion"));
                 }
                 ErrorCode::ScanFailed => {
-                    if let Some(msg) = obj.get(b"message") {
+                    if let Some(msg) = json_expr.get(b"message") {
                         if let Some(msg_str) = msg.as_string() {
-                            Output::err_generic(format_args!(
+                            Output::err_generic(
                                 "Security scanner failed: {}",
-                                BStr::new(&msg_str)
-                            ));
+                                (BStr::new(msg_str),),
+                            );
                         }
                     }
                     return Err(err!("ScannerFailed"));
                 }
             }
         } else if type_str != b"result" {
-            Output::err_generic(format_args!(
+            Output::err_generic(
                 "Unknown security scanner message type: {}",
-                BStr::new(&type_str)
-            ));
+                (BStr::new(type_str),),
+            );
             return Err(err!("UnknownMessageType"));
         }
 
         // if we got here then we got a result message so we can continue like normal
         let duration = bun_core::time::milli_timestamp() - start_time;
 
-        if self.manager.options.log_level == crate::package_manager_real::options::LogLevel::Verbose {
-            match status {
-                Status::Exited(exit) => {
-                    if exit.code == 0 {
+        if self.manager.options.log_level == crate::package_manager::Options::LogLevel::Verbose {
+            match &status {
+                Status::Exited { code, .. } => {
+                    if *code == 0 {
                         Output::pretty_errorln(format_args!(
                             "<d>[SecurityProvider]<r> Completed with exit code {} [{}ms]",
-                            exit.code, duration
+                            code, duration
                         ));
                     } else {
                         Output::pretty_errorln(format_args!(
                             "<d>[SecurityProvider]<r> Failed with exit code {} [{}ms]",
-                            exit.code, duration
+                            code, duration
                         ));
                     }
                 }
                 Status::Signaled(sig) => {
                     Output::pretty_errorln(format_args!(
                         "<d>[SecurityProvider]<r> Terminated by signal {} [{}ms]",
-                        <&'static str>::from(sig),
+                        sig.name().unwrap_or("unknown"),
                         duration
                     ));
                 }
@@ -1483,7 +1538,7 @@ impl<'a> SecurityScanSubprocess<'a> {
                 }
             }
         } else if self.manager.options.log_level
-            != crate::package_manager_real::options::LogLevel::Silent
+            != crate::package_manager::Options::LogLevel::Silent
             && duration >= 1000
         {
             let maybe_hourglass = if Output::enable_ansi_colors_stderr() {
@@ -1509,10 +1564,11 @@ impl<'a> SecurityScanSubprocess<'a> {
             }
         }
 
-        let Some(advisories_expr) = obj.get(b"advisories") else {
-            Output::err_generic(format_args!(
-                "Security scanner result missing 'advisories' field"
-            ));
+        let Some(advisories_expr) = json_expr.get(b"advisories") else {
+            Output::err_generic(
+                "Security scanner result missing 'advisories' field",
+                (),
+            );
             return Err(err!("MissingAdvisoriesField"));
         };
 
@@ -1520,25 +1576,25 @@ impl<'a> SecurityScanSubprocess<'a> {
             parse_security_advisories_from_expr(self.manager, advisories_expr, package_paths)?;
 
         if !status.is_ok() {
-            match status {
-                Status::Exited(exited) => {
-                    if exited.code != 0 {
-                        Output::err_generic(format_args!(
+            match &status {
+                Status::Exited { code, .. } => {
+                    if *code != 0 {
+                        Output::err_generic(
                             "Security scanner failed with exit code: {}",
-                            exited.code
-                        ));
+                            (*code,),
+                        );
                         return Err(err!("SecurityScannerFailed"));
                     }
                 }
                 Status::Signaled(signal) => {
-                    Output::err_generic(format_args!(
+                    Output::err_generic(
                         "Security scanner was terminated by signal: {}",
-                        <&'static str>::from(signal)
-                    ));
+                        (signal.name().unwrap_or("unknown"),),
+                    );
                     return Err(err!("SecurityScannerTerminated"));
                 }
                 _ => {
-                    Output::err_generic(format_args!("Security scanner failed"));
+                    Output::err_generic("Security scanner failed", ());
                     return Err(err!("SecurityScannerFailed"));
                 }
             }
@@ -1571,113 +1627,108 @@ fn parse_security_advisories_from_expr(
 ) -> Result<Box<[SecurityAdvisory]>, Error> {
     let mut advisories_list: Vec<SecurityAdvisory> = Vec::new();
 
-    if !advisories_expr.data.is_e_array() {
-        Output::err_generic(format_args!(
-            "Security scanner 'advisories' field must be an array, got: {}",
-            <&'static str>::from(&advisories_expr.data)
-        ));
+    let ExprData::EArray(array) = &advisories_expr.data else {
+        Output::err_generic(
+            "Security scanner 'advisories' field must be an array",
+            (),
+        );
         return Err(err!("InvalidAdvisoriesFormat"));
-    }
+    };
 
-    let array = advisories_expr.data.e_array();
     for (i, item) in array.items.slice().iter().enumerate() {
-        if !item.data.is_e_object() {
-            Output::err_generic(format_args!(
-                "Security advisory at index {} must be an object, got: {}",
-                i,
-                <&'static str>::from(&item.data)
-            ));
+        if !matches!(item.data, ExprData::EObject(_)) {
+            Output::err_generic(
+                "Security advisory at index {} must be an object",
+                (i,),
+            );
             return Err(err!("InvalidAdvisoryFormat"));
         }
 
-        let item_obj = item.data.e_object();
-
-        let Some(name_expr) = item_obj.get(b"package") else {
-            Output::err_generic(format_args!(
+        let Some(name_expr) = item.get(b"package") else {
+            Output::err_generic(
                 "Security advisory at index {} missing required 'package' field",
-                i
-            ));
+                (i,),
+            );
             return Err(err!("MissingPackageField"));
         };
         let Some(name_str_temp) = name_expr.as_string() else {
-            Output::err_generic(format_args!(
+            Output::err_generic(
                 "Security advisory at index {} 'package' field must be a string",
-                i
-            ));
+                (i,),
+            );
             return Err(err!("InvalidPackageField"));
         };
         if name_str_temp.is_empty() {
-            Output::err_generic(format_args!(
+            Output::err_generic(
                 "Security advisory at index {} 'package' field cannot be empty",
-                i
-            ));
+                (i,),
+            );
             return Err(err!("EmptyPackageField"));
         }
         // Duplicate the string since asString returns temporary memory
-        let name_str: Box<[u8]> = Box::from(&*name_str_temp);
+        let name_str: Box<[u8]> = Box::from(name_str_temp);
 
-        let desc_str: Option<Box<[u8]>> = if let Some(desc_expr) = item_obj.get(b"description") {
+        let desc_str: Option<Box<[u8]>> = if let Some(desc_expr) = item.get(b"description") {
             'blk: {
                 if let Some(str) = desc_expr.as_string() {
                     // Duplicate the string since asString returns temporary memory
-                    break 'blk Some(Box::from(&*str));
+                    break 'blk Some(Box::from(str));
                 }
-                if desc_expr.data.is_e_null() {
+                if matches!(desc_expr.data, ExprData::ENull) {
                     break 'blk None;
                 }
-                Output::err_generic(format_args!(
+                Output::err_generic(
                     "Security advisory at index {} 'description' field must be a string or null",
-                    i
-                ));
+                    (i,),
+                );
                 return Err(err!("InvalidDescriptionField"));
             }
         } else {
             None
         };
 
-        let url_str: Option<Box<[u8]>> = if let Some(url_expr) = item_obj.get(b"url") {
+        let url_str: Option<Box<[u8]>> = if let Some(url_expr) = item.get(b"url") {
             'blk: {
                 if let Some(str) = url_expr.as_string() {
                     // Duplicate the string since asString returns temporary memory
-                    break 'blk Some(Box::from(&*str));
+                    break 'blk Some(Box::from(str));
                 }
-                if url_expr.data.is_e_null() {
+                if matches!(url_expr.data, ExprData::ENull) {
                     break 'blk None;
                 }
-                Output::err_generic(format_args!(
+                Output::err_generic(
                     "Security advisory at index {} 'url' field must be a string or null",
-                    i
-                ));
+                    (i,),
+                );
                 return Err(err!("InvalidUrlField"));
             }
         } else {
             None
         };
 
-        let Some(level_expr) = item_obj.get(b"level") else {
-            Output::err_generic(format_args!(
+        let Some(level_expr) = item.get(b"level") else {
+            Output::err_generic(
                 "Security advisory at index {} missing required 'level' field",
-                i
-            ));
+                (i,),
+            );
             return Err(err!("MissingLevelField"));
         };
         let Some(level_str) = level_expr.as_string() else {
-            Output::err_generic(format_args!(
+            Output::err_generic(
                 "Security advisory at index {} 'level' field must be a string",
-                i
-            ));
+                (i,),
+            );
             return Err(err!("InvalidLevelField"));
         };
-        let level = if &*level_str == b"fatal" {
+        let level = if level_str == b"fatal" {
             SecurityAdvisoryLevel::Fatal
-        } else if &*level_str == b"warn" {
+        } else if level_str == b"warn" {
             SecurityAdvisoryLevel::Warn
         } else {
-            Output::err_generic(format_args!(
+            Output::err_generic(
                 "Security advisory at index {} 'level' field must be 'fatal' or 'warn', got: '{}'",
-                i,
-                BStr::new(&level_str)
-            ));
+                (i, BStr::new(level_str)),
+            );
             return Err(err!("InvalidLevelValue"));
         };
 

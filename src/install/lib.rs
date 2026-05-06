@@ -787,8 +787,67 @@ pub mod lockfile {
         pub trusted_dependencies: Option<crate::lockfile_real::TrustedDependenciesSet>,
         /// Zig: `Lockfile.scripts` (src/install/lockfile.zig).
         pub scripts: crate::lockfile_real::Scripts,
+        /// Zig: `Lockfile.overrides: OverrideMap = .{}`.
+        pub overrides: crate::lockfile_real::OverrideMap,
+        /// Zig: `Lockfile.catalogs: CatalogMap = .{}`.
+        pub catalogs: crate::lockfile_real::CatalogMap,
+        /// Zig: `Lockfile.text_lockfile_version: bun_lock.Version`.
+        pub text_lockfile_version: crate::lockfile_real::bun_lock::Version,
     }
     impl Lockfile {
+        /// Port of `Lockfile.loadFromCwd` (src/install/lockfile.zig). Real
+        /// body delegates to `lockfile_real::Lockfile::load_from_cwd` once the
+        /// stub/real types unify (reconciler-6).
+        pub fn load_from_cwd(
+            &mut self,
+            _manager: *mut crate::PackageManager,
+            _log: *mut bun_logger::Log,
+            _migrate: bool,
+        ) -> LoadResult<'_> {
+            todo!("blocked_on: lockfile_real::Lockfile::load_from_cwd un-gate (reconciler-6)")
+        }
+        /// Port of `Lockfile.rootPackage` (src/install/lockfile.zig).
+        #[inline]
+        pub fn root_package(&self) -> Option<package::Package> {
+            if self.packages.is_empty() { None } else { Some(self.packages.get(0)) }
+        }
+        /// Port of `Lockfile.stringBuilder` (src/install/lockfile.zig).
+        pub fn string_builder(&mut self) -> StringBuilder {
+            todo!("blocked_on: lockfile_real::Lockfile::string_builder — needs &mut buffers.string_bytes + string_pool (reconciler-6)")
+        }
+        /// Port of `Lockfile.cleanWithLogger` (src/install/lockfile.zig).
+        pub fn clean_with_logger(
+            &mut self,
+            _manager: *mut crate::PackageManager,
+            _updates: &[crate::update_request::UpdateRequest],
+            _log: *mut bun_logger::Log,
+            _exact_versions: bool,
+            _log_level: crate::package_manager::Options::LogLevel,
+        ) -> Result<Self, bun_core::Error> {
+            todo!("blocked_on: lockfile_real::Lockfile::clean_with_logger un-gate (reconciler-6)")
+        }
+        /// Port of `Lockfile.hasMetaHashChanged` (src/install/lockfile.zig).
+        pub fn has_meta_hash_changed(
+            &mut self,
+            print_name_version_string: bool,
+            packages_len: usize,
+        ) -> Result<bool, bun_core::Error> {
+            let new_hash = self.generate_meta_hash(print_name_version_string, packages_len)?;
+            let changed = new_hash != self.meta_hash;
+            self.meta_hash = new_hash;
+            Ok(changed)
+        }
+        /// Port of `Lockfile.isEmpty` (src/install/lockfile.zig).
+        #[inline]
+        pub fn is_empty(&self) -> bool { self.packages.is_empty() }
+        /// Port of `Lockfile.eql` (src/install/lockfile.zig). Compares the
+        /// post-clean lockfile against `before` for `--frozen-lockfile`.
+        pub fn eql(&self, _before: &Self, _packages_len: usize) -> Result<bool, bun_core::Error> {
+            todo!("blocked_on: lockfile_real::Lockfile::eql un-gate (reconciler-6)")
+        }
+        /// In-place form of `init_empty` (Zig writes `lockfile.* = .{}`).
+        #[inline]
+        pub fn init_empty_in_place(&mut self) { *self = Self::default(); }
         /// Port of `Lockfile.hasTrustedDependency` (src/install/lockfile.zig).
         pub fn has_trusted_dependency(&self, name: &[u8], resolution: &Resolution) -> bool {
             if let Some(trusted_dependencies) = &self.trusted_dependencies {
@@ -938,6 +997,21 @@ pub mod lockfile {
             }
             // should not hit this, default to root just in case
             0
+        }
+
+        /// Port of `Lockfile.resolveCatalogDependency`
+        /// (src/install/lockfile.zig). Returns the dependency's own version when
+        /// it is not a `catalog:` reference; the full catalog lookup lives in
+        /// the gated `lockfile_real::Lockfile` and is wired once that un-gates.
+        pub fn resolve_catalog_dependency<'a>(
+            &'a self,
+            dep: &'a Dependency,
+        ) -> Option<&'a crate::dependency::Version> {
+            if dep.version.tag != crate::dependency::Tag::Catalog {
+                return Some(&dep.version);
+            }
+            // TODO(port): blocked_on lockfile_real::catalogs un-gate (reconciler-6)
+            None
         }
 
         /// Port of `Lockfile.isWorkspaceTreeId` (src/install/lockfile.zig:616).

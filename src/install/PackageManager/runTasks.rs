@@ -869,9 +869,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 }
 
                 let dependency_list_entry = manager.task_queue.get_mut(&task.id).unwrap();
-                let dependency_list = core::mem::take(dependency_list_entry.value_ptr);
+                let dependency_list = core::mem::take(dependency_list_entry);
 
-                manager.process_dependency_list::<C>(dependency_list, extract_ctx, install_peer)?;
+                process_dependency_list_for_ctx::<C>(manager, dependency_list, extract_ctx, install_peer)?;
 
                 if log_level.show_progress() {
                     if !*has_updated_this_run {
@@ -978,7 +978,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                 if C::HAS_ON_EXTRACT {
                     if C::IS_PACKAGE_INSTALLER {
-                        PackageInstaller::from_ctx_mut(extract_ctx)
+                        C::as_package_installer(extract_ctx)
                             .fix_cached_lockfile_package_slices();
                         C::on_extract_package_installer(
                             extract_ctx,
@@ -997,7 +997,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     &mut package_id,
                     dependency_id,
                     resolution,
-                    &mut task.data.extract,
+                    &task.data.extract,
                     log_level,
                 ) {
                     'handle_pkg: {
@@ -1005,12 +1005,12 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         // We need to make sure we resolve the dependencies first before calling the onExtract callback
                         // TODO: move this into a separate function
                         let mut any_root = false;
-                        let Some(dependency_list_entry) = manager.task_queue.get_mut(&task.id)
-                        else {
-                            break 'handle_pkg;
+                        let dependency_list: TaskCallbackList = {
+                            let Some(entry) = manager.task_queue.get_mut(&task.id) else {
+                                break 'handle_pkg;
+                            };
+                            core::mem::take(entry)
                         };
-                        let dependency_list =
-                            core::mem::take(dependency_list_entry.value_ptr);
 
                         // Zig: `defer { dependency_list.deinit(); if (any_root) callbacks.onResolve(extract_ctx); }`
                         // `dependency_list` is a Drop type (frees on every path); only the
@@ -1030,11 +1030,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             }
                         });
 
-                        for dep in dependency_list.iter() {
+                        for dep in dependency_list.into_iter() {
                             match dep {
                                 bun_install::TaskCallbackContext::Dependency(id)
                                 | bun_install::TaskCallbackContext::RootDependency(id) => {
-                                    let id = *id;
                                     let version = &mut manager.lockfile.buffers.dependencies
                                         [id as usize]
                                         .version;
@@ -1055,15 +1054,17 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                     }
                                     manager.process_dependency_list_item(
                                         dep,
-                                        any_root,
+                                        Some(any_root),
                                         install_peer,
                                     )?;
                                 }
                                 _ => {
                                     // if it's a node_module folder to install, handle that after we process all the dependencies within the onExtract callback.
-                                    dependency_list_entry
-                                        .value_ptr
-                                        .push(dep.clone());
+                                    manager
+                                        .task_queue
+                                        .get_mut(&task.id)
+                                        .unwrap()
+                                        .push(dep);
                                     // PERF(port): was `catch unreachable` — Vec::push aborts on OOM
                                 }
                             }
@@ -1077,14 +1078,27 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     ))
                 {
                     // Peer dependencies do not initiate any downloads of their own, thus need to be resolved here instead
-                    let dependency_list = core::mem::take(dependency_list_entry.value_ptr);
+                    let dependency_list = core::mem::take(dependency_list_entry);
 
-                    // TODO(port): Zig passes `void, {}, {}` for Ctx/ctx/callbacks here — needs a
-                    // void impl of `RunTasksCallbacks`. Phase B: add `VoidCallbacks` unit impl.
-                    manager.process_dependency_list_void(dependency_list, install_peer)?;
+                    // Zig passes `void, {}, {}` for Ctx/ctx/callbacks here.
+                    manager.process_dependency_list(
+                        dependency_list,
+                        (),
+                        None::<fn(())>,
+                        install_peer,
+                    )?;
                 }
 
-                manager.set_preinstall_state(package_id, &manager.lockfile, bun_install::PreinstallState::Done);
+                // PORT NOTE: reshaped for borrowck — `set_preinstall_state` borrows
+                // `&mut self` and `&Lockfile` which would alias `manager.lockfile`.
+                let lockfile_ptr: *const Lockfile = &*manager.lockfile;
+                manager.set_preinstall_state(
+                    package_id,
+                    // SAFETY: `set_preinstall_state` only reads `lockfile.packages.len()`;
+                    // disjoint from `manager.preinstall_state` which it writes.
+                    unsafe { &*lockfile_ptr },
+                    bun_install::PreinstallState::Done,
+                );
 
                 if log_level.show_progress() {
                     if !*has_updated_this_run {

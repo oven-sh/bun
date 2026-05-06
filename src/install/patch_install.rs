@@ -289,19 +289,20 @@ impl<'a> PatchTask<'a> {
                         manager.lockfile.str(&pkg.name),
                         pkg.resolution.value.npm.version,
                     );
-                    debug_assert!(!manager.network_dedupe_map.contains(task_id));
+                    debug_assert!(!manager.network_dedupe_map.contains_key(&task_id));
 
+                    let is_required = manager.lockfile.buffers.dependencies[dep_id as usize]
+                        .behavior
+                        .is_required();
                     let network_task = manager
                         .generate_network_task_for_tarball(
                             // TODO: not just npm package
                             task_id,
                             url,
-                            manager.lockfile.buffers.dependencies[dep_id]
-                                .behavior
-                                .is_required(),
+                            is_required,
                             dep_id,
-                            pkg,
-                            calc_hash.name_and_version_hash,
+                            &pkg,
+                            Some(calc_hash.name_and_version_hash),
                             match pkg.resolution.tag {
                                 crate::resolution::Tag::Npm => Authorization::AllowAuthorization,
                                 _ => Authorization::NoAuthorization,
@@ -311,7 +312,7 @@ impl<'a> PatchTask<'a> {
                     if manager.get_preinstall_state(pkg.meta.id) == PreinstallState::Extract {
                         manager.set_preinstall_state(
                             pkg.meta.id,
-                            manager.lockfile,
+                            unsafe { &*lockfile_ptr },
                             PreinstallState::Extracting,
                         );
                         manager.enqueue_network_task(network_task);
@@ -332,10 +333,10 @@ impl<'a> PatchTask<'a> {
                     if manager.get_preinstall_state(pkg.meta.id) == PreinstallState::ApplyPatch {
                         manager.set_preinstall_state(
                             pkg.meta.id,
-                            manager.lockfile,
+                            unsafe { &*lockfile_ptr },
                             PreinstallState::ApplyingPatch,
                         );
-                        manager.enqueue_patch_task(patch_task);
+                        manager.enqueue_patch_task(patch_task as *mut crate::PatchTask);
                     }
                 }
                 _ => {}
@@ -369,10 +370,10 @@ impl<'a> PatchTask<'a> {
         );
         // TODO: can the patch file be anything other than utf-8?
 
-        let patchfile_txt = match sys::File::read_from(Fd::cwd(), absolute_patchfile_path) {
+        let patchfile_txt = match sys::File::read_from(Fd::cwd(), absolute_patchfile_path.as_bytes()) {
             sys::Result::Ok(txt) => txt,
             sys::Result::Err(e) => {
-                log.add_sys_error(e, format_args!("failed to read patchfile"))?;
+                log.add_sys_error(&e, format_args!("failed to read patchfile"))?;
                 return Ok(());
             }
         };
@@ -382,7 +383,10 @@ impl<'a> PatchTask<'a> {
             Ok(p) => p,
             Err(e) => {
                 log.add_error_fmt_opts(
-                    format_args!("failed to parse patchfile: {}", e.name()),
+                    format_args!(
+                        "failed to parse patchfile: {}",
+                        <&'static str>::from(e)
+                    ),
                     Default::default(),
                 )?;
                 return Ok(());
@@ -429,28 +433,41 @@ impl<'a> PatchTask<'a> {
         // PORT NOTE: `defer allocator.free(resolution_label)` — Vec drops at scope end.
 
         // 3. copy the unpatched files into temp dir
+        // SAFETY: `cache_dir_subpath_without_patch_hash` was built by `dupe_z` (NUL-terminated).
+        let cache_dir_subpath_z = unsafe {
+            ZStr::from_raw(
+                patch.cache_dir_subpath_without_patch_hash.as_ptr(),
+                patch.cache_dir_subpath_without_patch_hash.len().saturating_sub(1),
+            )
+        };
+        // PORT NOTE: borrowck — `tempdir_name` borrows `tmpname_buf` mutably, but
+        // `PackageInstall` also wants `&mut tmpname_buf[..]` for
+        // `destination_dir_subpath_buf`. Use a separate scratch buffer for the
+        // latter (Zig aliased the same buffer; the field is "TODO: never read"
+        // per `PackageInstall.zig`).
+        let mut dest_subpath_buf = [0u8; 1024];
         let mut pkg_install = PackageInstall {
-            allocator: (), // TODO(port): allocator field dropped (global mimalloc)
-            cache_dir: patch.cache_dir,
-            cache_dir_subpath: ZStr::from_bytes_with_nul(&patch.cache_dir_subpath_without_patch_hash),
+            cache_dir: sys::Dir { fd: patch.cache_dir },
+            cache_dir_subpath: cache_dir_subpath_z,
             destination_dir_subpath: tempdir_name,
-            destination_dir_subpath_buf: &mut tmpname_buf[..],
+            destination_dir_subpath_buf: &mut dest_subpath_buf[..],
             patch: None,
             progress: None,
             package_name: pkg_name,
             package_version: &resolution_label,
+            file_count: 0,
             // dummy value
             node_modules: &dummy_node_modules,
-            lockfile: self.manager.lockfile,
+            lockfile: &self.manager.lockfile,
         };
 
-        match pkg_install.install(true, system_tmpdir, InstallMethod::Copyfile, resolution_tag) {
+        match pkg_install.install(true, sys::Dir { fd: system_tmpdir }, InstallMethod::Copyfile, resolution_tag) {
             InstallResult::Success => {}
             InstallResult::Failure(reason) => {
                 return log.add_error_fmt_opts(
                     format_args!(
                         "{} while executing step: {}",
-                        reason.err.name(),
+                        reason.err,
                         BStr::new(reason.step.name())
                     ),
                     Default::default(),
@@ -460,7 +477,7 @@ impl<'a> PatchTask<'a> {
 
         {
             let patch_pkg_dir = match sys::openat(
-                Fd::from_std_dir(system_tmpdir),
+                system_tmpdir,
                 tempdir_name,
                 sys::O::RDONLY | sys::O::DIRECTORY,
                 0,
@@ -468,7 +485,7 @@ impl<'a> PatchTask<'a> {
                 sys::Result::Ok(fd) => fd,
                 sys::Result::Err(e) => {
                     return log.add_sys_error(
-                        e,
+                        &e,
                         format_args!(
                             "failed trying to open temporary dir to apply patch to package: {}",
                             BStr::new(&resolution_label)
@@ -532,11 +549,18 @@ impl<'a> PatchTask<'a> {
             ],
         );
 
+        // SAFETY: `cache_dir_subpath` was built by `dupe_z` (NUL-terminated).
+        let cache_dir_subpath_z = unsafe {
+            ZStr::from_raw(
+                patch.cache_dir_subpath.as_ptr(),
+                patch.cache_dir_subpath.len().saturating_sub(1),
+            )
+        };
         if let Err(e) = sys::renameat_concurrently(
-            Fd::from_std_dir(system_tmpdir),
+            system_tmpdir,
             path_in_tmpdir,
-            Fd::from_std_dir(patch.cache_dir),
-            ZStr::from_bytes_with_nul(&patch.cache_dir_subpath),
+            patch.cache_dir,
+            cache_dir_subpath_z,
             sys::RenameOptions {
                 move_fallback: true,
                 ..Default::default()
@@ -572,7 +596,7 @@ impl<'a> PatchTask<'a> {
 
         let stat: sys::Stat = match sys::stat(absolute_patchfile_path) {
             sys::Result::Err(e) => {
-                if e.get_errno() == sys::Errno::NOENT {
+                if e.get_errno() == sys::Errno::ENOENT {
                     log.add_error_fmt(
                         None,
                         Loc::EMPTY,
@@ -606,7 +630,7 @@ impl<'a> PatchTask<'a> {
             }
             sys::Result::Ok(s) => s,
         };
-        let size: u64 = u64::try_from(stat.size).unwrap();
+        let size: u64 = u64::try_from(stat.st_size).unwrap();
         if size == 0 {
             log.add_error_fmt(
                 None,
@@ -639,11 +663,11 @@ impl<'a> PatchTask<'a> {
         // what's a good number for this? page size i guess
         const STACK_SIZE: usize = 16384;
 
-        let mut file = sys::File { handle: fd };
+        let file = sys::File { handle: fd };
         let mut stack = [0u8; STACK_SIZE];
         let mut read: usize = 0;
         while (read as u64) < size {
-            let slice = match file.read_fill_buf(&mut stack[..]) {
+            let slice: &mut [u8] = match file.read_fill_buf(&mut stack[..]) {
                 sys::Result::Ok(slice) => slice,
                 sys::Result::Err(e) => {
                     log.add_error_fmt(
@@ -680,7 +704,7 @@ impl<'a> PatchTask<'a> {
     }
 
     pub fn new_calc_patch_hash(
-        manager: &'a PackageManager,
+        manager: &'a mut PackageManager,
         name_and_version_hash: u64,
         state: Option<EnqueueAfterState>,
     ) -> *mut PatchTask<'a> {
@@ -707,8 +731,9 @@ impl<'a> PatchTask<'a> {
                 logger: Log::init(),
             }),
             manager,
-            project_dir: FileSystem::instance().top_level_dir,
+            project_dir: FileSystem::instance().top_level_dir(),
             task: ThreadPoolTask {
+                node: ThreadPoolNode::default(),
                 callback: Self::run_from_thread_pool,
             },
             pre: false,
@@ -719,7 +744,7 @@ impl<'a> PatchTask<'a> {
     }
 
     pub fn new_apply_patch_hash(
-        pkg_manager: &'a PackageManager,
+        pkg_manager: &'a mut PackageManager,
         pkg_id: PackageID,
         patch_hash: u64,
         name_and_version_hash: u64,
@@ -730,11 +755,17 @@ impl<'a> PatchTask<'a> {
         let resolution = &pkg_manager.lockfile.packages.items_resolution()[pkg_id as usize];
 
         let mut folder_path_buf = PathBuffer::uninit();
+        // PORT NOTE: borrowck — `compute_cache_dir_and_subpath` borrows `&mut self` while
+        // `pkg_name.slice(..)` and `resolution` borrow `pkg_manager.lockfile` immutably. Clone
+        // the slice/resolution out first.
+        let pkg_name_slice =
+            pkg_name.slice(&pkg_manager.lockfile.buffers.string_bytes).to_vec();
+        let resolution_clone = resolution.clone();
         let stuff = pkg_manager.compute_cache_dir_and_subpath(
-            pkg_name.slice(&pkg_manager.lockfile.buffers.string_bytes),
-            resolution,
+            &pkg_name_slice,
+            &resolution_clone,
             &mut folder_path_buf,
-            patch_hash,
+            Some(patch_hash),
         );
 
         let patchfilepath: Box<[u8]> = Box::from(
@@ -772,8 +803,9 @@ impl<'a> PatchTask<'a> {
                 install_context: None,
             }),
             manager: pkg_manager,
-            project_dir: FileSystem::instance().top_level_dir,
+            project_dir: FileSystem::instance().top_level_dir(),
             task: ThreadPoolTask {
+                node: ThreadPoolNode::default(),
                 callback: Self::run_from_thread_pool,
             },
             pre: false,

@@ -258,10 +258,22 @@ impl ZStr {
         // SAFETY: invariant — byte at `len` is NUL and owned by the same allocation.
         unsafe { core::slice::from_raw_parts(self.0.as_ptr(), self.0.len() + 1) }
     }
-    // NOTE: there is intentionally no `Box<ZStr>` constructor. `Box<DST>`
-    // deallocates using the fat-pointer metadata length, so a `Box<ZStr>` whose
-    // `.len()` excludes the NUL would free one byte short. Use `ZBox` (below)
-    // for owned NUL-terminated strings.
+    // NOTE: prefer `ZBox` for owned NUL-terminated strings. `Box<ZStr>` is
+    // supported only as a transitional shim for ported fields that were typed
+    // `Box<ZStr>` before `ZBox` existed (e.g. `PackageManager.cache_directory_path`).
+    // The slice metadata of the returned `Box<ZStr>` covers `bytes.len() + 1`
+    // (i.e. INCLUDES the trailing NUL) so `Drop` deallocates the full
+    // allocation; `as_bytes()` will therefore include the trailing NUL.
+    // TODO(port): retire once all `Box<ZStr>` fields are migrated to `ZBox`.
+    pub fn boxed(bytes: &[u8]) -> Box<ZStr> {
+        let mut v = Vec::with_capacity(bytes.len() + 1);
+        v.extend_from_slice(bytes);
+        v.push(0);
+        let b: Box<[u8]> = v.into_boxed_slice();
+        // SAFETY: `ZStr` is a transparent newtype over `[u8]`; the fat-pointer
+        // metadata (len = bytes.len()+1) is preserved by the `as *mut ZStr` cast.
+        unsafe { Box::from_raw(Box::into_raw(b) as *mut ZStr) }
+    }
 }
 
 /// Owned, heap-allocated, NUL-terminated byte string. `.len()` / `Deref`

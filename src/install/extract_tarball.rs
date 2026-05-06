@@ -239,7 +239,7 @@ impl ExtractTarball {
         let mut tmpname_buf = PathBuffer::uninit();
         let (name, basename) = self.name_and_basename();
 
-        let mut resolved: &[u8] = b"";
+        let mut resolved: &'static [u8] = b"";
         let tmpname = FileSystem::tmpname(
             &basename[0..basename.len().min(32)],
             &mut tmpname_buf.0,
@@ -376,7 +376,7 @@ impl ExtractTarball {
                     // BORROW_PARAM: out-param writing the first dirname back into a stack local.
                     struct DirnameReader<'a> {
                         needs_first_dirname: bool, // = true
-                        outdirname: &'a mut &'a [u8],
+                        outdirname: &'a mut &'static [u8],
                     }
                     impl<'a> ArchiveAppender for DirnameReader<'a> {
                         const HAS_ON_FIRST_DIRECTORY_NAME: bool = true;

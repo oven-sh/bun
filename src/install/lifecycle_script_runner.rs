@@ -398,11 +398,14 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         // TODO(port): narrow error set
         bun_core::analytics::Features::LIFECYCLE_SCRIPTS.fetch_add(1, Ordering::Relaxed);
 
-        if !(*this).has_incremented_alive_count {
-            (*this).has_incremented_alive_count = true;
-            // .monotonic is okay because because this value is only used by hoisted installs, which
-            // only use this type on the main thread.
-            let _ = ALIVE_COUNT.fetch_add(1, Ordering::Relaxed);
+        // SAFETY: `this` is non-null and uniquely accessed (caller contract).
+        unsafe {
+            if !(*this).has_incremented_alive_count {
+                (*this).has_incremented_alive_count = true;
+                // .monotonic is okay because because this value is only used by hoisted installs, which
+                // only use this type on the main thread.
+                let _ = ALIVE_COUNT.fetch_add(1, Ordering::Relaxed);
+            }
         }
 
         // errdefer { decrement alive_count; ensure_not_in_heap }
@@ -414,14 +417,18 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         // provenance after we return — deriving them from a `&mut self` reborrow would
         // leave dead tags once that borrow is popped by subsequent `self` uses, and the
         // synchronous `process.on_exit` dispatch below would alias a second `&mut Self`.
-        let result = Self::spawn_next_script_inner(this, next_script_index);
+        // SAFETY: `this` is non-null and uniquely accessed (caller contract).
+        let result = unsafe { Self::spawn_next_script_inner(this, next_script_index) };
         if result.is_err() {
-            if (*this).has_incremented_alive_count {
-                (*this).has_incremented_alive_count = false;
-                // .monotonic is okay because because this value is only used by hoisted installs.
-                let _ = ALIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
+            // SAFETY: as above.
+            unsafe {
+                if (*this).has_incremented_alive_count {
+                    (*this).has_incremented_alive_count = false;
+                    // .monotonic is okay because because this value is only used by hoisted installs.
+                    let _ = ALIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
+                }
+                (*this).ensure_not_in_heap();
             }
-            (*this).ensure_not_in_heap();
         }
         result
     }
@@ -434,13 +441,17 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         this: *mut Self,
         next_script_index: u8,
     ) -> Result<(), bun_core::Error> {
-        let manager = (*this).manager;
+        // SAFETY: `this` is non-null and uniquely accessed (caller contract).
+        // Body wrapped in one block; per-field accesses do not materialize a
+        // whole-struct `&mut Self` across reentrant calls.
+        unsafe {
+        let manager: *mut PackageManager = (*this).manager;
         let original_script = (*this).scripts.items[next_script_index as usize]
             .as_ref()
             .expect("script present");
-        let cwd = &(*this).scripts.cwd;
-        (*this).stdout.set_parent(this);
-        (*this).stderr.set_parent(this);
+        let cwd = (*this).scripts.cwd.as_bytes();
+        (*this).stdout.set_parent(this as *mut c_void);
+        (*this).stderr.set_parent(this as *mut c_void);
 
         (*this).ensure_not_in_heap();
 
@@ -454,29 +465,30 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
         // SAFETY: we just pushed a NUL byte at copy_script[len-1]; slice [..len-1] is the body.
         let combined_script: &mut ZStr =
-            unsafe { ZStr::from_raw_mut(copy_script.as_mut_ptr(), copy_script.len() - 1) };
+            ZStr::from_raw_mut(copy_script.as_mut_ptr(), copy_script.len() - 1);
 
-        if (*this).foreground && (*this).manager.options.log_level != crate::LogLevel::Silent {
-            Output::command(combined_script.as_bytes());
-        } else if let Some(scripts_node) = manager.scripts_node.as_ref() {
-            manager.set_node_name(
-                scripts_node,
-                (*this).package_name,
-                PackageManager::ProgressStrings::SCRIPT_EMOJI,
+        if (*this).foreground && (*manager).options.log_level != crate::LogLevel::Silent {
+            Output::command(Output::CommandArgv::Single(combined_script.as_bytes()));
+        } else if let Some(scripts_node) = (*manager).scripts_node {
+            let scripts_node = scripts_node.as_ptr();
+            (*manager).set_node_name(
+                &*scripts_node,
+                &(*this).package_name,
+                ProgressStrings::SCRIPT_EMOJI,
                 true,
             );
             // .monotonic is okay because because this value is only used by hoisted installs, which
             // only use this type on the main thread.
-            if manager.finished_installing.load(Ordering::Relaxed) {
-                scripts_node.activate();
-                manager.progress.refresh();
+            if (*manager).finished_installing.load(Ordering::Relaxed) {
+                (*scripts_node).activate();
+                (*manager).progress.refresh();
             }
         }
 
         bun_output::scoped_log!(
             Script,
             "{} - {} $ {}",
-            bstr::BStr::new((*this).package_name),
+            bstr::BStr::new(&(*this).package_name),
             bstr::BStr::new((*this).script_name()),
             bstr::BStr::new(combined_script.as_bytes())
         );
@@ -519,9 +531,9 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 bun_spawn::Stdio::Ignore
             },
 
-            stdout: if (*this).manager.options.log_level == crate::LogLevel::Silent {
+            stdout: if (*manager).options.log_level == crate::LogLevel::Silent {
                 bun_spawn::Stdio::Ignore
-            } else if (*this).manager.options.log_level.is_verbose() || (*this).foreground {
+            } else if (*manager).options.log_level.is_verbose() || (*this).foreground {
                 bun_spawn::Stdio::Inherit
             } else {
                 #[cfg(unix)]
@@ -533,9 +545,9 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     bun_spawn::Stdio::BufferPipe((*this).stdout.source.as_ref().unwrap().pipe)
                 }
             },
-            stderr: if (*this).manager.options.log_level == crate::LogLevel::Silent {
+            stderr: if (*manager).options.log_level == crate::LogLevel::Silent {
                 bun_spawn::Stdio::Ignore
-            } else if (*this).manager.options.log_level.is_verbose() || (*this).foreground {
+            } else if (*manager).options.log_level.is_verbose() || (*this).foreground {
                 bun_spawn::Stdio::Inherit
             } else {
                 #[cfg(unix)]

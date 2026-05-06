@@ -2402,6 +2402,70 @@ impl<'a> StringBuilder<'a> {
     }
 }
 
+// ─── StringBuilder trait wiring ─────────────────────────────────────────────
+//
+// Several callees (`Version::count`/`append`, `Dependency::count`/`clone`,
+// `Bin::count`/`clone`, `Scripts::clone`/`count`) accept the builder via a
+// duck-typed trait that mirrors Zig's `comptime StringBuilder: type`. Wire
+// `lockfile::StringBuilder` into each so `Package` can pass `&mut builder`
+// straight through.
+
+impl<'a> bun_semver::StringBuilder for StringBuilder<'a> {
+    #[inline]
+    fn count(&mut self, slice_: &[u8]) {
+        StringBuilder::count(self, slice_)
+    }
+    #[inline]
+    fn append<T: bun_semver::semver_string::BuilderStringType>(&mut self, slice_: &[u8]) -> T {
+        let s: SemverString = StringBuilder::append::<SemverString>(self, slice_);
+        T::wrap_string(s, SemverString::Builder::string_hash(slice_))
+    }
+}
+
+impl<'a> crate::dependency::StringBuilderLike for StringBuilder<'a> {
+    #[inline]
+    fn count(&mut self, s: &[u8]) {
+        StringBuilder::count(self, s)
+    }
+    #[inline]
+    fn append_string(&mut self, s: &[u8]) -> SemverString {
+        StringBuilder::append::<SemverString>(self, s)
+    }
+    #[inline]
+    fn lockfile(&self) -> &crate::lockfile::Lockfile {
+        // `crate::lockfile::Lockfile` re-exports `lockfile_real::Lockfile`,
+        // so this is the same type; cast through pointer to satisfy the
+        // separate-path nominal typing during the staged port.
+        unsafe { &*(self.lockfile as *const Lockfile as *const crate::lockfile::Lockfile) }
+    }
+}
+
+impl<'a> crate::bin::StringBuilder for StringBuilder<'a> {
+    #[inline]
+    fn count(&mut self, s: &[u8]) {
+        StringBuilder::count(self, s)
+    }
+    #[inline]
+    fn append_string(&mut self, s: &[u8]) -> SemverString {
+        StringBuilder::append::<SemverString>(self, s)
+    }
+    #[inline]
+    fn append_external_string(&mut self, s: &[u8]) -> ExternalString {
+        StringBuilder::append::<ExternalString>(self, s)
+    }
+}
+
+impl<'a> crate::lockfile_real::package::scripts::LockfileStringBuilderLike for StringBuilder<'a> {
+    #[inline]
+    fn count(&mut self, s: &[u8]) {
+        StringBuilder::count(self, s)
+    }
+    #[inline]
+    fn append_string(&mut self, s: &[u8]) -> SemverString {
+        StringBuilder::append::<SemverString>(self, s)
+    }
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // PackageIndex
 // ────────────────────────────────────────────────────────────────────────────

@@ -481,6 +481,7 @@ dependencies = [
  "bitflags",
  "bstr",
  "bun_alloc",
+ "bun_analytics",
  "bun_base64",
  "bun_collections",
  "bun_core",
@@ -1680,6 +1681,7 @@ dependencies = [
  "bun_dotenv",
  "bun_event_loop",
  "bun_glob",
+ "bun_hash",
  "bun_http",
  "bun_http_types",
  "bun_install",
@@ -2250,6 +2252,7 @@ dependencies = [
  "phf",
  "scopeguard",
  "strum",
+ "thiserror",
 ]
 
 [[package]]

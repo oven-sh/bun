@@ -213,7 +213,7 @@ impl ClientSession {
             self.ssl_config.as_ref().map(|p| p.get() as *const _);
         self.port == port
             && mine == ssl_config
-            && strings::eql_long::<true>(&self.hostname, hostname)
+            && strings::eql_long(&self.hostname, hostname, true)
     }
 
     pub fn adopt(&mut self, client: &mut HTTPClient) {

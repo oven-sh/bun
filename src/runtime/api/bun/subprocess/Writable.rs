@@ -208,15 +208,18 @@ impl<'a> Writable<'a> {
             }
         }
 
+        // CYCLEBREAK: `FileSink::create` / `StaticPipeWriter::create` take
+        // `bun_event_loop::EventLoopHandle`, not `&bun_jsc::EventLoop`; erase to
+        // the vtable-backed handle once and reuse for all arms.
+        #[cfg(not(windows))]
+        let evtloop = bun_event_loop::EventLoopHandle::init(
+            event_loop as *const EventLoop as *mut (),
+        );
+
         #[cfg(not(windows))]
         match stdio {
             Stdio::Dup2(_) => panic!("TODO dup2 stdio"),
             Stdio::Pipe | Stdio::ReadableStream(_) => {
-                // CYCLEBREAK: `FileSink::create` takes `bun_event_loop::EventLoopHandle`,
-                // not `&bun_jsc::EventLoop`; erase to the vtable-backed handle.
-                let evtloop = bun_event_loop::EventLoopHandle::init(
-                    event_loop as *const EventLoop as *mut (),
-                );
                 let pipe_ptr = FileSink::create(evtloop, result.unwrap());
                 // SAFETY: `create` returns a freshly-boxed non-null pointer.
                 let pipe = unsafe { &mut *pipe_ptr };

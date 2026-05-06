@@ -1678,23 +1678,28 @@ pub fn append_envp_from_js(
 
         // PORT NOTE: Zig `std.fmt.allocPrintSentinel(envp.allocator, "{f}={f}", .{key, value}, 0)`
         // PERF(port): was arena bulk-free — profile in Phase B.
-        let line: Box<ZStr> = {
+        let line: ZBox = {
             let mut buf: Vec<u8> = Vec::new();
             write!(&mut buf, "{}={}", key, value_bunstr.to_zig_string()).map_err(|_| JsError::OutOfMemory)?;
-            buf.push(0);
-            let len = buf.len() - 1;
-            let slice = buf.into_boxed_slice();
-            // SAFETY: slice[len] == 0 written above; slice is heap-owned and outlives the ZStr.
-            unsafe { ZStr::from_raw_owned(slice, len) }
+            ZBox::from_vec(buf)
         };
 
         if key.eql_comptime(b"PATH") {
-            *path = &line.as_bytes()[b"PATH=".len()..];
+            // SAFETY: `line` is leaked below (mem::forget), so the pointed-to
+            // bytes outlive `*path` for the duration of the spawn call.
+            *path = unsafe {
+                core::slice::from_raw_parts(
+                    line.as_bytes().as_ptr().add(b"PATH=".len()),
+                    line.len() - b"PATH=".len(),
+                )
+            };
         }
 
-        // TODO(port): lifetime — `line: Box<ZStr>` drops at end of loop body; Phase B: collect into
-        // a backing Vec<Box<ZStr>> in the caller that lives past spawn_process.
-        envp.push(Some(line.as_ptr() as *const c_char));
+        // TODO(port): lifetime — `line: ZBox` would drop at end of loop body;
+        // Phase B: collect into a backing Vec<ZBox> in the caller that lives
+        // past spawn_process. For now, leak to keep the *const c_char valid.
+        envp.push(Some(line.as_ptr()));
+        core::mem::forget(line);
     }
     Ok(())
 }

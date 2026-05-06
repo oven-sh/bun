@@ -2526,79 +2526,8 @@ pub fn construct_bun_file(
     Ok(unsafe { (*ptr).to_js(global_object) })
 }
 
-impl Blob {
-    pub fn find_or_create_file_from_path<const CHECK_S3: bool>(
-        path_or_fd: &mut PathOrFileDescriptor,
-        global_this: &JSGlobalObject,
-    ) -> Blob {
-        let vm = global_this.bun_vm();
-        if CHECK_S3 {
-            if let PathOrFileDescriptor::Path(ref p) = path_or_fd {
-                if p.slice().starts_with(b"s3://") {
-                    let credentials = global_this.bun_vm().transpiler.env.get_s3_credentials();
-                    let copy = core::mem::replace(
-                        path_or_fd,
-                        PathOrFileDescriptor::Path(node::PathLike::String(bun_str::PathString::empty())),
-                    );
-                    return Blob::init_with_store(
-                        Store::init_s3(copy.into_path(), None, credentials),
-                        global_this,
-                    );
-                }
-            }
-        }
-
-        let path: PathOrFileDescriptor = 'brk: {
-            match path_or_fd {
-                PathOrFileDescriptor::Path(_) => {
-                    let mut slice = path_or_fd.path().slice();
-
-                    #[cfg(windows)]
-                    if slice == b"/dev/null" {
-                        path_or_fd.deinit();
-                        *path_or_fd = PathOrFileDescriptor::Path(node::PathLike::String(
-                            bun_str::PathString::init(b"\\\\.\\NUL".to_vec().into_boxed_slice()),
-                        ));
-                        slice = path_or_fd.path().slice();
-                    }
-
-                    if let Some(graph) = vm.standalone_module_graph {
-                        if let Some(file) = graph.find(slice) {
-                            let result = file.blob(global_this).dupe();
-                            if !matches!(path_or_fd.path(), node::PathLike::String(_)) {
-                                path_or_fd.deinit();
-                                *path_or_fd = PathOrFileDescriptor::Path(node::PathLike::String(
-                                    bun_str::PathString::empty(),
-                                ));
-                            }
-                            return result;
-                        }
-                    }
-
-                    path_or_fd.to_thread_safe();
-                    let copy = core::mem::replace(
-                        path_or_fd,
-                        PathOrFileDescriptor::Path(node::PathLike::String(bun_str::PathString::empty())),
-                    );
-                    break 'brk copy;
-                }
-                PathOrFileDescriptor::Fd(fd) => {
-                    if let Some(tag) = fd.stdio_tag() {
-                        let store = match tag {
-                            bun_sys::Stdio::StdIn => vm.rare_data().stdin(),
-                            bun_sys::Stdio::StdErr => vm.rare_data().stderr(),
-                            bun_sys::Stdio::StdOut => vm.rare_data().stdout(),
-                        };
-                        return Blob::init_with_store(store, global_this);
-                    }
-                    break 'brk path_or_fd.clone();
-                }
-            }
-        };
-
-        Blob::init_with_store(Store::init_file(path, None), global_this)
-    }
-}
+// `find_or_create_file_from_path`: canonical impl lives later in this file
+// (runtime `check_s3: bool` form). Const-generic duplicate removed here.
 
 // ──────────────────────────────────────────────────────────────────────────
 // getStream / toStreamWithOffset / lifetimeWrap / accessor host fns

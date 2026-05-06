@@ -315,7 +315,9 @@ impl Expr {
                 if array.items.len == 0 {
                     return None;
                 }
-                Some(ArrayIterator { array: array.get(), index: 0 })
+                // SAFETY: StoreRef points into the AST arena; deref to an unbounded
+                // ('static) borrow so the iterator is decoupled from the local.
+                Some(ArrayIterator { array: unsafe { &*array.as_ptr() }, index: 0 })
             }
             _ => None,
         }
@@ -671,7 +673,9 @@ impl Expr {
                 if array.items.len == 0 {
                     return None;
                 }
-                Some(ArrayIterator { array: array.get(), index: 0 })
+                // SAFETY: StoreRef points into the AST arena; deref to an unbounded
+                // ('static) borrow so the iterator is decoupled from the local.
+                Some(ArrayIterator { array: unsafe { &*array.as_ptr() }, index: 0 })
             }
             _ => None,
         }
@@ -2309,7 +2313,7 @@ impl Data {
                 };
                 let item = bump.alloc(E::Arrow {
                     args,
-                    body: el.body,
+                    body: G::FnBody { loc: el.body.loc, stmts: el.body.stmts },
                     is_async: el.is_async,
                     has_rest_arg: el.has_rest_arg,
                     prefer_expr: el.prefer_expr,

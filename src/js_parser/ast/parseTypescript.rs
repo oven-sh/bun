@@ -483,7 +483,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             let mut prev_value = value;
             while p.lexer.token == T::TDot {
                 p.lexer.next()?;
-                let dot_name = p.lexer.identifier;
+                // SAFETY: lexer.identifier is arena-owned for 'a; E::Dot.name is the
+                // Phase-A `Str = &'static [u8]` placeholder (E.rs:28).
+                let dot_name: &'static [u8] =
+                    unsafe { core::mem::transmute::<&'a [u8], &'static [u8]>(p.lexer.identifier) };
                 let dot_name_loc = p.lexer.loc();
                 value = p.new_expr(
                     E::Dot {

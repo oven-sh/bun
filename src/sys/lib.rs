@@ -1752,81 +1752,371 @@ pub const UTIME_NOW: i64 = -1;
 pub const UTIME_OMIT: i64 = -2;
 
 #[cfg(windows)]
+#[path = "sys_uv.rs"]
+pub mod sys_uv;
+
+#[cfg(windows)]
 mod windows_impl {
-    // TODO(b2-windows): NT/kernel32/libuv triad in `lib_draft_b1.rs`.
+    // PORT: NT/kernel32/libuv triad (sys.zig + sys_uv.zig). The libuv-backed ops
+    // delegate to `crate::sys_uv`; the rest are the windows arms of `sys.zig`.
     use super::*;
-    macro_rules! stub {
-        ($($vis:vis fn $name:ident($($p:ident : $t:ty),* $(,)?) -> $ret:ty;)+) => {
-            $($vis fn $name($($p: $t),*) -> $ret { todo!(concat!("bun_sys::", stringify!($name), " — windows")) })+
-        };
+    use super::windows as w;
+    use super::windows::libuv as uv;
+    use bun_paths::WPathBuffer;
+
+    // ── libuv-backed (sys_uv.zig) ────────────────────────────────────────
+    pub fn open(path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> { sys_uv::open(path, flags, mode) }
+    pub fn close(fd: Fd) -> Maybe<()> {
+        match sys_uv::close(fd) { Some(e) => Err(e), None => Ok(()) }
     }
-    stub! {
-        pub fn open(path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd>;
-        pub fn openat(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd>;
-        pub fn close(fd: Fd) -> Maybe<()>;
-        pub fn read(fd: Fd, buf: &mut [u8]) -> Maybe<usize>;
-        pub fn write(fd: Fd, buf: &[u8]) -> Maybe<usize>;
-        pub fn pread(fd: Fd, buf: &mut [u8], off: i64) -> Maybe<usize>;
-        pub fn pwrite(fd: Fd, buf: &[u8], off: i64) -> Maybe<usize>;
-        pub fn stat(path: &ZStr) -> Maybe<Stat>;
-        pub fn fstat(fd: Fd) -> Maybe<Stat>;
-        pub fn lstat(path: &ZStr) -> Maybe<Stat>;
-        pub fn mkdir(path: &ZStr, mode: Mode) -> Maybe<()>;
-        pub fn unlink(path: &ZStr) -> Maybe<()>;
-        pub fn rename(from: &ZStr, to: &ZStr) -> Maybe<()>;
-        pub fn symlink(target: &ZStr, link: &ZStr) -> Maybe<()>;
-        pub fn readlink(path: &ZStr, buf: &mut [u8]) -> Maybe<usize>;
-        pub fn dup(fd: Fd) -> Maybe<Fd>;
-        pub fn fchmod(fd: Fd, mode: Mode) -> Maybe<()>;
-        pub fn fchown(fd: Fd, uid: u32, gid: u32) -> Maybe<()>;
-        pub fn ftruncate(fd: Fd, len: i64) -> Maybe<()>;
-        pub fn getcwd(buf: &mut [u8]) -> Maybe<usize>;
-        pub fn page_size() -> usize;
-        pub fn mkdirat(dir: Fd, path: &ZStr, mode: Mode) -> Maybe<()>;
-        pub fn renameat(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr) -> Maybe<()>;
-        pub fn renameat2(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr, flags: Renameat2Flags) -> Maybe<()>;
-        pub fn unlinkat(dir: Fd, path: &ZStr, flags: i32) -> Maybe<()>;
-        pub fn mkdir_recursive_at(dir: Fd, sub: &[u8]) -> Maybe<()>;
-        pub fn link(src: &ZStr, dest: &ZStr) -> Maybe<()>;
-        pub fn linkat(src_dir: Fd, src: &ZStr, dest_dir: Fd, dest: &ZStr) -> Maybe<()>;
-        pub fn linkat_tmpfile(tmpfd: Fd, dirfd: Fd, name: &ZStr) -> Maybe<()>;
-        pub fn symlinkat(target: &ZStr, dirfd: Fd, dest: &ZStr) -> Maybe<()>;
-        pub fn readlinkat(fd: Fd, path: &ZStr, buf: &mut [u8]) -> Maybe<usize>;
-        pub fn chmod(path: &ZStr, mode: Mode) -> Maybe<()>;
-        pub fn fchmodat(dir: Fd, path: &ZStr, mode: Mode, flags: i32) -> Maybe<()>;
-        pub fn lchmod(path: &ZStr, mode: Mode) -> Maybe<()>;
-        pub fn chown(path: &ZStr, uid: u32, gid: u32) -> Maybe<()>;
-        pub fn lchown(path: &ZStr, uid: u32, gid: u32) -> Maybe<()>;
-        pub fn fchownat(dir: Fd, path: &ZStr, uid: u32, gid: u32, flags: i32) -> Maybe<()>;
-        pub fn fstatat(fd: Fd, path: &ZStr) -> Maybe<Stat>;
-        pub fn access(path: &ZStr, mode: i32) -> Maybe<()>;
-        pub fn faccessat(dir: Fd, sub: &ZStr) -> Maybe<bool>;
-        pub fn futimens(fd: Fd, atime: TimeLike, mtime: TimeLike) -> Maybe<()>;
-        pub fn utimens(path: &ZStr, atime: TimeLike, mtime: TimeLike) -> Maybe<()>;
-        pub fn lutimens(path: &ZStr, atime: TimeLike, mtime: TimeLike) -> Maybe<()>;
-        pub fn exists_z(path: &ZStr) -> bool;
-        pub fn exists_at(dir: Fd, sub: &ZStr) -> bool;
-        pub fn is_executable_file_path(path: &ZStr) -> bool;
-        pub fn get_file_size(fd: Fd) -> Maybe<u64>;
-        pub fn realpath<'a>(path: &ZStr, buf: &'a mut bun_core::PathBuffer) -> Maybe<&'a [u8]>;
-        pub fn fcntl(fd: Fd, cmd: i32, arg: isize) -> Maybe<isize>;
-        pub fn dup2(old: Fd, new: Fd) -> Maybe<Fd>;
-        pub fn pipe() -> Maybe<[Fd; 2]>;
-        pub fn isatty(fd: Fd) -> bool;
-        pub fn fsync(fd: Fd) -> Maybe<()>;
-        pub fn fdatasync(fd: Fd) -> Maybe<()>;
-        pub fn lseek(fd: Fd, offset: i64, whence: i32) -> Maybe<i64>;
-        pub fn chdir(path: &ZStr) -> Maybe<()>;
-        pub fn fchdir(fd: Fd) -> Maybe<()>;
-        pub fn umask(mode: Mode) -> Mode;
-        pub fn recv(fd: Fd, buf: &mut [u8], flags: i32) -> Maybe<usize>;
-        pub fn send(fd: Fd, buf: &[u8], flags: i32) -> Maybe<usize>;
-        pub fn recv_non_block(fd: Fd, buf: &mut [u8]) -> Maybe<usize>;
-        pub fn send_non_block(fd: Fd, buf: &[u8]) -> Maybe<usize>;
-        pub fn socketpair(domain: i32, ty: i32, proto: i32, nonblock: bool) -> Maybe<[Fd; 2]>;
-        pub fn mmap(addr: *mut u8, len: usize, prot: i32, flags: i32, fd: Fd, off: i64) -> Maybe<*mut u8>;
-        pub fn munmap(ptr: *mut u8, len: usize) -> Maybe<()>;
-        pub fn sendfile(src: Fd, dest: Fd, len: usize) -> Maybe<usize>;
+    pub fn read(fd: Fd, buf: &mut [u8]) -> Maybe<usize> { sys_uv::read(fd, buf) }
+    pub fn write(fd: Fd, buf: &[u8]) -> Maybe<usize> { sys_uv::write(fd, buf) }
+    pub fn pread(fd: Fd, buf: &mut [u8], off: i64) -> Maybe<usize> { sys_uv::pread(fd, buf, off) }
+    pub fn pwrite(fd: Fd, buf: &[u8], off: i64) -> Maybe<usize> { sys_uv::pwrite(fd, buf, off) }
+    pub fn stat(path: &ZStr) -> Maybe<Stat> { sys_uv::stat(path) }
+    pub fn fstat(fd: Fd) -> Maybe<Stat> { sys_uv::fstat(fd) }
+    pub fn lstat(path: &ZStr) -> Maybe<Stat> { sys_uv::lstat(path) }
+    pub fn mkdir(path: &ZStr, mode: Mode) -> Maybe<()> { sys_uv::mkdir(path, mode) }
+    pub fn unlink(path: &ZStr) -> Maybe<()> { sys_uv::unlink(path) }
+    pub fn rename(from: &ZStr, to: &ZStr) -> Maybe<()> { sys_uv::rename(from, to) }
+    pub fn symlink(target: &ZStr, link: &ZStr) -> Maybe<()> {
+        // sys.zig:2629 — windows uses `sys_uv.symlinkUV(target, dest, 0)`.
+        sys_uv::symlink_uv(target, link, 0)
+    }
+    pub fn readlink(path: &ZStr, buf: &mut [u8]) -> Maybe<usize> {
+        sys_uv::readlink(path, buf).map(|s| s.len())
+    }
+    pub fn fchmod(fd: Fd, mode: Mode) -> Maybe<()> { sys_uv::fchmod(fd, mode) }
+    pub fn fchown(fd: Fd, uid: u32, gid: u32) -> Maybe<()> { sys_uv::fchown(fd, uid as _, gid as _) }
+    pub fn ftruncate(fd: Fd, len: i64) -> Maybe<()> { sys_uv::ftruncate(fd, len as isize) }
+    pub fn chmod(path: &ZStr, mode: Mode) -> Maybe<()> { sys_uv::chmod(path, mode) }
+    pub fn chown(path: &ZStr, uid: u32, gid: u32) -> Maybe<()> { sys_uv::chown(path, uid as _, gid as _) }
+    pub fn link(src: &ZStr, dest: &ZStr) -> Maybe<()> { sys_uv::link(src, dest) }
+    pub fn fsync(fd: Fd) -> Maybe<()> { sys_uv::fsync(fd) }
+    pub fn fdatasync(fd: Fd) -> Maybe<()> { sys_uv::fdatasync(fd) }
+
+    // ── kernel32 / ntdll arms (sys.zig windows branches) ─────────────────
+    pub fn openat(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
+        // sys.zig:1773 — on windows `openat` re-routes through `openatWindowsT`.
+        // PORT NOTE: full NtCreateFile triad lives in `lib_draft_b1.rs::open_file_at_windows_nt_path`;
+        // until that lands at this layer, resolve `dir`+`path` to an absolute and `open()` it.
+        if path.as_bytes().first().map(|&b| b == b'/' || b == b'\\').unwrap_or(false)
+            || (path.len() >= 2 && path.as_bytes()[1] == b':')
+            || dir == Fd::cwd()
+        {
+            return open(path, flags, mode);
+        }
+        let mut dirbuf = bun_core::PathBuffer::default();
+        let dir_path = super::get_fd_path(dir, &mut dirbuf)?;
+        let mut joined = bun_core::PathBuffer::default();
+        let abs = bun_paths::join_string_buf_z(&mut joined.0, &[dir_path, path.as_bytes()], bun_paths::Platform::Windows);
+        open(abs, flags, mode)
+    }
+    pub fn dup(fd: Fd) -> Maybe<Fd> {
+        // sys.zig:3911 — DuplicateHandle on the underlying HANDLE.
+        let process = unsafe { w::kernel32::GetCurrentProcess() };
+        let mut target: w::HANDLE = core::ptr::null_mut();
+        let out = unsafe {
+            w::kernel32::DuplicateHandle(
+                process,
+                fd.native() as w::HANDLE,
+                process,
+                &mut target,
+                0,
+                w::TRUE,
+                w::DUPLICATE_SAME_ACCESS,
+            )
+        };
+        if out == 0 {
+            return Err(Error::new(w::get_last_errno(), Tag::dup).with_fd(fd));
+        }
+        Ok(Fd::from_native(target as FdNative))
+    }
+    pub fn dup2(old: Fd, new: Fd) -> Maybe<Fd> {
+        // No POSIX dup2 on Windows; sys.zig only dispatches via libuv c-runtime fds.
+        // Return ENOTSUP so callers that branch on platform fall back.
+        let _ = (old, new);
+        Err(Error::new(E::ENOTSUP, Tag::dup2))
+    }
+    pub fn getcwd(buf: &mut [u8]) -> Maybe<usize> {
+        // sys.zig:349 — GetCurrentDirectoryW + WTF16→UTF8.
+        let mut wbuf = WPathBuffer::default();
+        let len = unsafe { w::kernel32::GetCurrentDirectoryW(wbuf.len() as u32, wbuf.as_mut_ptr()) };
+        if len == 0 {
+            return Err(Error::new(w::get_last_errno(), Tag::getcwd));
+        }
+        let utf8 = bun_str::strings::from_w_path(buf, &wbuf[..len as usize]);
+        Ok(utf8.len())
+    }
+    pub fn page_size() -> usize {
+        let mut info = core::mem::MaybeUninit::<w::SYSTEM_INFO>::uninit();
+        unsafe { w::kernel32::GetSystemInfo(info.as_mut_ptr()) };
+        unsafe { info.assume_init() }.dwPageSize as usize
+    }
+    pub fn mkdirat(dir: Fd, path: &ZStr, _mode: Mode) -> Maybe<()> {
+        // sys.zig: routes to `mkdiratW` (CreateDirectoryW relative to a HANDLE).
+        let mut wbuf = WPathBuffer::default();
+        let wpath = bun_str::strings::to_nt_path(&mut wbuf, path.as_bytes());
+        super::windows::ntdll_mkdirat(dir, wpath)
+    }
+    pub fn renameat(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr) -> Maybe<()> {
+        // sys.zig:2572 — windows arm goes through renameAtW.
+        let mut wf = WPathBuffer::default();
+        let mut wt = WPathBuffer::default();
+        let from_w = bun_str::strings::to_nt_path(&mut wf, from.as_bytes());
+        let to_w = bun_str::strings::to_nt_path(&mut wt, to.as_bytes());
+        super::windows::rename_at_w(from_dir, from_w, to_dir, to_w, true)
+    }
+    pub fn renameat2(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr, flags: Renameat2Flags) -> Maybe<()> {
+        // sys.zig:2538 — `renameat2` collapses to `renameat` on windows; the
+        // `noreplace`/`exchange` flags are not honored by NTFS rename.
+        let _ = flags;
+        renameat(from_dir, from, to_dir, to)
+    }
+    pub fn unlinkat(dir: Fd, path: &ZStr, _flags: i32) -> Maybe<()> {
+        // sys.zig:2912 — windows arm calls DeleteFileBun against the dir handle.
+        let mut wbuf = WPathBuffer::default();
+        let wpath = bun_str::strings::to_nt_path(&mut wbuf, path.as_bytes());
+        super::windows::DeleteFileBun(wpath, super::windows::DeleteFileOptions { dir: Some(dir), remove_dir: false })
+    }
+    pub fn mkdir_recursive_at(dir: Fd, sub: &[u8]) -> Maybe<()> {
+        // Port of `bun.makePath` — split on sep and create each component.
+        let mut buf = bun_core::PathBuffer::default();
+        let mut n = 0usize;
+        for comp in sub.split(|&b| b == b'/' || b == b'\\') {
+            if comp.is_empty() { continue; }
+            if n > 0 { buf.0[n] = b'\\'; n += 1; }
+            buf.0[n..n + comp.len()].copy_from_slice(comp);
+            n += comp.len();
+            buf.0[n] = 0;
+            // SAFETY: NUL-terminated above; `n` bytes valid in `buf`.
+            let z = unsafe { ZStr::from_raw(buf.0.as_ptr(), n) };
+            match mkdirat(dir, z, 0o777) {
+                Ok(()) => {}
+                Err(e) if e.get_errno() == E::EEXIST => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(())
+    }
+    pub fn linkat(src_dir: Fd, src: &ZStr, dest_dir: Fd, dest: &ZStr) -> Maybe<()> {
+        // No native `linkat` on Windows — resolve to absolute and CreateHardLinkW.
+        let mut sb = bun_core::PathBuffer::default();
+        let mut db = bun_core::PathBuffer::default();
+        let s = super::get_fd_path(src_dir, &mut sb)?;
+        let d = super::get_fd_path(dest_dir, &mut db)?;
+        let mut sj = bun_core::PathBuffer::default();
+        let mut dj = bun_core::PathBuffer::default();
+        let s_abs = bun_paths::join_string_buf_z(&mut sj.0, &[s, src.as_bytes()], bun_paths::Platform::Windows);
+        let d_abs = bun_paths::join_string_buf_z(&mut dj.0, &[d, dest.as_bytes()], bun_paths::Platform::Windows);
+        link(s_abs, d_abs)
+    }
+    pub fn linkat_tmpfile(_tmpfd: Fd, _dirfd: Fd, _name: &ZStr) -> Maybe<()> {
+        // sys.zig:3973 — `if (!Environment.isLinux) @compileError("Linux only")`.
+        Err(Error::new(E::ENOTSUP, Tag::link))
+    }
+    pub fn symlinkat(target: &ZStr, dirfd: Fd, dest: &ZStr) -> Maybe<()> {
+        // sys.zig:2641 — windows: resolve `dest` against `dirfd`, then symlinkUV.
+        let mut db = bun_core::PathBuffer::default();
+        let d = super::get_fd_path(dirfd, &mut db)?;
+        let mut dj = bun_core::PathBuffer::default();
+        let d_abs = bun_paths::join_string_buf_z(&mut dj.0, &[d, dest.as_bytes()], bun_paths::Platform::Windows);
+        sys_uv::symlink_uv(target, d_abs, 0)
+    }
+    pub fn readlinkat(fd: Fd, path: &ZStr, buf: &mut [u8]) -> Maybe<usize> {
+        // No `readlinkat` on Windows — resolve and call `readlink`.
+        let mut db = bun_core::PathBuffer::default();
+        let d = super::get_fd_path(fd, &mut db)?;
+        let mut dj = bun_core::PathBuffer::default();
+        let abs = bun_paths::join_string_buf_z(&mut dj.0, &[d, path.as_bytes()], bun_paths::Platform::Windows);
+        readlink(abs, buf)
+    }
+    pub fn fchmodat(dir: Fd, path: &ZStr, mode: Mode, _flags: i32) -> Maybe<()> {
+        let mut db = bun_core::PathBuffer::default();
+        let d = super::get_fd_path(dir, &mut db)?;
+        let mut dj = bun_core::PathBuffer::default();
+        let abs = bun_paths::join_string_buf_z(&mut dj.0, &[d, path.as_bytes()], bun_paths::Platform::Windows);
+        chmod(abs, mode)
+    }
+    pub fn lchmod(path: &ZStr, mode: Mode) -> Maybe<()> {
+        // Windows has no lchmod; libuv chmod follows symlinks. Match Node: fall through.
+        chmod(path, mode)
+    }
+    pub fn lchown(_path: &ZStr, _uid: u32, _gid: u32) -> Maybe<()> {
+        // Windows has no ownership model; libuv uv_fs_lchown is a no-op success.
+        Ok(())
+    }
+    pub fn fchownat(_dir: Fd, _path: &ZStr, _uid: u32, _gid: u32, _flags: i32) -> Maybe<()> {
+        // See `lchown` — no-op on Windows.
+        Ok(())
+    }
+    pub fn fstatat(fd: Fd, path: &ZStr) -> Maybe<Stat> {
+        // sys.zig:838 — windows arm: resolve handle path + lstat.
+        let mut db = bun_core::PathBuffer::default();
+        let d = super::get_fd_path(fd, &mut db)?;
+        let mut dj = bun_core::PathBuffer::default();
+        let abs = bun_paths::join_string_buf_z(&mut dj.0, &[d, path.as_bytes()], bun_paths::Platform::Windows);
+        lstat(abs)
+    }
+    pub fn access(path: &ZStr, _mode: i32) -> Maybe<()> {
+        // sys.zig:1748 — windows arm: GetFileAttributesW.
+        let mut wbuf = WPathBuffer::default();
+        let wpath = bun_str::strings::to_kernel32_path(&mut wbuf, path.as_bytes());
+        let attrs = unsafe { w::kernel32::GetFileAttributesW(wpath.as_ptr()) };
+        if attrs == w::INVALID_FILE_ATTRIBUTES {
+            return Err(Error::new(w::get_last_errno(), Tag::access).with_path(path.as_bytes()));
+        }
+        Ok(())
+    }
+    pub fn faccessat(dir: Fd, sub: &ZStr) -> Maybe<bool> {
+        // sys.zig:3504 — windows arm: openat the file for attribute read; success ⇒ exists.
+        match openat(dir, sub, O::RDONLY, 0) {
+            Ok(fd) => { let _ = close(fd); Ok(true) }
+            Err(e) if e.get_errno() == E::ENOENT => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+    pub fn futimens(fd: Fd, atime: TimeLike, mtime: TimeLike) -> Maybe<()> {
+        // sys.zig:3544 — `uv_fs_futime`.
+        let a = atime.sec as f64 + atime.nsec as f64 / 1e9;
+        let m = mtime.sec as f64 + mtime.nsec as f64 / 1e9;
+        let mut req = uv::fs_t::uninitialized();
+        let rc = unsafe { uv::uv_fs_futime(core::ptr::null_mut(), &mut req, fd.uv(), a, m, None) };
+        if let Some(err) = Error::from_uv_rc(rc, Tag::futimens) { return Err(err.with_fd(fd)); }
+        Ok(())
+    }
+    pub fn utimens(path: &ZStr, atime: TimeLike, mtime: TimeLike) -> Maybe<()> {
+        let a = atime.sec as f64 + atime.nsec as f64 / 1e9;
+        let m = mtime.sec as f64 + mtime.nsec as f64 / 1e9;
+        let mut req = uv::fs_t::uninitialized();
+        let rc = unsafe { uv::uv_fs_utime(core::ptr::null_mut(), &mut req, path.as_ptr() as *const _, a, m, None) };
+        if let Some(err) = Error::from_uv_rc(rc, Tag::utimes) { return Err(err.with_path(path.as_bytes())); }
+        Ok(())
+    }
+    pub fn lutimens(path: &ZStr, atime: TimeLike, mtime: TimeLike) -> Maybe<()> {
+        let a = atime.sec as f64 + atime.nsec as f64 / 1e9;
+        let m = mtime.sec as f64 + mtime.nsec as f64 / 1e9;
+        let mut req = uv::fs_t::uninitialized();
+        let rc = unsafe { uv::uv_fs_lutime(core::ptr::null_mut(), &mut req, path.as_ptr() as *const _, a, m, None) };
+        if let Some(err) = Error::from_uv_rc(rc, Tag::lutimes) { return Err(err.with_path(path.as_bytes())); }
+        Ok(())
+    }
+    pub fn exists_z(path: &ZStr) -> bool {
+        // sys.zig:3482 — windows arm: GetFileAttributesW != INVALID.
+        access(path, 0).is_ok()
+    }
+    pub fn exists_at(dir: Fd, sub: &ZStr) -> bool {
+        // sys.zig:3718 — windows arm.
+        matches!(faccessat(dir, sub), Ok(true))
+    }
+    pub fn is_executable_file_path(path: &ZStr) -> bool {
+        // sys.zig:3767 — windows: extension match against PATHEXT defaults.
+        let p = path.as_bytes();
+        let ext_start = p.iter().rposition(|&b| b == b'.').map(|i| &p[i..]).unwrap_or(b"");
+        for e in [b".exe", b".cmd", b".bat", b".com"].iter() {
+            if ext_start.eq_ignore_ascii_case(*e) { return true; }
+        }
+        false
+    }
+    pub fn get_file_size(fd: Fd) -> Maybe<u64> {
+        // sys.zig:4140 — GetFileSizeEx.
+        let mut size: i64 = 0;
+        let ok = unsafe { w::kernel32::GetFileSizeEx(fd.native() as w::HANDLE, &mut size) };
+        if ok == 0 {
+            return Err(Error::new(w::get_last_errno(), Tag::fstat).with_fd(fd));
+        }
+        Ok(size as u64)
+    }
+    pub fn realpath<'a>(path: &ZStr, buf: &'a mut bun_core::PathBuffer) -> Maybe<&'a [u8]> {
+        // sys_uv.rs:216 — open + GetFinalPathNameByHandle (uv_fs_realpath edge cases).
+        let fd = open(path, O::RDONLY, 0)?;
+        let r = super::get_fd_path(fd, buf);
+        let _ = close(fd);
+        r
+    }
+    pub fn fcntl(_fd: Fd, _cmd: i32, _arg: isize) -> Maybe<isize> {
+        // sys.zig:959 — `if (Environment.isWindows) @compileError("not implemented")`.
+        Err(Error::new(E::ENOTSUP, Tag::fcntl))
+    }
+    pub fn pipe() -> Maybe<[Fd; 2]> {
+        // sys.zig:3839 — windows: uv_pipe(fds, 0, 0).
+        let mut fds: [uv::uv_file; 2] = [-1, -1];
+        let rc = unsafe { uv::uv_pipe(fds.as_mut_ptr(), 0, 0) };
+        if let Some(err) = Error::from_uv_rc(rc, Tag::pipe) { return Err(err); }
+        Ok([Fd::from_uv(fds[0]), Fd::from_uv(fds[1])])
+    }
+    pub fn isatty(fd: Fd) -> bool {
+        // sys.zig — windows: uv_guess_handle == UV_TTY.
+        unsafe { uv::uv_guess_handle(fd.uv()) == uv::UV_TTY }
+    }
+    pub fn lseek(fd: Fd, offset: i64, whence: i32) -> Maybe<i64> {
+        // sys.zig:2339 — windows: SetFilePointerEx.
+        let mut new: i64 = 0;
+        let ok = unsafe { w::SetFilePointerEx(fd.native() as w::HANDLE, offset, &mut new, whence as u32) };
+        if ok == 0 {
+            return Err(Error::new(w::get_last_errno(), Tag::lseek).with_fd(fd));
+        }
+        Ok(new)
+    }
+    pub fn chdir(path: &ZStr) -> Maybe<()> {
+        // sys.zig:465 — windows: SetCurrentDirectoryW.
+        let mut wbuf = WPathBuffer::default();
+        let wpath = bun_str::strings::to_kernel32_path(&mut wbuf, path.as_bytes());
+        if unsafe { w::SetCurrentDirectoryW(wpath.as_ptr()) } == 0 {
+            return Err(Error::new(w::get_last_errno(), Tag::chdir).with_path(path.as_bytes()));
+        }
+        Ok(())
+    }
+    pub fn fchdir(fd: Fd) -> Maybe<()> {
+        let mut buf = bun_core::PathBuffer::default();
+        let p = super::get_fd_path(fd, &mut buf)?;
+        let mut zb = bun_core::PathBuffer::default();
+        zb.0[..p.len()].copy_from_slice(p);
+        zb.0[p.len()] = 0;
+        // SAFETY: NUL-terminated above.
+        chdir(unsafe { ZStr::from_raw(zb.0.as_ptr(), p.len()) })
+    }
+    pub fn umask(mode: Mode) -> Mode {
+        // sys.zig: `_umask` (msvcrt).
+        unsafe extern "C" { fn _umask(m: core::ffi::c_int) -> core::ffi::c_int; }
+        unsafe { _umask(mode as core::ffi::c_int) as Mode }
+    }
+    pub fn recv(fd: Fd, buf: &mut [u8], flags: i32) -> Maybe<usize> {
+        // sys.zig:2243 — windows: winsock `recv`.
+        let rc = unsafe { w::ws2_32::recv(fd.native() as _, buf.as_mut_ptr() as *mut _, buf.len() as i32, flags) };
+        if rc < 0 {
+            return Err(Error::new(w::WSAGetLastError().unwrap_or(E::EUNKNOWN), Tag::recv).with_fd(fd));
+        }
+        Ok(rc as usize)
+    }
+    pub fn send(fd: Fd, buf: &[u8], flags: i32) -> Maybe<usize> {
+        // sys.zig:2294 — windows: winsock `send`.
+        let rc = unsafe { w::ws2_32::send(fd.native() as _, buf.as_ptr() as *const _, buf.len() as i32, flags) };
+        if rc < 0 {
+            return Err(Error::new(w::WSAGetLastError().unwrap_or(E::EUNKNOWN), Tag::send).with_fd(fd));
+        }
+        Ok(rc as usize)
+    }
+    pub fn recv_non_block(fd: Fd, buf: &mut [u8]) -> Maybe<usize> { recv(fd, buf, 0) }
+    pub fn send_non_block(fd: Fd, buf: &[u8]) -> Maybe<usize> { send(fd, buf, 0) }
+    pub fn socketpair(_domain: i32, _ty: i32, _proto: i32, _nonblock: bool) -> Maybe<[Fd; 2]> {
+        // sys.zig:3103 — `if (Environment.isWindows) @compileError("use spawnIPCSocket on Windows")`.
+        Err(Error::new(E::ENOTSUP, Tag::socketpair))
+    }
+    pub fn mmap(_addr: *mut u8, _len: usize, _prot: i32, _flags: i32, _fd: Fd, _off: i64) -> Maybe<*mut u8> {
+        // sys.zig:3006 — `if (Environment.isWindows) @compileError("not implemented")`.
+        Err(Error::new(E::ENOTSUP, Tag::mmap))
+    }
+    pub fn munmap(_ptr: *mut u8, _len: usize) -> Maybe<()> {
+        // sys.zig:3231 — `if (Environment.isWindows) @compileError("not implemented")`.
+        Err(Error::new(E::ENOTSUP, Tag::munmap))
+    }
+    pub fn sendfile(src: Fd, dest: Fd, len: usize) -> Maybe<usize> {
+        // sys.zig:504 — windows: uv_fs_sendfile.
+        let mut req = uv::fs_t::uninitialized();
+        let rc = unsafe { uv::uv_fs_sendfile(core::ptr::null_mut(), &mut req, dest.uv(), src.uv(), 0, len, None) };
+        if let Some(err) = Error::from_uv_rc(rc as i32, Tag::sendfile) { return Err(err); }
+        Ok(rc as usize)
     }
     pub type FcntlInt = isize;
     pub const MSG_DONTWAIT: i32 = 0;
@@ -4398,6 +4688,57 @@ pub fn fetch_cache_directory_path() -> Vec<u8> {
 // a stable import path so its `use bun_sys::fs::FileSystem` lines resolve.
 // The vtable is installed at runtime by the resolver crate.
 pub mod fs {
+    use core::sync::atomic::{AtomicPtr, Ordering};
+
+    /// Cold-path vtable (§Dispatch) installed by `bun_resolver::fs` at init.
+    /// All `*const Entry` / `*const DirEntry` arguments are erased
+    /// `*const bun_resolver::fs::{Entry,DirEntry}` cast across the seam by
+    /// callers (the opaque `#[repr(C)]` ZST handle pattern).
+    /// PERF(port): was inline field reads on a known struct.
+    pub struct FsVTable {
+        pub instance: fn() -> *const FileSystem,
+        pub entry_base: unsafe fn(*const Entry) -> &'static [u8],
+        pub entry_base_lowercase: unsafe fn(*const Entry) -> &'static [u8],
+        pub entry_dir: unsafe fn(*const Entry) -> &'static [u8],
+        pub entry_abs_path: unsafe fn(*const Entry) -> bun_string::PathString,
+        pub entry_set_abs_path: unsafe fn(*mut Entry, bun_string::PathString),
+        pub entry_cache: unsafe fn(*const Entry) -> EntryCache,
+        pub entry_kind: unsafe fn(*mut Entry, *mut core::ffi::c_void, bool) -> super::EntryKind,
+        pub dir_entry_has_comptime_query: unsafe fn(*const DirEntry, &'static [u8]) -> bool,
+        pub dir_entry_data: unsafe fn(*const DirEntry) -> *const (),
+        /// Snapshot the directory listing's value pointers into `out`.
+        /// PERF(port): was `data.iterator()` — collected to flatten the
+        /// `std::collections::hash_map::Values` type across the crate seam.
+        pub dir_entry_collect: unsafe fn(*const DirEntry, *mut Vec<*mut Entry>),
+        pub dirname_store_append:
+            fn(&[u8]) -> core::result::Result<&'static [u8], bun_alloc::AllocError>,
+        pub dirname_store_append_lower_case:
+            fn(&[u8]) -> core::result::Result<&'static [u8], bun_alloc::AllocError>,
+    }
+
+    /// Installed by `bun_resolver::fs::install_sys_fs_vtable()` at startup.
+    /// `null` ⇒ the resolver crate hasn't been initialized; accessor calls
+    /// abort with a clear message instead of UB.
+    pub static FS_VTABLE: AtomicPtr<FsVTable> = AtomicPtr::new(core::ptr::null_mut());
+
+    /// One-shot registration (mirrors `bun_core::output::install_output_sink`).
+    #[inline]
+    pub fn install_fs_vtable(v: &'static FsVTable) {
+        FS_VTABLE.store(v as *const _ as *mut _, Ordering::Release);
+    }
+
+    #[inline]
+    fn vtable() -> &'static FsVTable {
+        let p = FS_VTABLE.load(Ordering::Acquire);
+        bun_core::debug_assert!(
+            !p.is_null(),
+            "bun_sys::fs accessed before bun_resolver::fs::install_sys_fs_vtable()"
+        );
+        // SAFETY: written exactly once at startup with a `&'static FsVTable`;
+        // ordering guarantees the pointee is fully visible.
+        unsafe { &*p }
+    }
+
     /// Opaque handle to `bun_resolver::fs::FileSystem`. Dependents that need
     /// the concrete type must downcast via the resolver crate.
     #[repr(C)]
@@ -4405,7 +4746,10 @@ pub mod fs {
     impl FileSystem {
         /// Installed by `bun_resolver::fs` at init (cold-path vtable §Dispatch).
         pub fn instance() -> &'static FileSystem {
-            todo!("b2-blocked: bun_resolver::fs::FileSystem::instance vtable install")
+            // SAFETY: `instance` returns the resolver's process-static singleton
+            // (an erased `*const bun_resolver::fs::FileSystem`); never null once
+            // `FileSystem::init()` ran.
+            unsafe { &*(vtable().instance)() }
         }
         /// `fs.abs(parts)` — join `parts` against the cached cwd into a
         /// thread-local buffer. CYCLEBREAK: real impl in `bun_resolver::fs`;

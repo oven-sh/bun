@@ -2022,6 +2022,7 @@ dependencies = [
  "bun_core",
  "bun_dotenv",
  "bun_exe_format",
+ "bun_interchange",
  "bun_io",
  "bun_js_parser",
  "bun_logger",

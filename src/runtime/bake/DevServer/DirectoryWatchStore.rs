@@ -193,7 +193,7 @@ impl DirectoryWatchStore {
         // calling self methods that need &mut self.
         let gop = self
             .watches
-            .get_or_put(strings::paths::without_trailing_slash_windows_path(dir_name_to_watch))?;
+            .get_or_put(Box::<[u8]>::from(strings::paths::without_trailing_slash_windows_path(dir_name_to_watch)))?;
         let gop_index = gop.index;
         let found_existing = gop.found_existing;
 

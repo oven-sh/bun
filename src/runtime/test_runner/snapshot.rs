@@ -277,7 +277,7 @@ impl<'a> Snapshots<'a> {
         };
         // defer ast.deinit() → Drop
 
-        if ast.exports_ref.is_null() {
+        if ast.exports_ref.is_empty() {
             return Ok(());
         }
         let exports_ref = ast.exports_ref;

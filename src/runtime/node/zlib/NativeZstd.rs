@@ -296,9 +296,9 @@ impl Context {
                 let state = unsafe { c::ZSTD_createDCtx() };
                 if state.is_null() {
                     return Error::init(
-                        c"Could not initialize zstd instance".as_ptr(),
+                        "Could not initialize zstd instance",
                         -1,
-                        c"ERR_ZLIB_INITIALIZATION_FAILED".as_ptr(),
+                        "ERR_ZLIB_INITIALIZATION_FAILED",
                     );
                 }
                 self.state = Some(state.cast());

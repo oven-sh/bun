@@ -66,10 +66,9 @@ impl Expect {
             return Ok(JSValue::UNDEFINED);
         }
 
-        // TODO(port): verify Formatter constructor signature (Zig: .{ .globalThis = globalThis, .quote_strings = true })
-        let formatter = Formatter::new(global, /* quote_strings */ true);
+        // Zig: .{ .globalThis = globalThis, .quote_strings = true } — make_formatter sets quote_strings.
+        let mut formatter = super::make_formatter(global);
         // defer formatter.deinit(); — handled by Drop
-        // PORT NOTE: reshaped for borrowck — to_fmt takes &Formatter (shared) so three live wrappers coexist
         let start_fmt = start_value.to_fmt(&mut formatter);
         let end_fmt = end_value.to_fmt(&mut formatter);
         let received_fmt = value.to_fmt(&mut formatter);

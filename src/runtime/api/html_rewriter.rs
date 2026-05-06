@@ -741,7 +741,7 @@ impl BufferOutputSink {
             (*builder).build(
                 lolhtml::Encoding::UTF8,
                 lolhtml::MemorySettings {
-                    preallocated_parsing_buffer_size: if input_size == webcore::blob::MAX_SIZE {
+                    preallocated_parsing_buffer_size: if input_size as u64 == webcore::blob::MAX_SIZE {
                         1024
                     } else {
                         input_size.max(1024) as usize

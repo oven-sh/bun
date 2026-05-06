@@ -164,8 +164,13 @@ impl<'a> Writable<'a> {
                 }
 
                 Stdio::Blob(_) => {
-                    let blob = match core::mem::replace(stdio, Stdio::Ignore) {
-                        Stdio::Blob(b) => b,
+                    // See the unix arm below: Stdio has Drop, so move the
+                    // payload out via ManuallyDrop + ptr::read.
+                    let owned =
+                        core::mem::ManuallyDrop::new(core::mem::replace(stdio, Stdio::Ignore));
+                    let blob = match &*owned {
+                        // SAFETY: owned is ManuallyDrop; payload moved exactly once.
+                        Stdio::Blob(b) => unsafe { core::ptr::read(b) },
                         _ => unreachable!(),
                     };
                     return Ok(Writable::Buffer(StaticPipeWriter::create(

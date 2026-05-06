@@ -166,16 +166,15 @@ impl Format {
     }
 
     pub fn mime(self) -> &'static bun_str::ZStr {
-        // TODO(port): verify bun_str::zstr! macro for [:0]const u8 literals
         match self {
-            Format::Jpeg => bun_str::zstr!("image/jpeg"),
-            Format::Png => bun_str::zstr!("image/png"),
-            Format::Webp => bun_str::zstr!("image/webp"),
-            Format::Heic => bun_str::zstr!("image/heic"),
-            Format::Avif => bun_str::zstr!("image/avif"),
-            Format::Bmp => bun_str::zstr!("image/bmp"),
-            Format::Tiff => bun_str::zstr!("image/tiff"),
-            Format::Gif => bun_str::zstr!("image/gif"),
+            Format::Jpeg => bun_core::zstr!("image/jpeg"),
+            Format::Png => bun_core::zstr!("image/png"),
+            Format::Webp => bun_core::zstr!("image/webp"),
+            Format::Heic => bun_core::zstr!("image/heic"),
+            Format::Avif => bun_core::zstr!("image/avif"),
+            Format::Bmp => bun_core::zstr!("image/bmp"),
+            Format::Tiff => bun_core::zstr!("image/tiff"),
+            Format::Gif => bun_core::zstr!("image/gif"),
         }
     }
 }

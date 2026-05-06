@@ -3336,7 +3336,7 @@ pub fn make_path_w(dir: Fd, sub_path: &[u16]) -> Maybe<()> {
     // versions but they didn't all exist and this buffer was needed anyway":
     // transcode UTF-16 → UTF-8, then call `makePath` (`mkdir_recursive_at`).
     let mut buf = bun_paths::PathBuffer::default();
-    let utf8 = bun_str::strings::from_w_path(&mut buf.0[..], sub_path);
+    let utf8 = bun_string::strings::paths::from_w_path(&mut buf.0[..], sub_path);
     mkdir_recursive_at(dir, utf8.as_bytes())
 }
 

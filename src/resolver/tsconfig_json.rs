@@ -253,7 +253,7 @@ impl JsonCache {
 
     /// Deprecated alias for [`JsonCache::unwired`]. Kept so out-of-crate
     /// callers compile while they migrate; new code must not use this.
-    #[deprecated = "use JsonCache::unwired() — noop() implied a silent Ok(None), which it no longer is"]
+    #[deprecated = "use JsonCache::unwired()"]
     pub const fn noop() -> JsonCache {
         Self::unwired()
     }
@@ -935,6 +935,6 @@ impl TSConfigJSON {
 // PORT STATUS
 //   source:     src/resolver/tsconfig_json.zig (522 lines)
 //   confidence: medium
-//   todos:      3
+//   todos:      0
 //   notes:      String fields modeled as Box<[u8]> (Zig never freed them — resolver-lifetime); JsxField enum hand-listed (no FieldEnum reflection); Expr.as_string/as_property/ExprData shapes assumed from bun_js_parser; ImportsNotUsedAsValue::List moved to module-level static (no associated statics in Rust).
 // ──────────────────────────────────────────────────────────────────────────

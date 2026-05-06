@@ -518,7 +518,7 @@ impl LinkerGraph {
                             self.is_scb_bitset.set(*ref_id as usize);
                         }
                         UseDirective::Server => {
-                            todo!("um");
+                            bun_core::todo_panic!("um");
                         }
                     }
                 }

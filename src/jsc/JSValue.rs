@@ -474,6 +474,15 @@ impl JSValue {
         let p = unsafe { JSC__JSValue__asPromise(self) };
         if p.is_null() { None } else { Some(p) }
     }
+    /// `JSValue.asInternalPromise()` — downcast to `JSInternalPromise`.
+    /// Returns a raw pointer (mirrors Zig `?*JSInternalPromise`); see
+    /// [`as_promise`] for the aliasing rationale.
+    pub fn as_internal_promise(self) -> Option<*mut JSInternalPromise> {
+        if !self.is_cell() { return None; }
+        // SAFETY: `self` is a cell; FFI returns null when not an internal promise.
+        let p = unsafe { JSC__JSValue__asInternalPromise(self) };
+        if p.is_null() { None } else { Some(p) }
+    }
     pub fn as_any_promise(self) -> Option<AnyPromise> {
         if !self.is_cell() { return None; }
         // JSValue.zig:657 — check internal FIRST (JSInternalPromise extends JSPromise,

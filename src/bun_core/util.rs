@@ -2139,7 +2139,13 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
     }
 
     #[cfg(not(any(unix, windows)))]
-    { let _ = may_return; unimplemented!("reload_process: unsupported platform"); }
+    {
+        // Zig: `else @compileError("unsupported platform for reloadProcess")`.
+        // Faithful port — Bun only targets POSIX + Windows; any other target
+        // is a build-time error, not a runtime panic.
+        let _ = (clear_terminal, may_return);
+        compile_error!("unsupported platform for reload_process");
+    }
 }
 
 // ── spawn_sync_inherit ────────────────────────────────────────────────────

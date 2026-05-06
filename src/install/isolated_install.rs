@@ -73,7 +73,7 @@ struct EarlyDedupeKey {
 struct DedupeInfo {
     entry_id: store::entry::Id,
     dep_id: DependencyID,
-    peers: store::OrderedArraySet<store::node::TransitivePeer, store::node::transitive_peer::OrderedArraySetCtx>,
+    peers: store::node::Peers,
 }
 
 #[derive(Clone, Copy)]

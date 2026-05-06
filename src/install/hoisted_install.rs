@@ -13,7 +13,9 @@ use crate::bun_bunfig::Arguments as Command;
 
 use crate::{self as install, Bin, Lockfile, PackageID, PackageInstall};
 use crate::PackageManager;
-use crate::package_manager::{ProgressStrings, WorkspaceFilter};
+use crate::package_manager::{self, WorkspaceFilter};
+use crate::package_manager_real::ProgressStrings;
+use crate::package_install;
 use crate::package_installer::{PackageInstaller, TreeContext};
 
 // TODO(port): narrow error set
@@ -22,10 +24,10 @@ pub fn install_hoisted_packages(
     ctx: Command::Context,
     workspace_filters: &[WorkspaceFilter],
     install_root_dependencies: bool,
-    log_level: PackageManager::Options::LogLevel,
+    log_level: package_manager::Options::LogLevel,
     packages_to_install: Option<&[PackageID]>,
-) -> Result<PackageInstall::Summary, bun_core::Error> {
-    analytics::Features::hoisted_bun_install_inc(1);
+) -> Result<package_install::Summary, bun_core::Error> {
+    analytics::features::hoisted_bun_install.fetch_add(1, Ordering::Relaxed);
 
     let original_trees = this.lockfile.buffers.trees;
     let original_tree_dep_ids = this.lockfile.buffers.hoisted_dependencies;
@@ -78,7 +80,7 @@ pub fn install_hoisted_packages(
     let cwd = Fd::cwd();
     let node_modules_folder = 'brk: {
         // Attempt to open the existing node_modules folder
-        match sys::openat_os_path(cwd, sys::os_path_literal!("node_modules"), sys::O::DIRECTORY | sys::O::RDONLY, 0o755) {
+        match sys::openat_os_path(cwd, bun_paths::os_path_literal!("node_modules"), sys::O::DIRECTORY | sys::O::RDONLY, 0o755) {
             sys::Result::Ok(fd) => break 'brk sys::Dir::from_fd(fd),
             sys::Result::Err(_) => {}
         }
@@ -110,7 +112,7 @@ pub fn install_hoisted_packages(
         skip_delete = false;
     }
 
-    let mut summary = PackageInstall::Summary::default();
+    let mut summary = package_install::Summary::default();
 
     {
         let mut iterator = Lockfile::Tree::Iterator::<{ Lockfile::Tree::IterKind::NodeModules }>::init(this.lockfile);
@@ -291,7 +293,7 @@ pub fn install_hoisted_packages(
 
         while this.pending_task_count() > 0 && installer.options.do_.install_packages {
             struct Closure<'a> {
-                installer: &'a mut PackageInstaller,
+                installer: &'a mut PackageInstaller<'a>,
                 err: Option<bun_core::Error>,
                 // PORT NOTE: raw `*mut` (Zig `*PackageManager`) — `sleep_until`
                 // also receives this pointer, so `&mut` here would alias.

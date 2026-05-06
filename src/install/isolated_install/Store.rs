@@ -533,7 +533,7 @@ pub mod entry {
                 "entry ({}): '{}@{}'\n  dep_name: {}\n  pkg_id: {}\n  parent_id: {:?}\n  ",
                 entry_id,
                 BStr::new(entry_pkg_name),
-                pkg_resolutions[entry.pkg_id as usize].fmt(string_buf, bun_paths::Style::Posix),
+                pkg_resolutions[entry.pkg_id as usize].fmt(string_buf, bun_core::fmt::PathSep::Posix),
                 BStr::new(entry.dep_name.slice(string_buf)),
                 entry.pkg_id,
                 entry.parent_id,
@@ -547,7 +547,7 @@ pub mod entry {
                     "    {}@{}\n",
                     BStr::new(pkg_names[dep_entry.pkg_id as usize].slice(string_buf)),
                     pkg_resolutions[dep_entry.pkg_id as usize]
-                        .fmt(string_buf, bun_paths::Style::Posix),
+                        .fmt(string_buf, bun_core::fmt::PathSep::Posix),
                 );
             }
         }
@@ -589,6 +589,12 @@ pub mod node {
         pub dep_id: DependencyID,
         pub pkg_id: PackageID,
         pub auto_installed: bool,
+    }
+
+    // Zig: `TransitivePeer.OrderedArraySetCtx` — Rust can't nest a type inside a struct,
+    // so expose a snake_case module mirroring the Zig namespace for callers.
+    pub mod transitive_peer {
+        pub use super::TransitivePeerOrderedArraySetCtx as OrderedArraySetCtx;
     }
 
     pub struct TransitivePeerOrderedArraySetCtx<'a> {
@@ -645,7 +651,7 @@ pub mod node {
                 BStr::new(dep_name),
                 BStr::new(dep_version),
                 BStr::new(pkg_names[self.pkg_id as usize].slice(string_buf)),
-                pkg_resolutions[self.pkg_id as usize].fmt(string_buf, bun_paths::Style::Posix),
+                pkg_resolutions[self.pkg_id as usize].fmt(string_buf, bun_core::fmt::PathSep::Posix),
             );
         }
     }
@@ -683,7 +689,7 @@ pub mod node {
                     Store,
                     "    {}@{} ({}@{})\n",
                     BStr::new(pkg_name),
-                    pkg_res.fmt(string_buf, bun_paths::Style::Posix),
+                    pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Posix),
                     BStr::new(dep_name),
                     BStr::new(dep.version.literal.slice(string_buf)),
                 );
@@ -708,7 +714,7 @@ pub mod node {
                     Store,
                     "    {}@{} ({}@{})\n",
                     BStr::new(pkg_name),
-                    pkg_res.fmt(string_buf, bun_paths::Style::Posix),
+                    pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Posix),
                     BStr::new(dep_name),
                     BStr::new(dep.version.literal.slice(string_buf)),
                 );

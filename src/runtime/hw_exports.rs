@@ -20,9 +20,8 @@
 
 use core::ffi::c_void;
 
-use bun_jsc::{
-    CallFrame, JSGlobalObject, JSInternalPromise, JSValue, VirtualMachine, ZigStackFrame,
-};
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::{CallFrame, JSGlobalObject, JSInternalPromise, JSValue, ZigStackFrame};
 
 // ─── VirtualMachine.zig ──────────────────────────────────────────────────────
 
@@ -98,7 +97,10 @@ pub extern "C" fn Bun__VM__setEntryPointEvalResultESM(this: *mut VirtualMachine,
     let this = unsafe { &mut *this };
     // allow esm evaluate to set value multiple times
     if !this.entry_point_result.cjs_set_value {
-        this.entry_point_result.value.set(this.global(), result);
+        // PORT NOTE: reshaped for borrowck — split disjoint &mut/& borrows.
+        // SAFETY: `global` is the VM's owned global (STATIC ref per LIFETIMES.tsv).
+        let global = unsafe { &*this.global };
+        this.entry_point_result.value.set(global, result);
     }
 }
 
@@ -108,7 +110,10 @@ pub extern "C" fn Bun__VM__setEntryPointEvalResultCJS(this: *mut VirtualMachine,
     // SAFETY: `this` is the live per-thread VM.
     let this = unsafe { &mut *this };
     if !this.entry_point_result.value.has() {
-        this.entry_point_result.value.set(this.global(), value);
+        // PORT NOTE: reshaped for borrowck — split disjoint &mut/& borrows.
+        // SAFETY: `global` is the VM's owned global (STATIC ref per LIFETIMES.tsv).
+        let global = unsafe { &*this.global };
+        this.entry_point_result.value.set(global, value);
         this.entry_point_result.cjs_set_value = true;
     }
 }
@@ -127,7 +132,7 @@ pub extern "C" fn Bun__VM__specifierIsEvalEntryPoint(
         let specifier_str = bun_jsc::bun_string_jsc::from_js(specifier, global)
             .expect("unexpected exception");
         // `bun.String` derefs on Drop.
-        return specifier_str.eql_utf8(eval_source.path.text.as_bytes());
+        return specifier_str.eql_utf8(&eval_source.path.text);
     }
     false
 }

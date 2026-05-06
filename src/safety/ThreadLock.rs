@@ -1,3 +1,7 @@
+// TODO(b2): `ci_assert` feature — wire up in src/safety/Cargo.toml [features] (see src/http_types/Cargo.toml).
+// Until then, silence check-cfg so this file contributes 0 diagnostics on the bun_bin link path.
+#![allow(unexpected_cfgs)]
+
 use super::thread_id::{self, ThreadId, INVALID as INVALID_THREAD_ID};
 // TODO(port): verify `super::thread_id` exports `ThreadId` + `current()` in the Rust port;
 // Zig used `std.Thread.Id` / `std.Thread.getCurrentId()` directly with `invalid` from thread_id.zig.

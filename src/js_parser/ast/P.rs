@@ -5552,7 +5552,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
                     // when there's actually no symbol by that name, we return Ref.None
                     // If a symbol had already existed by that name, we return .unbound
-                    return result.r#ref.is_null()
+                    return result.r#ref.is_empty()
                         || self.symbols[result.r#ref.inner_index() as usize].kind == js_ast::symbol::Kind::Unbound;
                 }
             }
@@ -6190,94 +6190,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
     // wrap_inlined_enum: moved to ungated impl (round-G).
 
-    pub fn value_for_define(
-        &mut self,
-        loc: logger::Loc,
-        assign_target: js_ast::AssignTarget,
-        is_delete_target: bool,
-        define_data: &DefineData,
-    ) -> Expr {
-        match &define_data.value {
-            js_ast::ExprData::EIdentifier(id) => {
-                return self.handle_identifier(
-                    loc,
-                    *id,
-                    define_data.original_name(),
-                    IdentifierOpts::new()
-                        .with_assign_target(assign_target)
-                        .with_is_delete_target(is_delete_target)
-                        .with_was_originally_identifier(true),
-                );
-            }
-            js_ast::ExprData::EString(str_) => {
-                return self.new_expr(*str_, loc);
-            }
-            _ => {}
-        }
-        Expr { data: define_data.value, loc }
-    }
-
-    pub fn is_dot_define_match(&mut self, expr: Expr, parts: &[&[u8]]) -> bool {
-        match &expr.data {
-            js_ast::ExprData::EDot(ex) => {
-                if parts.len() > 1 {
-                    if ex.optional_chain.is_some() {
-                        return false;
-                    }
-                    // Intermediates must be dot expressions
-                    let last = parts.len() - 1;
-                    let is_tail_match = strings::eql(parts[last], ex.name);
-                    return is_tail_match && self.is_dot_define_match(ex.target, &parts[..last]);
-                }
-            }
-            js_ast::ExprData::EImportMeta(_) => {
-                return parts.len() == 2 && parts[0] == b"import" && parts[1] == b"meta";
-            }
-            // Note: this behavior differs from esbuild
-            // esbuild does not try to match index accessors
-            // we do, but only if it's a UTF8 string
-            // the intent is to handle people using this form instead of E.Dot. So we really only want to do this if the accessor can also be an identifier
-            js_ast::ExprData::EIndex(index) => {
-                if parts.len() > 1 {
-                    if let js_ast::ExprData::EString(s) = &index.index.data {
-                        if s.is_utf8() {
-                            if index.optional_chain.is_some() {
-                                return false;
-                            }
-                            let last = parts.len() - 1;
-                            let is_tail_match = strings::eql(parts[last], s.slice(self.allocator));
-                            return is_tail_match && self.is_dot_define_match(index.target, &parts[..last]);
-                        }
-                    }
-                }
-            }
-            js_ast::ExprData::EIdentifier(ex) => {
-                // The last expression must be an identifier
-                if parts.len() == 1 {
-                    let name = self.load_name_from_ref(ex.r#ref);
-                    if !strings::eql(name, parts[0]) {
-                        return false;
-                    }
-
-                    let Ok(result) = self.find_symbol_with_record_usage(expr.loc, name, false) else {
-                        return false;
-                    };
-
-                    // We must not be in a "with" statement scope
-                    if result.is_inside_with_scope {
-                        return false;
-                    }
-
-                    // when there's actually no symbol by that name, we return Ref.None
-                    // If a symbol had already existed by that name, we return .unbound
-                    return result.r#ref.is_null()
-                        || self.symbols[result.r#ref.inner_index() as usize].kind == js_ast::symbol::Kind::Unbound;
-                }
-            }
-            _ => {}
-        }
-        false
-    }
+    // value_for_define / is_dot_define_match: moved to ungated impl (round-G).
 
     // One statement could potentially expand to several statements
     pub fn stmts_to_single_stmt(&mut self, loc: logger::Loc, stmts: &'a mut [Stmt]) -> Stmt {

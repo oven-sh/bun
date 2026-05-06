@@ -53,8 +53,10 @@ const SERVER_COMPONENTS_WRAPS_EXPORTS: bool = false;
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
     // SAFETY: `current_scope` is always a valid arena-owned Scope for the parse;
     // `pushScopeForParsePass`/`popScope` keep it non-dangling.
+    // PORT NOTE: takes `&mut self` (not `&self`) so two live `&mut Scope` cannot
+    // alias from a shared `&P` — see PORTING.md §Forbidden (aliased &mut).
     #[inline(always)]
-    fn cur_scope(&self) -> &mut js_ast::Scope {
+    fn cur_scope(&mut self) -> &mut js_ast::Scope {
         unsafe { &mut *self.current_scope }
     }
 
@@ -342,9 +344,17 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         match &mut data.value {
             js_ast::StmtOrExpr::Expr(expr) => {
                 let was_anonymous_named_expr = expr.is_anonymous_named();
-                // blocked_on: Expr::Data::e_class().should_lower_standard_decorators accessor;
-                // decorator_class_name handling deferred (see _draft).
+                // Propagate `"default"` as the class name for anonymous decorated
+                // class expressions so standard-decorator lowering sees it.
+                let prev_decorator_class_name = p.decorator_class_name;
+                if was_anonymous_named_expr
+                    && matches!(expr.data, js_ast::ExprData::EClass(_))
+                    && expr.data.e_class().unwrap().should_lower_standard_decorators
+                {
+                    p.decorator_class_name = Some(js_ast::ClauseItem::DEFAULT_ALIAS);
+                }
                 *expr = p.visit_expr(*expr);
+                p.decorator_class_name = prev_decorator_class_name;
 
                 if p.is_control_flow_dead {
                     restore_dead!();
@@ -365,23 +375,44 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         if !ident.ref_.is_source_contents_slice() {
                             let symbol = &p.symbols[ident.ref_.inner_index() as usize];
                             if symbol.kind == js_ast::symbol::Kind::Unbound {
-                                // blocked_on: p.local_type_names.get(symbol.original_name) —
-                                // StringBoolMap key type vs *const [u8].
-                                // See _draft for the full type-elision branch.
+                                // SAFETY: original_name is arena-owned, valid for 'a.
+                                let original_name = unsafe { arena_str(symbol.original_name) };
+                                if p.local_type_names.get(original_name).copied() == Some(true) {
+                                    // the name points to a type — don't try to declare
+                                    // this symbol, drop the statement.
+                                    data.default_name.ref_ = None;
+                                    restore_dead!();
+                                    record_on_exit!();
+                                    return Ok(());
+                                }
                             }
                         }
                     }
                 }
 
                 if data.default_name.ref_.unwrap().is_source_contents_slice() {
-                    data.default_name = p.create_default_name(stmt.loc).expect("unreachable");
+                    data.default_name = p.create_default_name(expr.loc).expect("unreachable");
                 }
 
                 // blocked_on: react_fast_refresh temp-var emit (E::Call/E::Arrow accessors,
                 //   G::Decl::List::from_slice arity), server_components.wraps_exports(),
                 //   will_wrap_module_in_try_catch_for_using lowering, mark_for_replace path.
-                //   See _draft for the full tail.
-                let _ = mark_for_replace;
+                //   See _draft for the full tail. Gate loud so we don't silently emit
+                //   wrong AST when any of these features is active.
+                if p.options.features.react_fast_refresh {
+                    todo!("s_export_default: react_fast_refresh temp-var emit — see _draft");
+                }
+                if SERVER_COMPONENTS_WRAPS_EXPORTS {
+                    todo!("s_export_default: server_components.wraps_exports — see _draft");
+                }
+                if p.will_wrap_module_in_try_catch_for_using
+                    && unsafe { &*p.current_scope }.parent.is_none()
+                {
+                    todo!("s_export_default: will_wrap_module_in_try_catch_for_using lowering — see _draft");
+                }
+                if mark_for_replace {
+                    todo!("s_export_default: mark_for_replace substitution — see _draft");
+                }
             }
 
             js_ast::StmtOrExpr::Stmt(_s2) => {

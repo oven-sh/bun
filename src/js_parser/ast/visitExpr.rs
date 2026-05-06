@@ -371,9 +371,297 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         )
     }
     fn e_jsx_element(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
-        let _ = (p, in_);
-        todo!("G-round-4: e_jsx_element body — see _draft");
-        #[allow(unreachable_code)] expr
+        use crate::parser::{options, JSXImport, JSXTransformType};
+        let _ = in_;
+        let mut e_ = expr.data.e_jsx_element().unwrap();
+        // Zig: `switch (comptime jsx_transform_type)` — const-generic enum dispatch.
+        match J::KIND {
+            JSXTransformType::React => {
+                let tag: Expr = 'tagger: {
+                    if let Some(_tag) = e_.tag {
+                        break 'tagger p.visit_expr(_tag);
+                    }
+                    if p.options.jsx.runtime == options::JSX::Runtime::Classic {
+                        // blocked_on: jsx_strings_to_member_expression takes `&[&'a [u8]]`;
+                        // `options.jsx.fragment` is `Box<[Box<[u8]>]>` (round-C Pragma stub).
+                        // Shape mismatch — see `_draft::e_jsx_element`.
+                        let _ = &p.options.jsx.fragment;
+                        break 'tagger todo!(
+                            "e_jsx_element: jsx_strings_to_member_expression(fragment) — Pragma shape"
+                        );
+                    }
+                    break 'tagger p.jsx_import(JSXImport::Fragment, expr.loc);
+                };
+
+                for property in e_.properties.slice_mut() {
+                    if property.kind != G::PropertyKind::Spread {
+                        property.key = Some(p.visit_expr(property.key.unwrap()));
+                    }
+
+                    if property.value.is_some() {
+                        property.value = Some(p.visit_expr(property.value.unwrap()));
+                    }
+
+                    if property.initializer.is_some() {
+                        property.initializer = Some(p.visit_expr(property.initializer.unwrap()));
+                    }
+                }
+
+                let runtime = if p.options.jsx.runtime == options::JSX::Runtime::Automatic {
+                    options::JSX::Runtime::Automatic
+                } else {
+                    options::JSX::Runtime::Classic
+                };
+                let is_key_after_spread =
+                    e_.flags.contains(Flags::JSXElement::IsKeyAfterSpread);
+                let children_count = e_.children.len;
+
+                // TODO: maybe we should split these into two different AST Nodes
+                // That would reduce the amount of allocations a little
+                if runtime == options::JSX::Runtime::Classic || is_key_after_spread {
+                    // Arguments to createElement()
+                    let mut args =
+                        ExprNodeList::init_capacity(2 + children_count as usize).expect("oom");
+                    // PERF(port): was assume_capacity
+                    args.append(tag).expect("oom");
+
+                    let num_props = e_.properties.len;
+                    if num_props > 0 {
+                        // PORT NOTE: Zig duped the property slice into a fresh arena allocation
+                        // before wrapping in E.Object. PropertyList = BabyList<Property> here is
+                        // already arena-backed and the JSX node is consumed; reuse in place.
+                        // PERF(port): was arena alloc + bun.copy — profile in Phase B
+                        args.append(p.new_expr(
+                            E::Object {
+                                properties: core::mem::take(&mut e_.properties),
+                                ..Default::default()
+                            },
+                            expr.loc,
+                        ))
+                        .expect("oom");
+                    } else {
+                        args.append(p.new_expr(E::Null {}, expr.loc)).expect("oom");
+                    }
+
+                    let children_elements = &e_.children.slice()[0..children_count as usize];
+                    for child in children_elements {
+                        let arg = p.visit_expr(*child);
+                        if !matches!(arg.data, Data::EMissing(..)) {
+                            // PERF(port): was assume_capacity
+                            args.append(arg).expect("oom");
+                        }
+                    }
+
+                    let target: Expr = if runtime == options::JSX::Runtime::Classic {
+                        // blocked_on: jsx_strings_to_member_expression takes `&[&'a [u8]]`;
+                        // `options.jsx.factory` is `Box<[Box<[u8]>]>` (round-C Pragma stub).
+                        let _ = &p.options.jsx.factory;
+                        todo!(
+                            "e_jsx_element: jsx_strings_to_member_expression(factory) — Pragma shape"
+                        )
+                    } else {
+                        p.jsx_import(JSXImport::CreateElement, expr.loc)
+                    };
+
+                    // Call createElement()
+                    return p.new_expr(
+                        E::Call {
+                            target,
+                            args,
+                            // Enable tree shaking
+                            can_be_unwrapped_if_unused: if !p.options.ignore_dce_annotations
+                                && !p.options.jsx.side_effects
+                            {
+                                E::CallUnwrap::IfUnused
+                            } else {
+                                E::CallUnwrap::Never
+                            },
+                            close_paren_loc: e_.close_tag_loc,
+                            ..Default::default()
+                        },
+                        expr.loc,
+                    );
+                }
+                // function jsxDEV(type, config, maybeKey, source, self) {
+                else if runtime == options::JSX::Runtime::Automatic {
+                    // --- These must be done in all cases --
+                    // PORT NOTE: Zig reassigns `props` (a `*BabyList(G.Property)`) to point inside
+                    // a spread object's properties via raw arena pointer. Track as a raw ptr here.
+                    let mut props: *mut G::PropertyList = &mut e_.properties;
+
+                    let maybe_key_value: Option<ExprNodeIndex> = if e_.key_prop_index > -1 {
+                        // SAFETY: `props` points at the live `e_.properties` (arena-owned).
+                        unsafe { &mut *props }
+                            .ordered_remove(e_.key_prop_index as u32 as usize)
+                            .value
+                    } else {
+                        None
+                    };
+
+                    // arguments needs to be like
+                    // {
+                    //    ...props,
+                    //    children: [el1, el2]
+                    // }
+
+                    {
+                        let mut last_child: u32 = 0;
+                        // PORT NOTE: Zig wrote `e_.children.ptr[last_child] = p.visitExpr(child)`
+                        // while iterating a slice over the same buffer. Iterate by index to avoid
+                        // borrowck on `e_.children`.
+                        for i in 0..children_count {
+                            let child = e_.children.slice()[i as usize];
+                            let visited = p.visit_expr(child);
+                            e_.children.slice_mut()[last_child as usize] = visited;
+                            // if tree-shaking removes the element, we must also remove it here.
+                            last_child += u32::from(!matches!(
+                                e_.children.slice()[last_child as usize].data,
+                                Data::EMissing(..)
+                            ));
+                        }
+                        e_.children.len = last_child;
+                    }
+
+                    // TODO(port): jsxChildrenKeyData in Zig is a mutable `var` of `Expr.Data`
+                    // pointing at `Prefill.String.Children`. ExprData::EString wants a
+                    // `StoreRef<EString>` (arena-backed) so a process-static won't compile (see
+                    // P.rs `#[cfg(any())]` ~7552). Allocate via `p.new_expr` from the const
+                    // `prefill::string::CHILDREN` instead — small extra alloc.
+                    // PERF(port): was process-static — profile in Phase B
+                    let children_key = p.new_expr(prefill::string::CHILDREN, expr.loc);
+
+                    // Optimization: if the only non-child prop is a spread object
+                    // we can just pass the object as the first argument
+                    // this goes as deep as there are spreads
+                    // <div {{...{...{...{...foo}}}}} />
+                    // ->
+                    // <div {{...foo}} />
+                    // jsx("div", {...foo})
+                    // SAFETY: `props` is a live arena ptr at every step (either `&mut e_.properties`
+                    // or `&mut <spread object>.properties` deeper in the same arena).
+                    while unsafe { &*props }.len == 1
+                        && unsafe { &*props }.slice()[0].kind == G::PropertyKind::Spread
+                        && matches!(
+                            unsafe { &*props }.slice()[0].value.unwrap().data,
+                            Data::EObject(..)
+                        )
+                    {
+                        // PORT NOTE: reshaped for borrowck — Zig reassigns `props` to point inside
+                        // the spread object's properties; do the same via raw access.
+                        let inner = unsafe { &mut *props }.slice_mut()[0]
+                            .value
+                            .as_mut()
+                            .unwrap()
+                            .data
+                            .e_object_mut()
+                            .unwrap();
+                        props = &mut inner.properties;
+                    }
+
+                    // Typescript defines static jsx as children.len > 1 or single spread
+                    // https://github.com/microsoft/TypeScript/blob/d4fbc9b57d9aa7d02faac9b1e9bb7b37c687f6e9/src/compiler/transformers/jsx.ts#L340
+                    let is_static_jsx = e_.children.len > 1
+                        || (e_.children.len == 1
+                            && matches!(e_.children.slice()[0].data, Data::ESpread(..)));
+
+                    if is_static_jsx {
+                        // SAFETY: `props` arena-ptr; see note above.
+                        unsafe { &mut *props }
+                            .append(G::Property {
+                                key: Some(children_key),
+                                value: Some(p.new_expr(
+                                    E::Array {
+                                        items: core::mem::take(&mut e_.children),
+                                        is_single_line: e_.children.len < 2,
+                                        ..Default::default()
+                                    },
+                                    e_.close_tag_loc,
+                                )),
+                                ..Default::default()
+                            })
+                            .expect("oom");
+                    } else if e_.children.len == 1 {
+                        // SAFETY: `props` arena-ptr; see note above.
+                        unsafe { &mut *props }
+                            .append(G::Property {
+                                key: Some(children_key),
+                                value: Some(e_.children.slice()[0]),
+                                ..Default::default()
+                            })
+                            .expect("oom");
+                    }
+
+                    // Either:
+                    // jsxDEV(type, arguments, key, isStaticChildren, source, self)
+                    // jsx(type, arguments, key)
+                    let args_len = if p.options.jsx.development {
+                        6usize
+                    } else {
+                        2usize + usize::from(maybe_key_value.is_some())
+                    };
+                    let mut args = ExprNodeList::init_capacity(args_len).expect("oom");
+                    args.append(tag).expect("oom");
+
+                    args.append(p.new_expr(
+                        E::Object {
+                            // SAFETY: `props` arena-ptr; see note above. Consume by move.
+                            properties: core::mem::take(unsafe { &mut *props }),
+                            ..Default::default()
+                        },
+                        expr.loc,
+                    ))
+                    .expect("oom");
+
+                    if let Some(key) = maybe_key_value {
+                        args.append(key).expect("oom");
+                    } else if p.options.jsx.development {
+                        // if (maybeKey !== undefined)
+                        args.append(Expr {
+                            loc: expr.loc,
+                            data: Data::EUndefined(E::Undefined {}),
+                        })
+                        .expect("oom");
+                    }
+
+                    if p.options.jsx.development {
+                        // is the return type of the first child an array?
+                        // It's dynamic
+                        // Else, it's static
+                        args.append(Expr {
+                            loc: expr.loc,
+                            data: Data::EBoolean(E::Boolean { value: is_static_jsx }),
+                        })
+                        .expect("oom");
+
+                        args.append(p.new_expr(E::Undefined {}, expr.loc)).expect("oom");
+                        args.append(Expr { data: prefill::data::THIS, loc: expr.loc })
+                            .expect("oom");
+                    }
+
+                    return p.new_expr(
+                        E::Call {
+                            target: p.jsx_import_automatic(expr.loc, is_static_jsx),
+                            args,
+                            // Enable tree shaking
+                            can_be_unwrapped_if_unused: if !p.options.ignore_dce_annotations
+                                && !p.options.jsx.side_effects
+                            {
+                                E::CallUnwrap::IfUnused
+                            } else {
+                                E::CallUnwrap::Never
+                            },
+                            was_jsx_element: true,
+                            close_paren_loc: e_.close_tag_loc,
+                            ..Default::default()
+                        },
+                        expr.loc,
+                    );
+                } else {
+                    unreachable!();
+                }
+            }
+            _ => unreachable!(),
+        }
     }
     fn e_template(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
         let _ = in_;

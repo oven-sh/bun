@@ -167,7 +167,7 @@ impl DevServer<'_> {
     /// `VirtualMachine::get()` returns the same instance with write provenance.
     #[inline]
     pub(crate) fn vm_mut(&self) -> &mut VirtualMachine {
-        debug_assert!(core::ptr::eq(self.vm, unsafe { &*VirtualMachine::get() }));
+        debug_assert!(::core::ptr::eq(self.vm, unsafe { &*VirtualMachine::get() }));
         unsafe { &mut *VirtualMachine::get() }
     }
 }

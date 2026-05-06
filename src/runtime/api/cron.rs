@@ -1786,7 +1786,7 @@ fn spawn_cmd_generic<T: SpawnCmdTarget>(
     }
     #[cfg(windows)]
     {
-        if matches!(spawned.stderr, spawn::SpawnedStdio::Buffer(_)) {
+        if matches!(spawned.stderr, spawn::WindowsStdioResult::Buffer(_)) {
             this.stderr_reader().parent = this as *mut T as *mut core::ffi::c_void;
             *this.remaining_fds() += 1;
             if this.stderr_reader().start_with_current_pipe().unwrap_result().is_err() {

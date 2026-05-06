@@ -10,8 +10,8 @@ use bun_jsc::{
     self as jsc, CallFrame, JSArray, JSGlobalObject, JSMap, JSPromise, JSValue, JsRef, JsResult,
     VirtualMachine,
 };
-use crate::api::server_config::SSLConfig;
-use crate::api::Timer;
+use crate::socket::SSLConfig;
+use bun_event_loop::EventLoopTimer as Timer;
 use bun_str::{self as strings, String as BunString};
 use bun_uws as uws;
 

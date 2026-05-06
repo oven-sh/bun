@@ -6,32 +6,49 @@ import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 // (visitChildren → memoryCost() reading m_data via std::visit). The lock guard
 // around m_data was written as `Locker { lock };`, a temporary that destructs
 // immediately, so the critical section was never actually held. When m_data
-// held a Ref<SerializedScriptValue> (e.g. a MessageEvent delivered through a
-// BroadcastChannel) the GC visitor could observe a torn variant and crash with
-// `ASSERTION FAILED: m_ptr` in Ref::operator-> (or a SIGSEGV in release).
+// held a Ref<SerializedScriptValue> (a MessageEvent delivered through a
+// BroadcastChannel) the GC visitor could observe a torn variant — ~Ref()
+// nulls m_ptr before the variant index is updated — and crash with
+// `ASSERTION FAILED: m_ptr` in Ref::operator-> (SIGSEGV in release).
+//
+// The race window is the few instructions between ~Ref()'s
+// exchange(m_ptr, nullptr) and the variant index write, so we need many
+// fresh Ref→JSValueTag transitions under concurrent marking to hit it. We
+// accumulate every received event in `all` so each GC cycle has progressively
+// more memoryCost() visits, and each round supplies a fresh batch whose
+// initMessageEvent() call performs the racy variant reassignment.
 test(
   "MessageEvent.initMessageEvent does not race GC visitor on m_data",
   async () => {
     const script = /* js */ `
     const bc1 = new BroadcastChannel("message-event-init-gc");
     const bc2 = new BroadcastChannel("message-event-init-gc");
-    const received = [];
-    bc2.onmessage = e => received.push(e);
-    for (let i = 0; i < 100; i++) bc1.postMessage({ i });
-
-    await new Promise(r => {
-      const check = () => (received.length >= 100 ? r() : setTimeout(check, 1));
-      check();
-    });
-
-    // Each received MessageEvent's m_data is a Ref<SerializedScriptValue>.
-    // initMessageEvent() transitions it to JSValueTag while the concurrent
-    // collector (enabled via BUN_JSC_collectContinuously) is visiting the
-    // same object's memoryCost().
-    for (let j = 0; j < 50000; j++) {
-      for (const e of received) e.initMessageEvent("y", false, false, j);
+    const all = [];
+    let fresh = [];
+    let want = 0;
+    let resolver = null;
+    bc2.onmessage = e => {
+      fresh.push(e);
+      all.push(e);
+      if (resolver && all.length >= want) {
+        const r = resolver;
+        resolver = null;
+        r();
+      }
+    };
+    const N = 100;
+    const ROUNDS = 100;
+    for (let round = 0; round < ROUNDS; round++) {
+      fresh = [];
+      want = all.length + N;
+      const delivered = new Promise(r => (resolver = r));
+      for (let i = 0; i < N; i++) bc1.postMessage({ big: new ArrayBuffer(1024 * 64), i });
+      await delivered;
+      // Each fresh event's m_data is a Ref<SerializedScriptValue>; this
+      // reassigns it to JSValueTag while the concurrent collector may be
+      // inside memoryCost() on the same event.
+      for (const e of fresh) e.initMessageEvent("y", false, false, 0);
     }
-
     bc1.close();
     bc2.close();
     console.log("OK");
@@ -55,5 +72,5 @@ test(
     expect(stdout.trim()).toBe("OK");
     expect(exitCode).toBe(0);
   },
-  isDebug || isASAN ? 120_000 : 30_000,
+  isDebug || isASAN ? 300_000 : 60_000,
 );

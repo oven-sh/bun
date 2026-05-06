@@ -334,6 +334,13 @@ enum DeferredError {
     DeferredErrors,
 }
 
+// Process-lifetime singletons — PORTING.md §Forbidden: use OnceLock, never
+// `static mut` + `Box::leak`. `ZBox` is the sanctioned owned-ZStr type
+// (util.rs forbids `Box<ZStr>` because of DST dealloc-length mismatch).
+static CACHED_DEFAULT_SYSTEM_INCLUDE_DIR: OnceLock<bun_core::ZBox> = OnceLock::new();
+static CACHED_DEFAULT_SYSTEM_LIBRARY_DIR: OnceLock<bun_core::ZBox> = OnceLock::new();
+static CACHED_DEFAULT_SYSTEM_INCLUDE_DIR_ONCE: Once = Once::new();
+
 impl CompileC {
     pub extern "C" fn handle_compilation_error(
         this_: Option<&mut CompileC>,
@@ -379,13 +386,6 @@ impl CompileC {
     }
 
     pub const DEFAULT_TCC_OPTIONS: &'static str = "-std=c11 -Wl,--export-all-symbols -g -O2";
-
-    // Process-lifetime singletons — PORTING.md §Forbidden: use OnceLock, never
-    // `static mut` + `Box::leak`. `ZBox` is the sanctioned owned-ZStr type
-    // (util.rs forbids `Box<ZStr>` because of DST dealloc-length mismatch).
-    static CACHED_DEFAULT_SYSTEM_INCLUDE_DIR: OnceLock<bun_core::ZBox> = OnceLock::new();
-    static CACHED_DEFAULT_SYSTEM_LIBRARY_DIR: OnceLock<bun_core::ZBox> = OnceLock::new();
-    static CACHED_DEFAULT_SYSTEM_INCLUDE_DIR_ONCE: Once = Once::new();
 
     fn get_system_root_dir_once() {
         #[cfg(target_os = "macos")]
@@ -503,7 +503,7 @@ impl CompileC {
     }
 
     fn get_system_include_dir() -> Option<&'static ZStr> {
-        Self::CACHED_DEFAULT_SYSTEM_INCLUDE_DIR_ONCE.call_once(Self::get_system_root_dir_once);
+        CACHED_DEFAULT_SYSTEM_INCLUDE_DIR_ONCE.call_once(Self::get_system_root_dir_once);
         CACHED_DEFAULT_SYSTEM_INCLUDE_DIR
             .get()
             .map(|b| b.as_zstr())
@@ -511,7 +511,7 @@ impl CompileC {
     }
 
     fn get_system_library_dir() -> Option<&'static ZStr> {
-        Self::CACHED_DEFAULT_SYSTEM_INCLUDE_DIR_ONCE.call_once(Self::get_system_root_dir_once);
+        CACHED_DEFAULT_SYSTEM_INCLUDE_DIR_ONCE.call_once(Self::get_system_root_dir_once);
         CACHED_DEFAULT_SYSTEM_LIBRARY_DIR
             .get()
             .map(|b| b.as_zstr())
@@ -2558,6 +2558,51 @@ pub enum ABIType {
     Buffer = 20,
 }
 
+pub static ABI_TYPE_LABEL: phf::Map<&'static [u8], ABIType> = phf::phf_map! {
+    b"bool" => ABIType::Bool,
+    b"c_int" => ABIType::Int32T,
+    b"c_uint" => ABIType::Uint32T,
+    b"char" => ABIType::Char,
+    b"char*" => ABIType::Ptr,
+    b"double" => ABIType::Double,
+    b"f32" => ABIType::Float,
+    b"f64" => ABIType::Double,
+    b"float" => ABIType::Float,
+    b"i16" => ABIType::Int16T,
+    b"i32" => ABIType::Int32T,
+    b"i64" => ABIType::Int64T,
+    b"i8" => ABIType::Int8T,
+    b"int" => ABIType::Int32T,
+    b"int16_t" => ABIType::Int16T,
+    b"int32_t" => ABIType::Int32T,
+    b"int64_t" => ABIType::Int64T,
+    b"int8_t" => ABIType::Int8T,
+    b"isize" => ABIType::Int64T,
+    b"u16" => ABIType::Uint16T,
+    b"u32" => ABIType::Uint32T,
+    b"u64" => ABIType::Uint64T,
+    b"u8" => ABIType::Uint8T,
+    b"uint16_t" => ABIType::Uint16T,
+    b"uint32_t" => ABIType::Uint32T,
+    b"uint64_t" => ABIType::Uint64T,
+    b"uint8_t" => ABIType::Uint8T,
+    b"usize" => ABIType::Uint64T,
+    b"size_t" => ABIType::Uint64T,
+    b"buffer" => ABIType::Buffer,
+    b"void*" => ABIType::Ptr,
+    b"ptr" => ABIType::Ptr,
+    b"pointer" => ABIType::Ptr,
+    b"void" => ABIType::Void,
+    b"cstring" => ABIType::CString,
+    b"i64_fast" => ABIType::I64Fast,
+    b"u64_fast" => ABIType::U64Fast,
+    b"function" => ABIType::Function,
+    b"callback" => ABIType::Function,
+    b"fn" => ABIType::Function,
+    b"napi_env" => ABIType::NapiEnv,
+    b"napi_value" => ABIType::NapiValue,
+};
+
 impl ABIType {
     pub const MAX: i32 = ABIType::NapiValue as i32;
 
@@ -2575,50 +2620,10 @@ impl ABIType {
         )
     }
 
-    pub static LABEL: phf::Map<&'static [u8], ABIType> = phf::phf_map! {
-        b"bool" => ABIType::Bool,
-        b"c_int" => ABIType::Int32T,
-        b"c_uint" => ABIType::Uint32T,
-        b"char" => ABIType::Char,
-        b"char*" => ABIType::Ptr,
-        b"double" => ABIType::Double,
-        b"f32" => ABIType::Float,
-        b"f64" => ABIType::Double,
-        b"float" => ABIType::Float,
-        b"i16" => ABIType::Int16T,
-        b"i32" => ABIType::Int32T,
-        b"i64" => ABIType::Int64T,
-        b"i8" => ABIType::Int8T,
-        b"int" => ABIType::Int32T,
-        b"int16_t" => ABIType::Int16T,
-        b"int32_t" => ABIType::Int32T,
-        b"int64_t" => ABIType::Int64T,
-        b"int8_t" => ABIType::Int8T,
-        b"isize" => ABIType::Int64T,
-        b"u16" => ABIType::Uint16T,
-        b"u32" => ABIType::Uint32T,
-        b"u64" => ABIType::Uint64T,
-        b"u8" => ABIType::Uint8T,
-        b"uint16_t" => ABIType::Uint16T,
-        b"uint32_t" => ABIType::Uint32T,
-        b"uint64_t" => ABIType::Uint64T,
-        b"uint8_t" => ABIType::Uint8T,
-        b"usize" => ABIType::Uint64T,
-        b"size_t" => ABIType::Uint64T,
-        b"buffer" => ABIType::Buffer,
-        b"void*" => ABIType::Ptr,
-        b"ptr" => ABIType::Ptr,
-        b"pointer" => ABIType::Ptr,
-        b"void" => ABIType::Void,
-        b"cstring" => ABIType::CString,
-        b"i64_fast" => ABIType::I64Fast,
-        b"u64_fast" => ABIType::U64Fast,
-        b"function" => ABIType::Function,
-        b"callback" => ABIType::Function,
-        b"fn" => ABIType::Function,
-        b"napi_env" => ABIType::NapiEnv,
-        b"napi_value" => ABIType::NapiValue,
-    };
+    // Associated `static` items aren't allowed in Rust; the table lives at module
+    // scope as `ABI_TYPE_LABEL` and is re-exposed here so callers can keep using
+    // `ABIType::LABEL.get(...)` (auto-deref handles the `&phf::Map`).
+    pub const LABEL: &'static phf::Map<&'static [u8], ABIType> = &ABI_TYPE_LABEL;
 
     // TODO(port): map_to_js_object — Zig builds a comptime "{...}" string from `map` via
     // EnumMapFormatter. Rust cannot iterate phf at const time; generate via build.rs or

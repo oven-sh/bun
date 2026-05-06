@@ -153,10 +153,8 @@ impl Mkdir {
                         let path = unsafe { CStr::from_ptr(p) }.to_bytes().to_vec();
                         let task = ShellMkdirTask::create(cmd, opts, path, cwd.clone(), evtloop);
                         // SAFETY: freshly Box::into_raw'd.
-                        unsafe { (*task).task.schedule() };
+                        unsafe { ShellTask::schedule(task) };
                     }
-                    // TODO(b2-blocked): tasks are no-ops until WorkPool is
-                    // wired; suspend so the state machine doesn't spin.
                     return Yield::suspended();
                 }
             }
@@ -353,6 +351,14 @@ impl ShellMkdirTask {
         // SAFETY: `this` is a live Box::into_raw'd task.
         let cmd = unsafe { (*this).cmd };
         Mkdir::on_shell_mkdir_task_done(interp, cmd, this);
+    }
+}
+
+impl crate::shell::interpreter::ShellTaskCtx for ShellMkdirTask {
+    const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
+    fn run_from_thread_pool(this: *mut Self) { Self::run_from_thread_pool(this) }
+    fn run_from_main_thread(this: *mut Self, interp: &mut Interpreter) {
+        Self::run_from_main_thread(this, interp)
     }
 }
 

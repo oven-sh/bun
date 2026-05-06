@@ -903,7 +903,7 @@ impl Direction {
 // PORT NOTE: `PartialEq` derive dropped — `Local`/`Global` carry
 // `Box<Selector>` and `CustomFunction` carries `TokenList`, neither of which
 // implements `PartialEq`. Equality goes through `eql()` (CssEql protocol).
-#[derive(Clone)]
+#[derive(Clone, CssEql, CssHash)]
 pub enum PseudoClass {
     /// https://drafts.csswg.org/selectors-4/#linguistic-pseudos
     /// The [:lang()](https://drafts.csswg.org/selectors-4/#the-lang-pseudo) pseudo class.
@@ -1078,16 +1078,12 @@ impl PseudoClass {
         serialize::serialize_pseudo_class(self, dest, None)
     }
 
-    pub fn eql(&self, rhs: &PseudoClass) -> bool {
-        protocol_shims::implement_eql(self, rhs)
-    }
-
-    pub fn hash(&self, hasher: &mut Wyhash) {
-        protocol_shims::implement_hash(self, hasher)
-    }
-
+    // eql / hash — provided by `#[derive(CssEql, CssHash)]` (variant-wise; the
+    // `Box<Selector>` arms recurse via the `CssEql for GenericSelector` impl
+    // below). `deep_clone` is `Clone` — the selector AST is global-alloc and
+    // every borrowed payload (`Str`, `Ident.v`) is an arena-static identity copy.
     pub fn deep_clone(&self) -> Self {
-        protocol_shims::implement_deep_clone(self)
+        self.clone()
     }
 
     pub fn get_prefix(&self) -> css::VendorPrefix {
@@ -1842,16 +1838,29 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
     }
 
     pub fn deep_clone(&self) -> Self {
-        protocol_shims::implement_deep_clone(self)
+        let mut v = SmallList::<GenericSelector<Impl>, 1>::init_capacity(self.v.len());
+        for sel in self.v.slice() {
+            v.append(sel.deep_clone());
+        }
+        Self { v }
     }
 
     pub fn eql(&self, rhs: &Self) -> bool {
-        protocol_shims::implement_eql(self, rhs)
+        eql_selector_slice(self.v.slice(), rhs.v.slice())
     }
 
     pub fn hash(&self, hasher: &mut Wyhash) {
-        protocol_shims::implement_hash(self, hasher)
+        hash_selector_slice(self.v.slice(), hasher);
     }
+}
+
+impl<Impl: BunSelectorImpl> CssEql for GenericSelectorList<Impl> {
+    #[inline]
+    fn eql(&self, other: &Self) -> bool { self.eql(other) }
+}
+impl<Impl: BunSelectorImpl> CssHash for GenericSelectorList<Impl> {
+    #[inline]
+    fn hash(&self, hasher: &mut Wyhash) { self.hash(hasher) }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1927,11 +1936,20 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
     }
 
     pub fn deep_clone(&self) -> Self {
-        protocol_shims::implement_deep_clone(self)
+        Self {
+            specificity_and_flags: self.specificity_and_flags,
+            components: self.components.iter().map(|c| c.deep_clone()).collect(),
+        }
     }
 
     pub fn eql(&self, other: &Self) -> bool {
-        protocol_shims::implement_eql(self, other)
+        self.specificity_and_flags.eql(&other.specificity_and_flags)
+            && self.components.len() == other.components.len()
+            && self
+                .components
+                .iter()
+                .zip(other.components.iter())
+                .all(|(a, b)| a.eql(b))
     }
 
     pub fn has_combinator(&self) -> bool {
@@ -2628,7 +2646,7 @@ pub enum SimpleSelectorParseResult<Impl: SelectorImpl> {
 
 /// A pseudo element.
 // PORT NOTE: see PseudoClass — `PartialEq` derive dropped (Box<Selector>/TokenList).
-#[derive(Clone)]
+#[derive(Clone, CssEql, CssHash)]
 pub enum PseudoElement {
     /// The [::after](https://drafts.csswg.org/css-pseudo-4/#selectordef-after) pseudo element.
     After,
@@ -2710,16 +2728,9 @@ impl PseudoElement {
         self.eql(other)
     }
 
-    pub fn eql(&self, other: &PseudoElement) -> bool {
-        protocol_shims::implement_eql(self, other)
-    }
-
-    pub fn hash(&self, hasher: &mut Wyhash) {
-        protocol_shims::implement_hash(self, hasher)
-    }
-
+    // eql / hash — provided by `#[derive(CssEql, CssHash)]`.
     pub fn deep_clone(&self) -> Self {
-        protocol_shims::implement_deep_clone(self)
+        self.clone()
     }
 
     pub fn get_necessary_prefixes(&mut self, targets: css::targets::Targets) -> css::VendorPrefix {

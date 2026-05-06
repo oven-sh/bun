@@ -141,7 +141,7 @@ impl Touch {
                     let path = unsafe { CStr::from_ptr(p) }.to_bytes().to_vec();
                     let task = ShellTouchTask::create(cmd, opts, path, cwd.clone(), evtloop);
                     // SAFETY: freshly Box::into_raw'd.
-                    unsafe { (*task).task.schedule() };
+                    unsafe { ShellTask::schedule(task) };
                 }
                 Yield::suspended()
             }

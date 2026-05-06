@@ -119,18 +119,15 @@ impl Ls {
                             // SAFETY: freshly Box::into_raw'd.
                             unsafe {
                                 (*task).print_directory = print_directory;
-                                (*task).task.schedule();
+                                ShellTask::schedule(task);
                             }
                             let _ = &mut task;
                         }
                     } else {
                         let task = ShellLsTask::create(cmd, opts, cwd, b".".to_vec(), evtloop);
                         // SAFETY: freshly Box::into_raw'd.
-                        unsafe { (*task).task.schedule() };
+                        unsafe { ShellTask::schedule(task) };
                     }
-                    // Tasks scheduled; fall through to Exec on next loop
-                    // iteration to check completion (tasks may be no-ops while
-                    // WorkPool is stubbed, so we suspend).
                     return Yield::suspended();
                 }
                 Tag::Exec => {

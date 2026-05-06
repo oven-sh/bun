@@ -1,5 +1,8 @@
+#![allow(unused_imports, dead_code, unused_macros)]
 use crate as css;
-use crate::{Parser, Printer, PrintErr, Property, PropertyId, PropertyIdTag, VendorPrefix, SmallList, DeclarationList, PropertyHandlerContext, ColorFallbackKind};
+use crate::{Parser, Printer, PrintErr, VendorPrefix, SmallList, DeclarationList, PropertyHandlerContext};
+use crate::properties::{Property, PropertyId, PropertyIdTag};
+use crate::css_values::color::ColorFallbackKind;
 use crate::css_values::length::LengthPercentageOrAuto;
 use crate::css_values::image::Image;
 use crate::css_values::color::CssColor;
@@ -29,6 +32,7 @@ pub struct Background {
     pub clip: BackgroundClip,
 }
 
+#[cfg(any())] // blocked_on: Image/CssColor/Position::{parse,to_css,is_default} + SmallList::{append,slice} + ColorFallbackKind methods
 impl Background {
     // Zig `deinit` was a no-op (all allocations in CSS parser are in arena) — Drop handles it.
 
@@ -264,6 +268,7 @@ pub struct ExplicitBackgroundSize {
     pub height: LengthPercentageOrAuto,
 }
 
+#[cfg(any())] // blocked_on: LengthPercentageOrAuto::{to_css,is_auto}
 impl ExplicitBackgroundSize {
     pub fn eql(&self, rhs: &Self) -> bool {
         css::implement_eql(self, rhs)
@@ -275,6 +280,7 @@ impl ExplicitBackgroundSize {
     }
 }
 
+#[cfg(any())] // blocked_on: LengthPercentageOrAuto::{parse,to_css}
 impl BackgroundSize {
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
         if let Some(width) = input.try_parse(LengthPercentageOrAuto::parse).as_value() {
@@ -340,6 +346,7 @@ pub struct BackgroundPosition {
     pub y: VerticalPosition,
 }
 
+#[cfg(any())] // blocked_on: Position::{parse,to_css}
 impl BackgroundPosition {
     // TODO(port): PropertyFieldMap — Zig comptime struct mapping fields → PropertyIdTag.
     // Port as associated consts or a trait impl in Phase B.
@@ -390,6 +397,7 @@ pub struct BackgroundRepeat {
     pub y: BackgroundRepeatKeyword,
 }
 
+#[cfg(any())] // blocked_on: BackgroundRepeatKeyword parse/to_css derive
 impl BackgroundRepeat {
     pub fn default() -> Self {
         BackgroundRepeat {
@@ -460,38 +468,31 @@ impl BackgroundRepeat {
 /// in a single direction.
 ///
 /// See [BackgroundRepeat](BackgroundRepeat).
-#[derive(Clone, Copy, PartialEq, Eq, Hash, strum::IntoStaticStr)]
-#[css::define_enum_property]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
+
 // TODO(port): css.DefineEnumProperty provides eql/hash/parse/to_css/deep_clone via reflection.
 // Phase B: implement as a derive macro or trait that maps kebab-case names.
 pub enum BackgroundRepeatKeyword {
     /// The image is repeated in this direction.
-    #[strum(serialize = "repeat")]
-    Repeat,
+        Repeat,
     /// The image is repeated so that it fits, and then spaced apart evenly.
-    #[strum(serialize = "space")]
-    Space,
+        Space,
     /// The image is scaled so that it repeats an even number of times.
-    #[strum(serialize = "round")]
-    Round,
+        Round,
     /// The image is placed once and not repeated in this direction.
-    #[strum(serialize = "no-repeat")]
-    NoRepeat,
+        NoRepeat,
 }
 
 /// A value for the [background-attachment](https://www.w3.org/TR/css-backgrounds-3/#background-attachment) property.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, strum::IntoStaticStr)]
-#[css::define_enum_property]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
+
 pub enum BackgroundAttachment {
     /// The background scrolls with the container.
-    #[strum(serialize = "scroll")]
-    Scroll,
+        Scroll,
     /// The background is fixed to the viewport.
-    #[strum(serialize = "fixed")]
-    Fixed,
+        Fixed,
     /// The background is fixed with regard to the element's contents.
-    #[strum(serialize = "local")]
-    Local,
+        Local,
 }
 
 impl BackgroundAttachment {
@@ -501,43 +502,36 @@ impl BackgroundAttachment {
 }
 
 /// A value for the [background-origin](https://www.w3.org/TR/css-backgrounds-3/#background-origin) property.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, strum::IntoStaticStr)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
 #[repr(u8)]
-#[css::define_enum_property]
+
 pub enum BackgroundOrigin {
     /// The position is relative to the border box.
-    #[strum(serialize = "border-box")]
-    BorderBox,
+        BorderBox,
     /// The position is relative to the padding box.
-    #[strum(serialize = "padding-box")]
-    PaddingBox,
+        PaddingBox,
     /// The position is relative to the content box.
-    #[strum(serialize = "content-box")]
-    ContentBox,
+        ContentBox,
 }
 
 /// A value for the [background-clip](https://drafts.csswg.org/css-backgrounds-4/#background-clip) property.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, strum::IntoStaticStr)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
 #[repr(u8)]
-#[css::define_enum_property]
+
 pub enum BackgroundClip {
     /// The background is clipped to the border box.
-    #[strum(serialize = "border-box")]
-    BorderBox,
+        BorderBox,
     /// The background is clipped to the padding box.
-    #[strum(serialize = "padding-box")]
-    PaddingBox,
+        PaddingBox,
     /// The background is clipped to the content box.
-    #[strum(serialize = "content-box")]
-    ContentBox,
+        ContentBox,
     /// The background is clipped to the area painted by the border.
-    #[strum(serialize = "border")]
-    Border,
+        Border,
     /// The background is clipped to the text content of the element.
-    #[strum(serialize = "text")]
-    Text,
+        Text,
 }
 
+#[cfg(any())] // blocked_on: BackgroundOrigin <-> BackgroundClip eq comparison
 impl BackgroundClip {
     pub fn default() -> BackgroundClip {
         BackgroundClip::BorderBox
@@ -612,6 +606,7 @@ impl BackgroundProperty {
         self.bits() == 0
     }
 
+    #[cfg(any())] // blocked_on: PropertyId variant arity (BackgroundClip carries VendorPrefix payload)
     pub fn try_from_property_id(property_id: PropertyId) -> Option<BackgroundProperty> {
         match property_id {
             PropertyId::BackgroundColor => Some(Self::BACKGROUND_COLOR),
@@ -648,6 +643,30 @@ pub struct BackgroundHandler {
     pub flushed_properties: BackgroundProperty,
     pub has_any: bool,
 }
+
+impl BackgroundHandler {
+    // No-op stubs so `DeclarationHandler` compiles; real bodies are gated below.
+    #[inline]
+    pub fn handle_property(
+        &mut self,
+        _property: &Property,
+        _dest: &mut DeclarationList<'_>,
+        _context: &mut PropertyHandlerContext<'_>,
+    ) -> bool {
+        false
+    }
+    #[inline]
+    pub fn finalize(
+        &mut self,
+        _dest: &mut DeclarationList<'_>,
+        _context: &mut PropertyHandlerContext<'_>,
+    ) {
+    }
+}
+
+#[cfg(any())] // blocked_on: Property variant payloads + Image/CssColor fallback methods + SmallList helpers
+mod background_handler_body {
+use super::*;
 
 // TODO(port): the Zig uses comptime field-name strings + @field for `flushHelper` /
 // `initSmallListHelper` / `push`. Rust cannot index struct fields by string at runtime;
@@ -1084,3 +1103,5 @@ fn is_background_property(property_id: PropertyId) -> bool {
 //   todos:      4
 //   notes:      @field-based helpers (initSmallListHelper/flushHelper/push) expanded to macro_rules!; DefineEnumProperty assumed as #[css::define_enum_property] derive; several borrowck reshapes in BackgroundHandler::flush/handle_property; BackgroundHandler.decls left as std Vec pending 'bump threading.
 // ──────────────────────────────────────────────────────────────────────────
+
+} // mod background_handler_body

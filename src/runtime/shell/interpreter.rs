@@ -1214,8 +1214,11 @@ unsafe fn shell_task_trampoline<C: ShellTaskCtx>(task: *mut WorkPoolTask) {
     // `@fieldParentPtr("task", this)` for the outer hop).
     let ctx = unsafe { (shell_task as *mut u8).sub(C::TASK_OFFSET) as *mut C };
     C::run_from_thread_pool(ctx);
-    // SAFETY: `shell_task` is still live (owned by `ctx`).
-    unsafe { (*shell_task).on_finish() };
+    // PORT NOTE: Zig calls `this.onFinish()` here; the Rust per-builtin
+    // `run_from_thread_pool` bodies currently call `task.on_finish()`
+    // themselves (pre-WorkPool stub legacy). Leave that as-is until
+    // `on_finish` is un-stubbed to avoid a double enqueue.
+    let _ = shell_task;
 }
 
 #[cold]

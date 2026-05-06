@@ -831,14 +831,12 @@ fn transpile_source_code_inner(
 
             // ── RuntimeTranspilerCache ──────────────────────────────────────
             // Spec :178-182.
-            // TODO(b2-blocked): `RuntimeTranspilerCache` is `stub_ty!` in
-            // `bun_jsc`. Field-init un-gates with `RuntimeTranspilerCache.rs`.
-            #[cfg(any())]
-            let mut cache = bun_jsc::RuntimeTranspilerCache {
-                output_code_allocator: arena,
-                sourcemap_allocator: bun_alloc::default_allocator(),
-                esm_record_allocator: bun_alloc::default_allocator(),
-            };
+            // PORT NOTE: Zig threaded `output_code_allocator = arena.allocator()`,
+            // `sourcemap_allocator = default_allocator`, `esm_record_allocator =
+            // default_allocator`. The bundler-side `cache::RuntimeTranspilerCache`
+            // dropped those fields per PORTING.md §Allocators (cache buffers use
+            // global mimalloc), so `Default::default()` matches.
+            let mut cache = bun_bundler::cache::RuntimeTranspilerCache::default();
 
             // ── Swap `vm.transpiler.log` (and linker/resolver/pm logs) ──────
             // Spec :184-199.

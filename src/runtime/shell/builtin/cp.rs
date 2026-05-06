@@ -207,7 +207,7 @@ impl Cp {
                             cmd, evtloop, opts, operands, src, tgt.clone(), cwd.clone(),
                         );
                         // SAFETY: freshly Box::into_raw'd.
-                        unsafe { (*task).task.schedule() };
+                        unsafe { ShellTask::schedule(task) };
                     }
                     return Yield::suspended();
                 }

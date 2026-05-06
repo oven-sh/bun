@@ -171,9 +171,19 @@ impl Request {
             // stays valid across the field borrow.
             let content_type: Option<*const [u8]> = match &*self.body {
                 BodyValue::Blob(blob) => Some(blob.content_type),
-                // TODO(b2-blocked): `Locked.readable.get(global_this)` path —
-                // `PendingValue::readable` accessor + `ReadableStream.ptr.Blob`
-                // are still gated.
+                BodyValue::Locked(locked) => match locked.readable.get(global_this) {
+                    Some(readable) => match readable.ptr {
+                        crate::webcore::readable_stream::Source::Blob(blob) => {
+                            // SAFETY: Source::Blob holds a non-null *mut ByteBlobLoader
+                            // owned by the stream; its `content_type: Box<[u8]>` stays
+                            // valid across the field borrow below (same invariant as the
+                            // direct Blob arm).
+                            Some(unsafe { &*(*blob).content_type as *const [u8] })
+                        }
+                        _ => None,
+                    },
+                    None => None,
+                },
                 _ => None,
             };
 

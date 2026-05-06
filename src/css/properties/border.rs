@@ -1199,7 +1199,7 @@ macro_rules! flush_category {
 
         // State.shorthand
         macro_rules! shorthand {
-            ($P:ty, $prop_name:ident, $key:ident) => {{
+            ($P:ident, $prop_name:ident, $key:ident) => {{
                 let has_prop = block_start.$key.is_some()
                     && block_end.$key.is_some()
                     && inline_start.$key.is_some()
@@ -1224,13 +1224,13 @@ macro_rules! flush_category {
 
         // State.logicalShorthand
         macro_rules! logical_shorthand {
-            ($P:ty, $prop_name:ident, $key:ident, $start:expr, $end:expr) => {{
+            ($P:ident, $prop_name:ident, $key:ident, $start:expr, $end:expr) => {{
                 let has_prop = $start.$key.is_some() && $end.$key.is_some();
                 if has_prop {
                     fc_prop!(
                         f,
                         $prop_name,
-                        <$P> {
+                        $P {
                             start: $start.$key.take().unwrap(),
                             end: $end.$key.take().unwrap(),
                         }

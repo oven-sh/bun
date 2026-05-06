@@ -111,7 +111,9 @@ impl Mv {
                         done: false,
                         task: ShellTask::new(evtloop),
                     });
-                    task.task.schedule();
+                    // SAFETY: `task` is heap-allocated and outlives the worker
+                    // call (held in `MvState::CheckTarget` below).
+                    unsafe { ShellTask::schedule(&mut *task as *mut ShellMvCheckTargetTask) };
                     Self::state_mut(interp, cmd).state = MvState::CheckTarget(task);
                     return Yield::suspended();
                 }

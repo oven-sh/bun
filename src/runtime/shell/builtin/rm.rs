@@ -242,7 +242,7 @@ impl Rm {
                             let root = unsafe { CStr::from_ptr(p) }.to_bytes().to_vec();
                             let task = ShellRmTask::create(cmd, root, cwd, sig, evtloop);
                             // SAFETY: freshly Box::into_raw'd.
-                            unsafe { (*task).task.schedule() };
+                            unsafe { ShellTask::schedule(task) };
                         }
                     }
                     return Yield::suspended();

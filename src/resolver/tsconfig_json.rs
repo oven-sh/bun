@@ -42,14 +42,63 @@ pub mod options {
         }
 
         /// Port of `options.JSX.Pragma` — fields the resolver reads/writes.
-        #[derive(Clone, Default)]
+        #[derive(Clone)]
         pub struct Pragma {
             pub factory: Vec<Box<[u8]>>,
             pub fragment: Vec<Box<[u8]>>,
             pub runtime: Runtime,
             pub import_source: ImportSource,
+            /// Facilitates automatic JSX importing
+            /// Set on a per file basis like this:
+            /// /** @jsxImportSource @emotion/core */
+            pub package_name: Box<[u8]>,
             pub development: bool,
         }
+
+        impl Default for Pragma {
+            fn default() -> Self {
+                Pragma {
+                    factory: Vec::new(),
+                    fragment: Vec::new(),
+                    runtime: Runtime::default(),
+                    import_source: ImportSource::default(),
+                    package_name: Box::from(b"react".as_slice()),
+                    development: true,
+                }
+            }
+        }
+
+        impl Pragma {
+            /// Port of `options.JSX.Pragma.setImportSource` (options.zig:1254).
+            pub fn set_import_source(&mut self) {
+                let _ = bun_string::strings::concat_if_needed(
+                    &mut self.import_source.development,
+                    &[&self.package_name, b"/jsx-dev-runtime"],
+                    &[b"react/jsx-dev-runtime"],
+                );
+                let _ = bun_string::strings::concat_if_needed(
+                    &mut self.import_source.production,
+                    &[&self.package_name, b"/jsx-runtime"],
+                    &[b"react/jsx-runtime"],
+                );
+            }
+        }
+
+        /// Port of `options.JSX.RuntimeDevelopmentPair`.
+        #[derive(Clone, Copy)]
+        pub struct RuntimeDevelopmentPair {
+            pub runtime: Runtime,
+            pub development: Option<bool>,
+        }
+
+        /// Port of `options.JSX.RuntimeMap` (`bun.ComptimeStringMap`, options.zig:1179).
+        pub static RUNTIME_MAP: phf::Map<&'static [u8], RuntimeDevelopmentPair> = phf::phf_map! {
+            b"classic" => RuntimeDevelopmentPair { runtime: Runtime::Classic, development: None },
+            b"automatic" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
+            b"react" => RuntimeDevelopmentPair { runtime: Runtime::Classic, development: None },
+            b"react-jsx" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
+            b"react-jsxdev" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
+        };
     }
 }
 

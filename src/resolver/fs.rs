@@ -174,9 +174,9 @@ pub type EntryStoreBacking =
 
 // Per-monomorphization singleton storage — Zig kept `var instance` inside the
 // generic; Rust emits it at the declare site via `bss_*!` macros (returns `*mut`).
-bun_alloc::bss_string_list! { pub dirname_store_backing : { preallocate::counts::DIR_ENTRY * 2 }, { 128 + 1 } }
-bun_alloc::bss_string_list! { pub filename_store_backing : { preallocate::counts::FILES * 2 }, { 64 + 1 } }
-bun_alloc::bss_list! { pub entry_store_backing : Entry, { preallocate::counts::FILES * 2 } }
+bun_alloc::bss_string_list! { pub dirname_store_backing : preallocate::counts::DIR_ENTRY * 2, 128 + 1 }
+bun_alloc::bss_string_list! { pub filename_store_backing : preallocate::counts::FILES * 2, 64 + 1 }
+bun_alloc::bss_list! { pub entry_store_backing : Entry, preallocate::counts::FILES * 2 }
 
 /// Port of `FileSystem.DirnameStore` — ZST handle resolving to the
 /// `dirname_store_backing()` singleton on every call.
@@ -955,7 +955,7 @@ pub type EntriesOptionMap =
     allocators::BSSMapInner<EntriesOption, { preallocate::counts::DIR_ENTRY }, true>;
 
 // Per-monomorphization singleton storage for `EntriesOption.Map`.
-bun_alloc::bss_map_inner! { pub entries_option_map : EntriesOption, { preallocate::counts::DIR_ENTRY }, true }
+bun_alloc::bss_map_inner! { pub entries_option_map : EntriesOption, preallocate::counts::DIR_ENTRY, true }
 
 /// ZST handle over the `entries_option_map()` singleton; keeps `RealFS.entries`
 /// field-shaped without inlining the (large) backing array.

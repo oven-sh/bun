@@ -1,4 +1,4 @@
-use core::cell::Cell;
+use core::cell::{Cell, UnsafeCell};
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -60,8 +60,15 @@ pub struct PostgresSQLConnection {
     pub ref_count: Cell<u32>,
 
     pub write_buffer: OffsetByteList,
-    pub read_buffer: OffsetByteList,
-    pub last_message_start: u32,
+    // `read_buffer` / `last_message_start` are wrapped in interior-mutability cells
+    // because `Reader` (see below) accesses them through a `*mut Self` *while* a
+    // sibling `&mut PostgresSQLConnection` is live in `PostgresRequest::on_data` /
+    // `on()`. Under Stacked Borrows that `&mut` retag inserts SharedRW (not Unique)
+    // for `UnsafeCell` bytes, so the Reader's raw-derived access stays valid.
+    // `write_buffer` does NOT need this: every `self.writer()` call site consumes
+    // the Writer before `self` is reborrowed again.
+    pub read_buffer: UnsafeCell<OffsetByteList>,
+    pub last_message_start: Cell<u32>,
     pub requests: PostgresRequest::Queue,
     /// number of pipelined requests (Bind/Execute/Prepared statements)
     pub pipelined_requests: u32,

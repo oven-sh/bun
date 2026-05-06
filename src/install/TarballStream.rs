@@ -818,15 +818,21 @@ impl TarballStream {
         }
     }
 
-    fn finish(&mut self) {
+    /// # Safety
+    /// `this` must be the live pointer returned by `init()`. Frees `*this`
+    /// — caller must not touch it after return. Takes a raw pointer (not
+    /// `&mut self`) so no Rust reference dangles across the
+    /// `Box::from_raw` self-destruction (Zig spec: `this.deinit()` with a
+    /// freely-aliasing `*TarballStream`).
+    unsafe fn finish(this: *mut Self) {
         // Fields are already raw pointers (see struct PORT NOTE), so copying
-        // them out before `Box::from_raw(self)` is just a pointer copy — no
+        // them out before `Box::from_raw(this)` is just a pointer copy — no
         // reborrow of `&mut Task` is ever materialised from a stored `&mut`.
-        let task: *mut Task = self.extract_task;
-        let network: *mut NetworkTask = self.network_task;
-        let manager: *const PackageManager = self.package_manager;
+        let task: *mut Task = (*this).extract_task;
+        let network: *mut NetworkTask = (*this).network_task;
+        let manager: *mut PackageManager = (*this).package_manager;
 
-        self.close_output_file();
+        (*this).close_output_file();
 
         // The HTTP thread has delivered the final `has_more=false` chunk
         // (that's the only way `closed` gets set) and `notify()` does not
@@ -836,39 +842,41 @@ impl TarballStream {
         // safe and matches the `defer buffer.deinit()` in the buffered
         // `.extract` arm of `Task.callback`.
         // SAFETY: see comment above; network_task is live until published below.
-        unsafe { (*network).response_buffer = Default::default() };
+        (*network).response_buffer = Default::default();
 
         // SAFETY: `task` is live until pushed onto `resolve_tasks` below.
-        // `self.extract_task` is a raw `*mut Task` (not `&mut`), so this is
-        // the only `&mut Task` in existence — no aliasing with a stored
-        // reference. `populate_result` does not touch `self.extract_task`.
-        self.populate_result(unsafe { &mut *task });
+        // `(*this).extract_task` is a raw `*mut Task` (not `&mut`), so this
+        // is the only `&mut Task` in existence — no aliasing with a stored
+        // reference. `populate_result` does not touch `(*this).extract_task`.
+        (*this).populate_result(&mut *task);
 
         // Temp-dir cleanup must happen before we release the stream or
-        // publish the task: both `self.tmpname` and
+        // publish the task: both `(*this).tmpname` and
         // `task.request.extract.tarball.temp_dir` become invalid once
         // `Drop` runs / the main thread recycles the Task.
         // SAFETY: task is live (see above).
-        if unsafe { (*task).status } != TaskStatus::Success && !self.tmpname.to_bytes().is_empty() {
+        if (*task).status != TaskStatus::Success && !(*this).tmpname.to_bytes().is_empty() {
             // `populate_result` closes `dest` on the success path before the
             // rename; the early-return failure paths leave it open, so close
             // it here first — Windows can't remove an open directory.
             // `Drop` null-checks so this is not a double-close.
-            if let Some(d) = self.dest.take() {
+            if let Some(d) = (*this).dest.take() {
                 d.close();
             }
             // SAFETY: task is live (see above).
-            let _ = unsafe { &(*task).request.extract.tarball }
+            let _ = (*task)
+                .request
+                .extract
+                .tarball
                 .temp_dir
-                .delete_tree(self.tmpname.to_bytes());
+                .delete_tree((*this).tmpname.to_bytes());
         }
 
-        // SAFETY: self was allocated via Box::into_raw in `init()`; this is
-        // the sole owner and the only place it is reclaimed. After this line
-        // `self` is dangling — nothing below may touch it.
-        // TODO(port): self-destruction inside `&mut self` method — Phase B
-        // should reshape `drain`/`finish` to consume `*mut Self` directly.
-        unsafe { drop(Box::from_raw(self as *mut Self)) };
+        // SAFETY: `this` was allocated via Box::into_raw in `init()`; this is
+        // the sole owner and the only place it is reclaimed. No `&mut Self`
+        // is in scope (raw-ptr receiver), so nothing dangles. After this
+        // line `this` is freed — nothing below may touch it.
+        drop(Box::from_raw(this));
 
         // `task.apply_patch_task` is intentionally not touched: the
         // buffered `.extract` path (`enqueueExtractNPMPackage` →
@@ -878,11 +886,12 @@ impl TarballStream {
         // Publish last: once the task is on `resolve_tasks` the main
         // thread may immediately recycle it *and* the NetworkTask it
         // references, so nothing below this line may touch either.
-        // SAFETY: manager/task outlive this stream by construction.
-        unsafe {
-            (*manager).resolve_tasks.push(&mut *task);
-            (*manager).wake();
-        }
+        // SAFETY: manager/task outlive this stream by construction; manager
+        // is `*mut` (Zig spec: mutable `*PackageManager`) and shared across
+        // threads, so we mutate via raw-ptr deref without forming a
+        // long-lived `&mut PackageManager`.
+        (*manager).resolve_tasks.push(&mut *task);
+        (*manager).wake();
     }
 
     fn populate_result(&mut self, task: &mut Task) {
@@ -1034,7 +1043,8 @@ fn drain_callback(task: *mut thread_pool::Task) {
     };
     // SAFETY: the thread pool guarantees `task` is live for the duration of
     // the callback, and only one drain runs at a time (see `draining` flag).
-    unsafe { (*this).drain() };
+    // `drain` may free `this`; nothing touches it after this call.
+    unsafe { TarballStream::drain(this) };
 }
 
 /// libarchive client read callback. Returns whatever compressed bytes

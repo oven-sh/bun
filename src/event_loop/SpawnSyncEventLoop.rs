@@ -354,6 +354,16 @@ impl SpawnSyncEventLoop {
         // both mirroring `bun.timespec`). The C ABI only sees `*const timespec`,
         // so re-express the borrow as a `uws::Timespec` for `tick_with_timeout`.
         let uws_ts = duration.map(|ts| uws::Timespec { sec: ts.sec, nsec: ts.nsec });
+        #[cfg(windows)]
+        if let Some(t) = self.uv_timer {
+            // ALIASING: store `*mut Self` here (not in `prepare_timer_on_windows`) so its
+            // provenance is a direct child of *this* frame's `&mut self`. Between this store and
+            // the re-entrant `on_uv_timer` callback, the only `self` field accessed is `uws_loop`
+            // (next line), which the callback never reads — so the raw tag at `did_timeout`'s
+            // bytes survives under Stacked Borrows.
+            // SAFETY: `t` is a valid initialized libuv timer handle owned by `self`.
+            unsafe { (*t.as_ptr()).data = (self as *mut Self).cast() };
+        }
         // SAFETY: uws_loop is valid and exclusively owned.
         unsafe { (*self.uws_loop.as_ptr()).tick_with_timeout(uws_ts.as_ref()) };
 
@@ -369,16 +379,17 @@ impl SpawnSyncEventLoop {
             }
             #[cfg(not(windows))]
             {
-                self.did_timeout = Timespec::now(TimespecMockMode::AllowMockedTime).order(ts)
-                    != core::cmp::Ordering::Less;
+                self.did_timeout.set(
+                    Timespec::now(TimespecMockMode::AllowMockedTime).order(ts)
+                        != core::cmp::Ordering::Less,
+                );
             }
         }
 
         // SAFETY: vtable contract.
         unsafe { (vt().event_loop_tick_tasks_only)(self.event_loop) };
 
-        let did_timeout = self.did_timeout;
-        self.did_timeout = false;
+        let did_timeout = self.did_timeout.replace(false);
 
         if did_timeout {
             return TickState::Timeout;

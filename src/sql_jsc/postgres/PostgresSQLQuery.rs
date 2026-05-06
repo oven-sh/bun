@@ -179,15 +179,18 @@ impl PostgresSQLQuery {
         queries_array: JSValue,
     ) {
         self.ref_();
-        // SAFETY: raw ptr derived from the exclusive `&mut self`; the guard fires at
-        // end-of-scope after all other borrows of `self` have ended. `ref_()` above
-        // guarantees the count stays >0 until this guard runs.
+        // SAFETY: `this_ptr` is derived from the exclusive `&mut self`. After this cast we
+        // route *every* field access through `this_ptr` and never touch `self` again, so
+        // under Stacked Borrows no parent-`Unique` use pops `this_ptr`'s SharedReadWrite
+        // before the guards fire. `ref_()` above keeps the count >0 until `_deref` runs.
         let this_ptr = self as *mut Self;
         let _deref = scopeguard::guard(this_ptr, |p| unsafe { Self::deref_(p) });
-        self.status = Status::Fail;
-        let Some(this_value) = self.this_value.try_get() else { return };
-        let _downgrade = scopeguard::guard((), |_| self.this_value.downgrade());
-        let Some(target_value) = self.get_target(global_object, true) else { return };
+        unsafe { (*this_ptr).status = Status::Fail };
+        let Some(this_value) = (unsafe { (*this_ptr).this_value.try_get() }) else { return };
+        // Capture the raw pointer (not `&mut self.this_value`) so the guard holds no
+        // borrow across the `get_target` call below, which itself reads `this_value`.
+        let _downgrade = scopeguard::guard(this_ptr, |p| unsafe { (*p).this_value.downgrade() });
+        let Some(target_value) = (unsafe { (*this_ptr).get_target(global_object, true) }) else { return };
 
         // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM, no other live borrow.
         let vm = unsafe { &mut *crate::jsc::VirtualMachine::get() };
@@ -203,15 +206,18 @@ impl PostgresSQLQuery {
 
     pub fn on_js_error(&mut self, err: JSValue, global_object: &JSGlobalObject) {
         self.ref_();
-        // SAFETY: raw ptr derived from the exclusive `&mut self`; the guard fires at
-        // end-of-scope after all other borrows of `self` have ended. `ref_()` above
-        // guarantees the count stays >0 until this guard runs.
+        // SAFETY: `this_ptr` is derived from the exclusive `&mut self`. After this cast we
+        // route *every* field access through `this_ptr` and never touch `self` again, so
+        // under Stacked Borrows no parent-`Unique` use pops `this_ptr`'s SharedReadWrite
+        // before the guards fire. `ref_()` above keeps the count >0 until `_deref` runs.
         let this_ptr = self as *mut Self;
         let _deref = scopeguard::guard(this_ptr, |p| unsafe { Self::deref_(p) });
-        self.status = Status::Fail;
-        let Some(this_value) = self.this_value.try_get() else { return };
-        let _downgrade = scopeguard::guard((), |_| self.this_value.downgrade());
-        let Some(target_value) = self.get_target(global_object, true) else { return };
+        unsafe { (*this_ptr).status = Status::Fail };
+        let Some(this_value) = (unsafe { (*this_ptr).this_value.try_get() }) else { return };
+        // Capture the raw pointer (not `&mut self.this_value`) so the guard holds no
+        // borrow across the `get_target` call below, which itself reads `this_value`.
+        let _downgrade = scopeguard::guard(this_ptr, |p| unsafe { (*p).this_value.downgrade() });
+        let Some(target_value) = (unsafe { (*this_ptr).get_target(global_object, true) }) else { return };
 
         // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM, no other live borrow.
         let vm = unsafe { &mut *crate::jsc::VirtualMachine::get() };

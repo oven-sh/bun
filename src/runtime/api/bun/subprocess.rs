@@ -10,7 +10,7 @@ use std::sync::Arc;
 use bun_ptr::{RefCount, RefCounted, RefPtr};
 
 use bun_aio::{FilePoll, KeepAlive};
-use bun_collections::CowString;
+use bun_ptr::CowString;
 use bun_core::Output;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, JSGlobalObject, JSPromise, JSValue, JsRef, JsResult,
@@ -29,7 +29,8 @@ use crate::api::bun_process::{
 use crate::api::bun::Terminal;
 use crate::api::js_bun_spawn_bindings;
 use crate::jsc::ipc as IPC;
-use crate::node::node_cluster_binding;
+#[path = "../../node/node_cluster_binding.rs"]
+mod node_cluster_binding;
 use crate::timer::{EventLoopTimer, EventLoopTimerState};
 use crate::webcore::{self, AbortSignal, Blob, FileSink};
 

@@ -94,7 +94,7 @@ pub enum HTTPRequestBody {
 impl HTTPRequestBody {
     pub const EMPTY: HTTPRequestBody = HTTPRequestBody::AnyBlob(AnyBlob::Blob(Blob::EMPTY));
 
-    pub fn store(&mut self) -> Option<&mut BlobStore> {
+    pub fn store(&self) -> Option<&BlobStore> {
         match self {
             HTTPRequestBody::AnyBlob(blob) => blob.store(),
             _ => None,
@@ -458,7 +458,7 @@ impl FetchTasklet {
                 // done resolve body
                 let old = core::mem::replace(
                     body,
-                    BodyValue::InternalBlob(body::InternalBlob {
+                    BodyValue::InternalBlob(InternalBlob {
                         bytes: scheduled_response_buffer,
                     }),
                 );
@@ -1033,7 +1033,7 @@ impl FetchTasklet {
         }
 
         let scheduled_response_buffer = core::mem::take(&mut self.scheduled_response_buffer);
-        let response = BodyValue::InternalBlob(body::InternalBlob {
+        let response = BodyValue::InternalBlob(InternalBlob {
             bytes: scheduled_response_buffer.list,
         });
         self.scheduled_response_buffer = MutableString::default();
@@ -1624,10 +1624,10 @@ pub struct FetchOptions {
     pub disable_keepalive: bool,
     pub disable_decompression: bool,
     pub reject_unauthorized: bool,
-    pub url: ZigURL,
+    pub url: ZigURL<'static>,
     pub verbose: http::HTTPVerboseLevel,
     pub redirect_type: FetchRedirect,
-    pub proxy: Option<ZigURL>,
+    pub proxy: Option<ZigURL<'static>>,
     pub proxy_headers: Option<Headers>,
     pub url_proxy_buffer: Box<[u8]>,
     pub signal: Option<Arc<AbortSignal>>,

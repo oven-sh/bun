@@ -166,8 +166,10 @@ impl All {
                 #[cfg(debug_assertions)]
                 debug_assert!(false); // can't remove a timer that was not inserted
             }
-            InHeap::Regular => self.timers.remove(timer),
-            InHeap::Fake => self.fake_timers.timers.remove(timer),
+            // SAFETY: `timer` is in `self.timers` per `in_heap`.
+            InHeap::Regular => unsafe { self.timers.remove(timer) },
+            // SAFETY: `timer` is in `self.fake_timers.timers` per `in_heap`.
+            InHeap::Fake => unsafe { self.fake_timers.timers.remove(timer) },
         }
         timer_ref.in_heap = InHeap::None;
         timer_ref.state = EventLoopTimerState::CANCELLED;

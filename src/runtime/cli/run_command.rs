@@ -2076,7 +2076,7 @@ impl RunCommand {
                                 }
 
                                 // implicit yarn commands
-                                if !yarn_commands::has(yarn_cmd) {
+                                if !yarn_commands::ALL_YARN_COMMANDS.contains(yarn_cmd) {
                                     copy_script.extend_from_slice(Self::BUN_RUN.as_bytes());
                                     copy_script.push(b' ');
                                     copy_script.extend_from_slice(yarn_cmd);

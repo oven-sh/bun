@@ -1096,6 +1096,7 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
     }
 }
 
+#[cfg(windows)]
 impl<'a> CopyFileWindows<'a> {
     pub fn on_read_write_loop_complete(&mut self) {
         self.event_loop.unref_concurrently();
@@ -1520,6 +1521,7 @@ impl<'a> CopyFileWindows<'a> {
     }
 }
 
+#[cfg(windows)]
 extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
     // SAFETY: req points to CopyFileWindows.io_request
     let this: &mut CopyFileWindows = unsafe {
@@ -1574,6 +1576,7 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
     this.on_complete(size);
 }
 
+#[cfg(windows)]
 extern "C" fn on_chmod(req: *mut libuv::fs_t) {
     // SAFETY: req points to CopyFileWindows.io_request
     let this: &mut CopyFileWindows = unsafe {
@@ -1602,6 +1605,7 @@ extern "C" fn on_chmod(req: *mut libuv::fs_t) {
     this.resolve_promise(this.written_bytes);
 }
 
+#[cfg(windows)]
 extern "C" fn on_mkdirp_complete_concurrent(
     this: *mut CopyFileWindows,
     err_: bun_sys::Result<()>,

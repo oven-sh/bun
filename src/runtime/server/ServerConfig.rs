@@ -857,8 +857,8 @@ impl ServerConfig {
                     }
                 }
 
-                let Some(route) = AnyRoute::from_js(global, &path, value, &mut *init_ctx)? else {
-                    return global.throw_invalid_arguments(
+                let Some(route) = any_route_from_js(global, &path, value, &mut *init_ctx)? else {
+                    return Err(global.throw_invalid_arguments(
                         "'routes' expects a Record<string, Response | HTMLBundle | {[method: string]: (req: BunRequest) => Response|Promise<Response>}>\n\n\
                          To bundle frontend apps on-demand with Bun.serve(), import HTML files.\n\n\
                          Example:\n\n\
@@ -888,10 +888,9 @@ impl ServerConfig {
                          });\n\
                          ```\n\n\
                          See https://bun.com/docs/api/http for more information.",
-                        &[],
-                    );
+                    ));
                 };
-                args.static_routes.push(StaticRouteEntry {
+                init_ctx.user_routes.push(StaticRouteEntry {
                     path,
                     route,
                     method: http_method::Optional::Any,

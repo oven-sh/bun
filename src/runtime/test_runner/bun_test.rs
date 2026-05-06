@@ -1184,15 +1184,16 @@ impl<'a> BunTest<'a> {
 
                 bun_core::scoped_log!(bun_test_group, "callTestCallback -> promise: data {}", cfg_data);
 
-                match promise.status() {
+                // SAFETY: `as_promise` returned a non-null GC-managed JSPromise.
+                match unsafe { (*promise).status() } {
                     PromiseStatus::Pending => {
                         // not immediately resolved; register 'then' to handle the result when it becomes available
                         let this_ref: RefDataPtr = if let Some(dcb_ref_value) = &dcb_ref {
-                            dcb_ref_value.clone()
+                            dcb_ref_value.dupe_ref()
                         } else {
                             Self::ref_(&this_strong, cfg_data.clone())
                         };
-                        let _ = result.then(global_this, bun_ptr::IntrusiveRc::into_raw(this_ref), Self::bun_test_then, Self::bun_test_catch);
+                        let _ = result.then(global_this, bun_ptr::IntrusiveRc::into_raw(this_ref), bun_test_then_c, bun_test_catch_c);
                         // TODO: properly propagate exception upwards
                         return None;
                     }
@@ -1201,7 +1202,8 @@ impl<'a> BunTest<'a> {
                         return Some(cfg_data);
                     }
                     PromiseStatus::Rejected => {
-                        let value = promise.result(global_this.vm());
+                        // SAFETY: `promise` is a non-null GC-managed JSPromise.
+                        let value = unsafe { (*promise).result(global_this.vm()) };
                         // SAFETY: re-derive via `UnsafeCell` after the JS/microtask
                         // drain above; sole `&mut` at this point.
                         unsafe { (*this).on_uncaught_exception(global_this, Some(value), true, cfg_data.clone()) };
@@ -1268,7 +1270,8 @@ impl<'a> BunTest<'a> {
             Output::flush();
         }
 
-        global_this.bun_vm().run_error_handler(exception, None);
+        // SAFETY: bun_vm() returns the live per-thread VM.
+        unsafe { (*global_this.bun_vm()).run_error_handler(exception, None) };
 
         if matches!(
             handle_status,
@@ -1287,9 +1290,9 @@ impl<'a> Drop for BunTest<'a> {
         group_begin!();
         debug::group::end();
 
-        if self.timer.state == EventLoopTimerState::Active {
+        if self.timer.state == EventLoopTimerState::ACTIVE {
             // must remove an active timer to prevent UAF (if the timer were to trigger after BunTest deinit)
-            VirtualMachine::get().timer.remove(&mut self.timer);
+            vm_timer().remove(&mut self.timer);
         }
 
         for entry in self.extra_execution_entries.drain(..) {

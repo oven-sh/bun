@@ -394,16 +394,16 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // manual. Model as Option<NonNull<AbortSignal>> with a Drop guard in Phase B.
     let mut signal: Option<NonNull<AbortSignal>> = None;
     // Custom Hostname
-    let mut hostname: Option<Box<[u8]>> = None;
-    let mut range: Option<Box<[u8]>> = None;
-    let mut unix_socket_path: ZigString::Slice = ZigString::Slice::empty();
+    let mut hostname: Option<bun_core::ZBox> = None;
+    let mut range: Option<bun_core::ZBox> = None;
+    let mut unix_socket_path: ZigStringSlice = ZigStringSlice::empty();
 
     // TODO(port): lifetime — `url` and `proxy` borrow into this buffer. Kept as
     // Vec<u8> (owned) here; ZigURL fields are raw slices in Phase A.
     let mut url_proxy_buffer: Vec<u8> = Vec::new();
     let mut url_type = URLType::Remote;
 
-    let mut ssl_config: Option<SSLConfig::SharedPtr> = None;
+    let mut ssl_config: Option<ssl_config::SharedPtr> = None;
     let mut reject_unauthorized = vm.get_tls_reject_unauthorized();
     let mut check_server_identity: JSValue = JSValue::ZERO;
 

@@ -574,12 +574,17 @@ impl Request {
         this_value: JSValue,
         formatter: &mut F,
         writer: &mut W,
-    ) -> Result<(), bun_core::Error>
+    ) -> core::fmt::Result
     where
         F: bun_jsc::ConsoleFormatter,
         W: core::fmt::Write,
-        // TODO(port): narrow error set
     {
+        // PORT NOTE: return type narrowed to `core::fmt::Result` (matches
+        // Response::write_format / Blob::write_format). Funnel JsError /
+        // AllocError through `fmt::Error`; Zig's `anyerror!void` carried no
+        // payload either.
+        let js_err = |_: JsError| core::fmt::Error;
+
         // SAFETY: FFI call into JS builtin; this_value is a valid JSValue on stack
         let params_object = unsafe { Bun__getParamsIfBunRequest(this_value) };
 
@@ -592,32 +597,38 @@ impl Request {
             writer,
             "{} ({}) {{\n",
             class_label,
-            bun_fmt::size(self.body.value().size(), Default::default())
+            bun_fmt::size(self.body.size() as usize, Default::default())
         )?;
         {
-            formatter.indent_mut().add(1);
+            formatter.indent_inc();
             // Zig: `defer formatter.indent -|= 1;` — must run on every exit incl. `?` error paths.
             // SAFETY: `formatter` outlives `_indent_guard` (same scope, guard dropped first);
             // the raw pointer is only dereferenced in the closure at scope exit, at which point
             // no other borrow of `formatter` is live.
             let _indent_guard = scopeguard::guard(
-                formatter.indent_mut() as *mut _,
-                |p| unsafe { *p = (*p).saturating_sub(1) },
+                formatter as *mut F,
+                |p| unsafe { (*p).indent_dec() },
             );
+            // SAFETY: re-borrow for the body of the scope; `_indent_guard` only
+            // dereferences at drop after this borrow ends.
+            let formatter = unsafe { &mut *(_indent_guard.cast_const() as *mut F as *mut F) };
+            let _ = &formatter; // suppress unused if optimized away
+            // Re-acquire a usable &mut F for the rest of the block.
+            // (scopeguard owns the raw pointer; we still hold the original &mut via outer scope.)
 
             formatter.write_indent(writer)?;
-            writer.write_str(Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>method<d>:<r> \""))?;
+            writer.write_str(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>method<d>:<r> \""))?;
 
-            writer.write_str(<&'static str>::from(self.method))?;
+            write!(writer, "{:?}", self.method)?;
             writer.write_str("\"")?;
             formatter
-                .print_comma::<ENABLE_ANSI_COLORS, _>(writer)
+                .print_comma::<_, ENABLE_ANSI_COLORS>(writer)
                 .expect("unreachable");
             writer.write_str("\n")?;
 
             formatter.write_indent(writer)?;
-            writer.write_str(Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>url<d>:<r> "))?;
-            self.ensure_url()?;
+            writer.write_str(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>url<d>:<r> "))?;
+            self.ensure_url().map_err(|_| core::fmt::Error)?;
             write!(
                 writer,
                 "{}",
@@ -630,36 +641,40 @@ impl Request {
                 )
             )?;
             formatter
-                .print_comma::<ENABLE_ANSI_COLORS, _>(writer)
+                .print_comma::<_, ENABLE_ANSI_COLORS>(writer)
                 .expect("unreachable");
             writer.write_str("\n")?;
 
             if params_object.is_cell() {
                 formatter.write_indent(writer)?;
-                writer.write_str(Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>params<d>:<r> "))?;
-                formatter.print_as::<ENABLE_ANSI_COLORS, _>(
-                    bun_jsc::FormatTag::Private,
-                    writer,
-                    params_object,
-                    bun_jsc::JSType::Object,
-                )?;
+                writer.write_str(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>params<d>:<r> "))?;
                 formatter
-                    .print_comma::<ENABLE_ANSI_COLORS, _>(writer)
+                    .print_as::<_, ENABLE_ANSI_COLORS>(
+                        bun_jsc::FormatTag::Private,
+                        writer,
+                        params_object,
+                        bun_jsc::JSType::Object,
+                    )
+                    .map_err(js_err)?;
+                formatter
+                    .print_comma::<_, ENABLE_ANSI_COLORS>(writer)
                     .expect("unreachable");
                 writer.write_str("\n")?;
             }
 
             formatter.write_indent(writer)?;
-            writer.write_str(Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>headers<d>:<r> "))?;
-            let headers_js = self.get_headers(formatter.global_this())?;
-            formatter.print_as::<ENABLE_ANSI_COLORS, _>(
-                bun_jsc::FormatTag::Private,
-                writer,
-                headers_js,
-                bun_jsc::JSType::DOMWrapper,
-            )?;
+            writer.write_str(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>headers<d>:<r> "))?;
+            let headers_js = self.get_headers(formatter.global_this()).map_err(js_err)?;
+            formatter
+                .print_as::<_, ENABLE_ANSI_COLORS>(
+                    bun_jsc::FormatTag::Private,
+                    writer,
+                    headers_js,
+                    bun_jsc::JSType::DOMWrapper,
+                )
+                .map_err(js_err)?;
 
-            match self.body.value() {
+            match &mut *self.body {
                 BodyValue::Blob(blob) => {
                     writer.write_str("\n")?;
                     formatter.write_indent(writer)?;
@@ -668,26 +683,30 @@ impl Request {
                 BodyValue::InternalBlob(_) | BodyValue::WTFStringImpl(_) => {
                     writer.write_str("\n")?;
                     formatter.write_indent(writer)?;
-                    let size = self.body.value().size();
+                    let size = self.body.size();
                     if size == 0 {
                         // TODO(port): Blob.initEmpty(undefined) — `undefined` global ptr;
                         // Phase B should pass a real global or make initEmpty not need one.
-                        let mut empty = Blob::init_empty_unchecked();
+                        let mut empty = Blob::init_empty(formatter.global_this());
                         empty.write_format::<F, W, ENABLE_ANSI_COLORS>(formatter, writer)?;
                     } else {
-                        Blob::write_format_for_size::<W, ENABLE_ANSI_COLORS>(false, size, writer)?;
+                        crate::webcore::blob::write_format_for_size::<W, ENABLE_ANSI_COLORS>(
+                            false, size, writer,
+                        )?;
                     }
                 }
                 BodyValue::Locked(_) => {
                     if let Some(stream) = self.get_body_readable_stream(formatter.global_this()) {
                         writer.write_str("\n")?;
                         formatter.write_indent(writer)?;
-                        formatter.print_as::<ENABLE_ANSI_COLORS, _>(
-                            bun_jsc::FormatTag::Object,
-                            writer,
-                            stream.value,
-                            stream.value.js_type(),
-                        )?;
+                        formatter
+                            .print_as::<_, ENABLE_ANSI_COLORS>(
+                                bun_jsc::FormatTag::Object,
+                                writer,
+                                stream.value,
+                                stream.value.js_type(),
+                            )
+                            .map_err(js_err)?;
                     }
                 }
                 _ => {}

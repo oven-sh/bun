@@ -606,7 +606,7 @@ impl Expect {
     pub fn finalize(this: *mut Self) {
         // SAFETY: called by codegen finalize on mutator thread; `this` is the m_ctx Box payload
         unsafe {
-            (*this).custom_label.deref_();
+            (*this).custom_label.deref();
             // .zig:331 `if (this.parent) |parent| parent.deref();`
             // RefDataPtr = RefPtr<RefData> has NO `Drop` impl (src/ptr/ref_count.rs)
             // so the Box drop below would leak the +1 — release explicitly.
@@ -624,7 +624,14 @@ impl Expect {
 
         let mut custom_label = bun_str::String::empty();
         if arguments.len() > 1 {
-            if arguments[1].is_string() || arguments[1].implements_to_string(global_this)? {
+            // PORT NOTE: inline of `JSValue.implementsToString` (JSValue.zig:1608) —
+            // upstream `bun_jsc::JSValue` has no Rust binding yet.
+            let implements_to_string = arguments[1].is_object()
+                && matches!(
+                    arguments[1].fast_get(global_this, bun_jsc::BuiltinName::toString)?,
+                    Some(f) if f.is_cell() && f.is_callable()
+                );
+            if arguments[1].is_string() || implements_to_string {
                 let label = arguments[1].to_bun_string(global_this)?;
                 if global_this.has_exception() {
                     return Ok(JSValue::ZERO);

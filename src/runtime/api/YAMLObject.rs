@@ -2,29 +2,141 @@ use core::ffi::c_void;
 
 use bun_collections::{HashMap, StringHashMap};
 use bun_core::StackCheck;
-use bun_interchange::yaml::YAML;
-use bun_js_parser::ast::{self, Expr};
-use bun_jsc::wtf;
+use bun_interchange::yaml::{YamlParseError, YAML};
+use bun_js_parser::ASTMemoryAllocator;
 use bun_jsc::{
-    CallFrame, JSFunction, JSGlobalObject, JSPropertyIterator, JSValue, JsError, JsResult,
-    MarkedArgumentBuffer,
+    self as jsc, wtf, CallFrame, JSFunction, JSGlobalObject, JSPropertyIterator,
+    JSPropertyIteratorOptions, JSValue, JsError, JsResult, MarkedArgumentBuffer,
 };
-use bun_string::ZigString;
 use bun_logger as logger;
-use crate::node::BlobOrStringOrBuffer;
-use bun_str::String;
+use bun_logger::js_ast::{expr::Data as ExprData, E, Expr};
+use bun_str::{String as BunString, ZigString};
+
+use crate::node::types::SliceWithUnderlyingString;
+use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
+
+// ──────────────────────────────────────────────────────────────────────────
+// Local FFI / extension shims for upstream methods that live in still-gated
+// `bun_jsc` modules (`JSGlobalObject.throwStackOverflow`,
+// `JSValue.unwrapBoxedPrimitive`, `JSValue.putMayBeIndex`) or in
+// `bun_str::lib_draft_b1.rs` (`String::char_at`, `String::substring_with_len`).
+// Kept here so this file compiles without touching upstream crates.
+// ──────────────────────────────────────────────────────────────────────────
+unsafe extern "C" {
+    fn JSGlobalObject__throwStackOverflow(this: *const JSGlobalObject);
+    fn JSC__JSValue__unwrapBoxedPrimitive(global: *const JSGlobalObject, this: JSValue) -> JSValue;
+    fn JSC__JSValue__putMayBeIndex(
+        target: JSValue,
+        global: *const JSGlobalObject,
+        key: *const BunString,
+        value: JSValue,
+    );
+}
+
+trait JSGlobalObjectStackOverflowExt {
+    fn throw_stack_overflow(&self) -> JsError;
+}
+impl JSGlobalObjectStackOverflowExt for JSGlobalObject {
+    #[inline]
+    fn throw_stack_overflow(&self) -> JsError {
+        // SAFETY: FFI — `self` is a valid JSGlobalObject*; C++ side has no extra preconditions.
+        unsafe { JSGlobalObject__throwStackOverflow(self) };
+        JsError::Thrown
+    }
+}
+
+trait JSValueYamlExt {
+    fn unwrap_boxed_primitive(self, global: &JSGlobalObject) -> JsResult<JSValue>;
+    fn put_may_be_index(
+        self,
+        global: &JSGlobalObject,
+        key: &BunString,
+        value: JSValue,
+    ) -> JsResult<()>;
+}
+impl JSValueYamlExt for JSValue {
+    #[inline]
+    fn unwrap_boxed_primitive(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        // Mirrors JSValue.zig:1343 — fast-path skips the FFI when not an object.
+        if !self.is_object() {
+            return Ok(self);
+        }
+        // SAFETY: `global` is live; `self` is a valid encoded JSValue.
+        let result = unsafe { JSC__JSValue__unwrapBoxedPrimitive(global, self) };
+        if global.has_exception() {
+            return Err(JsError::Thrown);
+        }
+        Ok(result)
+    }
+    #[inline]
+    fn put_may_be_index(
+        self,
+        global: &JSGlobalObject,
+        key: &BunString,
+        value: JSValue,
+    ) -> JsResult<()> {
+        // SAFETY: `global` is live; `key` borrowed for the call; FFI may set an exception.
+        unsafe { JSC__JSValue__putMayBeIndex(self, global, key, value) };
+        if global.has_exception() {
+            Err(JsError::Thrown)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+trait BunStringYamlExt {
+    fn char_at(&self, i: usize) -> u16;
+    fn substring_with_len(&self, start: usize, end: usize) -> BunString;
+}
+impl BunStringYamlExt for BunString {
+    #[inline]
+    fn char_at(&self, i: usize) -> u16 {
+        // PORT NOTE: shim for `bun_str::String::char_at` (still in `lib_draft_b1.rs`).
+        // Reads a single code unit at `i` from the underlying WTF/Zig string.
+        if self.is_utf16() {
+            self.utf16().get(i).copied().unwrap_or(0)
+        } else {
+            u16::from(self.latin1().get(i).copied().unwrap_or(0))
+        }
+    }
+    #[inline]
+    fn substring_with_len(&self, start: usize, end: usize) -> BunString {
+        // PORT NOTE: shim for `bun_str::String::substring_with_len` — produces a
+        // borrowed `ZigString`-backed view into `self`'s storage since the real
+        // WTF substring helper isn't wired yet. Only the `space.str` newline path
+        // hits this (clamped to ≤10 code units) and `self` outlives the result.
+        if self.is_utf16() {
+            let s = self.utf16();
+            let end = end.min(s.len());
+            BunString::borrow_utf16(&s[start.min(end)..end])
+        } else {
+            let s = self.latin1();
+            let end = end.min(s.len());
+            BunString::ascii(&s[start.min(end)..end])
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 
 pub fn create(global_this: &JSGlobalObject) -> JSValue {
     let object = JSValue::create_empty_object(global_this, 2);
     object.put(
         global_this,
-        ZigString::static_(b"parse"),
-        JSFunction::create(global_this, b"parse", parse, 1, Default::default()),
+        b"parse",
+        JSFunction::create(global_this, b"parse", __jsc_host_parse, 1, Default::default()),
     );
     object.put(
         global_this,
-        ZigString::static_(b"stringify"),
-        JSFunction::create(global_this, b"stringify", stringify, 3, Default::default()),
+        b"stringify",
+        JSFunction::create(
+            global_this,
+            b"stringify",
+            __jsc_host_stringify,
+            3,
+            Default::default(),
+        ),
     );
 
     object
@@ -41,7 +153,7 @@ pub fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JS
     }
 
     if !replacer.is_undefined_or_null() {
-        return global.throw("YAML.stringify does not support the replacer argument", format_args!(""));
+        return Err(global.throw("YAML.stringify does not support the replacer argument"));
     }
 
     // PERF(port): was bun.AllocationScope (debug-tracked allocator) — global mimalloc in Phase A
@@ -53,7 +165,7 @@ pub fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JS
             StringifyError::OutOfMemory => Err(JsError::OutOfMemory),
             StringifyError::JsError => Err(JsError::Thrown),
             StringifyError::JsTerminated => Err(JsError::Terminated),
-            StringifyError::StackOverflow => global.throw_stack_overflow(),
+            StringifyError::StackOverflow => Err(global.throw_stack_overflow()),
         };
     }
 
@@ -62,11 +174,11 @@ pub fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JS
             StringifyError::OutOfMemory => Err(JsError::OutOfMemory),
             StringifyError::JsError => Err(JsError::Thrown),
             StringifyError::JsTerminated => Err(JsError::Terminated),
-            StringifyError::StackOverflow => global.throw_stack_overflow(),
+            StringifyError::StackOverflow => Err(global.throw_stack_overflow()),
         };
     }
 
-    Ok(stringifier.builder.to_string(global))
+    stringifier.builder.to_string(global)
 }
 
 pub struct Stringifier {
@@ -84,7 +196,7 @@ pub struct Stringifier {
 pub enum Space {
     Minified,
     Number(u32),
-    Str(String),
+    Str(BunString),
 }
 
 impl Space {
@@ -128,6 +240,16 @@ pub struct AnchorAlias {
     name: AnchorAliasName,
 }
 
+impl Default for AnchorAlias {
+    fn default() -> Self {
+        // PORT NOTE: `HashMap::get_or_put` requires `V: Default` to fill the
+        // freshly-inserted slot before the caller overwrites `*value_ptr`. Zig
+        // left it `undefined`; this is the closest legal Rust equivalent and is
+        // immediately overwritten by the caller (see `find_anchors_and_aliases`).
+        AnchorAlias { anchored: false, used: false, name: AnchorAliasName::Root }
+    }
+}
+
 impl AnchorAlias {
     pub fn init(origin: ValueOrigin) -> AnchorAlias {
         AnchorAlias {
@@ -150,7 +272,7 @@ pub enum AnchorAliasName {
     Root,
     ArrayItem(usize),
     PropValue {
-        prop_name: String,
+        prop_name: BunString,
         // added after the name
         counter: usize,
     },
@@ -159,7 +281,7 @@ pub enum AnchorAliasName {
 pub enum ValueOrigin {
     Root,
     ArrayItem,
-    PropValue(String),
+    PropValue(BunString),
 }
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
@@ -232,8 +354,7 @@ impl Stringifier {
 
         if unwrapped.is_big_int() {
             return Err(global
-                .throw("YAML.stringify cannot serialize BigInt", format_args!(""))
-                .unwrap_err()
+                .throw("YAML.stringify cannot serialize BigInt")
                 .into());
         }
 
@@ -297,8 +418,15 @@ impl Stringifier {
         }
 
         // const generics: <SKIP_EMPTY_NAME, INCLUDE_VALUE>
-        let mut iter =
-            JSPropertyIterator::<false, true>::init(global, unwrapped.to_object(global)?)?;
+        let mut iter = JSPropertyIterator::init(
+            global,
+            unwrapped.to_object(global)?,
+            JSPropertyIteratorOptions {
+                skip_empty_name: false,
+                include_value: true,
+                ..Default::default()
+            },
+        )?;
 
         while let Some(prop_name) = iter.next()? {
             if iter.value.is_undefined() || iter.value.is_symbol() || iter.value.is_function() {
@@ -353,8 +481,7 @@ impl Stringifier {
 
         if unwrapped.is_big_int() {
             return Err(global
-                .throw("YAML.stringify cannot serialize BigInt", format_args!(""))
-                .unwrap_err()
+                .throw("YAML.stringify cannot serialize BigInt")
                 .into());
         }
 
@@ -378,7 +505,7 @@ impl Stringifier {
         debug_assert!(unwrapped.is_object());
 
         let has_anchor: Option<&mut AnchorAlias> = 'has_anchor: {
-            let Some(anchor) = self.known_collections.get_ptr(&unwrapped) else {
+            let Some(anchor) = self.known_collections.get_mut(&unwrapped) else {
                 break 'has_anchor None;
             };
 
@@ -406,7 +533,7 @@ impl Stringifier {
                         self.builder.append_latin1(b"value");
                         self.builder.append_usize(*counter);
                     } else {
-                        self.builder.append_string(prop_name);
+                        self.builder.append_string(*prop_name);
                         if *counter != 0 {
                             self.builder.append_usize(*counter);
                         }
@@ -458,7 +585,7 @@ impl Stringifier {
                 }
                 Space::Number(_) | Space::Str(_) => {
                     self.builder
-                        .ensure_unused_capacity(iter.len * b"- ".len());
+                        .ensure_unused_capacity(iter.len as usize * b"- ".len());
                     let mut first = true;
                     while let Some(item) = iter.next()? {
                         if item.is_undefined() || item.is_symbol() || item.is_function() {
@@ -485,8 +612,15 @@ impl Stringifier {
         }
 
         // const generics: <SKIP_EMPTY_NAME, INCLUDE_VALUE>
-        let mut iter =
-            JSPropertyIterator::<false, true>::init(global, unwrapped.to_object(global)?)?;
+        let mut iter = JSPropertyIterator::init(
+            global,
+            unwrapped.to_object(global)?,
+            JSPropertyIteratorOptions {
+                skip_empty_name: false,
+                include_value: true,
+                ..Default::default()
+            },
+        )?;
 
         if iter.len == 0 {
             self.builder.append_latin1(b"{}");
@@ -580,13 +714,13 @@ impl Stringifier {
                 self.builder
                     .ensure_unused_capacity(indent_count * clamped.length());
                 for _ in 0..indent_count {
-                    self.builder.append_string(&clamped);
+                    self.builder.append_string(clamped);
                 }
             }
         }
     }
 
-    fn append_double_quoted_string(&mut self, str: &String) {
+    fn append_double_quoted_string(&mut self, str: &BunString) {
         self.builder.append_lchar(b'"');
 
         for i in 0..str.length() {
@@ -646,12 +780,12 @@ impl Stringifier {
         self.builder.append_lchar(b'"');
     }
 
-    fn append_string(&mut self, str: &String) {
+    fn append_string(&mut self, str: &BunString) {
         if string_needs_quotes(str) {
             self.append_double_quoted_string(str);
             return;
         }
-        self.builder.append_string(str);
+        self.builder.append_string(*str);
     }
 }
 
@@ -660,7 +794,7 @@ fn prop_value_needs_newline(value: JSValue) -> bool {
     !value.is_number() && !value.is_boolean() && !value.is_null() && !value.is_string()
 }
 
-fn string_needs_quotes(str: &String) -> bool {
+fn string_needs_quotes(str: &BunString) -> bool {
     if str.is_empty() {
         return true;
     }
@@ -826,7 +960,7 @@ fn string_needs_quotes(str: &String) -> bool {
     false
 }
 
-fn string_is_number(str: &String, offset: &mut usize) -> bool {
+fn string_is_number(str: &BunString, offset: &mut usize) -> bool {
     let start = *offset;
     let mut i = start;
 
@@ -975,7 +1109,7 @@ pub fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValu
     let arena = bun_alloc::Arena::new();
     // PERF(port): was arena bulk-free — profile in Phase B
 
-    let mut ast_memory_allocator = ast::ASTMemoryAllocator::new(&arena);
+    let mut ast_memory_allocator = ASTMemoryAllocator::new(&arena);
     let _ast_scope = ast_memory_allocator.enter();
 
     let [input_value] = call_frame.arguments_as_array::<1>();
@@ -985,9 +1119,15 @@ pub fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValu
             break 'input v;
         }
         let str = input_value.to_bun_string(global)?;
-        BlobOrStringOrBuffer::StringOrBuffer(crate::node::StringOrBuffer::String(
-            str.to_slice(&arena),
-        ))
+        // PORT NOTE: Zig's `str.toSlice(allocator)` is a `SliceWithUnderlyingString`
+        // bundling the (possibly-transcoded) UTF-8 view with its backing
+        // `bun.String` ref. The local `types::SliceWithUnderlyingString` stub
+        // exposes the same field shape.
+        let utf8 = str.to_utf8_without_ref();
+        BlobOrStringOrBuffer::StringOrBuffer(StringOrBuffer::String(SliceWithUnderlyingString {
+            utf8,
+            underlying: str,
+        }))
     };
 
     let mut log = logger::Log::init();
@@ -996,21 +1136,19 @@ pub fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValu
 
     let root = match YAML::parse(&source, &mut log, &arena) {
         Ok(root) => root,
-        Err(err) if err == bun_core::err!("OutOfMemory") => return Err(JsError::OutOfMemory),
-        Err(err) if err == bun_core::err!("StackOverflow") => return global.throw_stack_overflow(),
-        Err(_) => {
+        Err(YamlParseError::OutOfMemory) => return Err(JsError::OutOfMemory),
+        Err(YamlParseError::StackOverflow) => return Err(global.throw_stack_overflow()),
+        Err(YamlParseError::SyntaxError) => {
             if !log.msgs.is_empty() {
                 let first_msg = &log.msgs[0];
                 let error_text = &first_msg.data.text;
-                return global.throw_value(global.create_syntax_error_instance(
-                    "YAML Parse error: {s}",
-                    format_args!("{}", bstr::BStr::new(error_text)),
-                ));
+                return Err(global.throw_value(global.create_syntax_error_instance(
+                    format_args!("YAML Parse error: {}", bstr::BStr::new(error_text)),
+                )));
             }
-            return global.throw_value(global.create_syntax_error_instance(
-                "YAML Parse error: Unable to parse YAML string",
-                format_args!(""),
-            ));
+            return Err(global.throw_value(global.create_syntax_error_instance(
+                format_args!("YAML Parse error: Unable to parse YAML string"),
+            )));
         }
     };
 
@@ -1065,6 +1203,19 @@ impl From<bun_alloc::AllocError> for ToJsError {
     }
 }
 
+fn estring_to_js(str: &E::EString, global: &JSGlobalObject) -> JsResult<JSValue> {
+    // PORT NOTE: shim for `EString::to_js(allocator, global)` (lives in
+    // `bun_js_parser::ast::e::String` Zig-side). The YAML parser never builds
+    // ropes, so the simple slice → JS path is sufficient.
+    if str.is_utf16 {
+        let zig = ZigString::init_utf16(str.slice16());
+        let bun_s = BunString::init(zig);
+        jsc::bun_string_jsc::to_js(&bun_s, global)
+    } else {
+        jsc::bun_string_jsc::create_utf8_for_js(global, str.slice8())
+    }
+}
+
 impl<'a> ParserCtx<'a> {
     // deinit: seen_objects has Drop; no explicit impl needed.
 
@@ -1072,7 +1223,8 @@ impl<'a> ParserCtx<'a> {
         // SAFETY: MarkedArgumentBuffer::run passes valid non-null pointers for the duration of the call
         let ctx = unsafe { &mut *ctx };
         let args = unsafe { &mut *args };
-        ctx.result = match ctx.to_js(args, ctx.root) {
+        let root = ctx.root;
+        ctx.result = match ctx.to_js(args, root) {
             Ok(v) => v,
             Err(ToJsError::OutOfMemory) => {
                 ctx.result = ctx.global.throw_out_of_memory_value();
@@ -1083,7 +1235,8 @@ impl<'a> ParserCtx<'a> {
                 return;
             }
             Err(ToJsError::StackOverflow) => {
-                ctx.result = ctx.global.throw_stack_overflow().unwrap_or(JSValue::ZERO);
+                let _ = ctx.global.throw_stack_overflow();
+                ctx.result = JSValue::ZERO;
                 return;
             }
         };
@@ -1097,24 +1250,24 @@ impl<'a> ParserCtx<'a> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(ToJsError::StackOverflow);
         }
-        match &expr.data {
-            ast::ExprData::ENull(_) => Ok(JSValue::NULL),
-            ast::ExprData::EBoolean(boolean) => Ok(JSValue::from(boolean.value)),
-            ast::ExprData::ENumber(number) => Ok(JSValue::js_number(number.value)),
-            ast::ExprData::EString(str) => {
+        match expr.data {
+            ExprData::ENull(_) => Ok(JSValue::NULL),
+            ExprData::EBoolean(boolean) => Ok(JSValue::from(boolean.value)),
+            ExprData::ENumber(number) => Ok(JSValue::js_number(number.value)),
+            ExprData::EString(str) => {
                 // TODO(port): move to *_jsc — EString::to_js is a JSC extension trait
-                Ok(str.to_js(self.global)?)
+                Ok(estring_to_js(str.get(), self.global)?)
             }
-            ast::ExprData::EArray(e_array) => {
-                if let Some(arr) = self.seen_objects.get(&(*e_array as *const _ as *const c_void)) {
+            ExprData::EArray(e_array) => {
+                let key = e_array.as_ptr() as *const c_void;
+                if let Some(arr) = self.seen_objects.get(&key) {
                     return Ok(*arr);
                 }
 
-                let arr = JSValue::create_empty_array(self.global, e_array.items.len)?;
+                let arr = JSValue::create_empty_array(self.global, e_array.items.len as usize)?;
 
                 args.append(arr);
-                self.seen_objects
-                    .put(*e_array as *const _ as *const c_void, arr)?;
+                self.seen_objects.insert(key, arr);
 
                 for (_i, item) in e_array.slice().iter().enumerate() {
                     let i: u32 = u32::try_from(_i).unwrap();
@@ -1124,19 +1277,17 @@ impl<'a> ParserCtx<'a> {
 
                 Ok(arr)
             }
-            ast::ExprData::EObject(e_object) => {
-                if let Some(obj) = self
-                    .seen_objects
-                    .get(&(*e_object as *const _ as *const c_void))
-                {
+            ExprData::EObject(e_object) => {
+                let key = e_object.as_ptr() as *const c_void;
+                if let Some(obj) = self.seen_objects.get(&key) {
                     return Ok(*obj);
                 }
 
-                let obj = JSValue::create_empty_object(self.global, e_object.properties.len);
+                let obj =
+                    JSValue::create_empty_object(self.global, e_object.properties.len as usize);
 
                 args.append(obj);
-                self.seen_objects
-                    .put(*e_object as *const _ as *const c_void, obj)?;
+                self.seen_objects.insert(key, obj);
 
                 for prop in e_object.properties.slice() {
                     let key_expr = prop.key.unwrap();
@@ -1164,5 +1315,5 @@ impl<'a> ParserCtx<'a> {
 //   source:     src/runtime/api/YAMLObject.zig (1094 lines)
 //   confidence: medium
 //   todos:      2
-//   notes:      wtf::StringBuilder append_* method names guessed; JSPropertyIterator const-generic shape and get_or_put API need Phase B verification; arena/ASTMemoryAllocator interaction needs review; u16 char literal patterns use hex with comments
+//   notes:      wtf::StringBuilder append_* method names guessed; JSPropertyIterator const-generic shape and get_or_put API need Phase B verification; arena/ASTMemoryAllocator interaction needs review; u16 char literal patterns use hex with comments. Several upstream methods shimmed locally pending un-gate (throw_stack_overflow, unwrap_boxed_primitive, put_may_be_index, String::char_at/substring_with_len).
 // ──────────────────────────────────────────────────────────────────────────

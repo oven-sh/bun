@@ -2011,22 +2011,37 @@ macro_rules! path_literal {
 // until `bun_md` is added to `runtime/Cargo.toml`. Swap for `use bun_md as md;`
 // once the dep edge lands.
 pub(super) mod md_stub {
+    use bun_collections::StringHashMap;
+
     #[derive(Clone, Copy)]
     pub struct Options;
     impl Options { pub const TERMINAL: Self = Self; }
-    pub struct ImageUrlCollector;
-    impl ImageUrlCollector {
-        pub fn init() -> Self { Self }
-        pub fn renderer(&mut self) -> &mut Self { self }
-        pub fn urls(&self) -> &[&[u8]] { &[] }
+    pub struct ImageUrlCollector {
+        pub urls: Vec<Box<[u8]>>,
     }
-    pub struct AnsiTheme { pub light: bool }
+    impl ImageUrlCollector {
+        pub fn init() -> Self { Self { urls: Vec::new() } }
+        pub fn renderer(&mut self) -> &mut Self { self }
+    }
+    pub struct AnsiTheme<'a> {
+        pub light: bool,
+        pub columns: u16,
+        pub colors: bool,
+        pub hyperlinks: bool,
+        pub kitty_graphics: bool,
+        pub remote_image_paths: Option<&'a StringHashMap<Box<[u8]>>>,
+        pub image_base_dir: &'a [u8],
+    }
     pub fn detect_kitty_graphics() -> bool { false }
     pub fn detect_light_background() -> bool { false }
     pub fn render_with_renderer<R>(_src: &[u8], _opts: Options, _r: R) -> Result<(), ()> {
         todo!("blocked_on: bun_md")
     }
-    pub fn render_to_ansi(_src: &[u8], _opts: Options, _theme: AnsiTheme) -> Result<Vec<u8>, ()> {
+    pub fn render_to_ansi(
+        _src: &[u8],
+        _opts: Options,
+        _theme: AnsiTheme<'_>,
+    ) -> Result<Option<Vec<u8>>, bun_core::Error> {
         todo!("blocked_on: bun_md")
     }
 }

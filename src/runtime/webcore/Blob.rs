@@ -4546,15 +4546,12 @@ impl Blob {
 
 impl Blob {
     #[inline]
-    pub fn get(
+    pub fn get<const MOVE: bool, const REQUIRE_ARRAY: bool>(
         global: &JSGlobalObject,
         arg: JSValue,
-        move_: bool,
-        require_array: bool,
     ) -> JsResult<Blob> {
-        // PORT NOTE: was `<const MOVE, const REQUIRE_ARRAY>` (Zig comptime); collapsed
-        // to runtime dispatch so existing call sites passing `(_, _, true, false)` compile.
-        match (move_, require_array) {
+        // Zig: `comptime move: bool, comptime require_array: bool`.
+        match (MOVE, REQUIRE_ARRAY) {
             (true, false) => Self::from_js_move(global, arg),
             (false, false) => Self::from_js_clone_optional_array(global, arg),
             (_, true) => Self::from_js_clone(global, arg),

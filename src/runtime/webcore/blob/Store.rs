@@ -10,8 +10,11 @@ use bun_str::{strings, PathString, ZigString};
 use crate::webcore::node_types::{self as node, PathLike, PathOrFileDescriptor};
 use crate::node::types::PathOrFileDescriptorSerializeTag;
 use crate::node::fs as node_fs;
-use crate::webcore::s3_stub::{
-    self as s3, MultiPartUploadOptions, S3Credentials, S3CredentialsWithOptions, S3DeleteResult,
+// PORT NOTE: migrated off `webcore::s3_stub` — `bun_s3_signing` now provides
+// the real `S3Credentials`/`ACL`/`StorageClass` and `s3::client` re-exports
+// the result enums. The stub module is kept only for types not yet ported.
+use crate::webcore::s3::client::{
+    MultiPartUploadOptions, S3Credentials, S3CredentialsWithOptions, S3DeleteResult,
     S3ListObjectsOptions, S3ListObjectsResult, ACL, StorageClass,
 };
 use crate::webcore::s3::client as s3_client;

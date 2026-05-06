@@ -96,12 +96,14 @@ impl Taskable for NapiFinalizerTask {
 
 bun_output::declare_scope!(napi, visible);
 
+#[allow(deprecated)] // bun_jsc gates the c_api module as deprecated; no replacement path yet.
 const TODO_EXCEPTION: jsc::c_api::ExceptionRef = ptr::null_mut();
 
 // Local extern declarations for JavaScriptCore C API symbols not yet surfaced
 // through the active `jsc::c_api` module (the full `javascript_core_c_api.rs`
 // is still gated). Signatures mirror `<JavaScriptCore/JSObjectRef.h>` /
 // `<JavaScriptCore/JSTypedArray.h>`.
+#[allow(deprecated)] // jsc::c_api::{JSObjectRef,JSValueRef,ExceptionRef} — bun_jsc gates the c_api module as deprecated; no replacement path yet.
 unsafe extern "C" {
     fn JSObjectGetPrototype(
         ctx: *mut JSGlobalObject,

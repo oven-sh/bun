@@ -12,9 +12,9 @@ use crate::PrintErr;
 pub use crate::Error;
 
 // ─────────────────────────────────────────────────────────────────────────
-// `CssModule` is un-gated (B-2). `reference_dashed` remains internally
-// gated — it depends on still-gated `properties::css_modules::Specifier`
-// (`gated_prop!` stub carries no variants) and `ImportRecord.path.text`.
+// `CssModule` is un-gated (B-2). `reference_dashed` is un-gated; its
+// `dest.importRecord()` lookup is hoisted to the caller (see PORT NOTE on
+// the method) to satisfy Rust borrowck (caller holds `&mut dest.css_module`).
 // ─────────────────────────────────────────────────────────────────────────
 pub struct CssModule<'a> {
     pub config: &'a Config,
@@ -105,52 +105,61 @@ impl<'a> CssModule<'a> {
         }
     }
 
-    // Depends on `Printer.allocator` / `Printer.import_record()` (gated stub)
-    // and `properties::css_modules::Specifier` (gated). Re-enable with those hubs.
-    #[cfg(any())]
+    // PORT NOTE: Zig `referenceDashed` took `*Printer` so it could read
+    // `dest.allocator` and call `dest.importRecord(idx)`. In Rust the only
+    // caller (`DashedIdentReference::to_css`) already holds a `&mut` borrow of
+    // `dest.css_module` (which *is* `self`), so threading `&mut Printer` in
+    // here would alias. The caller pre-resolves the import-record path and
+    // hands it down as `specifier_path`; the fallible `importRecord` lookup
+    // therefore lives at the call site, which is why this no longer returns
+    // `Result<_, PrintErr>`.
     pub fn reference_dashed(
         &mut self,
-        dest: &mut css::Printer,
+        bump: &'a Bump,
         name: &'a [u8],
         from: &Option<css::css_properties::css_modules::Specifier>,
+        specifier_path: Option<&'a [u8]>,
         source_index: u32,
-    ) -> Result<Option<&'a [u8]>, PrintErr> {
-        let bump = dest.allocator;
-        let (reference, key) = if let Some(specifier) = from {
-            match specifier {
-                css::css_properties::css_modules::Specifier::Global => return Ok(Some(&name[2..])),
-                css::css_properties::css_modules::Specifier::ImportRecordIndex(import_record_index) => 'init: {
-                    let import_record = dest.import_record(*import_record_index)?;
-                    break 'init (
-                        CssModuleReference::Dependency {
-                            name: &name[2..],
-                            specifier: import_record.path.text,
-                        },
-                        import_record.path.text,
-                    );
+    ) -> Option<&'a [u8]> {
+        use css::css_properties::css_modules::Specifier;
+        let (reference, key): (CssModuleReference<'a>, &'a [u8]) = match from {
+            Some(Specifier::Global) => return Some(&name[2..]),
+            Some(Specifier::ImportRecordIndex(_)) => {
+                let path =
+                    specifier_path.expect("specifier_path required for Specifier::ImportRecordIndex");
+                (
+                    CssModuleReference::Dependency { name: &name[2..], specifier: path },
+                    path,
+                )
+            }
+            None => {
+                // Local export. Mark as used.
+                // PORT NOTE: Zig `getOrPut` returns an uninitialized value
+                // slot; `CssModuleExport` cannot be `Default` (BumpVec field),
+                // so reshape to the `entry()` API like `get_reference` above.
+                use bun_collections::array_hash_map::MapEntry;
+                match self.exports_by_source_index[source_index as usize].entry(name) {
+                    MapEntry::Occupied(mut o) => {
+                        o.get_mut().is_referenced = true;
+                    }
+                    MapEntry::Vacant(v) => {
+                        let mut res = BumpVec::new_in(bump);
+                        res.extend_from_slice(b"--");
+                        v.insert(CssModuleExport {
+                            name: self.config.pattern.write_to_string(
+                                bump,
+                                res,
+                                self.hashes[source_index as usize],
+                                self.sources[source_index as usize].as_bytes(),
+                                &name[2..],
+                            ),
+                            composes: BumpVec::new_in(bump),
+                            is_referenced: true,
+                        });
+                    }
                 }
+                return None;
             }
-        } else {
-            // Local export. Mark as used.
-            let gop = self.exports_by_source_index[source_index as usize].get_or_put(bump, name);
-            if gop.found_existing {
-                gop.value.is_referenced = true;
-            } else {
-                let mut res = BumpVec::new_in(bump);
-                res.extend_from_slice(b"--");
-                *gop.value = CssModuleExport {
-                    name: self.config.pattern.write_to_string(
-                        bump,
-                        res,
-                        self.hashes[source_index as usize],
-                        self.sources[source_index as usize].as_bytes(),
-                        &name[2..],
-                    ),
-                    composes: BumpVec::new_in(bump),
-                    is_referenced: true,
-                };
-            }
-            return Ok(None);
         };
 
         let the_hash = hash(
@@ -167,9 +176,9 @@ impl<'a> CssModule<'a> {
         // PORT NOTE: std.fmt.allocPrint → write into bump Vec (never `format!`, returns String)
         let mut k = BumpVec::new_in(bump);
         write!(&mut k, "--{}", bstr::BStr::new(the_hash)).expect("unreachable");
-        self.references.put(bump, k.into_bump_slice(), reference);
+        let _ = self.references.put(k.into_bump_slice(), reference);
 
-        Ok(Some(the_hash))
+        Some(the_hash)
     }
 
     pub fn handle_composes(

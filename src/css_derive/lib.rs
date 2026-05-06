@@ -722,6 +722,42 @@ fn expand_enum_property(input: DeriveInput) -> syn::Result<TokenStream2> {
             }
         }
 
+        // ── generics::{ToCss, Parse, ParseWithOptions} ────────────────────────
+        // `Property::value_to_css` / `Property::parse` dispatch through
+        // `css::generic::{to_css, parse_with_options}` (free fns bounded on the
+        // trait), so the inherent `to_css`/`parse` alone don't satisfy the call
+        // site — emit the trait impls too. They forward to the `EnumProperty`
+        // defaults so behaviour is identical to the inherents.
+        #[automatically_derived]
+        impl ::bun_css::generics::ToCss for #name {
+            #[inline]
+            fn to_css(
+                &self,
+                __dest: &mut ::bun_css::printer::Printer<'_>,
+            ) -> ::core::result::Result<(), ::bun_css::PrintErr> {
+                <Self as ::bun_css::EnumProperty>::to_css(self, __dest)
+            }
+        }
+        #[automatically_derived]
+        impl ::bun_css::generics::Parse for #name {
+            #[inline]
+            fn parse(
+                __input: &mut ::bun_css::css_parser::Parser<'_>,
+            ) -> ::bun_css::Result<Self> {
+                <Self as ::bun_css::EnumProperty>::parse(__input)
+            }
+        }
+        #[automatically_derived]
+        impl ::bun_css::generics::ParseWithOptions for #name {
+            #[inline]
+            fn parse_with_options(
+                __input: &mut ::bun_css::css_parser::Parser<'_>,
+                _: &::bun_css::css_parser::ParserOptions,
+            ) -> ::bun_css::Result<Self> {
+                <Self as ::bun_css::EnumProperty>::parse(__input)
+            }
+        }
+
         #[automatically_derived]
         #[allow(dead_code)]
         impl #name {

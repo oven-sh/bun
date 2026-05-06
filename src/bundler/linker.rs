@@ -125,14 +125,13 @@ mod hardcoded_module {
 
 // ── ExternalModules::is_node_builtin shim ───────────────────────────────
 // `options::ExternalModules::is_node_builtin` is `#[cfg(any())]`-gated for the
-// same `bun_resolve_builtins` reason. Provide a local fallback so the
-// browser-target diagnostic branch compiles; the conservative `false` simply
-// routes both messages through the generic "Maybe you need to bun install?"
-// arm until the real table is wired up.
+// same `bun_resolve_builtins` reason. Spec (linker.zig:229) routes the
+// browser-target diagnostic through this check; returning a hard `false` here
+// would silently emit the wrong message. Fail loudly instead — PORTING.md
+// §Forbidden flags silent-no-ops in non-gated code.
 #[inline]
 fn is_node_builtin(_path: &[u8]) -> bool {
-    // TODO(b2-blocked): bun_resolve_builtins.
-    false
+    todo!("b2-blocked: bun_resolve_builtins — ExternalModules::is_node_builtin")
 }
 
 #[inline]
@@ -146,26 +145,32 @@ fn without_leading_slash(s: &[u8]) -> &[u8] {
     }
 }
 
-/// Intern a freshly-allocated byte buffer for the lifetime of the process.
+/// Intern a byte buffer into the process-lifetime `relative_paths_list`
+/// `BSSStringList` singleton.
 ///
 /// Zig used `linker.allocator.dupe(u8, ...)` / `allocPrint` with
 /// `bun.default_allocator` and never frees the result — the linker is a
 /// per-transpile singleton whose output paths flow into `ImportRecord.path:
-/// Path<'static>`. Match those semantics by leaking; the backing allocation is
-/// mimalloc (global allocator) just like the Zig original.
-// PERF(port): route through `relative_paths_list().append()` once the
-// `BSSStringList::append` `'static`-erasure helper exists for this crate.
+/// Path<'static>`. PORTING.md §Forbidden bans `Vec::leak`/`Box::leak` for
+/// fabricating `&'static [u8]`; route through the `relative_paths_list`
+/// interner instead so the bytes are owned by a true process-lifetime
+/// singleton (the `OnceLock`-style exception PORTING.md carves out).
+#[inline]
+fn dupe(src: &[u8]) -> &'static [u8] {
+    // SAFETY: `relative_paths_list_ptr()` is Once-initialized and never freed
+    // (process-lifetime singleton). `append` copies `src` into its owned
+    // backing buffer and returns a slice borrowing that storage; deref of the
+    // raw `*mut` yields an unbounded `&mut self`, so the returned borrow is
+    // `'static`-valid by construction.
+    unsafe { (*relative_paths_list_ptr()).append(src).expect("OOM") }
+}
 #[inline]
 fn intern(buf: Vec<u8>) -> &'static [u8] {
-    Vec::leak(buf)
+    dupe(buf.as_slice())
 }
 #[inline]
 fn intern_box(buf: Box<[u8]>) -> &'static [u8] {
-    Box::leak(buf)
-}
-#[inline]
-fn dupe(src: &[u8]) -> &'static [u8] {
-    intern(src.to_vec())
+    dupe(&buf[..])
 }
 
 impl Linker {

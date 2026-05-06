@@ -7,6 +7,7 @@ use bun_jsc::{
 use bun_js_parser::{self as ast, lexer, Expr, ExprData};
 use bun_logger as logger;
 use bun_str::{String as BunString, ZigString};
+use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
 
 pub fn create(global: &JSGlobalObject) -> JSValue {
     let object = JSValue::create_empty_object(global, 2);

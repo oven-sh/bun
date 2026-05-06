@@ -3866,7 +3866,7 @@ pub mod sync {
                     bun_sys::E::AGAIN | bun_sys::E::INTR => continue,
                     err => {
                         cleanup_spawn_posix(&mut out, &out_fds, &process, success);
-                        return Ok(Maybe::Err(bun_sys::Error::from_code(err, bun_sys::Syscall::Poll)));
+                        return Ok(Maybe::Err(bun_sys::Error::from_code(err, bun_sys::Tag::poll)));
                     }
                 }
             }
@@ -4199,7 +4199,7 @@ pub mod sync {
         // `getppid()`.
         let mut ppid_fd = spawn_sys::INVALID_FD;
         if ppid > 1 {
-            match bun_sys::pidfd_open(ppid, 0) {
+            match spawn_sys::pidfd_open(ppid, 0) {
                 Maybe::Result(fd) => ppid_fd = Fd::from_native(fd),
                 Maybe::Err(e) => {
                     if e.get_errno() == bun_sys::E::SRCH {
@@ -4316,7 +4316,7 @@ pub mod sync {
                 bun_sys::E::SUCCESS => {}
                 bun_sys::E::AGAIN | bun_sys::E::INTR => {}
                 err => {
-                    return Some(Maybe::Err(bun_sys::Error::from_code(err, bun_sys::Syscall::Poll)))
+                    return Some(Maybe::Err(bun_sys::Error::from_code(err, bun_sys::Tag::poll)))
                 }
             }
 
@@ -4359,7 +4359,7 @@ pub mod sync {
         }
         loop {
             if bytes.try_reserve(16384).is_err() {
-                return Some(bun_sys::Error::from_code(bun_sys::E::NOMEM, bun_sys::Syscall::Recv));
+                return Some(bun_sys::Error::from_code(bun_sys::E::NOMEM, bun_sys::Tag::recv));
             }
             let spare = bytes.spare_capacity_mut();
             // SAFETY: recvNonBlock writes into uninit bytes; we extend len by bytes_read

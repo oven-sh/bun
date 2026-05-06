@@ -499,8 +499,6 @@ pub mod registry {
         NotFound,
     }
 
-    // TODO(b2): body gated — depends on PackageManifest::parse / Serializer::save_async
-    #[cfg(any())]
     pub fn get_package_metadata(
         scope: &Scope,
         response: picohttp::Response,
@@ -524,16 +522,16 @@ pub mod registry {
         let mut newly_last_modified: &[u8] = b"";
         let mut new_etag: &[u8] = b"";
         for header in response.headers.list.iter() {
-            if !(header.name.len() == "last-modified".len() || header.name.len() == "etag".len()) {
+            if !(header.name().len() == "last-modified".len() || header.name().len() == "etag".len()) {
                 continue;
             }
 
-            let hashed = HTTPClient::hash_header_name(&header.name);
+            let hashed = http::hash_header_name(header.name());
 
-            if hashed == HTTPClient::hash_header_const("last-modified") {
-                newly_last_modified = &header.value;
-            } else if hashed == HTTPClient::hash_header_const("etag") {
-                new_etag = &header.value;
+            if hashed == http::hash_header_name(b"last-modified") {
+                newly_last_modified = header.value();
+            } else if hashed == http::hash_header_name(b"etag") {
+                new_etag = header.value();
             }
         }
 
@@ -1255,11 +1253,25 @@ pub mod package_manifest {
             _cache_dir: bun_sys::Fd,
             _file_id: u64,
         ) -> Result<Option<PackageManifest>, bun_core::Error> {
-            // TODO(b2): npm::PackageManifest::Serializer::load_by_file_id — real body lives
-            // in the `#[cfg(any())]`-gated impl below (blocked on bun_io::FixedBufferStream /
-            // bun_sys::renameat2). Return `Ok(None)` (cache miss) so PackageManifestMap callers
-            // fall through to a network fetch instead of panicking.
-            Ok(None)
+            // Real body lives in the `#[cfg(any())]`-gated impl below. Blocked on
+            // bun_io::FixedBufferStream — fail loudly instead of silently treating
+            // every on-disk manifest as a cache miss (PORTING.md §Forbidden: silent no-op).
+            todo!("npm::PackageManifest::Serializer::load_by_file_id — blocked on bun_io::FixedBufferStream")
+        }
+
+        /// Zig: `Serializer.save_async(this, scope, tmpdir_fd, cache_dir)`.
+        /// Stub kept so `registry::get_package_metadata` compiles; real body
+        /// lives in the gated impl below (blocked on bun_io / renameat2).
+        pub fn save_async(
+            _this: &PackageManifest,
+            _scope: &registry::Scope,
+            _tmpdir_fd: bun_sys::Fd,
+            _cache_dir: bun_sys::Fd,
+        ) {
+            // Real body lives in the `#[cfg(any())]`-gated impl below. Blocked on
+            // bun_sys::renameat2 / bun_io::FixedBufferStream — fail loudly instead of
+            // silently dropping the cache write (PORTING.md §Forbidden: silent no-op).
+            todo!("npm::PackageManifest::Serializer::save_async — blocked on bun_sys::renameat2")
         }
     }
 
@@ -1973,7 +1985,7 @@ impl PackageManifest {
             let version = versions[idx];
             let package = &packages[idx];
 
-            if version.order(&latest_version, &self.string_buf, &self.string_buf) == core::cmp::Ordering::Greater {
+            if version.order(latest_version, &self.string_buf, &self.string_buf) == core::cmp::Ordering::Greater {
                 continue;
             }
             if let Some(expected_tag) = latest_version_tag_before_dot {
@@ -2075,7 +2087,7 @@ impl PackageManifest {
                 }
                 if newest_filtered.is_none() {
                     if group.flags.is_set(Semver::query::Flags::PRE) {
-                        if left.version.order(&result.version, group_buf, &self.string_buf)
+                        if left.version.order(result.version, group_buf, &self.string_buf)
                             == core::cmp::Ordering::Equal
                         {
                             return FindVersionResult::Found(result);
@@ -2128,7 +2140,7 @@ impl PackageManifest {
         if let Some(result) = self.find_by_dist_tag(b"latest") {
             if group.satisfies(result.version, group_buf, &self.string_buf) {
                 if group.flags.is_set(Semver::query::Flags::PRE) {
-                    if left.version.order(&result.version, group_buf, &self.string_buf)
+                    if left.version.order(result.version, group_buf, &self.string_buf)
                         == core::cmp::Ordering::Equal
                     {
                         // if prerelease, use latest if semver+tag match range exactly
@@ -2193,10 +2205,6 @@ const DEPENDENCY_GROUPS: [DependencyGroup; 3] = [
     DependencyGroup { prop: "peerDependencies", field: "peer_dependencies" },
 ];
 
-// TODO(b2): body gated — bun_logger::js_ast::Expr query surface
-// (`as_property`/`as_string`/`get`) and `Bin` field layout not landed yet.
-// ~1200 lines; un-gate once js_ast accessor helpers are ported.
-#[cfg(any())]
 impl PackageManifest {
     /// This parses [Abbreviated metadata](https://github.com/npm/registry/blob/master/docs/responses/package-metadata.md#abbreviated-metadata-format)
     pub fn parse(
@@ -2210,14 +2218,22 @@ impl PackageManifest {
         is_extended_manifest: bool,
     ) -> Result<Option<PackageManifest>, Error> {
         // TODO(port): narrow error set
-        let source = logger::Source::init_path_string(expected_name, json_buffer);
+        // SAFETY: Phase-A `logger::Str` is `&'static [u8]`; Source borrows the
+        // caller's buffers for the duration of this function only. Erase the
+        // lifetime to satisfy the field type until §Forbidden lifetime cleanup.
+        let source = logger::Source::init_path_string(
+            unsafe { core::mem::transmute::<&[u8], &'static [u8]>(expected_name) },
+            unsafe { core::mem::transmute::<&[u8], &'static [u8]>(json_buffer) },
+        );
         initialize_store();
-        let _store_pop = scopeguard::guard((), |_| {
-            // TODO(port): bun.ast.Stmt.Data.Store.memory_allocator.?.pop()
-            bun_js_parser::ast::Stmt::Data::Store::memory_allocator().unwrap().pop();
-        });
+        // TODO(port): bun.ast.Stmt.Data.Store.memory_allocator.?.pop() — Zig
+        // pushed/popped the AST arena around the parse so the JSON AST is
+        // bulk-freed on return. `initialize_mini_store` already does the push;
+        // the pop is handled by resetting on the next call. Phase B should wire
+        // an explicit RAII guard once `ASTMemoryAllocator::pop` is exposed.
         // PERF(port): was arena bulk-free — profile in Phase B
-        let json = match JSON::parse_utf8(&source, log) {
+        let bump = bun_alloc::Arena::new();
+        let json = match JSON::parse_utf8(&source, log, &bump) {
             Ok(j) => j,
             Err(_) => {
                 // don't use the arena memory!
@@ -2228,9 +2244,9 @@ impl PackageManifest {
             }
         };
 
-        if let Some(error_q) = json.as_property("error") {
+        if let Some(error_q) = json.as_property(b"error") {
             if let Some(err) = error_q.expr.as_string() {
-                log.add_error_fmt(&source, logger::Loc::EMPTY, format_args!("npm error: {}", bstr::BStr::new(err)))
+                log.add_error_fmt(Some(&source), logger::Loc::EMPTY, format_args!("npm error: {}", bstr::BStr::new(err)))
                     .expect("unreachable");
                 return Ok(None);
             }
@@ -2239,7 +2255,6 @@ impl PackageManifest {
         let mut result: PackageManifest = PackageManifest::default();
         // TODO(port): bun.serializable() — zero-init for serialization determinism
 
-        let mut string_pool = SemverString::Builder::StringPool::init();
         let mut all_extern_strings_dedupe_map = ExternalStringMapDeduper::default();
         let mut version_extern_strings_dedupe_map = ExternalStringMapDeduper::default();
         let mut optional_peer_dep_names: Vec<u64> = Vec::new();
@@ -2249,8 +2264,8 @@ impl PackageManifest {
 
         let mut bundled_deps_count: usize = 0;
 
-        let mut string_builder = SemverString::Builder {
-            string_pool,
+        let mut string_builder = Semver::semver_string::Builder {
+            string_pool: Semver::semver_string::StringPool::default(),
             ..Default::default()
         };
 
@@ -2263,7 +2278,7 @@ impl PackageManifest {
                 // from the default registry we don't check because the registry might have a different name in the manifest.
                 // https://github.com/oven-sh/bun/issues/4925
                 if scope.url_hash == *registry::DEFAULT_URL_HASH
-                    && !strings::eql_long(expected_name, received_name, true)
+                    && !strings::eql_long::<true>(expected_name, received_name)
                 {
                     Output::warn(format_args!(
                         "Package name mismatch. Expected <b>\"{}\"<r> but received <red>\"{}\"<r>",
@@ -2310,7 +2325,7 @@ impl PackageManifest {
                 }
                 if !parsed_version.valid {
                     log.add_error_fmt(
-                        &source,
+                        Some(&source),
                         prop.value.as_ref().unwrap().loc,
                         format_args!("Failed to parse dependency {}", bstr::BStr::new(version_name)),
                     )
@@ -2331,7 +2346,7 @@ impl PackageManifest {
                 if let Some(dist_q) = prop.value.as_ref().unwrap().as_property("dist") {
                     if let Some(tarball_prop) = dist_q.expr.get("tarball") {
                         if let JSON::ExprData::EString(s) = &tarball_prop.data {
-                            let tarball = s.slice();
+                            let tarball = s.data;
                             string_builder.count(tarball);
                             tarball_urls_count += (!tarball.is_empty()) as usize;
                         }
@@ -2342,11 +2357,11 @@ impl PackageManifest {
                     if let Some(bin) = prop.value.as_ref().unwrap().as_property("bin") {
                         match &bin.expr.data {
                             JSON::ExprData::EObject(obj) => {
-                                match obj.properties.len() {
+                                match obj.properties.slice().len() {
                                     0 => break 'bin,
                                     1 => {}
                                     _ => {
-                                        extern_string_count_bin += obj.properties.len() * 2;
+                                        extern_string_count_bin += obj.properties.slice().len() * 2;
                                     }
                                 }
 
@@ -2408,7 +2423,7 @@ impl PackageManifest {
                     // PERF(port): was comptime monomorphization — profile in Phase B
                     if let Some(versioned_deps) = prop.value.as_ref().unwrap().as_property(pair.prop) {
                         if let JSON::ExprData::EObject(obj) = &versioned_deps.expr.data {
-                            dependency_sum += obj.properties.len();
+                            dependency_sum += obj.properties.slice().len();
                             let properties = obj.properties.slice();
                             for property in properties {
                                 if let Some(key) = property.key.as_ref().unwrap().as_string() {
@@ -2481,18 +2496,18 @@ impl PackageManifest {
 
         let mut versioned_packages: Box<[PackageVersion]> =
             vec![PackageVersion::default(); release_versions_len + pre_versions_len].into_boxed_slice();
-        let all_semver_versions: Box<[Semver::Version]> =
+        let mut all_semver_versions: Box<[Semver::Version]> =
             vec![Semver::Version::default(); release_versions_len + pre_versions_len + dist_tags_count]
                 .into_boxed_slice();
         let mut all_extern_strings: Box<[ExternalString]> =
             vec![ExternalString::default(); extern_string_count + tarball_urls_count].into_boxed_slice();
         let mut version_extern_strings: Box<[ExternalString]> =
             vec![ExternalString::default(); dependency_sum].into_boxed_slice();
-        let all_extern_strings_bin_entries: Box<[ExternalString]> =
+        let mut all_extern_strings_bin_entries: Box<[ExternalString]> =
             vec![ExternalString::default(); extern_string_count_bin].into_boxed_slice();
         let mut all_tarball_url_strings: Box<[ExternalString]> =
             vec![ExternalString::default(); tarball_urls_count].into_boxed_slice();
-        let bundled_deps_buf: Box<[PackageNameHash]> =
+        let mut bundled_deps_buf: Box<[PackageNameHash]> =
             vec![PackageNameHash::default(); bundled_deps_count].into_boxed_slice();
         let mut bundled_deps_offset: usize = 0;
 
@@ -2512,7 +2527,7 @@ impl PackageManifest {
         let dist_tag_versions_start = release_versions_len + pre_versions_len;
         // SAFETY: all_semver_versions is heap-allocated; we need disjoint mutable subslices.
         // TODO(port): use split_at_mut chain instead of raw pointers in Phase B.
-        let all_semver_versions_ptr = all_semver_versions.as_ptr() as *mut Semver::Version;
+        let all_semver_versions_ptr: *mut Semver::Version = all_semver_versions.as_mut_ptr();
         let mut release_versions_cursor: usize = 0;
         let mut prerelease_versions_cursor: usize = release_versions_len;
 
@@ -2525,15 +2540,18 @@ impl PackageManifest {
 
         string_builder.allocate()?;
 
-        let string_buf: &[u8] = if let Some(ptr) = string_builder.ptr() {
-            // 0 it out for better determinism
-            // SAFETY: ptr is a freshly allocated buffer of cap bytes
-            unsafe { core::ptr::write_bytes(ptr, 0, string_builder.cap) };
-            // SAFETY: ptr is valid for cap bytes
-            unsafe { core::slice::from_raw_parts(ptr, string_builder.cap) }
-        } else {
-            b""
+        // PORT NOTE: Zig zeroed the freshly allocated buffer for determinism;
+        // `Builder::allocate` already produces a zeroed `Box<[u8]>`. The
+        // builder still owns the buffer; we keep a `*const u8`+len pair so
+        // sliced views into it stay valid across the appends below
+        // (borrowck would otherwise reject `&string_builder.ptr` while
+        // `string_builder.append` takes `&mut self`).
+        let (string_buf_ptr, string_buf_len) = match string_builder.ptr.as_deref() {
+            Some(b) => (b.as_ptr(), string_builder.cap),
+            None => (b"".as_ptr(), 0usize),
         };
+        // SAFETY: builder buffer lives for the rest of this fn; reads only.
+        let string_buf: &[u8] = unsafe { core::slice::from_raw_parts(string_buf_ptr, string_buf_len) };
 
         // Using `expected_name` instead of the name from the manifest. Custom registries might
         // have a different name than the dependency name in package.json.
@@ -2638,37 +2656,35 @@ impl PackageManifest {
                     if let Some(bin) = prop.value.as_ref().unwrap().as_property("bin") {
                         match &bin.expr.data {
                             JSON::ExprData::EObject(obj) => {
-                                match obj.properties.len() {
+                                match obj.properties.slice().len() {
                                     0 => {}
                                     1 => {
                                         let Some(bin_name) =
-                                            obj.properties.ptr()[0].key.as_ref().unwrap().as_string()
+                                            obj.properties.slice()[0].key.as_ref().unwrap().as_string()
                                         else {
                                             break 'bin;
                                         };
                                         let Some(value) =
-                                            obj.properties.ptr()[0].value.as_ref().unwrap().as_string()
+                                            obj.properties.slice()[0].value.as_ref().unwrap().as_string()
                                         else {
                                             break 'bin;
                                         };
 
                                         package_version.bin = Bin {
-                                            tag: Bin::Tag::NamedFile,
-                                            value: Bin::Value {
-                                                named_file: [
-                                                    string_builder.append::<SemverString>(bin_name),
-                                                    string_builder.append::<SemverString>(value),
-                                                ],
-                                            },
+                                            tag: bin::Tag::NamedFile,
+                                            _padding_tag: [0; 3],
+                                            value: bin::Value::init_named_file([
+                                                string_builder.append::<SemverString>(bin_name),
+                                                string_builder.append::<SemverString>(value),
+                                            ]),
                                         };
                                     }
                                     _ => {
                                         let group_start = extern_strings_bin_entries_cursor;
-                                        let group_len = obj.properties.len() * 2;
+                                        let group_len = obj.properties.slice().len() * 2;
                                         // SAFETY: all_extern_strings_bin_entries is heap-allocated and sized in counting pass
                                         let group_slice_ptr = unsafe {
-                                            (all_extern_strings_bin_entries.as_ptr() as *mut ExternalString)
-                                                .add(group_start)
+                                            all_extern_strings_bin_entries.as_mut_ptr().add(group_start)
                                         };
 
                                         let mut is_identical = match &prev_extern_bin_group {
@@ -2695,7 +2711,7 @@ impl PackageManifest {
                                                 if cfg!(debug_assertions) && is_identical {
                                                     let first = cur.slice(string_builder.allocated_slice());
                                                     let second = prev_item.slice(string_builder.allocated_slice());
-                                                    if !strings::eql_long(first, second, true) {
+                                                    if !strings::eql_long::<true>(first, second) {
                                                         Output::panic(format_args!(
                                                             "Bin group is not identical: {} != {}",
                                                             bstr::BStr::new(first),
@@ -2723,7 +2739,7 @@ impl PackageManifest {
                                                 if cfg!(debug_assertions) && is_identical {
                                                     let first = cur.slice(string_builder.allocated_slice());
                                                     let second = prev_item.slice(string_builder.allocated_slice());
-                                                    if !strings::eql_long(first, second, true) {
+                                                    if !strings::eql_long::<true>(first, second) {
                                                         Output::panic(format_args!(
                                                             "Bin group is not identical: {} != {}",
                                                             bstr::BStr::new(first),
@@ -2745,13 +2761,12 @@ impl PackageManifest {
                                         };
 
                                         package_version.bin = Bin {
-                                            tag: Bin::Tag::Map,
-                                            value: Bin::Value {
-                                                map: ExternalStringList::init(
-                                                    &all_extern_strings_bin_entries,
-                                                    &all_extern_strings_bin_entries[final_range],
-                                                ),
-                                            },
+                                            tag: bin::Tag::Map,
+                                            _padding_tag: [0; 3],
+                                            value: bin::Value::init_map(ExternalStringList::init(
+                                                &all_extern_strings_bin_entries,
+                                                &all_extern_strings_bin_entries[final_range],
+                                            )),
                                         };
                                     }
                                 }
@@ -2761,10 +2776,11 @@ impl PackageManifest {
                             JSON::ExprData::EString(stri) => {
                                 if !stri.data.is_empty() {
                                     package_version.bin = Bin {
-                                        tag: Bin::Tag::File,
-                                        value: Bin::Value {
-                                            file: string_builder.append::<SemverString>(stri.data),
-                                        },
+                                        tag: bin::Tag::File,
+                                        _padding_tag: [0; 3],
+                                        value: bin::Value::init_file(
+                                            string_builder.append::<SemverString>(stri.data),
+                                        ),
                                     };
                                     break 'bin;
                                 }
@@ -2785,10 +2801,11 @@ impl PackageManifest {
                             if let Some(str_) = bin_prop.expr.as_string() {
                                 if !str_.is_empty() {
                                     package_version.bin = Bin {
-                                        tag: Bin::Tag::Dir,
-                                        value: Bin::Value {
-                                            dir: string_builder.append::<SemverString>(str_),
-                                        },
+                                        tag: bin::Tag::Dir,
+                                        _padding_tag: [0; 3],
+                                        value: bin::Value::init_dir(
+                                            string_builder.append::<SemverString>(str_),
+                                        ),
                                     };
                                     break 'bin;
                                 }
@@ -2804,7 +2821,7 @@ impl PackageManifest {
                                 if let JSON::ExprData::EString(s) = &tarball_q.expr.data {
                                     if s.len() > 0 {
                                         package_version.tarball_url =
-                                            string_builder.append::<ExternalString>(s.slice());
+                                            string_builder.append::<ExternalString>(s.data);
                                         all_tarball_url_strings[tarball_url_strings_cursor] =
                                             package_version.tarball_url;
                                         tarball_url_strings_cursor += 1;
@@ -2814,13 +2831,13 @@ impl PackageManifest {
 
                             if let Some(file_count_) = dist.expr.as_property("fileCount") {
                                 if let JSON::ExprData::ENumber(n) = &file_count_.expr.data {
-                                    package_version.file_count = n.to_u32();
+                                    package_version.file_count = n.value as u32;
                                 }
                             }
 
                             if let Some(file_count_) = dist.expr.as_property("unpackedSize") {
                                 if let JSON::ExprData::ENumber(n) = &file_count_.expr.data {
-                                    package_version.unpacked_size = n.to_u32();
+                                    package_version.unpacked_size = n.value as u32;
                                 }
                             }
 
@@ -2871,7 +2888,7 @@ impl PackageManifest {
                             break 'blk false;
                         };
                         match &meta.expr.data {
-                            JSON::ExprData::EObject(obj) => obj.properties.len() > 0,
+                            JSON::ExprData::EObject(obj) => obj.properties.slice().len() > 0,
                             _ => false,
                         }
                     };
@@ -2911,7 +2928,7 @@ impl PackageManifest {
                                                 .as_string()
                                                 .expect("unreachable");
                                             optional_peer_dep_names
-                                                .push(SemverString::Builder::string_hash(meta_key));
+                                                .push(Semver::semver_string::Builder::string_hash(meta_key));
 
                                             // Reserve a slot for a meta-only synthesised peer.
                                             // The slot is unused if `meta_key` also appears in
@@ -2957,8 +2974,8 @@ impl PackageManifest {
                             if !bundle_all_deps && bundled_deps_set.swap_remove(name_str) {
                                 // SAFETY: bundled_deps_buf sized in counting pass
                                 unsafe {
-                                    *(bundled_deps_buf.as_ptr() as *mut PackageNameHash)
-                                        .add(bundled_deps_offset) = all_extern_strings[names_base + i].hash;
+                                    *bundled_deps_buf.as_mut_ptr().add(bundled_deps_offset) =
+                                        all_extern_strings[names_base + i].hash;
                                 }
                                 bundled_deps_offset += 1;
                             }
@@ -3028,7 +3045,7 @@ impl PackageManifest {
                                         else {
                                             continue;
                                         };
-                                        let meta_hash = SemverString::Builder::string_hash(meta_key);
+                                        let meta_hash = Semver::semver_string::Builder::string_hash(meta_key);
                                         for existing in &all_extern_strings[names_base..names_base + i] {
                                             if existing.hash == meta_hash {
                                                 continue 'outer;
@@ -3140,9 +3157,21 @@ impl PackageManifest {
                 if let Some(time_obj) = json.as_property("time") {
                     if let Some(publish_time_expr) = time_obj.expr.get(version_name) {
                         if let Some(publish_time_str) = publish_time_expr.as_string() {
-                            // MOVE_DOWN(b0): bun_jsc::wtf → bun_wtf (date parser is jsc-independent FFI).
-                            if let Ok(Some(time)) = bun_wtf::parse_es5_date(publish_time_str) {
-                                package_version.publish_timestamp_ms = time;
+                            // MOVE_DOWN(b0): bun_jsc::wtf::parse_es5_date → bun_wtf (date parser is
+                            // jsc-independent FFI). The extern decl is duplicated locally so the
+                            // minimum-release-age filter (`is_package_version_too_recent`) is not a
+                            // silent no-op while the `bun_wtf` crate split is pending.
+                            extern "C" {
+                                fn WTF__parseES5Date(bytes: *const u8, length: usize) -> f64;
+                            }
+                            if !publish_time_str.is_empty() {
+                                // SAFETY: publish_time_str.as_ptr() is valid for publish_time_str.len() bytes.
+                                let ms = unsafe {
+                                    WTF__parseES5Date(publish_time_str.as_ptr(), publish_time_str.len())
+                                };
+                                if ms.is_finite() {
+                                    package_version.publish_timestamp_ms = ms;
+                                }
                             }
                         }
                     }
@@ -3303,8 +3332,7 @@ impl PackageManifest {
                     // which we own mutably here. @constCast equivalent.
                     let versioned_packages_ = unsafe {
                         core::slice::from_raw_parts_mut(
-                            (versioned_packages.as_ptr() as *mut PackageVersion)
-                                .add(release.values.off as usize),
+                            versioned_packages.as_mut_ptr().add(release.values.off as usize),
                             len,
                         )
                     };
@@ -3324,7 +3352,7 @@ impl PackageManifest {
                     let string_bytes = string_buf;
                     indices.sort_by(|&left, &right| {
                         cloned_versions[left as usize].order(
-                            &cloned_versions[right as usize],
+                            cloned_versions[right as usize],
                             string_bytes,
                             string_bytes,
                         )
@@ -3352,7 +3380,7 @@ impl PackageManifest {
                             // version
                             let first = semver_versions_[0];
                             let second = semver_versions_[1];
-                            let order = second.order(&first, string_buf, string_buf);
+                            let order = second.order(first, string_buf, string_buf);
                             debug_assert!(order == core::cmp::Ordering::Greater);
                         }
                     }
@@ -3386,7 +3414,7 @@ impl PackageManifest {
                 // SAFETY: all_extern_strings owns the buffer
                 let dst = unsafe {
                     core::slice::from_raw_parts_mut(
-                        (all_extern_strings.as_ptr() as *mut u8).add(dst_start),
+                        (all_extern_strings.as_mut_ptr() as *mut u8).add(dst_start),
                         all_extern_strings.len() * core::mem::size_of::<ExternalString>() - dst_start,
                     )
                 };
@@ -3425,14 +3453,16 @@ impl PackageManifest {
         result.pkg.public_max_age = public_max_age;
         result.pkg.has_extended_manifest = is_extended_manifest;
 
-        if let Some(ptr) = string_builder.ptr() {
-            // SAFETY: ptr is valid for string_builder.len bytes; ownership transfers to result
-            // TODO(port): string_builder owns this allocation; need into_owned() that yields Box<[u8]>
-            result.string_buf =
-                unsafe { core::slice::from_raw_parts(ptr, string_builder.len) }.into();
+        if let Some(buf) = string_builder.ptr.take() {
+            // TODO(port): string_builder owns this allocation; copy out the
+            // written prefix. Phase B can add a `Builder::into_owned()` that
+            // yields `Box<[u8]>` without the truncate copy.
+            let mut v = buf.into_vec();
+            v.truncate(string_builder.len);
+            result.string_buf = v.into_boxed_slice();
         }
 
-        let _ = (string_pool, all_tarball_url_strings); // suppress unused-mut warnings in Phase A
+        let _ = all_tarball_url_strings; // suppress unused-mut warnings in Phase A
 
         Ok(Some(result))
     }

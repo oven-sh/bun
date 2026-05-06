@@ -6,7 +6,7 @@ use bun_paths::{self as Path, PathBuffer};
 use bun_semver::{self as Semver, String as SemverString};
 use bun_str::strings::{self, StringOrTinyString};
 use bun_threading::ThreadPool;
-use bun_fs::FileSystem;
+use crate::bun_fs::FileSystem;
 use bun_sys::Fd;
 
 use bun_install::{

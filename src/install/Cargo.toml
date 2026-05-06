@@ -47,9 +47,12 @@ bun_perf.workspace = true
 bun_picohttp.workspace = true
 bun_semver.workspace = true
 bun_sha_hmac.workspace = true
+bun_simdutf_sys.workspace = true
+bun_spawn = { path = "../spawn" }
 bun_string.workspace = true
 bun_sys.workspace = true
 bun_threading.workspace = true
+bun_transpiler.workspace = true
 bun_url.workspace = true
 bun_which.workspace = true
 bun_wyhash.workspace = true

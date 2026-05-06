@@ -14,7 +14,7 @@ use bun_install::lockfile::{Lockfile, Package};
 use bun_install::package_manager::{Options, PackageManager};
 use bun_semver::String as SemverString;
 use bun_logger as logger;
-use bun_json as JSON;
+use crate::bun_json as JSON;
 
 pub struct PatchCommitResult {
     pub patch_key: Box<[u8]>,

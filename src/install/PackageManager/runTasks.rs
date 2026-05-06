@@ -6,7 +6,7 @@ use bun_logger as logger;
 use bun_str::strings;
 use bun_threading::ThreadPool;
 use bun_http::{self as http, AsyncHTTP};
-use bun_fs::FileSystem;
+use crate::bun_fs::FileSystem;
 
 use bun_install::{
     DependencyID, ExtractTarball, NetworkTask, Npm, PackageID, PackageManifestError, PatchTask,

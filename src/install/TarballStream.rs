@@ -30,9 +30,9 @@ use bun_str::strings;
 use bun_sys::{self, Fd, Mode, O};
 use bun_threading::{thread_pool, Mutex, ThreadPool};
 
-use bun_fs::FileSystem;
-use bun_install::install::{NetworkTask, PackageManager, Task};
-use bun_install::integrity::{self, Integrity};
+use crate::bun_fs::FileSystem;
+use crate::{NetworkTask, PackageManager, Task};
+use crate::integrity::{self, Integrity};
 
 bun_output::declare_scope!(TarballStream, hidden);
 
@@ -475,15 +475,26 @@ impl<'a> TarballStream<'a> {
         // SAFETY: archive is a valid handle.
         let _ = unsafe { (*archive).read_set_options(c"read_concatenated_archives") };
 
-        // SAFETY: @enumFromInt on the libarchive return code.
-        let rc: lib::archive::Result = unsafe {
-            core::mem::transmute::<c_int, lib::archive::Result>(lib::archive_read_open(
+        // SAFETY: archive is a valid handle; callback/data pointers outlive the read.
+        let rc_raw: c_int = unsafe {
+            lib::archive_read_open(
                 archive.cast(),
                 self as *mut Self as *mut c_void,
                 None,
                 Some(archive_read_callback),
                 None,
-            ))
+            )
+        };
+        // PORTING.md §Forbidden: `transmute::<c_int, enum>` is UB for any value not
+        // declared as a discriminant. Map known ARCHIVE_* codes explicitly and treat
+        // anything else as Fatal.
+        let rc: lib::archive::Result = match rc_raw {
+            x if x == lib::archive::Result::Ok as c_int => lib::archive::Result::Ok,
+            x if x == lib::archive::Result::Eof as c_int => lib::archive::Result::Eof,
+            x if x == lib::archive::Result::Retry as c_int => lib::archive::Result::Retry,
+            x if x == lib::archive::Result::Warn as c_int => lib::archive::Result::Warn,
+            x if x == lib::archive::Result::Failed as c_int => lib::archive::Result::Failed,
+            _ => lib::archive::Result::Fatal,
         };
         match rc {
             lib::archive::Result::Ok | lib::archive::Result::Warn => {}
@@ -1183,10 +1194,10 @@ fn apply_windows_npm_path_escapes(path: OSPathZMut) {
 }
 
 // TODO(port): helper for `std.mem.tokenizeScalar(...).rest()` semantics on
-// `[OSPathChar]` — after one `next()`, Zig's `TokenIterator.rest()` returns
-// `buffer[index..]` where index sits at the delimiter immediately following
-// the first token (leading `/` is INCLUDED). Phase B: move into bun_str or
-// bun_paths.
+// `[OSPathChar]` — after one `next()`, Zig's `TokenIterator.rest()` first
+// SKIPS any delimiters at the current index (vendor/zig/lib/std/mem.zig)
+// before returning `buffer[index..]`, so for `"package/index.js"` the result
+// is `"index.js"` (no leading `/`). Phase B: move into bun_str or bun_paths.
 fn tokenizer_rest_placeholder(s: &[OSPathChar]) -> &[OSPathChar] {
     let mut i = 0;
     while i < s.len() && s[i] == ('/' as OSPathChar) {
@@ -1195,12 +1206,16 @@ fn tokenizer_rest_placeholder(s: &[OSPathChar]) -> &[OSPathChar] {
     while i < s.len() && s[i] != ('/' as OSPathChar) {
         i += 1;
     }
+    while i < s.len() && s[i] == ('/' as OSPathChar) {
+        i += 1;
+    }
     &s[i..]
 }
 
-// TODO(port): these enum/type references are guesses at the Rust-side names in
-// bun_install; Phase B will pin them down.
-use bun_install::install::{ResolutionTag, TaskData, TaskStatus};
+// Resolved Phase-B paths: Resolution::Tag is the real npm/git/tarball
+// discriminant; TaskData/TaskStatus live on the PackageManagerTask stub.
+use crate::resolution::Tag as ResolutionTag;
+use crate::package_manager_task::{TaskData, TaskStatus};
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

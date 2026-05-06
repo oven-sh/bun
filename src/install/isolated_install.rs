@@ -1,9 +1,31 @@
+// ───────────────────────────────────────────────────────────────────────────
+// Submodules — Zig basenames preserved per PORTING.md, hence #[path] attrs.
+// These are the install-to-disk primitives the Installer state machine drives.
+// ───────────────────────────────────────────────────────────────────────────
+#[path = "isolated_install/Store.rs"]
+pub mod store;
+#[path = "isolated_install/Installer.rs"]
+pub mod installer;
+#[path = "isolated_install/FileCopier.rs"]
+pub mod file_copier;
+#[path = "isolated_install/FileCloner.rs"]
+pub mod file_cloner;
+#[path = "isolated_install/Hardlinker.rs"]
+pub mod hardlinker;
+#[path = "isolated_install/Symlinker.rs"]
+pub mod symlinker;
+
+pub use store::Store;
+/// Alias so `crate::isolated_install::store::EntryId` (used by
+/// `TaskCallbackContext` in lib.rs) resolves to the real `entry::Id` newtype.
+pub use store::entry::Id as EntryId;
+pub use file_copier::FileCopier;
+
 use std::hash::Hasher as _;
 use std::io::Write as _;
 use std::sync::atomic::Ordering;
 
-use bun_core::{analytics, fast_random, fmt as bun_fmt, Environment, Global, Output, Progress};
-use bun_core::cli::Command;
+use bun_core::{fast_random, fmt as bun_fmt, Environment, Global, Output};
 use bun_collections::{ArrayHashMap, DynamicBitSet, DynamicBitSetList, HashMap, LinearFifo, StringArrayHashMap};
 use bun_alloc::AllocError;
 use bun_paths::{self as paths, AbsPath, AutoRelPath, PathBuffer, RelPath};
@@ -13,13 +35,16 @@ use bun_semver as semver;
 use bun_logger as logger;
 use bstr::BStr;
 
+use crate::analytics;
+use crate::bun_progress::Progress;
+use crate::bun_bunfig::Arguments as Command;
 use crate::{
-    self as install, DependencyID, PackageID, PackageInstall, PackageNameHash, Resolution, Store,
+    self as install, DependencyID, PackageID, PackageInstall, PackageNameHash, Resolution,
     invalid_dependency_id, invalid_package_id,
 };
 use crate::lockfile::{Lockfile, Tree};
 use crate::package_manager::{PackageManager, ProgressStrings, WorkspaceFilter};
-use crate::store::{self, Entry as StoreEntry, Node as StoreNode};
+use store::{Entry as StoreEntry, Node as StoreNode};
 
 bun_output::declare_scope!(IsolatedInstall, visible);
 macro_rules! log {

@@ -5,7 +5,7 @@ use bun_alloc::AllocError;
 
 use bun_core::{env_var, fmt as bun_fmt, Error, Global, Output, Progress};
 use bun_dotenv::Loader as DotEnvLoader;
-use bun_fs::FileSystem;
+use crate::bun_fs::FileSystem;
 use bun_install::lockfile::Lockfile;
 use bun_install::{PackageID, Repository, Resolution};
 use bun_paths::{self as path, AbsPath, PathBuffer, MAX_PATH_BYTES, SEP};

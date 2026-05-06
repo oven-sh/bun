@@ -15,7 +15,7 @@ use bun_threading::thread_pool::{self as thread_pool, Batch, Task as ThreadPoolT
 use bun_wyhash::Wyhash11;
 
 use crate::{
-    self, bun_hash_tag, lockfile::Lockfile, resolution::Resolution, DependencyID, PackageID,
+    bun_hash_tag, lockfile::Lockfile, resolution::Resolution, DependencyID, PackageID,
     PackageInstall, PackageManager, Task,
 };
 

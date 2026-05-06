@@ -20,10 +20,10 @@ pub static BUILD_COMMAND_EXEC_HOOK: AtomicPtr<()> = AtomicPtr::new(null_mut());
 /// flush parser errors on InstallFailed. Registered by bun_runtime::init().
 /// Signature: `unsafe fn() -> *mut bun_logger::Log`.
 pub static CLI_LOG_HOOK: AtomicPtr<()> = AtomicPtr::new(null_mut());
-use bun_fs::FileSystem;
+use crate::bun_fs::FileSystem;
 use bun_install::PackageNameHash;
 use bun_js_parser::js_printer as js_printer;
-use bun_json as json;
+use crate::bun_json as json;
 use bun_logger as logger;
 use bun_paths::{self, PathBuffer, SEP_STR};
 use bun_semver::String as SemverString;

@@ -1,19 +1,20 @@
 use core::sync::atomic::Ordering;
 
-use bun_core::{Global, Output, Progress};
-use bun_core::analytics; // TODO(port): verify crate path for `bun.analytics`
+use bun_core::{Global, Output};
 use bun_str::strings;
 use bun_sys::{self as sys, Fd};
 use bun_paths::SEP;
 use bun_collections::{DynamicBitSet as Bitset, StringHashMap};
 
+use crate::analytics;
+use crate::bun_fs::FileSystem;
+use crate::bun_progress::Progress;
+use crate::bun_bunfig::Arguments as Command;
 
-use bun_fs::FileSystem;
-
-use bun_install::{self as install, Bin, Lockfile, PackageID, PackageInstall};
-use bun_install::PackageManager;
-use bun_install::package_manager::{ProgressStrings, WorkspaceFilter};
-use bun_install::package_manager::package_installer::{PackageInstaller, TreeContext};
+use crate::{self as install, Bin, Lockfile, PackageID, PackageInstall};
+use crate::PackageManager;
+use crate::package_manager::{ProgressStrings, WorkspaceFilter};
+use crate::package_installer::{PackageInstaller, TreeContext};
 
 // TODO(port): narrow error set
 pub fn install_hoisted_packages(

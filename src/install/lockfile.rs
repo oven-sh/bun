@@ -22,7 +22,7 @@ use bun_sha::Hashers as Crypto;
 use bun_str::{strings, ZStr};
 use bun_sys::{self as sys, Fd, File};
 use bun_dotenv as DotEnv;
-use bun_json as JSON;
+use crate::bun_json as JSON;
 
 use crate::{
     self as Install, dependency::Dependency, npm as Npm, resolution::Resolution,

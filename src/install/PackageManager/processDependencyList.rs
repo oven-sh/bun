@@ -1,6 +1,6 @@
 use bun_core::{Global, Output};
 use bun_js_parser::Expr;
-use bun_json as json;
+use crate::bun_json as json;
 use bun_logger as logger;
 use bun_paths as path;
 use bun_semver::{ExternalString, String as SemverString};

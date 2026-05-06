@@ -9,7 +9,7 @@ use bun_str::strings;
 use bun_semver::{self as Semver, String, ExternalString};
 use bun_logger as logger;
 use bun_js_parser::Expr;
-use bun_json as JSON;
+use crate::bun_json as JSON;
 
 use bun_install::{
     self as Install,

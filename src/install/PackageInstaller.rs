@@ -3,22 +3,23 @@ use core::sync::atomic::Ordering;
 
 use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
 use bun_core::{Global, Output};
-use bun_fs::FileSystem;
 use bun_paths::{self as Path, PathBuffer, AbsPath, MAX_PATH_BYTES, SEP};
-use bun_progress::Progress;
 use bun_semver::String;
 use bun_str::{strings, ZStr};
 use bun_sys::{self as Syscall, Dir, Fd};
 
+use crate::bun_fs::FileSystem;
+use crate::bun_progress::Progress;
+use crate::bun_bunfig::Arguments as Command;
 use crate::bin::Bin;
-use crate::lifecycle_script_subprocess::LifecycleScriptSubprocess;
+use crate::lifecycle_script_runner::LifecycleScriptSubprocess;
 use crate::lockfile::{self, Lockfile, Package};
 use crate::package_install::PackageInstall;
 use crate::package_manager::{self, PackageManager, Options};
-use crate::patch_task::PatchTask;
+use crate::patch_install::PatchTask;
 use crate::postinstall_optimizer::PostinstallOptimizer;
 use crate::resolution::Resolution;
-use crate::task::Task;
+use crate::package_manager_task::Task;
 use crate::{
     invalid_package_id, DependencyID, DependencyInstallContext, ExtractData, PackageID,
     PackageNameHash, TaskCallbackContext, TruncatedPackageNameHash,
@@ -646,16 +647,18 @@ impl<'a> PackageInstaller<'a> {
                     u32::try_from(i).unwrap(),
                 )
             {
-                // PORT NOTE: `defer tree.pending_installs.clearRetainingCapacity()` moved to end of block.
-
                 // If installing these packages completes the tree, we don't allow it
                 // to call `installAvailablePackages` recursively. Starting at id 0 and
                 // going up ensures we will reach any trees that will be able to install
                 // packages upon completing the current tree
-                let pending_len = self.trees[i].pending_installs.len();
-                for j in 0..pending_len {
-                    // PORT NOTE: reshaped for borrowck.
-                    let context = self.trees[i].pending_installs[j].clone();
+                //
+                // PORT NOTE: spec iterates `tree.pending_installs.items` by struct
+                // copy (each `context.path` is the same allocation that lives in
+                // `pending_installs`) and `defer clearRetainingCapacity()` at the end.
+                // Drain by move (`mem::take`) to transfer ownership without the
+                // O(pending_installs) extra `.clone()` allocations and to leave
+                // `pending_installs` empty as the spec's defer does.
+                for context in core::mem::take(&mut self.trees[i].pending_installs) {
                     let package_id = resolutions[context.dependency_id as usize];
                     let name = self.names[package_id as usize];
                     let resolution = &self.resolutions[package_id as usize] as *const Resolution;
@@ -678,7 +681,6 @@ impl<'a> PackageInstaller<'a> {
                         unsafe { &*resolution },
                     );
                 }
-                self.trees[i].pending_installs.clear();
             }
         }
 
@@ -1931,11 +1933,17 @@ impl<'a> PackageInstaller<'a> {
                 }
             }
 
+            // PORT NOTE: `destination_dir` is `LazyPackageDestinationDir::NodeModulesPath`
+            // holding `&self.node_modules`. `increment_tree_install_count` takes
+            // `&mut self` and (via `link_tree_bins`) reads `self.node_modules.path`,
+            // which would alias the borrow held by `destination_dir`. Close it first
+            // — `destination_dir` is never read in this else-branch (`get_dir()` is
+            // only used in the `needs_install` branch's EACCES handler).
+            destination_dir.close();
             self.increment_tree_install_count::<{ !IS_PENDING_PACKAGE_INSTALL }>(
                 self.current_tree_id,
                 log_level,
             );
-            destination_dir.close();
         }
     }
 

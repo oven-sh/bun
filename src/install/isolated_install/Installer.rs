@@ -12,16 +12,18 @@ use bun_threading::{Mutex, ThreadPool};
 
 use bun_semver::String as SemverString;
 
-use bun_install::{
+use crate::{
     self as install, invalid_dependency_id, Bin, DependencyID, FileCopier, Lockfile, PackageID,
     PackageInstall, PackageManager, PackageNameHash, PostinstallOptimizer, Resolution, Store,
     TruncatedPackageNameHash,
 };
-use bun_install::isolated_install::{FileCloner, Hardlinker, Symlinker};
-use bun_install::lockfile::Package;
+use super::file_cloner::FileCloner;
+use super::hardlinker::Hardlinker;
+use super::symlinker::Symlinker;
+use crate::lockfile::Package;
 
 type Bitset = DynamicBitSet;
-type Progress = bun_core::Progress;
+type Progress = crate::bun_progress::Progress;
 
 bun_output::declare_scope!(IsolatedInstaller, hidden);
 macro_rules! debug {

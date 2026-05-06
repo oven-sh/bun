@@ -5,7 +5,7 @@ use bun_core::time::nano_timestamp;
 
 use bun_str::{strings, ZStr};
 use bun_semver::String as SemverString;
-use bun_fs::FileSystem;
+use crate::bun_fs::FileSystem;
 use bun_paths as Path;
 use bun_glob as glob;
 

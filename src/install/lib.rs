@@ -4,8 +4,19 @@
 // Crate aliases — Phase-A drafts use the porting-doc crate names; map them
 // to the real workspace crates here so module bodies stay diff-minimal.
 // ──────────────────────────────────────────────────────────────────────────
+// Self-alias so Phase-A drafts written against `bun_install::…` resolve
+// without rewriting every `use` (e.g. yarn.rs, extract_tarball.rs,
+// lifecycle_script_runner.rs).
+extern crate self as bun_install;
 extern crate bun_string as bun_str;
 extern crate bun_sha_hmac as bun_sha;
+// `bun_output::declare_scope!` / `scoped_log!` in Phase-A drafts → the macros
+// live at `bun_core` crate root (#[macro_export]); alias the crate so the
+// `bun_output::` path resolves in un-gated install modules.
+extern crate bun_core as bun_output;
+extern crate bun_analytics as analytics;
+// `bun_simdutf` → real crate is `bun_simdutf_sys`.
+extern crate bun_simdutf_sys as bun_simdutf;
 
 /// `bun_schema::api` → schema lives in `bun_options_types::schema::api`.
 pub(crate) mod bun_schema {
@@ -25,8 +36,8 @@ pub(crate) mod bun_json {
     /// produces UTF-8 strings, so `as_string` can return the raw slice.
     pub trait ExprAccessors {
         fn as_string(&self) -> Option<&'static [u8]>;
-        fn as_property(&self, key: &[u8]) -> Option<Query>;
-        fn get(&self, key: &[u8]) -> Option<Expr>;
+        fn as_property(&self, key: impl AsRef<[u8]>) -> Option<Query>;
+        fn get(&self, key: impl AsRef<[u8]>) -> Option<Expr>;
     }
     impl ExprAccessors for Expr {
         #[inline]
@@ -39,12 +50,12 @@ pub(crate) mod bun_json {
             None
         }
         #[inline]
-        fn as_property(&self, key: &[u8]) -> Option<Query> {
-            if let ExprData::EObject(o) = &self.data { o.as_property(key) } else { None }
+        fn as_property(&self, key: impl AsRef<[u8]>) -> Option<Query> {
+            if let ExprData::EObject(o) = &self.data { o.as_property(key.as_ref()) } else { None }
         }
         #[inline]
-        fn get(&self, key: &[u8]) -> Option<Expr> {
-            if let ExprData::EObject(o) = &self.data { o.get(key) } else { None }
+        fn get(&self, key: impl AsRef<[u8]>) -> Option<Expr> {
+            if let ExprData::EObject(o) = &self.data { o.get(key.as_ref()) } else { None }
         }
     }
 }
@@ -99,22 +110,28 @@ macro_rules! gated_mod {
 // explicit #[path] attrs for PascalCase files.
 // ──────────────────────────────────────────────────────────────────────────
 
-gated_mod!(pub mod extract_tarball = "extract_tarball.rs";);
-gated_mod!(pub mod network_task = "NetworkTask.rs";);
-gated_mod!(pub mod tarball_stream = "TarballStream.rs";);
+pub mod extract_tarball;
+#[path = "NetworkTask.rs"]
+pub mod network_task;
+#[path = "TarballStream.rs"]
+pub mod tarball_stream;
 pub mod npm;
-gated_mod!(pub mod package_manager = "PackageManager.rs";);
+#[path = "PackageManager.rs"]
+pub mod package_manager;
 #[path = "PackageManifestMap.rs"]
 pub mod package_manifest_map;
-gated_mod!(pub mod package_manager_task = "PackageManagerTask.rs";);
-gated_mod!(pub mod lockfile = "lockfile.rs";);
-gated_mod!(pub mod bin = "bin.rs";);
-gated_mod!(pub mod lifecycle_script_runner = "lifecycle_script_runner.rs";);
-gated_mod!(pub mod package_install = "PackageInstall.rs";);
-gated_mod!(pub mod package_installer = "PackageInstaller.rs";);
-gated_mod!(pub mod repository = "repository.rs";);
+#[path = "PackageManagerTask.rs"]
+pub mod package_manager_task;
+pub mod lockfile;
+pub mod bin;
+pub mod lifecycle_script_runner;
+#[path = "PackageInstall.rs"]
+pub mod package_install;
+#[path = "PackageInstaller.rs"]
+pub mod package_installer;
+pub mod repository;
 pub mod resolution;
-gated_mod!(pub mod isolated_install = "isolated_install.rs";);
+pub mod isolated_install;
 #[path = "PnpmMatcher.rs"]
 pub mod pnpm_matcher;
 pub mod postinstall_optimizer;
@@ -122,34 +139,44 @@ pub mod postinstall_optimizer;
 pub mod external_slice;
 pub mod integrity;
 pub mod dependency;
-gated_mod!(pub mod patch_install = "patch_install.rs";);
+pub mod patch_install;
 #[path = "ConfigVersion.rs"]
 pub mod config_version;
-gated_mod!(pub mod hoisted_install = "hoisted_install.rs";);
+pub mod hoisted_install;
 pub mod hosted_git_info;
-gated_mod!(pub mod migration = "migration.rs";);
+pub mod migration;
 pub mod padding_checker;
-gated_mod!(pub mod pnpm = "pnpm.rs";);
+pub mod pnpm;
 pub mod versioned_url;
-gated_mod!(pub mod yarn = "yarn.rs";);
+pub mod yarn;
 
-#[cfg(any())]
+/// `crate::install::…` shim — Phase-A drafts (bin.rs, repository.rs,
+/// migration.rs, resolvers/folder_resolver.rs) were written against a
+/// `bun_install::install` submodule path mirroring `install.zig`. The crate
+/// root *is* that file now, so re-export everything under both names.
+pub(crate) mod install {
+    pub use crate::*;
+}
+
+/// `windows-shim/BinLinkingShim.zig` — `.bunx` shim encoder consumed by
+/// `bin::Linker` (Windows only at runtime, but the encoder types are
+/// referenced unconditionally so the module must exist on all targets).
+pub mod windows_shim {
+    #[path = "../windows-shim/BinLinkingShim.rs"]
+    pub mod bin_linking_shim;
+    pub use bin_linking_shim::BinLinkingShim;
+}
+
 pub mod resolvers {
-    #[path = "folder_resolver.rs"]
+    #[path = "../resolvers/folder_resolver.rs"]
     pub mod folder_resolver;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Stub surface (B-1): opaque newtypes / todo!()-bodied re-exports so downstream
-// re-exports type-check. Real impls live in the gated modules above.
+// Stub surface (B-1): retired. Real impls live in the file-backed modules
+// above. Disabled stubs are kept as `#[cfg(any())]` reference shapes only.
 // ──────────────────────────────────────────────────────────────────────────
 
-#[cfg(not(any()))]
-pub mod extract_tarball { pub struct ExtractTarball; }
-#[cfg(not(any()))]
-pub mod network_task { pub struct NetworkTask; }
-#[cfg(not(any()))]
-pub mod tarball_stream { pub struct TarballStream; }
 #[cfg(any())] // un-gated: real impl in npm.rs
 pub mod npm {
     /// Stub for `npm.PackageManifest` (src/install/npm.zig). Only the fields
@@ -403,473 +430,6 @@ pub mod npm {
         }
     }
 }
-#[cfg(not(any()))]
-pub mod package_manager {
-    /// Stub for `PackageManager` (src/install/PackageManager.zig). Only the
-    /// fields read by un-gated modules are exposed; full layout lives in the
-    /// gated `PackageManager.rs`.
-    #[derive(Default)]
-    pub struct PackageManager {
-        pub options: options::Options,
-        pub timestamp_for_manifest_cache_control: u32,
-        pub lockfile: Box<crate::lockfile::Lockfile>,
-        // TODO(port): IdentityContext hasher (key is already a hash)
-        pub known_npm_aliases: bun_collections::HashMap<crate::PackageNameHash, ()>,
-    }
-    impl PackageManager {
-        /// Zig: `PackageManager.getCacheDirectory(this) std.fs.Dir`.
-        pub fn get_cache_directory(&mut self) -> bun_sys::Fd {
-            todo!("B-2: PackageManager::get_cache_directory")
-        }
-        /// Zig: `PackageManager.getTemporaryDirectory(this) std.fs.Dir`.
-        pub fn get_temporary_directory(&mut self) -> TempDir {
-            todo!("B-2: PackageManager::get_temporary_directory")
-        }
-        /// Zig: `PackageManager.verbose_install` — global flag.
-        #[inline]
-        pub fn verbose_install() -> bool { false }
-    }
-
-    /// Stub for the `std.fs.Dir` return of `getTemporaryDirectory` — only the
-    /// `.handle` field is read by `npm::registry::get_package_metadata`.
-    pub struct TempDir {
-        pub handle: bun_sys::Fd,
-    }
-
-    /// Stub for `PackageManager/CommandLineArguments.zig`. Real impl gated.
-    #[derive(Default, Clone)]
-    pub struct CommandLineArguments;
-
-    /// Port of `PackageManager.WorkspaceFilter` (src/install/PackageManager.zig).
-    /// Exposed so the gated `lockfile.rs` draft type-checks against the stub
-    /// surface; real impl lives in the gated `PackageManager.rs`.
-    pub enum WorkspaceFilter {
-        All,
-        Name(Box<[u8]>),
-        Path(Box<[u8]>),
-    }
-
-    /// Zig: `PackageManager.init(ctx, cli, comptime subcommand) !struct { *PackageManager, []const u8 }`.
-    /// Allocates the global singleton, resolves the root package.json path, and
-    /// returns `(manager, original_cwd)`. `Command::Context` is bunfig-tier and
-    /// not yet available below tier-6, so the stub takes the already-loaded
-    /// `Arguments` shape directly.
-    pub fn init(
-        _ctx: crate::bun_bunfig::Arguments::Context<'_>,
-        _cli: CommandLineArguments,
-        _subcommand: Subcommand,
-    ) -> Result<(&'static mut PackageManager, Box<[u8]>), bun_core::Error> {
-        todo!("B-2: package_manager::init — un-gate PackageManager.rs")
-    }
-
-    /// Zig: `PackageManager.install(ctx) !void` — the `bun install` entry point.
-    /// Wraps `updatePackageJSONAndInstallCatchError` for `Subcommand::Install`.
-    pub fn install(
-        _ctx: crate::bun_bunfig::Arguments::Context<'_>,
-    ) -> Result<(), bun_core::Error> {
-        todo!("B-2: package_manager::install — un-gate PackageManager.rs")
-    }
-
-    /// Stub for `PackageManager.Options` (src/install/PackageManager/PackageManagerOptions.zig).
-    pub mod options {
-        #[derive(Default)]
-        pub struct Options {
-            pub enable: Enable,
-        }
-        #[derive(Default)]
-        pub struct Enable {
-            pub manifest_cache: bool,
-            pub manifest_cache_control: bool,
-        }
-    }
-
-    pub mod security_scanner { pub struct SecurityScanSubprocess; }
-
-    /// Port of `PackageManager.Subcommand` (src/install/PackageManager.zig).
-    #[derive(Clone, Copy, PartialEq, Eq, Debug, strum::IntoStaticStr)]
-    #[strum(serialize_all = "kebab-case")]
-    pub enum Subcommand {
-        Install,
-        Update,
-        Pm,
-        Add,
-        Remove,
-        Link,
-        Unlink,
-        Patch,
-        PatchCommit,
-        Outdated,
-        Pack,
-        Publish,
-        Audit,
-        Info,
-        Why,
-        Scan,
-    }
-
-    impl Subcommand {
-        pub fn can_globally_install_packages(self) -> bool {
-            matches!(self, Self::Install | Self::Update | Self::Add)
-        }
-        pub fn supports_workspace_filtering(self) -> bool {
-            matches!(self, Self::Outdated | Self::Install | Self::Update)
-        }
-        pub fn supports_json_output(self) -> bool {
-            matches!(self, Self::Audit | Self::Pm | Self::Info)
-        }
-        // TODO: make all subcommands find root and chdir
-        pub fn should_chdir_to_root(self) -> bool {
-            !matches!(self, Self::Link)
-        }
-    }
-
-    /// Stub for `PackageManager/UpdateRequest.zig`. Real impl gated.
-    pub mod update_request {
-        pub type Array = Vec<UpdateRequest>;
-
-        #[derive(Default)]
-        pub struct UpdateRequest {
-            pub name: Vec<u8>,
-            pub version: crate::dependency::Version,
-            pub version_buf: Vec<u8>,
-            pub failed: bool,
-        }
-
-        impl UpdateRequest {
-            pub fn parse_with_error(
-                _manager: Option<&mut super::PackageManager>,
-                _log: &mut bun_logger::Log,
-                _positionals: &[&[u8]],
-                _out: &mut Array,
-                _subcommand: super::Subcommand,
-                _is_dev: bool,
-            ) -> Result<&'static mut [UpdateRequest], bun_core::Error> {
-                todo!("B-2: UpdateRequest::parse_with_error")
-            }
-        }
-    }
-}
-#[cfg(not(any()))]
-pub mod package_manager_task { pub struct Task; }
-#[cfg(not(any()))]
-pub mod lockfile {
-    #[derive(Default)]
-    pub struct Lockfile {
-        pub buffers: Buffers,
-    }
-
-    /// Stub for `Lockfile.Buffers` (src/install/lockfile/Buffers.zig). Only the
-    /// fields read by un-gated modules are exposed.
-    #[derive(Default)]
-    pub struct Buffers {
-        pub string_bytes: Vec<u8>,
-    }
-
-    pub struct PatchedDep;
-    pub mod bun_lock {}
-    pub mod tree { pub type Id = u32; }
-
-    /// Stub for `Lockfile.Package.Meta` (src/install/lockfile.zig). Only the
-    /// fields read by `postinstall_optimizer` are exposed; full layout lives in
-    /// the gated `lockfile.rs`.
-    pub mod package {
-        #[derive(Clone, Copy)]
-        pub struct Meta {
-            pub arch: crate::npm::Architecture,
-            pub os: crate::npm::OperatingSystem,
-        }
-
-        // Spec src/install/lockfile/Package/Meta.zig:10-11 — defaults are `.all`, not `.none`.
-        // Deriving `Default` would yield `Architecture(0)` / `OperatingSystem(0)` which makes
-        // `Meta::isDisabled` true on every platform.
-        impl Default for Meta {
-            fn default() -> Self {
-                Self {
-                    arch: crate::npm::Architecture::ALL,
-                    os: crate::npm::OperatingSystem::ALL,
-                }
-            }
-        }
-    }
-
-    impl Lockfile {
-        /// Zig: `Lockfile.initEmpty(this: *Lockfile, allocator)` — out-param init.
-        /// In Rust the allocator is implicit (global), so this is a value constructor.
-        pub fn init_empty() -> Self {
-            // TODO(b2): populate fields once Lockfile struct is un-gated.
-            Lockfile::default()
-        }
-
-        /// Zig: `Lockfile.loadFromDir(this, dir, ?*PackageManager, allocator, *Log,
-        /// comptime attempt_loading_from_other_lockfile)`. Allocator dropped per
-        /// PORTING.md; comptime bool becomes a runtime bool.
-        pub fn load_from_dir(
-            &mut self,
-            _dir: bun_sys::Fd,
-            _manager: Option<&mut crate::package_manager::PackageManager>,
-            _log: &mut bun_logger::Log,
-            _attempt_loading_from_other_lockfile: bool,
-        ) -> LoadResult {
-            todo!("B-2: Lockfile::load_from_dir")
-        }
-
-        /// Zig: `Lockfile.saveToDisk(this, *const LoadResult, *const PackageManager.Options)`.
-        /// Serializes to text or binary format (per `load_result.save_format(options)`)
-        /// and atomically renames into place.
-        pub fn save_to_disk(
-            &mut self,
-            _load_result: &LoadResult,
-            _options: &crate::package_manager::options::Options,
-        ) {
-            todo!("B-2: Lockfile::save_to_disk")
-        }
-
-        pub fn to_json_fmt(&self, _opts: JsonFmtOptions) -> impl core::fmt::Display + '_ {
-            struct F<'a>(&'a Lockfile);
-            impl core::fmt::Display for F<'_> {
-                fn fmt(&self, _f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                    todo!("B-2: Lockfile JSON serializer (std.json.fmt port)")
-                }
-            }
-            F(self)
-        }
-    }
-
-    /// Port of `LoadResult` tagged union (src/install/lockfile.zig).
-    pub enum LoadResult {
-        NotFound,
-        Err(LoadResultErr),
-        Ok(LoadResultOk),
-    }
-
-    pub struct LoadResultErr {
-        pub step: Step,
-        pub value: bun_core::Error,
-        pub lockfile_path: &'static str,
-        pub format: LockfileFormat,
-    }
-
-    #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-    pub enum Migrated { #[default] None, Npm, Yarn, Pnpm }
-
-    pub struct LoadResultOk {
-        pub lockfile: Box<Lockfile>,
-        pub loaded_from_binary_lockfile: bool,
-        pub migrated: Migrated,
-        pub format: LockfileFormat,
-        // TODO(b2): serializer_result once Serializer is ported
-    }
-
-    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-    pub enum LockfileFormat { Text, Binary }
-    impl LockfileFormat {
-        pub fn filename(self) -> &'static str {
-            match self { Self::Text => "bun.lock", Self::Binary => "bun.lockb" }
-        }
-    }
-
-    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-    pub enum Step { OpenFile, ReadFile, ParseFile, Migrating }
-
-    impl LoadResult {
-        pub fn loaded_from_text_lockfile(&self) -> bool {
-            match self {
-                Self::NotFound => false,
-                Self::Err(e) => e.format == LockfileFormat::Text,
-                Self::Ok(o) => o.format == LockfileFormat::Text,
-            }
-        }
-        pub fn loaded_from_binary_lockfile(&self) -> bool {
-            match self {
-                Self::NotFound => false,
-                Self::Err(e) => e.format == LockfileFormat::Binary,
-                Self::Ok(o) => o.format == LockfileFormat::Binary,
-            }
-        }
-    }
-
-    /// Options for the `std.json.fmt(Lockfile, …)` port — see
-    /// `lockfile_json_stringify_for_debugging.zig`. Shape mirrors
-    /// `std.json.StringifyOptions` subset Bun actually uses.
-    #[derive(Clone, Copy, Default)]
-    pub struct JsonFmtOptions {
-        pub whitespace: JsonWhitespace,
-        pub emit_null_optional_fields: bool,
-        pub emit_nonportable_numbers_as_strings: bool,
-    }
-
-    #[derive(Clone, Copy, Default, PartialEq, Eq)]
-    pub enum JsonWhitespace {
-        #[default]
-        Minified,
-        Indent2,
-        Indent4,
-        IndentTab,
-    }
-}
-#[cfg(not(any()))]
-pub mod bin {
-    use bun_semver::String as SemverString;
-    use crate::ExternalStringList;
-
-    /// Stub for `Bin` (src/install/bin.zig). `#[repr(C)]`+`Copy` because
-    /// `npm::PackageVersion` embeds it directly in the manifest binary layout.
-    /// Layout matches the gated `bin.rs` so `npm::PackageManifest::parse` can
-    /// build it without ungating the full `bin` module (which pulls in
-    /// `Lockfile`/`bun_sys::DirIterator`).
-    #[repr(C)]
-    #[derive(Clone, Copy)]
-    pub struct Bin {
-        pub tag: Tag,
-        pub _padding_tag: [u8; 3],
-        pub value: Value,
-    }
-    impl Default for Bin {
-        fn default() -> Self {
-            Self { tag: Tag::None, _padding_tag: [0; 3], value: Value::init_none() }
-        }
-    }
-    impl Bin {
-        #[inline]
-        pub fn init() -> Self { Self::default() }
-    }
-
-    #[repr(u8)]
-    #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-    pub enum Tag {
-        #[default]
-        None = 0,
-        File = 1,
-        NamedFile = 2,
-        Dir = 3,
-        Map = 4,
-    }
-
-    #[repr(C)]
-    #[derive(Clone, Copy)]
-    pub union Value {
-        pub none: (),
-        pub file: SemverString,
-        pub named_file: [SemverString; 2],
-        pub dir: SemverString,
-        pub map: ExternalStringList,
-    }
-    impl Value {
-        #[inline]
-        pub fn init_none() -> Value {
-            // SAFETY: all-zero is a valid Value (largest member ExternalStringList is POD)
-            unsafe { core::mem::zeroed() }
-        }
-        #[inline]
-        pub fn init_file(file: SemverString) -> Value {
-            let mut v = Self::init_none();
-            v.file = file;
-            v
-        }
-        #[inline]
-        pub fn init_named_file(named_file: [SemverString; 2]) -> Value {
-            let mut v = Self::init_none();
-            v.named_file = named_file;
-            v
-        }
-        #[inline]
-        pub fn init_dir(dir: SemverString) -> Value {
-            let mut v = Self::init_none();
-            v.dir = dir;
-            v
-        }
-        #[inline]
-        pub fn init_map(map: ExternalStringList) -> Value {
-            let mut v = Self::init_none();
-            v.map = map;
-            v
-        }
-    }
-}
-#[cfg(not(any()))]
-pub mod resolvers {
-    pub mod folder_resolver { pub struct FolderResolution; }
-}
-#[cfg(not(any()))]
-pub mod lifecycle_script_runner { pub struct LifecycleScriptSubprocess; }
-#[cfg(not(any()))]
-pub mod package_install { pub struct PackageInstall; }
-#[cfg(not(any()))]
-pub mod repository {
-    use bun_semver::String as SemverString;
-    use core::cmp::Ordering;
-
-    /// Stub for `Repository` (src/install/repository.zig). `#[repr(C)]`+`Copy`
-    /// because `resolution::Value` is a `#[repr(C)] union` that embeds it
-    /// directly (lockfile binary layout).
-    #[repr(C)]
-    #[derive(Clone, Copy, Default)]
-    pub struct Repository {
-        pub owner: SemverString,
-        pub repo: SemverString,
-        pub committish: SemverString,
-        pub resolved: SemverString,
-        pub package_name: SemverString,
-    }
-
-    impl Repository {
-        pub fn parse_append_git(
-            _input: &[u8],
-            _string_buf: &mut bun_semver::string::Buf<'_>,
-        ) -> Result<Repository, bun_alloc::AllocError> {
-            todo!("B-2: Repository::parse_append_git — un-gate repository.rs")
-        }
-        pub fn parse_append_github(
-            _input: &[u8],
-            _string_buf: &mut bun_semver::string::Buf<'_>,
-        ) -> Result<Repository, bun_alloc::AllocError> {
-            todo!("B-2: Repository::parse_append_github — un-gate repository.rs")
-        }
-        pub fn order(&self, _rhs: &Self, _lhs_buf: &[u8], _rhs_buf: &[u8]) -> Ordering {
-            todo!("B-2: Repository::order — un-gate repository.rs")
-        }
-        pub fn count<B: bun_semver::StringBuilder>(&self, _buf: &[u8], _builder: &mut B) {
-            todo!("B-2: Repository::count — un-gate repository.rs")
-        }
-        pub fn clone<B: bun_semver::StringBuilder>(&self, _buf: &[u8], _builder: &mut B) -> Self {
-            todo!("B-2: Repository::clone — un-gate repository.rs")
-        }
-        pub fn eql(&self, _rhs: &Self, _lhs_buf: &[u8], _rhs_buf: &[u8]) -> bool {
-            todo!("B-2: Repository::eql — un-gate repository.rs")
-        }
-        pub fn fmt_store_path<'a>(
-            &'a self,
-            _label: &'static str,
-            _buf: &'a [u8],
-        ) -> impl core::fmt::Display + 'a {
-            struct F;
-            impl core::fmt::Display for F {
-                fn fmt(&self, _f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                    todo!("B-2: Repository::fmt_store_path")
-                }
-            }
-            F
-        }
-        pub fn format_as(
-            &self,
-            _label: &'static str,
-            _buf: &[u8],
-            _writer: &mut core::fmt::Formatter<'_>,
-        ) -> core::fmt::Result {
-            todo!("B-2: Repository::format_as — un-gate repository.rs")
-        }
-    }
-}
-#[cfg(not(any()))]
-pub mod isolated_install {
-    pub mod store {
-        pub struct Store;
-        pub type EntryId = u32;
-    }
-    pub mod file_copier { pub struct FileCopier; }
-}
-#[cfg(not(any()))]
-pub mod patch_install { pub struct PatchTask; }
 
 #[cfg(any())] // B-2: replaced by real module above
 pub mod hosted_git_info_stub {
@@ -986,8 +546,8 @@ pub use package_manager::security_scanner::SecurityScanSubprocess;
 pub use package_install::PackageInstall;
 pub use repository::Repository;
 pub use resolution::Resolution;
-pub use isolated_install::store::Store;
-pub use isolated_install::file_copier::FileCopier;
+pub use isolated_install::Store;
+pub use isolated_install::FileCopier;
 pub use pnpm_matcher::PnpmMatcher;
 pub use postinstall_optimizer::PostinstallOptimizer;
 
@@ -1008,7 +568,7 @@ pub use dependency::Behavior;
 pub use lockfile::Lockfile;
 pub use lockfile::PatchedDep;
 pub use lockfile::LoadResult;
-pub use lockfile::Step as LoadStep;
+pub use lockfile::LoadStep;
 
 pub use package_manager::Subcommand;
 
@@ -1680,6 +1240,13 @@ pub type DependencyID = u32;
 
 pub const INVALID_PACKAGE_ID: PackageID = PackageID::MAX;
 pub const INVALID_DEPENDENCY_ID: DependencyID = DependencyID::MAX;
+// Phase-A drafts use the Zig field-style lowercase names; alias both spellings.
+pub const invalid_package_id: PackageID = INVALID_PACKAGE_ID;
+pub const invalid_dependency_id: DependencyID = INVALID_DEPENDENCY_ID;
+pub const bun_hash_tag: &[u8] = BUN_HASH_TAG;
+// snake_case aliases — Phase-A drafts use Zig-style decl spellings.
+pub const invalid_package_id: PackageID = INVALID_PACKAGE_ID;
+pub const invalid_dependency_id: DependencyID = INVALID_DEPENDENCY_ID;
 
 pub type PackageNameAndVersionHash = u64;
 /// Use String.Builder.stringHash to compute this
@@ -1888,7 +1455,7 @@ impl DependencyInstallContext {
 pub enum TaskCallbackContext {
     Dependency(DependencyID),
     DependencyInstallContext(DependencyInstallContext),
-    IsolatedPackageInstallContext(isolated_install::store::EntryId),
+    IsolatedPackageInstallContext(isolated_install::EntryId),
     RootDependency(DependencyID),
     RootRequestId(PackageID),
 }

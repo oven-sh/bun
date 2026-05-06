@@ -10,7 +10,7 @@ use bun_logger as logger;
 use bun_str::{self, strings, MutableString};
 use bun_threading::ThreadPool;
 use bun_url::URL;
-use bun_fs::FileSystem;
+use crate::bun_fs::FileSystem;
 
 use crate::npm::{self as npm, PackageManifest};
 use crate::{ExtractTarball, PackageManager, PatchTask, TarballStream, Task};

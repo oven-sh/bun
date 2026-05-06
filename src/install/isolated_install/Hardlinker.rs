@@ -41,7 +41,7 @@ impl Hardlinker {
     // No explicit Drop impl needed.
 
     pub fn link(&mut self) -> Result<sys::Result<()>, AllocError> {
-        if bun_install::PackageManager::verbose_install() {
+        if crate::PackageManager::verbose_install() {
             bun_core::output::pretty_errorln!(
                 "Hardlinking {} to {}",
                 bun_core::fmt::fmt_os_path(self.src.slice(), Default::default()),
@@ -67,17 +67,17 @@ impl Hardlinker {
                     sys::Result::Err(err) => return Ok(sys::Result::Err(err)),
                 };
 
-                // TODO(port): Zig `defer src_save.restore()` / `defer dest_save.restore()`
-                // run on ALL scope exits, including the early `return .initErr(...)` paths
-                // below. This port restores explicitly only at end-of-iteration, so an
-                // error return leaves self.src/self.dest with entry.path still appended.
-                // Phase B: either make AbsPath/Path::save() return an RAII guard whose
-                // Drop calls restore(), or wrap with scopeguard::guard. Until then,
-                // verify the caller never reuses a Hardlinker after link() returns Err.
-                let src_save = self.src.save();
+                // Zig `defer src_save.restore()` / `defer dest_save.restore()` run on
+                // ALL scope exits, including the early `return .initErr(...)` paths
+                // below. Wrap in scopeguard so the appended `entry.path` is always
+                // truncated off self.src/self.dest before the next iteration or any
+                // error-return leaves this scope.
+                let mut src_save = self.src.save();
+                let _src_restore = scopeguard::guard((), |_| src_save.restore());
                 self.src.append(entry.path);
 
-                let dest_save = self.dest.save();
+                let mut dest_save = self.dest.save();
+                let _dest_restore = scopeguard::guard((), |_| dest_save.restore());
                 self.dest.append(entry.path);
 
                 match entry.kind {
@@ -114,7 +114,7 @@ impl Hardlinker {
                             sys::Result::Ok(()) => {}
                             sys::Result::Err(link_err1) => match link_err1.get_errno() {
                                 sys::E::UV_EEXIST | sys::E::EXIST => {
-                                    if bun_install::PackageManager::verbose_install() {
+                                    if crate::PackageManager::verbose_install() {
                                         bun_core::output::pretty_errorln!(
                                             "Hardlinking {} to a path that already exists: {}",
                                             bun_core::fmt::fmt_os_path(
@@ -150,7 +150,7 @@ impl Hardlinker {
                                     }
                                 }
                                 sys::E::UV_ENOENT | sys::E::NOENT => {
-                                    if bun_install::PackageManager::verbose_install() {
+                                    if crate::PackageManager::verbose_install() {
                                         bun_core::output::pretty_errorln!(
                                             "Hardlinking {} to a path that doesn't exist: {}",
                                             bun_core::fmt::fmt_os_path(
@@ -182,9 +182,6 @@ impl Hardlinker {
                     }
                     _ => {}
                 }
-
-                self.dest.restore(dest_save);
-                self.src.restore(src_save);
             }
 
             return Ok(sys::Result::Ok(()));
@@ -199,11 +196,11 @@ impl Hardlinker {
                     sys::Result::Err(err) => return Ok(sys::Result::Err(err)),
                 };
 
-                // TODO(port): Zig `defer dest_save.restore()` runs on ALL scope exits,
-                // including early error returns below; this port restores only at
-                // end-of-iteration. See windows-branch comment above for the Phase B
-                // RAII-guard / scopeguard fix and the caller-reuse caveat.
-                let dest_save = self.dest.save();
+                // Zig `defer dest_save.restore()` runs on ALL scope exits, including
+                // early error returns below; wrap in scopeguard so self.dest is
+                // restored on every path.
+                let mut dest_save = self.dest.save();
+                let _dest_restore = scopeguard::guard((), |_| dest_save.restore());
                 self.dest.append(entry.path);
 
                 match entry.kind {
@@ -257,8 +254,6 @@ impl Hardlinker {
                     }
                     _ => {}
                 }
-
-                self.dest.restore(dest_save);
             }
 
             return Ok(sys::Result::Ok(()));
@@ -274,5 +269,5 @@ use bun_sys::walker_skippable::EntryKind;
 //   source:     src/install/isolated_install/Hardlinker.zig (210 lines)
 //   confidence: medium
 //   todos:      4
-//   notes:      AbsPath/Path comptime config + save()/restore() RAII shape need Phase B decisions; defer-restore skipped on error-return paths (RAII guard or scopeguard needed — verify caller never reuses Hardlinker after Err).
+//   notes:      AbsPath/Path comptime config + save()/restore() RAII shape need Phase B decisions; defer-restore now wrapped in scopeguard so error-return paths restore self.src/self.dest.
 // ──────────────────────────────────────────────────────────────────────────

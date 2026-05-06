@@ -5,7 +5,7 @@ use bun_paths::{self as Path, PathBuffer};
 use bun_http::AsyncHTTP;
 use bun_url::URL;
 // TODO(port): move to <area>_sys / verify crate path for schema API
-use bun_schema::api as Api;
+use crate::bun_schema::api as Api;
 
 use bun_install::{Features, Npm, PackageInstall, PnpmMatcher};
 use bun_install::package_manager::{PackageManager, Subcommand};

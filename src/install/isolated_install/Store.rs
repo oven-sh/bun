@@ -345,7 +345,7 @@ pub mod entry {
                             f,
                             "{}",
                             BStr::new(bun_paths::basename(
-                                bun_fs::FileSystem::instance().top_level_dir()
+                                crate::bun_fs::FileSystem::instance().top_level_dir()
                             ))
                         )?;
                     } else {

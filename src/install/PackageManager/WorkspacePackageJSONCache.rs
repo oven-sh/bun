@@ -9,7 +9,7 @@ use bun_paths::{self, is_absolute, PathBuffer};
 use bun_sys::File;
 
 use bun_install::initialize_store;
-use bun_json as json;
+use crate::bun_json as json;
 
 pub struct MapEntry {
     pub root: Expr,

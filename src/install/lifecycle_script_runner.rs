@@ -3,7 +3,8 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_core::{Global, Output};
 use bun_install::lockfile::{self as Lockfile, Package};
-use bun_install::store::{self as Store, Installer};
+use bun_install::isolated_install::store::{self as Store};
+use bun_install::isolated_install::installer::Installer;
 use bun_install::PackageManager;
 use bun_io::heap as io_heap;
 use bun_io::BufferedReader;

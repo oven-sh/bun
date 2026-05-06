@@ -8,8 +8,8 @@ use bun_alloc::AllocError;
 use bun_collections::{ArrayHashMap, HashMap, HiveArray, LinearFifo, StringArrayHashMap, UnboundedQueue};
 use bun_core::{err, Error, Global, LazyBool, Once, Output};
 use bun_dotenv as dot_env;
-use bun_fs as fs;
-use bun_fs::FileSystem;
+use crate::bun_fs as fs;
+use crate::bun_fs::FileSystem;
 use bun_http as http;
 use bun_http::AsyncHTTP;
 use bun_ini as ini;
@@ -17,8 +17,8 @@ use bun_ini as ini;
 use bun_event_loop::{self, AnyEventLoop, EventLoopHandle, MiniEventLoop};
 use bun_logger as logger;
 use bun_paths::{self as path, PathBuffer, DELIMITER, SEP, SEP_STR};
-use bun_progress::Progress;
-use bun_schema::api as Api;
+use crate::bun_progress::Progress;
+use crate::bun_schema::api as Api;
 use bun_semver::{self as Semver, String as SemverString};
 use bun_spawn::process::WaiterThread;
 use bun_str::{strings, ZStr};
@@ -28,9 +28,54 @@ use bun_transpiler::{self as transpiler, Transpiler};
 use bun_url::URL;
 
 // MOVE_DOWN(b0): bun_runtime::cli::Arguments → bun_bunfig::Arguments (config loading is bunfig-tier).
-use bun_bunfig::Arguments as BunArguments;
+use crate::bun_bunfig::Arguments as BunArguments;
 // TODO(b0): RunCommand arrives from move-in (bun_runtime::cli::RunCommand → install).
 use crate::RunCommand;
+
+// ──────────────────────────────────────────────────────────────────────────
+// Sub-module declarations — Zig basenames preserved per PORTING.md, hence
+// explicit #[path] attrs for PascalCase / camelCase file names.
+// ──────────────────────────────────────────────────────────────────────────
+#[path = "PackageManager/CommandLineArguments.rs"]
+pub mod command_line_arguments;
+#[path = "PackageManager/PackageManagerOptions.rs"]
+pub mod package_manager_options;
+#[path = "PackageManager/PackageJSONEditor.rs"]
+pub mod package_json_editor;
+#[path = "PackageManager/UpdateRequest.rs"]
+pub mod update_request;
+#[path = "PackageManager/WorkspacePackageJSONCache.rs"]
+pub mod workspace_package_json_cache;
+#[path = "PackageManager/install_with_manager.rs"]
+pub mod install_with_manager;
+#[path = "PackageManager/PackageManagerDirectories.rs"]
+pub mod package_manager_directories;
+#[path = "PackageManager/PackageManagerEnqueue.rs"]
+pub mod package_manager_enqueue;
+#[path = "PackageManager/PackageManagerLifecycle.rs"]
+pub mod package_manager_lifecycle;
+#[path = "PackageManager/PackageManagerResolution.rs"]
+pub mod package_manager_resolution;
+#[path = "PackageManager/ProgressStrings.rs"]
+pub mod progress_strings;
+#[path = "PackageManager/patchPackage.rs"]
+pub mod patch_package;
+#[path = "PackageManager/processDependencyList.rs"]
+pub mod process_dependency_list;
+#[path = "PackageManager/runTasks.rs"]
+pub mod run_tasks;
+#[path = "PackageManager/updatePackageJSONAndInstall.rs"]
+pub mod update_package_json_and_install;
+#[path = "PackageManager/PopulateManifestCache.rs"]
+pub mod populate_manifest_cache;
+#[path = "PackageManager/security_scanner.rs"]
+pub mod security_scanner;
+
+/// Lower-case path alias so `package_manager::options::Options` (used by the
+/// retired stub surface) keeps resolving.
+pub mod options {
+    pub use super::package_manager_options::*;
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // MOVE_DOWN(b0): bun_runtime::cli::package_manager_command::PackageManagerCommand → install

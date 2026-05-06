@@ -12,7 +12,7 @@ use bun_sys as Syscall;
 use bun_threading::Mutex;
 
 
-use bun_fs::FileSystem;
+use crate::bun_fs::FileSystem;
 
 use bun_install::lockfile::{self, Lockfile, Package};
 use bun_install::{

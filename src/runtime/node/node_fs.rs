@@ -4516,7 +4516,7 @@ impl NodeFS {
 
     fn read_inner(&mut self, args: &args::Read) -> Maybe<ret::Read> {
         debug_assert!(args.position.is_none());
-        let mut buf = args.buffer.slice();
+        let mut buf = args.buffer.slice_mut();
         let off = (args.offset as usize).min(buf.len());
         buf = &mut buf[off..];
         let l = (args.length as usize).min(buf.len());

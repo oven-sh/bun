@@ -2675,20 +2675,24 @@ impl<const SSL: bool> NewSocket<SSL> {
         // alias the `&mut TLSSocket` those calls materialise from ext.
         // Reborrow short-lived `unsafe { &mut *tls_ptr }` per use instead.
 
-        let sni: *const c_char = cfg
-            .and_then(|c| c.server_name)
-            .map(|p| p as *const c_char)
-            .unwrap_or(ptr::null());
-        let group = vm.rare_data().bun_connect_group(vm, true);
-        let new_raw = match raw_socket.adopt_tls(
-            group,
-            uws::SocketKind::BunSocketTls,
-            // SAFETY: short-lived field read on the fresh allocation.
-            unsafe { (*tls_ptr).owned_ssl_ctx }.unwrap(),
-            sni,
-            core::mem::size_of::<*mut c_void>(),
-            core::mem::size_of::<*mut c_void>(),
-        ) {
+        let sni: Option<&core::ffi::CStr> = cfg.and_then(|c| c.server_name.as_deref());
+        // SAFETY: per-thread VM singleton; no aliasing `&mut` held.
+        let group = unsafe { &mut *VirtualMachine::get() }
+            .rare_data()
+            .bun_connect_group::<true>(vm);
+        // SAFETY: `raw_socket` is the live `*mut us_socket_t` extracted from
+        // `InternalSocket::Connected` above; `owned_ssl_ctx` is the +1 ref
+        // taken from SecureContext/ssl_ctx_cache and never null here.
+        let new_raw: NonNull<uws::us_socket_t> = match unsafe {
+            (*raw_socket).adopt_tls(
+                group,
+                uws::SocketKind::BunSocketTls,
+                &mut *((*tls_ptr).owned_ssl_ctx.unwrap()),
+                sni,
+                core::mem::size_of::<*mut c_void>() as i32,
+                core::mem::size_of::<*mut c_void>() as i32,
+            )
+        } {
             Some(s) => s,
             None => {
                 // SAFETY: BoringSSL FFI.

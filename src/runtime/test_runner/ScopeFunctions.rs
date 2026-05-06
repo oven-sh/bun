@@ -403,24 +403,31 @@ impl ScopeFunctions {
 
         match self.mode {
             Mode::Describe => {
-                let new_scope = bun_test.collection.active_scope.append_describe(description, base)?;
+                // SAFETY: active_scope is a valid cursor into root_scope's tree for the lifetime of Collection.
+                let new_scope = unsafe { bun_test.collection.active_scope.as_mut() }.append_describe(description, base)?;
                 bun_test.collection.enqueue_describe_callback(new_scope, callback)?;
             }
             Mode::Test => {
                 // check for filter match
                 let mut matches_filter = true;
                 if let Some(reporter) = bun_test.reporter.as_ref() {
-                    if let Some(filter_regex) = reporter.jest.filter_regex.as_ref() {
+                    if let Some(filter_regex) = reporter.jest.filter_regex {
                         group_log::log(format_args!("matches_filter begin"));
                         debug_assert!(bun_test.collection.filter_buffer.is_empty());
                         // PORT NOTE: reshaped for borrowck — clear at end via explicit call below.
 
+                        // SAFETY: active_scope is a valid cursor into root_scope's tree for the lifetime of Collection.
+                        let active_scope: &DescribeScope = unsafe { bun_test.collection.active_scope.as_ref() };
+
                         let mut len = Measure { len: 0 };
-                        filter_names(&mut len, description, Some(&bun_test.collection.active_scope));
-                        // TODO(port): `addManyAsSlice` — extend filter_buffer by `len.len` uninit bytes and return mut slice.
-                        let slice = bun_test.collection.filter_buffer.add_many_as_slice(len.len)?;
+                        filter_names(&mut len, description, Some(active_scope));
+                        // PORT NOTE: Zig `addManyAsSlice` — extend by `len.len` zero bytes and
+                        // hand back the freshly-appended tail as `&mut [u8]`.
+                        let start = bun_test.collection.filter_buffer.len();
+                        bun_test.collection.filter_buffer.resize(start + len.len, 0);
+                        let slice: &mut [u8] = &mut bun_test.collection.filter_buffer[start..];
                         let mut rem = Write { buf: slice };
-                        filter_names(&mut rem, description, Some(&bun_test.collection.active_scope));
+                        filter_names(&mut rem, description, Some(active_scope));
                         debug_assert!(rem.buf.is_empty());
 
                         let str = BunString::from_bytes(bun_test.collection.filter_buffer.as_slice());
@@ -428,7 +435,14 @@ impl ScopeFunctions {
                             "matches_filter \"{}\"",
                             bstr::BStr::new(bun_test.collection.filter_buffer.as_slice())
                         ));
-                        matches_filter = filter_regex.matches(&str);
+                        // SAFETY: Zig holds `*RegularExpression` (mutably). The Rust runner
+                        // currently exposes it as `&RegularExpression`; `matches` only writes
+                        // its internal cursor and is single-threaded here, so cast away const.
+                        // TODO(port): change `TestRunner::filter_regex` to a mutable handle.
+                        let filter_regex_mut = unsafe {
+                            &mut *(filter_regex as *const bun_jsc::RegularExpression as *mut bun_jsc::RegularExpression)
+                        };
+                        matches_filter = filter_regex_mut.matches(str);
 
                         bun_test.collection.filter_buffer.clear();
                     }
@@ -442,10 +456,12 @@ impl ScopeFunctions {
                 group_log::log(format_args!(
                     "enqueueTestCallback / {} / in scope: {}",
                     bstr::BStr::new(description.unwrap_or(b"(unnamed)")),
-                    bstr::BStr::new(bun_test.collection.active_scope.base.name.as_deref().unwrap_or(b"(unnamed)"))
+                    // SAFETY: active_scope is a valid cursor into root_scope's tree.
+                    bstr::BStr::new(unsafe { bun_test.collection.active_scope.as_ref() }.base.name.as_deref().unwrap_or(b"(unnamed)"))
                 ));
 
-                let _ = bun_test.collection.active_scope.append_test(
+                // SAFETY: active_scope is a valid cursor into root_scope's tree for the lifetime of Collection.
+                let _ = unsafe { bun_test.collection.active_scope.as_mut() }.append_test(
                     description,
                     if matches_filter { callback } else { None },
                     bun_test::ExecutionEntryCfg {

@@ -2087,22 +2087,21 @@ impl ExpectAny {
 
         let mut flags = Flags::default();
         flags.set_asymmetric_matcher_constructor_type(asymmetric_matcher_constructor_type);
-        let any = Box::into_raw(Box::new(ExpectAny { flags }));
 
-        // SAFETY: freshly leaked Box; wrapper takes ownership, freed in finalize
-        let any_js_value = unsafe { (*any).to_js(global_this) };
+        let any_js_value = ExpectAny { flags }.to_js(global_this);
         any_js_value.ensure_still_alive();
-        Self::js::constructor_value_set_cached(any_js_value, global_this, constructor);
+        expect_any_js::constructor_value_set_cached(any_js_value, global_this, constructor);
         any_js_value.ensure_still_alive();
 
         let vm = global_this.bun_vm();
-        vm.auto_garbage_collect();
+        // SAFETY: bun_vm() returns the live VM pointer for this global.
+        unsafe { (*vm).auto_garbage_collect() };
 
         Ok(any_js_value)
     }
 }
 
-#[bun_jsc::JsClass]
+#[bun_jsc::JsClass(no_construct)]
 pub struct ExpectArrayContaining {
     pub flags: Flags,
 }
@@ -2124,14 +2123,12 @@ impl ExpectArrayContaining {
 
         let array_value = args[0];
 
-        let array_containing = Box::into_raw(Box::new(ExpectArrayContaining { flags: Flags::default() }));
-
-        // SAFETY: freshly leaked Box; wrapper takes ownership, freed in finalize
-        let array_containing_js_value = unsafe { (*array_containing).to_js(global_this) };
-        Self::js::array_value_set_cached(array_containing_js_value, global_this, array_value);
+        let array_containing_js_value = ExpectArrayContaining { flags: Flags::default() }.to_js(global_this);
+        expect_array_containing_js::array_value_set_cached(array_containing_js_value, global_this, array_value);
 
         let vm = global_this.bun_vm();
-        vm.auto_garbage_collect();
+        // SAFETY: bun_vm() returns the live VM pointer for this global.
+        unsafe { (*vm).auto_garbage_collect() };
         Ok(array_containing_js_value)
     }
 }

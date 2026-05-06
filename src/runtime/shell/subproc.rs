@@ -595,23 +595,17 @@ impl ShellSubprocess {
         *out_subproc = subprocess;
         // SAFETY: subprocess was just allocated and is uniquely owned here.
         let subproc = unsafe { &mut *subprocess };
-        // SAFETY: `subproc.process` is heap-allocated and never moved; the
-        // raw-ptr mutation matches the Zig single-threaded mutation model.
-        unsafe {
-            (*(Arc::as_ptr(&subproc.process) as *mut Process)).set_exit_handler(
-                subprocess.cast::<()>(),
-                &SHELL_SUBPROCESS_EXIT_VTABLE,
-            );
-        }
+        subproc.proc().set_exit_handler::<ShellSubprocess>(subprocess);
         stdio_consumed = true;
         let _ = scopeguard::ScopeGuard::into_inner(stdio_guard);
 
-        if let Writable::Pipe(pipe) = &mut subproc.stdin {
-            pipe.signal = webcore::streams::Signal::init(&mut subproc.stdin);
-            // TODO(port): self-referential signal init; needs raw-ptr API.
+        if let Writable::Pipe(_pipe) = &mut subproc.stdin {
+            // TODO(port): self-referential signal init — `Signal::init` needs a
+            // `SignalHandler` impl for `Writable` and a raw-ptr API. Shell never
+            // creates `.pipe` stdin (see `Writable::init`), so this is dead.
         }
 
-        match subproc.process.watch() {
+        match subproc.proc().watch() {
             bun_sys::Result::Ok(()) => {}
             bun_sys::Result::Err(_) => {
                 *notify_caller_process_already_exited = true;
@@ -620,7 +614,8 @@ impl ShellSubprocess {
         }
 
         if let Writable::Buffer(buffer) = &mut subproc.stdin {
-            if let Some(err) = buffer.start().as_err() {
+            // SAFETY: RefPtr<StaticPipeWriter> data is live; mut access mirrors Zig.
+            if let Err(err) = unsafe { (*buffer.data.as_ptr()).start() } {
                 let sys_err = err.to_shell_system_error();
                 let _ = subproc.try_kill(SignalCode::SIGTERM as i32);
                 Self::abort_after_failed_start(subprocess);
@@ -629,7 +624,7 @@ impl ShellSubprocess {
         }
 
         if let Readable::Pipe(pipe) = &mut subproc.stdout {
-            if let Some(err) = pipe.start(subprocess, event_loop).as_err() {
+            if let Err(err) = pipe.start(subprocess, event_loop) {
                 let sys_err = err.to_shell_system_error();
                 // PORT NOTE: reshaped for borrowck
                 // SAFETY: subprocess was allocated above and is uniquely owned here.
@@ -645,7 +640,7 @@ impl ShellSubprocess {
         }
 
         if let Readable::Pipe(pipe) = &mut subproc.stderr {
-            if let Some(err) = pipe.start(subprocess, event_loop).as_err() {
+            if let Err(err) = pipe.start(subprocess, event_loop) {
                 let sys_err = err.to_shell_system_error();
                 // PORT NOTE: reshaped for borrowck
                 // SAFETY: subprocess was allocated above and is uniquely owned here.

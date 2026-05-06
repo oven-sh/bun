@@ -503,7 +503,7 @@ impl Expect {
         // SAFETY: called from C++ with valid pointers
         let global_this = unsafe { &*global_this };
         // SAFETY: `from_js` returns the live `m_ctx` payload owned by `instance_value`.
-        let flags: Flags = 'flags: unsafe {
+        let flags: Flags = 'flags: { unsafe {
             if let Some(instance) = ExpectCustomAsymmetricMatcher::from_js(instance_value) {
                 break 'flags (*instance).flags;
             } else if let Some(instance) = ExpectAny::from_js(instance_value) {
@@ -525,7 +525,7 @@ impl Expect {
             } else {
                 break 'flags Flags::default();
             }
-        };
+        } };
 
         // SAFETY: out_flags is a valid out-ptr provided by C++ caller
         unsafe { *out_flags = flags.encode() };
@@ -1244,7 +1244,10 @@ impl Expect {
         };
 
         if let Some(saved_value) = existing_value {
-            if strings::eql_long(&pretty_value, saved_value, true) {
+            // PORT NOTE: clone to owned to release the &mut borrow on runner.snapshots
+            // before mutating passed/failed counters below.
+            let saved_value: Vec<u8> = saved_value.to_vec();
+            if strings::eql_long(&pretty_value, &saved_value, true) {
                 runner.snapshots.passed += 1;
                 return Ok(JSValue::UNDEFINED);
             }
@@ -1254,7 +1257,7 @@ impl Expect {
             // TODO(port): comptime string concatenation signature ++ "\n\n{f}\n"
             let diff_format = DiffFormatter {
                 received_string: Some(&pretty_value),
-                expected_string: Some(saved_value),
+                expected_string: Some(&saved_value),
                 global_this: Some(global_this),
                 ..Default::default()
             };

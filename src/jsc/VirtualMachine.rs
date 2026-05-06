@@ -2361,7 +2361,7 @@ impl VirtualMachine {
         };
         if self.hot_reload == HOT_RELOAD_WATCH {
             bun_core::Output::flush();
-            bun_cli::reload_process(should_clear_terminal, false);
+            bun_core::reload_process(should_clear_terminal, false);
         }
 
         if should_clear_terminal {
@@ -2391,23 +2391,16 @@ impl VirtualMachine {
     }
 
     /// Spec VirtualMachine.zig:827 `nodeFS`.
+    ///
+    /// TODO(b2-cycle): real return type is `&mut bun_runtime::node::fs::NodeFS`,
+    /// but `bun_runtime` is a forward-dep on `bun_jsc` (cycle). The field is
+    /// stored type-erased as `*mut c_void`; downstream callers in `bun_runtime`
+    /// cast back. Lazy-init of the boxed `NodeFS` must happen on that side
+    /// (it owns the struct definition).
     #[inline]
-    pub fn node_fs(&mut self) -> &mut bun_runtime::node::fs::NodeFS {
-        if self.node_fs.is_none() {
-            let vm_backref = if self.standalone_module_graph.is_some() {
-                self as *mut VirtualMachine
-            } else {
-                core::ptr::null_mut()
-            };
-            let nfs = Box::new(bun_runtime::node::fs::NodeFS {
-                // only used when standalone module graph is enabled
-                vm: vm_backref,
-                ..Default::default()
-            });
-            self.node_fs = Some(Box::into_raw(nfs).cast());
-        }
-        // SAFETY: just initialized above; opaque ptr stores `*mut NodeFS`.
-        unsafe { &mut *(self.node_fs.unwrap() as *mut bun_runtime::node::fs::NodeFS) }
+    pub fn node_fs(&mut self) -> *mut c_void {
+        let _ = self.standalone_module_graph.is_some();
+        todo!("blocked_on: bun_runtime::node::fs::NodeFS")
     }
 
     /// Spec VirtualMachine.zig:998 `nextAsyncTaskID`.

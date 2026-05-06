@@ -620,23 +620,23 @@ where
             };
 
             if RELOAD_IMMEDIATELY {
-                ctx.transpiler.resolver.watcher =
-                    ResolveWatcher::init_with(
+                ctx.transpiler.resolver.watcher = Some(
+                    ResolveWatcher::new(Watcher::on_maybe_watch_directory).init(
                         match &mut ctx.bun_watcher {
-                            ImportWatcher::Watch(w) => &mut **w,
+                            ImportWatcher::Watch(w) => &mut **w as *mut Watcher,
                             _ => unreachable!(),
                         },
-                        Watcher::on_maybe_watch_directory,
-                    );
+                    ),
+                );
             } else {
-                ctx.transpiler.resolver.watcher =
-                    ResolveWatcher::init_with(
+                ctx.transpiler.resolver.watcher = Some(
+                    ResolveWatcher::new(Watcher::on_maybe_watch_directory).init(
                         match &mut ctx.bun_watcher {
-                            ImportWatcher::Hot(w) => &mut **w,
+                            ImportWatcher::Hot(w) => &mut **w as *mut Watcher,
                             _ => unreachable!(),
                         },
-                        Watcher::on_maybe_watch_directory,
-                    );
+                    ),
+                );
             }
         }
          // disabled: Option<Box<Watcher>> arm
@@ -652,9 +652,9 @@ where
                     ));
                 }
             });
-            ctx.transpiler.resolver.watcher = ResolveWatcher::init_with(
-                &mut **ctx.bun_watcher.as_mut().unwrap(),
-                Watcher::on_maybe_watch_directory,
+            ctx.transpiler.resolver.watcher = Some(
+                ResolveWatcher::new(Watcher::on_maybe_watch_directory)
+                    .init(&mut **ctx.bun_watcher.as_mut().unwrap() as *mut Watcher),
             );
         }
 
@@ -822,7 +822,7 @@ where
                         // SAFETY: ctx outlives reloader (BACKREF).
                         let _ = unsafe {
                             (*self.ctx)
-                                .bust_dir_cache(strings::without_trailing_slash_windows_path(
+                                .bust_dir_cache(strings::paths::without_trailing_slash_windows_path(
                                     file_path,
                                 ))
                         };

@@ -452,7 +452,7 @@ impl ImageSetOption {
 
             if let Some(dep) = dep_ {
                 if let Err(_) = css::serializer::serialize_string(&dep.placeholder, dest) {
-                    return dest.add_fmt_error();
+                    return Err(dest.add_fmt_error());
                 }
                 if let Some(dependencies) = &mut dest.dependencies {
                     // PERF(port): was `catch |err| bun.handleOom(err)` — Vec::push aborts on OOM by default
@@ -463,7 +463,7 @@ impl ImageSetOption {
                     dest.get_import_record_url(url.import_record_idx)?,
                     dest,
                 ) {
-                    return dest.add_fmt_error();
+                    return Err(dest.add_fmt_error());
                 }
             }
         } else {
@@ -492,25 +492,11 @@ impl ImageSetOption {
             // TODO(port): replace raw slice with proper arena-lifetime borrow in Phase B.
             let file_type_slice = unsafe { &*file_type };
             if let Err(_) = css::serializer::serialize_string(file_type_slice, dest) {
-                return dest.add_fmt_error();
+                return Err(dest.add_fmt_error());
             }
             dest.write_char(b')')?;
         }
 
-        Ok(())
-    }
-    #[cfg(any())]
-    pub fn to_css(
-        &self,
-        dest: &mut css::Printer,
-        _is_prefixed: bool,
-    ) -> core::result::Result<(), PrintErr> {
-        // blocked_on: UrlDependency::new(Url) + serializer::serialize_string(&mut Printer)
-        self.image.to_css(dest)?;
-        dest.write_char(b' ')?;
-        let targets = core::mem::take(&mut dest.targets);
-        self.resolution.to_css(dest)?;
-        dest.targets = targets;
         Ok(())
     }
 

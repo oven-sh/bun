@@ -1,6 +1,6 @@
 use bun_core::fmt as bun_fmt;
-use bun_jsc::{JSGlobalObject, JSValue};
-use bun_str::String as BunString;
+use crate::jsc::{JSGlobalObject, JSValue};
+use bun_string::String as BunString;
 
 use bun_sql::postgres::PostgresProtocol as protocol;
 use bun_sql::postgres::PostgresTypes as types;
@@ -12,7 +12,7 @@ use crate::postgres::PostgresSQLStatement;
 use crate::postgres::Signature;
 use crate::shared::QueryBindingIterator::QueryBindingIterator;
 
-bun_output::declare_scope!(Postgres, visible);
+bun_core::declare_scope!(Postgres, visible);
 
 /// The PostgreSQL wire protocol uses 16-bit integers for parameter and column counts.
 const MAX_PARAMETERS: usize = u16::MAX as usize;
@@ -89,7 +89,7 @@ pub fn write_bind<Context>(
     // must match the number of parameters needed by the query.
     writer.short(len)?;
 
-    bun_output::scoped_log!(Postgres, "Bind: {} ({} args)", bun_fmt::quote(name), len);
+    bun_core::scoped_log!(Postgres, "Bind: {} ({} args)", bun_fmt::quote(name), len);
     iter.to(0);
     let mut i: usize = 0;
     while let Some(value) = iter.next()? {
@@ -113,7 +113,7 @@ pub fn write_bind<Context>(
             };
         };
         if value.is_empty_or_undefined_or_null() {
-            bun_output::scoped_log!(Postgres, "  -> NULL");
+            bun_core::scoped_log!(Postgres, "  -> NULL");
             //  As a special case, -1 indicates a
             // NULL parameter value. No value bytes follow in the NULL case.
             writer.int4((-1i32) as u32)?;
@@ -122,7 +122,7 @@ pub fn write_bind<Context>(
         }
         #[cfg(feature = "debug_logs")]
         {
-            bun_output::scoped_log!(
+            bun_core::scoped_log!(
                 Postgres,
                 "  -> {}",
                 bstr::BStr::new(tag.tag_name().unwrap_or(b"(unknown)"))
@@ -166,7 +166,7 @@ pub fn write_bind<Context>(
                     bytes = buf.byte_slice();
                 }
                 let l = writer.length()?;
-                bun_output::scoped_log!(Postgres, "    {} bytes", bytes.len());
+                bun_core::scoped_log!(Postgres, "    {} bytes", bytes.len());
 
                 writer.write(bytes)?;
                 l.write_excluding_self()?;
@@ -190,7 +190,7 @@ pub fn write_bind<Context>(
 
             _ => {
                 let str = BunString::from_js(value, global)?;
-                if str.tag() == bun_str::Tag::Dead {
+                if str.tag() == bun_string::Tag::Dead {
                     return Err(bun_core::err!("OutOfMemory"));
                 }
                 let slice = str.to_utf8_without_ref();
@@ -241,7 +241,7 @@ pub fn write_query<Context>(
             query,
         };
         q.write_internal(writer)?;
-        bun_output::scoped_log!(Postgres, "Parse: {}", bun_fmt::quote(query));
+        bun_core::scoped_log!(Postgres, "Parse: {}", bun_fmt::quote(query));
     }
 
     {
@@ -249,7 +249,7 @@ pub fn write_query<Context>(
             p: protocol::PortalOrPreparedStatement::PreparedStatement(name),
         };
         d.write_internal(writer)?;
-        bun_output::scoped_log!(Postgres, "Describe: {}", bun_fmt::quote(name));
+        bun_core::scoped_log!(Postgres, "Describe: {}", bun_fmt::quote(name));
     }
 
     Ok(())
@@ -337,7 +337,7 @@ pub fn parse_and_bind_and_execute<Context>(
             query,
         };
         q.write_internal(writer)?;
-        bun_output::scoped_log!(Postgres, "Parse: {}", bun_fmt::quote(query));
+        bun_core::scoped_log!(Postgres, "Parse: {}", bun_fmt::quote(query));
     }
 
     // Describe (needed on first execution to learn parameter/result types for caching)
@@ -346,7 +346,7 @@ pub fn parse_and_bind_and_execute<Context>(
             p: protocol::PortalOrPreparedStatement::PreparedStatement(name),
         };
         d.write_internal(writer)?;
-        bun_output::scoped_log!(Postgres, "Describe: {}", bun_fmt::quote(name));
+        bun_core::scoped_log!(Postgres, "Describe: {}", bun_fmt::quote(name));
     }
 
     // Bind — use server-provided types if available (binary format), otherwise
@@ -403,7 +403,7 @@ pub fn on_data<Context>(
     loop {
         reader.mark_message_start();
         let c = reader.int::<u8>()?;
-        bun_output::scoped_log!(Postgres, "read: {}", c as char);
+        bun_core::scoped_log!(Postgres, "read: {}", c as char);
         match c {
             b'D' => connection.on(M::DataRow, reader)?,
             b'd' => connection.on(M::CopyData, reader)?,
@@ -433,7 +433,7 @@ pub fn on_data<Context>(
             b'N' => {
                 if matches!(connection.tls_status, TlsStatus::MessageSent(_)) {
                     connection.tls_status = TlsStatus::SslNotAvailable;
-                    bun_output::scoped_log!(Postgres, "Server does not support SSL");
+                    bun_core::scoped_log!(Postgres, "Server does not support SSL");
                     if connection.ssl_mode == SslMode::Require {
                         connection.fail(
                             "Server does not support SSL",
@@ -452,9 +452,9 @@ pub fn on_data<Context>(
             b'W' => connection.on(M::CopyBothResponse, reader)?,
 
             _ => {
-                bun_output::scoped_log!(Postgres, "Unknown message: {}", c as char);
+                bun_core::scoped_log!(Postgres, "Unknown message: {}", c as char);
                 let to_skip = reader.length()?.saturating_sub(1);
-                bun_output::scoped_log!(Postgres, "to_skip: {}", to_skip);
+                bun_core::scoped_log!(Postgres, "to_skip: {}", to_skip);
                 reader.skip(usize::try_from(to_skip.max(0)).unwrap())?;
             }
         }

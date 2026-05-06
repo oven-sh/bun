@@ -408,7 +408,7 @@ fn cstr_eq(a: CStrPtr, b: CStrPtr) -> bool {
             // SAFETY: both are non-null NUL-terminated strings we own.
             let lhs = unsafe { CStr::from_ptr(a) }.to_bytes();
             let rhs = unsafe { CStr::from_ptr(b) }.to_bytes();
-            bun_string::strings::eql_long::<true>(lhs, rhs)
+            bun_string::strings::eql_long(lhs, rhs, true)
         }
         _ => false,
     }

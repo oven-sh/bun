@@ -48,7 +48,13 @@ pub enum T {
 }
 
 pub struct Lexer<'a> {
-    pub source: logger::Source,
+    // PORT NOTE: borrowed (`&'a Source`) rather than owned so
+    // `identifier`/`string_literal_slice` can borrow `&'a [u8]` from
+    // `source.contents` without a self-referential struct. The Zig original
+    // copied `Source` by value because Zig has no borrow checker; the Rust
+    // `logger::Source.contents` is now `Cow<'static,[u8]>` so an owned copy
+    // would tie those slices to `&self` instead of `'a`.
+    pub source: &'a logger::Source,
     pub log: &'a mut logger::Log,
     pub start: usize,
     pub end: usize,
@@ -139,7 +145,7 @@ impl<'a> Lexer<'a> {
                 // TODO(port): Zig passed `self.log.msgs.allocator`; Rust Log owns its allocator.
                 args,
                 logger::AddErrorOptions {
-                    source: Some(&self.source),
+                    source: Some(self.source),
                     loc: __loc,
                     redact_sensitive_information: self.should_redact_logs,
                     ..Default::default()
@@ -175,7 +181,7 @@ impl<'a> Lexer<'a> {
         self.log.add_error_fmt_opts(
             args,
             logger::AddErrorOptions {
-                source: Some(&self.source),
+                source: Some(self.source),
                 loc: r.loc,
                 len: r.len,
                 redact_sensitive_information: self.should_redact_logs,
@@ -1389,7 +1395,7 @@ impl<'a> Lexer<'a> {
 
     pub fn init(
         log: &'a mut logger::Log,
-        source: logger::Source,
+        source: &'a logger::Source,
         bump: &'a Arena,
         redact_logs: bool,
     ) -> Result<Lexer<'a>, Error> {

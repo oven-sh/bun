@@ -1,21 +1,22 @@
 use core::cell::Cell;
 use core::ptr::NonNull;
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, VirtualMachine};
-use bun_jsc::codegen::js_mysql_query as js;
+use crate::jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, VirtualMachine};
+use crate::jsc::codegen::js_mysql_query as js;
 use bun_sql::mysql::protocol::any_mysql_error::{self as AnyMySQLError};
 use bun_sql::mysql::MySQLQueryResult;
 use bun_sql::postgres::command_tag::CommandTag;
 use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode;
 
+use crate::mysql::protocol::any_mysql_error_jsc::mysql_error_to_js;
 use super::js_mysql_connection::MySQLConnection;
-use super::mysql_query::MySQLQuery;
-use super::mysql_statement::MySQLStatement;
+use super::my_sql_query::MySQLQuery;
+use super::my_sql_statement::MySQLStatement;
 
-bun_output::declare_scope!(MySQLQuery, visible);
+bun_core::declare_scope!(MySQLQuery, visible);
 
 macro_rules! debug {
-    ($($arg:tt)*) => { bun_output::scoped_log!(MySQLQuery, $($arg)*) };
+    ($($arg:tt)*) => { bun_core::scoped_log!(MySQLQuery, $($arg)*) };
 }
 
 #[bun_jsc::JsClass]
@@ -83,7 +84,7 @@ impl JSMySQLQuery {
     ) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
         // SAFETY: JS-thread only; sole `&mut VirtualMachine` borrow in this scope.
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(unsafe { global_this.bun_vm() }, arguments);
+        let mut args = jsc::call_frame::ArgumentsSlice::init(unsafe { global_this.bun_vm() }, arguments);
         // defer args.deinit() — handled by Drop
         let Some(query) = args.next_eat() else {
             return global_this.throw("query must be a string", &[]);
@@ -96,7 +97,7 @@ impl JSMySQLQuery {
             return global_this.throw("query must be a string", &[]);
         }
 
-        if values.js_type() != bun_jsc::JSType::Array {
+        if values.js_type() != jsc::JSType::Array {
             return global_this.throw("values must be an array", &[]);
         }
 
@@ -177,13 +178,13 @@ impl JSMySQLQuery {
         this.set_target(target);
         if let Err(err) = this.run(connection) {
             if !global_object.has_exception() {
-                return global_object.throw_value(AnyMySQLError::mysql_error_to_js(
+                return global_object.throw_value(mysql_error_to_js(
                     global_object,
                     "failed to execute query",
                     err,
                 ));
             }
-            return Err(bun_jsc::JsError::Thrown);
+            return Err(jsc::JsError::Thrown);
         }
         connection.enqueue_request(this);
         Ok(JSValue::UNDEFINED)
@@ -325,7 +326,7 @@ impl JSMySQLQuery {
         if let Some(err_) = self.global_object().try_take_exception() {
             self.reject_with_js_value(queries_array, err_);
         } else {
-            let instance = AnyMySQLError::mysql_error_to_js(
+            let instance = mysql_error_to_js(
                 self.global_object(),
                 "Failed to bind query",
                 err,
@@ -362,7 +363,7 @@ impl JSMySQLQuery {
 
         let mut js_error = err.to_error().unwrap_or(err);
         if js_error.is_empty() {
-            js_error = AnyMySQLError::mysql_error_to_js(
+            js_error = mysql_error_to_js(
                 this.global_object(),
                 "Query failed",
                 AnyMySQLError::Error::UnknownError,
@@ -418,7 +419,7 @@ impl JSMySQLQuery {
         {
             debug!("run failed to execute query");
             if !global_object.has_exception() {
-                return global_object.throw_value(AnyMySQLError::mysql_error_to_js(
+                return global_object.throw_value(mysql_error_to_js(
                     global_object,
                     "failed to execute query",
                     err,

@@ -228,7 +228,7 @@ pub struct TOML<'a> {
 impl<'a> TOML<'a> {
     pub fn init(
         bump: &'a Bump,
-        source_: logger::Source,
+        source_: &'a logger::Source,
         log: &'a mut logger::Log,
         redact_logs: bool,
     ) -> Result<TOML<'a>, bun_core::Error> {
@@ -241,8 +241,8 @@ impl<'a> TOML<'a> {
     }
 
     #[inline]
-    pub fn source(&self) -> &logger::Source {
-        &self.lexer.source
+    pub fn source(&self) -> &'a logger::Source {
+        self.lexer.source
     }
 
     // Zig: `fn e(_: *TOML, t: anytype, loc: logger.Loc) Expr` with a
@@ -256,7 +256,7 @@ impl<'a> TOML<'a> {
     }
 
     pub fn parse(
-        source_: &logger::Source,
+        source_: &'a logger::Source,
         log: &'a mut logger::Log,
         bump: &'a Bump,
         redact_logs: bool,
@@ -273,18 +273,11 @@ impl<'a> TOML<'a> {
             _ => {}
         }
 
-        // PORT NOTE: Zig copies the `Source` by value (`source_.*`); the T2
-        // `logger::Source` does not yet derive `Clone`, so reconstruct field-wise.
-        // All fields are `Copy`/`Clone`.
-        // TODO(port): drop once `bun_logger::Source` derives `Clone`.
-        let source_copy = logger::Source {
-            path: source_.path.clone(),
-            contents: source_.contents,
-            contents_is_recycled: source_.contents_is_recycled,
-            identifier_name: source_.identifier_name.clone(),
-            index: source_.index,
-        };
-        let mut parser = TOML::init(bump, source_copy, log, redact_logs)?;
+        // PORT NOTE: Zig copies the `Source` by value (`source_.*`). The Rust
+        // `Lexer` borrows it (`&'a Source`) so `identifier`/`string_literal_slice`
+        // can point into `source.contents` for `'a` without a self-referential
+        // struct — no copy needed.
+        let mut parser = TOML::init(bump, source_, log, redact_logs)?;
 
         parser.run_parser()
     }
@@ -476,8 +469,12 @@ impl<'a> TOML<'a> {
                     debug_assert!(loc.start > 0);
                     let start: u32 = u32::try_from(loc.start).unwrap();
                     // std.ascii.whitespace = { ' ', '\t', '\n', '\r', 0x0B, 0x0C }
+                    // PORT NOTE: reshaped for borrowck — `self.source()` returns
+                    // `&'a Source` (independent of `&self`), so bind it before
+                    // the `&mut self.lexer` borrow below.
+                    let src: &'a logger::Source = self.source();
                     let key_name = bun_str::strings::trim_right(
-                        &self.source().contents[start as usize..rope_end],
+                        &src.contents[start as usize..rope_end],
                         b" \t\n\r\x0B\x0C",
                     );
                     self.lexer.add_error(

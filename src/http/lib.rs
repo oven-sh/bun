@@ -1004,7 +1004,7 @@ pub fn print_request(
             headers: request.headers,
             bytes_read: request.bytes_read,
         };
-        Output::pretty_errorln(format_args!("{}", request_.curl(ignore_insecure, body)));
+        Output::pretty_errorln("{}", format_args!("{}", request_.curl(ignore_insecure, body)));
     }
 
     let ver: &str = match protocol {
@@ -1013,21 +1013,19 @@ pub fn print_request(
         Protocol::Http3 => "HTTP/3",
     };
     // TODO(port): pretty_fmt prefix elided pending Output::error_writer() in bun_core.
-    Output::pretty_errorln(format_args!(
+    Output::pretty_errorln(
         "> {} {} {}",
-        ver,
-        BStr::new(request.method),
-        BStr::new(url),
-    ));
+        (ver, BStr::new(request.method), BStr::new(url)),
+    );
     for header in request.headers {
-        Output::pretty_errorln(format_args!("> {}", header));
+        Output::pretty_errorln("> {}", (header,));
     }
     Output::flush();
 }
 
 #[cold]
 fn print_response(response: &picohttp::Response<'_>) {
-    Output::pretty_errorln(format_args!("{}", response));
+    Output::pretty_errorln("{}", (response,));
     Output::flush();
 }
 
@@ -1732,11 +1730,11 @@ pub fn cleanup(_force: bool) {
 }
 
 #[cfg(target_os = "linux")]
-pub const SOCKET_FLAGS: u32 = bun_sys::SOCK_CLOEXEC | bun_sys::posix::MSG_NOSIGNAL;
+pub const SOCKET_FLAGS: u32 = libc::SOCK_CLOEXEC as u32 | libc::MSG_NOSIGNAL as u32;
 #[cfg(not(target_os = "linux"))]
-pub const SOCKET_FLAGS: u32 = bun_sys::SOCK_CLOEXEC;
+pub const SOCKET_FLAGS: u32 = libc::SOCK_CLOEXEC as u32;
 
-pub const OPEN_SOCKET_FLAGS: u32 = bun_sys::SOCK_CLOEXEC;
+pub const OPEN_SOCKET_FLAGS: u32 = libc::SOCK_CLOEXEC as u32;
 
 pub const EXTREMELY_VERBOSE: bool = false;
 
@@ -1751,8 +1749,8 @@ pub const MAX_H2_RETRIES: u8 = 5;
 /// `force_http1`) still carries an authoritative Alt-Svc for the origin.
 pub fn h3_alt_svc_enabled() -> bool {
     // SAFETY: set once at startup before HTTP thread spawns
-    unsafe { EXPERIMENTAL_HTTP3_CLIENT_FROM_CLI }
-        || bun_core::feature_flag::BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT.get()
+    unsafe { EXPERIMENTAL_HTTP3_CLIENT_FROM_CLI
+        || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT.get() }
 }
 
 #[inline]
@@ -2216,7 +2214,7 @@ impl HTTPClient {
         // same pool entry as one without).
         if let Some(sni_raw) = &self.hostname {
             let sni = strip_port_from_host(sni_raw);
-            if !strings::eql_case_insensitive_ascii::<true>(sni, self.url.hostname) {
+            if !strings::eql_case_insensitive_ascii(sni, self.url.hostname, true) {
                 let sni_lower: &[u8] = if sni.len() <= name_lower_buf.len() {
                     strings::copy_lowercase(sni, &mut name_lower_buf[0..sni.len()])
                 } else {
@@ -2252,7 +2250,7 @@ impl HTTPClient {
                 // (order-independent) without the cancellation.
                 combined = combined.wrapping_add(h.final_());
                 any = true;
-                if strings::eql_case_insensitive_ascii::<true>(name, b"proxy-authorization") {
+                if strings::eql_case_insensitive_ascii(name, b"proxy-authorization", true) {
                     user_provided_auth = true;
                 }
             }
@@ -4645,7 +4643,7 @@ impl HTTPClient {
                                 // SAFETY: self.redirect (set below) keeps `normalized_url_str` alive.
                                 let new_url: URL<'static> =
                                     unsafe { core::mem::transmute(URL::parse(&normalized_url_str)) };
-                                is_same_origin = strings::eql_case_insensitive_ascii::<true>(strings::without_trailing_slash(new_url.origin), strings::without_trailing_slash(self.url.origin));
+                                is_same_origin = strings::eql_case_insensitive_ascii(strings::without_trailing_slash(new_url.origin), strings::without_trailing_slash(self.url.origin), true);
                                 self.url = new_url;
                                 // connected_url still borrows from the previous hop's buffer
                                 // until doRedirect releases the socket, so park it in
@@ -4698,7 +4696,7 @@ impl HTTPClient {
                                 // SAFETY: self.redirect (set below) keeps `normalized_url_str` alive.
                                 let new_url: URL<'static> =
                                     unsafe { core::mem::transmute(URL::parse(&normalized_url_str)) };
-                                is_same_origin = strings::eql_case_insensitive_ascii::<true>(strings::without_trailing_slash(new_url.origin), strings::without_trailing_slash(self.url.origin));
+                                is_same_origin = strings::eql_case_insensitive_ascii(strings::without_trailing_slash(new_url.origin), strings::without_trailing_slash(self.url.origin), true);
                                 self.url = new_url;
                                 debug_assert!(self.prev_redirect.is_empty());
                                 self.prev_redirect =
@@ -4718,7 +4716,7 @@ impl HTTPClient {
                                 let new_url = new_url_.to_owned_slice();
                                 // SAFETY: self.redirect (set below) keeps `new_url` alive.
                                 self.url = unsafe { core::mem::transmute(URL::parse(&new_url)) };
-                                is_same_origin = strings::eql_case_insensitive_ascii::<true>(strings::without_trailing_slash(self.url.origin), strings::without_trailing_slash(original_url.origin));
+                                is_same_origin = strings::eql_case_insensitive_ascii(strings::without_trailing_slash(self.url.origin), strings::without_trailing_slash(original_url.origin), true);
                                 debug_assert!(self.prev_redirect.is_empty());
                                 self.prev_redirect =
                                     core::mem::replace(&mut self.redirect, new_url);
@@ -4911,11 +4909,20 @@ struct InitialRequestPayloadResult {
     try_sending_more_data: bool,
 }
 
-#[derive(Default)]
 pub struct HTTPResponseMetadata {
     pub url: *const [u8], // TODO(port): borrows owned_buf
     pub owned_buf: Box<[u8]>,
-    pub response: picohttp::Response,
+    pub response: picohttp::Response<'static>,
+}
+
+impl Default for HTTPResponseMetadata {
+    fn default() -> Self {
+        Self {
+            url: core::ptr::slice_from_raw_parts(core::ptr::null::<u8>(), 0),
+            owned_buf: Box::default(),
+            response: picohttp::Response::default(),
+        }
+    }
 }
 
 #[cold]
@@ -4927,11 +4934,18 @@ pub fn print_request(
     body: &[u8],
     curl: bool,
 ) {
-    let mut request_ = request.clone();
-    request_.path = url;
+    // TODO(port): Zig built a clone with `path = url` for the curl formatter.
+    // picohttp::Request<'_> isn't `Clone`, so format the fields directly.
+    let request_ = picohttp::Request {
+        method: request.method,
+        path: url,
+        minor_version: request.minor_version,
+        headers: request.headers,
+        bytes_read: request.bytes_read,
+    };
 
     if curl {
-        Output::pretty_errorln(format_args!("{}", request_.curl(ignore_insecure, body)));
+        Output::pretty_errorln("{}", format_args!("{}", request_.curl(ignore_insecure, body)));
     }
 
     let ver: &[u8] = match protocol {
@@ -4942,7 +4956,7 @@ pub fn print_request(
     let prefix = if Output::enable_ansi_colors_stderr() {
         Output::pretty_fmt::<true>("<r><d>[fetch]<r> ")
     } else {
-        ""
+        Output::pretty_fmt::<false>("")
     };
     let _ = Output::error_writer().write_fmt(format_args!(
         "{}> {} {} {}\n",
@@ -4959,7 +4973,7 @@ pub fn print_request(
 
 #[cold]
 fn print_response(response: &picohttp::Response) {
-    Output::pretty_errorln(format_args!("{}", response));
+    Output::pretty_errorln("{}", (response,));
     Output::flush();
 }
 
@@ -5525,7 +5539,7 @@ pub mod ssl_config {
                 // SAFETY: both are non-null NUL-terminated strings we own.
                 let lhs = unsafe { CStr::from_ptr(a) }.to_bytes();
                 let rhs = unsafe { CStr::from_ptr(b) }.to_bytes();
-                bun_str::eql_long(lhs, rhs, true)
+                bun_string::strings::eql_long(lhs, rhs, true)
             }
             _ => false,
         }

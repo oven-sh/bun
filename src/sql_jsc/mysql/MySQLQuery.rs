@@ -1,26 +1,27 @@
 use core::ffi::c_void;
 use std::rc::Rc;
 
-use bun_jsc::{JSGlobalObject, JSValue, MarkedArgumentBuffer};
-use bun_str::String as BunString;
+use crate::jsc::{JSGlobalObject, JSValue, MarkedArgumentBuffer};
+use bun_string::String as BunString;
 
 use bun_sql::mysql::mysql_request as mysql_request;
-use bun_sql::mysql::mysql_types::Value;
+use super::my_sql_value::Value;
 use bun_sql::mysql::protocol::any_mysql_error::{self as any_mysql_error, AnyMySQLError};
 use bun_sql::mysql::protocol::prepared_statement as prepared_statement;
 use bun_sql::mysql::query_status::Status;
 use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode;
 
+use crate::mysql::protocol::any_mysql_error_jsc::mysql_error_to_js;
 use crate::mysql::protocol::signature::Signature;
 use crate::shared::query_binding_iterator::QueryBindingIterator;
 
 use super::js_mysql_connection::MySQLConnection;
-use super::mysql_statement::MySQLStatement;
+use super::my_sql_statement::{self as my_sql_statement, MySQLStatement};
 
-bun_output::declare_scope!(MySQLQuery, visible);
+bun_core::declare_scope!(MySQLQuery, visible);
 
 macro_rules! debug {
-    ($($arg:tt)*) => { bun_output::scoped_log!(MySQLQuery, $($arg)*) };
+    ($($arg:tt)*) => { bun_core::scoped_log!(MySQLQuery, $($arg)*) };
 }
 
 pub struct MySQLQuery {
@@ -251,7 +252,7 @@ impl MySQLQuery {
         if self.statement.is_none() {
             let stmt = Rc::new(MySQLStatement {
                 signature: Signature::empty(),
-                status: super::mysql_statement::Status::Parsing,
+                status: my_sql_statement::Status::Parsing,
                 // TODO(port): Zig sets intrusive `ref_count = .initExactRefs(1)`; with `Rc` the
                 // single owner here gives strong_count == 1 implicitly.
                 ..Default::default()
@@ -272,7 +273,7 @@ impl MySQLQuery {
         binding_value: JSValue,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
-        let mut query_str: Option<bun_str::Utf8Slice<'_>> = None;
+        let mut query_str: Option<bun_string::zig_string::Slice> = None;
         // `defer if (query_str) |str| str.deinit()` — deleted: `Utf8Slice` impls `Drop`.
 
         if self.statement.is_none() {
@@ -282,7 +283,7 @@ impl MySQLQuery {
                 Err(err) => {
                     if !global_object.has_exception() {
                         return global_object
-                            .throw_value(any_mysql_error::mysql_error_to_js(global_object, "failed to generate signature", err));
+                            .throw_value(mysql_error_to_js(global_object, "failed to generate signature", err));
                     }
                     return Err(bun_core::err!("JSError"));
                 }
@@ -299,7 +300,7 @@ impl MySQLQuery {
                 let stmt = entry.value_ptr.clone();
                 // TODO(port): mutation through `Rc<MySQLStatement>` — see field note. Reading `status`
                 // is fine; Phase B must expose interior mutability or use `IntrusiveRc`.
-                if stmt.status == super::mysql_statement::Status::Failed {
+                if stmt.status == my_sql_statement::Status::Failed {
                     let error_response = stmt.error_response.to_js(global_object);
                     // If the statement failed, we need to throw the error
                     return global_object.throw_value(error_response);
@@ -312,7 +313,7 @@ impl MySQLQuery {
             } else {
                 let stmt = Rc::new(MySQLStatement {
                     signature,
-                    status: super::mysql_statement::Status::Pending,
+                    status: my_sql_statement::Status::Pending,
                     statement_id: 0,
                     // TODO(port): Zig sets intrusive `ref_count = .initExactRefs(2)` (self + map).
                     // With `Rc`, storing two clones below yields strong_count == 2.
@@ -326,13 +327,13 @@ impl MySQLQuery {
         // mutates through a shared `*MySQLStatement`. Phase B: `IntrusiveRc` or `RefCell`.
         let stmt = self.statement.as_ref().expect("set above");
         match stmt.status {
-            super::mysql_statement::Status::Failed => {
+            my_sql_statement::Status::Failed => {
                 debug!("failed");
                 let error_response = stmt.error_response.to_js(global_object);
                 // If the statement failed, we need to throw the error
                 return global_object.throw_value(error_response);
             }
-            super::mysql_statement::Status::Prepared => {
+            my_sql_statement::Status::Prepared => {
                 if connection.can_pipeline() {
                     debug!("bindAndExecute");
                     let writer = connection.get_writer();
@@ -343,7 +344,7 @@ impl MySQLQuery {
                         self.bind_and_execute(writer, stmt_mut, global_object, binding_value, columns_value)
                     {
                         if !global_object.has_exception() {
-                            return global_object.throw_value(any_mysql_error::mysql_error_to_js(
+                            return global_object.throw_value(mysql_error_to_js(
                                 global_object,
                                 "failed to bind and execute query",
                                 err,
@@ -354,10 +355,10 @@ impl MySQLQuery {
                     self.flags.set_pipelined(true);
                 }
             }
-            super::mysql_statement::Status::Parsing => {
+            my_sql_statement::Status::Parsing => {
                 debug!("parsing");
             }
-            super::mysql_statement::Status::Pending => {
+            my_sql_statement::Status::Pending => {
                 if connection.can_prepare_query() {
                     debug!("prepareRequest");
                     let writer = connection.get_writer();
@@ -373,7 +374,7 @@ impl MySQLQuery {
                     // TODO(port): needs `&mut MySQLStatement`; see field note.
                     Rc::get_mut(self.statement.as_mut().unwrap())
                         .expect("TODO(port): shared mutation")
-                        .status = super::mysql_statement::Status::Parsing;
+                        .status = my_sql_statement::Status::Parsing;
                 }
             }
         }
@@ -469,7 +470,7 @@ impl MySQLQuery {
             && self
                 .statement
                 .as_ref()
-                .is_some_and(|s| s.status == super::mysql_statement::Status::Parsing)
+                .is_some_and(|s| s.status == my_sql_statement::Status::Parsing)
     }
 
     #[inline]
@@ -500,11 +501,11 @@ impl MySQLQuery {
                 // through the shared `*MySQLStatement`; do not silently no-op when the Rc is shared.
                 let statement = Rc::get_mut(statement)
                     .expect("TODO(port): shared mutation — switch to IntrusiveRc/RefCell");
-                if statement.status == super::mysql_statement::Status::Parsing
+                if statement.status == my_sql_statement::Status::Parsing
                     && statement.params.len() == statement.params_received as usize
                     && statement.statement_id > 0
                 {
-                    statement.status = super::mysql_statement::Status::Prepared;
+                    statement.status = my_sql_statement::Status::Prepared;
                 }
             }
         }

@@ -194,7 +194,12 @@ pub struct Lexer<'a, 'bump> {
 
 type LexResult<T = ()> = Result<T, bun_core::Error>;
 
-impl<'a, 'bump> Lexer<'a, 'bump> {
+impl<'a, 'bump> Lexer<'a, 'bump>
+where
+    // `identifier` may point into `source.contents` (`'a`) *or* a bump-alloc'd
+    // decode buffer (`'bump`); the slow-path escape-decoder writes the latter.
+    'bump: 'a,
+{
     // ── construction ─────────────────────────────────────────────────────
 
     fn init_without_reading(

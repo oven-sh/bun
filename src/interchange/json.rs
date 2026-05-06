@@ -90,19 +90,12 @@ where
 // flags. // TODO(port): if adt_const_params stabilizes, switch to
 // `<const OPTS: js_lexer::JSONOptions>`.
 
-// TODO(port): Lexer type — Zig: `js_lexer.NewLexer(opts)`. Assumed Rust shape:
-// `js_lexer::Lexer<const IS_JSON, const ALLOW_COMMENTS, ...>` or
-// `js_lexer::Lexer<const OPTS: JSONOptions>`. Placeholder alias; Phase B wires.
-type LexerFor<
-    const IS_JSON: bool,
-    const ALLOW_COMMENTS: bool,
-    const ALLOW_TRAILING_COMMAS: bool,
-    const IGNORE_LEADING_ESCAPE_SEQUENCES: bool,
-    const IGNORE_TRAILING_ESCAPE_SEQUENCES: bool,
-    const JSON_WARN_DUPLICATE_KEYS: bool,
-    const WAS_ORIGINALLY_MACRO: bool,
-    const GUESS_INDENTATION: bool,
-> = js_lexer::Lexer; // TODO(port): thread const generics through to js_lexer::NewLexer
+// PORT NOTE: Zig's `js_lexer.NewLexer(opts)` returned a comptime-specialised
+// type. The cycle-break `crate::json_lexer::Lexer` keeps a *runtime*
+// `JSONOptions` instead (the JSON token loop is small enough that the
+// specialisation buys nothing here), so the const-generic flags on
+// `JSONLikeParser` are flattened back into a runtime struct via `OPTS` below
+// and the lexer field is the single concrete `Lexer<'a, 'bump>`.
 
 pub struct JSONLikeParser<
     'a,
@@ -116,16 +109,7 @@ pub struct JSONLikeParser<
     const WAS_ORIGINALLY_MACRO: bool,
     const GUESS_INDENTATION: bool,
 > {
-    pub lexer: LexerFor<
-        IS_JSON,
-        ALLOW_COMMENTS,
-        ALLOW_TRAILING_COMMAS,
-        IGNORE_LEADING_ESCAPE_SEQUENCES,
-        IGNORE_TRAILING_ESCAPE_SEQUENCES,
-        JSON_WARN_DUPLICATE_KEYS,
-        WAS_ORIGINALLY_MACRO,
-        GUESS_INDENTATION,
-    >,
+    pub lexer: js_lexer::Lexer<'a, 'bump>,
     pub log: &'a mut logger::Log,
     pub bump: &'bump Bump,
     pub list_bump: &'bump Bump,
@@ -157,9 +141,23 @@ impl<
         GUESS_INDENTATION,
     >
 {
+    /// Runtime `JSONOptions` reconstructed from the 8 const-generic flags —
+    /// `crate::json_lexer::Lexer` carries the options at runtime (see struct
+    /// note above).
+    const OPTS: js_lexer::JSONOptions = js_lexer::JSONOptions {
+        is_json: IS_JSON,
+        allow_comments: ALLOW_COMMENTS,
+        allow_trailing_commas: ALLOW_TRAILING_COMMAS,
+        ignore_leading_escape_sequences: IGNORE_LEADING_ESCAPE_SEQUENCES,
+        ignore_trailing_escape_sequences: IGNORE_TRAILING_ESCAPE_SEQUENCES,
+        json_warn_duplicate_keys: JSON_WARN_DUPLICATE_KEYS,
+        was_originally_macro: WAS_ORIGINALLY_MACRO,
+        guess_indentation: GUESS_INDENTATION,
+    };
+
     pub fn init(
         bump: &'bump Bump,
-        source_: &logger::Source,
+        source_: &'a logger::Source,
         log: &'a mut logger::Log,
     ) -> Result<Self, bun_core::Error> {
         // TODO(port): narrow error set
@@ -169,7 +167,7 @@ impl<
     pub fn init_with_list_allocator(
         bump: &'bump Bump,
         list_bump: &'bump Bump,
-        source_: &logger::Source,
+        source_: &'a logger::Source,
         log: &'a mut logger::Log,
     ) -> Result<Self, bun_core::Error> {
         // TODO(port): narrow error set
@@ -179,7 +177,7 @@ impl<
         // map to whatever the typed-arena store assertion becomes in bun_js_parser.
 
         Ok(Self {
-            lexer: js_lexer::Lexer::init(log, source_, bump)?,
+            lexer: js_lexer::Lexer::init(log, source_, bump, Self::OPTS)?,
             bump,
             log,
             list_bump,
@@ -189,14 +187,15 @@ impl<
 
     #[inline]
     pub fn source(&self) -> &logger::Source {
-        &self.lexer.source
+        self.lexer.source
     }
 
     pub fn parse_expr<const MAYBE_AUTO_QUOTE: bool, const FORCE_UTF8: bool>(
         &mut self,
     ) -> Result<Expr, bun_core::Error> {
         if !self.stack_check.is_safe_to_recurse() {
-            bun_core::throw_stack_overflow()?;
+            // Zig: `bun.throwStackOverflow()`.
+            return Err(bun_core::err!("StackOverflow"));
         }
 
         let loc = self.lexer.loc();
@@ -237,7 +236,10 @@ impl<
             T::TOpenBracket => {
                 self.lexer.next()?;
                 let mut is_single_line = !self.lexer.has_newline_before;
-                let mut exprs: BumpVec<'bump, Expr> = BumpVec::new_in(self.list_bump);
+                // PORT NOTE: Zig grew an `ArrayList(Expr)` in `list_allocator` and
+                // `moveFromList`-ed it. The Rust `BabyList` is `Vec`-backed (global
+                // allocator), so build a `Vec<Expr>` directly and hand it off.
+                let mut exprs: Vec<Expr> = Vec::new();
                 // errdefer exprs.deinit() — dropped automatically on `?`.
 
                 while self.lexer.token != T::TCloseBracket {
@@ -265,9 +267,10 @@ impl<
                 self.lexer.expect(T::TCloseBracket)?;
                 Ok(new_expr(
                     E::Array {
-                        items: ExprNodeList::move_from_list(&mut exprs),
+                        items: ExprNodeList::move_from_list(exprs),
                         is_single_line,
                         was_originally_macro: WAS_ORIGINALLY_MACRO,
+                        ..Default::default()
                     },
                     loc,
                 ))
@@ -275,7 +278,8 @@ impl<
             T::TOpenBrace => {
                 self.lexer.next()?;
                 let mut is_single_line = !self.lexer.has_newline_before;
-                let mut properties: BumpVec<'bump, G::Property> = BumpVec::new_in(self.list_bump);
+                // PORT NOTE: see TOpenBracket note — `BabyList` is `Vec`-backed.
+                let mut properties: Vec<G::Property> = Vec::new();
                 // errdefer properties.deinit() — dropped automatically on `?`.
 
                 // PORT NOTE: reshaped for borrowck — Zig used `void`/`*Node` when
@@ -285,7 +289,7 @@ impl<
                 } else {
                     None
                 };
-                let duplicates_guard = scopeguard::guard(&mut duplicates, |d| {
+                let mut duplicates_guard = scopeguard::guard(&mut duplicates, |d| {
                     if JSON_WARN_DUPLICATE_KEYS {
                         if let Some(map) = d.take() {
                             hash_map_pool::release(map);
@@ -314,8 +318,10 @@ impl<
                     };
 
                     let key_range = self.lexer.range();
-                    let key = new_expr(str.clone(), key_range.loc);
-                    // TODO(port): E::String may not be Clone; Zig copied the value type.
+                    // Zig copied the `E.String` by value; `EString` is intentionally
+                    // not `Clone` (rope `next` would alias) — `shallow_clone` is the
+                    // explicit field-copy that matches the Zig struct copy.
+                    let key = new_expr(str.shallow_clone(), key_range.loc);
                     self.lexer.expect(T::TStringLiteral)?;
 
                     if JSON_WARN_DUPLICATE_KEYS {
@@ -331,9 +337,8 @@ impl<
                         if dup {
                             self.log
                                 .add_range_warning_fmt(
-                                    &self.lexer.source,
+                                    Some(self.lexer.source),
                                     key_range,
-                                    self.bump,
                                     format_args!(
                                         "Duplicate key \"{}\" in object literal",
                                         bstr::BStr::new(str.string(self.bump)?)

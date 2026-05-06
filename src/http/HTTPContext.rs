@@ -582,7 +582,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 if socket.target_port != target_port {
                     continue;
                 }
-                if !strings::eql_long::<true>(&socket.target_hostname, target_hostname) {
+                if !strings::eql_long(&socket.target_hostname, target_hostname, true) {
                     continue;
                 }
                 // A tunnel established with reject_unauthorized=false never
@@ -600,9 +600,10 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 }
             }
 
-            if strings::eql_long::<true>(
+            if strings::eql_long(
                 &socket.hostname_buf[..socket.hostname_len as usize],
                 hostname,
+                true,
             ) {
                 let http_socket = socket.http_socket;
 

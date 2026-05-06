@@ -3,8 +3,8 @@
 use core::mem::size_of;
 
 use bun_core::err;
-use bun_jsc::{JSGlobalObject, JSValue};
-use bun_str::String as BunString;
+use crate::jsc::{JSGlobalObject, JSValue};
+use bun_string::String as BunString;
 
 use crate::shared::cached_structure::CachedStructure as PostgresCachedStructure;
 use bun_sql::postgres::postgres_protocol as protocol;
@@ -20,15 +20,15 @@ pub use crate::shared::sql_data_cell::SQLDataCell;
 // referenced via `err!(...)` here.
 type Result<T, E = AnyPostgresError> = core::result::Result<T, E>;
 
-bun_output::declare_scope!(Postgres, visible);
-bun_output::declare_scope!(PostgresDataCell, visible);
+bun_core::declare_scope!(Postgres, visible);
+bun_core::declare_scope!(PostgresDataCell, visible);
 
 fn parse_bytea(hex: &[u8]) -> Result<SQLDataCell> {
     let len = hex.len() / 2;
     let mut buf = vec![0u8; len].into_boxed_slice();
     // errdefer free(buf) → Box drops on `?`
 
-    let written = bun_str::strings::decode_hex_to_bytes(&mut buf, hex)?;
+    let written = bun_string::strings::decode_hex_to_bytes(&mut buf, hex)?;
     let ptr = Box::into_raw(buf) as *mut u8;
 
     Ok(SQLDataCell {
@@ -459,7 +459,7 @@ fn parse_array(
                                 return Err(err!("UnsupportedArrayFormat").into());
                             }
 
-                            if bun_str::strings::eql_case_insensitive_ascii(&slice[0..8], b"Infinity", false) {
+                            if bun_string::strings::eql_case_insensitive_ascii(&slice[0..8], b"Infinity", false) {
                                 if matches!(
                                     array_type,
                                     types::Tag::DateArray | types::Tag::TimestampArray | types::Tag::TimestamptzArray
@@ -556,7 +556,7 @@ fn parse_array(
                                         if element.len() < 8 {
                                             return Err(err!("UnsupportedArrayFormat").into());
                                         }
-                                        if bun_str::strings::eql_case_insensitive_ascii(&element[0..8], b"Infinity", false) {
+                                        if bun_string::strings::eql_case_insensitive_ascii(&element[0..8], b"Infinity", false) {
                                             let val = if is_negative { -f64::INFINITY } else { f64::INFINITY };
                                             if matches!(
                                                 array_type,
@@ -1007,7 +1007,7 @@ pub fn from_bytes(
                     _ => unreachable!(),
                 }
             } else {
-                if bun_str::strings::eql_case_insensitive_ascii(bytes, b"NULL", true) {
+                if bun_string::strings::eql_case_insensitive_ascii(bytes, b"NULL", true) {
                     return Ok(SQLDataCell {
                         tag: SQLDataCell::Tag::Null,
                         value: SQLDataCell::Value { null: 0 },
@@ -1225,7 +1225,7 @@ fn parse_binary_numeric<'a>(input: &[u8], result: &'a mut Vec<u8>) -> Result<PGN
     let weight: i16 = read_be!(i16);
     let sign: u16 = read_be!(u16);
     let dscale: i16 = read_be!(i16);
-    bun_output::scoped_log!(
+    bun_core::scoped_log!(
         PostgresDataCell,
         "ndigits: {}, weight: {}, sign: {}, dscale: {}",
         ndigits,
@@ -1271,7 +1271,7 @@ fn parse_binary_numeric<'a>(input: &[u8], result: &'a mut Vec<u8>) -> Result<PGN
         while idx <= weight as usize {
             // PORT NOTE: Zig peer-type-widened `idx < ndigits`; compare in i32 to avoid usize→i16 truncation.
             let digit: u16 = if i32::try_from(idx).unwrap() < i32::from(ndigits) { read_be!(u16) } else { 0 };
-            bun_output::scoped_log!(PostgresDataCell, "digit: {}", digit);
+            bun_core::scoped_log!(PostgresDataCell, "digit: {}", digit);
             // TODO(port): std.fmt.printInt with width=4 fill='0'. NBASE=10000 so digit ∈ [0,9999].
             let digit_str: [u8; 4] = format_digit_4(digit);
             let digit_len = 4usize;
@@ -1311,12 +1311,12 @@ fn parse_binary_numeric<'a>(input: &[u8], result: &'a mut Vec<u8>) -> Result<PGN
                 } else {
                     0
                 };
-                bun_output::scoped_log!(PostgresDataCell, "dscale digit: {}", digit);
+                bun_core::scoped_log!(PostgresDataCell, "dscale digit: {}", digit);
                 let digit_str: [u8; 4] = format_digit_4(digit);
                 let digit_len = 4usize;
                 result.extend_from_slice(&digit_str[0..digit_len]);
             } else {
-                bun_output::scoped_log!(PostgresDataCell, "dscale digit: 0000");
+                bun_core::scoped_log!(PostgresDataCell, "dscale digit: 0000");
                 result.extend_from_slice(b"0000");
             }
             idx += 4;
@@ -1431,7 +1431,7 @@ impl<'a> Putter<'a> {
         cached_structure: Option<&PostgresCachedStructure>,
     ) -> Result<JSValue, bun_core::Error> {
         // TODO(port): jsc.JSObject.ExternColumnIdentifier path — confirm bun_jsc export name
-        let mut names: *mut bun_jsc::ExternColumnIdentifier = core::ptr::null_mut();
+        let mut names: *mut crate::jsc::ExternColumnIdentifier = core::ptr::null_mut();
         let mut names_count: u32 = 0;
         if let Some(c) = cached_structure {
             if let Some(f) = c.fields.as_ref() {
@@ -1456,7 +1456,7 @@ impl<'a> Putter<'a> {
     fn put_impl<const IS_RAW: bool>(&mut self, index: u32, optional_bytes: Option<&mut Data>) -> Result<bool> {
         // Bounds check to prevent crash when fields/list arrays are empty
         if (index as usize) >= self.fields.len() {
-            bun_output::scoped_log!(
+            bun_core::scoped_log!(
                 Postgres,
                 "putImpl: index {} >= fields.len {}, ignoring extra field",
                 index,
@@ -1465,7 +1465,7 @@ impl<'a> Putter<'a> {
             return Ok(false);
         }
         if (index as usize) >= self.list.len() {
-            bun_output::scoped_log!(
+            bun_core::scoped_log!(
                 Postgres,
                 "putImpl: index {} >= list.len {}, ignoring extra field",
                 index,
@@ -1476,7 +1476,7 @@ impl<'a> Putter<'a> {
 
         let field = &self.fields[index as usize];
         let oid = field.type_oid;
-        bun_output::scoped_log!(Postgres, "index: {}, oid: {}", index, oid);
+        bun_core::scoped_log!(Postgres, "index: {}, oid: {}", index, oid);
         let cell: &mut SQLDataCell = &mut self.list[index as usize];
         if IS_RAW {
             *cell = SQLDataCell::raw(optional_bytes);

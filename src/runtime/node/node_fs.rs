@@ -5011,7 +5011,7 @@ impl NodeFS {
                         dirent_path_prev.deref();
                         dirent_path_prev = webcore::encoding::to_bun_string(
                             without_nt_prefix::<u8>(path_u8),
-                            args.encoding,
+                            encoding_to_node(args.encoding),
                         );
                     }
                 }

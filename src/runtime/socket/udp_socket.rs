@@ -633,7 +633,7 @@ impl UDPSocket {
     ) -> JsResult<JSValue> {
         if this.closed {
             return Err(global_this.throw_value(
-                bun_sys::Result::<()>::errno_sys(posix::E::BADF as i32, bun_sys::Tag::Setsockopt)
+                bun_sys::Result::<()>::errno_sys(posix::E::BADF as i32, bun_sys::Tag::setsockopt)
                     .unwrap()
                     .to_js(global_this)?,
             ));
@@ -648,7 +648,7 @@ impl UDPSocket {
         // SAFETY: !closed implies socket is Some and valid.
         let res = unsafe { (*this.socket.unwrap()).set_broadcast(enabled) };
 
-        if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::Setsockopt) {
+        if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
             return Err(global_this.throw_value(err.to_js(global_this)?));
         }
 
@@ -663,7 +663,7 @@ impl UDPSocket {
     ) -> JsResult<JSValue> {
         if this.closed {
             return Err(global_this.throw_value(
-                bun_sys::Result::<()>::errno_sys(posix::E::BADF as i32, bun_sys::Tag::Setsockopt)
+                bun_sys::Result::<()>::errno_sys(posix::E::BADF as i32, bun_sys::Tag::setsockopt)
                     .unwrap()
                     .to_js(global_this)?,
             ));
@@ -678,7 +678,7 @@ impl UDPSocket {
         // SAFETY: !closed implies socket is Some and valid.
         let res = unsafe { (*this.socket.unwrap()).set_multicast_loopback(enabled) };
 
-        if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::Setsockopt) {
+        if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
             return Err(global_this.throw_value(err.to_js(global_this)?));
         }
 
@@ -693,7 +693,7 @@ impl UDPSocket {
     ) -> JsResult<JSValue> {
         if this.closed {
             return Err(global_this.throw_value(
-                bun_sys::Result::<()>::errno_sys(posix::E::BADF as i32, bun_sys::Tag::Setsockopt)
+                bun_sys::Result::<()>::errno_sys(posix::E::BADF as i32, bun_sys::Tag::setsockopt)
                     .unwrap()
                     .to_js(global_this)?,
             ));
@@ -708,7 +708,7 @@ impl UDPSocket {
         let mut addr: sockaddr_storage = unsafe { core::mem::zeroed() };
         if !this.parse_addr(global_this, JSValue::js_number(0), arguments[0], &mut addr)? {
             return Err(global_this.throw_value(
-                bun_sys::Result::<()>::errno_sys(posix::E::INVAL as i32, bun_sys::Tag::Setsockopt)
+                bun_sys::Result::<()>::errno_sys(posix::E::INVAL as i32, bun_sys::Tag::setsockopt)
                     .unwrap()
                     .to_js(global_this)?,
             ));
@@ -736,7 +736,7 @@ impl UDPSocket {
             unsafe { (*socket).set_membership(&addr, None, drop) }
         };
 
-        if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::Setsockopt) {
+        if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
             return Err(global_this.throw_value(err.to_js(global_this)?));
         }
 
@@ -769,7 +769,7 @@ impl UDPSocket {
     ) -> JsResult<JSValue> {
         if this.closed {
             return Err(global_this.throw_value(
-                bun_sys::Result::<()>::errno_sys(posix::E::BADF as i32, bun_sys::Tag::Setsockopt)
+                bun_sys::Result::<()>::errno_sys(posix::E::BADF as i32, bun_sys::Tag::setsockopt)
                     .unwrap()
                     .to_js(global_this)?,
             ));
@@ -786,7 +786,7 @@ impl UDPSocket {
             &mut *source_addr.as_mut_ptr()
         })? {
             return Err(global_this.throw_value(
-                bun_sys::Result::<()>::errno_sys(posix::E::INVAL as i32, bun_sys::Tag::Setsockopt)
+                bun_sys::Result::<()>::errno_sys(posix::E::INVAL as i32, bun_sys::Tag::setsockopt)
                     .unwrap()
                     .to_js(global_this)?,
             ));
@@ -800,7 +800,7 @@ impl UDPSocket {
             &mut *group_addr.as_mut_ptr()
         })? {
             return Err(global_this.throw_value(
-                bun_sys::Result::<()>::errno_sys(posix::E::INVAL as i32, bun_sys::Tag::Setsockopt)
+                bun_sys::Result::<()>::errno_sys(posix::E::INVAL as i32, bun_sys::Tag::setsockopt)
                     .unwrap()
                     .to_js(global_this)?,
             ));
@@ -839,7 +839,7 @@ impl UDPSocket {
             unsafe { (*socket).set_source_specific_membership(&source_addr, &group_addr, None, drop) }
         };
 
-        if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::Setsockopt) {
+        if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
             return Err(global_this.throw_value(err.to_js(global_this)?));
         }
 
@@ -872,7 +872,7 @@ impl UDPSocket {
     ) -> JsResult<JSValue> {
         if this.closed {
             return Err(global_this.throw_value(
-                bun_sys::Result::<()>::errno_sys(posix::E::BADF as i32, bun_sys::Tag::Setsockopt)
+                bun_sys::Result::<()>::errno_sys(posix::E::BADF as i32, bun_sys::Tag::setsockopt)
                     .unwrap()
                     .to_js(global_this)?,
             ));
@@ -901,7 +901,7 @@ impl UDPSocket {
         // SAFETY: socket valid (checked above).
         let res = unsafe { (*socket).set_multicast_interface(&addr) };
 
-        if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::Setsockopt) {
+        if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
             return Err(global_this.throw_value(err.to_js(global_this)?));
         }
 
@@ -935,7 +935,7 @@ impl UDPSocket {
         // PERF(port): was comptime monomorphization — profile in Phase B.
         if this.closed {
             return Err(global_this.throw_value(
-                bun_sys::Result::<()>::errno_sys(posix::E::BADF as i32, bun_sys::Tag::Setsockopt)
+                bun_sys::Result::<()>::errno_sys(posix::E::BADF as i32, bun_sys::Tag::setsockopt)
                     .unwrap()
                     .to_js(global_this)?,
             ));
@@ -952,7 +952,7 @@ impl UDPSocket {
         };
         let res = function(socket, ttl);
 
-        if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::Setsockopt) {
+        if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
             return Err(global_this.throw_value(err.to_js(global_this)?));
         }
 

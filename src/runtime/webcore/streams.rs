@@ -1992,7 +1992,7 @@ impl NetworkSink {
     fn detach_writable(&mut self) {
         if let Some(task) = self.task.take() {
             // SAFETY: task is ref-counted; deref releases our ref
-            unsafe { task.as_ref() }.deref();
+            bun_s3::MultiPartUpload::deref_(task.as_ptr());
         }
     }
 
@@ -2006,7 +2006,7 @@ impl NetworkSink {
             NetworkSinkLog,
             "onWritable flushed: {} state: {}",
             flushed,
-            <&'static str>::from(task.state)
+            task.state as u8
         );
         if this.flush_promise.has_value() {
             // SAFETY: global_this set at construction

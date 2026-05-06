@@ -984,9 +984,16 @@ pub mod heap_breakdown {
     pub const ENABLED: bool = cfg!(debug_assertions) && cfg!(target_os = "macos");
 
     /// Opaque FFI handle for a macOS `malloc_zone_t`.
+    //
+    // `_p` is `UnsafeCell` so the type is `!Freeze`: libmalloc mutates the
+    // zone's internal state on every `malloc_zone_*` call, and we hand out
+    // `&'static Zone` across threads. Without interior mutability, deriving a
+    // `*mut Zone` from `&Zone` and writing through it is UB under Stacked
+    // Borrows. Zig spec uses `*Zone` (freely-aliasing mutable); `UnsafeCell`
+    // is the Rust encoding of that intent.
     #[repr(C)]
     pub struct Zone {
-        _p: [u8; 0],
+        _p: UnsafeCell<[u8; 0]>,
         _m: PhantomData<(*mut u8, PhantomPinned)>,
     }
 

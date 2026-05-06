@@ -313,8 +313,9 @@ pub fn terminate_all_and_wait(timeout_ms: u64) {
             if !w.vm.is_null() {
                 // SAFETY: vm published under vm_lock; non-null here.
                 let vm = unsafe { &*w.vm };
-                // TODO(b2): vm.jsc_vm.notify_need_termination() — VM stub gated.
-                let _ = vm;
+                // SAFETY: jsc_vm is a valid JSC::VM*; notify_need_termination
+                // is documented thread-safe (VMTraps).
+                unsafe { (*vm.jsc_vm).notify_need_termination() };
                 vm.event_loop().wakeup();
             }
             w.vm_lock.unlock();

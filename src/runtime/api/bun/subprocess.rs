@@ -357,12 +357,15 @@ impl Subprocess<'_> {
             StdioKind::Stdin => match &mut self.stdin {
                 Writable::Pipe(pipe) => {
                     pipe.signal.clear();
-                    pipe.deref();
+                    // PORT NOTE: Zig's `pipe.deref()` is the Arc<FileSink> drop that
+                    // happens when the Writable::Pipe payload is overwritten below.
+                    // Calling an explicit deref here would double-decrement.
                     self.stdin = Writable::Ignore;
                 }
                 Writable::Buffer(buffer) => {
                     buffer.source.detach();
-                    buffer.deref();
+                    // PORT NOTE: Zig's `buffer.deref()` is the owner drop from the
+                    // assignment below; do not deref explicitly.
                     self.stdin = Writable::Ignore;
                 }
                 _ => {}
@@ -373,18 +376,23 @@ impl Subprocess<'_> {
                 } else {
                     &mut self.stderr
                 };
-                match out {
-                    Readable::Pipe(pipe) => {
-                        if let PipeReader::State::Done(done) = &mut pipe.state {
-                            let taken = core::mem::take(done);
-                            *out = Readable::Buffer(CowString::init_owned(taken));
-                            // pipe.state was emptied via take()
-                        } else {
-                            *out = Readable::Ignore;
-                        }
-                        // PORT NOTE: pipe.deref() handled by Rc<PipeReader> Drop when *out is reassigned.
+                if matches!(out, Readable::Pipe(_)) {
+                    // Mirror Zig: copy the pipe pointer out, reassign `out.*`, then
+                    // mutate/deref the pipe. In Rust, move the Rc<PipeReader> out of
+                    // `*out` first so reassigning doesn't drop it while still borrowed.
+                    let Readable::Pipe(mut pipe) =
+                        core::mem::replace(out, Readable::Ignore)
+                    else {
+                        unreachable!()
+                    };
+                    if let PipeReader::State::Done(done) = &mut pipe.state {
+                        let taken = core::mem::take(done);
+                        *out = Readable::Buffer(CowString::init_owned(taken));
+                        // pipe.state was emptied via take()
                     }
-                    _ => {}
+                    // else: *out stays Readable::Ignore (set by mem::replace above).
+                    // PORT NOTE: Zig's `pipe.deref()` is `drop(pipe)` (Rc strong release).
+                    drop(pipe);
                 }
             }
         }
@@ -627,11 +635,6 @@ impl Subprocess<'_> {
     pub fn on_stdin_destroyed(&mut self) {
         let must_deref = self.flags.contains(Flags::DEREF_ON_STDIN_DESTROYED);
         self.flags.remove(Flags::DEREF_ON_STDIN_DESTROYED);
-        let guard = scopeguard::guard((), |_| {
-            if must_deref {
-                self.deref();
-            }
-        });
 
         self.flags.insert(Flags::HAS_STDIN_DESTRUCTOR_CALLED);
         self.weak_file_sink_stdin_ptr = None;
@@ -641,8 +644,12 @@ impl Subprocess<'_> {
             self.update_has_pending_activity();
         }
 
-        drop(guard);
-        // TODO(port): errdefer — scopeguard captures &mut self; reshaped above. Phase B verify.
+        // Zig `defer if (must_deref) this.deref()` — there are no early returns
+        // above, so running it last is the exact LIFO order. A scopeguard here
+        // would alias `&mut self` with the body's borrows.
+        if must_deref {
+            self.deref();
+        }
     }
 
     #[bun_jsc::host_fn(method)]

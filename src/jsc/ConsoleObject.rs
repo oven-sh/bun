@@ -1553,17 +1553,33 @@ pub mod formatter {
             // TODO(port): Zig writes through `*std.Io.Writer`; here we go
             // through `core::fmt::Write`. Phase B may need a `bun_io::Write`
             // adapter for `core::fmt::Formatter` to keep the byte path.
+            //
+            // `Display::fmt` takes `&self`, but `ZigFormatter` is a transient
+            // adapter that uniquely owns the `&mut Formatter` for the duration
+            // of the call. Cast through a raw pointer so we can mutate without
+            // holding a long-lived borrow that aliases the body.
+            // SAFETY: `self.formatter` is the unique handle; no other `&mut`
+            // to the same `Formatter` exists while `fmt` runs.
+            let formatter: &mut Formatter<'_> =
+                unsafe { &mut *(&*self.formatter as *const Formatter<'_> as *mut Formatter<'_>) };
+
             let one = [self.value];
-            self.formatter.remaining_values = &one;
-            let _reset = scopeguard::guard(&mut *self.formatter, |fmt| {
-                fmt.remaining_values = &[];
+            formatter.remaining_values = &one;
+            // Reset `remaining_values` on every exit path (mirrors Zig
+            // `defer self.formatter.remaining_values = &.{}`). Capture a raw
+            // pointer so the body can keep using `formatter`.
+            let fmt_ptr: *mut Formatter<'_> = formatter;
+            let _reset = scopeguard::guard((), move |_| unsafe {
+                (*fmt_ptr).remaining_values = &[];
             });
-            let tag = Tag::get(self.value, self.formatter.global_this)
+
+            let tag = Tag::get(self.value, formatter.global_this)
                 .map_err(|_| core::fmt::Error)?;
             // TODO(port): need a `&mut dyn bun_io::Write` over `f`.
             let mut sink = bun_io::FmtWriteAdapter::new(f);
-            self.formatter
-                .format::<false>(tag, &mut sink, self.value, self.formatter.global_this)
+            let global = formatter.global_this;
+            formatter
+                .format::<false>(tag, &mut sink, self.value, global)
                 .map_err(|_| core::fmt::Error)
         }
     }

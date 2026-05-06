@@ -86,6 +86,7 @@ members = [
   "src/standalone_graph",
   "src/uws",
   "src/wyhash",
+  "src/hash",
   "src/boringssl_sys",
   "src/bun_core",
   "src/bun_core_macros",
@@ -212,12 +213,14 @@ bun_semver_jsc = { path = "src/semver_jsc" }
 bun_standalone_graph = { path = "src/standalone_graph" }
 bun_uws = { path = "src/uws" }
 bun_wyhash = { path = "src/wyhash" }
+bun_hash = { path = "src/hash" }
 bun_boringssl_sys = { path = "src/boringssl_sys" }
 bun_core = { path = "src/bun_core" }
 bun_core_macros = { path = "src/bun_core_macros" }
 bun_patch_jsc = { path = "src/patch_jsc" }
 bun_router = { path = "src/router" }
 bun_shell_parser = { path = "src/shell_parser" }
+bun_spawn = { path = "src/spawn" }
 bun_tcc_sys = { path = "src/tcc_sys" }
 bun_uws_sys = { path = "src/uws_sys" }
 bun_zstd = { path = "src/zstd" }

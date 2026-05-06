@@ -898,11 +898,11 @@ where
         req: *mut Req<SSL_ENABLED, HTTP3>,
         resp: uws::AnyResponse,
         should_deinit_context: Option<*mut bool>,
-        method: Option<HTTP::Method>,
+        method: Option<Method>,
     ) {
         let resolved_method = method
-            .or_else(|| HTTP::Method::which(Self::req_method(req)))
-            .unwrap_or(HTTP::Method::GET);
+            .or_else(|| Method::which(Self::req_method(req)))
+            .unwrap_or(Method::GET);
         // SAFETY: writing to MaybeUninit slot
         unsafe {
             this.as_mut_ptr().write(Self {

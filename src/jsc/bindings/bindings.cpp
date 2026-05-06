@@ -732,9 +732,15 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     // `util.isDeepStrictEqual` docs). This must apply to every object type,
     // including arrays, Map, Set, Error, Date, RegExp, ArrayBuffer and their
     // subclasses — not just plain objects — so the check lives here, before
-    // `specialObjectsDequal` and the array branch dispatch on type. See
-    // issue #29030.
-    if constexpr (isStrict) {
+    // `specialObjectsDequal` and the array branch dispatch on type.
+    //
+    // Gated on `!enableAsymmetricMatchers` so it only affects `node:assert`
+    // and `node:util.isDeepStrictEqual`. bun:test's `toStrictEqual` (which
+    // runs with `enableAsymmetricMatchers=true`) keeps its existing
+    // `calculatedClassName`-based type guard to avoid breaking cross-realm
+    // objects and tests that compare Buffer against Uint8Array by content.
+    // See issue #29030.
+    if constexpr (isStrict && !enableAsymmetricMatchers) {
         if (o1 && o2) {
             JSValue proto1 = o1->getPrototype(globalObject);
             RETURN_IF_EXCEPTION(scope, false);

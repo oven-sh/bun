@@ -1633,9 +1633,9 @@ fn write_proxy_request(
     }
 
     for header in request.headers {
-        let _ = writer.write_all(header.name);
+        let _ = writer.write_all(header.name());
         let _ = writer.write_all(b": ");
-        let _ = writer.write_all(header.value);
+        let _ = writer.write_all(header.value());
         let _ = writer.write_all(b"\r\n");
     }
 
@@ -1653,9 +1653,9 @@ fn write_request(
     let _ = writer.write_all(b" HTTP/1.1\r\n");
 
     for header in request.headers {
-        let _ = writer.write_all(header.name);
+        let _ = writer.write_all(header.name());
         let _ = writer.write_all(b": ");
-        let _ = writer.write_all(header.value);
+        let _ = writer.write_all(header.value());
         let _ = writer.write_all(b"\r\n");
     }
 

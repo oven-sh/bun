@@ -22,10 +22,7 @@ bun_base64.workspace = true
 bun_boringssl_sys.workspace = true
 bun_core.workspace = true
 bun_collections.workspace = true
-# TODO(b2-blocked): bun_jsc fails to compile (concurrent B-2 work — `Counters`
-# missing `Debug` derive at lib.rs:1649). Re-enable once bun_jsc is green; this
-# crate uses local signature-compatible stubs in the meantime (see lib.rs `mod jsc`).
-# bun_jsc.workspace = true
+bun_jsc.workspace = true
 bun_ptr.workspace = true
 bun_sha_hmac.workspace = true
 # TODO(b2-blocked): bun_runtime fails to compile (concurrent B-2 work —

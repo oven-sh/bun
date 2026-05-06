@@ -1,40 +1,28 @@
-use crate::jsc::{JSGlobalObject, JSValue};
+use crate::jsc::{JSFunction, JSGlobalObject, JSValue};
 
 pub fn create_binding(global_object: &JSGlobalObject) -> JSValue {
-    
-    {
-        // TODO(b2-blocked): bun_jsc::JSValue::{create_empty_object_with_null_prototype,put}
-        // TODO(b2-blocked): bun_jsc::JSFunction::create
-        // TODO(b2-blocked): bun_string::ZigString::static_str
-        // TODO(b2-blocked): bun_jsc codegen `js::get_constructor` for #[JsClass] types
-        let binding = JSValue::create_empty_object_with_null_prototype(global_object);
-        binding.put(
-            global_object,
-            bun_string::ZigString::static_str(b"PostgresSQLConnection"),
-            PostgresSQLConnection::js::get_constructor(global_object),
-        );
-        binding.put(
-            global_object,
-            bun_string::ZigString::static_str(b"init"),
-            bun_jsc::JSFunction::create(global_object, "init", PostgresSQLContext::init, 0, Default::default()),
-        );
-        binding.put(
-            global_object,
-            bun_string::ZigString::static_str(b"createQuery"),
-            bun_jsc::JSFunction::create(global_object, "createQuery", PostgresSQLQuery::call, 6, Default::default()),
-        );
-        binding.put(
-            global_object,
-            bun_string::ZigString::static_str(b"createConnection"),
-            bun_jsc::JSFunction::create(global_object, "createConnection", PostgresSQLConnection::call, 2, Default::default()),
-        );
-        return binding;
-    }
-    #[cfg(any())]
-    {
-        let _ = global_object;
-        unimplemented!("b2-blocked: bun_jsc::JSValue / JSFunction method surface")
-    }
+    let binding = JSValue::create_empty_object_with_null_prototype(global_object);
+    binding.put(
+        global_object,
+        bun_string::ZigString::static_str(b"PostgresSQLConnection"),
+        postgres_sql_connection::js::get_constructor(global_object),
+    );
+    binding.put(
+        global_object,
+        bun_string::ZigString::static_str(b"init"),
+        JSFunction::create(global_object, "init", PostgresSQLContext::init, 0, Default::default()),
+    );
+    binding.put(
+        global_object,
+        bun_string::ZigString::static_str(b"createQuery"),
+        JSFunction::create(global_object, "createQuery", PostgresSQLQuery::call, 6, Default::default()),
+    );
+    binding.put(
+        global_object,
+        bun_string::ZigString::static_str(b"createConnection"),
+        JSFunction::create(global_object, "createConnection", postgres_sql_connection::call, 2, Default::default()),
+    );
+    binding
 }
 
 // ──────────────────────────────────────────────────────────────────────────

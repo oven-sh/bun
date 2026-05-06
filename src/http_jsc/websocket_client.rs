@@ -122,13 +122,26 @@ impl<const SSL: bool> WebSocket<SSL> {
     pub fn r#ref(&self) {
         self.ref_count.set(self.ref_count.get() + 1);
     }
+    /// Decrement the intrusive refcount; frees the allocation when it hits zero.
+    ///
+    /// # Safety
+    /// `this` must point to a live `WebSocket<SSL>` allocated via
+    /// `Box::into_raw` (see `init` / `init_with_tunnel`). Takes a raw `*mut`
+    /// rather than `&self` because the final `deinit` writes through the
+    /// pointer; deriving a `*mut` from a shared `&self` borrow would discard
+    /// write provenance (UB under Stacked Borrows when written through).
     #[inline]
-    pub fn deref(&self) {
-        let n = self.ref_count.get() - 1;
-        self.ref_count.set(n);
+    pub unsafe fn deref(this: *mut Self) {
+        // SAFETY: `this` is live per fn contract; `ref_count` is a `Cell`, so
+        // forming a shared borrow for the decrement is sound regardless of
+        // other outstanding shared references to `*this`.
+        let rc = unsafe { &(*this).ref_count };
+        let n = rc.get() - 1;
+        rc.set(n);
         if n == 0 {
-            // SAFETY: refcount hit zero; we own the allocation (bun.new/Box::into_raw)
-            unsafe { Self::deinit(self as *const Self as *mut Self) };
+            // SAFETY: refcount hit zero; caller held the last owner of the
+            // `Box::into_raw` allocation and `this` carries write provenance.
+            unsafe { Self::deinit(this) };
         }
     }
 }
@@ -259,9 +272,10 @@ impl<const SSL: bool> WebSocket<SSL> {
         // PORT NOTE: reshaped for borrowck — `scopeguard` capturing `&this`
         // would freeze it for the whole scope. Capture a raw ptr instead;
         // the ref taken on the line above guarantees `this` outlives the guard.
-        let _guard = scopeguard::guard(this as *const Self, |p| {
-            // SAFETY: `p` is `this`, kept alive by the `r#ref()` above.
-            unsafe { (*p).deref() }
+        let _guard = scopeguard::guard(this as *mut Self, |p| {
+            // SAFETY: `p` is `this`, kept alive by the `r#ref()` above;
+            // derived from `&mut Self` so it carries write provenance.
+            unsafe { Self::deref(p) }
         });
 
         let had_tunnel = this.proxy_tunnel.is_some();
@@ -608,9 +622,10 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.r#ref();
         // PORT NOTE: reshaped for borrowck — capture a raw ptr so `self` stays
         // mutably borrowable below. The ref taken above keeps `self` alive.
-        let _guard = scopeguard::guard(self as *const Self, |p| {
-            // SAFETY: `p` is `self`, kept alive by the `r#ref()` above.
-            unsafe { (*p).deref() }
+        let _guard = scopeguard::guard(self as *mut Self, |p| {
+            // SAFETY: `p` is `self`, kept alive by the `r#ref()` above;
+            // derived from `&mut Self` so it carries write provenance.
+            unsafe { Self::deref(p) }
         });
         // TODO(port): scopeguard captures &self while &mut self is used below;
         // Phase B: convert to manual ref/deref at exit points or use raw ptr in guard.
@@ -1440,9 +1455,10 @@ impl<const SSL: bool> WebSocket<SSL> {
         // PORT NOTE: reshaped for borrowck — `scopeguard` capturing `&this`
         // would freeze it for the whole scope. Capture a raw ptr instead;
         // the ref taken on the line above guarantees `this` outlives the guard.
-        let _guard = scopeguard::guard(this as *const Self, |p| {
-            // SAFETY: `p` is `this`, kept alive by the `r#ref()` above.
-            unsafe { (*p).deref() }
+        let _guard = scopeguard::guard(this as *mut Self, |p| {
+            // SAFETY: `p` is `this`, kept alive by the `r#ref()` above;
+            // derived from `&mut Self` so it carries write provenance.
+            unsafe { Self::deref(p) }
         });
         // TODO(port): scopeguard borrowck — see handle_data note
 
@@ -1488,9 +1504,10 @@ impl<const SSL: bool> WebSocket<SSL> {
         // PORT NOTE: reshaped for borrowck — `scopeguard` capturing `&this`
         // would freeze it for the whole scope. Capture a raw ptr instead;
         // the ref taken on the line above guarantees `this` outlives the guard.
-        let _guard = scopeguard::guard(this as *const Self, |p| {
-            // SAFETY: `p` is `this`, kept alive by the `r#ref()` above.
-            unsafe { (*p).deref() }
+        let _guard = scopeguard::guard(this as *mut Self, |p| {
+            // SAFETY: `p` is `this`, kept alive by the `r#ref()` above;
+            // derived from `&mut Self` so it carries write provenance.
+            unsafe { Self::deref(p) }
         });
         // TODO(port): scopeguard borrowck
 
@@ -1550,9 +1567,10 @@ impl<const SSL: bool> WebSocket<SSL> {
         // PORT NOTE: reshaped for borrowck — `scopeguard` capturing `&this`
         // would freeze it for the whole scope. Capture a raw ptr instead;
         // the ref taken on the line above guarantees `this` outlives the guard.
-        let _guard = scopeguard::guard(this as *const Self, |p| {
-            // SAFETY: `p` is `this`, kept alive by the `r#ref()` above.
-            unsafe { (*p).deref() }
+        let _guard = scopeguard::guard(this as *mut Self, |p| {
+            // SAFETY: `p` is `this`, kept alive by the `r#ref()` above;
+            // derived from `&mut Self` so it carries write provenance.
+            unsafe { Self::deref(p) }
         });
         // TODO(port): scopeguard borrowck
 
@@ -1642,9 +1660,10 @@ impl<const SSL: bool> WebSocket<SSL> {
         // PORT NOTE: reshaped for borrowck — `scopeguard` capturing `&this`
         // would freeze it for the whole scope. Capture a raw ptr instead;
         // the ref taken on the line above guarantees `this` outlives the guard.
-        let _guard = scopeguard::guard(this as *const Self, |p| {
-            // SAFETY: `p` is `this`, kept alive by the `r#ref()` above.
-            unsafe { (*p).deref() }
+        let _guard = scopeguard::guard(this as *mut Self, |p| {
+            // SAFETY: `p` is `this`, kept alive by the `r#ref()` above;
+            // derived from `&mut Self` so it carries write provenance.
+            unsafe { Self::deref(p) }
         });
         // TODO(port): scopeguard borrowck
 
@@ -1958,9 +1977,10 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.r#ref();
         // PORT NOTE: reshaped for borrowck — capture a raw ptr so `self` stays
         // mutably borrowable below. The ref taken above keeps `self` alive.
-        let _guard = scopeguard::guard(self as *const Self, |p| {
-            // SAFETY: `p` is `self`, kept alive by the `r#ref()` above.
-            unsafe { (*p).deref() }
+        let _guard = scopeguard::guard(self as *mut Self, |p| {
+            // SAFETY: `p` is `self`, kept alive by the `r#ref()` above;
+            // derived from `&mut Self` so it carries write provenance.
+            unsafe { Self::deref(p) }
         });
         // TODO(port): scopeguard borrowck
 
@@ -1981,9 +2001,10 @@ impl<const SSL: bool> WebSocket<SSL> {
         // PORT NOTE: reshaped for borrowck — `scopeguard` capturing `&this`
         // would freeze it for the whole scope. Capture a raw ptr instead;
         // the ref taken on the line above guarantees `this` outlives the guard.
-        let _guard = scopeguard::guard(this as *const Self, |p| {
-            // SAFETY: `p` is `this`, kept alive by the `r#ref()` above.
-            unsafe { (*p).deref() }
+        let _guard = scopeguard::guard(this as *mut Self, |p| {
+            // SAFETY: `p` is `this`, kept alive by the `r#ref()` above;
+            // derived from `&mut Self` so it carries write provenance.
+            unsafe { Self::deref(p) }
         });
         // TODO(port): scopeguard borrowck
 

@@ -1,20 +1,22 @@
 use bun_alloc::Arena;
-use bun_bundler::analyze_transpiled_module::{self, ModuleInfo};
-use bun_bundler::js_printer::{self, PrintResult};
-use bun_bundler::linker_context::{GenerateChunkCtx, LinkerContext};
-use bun_bundler::options;
-use bun_bundler::renamer;
-use bun_bundler::{
-    Chunk, CompileResult, CompileResultForSourceMap, Fs, Index, JSAst, JSMeta, RefImportData,
+use crate::analyze_transpiled_module::{self, ModuleInfo};
+use bun_js_printer::{self as js_printer, PrintResult};
+use crate::linker_context_mod::GenerateChunkCtx;
+use crate::LinkerContext;
+use crate::options;
+use crate::bun_renamer as renamer;
+use crate::bun_fs as Fs;
+use crate::{
+    Chunk, CompileResult, CompileResultForSourceMap, Index, JSAst, JSMeta, RefImportData,
     ResolvedExports, ThreadPool,
 };
 use bun_collections::MultiArrayList;
-use bun_core::{perf, StringJoiner};
-use bun_js_parser::ast::{self as js_ast, Binding, Expr, Part, Ref, Scope, Stmt, B, E, G, S};
+use bun_core::perf;
+use bun_js_parser::ast::{self as js_ast, Binding, BindingData, Expr, Part, Ref, Scope, Stmt, B, E, G, S};
 use bun_logger as Logger;
 use bun_options_types::ImportRecord;
 use bun_sourcemap as SourceMap;
-use bun_str::{strings, MutableString};
+use bun_string::{strings, MutableString, string_joiner::StringJoiner};
 
 /// This runs after we've already populated the compile results
 pub fn post_process_js_chunk(
@@ -30,8 +32,8 @@ pub fn post_process_js_chunk(
     let c = ctx.c;
     debug_assert!(matches!(chunk.content, Chunk::Content::Javascript(_)));
 
-    js_ast::Expr::Data::Store::create();
-    js_ast::Stmt::Data::Store::create();
+    js_ast::expr::data::Store::create();
+    js_ast::stmt::data::Store::create();
 
     // TODO(port): `defer chunk.renamer.deinit(bun.default_allocator)` — Zig explicitly
     // tears down the renamer at end of scope. In Rust this should be handled by Drop on
@@ -45,8 +47,7 @@ pub fn post_process_js_chunk(
     let cross_chunk_suffix: PrintResult;
 
     let runtime_scope: &mut Scope =
-        &mut c.graph.ast.items_mut(.module_scope)[c.graph.files.items(.input_file)[Index::runtime().value()].get()];
-    // TODO(port): MultiArrayList field accessors (.items(.field)) need Rust API
+        &mut c.graph.ast.items_module_scope_mut()[c.graph.files.items_input_file()[Index::RUNTIME.value].get()];
     let runtime_members = &mut runtime_scope.members;
     let to_common_js_ref = c.graph.symbols.follow(runtime_members.get(b"__toCommonJS").unwrap().r#ref);
     let to_esm_ref = c.graph.symbols.follow(runtime_members.get(b"__toESM").unwrap().r#ref);
@@ -60,7 +61,7 @@ pub fn post_process_js_chunk(
     let generate_module_info = c.options.generate_bytecode_cache
         && c.options.output_format == options::OutputFormat::Esm
         && c.options.compile;
-    let loader = c.parse_graph.input_files.items(.loader)[chunk.entry_point.source_index as usize];
+    let loader = c.parse_graph.input_files.items_loader()[chunk.entry_point.source_index as usize];
     let is_typescript = loader.is_type_script();
     // Zig: ModuleInfo.create(bun.default_allocator, ...) returns heap-allocated *ModuleInfo,
     // later stored on chunk.content.javascript.module_info — OWNED → Box<ModuleInfo>.
@@ -166,7 +167,7 @@ pub fn post_process_js_chunk(
         // Note: the runtime source (index 0) also uses import.meta (e.g.
         // `import.meta.require`), so we must not skip it.
         {
-            let all_ast_flags = c.graph.ast.items(.flags);
+            let all_ast_flags = c.graph.ast.items_flags();
             for part_range in chunk.content.javascript().parts_in_chunk_in_order.iter() {
                 if all_ast_flags[part_range.source_index.get()].has_import_meta {
                     mi.flags.contains_import_meta = true;
@@ -183,8 +184,8 @@ pub fn post_process_js_chunk(
         // generator is dropped — the entry promise resolves immediately and the
         // process exits before the awaited value lands.
         {
-            let tla_keywords = c.parse_graph.ast.items(.top_level_await_keyword);
-            let wraps = c.graph.meta.items(.flags);
+            let tla_keywords = c.parse_graph.ast.items_top_level_await_keyword();
+            let wraps = c.graph.meta.items_flags();
             for part_range in chunk.content.javascript().parts_in_chunk_in_order.iter() {
                 let idx = part_range.source_index.get();
                 if idx >= tla_keywords.len() {

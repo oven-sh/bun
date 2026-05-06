@@ -757,7 +757,7 @@ pub mod bake_types {
         pub set: bun_collections::StringArrayHashMap<EntryPointFlags>,
     }
     impl EntryPointList {
-        pub const fn empty() -> Self { Self { set: bun_collections::StringArrayHashMap::new() } }
+        pub fn empty() -> Self { Self { set: bun_collections::StringArrayHashMap::new() } }
     }
 
     /// Mirrors src/bake/bake.zig `Framework`. Only the field bundler reads
@@ -765,9 +765,18 @@ pub mod bake_types {
     /// until tier-6 collapse lands the full struct in bun_runtime.
     pub struct Framework {
         pub built_in_modules: bun_collections::StringArrayHashMap<BuiltInModule>,
-        // TODO(b0-genuine): remaining Framework fields (server_components, react_fast_refresh,
+        /// Mirrors `Framework.server_components`. TYPE_ONLY: only the two
+        /// flags the bundler reads.
+        pub server_components: Option<ServerComponents>,
+        // TODO(b0-genuine): remaining Framework fields (react_fast_refresh,
         // file_system_router_types, ...) — bundler does not read them; bake constructs.
         _opaque_tail: (),
+    }
+    /// Mirrors src/bake/bake.zig `Framework.ServerComponents` — TYPE_ONLY subset.
+    #[derive(Default, Clone)]
+    pub struct ServerComponents {
+        pub separate_ssr_graph: bool,
+        pub server_runtime_import: Box<[u8]>,
     }
 
     /// Mirrors src/bake/bake.zig:840 `HmrRuntime`. TYPE_ONLY moved down so the
@@ -800,28 +809,31 @@ pub mod bake_types {
     /// linker has a real preamble even before runtime registers a loader.
     #[inline]
     pub fn get_hmr_runtime(side: Side) -> HmrRuntime {
+        // PORT NOTE: `OUT_DIR` codegen for `bake.client.js` / `bake.server.js`
+        // is not wired in the Rust build yet. Embed empty preambles; the runtime
+        // (T6) registers a loader at init that supersedes this.
         match side {
-            Side::Client => HmrRuntime::init(include_bytes!(concat!(env!("OUT_DIR"), "/bake.client.js"))),
-            Side::Server => HmrRuntime::init(include_bytes!(concat!(env!("OUT_DIR"), "/bake.server.js"))),
+            Side::Client => HmrRuntime::init(b"// bake.client.js (placeholder)\n"),
+            Side::Server => HmrRuntime::init(b"// bake.server.js (placeholder)\n"),
         }
     }
 
     /// Mirrors src/bake/bake.zig:936 `server_virtual_source` / :942 `client_virtual_source`.
     /// `Logger::Source` is not `const`-constructible (owns a `fs::Path`), so these
     /// are lazy statics. PERF(port): was `pub const` — verify in Phase B.
-    pub static SERVER_VIRTUAL_SOURCE: std::sync::LazyLock<bun_logger::Source> =
-        std::sync::LazyLock::new(|| bun_logger::Source {
-            path: bun_fs::Path::init_for_kit_built_in(b"bun", b"bake/server"),
-            contents: b"".as_slice().into(), // Virtual
-            index: bun_js_parser::Index::BAKE_SERVER_DATA,
-            ..Default::default()
+    pub static SERVER_VIRTUAL_SOURCE: std::sync::LazyLock<bun_logger::Source<'static>> =
+        std::sync::LazyLock::new(|| {
+            let mut s = bun_logger::Source::default();
+            s.path = crate::ungate_support::bun_fs::Path::init_for_kit_built_in(b"bun", b"bake/server");
+            s.index = bun_logger::Index(crate::Index::BAKE_SERVER_DATA.get());
+            s
         });
-    pub static CLIENT_VIRTUAL_SOURCE: std::sync::LazyLock<bun_logger::Source> =
-        std::sync::LazyLock::new(|| bun_logger::Source {
-            path: bun_fs::Path::init_for_kit_built_in(b"bun", b"bake/client"),
-            contents: b"".as_slice().into(), // Virtual
-            index: bun_js_parser::Index::BAKE_CLIENT_DATA,
-            ..Default::default()
+    pub static CLIENT_VIRTUAL_SOURCE: std::sync::LazyLock<bun_logger::Source<'static>> =
+        std::sync::LazyLock::new(|| {
+            let mut s = bun_logger::Source::default();
+            s.path = crate::ungate_support::bun_fs::Path::init_for_kit_built_in(b"bun", b"bake/client");
+            s.index = bun_logger::Index(crate::Index::BAKE_CLIENT_DATA.get());
+            s
         });
     /// Alias kept for callers that referenced the DevServer constant name directly.
     pub const DEV_SERVER_ASSET_PREFIX: &str = ASSET_PREFIX;

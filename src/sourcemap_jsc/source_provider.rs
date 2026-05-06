@@ -4,6 +4,7 @@
 //! `get_source_map_impl` calls it via a trait bound (Zig used
 //! `@hasDecl(SourceProviderKind, "getExternalData")`).
 
+use core::cell::UnsafeCell;
 use core::marker::{PhantomData, PhantomPinned};
 
 use bun_jsc::JSGlobalObject;

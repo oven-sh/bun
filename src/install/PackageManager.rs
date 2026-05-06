@@ -43,17 +43,24 @@ pub mod Command {
     pub use bun_options_types::Context::{Context, ContextData};
 
     /// Hook (GENUINE b0): `bun_runtime::cli::Command::get()` returns the
-    /// process-global `&'static mut ContextData`. The static itself lives in
-    /// tier-6 (`cli.rs`); install only needs a pointer for the bundler hook in
+    /// process-global `*ContextData`. The static itself lives in tier-6
+    /// (`cli.rs`); install only needs a pointer for the bundler hook in
     /// `update_package_json_and_install`. Registered once at startup by bun_cli.
     pub static GLOBAL_CTX: core::sync::atomic::AtomicPtr<ContextData> =
         core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
+    /// Returns the raw process-global `*mut ContextData` (Zig: `Command.get()
+    /// -> *ContextData`). Returns a raw pointer rather than `&'static mut`
+    /// because callers (e.g. `update_package_json_and_install`) already hold a
+    /// live `ctx: &mut ContextData` to the same allocation — materializing a
+    /// second `&mut` here would alias and is UB. Callers must deref at point
+    /// of use under their own SAFETY justification.
     #[inline]
-    pub fn get() -> &'static mut ContextData {
+    pub fn get() -> *mut ContextData {
         // SAFETY: `GLOBAL_CTX` is set exactly once during single-threaded CLI
-        // startup (before any install entry point runs) and never cleared.
-        unsafe { &mut *GLOBAL_CTX.load(core::sync::atomic::Ordering::Relaxed) }
+        // startup (before any install entry point runs) and never cleared; we
+        // only read the pointer value here, no dereference.
+        GLOBAL_CTX.load(core::sync::atomic::Ordering::Relaxed)
     }
 }
 
@@ -1144,9 +1151,20 @@ pub fn allocate_package_manager() {
     }
 }
 
-pub fn get() -> &'static mut PackageManager {
-    // SAFETY: allocate_package_manager() must have been called and the value initialized.
-    unsafe { &mut *holder::RAW_PTR }
+/// Returns the raw singleton pointer (Zig: `pub fn get() *PackageManager`).
+///
+/// Intentionally returns `*mut` rather than `&'static mut`: Zig's `*T` freely
+/// aliases, and this accessor is invoked from thread-pool workers
+/// (`UninstallTask::run`, npm `SaveTask`, `Repository` git ops) concurrently
+/// with the main thread holding the `&mut PackageManager` returned by `init()`.
+/// Materializing `&'static mut` here would create aliased mutable references
+/// (UB). Callers must form their own narrowly-scoped reference via raw-pointer
+/// projection (e.g. `unsafe { &(*get()).cache_directory_path }`) and justify
+/// exclusivity / atomicity at the deref site.
+pub fn get() -> *mut PackageManager {
+    // SAFETY: reading a `static mut` raw-pointer slot; `allocate_package_manager()`
+    // is the sole writer and runs on the main thread before any caller of `get()`.
+    unsafe { holder::RAW_PTR }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

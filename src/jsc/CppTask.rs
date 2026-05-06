@@ -1,6 +1,7 @@
 use core::marker::{PhantomData, PhantomPinned};
 
 use crate::{JSGlobalObject, JsResult, VirtualMachineRef as VirtualMachine};
+use bun_event_loop::{task_tag, TaskTag, Taskable};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
 // TODO(port): move to jsc_sys
@@ -19,6 +20,10 @@ unsafe extern "C" {
 pub struct CppTask {
     _p: [u8; 0],
     _m: PhantomData<(*mut u8, PhantomPinned)>,
+}
+
+impl Taskable for CppTask {
+    const TAG: TaskTag = task_tag::CppTask;
 }
 
 impl CppTask {
@@ -72,8 +77,8 @@ impl ConcurrentCppTask {
         Box::into_raw(Box::new(ConcurrentCppTask {
             cpp_task,
             workpool_task: WorkPoolTask {
+                node: Default::default(),
                 callback: Self::run_from_workpool,
-                ..Default::default()
             },
         }))
     }

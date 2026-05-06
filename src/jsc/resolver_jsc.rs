@@ -102,7 +102,7 @@ pub extern "C" fn node_module_paths_js_value(
     }
 
     while !root_path.is_empty()
-        && Platform::Auto.is_separator(root_path[root_path.len() - 1])
+        && Platform::AUTO.is_separator(root_path[root_path.len() - 1])
     {
         root_path = &root_path[..root_path.len() - 1];
     }

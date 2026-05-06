@@ -2,7 +2,7 @@
 //! `src/bun_core/fmt.zig`; only the JS-facing wrapper that takes a
 //! `&JSGlobalObject` lives here so `bun_core/` stays JSC-free.
 
-use core::fmt::Write as _;
+use std::io::Write as _;
 
 use bun_core::fmt;
 use crate::{JSGlobalObject, JsResult};

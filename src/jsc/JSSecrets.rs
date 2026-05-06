@@ -44,11 +44,10 @@ impl SecretsJob {
         let job = Box::into_raw(Box::new(SecretsJob {
             vm,
             task: WorkPoolTask {
+                node: Default::default(),
                 callback: Self::run_task,
-                ..Default::default()
             },
-            // SAFETY: any_task is overwritten immediately below before any use.
-            any_task: unsafe { core::mem::zeroed() },
+            any_task: AnyTask::default(),
             poll: KeepAlive::default(),
             ctx,
             promise: Strong::create(promise, global),
@@ -57,8 +56,8 @@ impl SecretsJob {
         // SAFETY: job was just allocated above and is non-null.
         unsafe {
             (*job).any_task = AnyTask {
-                ctx: job.cast(),
-                callback: Some(Self::run_from_js_erased),
+                ctx: core::ptr::NonNull::new(job.cast()),
+                callback: Self::run_from_js_erased,
             };
         }
         job
@@ -83,8 +82,9 @@ impl SecretsJob {
         }
     }
 
-    unsafe extern "C" fn run_from_js_erased(this: *mut core::ffi::c_void) {
-        Self::run_from_js(this.cast::<SecretsJob>())
+    fn run_from_js_erased(this: *mut core::ffi::c_void) -> bun_event_loop::JsResult<()> {
+        Self::run_from_js(this.cast::<SecretsJob>());
+        Ok(())
     }
 
     pub fn run_from_js(this: *mut SecretsJob) {

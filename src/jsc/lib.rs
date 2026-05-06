@@ -494,6 +494,83 @@ pub mod host_fn {
             Err(JsError::Terminated) => JSValue::ZERO,
         }
     }
+
+    // ── codegen-contract result mappers (called by generated_classes.rs) ─────
+    //
+    // These are the closure-taking forms the per-class `extern "C"` thunks in
+    // `build/codegen/generated_classes.rs` call into. They mirror Zig's
+    // `toJSHostFnResult` / `toJSHostSetterValue` and the constructor `?*T`
+    // protocol exactly: returned `JSValue::ZERO` (resp. `false` / null) iff
+    // `vm.hasException()`.
+
+    /// Map a `JsResult<JSValue>` host-fn body to the raw `EncodedJSValue` the
+    /// C++ side expects (`.zero` ⇔ exception pending). Debug builds assert the
+    /// full biconditional `(ret == 0) == has_exception()` (host_fn.zig:68).
+    #[inline(always)]
+    pub fn host_fn_result(
+        global: &JSGlobalObject,
+        f: impl FnOnce() -> JsResult<JSValue>,
+    ) -> JSValue {
+        let ret = match f() {
+            Ok(v) => v,
+            Err(JsError::Thrown) => JSValue::ZERO,
+            Err(JsError::OutOfMemory) => global.throw_out_of_memory_value(),
+            Err(JsError::Terminated) => JSValue::ZERO,
+        };
+        #[cfg(debug_assertions)]
+        debug_assert_eq!(
+            ret.is_empty(),
+            global.has_exception(),
+            "host_fn_result: (ret == .zero) must equal vm.hasException()",
+        );
+        ret
+    }
+
+    /// Setter variant: `JsResult<()>` → `bool` (false on any error; OOM throws
+    /// first). Mirrors `toJSHostSetterValue` (host_fn.zig:71-81).
+    #[inline(always)]
+    pub fn host_setter_result(
+        global: &JSGlobalObject,
+        f: impl FnOnce() -> JsResult<()>,
+    ) -> bool {
+        match f() {
+            Ok(()) => true,
+            Err(JsError::Thrown) => false,
+            Err(JsError::OutOfMemory) => {
+                let _ = global.throw_out_of_memory_value();
+                false
+            }
+            Err(JsError::Terminated) => false,
+        }
+    }
+
+    /// Constructor variant: `JsResult<*mut T>` → `*mut T` (null on any error;
+    /// OOM throws first). Debug builds assert `(ptr.is_null()) ==
+    /// has_exception()` to match the C++ `ASSERT_WITH_MESSAGE(!ptr, …)` at the
+    /// call site.
+    #[inline(always)]
+    pub fn host_construct_result<T>(
+        global: &JSGlobalObject,
+        f: impl FnOnce() -> JsResult<*mut T>,
+    ) -> *mut T {
+        let ret: *mut T = match f() {
+            Ok(p) => p,
+            Err(JsError::Thrown) => core::ptr::null_mut(),
+            Err(JsError::OutOfMemory) => {
+                let _ = global.throw_out_of_memory_value();
+                core::ptr::null_mut()
+            }
+            Err(JsError::Terminated) => core::ptr::null_mut(),
+        };
+        #[cfg(debug_assertions)]
+        debug_assert_eq!(
+            ret.is_null(),
+            global.has_exception(),
+            "host_construct_result: (ptr == null) must equal vm.hasException()",
+        );
+        ret
+    }
+
     /// `host_fn::toJSHostFnWithContext` (host_fn.zig:24) — like `to_js_host_fn`
     /// but threads a leading `&mut Context` through to the wrapped fn.
     #[inline]
@@ -586,8 +663,9 @@ pub mod host_fn {
     }
 }
 pub use self::host_fn::{
-    from_js_host_call, from_js_host_call_generic, to_js_host_call, to_js_host_fn,
-    to_js_host_fn_result, to_js_host_fn_with_context, JSHostFn, JSHostFnZig, JSHostFnZigWithContext,
+    from_js_host_call, from_js_host_call_generic, host_construct_result, host_fn_result,
+    host_setter_result, to_js_host_call, to_js_host_fn, to_js_host_fn_result,
+    to_js_host_fn_with_context, JSHostFn, JSHostFnZig, JSHostFnZigWithContext,
     JSHostFunctionTypeWithContext,
 };
 

@@ -50,8 +50,8 @@ fn find_path(
     // for each path
     let mut found = if let Some(paths) = paths_maybe {
         'found: {
-            let mut iter = paths.iterator(global);
-            while let Some(path) = iter.next(global)? {
+            let mut iter = paths.iterator(global)?;
+            while let Some(path) = iter.next()? {
                 let cur_path = BunString::from_js(path, global)?;
                 // `defer cur_path.deref()` — handled by Drop on bun_string::String
 
@@ -81,14 +81,17 @@ fn find_path_inner(
     // SAFETY: zero-init is the documented `ErrorableString` "empty" state; the
     // callee fully overwrites it on both ok/err paths.
     let mut errorable: ErrorableString = unsafe { core::mem::zeroed() };
+    // PORT NOTE: `bun_string::String::ref_()` only bumps the WTF refcount in
+    // place; clone via `clone_utf8` of the borrowed bytes to pass by value.
+    let request_dup = BunString::clone_utf8(request.to_utf8().slice());
+    let cur_path_dup = BunString::clone_utf8(cur_path.to_utf8().slice());
     match VirtualMachine::resolve_maybe_needs_trailing_slash::<true>(
         &mut errorable,
         global,
-        request.ref_(),
-        cur_path.ref_(),
+        request_dup,
+        cur_path_dup,
         None,
         false,
-        true,
         true,
     ) {
         Ok(()) => {}
@@ -143,10 +146,10 @@ fn on_require_extension_modify_non_function(_global: &JSGlobalObject, _str: &[u8
     todo!("phase-d: NodeModuleModule onRequireExtensionModifyNonFunction — vm.commonjs_custom_extensions value type")
 }
 
-pub fn find_longest_registered_extension(
-    vm: &VirtualMachine,
+pub fn find_longest_registered_extension<'a>(
+    vm: &'a VirtualMachine,
     filename: &[u8],
-) -> Option<&CustomLoader> {
+) -> Option<&'a CustomLoader> {
     let basename = bun_paths::basename(filename);
     let mut next: usize = 0;
     while let Some(i) = strings::index_of_char_pos(basename, b'.', next) {

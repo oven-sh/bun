@@ -683,6 +683,17 @@ pub use bun_core::{Fd, FdNative, FdKind, FdOptional, Stdio, Mode, FileKind, kind
 #[cfg(not(windows))] pub type SocketT = core::ffi::c_int;
 #[cfg(windows)] pub type SocketT = usize;
 pub use bun_errno::{E, S, SystemErrno, get_errno, GetErrno};
+
+/// Exported for `headers-handwritten.h` `Bun__errnoName`. Returns the static
+/// upper-case errno name (e.g. `"ENOENT"`) or null for an unrecognised code.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__errnoName(err: core::ffi::c_int) -> *const core::ffi::c_char {
+    match SystemErrno::init(err as _) {
+        Some(e) => <&'static str>::from(e).as_ptr() as *const core::ffi::c_char,
+        None => core::ptr::null(),
+    }
+}
+
 // libuv-style error constants (negated errno on posix, UV_* on Windows). The
 // per-platform `bun_errno` module defines this as `mod uv_e`; re-export under
 // the canonical Zig name so callers can write `bun_sys::UV_E::NOENT`.

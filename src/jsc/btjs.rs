@@ -5,7 +5,7 @@ use std::io::Write as _;
 #[cfg(debug_assertions)]
 use bun_core::{self, err, Error};
 #[cfg(debug_assertions)]
-use bun_jsc::{CallFrame, VirtualMachine};
+use crate::{CallFrame, VirtualMachineRef as VirtualMachine};
 
 // Port of the subset of Zig `std.debug.*` used by btjs.zig: `SelfInfo`, `StackIterator`,
 // `ThreadContext`, `MemoryAccessor`, plus the symbol-lookup helpers. The frame-pointer
@@ -835,7 +835,9 @@ fn print_source_at_address(
     // do_llint holds (i.e. address is inside the JSC LLInt range, so fp is a JSC CallFrame).
     let frame: &CallFrame = unsafe { &*(fp as *const CallFrame) };
     if do_llint {
-        let srcloc = frame.get_caller_src_loc(VirtualMachine::get().global);
+        // SAFETY: VM singleton is process-lifetime; `global` is set before any
+        // JS frame can be on the stack to inspect.
+        let srcloc = frame.get_caller_src_loc(unsafe { &*(*VirtualMachine::get()).global });
         tty_config.set_color(out_stream, Color::Bold)?;
         write!(out_stream, "{}:{}:{}: ", srcloc.str, srcloc.line, srcloc.column)?;
         tty_config.set_color(out_stream, Color::Reset)?;

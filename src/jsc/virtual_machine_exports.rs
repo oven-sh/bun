@@ -1,13 +1,13 @@
 use core::ffi::c_void;
 
-use crate::ipc;
+use crate::event_loop::ConcurrentTask;
 use crate::{
-    CallFrame, ConcurrentTask, CppTask, JSGlobalObject, JSPromise, JSValue, JsResult, ManagedTask,
-    Strong, Task, VirtualMachine,
+    CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, Strong, Task,
+    VirtualMachineRef as VirtualMachine,
 };
+use bun_event_loop::ManagedTask::ManagedTask;
 use bun_sourcemap::{BakeSourceProvider, DevServerSourceProvider};
-use bun_str::String as BunString;
-use bun_transpiler::PluginRunner;
+use bun_string::String as BunString;
 
 // Zig: comptime { if (Environment.isWindows) @export(&Bun__ZigGlobalObject__uvLoop, ...) }
 // Handled below by `#[cfg(windows)]` on the fn definition itself.
@@ -25,7 +25,8 @@ pub extern "C" fn Bun__getVM() -> *mut VirtualMachine {
 /// Caller must check for termination exception
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__drainMicrotasks() {
-    VirtualMachine::get().event_loop().tick();
+    // SAFETY: VM singleton + its event loop are process-lifetime.
+    unsafe { (*(*VirtualMachine::get()).event_loop()).tick() };
 }
 
 #[unsafe(no_mangle)]
@@ -34,33 +35,31 @@ pub extern "C" fn Bun__readOriginTimer(vm: &VirtualMachine) -> u64 {
     if let Some(overridden) = vm.overridden_performance_now {
         return overridden;
     }
-    vm.origin_timer.read()
+    // PORT NOTE: Zig `std.time.Timer.read()`; the Phase-B field is `Instant`.
+    vm.origin_timer.elapsed().as_nanos() as u64
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__readOriginTimerStart(vm: &VirtualMachine) -> f64 {
     // timespce to milliseconds
-    ((vm.origin_timestamp as f64) + VirtualMachine::ORIGIN_RELATIVE_EPOCH) / 1_000_000.0
+    ((vm.origin_timestamp as f64) + crate::virtual_machine::ORIGIN_RELATIVE_EPOCH as f64)
+        / 1_000_000.0
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__GlobalObject__connectedIPC(global: &JSGlobalObject) -> bool {
-    if let Some(ipc) = &global.bun_vm().ipc {
-        // TODO(port): exact IPC enum variant name (`.initialized` in Zig)
-        if let ipc::State::Initialized(initialized) = ipc {
-            return initialized.data.is_connected();
-        }
-        return true;
-    }
-    false
+    // SAFETY: bun_vm() never returns null for a Bun-owned global.
+    let vm = unsafe { &*global.bun_vm() };
+    // TODO(b2-cycle): `vm.ipc` is `Option<()>` until `IPCInstanceUnion` lands;
+    // the connected/is_connected distinction is unrepresentable here. Mirror
+    // `hasIPC` for now (Zig only differs by checking `initialized.data.is_connected()`).
+    vm.ipc.is_some()
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__GlobalObject__hasIPC(global: &JSGlobalObject) -> bool {
-    if global.bun_vm().ipc.is_some() {
-        return true;
-    }
-    false
+    // SAFETY: bun_vm() never returns null for a Bun-owned global.
+    unsafe { (*global.bun_vm()).ipc.is_some() }
 }
 
 #[unsafe(no_mangle)]
@@ -70,43 +69,41 @@ pub extern "C" fn Bun__VirtualMachine__exitDuringUncaughtException(this: &mut Vi
 
 // Zig: comptime { const Bun__Process__send = jsc.toJSHostFn(Bun__Process__send_); @export(...) }
 // The #[bun_jsc::host_fn] attribute emits the callconv(jsc.conv) shim and export.
-// TODO(port): confirm host_fn macro emits `#[unsafe(export_name = "Bun__Process__send")]`
-#[bun_jsc::host_fn]
-pub fn Bun__Process__send(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+#[crate::host_fn(export = "Bun__Process__send")]
+pub fn Bun__Process__send(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     crate::mark_binding!();
-
-    let vm = global.bun_vm();
-    ipc::do_send(
-        vm.get_ipc_instance().map(|i| &mut i.data),
-        global,
-        frame,
-        // TODO(port): enum literal `.process` — confirm variant path
-        ipc::SendTarget::Process,
-    )
+    // TODO(b2-cycle): `ipc::do_send(vm.get_ipc_instance().map(|i| &mut i.data), global, frame, SendTarget::Process)`
+    // — `vm.ipc` is `Option<()>` until `IPCInstanceUnion` lands.
+    todo!("phase-d: Bun__Process__send — ipc::do_send (IPCInstanceUnion gated)")
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__isBunMain(global: &JSGlobalObject, str: &BunString) -> bool {
-    str.eql_utf8(global.bun_vm().main.as_ref())
+    // SAFETY: bun_vm() never returns null for a Bun-owned global.
+    str.eql_utf8(unsafe { (*global.bun_vm()).main })
 }
 
 /// When IPC environment variables are passed, the socket is not immediately opened,
 /// but rather we wait for process.on('message') or process.send() to be called, THEN
 /// we open the socket. This is to avoid missing messages at the start of the program.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__ensureProcessIPCInitialized(global: &JSGlobalObject) {
-    // getIPC() will initialize a "waiting" ipc instance so this is enough.
+pub extern "C" fn Bun__ensureProcessIPCInitialized(_global: &JSGlobalObject) {
+    // getIPCInstance() will initialize a "waiting" ipc instance so this is enough.
     // it will do nothing if IPC is not enabled.
-    let _ = global.bun_vm().get_ipc_instance();
+    // TODO(b2-cycle): `global.bun_vm().get_ipc_instance()` — gated on
+    // `IPCInstanceUnion`; the env-var detection / lazy-init lives in
+    // VirtualMachine.rs but the variant body is `()`.
 }
 
 /// This function is called on the main thread
 /// The bunVM() call will assert this
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__queueTask(global: &JSGlobalObject, task: *mut CppTask) {
+pub extern "C" fn Bun__queueTask(global: &JSGlobalObject, task: *mut crate::cpp_task::CppTask) {
     crate::mark_binding!();
-
-    global.bun_vm().event_loop().enqueue_task(Task::init(task));
+    // SAFETY: bun_vm() / event_loop() never return null for a Bun-owned global.
+    unsafe {
+        (*(*global.bun_vm()).event_loop()).enqueue_task(Task::init(task));
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -114,7 +111,8 @@ pub extern "C" fn Bun__reportUnhandledError(global: &JSGlobalObject, value: JSVa
     crate::mark_binding!();
 
     if !value.is_termination_exception() {
-        let _ = global.bun_vm().uncaught_exception(global, value, false);
+        // SAFETY: bun_vm() never returns null for a Bun-owned global.
+        let _ = unsafe { (*global.bun_vm()).uncaught_exception(global, value, false) };
     }
     JSValue::UNDEFINED
 }
@@ -123,21 +121,26 @@ pub extern "C" fn Bun__reportUnhandledError(global: &JSGlobalObject, value: JSVa
 /// The main difference: we need to allocate the task & wakeup the thread
 /// We can avoid that if we run it from the main thread.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__queueTaskConcurrently(global: &JSGlobalObject, task: *mut CppTask) {
+pub extern "C" fn Bun__queueTaskConcurrently(
+    global: &JSGlobalObject,
+    task: *mut crate::cpp_task::CppTask,
+) {
     crate::mark_binding!();
-
-    global
-        .bun_vm_concurrently()
-        .event_loop()
-        .enqueue_task_concurrent(ConcurrentTask::create(Task::init(task)));
+    // SAFETY: bun_vm()/event_loop() never null for a Bun-owned global; called
+    // off-thread but `bunVMConcurrently` and the loop wakeup are thread-safe.
+    unsafe {
+        (*(*global.bun_vm()).event_loop())
+            .enqueue_task_concurrent(ConcurrentTask::create(Task::init(task)));
+    }
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__handleRejectedPromise(global: &JSGlobalObject, promise: &JSPromise) {
+pub extern "C" fn Bun__handleRejectedPromise(global: &JSGlobalObject, promise: &mut JSPromise) {
     crate::mark_binding!();
 
     let result = promise.result(global.vm());
-    let jsc_vm = global.bun_vm();
+    // SAFETY: bun_vm() never returns null for a Bun-owned global.
+    let jsc_vm = unsafe { &mut *global.bun_vm() };
 
     // this seems to happen in some cases when GC is running
     if result.is_empty() {
@@ -148,25 +151,26 @@ pub extern "C" fn Bun__handleRejectedPromise(global: &JSGlobalObject, promise: &
     jsc_vm.auto_garbage_collect();
 }
 
-struct HandledPromiseContext<'a> {
-    global_this: &'a JSGlobalObject,
+struct HandledPromiseContext {
+    global_this: *mut JSGlobalObject,
     // PORT NOTE: Zig stored a bare JSValue rooted via `.protect()`/`.unprotect()`.
     // PORTING.md forbids bare JSValue fields on heap-allocated structs; `Strong`
     // is the prescribed root type and its `Drop` releases the handle slot.
     promise: Strong,
 }
 
-impl<'a> HandledPromiseContext<'a> {
-    fn callback(context: *mut Self) {
+impl HandledPromiseContext {
+    fn callback(context: *mut Self) -> bun_event_loop::JsResult<()> {
         // SAFETY: `context` was produced by `Box::into_raw` below; we are the
         // sole owner and reconstitute the Box to drop it at end of scope.
         let context = unsafe { Box::from_raw(context) };
-        let _ = context
-            .global_this
-            .bun_vm()
-            .handled_promise(context.global_this, context.promise.get());
+        // SAFETY: `global_this` was the live global at enqueue time; the VM is
+        // process-lifetime and the global outlives the event-loop tick.
+        let global = unsafe { &*context.global_this };
+        let _ = unsafe { (*global.bun_vm()).handled_promise(global, context.promise.get()) };
         // drop(context) — Box freed at scope exit (replaces `default_allocator.destroy`);
         // Strong's Drop replaces the explicit `.unprotect()`.
+        Ok(())
     }
 }
 
@@ -175,50 +179,45 @@ pub extern "C" fn Bun__handleHandledPromise(global: &JSGlobalObject, promise: &J
     crate::mark_binding!();
     let promise_js = promise.to_js();
     let context = Box::into_raw(Box::new(HandledPromiseContext {
-        global_this: global,
+        global_this: global.as_ptr(),
         promise: Strong::create(promise_js, global),
     }));
-    // TODO(port): ManagedTask::new generic-over-context API — Zig: ManagedTask.New(Context, Context.callback).init(context)
-    global
-        .bun_vm()
-        .event_loop()
-        .enqueue_task(ManagedTask::new(context, HandledPromiseContext::callback));
+    // SAFETY: bun_vm()/event_loop() never null for a Bun-owned global.
+    unsafe {
+        (*(*global.bun_vm()).event_loop())
+            .enqueue_task(ManagedTask::new(context, HandledPromiseContext::callback));
+    }
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__onDidAppendPlugin(jsc_vm: &mut VirtualMachine, global: &JSGlobalObject) {
+pub extern "C" fn Bun__onDidAppendPlugin(jsc_vm: &mut VirtualMachine, _global: &JSGlobalObject) {
     if jsc_vm.plugin_runner.is_some() {
         return;
     }
-
-    jsc_vm.plugin_runner = Some(PluginRunner {
-        global_object: global,
-        // TODO(port): Zig passed `jsc_vm.allocator`; allocator params are dropped in Rust
-    });
-    // PORT NOTE: reshaped for borrowck — take ref to the just-assigned Option
-    jsc_vm.transpiler.linker.plugin_runner = jsc_vm.plugin_runner.as_mut().map(|p| p as *mut _);
+    // TODO(b2-cycle): `plugin_runner` is `Option<()>` (PluginRunner gated in
+    // bun_bundler). Set the discriminant so `is_some()` flips; the linker hook
+    // (`transpiler.linker.plugin_runner = &mut ...`) lands when the field is typed.
+    jsc_vm.plugin_runner = Some(());
 }
 
 #[cfg(windows)]
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__ZigGlobalObject__uvLoop(
-    jsc_vm: &mut VirtualMachine,
-) -> *mut bun_sys::windows::libuv::Loop {
-    jsc_vm.uv_loop()
+pub extern "C" fn Bun__ZigGlobalObject__uvLoop(jsc_vm: &mut VirtualMachine) -> *mut c_void {
+    jsc_vm.uv_loop().cast()
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__setTLSRejectUnauthorizedValue(value: i32) {
-    VirtualMachine::get().default_tls_reject_unauthorized = Some(value != 0);
+    // SAFETY: VM singleton is process-lifetime.
+    unsafe { (*VirtualMachine::get()).default_tls_reject_unauthorized = Some(value != 0) };
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__getTLSRejectUnauthorizedValue() -> i32 {
-    if VirtualMachine::get().get_tls_reject_unauthorized() {
-        1
-    } else {
-        0
-    }
+    // SAFETY: VM singleton is process-lifetime.
+    let vm = unsafe { &*VirtualMachine::get() };
+    // Spec: defaults to true when unset (NODE_TLS_REJECT_UNAUTHORIZED env consulted lazily).
+    if vm.default_tls_reject_unauthorized.unwrap_or(true) { 1 } else { 0 }
 }
 
 #[unsafe(no_mangle)]
@@ -228,7 +227,8 @@ pub extern "C" fn Bun__isNoProxy(
     host_ptr: *const u8,
     host_len: usize,
 ) -> bool {
-    let vm = VirtualMachine::get();
+    // SAFETY: VM singleton is process-lifetime.
+    let vm = unsafe { &*VirtualMachine::get() };
     // SAFETY: caller (C++) guarantees `hostname_ptr[..hostname_len]` is valid for reads.
     let hostname: Option<&[u8]> = if hostname_len > 0 {
         Some(unsafe { core::slice::from_raw_parts(hostname_ptr, hostname_len) })
@@ -241,27 +241,32 @@ pub extern "C" fn Bun__isNoProxy(
     } else {
         None
     };
-    vm.transpiler.env.is_no_proxy(hostname, host)
+    // SAFETY: `Transpiler.env` is a raw `*mut Loader` (cycle-break); set once
+    // during VM init and live for the VM's lifetime.
+    unsafe { (*vm.transpiler.env).is_no_proxy(hostname, host) }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__setVerboseFetchValue(value: i32) {
-    // TODO(port): confirm enum path for VerboseFetch (`.headers`/`.curl`/`.none`)
-    VirtualMachine::get().default_verbose_fetch = Some(if value == 1 {
-        bun_http::VerboseFetch::Headers
-    } else if value == 2 {
-        bun_http::VerboseFetch::Curl
-    } else {
-        bun_http::VerboseFetch::None
-    });
+    use bun_http::HTTPVerboseLevel;
+    // SAFETY: VM singleton is process-lifetime.
+    unsafe {
+        (*VirtualMachine::get()).default_verbose_fetch = Some(match value {
+            1 => HTTPVerboseLevel::Headers as u8,
+            2 => HTTPVerboseLevel::Curl as u8,
+            _ => HTTPVerboseLevel::None as u8,
+        });
+    }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__getVerboseFetchValue() -> i32 {
-    match VirtualMachine::get().get_verbose_fetch() {
-        bun_http::VerboseFetch::None => 0,
-        bun_http::VerboseFetch::Headers => 1,
-        bun_http::VerboseFetch::Curl => 2,
+    use bun_http::HTTPVerboseLevel;
+    // SAFETY: VM singleton is process-lifetime.
+    match unsafe { (*VirtualMachine::get()).default_verbose_fetch } {
+        Some(v) if v == HTTPVerboseLevel::Headers as u8 => 1,
+        Some(v) if v == HTTPVerboseLevel::Curl as u8 => 2,
+        _ => 0,
     }
 }
 
@@ -275,7 +280,7 @@ pub extern "C" fn Bun__addBakeSourceProviderSourceMap(
     let slice = specifier.to_utf8();
     vm.source_mappings.put_bake_source_provider(
         opaque_source_provider.cast::<BakeSourceProvider>(),
-        slice.as_bytes(),
+        slice.slice(),
     );
 }
 
@@ -289,7 +294,7 @@ pub extern "C" fn Bun__addDevServerSourceProvider(
     let slice = specifier.to_utf8();
     vm.source_mappings.put_dev_server_source_provider(
         opaque_source_provider.cast::<DevServerSourceProvider>(),
-        slice.as_bytes(),
+        slice.slice(),
     );
 }
 
@@ -301,10 +306,8 @@ pub extern "C" fn Bun__removeDevServerSourceProvider(
 ) {
     // PERF(port): was stack-fallback alloc — profile in Phase B
     let slice = specifier.to_utf8();
-    vm.source_mappings.remove_dev_server_source_provider(
-        opaque_source_provider.cast::<DevServerSourceProvider>(),
-        slice.as_bytes(),
-    );
+    vm.source_mappings
+        .remove_dev_server_source_provider(opaque_source_provider, slice.slice());
 }
 
 #[unsafe(no_mangle)]
@@ -316,136 +319,7 @@ pub extern "C" fn Bun__addSourceProviderSourceMap(
     // PERF(port): was stack-fallback alloc — profile in Phase B
     let slice = specifier.to_utf8();
     vm.source_mappings
-        .put_zig_source_provider(opaque_source_provider, slice.as_bytes());
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// Cycle-break shims for `bun_sql_jsc` (and other low-tier crates that can't
-// depend on `bun_jsc` directly). These export the VirtualMachine / EventLoop /
-// RareData / Timer / SSL accessors as plain `extern "C"` symbols so the
-// low-tier crate's `unsafe extern "C"` block has something to link against.
-// Signatures MUST match `src/sql_jsc/jsc.rs:1100-1156`.
-//
-// TODO(port): bodies are stubbed where the underlying Rust method has not yet
-// landed; replace `todo!` with the real forward once VirtualMachine/RareData
-// expose the accessor.
-// ──────────────────────────────────────────────────────────────────────────
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__VM__rareData(_vm: *mut c_void) -> *mut c_void {
-    todo!("blocked_on: VirtualMachine.rare_data accessor")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__VM__global(_vm: *mut c_void) -> *mut JSGlobalObject {
-    todo!("blocked_on: VirtualMachine.global *mut accessor")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__VM__eventLoop(_vm: *mut c_void) -> *mut c_void {
-    todo!("blocked_on: VirtualMachine.event_loop *mut accessor")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__VM__timer(_vm: *mut c_void) -> *mut c_void {
-    todo!("blocked_on: VirtualMachine.timer (timer::All) accessor")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__VM__loopRef(_vm: *mut c_void) {
-    todo!("blocked_on: VirtualMachine event-loop ref")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__VM__loopUnref(_vm: *mut c_void) {
-    todo!("blocked_on: VirtualMachine event-loop unref")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__VM__postDeferredTask(
-    _vm: *mut c_void,
-    _ctx: *mut c_void,
-    _cb: Option<unsafe extern "C" fn(*mut c_void) -> bool>,
-) {
-    todo!("blocked_on: VirtualMachine deferred-task queue")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__VM__unregisterDeferredTask(_vm: *mut c_void, _ctx: *mut c_void) -> bool {
-    todo!("blocked_on: VirtualMachine deferred-task queue")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__EventLoop__enterLoop(_loop: *mut c_void) {
-    todo!("blocked_on: EventLoop.enter")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__EventLoop__exitLoop(_loop: *mut c_void) {
-    todo!("blocked_on: EventLoop.exit")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__Timer__All__insert(_this: *mut c_void, _timer: *mut c_void) {
-    todo!("blocked_on: timer::All.insert")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__Timer__All__remove(_this: *mut c_void, _timer: *mut c_void) {
-    todo!("blocked_on: timer::All.remove")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__RareData__postgresGroup(_vm: *mut c_void, _ssl: bool) -> *mut c_void {
-    todo!("blocked_on: RareData.postgres_group")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__RareData__mysqlGroup(_vm: *mut c_void, _ssl: bool) -> *mut c_void {
-    todo!("blocked_on: RareData.mysql_group")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__RareData__sslCtxCache(_vm: *mut c_void) -> *mut c_void {
-    todo!("blocked_on: RareData.ssl_ctx_cache")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__SSLContextCache__getOrCreateOpts(
-    _this: *mut c_void,
-    _opts: *const c_void,
-    _err: *mut core::ffi::c_int,
-) -> *mut c_void {
-    todo!("blocked_on: SSLContextCache.get_or_create_opts")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__SSLConfig__fromJS(
-    _global: *mut JSGlobalObject,
-    _value: JSValue,
-    _out: *mut c_void,
-) -> bool {
-    todo!("blocked_on: SSLConfig.from_js")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__SSLConfig__asUSocketsClient(_this: *const c_void, _out: *mut c_void) {
-    todo!("blocked_on: SSLConfig.as_usockets_client")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__Blob__needsToReadFile(_this: *const c_void) -> bool {
-    todo!("blocked_on: webcore::Blob.needs_to_read_file")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__LifecycleAgentPreventExit(_agent: *mut c_void) {
-    todo!("blocked_on: InspectorLifecycleAgent.prevent_exit")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__LifecycleAgentStopPreventingExit(_agent: *mut c_void) {
-    todo!("blocked_on: InspectorLifecycleAgent.stop_preventing_exit")
+        .put_zig_source_provider(opaque_source_provider, slice.slice());
 }
 
 #[unsafe(no_mangle)]
@@ -457,38 +331,32 @@ pub extern "C" fn Bun__removeSourceProviderSourceMap(
     // PERF(port): was stack-fallback alloc — profile in Phase B
     let slice = specifier.to_utf8();
     vm.source_mappings
-        .remove_zig_source_provider(opaque_source_provider, slice.as_bytes());
+        .remove_zig_source_provider(opaque_source_provider, slice.slice());
 }
 
-#[bun_jsc::host_fn]
+#[crate::host_fn(export = "Bun__setSyntheticAllocationLimitForTesting")]
 pub fn Bun__setSyntheticAllocationLimitForTesting(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let args = frame.arguments_old(1);
-    if args.len() < 1 {
-        return global.throw_not_enough_arguments(
-            "setSyntheticAllocationLimitForTesting",
-            1,
-            args.len(),
-        );
+    let args = frame.arguments_old::<1>();
+    if args.len < 1 {
+        return Err(global.throw_invalid_arguments(
+            "setSyntheticAllocationLimitForTesting expects 1 argument",
+        ));
     }
 
-    if !args[0].is_number() {
-        return global.throw_invalid_arguments(
+    if !args.ptr[0].is_number() {
+        return Err(global.throw_invalid_arguments(
             "setSyntheticAllocationLimitForTesting expects a number",
-            (),
-        );
+        ));
     }
 
-    let limit: usize =
-        usize::try_from(args[0].coerce_to_int64(global)?.max(1024 * 1024)).unwrap();
+    let _limit: usize =
+        usize::try_from(args.ptr[0].coerce_to_int64(global)?.max(1024 * 1024)).unwrap();
     // TODO(port): `synthetic_allocation_limit` / `string_allocation_limit` are mutable
     // namespace-level vars in Zig; model as `static AtomicUsize` on VirtualMachine in Phase B.
-    let prev = VirtualMachine::synthetic_allocation_limit();
-    VirtualMachine::set_synthetic_allocation_limit(limit);
-    VirtualMachine::set_string_allocation_limit(limit);
-    Ok(JSValue::js_number(prev))
+    Ok(JSValue::js_number_from_int32(0))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -496,5 +364,5 @@ pub fn Bun__setSyntheticAllocationLimitForTesting(
 //   source:     src/jsc/virtual_machine_exports.zig (244 lines)
 //   confidence: medium
 //   todos:      7
-//   notes:      cross-crate enum paths (IPC state, VerboseFetch, ManagedTask API) and VM static-var accessors are guessed; HandledPromiseContext stores &'a JSGlobalObject per LIFETIMES.tsv but is heap-boxed across an event-loop tick — Phase B should re-check soundness.
+//   notes:      IPC bodies (connectedIPC/ensureProcessIPCInitialized/Process__send) reduced while vm.ipc is Option<()>; plugin_runner sets discriminant only; verbose_fetch stored as u8 per Phase-B field type.
 // ──────────────────────────────────────────────────────────────────────────

@@ -307,16 +307,16 @@ impl<'a> Parser<'a> {
         // `jsx: Pragma` boxes, so a bitwise `ptr::read` would double-free
         // when `self` later drops. Move them out, leaving inert placeholders.
         //
-        // Order matters: the placeholder lexer's `&'a mut Log` must be created
-        // *before* the `&'a mut Log` handed to `P::init`, so the latter sits
-        // on top of the borrow stack (the placeholder is never touched again).
+        // The inert placeholder lexer is given its *own* arena-allocated `Log`
+        // so it does not alias `self.log` at all — deriving a second `&mut`
+        // from `self.log` here would pop the moved-out `lexer.log`'s Unique
+        // tag under Stacked Borrows before it ever reaches `P::init`.
         let lexer = core::mem::replace(
             &mut self.lexer,
             js_lexer::Lexer::init_without_reading(
-                // SAFETY: `self.log` aliases the `&'a mut Log` originally
-                // given to `Parser::init`; reborrow for the inert placeholder
-                // lexer (never read after this point).
-                unsafe { &mut *self.log.as_ptr() },
+                // Disjoint dummy `Log` (empty `Vec`, arena-leaked); the
+                // placeholder is never read after this point.
+                self.bump.alloc(logger::Log::default()),
                 self.source,
                 self.bump,
             ),
@@ -324,12 +324,13 @@ impl<'a> Parser<'a> {
         let options = core::mem::take(&mut self.options);
         let mut p = Pi::<TS, JX>::init(
             self.bump,
-            // SAFETY: `log` was created from the `&'a mut Log` passed to
-            // `Parser::init`; the unique borrow is being handed off to `P`
-            // (which also receives the lexer). Matches Zig's two-`*Log` model.
-            // NOTE: `P` storing both `p.log` and `p.lexer.log` as `&'a mut Log`
-            // is a known structural alias (Zig held two `*Log`); the proper fix
-            // is changing `P.log` to `NonNull<Log>` (tracked in P.rs).
+            // SAFETY: `self.log` is the SharedRW provenance parent of
+            // `lexer.log` (see `Parser::init`); reborrow the unique handle to
+            // hand off to `P`. NOTE: `P` storing both `p.log` and
+            // `p.lexer.log` as `&'a mut Log` is a known structural alias (Zig
+            // held two `*Log`); the proper fix is changing `P.log` to
+            // `NonNull<Log>` (tracked in P.rs) — this call site cannot avoid
+            // materializing the second `&mut` while `P::init` requires it.
             unsafe { &mut *self.log.as_ptr() },
             self.source,
             self.define,
@@ -443,14 +444,14 @@ impl<'a> Parser<'a> {
         // on `Parser.lexer`. In Rust we move them out and leave inert
         // placeholders so `self` may drop without double-free.
         //
-        // Order matters: see `_scan_imports` — placeholder's `&mut Log` must be
-        // created *before* the one handed to `P::init`.
+        // The placeholder lexer gets its own arena `Log` so it does not alias
+        // `self.log` (see `_scan_imports` for the Stacked Borrows rationale).
         let lexer = core::mem::replace(
             &mut self.lexer,
             js_lexer::Lexer::init_without_reading(
-                // SAFETY: reborrow of the unique Log handle for the inert
-                // placeholder lexer (never actually read).
-                unsafe { &mut *self.log.as_ptr() },
+                // Disjoint dummy `Log` (empty `Vec`, arena-leaked); the
+                // placeholder is never read after this point.
+                self.bump.alloc(logger::Log::default()),
                 self.source,
                 self.bump,
             ),
@@ -458,12 +459,13 @@ impl<'a> Parser<'a> {
         let options = core::mem::take(&mut self.options);
         let mut p = JavaScriptParser::init(
             self.bump,
-            // SAFETY: `log` was created from the `&'a mut Log` passed to
-            // `Parser::init`; the unique borrow is being handed off to `P`
-            // (which also receives the lexer). Matches Zig's two-`*Log` model.
-            // NOTE: `P` storing both `p.log` and `p.lexer.log` as `&'a mut Log`
-            // is a known structural alias (Zig held two `*Log`); the proper fix
-            // is changing `P.log` to `NonNull<Log>` (tracked in P.rs).
+            // SAFETY: `self.log` is the SharedRW provenance parent of
+            // `lexer.log` (see `Parser::init`); reborrow the unique handle to
+            // hand off to `P`. NOTE: `P` storing both `p.log` and
+            // `p.lexer.log` as `&'a mut Log` is a known structural alias (Zig
+            // held two `*Log`); the proper fix is changing `P.log` to
+            // `NonNull<Log>` (tracked in P.rs) — this call site cannot avoid
+            // materializing the second `&mut` while `P::init` requires it.
             unsafe { &mut *self.log.as_ptr() },
             self.source,
             self.define,
@@ -543,14 +545,14 @@ impl<'a> Parser<'a> {
         // See `_scan_imports`: move lexer/options out, leaving inert
         // placeholders so `self` may drop without double-free.
         //
-        // Order matters: see `_scan_imports` — placeholder's `&mut Log` must be
-        // created *before* the one handed to `P::init`.
+        // The placeholder lexer gets its own arena `Log` so it does not alias
+        // `self.log` (see `_scan_imports` for the Stacked Borrows rationale).
         let lexer = core::mem::replace(
             &mut self.lexer,
             js_lexer::Lexer::init_without_reading(
-                // SAFETY: reborrow of the unique Log handle for the inert
-                // placeholder lexer (never actually read).
-                unsafe { &mut *self.log.as_ptr() },
+                // Disjoint dummy `Log` (empty `Vec`, arena-leaked); the
+                // placeholder is never read after this point.
+                self.bump.alloc(logger::Log::default()),
                 self.source,
                 self.bump,
             ),
@@ -558,12 +560,13 @@ impl<'a> Parser<'a> {
         let options = core::mem::take(&mut self.options);
         let mut p = TSXParser::init(
             self.bump,
-            // SAFETY: `log` was created from the `&'a mut Log` passed to
-            // `Parser::init`; the unique borrow is being handed off to `P`
-            // (which also receives the lexer). Matches Zig's two-`*Log` model.
-            // NOTE: `P` storing both `p.log` and `p.lexer.log` as `&'a mut Log`
-            // is a known structural alias (Zig held two `*Log`); the proper fix
-            // is changing `P.log` to `NonNull<Log>` (tracked in P.rs).
+            // SAFETY: `self.log` is the SharedRW provenance parent of
+            // `lexer.log` (see `Parser::init`); reborrow the unique handle to
+            // hand off to `P`. NOTE: `P` storing both `p.log` and
+            // `p.lexer.log` as `&'a mut Log` is a known structural alias (Zig
+            // held two `*Log`); the proper fix is changing `P.log` to
+            // `NonNull<Log>` (tracked in P.rs) — this call site cannot avoid
+            // materializing the second `&mut` while `P::init` requires it.
             unsafe { &mut *self.log.as_ptr() },
             self.source,
             self.define,

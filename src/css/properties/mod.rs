@@ -12,9 +12,8 @@ use crate as css;
 // (`align`, `background`, …) remain ``-gated — their handler
 // bodies and parse/to_css impls bottom out on Parser/Printer surface that
 // is still in flux — but every *value type* the `Property` enum names is
-// re-exposed below as a data-only stub inside the inline `pub mod $name {}`
-// body via `prop_value_stub!`. When a leaf .rs file un-gates, its real
-// type replaces the stub transparently (same path, same name).
+// re-exposed below via `pub mod $name`. When a leaf .rs file un-gates, its
+// real type replaces the stub transparently (same path, same name).
 //
 // `prefixes::Feature` and the entire `values/` lattice are real, so
 // `PropertyId::set_prefixes_for_targets` / `from_name_and_prefix` and the
@@ -22,12 +21,7 @@ use crate as css;
 
 macro_rules! gated_prop {
     ($name:ident) => {
-         pub mod $name;
-        #[cfg(any())] pub mod $name {}
-    };
-    ($name:ident, { $($body:tt)* }) => {
-         pub mod $name;
-        #[cfg(any())] pub mod $name { $($body)* }
+        pub mod $name;
     };
 }
 

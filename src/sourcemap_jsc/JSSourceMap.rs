@@ -83,25 +83,17 @@ fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
     // Rust Box allocation aborts on OOM (handleOom semantics).
     let fake_sources_array: Box<[bstring::String]> = Box::new([source_url_string.dupe_ref()]);
 
-    // TODO(b2-blocked): bun_sourcemap::ParsedSourceMap::deref_ — `SavedSourceMap::get`
-    // returns an intrusive `*mut ParsedSourceMap` (+1 ref) but the lower-tier
-    // `ParsedSourceMap` exposes only `ref_count: AtomicU32` with no
-    // `ref_()`/`deref_()`/`AnyRefCounted` impl yet, so we cannot adopt it into
-    // `RefPtr` nor reconcile with the `Arc<ParsedSourceMap>` field. Once that
-    // lands, change `JSSourceMap.sourcemap` to `bun_ptr::RefPtr<ParsedSourceMap>`
-    // and use `RefPtr::adopt_ref(source_map)` here + `RefPtr::new(mapping_list)`
-    // in `constructor`.
-    
-    {
-        let this = Box::new(JSSourceMap {
-            sourcemap: source_map,
-            sources: fake_sources_array,
-            names: Box::default(),
-        });
-        return Ok(JSSourceMap::to_js(this, global));
-    }
-    let _ = (source_map, fake_sources_array);
-    todo!("blocked on bun_sourcemap::ParsedSourceMap::deref_ / bun_ptr::AnyRefCounted")
+    // PORT NOTE: Zig stores an intrusive `*ParsedSourceMap` (+1 ref from
+    // `SavedSourceMap.get`) and `deinit` calls `sourcemap.deref()`. The Rust
+    // port models that ownership as `Arc<ParsedSourceMap>` (LIFETIMES.tsv);
+    // `SavedSourceMap::get` already hands back the +1 as an `Arc`, and `Drop`
+    // on the field releases it — no manual `deref_()` needed.
+    let this = Box::new(JSSourceMap {
+        sourcemap: source_map,
+        sources: fake_sources_array,
+        names: Box::default(),
+    });
+    Ok(JSSourceMap::to_js(this, global))
 }
 
 impl JSSourceMap {

@@ -1034,12 +1034,7 @@ impl Tag {
 
 pub struct NpmInfo {
     pub name: String,
-    // TODO(port): `Semver.Query.Group` in Zig stores `Semver.String` (offset+len
-    // into the lockfile string buffer) and so carries no borrow. The Rust
-    // `bun_semver::query::Group<'a>` currently borrows its `input: &'a [u8]`;
-    // pinning to `'static` here matches the B-1 stub. The construction site in
-    // `parse_with_tag` is re-gated until `Group` drops the lifetime.
-    pub version: Semver::query::Group<'static>,
+    pub version: Semver::query::Group,
     pub is_alias: bool,
 }
 

@@ -4602,11 +4602,11 @@ impl H2FrameParser {
 
     #[bun_jsc::host_fn(method)]
     pub fn emit_abort_to_all_streams(this: &mut Self, _global_object: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
-        let self_ptr = this as *mut Self;
-        // SAFETY: self_ptr = self as *mut Self on the line above; reshaped for borrowck, no other live &mut to *self exists across this iterator
-        let mut it = StreamResumableIterator::init(unsafe { &mut *self_ptr });
+        // PORT NOTE: iterator stores a raw *mut so the loop body can keep using `this` exclusively.
+        let mut it = StreamResumableIterator::init(this as *mut Self);
         while let Some(stream_ptr) = it.next() {
-            // SAFETY: stream_ptr is a *mut Stream stored in self.streams (Box::into_raw); valid for the lifetime of the entry, exclusive access reshaped for borrowck
+            // SAFETY: stream_ptr is a *mut Stream stored in self.streams (Box::into_raw); valid for
+            // the lifetime of the entry. Separate heap allocation from `this`, so no aliasing.
             let stream = unsafe { &mut *stream_ptr };
             // this is the oposite logic of emitErrorToallStreams, in this case we wanna to cancel this streams
             if this.is_server {
@@ -4634,11 +4634,11 @@ impl H2FrameParser {
             return global_object.throw("Expected error argument");
         }
 
-        let self_ptr = this as *mut Self;
-        // SAFETY: self_ptr = self as *mut Self on the line above; reshaped for borrowck, no other live &mut to *self exists across this iterator
-        let mut it = StreamResumableIterator::init(unsafe { &mut *self_ptr });
+        // PORT NOTE: iterator stores a raw *mut so the loop body can keep using `this` exclusively.
+        let mut it = StreamResumableIterator::init(this as *mut Self);
         while let Some(stream_ptr) = it.next() {
-            // SAFETY: stream_ptr is a *mut Stream stored in self.streams (Box::into_raw); valid for the lifetime of the entry, exclusive access reshaped for borrowck
+            // SAFETY: stream_ptr is a *mut Stream stored in self.streams (Box::into_raw); valid for
+            // the lifetime of the entry. Separate heap allocation from `this`, so no aliasing.
             let stream = unsafe { &mut *stream_ptr };
             if stream.state != StreamState::CLOSED {
                 stream.state = StreamState::CLOSED;
@@ -5411,9 +5411,8 @@ impl H2FrameParser {
 
     #[bun_jsc::host_fn(method)]
     pub fn detach_from_js(this: &mut Self, _global_object: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
-        let self_ptr = this as *mut Self;
-        // SAFETY: self_ptr = self as *mut Self on the line above; reshaped for borrowck, no other live &mut to *self exists across this iterator
-        let mut it = StreamResumableIterator::init(unsafe { &mut *self_ptr });
+        // PORT NOTE: iterator stores a raw *mut so the loop body can keep using `this` exclusively.
+        let mut it = StreamResumableIterator::init(this as *mut Self);
         while let Some(stream) = it.next() {
             // SAFETY: stream is *mut Stream from self.streams; valid until freed below / map cleared
             unsafe { (*stream).free_resources::<false>(this) };

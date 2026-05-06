@@ -41,47 +41,47 @@ pub struct GetOrPutResult<'a> {
 }
 
 impl PathToSourceIndexMap {
-    pub fn get_path(&self, path: &FsPath) -> Option<IndexInt> {
-        self.get(path.text)
+    pub fn get_path(&self, path: &impl PathLike) -> Option<IndexInt> {
+        self.get(path.path_text())
     }
 
-    pub fn get(&self, text: &[u8]) -> Option<IndexInt> {
-        self.map.get(text).copied()
+    pub fn get(&self, text: impl AsRef<[u8]>) -> Option<IndexInt> {
+        self.map.get(text.as_ref()).copied()
     }
 
-    pub fn put_path(&mut self, path: &FsPath, value: IndexInt) -> Result<(), bun_alloc::AllocError> {
-        self.put(path.text, value)
+    pub fn put_path(&mut self, path: &impl PathLike, value: IndexInt) -> Result<(), bun_alloc::AllocError> {
+        self.put(path.path_text(), value)
     }
 
-    pub fn put(&mut self, text: &[u8], value: IndexInt) -> Result<(), bun_alloc::AllocError> {
+    pub fn put(&mut self, text: impl AsRef<[u8]>, value: IndexInt) -> Result<(), bun_alloc::AllocError> {
         // PERF(port): Zig used StringHashMapUnmanaged with arena-borrowed keys (no copy);
         // bun_collections::StringHashMap is keyed by `Box<[u8]>`, so we dupe here.
         // Revisit once StringHashMap gains a borrowed-key variant.
-        self.map.insert(Box::<[u8]>::from(text), value);
+        self.map.insert(Box::<[u8]>::from(text.as_ref()), value);
         Ok(())
     }
 
-    pub fn get_or_put_path(&mut self, path: &FsPath) -> Result<GetOrPutResult<'_>, bun_alloc::AllocError> {
-        self.get_or_put(path.text)
+    pub fn get_or_put_path(&mut self, path: &impl PathLike) -> Result<GetOrPutResult<'_>, bun_alloc::AllocError> {
+        self.get_or_put(path.path_text())
     }
 
-    pub fn get_or_put(&mut self, text: &[u8]) -> Result<GetOrPutResult<'_>, bun_alloc::AllocError> {
+    pub fn get_or_put(&mut self, text: impl AsRef<[u8]>) -> Result<GetOrPutResult<'_>, bun_alloc::AllocError> {
         // `Map` derefs to `std::collections::HashMap`, so this is std's Entry —
         // not `bun_collections::hash_map::Entry` (which is `ArrayHashMap`'s).
         use std::collections::hash_map::Entry;
         // PERF(port): see note in `put` re: key duplication.
-        match self.map.entry(Box::<[u8]>::from(text)) {
+        match self.map.entry(Box::<[u8]>::from(text.as_ref())) {
             Entry::Occupied(e) => Ok(GetOrPutResult { value_ptr: e.into_mut(), found_existing: true }),
             Entry::Vacant(e) => Ok(GetOrPutResult { value_ptr: e.insert(0), found_existing: false }),
         }
     }
 
-    pub fn remove(&mut self, text: &[u8]) -> bool {
-        self.map.remove(text).is_some()
+    pub fn remove(&mut self, text: impl AsRef<[u8]>) -> bool {
+        self.map.remove(text.as_ref()).is_some()
     }
 
-    pub fn remove_path(&mut self, path: &FsPath) -> bool {
-        self.remove(path.text)
+    pub fn remove_path(&mut self, path: &impl PathLike) -> bool {
+        self.remove(path.path_text())
     }
 }
 

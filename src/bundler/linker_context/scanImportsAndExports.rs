@@ -55,6 +55,15 @@ impl From<AllocError> for ScanImportsAndExportsError {
         ScanImportsAndExportsError::OutOfMemory
     }
 }
+impl From<ScanImportsAndExportsError> for crate::linker_context_mod::LinkError {
+    fn from(e: ScanImportsAndExportsError) -> Self {
+        use crate::linker_context_mod::LinkError;
+        match e {
+            ScanImportsAndExportsError::OutOfMemory => LinkError::OutOfMemory,
+            ScanImportsAndExportsError::ImportResolutionFailed => LinkError::ImportResolutionFailed,
+        }
+    }
+}
 impl From<ScanImportsAndExportsError> for bun_core::Error {
     fn from(e: ScanImportsAndExportsError) -> Self {
         bun_core::Error::from_name(<&'static str>::from(e))
@@ -417,7 +426,7 @@ pub fn scan_imports_and_exports(
                 // but before matching imports with exports.
                 col!(resolved_export_stars)[id] = ExportData {
                     data: ImportTracker {
-                        source_index: js_ast::Index::source(source_index as usize),
+                        source_index: Index::source(source_index),
                         import_ref: col_ref!(exports_refs)[id],
                         ..Default::default()
                     },
@@ -678,7 +687,7 @@ pub fn scan_imports_and_exports(
                     js_ast::NAMESPACE_EXPORT_PART_INDEX,
                     runtime_export_symbol_ref,
                     1,
-                    js_ast::Index::RUNTIME,
+                    Index::RUNTIME,
                 )?;
             }
 
@@ -968,7 +977,7 @@ pub fn scan_imports_and_exports(
                                 part_index as u32,
                                 wrapper_ref,
                                 1,
-                                js_ast::Index::source(other_source_index as usize),
+                                Index::source(other_source_index),
                             )?;
                         }
 
@@ -995,7 +1004,7 @@ pub fn scan_imports_and_exports(
                                 part_index as u32,
                                 col_ref!(exports_refs)[other_id],
                                 1,
-                                js_ast::Index::source(other_source_index as usize),
+                                Index::source(other_source_index),
                             )?;
 
                             // If this is a "require()" call, then we should add the
@@ -1028,7 +1037,7 @@ pub fn scan_imports_and_exports(
                             part_index as u32,
                             col_ref!(exports_refs)[other_id],
                             1,
-                            js_ast::Index::source(other_source_index as usize),
+                            Index::source(other_source_index),
                         )?;
                     }
                 }

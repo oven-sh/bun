@@ -1,29 +1,41 @@
 use core::mem::offset_of;
 
 use bun_alloc::Arena as Bump;
+use bun_threading::thread_pool as ThreadPoolLib;
+
+use crate::{BundleV2, Chunk, LinkerContext};
+
+#[cfg(feature = "css")]
 use bun_collections::BabyList;
-use crate::bun_css::{self as css, BundlerStyleSheet, ImportConditions, PrinterOptions, Targets};
-use bun_css::css_parser::{
+#[cfg(feature = "css")]
+use crate::bun_css::{BundlerStyleSheet, ImportConditions, ImportInfo, PrinterOptions, Targets};
+#[cfg(feature = "css")]
+use crate::bun_css::css_parser::{
     BundlerCssRule, BundlerCssRuleList, BundlerLayerBlockRule, BundlerMediaRule,
     BundlerSupportsRule, ImportRule, LayerName, LayerStatementRule, Location, ParserOptions,
     SmallList,
 };
-use bun_css::css_parser::ImportInfo;
+#[cfg(feature = "css")]
 use crate::bun_fs::Path;
+#[cfg(feature = "css")]
 use bun_logger::{Loc, Range};
+#[cfg(feature = "css")]
 use bun_options_types::{
     import_record::Flags as ImportRecordFlags, BundleEnums::Index as AstIndex, ImportKind,
     ImportRecord, ImportRecordTag,
 };
+#[cfg(feature = "css")]
 use bun_resolver::DataURL;
+#[cfg(feature = "css")]
 use crate::bun_str::strings;
-use bun_threading::thread_pool as ThreadPoolLib;
 
+#[cfg(feature = "css")]
 use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
+#[cfg(feature = "css")]
 use crate::Graph::InputFileListExt as _;
 
+#[cfg(feature = "css")]
 use crate::chunk::{Content, CssImportOrderKind};
-use crate::{BundleV2, Chunk, LinkerContext};
 
 // PORT NOTE: Zig stores `*Chunk` / `*LinkerContext` (freely-aliasing mutable
 // pointers). We mirror that with raw pointers rather than `&mut` / `&` so that

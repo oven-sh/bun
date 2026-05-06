@@ -419,9 +419,47 @@ impl WorkerPipe {
         // SAFETY: worker/coord backrefs valid for pipe lifetime.
         unsafe { (*(*self.worker).coord).vm.event_loop() }
     }
-    pub fn loop_(&self) -> &r#async::Loop {
+    pub fn loop_(&self) -> *mut r#async::Loop {
         // SAFETY: worker/coord backrefs valid for pipe lifetime.
         unsafe { (*(*self.worker).coord).vm.uv_loop() }
+    }
+}
+
+impl Default for WorkerPipe {
+    fn default() -> Self {
+        Self::new(PipeRole::Stdout, core::ptr::null())
+    }
+}
+
+// `bun.io.BufferedReader.init(WorkerPipe)` — vtable parent. Maps the Zig
+// `onReadChunk`/`onReaderDone`/`onReaderError`/`loop`/`eventLoop` decls.
+impl bun_io::pipe_reader::BufferedReaderParent for WorkerPipe {
+    const HAS_ON_READ_CHUNK: bool = true;
+    // SAFETY (all): see `BufferedReaderParent` aliasing contract — `this` is the
+    // `*mut Self` registered via `set_parent`; a `&mut` to the embedded reader
+    // may be live on the caller's stack. These touch only fields disjoint from
+    // `reader` (worker backref / done flag).
+    unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], state: bun_io::ReadState) -> bool {
+        unsafe { WorkerPipe::on_read_chunk(&mut *this, chunk, state) }
+    }
+    unsafe fn on_reader_done(this: *mut Self) {
+        unsafe { WorkerPipe::on_reader_done(&mut *this) }
+    }
+    unsafe fn on_reader_error(this: *mut Self, err: bun_sys::Error) {
+        unsafe { WorkerPipe::on_reader_error(&mut *this, err) }
+    }
+    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
+        // SAFETY: worker/coord backrefs valid for pipe lifetime.
+        unsafe { (*(*(*this).worker).coord).vm.uv_loop().cast() }
+    }
+    unsafe fn event_loop(_this: *mut Self) -> bun_io::EventLoopHandle {
+        // CYCLEBREAK: bun_io::EventLoopHandle is an opaque `*mut c_void` whose
+        // concrete repr is a stored `bun_jsc::EventLoopHandle`. WorkerPipe has
+        // no such stored handle — the Zig side dispatched through `coord.vm`
+        // directly. The FilePoll vtable bridge needs a real address; until a
+        // VM→io::EventLoopHandle helper lands, this path is unreachable for
+        // test-parallel pipes (poll registration goes through `loop_`).
+        todo!("blocked_on: bun_io::EventLoopHandle bridge from VirtualMachine")
     }
 }
 

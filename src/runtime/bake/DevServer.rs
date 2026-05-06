@@ -162,10 +162,12 @@ impl DevServer<'_> {
 
     /// Recover `&mut VirtualMachine` from the JSC_BORROW `vm` field.
     /// SAFETY: single JS thread; caller must not hold an aliasing `&mut`.
-    /// Routed through `ptr::from_ref` to sidestep `invalid_reference_casting`.
+    /// Cast through raw `*const` → `*mut` (the stored `&'a` is a port artifact of
+    /// Zig's `*VirtualMachine`; see same pattern in `api/bun/subprocess.rs`).
     #[inline]
+    #[allow(invalid_reference_casting)]
     pub(crate) fn vm_mut(&self) -> &mut VirtualMachine {
-        unsafe { &mut *::core::ptr::from_ref(self.vm).cast_mut() }
+        unsafe { &mut *(self.vm as *const VirtualMachine as *mut VirtualMachine) }
     }
 }
 pub use crate::bake::dev_server::packed_map::PackedMap;

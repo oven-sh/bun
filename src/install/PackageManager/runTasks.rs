@@ -865,14 +865,14 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 manager.process_dependency_list::<C>(dependency_list, extract_ctx, install_peer)?;
 
                 if log_level.show_progress() {
-                    if !has_updated_this_run {
+                    if !*has_updated_this_run {
                         manager.set_node_name(
                             manager.downloads_node.as_ref().unwrap(),
                             manifest.name(),
                             ProgressStrings::DOWNLOAD_EMOJI,
                             true,
                         );
-                        has_updated_this_run = true;
+                        *has_updated_this_run = true;
                     }
                 }
             }
@@ -1072,14 +1072,14 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 manager.set_preinstall_state(package_id, &manager.lockfile, bun_install::PreinstallState::Done);
 
                 if log_level.show_progress() {
-                    if !has_updated_this_run {
+                    if !*has_updated_this_run {
                         manager.set_node_name(
                             manager.downloads_node.as_ref().unwrap(),
                             alias,
                             ProgressStrings::EXTRACT_EMOJI,
                             true,
                         );
-                        has_updated_this_run = true;
+                        *has_updated_this_run = true;
                     }
                 }
             }
@@ -1222,14 +1222,14 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 }
 
                 if log_level.show_progress() {
-                    if !has_updated_this_run {
+                    if !*has_updated_this_run {
                         manager.set_node_name(
                             manager.downloads_node.as_ref().unwrap(),
                             name,
                             ProgressStrings::DOWNLOAD_EMOJI,
                             true,
                         );
-                        has_updated_this_run = true;
+                        *has_updated_this_run = true;
                     }
                 }
             }
@@ -1347,14 +1347,14 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 }
 
                 if log_level.show_progress() {
-                    if !has_updated_this_run {
+                    if !*has_updated_this_run {
                         manager.set_node_name(
                             manager.downloads_node.as_ref().unwrap(),
                             alias.slice(),
                             ProgressStrings::DOWNLOAD_EMOJI,
                             true,
                         );
-                        has_updated_this_run = true;
+                        *has_updated_this_run = true;
                     }
                 }
             }

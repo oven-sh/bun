@@ -6708,7 +6708,8 @@ impl<'a> Resolver<'a> {
                             // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver (see LIFETIMES.tsv).
                             if let Some(dir_entries) = unsafe { &*dir_info_ptr }.get_entries(self.generation) {
                                 // SAFETY: ARENA — slot in the BSSMap-backed EntriesOptionMap singleton; outlives the resolver.
-                                let dir_entries = unsafe { &mut *dir_entries };
+                                // Read-only `.get()` lookup — shared borrow only.
+                                let dir_entries = unsafe { &*dir_entries };
                                 let index = b"index";
                                 let buf = bufs!(load_as_file);
                                 buf[..index.len()].copy_from_slice(index);
@@ -7860,7 +7861,8 @@ impl<'a> Resolver<'a> {
 
         if let Some(entries) = dir_info.get_entries(self.generation) {
             // SAFETY: ARENA — slot in the BSSMap-backed EntriesOptionMap singleton; outlives the resolver.
-            let entries = unsafe { &mut *entries };
+            // Read-only `.get()` lookup — shared borrow only.
+            let entries = unsafe { &*entries };
             if let Some(lookup) = entries.get(&base[..]) {
                 if unsafe { &*lookup.entry }.kind(rfs, self.store_fd) == Fs::file_system::EntryKind::File {
                     let out_buf: &[u8] = {

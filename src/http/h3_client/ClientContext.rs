@@ -49,12 +49,14 @@ impl ClientContext {
         }
         LSQUIC_INIT_ONCE.call_once(|| quic::global_init());
         // SAFETY: caller passes the live HTTP-thread uws loop.
-        let qctx = quic::Context::create_client(
-            unsafe { &mut *loop_ },
-            0,
-            core::mem::size_of::<*mut ClientSession>() as c_uint,
-            core::mem::size_of::<*mut Stream>() as c_uint,
-        )?;
+        let qctx = unsafe {
+            quic::Context::create_client(
+                loop_,
+                0,
+                core::mem::size_of::<*mut ClientSession>() as c_uint,
+                core::mem::size_of::<*mut Stream>() as c_uint,
+            )
+        }?;
         // SAFETY: create_client returns non-null on Some.
         let qctx = unsafe { NonNull::new_unchecked(qctx) };
         // SAFETY: qctx is a fresh live us_quic_socket_context_t.

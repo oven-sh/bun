@@ -72,15 +72,20 @@ pub enum ConnectResult {
 }
 
 impl Context {
+    /// # Safety
+    /// `loop_` must point to a live `us_loop_t`. Takes a raw pointer (not `&mut Loop`)
+    /// because the Loop is shared across every context/socket/timer on the thread —
+    /// Zig `*uws.Loop` freely aliases — so requiring `&mut` would force callers to
+    /// assert uniqueness that does not hold.
     #[inline]
-    pub fn create_client(
-        loop_: &mut Loop,
+    pub unsafe fn create_client(
+        loop_: *mut Loop,
         ext_size: c_uint,
         conn_ext: c_uint,
         stream_ext: c_uint,
     ) -> Option<*mut Context> {
         // SAFETY: thin FFI forward; all args are POD, return is nullable.
-        let p = unsafe { us_create_quic_client_context(loop_ as *mut Loop, ext_size, conn_ext, stream_ext) };
+        let p = unsafe { us_create_quic_client_context(loop_, ext_size, conn_ext, stream_ext) };
         if p.is_null() { None } else { Some(p) }
     }
 
@@ -170,5 +175,5 @@ impl Context {
 //   source:     src/uws_sys/quic/Context.zig (56 lines)
 //   confidence: high
 //   todos:      0
-//   notes:      r#loop used to avoid keyword clash; Loop refs are &mut at wrapper layer (raw ptr only at extern "C"); ConnectResult payloads are raw *mut per LIFETIMES.tsv (FFI class)
+//   notes:      r#loop used to avoid keyword clash; Loop is passed/returned as *mut Loop at the wrapper layer because it freely aliases (Zig `*uws.Loop`, Context.zig:6,9); ConnectResult payloads are raw *mut per LIFETIMES.tsv (FFI class)
 // ──────────────────────────────────────────────────────────────────────────

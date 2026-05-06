@@ -952,7 +952,7 @@ impl ClientSession {
         let client = unsafe { &mut *client_ptr.as_ptr() };
 
         if client.signals.get(signals::Field::Aborted) {
-            stream.rst(wire::ErrorCode::CANCEL);
+            self.rst_stream(stream, wire::ErrorCode::CANCEL);
             let _ = self.flush();
             stream.client = None;
             client.h2 = None;
@@ -984,7 +984,7 @@ impl ClientSession {
             let result = match self.apply_headers(stream, client) {
                 Ok(r) => r,
                 Err(err) => {
-                    stream.rst(wire::ErrorCode::CANCEL);
+                    self.rst_stream(stream, wire::ErrorCode::CANCEL);
                     let _ = self.flush();
                     stream.client = None;
                     client.h2 = None;
@@ -1001,7 +1001,7 @@ impl ClientSession {
             // HTTPClient and the first one's `stream.client` becomes a
             // dangling pointer once the request completes.
             if client.state.flags.is_redirect_pending {
-                stream.rst(wire::ErrorCode::CANCEL);
+                self.rst_stream(stream, wire::ErrorCode::CANCEL);
                 let _ = self.flush();
                 stream.client = None;
                 client.h2 = None;
@@ -1049,7 +1049,7 @@ impl ClientSession {
                 Ok(r) => r,
                 Err(err) => {
                     stream.body_buffer.clear();
-                    stream.rst(wire::ErrorCode::CANCEL);
+                    self.rst_stream(stream, wire::ErrorCode::CANCEL);
                     let _ = self.flush();
                     if !terminal {
                         stream.client = None;

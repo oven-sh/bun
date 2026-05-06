@@ -329,12 +329,17 @@ impl<'a> PatchTask<'a> {
                         "pkg: {} apply patch",
                         BStr::new(pkg_name.slice(&manager.lockfile.buffers.string_bytes))
                     );
+                    // PORT NOTE: erase the `'a` lifetime tied to `manager`'s
+                    // `&mut` borrow so we can re-borrow `manager` below. The
+                    // task stores `&PackageManager` as a long-lived backref
+                    // (Zig uses a raw `*PackageManager`); the lifetime is not
+                    // enforced through the raw-pointer queue anyway.
                     let patch_task = PatchTask::new_apply_patch_hash(
                         manager,
                         pkg_meta_id,
                         hash,
                         name_and_version_hash,
-                    );
+                    ) as *mut PatchTask<'static>;
                     if manager.get_preinstall_state(pkg_meta_id) == PreinstallState::ApplyPatch {
                         manager.set_preinstall_state(pkg_meta_id, PreinstallState::ApplyingPatch);
                         manager.enqueue_patch_task(patch_task);

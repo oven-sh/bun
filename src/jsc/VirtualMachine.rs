@@ -884,6 +884,28 @@ impl VirtualMachine {
         !self.bun_watcher.is_null()
     }
 
+    /// Spec VirtualMachine.zig:454 — `pub threadlocal var is_main_thread_vm`.
+    /// Thin setter so callers don't need `.with` plumbing on the thread-local.
+    #[inline]
+    pub fn set_is_main_thread_vm(value: bool) {
+        IS_MAIN_THREAD_VM.set(value);
+    }
+
+    /// Spec VirtualMachine.zig:2283 `ensureDebugger`.
+    ///
+    /// The body lives in `bun_runtime` (it constructs `bun.api.Debugger`), so
+    /// dispatch through [`RuntimeHooks::ensure_debugger`] like
+    /// [`reload_entry_point`] does. No-op when hooks aren't installed (pure
+    /// `bun_jsc` unit tests) — matches the Zig early-return when `debugger`
+    /// is unset.
+    pub fn ensure_debugger(&mut self, block_until_connected: bool) -> Result<(), bun_core::Error> {
+        if let Some(hooks) = runtime_hooks() {
+            // SAFETY: hook contract — `self` is the live per-thread VM.
+            unsafe { (hooks.ensure_debugger)(self, block_until_connected) };
+        }
+        Ok(())
+    }
+
     /// Whether this VM should be destroyed after it exits, even if it is the
     /// main thread's VM. Worker VMs are always destroyed on exit, regardless
     /// of this setting. Setting this to true may expose bugs that would

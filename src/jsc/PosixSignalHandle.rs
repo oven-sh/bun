@@ -178,7 +178,7 @@ pub extern "C" fn Bun__ensureSignalHandler() {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/jsc/PosixSignalHandle.zig (124 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      drain() relies on Task::init/set_uintptr tag-pointer hack; EventLoop.signal_handler stored as erased *mut c_void until field is typed
+//   confidence: high
+//   todos:      0
+//   notes:      EventLoop.signal_handler stored as erased *mut c_void until field is typed
 // ──────────────────────────────────────────────────────────────────────────

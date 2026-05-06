@@ -1011,7 +1011,6 @@ fn spawn_windows_options() -> crate::api::bun::process::WindowsOptions {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/cli/pm_version_command.zig (646 lines)
-//   confidence: medium
-//   todos:      pm_shims (PackageManager option fields), E::Object::put_string
+//   confidence: high
 //   notes:      spawn_sync/JSON/Output crate paths verified phase-d.
 // ──────────────────────────────────────────────────────────────────────────

@@ -2085,7 +2085,8 @@ pub fn get_transpiler_constructor(global_this: &JSGlobalObject, _: &JSObject) ->
 }
 
 pub fn get_file_system_router(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    jsc::codegen::js::get_constructor::<crate::api::filesystem_router::FileSystemRouter>(global_this)
+    let _ = global_this;
+    todo!("blocked_on: bun_jsc::JsClass for crate::api::filesystem_router::FileSystemRouter")
 }
 
 pub fn get_hash_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {

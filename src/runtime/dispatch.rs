@@ -369,13 +369,15 @@ pub fn run_task(
 
         // ── JSC scheduler / module loader ────────────────────────────────
         task_tag::JSCDeferredWorkTask => {
-            bun_jsc::mark_binding(core::panic::Location::caller());
+            bun_jsc::mark_binding();
             // Body: `cast!(JSCDeferredWorkTask).run()?;`
             todo!("blocked_on: bun_jsc::jsc_scheduler::JSCDeferredWorkTask");
         }
         task_tag::PollPendingModulesTask => {
             // Zig: `virtual_machine.modules.onPoll()`.
-            vm.modules.on_poll();
+            // `vm.modules` is currently `()` in bun_jsc::VirtualMachine.
+            let _ = &vm.modules;
+            todo!("blocked_on: bun_jsc::VirtualMachine::modules (ModuleLoader::on_poll)");
         }
         task_tag::RuntimeTranspilerStore => {
             cast!(RuntimeTranspilerStore).run_from_js_thread(el, global, vm);

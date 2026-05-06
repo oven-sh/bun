@@ -517,9 +517,9 @@ pub mod command {
             // if we are bunx, but NOT a symlink to bun. when we run `<self> install`, we dont
             // want to recursively run bunx. so this check lets us peek back into bun install.
             if let Some(next) = args_iter.next() {
-                if next == b"add" && bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL::get() {
+                if next == b"add" && bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL::get().unwrap_or(false) {
                     return Tag::AddCommand;
-                } else if next == b"exec" && bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL::get() {
+                } else if next == b"exec" && bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL::get().unwrap_or(false) {
                     return Tag::ExecCommand;
                 }
             }

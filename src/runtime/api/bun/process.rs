@@ -4346,12 +4346,12 @@ pub mod sync {
             //
             // WUNTRACED only on a TTY: bridges Ctrl-Z via `JobControl`.
             // Non-TTY callers never see stops, matching plain `bun run`.
-            let wopts = (libc::WNOHANG | if jc.is_active() { libc::WUNTRACED } else { 0 }) as u32;
+            let wopts: u32 = (libc::WNOHANG | if jc.is_active() { libc::WUNTRACED } else { 0 }) as u32;
             loop {
                 let r = posix_spawn::wait4(-1, wopts, None);
                 let w = match &r {
                     Maybe::Err(_) => break,
-                    Maybe::Result(w) => *w,
+                    Maybe::Ok(w) => *w,
                 };
                 if w.pid <= 0 {
                     break;

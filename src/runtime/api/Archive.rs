@@ -1130,19 +1130,20 @@ impl WriteContext {
 
         let file = match bun_sys::File::openat(
             Fd::cwd(),
-            self.path.as_zstr(),
+            self.path.as_bytes(),
             bun_sys::O::CREAT | bun_sys::O::WRONLY | bun_sys::O::TRUNC,
             0o644,
         ) {
-            bun_sys::Result::Err(err) => return WriteResult::SysErr(err.clone_owned()),
-            bun_sys::Result::Ok(f) => f,
+            Err(err) => return WriteResult::SysErr(err),
+            Ok(f) => f,
         };
-        let _close = scopeguard::guard((), |_| file.close());
 
-        match file.write_all(data_to_write) {
-            bun_sys::Result::Err(err) => WriteResult::SysErr(err.clone_owned()),
-            bun_sys::Result::Ok(_) => WriteResult::Success,
-        }
+        let res = match file.write_all(data_to_write) {
+            Err(err) => WriteResult::SysErr(err),
+            Ok(_) => WriteResult::Success,
+        };
+        let _ = file.close();
+        res
     }
 }
 

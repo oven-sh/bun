@@ -2980,7 +2980,7 @@ pub mod args {
             let mut mode = constants::Copyfile::from_raw(0);
             if let Some(arg) = arguments.next() {
                 arguments.eat();
-                mode = constants::Copyfile::from_raw(FileSystemFlags::from_js_number_only(ctx, arg, FileSystemFlags::Kind::CopyFile)?.as_int() as u8);
+                mode = constants::Copyfile::from_raw(FileSystemFlags::from_js_number_only(ctx, arg, FileSystemFlags::Kind::CopyFile)?.as_int());
             }
             Ok(CopyFile { src, dest, mode })
         }

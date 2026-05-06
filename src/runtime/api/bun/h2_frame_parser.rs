@@ -4143,7 +4143,7 @@ impl H2FrameParser {
             if js_silent.is_boolean() {
                 silent = js_silent.as_boolean();
             } else {
-                return global_object.err_invalid_arg_type("options.silent must be a boolean").throw();
+                return Err(global_object.err(bun_jsc::ErrorCode::INVALID_ARG_TYPE, format_args!("options.silent must be a boolean")).throw());
             }
         }
         if parent_id == stream.id {

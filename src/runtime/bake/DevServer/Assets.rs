@@ -122,7 +122,7 @@ impl Assets {
             content_hash,
             super::ASSET_PREFIX,
             bstr::BStr::new(&hex_buf[..hex_len]),
-            bstr::BStr::new(mime_type.value),
+            bstr::BStr::new(&*mime_type.value),
         );
 
         // Captured up-front so borrows of `self.files` / `self.path_map` below don't

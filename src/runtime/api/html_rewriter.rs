@@ -8,22 +8,15 @@ pub struct ContentOptions {
     pub html: bool,
 }
 
-/// Opaque surfaces for the eight `.classes.ts` wrapper types. Full structs
-/// hold raw `*mut lolhtml::*` plus `JsRef`/`Strong` and live in `_jsc_gated`.
-// TODO(b2-blocked): bun_jsc::JsClass + bun_lolhtml safe wrapper crate
-pub struct HTMLRewriter(());
-pub struct TextChunk(());
-pub struct DocType(());
-pub struct DocEnd(());
-pub struct Comment(());
-pub struct EndTag(());
-pub struct AttributeIterator(());
-pub struct Element(());
+// Eight `.classes.ts` wrapper types — real defs (raw `*mut lolhtml::*`
+// plus `JsRef`/`Strong`) are below; re-exported here so callers see
+// `crate::api::html_rewriter::HTMLRewriter` directly.
+pub use _jsc_gated::{
+    AttributeIterator, Comment, DocEnd, DocType, Element, EndTag, HTMLRewriter, TextChunk,
+};
 
-// TODO(b2-blocked): bun_jsc + #[bun_jsc::host_fn]/JsClass + bun_lolhtml (only _sys exists)
-#[cfg(any())]
 mod _jsc_gated {
-use core::cell::Cell;
+use core::cell::{Cell, RefCell};
 use core::ptr::NonNull;
 use std::io::Write as _;
 use std::rc::Rc;
@@ -34,8 +27,16 @@ use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, Strong, SystemError,
     TopExceptionScope, VirtualMachine, ZigString,
 };
-use bun_lolhtml as lolhtml;
-use bun_runtime::webcore::{self, Blob, Body, Response, Signal, Sink, StreamResult};
+// PORT NOTE: there is no `bun_lolhtml` safe-wrapper crate yet — the safe
+// surface lives directly in `bun_lolhtml_sys::lol_html`. The Phase-A draft
+// referenced both `lolhtml::Foo` (safe wrappers) and `lolhtml_sys::Foo` (raw
+// opaque handles); they resolve to the same module, so alias both names.
+use bun_lolhtml_sys::lol_html as lolhtml;
+use bun_lolhtml_sys::lol_html as lolhtml_sys;
+use crate::webcore::{self, Blob, Body, Response};
+use crate::webcore::streams::{Signal, StreamResult};
+// TODO(b2-blocked): `crate::webcore::sink` is still gated; `Sink` references
+// (`webcore::Sink::init`, `Sink::UTF8Fallback`) resolve once it un-gates.
 use bun_str::String as BunString;
 use bun_sys;
 
@@ -74,15 +75,15 @@ impl Drop for LOLHTMLContext {
 #[bun_jsc::JsClass]
 pub struct HTMLRewriter {
     pub builder: *mut lolhtml_sys::HTMLRewriterBuilder,
-    pub context: Rc<LOLHTMLContext>,
+    pub context: Rc<RefCell<LOLHTMLContext>>,
 }
 
 impl HTMLRewriter {
     #[bun_jsc::host_fn]
     pub fn constructor(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut HTMLRewriter> {
         let rewriter = Box::into_raw(Box::new(HTMLRewriter {
-            builder: lolhtml::HTMLRewriter::Builder::init(),
-            context: Rc::new(LOLHTMLContext::default()),
+            builder: lolhtml::HTMLRewriterBuilder::init(),
+            context: Rc::new(RefCell::new(LOLHTMLContext::default())),
         }));
         bun_core::analytics::Features::html_rewriter_inc();
         Ok(rewriter)
@@ -111,18 +112,21 @@ impl HTMLRewriter {
         let mut handler = Box::new(handler_);
         let handler_ptr: *mut ElementHandler = &mut *handler;
 
+        let has_element = handler.on_element_callback.is_some();
+        let has_comment = handler.on_comment_callback.is_some();
+        let has_text = handler.on_text_callback.is_some();
+
         // SAFETY: builder is a valid lol-html builder; handler_ptr stays alive
-        // because we push it into self.context.element_handlers below.
+        // because we push it into self.context.element_handlers below. The
+        // `&mut *handler_ptr` borrows are address-taken only — the wrapper
+        // immediately erases them to `*mut c_void` userdata without
+        // dereferencing, so no aliasing access occurs.
         let res = unsafe {
-            lolhtml::HTMLRewriter::Builder::add_element_content_handlers(
-                self.builder,
-                *selector_guard,
-                ElementHandler::on_element,
-                if handler.on_element_callback.is_some() { handler_ptr } else { core::ptr::null_mut() },
-                ElementHandler::on_comment,
-                if handler.on_comment_callback.is_some() { handler_ptr } else { core::ptr::null_mut() },
-                ElementHandler::on_text,
-                if handler.on_text_callback.is_some() { handler_ptr } else { core::ptr::null_mut() },
+            (*self.builder).add_element_content_handlers(
+                &mut **selector_guard,
+                if has_element { Some(&mut *handler_ptr) } else { None::<&mut ElementHandler> },
+                if has_comment { Some(&mut *handler_ptr) } else { None::<&mut ElementHandler> },
+                if has_text { Some(&mut *handler_ptr) } else { None::<&mut ElementHandler> },
             )
         };
         if res.is_err() {
@@ -131,13 +135,7 @@ impl HTMLRewriter {
         }
 
         let selector = scopeguard::ScopeGuard::into_inner(selector_guard);
-        // TODO(port): KNOWN-WRONG — Rc::get_mut returns None (→ panic) once
-        // begin_transform() has cloned the Rc, but the Zig mutates through
-        // *LOLHTMLContext unconditionally and HTMLRewriter is reusable after
-        // transform(). Phase B: switch context to bun_ptr::IntrusiveRc<LOLHTMLContext>
-        // (or Rc<RefCell<_>>) so push() works through a shared handle.
-        let ctx = Rc::get_mut(&mut self.context)
-            .expect("TODO(port): context shared after transform(); see note above");
+        let mut ctx = self.context.borrow_mut();
         ctx.selectors.push(selector);
         ctx.element_handlers.push(handler);
         Ok(call_frame.this())
@@ -153,27 +151,26 @@ impl HTMLRewriter {
         let mut handler = Box::new(handler_);
         let handler_ptr: *mut DocumentHandler = &mut *handler;
 
+        let has_doc_type = handler.on_doc_type_callback.is_some();
+        let has_comment = handler.on_comment_callback.is_some();
+        let has_text = handler.on_text_callback.is_some();
+        let has_end = handler.on_end_callback.is_some();
+
         // If this fails, subsequent calls to write or end should throw
         // SAFETY: builder is valid; handler_ptr lives in context.document_handlers.
+        // The `&mut *handler_ptr` borrows are address-taken only — the wrapper
+        // immediately erases them to `*mut c_void` userdata without
+        // dereferencing, so no aliasing access occurs.
         unsafe {
-            lolhtml::HTMLRewriter::Builder::add_document_content_handlers(
-                self.builder,
-                DocumentHandler::on_doc_type,
-                if handler.on_doc_type_callback.is_some() { handler_ptr } else { core::ptr::null_mut() },
-                DocumentHandler::on_comment,
-                if handler.on_comment_callback.is_some() { handler_ptr } else { core::ptr::null_mut() },
-                DocumentHandler::on_text,
-                if handler.on_text_callback.is_some() { handler_ptr } else { core::ptr::null_mut() },
-                DocumentHandler::on_end,
-                if handler.on_end_callback.is_some() { handler_ptr } else { core::ptr::null_mut() },
+            (*self.builder).add_document_content_handlers(
+                if has_doc_type { Some(&mut *handler_ptr) } else { None::<&mut DocumentHandler> },
+                if has_comment { Some(&mut *handler_ptr) } else { None::<&mut DocumentHandler> },
+                if has_text { Some(&mut *handler_ptr) } else { None::<&mut DocumentHandler> },
+                if has_end { Some(&mut *handler_ptr) } else { None::<&mut DocumentHandler> },
             );
         }
 
-        // TODO(port): KNOWN-WRONG — see on_() above; Rc::get_mut panics once
-        // begin_transform() has cloned the Rc. Phase B: IntrusiveRc / RefCell.
-        let ctx = Rc::get_mut(&mut self.context)
-            .expect("TODO(port): context shared after transform(); see note above");
-        ctx.document_handlers.push(handler);
+        self.context.borrow_mut().document_handlers.push(handler);
         Ok(call_frame.this())
     }
 
@@ -292,7 +289,7 @@ impl HTMLRewriter {
 pub struct HTMLRewriterLoader {
     pub rewriter: *mut lolhtml_sys::HTMLRewriter,
     pub finalized: bool,
-    pub context: LOLHTMLContext,
+    pub context: Rc<RefCell<LOLHTMLContext>>,
     pub chunk_size: usize,
     pub failed: bool,
     pub output: webcore::Sink,
@@ -367,24 +364,21 @@ impl HTMLRewriterLoader {
     pub fn setup(
         &mut self,
         builder: *mut lolhtml_sys::HTMLRewriterBuilder,
-        context: *mut LOLHTMLContext,
+        context: Rc<RefCell<LOLHTMLContext>>,
         size_hint: Option<usize>,
         output: webcore::Sink,
     ) -> Option<&'static [u8]> {
         let chunk_size = size_hint.unwrap_or(16384).max(1024);
         // SAFETY: builder valid; `self` outlives the rewriter (deinit'd in finalize()).
         let built = unsafe {
-            lolhtml::HTMLRewriter::Builder::build(
-                builder,
+            (*builder).build(
                 lolhtml::Encoding::UTF8,
                 lolhtml::MemorySettings {
                     preallocated_parsing_buffer_size: chunk_size,
                     max_allowed_memory_usage: u32::MAX as usize,
                 },
                 false,
-                self as *mut Self,
-                Self::write_to_destination,
-                Self::done,
+                self,
             )
         };
         self.rewriter = match built {
@@ -399,13 +393,10 @@ impl HTMLRewriterLoader {
         };
 
         self.chunk_size = chunk_size;
-        // TODO(port): Zig copies `*context` by value into self.context. With Rc
-        // semantics this would be a clone; here LOLHTMLContext is owned by
-        // value. Phase B: confirm whether HTMLRewriterLoader is dead code (it
-        // is not referenced by HTMLRewriter.transform).
-        // SAFETY: context points at a fully-initialized LOLHTMLContext owned by
-        // the caller; Zig does a struct copy (`self.context = context.*`).
-        self.context = unsafe { core::ptr::read(context) };
+        // Share the context with the caller via Rc; the Zig version stored a
+        // POD struct copy of an `ArrayListUnmanaged`, which in Rust would
+        // double-own `Vec`/`Box` heap buffers. Clone the Rc instead.
+        self.context = context;
         self.output = output;
 
         None
@@ -475,6 +466,15 @@ impl HTMLRewriterLoader {
     }
 }
 
+impl lolhtml::OutputSink for HTMLRewriterLoader {
+    fn write(&mut self, bytes: &[u8]) {
+        self.write_to_destination(bytes);
+    }
+    fn done(&mut self) {
+        HTMLRewriterLoader::done(self);
+    }
+}
+
 // ───────────────────────── BufferOutputSink ──────────────────────────────
 
 pub struct BufferOutputSink {
@@ -484,7 +484,7 @@ pub struct BufferOutputSink {
     pub global: &'static JSGlobalObject, // JSC_BORROW
     pub bytes: MutableString,
     pub rewriter: *mut lolhtml_sys::HTMLRewriter, // null when unset
-    pub context: Rc<LOLHTMLContext>,
+    pub context: Rc<RefCell<LOLHTMLContext>>,
     pub response: *mut Response, // BORROW_FIELD: kept alive by response_value Strong
     pub response_value: Strong,
     pub body_value_bufferer: Option<webcore::Body::ValueBufferer>,
@@ -508,7 +508,7 @@ impl BufferOutputSink {
     }
 
     pub fn init(
-        context: Rc<LOLHTMLContext>,
+        context: Rc<RefCell<LOLHTMLContext>>,
         global: &JSGlobalObject,
         original: *mut Response,
         builder: *mut lolhtml_sys::HTMLRewriterBuilder,
@@ -532,9 +532,10 @@ impl BufferOutputSink {
         }));
         // defer sink.deref();
         let _sink_guard = scopeguard::guard(sink, |s| BufferOutputSink::deref(s));
-        // SAFETY: sink was just allocated via Box::into_raw above; refcount==1
-        // and no other alias exists yet.
-        let sink_ref = unsafe { &mut *sink };
+        // PORT NOTE: do not hold a long-lived `&mut *sink` here — the same
+        // allocation is also written through the raw pointer by the lol-html
+        // output-sink callback during `bufferer.run()` and by `deref(sink)`
+        // below. Access fields via raw-pointer place expressions instead.
 
         let result = Box::into_raw(Box::new(Response::init(
             webcore::ResponseInit { status_code: 200, ..Default::default() },
@@ -550,7 +551,8 @@ impl BufferOutputSink {
             false,
         )));
 
-        sink_ref.response = result;
+        // SAFETY: sink was just allocated via Box::into_raw above; refcount==1.
+        unsafe { (*sink).response = result };
         let mut sink_error: JSValue = JSValue::ZERO;
         // SAFETY: original is a live *Response passed from begin_transform; its
         // JS wrapper is on the caller's stack.
@@ -563,7 +565,8 @@ impl BufferOutputSink {
         let scope = vm.unhandled_rejection_scope();
         let prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
         vm.unhandled_pending_rejection_to_capture = Some(NonNull::from(&mut sink_error));
-        sink_ref.tmp_sync_error = Some(NonNull::from(&mut sink_error));
+        // SAFETY: sink is a live heap allocation (refcount >= 1).
+        unsafe { (*sink).tmp_sync_error = Some(NonNull::from(&mut sink_error)) };
         vm.on_unhandled_rejection = VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value;
         let _vm_guard = scopeguard::guard((), |_| {
             sink_error.ensure_still_alive();
@@ -571,10 +574,11 @@ impl BufferOutputSink {
             scope.apply(vm);
         });
 
-        // SAFETY: builder valid; sink outlives rewriter (deinit in Drop).
+        // SAFETY: builder valid; sink outlives rewriter (deinit in Drop). The
+        // `&mut *sink` borrow is consumed by `build()` (address-taken into a
+        // `*mut c_void` userdata) and does not overlap any other live borrow.
         let built = unsafe {
-            lolhtml::HTMLRewriter::Builder::build(
-                builder,
+            (*builder).build(
                 lolhtml::Encoding::UTF8,
                 lolhtml::MemorySettings {
                     preallocated_parsing_buffer_size: if input_size == Blob::MAX_SIZE {
@@ -585,20 +589,21 @@ impl BufferOutputSink {
                     max_allowed_memory_usage: u32::MAX as usize,
                 },
                 false,
-                sink,
-                BufferOutputSink::write,
-                BufferOutputSink::done,
+                &mut *sink,
             )
         };
-        sink_ref.rewriter = match built {
-            Ok(r) => r,
-            Err(_) => {
-                // SAFETY: result was Box::into_raw'd above and never handed to
-                // JS; finalize takes ownership and frees it once.
-                unsafe { Response::finalize(result) };
-                return Ok(create_lolhtml_error(global));
-            }
-        };
+        // SAFETY: sink is a live heap allocation (refcount >= 1).
+        unsafe {
+            (*sink).rewriter = match built {
+                Ok(r) => r,
+                Err(_) => {
+                    // SAFETY: result was Box::into_raw'd above and never handed to
+                    // JS; finalize takes ownership and frees it once.
+                    Response::finalize(result);
+                    return Ok(create_lolhtml_error(global));
+                }
+            };
+        }
 
         // SAFETY: result and original are both live *Response (result allocated
         // above, original kept alive by caller); no aliasing &mut exists.
@@ -616,31 +621,41 @@ impl BufferOutputSink {
         }
 
         // Hold off on cloning until we're actually done.
-        // SAFETY: sink_ref.response == result (set above), live heap allocation.
-        let response_js_value = unsafe { (*sink_ref.response).to_js(sink_ref.global) };
-        sink_ref.response_value.set(global, response_js_value);
+        // SAFETY: (*sink).response == result (set above), live heap allocation.
+        let response_js_value = unsafe { (*(*sink).response).to_js((*sink).global) };
+        // SAFETY: sink is a live heap allocation (refcount >= 1).
+        unsafe { (*sink).response_value.set(global, response_js_value) };
 
         // SAFETY: result/original are live *Response (see SAFETY note above).
         unsafe { (*result).set_url((*original).get_url().clone()) };
 
         // SAFETY: original is a live *Response kept alive by caller.
         let value = unsafe { (*original).get_body_value() };
-        // SAFETY: original is a live *Response kept alive by caller.
-        let owned_readable_stream = unsafe { (*original).get_body_readable_stream(sink_ref.global) };
-        sink_ref.ref_();
-        sink_ref.body_value_bufferer = Some(webcore::Body::ValueBufferer::init(
-            sink as *mut core::ffi::c_void,
-            Self::on_finished_buffering as *const _,
-            sink_ref.global,
-        ));
+        // SAFETY: original is a live *Response kept alive by caller; sink live.
+        let owned_readable_stream = unsafe { (*original).get_body_readable_stream((*sink).global) };
+        // SAFETY: sink is a live heap allocation (refcount >= 1).
+        unsafe {
+            (*sink).ref_();
+            (*sink).body_value_bufferer = Some(webcore::Body::ValueBufferer::init(
+                sink as *mut core::ffi::c_void,
+                Self::on_finished_buffering as *const _,
+                (*sink).global,
+            ));
+        }
         response_js_value.ensure_still_alive();
 
-        if let Err(buffering_error) = sink_ref
-            .body_value_bufferer
-            .as_mut()
-            .unwrap()
-            .run(value, owned_readable_stream)
-        {
+        // SAFETY: sink is a live heap allocation; body_value_bufferer was just
+        // set to Some above. The `&mut` borrow here is scoped to this single
+        // expression and does not overlap raw-pointer writes (the bufferer may
+        // re-enter `BufferOutputSink::write/done` through the lol-html
+        // callback, which writes through the raw `sink` pointer).
+        if let Err(buffering_error) = unsafe {
+            (*sink)
+                .body_value_bufferer
+                .as_mut()
+                .unwrap()
+                .run(value, owned_readable_stream)
+        } {
             BufferOutputSink::deref(sink);
             return Ok(match buffering_error {
                 e if e == bun_core::err!("StreamAlreadyUsed") => {
@@ -649,7 +664,7 @@ impl BufferOutputSink {
                         message: BunString::static_("Stream already used, please create a new one"),
                         ..Default::default()
                     };
-                    err.to_error_instance(sink_ref.global)
+                    err.to_error_instance(global_static)
                 }
                 _ => {
                     let err = SystemError {
@@ -657,7 +672,7 @@ impl BufferOutputSink {
                         message: BunString::static_("Failed to pipe stream"),
                         ..Default::default()
                     };
-                    err.to_error_instance(sink_ref.global)
+                    err.to_error_instance(global_static)
                 }
             });
         }
@@ -783,6 +798,15 @@ impl BufferOutputSink {
     }
 }
 
+impl lolhtml::OutputSink for BufferOutputSink {
+    fn write(&mut self, bytes: &[u8]) {
+        BufferOutputSink::write(self, bytes);
+    }
+    fn done(&mut self) {
+        BufferOutputSink::done(self);
+    }
+}
+
 #[derive(Clone, Copy)]
 pub enum BufferOutputSinkSync {
     Suspended,
@@ -850,6 +874,10 @@ impl DocumentHandler {
     }
 
     pub fn init(global: &JSGlobalObject, this_object: JSValue) -> JsResult<DocumentHandler> {
+        if !this_object.is_object() {
+            return global.throw_invalid_arguments("Expected object");
+        }
+
         // SAFETY: JSC_BORROW — JSGlobalObject outlives every handler (VM-lifetime).
         let global_static: &'static JSGlobalObject = unsafe { &*(global as *const _) };
         let handler = DocumentHandler {
@@ -860,10 +888,6 @@ impl DocumentHandler {
             this_object,
             global: global_static,
         };
-
-        if !this_object.is_object() {
-            return global.throw_invalid_arguments("Expected object");
-        }
 
         // errdefer: unprotect any callbacks we've protected so far on failure.
         // Guard the OWNED value (not &mut) so the success path returns it by
@@ -923,6 +947,27 @@ impl Drop for DocumentHandler {
         if let Some(cb) = self.on_text_callback.take() { cb.unprotect(); }
         if let Some(cb) = self.on_end_callback.take() { cb.unprotect(); }
         self.this_object.unprotect();
+    }
+}
+
+impl lolhtml::DirectiveCallback<lolhtml::DocType> for DocumentHandler {
+    fn call(&mut self, container: &mut lolhtml::DocType) -> bool {
+        DocumentHandler::on_doc_type(self, container)
+    }
+}
+impl lolhtml::DirectiveCallback<lolhtml::Comment> for DocumentHandler {
+    fn call(&mut self, container: &mut lolhtml::Comment) -> bool {
+        DocumentHandler::on_comment(self, container)
+    }
+}
+impl lolhtml::DirectiveCallback<lolhtml::TextChunk> for DocumentHandler {
+    fn call(&mut self, container: &mut lolhtml::TextChunk) -> bool {
+        DocumentHandler::on_text(self, container)
+    }
+}
+impl lolhtml::DirectiveCallback<lolhtml::DocEnd> for DocumentHandler {
+    fn call(&mut self, container: &mut lolhtml::DocEnd) -> bool {
+        DocumentHandler::on_end(self, container)
     }
 }
 
@@ -1170,6 +1215,22 @@ impl Drop for ElementHandler {
         if let Some(cb) = self.on_comment_callback.take() { cb.unprotect(); }
         if let Some(cb) = self.on_text_callback.take() { cb.unprotect(); }
         self.this_object.unprotect();
+    }
+}
+
+impl lolhtml::DirectiveCallback<lolhtml::Element> for ElementHandler {
+    fn call(&mut self, container: &mut lolhtml::Element) -> bool {
+        ElementHandler::on_element(self, container)
+    }
+}
+impl lolhtml::DirectiveCallback<lolhtml::Comment> for ElementHandler {
+    fn call(&mut self, container: &mut lolhtml::Comment) -> bool {
+        ElementHandler::on_comment(self, container)
+    }
+}
+impl lolhtml::DirectiveCallback<lolhtml::TextChunk> for ElementHandler {
+    fn call(&mut self, container: &mut lolhtml::TextChunk) -> bool {
+        ElementHandler::on_text(self, container)
     }
 }
 
@@ -1716,10 +1777,17 @@ impl EndTagHandler {
         )
     }
 
-    // TODO(port): LOLHTML.DirectiveHandler(LOLHTML.EndTag, Handler, onEndTag) —
-    // C ABI shim that lol-html invokes. Phase B: emit via bun_lolhtml macro.
-    pub const ON_END_TAG_HANDLER: lolhtml::DirectiveHandlerFn =
-        lolhtml::directive_handler!(lolhtml::EndTag, EndTagHandler, EndTagHandler::on_end_tag);
+    /// C-ABI trampoline that lol-html invokes for end-tag handlers — routes
+    /// through `directive_handler::<EndTag, Self>` which calls
+    /// `<Self as DirectiveCallback<EndTag>>::call`.
+    pub const ON_END_TAG_HANDLER: lolhtml::lol_html_end_tag_handler_t =
+        lolhtml::directive_handler::<lolhtml::EndTag, EndTagHandler>;
+}
+
+impl lolhtml::DirectiveCallback<lolhtml::EndTag> for EndTagHandler {
+    fn call(&mut self, container: &mut lolhtml::EndTag) -> bool {
+        EndTagHandler::on_end_tag(self, container)
+    }
 }
 
 impl EndTag {
@@ -2032,8 +2100,7 @@ impl Element {
         // duration of the lol-html callback; end_tag_handler is a fresh Box
         // whose ownership transfers to lol-html on success.
         if unsafe {
-            lolhtml::Element::on_end_tag(
-                self.element,
+            (*self.element).on_end_tag(
                 EndTagHandler::ON_END_TAG_HANDLER,
                 end_tag_handler as *mut core::ffi::c_void,
             )

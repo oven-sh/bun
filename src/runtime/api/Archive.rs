@@ -26,9 +26,9 @@ impl Compression {
     }
 }
 
-/// Opaque surface — full `.classes.ts` payload is `{ data, count, compress }`.
-// TODO(b2-blocked): bun_jsc::JsClass — replace with _jsc_gated::Archive.
-pub struct Archive(());
+/// `.classes.ts` payload (`{ data, count, compress }`) — re-export from the
+/// un-gated body so callers see `crate::api::archive::Archive` directly.
+pub use _jsc_gated::Archive;
 
 /// Reject empty paths, absolute paths, Windows drive letters, and any `..` component.
 pub fn is_safe_path(pathname: &[u8]) -> bool {
@@ -77,10 +77,8 @@ pub fn match_glob_patterns(patterns: &[Box<[u8]>], pathname: &[u8]) -> bool {
 
 // ─── JSC host-fns + AsyncTask<Ctx> work-pool machinery ──────────────────────
 // All task contexts hold `JSPromise`/`KeepAlive`, all start_* fns take
-// `&JSGlobalObject`, and `compress_gzip` needs `bun_libdeflate_sys` (not a
-// `bun_runtime` dep). The pure helpers above are duplicated out.
-// TODO(b2-blocked): bun_jsc + #[bun_jsc::host_fn]/JsClass + bun_libdeflate_sys dep
-#[cfg(any())]
+// `&JSGlobalObject`. The pure helpers above are duplicated out (kept for
+// callers that don't link the JSC types).
 mod _jsc_gated {
 use core::ffi::{c_char, CStr};
 use core::mem::offset_of;
@@ -91,7 +89,8 @@ use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, JSPromise, JSPromiseStrong,
     ConcurrentTask, VirtualMachine, JSMap, JSPropertyIterator, JSPropertyIteratorOptions,
 };
-use bun_jsc::webcore::{Blob, BlobStore};
+use crate::webcore::Blob;
+use crate::webcore::blob::Store as BlobStore;
 use bun_threading::{WorkPool, WorkPoolTask};
 use bun_aio::KeepAlive;
 use bun_core::{self, Output};
@@ -99,7 +98,6 @@ use bun_str::{self as strings, ZigString};
 use bun_sys::{self, Fd, Mode};
 use bun_glob as glob;
 use bun_libarchive as libarchive;
-use bun_libdeflate_sys as libdeflate;
 
 // TODO(port): codegen aliases (`js`, `toJS`, `fromJS`, `fromJSDirect`) are wired by
 // `#[bun_jsc::JsClass]`; the Zig `pub const js = jsc.Codegen.JSArchive;` lines are deleted.
@@ -1264,7 +1262,11 @@ impl From<CompressError> for WriteError {
     }
 }
 
+// TODO(b2-blocked): `bun_libdeflate_sys` is not a `bun_runtime` dep yet — body
+// gated until Cargo.toml gains the dep. Signature kept so callers type-check.
+#[cfg(any())]
 fn compress_gzip(data: &[u8], level: u8) -> Result<Vec<u8>, CompressError> {
+    use bun_libdeflate_sys as libdeflate;
     libdeflate::load();
 
     let Some(compressor) = libdeflate::Compressor::alloc(i32::from(level)) else {
@@ -1301,6 +1303,11 @@ fn compress_gzip(data: &[u8], level: u8) -> Result<Vec<u8>, CompressError> {
     output.truncate(result.written);
     // Zig: realloc(output, written) catch output[0..written] — truncate is the moral equivalent.
     Ok(output)
+}
+#[cfg(not(any()))]
+fn compress_gzip(_data: &[u8], _level: u8) -> Result<Vec<u8>, CompressError> {
+    // TODO(b2-blocked): bun_libdeflate_sys dep — see gated body above.
+    Err(CompressError::GzipInitFailed)
 }
 
 /// Check if a path is safe (no absolute paths or path traversal)

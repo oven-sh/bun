@@ -1,9 +1,8 @@
 //! `Bun.Transpiler` — single-file transform/scan over the JS parser.
 
-/// Opaque surface — full `.classes.ts` payload (Arena + Transpiler + Config)
-/// lives in `_jsc_gated`.
-// TODO(b2-blocked): bun_jsc::JsClass — replace with _jsc_gated::JSTranspiler.
-pub struct JSTranspiler(());
+/// `.classes.ts` payload (Arena + Transpiler + Config) — re-export from the
+/// un-gated body so callers see `crate::api::js_transpiler::JSTranspiler`.
+pub use _jsc_gated::JSTranspiler;
 
 /// Heuristic used by the REPL: returns true if `code` starts with `{` (after
 /// whitespace) and doesn't end with `;` — i.e. should be wrapped in `()` to
@@ -25,32 +24,33 @@ pub fn is_likely_object_literal(code: &[u8]) -> bool {
     !(end > 0 && code[end - 1] == b';')
 }
 
-// TODO(b2-blocked): bun_jsc + #[bun_jsc::host_fn]/JsClass + bun_schema::api
-#[cfg(any())]
 mod _jsc_gated {
 use std::cell::Cell;
 use std::io::Write as _;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_bundler::options::{self, Loader, PackagesOption, SourceMapOption, Target};
-use bun_bundler::{self as Transpiler, MacroJSCtx, ParseResult};
+use bun_bundler::{self as Transpiler};
+use bun_bundler::transpiler::{MacroJSCtx, ParseResult};
 use bun_core::Error;
 use bun_jsc::{
     self as jsc, CallFrame, JSArrayIterator, JSGlobalObject, JSPromise, JSPropertyIterator,
     JSPropertyIteratorOptions, JSValue, JsResult, VirtualMachine, ZigString,
 };
-use bun_jsc::node::StringOrBuffer;
+use crate::node::StringOrBuffer;
 use bun_js_parser::runtime::Runtime;
-use bun_js_parser::{self as JSParser, ScanPassResult};
+use bun_js_parser::{self as JSParser};
+use bun_js_parser::parser::ScanPassResult;
 use bun_js_parser::ast::{self as JSAst, Expr};
 use bun_js_parser::lexer as JSLexer;
-use bun_js_parser::printer as JSPrinter;
+use bun_js_printer as JSPrinter;
 use bun_logger as logger;
 use bun_options_types::ImportRecord;
 use bun_resolver::package_json::{MacroMap, PackageJSON};
 use bun_resolver::tsconfig_json::TSConfigJSON;
-use bun_runtime::api::BuildMessage;
-use bun_schema::api;
+use crate::api::BuildMessage;
+// `bun_schema::api` → schema lives in `bun_options_types::schema::api`.
+use bun_options_types::schema::api;
 use bun_str::{self as strings, String as BunString};
 
 // TODO(port): `pub const js = jsc.Codegen.JSTranspiler;` and the toJS/fromJS/fromJSDirect
@@ -497,22 +497,22 @@ impl Config {
                             if str.len == 0 {
                                 continue;
                             }
-                            // TODO(port): bufPrint into spare capacity of `buf`. Zig wrote into
-                            // `buf.items.ptr[buf.items.len..buf.capacity]` and bumped `items.len`.
-                            // Here we approximate by writing into a temp and extending; the
-                            // intent is a contiguous backing buffer with stable subslices.
+                            // Spec uses `std.fmt.bufPrint` into the fixed spare capacity
+                            // (sized from UTF-16 code-unit lengths) and throws on overflow.
+                            // `write!` on a `Vec` would silently grow instead, so check the
+                            // bound explicitly to preserve the spec's overflow throw.
                             let start = buf.len();
-                            if write!(&mut buf, "{}", str).is_err() {
+                            write!(&mut buf, "{}", str).ok();
+                            if buf.len() > total_name_buf_len as usize {
                                 return global.throw_invalid_arguments(
                                     "Error reading exports.eliminate. TODO: utf-16",
                                     format_args!(""),
                                 );
                             }
                             let name_len = buf.len() - start;
-                            // PORT NOTE: reshaped for borrowck — borrow `buf` after writing.
-                            // TODO(port): `replacements` keys borrow into `buf`; in Zig both live
-                            // in the same arena. In Rust this needs `buf` to outlive
-                            // `replacements` or keys to be `Box<[u8]>`.
+                            // `replacements.put_assume_capacity` boxes the key on insert
+                            // (`Box::from(key)`), so the map owns its bytes and `buf`
+                            // can drop normally at end of scope.
                             let name_slice = &buf[start..start + name_len];
                             if name_len > 0 {
                                 // PERF(port): was putAssumeCapacity — profile in Phase B
@@ -523,8 +523,6 @@ impl Config {
                             }
                         }
                     }
-                    // TODO(port): `buf` must be kept alive alongside `replacements`.
-                    core::mem::forget(buf);
                 }
             }
 

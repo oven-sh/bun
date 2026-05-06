@@ -794,11 +794,9 @@ pub fn braces(
     let expansion_count = Braces::calculate_expanded_amount(&lexer_output.tokens[..]);
 
     if opts.tokenize {
-        let mut str: Vec<u8> = Vec::new();
         // TODO(port): std.json.fmt — need a JSON `Display` for the token list
-        write!(&mut str, "{}", bun_json::fmt(&lexer_output.tokens[..])).expect("oom");
-        let mut bun_str = BunString::from_bytes(&str);
-        return Ok(bun_str.to_js(global));
+        let _ = &lexer_output.tokens[..];
+        todo!("blocked_on: std.json.fmt port (JSON Display for braces tokens)");
     }
     if opts.parse {
         let mut parser = Braces::Parser::init(&lexer_output.tokens[..], &arena);

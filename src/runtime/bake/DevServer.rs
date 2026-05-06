@@ -4103,7 +4103,7 @@ impl DevServer<'_> {
             DevResponse::Promise(mut r) => {
                 let global = r.global;
                 let mut any_blob = Blob::Any::from_array_list(buf);
-                let mut headers = bun_http::Headers::from(None, bun_http::HeadersOptions { body: Some(&any_blob) })?;
+                let mut headers = bun_http::Headers::from(None, bun_http::headers::Options { body: Some(&any_blob) });
                 headers.append("Content-Type", MimeType::HTML.value).expect("oom");
                 if headers.get("etag").is_none() {
                     if !any_blob.slice().is_empty() {
@@ -4144,7 +4144,7 @@ impl DevServer<'_> {
         if !AllocationScope::ENABLED {
             return;
         }
-        if !bun_output::scope_is_visible(DevServer) {
+        if !bun_output::scope_is_visible!(DevServer) {
             return;
         }
         let stats = self.allocation_scope.stats();

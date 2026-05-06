@@ -10,7 +10,8 @@ use bun_js_parser::runtime::Runtime;
 use bun_options_types::CompileTarget;
 use bun_core::env::OperatingSystem;
 use bun_options_types::Context::MacroOptions;
-use bun_paths::{self as resolve_path, PathBuffer};
+use bun_options_types::schema::api;
+use bun_paths::{resolve_path, PathBuffer};
 use bun_str::strings;
 use bun_sys::{self, Fd};
 

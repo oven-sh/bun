@@ -364,16 +364,16 @@ impl<'a, A: GenericAllocator> Borrowed<'a, A> {
             // interior-mutability provenance (see `GuardedBy.unsynchronized_value`), so the
             // shared `&State` borrow held here is sufficient and no exclusive provenance is
             // required.
-            StdAllocator::from_raw(self.state as *const State as *mut c_void, &VTABLE)
+            StdAllocator { ptr: self.state as *const State as *mut c_void, vtable: &VTABLE }
         }
         #[cfg(not(feature = "alloc_scopes"))]
         {
-            crate::as_std(&self.parent)
+            as_std(&self.parent)
         }
     }
 
-    pub fn parent(&self) -> crate::Borrowed<A> {
-        self.parent
+    pub fn parent(&self) -> BorrowedAlloc<A> {
+        self.parent.clone()
     }
 
     // Zig `deinit` only forwarded to `bun.memory.deinit(&self.#parent)` (a "call deinit if it has

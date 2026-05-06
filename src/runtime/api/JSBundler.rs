@@ -1415,19 +1415,13 @@ pub mod js_bundler {
                         }
 
                         if outfile == b"index" {
-                            outfile = bun_paths::basename(
-                                bun_paths::dirname(entry_point, bun_paths::Platform::Auto)
-                                    .filter(|d| !d.is_empty())
-                                    .unwrap_or(b"index"),
-                            );
+                            let d = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(entry_point);
+                            outfile = bun_paths::basename(if d.is_empty() { b"index" } else { d });
                         }
 
                         if outfile == b"bun" {
-                            outfile = bun_paths::basename(
-                                bun_paths::dirname(entry_point, bun_paths::Platform::Auto)
-                                    .filter(|d| !d.is_empty())
-                                    .unwrap_or(b"bun"),
-                            );
+                            let d = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(entry_point);
+                            outfile = bun_paths::basename(if d.is_empty() { b"bun" } else { d });
                         }
 
                         // If argv[0] is "bun" or "bunx", we don't check if the binary is standalone

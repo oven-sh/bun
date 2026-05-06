@@ -1019,11 +1019,11 @@ impl PublishCommand {
                 Output::flush();
 
                 // on another thread because pressing enter is not required
-                // TODO(port): Zig used std.Thread.spawn — bun_threading equivalent in Phase B
-                match bun_threading::Thread::spawn(move || Self::press_enter_to_open_in_browser(&auth_url_str)) {
-                    Ok(t) => t.detach(),
-                    Err(e) => {
-                        Output::err(e, format_args!("failed to spawn thread for opening auth url"));
+                // TODO(port): Zig used std.Thread.spawn — bun_threading has no spawn; use std::thread::Builder
+                match std::thread::Builder::new().spawn(move || Self::press_enter_to_open_in_browser(&auth_url_str)) {
+                    Ok(_t) => { /* JoinHandle dropped → detached */ }
+                    Err(_e) => {
+                        Output::err("ThreadSpawn", format_args!("failed to spawn thread for opening auth url"));
                         Global::crash();
                     }
                 }
@@ -1083,7 +1083,7 @@ impl PublishCommand {
                                 break 'nanoseconds 500 * 1_000_000;
                             };
 
-                            bun_threading::Thread::sleep_ns(nanoseconds);
+                            std::thread::sleep(std::time::Duration::from_nanos(nanoseconds));
                             continue;
                         }
                         200 => {

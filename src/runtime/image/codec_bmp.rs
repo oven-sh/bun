@@ -147,7 +147,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
     let (bs, bw) = shift_width(h.b_mask);
     let (as_, aw) = shift_width(h.a_mask);
 
-    let mut out = vec![0u8; h.width as usize * h.height as usize * 4].into_boxed_slice();
+    let mut out = vec![0u8; h.width as usize * h.height as usize * 4];
 
     let mut y: u32 = 0;
     while y < h.height {

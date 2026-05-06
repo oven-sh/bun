@@ -1964,7 +1964,7 @@ impl JSFrameworkRouter {
         for part in parsed.parts {
             use fmt::Write as _;
             // TODO(port): writing fmt into Vec<u8> — needs adapter (bstr or io::Write)
-            part.to_string_for_internal_use(&mut bun_str::ByteFmtWriter::new(&mut rendered))?;
+            part.to_string_for_internal_use(&mut ByteFmtWriter::new(&mut rendered))?;
         }
 
         let mut out = bun_str::String::init(&rendered);
@@ -1986,7 +1986,7 @@ impl JSFrameworkRouter {
         let mut it = pattern.iterate();
         while let Some(part) = it.next() {
             use fmt::Write as _;
-            part.to_string_for_internal_use(&mut bun_str::ByteFmtWriter::new(&mut rendered))?;
+            part.to_string_for_internal_use(&mut ByteFmtWriter::new(&mut rendered))?;
         }
         let mut str = bun_str::String::clone_utf8(&rendered);
         str.transfer_to_js(global)
@@ -1995,7 +1995,7 @@ impl JSFrameworkRouter {
     fn part_to_js(global: &JSGlobalObject, part: &Part<'_>) -> JsResult<JSValue> {
         let mut rendered: Vec<u8> = Vec::new();
         use fmt::Write as _;
-        part.to_string_for_internal_use(&mut bun_str::ByteFmtWriter::new(&mut rendered))?;
+        part.to_string_for_internal_use(&mut ByteFmtWriter::new(&mut rendered))?;
         let mut str = bun_str::String::clone_utf8(&rendered);
         str.transfer_to_js(global)
     }
@@ -2009,6 +2009,30 @@ impl JSFrameworkRouter {
             return Ok(JSValue::NULL);
         };
         self.files[id.get() as usize].to_js(global)
+    }
+}
+
+// PORT NOTE: free-function host-fn shim — `#[bun_jsc::host_fn]` (Free kind) emits a
+// shim that calls the bare ident, so this cannot live inside the `impl` block.
+#[bun_jsc::host_fn]
+pub fn parse_route_pattern(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    JSFrameworkRouter::parse_route_pattern(global, frame)
+}
+
+/// Tiny `fmt::Write` adapter over `Vec<u8>` for serializing `Part`s into a byte
+/// buffer (Zig used `std.ArrayList(u8).writer()`).
+struct ByteFmtWriter<'a>(&'a mut Vec<u8>);
+impl<'a> ByteFmtWriter<'a> {
+    #[inline]
+    fn new(v: &'a mut Vec<u8>) -> Self {
+        Self(v)
+    }
+}
+impl fmt::Write for ByteFmtWriter<'_> {
+    #[inline]
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        self.0.extend_from_slice(s.as_bytes());
+        Ok(())
     }
 }
 

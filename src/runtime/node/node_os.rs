@@ -190,7 +190,7 @@ fn cpus_impl_linux(global_this: &JSGlobalObject) -> Result<JSValue, bun_core::Er
         };
         // file closed on Drop
 
-        let read = bun_sys::File::from(file).read_to_end_with_array_list(&mut file_buf, bun_sys::ReadHint::ProbablySmall).unwrap()?;
+        let read = bun_sys::File::from(file).read_to_end_with_array_list(&mut file_buf, bun_sys::SizeHint::ProbablySmall).unwrap()?;
         let contents = &file_buf[0..read];
 
         let mut line_iter = contents.split(|b| *b == b'\n').filter(|s| !s.is_empty());
@@ -234,7 +234,7 @@ fn cpus_impl_linux(global_this: &JSGlobalObject) -> Result<JSValue, bun_core::Er
     if let Ok(file) = bun_sys::File::open(b"/proc/cpuinfo", bun_sys::O::RDONLY, 0) {
         // file closed on Drop
 
-        let read = bun_sys::File::from(file).read_to_end_with_array_list(&mut file_buf, bun_sys::ReadHint::ProbablySmall).unwrap()?;
+        let read = bun_sys::File::from(file).read_to_end_with_array_list(&mut file_buf, bun_sys::SizeHint::ProbablySmall).unwrap()?;
         let contents = &file_buf[0..read];
 
         let mut line_iter = contents.split(|b| *b == b'\n').filter(|s| !s.is_empty());
@@ -295,7 +295,7 @@ fn cpus_impl_linux(global_this: &JSGlobalObject) -> Result<JSValue, bun_core::Er
         if let Ok(file) = bun_sys::File::open(path, bun_sys::O::RDONLY, 0) {
             // file closed on Drop
 
-            let read = bun_sys::File::from(file).read_to_end_with_array_list(&mut file_buf, bun_sys::ReadHint::ProbablySmall).unwrap()?;
+            let read = bun_sys::File::from(file).read_to_end_with_array_list(&mut file_buf, bun_sys::SizeHint::ProbablySmall).unwrap()?;
             let contents = &file_buf[0..read];
 
             let digits = trim_bytes(contents, b" \n");

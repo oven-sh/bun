@@ -386,24 +386,24 @@ impl Stdio {
         }
 
         match body {
-            jsc::webcore::body::Value::Null | jsc::webcore::body::Value::Empty => {
+            webcore::body::Value::Null | webcore::body::Value::Empty => {
                 *out_stdio = Stdio::Ignore;
                 return Ok(());
             }
-            jsc::webcore::body::Value::Used => {
+            webcore::body::Value::Used => {
                 return Err(global
                     .err(jsc::ErrorCode::BODY_ALREADY_USED, format_args!("Body already used"))
                     .throw());
             }
-            jsc::webcore::body::Value::Error(err) => {
+            webcore::body::Value::Error(err) => {
                 return Err(global.throw_value(err.to_js(global)));
             }
 
             // handled above.
-            jsc::webcore::body::Value::Blob(_)
-            | jsc::webcore::body::Value::WTFStringImpl(_)
-            | jsc::webcore::body::Value::InternalBlob(_) => unreachable!(),
-            jsc::webcore::body::Value::Locked(_) => {
+            webcore::body::Value::Blob(_)
+            | webcore::body::Value::WTFStringImpl(_)
+            | webcore::body::Value::InternalBlob(_) => unreachable!(),
+            webcore::body::Value::Locked(_) => {
                 if is_sync {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "ReadableStream cannot be used in sync mode"
@@ -428,7 +428,7 @@ impl Stdio {
                 let stream_value = body.to_readable_stream(global)?;
 
                 let Some(stream) =
-                    jsc::webcore::ReadableStream::from_js(stream_value, global)?
+                    webcore::ReadableStream::from_js(stream_value, global)?
                 else {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "Failed to create ReadableStream"

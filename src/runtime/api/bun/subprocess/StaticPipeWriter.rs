@@ -121,11 +121,11 @@ impl<P: StaticPipeWriterProcess> bun_io::pipe_writer::WindowsWriterParent for St
     }
     unsafe fn ref_(this: *mut Self) {
         // SAFETY: see loop_. Intrusive refcount bump.
-        unsafe { bun_ptr::intrusive_ref(&*this) };
+        unsafe { RefCount::<Self>::ref_(this) };
     }
     unsafe fn deref(this: *mut Self) {
         // SAFETY: see loop_. Intrusive refcount drop; may free `this`.
-        unsafe { bun_ptr::intrusive_deref(&*this) };
+        unsafe { RefCount::<Self>::deref(this) };
     }
 }
 

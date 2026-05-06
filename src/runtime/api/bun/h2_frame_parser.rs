@@ -3805,8 +3805,8 @@ impl H2FrameParser {
 
     #[bun_jsc::host_fn(method)]
     pub fn altsvc(this: &mut Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let mut origin_slice: Option<bun_str::Slice> = None;
-        let mut value_slice: Option<bun_str::Slice> = None;
+        let mut origin_slice: Option<bun_str::zig_string::Slice> = None;
+        let mut value_slice: Option<bun_str::zig_string::Slice> = None;
 
         let mut origin_str: &[u8] = b"";
         let mut value_str: &[u8] = b"";
@@ -5329,7 +5329,7 @@ impl H2FrameParser {
         this.detach_native_socket();
         if let Some(socket) = JSTLSSocket::from_js(socket_js) {
             bun_output::scoped_log!(H2FrameParser, "TLSSocket attached");
-            if socket.attach_native_callback(crate::api::socket::NativeCallback::H2(this)) {
+            if socket.attach_native_callback(crate::socket::NativeCallbacks::H2(this)) {
                 this.native_socket = BunSocket::Tls(socket);
             } else {
                 socket.ref_();
@@ -5339,7 +5339,7 @@ impl H2FrameParser {
             let _ = this.flush();
         } else if let Some(socket) = JSTCPSocket::from_js(socket_js) {
             bun_output::scoped_log!(H2FrameParser, "TCPSocket attached");
-            if socket.attach_native_callback(crate::api::socket::NativeCallback::H2(this)) {
+            if socket.attach_native_callback(crate::socket::NativeCallbacks::H2(this)) {
                 this.native_socket = BunSocket::Tcp(socket);
             } else {
                 socket.ref_();
@@ -5438,7 +5438,7 @@ impl H2FrameParser {
         if let Some(socket_js) = options.get(global_object, "native")? {
             if let Some(socket) = JSTLSSocket::from_js(socket_js) {
                 bun_output::scoped_log!(H2FrameParser, "TLSSocket attached");
-                if socket.attach_native_callback(crate::api::socket::NativeCallback::H2(this)) {
+                if socket.attach_native_callback(crate::socket::NativeCallbacks::H2(this)) {
                     this_ref.native_socket = BunSocket::Tls(socket);
                 } else {
                     socket.ref_();
@@ -5447,7 +5447,7 @@ impl H2FrameParser {
                 let _ = this_ref.flush();
             } else if let Some(socket) = JSTCPSocket::from_js(socket_js) {
                 bun_output::scoped_log!(H2FrameParser, "TCPSocket attached");
-                if socket.attach_native_callback(crate::api::socket::NativeCallback::H2(this)) {
+                if socket.attach_native_callback(crate::socket::NativeCallbacks::H2(this)) {
                     this_ref.native_socket = BunSocket::Tcp(socket);
                 } else {
                     socket.ref_();

@@ -18,10 +18,9 @@
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
+use bun_alloc::Allocator;
 use bun_core::Fd;
-// TODO(b0-genuine): bun_sys (T1) — mmap/munmap/pwrite/ftruncate/memfd_create/posix/Result/Error/
-// Errno/Tag/can_use_memfd. LinuxMemFdAllocator is syscall-heavy and constructs a runtime Blob
-// payload; this module likely belongs in T≥1. Neither vtable nor hook fits a syscall surface.
+// bun_sys (T1) — mmap/munmap/pwrite/ftruncate/memfd_create/Result/Error/E/Tag/can_use_memfd.
 use bun_sys as sys;
 // TODO(b0-genuine): crate::webcore::blob::store::Bytes — return-value struct constructed
 // inline (cap/ptr/len/allocator). Not dispatch; not a hook. Candidate fix: define a local

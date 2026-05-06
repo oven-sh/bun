@@ -209,20 +209,20 @@ pub fn validate_int32(
         return Err(throw_err_invalid_arg_type(global_this, name, "number", value));
     }
     if !value.is_any_int() {
-        let formatter = jsc::ConsoleObject::Formatter::new(global_this);
+        let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
         return Err(throw_range_error(
             global_this,
             format_args!(
                 "The value of \"{}\" is out of range. It must be an integer. Received {}",
                 name,
-                jsc::ConsoleObject::format_value(&formatter, value)
+                jsc::ConsoleObject::formatter::ZigFormatter::new(&mut formatter, value)
             ),
         ));
     }
     let num = value.as_number();
     // Use floating point comparison here to ensure values out of i32 range get caught instead of clamp/truncated.
     if num < (min as f64) || num > (max as f64) {
-        let formatter = jsc::ConsoleObject::Formatter::new(global_this);
+        let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
         return Err(throw_range_error(
             global_this,
             format_args!(
@@ -230,7 +230,7 @@ pub fn validate_int32(
                 name,
                 min,
                 max,
-                jsc::ConsoleObject::format_value(&formatter, value)
+                jsc::ConsoleObject::formatter::ZigFormatter::new(&mut formatter, value)
             ),
         ));
     }

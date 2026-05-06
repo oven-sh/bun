@@ -212,11 +212,10 @@ impl TrustCommand {
         pm: &mut PackageManager,
         args: &[&ZStr],
     ) -> Result<(), bun_core::Error> {
-        Output::pretty_error(format_args!(const_format::concatcp!(
-            "<r><b>bun pm trust <r><d>v",
-            bun_core::Global::PACKAGE_JSON_VERSION_WITH_SHA,
-            "<r>\n"
-        )));
+        Output::pretty_error(format_args!(
+            "<r><b>bun pm trust <r><d>v{}<r>\n",
+            Global::package_json_version_with_sha,
+        ));
         Output::flush();
 
         if args.len() == 2 {

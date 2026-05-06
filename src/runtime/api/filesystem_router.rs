@@ -283,11 +283,10 @@ impl FileSystemRouter {
             arena,
         });
 
-        fs_router.router.config.dir = fs_router.base_dir.as_ref().unwrap().slice();
-        // PORT NOTE: `base_dir.?.ref()` — with Arc<RefString> the extra ref is a clone we
-        // intentionally leak to match Zig's +1 (router.config.dir borrows it past Arc drop).
-        // TODO(port): lifetime — Phase B should make router.config.dir own its bytes instead.
-        core::mem::forget(fs_router.base_dir.as_ref().unwrap().clone());
+        // PORT NOTE: `base_dir.?.ref()` — Zig borrowed the RefString bytes into
+        // `router.config.dir` and bumped the refcount. RouteConfig::dir is now an owned
+        // `Box<[u8]>`, so copy the bytes; no extra Arc leak needed.
+        fs_router.router.config.dir = Box::from(fs_router.base_dir.as_ref().unwrap().slice());
 
         // TODO: Memory leak? We haven't freed `asset_prefix_slice`, but we can't do so because the
         // underlying string is borrowed in `fs_router.router.config.asset_prefix_path`.
@@ -347,8 +346,12 @@ impl FileSystemRouter {
     }
 
     pub fn bust_dir_cache(&mut self, global_this: &JSGlobalObject) {
-        let dir = strings::paths::without_trailing_slash_windows_path(self.router.config.dir);
-        self.bust_dir_cache_recursive(global_this, dir);
+        let dir = strings::paths::without_trailing_slash_windows_path(&self.router.config.dir);
+        // PORT NOTE: reshaped for borrowck — `dir` borrows `self.router.config.dir`; the
+        // recursive walk re-derives the path from the resolver per-iteration so a one-time
+        // copy is sufficient.
+        let dir = dir.to_vec();
+        self.bust_dir_cache_recursive(global_this, &dir);
     }
 
     #[bun_jsc::host_fn(method)]

@@ -251,9 +251,9 @@ impl Listener {
             &this_ref.group as *const _ as *const c_void,
             size_of::<uws::SocketGroup>(),
         );
-        let mut listener_allocated = true;
+        let listener_allocated = core::cell::Cell::new(true);
         let cleanup = scopeguard::guard((), |()| {
-            if listener_allocated {
+            if listener_allocated.get() {
                 // SAFETY: this is still the sole owner on the error path
                 let this_ref = unsafe { &mut *this };
                 if let Some(c) = this_ref.secure_ctx {
@@ -406,7 +406,7 @@ impl Listener {
             }
         }
 
-        listener_allocated = false; // ownership now on `this`; deinit handles cleanup
+        listener_allocated.set(false); // ownership now on `this`; deinit handles cleanup
         scopeguard::ScopeGuard::into_inner(cleanup);
         let this_value = todo!("blocked_on: bun_jsc::JsClass::to_js for Listener (consumes self)");
         #[allow(unreachable_code)]

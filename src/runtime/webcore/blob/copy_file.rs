@@ -130,7 +130,7 @@ impl<'a> CopyFile<'a> {
         if let Some(store) = self.store.take() {
             drop(store); // deref()
         }
-        promise.reject(global_this, instance)
+        promise.reject(global_this, Ok(instance))
     }
 
     pub fn then(&mut self, promise: &mut JSPromise) -> Result<(), jsc::JsTerminated> {

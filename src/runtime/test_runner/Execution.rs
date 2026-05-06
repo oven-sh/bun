@@ -332,7 +332,7 @@ impl Execution {
         }
     }
 
-    pub fn handle_timeout(&mut self, global_this: *mut JSGlobalObject) -> JsResult<()> {
+    pub fn handle_timeout(&mut self, global_this: &JSGlobalObject) -> JsResult<()> {
         group_begin!();
 
         // if the concurrent group has one sequence and the sequence has an active entry that has timed out,

@@ -117,14 +117,20 @@ pub fn view(
     );
     let mut path_buf = PathBuffer::uninit();
     // Always fetch the full registry manifest, not a specific version
-    let url = URL::parse(buf_print(
+    let url_slice = buf_print(
         path_buf.0.as_mut_slice(),
         format_args!(
             "{}/{}",
             BStr::new(strings::without_trailing_slash(scope.url.href)),
             BStr::new(encoded_name),
         ),
-    ));
+    );
+    // SAFETY: `AsyncHTTP::init_sync` over-restricts to `URL<'static>` (port
+    // artifact); the request is driven to completion via `send_sync()` below
+    // while `path_buf` is still live on this stack frame, matching the Zig
+    // original which passes a stack `bun.PathBuffer` slice.
+    let url: URL<'static> =
+        unsafe { core::mem::transmute::<URL<'_>, URL<'static>>(URL::parse(url_slice)) };
 
     let mut headers = http::HeaderBuilder::default();
     headers.count(b"Accept", b"application/json");
@@ -223,7 +229,8 @@ pub fn view(
         'from_versions: {
             if let Some(versions_obj) = json.get_object(b"versions") {
                 // Find the version string from JSON that matches the resolved version
-                let versions = versions_obj.data.e_object().unwrap().properties.slice();
+                let versions_e_obj = versions_obj.data.e_object().unwrap();
+                let versions = versions_e_obj.properties.slice();
                 versions_len = versions.len();
 
                 let wanted_version: Semver::Version = 'brk2: {

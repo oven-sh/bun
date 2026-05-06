@@ -724,7 +724,7 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
         let bun_exe = match bun_core::self_exe_path() {
             Ok(p) => p,
             Err(_) => {
-                return Err(global.throw("{}", format_args!("Failed to get bun executable path")));
+                return Err(global.throw("Failed to get bun executable path"));
             }
         };
         if bun_str::strings::index_of_any(bun_exe.as_bytes(), b"'%").is_some() {

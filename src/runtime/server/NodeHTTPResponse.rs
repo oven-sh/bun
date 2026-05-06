@@ -1519,7 +1519,7 @@ impl NodeHTTPResponse {
                 uws::WriteResult::WantMore(written) => {
                     raw_response.clear_on_writable();
                     js::on_writable_set_cached(js_this, global_object, JSValue::UNDEFINED);
-                    Ok(JSValue::js_number_from_uint64(written))
+                    Ok(JSValue::js_number_from_uint64(written as u64))
                 }
                 uws::WriteResult::Backpressure(written) => {
                     if !callback_value.is_undefined() {
@@ -1532,7 +1532,7 @@ impl NodeHTTPResponse {
                     }
 
                     // PERF(port): @intCast — bounded by min().
-                    let clamped = i64::try_from(written.min(i64::MAX as u64)).unwrap();
+                    let clamped = i64::try_from(written.min(i64::MAX as usize)).unwrap();
                     Ok(JSValue::js_number((-clamped) as f64))
                 }
             }

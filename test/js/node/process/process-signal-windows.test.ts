@@ -9,8 +9,8 @@
 // Windows so those console events reach JS, matching Node.js.
 
 import { expect, test } from "bun:test";
-import { spawn } from "node:child_process";
 import { bunEnv, bunExe, isArm64, isWindows } from "harness";
+import { spawn } from "node:child_process";
 
 // bun:ffi (TinyCC) is unavailable on Windows arm64.
 test.skipIf(!isWindows || isArm64)(

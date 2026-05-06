@@ -354,18 +354,18 @@ impl Drop for Job {
 }
 
 /// For usage in Rust
-pub fn pbkdf2(
-    output: &mut [u8],
+pub fn pbkdf2<'a>(
+    output: &'a mut [u8],
     password: &[u8],
     salt: &[u8],
     iteration_count: u32,
     algorithm: Algorithm,
-) -> Option<&[u8]> {
-    // TODO(port): return type borrows `output`; Zig returned `?[]const u8` aliasing the input.
+) -> Option<&'a [u8]> {
+    // Return type borrows `output`; Zig returned `?[]const u8` aliasing the input.
     let mut pbk = PBKDF2 {
         algorithm,
-        password: StringOrBuffer::EncodedSlice(ZigString::Slice::from_utf8_never_free(password)),
-        salt: StringOrBuffer::EncodedSlice(ZigString::Slice::from_utf8_never_free(salt)),
+        password: StringOrBuffer::EncodedSlice(ZigStringSlice::from_utf8_never_free(password)),
+        salt: StringOrBuffer::EncodedSlice(ZigStringSlice::from_utf8_never_free(salt)),
         iteration_count,
         length: i32::try_from(output.len()).unwrap(),
     };

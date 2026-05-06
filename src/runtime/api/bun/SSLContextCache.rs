@@ -28,8 +28,8 @@ use bun_threading::Mutex;
 use bun_uws as uws;
 use bun_uws_sys::create_bun_socket_error_t;
 
-// TODO(port): verify path — `jsc.API.ServerConfig.SSLConfig` lives under src/runtime/api/
-use crate::api::server_config::SSLConfig;
+// `jsc.API.ServerConfig.SSLConfig` — re-exported from src/runtime/socket/SSLConfig.rs
+use crate::api::server::server_config::SSLConfig;
 
 pub struct SSLContextCache {
     // TODO(port): ArrayHashMap needs custom context = DigestContext, store_hash = false

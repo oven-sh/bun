@@ -261,16 +261,22 @@ fn write_to_blocking_pipe(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
 
 /// Function table for `PosixBufferedWriter`. In Zig this was `function_table: anytype`;
 /// in many cases the function table can be the same as `Parent`.
+///
+/// All methods take `*mut Self` (not `&mut self`) because the writer is an
+/// intrusive *field of* the parent — see PipeWriter.zig `parent: *Parent`.
+/// Materializing `&mut Parent` while a `&mut writer` is live would alias under
+/// Stacked Borrows. Zig's `*Parent` freely aliases; we mirror that with raw
+/// pointers and never form a `&mut Parent` inside the writer.
 pub trait PosixBufferedWriterParent {
-    fn on_write(&mut self, amount: usize, status: WriteStatus);
-    fn on_error(&mut self, err: sys::Error);
+    fn on_write(this: *mut Self, amount: usize, status: WriteStatus);
+    fn on_error(this: *mut Self, err: sys::Error);
     const HAS_ON_CLOSE: bool;
-    fn on_close(&mut self) {}
-    fn get_buffer(&self) -> &[u8];
+    fn on_close(_this: *mut Self) {}
+    fn get_buffer<'a>(this: *mut Self) -> &'a [u8];
     const HAS_ON_WRITABLE: bool;
-    fn on_writable(&mut self) {}
+    fn on_writable(_this: *mut Self) {}
     // TODO(port): Zig calls `parent.eventLoop()` (returns anytype). Phase B: pin concrete type.
-    fn event_loop(&self) -> EventLoopHandle;
+    fn event_loop(this: *mut Self) -> EventLoopHandle;
 }
 
 pub struct PosixBufferedWriter<Parent: PosixBufferedWriterParent> {

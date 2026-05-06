@@ -3395,19 +3395,18 @@ impl<'a> BundleV2<'a> {
 
         self.add_server_component_boundaries_as_extra_entry_points()?;
 
-        let mut chunks = {
-            // SAFETY: both `Index` newtypes are `repr(transparent)` over u32.
-            let entry_points: &mut [Index] = unsafe {
-                core::slice::from_raw_parts_mut(
-                    self.graph.entry_points.as_mut_ptr().cast(),
-                    self.graph.entry_points.len(),
-                )
-            };
+        // SAFETY: see `generate_from_cli` — repr(transparent) Index slice cast +
+        // raw-ptr borrow sidestep for `&mut self.linker` / `&mut *self`.
+        let mut chunks = unsafe {
+            let bundle_ptr: *mut BundleV2 = self;
+            let ep_len = (*bundle_ptr).graph.entry_points.len();
+            let ep = (*bundle_ptr).graph.entry_points.as_ptr();
+            let scbs = core::mem::take(&mut (*bundle_ptr).graph.server_component_boundaries);
             let mut reachable_files = reachable_files;
             self.linker.link(
-                self,
-                entry_points,
-                &self.graph.server_component_boundaries,
+                &mut *bundle_ptr,
+                core::slice::from_raw_parts(ep, ep_len),
+                scbs,
                 &mut reachable_files,
             )?
         };
@@ -3590,7 +3589,7 @@ impl<'a> BundleV2<'a> {
                 // These files are filtered out via the lack of any parts.
                 //
                 // Actual empty files will contain a part exporting an empty object.
-                if part_list.len() != 0 {
+                if part_list.len != 0 {
                     if maybe_css.is_some() {
                         // CSS has restrictions on what files can be imported.
                         // This means the file can become an error after
@@ -3600,7 +3599,10 @@ impl<'a> BundleV2<'a> {
                         if self.linker.scan_css_imports(
                             u32::try_from(index).unwrap(),
                             import_records.slice(),
-                            css_asts,
+                            // PORT NOTE: `scan_css_imports` takes the column as a raw
+                            // `*mut` slice (the scanImportsAndExports caller holds raw
+                            // SoA pointers); it only reads via `is_none()`.
+                            css_asts as *const [Option<*mut core::ffi::c_void>] as *mut [Option<*mut core::ffi::c_void>],
                             sources,
                             loaders,
                         ) == crate::linker_context_mod::ScanCssImportsResult::Errors {
@@ -3687,18 +3689,17 @@ impl<'a> BundleV2<'a> {
 
         // The linker still has to be initialized as code generation expects
         // much of its state to be valid memory, even if empty.
-        {
-            // SAFETY: both `Index` newtypes are `repr(transparent)` over u32.
-            let entry_points: &[Index] = unsafe {
-                core::slice::from_raw_parts(
-                    self.graph.entry_points.as_ptr().cast(),
-                    self.graph.entry_points.len(),
-                )
-            };
+        // SAFETY: see `generate_from_cli` — repr(transparent) Index slice cast +
+        // raw-ptr borrow sidestep for `&mut self.linker` / `&mut *self`.
+        unsafe {
+            let bundle_ptr: *mut BundleV2 = self;
+            let ep_len = (*bundle_ptr).graph.entry_points.len();
+            let ep = (*bundle_ptr).graph.entry_points.as_ptr();
+            let scbs = core::mem::take(&mut (*bundle_ptr).graph.server_component_boundaries);
             self.linker.load(
-                self,
-                entry_points,
-                &self.graph.server_component_boundaries,
+                &mut *bundle_ptr,
+                core::slice::from_raw_parts(ep, ep_len),
+                scbs,
                 js_reachable_files,
             ).map_err(|_| AllocError)?;
         }

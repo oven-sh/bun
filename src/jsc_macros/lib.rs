@@ -441,10 +441,16 @@ impl Parse for JsClassArgs {
 #[proc_macro_attribute]
 pub fn JsClass(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as JsClassArgs);
-    let strukt = parse_macro_input!(item as ItemStruct);
-    expand_js_class(args, strukt)
-        .unwrap_or_else(|e| e.to_compile_error())
-        .into()
+    // Accept both `struct` and `enum` payloads — Zig `.classes.ts` `m_ctx`
+    // payloads are frequently `union(enum)`, which port to Rust `enum`s.
+    let item2 = item.clone();
+    if let Ok(strukt) = syn::parse::<ItemStruct>(item) {
+        return expand_js_class(args, strukt)
+            .unwrap_or_else(|e| e.to_compile_error())
+            .into();
+    }
+    let enm = parse_macro_input!(item2 as ItemEnum);
+    expand_js_class_enum(args, enm).into()
 }
 
 /// `#[derive(JsClass)]` form — same expansion, for callers that prefer derive
@@ -455,7 +461,7 @@ pub fn js_class_derive(item: TokenStream) -> TokenStream {
     let strukt = parse_macro_input!(item as ItemStruct);
     // Derive can't see the struct tokens to re-emit them, so only emit the
     // hooks + trait impl.
-    let hooks = js_class_hooks(&JsClassArgs::default(), &strukt);
+    let hooks = js_class_hooks(&JsClassArgs::default(), &strukt.ident);
     hooks.into()
 }
 
@@ -466,15 +472,22 @@ fn expand_js_class(args: JsClassArgs, strukt: ItemStruct) -> syn::Result<TokenSt
     for field in strukt.fields.iter_mut() {
         field.attrs.retain(|a| !a.path().is_ident("js"));
     }
-    let hooks = js_class_hooks(&args, &strukt);
+    let hooks = js_class_hooks(&args, &strukt.ident);
     Ok(quote! {
         #strukt
         #hooks
     })
 }
 
-fn js_class_hooks(args: &JsClassArgs, strukt: &ItemStruct) -> TokenStream2 {
-    let rust_ty = &strukt.ident;
+fn expand_js_class_enum(args: JsClassArgs, enm: ItemEnum) -> TokenStream2 {
+    let hooks = js_class_hooks(&args, &enm.ident);
+    quote! {
+        #enm
+        #hooks
+    }
+}
+
+fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
     let ty_name = args
         .name
         .as_ref()

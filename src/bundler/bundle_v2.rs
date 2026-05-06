@@ -1220,13 +1220,13 @@ use crate::barrel_imports;
 
 pub use crate::bundle_thread::BundleThread;
 
-bun_output::declare_scope!(part_dep_tree, visible);
-bun_output::declare_scope!(Bundle, visible);
-bun_output::declare_scope!(scan_counter, visible);
-bun_output::declare_scope!(ReachableFiles, visible);
-bun_output::declare_scope!(TreeShake, hidden);
-bun_output::declare_scope!(PartRanges, hidden);
-bun_output::declare_scope!(ContentHasher, hidden);
+bun_core::declare_scope!(part_dep_tree, visible);
+bun_core::declare_scope!(Bundle, visible);
+bun_core::declare_scope!(scan_counter, visible);
+bun_core::declare_scope!(ReachableFiles, visible);
+bun_core::declare_scope!(TreeShake, hidden);
+bun_core::declare_scope!(PartRanges, hidden);
+bun_core::declare_scope!(ContentHasher, hidden);
 
 pub type MangledProps = ArrayHashMap<Ref, Box<[u8]>>;
 
@@ -1385,7 +1385,7 @@ pub fn generic_path_with_pretty_initialized(
     bump: &bun_alloc::Arena,
 ) -> Result<Fs::Path, Error> {
     // TODO(port): narrow error set
-    let buf = bun_paths::path_buffer_pool().get();
+    let buf = bun_paths::path_buffer_pool::get().get();
 
     let is_node = path.namespace == b"node";
     if is_node
@@ -1400,10 +1400,10 @@ pub fn generic_path_with_pretty_initialized(
     // "node:" prefix is not emitted.
     if path.is_file() || is_node {
         let buf2 = if target == Target::BakeServerComponentsSsr {
-            bun_paths::path_buffer_pool().get()
+            bun_paths::path_buffer_pool::get().get()
         } else {
             // TODO(port): in Zig buf2 aliases buf when target != ssr; here we need a separate guard or branch
-            bun_paths::path_buffer_pool().get()
+            bun_paths::path_buffer_pool::get().get()
         };
         let rel = bun_paths::relative_platform_buf(&mut *buf2, top_level_dir, &path.text, bun_paths::Platform::Loose, false);
         let mut path_clone = path;
@@ -1510,7 +1510,7 @@ pub struct BundleV2<'a> {
     /// You can find which callbacks are run by looking at the
     /// `finishFromBakeDevServer(...)` function here
     pub asynchronous: bool,
-    pub thread_lock: bun_core::safety::ThreadLock,
+    pub thread_lock: bun_core::ThreadLock,
 
     // if false we can skip TLA validation and propagation
     pub has_any_top_level_await_modules: bool,
@@ -1658,7 +1658,7 @@ impl<'a> BundleV2<'a> {
 pub struct ReachableFileVisitor<'a> {
     pub reachable: Vec<Index>,
     pub visited: DynamicBitSet,
-    pub all_import_records: &'a mut [ImportRecord::List],
+    pub all_import_records: &'a mut [import_record::List],
     pub all_loaders: &'a [Loader],
     pub all_urls_for_css: &'a [&'a [u8]],
     pub redirects: &'a [u32],
@@ -1666,7 +1666,7 @@ pub struct ReachableFileVisitor<'a> {
     pub dynamic_import_entry_points: &'a mut ArrayHashMap<IndexInt, ()>,
     /// Files which are Server Component Boundaries
     pub scb_bitset: Option<DynamicBitSetUnmanaged>,
-    pub scb_list: ServerComponentBoundary::ListSlice,
+    pub scb_list: server_component_boundary::Slice<'a>,
 
     /// Files which are imported by JS and inlined in CSS
     pub additional_files_imported_by_js_and_inlined_in_css: &'a mut DynamicBitSetUnmanaged,
@@ -1829,13 +1829,13 @@ impl<'a> BundleV2<'a> {
             }
         }
 
-        if bun_output::scope_is_visible!(ReachableFiles) {
-            bun_output::scoped_log!(ReachableFiles, "Reachable count: {} / {}", visitor.reachable.len(), self.graph.input_files.len());
+        if bun_core::scope_is_visible!(ReachableFiles) {
+            bun_core::scoped_log!(ReachableFiles, "Reachable count: {} / {}", visitor.reachable.len(), self.graph.input_files.len());
             let sources = self.graph.input_files.items_source();
             let targets = self.graph.ast.items_target();
             for idx in visitor.reachable.iter() {
                 let source = &sources[idx.get() as usize];
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     ReachableFiles,
                     "reachable file: #{} {} ({}) target=.{}",
                     source.index.get(),
@@ -1881,7 +1881,7 @@ impl<'a> BundleV2<'a> {
 
     pub fn wait_for_parse(&mut self) {
         self.r#loop().tick(self, &Self::is_done);
-        bun_output::scoped_log!(Bundle, "Parsed {} files, producing {} ASTs", self.graph.input_files.len(), self.graph.ast.len());
+        bun_core::scoped_log!(Bundle, "Parsed {} files, producing {} ASTs", self.graph.input_files.len(), self.graph.ast.len());
     }
 
     pub fn scan_for_secondary_paths(&mut self) {
@@ -2170,7 +2170,7 @@ impl<'a> BundleV2<'a> {
         path.assert_pretty_is_valid();
         *entry.key_ptr = path.text.clone();
         *entry.value_ptr = source_index.get();
-        self.graph.ast.append(JSAst::EMPTY);
+        self.graph.ast.append(JSAst::empty());
 
         self.graph.input_files.append(Graph::InputFile {
             source: Logger::Source {
@@ -2231,7 +2231,7 @@ impl<'a> BundleV2<'a> {
         path.assert_pretty_is_valid();
         *entry.key_ptr = path.text.clone();
         *entry.value_ptr = source_index.get();
-        self.graph.ast.append(JSAst::EMPTY);
+        self.graph.ast.append(JSAst::empty());
 
         self.graph.input_files.append(Graph::InputFile {
             source: Logger::Source {
@@ -2319,7 +2319,7 @@ impl<'a> BundleV2<'a> {
             completion: None,
             file_map: None,
             source_code_length: 0,
-            thread_lock: bun_core::safety::ThreadLock::init_locked(),
+            thread_lock: bun_core::ThreadLock::init_locked(),
             resolve_tasks_waiting_for_import_source_index: ArrayHashMap::new(),
             free_list: Vec::new(),
             unique_key: 0,
@@ -2406,13 +2406,13 @@ impl<'a> BundleV2<'a> {
     pub fn increment_scan_counter(&mut self) {
         self.thread_lock.assert_locked();
         self.graph.pending_items += 1;
-        bun_output::scoped_log!(scan_counter, ".pending_items + 1 = {}", self.graph.pending_items);
+        bun_core::scoped_log!(scan_counter, ".pending_items + 1 = {}", self.graph.pending_items);
     }
 
     pub fn decrement_scan_counter(&mut self) {
         self.thread_lock.assert_locked();
         self.graph.pending_items -= 1;
-        bun_output::scoped_log!(scan_counter, ".pending_items - 1 = {}", self.graph.pending_items);
+        bun_core::scoped_log!(scan_counter, ".pending_items - 1 = {}", self.graph.pending_items);
         self.on_after_decrement_scan_counter();
     }
 
@@ -2592,7 +2592,7 @@ impl<'a> BundleV2<'a> {
         })?;
 
         // try this.graph.entry_points.append(allocator, Index.runtime);
-        self.graph.ast.append(JSAst::EMPTY);
+        self.graph.ast.append(JSAst::empty());
         self.path_to_source_index_map(self.transpiler.options.target).put(b"bun:wrap".into(), Index::RUNTIME.get());
         let runtime_parse_task = self.allocator().alloc(rt.parse_task);
         runtime_parse_task.ctx = self;
@@ -2775,7 +2775,7 @@ impl<'a> BundleV2<'a> {
         known_target: options::Target,
     ) -> Result<IndexInt, AllocError> {
         let source_index = Index::init(u32::try_from(self.graph.ast.len()).unwrap());
-        self.graph.ast.append(JSAst::EMPTY);
+        self.graph.ast.append(JSAst::empty());
 
         self.graph.input_files.append(Graph::InputFile {
             source: source.clone(),
@@ -2815,7 +2815,7 @@ impl<'a> BundleV2<'a> {
         known_target: options::Target,
     ) -> Result<IndexInt, AllocError> {
         let source_index = Index::init(u32::try_from(self.graph.ast.len()).unwrap());
-        self.graph.ast.append(JSAst::EMPTY);
+        self.graph.ast.append(JSAst::empty());
 
         self.graph.input_files.append(Graph::InputFile {
             source: source.clone(),
@@ -2879,7 +2879,7 @@ impl<'a> BundleV2<'a> {
             side_effects: _resolver::SideEffects::HasSideEffects,
             ..Default::default()
         })?;
-        self.graph.ast.append(JSAst::EMPTY);
+        self.graph.ast.append(JSAst::empty());
 
         let task = Box::new(ServerComponentParseTask {
             data,
@@ -3295,7 +3295,7 @@ pub fn on_load_from_js_loop(load: &mut jsc_api::JSBundler::Load) {
 
 impl<'a> BundleV2<'a> {
     pub fn on_load(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
-        bun_output::scoped_log!(Bundle, "onLoad: ({}, {})", load.source_index.get(), <&'static str>::from(&load.value));
+        bun_core::scoped_log!(Bundle, "onLoad: ({}, {})", load.source_index.get(), <&'static str>::from(&load.value));
         let _guard = scopeguard::guard((), |_| {
             if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
                 this.graph.heap.help_catch_memory_issues();
@@ -3387,8 +3387,8 @@ impl<'a> BundleV2<'a> {
                     let mut msg_mut = msg;
                     let temp_log = Logger::Log {
                         clone_line_text: false,
-                        errors: (msg.kind == Logger::MsgKind::Err) as u32,
-                        warnings: (msg.kind == Logger::MsgKind::Warn) as u32,
+                        errors: (msg.kind == Logger::Kind::Err) as u32,
+                        warnings: (msg.kind == Logger::Kind::Warn) as u32,
                         msgs: vec![msg_mut],
                         ..Default::default()
                     };
@@ -3401,8 +3401,8 @@ impl<'a> BundleV2<'a> {
                     ).expect("oom");
                 } else {
                     log.msgs.push(msg);
-                    log.errors += (msg.kind == Logger::MsgKind::Err) as u32;
-                    log.warnings += (msg.kind == Logger::MsgKind::Warn) as u32;
+                    log.errors += (msg.kind == Logger::Kind::Err) as u32;
+                    log.warnings += (msg.kind == Logger::Kind::Warn) as u32;
                 }
 
                 // An error occurred, prevent spinning the event loop forever
@@ -3421,7 +3421,7 @@ pub fn on_resolve_from_js_loop(resolve: &mut jsc_api::JSBundler::Resolve) {
 impl<'a> BundleV2<'a> {
     pub fn on_resolve(resolve: &mut jsc_api::JSBundler::Resolve, this: &mut BundleV2) {
         let _dec_guard = scopeguard::guard((), |_| this.decrement_scan_counter());
-        bun_output::scoped_log!(Bundle, "onResolve: ({}:{}, {})",
+        bun_core::scoped_log!(Bundle, "onResolve: ({}:{}, {})",
             bstr::BStr::new(&resolve.import_record.namespace),
             bstr::BStr::new(&resolve.import_record.specifier),
             <&'static str>::from(&resolve.value));
@@ -3503,7 +3503,7 @@ impl<'a> BundleV2<'a> {
                         let source_index = Index::init(u32::try_from(this.graph.ast.len()).unwrap());
                         *existing.value_ptr = source_index.get();
                         out_source_index = Some(source_index);
-                        this.graph.ast.append(JSAst::EMPTY);
+                        this.graph.ast.append(JSAst::empty());
                         let loader = path.loader(&this.transpiler.options.loaders).unwrap_or(Loader::File);
 
                         this.graph.input_files.append(Graph::InputFile {
@@ -3589,8 +3589,8 @@ impl<'a> BundleV2<'a> {
             jsc_api::JSBundler::ResolveValue::Err(err) => {
                 let log = this.log_for_resolution_failures(&resolve.import_record.source_file, resolve.import_record.original_target.bake_graph());
                 log.msgs.push(err.clone());
-                log.errors += (err.kind == Logger::MsgKind::Err) as u32;
-                log.warnings += (err.kind == Logger::MsgKind::Warn) as u32;
+                log.errors += (err.kind == Logger::Kind::Err) as u32;
+                log.warnings += (err.kind == Logger::Kind::Warn) as u32;
             }
             jsc_api::JSBundler::ResolveValue::Pending | jsc_api::JSBundler::ResolveValue::Consumed => unreachable!(),
         }
@@ -3750,7 +3750,7 @@ fn write_metafile_output(
         // root_dir closed on drop
 
         // Create parent directories if needed (relative to outdir)
-        if let Some(parent) = bun_paths::dirname(file_path, bun_paths::Platform::Auto) {
+        if let Some(parent) = bun_paths::dirname(file_path, bun_paths::Platform::Loose) {
             if !parent.is_empty() {
                 let _ = root_dir.make_path(parent);
             }
@@ -3768,7 +3768,7 @@ fn write_metafile_output(
             mode: 0o644,
             dirfd: bun_sys::Fd::from_std_dir(&root_dir),
             file: bun_sys::PathOrFileDescriptor::Path(
-                bun_core::PathString::init(file_path),
+                bun_string::PathString::init(file_path),
             ),
         }).unwrap_or_else(|err| {
             Output::warn(format_args!("Failed to write metafile to '{}': {}", bstr::BStr::new(file_path), err.name()));
@@ -4074,7 +4074,7 @@ impl<'a> BundleV2<'a> {
             if plugins.has_any_matches(&import_record.path, false) {
                 // This is where onResolve plugins are enqueued
                 let resolve = Box::new(jsc_api::JSBundler::Resolve::default());
-                bun_output::scoped_log!(Bundle, "enqueue onResolve: {}:{}",
+                bun_core::scoped_log!(Bundle, "enqueue onResolve: {}:{}",
                     bstr::BStr::new(&import_record.path.namespace),
                     bstr::BStr::new(&import_record.path.text));
                 self.increment_scan_counter();
@@ -4108,7 +4108,7 @@ impl<'a> BundleV2<'a> {
             let mut temp_path = Fs::Path::init(entry_point.into());
             temp_path.namespace = b"file";
             if plugins.has_any_matches(&temp_path, false) {
-                bun_output::scoped_log!(Bundle, "Entry point '{}' plugin match", bstr::BStr::new(entry_point));
+                bun_core::scoped_log!(Bundle, "Entry point '{}' plugin match", bstr::BStr::new(entry_point));
 
                 let resolve = Box::leak(Box::new(jsc_api::JSBundler::Resolve::default()));
                 self.increment_scan_counter();
@@ -4158,7 +4158,7 @@ impl<'a> BundleV2<'a> {
         if let Some(plugins) = self.plugins.as_deref_mut() {
             if plugins.has_any_matches(&parse.path, true) {
                 // This is where onLoad plugins are enqueued
-                bun_output::scoped_log!(Bundle, "enqueue onLoad: {}:{}",
+                bun_core::scoped_log!(Bundle, "enqueue onLoad: {}:{}",
                     bstr::BStr::new(&parse.path.namespace),
                     bstr::BStr::new(&parse.path.text));
                 let load = Box::leak(Box::new(jsc_api::JSBundler::Load::init(self, parse)));
@@ -4206,8 +4206,8 @@ impl<'a> BundleV2<'a> {
         debug_assert!(self.graph.input_files.items_source()[Index::BAKE_SERVER_DATA.get() as usize].index.get() == Index::BAKE_SERVER_DATA.get());
         debug_assert!(self.graph.input_files.items_source()[Index::BAKE_CLIENT_DATA.get() as usize].index.get() == Index::BAKE_CLIENT_DATA.get());
 
-        self.graph.ast.append(JSAst::EMPTY); // PERF(port): was assume_capacity
-        self.graph.ast.append(JSAst::EMPTY); // PERF(port): was assume_capacity
+        self.graph.ast.append(JSAst::empty()); // PERF(port): was assume_capacity
+        self.graph.ast.append(JSAst::empty()); // PERF(port): was assume_capacity
         Ok(())
     }
 
@@ -4247,7 +4247,7 @@ impl<'a> BundleV2<'a> {
         });
 
         if let Some(err) = resolve_result.last_error {
-            bun_output::scoped_log!(Bundle, "failed with error: {}", err.name());
+            bun_core::scoped_log!(Bundle, "failed with error: {}", err.name());
             resolve_result.resolve_queue.clear();
 
             // Preserve the parsed import_records on the graph so any plugin
@@ -4275,7 +4275,7 @@ impl<'a> BundleV2<'a> {
 }
 
 pub struct ResolveImportRecordCtx<'a> {
-    pub import_records: &'a mut ImportRecord::List,
+    pub import_records: &'a mut import_record::List,
     pub source: &'a Logger::Source,
     pub loader: Loader,
     pub target: options::Target,
@@ -4464,7 +4464,7 @@ impl<'a> BundleV2<'a> {
                     path_primary.pretty = self.allocator().alloc_slice_copy(&path_primary.text);
                     import_record.path = path_primary.clone();
                     *resolve_entry.key_ptr = path_primary.text.clone();
-                    bun_output::scoped_log!(Bundle, "created ParseTask from FileMap: {}", bstr::BStr::new(&path_primary.text));
+                    bun_core::scoped_log!(Bundle, "created ParseTask from FileMap: {}", bstr::BStr::new(&path_primary.text));
                     let resolve_task = Box::leak(Box::new(ParseTask::default()));
                     file_map_result.path_pair.primary = path_primary;
                     *resolve_task = ParseTask::init(&file_map_result, Index::INVALID, self);
@@ -4499,7 +4499,7 @@ impl<'a> BundleV2<'a> {
                         if err == bun_core::err!("ModuleNotFound") {
                             if self.bun_watcher.is_some() {
                                 if !had_busted_dir_cache {
-                                    bun_output::scoped_log!(watcher, "busting dir cache {} -> {}",
+                                    bun_core::scoped_log!(watcher, "busting dir cache {} -> {}",
                                         bstr::BStr::new(&source.path.text), bstr::BStr::new(&import_record.path.text));
                                     // Only re-query if we previously had something cached.
                                     if transpiler.resolver.bust_dir_cache_from_specifier(
@@ -4579,7 +4579,7 @@ impl<'a> BundleV2<'a> {
                                         ).expect("oom");
                                     }
                                 } else {
-                                    let buf = bun_paths::path_buffer_pool().get();
+                                    let buf = bun_paths::path_buffer_pool::get().get();
                                     let specifier_to_use = if loader == Loader::Html
                                         && import_record.path.text.starts_with(&Fs::FileSystem::instance().top_level_dir)
                                     {
@@ -4734,7 +4734,7 @@ impl<'a> BundleV2<'a> {
 
             import_record.path = path.clone();
             *resolve_entry.key_ptr = path.text.clone();
-            bun_output::scoped_log!(Bundle, "created ParseTask: {}", bstr::BStr::new(&path.text));
+            bun_core::scoped_log!(Bundle, "created ParseTask: {}", bstr::BStr::new(&path.text));
             let resolve_task = Box::leak(Box::new(ParseTask::init(&resolve_result, Index::INVALID, self)));
 
             resolve_task.known_target = if import_record.kind == ImportKind::HtmlManifest {
@@ -4811,7 +4811,7 @@ impl<'a> BundleV2<'a> {
                 diff += 1;
 
                 graph.input_files.append(new_input_file).expect("unreachable");
-                graph.ast.append(JSAst::EMPTY);
+                graph.ast.append(JSAst::empty());
 
                 if is_html_entrypoint {
                     self.ensure_client_transpiler();
@@ -4874,7 +4874,7 @@ impl<'a> BundleV2<'a> {
     /// Patch source_index on import records from pathToSourceIndexMap and
     /// resolve_tasks_waiting_for_import_source_index. Called after
     /// processResolveQueue has registered new modules.
-    pub fn patch_import_record_source_indices(&mut self, import_records: &mut ImportRecord::List, ctx: PatchImportRecordsCtx) {
+    pub fn patch_import_record_source_indices(&mut self, import_records: &mut import_record::List, ctx: PatchImportRecordsCtx) {
         let graph = &self.graph;
         let input_file_loaders = graph.input_files.items_loader();
         let save_import_record_source_index = ctx.force_save
@@ -4996,7 +4996,7 @@ impl<'a> BundleV2<'a> {
 
         let mut diff: i32 = -1;
         let _diff_guard = scopeguard::guard((), |_| {
-            bun_output::scoped_log!(scan_counter, "in parse task .pending_items += {} = {}\n",
+            bun_core::scoped_log!(scan_counter, "in parse task .pending_items += {} = {}\n",
                 diff, i32::try_from(graph.pending_items).unwrap() + diff);
             graph.pending_items = u32::try_from(i32::try_from(graph.pending_items).unwrap() + diff).unwrap();
             if diff < 0 {
@@ -5045,7 +5045,7 @@ impl<'a> BundleV2<'a> {
                 let side_effects = input_files.items_side_effects_mut();
                 side_effects[empty_result.source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsEmptyAst;
                 if cfg!(debug_assertions) {
-                    bun_output::scoped_log!(Bundle, "onParse({}, {}) = empty",
+                    bun_core::scoped_log!(Bundle, "onParse({}, {}) = empty",
                         empty_result.source_index.get(),
                         bstr::BStr::new(&input_files.items_source()[empty_result.source_index.get() as usize].path.text));
                 }
@@ -5082,7 +5082,7 @@ impl<'a> BundleV2<'a> {
                 // Record which loader we used for this file
                 graph.input_files.items_loader_mut()[result.source.index.get() as usize] = result.loader;
 
-                bun_output::scoped_log!(Bundle, "onParse({}, {}) = {} imports, {} exports",
+                bun_core::scoped_log!(Bundle, "onParse({}, {}) = {} imports, {} exports",
                     result.source.index.get(),
                     bstr::BStr::new(&result.source.path.text),
                     result.ast.import_records.len(),
@@ -5192,7 +5192,7 @@ impl<'a> BundleV2<'a> {
             }
             ParseTask::ResultValue::Err(err) => {
                 if cfg!(feature = "enable_logs") {
-                    bun_output::scoped_log!(Bundle, "onParse() = err");
+                    bun_core::scoped_log!(Bundle, "onParse() = err");
                 }
 
                 if process_log {
@@ -5258,7 +5258,7 @@ pub struct ImportData {
     // then this may not be the result of a single chain but may instead form
     // a diamond shape if this same symbol was re-exported multiple times from
     // different files.
-    pub re_exports: Dependency::List,
+    pub re_exports: BabyList<Dependency>,
 
     pub data: ImportTracker,
 }
@@ -5437,7 +5437,7 @@ pub struct EntryPoint {
     /// eventually be turned into a relative path by computing the path relative
     /// to the "outbase" directory. Then this relative path will be joined onto
     /// the "outdir" directory to form the final output path for this entry point.
-    pub output_path: bun_core::PathString,
+    pub output_path: bun_string::PathString,
 
     /// This is the source index of the entry point. This file must have a valid
     /// entry point kind (i.e. not "none").
@@ -5591,7 +5591,7 @@ impl CrossChunkImport {
     pub fn sorted_cross_chunk_imports(
         list: &mut Vec<CrossChunkImport>,
         chunks: &mut [Chunk],
-        imports_from_other_chunks: &mut Chunk::ImportsFromOtherChunks,
+        imports_from_other_chunks: &mut chunk::ImportsFromOtherChunks,
     ) -> Result<(), Error> {
         let mut result = core::mem::take(list);
         let _restore = scopeguard::guard((), |_| { *list = result; });
@@ -5712,7 +5712,7 @@ pub struct ContentHasher {
 
 impl ContentHasher {
     pub fn write(&mut self, bytes: &[u8]) {
-        bun_output::scoped_log!(ContentHasher, "HASH_UPDATE {}:\n{}\n----------\n", bytes.len(), bstr::BStr::new(bytes));
+        bun_core::scoped_log!(ContentHasher, "HASH_UPDATE {}:\n{}\n----------\n", bytes.len(), bstr::BStr::new(bytes));
         self.hasher.update(&bytes.len().to_ne_bytes());
         self.hasher.update(bytes);
     }
@@ -5724,7 +5724,7 @@ impl ContentHasher {
     }
 
     pub fn write_ints(&mut self, i: &[u32]) {
-        bun_output::scoped_log!(ContentHasher, "HASH_UPDATE: {:?}\n", i);
+        bun_core::scoped_log!(ContentHasher, "HASH_UPDATE: {:?}\n", i);
         // SAFETY: [u32] is POD; reinterpret as bytes
         self.hasher.update(bytemuck::cast_slice(i));
     }
@@ -5824,7 +5824,7 @@ impl<'a> DevServerOutput<'a> {
 }
 
 pub fn generate_unique_key() -> u64 {
-    let key = bun_core::rand::random_u64() & 0x0FFFFFFF_FFFFFFFF_u64;
+    let key = bun_core::fast_random() & 0x0FFFFFFF_FFFFFFFF_u64;
     // without this check, putting unique_key in an object key would
     // sometimes get converted to an identifier. ensuring it starts
     // with a number forces that optimization off.

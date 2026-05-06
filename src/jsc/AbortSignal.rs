@@ -196,12 +196,14 @@ impl AbortSignal {
 
     #[inline(always)]
     fn as_mut_ptr(&self) -> *mut AbortSignal {
-        // SAFETY: `AbortSignal` is an opaque zero-sized FFI handle marked
-        // `!Freeze` (see `UnsafeCell` in the struct definition). No Rust-visible
-        // bytes exist at this address; all mutation happens inside C++ memory
-        // that the `&self` borrow does not cover, so deriving `*mut` here is
-        // sound — interior mutability is the intended contract.
-        self as *const AbortSignal as *mut AbortSignal
+        // SAFETY: `AbortSignal` is an opaque zero-sized FFI handle whose first
+        // (and only sized) field is an `UnsafeCell` at offset 0 of this
+        // `repr(C)` struct. `UnsafeCell::get` legitimately yields a `*mut`
+        // from `&self`, and casting it back to `*mut AbortSignal` preserves
+        // address and provenance. No Rust-visible bytes exist at this address;
+        // all mutation happens inside C++ memory that the `&self` borrow does
+        // not cover — interior mutability is the intended contract.
+        self._p.get().cast::<AbortSignal>()
     }
 }
 

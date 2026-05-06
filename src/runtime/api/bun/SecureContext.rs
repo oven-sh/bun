@@ -15,7 +15,7 @@
 
 use bun_boringssl_sys as boringssl;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use crate::api::server::ServerConfig::SSLConfig;
+use crate::socket::SSLConfig;
 use bun_str::strings;
 use bun_uws as uws;
 
@@ -165,7 +165,7 @@ impl SecureContext {
 
 const SSL_CTX_BASE_COST: usize = 50 * 1024;
 
-pub use uws::socket_context::c;
+use bun_uws_sys::socket_context::c;
 
 mod cpp {
     use super::*;

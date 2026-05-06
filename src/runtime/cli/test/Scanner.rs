@@ -287,11 +287,11 @@ impl<'a> Scanner<'a> {
             && !self.matches_path_ignore_pattern(name)
     }
 
-    pub fn next(&mut self, entry: &mut bun_fs::Entry, fd: Fd) {
+    pub fn next(&mut self, entry: &mut fs::Entry, fd: Fd) {
         let name = entry.base_lowercase();
         self.has_iterated = true;
         match entry.kind(&self.fs.fs, true) {
-            bun_fs::EntryKind::Dir => {
+            fs::EntryKind::Dir => {
                 if (!name.is_empty() && name[0] == b'.') || name == b"node_modules" {
                     return;
                 }

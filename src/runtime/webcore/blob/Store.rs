@@ -369,6 +369,7 @@ impl Store {
 /// owns the allocation itself — so either the Arc would free an already-freed
 /// box, or the intrusive count and Arc strong count would silently diverge
 /// (`has_one_ref()` lying). One refcount, one deallocation path.
+#[repr(transparent)]
 pub struct StoreRef {
     ptr: NonNull<Store>,
 }

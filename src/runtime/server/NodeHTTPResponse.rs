@@ -1033,7 +1033,7 @@ impl NodeHTTPResponse {
         self.raw_response
             .as_ref()
             .unwrap()
-            .on_data::<NodeHTTPResponse>(Self::on_data, self);
+            .on_data(on_data_shim, self as *mut Self);
         self.flags.remove(Flags::IS_DATA_BUFFERED_DURING_PAUSE);
         let mut result: JSValue = JSValue::TRUE;
 

@@ -42,7 +42,7 @@ pub fn to_include(
         let value_string = value.to_slice_or_null(global)?;
         let expected_string = expected.to_slice_or_null(global)?;
         pass = strings::contains(value_string.slice(), expected_string.slice())
-            || expected_string.len() == 0;
+            || expected_string.slice().is_empty();
     }
 
     let not = this.flags.not();

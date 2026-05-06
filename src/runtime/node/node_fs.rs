@@ -3182,7 +3182,7 @@ pub mod args {
             let mut mode = FileSystemFlags::R;
             if let Some(arg) = arguments.next() {
                 arguments.eat();
-                mode = FileSystemFlags::from_js_number_only(ctx, arg, FileSystemFlags::Kind::Access)?;
+                mode = FileSystemFlags::from_js_number_only(ctx, arg, FileSystemFlagsKind::Access)?;
             }
             Ok(Access { path, mode })
         }

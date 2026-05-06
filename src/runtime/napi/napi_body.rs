@@ -2920,7 +2920,7 @@ macro_rules! keep_symbols {
 }
 
 pub fn fix_dead_code_elimination() {
-    jsc::mark_binding(core::panic::Location::caller());
+    jsc::mark_binding();
 
     // napi_functions_to_export
     keep_symbols!(

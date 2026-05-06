@@ -6062,9 +6062,8 @@ pub fn create_dev_server_framework_request_args_object(
     })
 }
 
-#[bun_jsc::host_fn]
-#[unsafe(no_mangle)]
-pub extern "C" fn Bake__getNewRouteParamsJSFunctionImpl(
+#[bun_jsc::host_fn(export = "Bake__getNewRouteParamsJSFunctionImpl")]
+pub fn bake_get_new_route_params_js_function_impl(
     global: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JSValue {

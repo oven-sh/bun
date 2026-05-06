@@ -3683,7 +3683,7 @@ declare module "bun" {
      * const count = await redis.command("COUNT");
      * ```
      */
-    command(...args: string[]): Promise<any>;
+    command(...args: (string | number)[]): Promise<any>;
 
     /**
      * Inspect the internals of Redis objects

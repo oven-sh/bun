@@ -1,9 +1,14 @@
+// Tests for bitmap, HyperLogLog, geo, scripting, server/generic, and stream
+// command wrappers on RedisClient. The prototype checks below run without a
+// server; the functional checks run against localhost:6379 when reachable
+// (the docker-based valkey.test.ts suite exercises the same commands more
+// thoroughly in CI).
 import { RedisClient } from "bun";
 import { describe, expect, test } from "bun:test";
 import * as net from "node:net";
 
-// Every command added in this PR. All exist in both modern Redis (7+) and Valkey.
-const NEW_COMMANDS = [
+// Commands that exist in both modern Redis (7+) and Valkey.
+const COMMANDS = [
   // Bitmap
   "bitop",
   "bitpos",
@@ -58,8 +63,8 @@ const NEW_COMMANDS = [
   "xsetid",
 ] as const;
 
-describe("RedisClient new command methods", () => {
-  for (const name of NEW_COMMANDS) {
+describe("RedisClient command methods exist", () => {
+  for (const name of COMMANDS) {
     test(`RedisClient.prototype.${name} is a function`, () => {
       expect(typeof RedisClient.prototype[name]).toBe("function");
     });
@@ -80,7 +85,7 @@ const hasLocalRedis = await new Promise<boolean>(resolve => {
   setTimeout(() => done(false), 1000);
 });
 
-describe.skipIf(!hasLocalRedis)("RedisClient new commands (functional)", () => {
+describe.skipIf(!hasLocalRedis)("RedisClient commands (functional)", () => {
   const url = "redis://127.0.0.1:6379";
   const prefix = `bun-newcmd-${Date.now()}-${Math.random().toString(36).slice(2)}:`;
   const key = (name: string) => prefix + name;

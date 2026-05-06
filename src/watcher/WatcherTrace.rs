@@ -91,7 +91,7 @@ pub fn write_events(watcher: &Watcher, events: &[WatchEvent], changed_files: &[C
     let mut first_file = true;
     for event in events {
         let file_path: &[u8] = if (event.index as usize) < file_paths.len() {
-            file_paths[event.index as usize]
+            &file_paths[event.index as usize]
         } else {
             b"(unknown)"
         };

@@ -12,11 +12,13 @@
 // ═══════════════════════════════════════════════════════════════════════
 
 // ── sub-modules (un-gated in B-2; remaining gates need higher-tier deps) ──
-// TODO(b2-blocked): bun_uws::SocketHandler — AsyncHTTP/HTTPContext/HTTPThread/
-// ProxyTunnel are mutually recursive and all bottom out on uws socket types
-// + ssl_config (see note above `_phase_a_draft`). They cannot be un-gated
-// piecewise; first un-gate `ssl_config` + `bun_uws_sys::socket` (T4), then
-// this whole cluster lands together.
+// TODO(b2-blocked): AsyncHTTP/HTTPContext/HTTPThread/ProxyTunnel are mutually
+// recursive (HTTPClient ↔ HTTPContext ↔ HTTPThread ↔ AsyncHTTP ↔ ProxyTunnel ↔
+// h2_client/h3_client) and must land together with the `_phase_a_draft` block
+// below. ssl_config + ssl_wrapper are now resolved (un-gated this pass);
+// remaining lower-tier blockers are method bodies on
+// bun_uws::NewSocketHandler (connect/adopt/ext/write/…) and
+// bun_uws::quic::{Stream,Context,Header,PendingConnect} (h3 only).
 // PORT NOTE: `h2_client`/`h3_client` are now un-gated as thin shells (atomics
 // + constants only); their heavy submodules (Stream/ClientSession/…) remain
 // gated inside H2Client.rs/H3Client.rs until the cluster above lands.
@@ -60,8 +62,12 @@ pub use decompressor::Decompressor;
 pub use thread_safe_stream_buffer::ThreadSafeStreamBuffer;
 pub use send_file::SendFile;
 pub struct ProxyTunnel(());
-pub struct SSLConfig(());
-pub struct SSLWrapper<T>(core::marker::PhantomData<T>);
+#[path = "ssl_config.rs"] pub mod ssl_config;
+pub use ssl_config::SSLConfig;
+// PORT NOTE: SSLWrapper was MOVE_DOWN to bun_uws (tier 4); re-export here so
+// `crate::ssl_wrapper::SSLWrapper` resolves for ProxyTunnel/HTTPContext.
+pub use bun_uws::ssl_wrapper;
+pub use bun_uws::ssl_wrapper::SSLWrapper;
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
@@ -379,16 +385,18 @@ pub fn hash_header_name(name: &[u8]) -> u64 {
 
 // ═══════════════════════════════════════════════════════════════════════
 // Phase-A draft (gated)
-// TODO(b2-blocked): bun_http::ssl_config::SSLConfig (MOVE_DOWN from
-//   bun_runtime — drafted below but depends on bun_uws::us_bun_socket_context_options_t
-//   and bun_boringssl surfaces not yet exported)
-// TODO(b2-blocked): bun_http::ssl_wrapper::SSLWrapper (MOVE_DOWN from
-//   bun_runtime::socket — drafted below)
-// TODO(b2-blocked): bun_uws::SocketHandler / bun_uws::SocketGroup /
-//   bun_uws::AnySocket (re-exports from bun_uws_sys gated in T4)
+// RESOLVED this pass: ssl_config (extracted to ssl_config.rs), ssl_wrapper
+//   (re-exported from bun_uws), SocketHandler/SocketGroup/AnySocket types
+//   (now in bun_uws).
+// TODO(b2-blocked): bun_uws::NewSocketHandler method bodies
+//   (connect/ext/write/raw_write/is_shutdown/timeout/get_native_handle/…)
+//   — types exist but most methods used by HTTPContext/HTTPClient are stubs.
+// TODO(b2-blocked): bun_uws::quic::{Stream,Context,Header,PendingConnect,Socket}
+//   — only quic::global_init() is exported; h3_client/* needs the rest.
 // The HTTPClient struct + impl, HTTPContext, HTTPThread, AsyncHTTP, ProxyTunnel,
-// h2_client/, h3_client/ are mutually recursive and all bottom out on the three
-// items above. Un-gating any one of them requires the full set.
+// h2_client/, h3_client/ are mutually recursive. Un-gating any one of them
+// requires the full set; next B-2 pass should attempt the cluster together
+// once the bun_uws method surface lands.
 // ═══════════════════════════════════════════════════════════════════════
 #[cfg(any())]
 mod _phase_a_draft {

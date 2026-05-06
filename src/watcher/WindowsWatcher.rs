@@ -12,9 +12,13 @@ bun_core::declare_scope!(watcher, visible);
 
 pub type Platform = WindowsWatcher;
 
-// TODO(b2-blocked): bun_sys::windows — entire module body below depends on the
-// gated `bun_sys::windows` surface (HANDLE, OVERLAPPED, FILE_ACTION_*, kernel32
-// extern fns). Re-gated wholesale; Phase-A draft preserved.
+// TODO(b2-blocked): bun_sys::windows — draft body below now has most of its
+// lower-tier surface available (`HANDLE`, `OVERLAPPED`, `FILE_ACTION_*`,
+// `kernel32`/`ntdll` extern fns landed in `bun_sys::windows`). Kept re-gated
+// until a Windows cross-target is wired into `cargo check` so the
+// `bun_sys::Error { syscall: Tag::watch, … }` construction, `Win32Error`
+// helpers, and `strings::to_nt_path`/`copy_utf16_into_utf8` call shapes can be
+// verified. Phase-A draft preserved verbatim in `mod draft`.
 #[cfg(any())]
 use bun_sys::windows as w;
 #[cfg(any())]

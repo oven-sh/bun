@@ -5,6 +5,7 @@ use core::sync::atomic::AtomicU32;
 use crate::Ordinal; // TODO(b2-blocked): bun_core::Ordinal — local shim
 
 use crate::mapping;
+use crate::vlq::VLQ;
 use crate::{
     BakeSourceProvider, DevServerSourceProvider, InternalSourceMap, Mapping, ParseUrl,
     ParseUrlResultHint, SourceMapLoadHint, SourceProviderMap,
@@ -247,12 +248,9 @@ impl ParsedSourceMap {
             + self.external_source_names.len() * core::mem::size_of::<Box<[u8]>>()
     }
 
-    // TODO(b2-blocked): bun_io::Write
-    #[cfg(any())]
-    pub fn write_vlqs(&self, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
+    pub fn write_vlqs<W: bun_io::Write + ?Sized>(&self, writer: &mut W) -> bun_io::Result<()> {
         if let Some(ism) = &self.internal {
-            let mut buf = MutableString::init_empty();
+            let mut buf = bun_string::MutableString::init_empty();
             ism.append_vlq_to(&mut buf);
             writer.write_all(buf.list.as_slice())?;
             return Ok(());
@@ -276,7 +274,6 @@ impl ParsedSourceMap {
                 debug_assert!(gn.lines.zero_based() > current_line);
                 let inc = gn.lines.zero_based() - current_line;
                 writer.splat_byte_all(b';', usize::try_from(inc).unwrap())?;
-                // TODO(port): bun_io::Write needs splat_byte_all (Zig std.io.Writer.splatByteAll)
                 current_line = gn.lines.zero_based();
                 last_col = 0;
             } else if i != 0 {
@@ -294,8 +291,6 @@ impl ParsedSourceMap {
         Ok(())
     }
 
-    // TODO(b2-blocked): bun_io::Write — needs `write_vlqs` above.
-    #[cfg(any())]
     pub fn format_vlqs(&self) -> VlqsFmt<'_> {
         VlqsFmt(self)
     }
@@ -312,12 +307,8 @@ impl ParsedSourceMap {
 
 pub struct VlqsFmt<'a>(&'a ParsedSourceMap);
 
-// TODO(b2-blocked): bun_io::FmtAdapter
-#[cfg(any())]
 impl<'a> fmt::Display for VlqsFmt<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // TODO(port): write_vlqs targets a byte writer (bun_io::Write); bridging to
-        // core::fmt::Write needs an adapter. Phase B should provide bun_io::FmtAdapter.
         let mut adapter = bun_io::FmtAdapter::new(f);
         self.0.write_vlqs(&mut adapter).map_err(|_| fmt::Error)
     }

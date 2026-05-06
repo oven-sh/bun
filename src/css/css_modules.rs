@@ -304,22 +304,11 @@ impl Pattern {
                     writefn(s, false);
                 }
                 Segment::Name => {
-                    #[cfg(any())]
-                    {
-                        // TODO(b2-blocked): bun_paths::stem — std.fs.path.stem
-                        // equivalent over &[u8]. Do NOT use std::path (OsStr).
-                        let stem = bun_paths::stem(path);
-                        if bun_string::strings::index_of(stem, b".").is_some() {
-                            writefn(stem, true);
-                        } else {
-                            writefn(stem, false);
-                        }
-                    }
-                    #[cfg(not(any()))]
-                    {
-                        // TODO(b2-blocked): bun_paths::stem
-                        let _ = path;
-                        writefn(b"", false);
+                    let stem = bun_paths::stem(path);
+                    if bun_string::strings::index_of(stem, b".").is_some() {
+                        writefn(stem, true);
+                    } else {
+                        writefn(stem, false);
                     }
                 }
                 Segment::Local => {

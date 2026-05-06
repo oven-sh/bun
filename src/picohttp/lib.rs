@@ -95,6 +95,13 @@ pub struct Header {
 impl Header {
     #[inline]
     pub fn name(&self) -> &[u8] {
+        // picohttpparser sets `name = NULL, name_len = 0` for multiline /
+        // continuation headers. `from_raw_parts(null, 0)` is UB in Rust even
+        // though Zig's `[]const u8{ptr=null, len=0}` is well-defined, so guard
+        // the zero-length case explicitly.
+        if self.name_len == 0 {
+            return &[];
+        }
         // SAFETY: ptr/len originate from picohttpparser pointing into the
         // caller-provided buffer, or from StringBuilder::append.
         unsafe { core::slice::from_raw_parts(self.name_ptr, self.name_len) }
@@ -524,10 +531,10 @@ impl<'a> Response<'a> {
 
         match rc {
             -1 => {
-                // TODO(b2-blocked): bun_core::debug — macro passes `concat!(...)`
-                // into `pretty_errorln!` which only accepts `$fmt:literal`.
-                #[cfg(any())]
-                bun_core::debug!("Malformed HTTP response:\n{}", BStr::new(buf));
+                // NOTE: `bun_core::debug!` macro is currently broken (it forwards
+                // `concat!(...)` into `pretty_errorln!` whose matcher is `$fmt:literal`).
+                // Use the function-form `output::debug` until the macro is fixed.
+                Output::debug(format_args!("Malformed HTTP response:\n{}", BStr::new(buf)));
                 Err(ParseResponseError::Malformed_HTTP_Response)
             }
             -2 => {
@@ -651,6 +658,6 @@ pub use c::phr_decode_chunked_is_in_data;
 // PORT STATUS
 //   source:     src/picohttp/picohttp.zig (386 lines)
 //   confidence: medium
-//   todos:      1
-//   notes:      Header is #[repr(C)] ptr+len (must match phr_header); Request/Response/Headers carry <'a> borrowing the input buffer; pretty_fmt! is bun_core's passthrough stub until proc-macro lands; one debug! call re-gated on bun_core macro fix.
+//   todos:      0
+//   notes:      Header is #[repr(C)] ptr+len (must match phr_header); Request/Response/Headers carry <'a> borrowing the input buffer; pretty_fmt! is bun_core's passthrough stub until proc-macro lands; debug! call uses output::debug fn-form (macro-form broken upstream).
 // ──────────────────────────────────────────────────────────────────────────

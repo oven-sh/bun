@@ -1129,8 +1129,6 @@ impl IntoExprData for E::EString {
 // *E.String — Zig allows passing a pointer to copy from. `EString` derives no
 // `Clone` (rope `next` ptr); Zig copies the struct bytes. Mirror with a
 // shallow field-copy.
-// TODO(b2-ast-round-C): wire once `EString::shallow_clone` is settled.
-#[cfg(any())]
 impl IntoExprData for &E::EString {
     fn into_data_store(self) -> Data {
         Data::EString(unsafe { StoreRef::from_raw(data::Store::append(self.shallow_clone())) })

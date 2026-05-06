@@ -1847,18 +1847,11 @@ impl<'a> AnsiRenderer<'a> {
     /// that don't understand the APC sequence silently drop it.
     fn emit_kitty_image_file(&mut self, path: &[u8]) {
         // Base64-encode the file path (Kitty expects the payload to be b64).
-        #[cfg(any())]
         let encoded = {
             let encoded_len = bun_core::base64::encode_len(path);
             let mut encoded = vec![0u8; encoded_len];
             let _ = bun_core::base64::encode(&mut encoded, path);
             encoded
-        };
-        #[cfg(not(any()))]
-        let encoded: Vec<u8> = {
-            // TODO(b2-blocked): bun_core::base64::encode
-            let _ = path;
-            Vec::new()
         };
         self.write_raw_no_color(b"\x1b_Ga=T,t=f,f=100,q=2;");
         self.write_raw_no_color(&encoded);
@@ -2235,27 +2228,13 @@ fn code_span_open(light: bool) -> &'static [u8] {
 /// Visible printable width of a UTF-8 byte slice, excluding ANSI escape
 /// sequences. Correctly handles multi-width graphemes (CJK, emoji).
 fn visible_width(s: &[u8]) -> usize {
-    #[cfg(any())]
-    { bun_str::strings::visible::width::exclude_ansi_colors::utf8(s) }
-    #[cfg(not(any()))]
-    {
-        // TODO(b2-blocked): bun_string::strings::visible::width::exclude_ansi_colors::utf8
-        let _ = s;
-        0
-    }
+    strings::visible::width::exclude_ansi_colors::utf8(s)
 }
 
 /// Byte index of the longest prefix of `s` whose visible width is <=
 /// `max_cols`. ANSI escapes are zero-width and always included.
 fn visible_index_at(s: &[u8], max_cols: usize) -> usize {
-    #[cfg(any())]
-    { bun_str::strings::visible::width::exclude_ansi_colors::utf8_index_at_width(s, max_cols) }
-    #[cfg(not(any()))]
-    {
-        // TODO(b2-blocked): bun_string::strings::visible::width::exclude_ansi_colors::utf8_index_at_width
-        let _ = max_cols;
-        s.len()
-    }
+    strings::visible::width::exclude_ansi_colors::utf8_index_at_width(s, max_cols)
 }
 
 fn is_js_lang(lang: &[u8]) -> bool {
@@ -2379,18 +2358,22 @@ pub fn detect_kitty_graphics() -> bool {
 /// the reply with a short timeout. Raw mode is applied + restored
 /// around the read so the bytes don't echo to the user's terminal.
 fn probe_kitty_graphics() -> bool {
-    #[cfg(not(any()))]
+    // Zig: `if (comptime !bun.Environment.isPosix) return false;`
+    #[cfg(not(unix))]
     {
-        // TODO(b2-blocked): bun_sys::posix::tcgetattr / bun_sys::posix::tcsetattr / bun_sys::posix::poll
         return false;
     }
-    #[cfg(any())]
+    #[cfg(unix)]
     {
-        if bun_core::Output::bun_stdio_tty(0) == 0 || bun_core::Output::bun_stdio_tty(1) == 0 {
+        // SAFETY: bun_stdio_tty is plain data written once at startup.
+        let (tty0, tty1) = unsafe {
+            (bun_core::Output::bun_stdio_tty[0], bun_core::Output::bun_stdio_tty[1])
+        };
+        if tty0 == 0 || tty1 == 0 {
             return false;
         }
         // Honor an explicit opt-out.
-        if bun_core::getenv_z(b"BUN_DISABLE_KITTY_PROBE").is_some() {
+        if bun_core::getenv_z(bun_core::zstr!("BUN_DISABLE_KITTY_PROBE")).is_some() {
             return false;
         }
 
@@ -2399,14 +2382,13 @@ fn probe_kitty_graphics() -> bool {
         // restoring to a fixed .normal would corrupt it — instead reapply
         // exactly what we read. tcgetattr failing means stdin isn't a real
         // TTY in a way we can snapshot; skip probing entirely.
-        // TODO(port): termios save/restore via bun_sys::posix once ported.
         let saved_termios = match bun_sys::posix::tcgetattr(0) {
             Ok(t) => t,
             Err(_) => return false,
         };
         let _ = bun_core::tty::set_mode(0, bun_core::tty::Mode::Raw);
-        let _restore = scopeguard::guard((), |_| {
-            if bun_sys::posix::tcsetattr(0, bun_sys::posix::TCSA::Now, &saved_termios).is_err() {
+        let _restore = scopeguard::guard(saved_termios, |saved| {
+            if bun_sys::posix::tcsetattr(0, bun_sys::posix::TCSA::Now, &saved).is_err() {
                 let _ = bun_core::tty::set_mode(0, bun_core::tty::Mode::Normal);
             }
         });
@@ -2416,8 +2398,8 @@ fn probe_kitty_graphics() -> bool {
         // (or `ENOTSUPPORTED:...`) within a frame.
         const QUERY: &[u8] = b"\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\";
         match bun_sys::write(bun_sys::Fd::stdout(), QUERY) {
-            bun_sys::Result::Ok(_) => {}
-            bun_sys::Result::Err(_) => return false,
+            Ok(_) => {}
+            Err(_) => return false,
         }
 
         // Wait up to ~80ms for a response. Kitty/Ghostty/WezTerm reply
@@ -2428,7 +2410,6 @@ fn probe_kitty_graphics() -> bool {
             revents: 0,
         }];
         // bun.sys.poll has a Maybe variant Zig flags as incomplete — keep std.posix.poll.
-        // TODO(port): use bun_sys::poll once available.
         let ready = match bun_sys::posix::poll(&mut pfd, 80) {
             Ok(r) => r,
             Err(_) => return false,
@@ -2439,8 +2420,8 @@ fn probe_kitty_graphics() -> bool {
 
         let mut buf = [0u8; 128];
         let n = match bun_sys::read(bun_sys::Fd::stdin(), &mut buf) {
-            bun_sys::Result::Ok(r) => r,
-            bun_sys::Result::Err(_) => return false,
+            Ok(r) => r,
+            Err(_) => return false,
         };
         if n == 0 {
             return false;

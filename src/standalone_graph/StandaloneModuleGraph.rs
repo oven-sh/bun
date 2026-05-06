@@ -12,9 +12,12 @@ use bun_collections::StringArrayHashMap;
 use bun_core::{self as bun, Environment, Error as BunError, Output, err};
 use bun_paths::{self as path, PathBuffer, WPathBuffer, OSPathBuffer, SEP_STR};
 use bun_str::{strings, String as BunString, ZStr, StringPointer};
-use bun_sys::{self as Syscall, Fd, Stat};
+use bun_sys::{self as Syscall, Fd, FdExt as _, Stat};
 use bun_options_types::BundleEnums::{Loader, Format, WindowsOptions};
 use bun_sourcemap as SourceMap;
+use bun_bundler::options::{self, OutputFile};
+use bun_exe_format::{elf as bun_elf, macho as bun_macho, pe as bun_pe};
+use bun_paths::fs as bun_fs;
 
 // TODO(b2-blocked): bun_webcore::Blob — `cached_blob` is only ever set from
 // `bun_runtime` (higher tier); model as opaque erased pointer here.
@@ -523,7 +526,6 @@ fn slice_to_z(bytes: &'static [u8], ptr: StringPointer) -> &'static ZStr {
     unsafe { ZStr::from_raw(bytes.as_ptr().add(ptr.offset as usize), ptr.length as usize) }
 }
 
-#[cfg(any())]
 pub fn to_bytes(
     prefix: &[u8],
     output_files: &[OutputFile],
@@ -531,8 +533,10 @@ pub fn to_bytes(
     compile_exec_argv: &[u8],
     flags: Flags,
 ) -> Result<Vec<u8>, BunError> {
-    // TODO(b2-blocked): bun_bundler::options::OutputFile / OutputValue / OutputKind / Side
-    let _serialize_trace = bun_perf::trace("StandaloneModuleGraph.serialize");
+    // TODO(b2-blocked): bun_perf::PerfEvent::StandaloneModuleGraph_serialize — generated
+    // enum is still a `_Stub` placeholder; restore the trace call once the generator emits
+    // real variants.
+    // let _serialize_trace = bun_perf::trace(bun_perf::PerfEvent::StandaloneModuleGraph_serialize);
 
     let mut entry_point_id: Option<usize> = None;
     let mut string_builder = bun_str::StringBuilder::default();
@@ -540,18 +544,18 @@ pub fn to_bytes(
     for output_file in output_files {
         string_builder.count_z(&output_file.dest_path);
         string_builder.count_z(prefix);
-        if let options::OutputValue::Buffer(buf) = &output_file.value {
+        if let options::OutputValue::Buffer { bytes } = &output_file.value {
             if output_file.output_kind == options::OutputKind::Sourcemap {
                 // This is an over-estimation to ensure that we allocate
                 // enough memory for the source-map contents. Calculating
                 // the exact amount is not possible without allocating as it
                 // involves a JSON parser.
-                string_builder.cap += buf.bytes.len() * 2;
+                string_builder.cap += bytes.len() * 2;
             } else if output_file.output_kind == options::OutputKind::Bytecode {
                 // Allocate up to 256 byte alignment for bytecode
-                string_builder.cap += (buf.bytes.len() + 255) / 256 * 256 + 256;
+                string_builder.cap += (bytes.len() + 255) / 256 * 256 + 256;
             } else if output_file.output_kind == options::OutputKind::ModuleInfo {
-                string_builder.cap += buf.bytes.len();
+                string_builder.cap += bytes.len();
             } else {
                 if entry_point_id.is_none() {
                     if output_file.side.is_none()
@@ -563,7 +567,7 @@ pub fn to_bytes(
                     }
                 }
 
-                string_builder.count_z(&buf.bytes);
+                string_builder.count_z(bytes);
                 module_count += 1;
             }
         }
@@ -592,7 +596,7 @@ pub fn to_bytes(
             continue;
         }
 
-        let options::OutputValue::Buffer(buf) = &output_file.value else {
+        let options::OutputValue::Buffer { bytes: buf_bytes } = &output_file.value else {
             continue;
         };
 
@@ -622,8 +626,8 @@ pub fn to_bytes(
                 //
                 // This alignment strategy (target_mod=120) works for all platforms because
                 // it's the worst-case offset needed for the 8-byte header scenario.
-                let bytecode = &output_files[output_file.bytecode_index as usize]
-                    .value.buffer().bytes;
+                let bytecode = output_files[output_file.bytecode_index as usize]
+                    .value.as_slice();
                 let current_offset = string_builder.len;
                 // Calculate padding so that (current_offset + padding) % 128 == 120
                 // This accounts for the 8-byte section header on PE/Mach-O platforms.
@@ -656,8 +660,8 @@ pub fn to_bytes(
         // Embed module_info for ESM bytecode
         let module_info: StringPointer = 'brk: {
             if output_file.module_info_index != u32::MAX {
-                let mi_bytes = &output_files[output_file.module_info_index as usize]
-                    .value.buffer().bytes;
+                let mi_bytes = output_files[output_file.module_info_index as usize]
+                    .value.as_slice();
                 let offset = string_builder.len;
                 let writable = string_builder.writable();
                 writable[0..mi_bytes.len()].copy_from_slice(&mi_bytes[0..mi_bytes.len()]);
@@ -670,11 +674,16 @@ pub fn to_bytes(
             break 'brk StringPointer::default();
         };
 
+        // TODO(b2-blocked): bun_sys::File::{make_open,write_all} — `src/sys/File.rs` is
+        // still cfg-gated upstream; this dump-to-disk path is debug/canary only.
+        #[cfg(any())]
         #[cfg(any(feature = "canary", debug_assertions))]
         {
             if let Some(dump_code_dir) = bun_core::env_var::BUN_FEATURE_FLAG_DUMP_CODE.get() {
-                let mut path_buf = bun_paths::path_buffer_pool().get();
-                let dest_z = path::join_abs_string_buf_z(dump_code_dir, &mut *path_buf, &[dest_path], path::Style::Auto);
+                let mut path_buf = bun_paths::path_buffer_pool::get();
+                let dest_z = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
+                    dump_code_dir, &mut path_buf[..], &[dest_path],
+                );
 
                 // Scoped block to handle dump failures without skipping module emission
                 'dump: {
@@ -687,15 +696,15 @@ pub fn to_bytes(
                         Err(e) => {
                             Output::pretty_errorln(format_args!(
                                 "<r><red>error<r><d>:<r> failed to open {}: {}",
-                                bstr::BStr::new(dest_path), e.name()
+                                bstr::BStr::new(dest_path), e
                             ));
                             break 'dump;
                         }
                     };
-                    if let Err(e) = file.write_all(&buf.bytes).unwrap_result() {
+                    if let Err(e) = file.write_all(buf_bytes).unwrap_result() {
                         Output::pretty_errorln(format_args!(
                             "<r><red>error<r><d>:<r> failed to write {}: {}",
-                            bstr::BStr::new(dest_path), e.name()
+                            bstr::BStr::new(dest_path), e
                         ));
                         break 'dump;
                     }
@@ -719,7 +728,7 @@ pub fn to_bytes(
                 bstr::BStr::new(dest_path)
             )),
             loader: output_file.loader,
-            contents: string_builder.append_count_z(&buf.bytes),
+            contents: string_builder.append_count_z(buf_bytes),
             encoding: match output_file.loader {
                 Loader::Js | Loader::Jsx | Loader::Ts | Loader::Tsx => Encoding::Latin1,
                 _ => Encoding::Binary,
@@ -740,7 +749,7 @@ pub fn to_bytes(
                 options::Side::Server => FileSide::Server,
                 options::Side::Client => FileSide::Client,
             },
-            sourcemap: Schema::StringPointer::default(),
+            sourcemap: StringPointer::default(),
         };
 
         if output_file.source_map_index != u32::MAX {
@@ -748,7 +757,7 @@ pub fn to_bytes(
             serialize_json_source_map_for_standalone(
                 &mut source_map_header_list,
                 &mut source_map_string_list,
-                &output_files[output_file.source_map_index as usize].value.buffer().bytes,
+                output_files[output_file.source_map_index as usize].value.as_slice(),
             )?;
             module.sourcemap = string_builder.add_concat(&[
                 &source_map_header_list,
@@ -761,20 +770,36 @@ pub fn to_bytes(
         modules.push(module);
     }
 
+    // SAFETY: `CompiledModuleGraphFile` is `#[repr(C)]` POD with no padding-dependent
+    // invariants; reinterpreting its backing storage as bytes is the same as Zig's
+    // `std.mem.sliceAsBytes`.
+    let modules_as_bytes: &[u8] = unsafe {
+        core::slice::from_raw_parts(
+            modules.as_ptr() as *const u8,
+            modules.len() * size_of::<CompiledModuleGraphFile>(),
+        )
+    };
     let offsets = Offsets {
         entry_point_id: entry_point_id.unwrap() as u32,
-        modules_ptr: string_builder.append_count(bytemuck::cast_slice::<_, u8>(&modules)),
+        modules_ptr: string_builder.append_count(modules_as_bytes),
         compile_exec_argv_ptr: string_builder.append_count_z(compile_exec_argv),
         byte_count: string_builder.len,
         flags,
     };
 
-    let _ = string_builder.append(bytemuck::bytes_of(&offsets));
+    // SAFETY: `Offsets` is `#[repr(C)]` POD; same `sliceAsBytes` rationale as above.
+    let offsets_as_bytes: &[u8] = unsafe {
+        core::slice::from_raw_parts(
+            &offsets as *const Offsets as *const u8,
+            size_of::<Offsets>(),
+        )
+    };
+    let _ = string_builder.append(offsets_as_bytes);
     let _ = string_builder.append(TRAILER);
 
     // SAFETY: string_builder.ptr was set by allocate() above.
     let output_bytes = unsafe {
-        core::slice::from_raw_parts_mut(string_builder.ptr.unwrap(), string_builder.len)
+        core::slice::from_raw_parts_mut(string_builder.ptr.unwrap().as_ptr(), string_builder.len)
     };
 
     #[cfg(debug_assertions)]
@@ -843,31 +868,27 @@ impl CompileResult {
 pub fn inject(
     bytes: &[u8],
     self_exe: &ZStr,
-    inject_options: InjectOptions,
+    inject_options: &InjectOptions,
     target: &CompileTarget,
 ) -> Fd {
-    // TODO(b2-blocked): bun_resolver::fs::FileSystem::tmpname (T6; not in deps)
-    // TODO(b2-blocked): bun_resolver::fs::RealFS::tmpdir_path
-    // TODO(b2-blocked): bun_exe_format::{macho::MachoFile,pe::PEFile,elf::ElfFile}
-    //   write paths (init/write_section/build_and_sign/add_bun_section signatures)
-    // TODO(b2-blocked): bun_sys::File.read_to_end shape ({err,bytes} struct vs Maybe<Vec>)
-    // TODO(b2-blocked): bun_io::BufWriter
-    #[cfg(any())]
-    {
     let mut buf = PathBuffer::uninit();
+    // PORT NOTE: `tmpname` borrows `buf` mutably for the &ZStr it returns. The
+    // tmpdir-fallback retry below may need to repoint `zname` at a heap-owned
+    // buffer instead, so hoist that owner here so it outlives the loop.
+    let mut zname_owned: Option<Box<[u8]>> = None;
     let mut zname: &ZStr = match bun_fs::FileSystem::tmpname(
         b"bun-build",
-        &mut buf,
-        // SAFETY: i64 → u64 bitcast (same size).
-        unsafe { core::mem::transmute::<i64, u64>(bun_core::time::milli_timestamp()) },
+        &mut buf[..],
+        // i64 → u64 bitcast (Zig: `@bitCast`).
+        bun_core::time::milli_timestamp() as u64,
     ) {
         Ok(n) => n,
         Err(e) => {
             Output::pretty_errorln(format_args!(
                 "<r><red>error<r><d>:<r> failed to get temporary file name: {}",
-                e.name()
+                bstr::BStr::new(e.name())
             ));
-            return Fd::invalid();
+            return Fd::INVALID;
         }
     };
 
@@ -948,8 +969,8 @@ pub fn inject(
             let mut tried_changing_abs_dir = false;
             for retry in 0..3 {
                 match Syscall::open(zname, bun_sys::O::CLOEXEC | bun_sys::O::RDWR | bun_sys::O::CREAT, 0) {
-                    bun_sys::Result::Ok(res) => break 'brk2 res,
-                    bun_sys::Result::Err(err) => {
+                    Ok(res) => break 'brk2 res,
+                    Err(err) => {
                         if retry < 2 {
                             // they may not have write access to the present working directory
                             //
@@ -963,31 +984,36 @@ pub fn inject(
                             // but we only do that once because otherwise it's just silly
                             if !tried_changing_abs_dir {
                                 tried_changing_abs_dir = true;
+                                // TODO(b2-blocked): bun_resolver::fs::RealFS::tmpdir_path —
+                                // T6 crate not in deps. Retry-in-tmpdir fallback skipped
+                                // until tmpdir_path moves down or bun_resolver is added.
+                                #[cfg(any())]
+                                {
                                 let zname_z = bun_str::strings::concat(&[
                                     bun_fs::FileSystem::RealFS::tmpdir_path(),
                                     SEP_STR.as_bytes(),
                                     zname.as_bytes(),
                                     &[0],
-                                ]);
-                                // TODO(port): Zig leaked the concat buffer here. PORTING.md
-                                // §Forbidden bans `mem::forget`; hoist `zname_z` to an
-                                // outer `Option<Vec<u8>>` owner so it outlives the loop
-                                // and drops at fn exit. Do this when un-gating.
-                                // SAFETY: trailing 0 byte appended above; `zname_z` kept
-                                // alive via the hoisted owner described above.
+                                ]).expect("OOM");
+                                // PORT NOTE: Zig leaked the concat buffer here. PORTING.md
+                                // §Forbidden bans `mem::forget`; the buffer is parked in
+                                // `zname_owned` (declared at fn entry) so it outlives the
+                                // loop and drops at fn exit.
+                                let len = zname_z.len().saturating_sub(1);
+                                zname_owned = Some(zname_z);
+                                // SAFETY: trailing 0 byte appended above; `zname_owned`
+                                // keeps the allocation alive for the rest of the fn.
                                 zname = unsafe {
-                                    ZStr::from_raw(
-                                        zname_z.as_ptr(),
-                                        zname_z.len().saturating_sub(1),
-                                    )
+                                    ZStr::from_raw(zname_owned.as_ref().unwrap().as_ptr(), len)
                                 };
                                 continue;
+                                }
                             }
                             match err.get_errno() {
                                 // try again
-                                bun_sys::Errno::PERM
-                                | bun_sys::Errno::AGAIN
-                                | bun_sys::Errno::BUSY => continue,
+                                bun_sys::E::EPERM
+                                | bun_sys::E::EAGAIN
+                                | bun_sys::E::EBUSY => continue,
                                 _ => break,
                             }
 
@@ -998,7 +1024,7 @@ pub fn inject(
                                     err
                                 ));
                                 // No fd to cleanup yet, just return error
-                                return Fd::invalid();
+                                return Fd::INVALID;
                             }
                         }
                         // PORT NOTE: Zig falls through to `unreachable` on retry == 2; the
@@ -1012,14 +1038,14 @@ pub fn inject(
         let self_fd: Fd = 'brk2: {
             for retry in 0..3 {
                 match Syscall::open(self_exe, bun_sys::O::CLOEXEC | bun_sys::O::RDONLY, 0) {
-                    bun_sys::Result::Ok(res) => break 'brk2 res,
-                    bun_sys::Result::Err(err) => {
+                    Ok(res) => break 'brk2 res,
+                    Err(err) => {
                         if retry < 2 {
                             match err.get_errno() {
                                 // try again
-                                bun_sys::Errno::PERM
-                                | bun_sys::Errno::AGAIN
-                                | bun_sys::Errno::BUSY => continue,
+                                bun_sys::E::EPERM
+                                | bun_sys::E::EAGAIN
+                                | bun_sys::E::EBUSY => continue,
                                 _ => {}
                             }
                         }
@@ -1029,7 +1055,7 @@ pub fn inject(
                             err
                         ));
                         cleanup(zname, fd);
-                        return Fd::invalid();
+                        return Fd::INVALID;
                     }
                 }
             }
@@ -1039,63 +1065,70 @@ pub fn inject(
         #[cfg(not(windows))]
         {
             // defer self_fd.close()
-            let _self_fd_guard = scopeguard::guard((), |_| self_fd.close());
+            let _self_fd_guard = scopeguard::guard((), move |_| self_fd.close());
 
-            if let Err(e) = bun_sys::copy_file(self_fd, fd).unwrap_result() {
+            if let Err(e) = bun_sys::copy_file(self_fd, fd) {
                 Output::pretty_errorln(format_args!(
                     "<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {}",
-                    e.name()
+                    e
                 ));
                 cleanup(zname, fd);
-                return Fd::invalid();
+                return Fd::INVALID;
             }
 
             break 'brk fd;
         }
     };
+    let _ = (&mut zname_owned, &mut zname);
 
     match target.os {
         CompileTargetOs::Mac => {
-            let input_result = bun_sys::File { handle: cloned_executable_fd }.read_to_end();
-            if let Some(err) = input_result.err {
-                Output::pretty_errorln(format_args!("Error reading standalone module graph: {}", err));
-                cleanup(zname, cloned_executable_fd);
-                return Fd::invalid();
-            }
-            let mut macho_file = match bun_macho::MachoFile::init(input_result.bytes, bytes.len()) {
+            let input_bytes = match (bun_sys::File { handle: cloned_executable_fd }).read_to_end() {
+                Ok(b) => b,
+                Err(err) => {
+                    Output::pretty_errorln(format_args!("Error reading standalone module graph: {}", err));
+                    cleanup(zname, cloned_executable_fd);
+                    return Fd::INVALID;
+                }
+            };
+            let mut macho_file = match bun_macho::MachoFile::init(&input_bytes, bytes.len()) {
                 Ok(f) => f,
                 Err(e) => {
                     Output::pretty_errorln(format_args!("Error initializing standalone module graph: {}", e));
                     cleanup(zname, cloned_executable_fd);
-                    return Fd::invalid();
+                    return Fd::INVALID;
                 }
             };
             if let Err(e) = macho_file.write_section(bytes) {
                 Output::pretty_errorln(format_args!("Error writing standalone module graph: {}", e));
                 cleanup(zname, cloned_executable_fd);
-                return Fd::invalid();
+                return Fd::INVALID;
             }
-            // input_result.bytes dropped here
+            drop(input_bytes);
 
-            if let bun_sys::Result::Err(err) = Syscall::set_file_offset(cloned_executable_fd, 0) {
+            if let Err(err) = Syscall::set_file_offset(cloned_executable_fd, 0) {
                 Output::pretty_errorln(format_args!("Error seeking to start of temporary file: {}", err));
                 cleanup(zname, cloned_executable_fd);
-                return Fd::invalid();
+                return Fd::INVALID;
             }
 
-            let mut file = bun_sys::File { handle: cloned_executable_fd };
-            let writer = file.writer();
             // TODO(port): Zig used writer.adaptToNewApi(&buffer) with 512KB stack buffer.
-            let mut buffered_writer = bun_io::BufWriter::with_capacity(512 * 1024, writer);
+            // `std::io::BufWriter` heap-allocates the buffer; PERF parity is Phase B.
+            let mut buffered_writer = std::io::BufWriter::with_capacity(
+                512 * 1024,
+                bun_sys::FileWriter(cloned_executable_fd),
+            );
             if let Err(e) = macho_file.build_and_sign(&mut buffered_writer) {
-                Output::pretty_errorln(format_args!("Error writing standalone module graph: {}", e));
+                Output::pretty_errorln(format_args!(
+                    "Error writing standalone module graph: {}", bstr::BStr::new(e.name())
+                ));
                 cleanup(zname, cloned_executable_fd);
-                return Fd::invalid();
+                return Fd::INVALID;
             }
-            if let Err(e) = buffered_writer.flush() {
+            if let Err(e) = std::io::Write::flush(&mut buffered_writer) {
                 Output::pretty_errorln(format_args!("Error flushing standalone module graph: {}", e));
                 cleanup(zname, cloned_executable_fd);
-                return Fd::invalid();
+                return Fd::INVALID;
             }
             #[cfg(not(windows))]
             {
@@ -1105,40 +1138,43 @@ pub fn inject(
             return cloned_executable_fd;
         }
         CompileTargetOs::Windows => {
-            let input_result = bun_sys::File { handle: cloned_executable_fd }.read_to_end();
-            if let Some(err) = input_result.err {
-                Output::pretty_errorln(format_args!("Error reading standalone module graph: {}", err));
-                cleanup(zname, cloned_executable_fd);
-                return Fd::invalid();
-            }
-            let mut pe_file = match bun_pe::PEFile::init(input_result.bytes) {
+            let input_bytes = match (bun_sys::File { handle: cloned_executable_fd }).read_to_end() {
+                Ok(b) => b,
+                Err(err) => {
+                    Output::pretty_errorln(format_args!("Error reading standalone module graph: {}", err));
+                    cleanup(zname, cloned_executable_fd);
+                    return Fd::INVALID;
+                }
+            };
+            let mut pe_file = match bun_pe::PEFile::init(&input_bytes) {
                 Ok(f) => f,
                 Err(e) => {
                     Output::pretty_errorln(format_args!("Error initializing PE file: {}", e));
                     cleanup(zname, cloned_executable_fd);
-                    return Fd::invalid();
+                    return Fd::INVALID;
                 }
             };
             // Always strip authenticode when adding .bun section for --compile
-            if let Err(e) = pe_file.add_bun_section(bytes, bun_pe::AuthenticodeMode::StripAlways) {
+            if let Err(e) = pe_file.add_bun_section(bytes, bun_pe::StripMode::StripAlways) {
                 Output::pretty_errorln(format_args!("Error adding Bun section to PE file: {}", e));
                 cleanup(zname, cloned_executable_fd);
-                return Fd::invalid();
+                return Fd::INVALID;
             }
-            // input_result.bytes dropped here
+            drop(input_bytes);
 
-            if let bun_sys::Result::Err(err) = Syscall::set_file_offset(cloned_executable_fd, 0) {
+            if let Err(err) = Syscall::set_file_offset(cloned_executable_fd, 0) {
                 Output::pretty_errorln(format_args!("Error seeking to start of temporary file: {}", err));
                 cleanup(zname, cloned_executable_fd);
-                return Fd::invalid();
+                return Fd::INVALID;
             }
 
-            let mut file = bun_sys::File { handle: cloned_executable_fd };
-            let writer = file.writer();
-            if let Err(e) = pe_file.write(writer) {
-                Output::pretty_errorln(format_args!("Error writing PE file: {}", e));
+            let mut writer = bun_sys::FileWriter(cloned_executable_fd);
+            if let Err(e) = pe_file.write(&mut writer) {
+                Output::pretty_errorln(format_args!(
+                    "Error writing PE file: {}", bstr::BStr::new(e.name())
+                ));
                 cleanup(zname, cloned_executable_fd);
-                return Fd::invalid();
+                return Fd::INVALID;
             }
             // Set executable permissions when running on POSIX hosts, even for Windows targets
             #[cfg(not(windows))]
@@ -1150,19 +1186,21 @@ pub fn inject(
         }
         CompileTargetOs::Linux | CompileTargetOs::Freebsd => {
             // ELF section approach: find .bun section and expand it
-            let input_result = bun_sys::File { handle: cloned_executable_fd }.read_to_end();
-            if let Some(err) = input_result.err {
-                Output::pretty_errorln(format_args!("Error reading executable: {}", err));
-                cleanup(zname, cloned_executable_fd);
-                return Fd::invalid();
-            }
+            let input_bytes = match (bun_sys::File { handle: cloned_executable_fd }).read_to_end() {
+                Ok(b) => b,
+                Err(err) => {
+                    Output::pretty_errorln(format_args!("Error reading executable: {}", err));
+                    cleanup(zname, cloned_executable_fd);
+                    return Fd::INVALID;
+                }
+            };
 
-            let mut elf_file = match bun_elf::ElfFile::init(input_result.bytes) {
+            let mut elf_file = match bun_elf::ElfFile::init(&input_bytes) {
                 Ok(f) => f,
                 Err(e) => {
                     Output::pretty_errorln(format_args!("Error initializing ELF file: {}", e));
                     cleanup(zname, cloned_executable_fd);
-                    return Fd::invalid();
+                    return Fd::INVALID;
                 }
             };
 
@@ -1171,22 +1209,22 @@ pub fn inject(
             if let Err(e) = elf_file.write_bun_section(bytes) {
                 Output::pretty_errorln(format_args!("Error writing .bun section to ELF: {}", e));
                 cleanup(zname, cloned_executable_fd);
-                return Fd::invalid();
+                return Fd::INVALID;
             }
-            // input_result.bytes dropped here
+            drop(input_bytes);
 
-            if let bun_sys::Result::Err(err) = Syscall::set_file_offset(cloned_executable_fd, 0) {
+            if let Err(err) = Syscall::set_file_offset(cloned_executable_fd, 0) {
                 Output::pretty_errorln(format_args!("Error seeking to start of temporary file: {}", err));
                 cleanup(zname, cloned_executable_fd);
-                return Fd::invalid();
+                return Fd::INVALID;
             }
 
             // Write the modified ELF data back to the file
             let write_file = bun_sys::File { handle: cloned_executable_fd };
-            if let bun_sys::Result::Err(err) = write_file.write_all(&elf_file.data) {
+            if let Err(err) = write_file.write_all(&elf_file.data) {
                 Output::pretty_errorln(format_args!("Error writing ELF file: {}", err));
                 cleanup(zname, cloned_executable_fd);
-                return Fd::invalid();
+                return Fd::INVALID;
             }
             // Truncate the file to the exact size of the modified ELF
             let _ = Syscall::ftruncate(cloned_executable_fd, i64::try_from(elf_file.data.len()).unwrap());
@@ -1217,14 +1255,14 @@ pub fn inject(
             {
                 let seek_position: u64 = u64::try_from('brk: {
                     let fstat = match Syscall::fstat(cloned_executable_fd) {
-                        bun_sys::Result::Ok(res) => res,
-                        bun_sys::Result::Err(err) => {
+                        Ok(res) => res,
+                        Err(err) => {
                             Output::pretty_errorln(format_args!("{}", err));
                             cleanup(zname, cloned_executable_fd);
-                            return Fd::invalid();
+                            return Fd::INVALID;
                         }
                     };
-                    break 'brk fstat.size.max(0);
+                    break 'brk fstat.st_size.max(0);
                 }).unwrap();
 
                 total_byte_count = seek_position as usize + bytes.len() + 8;
@@ -1237,26 +1275,26 @@ pub fn inject(
                 //  gap (a "hole") return null bytes ('\0') until data is actually
                 //  written into the gap.
                 //
-                if let bun_sys::Result::Err(err) = Syscall::set_file_offset(cloned_executable_fd, seek_position) {
+                if let Err(err) = Syscall::set_file_offset(cloned_executable_fd, seek_position) {
                     Output::pretty_errorln(format_args!(
                         "{}\nwhile seeking to end of temporary file (pos: {})",
                         err, seek_position
                     ));
                     cleanup(zname, cloned_executable_fd);
-                    return Fd::invalid();
+                    return Fd::INVALID;
                 }
             }
 
             let mut remain = bytes;
             while !remain.is_empty() {
                 match Syscall::write(cloned_executable_fd, remain) {
-                    bun_sys::Result::Ok(written) => remain = &remain[written..],
-                    bun_sys::Result::Err(err) => {
+                    Ok(written) => remain = &remain[written..],
+                    Err(err) => {
                         Output::pretty_errorln(format_args!(
                             "<r><red>error<r><d>:<r> failed to write to temporary file\n{}", err
                         ));
                         cleanup(zname, cloned_executable_fd);
-                        return Fd::invalid();
+                        return Fd::INVALID;
                     }
                 }
             }
@@ -1324,11 +1362,9 @@ pub fn inject(
             }
         }
 
+        let _ = inject_options;
         cloned_executable_fd
     }
-    }
-    let _ = (bytes, self_exe, inject_options, target);
-    todo!("b2-blocked: bun_resolver::fs::FileSystem::tmpname + bun_exe_format write paths")
 }
 
 pub use bun_options_types::CompileTarget::CompileTarget;
@@ -1338,65 +1374,57 @@ pub fn download(
     target: &CompileTarget,
     env: &mut bun_dotenv::Loader<'_>,
 ) -> Result<bun_core::ZBox, BunError> {
-    // TODO(b2-blocked): bun_options_types::CompileTarget::exe_path
-    // TODO(b2-blocked): bun_options_types::CompileTarget::download_to_path
-    // (both still cfg-gated upstream on bun_sys::fetch_cache_directory_path /
-    // bun_sys::move_file_z). `err_generic` is `bun_core::err_generic!` — switch
-    // to the macro when un-gating.
-    #[cfg(any())]
-    {
     let mut exe_path_buf = PathBuffer::uninit();
     let mut version_str_buf = [0u8; 1024];
     // TODO(port): std.fmt.bufPrintZ — write into fixed buffer with NUL.
-    let version_str = {
+    let written = {
         let mut cursor = &mut version_str_buf[..];
         write!(cursor, "{}", target).map_err(|_| err!("NoSpaceLeft"))?;
-        let written = 1024 - cursor.len();
-        version_str_buf[written] = 0;
-        // SAFETY: version_str_buf[written] == 0 written above.
-        unsafe { ZStr::from_raw(version_str_buf.as_ptr(), written) }
+        1024 - cursor.len()
     };
+    version_str_buf[written] = 0;
+    // SAFETY: version_str_buf[written] == 0 written above; buffer outlives the borrow.
+    let version_str = unsafe { ZStr::from_raw(version_str_buf.as_ptr(), written) };
     let mut needs_download: bool = true;
     let dest_z = target.exe_path(&mut exe_path_buf, version_str, env, &mut needs_download);
     if needs_download {
         if let Err(e) = target.download_to_path(env, dest_z) {
             // For CLI, provide detailed error messages and exit
+            // TODO(port): `err!()` is a Phase-A stub (all variants compare equal);
+            // branch dispatch is correct once `bun_core::Error::from_name` interns.
             if e == err!("TargetNotFound") {
-                Output::err_generic(format_args!(
+                Output::err_fmt(format_args!(
                     "Does this target and version of Bun exist?\n\n404 downloading {} from npm registry",
                     target
                 ));
             } else if e == err!("NetworkError") {
-                Output::err_generic(format_args!(
+                Output::err_fmt(format_args!(
                     "Failed to download cross-compilation target.\n\nNetwork error downloading {} from npm registry",
                     target
                 ));
             } else if e == err!("InvalidResponse") {
-                Output::err_generic(format_args!(
+                Output::err_fmt(format_args!(
                     "Failed to verify the integrity of the downloaded tarball.\n\nThe downloaded content for {} appears to be corrupted",
                     target
                 ));
             } else if e == err!("ExtractionFailed") {
-                Output::err_generic(format_args!(
+                Output::err_fmt(format_args!(
                     "Failed to extract the downloaded tarball.\n\nCould not extract executable for {}",
                     target
                 ));
             } else {
-                Output::err_generic(format_args!("Failed to download {}: {}", target, e.name()));
+                Output::err_fmt(format_args!(
+                    "Failed to download {}: {}", target, bstr::BStr::new(e.name())
+                ));
             }
             return Err(err!("DownloadFailed"));
         }
     }
 
-    return Ok(ZStr::from_bytes(dest_z.as_bytes()));
-    }
-    let _ = (target, env);
-    todo!("b2-blocked: bun_options_types::CompileTarget::{{exe_path,download_to_path}}")
+    Ok(bun_core::ZBox::from_vec_with_nul(dest_z.as_bytes().to_vec()))
 }
 
-#[cfg(any())]
 pub fn to_executable(
-    // TODO(b2-blocked): bun_bundler::options::OutputFile (and inject/to_bytes above).
     target: &CompileTarget,
     output_files: &[OutputFile],
     root_dir: Fd, // TODO(port): was std.fs.Dir
@@ -1414,7 +1442,7 @@ pub fn to_executable(
         Ok(b) => b,
         Err(e) => {
             return Ok(CompileResult::fail_fmt(format_args!(
-                "failed to generate module graph bytes: {}", e.name()
+                "failed to generate module graph bytes: {}", bstr::BStr::new(e.name())
             )));
         }
     };
@@ -1423,16 +1451,17 @@ pub fn to_executable(
     }
     // bytes drops at end of scope
 
-    let mut free_self_exe = false;
-    let self_exe: Box<ZStr> = if let Some(path) = self_exe_path {
-        free_self_exe = true;
-        ZStr::from_bytes(path)
+    // PORT NOTE: Zig tracked `free_self_exe` to decide whether the slice was
+    // allocator-owned. `ZBox` always owns its bytes and drops on scope exit,
+    // so the flag is unnecessary.
+    let self_exe: bun_core::ZBox = if let Some(path) = self_exe_path {
+        bun_core::ZBox::from_vec_with_nul(path.to_vec())
     } else if target.is_default() {
         match bun_core::self_exe_path() {
-            Ok(p) => p,
+            Ok(p) => bun_core::ZBox::from_vec_with_nul(p.as_bytes().to_vec()),
             Err(e) => {
                 return Ok(CompileResult::fail_fmt(format_args!(
-                    "failed to get self executable path: {}", e.name()
+                    "failed to get self executable path: {}", bstr::BStr::new(e.name())
                 )));
             }
         }
@@ -1461,18 +1490,15 @@ pub fn to_executable(
                 } else if e == err!("UnsupportedTarget") {
                     CompileResult::fail_fmt(format_args!("Target '{}' is not supported", target))
                 } else {
-                    CompileResult::fail_fmt(format_args!("Failed to download '{}': {}", target, e.name()))
+                    CompileResult::fail_fmt(format_args!("Failed to download '{}': {}", target, bstr::BStr::new(e.name())))
                 });
             }
         }
 
-        free_self_exe = true;
-        ZStr::from_bytes(dest_z.as_bytes())
+        bun_core::ZBox::from_vec_with_nul(dest_z.as_bytes().to_vec())
     };
-    // PORT NOTE: free_self_exe tracked whether to free self_exe; Box drops unconditionally.
-    let _ = free_self_exe;
 
-    let mut fd = inject(&bytes, &self_exe, windows_options.clone(), target);
+    let mut fd = inject(&bytes, &self_exe, &windows_options, target);
     // TODO(port): errdefer — Zig's `defer if (fd != invalid) fd.close()` reads `fd` at
     // scope exit after later reassignments. A scopeguard closure capturing `fd` by value
     // would not observe those writes; capturing by `&mut` conflicts with later uses.
@@ -1593,40 +1619,36 @@ pub fn to_executable(
     #[cfg(not(windows))]
     {
         let mut buf2 = PathBuffer::uninit();
-        let temp_location = match bun_sys::get_fd_path(fd, &mut buf2) {
-            Ok(p) => p,
+        // PORT NOTE: borrowck — `get_fd_path` returns `&mut [u8]` borrowing `buf2`;
+        // copy it into an owned buffer so `temp_posix_buf` can also borrow `buf2`'s
+        // sibling without overlap.
+        let temp_location: Vec<u8> = match bun_sys::get_fd_path(fd, &mut buf2) {
+            Ok(p) => p.to_vec(),
             Err(e) => {
                 return Ok(CompileResult::fail_fmt(format_args!(
-                    "failed to get path for fd: {}", e.name()
+                    "failed to get path for fd: {}", e
                 )));
             }
         };
         // TODO(port): std.posix.toPosixPath — copy into NUL-terminated fixed buffer.
-        let temp_posix = match bun_paths::to_posix_path(temp_location) {
-            Ok(p) => p,
-            Err(e) => {
-                return Ok(CompileResult::fail_fmt(format_args!("path too long: {}", e.name())));
-            }
-        };
+        // `resolve_path::z` does the same (copy + NUL) and yields `&ZStr`.
+        let mut temp_posix_buf = PathBuffer::uninit();
+        let temp_posix = path::resolve_path::z(&temp_location, &mut temp_posix_buf);
         let outfile_basename = bun_paths::basename(outfile);
-        let outfile_posix = match bun_paths::to_posix_path(outfile_basename) {
-            Ok(p) => p,
-            Err(e) => {
-                return Ok(CompileResult::fail_fmt(format_args!("outfile name too long: {}", e.name())));
-            }
-        };
+        let mut outfile_posix_buf = PathBuffer::uninit();
+        let outfile_posix = path::resolve_path::z(outfile_basename, &mut outfile_posix_buf);
 
         if let Err(e) = bun_sys::move_file_z_with_handle(
             fd,
             Fd::cwd(),
-            bun_str::slice_to_nul(&temp_posix),
-            Fd::from_std_dir(root_dir),
-            bun_str::slice_to_nul(&outfile_posix),
+            temp_posix,
+            root_dir,
+            outfile_posix,
         ) {
             fd.close();
-            fd = Fd::invalid();
+            fd = Fd::INVALID;
 
-            let _ = Syscall::unlink(&temp_posix);
+            let _ = Syscall::unlink(temp_posix);
 
             if e == err!("IsDir") || e == err!("EISDIR") {
                 return Ok(CompileResult::fail_fmt(format_args!(
@@ -1636,13 +1658,14 @@ pub fn to_executable(
             } else {
                 return Ok(CompileResult::fail_fmt(format_args!(
                     "failed to rename {} to {}: {}",
-                    bstr::BStr::new(temp_location),
+                    bstr::BStr::new(&temp_location),
                     bstr::BStr::new(outfile),
-                    e.name()
+                    bstr::BStr::new(e.name())
                 )));
             }
         }
 
+        let _ = fd;
         Ok(CompileResult::Success)
     }
 }

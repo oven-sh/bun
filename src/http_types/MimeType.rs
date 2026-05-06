@@ -3,10 +3,12 @@ use std::borrow::Cow;
 use bun_string::strings;
 
 // TODO(b2-blocked): bun_options_types::Loader
-// `options_types` is same-tier (T3); not added as a dep to avoid an intra-tier
-// edge. `by_loader` (the only consumer) is gated below.
+// `options_types` is same-tier (T3); adding it as a dep creates a cargo cycle
+// (io → zlib → options_types → http_types → uws_sys → io). `by_loader` (the
+// only consumer) stays gated below until the zlib/io edge is broken or Loader
+// moves to a lower tier.
 #[cfg(any())]
-use bun_options_types::Loader; // TYPE_ONLY: was bun_bundler::options::Loader (T5); moves to options_types (T3) per CYCLEBREAK
+use bun_options_types::Loader; // TYPE_ONLY: was bun_bundler::options::Loader (T5); moved to options_types (T3) per CYCLEBREAK
 
 // ───────────────────────────────────────────────────────────────────────────
 // `Table` (= generated `mime_type_list_enum::MimeTypeList`). The Rust side is a
@@ -500,7 +502,7 @@ impl MimeType {
 }
 
 // TODO: improve this
-// TODO(b2-blocked): bun_options_types::Loader (same-tier T3; see top-of-file note)
+// TODO(b2-blocked): bun_options_types::Loader (same-tier T3 → cargo cycle; see top-of-file note)
 #[cfg(any())]
 pub fn by_loader(loader: Loader, ext: &[u8]) -> MimeType {
     match loader {

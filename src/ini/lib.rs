@@ -231,10 +231,9 @@ pub enum ScopeError {
 // TODO(b2-blocked): bun_api::NpmRegistryMap
 // TODO(b2-blocked): bun_api::npm_registry::Parser
 // TODO(b2-blocked): bun_api::Ca
-// TODO(b2-blocked): bun_logger::source_from_file (was bun_sys::File::to_source — moved up)
 // TODO(b2-blocked): bun_install_types::NodeLinker::PnpmMatcher::from_expr
-// TODO(b2-blocked): bun_interchange::json::parse_utf8_impl (bun_interchange::Expr is an
-//                   opaque stub, not bun_js_parser::Expr — quoted-value JSON fast path only)
+// TODO(b2-blocked): bun_interchange::json::parse_utf8_impl (returns bun_logger::js_ast::Expr
+//                   stub, not bun_js_parser::Expr — quoted-value JSON fast path only)
 
 pub use draft::{
     ConfigIterator, Parser, ScopeItem, ScopeIterator, ToStringFormatter,
@@ -601,11 +600,11 @@ impl<'a> Parser<'a> {
                     offset += 1;
                 }
                 // TODO(b2-blocked): bun_interchange::json::parse_utf8_impl —
-                // `bun_interchange` currently exports an opaque `Expr` stub
-                // (not `bun_js_parser::Expr`), so the JSON fast path stays
-                // gated. Falls back to the same path the Zig takes when JSON
-                // parsing fails (env-var expand for values, fallthrough for
-                // sections/keys).
+                // returns `bun_logger::js_ast::Expr` (MOVE_DOWN stub) which is
+                // a distinct type from `bun_js_parser::Expr`, so the JSON fast
+                // path stays gated. Falls back to the same path the Zig takes
+                // when JSON parsing fails (env-var expand for values,
+                // fallthrough for sections/keys).
                 #[cfg(any())]
                 {
                 let src = Source::init_path_string(self.source.path.text.as_slice(), val);
@@ -1155,18 +1154,15 @@ pub struct ConfigIterator<'a> {
 
 impl<'a> ConfigIterator<'a> {
     pub fn next(&mut self) -> Option<IniOption<ConfigItem>> {
-        #[cfg(any())]
-        // TODO(b2-blocked): bun_js_parser::Expr::as_utf8_string_literal
-        {
-        if self.prop_idx >= self.config.properties.len() {
+        if self.prop_idx >= self.config.properties.len as usize {
             return None;
         }
         let prop_idx = self.prop_idx;
         self.prop_idx += 1;
 
-        let prop = &self.config.properties.ptr()[prop_idx];
+        let prop = self.config.properties.at(prop_idx);
 
-        if let Some(keyexpr) = &prop.key {
+        if let Some(keyexpr) = prop.key {
             if let Some(key) = keyexpr.as_utf8_string_literal() {
                 if strings::has_prefix(key, b"//") {
                     // PORT NOTE: Zig builds this list at comptime by reversing
@@ -1191,14 +1187,14 @@ impl<'a> ConfigIterator<'a> {
 
                         if let Some(index) = strings::last_index_of(key, name_with_eq) {
                             let url_part = &key[2..index];
-                            if let Some(value_expr) = &prop.value {
+                            if let Some(value_expr) = prop.value {
                                 if let Some(value) = value_expr.as_utf8_string_literal() {
                                     return Some(IniOption::Some(ConfigItem {
                                         // PERF(port): Zig borrowed arena slices here; we box.
                                         registry_url: Box::<[u8]>::from(url_part),
                                         value: Box::<[u8]>::from(value),
                                         optname: opt,
-                                        loc: prop.key.as_ref().unwrap().loc,
+                                        loc: keyexpr.loc,
                                     }));
                                 }
                             }
@@ -1209,8 +1205,6 @@ impl<'a> ConfigIterator<'a> {
         }
 
         Some(IniOption::None)
-        } // end #[cfg(any())]
-        todo!("b2-blocked: bun_js_parser::Expr::as_utf8_string_literal")
     }
 }
 
@@ -1237,24 +1231,23 @@ pub struct ScopeItem {
 impl<'a> ScopeIterator<'a> {
     pub fn next(&mut self) -> OOM<Option<IniOption<ScopeItem>>> {
         #[cfg(any())]
-        // TODO(b2-blocked): bun_js_parser::Expr::as_utf8_string_literal
         // TODO(b2-blocked): bun_api::npm_registry::Parser
         // TODO(b2-blocked): bun_api::NpmRegistry
         {
-        if self.prop_idx >= self.config.properties.len() {
+        if self.prop_idx >= self.config.properties.len as usize {
             return Ok(None);
         }
         let prop_idx = self.prop_idx;
         self.prop_idx += 1;
 
-        let prop = &self.config.properties.ptr()[prop_idx];
+        let prop = self.config.properties.at(prop_idx);
 
-        if let Some(keyexpr) = &prop.key {
+        if let Some(keyexpr) = prop.key {
             if let Some(key) = keyexpr.as_utf8_string_literal() {
                 if strings::has_prefix(key, b"@") && strings::ends_with(key, b":registry") {
                     if !self.count {
                         let registry = 'brk: {
-                            if let Some(value) = &prop.value {
+                            if let Some(value) = prop.value {
                                 if let Some(str_) = value.as_utf8_string_literal() {
                                     let mut parser = bun_api::npm_registry::Parser {
                                         log: self.log,
@@ -1277,7 +1270,7 @@ impl<'a> ScopeIterator<'a> {
 
         Ok(Some(IniOption::None))
         } // end #[cfg(any())]
-        todo!("b2-blocked: bun_api::npm_registry / bun_js_parser::Expr::as_utf8_string_literal")
+        todo!("b2-blocked: bun_api::npm_registry::Parser / bun_api::NpmRegistry")
     }
 }
 
@@ -1290,16 +1283,7 @@ impl<'a> ScopeIterator<'a> {
 // TODO(b2-blocked): bun_api::NpmRegistryMap
 // TODO(b2-blocked): bun_api::npm_registry::Parser
 // TODO(b2-blocked): bun_api::Ca
-// TODO(b2-blocked): bun_logger::source_from_file
-// TODO(b2-blocked): bun_interchange::json::parse_utf8_impl
 // TODO(b2-blocked): bun_install_types::NodeLinker::PnpmMatcher::from_expr
-// TODO(b2-blocked): bun_js_parser::Expr::as_property
-// TODO(b2-blocked): bun_js_parser::Expr::as_utf8_string_literal
-// TODO(b2-blocked): bun_js_parser::Expr::as_string
-// TODO(b2-blocked): bun_js_parser::Expr::as_string_cloned
-// TODO(b2-blocked): bun_js_parser::Expr::as_bool
-// TODO(b2-blocked): bun_js_parser::Expr::get
-// TODO(b2-blocked): bun_js_parser::E::EString::eql_comptime
 //
 // `load_npmrc_config` / `load_npmrc` / `handle_auth` are blocked wholesale on
 // the schema types (`BunInstall`/`NpmRegistry`/`NpmRegistryMap`/`Ca` —
@@ -1896,5 +1880,5 @@ fn handle_auth(
 //   source:     src/ini/ini.zig (1357 lines)
 //   confidence: medium
 //   todos:      6
-//   notes:      B-2: Parser::parse()/prepare_str() bodies un-gated against live bun_js_parser accessor surface (Object::get/put/get_or_put_object, Array::push, ExprData::e_object_mut/e_array_mut, IntoExprData). Quoted-value JSON fast path in prepare_str() stays gated on bun_interchange::json (its Expr is an opaque stub). load_npmrc/load_npmrc_config + ScopeIterator::next stay gated on empty bun_api crate (BunInstall/NpmRegistry/Ca/npm_registry::Parser).
+//   notes:      B-2: Parser::parse()/prepare_str()/ConfigIterator::next() bodies un-gated against live bun_js_parser accessor surface (Object::get/put/get_or_put_object, Array::push, ExprData::e_object_mut/e_array_mut, Expr::as_utf8_string_literal, IntoExprData). Quoted-value JSON fast path in prepare_str() stays gated on bun_interchange::json (returns bun_logger::js_ast::Expr stub, not bun_js_parser::Expr). load_npmrc/load_npmrc_config/handle_auth + ScopeIterator::next/ScopeItem.registry stay gated on empty bun_api crate (BunInstall/NpmRegistry/Ca/npm_registry::Parser).
 // ──────────────────────────────────────────────────────────────────────────

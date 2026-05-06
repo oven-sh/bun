@@ -284,9 +284,6 @@ mod linux_impl {
     use super::*;
 
     pub fn wait(ptr: &AtomicU32, expect: u32, timeout: Option<u64>) -> Result<(), TimeoutError> {
-        #[cfg(any())]
-        {
-        // TODO(b2-blocked): bun_sys::linux::futex_4arg
         use bun_sys::linux;
         // SAFETY: ts is fully initialized below before being passed to the kernel when
         // timeout.is_some(); when timeout is None we pass null and ts is never read.
@@ -326,16 +323,9 @@ mod linux_impl {
                 );
             }
         }
-        }
-        // TODO(b2-blocked): bun_sys::linux::futex_4arg
-        let _ = (ptr, expect, timeout);
-        unimplemented!("b2-blocked: bun_sys::linux::futex_4arg")
     }
 
     pub fn wake(ptr: &AtomicU32, max_waiters: u32) {
-        #[cfg(any())]
-        {
-        // TODO(b2-blocked): bun_sys::linux::futex_3arg
         use bun_sys::linux;
         let val: u32 = match i32::try_from(max_waiters) {
             Ok(v) => v as u32,
@@ -356,10 +346,6 @@ mod linux_impl {
             linux::E::FAULT => panic!("futex_wake() returned EFAULT unexpectedly"), // pointer became invalid while doing the wake
             _ => panic!("Unexpected futex_wake() return code"),
         }
-        }
-        // TODO(b2-blocked): bun_sys::linux::futex_3arg
-        let _ = (ptr, max_waiters);
-        unimplemented!("b2-blocked: bun_sys::linux::futex_3arg")
     }
 }
 

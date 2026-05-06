@@ -28,9 +28,6 @@ pub mod parser;
 pub use parser::*;
 
 // ── round-C stubs for gated modules P.rs/Parser.rs reference ────────────
-pub mod renamer {
-    pub type SymbolMap = crate::ast::symbol::Map;
-}
 pub mod repl_transforms {
     pub type ReplPrelude = ();
 }
@@ -1584,13 +1581,14 @@ pub mod defines_full_draft {
 // Only the slot-assignment helpers the parser calls (`P.rs:6658`) live here;
 // the full `NumberRenamer`/`MinifyRenamer` machinery stays in `bun_js_printer`
 // (it depends on the printer's name-buffer and reserved-names tables).
-// TODO(b1): gated — depends on un-stubbed `Scope.members`, `Symbol.nested_scope_slot`.
-#[cfg(any())]
 pub mod renamer {
     use crate::ast::base::Ref;
     use crate::ast::scope::Scope;
     use crate::ast::symbol::{self, Symbol, SlotNamespace, INVALID_NESTED_SCOPE_SLOT};
     use crate::SlotCounts;
+
+    // Round-C alias kept for P.rs/Parser.rs callers.
+    pub type SymbolMap = crate::ast::symbol::Map;
 
     pub fn assign_nested_scope_slots(
         _allocator: &bun_alloc::Arena,

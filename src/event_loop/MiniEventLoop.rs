@@ -125,69 +125,67 @@ thread_local! {
 }
 
 pub fn init_global(
-    env: Option<&'static DotEnvLoader<'static>>,
+    env: Option<&'static mut DotEnvLoader<'static>>,
     cwd: Option<&[u8]>,
 ) -> &'static mut MiniEventLoop<'static> {
-    #[cfg(any())]
+    if GLOBAL_INITIALIZED.with(|g| g.get()) {
+        // SAFETY: GLOBAL was set on a previous call (GLOBAL_INITIALIZED gate).
+        return unsafe { &mut *GLOBAL.with(|g| g.get()) };
+    }
+    let loop_ = MiniEventLoop::init();
+    // PORT NOTE: §Forbidden bans `Box::leak` for `&'static`; this is a
+    // thread-lifetime singleton, so use `Box::into_raw` (intrusive ownership)
+    // and store the raw pointer in the thread-local — same as Zig
+    // `bun.default_allocator.create` + `threadlocal var global: *MiniEventLoop`.
+    let global: *mut MiniEventLoop<'static> = Box::into_raw(Box::new(loop_));
+    GLOBAL.with(|g| g.set(global));
+    // SAFETY: just allocated above; exclusive on this thread.
+    let global = unsafe { &mut *global };
+
+    // PORT NOTE: `InternalLoopData::set_parent_event_loop` (typed) lives in a
+    // higher tier; the sys-level API is `set_parent_raw(tag, ptr)`. Tag 1 = JS,
+    // tag 2 = mini (matches Zig `EventLoopHandle` discriminant + 1).
     {
-        if GLOBAL_INITIALIZED.with(|g| g.get()) {
-            // SAFETY: GLOBAL was set on a previous call (GLOBAL_INITIALIZED gate).
-            return unsafe { &mut *GLOBAL.with(|g| g.get()) };
-        }
-        let loop_ = MiniEventLoop::init();
-        // PORT NOTE: §Forbidden bans `Box::leak` for `&'static`; this is a
-        // thread-lifetime singleton, so use `Box::into_raw` (intrusive ownership)
-        // and store the raw pointer in the thread-local — same as Zig
-        // `bun.default_allocator.create` + `threadlocal var global: *MiniEventLoop`.
-        let global: *mut MiniEventLoop<'static> = Box::into_raw(Box::new(loop_));
-        GLOBAL.with(|g| g.set(global));
-        // SAFETY: just allocated above; exclusive on this thread.
-        let global = unsafe { &mut *global };
+        let (tag, ptr) = EventLoopHandle::init_mini(global).into_tag_ptr();
+        // SAFETY: `loop_` is the live C-owned uws loop set in `MiniEventLoop::init`.
+        unsafe { (*global.loop_).internal_loop_data.set_parent_raw(tag, ptr) };
+    }
 
-        // TODO(b2-blocked): bun_uws::Loop::internal_loop_data
-        // TODO(b2-blocked): bun_uws::InternalLoopData::set_parent_event_loop
-        global
-            .loop_
-            .internal_loop_data()
-            .set_parent_event_loop(EventLoopHandle::init_mini(global));
+    // PORT NOTE: Zig `bun.DotEnv.instance` is a `?*Loader` global. The Rust
+    // port stores it as `OnceLock<usize>` (erased `*mut Loader<'static>`).
+    global.env = env.map(NonNull::from).or_else(|| {
+        dotenv::INSTANCE
+            .get()
+            .and_then(|p| NonNull::new(*p as *mut DotEnvLoader<'static>))
+    });
+    if global.env.is_none() {
+        // Thread-lifetime singletons (matches Zig `bun.default_allocator.create`).
+        let map: *mut dotenv::Map = Box::into_raw(Box::new(dotenv::Map::init()));
+        // SAFETY: `map` lives for the thread (singleton); never freed (Zig parity).
+        let loader: *mut DotEnvLoader<'static> =
+            Box::into_raw(Box::new(DotEnvLoader::init(unsafe { &mut *map })));
+        // SAFETY: `Box::into_raw` never returns null.
+        global.env = Some(unsafe { NonNull::new_unchecked(loader) });
+    }
 
-        // TODO(b2-blocked): bun_dotenv::instance
-        global.env = env.or_else(|| dotenv::instance());
-        if global.env.is_none() {
-            // Thread-lifetime singletons (matches Zig `bun.default_allocator.create`).
-            let map: *mut dotenv::Map = Box::into_raw(Box::new(dotenv::Map::init()));
-            // SAFETY: `map` lives for the thread (singleton); never freed (Zig parity).
-            let loader: *mut DotEnvLoader<'static> =
-                Box::into_raw(Box::new(DotEnvLoader::init(unsafe { &mut *map })));
-            // SAFETY: same lifetime reasoning as above.
-            global.env = Some(unsafe { &*loader });
-        }
-
-        // Set top_level_dir from provided cwd or get current working directory
-        if let Some(dir) = cwd {
-            // PORT NOTE: Zig borrowed `dir`; we dupe to keep Box<[u8]> ownership uniform.
-            global.top_level_dir = Box::<[u8]>::from(dir);
-        } else if global.top_level_dir.is_empty() {
-            let mut buf = bun_paths::PathBuffer::uninit();
-            // TODO(b2-blocked): bun_sys::getcwd (returns Maybe<usize>, not slice — reshape)
-            match sys::getcwd(&mut buf) {
-                Ok(len) => {
-                    global.top_level_dir = Box::<[u8]>::from(&buf[..len]);
-                }
-                Err(_) => {
-                    global.top_level_dir = Box::default();
-                }
+    // Set top_level_dir from provided cwd or get current working directory
+    if let Some(dir) = cwd {
+        // PORT NOTE: Zig borrowed `dir`; we dupe to keep Box<[u8]> ownership uniform.
+        global.top_level_dir = Box::<[u8]>::from(dir);
+    } else if global.top_level_dir.is_empty() {
+        let mut buf = bun_paths::PathBuffer::uninit();
+        match sys::getcwd(&mut buf[..]) {
+            Ok(len) => {
+                global.top_level_dir = Box::<[u8]>::from(&buf[..len]);
+            }
+            Err(_) => {
+                global.top_level_dir = Box::default();
             }
         }
-
-        GLOBAL_INITIALIZED.with(|g| g.set(true));
-        return global;
     }
-    let _ = (env, cwd);
-    // TODO(b2-blocked): bun_uws::Loop::internal_loop_data
-    // TODO(b2-blocked): bun_uws::InternalLoopData::set_parent_event_loop
-    // TODO(b2-blocked): bun_dotenv::instance
-    todo!("MiniEventLoop::init_global — blocked on bun_uws::Loop / bun_dotenv::instance")
+
+    GLOBAL_INITIALIZED.with(|g| g.set(true));
+    global
 }
 
 impl<'a> MiniEventLoop<'a> {
@@ -229,25 +227,19 @@ impl<'a> MiniEventLoop<'a> {
     }
 
     pub fn init() -> MiniEventLoop<'a> {
-        #[cfg(any())]
-        {
-            return MiniEventLoop {
-                tasks: Queue::init(),
-                concurrent_tasks: ConcurrentTaskQueue::default(),
-                // TODO(b2-blocked): bun_uws::Loop::get
-                loop_: UwsLoop::get(),
-                file_polls_: None,
-                env: None,
-                top_level_dir: Box::default(),
-                after_event_loop_callback_ctx: None,
-                after_event_loop_callback: None,
-                pipe_read_buffer: None,
-                stdout_store: None,
-                stderr_store: None,
-            };
+        MiniEventLoop {
+            tasks: Queue::init(),
+            concurrent_tasks: ConcurrentTaskQueue::default(),
+            loop_: UwsLoop::get(),
+            file_polls_: None,
+            env: None,
+            top_level_dir: Box::default(),
+            after_event_loop_callback_ctx: None,
+            after_event_loop_callback: None,
+            pipe_read_buffer: None,
+            stdout_store: None,
+            stderr_store: None,
         }
-        // TODO(b2-blocked): bun_uws::Loop::get
-        todo!("MiniEventLoop::init — blocked on bun_uws::Loop::get")
     }
 
     pub fn tick_concurrent_with_count(&mut self) -> usize {
@@ -298,84 +290,65 @@ impl<'a> MiniEventLoop<'a> {
     }
 
     pub fn tick_once(&mut self, context: *mut c_void) {
-        #[cfg(any())]
-        {
-            if self.tick_concurrent_with_count() == 0 && self.tasks.readable_length() == 0 {
-                // TODO(b2-blocked): bun_uws::Loop::inc
-                // TODO(b2-blocked): bun_uws::Loop::tick
-                // TODO(b2-blocked): bun_uws::Loop::dec
-                self.loop_.inc();
-                self.loop_.tick();
-                self.loop_.dec();
-                // PORT NOTE: Zig `defer this.onAfterEventLoop()` was block-scoped to this `if`.
-                self.on_after_event_loop();
+        if self.tick_concurrent_with_count() == 0 && self.tasks.readable_length() == 0 {
+            // SAFETY: `loop_` is the live C-owned uws loop set in `init()`.
+            unsafe {
+                (*self.loop_).inc();
+                (*self.loop_).tick();
+                (*self.loop_).dec();
             }
-
-            while let Some(task) = self.tasks.read_item() {
-                // SAFETY: tasks are pushed by enqueue_task* and remain valid until run() consumes them.
-                unsafe { (*task).run(context) };
-            }
-            return;
+            // PORT NOTE: Zig `defer this.onAfterEventLoop()` was block-scoped to this `if`.
+            self.on_after_event_loop();
         }
-        let _ = context;
-        // TODO(b2-blocked): bun_uws::Loop::tick
-        todo!("MiniEventLoop::tick_once — blocked on bun_uws::Loop methods")
+
+        while let Some(task) = self.tasks.read_item() {
+            // SAFETY: tasks are pushed by enqueue_task* and remain valid until run() consumes them.
+            unsafe { (*task).run(context) };
+        }
     }
 
     pub fn tick_without_idle(&mut self, context: *mut c_void) {
-        #[cfg(any())]
-        {
-            loop {
-                let _ = self.tick_concurrent_with_count();
-                while let Some(task) = self.tasks.read_item() {
-                    // SAFETY: see tick_once.
-                    unsafe { (*task).run(context) };
-                }
-
-                // TODO(b2-blocked): bun_uws::Loop::tick_without_idle
-                self.loop_.tick_without_idle();
-
-                if self.tasks.readable_length() == 0 && self.tick_concurrent_with_count() == 0 {
-                    break;
-                }
+        loop {
+            let _ = self.tick_concurrent_with_count();
+            while let Some(task) = self.tasks.read_item() {
+                // SAFETY: see tick_once.
+                unsafe { (*task).run(context) };
             }
-            // PORT NOTE: Zig `defer this.onAfterEventLoop()` at fn scope; no early returns above.
-            self.on_after_event_loop();
-            return;
+
+            // SAFETY: `loop_` is the live C-owned uws loop set in `init()`.
+            unsafe { (*self.loop_).tick_without_idle() };
+
+            if self.tasks.readable_length() == 0 && self.tick_concurrent_with_count() == 0 {
+                break;
+            }
         }
-        let _ = context;
-        // TODO(b2-blocked): bun_uws::Loop::tick_without_idle
-        todo!("MiniEventLoop::tick_without_idle — blocked on bun_uws::Loop methods")
+        // PORT NOTE: Zig `defer this.onAfterEventLoop()` at fn scope; no early returns above.
+        self.on_after_event_loop();
     }
 
     pub fn tick<F>(&mut self, context: *mut c_void, is_done: F)
     where
         F: Fn(*mut c_void) -> bool,
     {
-        #[cfg(any())]
-        {
-            // PERF(port): Zig `comptime isDone: *const fn` monomorphized per callsite; generic `F`
-            // here also monomorphizes — should match.
-            while !is_done(context) {
-                if self.tick_concurrent_with_count() == 0 && self.tasks.readable_length() == 0 {
-                    // TODO(b2-blocked): bun_uws::Loop::inc / tick / dec
-                    self.loop_.inc();
-                    self.loop_.tick();
-                    self.loop_.dec();
-                    // PORT NOTE: Zig `defer` was block-scoped to this `if`.
-                    self.on_after_event_loop();
+        // PERF(port): Zig `comptime isDone: *const fn` monomorphized per callsite; generic `F`
+        // here also monomorphizes — should match.
+        while !is_done(context) {
+            if self.tick_concurrent_with_count() == 0 && self.tasks.readable_length() == 0 {
+                // SAFETY: `loop_` is the live C-owned uws loop set in `init()`.
+                unsafe {
+                    (*self.loop_).inc();
+                    (*self.loop_).tick();
+                    (*self.loop_).dec();
                 }
-
-                while let Some(task) = self.tasks.read_item() {
-                    // SAFETY: see tick_once.
-                    unsafe { (*task).run(context) };
-                }
+                // PORT NOTE: Zig `defer` was block-scoped to this `if`.
+                self.on_after_event_loop();
             }
-            return;
+
+            while let Some(task) = self.tasks.read_item() {
+                // SAFETY: see tick_once.
+                unsafe { (*task).run(context) };
+            }
         }
-        let _ = (context, is_done);
-        // TODO(b2-blocked): bun_uws::Loop::tick
-        todo!("MiniEventLoop::tick — blocked on bun_uws::Loop methods")
     }
 
     // TODO(port): Zig `enqueueTask` uses `comptime field: std.meta.FieldEnum(Context)` + `@field`
@@ -394,16 +367,9 @@ impl<'a> MiniEventLoop<'a> {
     }
 
     pub fn enqueue_task_concurrent(&mut self, task: *mut AnyTaskWithExtraContext) {
-        #[cfg(any())]
-        {
-            self.concurrent_tasks.push(task);
-            // TODO(b2-blocked): bun_uws::Loop::wakeup
-            self.loop_.wakeup();
-            return;
-        }
-        let _ = task;
-        // TODO(b2-blocked): bun_uws::Loop::wakeup
-        todo!("MiniEventLoop::enqueue_task_concurrent — blocked on bun_uws::Loop::wakeup")
+        self.concurrent_tasks.push(task);
+        // SAFETY: `loop_` is the live C-owned uws loop set in `init()`.
+        unsafe { (*self.loop_).wakeup() };
     }
 
     // TODO(port): same comptime-reflection problem as `enqueue_task` (uses `@field` +
@@ -508,27 +474,18 @@ mod mini_ctx {
         // Zig MiniVM.incrementPendingUnrefCounter: `@panic("FIXME TODO")`.
         unimplemented!("FIXME TODO");
     }
-    unsafe fn ref_concurrently(owner: *mut ()) {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_uws::Loop::ref_
-            unsafe { (*(*cast(owner)).loop_).ref_() };
-            return;
-        }
-        let _ = owner;
-        // TODO(b2-blocked): bun_uws::Loop::ref_
-        todo!("MiniEventLoop EventLoopCtx::ref_concurrently — blocked on bun_uws::Loop::ref_")
+    unsafe fn ref_concurrently(_: *mut ()) {
+        // Zig has NO Mini-side `refConcurrently` — `KeepAlive::refConcurrently`
+        // (src/aio/posix_event_loop.zig) only accepts `*jsc.VirtualMachine`;
+        // calling with a Mini loop is a Zig compile error. Preserve that
+        // invariant here rather than non-atomically mutating the uws PosixLoop
+        // counters from off-thread (data race) and omitting `wakeup()`.
+        unimplemented!("FIXME TODO");
     }
-    unsafe fn unref_concurrently(owner: *mut ()) {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_uws::Loop::unref
-            unsafe { (*(*cast(owner)).loop_).unref() };
-            return;
-        }
-        let _ = owner;
-        // TODO(b2-blocked): bun_uws::Loop::unref
-        todo!("MiniEventLoop EventLoopCtx::unref_concurrently — blocked on bun_uws::Loop::unref")
+    unsafe fn unref_concurrently(_: *mut ()) {
+        // See `ref_concurrently` — Zig `KeepAlive::unrefConcurrently` only
+        // accepts `*jsc.VirtualMachine`; unreachable for Mini.
+        unimplemented!("FIXME TODO");
     }
     unsafe fn after_event_loop_callback(owner: *mut ()) -> Option<OpaqueCallback> {
         unsafe { (*cast(owner)).after_event_loop_callback }

@@ -84,6 +84,7 @@ use core::sync::atomic::{AtomicPtr, Ordering};
 
 use bun_alloc::AllocError;
 use bun_logger as logger;
+use bun_logger::ast;
 use bun_string::{strings, String as BunString};
 use bun_string::escape_reg_exp::escape_reg_exp_for_package_name_matching;
 
@@ -197,19 +198,24 @@ impl From<FromExprError> for bun_core::Error {
 }
 
 impl PnpmMatcher {
-    // TODO(b2-blocked): bun_logger::ast::Expr / bun_logger::ast::ExprData —
-    // EString/EArray/.as_string_cloned/.slice/.loc have not yet moved down
-    // from bun_js_parser into bun_logger per CYCLEBREAK §→logger. The fn
-    // signature itself names `ast::Expr`, so the whole fn (not just the body)
-    // stays gated until that lower-tier surface lands. Body is otherwise
-    // reconciled against the live `bun_logger::{Log, Source, AddErrorOptions}`
-    // API so un-gating only needs the `ast` import.
-    #[cfg(any())]
+    // B-2 UN-GATED (signature): `bun_logger::ast::Expr` / `Log` / `Source` now
+    // resolve, so the fn is part of the public surface and downstream
+    // `ini`/`bunfig` callers can name it.
+    //
+    // TODO(b2-blocked): bun_logger::ast::ExprData — currently an opaque
+    // `struct ExprData(())` stub, not the real tagged enum. The body pattern-
+    // matches on `ExprData::EString` / `ExprData::EArray` and calls
+    // `E::String::slice` / `Expr::as_string_cloned` (both `todo!()` in the T2
+    // stub and with divergent arena-taking signatures). Body stays gated until
+    // the value-shaped AST MOVE_DOWN (bun_js_parser→bun_logger) lands the real
+    // variant set; un-gating then only needs the `match` arms reconciled.
     pub fn from_expr(
         expr: &ast::Expr,
         log: &mut logger::Log,
         source: &logger::Source,
     ) -> Result<PnpmMatcher, FromExprError> {
+        #[cfg(any())]
+        {
         let mut buf: Vec<u8> = Vec::new();
 
         // bun.jsc.initialize(false) is now performed lazily inside
@@ -308,10 +314,13 @@ impl PnpmMatcher {
             Behavior::HasExcludeAndIncludeMatchers
         };
 
-        Ok(PnpmMatcher {
+        return Ok(PnpmMatcher {
             matchers: matchers.into_boxed_slice(),
             behavior,
-        })
+        });
+        } // end #[cfg(any())] body
+        let _ = (expr, log, source);
+        todo!("PnpmMatcher::from_expr — blocked on bun_logger::ast::ExprData enum variants (MOVE_DOWN pending from bun_js_parser)")
     }
 
     pub fn is_match(&self, name: &[u8]) -> bool {

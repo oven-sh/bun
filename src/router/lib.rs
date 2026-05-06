@@ -956,9 +956,11 @@ impl<'a> RouteLoader<'a> {
     }
 
     #[cfg(any())]
-    // TODO(b2-blocked): bun_sys::fs::DirEntry / bun_sys::fs::Entry (MOVE_DOWN bun_resolver::fs→sys pending)
-    // TODO(b2-blocked): bun_sys::fs::FileSystem::abs
-    // TODO(b2-blocked): bun_paths::extension
+    // TODO(b2-blocked): bun_sys::fs::DirEntry::iter — opaque stub exposes no
+    //   way to iterate `data` (Zig: `entries.data.iterator()`); MOVE_DOWN
+    //   bun_resolver::fs→sys still pending the EntryMap surface.
+    // TODO(b2-blocked): bun_sys::fs::Entry::dir — field access; opaque stub
+    //   only has getter, but `load` needs the slice for sub-slicing.
     pub fn load<R: ResolverLike>(
         &mut self,
         resolver: &mut R,
@@ -1158,12 +1160,11 @@ impl Route {
     pub const INDEX_ROUTE_NAME: &'static [u8] = b"/";
 
     #[cfg(any())]
-    // TODO(b2-blocked): bun_sys::fs::Entry (MOVE_DOWN bun_resolver::fs→sys pending)
-    // TODO(b2-blocked): bun_sys::fs::FileSystem::dirname_store
-    // TODO(b2-blocked): bun_sys::fs::FileSystem::abs_buf
-    // TODO(b2-blocked): bun_sys::fs::FileSystem::set_max_fd
-    // TODO(b2-blocked): bun_sys::open_file_absolute_z
-    // TODO(b2-blocked): bun_string::strings::trim_right
+    // TODO(b2-blocked): bun_sys::fs::Entry::set_abs_path — body mutates
+    //   `entry.abs_path` (Zig: `entry.abs_path = PathString.init(...)`); the
+    //   opaque MOVE_DOWN stub has no setter.
+    // TODO(b2-blocked): bun_sys::fs::Entry::cache — body reads
+    //   `entry.cache.fd`; opaque stub's `cache()` returns a copy, not a field.
     pub fn parse(
         base_: &[u8],
         extname: &[u8],
@@ -1528,7 +1529,6 @@ impl<'a> Match<'a> {
         PathnameScanner::init(self.pathname, self.name, self.params)
     }
 
-    #[cfg(any())] // TODO(b2-blocked): bun_paths::extension
     pub fn name_with_basename<'s>(file_path: &'s [u8], dir: &[u8]) -> &'s [u8] {
         let mut name = file_path;
         if let Some(i) = strings::index_of(name, dir) {
@@ -2128,7 +2128,6 @@ mod tests {
         }
     }
 
-    #[cfg(any())] // TODO(b2-blocked): bun_core::Output::init_test
     fn make_test(cwd_path: &[u8], data: &[(&str, &str)]) -> Result<(), bun_core::Error> {
         // TODO(port): Zig used comptime field iteration over an anonymous struct.
         // Ported as runtime slice of (path, content) pairs.

@@ -57,16 +57,10 @@ pub fn append_to_headers(bytes: &[u8], headers: &mut Headers) -> Result<(), bun_
     Ok(())
 }
 
+#[inline]
 fn xxhash64(seed: u64, bytes: &[u8]) -> u64 {
-    // TODO(b2-blocked): bun_core::hash::xxhash64
-    // Zig: `std.hash.XxHash64.hash(0, bytes)`. No XxHash64 in bun_core yet
-    // (only wyhash). Body re-gated until lower-tier crate exposes it.
-    #[cfg(any())]
-    {
-        bun_core::hash::xxhash64(seed, bytes)
-    }
-    let _ = (seed, bytes);
-    unimplemented!("b2-blocked: bun_core::hash::xxhash64")
+    // Zig: `std.hash.XxHash64.hash(0, bytes)`.
+    bun_core::hash::xxhash64(seed, bytes)
 }
 
 pub fn if_none_match(
@@ -292,6 +286,6 @@ pub mod wtf {
 // PORT STATUS
 //   source:     src/http_types/ETag.zig (65 lines)
 //   confidence: medium
-//   todos:      3
-//   notes:      XxHash64 needs a crate; strings::trim/trim_left assumed in bun_str
+//   todos:      2
+//   notes:      strings::trim/trim_left assumed in bun_str
 // ──────────────────────────────────────────────────────────────────────────

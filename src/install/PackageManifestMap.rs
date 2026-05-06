@@ -1,6 +1,8 @@
 use bun_collections::HashMap;
-use bun_collections::hash_map::Entry;
-use bun_semver::String as SemverString;
+// PORT NOTE: bun_collections::HashMap aliases std::collections::HashMap, so its
+// .entry() returns the std Entry, not bun_collections::hash_map::Entry.
+use std::collections::hash_map::Entry;
+use bun_semver::string::Builder as StringBuilder;
 
 use crate::npm;
 use crate::PackageManager;
@@ -41,7 +43,7 @@ impl PackageManifestMap {
         self.by_name_hash(
             pm,
             scope,
-            SemverString::Builder::string_hash(name),
+            StringBuilder::string_hash(name),
             cache_behavior,
             needs_extended_manifest,
         )
@@ -88,7 +90,7 @@ impl PackageManifestMap {
         self.by_name_hash_allow_expired(
             pm,
             scope,
-            SemverString::Builder::string_hash(name),
+            StringBuilder::string_hash(name),
             is_expired,
             cache_behavior,
             needs_extended_manifest,
@@ -127,17 +129,22 @@ impl PackageManifestMap {
         match self.hash_map.entry(name_hash) {
             Entry::Occupied(occ) => {
                 let value_ptr = occ.into_mut();
-                if let Value::Manifest(m) = value_ptr {
-                    if needs_extended_manifest && !m.pkg.has_extended_manifest {
-                        // PORT NOTE: reshaped for borrowck — swap variant tag while moving payload.
-                        let Value::Manifest(m) = core::mem::replace(value_ptr, Value::NotFound)
-                        else {
-                            unreachable!()
-                        };
-                        *value_ptr = Value::Expired(m);
-                    } else {
-                        return Some(m);
-                    }
+                // PORT NOTE: reshaped for borrowck — Zig mutated `value_ptr.*` in
+                // place from `.manifest` to `.expired`. Compute the demote decision
+                // first without holding a borrow that escapes the fn.
+                let demote = matches!(
+                    value_ptr,
+                    Value::Manifest(m)
+                        if needs_extended_manifest && !m.pkg.has_extended_manifest
+                );
+                if demote {
+                    let Value::Manifest(m) = core::mem::replace(value_ptr, Value::NotFound)
+                    else {
+                        unreachable!()
+                    };
+                    *value_ptr = Value::Expired(m);
+                } else if let Value::Manifest(m) = value_ptr {
+                    return Some(m);
                 }
 
                 if let Some(expiry) = is_expired {
@@ -151,7 +158,7 @@ impl PackageManifestMap {
             }
             Entry::Vacant(vac) => {
                 if pm.options.enable.manifest_cache {
-                    if let Some(manifest) = npm::PackageManifest::Serializer::load_by_file_id(
+                    if let Some(manifest) = npm::package_manifest::Serializer::load_by_file_id(
                         scope,
                         pm.get_cache_directory(),
                         name_hash,

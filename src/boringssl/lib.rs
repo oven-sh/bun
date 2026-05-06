@@ -8,7 +8,7 @@ use core::ffi::CStr;
 use core::ptr;
 
 pub use bun_boringssl_sys as boring;
-#[cfg(any())] use bun_cares_sys as c_ares; // TODO(b2-blocked): bun_cares_sys::{ares_inet_pton, ares_inet_ntop} (module gated)
+use bun_cares_sys as c_ares;
 use bun_string::strings;
 
 // MOVE_DOWN: ported from `src/runtime/api/bun/x509.zig::isSafeAltName`.
@@ -63,7 +63,10 @@ pub fn load() {
         }
         LOADED = true;
         boring::CRYPTO_library_init();
-        debug_assert!(boring::SSL_library_init() > 0);
+        // NB: do NOT fold this into `debug_assert!` — that macro elides its
+        // argument entirely in release builds, which would skip the call.
+        let rc = boring::SSL_library_init();
+        debug_assert!(rc > 0);
         boring::SSL_load_error_strings();
         boring::ERR_load_BIO_strings();
         boring::OpenSSL_add_all_algorithms();
@@ -76,11 +79,50 @@ pub fn load() {
     }
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// Extra FFI surface not yet exposed by `bun_boringssl_sys` (hand-curated
+// subset). Ground truth: src/boringssl_sys/boringssl.zig + openssl/ssl.h.
+// Remove once the bindgen pipeline lands these in the sys crate.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `enum ssl_verify_result_t` is `BORINGSSL_ENUM_INT`-backed; `ssl_verify_ok == 0`.
+#[allow(non_camel_case_types)]
+type ssl_verify_result_t = c_int;
+#[allow(non_upper_case_globals)]
+const ssl_verify_ok: ssl_verify_result_t = 0;
+
+/// `#define SSL_DEFAULT_CIPHER_LIST "ALL"`
+const SSL_DEFAULT_CIPHER_LIST: *const c_char = c"ALL".as_ptr();
+
+#[repr(C)]
+struct CRYPTO_BUFFER_POOL {
+    _opaque: [u8; 0],
+}
+
+type SslCustomVerifyCb =
+    Option<unsafe extern "C" fn(ssl: *mut boring::SSL, out_alert: *mut u8) -> ssl_verify_result_t>;
+
+unsafe extern "C" {
+    fn SSL_CTX_set_custom_verify(ctx: *mut boring::SSL_CTX, mode: c_int, callback: SslCustomVerifyCb);
+    fn CRYPTO_BUFFER_POOL_new() -> *mut CRYPTO_BUFFER_POOL;
+    fn SSL_CTX_set0_buffer_pool(ctx: *mut boring::SSL_CTX, pool: *mut CRYPTO_BUFFER_POOL);
+    fn SSL_CTX_set_cipher_list(ctx: *mut boring::SSL_CTX, s: *const c_char) -> c_int;
+}
+
+unsafe extern "C" fn noop_custom_verify(
+    _ssl: *mut boring::SSL,
+    _out_alert: *mut u8,
+) -> ssl_verify_result_t {
+    ssl_verify_ok
+}
+
 static mut CTX_STORE: Option<*mut boring::SSL_CTX> = None;
+// Zig: `threadlocal var auto_crypto_buffer_pool` — only ever populated on the
+// first `init_client()` call (guarded by `CTX_STORE`), so a plain static under
+// the same single-threaded-startup assumption is equivalent.
+static mut AUTO_CRYPTO_BUFFER_POOL: *mut CRYPTO_BUFFER_POOL = ptr::null_mut();
 
 pub fn init_client() -> *mut boring::SSL {
-    #[cfg(not(any()))] { todo!("b2-blocked: bun_boringssl_sys::SSL_new / SSL_CTX_new / TLS_with_buffers_method / SSL_set_connect_state") }
-    #[cfg(any())] // TODO(b2-blocked): bun_boringssl_sys::SSL_new / SSL_CTX_new / TLS_with_buffers_method / SSL_set_connect_state
     // SAFETY: matches Zig's non-atomic global; single-threaded startup assumption.
     unsafe {
         if let Some(ctx) = CTX_STORE {
@@ -90,9 +132,19 @@ pub fn init_client() -> *mut boring::SSL {
         let ctx = match CTX_STORE {
             Some(ctx) => ctx,
             None => 'brk: {
-                // Zig: `SSL_CTX.init()` = `SSL_CTX_new(TLS_with_buffers_method())`
-                CTX_STORE = Some(boring::SSL_CTX_new(boring::TLS_with_buffers_method()));
-                break 'brk CTX_STORE.unwrap();
+                // Zig: `SSL_CTX.init()` — see boringssl.zig:19197. Three steps:
+                //   1. SSL_CTX_new(TLS_with_buffers_method())
+                //   2. setCustomVerify(noop_custom_verify) → SSL_CTX_set_custom_verify(ctx, 0, cb)
+                //   3. setup() → CRYPTO_BUFFER_POOL_new + set0_buffer_pool + set_cipher_list("ALL")
+                let ctx = boring::SSL_CTX_new(boring::TLS_with_buffers_method());
+                SSL_CTX_set_custom_verify(ctx, 0, Some(noop_custom_verify));
+                if AUTO_CRYPTO_BUFFER_POOL.is_null() {
+                    AUTO_CRYPTO_BUFFER_POOL = CRYPTO_BUFFER_POOL_new();
+                }
+                SSL_CTX_set0_buffer_pool(ctx, AUTO_CRYPTO_BUFFER_POOL);
+                let _ = SSL_CTX_set_cipher_list(ctx, SSL_DEFAULT_CIPHER_LIST);
+                CTX_STORE = Some(ctx);
+                break 'brk ctx;
             }
         };
 
@@ -163,9 +215,6 @@ pub fn canonicalize_ip<'a>(
     addr_str: &[u8],
     out_ip: &'a mut [u8; INET6_ADDRSTRLEN + 1],
 ) -> Option<&'a [u8]> {
-    #[cfg(not(any()))] { todo!("b2-blocked: bun_cares_sys::ares_inet_pton") }
-    #[cfg(any())] // TODO(b2-blocked): bun_cares_sys::ares_inet_pton
-    {
     if addr_str.len() >= INET6_ADDRSTRLEN {
         return None;
     }
@@ -190,7 +239,7 @@ pub fn canonicalize_ip<'a>(
             af,
             ip_std_text.as_ptr().cast(),
             out_ip.as_mut_ptr().cast(),
-            out_ip.len(),
+            out_ip.len() as c_ares::c_ares::ares_socklen_t,
         )
         .is_null()
         {
@@ -203,7 +252,6 @@ pub fn canonicalize_ip<'a>(
         .to_bytes()
         .len();
     Some(&out_ip[..size])
-    }
 }
 
 /// converts ASN1_OCTET_STRING to canonicalized IP string
@@ -212,15 +260,17 @@ pub fn ip2_string<'a>(
     ip: &boring::ASN1_OCTET_STRING,
     out_ip: &'a mut [u8; INET6_ADDRSTRLEN + 1],
 ) -> Option<&'a [u8]> {
-    #[cfg(not(any()))] { todo!("b2-blocked: bun_cares_sys::ares_inet_ntop") }
-    #[cfg(any())] // TODO(b2-blocked): bun_cares_sys::ares_inet_ntop
-    {
     // Zig used std.posix.AF.INET — libc constants, not bun_sys.
     let af: c_int = if ip.length == 4 { libc::AF_INET } else { libc::AF_INET6 };
     // SAFETY: ip.data points to ip.length bytes; out_ip is INET6_ADDRSTRLEN+1 bytes.
     unsafe {
-        if c_ares::ares_inet_ntop(af, ip.data.cast(), out_ip.as_mut_ptr().cast(), out_ip.len())
-            .is_null()
+        if c_ares::ares_inet_ntop(
+            af,
+            ip.data.cast(),
+            out_ip.as_mut_ptr().cast(),
+            out_ip.len() as c_ares::c_ares::ares_socklen_t,
+        )
+        .is_null()
         {
             return None;
         }
@@ -232,7 +282,6 @@ pub fn ip2_string<'a>(
         .to_bytes()
         .len();
     Some(&out_ip[..size])
-    }
 }
 
 /// Matches a DNS name pattern (possibly with a leading `*.` wildcard) against

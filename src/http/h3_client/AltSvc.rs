@@ -13,9 +13,9 @@
 //! (RFC 7838 §2.1) that are out of scope here.
 
 use bun_collections::StringHashMap;
-use bun_str::strings;
+use bun_string::strings;
 
-bun_output::declare_scope!(h3_client, hidden);
+bun_core::declare_scope!(h3_client, hidden);
 
 /// One advertised `h3` alternative from an `Alt-Svc` field-value. `port` is
 /// the alt-authority port (where QUIC should connect); `ma` is the freshness
@@ -59,7 +59,7 @@ pub fn parse(field_value: &[u8]) -> Result<Option<Entry>, ParseError> {
     if value.is_empty() {
         return Ok(None);
     }
-    if strings::eql_case_insensitive_ascii(value, b"clear", true) {
+    if strings::eql_case_insensitive_ascii::<true>(value, b"clear") {
         return Err(ParseError::Clear);
     }
 
@@ -80,7 +80,7 @@ pub fn parse(field_value: &[u8]) -> Result<Option<Entry>, ParseError> {
         let proto = &alternative[..eq];
         // Only the final IETF "h3" ALPN token; draft `h3-NN` versions are
         // ignored since lsquic is built for the final spec.
-        if !strings::eql_case_insensitive_ascii(proto, b"h3", true) {
+        if !strings::eql_case_insensitive_ascii::<true>(proto, b"h3") {
             continue;
         }
 
@@ -110,7 +110,7 @@ pub fn parse(field_value: &[u8]) -> Result<Option<Entry>, ParseError> {
                 continue;
             };
             let peq = peq as usize;
-            if strings::eql_case_insensitive_ascii(&param[..peq], b"ma", true) {
+            if strings::eql_case_insensitive_ascii::<true>(&param[..peq], b"ma") {
                 result.ma = parse_int::<u32>(&param[peq + 1..]).unwrap_or(result.ma);
             }
             // `persist` and unknown parameters are ignored (§3.1).
@@ -194,7 +194,7 @@ pub fn record(origin_host: &[u8], origin_port: u16, field_value: &[u8]) {
         Err(ParseError::Clear) => {
             // `clear`
             cache().remove(k);
-            bun_output::scoped_log!(h3_client, "alt-svc clear {}", bstr::BStr::new(k));
+            bun_core::scoped_log!(h3_client, "alt-svc clear {}", bstr::BStr::new(k));
             return;
         }
         Ok(None) => return,
@@ -208,13 +208,12 @@ pub fn record(origin_host: &[u8], origin_port: u16, field_value: &[u8]) {
             return;
         }
     }
-    // TODO(port): `StringHashMap` getOrPut equivalent. Assumes an
-    // `entry(&[u8])`-style API that dupes the key on insert; adjust in Phase B.
-    cache().insert_or_update(k, Record {
+    // PORT NOTE: `StringHashMap::put` dupes the key on insert (matches Zig getOrPut).
+    let _ = cache().put(k, Record {
         h3_port: entry.port,
         expires_at: now + i64::from(entry.ma),
     });
-    bun_output::scoped_log!(
+    bun_core::scoped_log!(
         h3_client,
         "alt-svc h3 {} -> :{} ma={}",
         bstr::BStr::new(k),

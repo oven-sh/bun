@@ -4,10 +4,10 @@ use core::mem::ManuallyDrop;
 use bun_logger as logger;
 use bun_semver as Semver;
 use bun_semver::{SlicedString, String};
-use bun_str::strings;
+use bun_string::strings;
 
 use crate::hosted_git_info;
-use crate::install::{Features, PackageManager, PackageNameHash};
+use crate::{Features, PackageManager, PackageNameHash};
 use crate::repository::Repository;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -24,10 +24,10 @@ impl URI {
     pub fn eql(lhs: URI, rhs: URI, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool {
         match (lhs, rhs) {
             (URI::Local(l), URI::Local(r)) => {
-                strings::eql_long(l.slice(lhs_buf), r.slice(rhs_buf), true)
+                strings::eql_long::<true>(l.slice(lhs_buf), r.slice(rhs_buf))
             }
             (URI::Remote(l), URI::Remote(r)) => {
-                strings::eql_long(l.slice(lhs_buf), r.slice(rhs_buf), true)
+                strings::eql_long::<true>(l.slice(lhs_buf), r.slice(rhs_buf))
             }
             _ => false,
         }
@@ -86,7 +86,7 @@ impl Dependency {
 
         let lhs_name = lhs.name.slice(string_buf);
         let rhs_name = rhs.name.slice(string_buf);
-        strings::cmp_strings_asc((), lhs_name, rhs_name)
+        strings::cmp_strings_asc(&(),lhs_name, rhs_name)
     }
 
     pub fn count_with_different_buffers<SB: StringBuilderLike>(
@@ -121,10 +121,13 @@ impl Dependency {
         builder: &mut SB,
     ) -> Result<Dependency, bun_core::Error> {
         // TODO(port): narrow error set
-        let out_slice = builder.lockfile().buffers.string_bytes.as_slice();
+        // PORT NOTE: reshaped for borrowck — Zig captured `out_slice` first, but
+        // `append_string` may reallocate `string_bytes`, invalidating the slice.
+        // Append first, then borrow the (now-stable) buffer.
         let new_literal = builder.append_string(self.version.literal.slice(version_buf));
-        let sliced = new_literal.sliced(out_slice);
         let new_name = builder.append_string(self.name.slice(name_buf));
+        let out_slice = builder.lockfile().buffers.string_bytes.as_slice();
+        let sliced = new_literal.sliced(out_slice);
 
         Ok(Dependency {
             name_hash: self.name_hash,
@@ -315,6 +318,41 @@ pub fn is_remote_tarball(dependency: &[u8]) -> bool {
     dependency.starts_with(b"https://") || dependency.starts_with(b"http://")
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// Stub-compat aliases: B-1 stub exposed `dependency::version::Tag`,
+// `dependency::VersionTag`, `Dependency::is_remote_tarball`, and a `tarball`
+// submodule. Real Zig nests `Tag` under `Dependency.Version`, but Phase-A
+// flattened to top-level — keep both paths so dependents type-check.
+// ──────────────────────────────────────────────────────────────────────────
+pub use Tag as VersionTag;
+pub mod version {
+    pub use super::Tag;
+}
+pub mod tarball {
+    pub use super::{TarballInfo, URI as Uri};
+}
+impl Dependency {
+    #[inline]
+    pub fn is_remote_tarball(dep: &[u8]) -> bool {
+        is_remote_tarball(dep)
+    }
+
+    /// Stub-compat: B-1 stub exposed `Dependency::parse` as an associated fn;
+    /// real port has it as a free fn. Delegate so downstream callers
+    /// (`bun_install_jsc`) keep type-checking.
+    #[inline]
+    pub fn parse(
+        alias: String,
+        alias_hash: Option<PackageNameHash>,
+        dependency: &[u8],
+        sliced: &SlicedString,
+        log: Option<&mut logger::Log>,
+        manager: Option<&mut PackageManager>,
+    ) -> Option<Version> {
+        parse(alias, alias_hash, dependency, sliced, log, manager)
+    }
+}
+
 pub fn split_version_and_maybe_name(str: &[u8]) -> (&[u8], Option<&[u8]>) {
     if let Some(at_index) = strings::index_of_char(str, b'@') {
         let at_index = at_index as usize;
@@ -484,7 +522,7 @@ impl Version {
 
     pub fn is_less_than(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool {
         debug_assert!(lhs.tag == rhs.tag);
-        strings::cmp_strings_asc((), lhs.literal.slice(string_buf), rhs.literal.slice(string_buf))
+        strings::cmp_strings_asc(&(),lhs.literal.slice(string_buf), rhs.literal.slice(string_buf))
     }
 
     pub fn is_less_than_with_tag(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool {
@@ -493,7 +531,7 @@ impl Version {
             return tag_order == Ordering::Less;
         }
 
-        strings::cmp_strings_asc((), lhs.literal.slice(string_buf), rhs.literal.slice(string_buf))
+        strings::cmp_strings_asc(&(),lhs.literal.slice(string_buf), rhs.literal.slice(string_buf))
     }
 
     pub fn to_version(
@@ -540,10 +578,9 @@ impl Version {
                 // if the two versions are identical as strings, it should often be faster to compare that than the actual semver version
                 // semver ranges involve a ton of pointer chasing
                 Tag::Npm => {
-                    strings::eql_long(
+                    strings::eql_long::<true>(
                         self.literal.slice(lhs_buf),
                         rhs.literal.slice(rhs_buf),
-                        true,
                     ) || self.value.npm.eql(&rhs.value.npm, lhs_buf, rhs_buf)
                 }
                 Tag::Folder | Tag::DistTag => {
@@ -645,8 +682,9 @@ impl Tag {
             return Tag::DistTag;
         }
 
-        if strings::starts_with_windows_drive_letter(dependency)
-            && bun_paths::is_sep(dependency[2])
+        if strings::starts_with_windows_drive_letter_t(dependency)
+            // PORT NOTE: Zig `bun.path.isSepAny` — bun_paths re-export pending; inlined.
+            && matches!(dependency[2], b'/' | b'\\')
         {
             if is_tarball(dependency) {
                 return Tag::Tarball;
@@ -990,7 +1028,12 @@ impl Tag {
 
 pub struct NpmInfo {
     pub name: String,
-    pub version: Semver::Query::Group,
+    // TODO(port): `Semver.Query.Group` in Zig stores `Semver.String` (offset+len
+    // into the lockfile string buffer) and so carries no borrow. The Rust
+    // `bun_semver::query::Group<'a>` currently borrows its `input: &'a [u8]`;
+    // pinning to `'static` here matches the B-1 stub. The construction site in
+    // `parse_with_tag` is re-gated until `Group` drops the lifetime.
+    pub version: Semver::query::Group<'static>,
     pub is_alias: bool,
 }
 
@@ -1085,7 +1128,7 @@ pub fn is_windows_abs_path_with_leading_slashes(dep: &[u8]) -> Option<&[u8]> {
                 return None;
             }
         }
-        if strings::starts_with_windows_drive_letter(&dep[i..]) {
+        if strings::starts_with_windows_drive_letter_t(&dep[i..]) {
             return Some(&dep[i..]);
         }
     }
@@ -1172,38 +1215,48 @@ pub fn parse_with_tag(
                 input = &input[1..];
             }
 
-            let version = match Semver::Query::parse(input, sliced.sub(input)) {
-                Ok(v) => v,
-                Err(_e) => {
-                    // error.OutOfMemory => bun.outOfMemory()
-                    bun_core::out_of_memory();
-                }
-            };
+            #[cfg(any())]
+            {
+                // TODO(b2-blocked): bun_semver::query::Group — Rust port carries
+                // a `'a` borrow on `input`; storing it in `NpmInfo` (no lifetime
+                // param per PORTING.md §Type-map) requires Group to drop the
+                // borrow (offset+len into the lockfile buffer, like Zig).
+                let version = match Semver::query::parse(input, sliced.sub(input)) {
+                    Ok(v) => v,
+                    Err(_e) => {
+                        // error.OutOfMemory => bun.outOfMemory()
+                        bun_core::out_of_memory();
+                    }
+                };
 
-            let result = Version {
-                literal: sliced.value(),
-                value: Value {
-                    npm: ManuallyDrop::new(NpmInfo {
-                        is_alias,
-                        name,
-                        version,
-                    }),
-                },
-                tag: Tag::Npm,
-            };
+                let result = Version {
+                    literal: sliced.value(),
+                    value: Value {
+                        npm: ManuallyDrop::new(NpmInfo {
+                            is_alias,
+                            name,
+                            version,
+                        }),
+                    },
+                    tag: Tag::Npm,
+                };
 
-            if is_alias {
-                if let Some(pm) = package_manager {
-                    pm.known_npm_aliases
-                        .put(alias_hash.unwrap(), &result)
-                        .expect("unreachable");
-                    // TODO(port): Zig moves `result` into map by value; here we
-                    // can't both store and return ownership. Phase B: clone or
-                    // change map value type.
+                if is_alias {
+                    if let Some(pm) = package_manager {
+                        // TODO(port): Zig moves `result` into map by value; here we
+                        // can't both store and return ownership. Phase B: clone or
+                        // change map value type to track keys only.
+                        pm.known_npm_aliases.insert(alias_hash.unwrap(), ());
+                    }
                 }
+
+                Some(result)
             }
-
-            Some(result)
+            #[cfg(not(any()))]
+            {
+                let _ = (input, sliced, is_alias, name, alias_hash, package_manager);
+                todo!("b2-blocked: bun_semver::query::Group lifetime")
+            }
         }
         Tag::DistTag => {
             let mut tag_to_use = sliced.value();
@@ -1559,7 +1612,7 @@ pub fn parse_with_tag(
 
             let group = &dependency[b"catalog:".len()..];
 
-            let trimmed = strings::trim(group, strings::WHITESPACE_CHARS);
+            let trimmed = strings::trim(group, &strings::WHITESPACE_CHARS);
 
             Some(Version {
                 value: Value {

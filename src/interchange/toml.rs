@@ -12,10 +12,12 @@ pub mod lexer;
 pub use self::lexer::Lexer;
 use self::lexer::T;
 
-#[cfg(any())]
-type Rope = <E::Object as js_ast::e::ObjectExt>::Rope;
-// TODO(port): the line above guesses at how `js_ast::E::Object::Rope` is exposed in Rust;
-// in Zig it is `js_ast.E.Object.Rope`. Adjust to the real path in Phase B.
+// Zig: `js_ast.E.Object.Rope`. The MOVE_DOWN landed it at
+// `bun_logger::js_ast::e::object::Rope` (lowercase `e` namespace mirrors the
+// per-variant submodule layout). Field set is still a stub `(())`; the
+// `parse_key` / `run_parser_impl` bodies that construct `Rope { head, next }`
+// stay gated below until the real shape lands.
+type Rope = js_ast::e::object::Rope;
 
 // ──────────────────────────────────────────────────────────────────────────
 // HashMapPool

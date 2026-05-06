@@ -29,17 +29,12 @@ const CHANGELIST_COUNT: usize = 128;
 impl KEventWatcher {
     // TODO(port): narrow error set
     pub fn init(&mut self, _: &[u8]) -> Result<(), bun_core::Error> {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_sys::kqueue
-            let fd = bun_sys::kqueue()?;
-            if fd == 0 {
-                return Err(bun_core::err!("KQueueError"));
-            }
-            self.fd = Some(Fd::from_native(fd));
-            return Ok(());
+        let fd = bun_sys::kqueue()?;
+        if fd.native() == 0 {
+            return Err(bun_core::err!("KQueueError"));
         }
-        todo!("KEventWatcher::init — bun_sys::kqueue")
+        self.fd = Some(fd);
+        Ok(())
     }
 
     pub fn stop(&mut self) {
@@ -72,98 +67,94 @@ pub fn watch_event_from_kevent(kevent: &libc::kevent) -> WatchEvent {
 }
 
 pub fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
-    #[cfg(any())]
-    {
-        // TODO(b2-blocked): bun_sys::c::kevent (raw syscall + timespec)
-        use bun_sys::c;
-        let fd: Fd = this
-            .platform
-            .fd
-            .expect("KEventWatcher has an invalid file descriptor");
+    use bun_sys::c;
+    let fd: Fd = this
+        .platform
+        .fd
+        .expect("KEventWatcher has an invalid file descriptor");
 
-        // not initialized each time
-        // SAFETY: all-zero is a valid Kevent (#[repr(C)] POD)
-        let mut changelist_array: [libc::kevent; CHANGELIST_COUNT] = unsafe { core::mem::zeroed() };
-        let changelist = &mut changelist_array;
+    // not initialized each time
+    // SAFETY: all-zero is a valid Kevent (#[repr(C)] POD)
+    let mut changelist_array: [libc::kevent; CHANGELIST_COUNT] = unsafe { core::mem::zeroed() };
+    let changelist = &mut changelist_array;
 
-        let _flush = scopeguard::guard((), |_| Output::flush());
+    let _flush = scopeguard::guard((), |_| Output::flush());
 
-        // SAFETY: fd is a valid kqueue fd; changelist points to CHANGELIST_COUNT zeroed entries
-        let mut count: c_int = unsafe {
+    // SAFETY: fd is a valid kqueue fd; changelist points to CHANGELIST_COUNT zeroed entries
+    let mut count: c_int = unsafe {
+        c::kevent(
+            fd.native(),
+            changelist.as_ptr(),
+            0,
+            changelist.as_mut_ptr(),
+            CHANGELIST_COUNT as c_int,
+            core::ptr::null(), // timeout
+        )
+    };
+
+    // Give the events more time to coalesce
+    if count < 128 / 2 {
+        let remain: c_int = 128 - count;
+        let off = usize::try_from(count).unwrap();
+        let ts = libc::timespec { tv_sec: 0, tv_nsec: 100_000 }; // 0.0001 seconds
+        // SAFETY: off < CHANGELIST_COUNT (count < 64), remain entries fit in the buffer
+        let extra: c_int = unsafe {
             c::kevent(
                 fd.native(),
-                changelist.as_ptr(),
+                changelist.as_ptr().add(off),
                 0,
-                changelist.as_mut_ptr(),
-                CHANGELIST_COUNT as c_int,
-                core::ptr::null(), // timeout
+                changelist.as_mut_ptr().add(off),
+                remain,
+                &ts,
             )
         };
 
-        // Give the events more time to coalesce
-        if count < 128 / 2 {
-            let remain: c_int = 128 - count;
-            let off = usize::try_from(count).unwrap();
-            let ts = c::timespec { tv_sec: 0, tv_nsec: 100_000 }; // 0.0001 seconds
-            // SAFETY: off < CHANGELIST_COUNT (count < 64), remain entries fit in the buffer
-            let extra: c_int = unsafe {
-                c::kevent(
-                    fd.native(),
-                    changelist.as_ptr().add(off),
-                    0,
-                    changelist.as_mut_ptr().add(off),
-                    remain,
-                    &ts,
-                )
-            };
-
-            count += extra;
-        }
-
-        let changes_len = usize::try_from(count.max(0)).unwrap();
-        let changes = &changelist[0..changes_len];
-        // PORT NOTE: reshaped for borrowck — Zig re-slices `watchevents` in place; Rust tracks out_len
-        // and slices once at the end to avoid overlapping &mut borrows of `this`.
-        let watchevents = &mut this.watch_events[0..changes_len];
-        let mut out_len: usize = 0;
-        if changes_len > 0 {
-            watchevents[0] = watch_event_from_kevent(&changes[0]);
-            out_len = 1;
-            let mut prev_event = changes[0];
-            for event in &changes[1..] {
-                if prev_event.udata == event.udata {
-                    let new = watch_event_from_kevent(event);
-                    watchevents[out_len - 1].merge(new);
-                    continue;
-                }
-
-                watchevents[out_len] = watch_event_from_kevent(event);
-                prev_event = *event;
-                out_len += 1;
-            }
-        }
-
-        // TODO(port): borrowck — `_guard` borrows `this.mutex` while subsequent lines borrow other
-        // `this` fields; Phase B may need to split borrows or use a raw lock/unlock pair.
-        this.mutex.lock();
-        let _unlock = scopeguard::guard((), |_| this.mutex.unlock());
-        if this.running {
-            let deduped: Vec<WatchEvent> = this.watch_events[0..out_len].to_vec();
-            let changed = &this.changed_filepaths[0..out_len];
-            this.write_trace_events(&deduped, changed);
-            (this.on_file_update)(this.ctx, &mut deduped.clone(), changed, &this.watchlist);
-        }
-
-        return Ok(());
+        count += extra;
     }
-    let _ = this;
-    todo!("watch_loop_cycle — bun_sys::c::kevent")
+
+    let changes_len = usize::try_from(count.max(0)).unwrap();
+    let changes = &changelist[0..changes_len];
+    // PORT NOTE: reshaped for borrowck — Zig re-slices `watchevents` in place; Rust tracks out_len
+    // and slices once at the end to avoid overlapping &mut borrows of `this`.
+    let watchevents = &mut this.watch_events[0..changes_len];
+    let mut out_len: usize = 0;
+    if changes_len > 0 {
+        watchevents[0] = watch_event_from_kevent(&changes[0]);
+        out_len = 1;
+        let mut prev_event = changes[0];
+        for event in &changes[1..] {
+            if prev_event.udata == event.udata {
+                let new = watch_event_from_kevent(event);
+                watchevents[out_len - 1].merge(new);
+                continue;
+            }
+
+            watchevents[out_len] = watch_event_from_kevent(event);
+            prev_event = *event;
+            out_len += 1;
+        }
+    }
+
+    this.mutex.lock();
+    // PORT NOTE: edition-2021 disjoint capture — closure borrows only `this.mutex`.
+    let _unlock = scopeguard::guard((), |_| this.mutex.unlock());
+    if this.running {
+        // PORT NOTE: reshaped for borrowck — copy the (small, ≤128) deduped slice
+        // into a local so `this` is no longer mutably borrowed via `watch_events`
+        // when calling `write_trace_events(&self, …)`.
+        let deduped: Vec<WatchEvent> = this.watch_events[0..out_len].to_vec();
+        let changed = &this.changed_filepaths[0..out_len];
+        this.write_trace_events(&deduped, changed);
+        (this.on_file_update)(this.ctx, &mut deduped.clone(), changed, &this.watchlist);
+    }
+
+    Ok(())
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/watcher/KEventWatcher.zig (108 lines)
 //   confidence: medium
-//   todos:      4
-//   notes:      raw kevent()/kqueue() need bun_sys::c bindings; watch_loop_cycle has borrowck overlap on Watcher fields (mutex guard vs. watch_events/changed_filepaths)
+//   todos:      1
+//   notes:      watch_loop_cycle reshaped for borrowck (deduped events copied to Vec before write_trace_events/on_file_update)
 // ──────────────────────────────────────────────────────────────────────────

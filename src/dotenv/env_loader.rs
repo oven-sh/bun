@@ -24,6 +24,19 @@ pub enum DotEnvFileSuffix {
     Test,
 }
 
+/// Mirrors `bun_api::DotEnvBehavior` (schema.peechy enum, values 1..=4). Defined locally so
+/// this T2 crate names no `bun_api` types — see PORTING.md §Dispatch. The high-tier caller
+/// transmutes/maps its `api::DotEnvBehavior` into this at the call site.
+// TODO(port): once bun_api lands the schema types, re-export that enum here instead.
+#[derive(Copy, Clone, PartialEq, Eq)]
+#[repr(u32)]
+pub enum DotEnvBehavior {
+    Disable = 1,
+    Prefix = 2,
+    LoadAll = 3,
+    LoadAllWithoutInlining = 4,
+}
+
 pub struct Loader<'a> {
     pub map: &'a mut Map,
     // allocator dropped — global mimalloc (see PORTING.md §Allocators)
@@ -446,18 +459,83 @@ impl<'a> Loader<'a> {
     // and bun_js_parser::{E::String, Expr::Data}. Converted to manual vtable (cold-path
     // §Dispatch, PORTING.md): dotenv passes (key, raw_value) bytes; the high-tier vtable
     // impl (bun_bundler / bun_runtime) constructs E::String + DefineData and inserts.
-    #[cfg(any())]
+    //
+    // PORT NOTE: `framework_defaults: api.StringMap` flattened to parallel key/value slices
+    // and `api.DotEnvBehavior` mirrored locally so this crate names no `bun_api` types
+    // (PORTING.md §Dispatch — low tier names no high-tier types). The high-tier caller
+    // unpacks its `api::StringMap` at the call site.
     pub fn copy_for_define(
         &mut self,
         to_json: DefineStoreRef<'_>,
         to_string: DefineStoreRef<'_>,
-        framework_defaults: &(), // TODO(b2-blocked): bun_api::StringMap
-        behavior: (),            // TODO(b2-blocked): bun_api::DotEnvBehavior
+        framework_defaults_keys: &[&[u8]],
+        framework_defaults_values: &[&[u8]],
+        behavior: DotEnvBehavior,
         prefix: &[u8],
     ) -> Result<(), bun_core::Error> {
-        // TODO(b2-blocked): bun_api::StringMap
-        // TODO(b2-blocked): bun_api::DotEnvBehavior
-        // TODO(b2-blocked): bun_collections::ArrayHashMapExt::Iterator (resettable)
+        const INVALID_HASH: u64 = u64::MAX - 1;
+        let mut string_map_hashes: Vec<u64> = vec![INVALID_HASH; framework_defaults_keys.len()];
+
+        // Frameworks determine an allowlist of values
+        const PROCESS_ENV: &[u8] = b"process.env.";
+        for (i, &key) in framework_defaults_keys.iter().enumerate() {
+            if key.len() > PROCESS_ENV.len() && &key[..PROCESS_ENV.len()] == PROCESS_ENV {
+                let hashable_segment = &key[PROCESS_ENV.len()..];
+                string_map_hashes[i] = bun_wyhash::hash(hashable_segment);
+            }
+        }
+
+        // PORT NOTE: Zig pre-counted `key_buf_len`/`e_strings_to_allocate` to size two bump
+        // allocations, then `iter.reset()` and re-walked. With the vtable contract
+        // ("implementor copies/owns bytes as needed") the pre-sizing pass is dead — emit
+        // directly. PERF(port): was single-buffer key arena; now per-entry Vec reuse.
+        if behavior != DotEnvBehavior::Disable && behavior != DotEnvBehavior::LoadAllWithoutInlining
+        {
+            if behavior == DotEnvBehavior::Prefix {
+                debug_assert!(!prefix.is_empty());
+            }
+
+            let mut key_buf: Vec<u8> = Vec::new();
+            // PORT NOTE: borrowck — iterate parallel slices instead of `iterator()` so the
+            // map borrow stays shared while we call into the vtable.
+            let keys = self.map.map.keys();
+            let values = self.map.map.values();
+            for (k, v) in keys.iter().zip(values.iter()) {
+                if k.is_empty() {
+                    continue;
+                }
+                let value: &[u8] = &v.value;
+
+                if behavior == DotEnvBehavior::Prefix {
+                    if strings::starts_with(k, prefix) {
+                        key_buf.clear();
+                        key_buf.extend_from_slice(PROCESS_ENV);
+                        key_buf.extend_from_slice(k);
+                        to_string.put_string_define(&key_buf, value)?;
+                    } else {
+                        let hash = bun_wyhash::hash(k);
+                        debug_assert!(hash != INVALID_HASH);
+                        if let Some(key_i) = string_map_hashes.iter().position(|&h| h == hash) {
+                            to_string
+                                .put_string_define(framework_defaults_keys[key_i], value)?;
+                        }
+                    }
+                } else {
+                    key_buf.clear();
+                    key_buf.extend_from_slice(PROCESS_ENV);
+                    key_buf.extend_from_slice(k);
+                    to_string.put_string_define(&key_buf, value)?;
+                }
+            }
+        }
+
+        for (i, &key) in framework_defaults_keys.iter().enumerate() {
+            let value = framework_defaults_values[i];
+            if !to_string.contains(key) && !to_json.contains(key) {
+                to_json.put_raw(key, value)?;
+            }
+        }
+
         Ok(())
     }
 
@@ -589,9 +667,9 @@ impl<'a> Loader<'a> {
     ) -> Result<(), bun_core::Error> {
         let dir_handle = bun_sys::Fd::cwd();
 
-        #[cfg(any())]
+        // PORT NOTE: bun_sys::fs::DirEntry::has_comptime_query is a `todo!()` stub until the
+        // resolver→sys MOVE_DOWN lands; the body compiles and is exercised once that fills in.
         {
-            // TODO(b2-blocked): bun_sys::fs::DirEntry::has_comptime_query
             match suffix {
                 DotEnvFileSuffix::Development => {
                     if dir.has_comptime_query(b".env.development.local") {
@@ -646,7 +724,6 @@ impl<'a> Loader<'a> {
                 analytics::Features::dotenv_inc();
             }
         }
-        let _ = (suffix, dir, value_buffer, dir_handle);
         Ok(())
     }
 
@@ -1401,9 +1478,10 @@ pub static INSTANCE: OnceLock<usize /* *mut Loader<'static> */> = OnceLock::new(
 //               gated only on bun_logger Source ownership + DirEntry query)
 //   notes:      @field(this, base) → match helper; HashTableValue.value owned (Box<[u8]>),
 //               Phase B may need Cow. NullDelimitedEnvMap owns its strings (no Box::leak).
-//               load_default_files body re-gated on bun_sys::fs::DirEntry::has_comptime_query
-//               (MOVE_DOWN resolver→sys not landed); load_env_file{,_dynamic} bodies re-gated
-//               on bun_logger::Source owning contents. copy_for_define re-gated on bun_api
-//               (higher tier — vtable-dispatch path); get_s3_credentials re-gated on
-//               bun_s3_signing TYPE_ONLY move-down (higher tier).
+//               load_default_files un-gated (calls bun_sys::fs::DirEntry::has_comptime_query
+//               stub — fills in once resolver→sys MOVE_DOWN lands). copy_for_define un-gated
+//               via DefineStoreVTable + local DotEnvBehavior mirror (api.StringMap flattened
+//               to slice pair). load_env_file{,_dynamic} bodies re-gated on bun_logger::Source
+//               owning contents (PORTING.md §Forbidden bans Box::leak); get_s3_credentials
+//               re-gated on bun_s3_signing::S3Credentials TYPE_ONLY move-down (higher tier).
 // ──────────────────────────────────────────────────────────────────────────

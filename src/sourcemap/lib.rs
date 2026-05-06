@@ -2,15 +2,16 @@
 //! `bun_sourcemap` — B-2 un-gated.
 //!
 //! All sibling modules (`Chunk.rs`, `InternalSourceMap.rs`, `LineOffsetTable.rs`,
-//! `Mapping.rs`, `ParsedSourceMap.rs`, `VLQ.rs`) compile. `SerializedSourceMap`
-//! and `SourceMapPieces::finalize` are lifted from the Phase-A draft and live.
+//! `Mapping.rs`, `ParsedSourceMap.rs`, `VLQ.rs`) compile with no `#[cfg(any())]`
+//! gates. `SerializedSourceMap`, `SourceMapPieces::finalize`,
+//! `append_source_mapping_url_remote`, `Chunk::print_source_map_contents*`,
+//! `ParsedSourceMap::write_vlqs`/`format_vlqs`, and `VLQ::write_to` are live.
 //! Remaining `#[cfg(any())]` fn-body gates are tagged `TODO(b2-blocked)` on
-//! missing lower-tier surface (bun_io::Write, bun_core::Ordinal, bun_js_printer,
-//! bun_core::base64, bun_string::StringJoiner::push_owned).
+//! missing lower-tier surface (bun_js_parser::Expr accessors,
+//! bun_logger::fs::Path::pretty, bun_core::Ordinal).
 //!
-//! The `_phase_a_draft` block below preserves the bodies of `parse_url` /
-//! `parse_json` / `get_source_map_impl` / `append_source_map_chunk` /
-//! `append_source_mapping_url_remote` for the next pass.
+//! The `_phase_a_draft` block below preserves the bodies of `parse_json` /
+//! `get_source_map_impl` for the next pass.
 
 // ── crate aliases ─────────────────────────────────────────────────────────
 // TODO(b1): Phase-A draft used `bun_str`; the workspace crate is `bun_string`.
@@ -888,15 +889,43 @@ fn last_index_of(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     }
 }
 
+pub fn append_source_mapping_url_remote<W: bun_io::Write + ?Sized>(
+    origin: &bun_url::URL<'_>,
+    source: &logger::Source,
+    asset_prefix_path: &[u8],
+    writer: &mut W,
+) -> bun_io::Result<()> {
+    // TODO(b2-blocked): bun_logger::fs::Path::pretty — minimal `fs::Path` shim
+    // in bun_logger lacks the `pretty` field (Zig `bun.fs.Path.pretty`).
+    #[cfg(any())]
+    {
+        writer.write_all(b"\n//# sourceMappingURL=")?;
+        writer.write_all(bun_str::strings::without_trailing_slash(origin.href))?;
+        if !asset_prefix_path.is_empty() {
+            writer.write_all(asset_prefix_path)?;
+        }
+        if !source.path.pretty.is_empty() && source.path.pretty[0] != b'/' {
+            writer.write_all(b"/")?;
+        }
+        writer.write_all(source.path.pretty)?;
+        writer.write_all(b".map")?;
+        return Ok(());
+    }
+    #[cfg(not(any()))]
+    {
+        let _ = (origin, source, asset_prefix_path, writer);
+        todo!("B-2: append_source_mapping_url_remote — blocked on bun_logger::fs::Path::pretty")
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Phase-A draft body — preserved, gated off. Remaining bodies here
-// (parse_json/get_source_map_impl/append_source_mapping_url_remote) are
-// blocked on:
+// (parse_json / get_source_map_impl) are blocked on:
 //   TODO(b2-blocked): bun_js_parser::Expr (data_store_reset / Data accessors)
-//   TODO(b2-blocked): bun_io::Write
 //   TODO(b2-blocked): bun_str::String find-source-mapping-url helpers
-// `SerializedSourceMap`, `SourceMapPieces::finalize`, `parse_url`, and
-// `append_source_map_chunk` have been lifted out and are now live above.
+// `SerializedSourceMap`, `SourceMapPieces::finalize`, `parse_url`,
+// `append_source_map_chunk`, and `append_source_mapping_url_remote` have been
+// lifted out and are now live above.
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(any())]
 mod _phase_a_draft {

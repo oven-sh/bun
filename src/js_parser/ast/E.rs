@@ -134,8 +134,6 @@ impl Array {
     // PORTING.md (jsc extension trait lives in `js_parser_jsc` crate).
 
     /// Assumes each item in the array is a string
-    // TODO(b2-ast-round-C): depends on `EString::order` (gated EString impl).
-    #[cfg(any())]
     pub fn alphabetize_strings(&mut self) {
         if cfg!(debug_assertions) {
             for item in self.items.slice() {
@@ -1244,9 +1242,6 @@ static PACKAGE_JSON_SORT_MAP: phf::Map<&'static [u8], PackageJsonSortFields> = p
     b"exports" => PackageJsonSortFields::Exports,
 };
 
-// TODO(b2-ast-round-C): sorters call `.e_string().data` (Option deref) and
-// `strings::cmp_strings_asc` arity. Un-gate with the Object impl above.
-#[cfg(any())]
 fn package_json_sort_is_less_than(lhs: &G::Property, rhs: &G::Property) -> Ordering {
     let mut lhs_key_size: u8 = PackageJsonSortFields::Fake as u8;
     let mut rhs_key_size: u8 = PackageJsonSortFields::Fake as u8;
@@ -1266,21 +1261,21 @@ fn package_json_sort_is_less_than(lhs: &G::Property, rhs: &G::Property) -> Order
     }
 
     match lhs_key_size.cmp(&rhs_key_size) {
-        Ordering::Less => Ordering::Less,
-        Ordering::Greater => Ordering::Greater,
-        Ordering::Equal => strings::cmp_strings_asc(
-            lhs.key.as_ref().unwrap().data.e_string().data,
-            rhs.key.as_ref().unwrap().data.e_string().data,
-        ),
+        Ordering::Equal => {
+            // PORT NOTE: Zig `cmpStringsAsc` is `std.mem.order(u8, a, b) == .lt`; lifted to
+            // a full `Ordering` so this is usable with `sort_by`.
+            let a = lhs.key.as_ref().unwrap().data.e_string().unwrap().data;
+            let b = rhs.key.as_ref().unwrap().data.e_string().unwrap().data;
+            a.cmp(b)
+        }
+        ord => ord,
     }
 }
 
-#[cfg(any())]
 fn object_sorter_is_less_than(lhs: &G::Property, rhs: &G::Property) -> Ordering {
-    strings::cmp_strings_asc(
-        lhs.key.as_ref().unwrap().data.e_string().data,
-        rhs.key.as_ref().unwrap().data.e_string().data,
-    )
+    let a = lhs.key.as_ref().unwrap().data.e_string().unwrap().data;
+    let b = rhs.key.as_ref().unwrap().data.e_string().unwrap().data;
+    a.cmp(b)
 }
 
 pub struct Spread {
@@ -1520,9 +1515,148 @@ impl EString {
     }
 }
 
-// TODO(b2-ast-round-C): EString rope/eql/transcode methods need
-// `bun_string::utf16_eql_string`/`to_utf16_alloc_for_real` (track-A
-// blocked_on) and bump-arena slice helpers. Un-gate with the parser round.
+// ── live EString surface (B-2 un-gate) ─────────────────────────────────────
+// Ordering / equality / const-literal helpers extracted from the round-C draft
+// below. Rope mutation (`push`/`clone_rope_nodes`) and `string_z`/`to_zig_string`
+// remain gated on `StoreRef::{from_mut,get_mut}` and `bun_string::ZStr` arena
+// constructors respectively.
+impl EString {
+    pub const CLASS: EString = EString::from_static(b"class");
+    pub const EMPTY: EString = EString::from_static(b"");
+    pub const TRUE: EString = EString::from_static(b"true");
+    pub const FALSE: EString = EString::from_static(b"false");
+    pub const NULL: EString = EString::from_static(b"null");
+    pub const UNDEFINED: EString = EString::from_static(b"undefined");
+
+    pub fn is_identifier(&mut self, bump: &Bump) -> bool {
+        if !self.is_utf8() {
+            return crate::lexer::is_identifier_utf16(self.slice16());
+        }
+        crate::lexer::is_identifier(self.slice(bump))
+    }
+
+    fn string_compare_for_javascript<T: Copy + Into<i32>>(a: &[T], b: &[T]) -> Ordering {
+        let n = a.len().min(b.len());
+        let a_slice = &a[..n];
+        let b_slice = &b[..n];
+        debug_assert_eq!(a_slice.len(), b_slice.len());
+        for (a_char, b_char) in a_slice.iter().zip(b_slice) {
+            let delta: i32 = (*a_char).into() - (*b_char).into();
+            if delta != 0 {
+                return if delta < 0 { Ordering::Less } else { Ordering::Greater };
+            }
+        }
+        a.len().cmp(&b.len())
+    }
+
+    /// Compares two strings lexicographically for JavaScript semantics.
+    /// Both strings must share the same encoding (UTF-8 vs UTF-16).
+    #[inline]
+    pub fn order(&self, other: &EString) -> Ordering {
+        debug_assert!(self.is_utf8() == other.is_utf8());
+        if self.is_utf8() {
+            Self::string_compare_for_javascript(self.data, other.data)
+        } else {
+            Self::string_compare_for_javascript(self.slice16(), other.slice16())
+        }
+    }
+
+    pub fn clone(&self, bump: &Bump) -> Result<EString, AllocError> {
+        Ok(EString {
+            // SAFETY: arena-owned slice; lifetime erased to 'static per Phase-A `Str`.
+            data: unsafe {
+                core::mem::transmute::<&[u8], &'static [u8]>(bump.alloc_slice_copy(self.data))
+            },
+            prefer_template: self.prefer_template,
+            is_utf16: !self.is_utf8(),
+            ..EString::default()
+        })
+    }
+
+    pub fn clone_slice_if_necessary<'b>(&self, bump: &'b Bump) -> Result<&'b [u8], AllocError> {
+        if self.is_utf8() {
+            return Ok(bump.alloc_slice_copy(self.string(bump).expect("unreachable")));
+        }
+        self.string(bump)
+    }
+
+    pub fn javascript_length(&self) -> Option<u32> {
+        if self.rope_len > 0 {
+            // We only support ascii ropes for now
+            return Some(self.rope_len);
+        }
+        if self.is_utf8() {
+            if !strings::is_all_ascii(self.data) {
+                return None;
+            }
+            return Some(self.data.len() as u32);
+        }
+        Some(self.slice16().len() as u32)
+    }
+
+    // Zig `eql(comptime _t: type, other: anytype)` — split by operand type.
+    pub fn eql_string(&self, other: &EString) -> bool {
+        if self.is_utf8() {
+            if other.is_utf8() {
+                strings::eql_long::<true>(self.data, other.data)
+            } else {
+                strings::utf16_eql_string(other.slice16(), self.data)
+            }
+        } else if other.is_utf8() {
+            strings::utf16_eql_string(self.slice16(), other.data)
+        } else {
+            self.slice16() == other.slice16()
+        }
+    }
+
+    pub fn eql_utf16(&self, other: &[u16]) -> bool {
+        if self.is_utf8() {
+            strings::utf16_eql_string(other, self.data)
+        } else {
+            other == self.slice16()
+        }
+    }
+
+    /// Shallow field-wise copy. `EString` is structurally `Copy` (slice ref +
+    /// `Option<NonNull>` rope links + scalars) but does not derive it to keep
+    /// rope-ownership intent explicit; Zig sites that did `.* = other.*` use
+    /// this instead.
+    #[inline]
+    pub fn shallow_clone(&self) -> EString {
+        EString {
+            data: self.data,
+            prefer_template: self.prefer_template,
+            next: self.next,
+            end: self.end,
+            rope_len: self.rope_len,
+            is_utf16: self.is_utf16,
+        }
+    }
+
+    pub fn has_prefix_comptime(&self, value: &'static [u8]) -> bool {
+        if self.data.len() < value.len() {
+            return false;
+        }
+        if self.is_utf8() {
+            &self.data[..value.len()] == value
+        } else {
+            strings::eql_comptime_utf16(&self.slice16()[..value.len()], value)
+        }
+    }
+}
+
+fn array_sorter_is_less_than(lhs: &Expr, rhs: &Expr) -> Ordering {
+    lhs.data
+        .e_string()
+        .unwrap()
+        .order(rhs.data.e_string().unwrap().get())
+}
+
+// TODO(b2-ast-round-C): remaining EString rope-mutation / ZStr / ZigString methods.
+// `push`/`clone_rope_nodes` need `StoreRef::{from_mut,get_mut}` +
+// `expr::data::Store::append_string`; `string_z`/`to_zig_string` need
+// `bun_string::ZStr::from_bytes_in` + bump-arena `to_utf8_alloc_z`. The
+// duplicate methods kept here for diffability against E.zig.
 #[cfg(any())]
 impl EString {
     pub fn is_identifier(&mut self, bump: &Bump) -> bool {
@@ -2236,20 +2370,19 @@ impl Import {
         self.import_record_index == u32::MAX
     }
 
-    // TODO(b2-ast-round-C): walks `options.data.e_object()?.get(b"...")` which
-    // is in the gated Object impl above.
-    #[cfg(any())]
     pub fn import_record_loader(&self) -> Option<bun_options_types::Loader> {
         // This logic is duplicated in js_printer.zig fn parsePath()
-        let obj = self.options.data.as_e_object()?;
-        let with = obj.get(b"with").or_else(|| obj.get(b"assert"))?;
-        let with_obj = with.data.as_e_object()?;
-        let str_ = with_obj.get(b"type")?.data.as_e_string()?;
+        // PORT NOTE: explicit `Object::get` calls — `StoreRef::get()` (0-arg deref helper)
+        // would otherwise shadow `Object::get(key)` through autoderef.
+        let crate::ast::expr::Data::EObject(obj) = &self.options.data else { return None };
+        let with = Object::get(obj, b"with").or_else(|| Object::get(obj, b"assert"))?;
+        let crate::ast::expr::Data::EObject(with_obj) = &with.data else { return None };
+        let str_ = Object::get(with_obj, b"type")?.data.as_e_string()?;
 
         if !str_.is_utf16 {
             if let Some(loader) = bun_options_types::Loader::from_string(str_.data) {
                 if loader == bun_options_types::Loader::Sqlite {
-                    let Some(embed) = with_obj.get(b"embed") else { return Some(loader) };
+                    let Some(embed) = Object::get(with_obj, b"embed") else { return Some(loader) };
                     let Some(embed_str) = embed.data.as_e_string() else { return Some(loader) };
                     if embed_str.eql_comptime(b"true") {
                         return Some(bun_options_types::Loader::SqliteEmbedded);

@@ -27,6 +27,13 @@ use crate as resolver;
 #[derive(Default, Clone, Copy)] pub struct OperatingSystem(());
 // TODO(b2-blocked): bun_install::PackageID
 pub type PackageID = u32;
+// TODO(b2-blocked): bun_bundler::options::{Framework, RouteConfig} — local opaque
+// stand-ins so `FrameworkRouterPair` type-checks; the heavy gated impl block below
+// references many more `options::*` items and stays gated until bun_bundler lands.
+mod options {
+    #[derive(Default)] pub struct Framework(());
+    #[derive(Default)] pub struct RouteConfig(());
+}
 // TODO(b2-blocked): bun_collections::StringMap (array-backed string→string map)
 pub type StringMap = StringArrayHashMap<Box<[u8]>>;
 // TODO(b2-blocked): bun_collections::StringHashMapUnownedKey
@@ -115,8 +122,6 @@ pub enum LoadFramework {
     Production,
 }
 
-// TODO(b2-blocked): bun_bundler::options::{Framework, RouteConfig}
-#[cfg(any())]
 pub struct FrameworkRouterPair<'a> {
     pub framework: &'a mut options::Framework,
     pub router: &'a mut options::RouteConfig,

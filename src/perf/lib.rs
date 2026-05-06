@@ -191,18 +191,9 @@ impl Linux {
     }
 
     pub fn init(event: PerfEvent) -> Self {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_core::timespec
-            return Self {
-                start_time: bun_core::timespec::now(bun_core::timespec::MockMode::ForceRealTime).ns(),
-                event,
-            };
-        }
-        #[cfg(not(any()))]
-        {
-            let _ = event;
-            todo!("b2-blocked: bun_core::timespec")
+        Self {
+            start_time: bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime).ns(),
+            event,
         }
     }
 
@@ -211,29 +202,20 @@ impl Linux {
             return;
         }
 
-        #[cfg(any())]
-        {
-        // TODO(b2-blocked): bun_core::timespec
-        let duration = bun_core::timespec::now(bun_core::timespec::MockMode::ForceRealTime)
+        let duration = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime)
             .ns()
             .saturating_sub(self.start_time);
 
-        // TODO(port): @tagName in Zig yields a NUL-terminated string; strum::IntoStaticStr does not.
-        // PerfEvent needs an `as_cstr() -> &'static CStr` (or the generator must emit NUL-terminated names).
-        let name: &'static str = self.event.into();
-        // SAFETY: FFI call; name pointer is 'static. See TODO above re: NUL terminator.
+        // Zig's `@tagName(this.event).ptr` yields `[*:0]const u8` (NUL-terminated).
+        // `PerfEvent::as_cstr()` provides the equivalent `&'static CStr` so the C side's
+        // `snprintf("C|%d|%s|%lld", ...)` reads a properly terminated string.
+        // SAFETY: FFI call; pointer is 'static and NUL-terminated.
         let _ = unsafe {
             Bun__linux_trace_emit(
-                name.as_ptr() as *const c_char,
+                self.event.as_cstr().as_ptr(),
                 i64::try_from(duration).unwrap(),
             )
         };
-        }
-        #[cfg(not(any()))]
-        {
-            let _ = (&self.start_time, &self.event);
-            todo!("b2-blocked: bun_core::timespec")
-        }
     }
 }
 
@@ -256,5 +238,5 @@ unsafe extern "C" {
 //   source:     src/perf/perf.zig (159 lines)
 //   confidence: medium
 //   todos:      6
-//   notes:      trace() now takes PerfEvent (not comptime str); verify bun.timespec/OSLog paths; @tagName NUL-termination needs PerfEvent.as_cstr()
+//   notes:      trace() now takes PerfEvent (not comptime str); verify bun.timespec/OSLog paths; @tagName NUL-termination handled via PerfEvent::as_cstr()
 // ──────────────────────────────────────────────────────────────────────────

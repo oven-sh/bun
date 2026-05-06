@@ -258,8 +258,6 @@ impl ModuleInfoDeserialized {
         }
     }
 
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_io::Write — bun_io exposes no `Write` trait yet.
     pub fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         // SAFETY: all raw slice fields are valid for the lifetime of `self`

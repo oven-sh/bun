@@ -1,11 +1,14 @@
 //! JavaScript printer — translates the AST back to source text.
 //! Port of src/js_printer/js_printer.zig.
 //!
-//! B-2 UN-GATED. `bun_js_parser` is now linked: `Options<'a>`, `renamer`,
-//! `ImportVariant::determine`, and the small AST helpers compile for real.
-//! The `Printer` impl block and the top-level `print_*` entry points stay
-//! `#[cfg(any())]`-gated until the per-node `bun_js_parser::ast::{e,s,b,g}`
-//! method surface (printing helpers, op tables) is filled in upstream.
+//! B-2 UN-GATED. The `Printer<'a, W, ...>` struct and its full method surface
+//! (`print_expr`, `print_stmt`, `print_binding`, `print_property`, …) now
+//! compile against the real `bun_js_parser::ast::{e,s,b,g,op,expr,stmt}`
+//! types. Remaining `#[cfg(any())]` islands are leaf optimizations / entry
+//! points blocked on lower-tier surface (see TODO(b2-blocked) markers below):
+//! the destructuring-minify rewrite, template-inlining fold, the ESM-to-CJS
+//! __export emission path, `print_dev_server_module`, and the top-level
+//! `print_*` driver fns in `__gated_entry_points`.
 
 #![allow(unused, nonstandard_style, clippy::all)]
 #![allow(unsafe_op_in_unsafe_fn)]
@@ -1374,7 +1377,7 @@ impl TopLevel {
 // ───────────────────────────────────────────────────────────────────────────
 // Printer (NewPrinter) — the impl body is the bulk of this crate and touches
 // nearly every bun_js_parser AST node type. `bun_js_parser` now links, but the
-// per-node API surface (op tables, FnFlags, Binding::Data dispatch, EString
+// per-node API surface (op tables, FnFlags, BindingData dispatch, EString
 // `.data()` accessor, ImportRecord flag fields) does not yet match the shapes
 // the Phase-A draft assumed (~300 mismatches). Re-gated until those land.
 // ───────────────────────────────────────────────────────────────────────────
@@ -1384,11 +1387,66 @@ impl TopLevel {
 // TODO(b2-blocked): bun_js_parser::ast::e::EString::data
 // TODO(b2-blocked): bun_options_types::import_record::Flags field-style accessors (contains_import_star/wrap_with_to_esm/handles_import_errors)
 // TODO(b2-blocked): bun_options_types::ImportRecord::module_id
-#[cfg(any())]
-mod __gated_printer {
+pub mod __gated_printer {
 use super::*;
-use js_ast::ast::{e as E, s as S, b as B, g as G, op as Op, expr as Expr, stmt as Stmt, binding as Binding};
-use js_ast::ast::op::Level;
+use js_ast::ast::{e as E, s as S, b as B, g as G, op as Op};
+use js_ast::ast::op::{Op as OpInfo, Level};
+use js_ast::ast::expr::{Expr, Data as ExprData};
+use js_ast::ast::stmt::{Stmt, Data as StmtData, Tag as StmtTag};
+use js_ast::ast::binding::{Binding, Data as BindingData, Tag as BindingTag};
+use js_ast::Symbol;
+use bun_options_types::import_record::Tag as ImportRecordTag;
+
+// ──────────────────────────────────────────────────────────────────────────
+// Phase-B local helpers — bridge gaps between Phase-A draft and the real
+// lower-tier crate API surface without editing those crates.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Dereference an arena-owned `*mut [T]` into a slice. Phase A stores AST
+/// child lists as raw `*mut [T]` (PORTING.md §Allocators: ARENA → raw); the
+/// printer only ever reads them.
+#[inline(always)]
+pub(crate) fn slice_of<'a, T>(p: *mut [T]) -> &'a [T] {
+    if p.is_null() { return &[]; }
+    // SAFETY: arena-owned slice; outlives the print pass; Phase B threads 'bump.
+    unsafe { &*p }
+}
+#[inline(always)]
+pub(crate) fn slice_of_const<'a, T>(p: *const [T]) -> &'a [T] {
+    if p.is_null() { return &[]; }
+    // SAFETY: arena-owned; never freed until arena reset post-print.
+    unsafe { &*p }
+}
+
+/// `EnumSet<T>` field-style mutation as used by the Zig (`flags.x = true`).
+#[inline(always)]
+pub(crate) fn set_flag<T: enumset::EnumSetType>(set: &mut enumset::EnumSet<T>, flag: T, on: bool) {
+    if on { set.insert(flag); } else { set.remove(flag); }
+}
+
+// ── local string helpers not yet exported by `bun_string::strings` ────────
+// TODO(b2-blocked): bun_string::strings::contains_non_bmp_code_point_or_is_invalid_identifier
+#[inline]
+pub(crate) fn contains_non_bmp_code_point_or_is_invalid_identifier(alias: &[u8]) -> bool {
+    // Conservative: if it's not a valid identifier, take the quoted-string path.
+    // Non-BMP detection is folded into `is_identifier`'s WTF-8 walk; matching the
+    // Zig fast-path exactly is deferred until the highway helper lands upstream.
+    !js_ast::lexer::is_identifier(alias)
+}
+// TODO(b2-blocked): bun_string::strings::encode_wtf8_rune_t (generic CodeUnit variant)
+#[inline]
+pub(crate) fn encode_wtf8_rune_t(tmp: &mut [u8; 4], c: u32) -> usize {
+    bun_str::strings::encode_wtf8_rune(tmp, c) as usize
+}
+// TODO(b2-blocked): bun_js_parser::lexer::is_latin1_identifier (u16 overload)
+#[inline]
+pub(crate) fn is_latin1_identifier_u16(name: &[u16]) -> bool {
+    // Zig generic walks code units; for u16 the fast path is "all units ≤ 0xFF
+    // and the latin-1 byte sequence is an identifier". Fall back to that.
+    if name.iter().any(|&c| c > 0xFF) { return false; }
+    let bytes: Vec<u8> = name.iter().map(|&c| c as u8).collect();
+    js_ast::lexer::is_latin1_identifier(&bytes[..])
+}
 
 /// `fn NewPrinter(...) type` → generic struct.
 pub struct Printer<
@@ -1412,14 +1470,14 @@ pub struct Printer<
     pub prev_op_end: i32,
     pub prev_num_end: i32,
     pub prev_reg_exp_end: i32,
-    pub call_target: Option<Expr::Data>,
+    pub call_target: Option<ExprData>,
     pub writer: W,
 
     pub has_printed_bundled_import_statement: bool,
 
-    pub renamer: rename::Renamer,
-    pub prev_stmt_tag: Stmt::Tag,
-    pub source_map_builder: SourceMap::Chunk::Builder,
+    pub renamer: rename::Renamer<'a, 'a>,
+    pub prev_stmt_tag: StmtTag,
+    pub source_map_builder: SourceMap::chunk::Builder,
 
     pub symbol_counter: u32,
 
@@ -1431,6 +1489,10 @@ pub struct Printer<
     // PORT NOTE: Zig used `if (!may_have_module_info) void else ?*ModuleInfo` — in Rust we always
     // carry the Option and gate at call sites with MAY_HAVE_MODULE_INFO.
     pub module_info: Option<&'a mut analyze_transpiled_module::ModuleInfo>,
+
+    /// Arena for transient allocations during printing (rope flattening,
+    /// UTF-16→UTF-8 transcoding). Zig: `p.options.allocator`.
+    pub bump: &'a bumpalo::Bump,
 }
 
 /// The handling of binary expressions is convoluted because we're using
@@ -1439,7 +1501,10 @@ pub struct Printer<
 /// code in the JavaScript parser for details.
 pub struct BinaryExpressionVisitor<'ast> {
     // Inputs
-    pub e: &'ast E::Binary,
+    // PORT NOTE: Zig stored `*const E.Binary`; Phase A keeps the StoreRef so the
+    // visitor stack can outlive the by-value `Expr` argument to `print_expr`.
+    pub e: js_ast::ast::StoreRef<E::Binary>,
+    _phantom: core::marker::PhantomData<&'ast ()>,
     pub level: Level,
     pub flags: ExprFlagSet,
 
@@ -1448,14 +1513,14 @@ pub struct BinaryExpressionVisitor<'ast> {
     pub left_flags: ExprFlagSet,
 
     // "Local variables" passed from "checkAndPrepare" to "visitRightAndFinish"
-    pub entry: &'static Op,
+    pub entry: &'static OpInfo,
     pub wrap: bool,
     pub right_level: Level,
 }
 
 impl<'ast> Default for BinaryExpressionVisitor<'ast> {
     fn default() -> Self {
-        // TODO(port): `entry` defaulted to `undefined` in Zig; we need a sentinel &'static Op.
+        // TODO(port): `entry` defaulted to `undefined` in Zig; we need a sentinel &'static OpInfo.
         unreachable!("construct via fields")
     }
 }
@@ -1472,8 +1537,13 @@ where
     pub const MAY_HAVE_MODULE_INFO: bool = IS_BUN_PLATFORM && !REWRITE_ESM_TO_CJS;
 
     /// When Printer is used as a io.Writer, this represents it's error type, aka nothing.
-    pub type Error = core::convert::Infallible;
+    // (Zig: `pub const Error = error{};`) — inherent associated types are
+    // unstable; callers can name `core::convert::Infallible` directly.
 
+    /// Reborrow the optional `ModuleInfo` for the duration of `&mut self`.
+    /// Callers that need to interleave other `&mut self` calls (e.g.
+    /// `name_for_symbol`) must fetch those values *before* calling this, then
+    /// re-call `module_info()` — see PORTING.md §Forbidden re: lifetime-extend.
     #[inline]
     fn module_info(&mut self) -> Option<&mut analyze_transpiled_module::ModuleInfo> {
         if !Self::MAY_HAVE_MODULE_INFO { return None; }
@@ -1484,7 +1554,7 @@ where
     fn binary_check_and_prepare(&mut self, v: &mut BinaryExpressionVisitor<'a>) -> bool {
         let e = v.e;
 
-        let entry: &'static Op = Op::TABLE.get_ptr_const(e.op);
+        let entry: &'static OpInfo = Op::TABLE.get_ptr_const(e.op);
         let e_level = entry.level;
         v.entry = entry;
         v.wrap = v.level.gte(e_level) || (e.op == Op::Code::BinIn && v.flags.contains(ExprFlag::ForbidIn));
@@ -1492,7 +1562,7 @@ where
         // Destructuring assignments must be parenthesized
         let n = self.writer.written();
         if n == self.stmt_start || n == self.arrow_expr_start {
-            if let Expr::Data::EObject(_) = e.left.data {
+            if let ExprData::EObject(_) = e.left.data {
                 v.wrap = true;
             }
         }
@@ -1505,23 +1575,23 @@ where
         v.left_level = e_level.sub(1);
         v.right_level = e_level.sub(1);
 
-        if e.op.is_right_associative() {
+        if Op::Code::is_right_associative(e.op) {
             v.left_level = e_level;
         }
 
-        if e.op.is_left_associative() {
+        if Op::Code::is_left_associative(e.op) {
             v.right_level = e_level;
         }
 
         match e.op {
             // "??" can't directly contain "||" or "&&" without being wrapped in parentheses
             Op::Code::BinNullishCoalescing => {
-                if let Expr::Data::EBinary(left) = &e.left.data {
+                if let ExprData::EBinary(left) = &e.left.data {
                     if matches!(left.op, Op::Code::BinLogicalAnd | Op::Code::BinLogicalOr) {
                         v.left_level = Level::Prefix;
                     }
                 }
-                if let Expr::Data::EBinary(right) = &e.right.data {
+                if let ExprData::EBinary(right) = &e.right.data {
                     if matches!(right.op, Op::Code::BinLogicalAnd | Op::Code::BinLogicalOr) {
                         v.right_level = Level::Prefix;
                     }
@@ -1530,15 +1600,15 @@ where
             // "**" can't contain certain unary expressions
             Op::Code::BinPow => {
                 match &e.left.data {
-                    Expr::Data::EUnary(left) => {
-                        if left.op.unary_assign_target() == Op::AssignTarget::None {
+                    ExprData::EUnary(left) => {
+                        if Op::Code::unary_assign_target(left.op) == js_ast::AssignTarget::None {
                             v.left_level = Level::Call;
                         }
                     }
-                    Expr::Data::EAwait(_) | Expr::Data::EUndefined | Expr::Data::ENumber(_) => {
+                    ExprData::EAwait(_) | ExprData::EUndefined(_) | ExprData::ENumber(_) => {
                         v.left_level = Level::Call;
                     }
-                    Expr::Data::EBoolean(_) | Expr::Data::EBranchBoolean(_) => {
+                    ExprData::EBoolean(_) | ExprData::EBranchBoolean(_) => {
                         // When minifying, booleans are printed as "!0 and "!1"
                         if self.options.minify_syntax {
                             v.left_level = Level::Call;
@@ -1551,9 +1621,9 @@ where
         }
 
         // Special-case "#foo in bar"
-        if matches!(e.left.data, Expr::Data::EPrivateIdentifier(_)) && e.op == Op::Code::BinIn {
-            let private = match &e.left.data { Expr::Data::EPrivateIdentifier(p) => p, _ => unreachable!() };
-            let name = self.renamer.name_for_symbol(private.ref_);
+        if matches!(e.left.data, ExprData::EPrivateIdentifier(_)) && e.op == Op::Code::BinIn {
+            let private = match &e.left.data { ExprData::EPrivateIdentifier(p) => p, _ => unreachable!() };
+            let name = self.name_for_symbol(private.ref_);
             self.add_source_mapping_for_name(e.left.loc, name, private.ref_);
             self.print_identifier(name);
             self.binary_visit_right_and_finish(v);
@@ -1678,13 +1748,13 @@ where
         }
     }
 
-    pub fn mangled_prop_name(&self, ref_: Ref) -> &[u8] {
+    pub fn mangled_prop_name(&mut self, ref_: Ref) -> &'a [u8] {
         let ref_ = self.symbols().follow(ref_);
         // TODO: we don't support that
         if let Some(mangled_props) = self.options.mangled_props {
-            if let Some(name) = mangled_props.get(ref_) { return name; }
+            if let Some(name) = mangled_props.get(&ref_) { return name; }
         }
-        self.renamer.name_for_symbol(ref_)
+        self.name_for_symbol(ref_)
     }
 
     #[inline] pub fn print_space(&mut self) { if !self.options.minify_whitespace { self.print(b" "); } }
@@ -1703,12 +1773,12 @@ where
         if self.options.minify_whitespace { self.print(b"="); } else { self.print(b" = "); }
     }
 
-    fn print_global_bun_import_statement(&mut self, import: S::Import) {
+    fn print_global_bun_import_statement(&mut self, import: &S::Import) {
         if !IS_BUN_PLATFORM { unreachable!(); }
         self.print_internal_bun_import(import, Some(b"globalThis.Bun"));
     }
 
-    fn print_internal_bun_import(&mut self, import: S::Import, statement: Option<&'static [u8]>) {
+    fn print_internal_bun_import(&mut self, import: &S::Import, statement: Option<&'static [u8]>) {
         if !IS_BUN_PLATFORM { unreachable!(); }
 
         if import.star_name_loc.is_some() {
@@ -1746,7 +1816,7 @@ where
             self.print_semicolon_after_statement();
         }
 
-        if import.items.len() > 0 {
+        if slice_of(import.items).len() > 0 {
             self.print_semicolon_if_needed();
             self.print_whitespacer(ws!(b"var {"));
 
@@ -1756,7 +1826,7 @@ where
                 self.print_indent();
             }
 
-            for (i, item) in import.items.iter().enumerate() {
+            for (i, item) in slice_of(import.items).iter().enumerate() {
                 if i > 0 {
                     self.print(b",");
                     self.print_space();
@@ -1765,7 +1835,7 @@ where
                         self.print_indent();
                     }
                 }
-                self.print_clause_item_as(*item, ClauseItemAs::Var);
+                self.print_clause_item_as(item, ClauseItemAs::Var);
             }
 
             if !import.is_single_line {
@@ -1793,20 +1863,25 @@ where
 
         // Record var declarations for module_info. printGlobalBunImportStatement
         // bypasses printDeclStmt/printBinding, so we must record vars explicitly.
-        if Self::MAY_HAVE_MODULE_INFO {
-            if let Some(mi) = self.module_info() {
-                if import.star_name_loc.is_some() {
-                    let name = self.renamer.name_for_symbol(import.namespace_ref);
-                    mi.add_var(mi.str(name), analyze_transpiled_module::VarKind::Declared);
-                }
-                if let Some(default) = &import.default_name {
-                    let name = self.renamer.name_for_symbol(default.ref_.unwrap());
-                    mi.add_var(mi.str(name), analyze_transpiled_module::VarKind::Declared);
-                }
-                for item in import.items.iter() {
-                    let name = self.renamer.name_for_symbol(item.name.ref_.unwrap());
-                    mi.add_var(mi.str(name), analyze_transpiled_module::VarKind::Declared);
-                }
+        // PORT NOTE: reshaped for borrowck — compute names before borrowing module_info.
+        if Self::MAY_HAVE_MODULE_INFO && self.module_info.is_some() {
+            if import.star_name_loc.is_some() {
+                let name = self.name_for_symbol(import.namespace_ref);
+                let mi = self.module_info().unwrap();
+                let id = mi.str(name);
+                mi.add_var(id, analyze_transpiled_module::VarKind::Declared);
+            }
+            if let Some(default) = &import.default_name {
+                let name = self.name_for_symbol(default.ref_.unwrap());
+                let mi = self.module_info().unwrap();
+                let id = mi.str(name);
+                mi.add_var(id, analyze_transpiled_module::VarKind::Declared);
+            }
+            for item in slice_of(import.items).iter() {
+                let name = self.name_for_symbol(item.name.ref_.unwrap());
+                let mi = self.module_info().unwrap();
+                let id = mi.str(name);
+                mi.add_var(id, analyze_transpiled_module::VarKind::Declared);
             }
         }
     }
@@ -1814,7 +1889,7 @@ where
     #[inline]
     pub fn print_space_before_identifier(&mut self) {
         if self.writer.written() > 0
-            && (js_lexer::is_identifier_continue(self.writer.prev_char() as i32)
+            && (js_ast::lexer::is_identifier_continue(self.writer.prev_char() as i32)
                 || self.writer.written() == self.prev_reg_exp_end)
         {
             self.print(b" ");
@@ -1854,9 +1929,9 @@ where
 
     pub fn print_body(&mut self, stmt: Stmt, tlmtlo: TopLevel) {
         match &stmt.data {
-            Stmt::Data::SBlock(block) => {
+            StmtData::SBlock(block) => {
                 self.print_space();
-                self.print_block(stmt.loc, &block.stmts, block.close_brace_loc, tlmtlo);
+                self.print_block(stmt.loc, slice_of(block.stmts), Some(block.close_brace_loc), tlmtlo);
                 self.print_newline();
             }
             _ => {
@@ -1921,7 +1996,11 @@ where
             unreachable!();
         }
 
-        if FeatureFlags::SAME_TARGET_BECOMES_DESTRUCTURING {
+        // TODO(b2-blocked): bun_js_parser::ast::b::Property: Default + Binding::init
+        // — destructuring-minify rewrite needs B::Property defaults and a
+        // Binding constructor that the lower-tier crate doesn't yet expose.
+        #[cfg(any())]
+        if bun_core::FeatureFlags::SAME_TARGET_BECOMES_DESTRUCTURING {
             // Minify
             //
             //    var a = obj.foo, b = obj.bar, c = obj.baz;
@@ -1940,28 +2019,28 @@ where
                 let first_decl = &decls[0];
                 let second_decl = &decls[1];
 
-                if !matches!(first_decl.binding.data, Binding::Data::BIdentifier(_)) { break 'brk; }
+                if !matches!(first_decl.binding.data, BindingData::BIdentifier(_)) { break 'brk; }
                 if second_decl.value.is_none()
-                    || !matches!(second_decl.value.as_ref().unwrap().data, Expr::Data::EDot(_))
-                    || !matches!(second_decl.binding.data, Binding::Data::BIdentifier(_))
+                    || !matches!(second_decl.value.as_ref().unwrap().data, ExprData::EDot(_))
+                    || !matches!(second_decl.binding.data, BindingData::BIdentifier(_))
                 {
                     break 'brk;
                 }
 
                 let Some(target_value) = &first_decl.value else { break 'brk; };
-                let Expr::Data::EDot(target_e_dot) = &target_value.data else { break 'brk; };
-                let target_ref = if matches!(target_e_dot.target.data, Expr::Data::EIdentifier(_)) && target_e_dot.optional_chain.is_none() {
-                    match &target_e_dot.target.data { Expr::Data::EIdentifier(id) => id.ref_, _ => unreachable!() }
+                let ExprData::EDot(target_e_dot) = &target_value.data else { break 'brk; };
+                let target_ref = if matches!(target_e_dot.target.data, ExprData::EIdentifier(_)) && target_e_dot.optional_chain.is_none() {
+                    match &target_e_dot.target.data { ExprData::EIdentifier(id) => id.ref_, _ => unreachable!() }
                 } else {
                     break 'brk;
                 };
 
-                let second_e_dot = match &second_decl.value.as_ref().unwrap().data { Expr::Data::EDot(d) => d, _ => unreachable!() };
-                if !matches!(second_e_dot.target.data, Expr::Data::EIdentifier(_)) || second_e_dot.optional_chain.is_some() {
+                let second_e_dot = match &second_decl.value.as_ref().unwrap().data { ExprData::EDot(d) => d, _ => unreachable!() };
+                if !matches!(second_e_dot.target.data, ExprData::EIdentifier(_)) || second_e_dot.optional_chain.is_some() {
                     break 'brk;
                 }
 
-                let second_ref = match &second_e_dot.target.data { Expr::Data::EIdentifier(id) => id.ref_, _ => unreachable!() };
+                let second_ref = match &second_e_dot.target.data { ExprData::EIdentifier(id) => id.ref_, _ => unreachable!() };
                 if !second_ref.eql(target_ref) {
                     break 'brk;
                 }
@@ -1991,18 +2070,18 @@ where
                         let decl = &decls[0];
 
                         if decl.value.is_none()
-                            || !matches!(decl.value.as_ref().unwrap().data, Expr::Data::EDot(_))
-                            || !matches!(decl.binding.data, Binding::Data::BIdentifier(_))
+                            || !matches!(decl.value.as_ref().unwrap().data, ExprData::EDot(_))
+                            || !matches!(decl.binding.data, BindingData::BIdentifier(_))
                         {
                             break;
                         }
 
-                        let e_dot = match &decl.value.as_ref().unwrap().data { Expr::Data::EDot(d) => d, _ => unreachable!() };
-                        if !matches!(e_dot.target.data, Expr::Data::EIdentifier(_)) || e_dot.optional_chain.is_some() {
+                        let e_dot = match &decl.value.as_ref().unwrap().data { ExprData::EDot(d) => d, _ => unreachable!() };
+                        if !matches!(e_dot.target.data, ExprData::EIdentifier(_)) || e_dot.optional_chain.is_some() {
                             break;
                         }
 
-                        let ref_ = match &e_dot.target.data { Expr::Data::EIdentifier(id) => id.ref_, _ => unreachable!() };
+                        let ref_ = match &e_dot.target.data { ExprData::EIdentifier(id) => id.ref_, _ => unreachable!() };
                         if !ref_.eql(target_ref) {
                             break;
                         }
@@ -2072,14 +2151,14 @@ where
 
     pub fn print_symbol(&mut self, ref_: Ref) {
         debug_assert!(!ref_.is_null()); // Invalid Symbol
-        let name = self.renamer.name_for_symbol(ref_);
+        let name = self.name_for_symbol(ref_);
         self.print_identifier(name);
     }
 
     pub fn print_clause_alias(&mut self, alias: &[u8]) {
         debug_assert!(!alias.is_empty());
 
-        if !strings::contains_non_bmp_code_point_or_is_invalid_identifier(alias) {
+        if !contains_non_bmp_code_point_or_is_invalid_identifier(alias) {
             self.print_space_before_identifier();
             self.print_identifier(alias);
         } else {
@@ -2127,13 +2206,13 @@ where
         }
     }
 
-    pub fn print_func(&mut self, func: G::Fn) {
-        self.print_fn_args(func.open_parens_loc, &func.args, func.flags.contains(G::FnFlags::HasRestArg), false);
+    pub fn print_func(&mut self, func: &G::Fn) {
+        self.print_fn_args(Some(func.open_parens_loc), slice_of(func.args), func.flags.contains(G::FnFlags::HasRestArg), false);
         self.print_space();
-        self.print_block(func.body.loc, &func.body.stmts, None, TopLevel::init(IsTopLevel::No));
+        self.print_block(func.body.loc, slice_of(func.body.stmts), None, TopLevel::init(IsTopLevel::No));
     }
 
-    pub fn print_class(&mut self, class: G::Class) {
+    pub fn print_class(&mut self, class: &G::Class) {
         if let Some(extends) = &class.extends {
             self.print(b" extends");
             self.print_space();
@@ -2147,20 +2226,21 @@ where
         self.print_newline();
         self.indent();
 
-        for item in class.properties.iter() {
+        for item in slice_of(class.properties).iter() {
             self.print_semicolon_if_needed();
             self.print_indent();
 
-            if item.kind == G::Property::Kind::ClassStaticBlock {
+            if item.kind == G::PropertyKind::ClassStaticBlock {
                 self.print(b"static");
                 self.print_space();
-                let csb = item.class_static_block.as_ref().unwrap();
+                // SAFETY: arena-owned ClassStaticBlock; outlives the print pass.
+                let csb = unsafe { item.class_static_block.as_ref().unwrap().as_ref() };
                 self.print_block(csb.loc, csb.stmts.slice(), None, TopLevel::init(IsTopLevel::No));
                 self.print_newline();
                 continue;
             }
 
-            self.print_property(*item);
+            self.print_property(item);
 
             if item.value.is_none() {
                 self.print_semicolon_after_statement();
@@ -2181,7 +2261,7 @@ where
     pub fn best_quote_char_for_e_string(str: &E::String, allow_backtick: bool) -> u8 {
         if IS_JSON { return b'"'; }
         if str.is_utf8() {
-            best_quote_char_for_string(str.data(), allow_backtick)
+            best_quote_char_for_string(str.slice8(), allow_backtick)
         } else {
             best_quote_char_for_string(str.slice16(), allow_backtick)
         }
@@ -2326,18 +2406,33 @@ where
 
     pub fn is_unbound_eval_identifier(&self, value: Expr) -> bool {
         match &value.data {
-            Expr::Data::EIdentifier(ident) => {
+            ExprData::EIdentifier(ident) => {
                 if ident.ref_.is_source_contents_slice() { return false; }
-                let Some(symbol) = self.symbols().get(self.symbols().follow(ident.ref_)) else { return false; };
-                symbol.kind == Symbol::Kind::Unbound && symbol.original_name == b"eval"
+                let Some(symbol) = self.symbols().get_const(self.symbols().follow(ident.ref_)) else { return false; };
+                symbol.kind == js_ast::ast::symbol::Kind::Unbound && slice_of_const(symbol.original_name) == b"eval"
             }
             _ => false,
         }
     }
 
     #[inline]
-    fn symbols(&self) -> js_ast::Symbol::Map {
+    fn symbols(&self) -> &js_ast::ast::symbol::Map {
         self.renamer.symbols()
+    }
+
+    /// Borrowck-reshape helper: `Renamer::name_for_symbol` returns a slice
+    /// borrowing `&mut self.renamer`, which conflicts with the immediately
+    /// following `self.print_*` call. The returned bytes always point into
+    /// either the AST arena (`Symbol::original_name: *const [u8]`) or the
+    /// `Source::contents` buffer — both are kept alive for `'a` by the
+    /// caller of `Printer::init`. Detach the borrow to a raw ptr per the
+    /// Phase-A ARENA convention (matching `slice_of_const` for AST fields).
+    /// // PORT NOTE: reshaped for borrowck — Phase B threads `'bump` through Renamer.
+    #[inline]
+    fn name_for_symbol(&mut self, ref_: Ref) -> &'a [u8] {
+        let p = self.renamer.name_for_symbol(ref_) as *const [u8];
+        // SAFETY: arena/source-backed; outlives 'a (see renamer.rs SAFETY notes).
+        unsafe { &*p }
     }
 
     pub fn print_require_error(&mut self, text: &[u8]) {
@@ -2347,15 +2442,16 @@ where
     }
 
     #[inline]
-    pub fn import_record(&self, import_record_index: usize) -> &ImportRecord {
+    pub fn import_record(&self, import_record_index: usize) -> &'a ImportRecord {
+        // PORT NOTE: detached from `&self` so callers can interleave `&mut self` printing.
         &self.import_records[import_record_index]
     }
 
     pub fn is_unbound_identifier(&self, expr: &Expr) -> bool {
-        let Expr::Data::EIdentifier(id) = &expr.data else { return false; };
+        let ExprData::EIdentifier(id) = &expr.data else { return false; };
         let ref_ = id.ref_;
-        let Some(symbol) = self.symbols().get(self.symbols().follow(ref_)) else { return false; };
-        symbol.kind == Symbol::Kind::Unbound
+        let Some(symbol) = self.symbols().get_const(self.symbols().follow(ref_)) else { return false; };
+        symbol.kind == js_ast::ast::symbol::Kind::Unbound
     }
 
     pub fn print_require_or_import_expr(
@@ -2390,7 +2486,7 @@ where
             //      const foo = await Promise.resolve(globalThis.Bun)
             //      const bar = globalThis.Bun
             //
-            if record.tag == ImportRecord::Tag::Bun {
+            if record.tag == ImportRecordTag::Bun {
                 if record.kind == ImportKind::Dynamic {
                     self.print(b"Promise.resolve(globalThis.Bun)");
                     if wrap { self.print(b")"); }
@@ -2446,7 +2542,7 @@ where
             if wrap_comma_operator { self.print(b"("); }
 
             // Wrap this with a call to "__toESM()" if this is a CommonJS file
-            let wrap_with_to_esm = record.flags.wrap_with_to_esm;
+            let wrap_with_to_esm = record.flags.contains(ImportRecordFlags::WRAP_WITH_TO_ESM);
             if wrap_with_to_esm {
                 self.print_space_before_identifier();
                 self.print_symbol(self.options.to_esm_ref);
@@ -2454,12 +2550,13 @@ where
             }
 
             if let Some(input_files) = self.options.input_files_for_dev_server {
-                debug_assert!(module_type == options::Format::InternalBakeDev);
+                debug_assert!(module_type == bundle_opts::Format::InternalBakeDev);
                 self.print_space_before_identifier();
                 self.print_symbol(self.options.hmr_ref);
                 self.print(b".require(");
                 let path = &input_files[record.source_index.get() as usize].path;
-                self.print_string_literal_utf8(&path.pretty, false);
+                // TODO(b2-blocked): bun_logger::fs::Path::pretty — field not yet ported; .text is the un-pretty path.
+                self.print_string_literal_utf8(path.text, false);
                 self.print(b")");
             } else if !meta.was_unwrapped_require {
                 // Call the wrapper
@@ -2477,7 +2574,7 @@ where
                 // Return the namespace object if this is an ESM file
                 if meta.exports_ref.is_valid() {
                     // Wrap this with a call to "__toCommonJS()" if this is an ESM file
-                    let wrap_with_to_cjs = record.flags.wrap_with_to_commonjs;
+                    let wrap_with_to_cjs = record.flags.contains(ImportRecordFlags::WRAP_WITH_TO_COMMONJS);
                     if wrap_with_to_cjs {
                         self.print_symbol(self.options.to_commonjs_ref);
                         self.print(b"(");
@@ -2494,7 +2591,7 @@ where
             }
 
             if wrap_with_to_esm {
-                if self.options.input_module_type == options::ModuleType::Esm {
+                if self.options.input_module_type == bundle_opts::ModuleType::Esm {
                     self.print(b",");
                     self.print_space();
                     self.print(b"1");
@@ -2513,7 +2610,7 @@ where
             self.print_space_before_identifier();
 
             if self.options.inline_require_and_import_errors {
-                if record.path.is_disabled && record.flags.handles_import_errors {
+                if record.path.is_disabled && record.flags.contains(ImportRecordFlags::HANDLES_IMPORT_ERRORS) {
                     self.print_require_error(&record.path.text);
                     if wrap { self.print(b")"); }
                     return;
@@ -2526,12 +2623,12 @@ where
                 }
             }
 
-            let wrap_with_to_esm = record.flags.wrap_with_to_esm;
+            let wrap_with_to_esm = record.flags.contains(ImportRecordFlags::WRAP_WITH_TO_ESM);
 
-            if module_type == options::Format::InternalBakeDev {
+            if module_type == bundle_opts::Format::InternalBakeDev {
                 self.print_space_before_identifier();
                 self.print_symbol(self.options.hmr_ref);
-                if record.tag == ImportRecord::Tag::Builtin {
+                if record.tag == ImportRecordTag::Builtin {
                     self.print(b".builtin(");
                 } else {
                     self.print(b".require(");
@@ -2570,10 +2667,10 @@ where
         self.print_space_before_identifier();
 
         // Wrap with __toESM if importing a CommonJS module
-        let wrap_with_to_esm = record.flags.wrap_with_to_esm;
+        let wrap_with_to_esm = record.flags.contains(ImportRecordFlags::WRAP_WITH_TO_ESM);
 
         // Allow it to fail at runtime, if it should
-        if module_type != options::Format::InternalBakeDev {
+        if module_type != bundle_opts::Format::InternalBakeDev {
             self.print(b"import(");
             self.print_import_record_path(record);
         } else {
@@ -2595,7 +2692,7 @@ where
             self.print(b".then((m)=>");
             self.print_symbol(self.options.to_esm_ref);
             self.print(b"(m.default");
-            if self.options.input_module_type == options::ModuleType::Esm {
+            if self.options.input_module_type == bundle_opts::ModuleType::Esm {
                 self.print(b",1");
             }
             self.print(b"))");
@@ -2619,9 +2716,7 @@ where
     }
 
     pub fn print_string_literal_utf8(&mut self, str: &[u8], allow_backtick: bool) {
-        if cfg!(debug_assertions) {
-            debug_assert!(strings::wtf8_validate_slice(str));
-        }
+        // TODO(b2-blocked): bun_string::strings::wtf8_validate_slice — debug-only assert dropped.
 
         let quote = if !IS_JSON {
             best_quote_char_for_string(str, allow_backtick)
@@ -2634,35 +2729,35 @@ where
         self.print(quote);
     }
 
-    fn print_clause_item(&mut self, item: js_ast::ClauseItem) {
+    fn print_clause_item(&mut self, item: &js_ast::ClauseItem) {
         self.print_clause_item_as(item, ClauseItemAs::Import)
     }
 
-    fn print_export_clause_item(&mut self, item: js_ast::ClauseItem) {
+    fn print_export_clause_item(&mut self, item: &js_ast::ClauseItem) {
         self.print_clause_item_as(item, ClauseItemAs::Export)
     }
 
-    fn print_export_from_clause_item(&mut self, item: js_ast::ClauseItem) {
+    fn print_export_from_clause_item(&mut self, item: &js_ast::ClauseItem) {
         self.print_clause_item_as(item, ClauseItemAs::ExportFrom)
     }
 
-    fn print_clause_item_as(&mut self, item: js_ast::ClauseItem, as_: ClauseItemAs) {
-        let name = self.renamer.name_for_symbol(item.name.ref_.unwrap());
+    fn print_clause_item_as(&mut self, item: &js_ast::ClauseItem, as_: ClauseItemAs) {
+        let name = self.name_for_symbol(item.name.ref_.unwrap());
 
         match as_ {
             ClauseItemAs::Import => {
-                if name == item.alias {
+                if name == slice_of_const(item.alias) {
                     self.print_identifier(name);
                 } else {
-                    self.print_clause_alias(&item.alias);
+                    self.print_clause_alias(slice_of_const(item.alias));
                     self.print(b" as ");
                     self.add_source_mapping(item.alias_loc);
                     self.print_identifier(name);
                 }
             }
             ClauseItemAs::Var => {
-                self.print_clause_alias(&item.alias);
-                if name != item.alias {
+                self.print_clause_alias(slice_of_const(item.alias));
+                if name != slice_of_const(item.alias) {
                     self.print(b":");
                     self.print_space();
                     self.print_identifier(name);
@@ -2670,10 +2765,10 @@ where
             }
             ClauseItemAs::Export => {
                 self.print_identifier(name);
-                if name != item.alias {
+                if name != slice_of_const(item.alias) {
                     self.print(b" as ");
                     self.add_source_mapping(item.alias_loc);
-                    self.print_clause_alias(&item.alias);
+                    self.print_clause_alias(slice_of_const(item.alias));
                 }
             }
             ClauseItemAs::ExportFrom => {
@@ -2685,13 +2780,14 @@ where
                 // whose display name may be mangled by a minifier. We must print
                 // `original_name` via `printClauseAlias` so string literals stay
                 // quoted and mangling can't corrupt the foreign-module name.
-                let from_name = if !item.original_name.is_empty() { &item.original_name[..] } else { name };
+                let original = slice_of_const(item.original_name);
+                let from_name = if !original.is_empty() { original } else { name };
                 self.print_clause_alias(from_name);
 
-                if from_name != item.alias {
+                if from_name != slice_of_const(item.alias) {
                     self.print(b" as ");
                     self.add_source_mapping(item.alias_loc);
-                    self.print_clause_alias(&item.alias);
+                    self.print_clause_alias(slice_of_const(item.alias));
                 }
             }
         }
@@ -2700,9 +2796,9 @@ where
     #[inline]
     pub fn can_print_identifier_utf16(&self, name: &[u16]) -> bool {
         if ASCII_ONLY || ASCII_ONLY_ALWAYS_ON_UNLESS_MINIFYING {
-            js_lexer::is_latin1_identifier_u16(name)
+            is_latin1_identifier_u16(name)
         } else {
-            js_lexer::is_identifier_utf16(name)
+            js_ast::lexer::is_identifier_utf16(name)
         }
     }
 
@@ -2722,24 +2818,24 @@ where
         let mut ascii_start: usize = 0;
         let mut is_ascii = false;
         let mut iter = CodepointIterator::init(bytes);
-        let mut cursor = CodepointIterator::Cursor::default();
+        let mut cursor = strings::Cursor::default();
 
         while iter.next(&mut cursor) {
-            match cursor.c {
+            match cursor.c as u32 {
                 // unlike other versions, we only want to mutate > 0x7F
                 0..=LAST_ASCII => {
                     if !is_ascii {
-                        ascii_start = cursor.i;
+                        ascii_start = (cursor.i as usize);
                         is_ascii = true;
                     }
                 }
                 _ => {
                     if is_ascii {
-                        self.print(&bytes[ascii_start..cursor.i]);
+                        self.print(&bytes[ascii_start..(cursor.i as usize)]);
                         is_ascii = false;
                     }
 
-                    match cursor.c {
+                    match cursor.c as u32 {
                         0..=0xFFFF => {
                             let c = usize::try_from(cursor.c).unwrap();
                             self.print(&[
@@ -2769,40 +2865,40 @@ where
         let mut flags = in_flags;
 
         match &expr.data {
-            Expr::Data::EMissing => {}
-            Expr::Data::EUndefined => {
+            ExprData::EMissing(_) => {}
+            ExprData::EUndefined(_) => {
                 self.add_source_mapping(expr.loc);
                 self.print_undefined(expr.loc, level);
             }
-            Expr::Data::ESuper => {
+            ExprData::ESuper(_) => {
                 self.print_space_before_identifier();
                 self.add_source_mapping(expr.loc);
                 self.print(b"super");
             }
-            Expr::Data::ENull => {
+            ExprData::ENull(_) => {
                 self.print_space_before_identifier();
                 self.add_source_mapping(expr.loc);
                 self.print(b"null");
             }
-            Expr::Data::EThis => {
+            ExprData::EThis(_) => {
                 self.print_space_before_identifier();
                 self.add_source_mapping(expr.loc);
                 self.print(b"this");
             }
-            Expr::Data::ESpread(e) => {
+            ExprData::ESpread(e) => {
                 self.add_source_mapping(expr.loc);
                 self.print(b"...");
                 self.print_expr(e.value, Level::Comma, ExprFlag::none());
             }
-            Expr::Data::ENewTarget => {
+            ExprData::ENewTarget(_) => {
                 self.print_space_before_identifier();
                 self.add_source_mapping(expr.loc);
                 self.print(b"new.target");
             }
-            Expr::Data::EImportMeta => {
+            ExprData::EImportMeta(_) => {
                 self.print_space_before_identifier();
                 self.add_source_mapping(expr.loc);
-                if self.options.module_type == options::Format::InternalBakeDev {
+                if self.options.module_type == bundle_opts::Format::InternalBakeDev {
                     debug_assert!(self.options.hmr_ref.is_valid());
                     self.print_symbol(self.options.hmr_ref);
                     self.print(b".importMeta");
@@ -2818,13 +2914,13 @@ where
                     // referencing import.meta
                     //
                     // TODO: This assertion trips when using `import.meta` with `--format=cjs`
-                    debug_assert!(self.options.module_type == options::Format::Cjs);
+                    debug_assert!(self.options.module_type == bundle_opts::Format::Cjs);
 
                     self.print_symbol(self.options.import_meta_ref);
                 }
             }
-            Expr::Data::EImportMetaMain(data) => {
-                if self.options.module_type == options::Format::Esm && self.options.target != options::Target::Node {
+            ExprData::EImportMetaMain(data) => {
+                if self.options.module_type == bundle_opts::Format::Esm && self.options.target != bundle_opts::Target::Node {
                     // Node.js doesn't support import.meta.main
                     // Most of the time, leave it in there
                     if data.inverted {
@@ -2837,7 +2933,7 @@ where
                     if let Some(mi) = self.module_info() { mi.flags.contains_import_meta = true; }
                     self.print(b"import.meta.main");
                 } else {
-                    debug_assert!(self.options.module_type != options::Format::InternalBakeDev);
+                    debug_assert!(self.options.module_type != bundle_opts::Format::InternalBakeDev);
 
                     self.print_space_before_identifier();
                     self.add_source_mapping(expr.loc);
@@ -2854,7 +2950,7 @@ where
                         self.print_whitespacer(ws!(b".main == "));
                     }
 
-                    if self.options.target == options::Target::Node {
+                    if self.options.target == bundle_opts::Target::Node {
                         // "__require.module"
                         if let Some(require) = self.options.require_ref {
                             self.print_symbol(require);
@@ -2869,7 +2965,7 @@ where
                     }
                 }
             }
-            Expr::Data::ESpecial(special) => match special {
+            ExprData::ESpecial(special) => match special {
                 E::Special::ModuleExports => {
                     self.print_space_before_identifier();
                     self.add_source_mapping(expr.loc);
@@ -2886,68 +2982,78 @@ where
                     }
                 }
                 E::Special::HotEnabled => {
-                    debug_assert!(self.options.module_type == options::Format::InternalBakeDev);
+                    debug_assert!(self.options.module_type == bundle_opts::Format::InternalBakeDev);
                     self.print_symbol(self.options.hmr_ref);
                     self.print(b".indirectHot");
                 }
                 E::Special::HotData => {
-                    debug_assert!(self.options.module_type == options::Format::InternalBakeDev);
+                    debug_assert!(self.options.module_type == bundle_opts::Format::InternalBakeDev);
                     self.print_symbol(self.options.hmr_ref);
                     self.print(b".data");
                 }
                 E::Special::HotAccept => {
-                    debug_assert!(self.options.module_type == options::Format::InternalBakeDev);
+                    debug_assert!(self.options.module_type == bundle_opts::Format::InternalBakeDev);
                     self.print_symbol(self.options.hmr_ref);
                     self.print(b".accept");
                 }
                 E::Special::HotAcceptVisited => {
-                    debug_assert!(self.options.module_type == options::Format::InternalBakeDev);
+                    debug_assert!(self.options.module_type == bundle_opts::Format::InternalBakeDev);
                     self.print_symbol(self.options.hmr_ref);
                     self.print(b".acceptSpecifiers");
                 }
                 E::Special::HotDisabled => {
-                    debug_assert!(self.options.module_type != options::Format::InternalBakeDev);
-                    self.print_expr(Expr { data: Expr::Data::EUndefined, loc: expr.loc }, level, in_flags);
+                    debug_assert!(self.options.module_type != bundle_opts::Format::InternalBakeDev);
+                    self.print_expr(Expr { data: ExprData::EUndefined(E::Undefined {}), loc: expr.loc }, level, in_flags);
                 }
                 E::Special::ResolvedSpecifierString(index) => {
-                    debug_assert!(self.options.module_type == options::Format::InternalBakeDev);
-                    self.print_string_literal_utf8(&self.import_record(index.get() as usize).path.pretty, true);
+                    debug_assert!(self.options.module_type == bundle_opts::Format::InternalBakeDev);
+                    self.print_string_literal_utf8(self.import_record(*index as usize).path.pretty, true);
                 }
             },
-            Expr::Data::ECommonjsExportIdentifier(id) => {
+            ExprData::ECommonjsExportIdentifier(id) => {
                 self.print_space_before_identifier();
                 self.add_source_mapping(expr.loc);
 
-                for (key, value) in self.options.commonjs_named_exports.keys().iter().zip(self.options.commonjs_named_exports.values().iter()) {
-                    if value.loc_ref.ref_.unwrap().eql(id.ref_) {
-                        if self.options.commonjs_named_exports_deoptimized || value.needs_decl {
-                            if self.options.commonjs_module_exports_assigned_deoptimized
-                                && id.base == E::CommonjsExportIdentifier::Base::ModuleDotExports
-                                && self.options.commonjs_module_ref.is_valid()
-                            {
-                                self.print_symbol(self.options.commonjs_module_ref);
-                                self.print(b".exports");
-                            } else {
-                                self.print_symbol(self.options.commonjs_named_exports_ref);
-                            }
-
-                            if js_lexer::is_identifier(key) {
-                                self.print(b".");
-                                self.print(key);
-                            } else {
-                                self.print(b"[");
-                                self.print_string_literal_utf8(key, false);
-                                self.print(b"]");
-                            }
+                // PORT NOTE: reshaped for borrowck — find the matching index first,
+                // then drop the immutable iter borrow before printing.
+                let mut found: Option<usize> = None;
+                for (idx, value) in self.options.commonjs_named_exports.values().iter().enumerate() {
+                    if value.loc_ref.ref_.unwrap().eql(id.ref_) { found = Some(idx); break; }
+                }
+                if let Some(idx) = found {
+                    let key: *const [u8] = &self.options.commonjs_named_exports.keys()[idx][..];
+                    let value_loc_ref = self.options.commonjs_named_exports.values()[idx].loc_ref;
+                    let value_needs_decl = self.options.commonjs_named_exports.values()[idx].needs_decl;
+                    struct V { loc_ref: js_ast::LocRef, needs_decl: bool }
+                    let value = V { loc_ref: value_loc_ref, needs_decl: value_needs_decl };
+                    if self.options.commonjs_named_exports_deoptimized || value.needs_decl {
+                        if self.options.commonjs_module_exports_assigned_deoptimized
+                            && id.base == E::CommonJSExportIdentifierBase::ModuleDotExports
+                            && self.options.commonjs_module_ref.is_valid()
+                        {
+                            self.print_symbol(self.options.commonjs_module_ref);
+                            self.print(b".exports");
                         } else {
-                            self.print_symbol(value.loc_ref.ref_.unwrap());
+                            self.print_symbol(self.options.commonjs_named_exports_ref);
                         }
-                        break;
+
+                        // SAFETY: `commonjs_named_exports` keys borrow `'a` (Options<'a>).
+                        let key = unsafe { &*key };
+                        if js_ast::lexer::is_identifier(key) {
+                            self.print(b".");
+                            self.print(key);
+                        } else {
+                            self.print(b"[");
+                            self.print_string_literal_utf8(key, false);
+                            self.print(b"]");
+                        }
+                    } else {
+                        self.print_symbol(value.loc_ref.ref_.unwrap());
                     }
                 }
             }
-            Expr::Data::ENew(e) => {
-                let has_pure_comment = e.can_be_unwrapped_if_unused == E::CanBeUnwrapped::IfUnused && self.options.print_dce_annotations;
+            ExprData::ENew(e) => {
+                let has_pure_comment = e.can_be_unwrapped_if_unused == E::CallUnwrap::IfUnused && self.options.print_dce_annotations;
                 let wrap = level.gte(Level::Call) || (has_pure_comment && level.gte(Level::Postfix));
 
                 if wrap { self.print(b"("); }
@@ -2981,7 +3087,7 @@ where
 
                 if wrap { self.print(b")"); }
             }
-            Expr::Data::ECall(e) => {
+            ExprData::ECall(e) => {
                 let mut wrap = level.gte(Level::New) || flags.contains(ExprFlag::ForbidCall);
                 let mut target_flags = ExprFlag::none();
                 if e.optional_chain.is_none() {
@@ -2990,7 +3096,7 @@ where
                     wrap = true;
                 }
 
-                let has_pure_comment = e.can_be_unwrapped_if_unused == E::CanBeUnwrapped::IfUnused && self.options.print_dce_annotations;
+                let has_pure_comment = e.can_be_unwrapped_if_unused == E::CallUnwrap::IfUnused && self.options.print_dce_annotations;
                 if has_pure_comment && level.gte(Level::Postfix) {
                     wrap = true;
                 }
@@ -3040,47 +3146,47 @@ where
                 self.print(b")");
                 if wrap { self.print(b")"); }
             }
-            Expr::Data::ERequireMain => {
+            ExprData::ERequireMain => {
                 self.print_space_before_identifier();
                 self.add_source_mapping(expr.loc);
 
                 if let Some(require_ref) = self.options.require_ref {
                     self.print_symbol(require_ref);
                     self.print(b".main");
-                } else if self.options.module_type == options::Format::InternalBakeDev {
+                } else if self.options.module_type == bundle_opts::Format::InternalBakeDev {
                     self.print(b"false"); // there is no true main entry point
                 } else {
                     self.print(b"require.main");
                 }
             }
-            Expr::Data::ERequireCallTarget => {
+            ExprData::ERequireCallTarget => {
                 self.print_space_before_identifier();
                 self.add_source_mapping(expr.loc);
 
                 if let Some(require_ref) = self.options.require_ref {
                     self.print_symbol(require_ref);
-                } else if self.options.module_type == options::Format::InternalBakeDev {
+                } else if self.options.module_type == bundle_opts::Format::InternalBakeDev {
                     self.print_symbol(self.options.hmr_ref);
                     self.print(b".require");
                 } else {
                     self.print(b"require");
                 }
             }
-            Expr::Data::ERequireResolveCallTarget => {
+            ExprData::ERequireResolveCallTarget => {
                 self.print_space_before_identifier();
                 self.add_source_mapping(expr.loc);
 
                 if let Some(require_ref) = self.options.require_ref {
                     self.print_symbol(require_ref);
                     self.print(b".resolve");
-                } else if self.options.module_type == options::Format::InternalBakeDev {
+                } else if self.options.module_type == bundle_opts::Format::InternalBakeDev {
                     self.print_symbol(self.options.hmr_ref);
                     self.print(b".requireResolve");
                 } else {
                     self.print(b"require.resolve");
                 }
             }
-            Expr::Data::ERequireString(e) => {
+            ExprData::ERequireString(e) => {
                 if !REWRITE_ESM_TO_CJS {
                     self.print_require_or_import_expr(
                         e.import_record_index,
@@ -3092,7 +3198,7 @@ where
                     );
                 }
             }
-            Expr::Data::ERequireResolveString(e) => {
+            ExprData::ERequireResolveString(e) => {
                 let wrap = level.gte(Level::New) || flags.contains(ExprFlag::ForbidCall);
                 if wrap { self.print(b"("); }
 
@@ -3101,7 +3207,7 @@ where
                 if let Some(require_ref) = self.options.require_ref {
                     self.print_symbol(require_ref);
                     self.print(b".resolve");
-                } else if self.options.module_type == options::Format::InternalBakeDev {
+                } else if self.options.module_type == bundle_opts::Format::InternalBakeDev {
                     self.print_symbol(self.options.hmr_ref);
                     self.print(b".requireResolve");
                 } else {
@@ -3114,7 +3220,7 @@ where
 
                 if wrap { self.print(b")"); }
             }
-            Expr::Data::EImport(e) => {
+            ExprData::EImport(e) => {
                 // Handle non-string expressions
                 if e.is_import_record_null() {
                     let wrap = level.gte(Level::New) || flags.contains(ExprFlag::ForbidCall);
@@ -3122,7 +3228,7 @@ where
 
                     self.print_space_before_identifier();
                     self.add_source_mapping(expr.loc);
-                    if self.options.module_type == options::Format::InternalBakeDev {
+                    if self.options.module_type == bundle_opts::Format::InternalBakeDev {
                         self.print_symbol(self.options.hmr_ref);
                         self.print(b".dynamicImport(");
                     } else {
@@ -3150,7 +3256,7 @@ where
                     );
                 }
             }
-            Expr::Data::EDot(e) => {
+            ExprData::EDot(e) => {
                 let is_optional_chain = e.optional_chain == Some(js_ast::OptionalChain::Start);
 
                 let mut wrap = false;
@@ -3173,7 +3279,7 @@ where
 
                 self.print_expr(e.target, Level::Postfix, flags);
 
-                if js_lexer::is_identifier(&e.name) {
+                if js_ast::lexer::is_identifier(&e.name) {
                     if is_optional_chain {
                         self.print(b"?.");
                     } else {
@@ -3198,16 +3304,16 @@ where
 
                 if wrap { self.print(b")"); }
             }
-            Expr::Data::EIndex(e) => {
+            ExprData::EIndex(e) => {
                 let mut wrap = false;
                 if e.optional_chain.is_none() {
                     flags.insert(ExprFlag::HasNonOptionalChainParent);
 
-                    if let Some(str) = e.index.data.as_e_string() {
-                        str.resolve_rope_if_needed(/* allocator dropped */);
+                    if let Some(mut str) = e.index.data.as_e_string() {
+                        str.resolve_rope_if_needed(self.bump);
                         if str.is_utf8() {
-                            if let Some(value) = self.try_to_get_imported_enum_value(e.target, str.data()) {
-                                self.print_inlined_enum(value, str.data(), level);
+                            if let Some(value) = self.try_to_get_imported_enum_value(e.target, str.slice8()) {
+                                self.print_inlined_enum(value, str.slice8(), level);
                                 return;
                             }
                         }
@@ -3228,7 +3334,7 @@ where
                 }
 
                 match &e.index.data {
-                    Expr::Data::EPrivateIdentifier(priv_) => {
+                    ExprData::EPrivateIdentifier(priv_) => {
                         if !is_optional_chain_start {
                             self.print(b".");
                         }
@@ -3245,7 +3351,7 @@ where
 
                 if wrap { self.print(b")"); }
             }
-            Expr::Data::EIf(e) => {
+            ExprData::EIf(e) => {
                 let wrap = level.gte(Level::Conditional);
                 if wrap {
                     self.print(b"(");
@@ -3263,7 +3369,7 @@ where
                 self.print_expr(e.no, Level::Yield, flags);
                 if wrap { self.print(b")"); }
             }
-            Expr::Data::EArrow(e) => {
+            ExprData::EArrow(e) => {
                 let wrap = level.gte(Level::Assign);
 
                 if wrap { self.print(b"("); }
@@ -3280,7 +3386,7 @@ where
 
                 let mut was_printed = false;
                 if e.body.stmts.len() == 1 && e.prefer_expr {
-                    if let Stmt::Data::SReturn(ret) = &e.body.stmts[0].data {
+                    if let StmtData::SReturn(ret) = slice_of(e.body.stmts)[0].data {
                         if let Some(val) = &ret.value {
                             self.arrow_expr_start = self.writer.written();
                             self.print_expr(*val, Level::Comma, ExprFlag::ForbidIn.into());
@@ -3290,12 +3396,12 @@ where
                 }
 
                 if !was_printed {
-                    self.print_block(e.body.loc, &e.body.stmts, None, TopLevel::init(IsTopLevel::No));
+                    self.print_block(e.body.loc, slice_of(e.body.stmts), None, TopLevel::init(IsTopLevel::No));
                 }
 
                 if wrap { self.print(b")"); }
             }
-            Expr::Data::EFunction(e) => {
+            ExprData::EFunction(e) => {
                 let n = self.writer.written();
                 let wrap = self.stmt_start == n || self.export_default_start == n;
 
@@ -3315,13 +3421,13 @@ where
                 if let Some(sym) = &e.func.name {
                     self.print_space_before_identifier();
                     self.add_source_mapping(sym.loc);
-                    self.print_symbol(sym.ref_.unwrap_or_else(|| Output::panic("internal error: expected E.Function's name symbol to have a ref")));
+                    self.print_symbol(sym.ref_.unwrap_or_else(|| Output::panic(format_args!("internal error: expected E.Function's name symbol to have a ref"))));
                 }
 
-                self.print_func(e.func);
+                self.print_func(&e.func);
                 if wrap { self.print(b")"); }
             }
-            Expr::Data::EClass(e) => {
+            ExprData::EClass(e) => {
                 let n = self.writer.written();
                 let wrap = self.stmt_start == n || self.export_default_start == n;
                 if wrap { self.print(b"("); }
@@ -3332,12 +3438,12 @@ where
                 if let Some(name) = &e.class_name {
                     self.print(b" ");
                     self.add_source_mapping(name.loc);
-                    self.print_symbol(name.ref_.unwrap_or_else(|| Output::panic("internal error: expected E.Class's name symbol to have a ref")));
+                    self.print_symbol(name.ref_.unwrap_or_else(|| Output::panic(format_args!("internal error: expected E.Class's name symbol to have a ref"))));
                 }
-                self.print_class(*e);
+                self.print_class(&e);
                 if wrap { self.print(b")"); }
             }
-            Expr::Data::EArray(e) => {
+            ExprData::EArray(e) => {
                 self.add_source_mapping(expr.loc);
                 self.print(b"[");
                 let items = e.items.slice();
@@ -3355,7 +3461,7 @@ where
                         }
                         self.print_expr(*item, Level::Comma, ExprFlag::none());
 
-                        if i == items.len() - 1 && matches!(item.data, Expr::Data::EMissing) {
+                        if i == items.len() - 1 && matches!(item.data, ExprData::EMissing(_)) {
                             // Make sure there's a comma after trailing missing items
                             self.print(b",");
                         }
@@ -3374,7 +3480,7 @@ where
 
                 self.print(b"]");
             }
-            Expr::Data::EObject(e) => {
+            ExprData::EObject(e) => {
                 let n = self.writer.written();
                 let wrap = if IS_JSON { false } else { self.stmt_start == n || self.arrow_expr_start == n };
 
@@ -3391,7 +3497,7 @@ where
                         self.print_newline();
                         self.print_indent();
                     }
-                    self.print_property(props[0]);
+                    self.print_property(&props[0]);
 
                     if props.len() > 1 {
                         for property in &props[1..] {
@@ -3402,7 +3508,7 @@ where
                                 self.print_newline();
                                 self.print_indent();
                             }
-                            self.print_property(*property);
+                            self.print_property(property);
                         }
                     }
 
@@ -3420,7 +3526,7 @@ where
                 self.print(b"}");
                 if wrap { self.print(b")"); }
             }
-            Expr::Data::EBoolean(e) | Expr::Data::EBranchBoolean(e) => {
+            ExprData::EBoolean(e) | ExprData::EBranchBoolean(e) => {
                 self.add_source_mapping(expr.loc);
                 if self.options.minify_syntax {
                     if level.gte(Level::Prefix) {
@@ -3433,31 +3539,37 @@ where
                     self.print(if e.value { b"true".as_slice() } else { b"false".as_slice() });
                 }
             }
-            Expr::Data::EString(e) => {
-                e.resolve_rope_if_needed(/* allocator dropped */);
+            ExprData::EString(e) => {
+                let mut e = *e;
+                e.resolve_rope_if_needed(self.bump);
                 self.add_source_mapping(expr.loc);
 
                 // If this was originally a template literal, print it as one as long as we're not minifying
                 if e.prefer_template && !self.options.minify_syntax {
                     self.print(b"`");
-                    self.print_string_characters_e_string(e, b'`');
+                    self.print_string_characters_e_string(&e, b'`');
                     self.print(b"`");
                     return;
                 }
 
-                self.print_string_literal_e_string(e, true);
+                self.print_string_literal_e_string(&e, true);
             }
-            Expr::Data::ETemplate(e) => {
+            ExprData::ETemplate(e) => {
+                // TODO(b2-blocked): bun_js_parser::E::TemplatePart: Clone + E::Template::fold reshape
+                // — the inlining-rewrite path requires `TemplatePart: Clone` and a
+                // `fold(&mut self, &Bump, Loc)` overload that the lower-tier crate
+                // doesn't yet expose under matching arity.
+                #[cfg(any())]
                 if e.tag.is_none() && (self.options.minify_syntax || self.was_lazy_export) {
                     let mut replaced: Vec<E::TemplatePart> = Vec::new();
                     for (i, _part) in e.parts.iter().enumerate() {
                         let mut part = *_part;
                         let inlined_value: Option<Expr> = match &part.value.data {
-                            Expr::Data::ENameOfSymbol(e2) => Some(Expr::init(
+                            ExprData::ENameOfSymbol(e2) => Some(Expr::init(
                                 E::String::init(self.mangled_prop_name(e2.ref_)),
                                 part.value.loc,
                             )),
-                            Expr::Data::EDot(_) => {
+                            ExprData::EDot(_) => {
                                 // TODO: handle inlining of dot properties
                                 None
                             }
@@ -3480,13 +3592,13 @@ where
                         copy.parts = &replaced[..]; // TODO(port): lifetime — `replaced` is local
                         let e2 = copy.fold(/* allocator dropped */ expr.loc);
                         match &e2.data {
-                            Expr::Data::EString(s) => {
+                            ExprData::EString(s) => {
                                 self.print(b'"');
-                                self.print_string_characters_utf8(s.data(), b'"');
+                                self.print_string_characters_utf8(s.slice8(), b'"');
                                 self.print(b'"');
                                 return;
                             }
-                            Expr::Data::ETemplate(t) => {
+                            ExprData::ETemplate(t) => {
                                 // SAFETY: e is &mut behind the AST arena pointer
                                 // TODO(port): Zig mutated `e.* = e2.data.e_template.*` — needs &mut access through arena.
                                 let _ = t;
@@ -3506,7 +3618,14 @@ where
                 if let Some(tag) = &e.tag {
                     self.add_source_mapping(expr.loc);
                     // Optional chains are forbidden in template tags
-                    if expr.is_optional_chain() {
+                    // PORT NOTE: `Expr::is_optional_chain` is gated upstream; inline its body.
+                    let is_optional_chain = match &expr.data {
+                        ExprData::EDot(d) => d.optional_chain.is_some(),
+                        ExprData::EIndex(i) => i.optional_chain.is_some(),
+                        ExprData::ECall(c) => c.optional_chain.is_some(),
+                        _ => false,
+                    };
+                    if is_optional_chain {
                         self.print(b"(");
                         self.print_expr(*tag, Level::Lowest, ExprFlag::none());
                         self.print(b")");
@@ -3518,11 +3637,12 @@ where
                 }
 
                 self.print(b"`");
-                match &e.head {
-                    E::Template::Head::Raw(raw) => self.print_raw_template_literal(raw),
-                    E::Template::Head::Cooked(cooked) => {
+                let mut e = *e;
+                match &mut e.head {
+                    E::TemplateContents::Raw(raw) => self.print_raw_template_literal(raw),
+                    E::TemplateContents::Cooked(cooked) => {
                         if cooked.is_present() {
-                            cooked.resolve_rope_if_needed(/* allocator dropped */);
+                            cooked.resolve_rope_if_needed(self.bump);
                             self.print_string_characters_e_string(cooked, b'`');
                         }
                     }
@@ -3533,33 +3653,38 @@ where
                     self.print_expr(part.value, Level::Lowest, ExprFlag::none());
                     self.print(b"}");
                     match &part.tail {
-                        E::Template::Head::Raw(raw) => self.print_raw_template_literal(raw),
-                        E::Template::Head::Cooked(cooked) => {
+                        E::TemplateContents::Raw(raw) => self.print_raw_template_literal(raw),
+                        E::TemplateContents::Cooked(cooked) => {
                             if cooked.is_present() {
-                                cooked.resolve_rope_if_needed(/* allocator dropped */);
-                                self.print_string_characters_e_string(cooked, b'`');
+                                // PORT NOTE: `parts` is `&'static [TemplatePart]` (arena, immutable
+                                // borrow). Zig mutates in place; Rust resolves a local copy of the
+                                // EString header (the rope chain is StoreRef-linked and Copy) and
+                                // prints from that — the arena node stays roped.
+                                let mut local = E::EString { ..*cooked };
+                                local.resolve_rope_if_needed(self.bump);
+                                self.print_string_characters_e_string(&local, b'`');
                             }
                         }
                     }
                 }
                 self.print(b"`");
             }
-            Expr::Data::ERegExp(e) => {
+            ExprData::ERegExp(e) => {
                 self.add_source_mapping(expr.loc);
                 self.print_reg_exp_literal(e);
             }
-            Expr::Data::EBigInt(e) => {
+            ExprData::EBigInt(e) => {
                 self.print_space_before_identifier();
                 self.add_source_mapping(expr.loc);
                 self.print(&e.value[..]);
                 self.print(b'n');
             }
-            Expr::Data::ENumber(e) => {
+            ExprData::ENumber(e) => {
                 self.add_source_mapping(expr.loc);
                 self.print_number(e.value, level);
             }
-            Expr::Data::EIdentifier(e) => {
-                let name = self.renamer.name_for_symbol(e.ref_);
+            ExprData::EIdentifier(e) => {
+                let name = self.name_for_symbol(e.ref_);
                 let wrap = self.writer.written() == self.for_of_init_start && name == b"let";
 
                 if wrap { self.print(b"("); }
@@ -3570,18 +3695,23 @@ where
 
                 if wrap { self.print(b")"); }
             }
-            Expr::Data::EImportIdentifier(e) => {
+            ExprData::EImportIdentifier(e) => {
                 // Potentially use a property access instead of an identifier
                 let mut did_print = false;
 
-                let ref_ = if self.options.module_type != options::Format::InternalBakeDev {
+                let ref_ = if self.options.module_type != bundle_opts::Format::InternalBakeDev {
                     self.symbols().follow(e.ref_)
                 } else {
                     e.ref_
                 };
-                let symbol = self.symbols().get(ref_).unwrap();
+                // PORT NOTE: reshaped for borrowck — `get_const` borrows self; capture
+                // the two fields we need via the arena raw-ptr convention so the
+                // borrow is dropped before the `&mut self` print calls below.
+                let symbol_ptr: *const Symbol = self.symbols().get_const(ref_).unwrap();
+                // SAFETY: arena-backed; symbol table outlives the print pass.
+                let symbol = unsafe { &*symbol_ptr };
 
-                if symbol.import_item_status == Symbol::ImportItemStatus::Missing {
+                if symbol.import_item_status == js_ast::ImportItemStatus::Missing {
                     self.print_undefined(expr.loc, level);
                     did_print = true;
                 } else if let Some(namespace) = &symbol.namespace_alias {
@@ -3593,19 +3723,19 @@ where
 
                             if let Some(target) = &self.call_target {
                                 wrap = e.was_originally_identifier
-                                    && matches!(target, Expr::Data::EIdentifier(id) if id.ref_.eql(e.ref_));
+                                    && matches!(target, ExprData::EIdentifier(id) if id.ref_.eql(e.ref_));
                             }
 
                             if wrap { self.print_whitespacer(ws!(b"(0, ")); }
                             self.print_space_before_identifier();
                             self.add_source_mapping(expr.loc);
-                            self.print_namespace_alias(import_record, *namespace);
+                            self.print_namespace_alias(import_record, namespace);
 
                             if wrap { self.print(b")"); }
-                        } else if import_record.flags.was_originally_require && import_record.path.is_disabled {
+                        } else if import_record.flags.contains(ImportRecordFlags::WAS_ORIGINALLY_REQUIRE) && import_record.path.is_disabled {
                             self.add_source_mapping(expr.loc);
 
-                            if import_record.flags.handles_import_errors {
+                            if import_record.flags.contains(ImportRecordFlags::HANDLES_IMPORT_ERRORS) {
                                 self.print_require_error(&import_record.path.text);
                             } else {
                                 self.print_disabled_import();
@@ -3619,7 +3749,7 @@ where
 
                         let wrap = if let Some(target) = &self.call_target {
                             e.was_originally_identifier
-                                && matches!(target, Expr::Data::EIdentifier(id) if id.ref_.eql(e.ref_))
+                                && matches!(target, ExprData::EIdentifier(id) if id.ref_.eql(e.ref_))
                         } else {
                             false
                         };
@@ -3629,8 +3759,8 @@ where
                         self.print_space_before_identifier();
                         self.add_source_mapping(expr.loc);
                         self.print_symbol(namespace.namespace_ref);
-                        let alias = &namespace.alias;
-                        if js_lexer::is_identifier(alias) {
+                        let alias = slice_of_const(namespace.alias);
+                        if js_ast::lexer::is_identifier(alias) {
                             self.print(b".");
                             // TODO: addSourceMappingForName
                             self.print_identifier(alias);
@@ -3651,7 +3781,7 @@ where
                     self.print_symbol(e.ref_);
                 }
             }
-            Expr::Data::EAwait(e) => {
+            ExprData::EAwait(e) => {
                 let wrap = level.gte(Level::Prefix);
                 if wrap { self.print(b"("); }
 
@@ -3663,7 +3793,7 @@ where
 
                 if wrap { self.print(b")"); }
             }
-            Expr::Data::EYield(e) => {
+            ExprData::EYield(e) => {
                 let wrap = level.gte(Level::Assign);
                 if wrap { self.print(b"("); }
 
@@ -3679,13 +3809,13 @@ where
 
                 if wrap { self.print(b")"); }
             }
-            Expr::Data::EUnary(e) => {
-                let entry: &'static Op = Op::TABLE.get_ptr_const(e.op);
+            ExprData::EUnary(e) => {
+                let entry: &'static OpInfo = Op::TABLE.get_ptr_const(e.op);
                 let wrap = level.gte(entry.level);
 
                 if wrap { self.print(b"("); }
 
-                if !e.op.is_prefix() {
+                if !Op::Code::is_prefix(e.op) {
                     self.print_expr(e.value, Level::Postfix.sub(1), ExprFlag::none());
                 }
 
@@ -3696,7 +3826,7 @@ where
                     self.print_space();
                 } else {
                     self.print_space_before_operator(e.op);
-                    if e.op.is_prefix() {
+                    if Op::Code::is_prefix(e.op) {
                         self.add_source_mapping(expr.loc);
                     }
                     self.print(entry.text);
@@ -3704,10 +3834,10 @@ where
                     self.prev_op_end = self.writer.written();
                 }
 
-                if e.op.is_prefix() {
+                if Op::Code::is_prefix(e.op) {
                     // Never turn "typeof (0, x)" into "typeof x" or "delete (0, x)" into "delete x"
-                    if (e.op == Op::Code::UnTypeof && !e.flags.was_originally_typeof_identifier && self.is_unbound_identifier(&e.value))
-                        || (e.op == Op::Code::UnDelete && !e.flags.was_originally_delete_of_identifier_or_property_access && is_identifier_or_numeric_constant_or_property_access(&e.value))
+                    if (e.op == Op::Code::UnTypeof && !e.flags.contains(E::UnaryFlags::WAS_ORIGINALLY_TYPEOF_IDENTIFIER) && self.is_unbound_identifier(&e.value))
+                        || (e.op == Op::Code::UnDelete && !e.flags.contains(E::UnaryFlags::WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS) && is_identifier_or_numeric_constant_or_property_access(&e.value))
                     {
                         self.print(b"(0,");
                         self.print_space();
@@ -3720,12 +3850,13 @@ where
 
                 if wrap { self.print(b")"); }
             }
-            Expr::Data::EBinary(e) => {
+            ExprData::EBinary(e) => {
                 // The handling of binary expressions is convoluted because we're using
                 // iteration on the heap instead of recursion on the call stack to avoid
                 // stack overflow for deeply-nested ASTs.
                 let mut v = BinaryExpressionVisitor {
-                    e,
+                    e: *e,
+                    _phantom: core::marker::PhantomData,
                     level,
                     flags,
                     left_level: Level::Lowest,
@@ -3744,7 +3875,7 @@ where
                     }
 
                     let left = v.e.left;
-                    let left_binary: Option<&E::Binary> = if let Expr::Data::EBinary(b) = &left.data { Some(b) } else { None };
+                    let left_binary = if let ExprData::EBinary(b) = &left.data { Some(*b) } else { None };
 
                     // Stop iterating if iteration doesn't apply to the left node
                     if left_binary.is_none() {
@@ -3757,6 +3888,7 @@ where
                     let lb = left_binary.unwrap();
                     let next = BinaryExpressionVisitor {
                         e: lb,
+                        _phantom: core::marker::PhantomData,
                         level: v.left_level,
                         flags: v.left_flags,
                         left_level: Level::Lowest,
@@ -3776,7 +3908,7 @@ where
                     self.binary_visit_right_and_finish(&last);
                 }
             }
-            Expr::Data::EInlinedEnum(e) => {
+            ExprData::EInlinedEnum(e) => {
                 self.print_expr(e.value, level, flags);
                 if !self.options.minify_whitespace && !self.options.minify_identifiers {
                     self.print(b" /* ");
@@ -3784,7 +3916,7 @@ where
                     self.print(b" */");
                 }
             }
-            Expr::Data::ENameOfSymbol(e) => {
+            ExprData::ENameOfSymbol(e) => {
                 let name = self.mangled_prop_name(e.ref_);
                 self.add_source_mapping_for_name(expr.loc, name, e.ref_);
 
@@ -3796,9 +3928,10 @@ where
                 self.print_string_characters_utf8(name, b'"');
                 self.print(b'"');
             }
-            Expr::Data::EJsxElement(_) | Expr::Data::EPrivateIdentifier(_) => {
+            ExprData::EJsxElement(_) | ExprData::EPrivateIdentifier(_) => {
                 if cfg!(debug_assertions) {
-                    Output::panic(format_args!("Unexpected expression of type .{}", <&'static str>::from(&expr.data)));
+                    // TODO(port): @tagName(expr.data) — ExprData lacks IntoStaticStr.
+                    Output::panic(format_args!("Unexpected expression of type {:?}", core::mem::discriminant(&expr.data)));
                 }
             }
         }
@@ -3834,11 +3967,11 @@ where
         if !str.is_utf8() {
             self.print_string_characters_utf16(str.slice16(), c);
         } else {
-            self.print_string_characters_utf8(str.data(), c);
+            self.print_string_characters_utf8(str.slice8(), c);
         }
     }
 
-    pub fn print_namespace_alias(&mut self, _import_record: &ImportRecord, namespace: G::NamespaceAlias) {
+    pub fn print_namespace_alias(&mut self, _import_record: &ImportRecord, namespace: &G::NamespaceAlias) {
         self.print_symbol(namespace.namespace_ref);
 
         // In the case of code like this:
@@ -3848,12 +3981,12 @@ where
         // that means the namespace alias is empty
         if namespace.alias.is_empty() { return; }
 
-        if js_lexer::is_identifier(&namespace.alias) {
+        if js_ast::lexer::is_identifier(slice_of_const(namespace.alias)) {
             self.print(b".");
-            self.print_identifier(&namespace.alias);
+            self.print_identifier(slice_of_const(namespace.alias));
         } else {
             self.print(b"[");
-            self.print_string_literal_utf8(&namespace.alias, false);
+            self.print_string_literal_utf8(slice_of_const(namespace.alias), false);
             self.print(b"]");
         }
     }
@@ -3871,22 +4004,22 @@ where
             let mut ascii_start: usize = 0;
             let mut is_ascii = false;
             let mut iter = CodepointIterator::init(&e.value);
-            let mut cursor = CodepointIterator::Cursor::default();
+            let mut cursor = strings::Cursor::default();
             while iter.next(&mut cursor) {
-                match cursor.c {
+                match cursor.c as u32 {
                     FIRST_ASCII..=LAST_ASCII => {
                         if !is_ascii {
-                            ascii_start = cursor.i;
+                            ascii_start = (cursor.i as usize);
                             is_ascii = true;
                         }
                     }
                     _ => {
                         if is_ascii {
-                            self.print(&e.value[ascii_start..cursor.i]);
+                            self.print(&e.value[ascii_start..(cursor.i as usize)]);
                             is_ascii = false;
                         }
 
-                        match cursor.c {
+                        match cursor.c as u32 {
                             0..=0xFFFF => {
                                 let c = usize::try_from(cursor.c).unwrap();
                                 self.print(&[
@@ -3897,8 +4030,8 @@ where
                             }
                             c => {
                                 let k = usize::try_from(c - 0x10000).unwrap();
-                                let lo = usize::from(FIRST_HIGH_SURROGATE) + ((k >> 10) & 0x3FF);
-                                let hi = usize::from(FIRST_LOW_SURROGATE) + (k & 0x3FF);
+                                let lo = (FIRST_HIGH_SURROGATE as usize) + ((k >> 10) & 0x3FF);
+                                let hi = (FIRST_LOW_SURROGATE as usize) + (k & 0x3FF);
                                 self.print(&[
                                     b'\\', b'u',
                                     HEX_CHARS[lo >> 12], HEX_CHARS[(lo >> 8) & 15], HEX_CHARS[(lo >> 4) & 15], HEX_CHARS[lo & 15],
@@ -3923,53 +4056,72 @@ where
         self.prev_reg_exp_end = self.writer.written();
     }
 
-    pub fn print_property(&mut self, item_in: G::Property) {
-        let mut item = item_in;
+    pub fn print_property(&mut self, item_in: &G::Property) {
+        // PORT NOTE: Zig took G.Property by value (Copy in Zig). Rust's
+        // G::Property isn't `Copy`, so take a borrow and shallow-copy the
+        // mutable bits we may rewrite (key + flags).
+        let mut item = G::Property {
+            kind: item_in.kind,
+            flags: item_in.flags,
+            class_static_block: item_in.class_static_block,
+            key: item_in.key,
+            value: item_in.value,
+            initializer: item_in.initializer,
+            // PERF(port): BabyList not Copy — re-slice instead of move.
+            ts_decorators: js_ast::ExprNodeList::default(),
+            // TODO(port): ts_decorators not used by the printer; BabyList is !Copy so omit the copy.
+            ts_metadata: Default::default(),
+            // TODO(port): ts_metadata not used by the printer; not Copy.
+        };
         if !IS_JSON {
-            if item.kind == G::Property::Kind::Spread {
+            if item.kind == G::PropertyKind::Spread {
                 self.print(b"...");
                 self.print_expr(item.value.unwrap(), Level::Comma, ExprFlag::none());
                 return;
             }
 
             // Handle key syntax compression for cross-module constant inlining of enums
-            if self.options.minify_syntax && item.flags.contains(G::Property::Flags::IsComputed) {
-                if let Some(dot) = item.key.as_ref().unwrap().data.as_e_dot() {
-                    if let Some(value) = self.try_to_get_imported_enum_value(dot.target, &dot.name) {
+            if self.options.minify_syntax && item.flags.contains(js_ast::flags::Property::IsComputed) {
+                if let ExprData::EDot(dot) = &item.key.as_ref().unwrap().data {
+                    if let Some(value) = self.try_to_get_imported_enum_value(dot.target, slice_of_const(dot.name)) {
                         match value {
-                            js_ast::InlinedEnumValue::Decoded::String(str) => {
-                                item.key.as_mut().unwrap().data = Expr::Data::EString(str);
+                            js_ast::InlinedEnumValueDecoded::String(str) => {
+                                // SAFETY: arena-owned `*const EString`; cast through *mut for the
+                                // StoreRef wrapper — the printer only ever reads through it.
+                                let sref = unsafe { js_ast::ast::StoreRef::from_raw(str as *mut E::EString) };
+                                item.key.as_mut().unwrap().data = ExprData::EString(sref);
                                 // Problematic key names must stay computed for correctness
-                                if !str.eql_comptime(b"__proto__") && !str.eql_comptime(b"constructor") && !str.eql_comptime(b"prototype") {
-                                    item.flags.set_present(G::Property::Flags::IsComputed, false);
+                                let s = unsafe { &*str };
+                                if !s.eql_comptime(b"__proto__") && !s.eql_comptime(b"constructor") && !s.eql_comptime(b"prototype") {
+                                    set_flag(&mut item.flags, js_ast::flags::Property::IsComputed, false);
                                 }
                             }
-                            js_ast::InlinedEnumValue::Decoded::Number(num) => {
-                                item.key.as_mut().unwrap().data = Expr::Data::ENumber(E::Number { value: num });
-                                item.flags.set_present(G::Property::Flags::IsComputed, false);
+                            js_ast::InlinedEnumValueDecoded::Number(num) => {
+                                item.key.as_mut().unwrap().data = ExprData::ENumber(E::Number { value: num });
+                                set_flag(&mut item.flags, js_ast::flags::Property::IsComputed, false);
                             }
                         }
                     }
                 }
             }
 
-            if item.flags.contains(G::Property::Flags::IsStatic) {
+            if item.flags.contains(js_ast::flags::Property::IsStatic) {
                 self.print(b"static");
                 self.print_space();
             }
 
             match item.kind {
-                G::Property::Kind::Get => {
+                G::PropertyKind::Get => {
                     self.print_space_before_identifier();
                     self.print(b"get");
                     self.print_space();
                 }
-                G::Property::Kind::Set => {
+                G::PropertyKind::Set => {
                     self.print_space_before_identifier();
                     self.print(b"set");
                     self.print_space();
                 }
-                G::Property::Kind::AutoAccessor => {
+                G::PropertyKind::AutoAccessor => {
                     self.print_space_before_identifier();
                     self.print(b"accessor");
                     self.print_space();
@@ -3978,8 +4130,8 @@ where
             }
 
             if let Some(val) = &item.value {
-                if let Expr::Data::EFunction(func) = &val.data {
-                    if item.flags.contains(G::Property::Flags::IsMethod) {
+                if let ExprData::EFunction(func) = &val.data {
+                    if item.flags.contains(js_ast::flags::Property::IsMethod) {
                         if func.func.flags.contains(G::FnFlags::IsAsync) {
                             self.print_space_before_identifier();
                             self.print(b"async");
@@ -4003,15 +4155,15 @@ where
 
         let key = item.key.unwrap();
 
-        if !IS_JSON && item.flags.contains(G::Property::Flags::IsComputed) {
+        if !IS_JSON && item.flags.contains(js_ast::flags::Property::IsComputed) {
             self.print(b"[");
             self.print_expr(key, Level::Comma, ExprFlag::none());
             self.print(b"]");
 
             if let Some(val) = &item.value {
-                if let Expr::Data::EFunction(func) = &val.data {
-                    if item.flags.contains(G::Property::Flags::IsMethod) {
-                        self.print_func(func.func);
+                if let ExprData::EFunction(func) = &val.data {
+                    if item.flags.contains(js_ast::flags::Property::IsMethod) {
+                        self.print_func(&func.func);
                         return;
                     }
                 }
@@ -4027,42 +4179,43 @@ where
         }
 
         match &key.data {
-            Expr::Data::EPrivateIdentifier(priv_) => {
+            ExprData::EPrivateIdentifier(priv_) => {
                 if IS_JSON { unreachable!(); }
                 self.add_source_mapping(key.loc);
                 self.print_symbol(priv_.ref_);
             }
-            Expr::Data::EString(key_str) => {
+            ExprData::EString(key_str) => {
+                let mut key_str = *key_str;
                 self.add_source_mapping(key.loc);
                 if key_str.is_utf8() {
-                    key_str.resolve_rope_if_needed(/* allocator dropped */);
+                    key_str.resolve_rope_if_needed(self.bump);
                     self.print_space_before_identifier();
                     let mut allow_shorthand = true;
-                    if !IS_JSON && js_lexer::is_identifier(key_str.data()) {
-                        self.print_identifier(key_str.data());
+                    if !IS_JSON && js_ast::lexer::is_identifier(key_str.slice8()) {
+                        self.print_identifier(key_str.slice8());
                     } else {
                         allow_shorthand = false;
-                        self.print_string_literal_e_string(key_str, false);
+                        self.print_string_literal_e_string(&key_str, false);
                     }
 
                     // Use a shorthand property if the names are the same
                     if let Some(val) = &item.value {
                         match &val.data {
-                            Expr::Data::EIdentifier(e) => {
-                                if key_str.eql(self.renamer.name_for_symbol(e.ref_)) {
+                            ExprData::EIdentifier(e) => {
+                                if key_str.slice8() == self.name_for_symbol(e.ref_) {
                                     if let Some(initial) = &item.initializer {
                                         self.print_initializer(*initial);
                                     }
                                     if allow_shorthand { return; }
                                 }
                             }
-                            Expr::Data::EImportIdentifier(e) => 'inner: {
+                            ExprData::EImportIdentifier(e) => 'inner: {
                                 let ref_ = self.symbols().follow(e.ref_);
                                 if self.options.input_files_for_dev_server.is_some() {
                                     break 'inner;
                                 }
-                                if let Some(symbol) = self.symbols().get(ref_) {
-                                    if symbol.namespace_alias.is_none() && key_str.data() == self.renamer.name_for_symbol(e.ref_) {
+                                if let Some(symbol) = self.symbols().get_const(ref_) {
+                                    if symbol.namespace_alias.is_none() && key_str.slice8() == self.name_for_symbol(e.ref_) {
                                         if let Some(initial) = &item.initializer {
                                             self.print_initializer(*initial);
                                         }
@@ -4080,9 +4233,9 @@ where
                     // Use a shorthand property if the names are the same
                     if let Some(val) = &item.value {
                         match &val.data {
-                            Expr::Data::EIdentifier(e) => {
-                                if item.flags.contains(G::Property::Flags::WasShorthand)
-                                    || strings::utf16_eql_string(key_str.slice16(), self.renamer.name_for_symbol(e.ref_))
+                            ExprData::EIdentifier(e) => {
+                                if item.flags.contains(js_ast::flags::Property::WasShorthand)
+                                    || strings::utf16_eql_string(key_str.slice16(), self.name_for_symbol(e.ref_))
                                 {
                                     if let Some(initial) = &item.initializer {
                                         self.print_initializer(*initial);
@@ -4090,11 +4243,11 @@ where
                                     return;
                                 }
                             }
-                            Expr::Data::EImportIdentifier(e) => {
+                            ExprData::EImportIdentifier(e) => {
                                 let ref_ = self.symbols().follow(e.ref_);
-                                if let Some(symbol) = self.symbols().get(ref_) {
+                                if let Some(symbol) = self.symbols().get_const(ref_) {
                                     if symbol.namespace_alias.is_none()
-                                        && strings::utf16_eql_string(key_str.slice16(), self.renamer.name_for_symbol(e.ref_))
+                                        && strings::utf16_eql_string(key_str.slice16(), self.name_for_symbol(e.ref_))
                                     {
                                         if let Some(initial) = &item.initializer {
                                             self.print_initializer(*initial);
@@ -4119,18 +4272,18 @@ where
             }
         }
 
-        if item.kind != G::Property::Kind::Normal && item.kind != G::Property::Kind::AutoAccessor {
+        if item.kind != G::PropertyKind::Normal && item.kind != G::PropertyKind::AutoAccessor {
             if IS_JSON { unreachable!("item.kind must be normal in json"); }
-            if let Expr::Data::EFunction(func) = &item.value.as_ref().unwrap().data {
-                self.print_func(func.func);
+            if let ExprData::EFunction(func) = &item.value.as_ref().unwrap().data {
+                self.print_func(&func.func);
                 return;
             }
         }
 
         if let Some(val) = &item.value {
-            if let Expr::Data::EFunction(f) = &val.data {
-                if item.flags.contains(G::Property::Flags::IsMethod) {
-                    self.print_func(f.func);
+            if let ExprData::EFunction(f) = &val.data {
+                if item.flags.contains(js_ast::flags::Property::IsMethod) {
+                    self.print_func(&f.func);
                     return;
                 }
             }
@@ -4157,26 +4310,32 @@ where
 
     pub fn print_binding(&mut self, binding: Binding, tlm: TopLevelAndIsExport) {
         match &binding.data {
-            Binding::Data::BMissing => {}
-            Binding::Data::BIdentifier(b) => {
+            BindingData::BMissing(_) => {}
+            BindingData::BIdentifier(b) => {
+                // SAFETY: arena-owned; outlives the print pass.
+                let b = unsafe { &**b };
                 self.print_space_before_identifier();
                 self.add_source_mapping(binding.loc);
-                self.print_symbol(b.ref_);
+                self.print_symbol(b.r#ref);
                 if Self::MAY_HAVE_MODULE_INFO {
+                    // PORT NOTE: reshaped for borrowck — fetch name before borrowing module_info.
+                    let local_name = self.name_for_symbol(b.r#ref);
                     if let Some(mi) = self.module_info() {
-                        let local_name = self.renamer.name_for_symbol(b.ref_);
                         let name_id = mi.str(local_name);
                         if let Some(vk) = tlm.is_top_level { mi.add_var(name_id, vk); }
                         if tlm.is_export { mi.add_export_info_local(name_id, name_id); }
                     }
                 }
             }
-            Binding::Data::BArray(b) => {
+            BindingData::BArray(b) => {
+                // SAFETY: arena-owned; outlives the print pass.
+                let b = unsafe { &**b };
+                let items = slice_of(b.items);
                 self.print(b"[");
-                if !b.items.is_empty() {
+                if !items.is_empty() {
                     if !b.is_single_line { self.indent(); }
 
-                    for (i, item) in b.items.iter().enumerate() {
+                    for (i, item) in items.iter().enumerate() {
                         if i != 0 {
                             self.print(b",");
                             if b.is_single_line { self.print_space(); }
@@ -4187,7 +4346,7 @@ where
                             self.print_indent();
                         }
 
-                        let is_last = i + 1 == b.items.len();
+                        let is_last = i + 1 == items.len();
                         if b.has_spread && is_last {
                             self.print(b"...");
                         }
@@ -4196,7 +4355,7 @@ where
                         self.maybe_print_default_binding_value(item);
 
                         // Make sure there's a comma after trailing missing items
-                        if is_last && matches!(item.binding.data, Binding::Data::BMissing) {
+                        if is_last && matches!(item.binding.data, BindingData::BMissing(_)) {
                             self.print(b",");
                         }
                     }
@@ -4209,12 +4368,15 @@ where
                 }
                 self.print(b"]");
             }
-            Binding::Data::BObject(b) => {
+            BindingData::BObject(b) => {
+                // SAFETY: arena-owned; outlives the print pass.
+                let b = unsafe { &**b };
+                let properties = slice_of(b.properties);
                 self.print(b"{");
-                if !b.properties.is_empty() {
+                if !properties.is_empty() {
                     if !b.is_single_line { self.indent(); }
 
-                    for (i, property) in b.properties.iter().enumerate() {
+                    for (i, property) in properties.iter().enumerate() {
                         if i != 0 { self.print(b","); }
 
                         if b.is_single_line {
@@ -4224,10 +4386,10 @@ where
                             self.print_indent();
                         }
 
-                        if property.flags.contains(B::Property::Flags::IsSpread) {
+                        if property.flags.contains(js_ast::flags::Property::IsSpread) {
                             self.print(b"...");
                         } else {
-                            if property.flags.contains(B::Property::Flags::IsComputed) {
+                            if property.flags.contains(js_ast::flags::Property::IsComputed) {
                                 self.print(b"[");
                                 self.print_expr(property.key, Level::Comma, ExprFlag::none());
                                 self.print(b"]:");
@@ -4239,21 +4401,24 @@ where
                             }
 
                             match &property.key.data {
-                                Expr::Data::EString(str) => {
-                                    str.resolve_rope_if_needed(/* allocator dropped */);
+                                ExprData::EString(str) => {
+                                    let mut str = *str;
+                                    str.resolve_rope_if_needed(self.bump);
                                     self.add_source_mapping(property.key.loc);
 
                                     if str.is_utf8() {
                                         self.print_space_before_identifier();
-                                        if js_lexer::is_identifier(str.data()) {
-                                            self.print_identifier(str.data());
+                                        if js_ast::lexer::is_identifier(str.slice8()) {
+                                            self.print_identifier(str.slice8());
 
                                             // Use a shorthand property if the names are the same
-                                            if let Binding::Data::BIdentifier(id) = &property.value.data {
-                                                if str.eql(self.renamer.name_for_symbol(id.ref_)) {
+                                            if let BindingData::BIdentifier(id) = &property.value.data {
+                                                // SAFETY: arena-owned.
+                                                let id = unsafe { &**id };
+                                                if str.slice8() == self.name_for_symbol(id.r#ref) {
                                                     if Self::MAY_HAVE_MODULE_INFO {
                                                         if let Some(mi) = self.module_info() {
-                                                            let name_id = mi.str(str.data());
+                                                            let name_id = mi.str(str.slice8());
                                                             if let Some(vk) = tlm.is_top_level { mi.add_var(name_id, vk); }
                                                             if tlm.is_export { mi.add_export_info_local(name_id, name_id); }
                                                         }
@@ -4263,18 +4428,21 @@ where
                                                 }
                                             }
                                         } else {
-                                            self.print_string_literal_utf8(str.data(), false);
+                                            self.print_string_literal_utf8(str.slice8(), false);
                                         }
                                     } else if self.can_print_identifier_utf16(str.slice16()) {
                                         self.print_space_before_identifier();
                                         self.print_identifier_utf16(str.slice16()).expect("unreachable");
 
                                         // Use a shorthand property if the names are the same
-                                        if let Binding::Data::BIdentifier(id) = &property.value.data {
-                                            if strings::utf16_eql_string(str.slice16(), self.renamer.name_for_symbol(id.ref_)) {
+                                        if let BindingData::BIdentifier(id) = &property.value.data {
+                                            // SAFETY: arena-owned.
+                                            let id = unsafe { &**id };
+                                            if strings::utf16_eql_string(str.slice16(), self.name_for_symbol(id.r#ref)) {
                                                 if Self::MAY_HAVE_MODULE_INFO {
+                                                    // PORT NOTE: reshaped for borrowck — bump access first.
+                                                    let str8 = str.slice(self.bump);
                                                     if let Some(mi) = self.module_info() {
-                                                        let str8 = str.slice(/* allocator dropped */);
                                                         let name_id = mi.str(str8);
                                                         if let Some(vk) = tlm.is_top_level { mi.add_var(name_id, vk); }
                                                         if tlm.is_export { mi.add_export_info_local(name_id, name_id); }
@@ -4332,17 +4500,17 @@ where
         let new_tag = stmt.data.tag();
 
         match &stmt.data {
-            Stmt::Data::SComment(s) => {
+            StmtData::SComment(s) => {
                 self.print_indent();
                 self.add_source_mapping(stmt.loc);
-                self.print_indented_comment(&s.text);
+                self.print_indented_comment(slice_of_const(s.text));
             }
-            Stmt::Data::SFunction(s) => {
+            StmtData::SFunction(s) => {
                 self.print_indent();
                 self.print_space_before_identifier();
                 self.add_source_mapping(stmt.loc);
-                let name = s.func.name.as_ref().unwrap_or_else(|| Output::panic("Internal error: expected func to have a name ref"));
-                let name_ref = name.ref_.unwrap_or_else(|| Output::panic("Internal error: expected func to have a name"));
+                let name = s.func.name.as_ref().unwrap_or_else(|| Output::panic(format_args!("Internal error: expected func to have a name ref")));
+                let name_ref = name.ref_.unwrap_or_else(|| Output::panic(format_args!("Internal error: expected func to have a name")));
 
                 if s.func.flags.contains(G::FnFlags::IsExport) {
                     if !REWRITE_ESM_TO_CJS { self.print(b"export "); }
@@ -4359,9 +4527,9 @@ where
                 }
 
                 self.add_source_mapping(name.loc);
-                let local_name = self.renamer.name_for_symbol(name_ref);
+                let local_name = self.name_for_symbol(name_ref);
                 self.print_identifier(local_name);
-                self.print_func(s.func);
+                self.print_func(&s.func);
 
                 if Self::MAY_HAVE_MODULE_INFO {
                     if let Some(mi) = self.module_info() {
@@ -4381,9 +4549,9 @@ where
                     self.print_semicolon_after_statement();
                 }
             }
-            Stmt::Data::SClass(s) => {
+            StmtData::SClass(s) => {
                 // Give an extra newline for readaiblity
-                if prev_stmt_tag != Stmt::Tag::SEmpty {
+                if prev_stmt_tag != StmtTag::SEmpty {
                     self.print_newline();
                 }
 
@@ -4397,9 +4565,9 @@ where
 
                 self.print(b"class ");
                 self.add_source_mapping(s.class.class_name.as_ref().unwrap().loc);
-                let name_str = self.renamer.name_for_symbol(name_ref);
+                let name_str = self.name_for_symbol(name_ref);
                 self.print_identifier(name_str);
-                self.print_class(s.class);
+                self.print_class(&s.class);
 
                 if Self::MAY_HAVE_MODULE_INFO {
                     if let Some(mi) = self.module_info() {
@@ -4418,35 +4586,36 @@ where
                 if REWRITE_ESM_TO_CJS {
                     if s.is_export {
                         self.print_indent();
-                        let n = self.renamer.name_for_symbol(name_ref);
+                        let n = self.name_for_symbol(name_ref);
                         self.print_bundled_export(n, n);
                         self.print_semicolon_after_statement();
                     }
                 }
             }
-            Stmt::Data::SEmpty => {
-                if prev_stmt_tag == Stmt::Tag::SEmpty && self.options.indent.count == 0 { self.prev_stmt_tag = new_tag; return Ok(()); }
+            StmtData::SEmpty(_) => {
+                if prev_stmt_tag == StmtTag::SEmpty && self.options.indent.count == 0 { self.prev_stmt_tag = new_tag; return Ok(()); }
                 self.print_indent();
                 self.add_source_mapping(stmt.loc);
                 self.print(b";");
                 self.print_newline();
             }
-            Stmt::Data::SExportDefault(s) => {
+            StmtData::SExportDefault(s) => {
                 self.print_indent();
                 self.print_space_before_identifier();
                 self.add_source_mapping(stmt.loc);
                 self.print(b"export default ");
 
-                match &s.value {
+                match s.value {
                     js_ast::StmtOrExpr::Expr(expr) => {
                         // Functions and classes must be wrapped to avoid confusion with their statement forms
                         self.export_default_start = self.writer.written();
-                        self.print_expr(*expr, Level::Comma, ExprFlag::none());
+                        self.print_expr(expr, Level::Comma, ExprFlag::none());
                         self.print_semicolon_after_statement();
 
                         if Self::MAY_HAVE_MODULE_INFO {
                             if let Some(mi) = self.module_info() {
-                                mi.add_export_info_local(mi.str(b"default"), analyze_transpiled_module::StringID::STAR_DEFAULT);
+                                let default_id = mi.str(b"default");
+                                mi.add_export_info_local(default_id, analyze_transpiled_module::StringID::STAR_DEFAULT);
                                 mi.add_var(analyze_transpiled_module::StringID::STAR_DEFAULT, analyze_transpiled_module::VarKind::Lexical);
                             }
                         }
@@ -4455,7 +4624,7 @@ where
                     }
                     js_ast::StmtOrExpr::Stmt(s2) => {
                         match &s2.data {
-                            Stmt::Data::SFunction(func) => {
+                            StmtData::SFunction(func) => {
                                 self.print_space_before_identifier();
 
                                 if func.func.flags.contains(G::FnFlags::IsAsync) { self.print(b"async "); }
@@ -4468,12 +4637,12 @@ where
                                     self.maybe_print_space();
                                 }
 
-                                let func_name: Option<&[u8]> = func.func.name.as_ref().map(|name| self.renamer.name_for_symbol(name.ref_.unwrap()));
+                                let func_name: Option<&[u8]> = func.func.name.as_ref().map(|name| self.name_for_symbol(name.ref_.unwrap()));
                                 if let Some(fn_name) = func_name {
                                     self.print_identifier(fn_name);
                                 }
 
-                                self.print_func(func.func);
+                                self.print_func(&func.func);
 
                                 if Self::MAY_HAVE_MODULE_INFO {
                                     if let Some(mi) = self.module_info() {
@@ -4481,27 +4650,29 @@ where
                                             Some(f) => mi.str(f),
                                             None => analyze_transpiled_module::StringID::STAR_DEFAULT,
                                         };
-                                        mi.add_export_info_local(mi.str(b"default"), local_name);
+                                        let default_id = mi.str(b"default");
+                                        mi.add_export_info_local(default_id, local_name);
                                         mi.add_var(local_name, analyze_transpiled_module::VarKind::Lexical);
                                     }
                                 }
 
                                 self.print_newline();
                             }
-                            Stmt::Data::SClass(class) => {
+                            StmtData::SClass(class) => {
                                 self.print_space_before_identifier();
 
                                 let class_name: Option<&[u8]> = class.class.class_name.as_ref().map(|name|
-                                    self.renamer.name_for_symbol(name.ref_.unwrap_or_else(|| Output::panic("Internal error: Expected class to have a name ref")))
+                                    self.name_for_symbol(name.ref_.unwrap_or_else(|| Output::panic(format_args!("Internal error: Expected class to have a name ref"))))
                                 );
                                 if let Some(name) = &class.class.class_name {
                                     self.print(b"class ");
-                                    self.print_identifier(self.renamer.name_for_symbol(name.ref_.unwrap()));
+                                    let n = self.name_for_symbol(name.ref_.unwrap());
+                                    self.print_identifier(n);
                                 } else {
                                     self.print(b"class");
                                 }
 
-                                self.print_class(class.class);
+                                self.print_class(&class.class);
 
                                 if Self::MAY_HAVE_MODULE_INFO {
                                     if let Some(mi) = self.module_info() {
@@ -4509,19 +4680,20 @@ where
                                             Some(f) => mi.str(f),
                                             None => analyze_transpiled_module::StringID::STAR_DEFAULT,
                                         };
-                                        mi.add_export_info_local(mi.str(b"default"), local_name);
+                                        let default_id = mi.str(b"default");
+                                        mi.add_export_info_local(default_id, local_name);
                                         mi.add_var(local_name, analyze_transpiled_module::VarKind::Lexical);
                                     }
                                 }
 
                                 self.print_newline();
                             }
-                            _ => Output::panic("Internal error: unexpected export default stmt data"),
+                            _ => Output::panic(format_args!("Internal error: unexpected export default stmt data")),
                         }
                     }
                 }
             }
-            Stmt::Data::SExportStar(s) => {
+            StmtData::SExportStar(s) => {
                 // Give an extra newline for readaiblity
                 if !prev_stmt_tag.is_export_like() {
                     self.print_newline();
@@ -4538,7 +4710,7 @@ where
                 }
 
                 if let Some(alias) = &s.alias {
-                    self.print_clause_alias(&alias.original_name);
+                    self.print_clause_alias(slice_of_const(alias.original_name));
                     self.print(b" ");
                     self.print_whitespacer(ws!(b"from "));
                 }
@@ -4552,20 +4724,21 @@ where
                         let irp_id = mi.str(irp);
                         mi.request_module(irp_id, analyze_transpiled_module::FetchParameters::None);
                         if let Some(alias) = &s.alias {
-                            mi.add_export_info_namespace(mi.str(&alias.original_name), irp_id);
+                            let alias_id = mi.str(slice_of_const(alias.original_name));
+                            mi.add_export_info_namespace(alias_id, irp_id);
                         } else {
                             mi.add_export_info_star(irp_id);
                         }
                     }
                 }
             }
-            Stmt::Data::SExportClause(s) => {
+            StmtData::SExportClause(s) => {
                 if REWRITE_ESM_TO_CJS {
                     self.print_indent();
                     self.print_space_before_identifier();
                     self.add_source_mapping(stmt.loc);
 
-                    match s.items.len() {
+                    match slice_of(s.items).len() {
                         0 => {}
                         // Object.assign(__export, {prop1, prop2, prop3});
                         _ => {
@@ -4576,10 +4749,13 @@ where
                             self.print_space();
                             self.print(b"{");
                             self.print_space();
-                            let last = s.items.len() - 1;
-                            for (i, item) in s.items.iter().enumerate() {
-                                let symbol = self.symbols().get_with_link(item.name.ref_.unwrap()).unwrap();
-                                let name = &symbol.original_name;
+                            let last = slice_of(s.items).len() - 1;
+                            for (i, item) in slice_of(s.items).iter().enumerate() {
+                                // PORT NOTE: reshaped for borrowck — detach symbol from self.
+                                let symbol_ptr: *const Symbol = self.symbols().get_with_link_const(item.name.ref_.unwrap()).unwrap();
+                                // SAFETY: arena-backed symbol table outlives the print pass.
+                                let symbol = unsafe { &*symbol_ptr };
+                                let name = slice_of_const(symbol.original_name);
                                 let mut did_print = false;
 
                                 if let Some(namespace) = &symbol.namespace_alias {
@@ -4587,14 +4763,14 @@ where
                                     if namespace.was_originally_property_access {
                                         self.print_identifier(name);
                                         self.print(b": () => ");
-                                        self.print_namespace_alias(import_record, *namespace);
+                                        self.print_namespace_alias(import_record, namespace);
                                         did_print = true;
                                     }
                                 }
 
                                 if !did_print {
-                                    self.print_clause_alias(&item.alias);
-                                    if name != &item.alias {
+                                    self.print_clause_alias(slice_of_const(item.alias));
+                                    if name != slice_of_const(item.alias) {
                                         self.print(b":");
                                         self.print_space_before_identifier();
                                         self.print_identifier(name);
@@ -4622,7 +4798,7 @@ where
                 self.print(b"export");
                 self.print_space();
 
-                if s.items.is_empty() {
+                if slice_of(s.items).is_empty() {
                     self.print(b"{}");
                     self.print_semicolon_after_statement();
                     self.prev_stmt_tag = new_tag;
@@ -4630,24 +4806,27 @@ where
                 }
 
                 // PORT NOTE: Zig wraps `s.items` in an ArrayListUnmanaged and uses swapRemove
-                // in-place. We mirror with a Vec view into the same backing storage.
-                // TODO(port): lifetime — Zig mutates `s.items` in place via swapRemove. In Rust
-                // the AST is arena-backed; need &mut access in Phase B.
-                let mut array: Vec<js_ast::ClauseItem> = s.items.to_vec();
+                // in-place. `ClauseItem` isn't `Clone`, so build a Vec of arena borrows
+                // instead and swap-remove the borrows.
+                // TODO(port): lifetime — Zig mutates `s.items` in place; Phase B may write back.
+                let mut array: Vec<&js_ast::ClauseItem> = slice_of(s.items).iter().collect();
                 {
                     let mut i: usize = 0;
                     while i < array.len() {
                         let item = array[i];
 
-                        if !item.original_name.is_empty() {
-                            if let Some(symbol) = self.symbols().get(item.name.ref_.unwrap()) {
+                        if !slice_of_const(item.original_name).is_empty() {
+                            // PORT NOTE: reshaped for borrowck — detach symbol from self.
+                            let symbol_ptr: Option<*const Symbol> = self.symbols().get_const(item.name.ref_.unwrap()).map(|s| s as *const _);
+                            // SAFETY: arena-backed; symbol table outlives the print pass.
+                            if let Some(symbol) = symbol_ptr.map(|p| unsafe { &*p }) {
                                 if let Some(namespace) = &symbol.namespace_alias {
                                     let import_record = self.import_record(namespace.import_record_index as usize);
                                     if namespace.was_originally_property_access {
                                         self.print(b"var ");
                                         self.print_symbol(item.name.ref_.unwrap());
                                         self.print_equals();
-                                        self.print_namespace_alias(import_record, *namespace);
+                                        self.print_namespace_alias(import_record, namespace);
                                         self.print_semicolon_after_statement();
                                         array.swap_remove(i);
 
@@ -4693,12 +4872,14 @@ where
                         self.print_indent();
                     }
 
-                    let name = self.renamer.name_for_symbol(item.name.ref_.unwrap());
-                    self.print_export_clause_item(*item);
+                    let name = self.name_for_symbol(item.name.ref_.unwrap());
+                    self.print_export_clause_item(item);
 
                     if Self::MAY_HAVE_MODULE_INFO {
                         if let Some(mi) = self.module_info() {
-                            mi.add_export_info_local(mi.str(&item.alias), mi.str(name));
+                            let alias_id = mi.str(slice_of_const(item.alias));
+                            let name_id = mi.str(name);
+                            mi.add_export_info_local(alias_id, name_id);
                         }
                     }
                 }
@@ -4714,7 +4895,7 @@ where
                 self.print(b"}");
                 self.print_semicolon_after_statement();
             }
-            Stmt::Data::SExportFrom(s) => {
+            StmtData::SExportFrom(s) => {
                 self.print_indent();
                 self.print_space_before_identifier();
                 self.add_source_mapping(stmt.loc);
@@ -4725,7 +4906,7 @@ where
 
                 if !s.is_single_line { self.indent(); } else { self.print_space(); }
 
-                for (i, item) in s.items.iter().enumerate() {
+                for (i, item) in slice_of(s.items).iter().enumerate() {
                     if i != 0 {
                         self.print(b",");
                         if s.is_single_line { self.print_space(); }
@@ -4734,7 +4915,7 @@ where
                         self.print_newline();
                         self.print_indent();
                     }
-                    self.print_export_from_clause_item(*item);
+                    self.print_export_from_clause_item(item);
                 }
 
                 if !s.is_single_line {
@@ -4750,43 +4931,50 @@ where
                 self.print_import_record_path(import_record);
                 self.print_semicolon_after_statement();
 
-                if Self::MAY_HAVE_MODULE_INFO {
-                    if let Some(mi) = self.module_info() {
-                        let irp_id = mi.str(irp);
-                        mi.request_module(irp_id, analyze_transpiled_module::FetchParameters::None);
-                        for item in s.items.iter() {
-                            let name = self.renamer.name_for_symbol(item.name.ref_.unwrap());
-                            mi.add_export_info_indirect(mi.str(&item.alias), mi.str(name), irp_id);
-                        }
+                if Self::MAY_HAVE_MODULE_INFO && self.module_info.is_some() {
+                    // PORT NOTE: reshaped for borrowck — re-borrow module_info per item so
+                    // `name_for_symbol` (which needs `&mut self`) can run between uses.
+                    let irp_id = {
+                        let mi = self.module_info().unwrap();
+                        let id = mi.str(irp);
+                        mi.request_module(id, analyze_transpiled_module::FetchParameters::None);
+                        id
+                    };
+                    for item in slice_of(s.items).iter() {
+                        let name = self.name_for_symbol(item.name.ref_.unwrap());
+                        let mi = self.module_info().unwrap();
+                        let alias_id = mi.str(slice_of_const(item.alias));
+                        let name_id = mi.str(name);
+                        mi.add_export_info_indirect(alias_id, name_id, irp_id);
                     }
                 }
             }
-            Stmt::Data::SLocal(s) => {
+            StmtData::SLocal(s) => {
                 self.print_indent();
                 self.print_space_before_identifier();
                 self.add_source_mapping(stmt.loc);
                 match s.kind {
-                    S::Local::Kind::KConst => self.print_decl_stmt(s.is_export, b"const", s.decls.slice(), tlmtlo),
-                    S::Local::Kind::KLet => self.print_decl_stmt(s.is_export, b"let", s.decls.slice(), tlmtlo),
-                    S::Local::Kind::KVar => self.print_decl_stmt(s.is_export, b"var", s.decls.slice(), tlmtlo),
-                    S::Local::Kind::KUsing => self.print_decl_stmt(s.is_export, b"using", s.decls.slice(), tlmtlo),
-                    S::Local::Kind::KAwaitUsing => self.print_decl_stmt(s.is_export, b"await using", s.decls.slice(), tlmtlo),
+                    S::Kind::KConst => self.print_decl_stmt(s.is_export, b"const", s.decls.slice(), tlmtlo),
+                    S::Kind::KLet => self.print_decl_stmt(s.is_export, b"let", s.decls.slice(), tlmtlo),
+                    S::Kind::KVar => self.print_decl_stmt(s.is_export, b"var", s.decls.slice(), tlmtlo),
+                    S::Kind::KUsing => self.print_decl_stmt(s.is_export, b"using", s.decls.slice(), tlmtlo),
+                    S::Kind::KAwaitUsing => self.print_decl_stmt(s.is_export, b"await using", s.decls.slice(), tlmtlo),
                 }
             }
-            Stmt::Data::SIf(s) => {
+            StmtData::SIf(s) => {
                 self.print_indent();
                 self.print_if(s, stmt.loc, tlmtlo.sub_var());
             }
-            Stmt::Data::SDoWhile(s) => {
+            StmtData::SDoWhile(s) => {
                 self.print_indent();
                 self.print_space_before_identifier();
                 self.add_source_mapping(stmt.loc);
                 self.print(b"do");
                 let sub_var = tlmtlo.sub_var();
-                match &s.body.data {
-                    Stmt::Data::SBlock(block) => {
+                match s.body.data {
+                    StmtData::SBlock(block) => {
                         self.print_space();
-                        self.print_block(s.body.loc, &block.stmts, block.close_brace_loc, sub_var);
+                        self.print_block(s.body.loc, slice_of(block.stmts), Some(block.close_brace_loc), sub_var);
                         self.print_space();
                     }
                     _ => {
@@ -4806,7 +4994,7 @@ where
                 self.print(b")");
                 self.print_semicolon_after_statement();
             }
-            Stmt::Data::SForIn(s) => {
+            StmtData::SForIn(s) => {
                 self.print_indent();
                 self.print_space_before_identifier();
                 self.add_source_mapping(stmt.loc);
@@ -4822,7 +5010,7 @@ where
                 self.print(b")");
                 self.print_body(s.body, tlmtlo.sub_var());
             }
-            Stmt::Data::SForOf(s) => {
+            StmtData::SForOf(s) => {
                 self.print_indent();
                 self.print_space_before_identifier();
                 self.add_source_mapping(stmt.loc);
@@ -4840,7 +5028,7 @@ where
                 self.print(b")");
                 self.print_body(s.body, tlmtlo.sub_var());
             }
-            Stmt::Data::SWhile(s) => {
+            StmtData::SWhile(s) => {
                 self.print_indent();
                 self.print_space_before_identifier();
                 self.add_source_mapping(stmt.loc);
@@ -4851,7 +5039,7 @@ where
                 self.print(b")");
                 self.print_body(s.body, tlmtlo.sub_var());
             }
-            Stmt::Data::SWith(s) => {
+            StmtData::SWith(s) => {
                 self.print_indent();
                 self.print_space_before_identifier();
                 self.add_source_mapping(stmt.loc);
@@ -4862,24 +5050,24 @@ where
                 self.print(b")");
                 self.print_body(s.body, tlmtlo.sub_var());
             }
-            Stmt::Data::SLabel(s) => {
+            StmtData::SLabel(s) => {
                 if !self.options.minify_whitespace && self.options.indent.count > 0 {
                     self.print_indent();
                 }
                 self.print_space_before_identifier();
                 self.add_source_mapping(stmt.loc);
-                self.print_symbol(s.name.ref_.unwrap_or_else(|| Output::panic("Internal error: expected label to have a name")));
+                self.print_symbol(s.name.ref_.unwrap_or_else(|| Output::panic(format_args!("Internal error: expected label to have a name"))));
                 self.print(b":");
                 self.print_body(s.stmt, tlmtlo.sub_var());
             }
-            Stmt::Data::STry(s) => {
+            StmtData::STry(s) => {
                 self.print_indent();
                 self.print_space_before_identifier();
                 self.add_source_mapping(stmt.loc);
                 self.print(b"try");
                 self.print_space();
                 let sub_var_try = tlmtlo.sub_var();
-                self.print_block(s.body_loc, &s.body, None, sub_var_try);
+                self.print_block(s.body_loc, slice_of(s.body), None, sub_var_try);
 
                 if let Some(catch_) = &s.catch_ {
                     self.print_space();
@@ -4892,19 +5080,19 @@ where
                         self.print(b")");
                     }
                     self.print_space();
-                    self.print_block(catch_.body_loc, &catch_.body, None, sub_var_try);
+                    self.print_block(catch_.body_loc, slice_of(catch_.body), None, sub_var_try);
                 }
 
                 if let Some(finally) = &s.finally {
                     self.print_space();
                     self.print(b"finally");
                     self.print_space();
-                    self.print_block(finally.loc, &finally.stmts, None, sub_var_try);
+                    self.print_block(finally.loc, slice_of(finally.stmts), None, sub_var_try);
                 }
 
                 self.print_newline();
             }
-            Stmt::Data::SFor(s) => {
+            StmtData::SFor(s) => {
                 self.print_indent();
                 self.print_space_before_identifier();
                 self.add_source_mapping(stmt.loc);
@@ -4932,7 +5120,7 @@ where
                 self.print(b")");
                 self.print_body(s.body, tlmtlo.sub_var());
             }
-            Stmt::Data::SSwitch(s) => {
+            StmtData::SSwitch(s) => {
                 self.print_indent();
                 self.print_space_before_identifier();
                 self.add_source_mapping(stmt.loc);
@@ -4946,7 +5134,7 @@ where
                 self.print_newline();
                 self.indent();
 
-                for c in s.cases.iter() {
+                for c in slice_of(s.cases).iter() {
                     self.print_semicolon_if_needed();
                     self.print_indent();
 
@@ -4961,10 +5149,11 @@ where
                     self.print(b":");
 
                     let sub_var_case = tlmtlo.sub_var();
-                    if c.body.len() == 1 {
-                        if let Stmt::Data::SBlock(block) = &c.body[0].data {
+                    let c_body = slice_of(c.body);
+                    if c_body.len() == 1 {
+                        if let StmtData::SBlock(block) = &c_body[0].data {
                             self.print_space();
-                            self.print_block(c.body[0].loc, &block.stmts, block.close_brace_loc, sub_var_case);
+                            self.print_block(c_body[0].loc, slice_of(block.stmts), Some(block.close_brace_loc), sub_var_case);
                             self.print_newline();
                             continue;
                         }
@@ -4972,7 +5161,7 @@ where
 
                     self.print_newline();
                     self.indent();
-                    for st in c.body.iter() {
+                    for st in c_body.iter() {
                         self.print_semicolon_if_needed();
                         self.print_stmt(*st, sub_var_case).expect("unreachable");
                     }
@@ -4985,9 +5174,9 @@ where
                 self.print_newline();
                 self.needs_semicolon = false;
             }
-            Stmt::Data::SImport(s) => {
+            StmtData::SImport(s) => {
                 debug_assert!((s.import_record_index as usize) < self.import_records.len());
-                debug_assert!(self.options.module_type != options::Format::InternalBakeDev);
+                debug_assert!(self.options.module_type != bundle_opts::Format::InternalBakeDev);
 
                 let record: &ImportRecord = self.import_record(s.import_record_index as usize);
                 self.print_indent();
@@ -4995,15 +5184,15 @@ where
                 self.add_source_mapping(stmt.loc);
 
                 if IS_BUN_PLATFORM {
-                    if record.tag == ImportRecord::Tag::Bun {
-                        self.print_global_bun_import_statement(s.clone());
+                    if record.tag == ImportRecordTag::Bun {
+                        self.print_global_bun_import_statement(&s);
                         self.prev_stmt_tag = new_tag;
                         return Ok(());
                     }
                 }
 
                 if record.path.is_disabled {
-                    if record.flags.contains_import_star {
+                    if record.flags.contains(ImportRecordFlags::CONTAINS_IMPORT_STAR) {
                         self.print(b"var ");
                         self.print_symbol(s.namespace_ref);
                         self.print_equals();
@@ -5011,7 +5200,7 @@ where
                         self.print_semicolon_after_statement();
                     }
 
-                    if !s.items.is_empty() || s.default_name.is_some() {
+                    if !slice_of(s.items).is_empty() || s.default_name.is_some() {
                         self.print_indent();
                         self.print_space_before_identifier();
                         self.print_whitespacer(ws!(b"var {"));
@@ -5022,22 +5211,22 @@ where
                             self.print_space();
                             self.print_symbol(default_name.ref_.unwrap());
 
-                            if !s.items.is_empty() {
+                            if !slice_of(s.items).is_empty() {
                                 self.print_space();
                                 self.print(b",");
                                 self.print_space();
-                                for (i, item) in s.items.iter().enumerate() {
-                                    self.print_clause_item_as(*item, ClauseItemAs::Var);
-                                    if i < s.items.len() - 1 {
+                                for (i, item) in slice_of(s.items).iter().enumerate() {
+                                    self.print_clause_item_as(item, ClauseItemAs::Var);
+                                    if i < slice_of(s.items).len() - 1 {
                                         self.print(b",");
                                         self.print_space();
                                     }
                                 }
                             }
                         } else {
-                            for (i, item) in s.items.iter().enumerate() {
-                                self.print_clause_item_as(*item, ClauseItemAs::Var);
-                                if i < s.items.len() - 1 {
+                            for (i, item) in slice_of(s.items).iter().enumerate() {
+                                self.print_clause_item_as(item, ClauseItemAs::Var);
+                                if i < slice_of(s.items).len() - 1 {
                                     self.print(b",");
                                     self.print_space();
                                 }
@@ -5047,7 +5236,7 @@ where
                         self.print(b"}");
                         self.print_equals();
 
-                        if record.flags.contains_import_star {
+                        if record.flags.contains(ImportRecordFlags::CONTAINS_IMPORT_STAR) {
                             self.print_symbol(s.namespace_ref);
                             self.print_semicolon_after_statement();
                         } else {
@@ -5060,7 +5249,7 @@ where
                     return Ok(());
                 }
 
-                if record.flags.handles_import_errors && record.path.is_disabled && record.kind.is_common_js() {
+                if record.flags.contains(ImportRecordFlags::HANDLES_IMPORT_ERRORS) && record.path.is_disabled && record.kind.is_common_js() {
                     self.prev_stmt_tag = new_tag;
                     return Ok(());
                 }
@@ -5075,14 +5264,14 @@ where
                     item_count += 1;
                 }
 
-                if !s.items.is_empty() {
+                if !slice_of(s.items).is_empty() {
                     if item_count > 0 { self.print(b","); }
                     self.print_space();
 
                     self.print(b"{");
                     if !s.is_single_line { self.indent(); } else { self.print_space(); }
 
-                    for (i, item) in s.items.iter().enumerate() {
+                    for (i, item) in slice_of(s.items).iter().enumerate() {
                         if i != 0 {
                             self.print(b",");
                             if s.is_single_line { self.print_space(); }
@@ -5091,7 +5280,7 @@ where
                             self.print_newline();
                             self.print_indent();
                         }
-                        self.print_clause_item(*item);
+                        self.print_clause_item(item);
                     }
 
                     if !s.is_single_line {
@@ -5105,7 +5294,7 @@ where
                     item_count += 1;
                 }
 
-                if record.flags.contains_import_star {
+                if record.flags.contains(ImportRecordFlags::CONTAINS_IMPORT_STAR) {
                     if item_count > 0 { self.print(b","); }
                     self.print_space();
                     self.print_whitespacer(ws!(b"* as"));
@@ -5115,7 +5304,7 @@ where
                 }
 
                 if item_count > 0 {
-                    if !self.options.minify_whitespace || record.flags.contains_import_star || s.items.is_empty() {
+                    if !self.options.minify_whitespace || record.flags.contains(ImportRecordFlags::CONTAINS_IMPORT_STAR) || slice_of(s.items).is_empty() {
                         self.print(b" ");
                     }
                     self.print_whitespacer(ws!(b"from "));
@@ -5126,7 +5315,7 @@ where
                 // backwards compatibility: previously, we always stripped type
                 if IS_BUN_PLATFORM {
                     if let Some(loader) = record.loader {
-                        use options::Loader;
+                        use bundle_opts::Loader;
                         match loader {
                             Loader::Jsx => self.print_whitespacer(ws!(b" with { type: \"jsx\" }")),
                             Loader::Js => self.print_whitespacer(ws!(b" with { type: \"js\" }")),
@@ -5153,14 +5342,18 @@ where
                 }
                 self.print_semicolon_after_statement();
 
-                if Self::MAY_HAVE_MODULE_INFO {
-                    if let Some(mi) = self.module_info() {
-                        let import_record_path = &record.path.text;
+                if Self::MAY_HAVE_MODULE_INFO && self.module_info.is_some() {
+                    // PORT NOTE: reshaped for borrowck — `module_info()` borrows `&mut self`,
+                    // so we re-borrow it between `name_for_symbol` calls instead of holding
+                    // a single long-lived `mi` across the whole block. `irp_id` is Copy.
+                    let import_record_path = &record.path.text;
+                    let irp_id = {
+                        let mi = self.module_info().unwrap();
                         let irp_id = mi.str(import_record_path);
                         use analyze_transpiled_module::FetchParameters as FP;
                         let fetch_parameters: FP = if IS_BUN_PLATFORM {
                             if let Some(loader) = record.loader {
-                                use options::Loader;
+                                use bundle_opts::Loader;
                                 match loader {
                                     Loader::Json => FP::Json,
                                     Loader::Jsx => FP::host_defined(mi.str(b"jsx")),
@@ -5186,50 +5379,57 @@ where
                             } else { FP::None }
                         } else { FP::None };
                         mi.request_module(irp_id, fetch_parameters);
+                        irp_id
+                    };
 
-                        if let Some(name) = &s.default_name {
-                            let local_name = self.renamer.name_for_symbol(name.ref_.unwrap());
-                            let local_name_id = mi.str(local_name);
-                            mi.add_var(local_name_id, analyze_transpiled_module::VarKind::Lexical);
-                            mi.add_import_info_single(irp_id, mi.str(b"default"), local_name_id, false);
-                        }
+                    if let Some(name) = &s.default_name {
+                        let local_name = self.name_for_symbol(name.ref_.unwrap());
+                        let mi = self.module_info().unwrap();
+                        let local_name_id = mi.str(local_name);
+                        mi.add_var(local_name_id, analyze_transpiled_module::VarKind::Lexical);
+                        let default_id = mi.str(b"default");
+                        mi.add_import_info_single(irp_id, default_id, local_name_id, false);
+                    }
 
-                        for item in s.items.iter() {
-                            let local_name = self.renamer.name_for_symbol(item.name.ref_.unwrap());
-                            let local_name_id = mi.str(local_name);
-                            mi.add_var(local_name_id, analyze_transpiled_module::VarKind::Lexical);
-                            mi.add_import_info_single(irp_id, mi.str(&item.alias), local_name_id, false);
-                        }
+                    for item in slice_of(s.items).iter() {
+                        let local_name = self.name_for_symbol(item.name.ref_.unwrap());
+                        let mi = self.module_info().unwrap();
+                        let local_name_id = mi.str(local_name);
+                        mi.add_var(local_name_id, analyze_transpiled_module::VarKind::Lexical);
+                        let alias_id = mi.str(slice_of_const(item.alias));
+                        mi.add_import_info_single(irp_id, alias_id, local_name_id, false);
+                    }
 
-                        if record.flags.contains_import_star {
-                            let local_name = self.renamer.name_for_symbol(s.namespace_ref);
-                            mi.add_var(mi.str(local_name), analyze_transpiled_module::VarKind::Lexical);
-                            mi.add_import_info_namespace(irp_id, mi.str(local_name));
-                        }
+                    if record.flags.contains(ImportRecordFlags::CONTAINS_IMPORT_STAR) {
+                        let local_name = self.name_for_symbol(s.namespace_ref);
+                        let mi = self.module_info().unwrap();
+                        let local_name_id = mi.str(local_name);
+                        mi.add_var(local_name_id, analyze_transpiled_module::VarKind::Lexical);
+                        mi.add_import_info_namespace(irp_id, local_name_id);
                     }
                 }
             }
-            Stmt::Data::SBlock(s) => {
+            StmtData::SBlock(s) => {
                 self.print_indent();
-                self.print_block(stmt.loc, &s.stmts, s.close_brace_loc, tlmtlo.sub_var());
+                self.print_block(stmt.loc, slice_of(s.stmts), Some(s.close_brace_loc), tlmtlo.sub_var());
                 self.print_newline();
             }
-            Stmt::Data::SDebugger => {
+            StmtData::SDebugger(_) => {
                 self.print_indent();
                 self.print_space_before_identifier();
                 self.add_source_mapping(stmt.loc);
                 self.print(b"debugger");
                 self.print_semicolon_after_statement();
             }
-            Stmt::Data::SDirective(s) => {
+            StmtData::SDirective(s) => {
                 if IS_JSON { unreachable!(); }
                 self.print_indent();
                 self.print_space_before_identifier();
                 self.add_source_mapping(stmt.loc);
-                self.print_string_literal_utf8(&s.value, false);
+                self.print_string_literal_utf8(slice_of_const(s.value), false);
                 self.print_semicolon_after_statement();
             }
-            Stmt::Data::SBreak(s) => {
+            StmtData::SBreak(s) => {
                 self.print_indent();
                 self.print_space_before_identifier();
                 self.add_source_mapping(stmt.loc);
@@ -5240,7 +5440,7 @@ where
                 }
                 self.print_semicolon_after_statement();
             }
-            Stmt::Data::SContinue(s) => {
+            StmtData::SContinue(s) => {
                 self.print_indent();
                 self.print_space_before_identifier();
                 self.add_source_mapping(stmt.loc);
@@ -5251,18 +5451,18 @@ where
                 }
                 self.print_semicolon_after_statement();
             }
-            Stmt::Data::SReturn(s) => {
+            StmtData::SReturn(s) => {
                 self.print_indent();
                 self.print_space_before_identifier();
                 self.add_source_mapping(stmt.loc);
                 self.print(b"return");
-                if let Some(value) = &s.value {
+                if let Some(value) = s.value {
                     self.print_space();
-                    self.print_expr(*value, Level::Lowest, ExprFlag::none());
+                    self.print_expr(value, Level::Lowest, ExprFlag::none());
                 }
                 self.print_semicolon_after_statement();
             }
-            Stmt::Data::SThrow(s) => {
+            StmtData::SThrow(s) => {
                 self.print_indent();
                 self.print_space_before_identifier();
                 self.add_source_mapping(stmt.loc);
@@ -5271,7 +5471,7 @@ where
                 self.print_expr(s.value, Level::Lowest, ExprFlag::none());
                 self.print_semicolon_after_statement();
             }
-            Stmt::Data::SExpr(s) => {
+            StmtData::SExpr(s) => {
                 if !self.options.minify_whitespace && self.options.indent.count > 0 {
                     self.print_indent();
                 }
@@ -5280,7 +5480,8 @@ where
                 self.print_semicolon_after_statement();
             }
             other => {
-                Output::panic(format_args!("Unexpected tag in printStmt: .{}", <&'static str>::from(other)));
+                // TODO(port): @tagName(stmt.data) — StmtData lacks IntoStaticStr.
+                Output::panic(format_args!("Unexpected tag in printStmt: {:?}", core::mem::discriminant(other)));
             }
         }
         self.prev_stmt_tag = new_tag;
@@ -5296,7 +5497,7 @@ where
         if IS_JSON { unreachable!(); }
 
         let quote = best_quote_char_for_string(&import_record.path.text, false);
-        if import_record.flags.print_namespace_in_path && !import_record.path.is_file() {
+        if import_record.flags.contains(ImportRecordFlags::PRINT_NAMESPACE_IN_PATH) && !import_record.path.is_file() {
             self.print(quote);
             self.print_string_characters_utf8(&import_record.path.namespace, quote);
             self.print(b":");
@@ -5310,7 +5511,7 @@ where
     }
 
     pub fn print_bundled_import(&mut self, record: ImportRecord, s: &S::Import) {
-        if record.flags.is_internal { return; }
+        if record.flags.contains(ImportRecordFlags::IS_INTERNAL) { return; }
 
         let import_record = self.import_record(s.import_record_index as usize);
         let is_disabled = import_record.path.is_disabled;
@@ -5318,7 +5519,7 @@ where
 
         // If the bundled import was disabled and only imported for side effects we can skip it
         if record.path.is_disabled {
-            if self.symbols().get(s.namespace_ref).is_none() { return; }
+            if self.symbols().get_const(s.namespace_ref).is_none() { return; }
         }
 
         match ImportVariant::determine(&record, s) {
@@ -5462,22 +5663,22 @@ where
 
     pub fn print_for_loop_init(&mut self, init_st: Stmt) {
         match &init_st.data {
-            Stmt::Data::SExpr(s) => {
+            StmtData::SExpr(s) => {
                 self.print_expr(s.value, Level::Lowest, ExprFlag::ForbidIn | ExprFlag::ExprResultIsUnused);
             }
-            Stmt::Data::SLocal(s) => {
+            StmtData::SLocal(s) => {
                 let flags = ExprFlag::ForbidIn.into();
                 match s.kind {
-                    S::Local::Kind::KVar => self.print_decls(b"var", s.decls.slice(), flags, TopLevelAndIsExport::default()),
-                    S::Local::Kind::KLet => self.print_decls(b"let", s.decls.slice(), flags, TopLevelAndIsExport::default()),
-                    S::Local::Kind::KConst => self.print_decls(b"const", s.decls.slice(), flags, TopLevelAndIsExport::default()),
-                    S::Local::Kind::KUsing => self.print_decls(b"using", s.decls.slice(), flags, TopLevelAndIsExport::default()),
-                    S::Local::Kind::KAwaitUsing => self.print_decls(b"await using", s.decls.slice(), flags, TopLevelAndIsExport::default()),
+                    S::Kind::KVar => self.print_decls(b"var", s.decls.slice(), flags, TopLevelAndIsExport::default()),
+                    S::Kind::KLet => self.print_decls(b"let", s.decls.slice(), flags, TopLevelAndIsExport::default()),
+                    S::Kind::KConst => self.print_decls(b"const", s.decls.slice(), flags, TopLevelAndIsExport::default()),
+                    S::Kind::KUsing => self.print_decls(b"using", s.decls.slice(), flags, TopLevelAndIsExport::default()),
+                    S::Kind::KAwaitUsing => self.print_decls(b"await using", s.decls.slice(), flags, TopLevelAndIsExport::default()),
                 }
             }
             // for(;)
-            Stmt::Data::SEmpty => {}
-            _ => Output::panic("Internal error: Unexpected stmt in for loop"),
+            StmtData::SEmpty(_) => {}
+            _ => Output::panic(format_args!("Internal error: Unexpected stmt in for loop")),
         }
     }
 
@@ -5491,9 +5692,9 @@ where
         self.print(b")");
 
         match &s.yes.data {
-            Stmt::Data::SBlock(block) => {
+            StmtData::SBlock(block) => {
                 self.print_space();
-                self.print_block(s.yes.loc, &block.stmts, block.close_brace_loc, tlmtlo);
+                self.print_block(s.yes.loc, slice_of(block.stmts), Some(block.close_brace_loc), tlmtlo);
                 if s.no.is_some() { self.print_space(); } else { self.print_newline(); }
             }
             _ => {
@@ -5529,12 +5730,12 @@ where
             self.print(b"else");
 
             match &no_block.data {
-                Stmt::Data::SBlock(block) => {
+                StmtData::SBlock(block) => {
                     self.print_space();
-                    self.print_block(no_block.loc, &block.stmts, None, tlmtlo);
+                    self.print_block(no_block.loc, slice_of(block.stmts), None, tlmtlo);
                     self.print_newline();
                 }
-                Stmt::Data::SIf(s_if) => {
+                StmtData::SIf(s_if) => {
                     self.print_if(s_if, no_block.loc, tlmtlo);
                 }
                 _ => {
@@ -5547,29 +5748,29 @@ where
         }
     }
 
-    pub fn wrap_to_avoid_ambiguous_else(s_: &Stmt::Data) -> bool {
+    pub fn wrap_to_avoid_ambiguous_else(s_: &StmtData) -> bool {
         let mut s = s_;
         loop {
             match s {
-                Stmt::Data::SIf(index) => {
+                StmtData::SIf(index) => {
                     if let Some(no) = &index.no { s = &no.data; } else { return true; }
                 }
-                Stmt::Data::SFor(current) => s = &current.body.data,
-                Stmt::Data::SForIn(current) => s = &current.body.data,
-                Stmt::Data::SForOf(current) => s = &current.body.data,
-                Stmt::Data::SWhile(current) => s = &current.body.data,
-                Stmt::Data::SWith(current) => s = &current.body.data,
+                StmtData::SFor(current) => s = &current.body.data,
+                StmtData::SForIn(current) => s = &current.body.data,
+                StmtData::SForOf(current) => s = &current.body.data,
+                StmtData::SWhile(current) => s = &current.body.data,
+                StmtData::SWith(current) => s = &current.body.data,
                 _ => return false,
             }
         }
     }
 
-    pub fn try_to_get_imported_enum_value(&self, target: Expr, name: &[u8]) -> Option<js_ast::InlinedEnumValue::Decoded> {
-        if let Some(id) = target.data.as_e_import_identifier() {
+    pub fn try_to_get_imported_enum_value(&self, target: Expr, name: &[u8]) -> Option<js_ast::InlinedEnumValueDecoded> {
+        if let ExprData::EImportIdentifier(id) = &target.data {
             let ref_ = self.symbols().follow(id.ref_);
-            if let Some(symbol) = self.symbols().get(ref_) {
-                if symbol.kind == Symbol::Kind::TsEnum {
-                    if let Some(enum_value) = self.options.ts_enums.get(ref_) {
+            if let Some(symbol) = self.symbols().get_const(ref_) {
+                if symbol.kind == js_ast::ast::symbol::Kind::TsEnum {
+                    if let Some(enum_value) = self.options.ts_enums.get(&ref_) {
                         if let Some(value) = enum_value.get(name) {
                             return Some(value.decode());
                         }
@@ -5580,12 +5781,13 @@ where
         None
     }
 
-    pub fn print_inlined_enum(&mut self, inlined: js_ast::InlinedEnumValue::Decoded, comment: &[u8], level: Level) {
+    pub fn print_inlined_enum(&mut self, inlined: js_ast::InlinedEnumValueDecoded, comment: &[u8], level: Level) {
         match inlined {
-            js_ast::InlinedEnumValue::Decoded::Number(num) => self.print_number(num, level),
+            js_ast::InlinedEnumValueDecoded::Number(num) => self.print_number(num, level),
             // TODO: extract printString
-            js_ast::InlinedEnumValue::Decoded::String(str) => self.print_expr(
-                Expr { data: Expr::Data::EString(str), loc: logger::Loc::EMPTY },
+            js_ast::InlinedEnumValueDecoded::String(str) => self.print_expr(
+                // SAFETY: arena-owned `*const EString`; the printer only reads through the StoreRef.
+                Expr { data: ExprData::EString(unsafe { js_ast::ast::StoreRef::from_raw(str as *mut E::EString) }), loc: logger::Loc::EMPTY },
                 level,
                 ExprFlagSet::empty(),
             ),
@@ -5621,6 +5823,9 @@ where
         };
         self.print_decls(keyword, decls, ExprFlag::none(), tlm);
         self.print_semicolon_after_statement();
+        // TODO(b2-blocked): bun_js_parser::runtime::Imports::__export — the
+        // real `Runtime::Imports` is gated upstream; the stub has no fields.
+        #[cfg(any())]
         if REWRITE_ESM_TO_CJS && is_export && !decls.is_empty() {
             for decl in decls {
                 self.print_indent();
@@ -5632,7 +5837,7 @@ where
                 self.print_space();
 
                 match &decl.binding.data {
-                    Binding::Data::BIdentifier(ident) => {
+                    BindingData::BIdentifier(ident) => {
                         self.print(b"{");
                         self.print_space();
                         self.print_symbol(ident.ref_);
@@ -5640,11 +5845,11 @@ where
                         self.print_symbol(ident.ref_);
                         self.print(b") }");
                     }
-                    Binding::Data::BObject(obj) => {
+                    BindingData::BObject(obj) => {
                         self.print(b"{");
                         self.print_space();
                         for prop in obj.properties.iter() {
-                            if let Binding::Data::BIdentifier(ident) = &prop.value.data {
+                            if let BindingData::BIdentifier(ident) = &prop.value.data {
                                 self.print_symbol(ident.ref_);
                                 if self.options.minify_whitespace { self.print(b":()=>("); } else { self.print(b": () => ("); }
                                 self.print_symbol(ident.ref_);
@@ -5676,18 +5881,18 @@ where
         let mut ascii_start: usize = 0;
         let mut is_ascii = false;
         let mut iter = CodepointIterator::init(identifier);
-        let mut cursor = CodepointIterator::Cursor::default();
+        let mut cursor = strings::Cursor::default();
         while iter.next(&mut cursor) {
-            match cursor.c {
+            match cursor.c as u32 {
                 FIRST_ASCII..=LAST_ASCII => {
                     if !is_ascii {
-                        ascii_start = cursor.i;
+                        ascii_start = (cursor.i as usize);
                         is_ascii = true;
                     }
                 }
                 _ => {
                     if is_ascii {
-                        self.print(&identifier[ascii_start..cursor.i]);
+                        self.print(&identifier[ascii_start..(cursor.i as usize)]);
                         is_ascii = false;
                     }
                     self.print(b"\\u{");
@@ -5730,7 +5935,7 @@ where
                         self.print(b"\\u");
                         let buf_ptr = self.writer.reserve(4).expect("unreachable");
                         let mut tmp = [0u8; 4];
-                        let len = strings::encode_wtf8_rune_t::<CodeUnitType>(&mut tmp, c);
+                        let len = encode_wtf8_rune_t(&mut tmp, c as u32);
                         // SAFETY: reserved 4 bytes
                         unsafe { core::ptr::copy_nonoverlapping(tmp.as_ptr(), buf_ptr, len); }
                         self.writer.advance(len as u64);
@@ -5742,7 +5947,7 @@ where
             {
                 let buf_ptr = self.writer.reserve(4).expect("unreachable");
                 let mut tmp = [0u8; 4];
-                let len = strings::encode_wtf8_rune_t::<CodeUnitType>(&mut tmp, c);
+                let len = encode_wtf8_rune_t(&mut tmp, c as u32);
                 // SAFETY: reserved 4 bytes
                 unsafe { core::ptr::copy_nonoverlapping(tmp.as_ptr(), buf_ptr, len); }
                 self.writer.advance(len as u64);
@@ -5807,6 +6012,7 @@ where
         if text.starts_with(b"/*") {
             // Re-indent multi-line comments
             while let Some(newline_index) = strings::index_of_char(text, b'\n') {
+                let newline_index = newline_index as usize;
                 // Skip over \r if it precedes \n
                 if newline_index > 0 && text[newline_index - 1] == b'\r' {
                     self.print(&text[..newline_index - 1]);
@@ -5831,12 +6037,14 @@ where
 
     pub fn init(
         writer: W,
+        bump: &'a bumpalo::Bump,
         import_records: &'a [ImportRecord],
         opts: Options<'a>,
-        renamer: rename::Renamer,
-        source_map_builder: SourceMap::Chunk::Builder,
+        renamer: rename::Renamer<'a, 'a>,
+        source_map_builder: SourceMap::chunk::Builder,
     ) -> Self {
         let mut printer = Self {
+            bump,
             import_records,
             needs_semicolon: false,
             stmt_start: -1,
@@ -5852,7 +6060,7 @@ where
             writer,
             has_printed_bundled_import_statement: false,
             renamer,
-            prev_stmt_tag: Stmt::Tag::SEmpty,
+            prev_stmt_tag: StmtTag::SEmpty,
             source_map_builder,
             symbol_counter: 0,
             temporary_bindings: Vec::new(),
@@ -5860,15 +6068,25 @@ where
             was_lazy_export: false,
             module_info: None,
         };
+        // TODO(b2-blocked): bun_sourcemap::chunk::Builder::line_offset_table_byte_offset_list
+        // — field is `&'static [u32]` upstream pending Phase-B lifetime threading; can't
+        // store a borrow of `line_offset_tables` without transmuting. The Builder uses
+        // its default empty slice until then.
+        #[cfg(any())]
         if GENERATE_SOURCE_MAP {
-            // This seems silly to cache but the .items() function apparently costs 1ms according to Instruments.
+            use SourceMap::line_offset_table::ListExt;
             printer.source_map_builder.line_offset_table_byte_offset_list =
                 printer.source_map_builder.line_offset_tables.items_byte_offset_to_start_of_line();
         }
         printer
     }
 
-    fn print_dev_server_module(&mut self, source: &logger::Source, ast: &Ast, part: &js_ast::Part) {
+    // TODO(b2-blocked): bun_logger::fs::Path::pretty + bun_js_parser::Part::stmts shape
+    // — `print_dev_server_module` walks `source.path.pretty` (not yet ported on
+    // bun_logger's Path) and indexes `part.stmts: *mut [Stmt]` for ESM bake-dev
+    // output. Re-gated until those land.
+    #[cfg(any())]
+    fn print_dev_server_module(&mut self, source: &logger::Source, ast: &js_ast::Ast, part: &js_ast::Part) {
         self.indent();
         self.print_indent();
 
@@ -5883,7 +6101,7 @@ where
             self.print_space();
             self.print(b"{\n");
             let lazy = func.body.stmts[0].data.as_s_lazy_export().unwrap();
-            if !matches!(*lazy, Expr::Data::EUndefined) {
+            if !matches!(*lazy, ExprData::EUndefined(_)) {
                 self.indent();
                 self.print_indent();
                 self.print_symbol(self.options.hmr_ref);
@@ -5909,7 +6127,7 @@ where
                     let record = self.import_record(import.import_record_index as usize);
                     self.print_string_literal_utf8(&record.path.pretty, false);
 
-                    let item_count = u32::from(import.default_name.is_some()) + u32::try_from(import.items.len()).unwrap();
+                    let item_count = u32::from(import.default_name.is_some()) + u32::try_from(slice_of(import.items).len()).unwrap();
                     let _ = self.fmt(format_args!(", {},", item_count));
                     if item_count == 0 {
                         // Add a comment explaining why the number could be zero
@@ -5918,9 +6136,9 @@ where
                         if import.default_name.is_some() {
                             self.print(b" \"default\",");
                         }
-                        for item in import.items.iter() {
+                        for item in slice_of(import.items).iter() {
                             self.print(b" ");
-                            self.print_string_literal_utf8(&item.alias, false);
+                            self.print_string_literal_utf8(slice_of_const(item.alias), false);
                             self.print(b",");
                         }
                     }
@@ -5977,7 +6195,7 @@ where
             self.print_fn_args(func.open_parens_loc, &func.args, func.flags.contains(G::FnFlags::HasRestArg), false);
             self.print(b" => {\n");
             self.indent();
-            self.print_block_body(&func.body.stmts, TopLevel::init(IsTopLevel::No));
+            self.print_block_body(slice_of(func.body.stmts), TopLevel::init(IsTopLevel::No));
             self.unindent();
             self.print_indent();
             self.print(b"}, ");
@@ -6017,7 +6235,12 @@ impl<const N: usize> PrintArg for &[u8; N] {
 pub trait HasDefaultValue {
     fn default_value(&self) -> Option<js_ast::Expr>;
 }
-// TODO(port): impl HasDefaultValue for B::ArrayItem and B::Property in bun_js_parser.
+impl HasDefaultValue for js_ast::ast::b::Property {
+    #[inline] fn default_value(&self) -> Option<js_ast::Expr> { self.default_value }
+}
+impl HasDefaultValue for js_ast::ArrayBinding {
+    #[inline] fn default_value(&self) -> Option<js_ast::Expr> { self.default_value }
+}
 
 // ───────────────────────────────────────────────────────────────────────────
 // Writer (NewWriter)
@@ -6372,23 +6595,30 @@ pub enum GenerateSourceMap { Disable, Lazy, Eager }
 // Top-level print entry points — gated on `__gated_printer::Printer` (above)
 // plus the renamer driver path that mutates `Ast.module_scope`.
 // ───────────────────────────────────────────────────────────────────────────
-// TODO(b2-blocked): bun_js_printer::__gated_printer (Printer<...>)
-// TODO(b2-blocked): bun_js_parser::ast::ast::Ast::{module_scope mut access, nested_scope_slot_counts}
+// TODO(b2-blocked): bun_crash_handler::{set_current_action, current_action}
+// TODO(b2-blocked): bun_core::perf
+// TODO(b2-blocked): bun_logger::Index::{value, is_runtime}
+// TODO(b2-blocked): bun_sourcemap::chunk::Builder::default / SourceMap::init
+// TODO(b2-blocked): bun_js_parser::Ast::init_test
+// TODO(b2-blocked): bun_js_printer::__gated_printer::Printer::print_dev_server_module (re-gated above)
 #[cfg(any())]
-mod __gated_entry_points {
+pub mod __gated_entry_points {
 use super::*;
+use super::__gated_printer::*;
+use js_ast::Ast;
+use js_ast::ast::op::Level;
 
 pub fn get_source_map_builder<const GENERATE_SOURCE_MAP: GenerateSourceMap, const IS_BUN_PLATFORM: bool>(
     opts: &Options,
     source: &logger::Source,
     tree: &Ast,
-) -> SourceMap::Chunk::Builder {
+) -> SourceMap::chunk::Builder {
     if GENERATE_SOURCE_MAP == GenerateSourceMap::Disable {
         // TODO(port): Zig returned `undefined` here.
-        return SourceMap::Chunk::Builder::default();
+        return SourceMap::chunk::Builder::default();
     }
 
-    SourceMap::Chunk::Builder {
+    SourceMap::chunk::Builder {
         source_map: SourceMap::Chunk::SourceMap::init(
             // opts.source_map_allocator orelse opts.allocator — allocator dropped
             IS_BUN_PLATFORM && GENERATE_SOURCE_MAP == GenerateSourceMap::Lazy,
@@ -6417,7 +6647,7 @@ pub fn get_source_map_builder<const GENERATE_SOURCE_MAP: GenerateSourceMap, cons
 pub fn print_ast<W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOURCE_MAP: bool>(
     _writer: W,
     tree: Ast,
-    symbols: js_ast::Symbol::Map,
+    symbols: js_ast::ast::symbol::Map,
     source: &logger::Source,
     opts: Options,
 ) -> Result<usize, bun_core::Error> {
@@ -6503,7 +6733,7 @@ pub fn print_ast<W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOURCE_M
     if !opts.bundling
         && tree.uses_require_ref
         && tree.exports_kind == js_ast::ExportsKind::Esm
-        && opts.target == options::Target::Bun
+        && opts.target == bundle_opts::Target::Bun
     {
         // Hoist the `var {require}=import.meta;` declaration. Previously,
         // `import.meta.require` was inlined into transpiled files, which
@@ -6576,20 +6806,20 @@ pub fn print_json<W: WriterTrait>(
     type PrinterType<'a, W> = Printer<'a, W, false, false, false, true, false>;
     let writer = _writer;
     let mut s_expr = S::SExpr { value: expr, ..Default::default() };
-    let stmt = Stmt { loc: logger::Loc::EMPTY, data: Stmt::Data::SExpr(&mut s_expr) };
+    let stmt = Stmt { loc: logger::Loc::EMPTY, data: StmtData::SExpr(&mut s_expr) };
     let mut stmts = [stmt];
     let mut parts = [js_ast::Part { stmts: &stmts[..], ..Default::default() }];
     let ast = Ast::init_test(&mut parts);
     let list = js_ast::Symbol::List::from_borrowed_slice_dangerous(ast.symbols.slice());
     let nested_list = js_ast::Symbol::NestedList::from_borrowed_slice_dangerous(&[list]);
-    let mut renamer = rename::NoOpRenamer::init(js_ast::Symbol::Map::init_list(nested_list), source);
+    let mut renamer = rename::NoOpRenamer::init(js_ast::ast::symbol::Map::init_list(nested_list), source);
 
     let mut printer = PrinterType::<W>::init(
         writer,
         ast.import_records.slice(),
         opts,
         renamer.to_renamer(),
-        SourceMap::Chunk::Builder::default(), // undefined
+        SourceMap::chunk::Builder::default(), // undefined
     );
     // PERF(port): was stack-fallback allocator
     printer.binary_expression_stack = Vec::new();
@@ -6608,7 +6838,7 @@ pub fn print<const GENERATE_SOURCE_MAPS: bool>(
     opts: Options,
     import_records: &[ImportRecord],
     parts: &[js_ast::Part],
-    renamer: rename::Renamer,
+    renamer: rename::Renamer<'a, 'a>,
 ) -> PrintResult {
     let _trace = bun_core::perf::trace("JSPrinter.print");
 
@@ -6635,7 +6865,7 @@ pub fn print_with_writer<W: WriterTrait, const GENERATE_SOURCE_MAPS: bool>(
     opts: Options,
     import_records: &[ImportRecord],
     parts: &[js_ast::Part],
-    renamer: rename::Renamer,
+    renamer: rename::Renamer<'a, 'a>,
 ) -> PrintResult {
     if target.is_bun() {
         print_with_writer_and_platform::<W, true, GENERATE_SOURCE_MAPS>(
@@ -6656,7 +6886,7 @@ pub fn print_with_writer_and_platform<W: WriterTrait, const IS_BUN_PLATFORM: boo
     opts: Options,
     import_records: &[ImportRecord],
     parts: &[js_ast::Part],
-    renamer: rename::Renamer,
+    renamer: rename::Renamer<'a, 'a>,
 ) -> PrintResult {
     let prev_action = bun_crash_handler::current_action();
     let _restore = scopeguard::guard((), |_| bun_crash_handler::set_current_action(prev_action));
@@ -6678,12 +6908,12 @@ pub fn print_with_writer_and_platform<W: WriterTrait, const IS_BUN_PLATFORM: boo
     printer.binary_expression_stack = Vec::new();
     // defer: temporary_bindings.deinit / writer.* = printer.writer.* — handled by move-out below.
 
-    if opts.module_type == options::Format::InternalBakeDev && !source.index.is_runtime() {
+    if opts.module_type == bundle_opts::Format::InternalBakeDev && !source.index.is_runtime() {
         printer.print_dev_server_module(source, &ast, &parts[0]);
     } else {
         // The IIFE wrapper is done in `postProcessJSChunk`, so we just manually
         // trigger an indent.
-        if opts.module_type == options::Format::Iife {
+        if opts.module_type == bundle_opts::Format::Iife {
             printer.indent();
         }
 
@@ -6732,7 +6962,7 @@ pub fn print_with_writer_and_platform<W: WriterTrait, const IS_BUN_PLATFORM: boo
 pub fn print_common_js<W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOURCE_MAP: bool>(
     _writer: W,
     tree: Ast,
-    symbols: js_ast::Symbol::Map,
+    symbols: js_ast::ast::symbol::Map,
     source: &logger::Source,
     opts: Options,
 ) -> Result<usize, bun_core::Error> {

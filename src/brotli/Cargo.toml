@@ -23,3 +23,4 @@ bitflags.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
 bun_brotli_sys.workspace = true
+bun_io.workspace = true

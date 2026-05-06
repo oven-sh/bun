@@ -42,10 +42,6 @@ impl GetAddrInfo {
         }
     }
 
-    // TODO(b2-blocked): bun_cares_sys::c_ares::AddrInfo_hints
-    // (bun_cares_sys exists at tier-0 but its `c_ares` module is itself
-    // `#[cfg(any())]`-gated; return type cannot be named until that lands.)
-    #[cfg(any())]
     pub fn to_cares(&self) -> bun_cares_sys::c_ares::AddrInfo_hints {
         // SAFETY: all-zero is a valid AddrInfo_hints (C POD struct)
         let mut hints: bun_cares_sys::c_ares::AddrInfo_hints = unsafe { core::mem::zeroed() };
@@ -313,14 +309,10 @@ pub enum BackendFromJsError {
     JSError,
 }
 
-// TODO(port): std.net.Address — std::net is banned. Need a bun_sys (or bun_net)
-// SocketAddress wrapper over libc::sockaddr_storage with .in/.in6/.un views.
-// TODO(b2-blocked): bun_sys::net::Address
-#[cfg(any())]
+// TODO(port): std.net.Address — std::net is banned. `bun_sys::net::Address`
+// wraps `libc::sockaddr_storage`; `.in/.in6/.un` views are accessed via raw
+// casts on `as_sockaddr()` here until bun_sys grows typed accessors.
 pub type Address = bun_sys::net::Address;
-#[cfg(not(any()))]
-#[derive(Debug)]
-pub struct Address(());
 
 pub struct GetAddrInfoResult {
     pub address: Address,
@@ -369,76 +361,70 @@ impl GetAddrInfoResult {
     }
 
     pub fn from_addr_info(addrinfo: &libc::addrinfo) -> Option<GetAddrInfoResult> {
-        // TODO(b2-blocked): bun_sys::net::Address
-        #[cfg(any())]
-        {
-            let sockaddr = addrinfo.ai_addr;
-            if sockaddr.is_null() {
-                return None;
-            }
-            Some(GetAddrInfoResult {
-                // SAFETY: ai_addr is non-null and points to a valid sockaddr per getaddrinfo contract
-                address: unsafe { Address::init_posix(sockaddr) },
-                // no TTL in POSIX getaddrinfo()
-                ttl: 0,
-            })
+        let sockaddr = addrinfo.ai_addr;
+        if sockaddr.is_null() {
+            return None;
         }
-        #[cfg(not(any()))]
-        {
-            let _ = addrinfo;
-            todo!("b2-blocked: bun_sys::net::Address::init_posix")
-        }
+        Some(GetAddrInfoResult {
+            // SAFETY: ai_addr is non-null and points to a valid sockaddr per getaddrinfo contract
+            address: unsafe { Address::init_posix(sockaddr) },
+            // no TTL in POSIX getaddrinfo()
+            ttl: 0,
+        })
     }
 }
 
 pub fn address_to_string(address: &Address) -> Result<BunString, AllocError> {
-    // TODO(b2-blocked): bun_sys::net::Address
-    // Body requires .any()/.in_()/.in6()/.un() views on Address; the stub
-    // `Address(())` exposes none. Signature is un-gated so tier-6 callers link.
-    #[cfg(any())]
-    {
-        return match address.any().family() {
-            f if f == libc::AF_INET => {
-                let self_ = address.in_();
-                let bytes: [u8; 4] = self_.sa_addr_bytes();
-                Ok(BunString::create_format(format_args!(
-                    "{}.{}.{}.{}",
-                    bytes[0], bytes[1], bytes[2], bytes[3]
-                )))
+    // PORT NOTE: reshaped — bun_sys::net::Address exposes family()/as_sockaddr()
+    // rather than .in/.in6/.un union views, so each arm casts the raw sockaddr.
+    match address.family() {
+        libc::AF_INET => {
+            // SAFETY: family() == AF_INET, storage holds a sockaddr_in.
+            let v4 = unsafe { &*address.as_sockaddr().cast::<libc::sockaddr_in>() };
+            let bytes: [u8; 4] = v4.sin_addr.s_addr.to_ne_bytes();
+            Ok(BunString::create_format(format_args!(
+                "{}.{}.{}.{}",
+                bytes[0], bytes[1], bytes[2], bytes[3]
+            )))
+        }
+        libc::AF_INET6 => {
+            // SAFETY: family() == AF_INET6, storage holds a sockaddr_in6.
+            let v6 = unsafe { &*address.as_sockaddr().cast::<libc::sockaddr_in6>() };
+            // PERF(port): was stack-fallback alloc — profile in Phase B
+            // PORT NOTE: Zig formatted via std.net.Address Display ("[addr]:port")
+            // then sliced the brackets/port off ("TODO: this is a hack"). Here we
+            // render the bare address directly via ares_inet_ntop — same result
+            // without the post-slice.
+            let mut buf = [0u8; 64]; // >= INET6_ADDRSTRLEN (46)
+            // SAFETY: sin6_addr is a valid in6_addr; buf len fits INET6_ADDRSTRLEN.
+            let p = unsafe {
+                bun_cares_sys::c_ares::ares_inet_ntop(
+                    libc::AF_INET6,
+                    (&v6.sin6_addr as *const libc::in6_addr).cast(),
+                    buf.as_mut_ptr(),
+                    buf.len() as bun_cares_sys::c_ares::ares_socklen_t,
+                )
+            };
+            if p.is_null() {
+                return Ok(BunString::EMPTY);
             }
-            f if f == libc::AF_INET6 => {
-                // PERF(port): was stack-fallback alloc — profile in Phase B
-                let mut out: Vec<u8> = Vec::new();
-                // TODO(port): std.net.Address Display impl — need bun_sys::net::Address Display
-                write!(&mut out, "{}", address).map_err(|_| AllocError)?;
-                // TODO: this is a hack, fix it
-                // This removes [.*]:port
-                //              ^  ^^^^^^
-                let port = address.in6().get_port();
-                let port_digits = {
-                    let mut buf: Vec<u8> = Vec::new();
-                    write!(&mut buf, "{}", port).expect("unreachable");
-                    buf.len()
-                };
-                Ok(BunString::clone_latin1(
-                    &out[1..out.len() - 1 - port_digits - 1],
-                ))
-            }
-            f if f == libc::AF_UNIX => {
-                #[cfg(unix)]
-                {
-                    return Ok(BunString::clone_latin1(address.un().path()));
-                }
-                #[allow(unreachable_code)]
-                Ok(BunString::EMPTY)
-            }
-            _ => Ok(BunString::EMPTY),
-        };
-    }
-    #[cfg(not(any()))]
-    {
-        let _ = address;
-        todo!("b2-blocked: bun_sys::net::Address")
+            let len = buf.iter().position(|&b| b == 0).unwrap_or(0);
+            Ok(BunString::clone_latin1(&buf[..len]))
+        }
+        #[cfg(unix)]
+        libc::AF_UNIX => {
+            // SAFETY: family() == AF_UNIX; sockaddr_storage is >= sizeof(sockaddr_un).
+            let un = unsafe { &*address.as_sockaddr().cast::<libc::sockaddr_un>() };
+            // SAFETY: reinterpreting [c_char; N] as [u8; N] (same size/align).
+            let path: &[u8] = unsafe {
+                core::slice::from_raw_parts(
+                    un.sun_path.as_ptr().cast::<u8>(),
+                    un.sun_path.len(),
+                )
+            };
+            Ok(BunString::clone_latin1(path))
+        }
+        _ => Ok(BunString::EMPTY),
     }
 }
 

@@ -23,12 +23,8 @@ impl VLQ {
         &self.bytes[0..self.len as usize]
     }
 
-    // TODO(b2-blocked): bun_io::Write
-    #[cfg(any())]
-    pub fn write_to(self, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
-        writer.write_all(&self.bytes[0..self.len as usize])?;
-        Ok(())
+    pub fn write_to<W: bun_io::Write + ?Sized>(self, writer: &mut W) -> bun_io::Result<()> {
+        writer.write_all(&self.bytes[0..self.len as usize])
     }
 
     pub const fn encode(value: i32) -> VLQ {

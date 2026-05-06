@@ -85,28 +85,17 @@ pub type Task = AnyTaskWithExtraContext;
 
 impl<'a> AnyEventLoop<'a> {
     pub fn iteration_number(&self) -> u64 {
-        #[cfg(any())]
-        {
-            return match self {
-                // SAFETY: vtable populated by runtime; owner is the erased EventLoop ptr.
-                AnyEventLoop::Js { owner, vtable } => unsafe { (vtable.iteration_number)(*owner) },
-                // TODO(b2-blocked): bun_uws::Loop::iteration_number
-                AnyEventLoop::Mini(mini) => mini.loop_.iteration_number(),
-            };
+        match self {
+            // SAFETY: vtable populated by runtime; owner is the erased EventLoop ptr.
+            AnyEventLoop::Js { owner, vtable } => unsafe { (vtable.iteration_number)(*owner) },
+            // SAFETY: `loop_` is the live C-owned uws loop (set in `MiniEventLoop::init`).
+            AnyEventLoop::Mini(mini) => unsafe { (*mini.loop_).iteration_number() },
         }
-        // TODO(b2-blocked): bun_uws::Loop::iteration_number
-        todo!("AnyEventLoop::iteration_number — blocked on bun_uws::Loop::iteration_number")
     }
 
     pub fn wakeup(&mut self) {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_uws::Loop::wakeup
-            self.r#loop().wakeup();
-            return;
-        }
-        // TODO(b2-blocked): bun_uws::Loop::wakeup
-        todo!("AnyEventLoop::wakeup — blocked on bun_uws::Loop::wakeup")
+        // SAFETY: `r#loop()` returns a valid live loop pointer (vtable contract / mini.loop_).
+        unsafe { (*self.r#loop()).wakeup() };
     }
 
     pub fn file_polls(&mut self) -> &mut bun_aio::file_poll::Store {
@@ -320,6 +309,17 @@ impl EventLoopHandle {
         EventLoopHandle::Mini(mini)
     }
 
+    /// Erase to the `(tag, ptr)` pair stored in `uws::InternalLoopData`
+    /// (`parent_tag` / `parent_ptr`). Tag 1 = JS, tag 2 = mini — matches Zig
+    /// `setParentEventLoop`.
+    #[inline]
+    pub fn into_tag_ptr(self) -> (core::ffi::c_char, *mut core::ffi::c_void) {
+        match self {
+            EventLoopHandle::Js { owner, .. } => (1, owner.cast()),
+            EventLoopHandle::Mini(mini) => (2, mini.cast()),
+        }
+    }
+
     pub fn from_any(any: &mut AnyEventLoop<'static>) -> EventLoopHandle {
         match any {
             AnyEventLoop::Js { owner, vtable } => EventLoopHandle::Js {
@@ -458,27 +458,13 @@ impl EventLoopHandle {
     }
 
     pub fn ref_(self) {
-        #[cfg(any())]
-        {
-            // SAFETY: `r#loop` returns a valid live loop.
-            // TODO(b2-blocked): bun_uws::Loop::ref_
-            unsafe { (*self.r#loop()).ref_() };
-            return;
-        }
-        // TODO(b2-blocked): bun_uws::Loop::ref_
-        todo!("EventLoopHandle::ref_ — blocked on bun_uws::Loop::ref_")
+        // SAFETY: `r#loop` returns a valid live loop.
+        unsafe { (*self.r#loop()).ref_() };
     }
 
     pub fn unref(self) {
-        #[cfg(any())]
-        {
-            // SAFETY: `r#loop` returns a valid live loop.
-            // TODO(b2-blocked): bun_uws::Loop::unref
-            unsafe { (*self.r#loop()).unref() };
-            return;
-        }
-        // TODO(b2-blocked): bun_uws::Loop::unref
-        todo!("EventLoopHandle::unref — blocked on bun_uws::Loop::unref")
+        // SAFETY: `r#loop` returns a valid live loop.
+        unsafe { (*self.r#loop()).unref() };
     }
 
     pub fn env(self) -> *mut DotEnvLoader<'static> {

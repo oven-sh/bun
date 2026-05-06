@@ -143,7 +143,7 @@ unsafe extern "C" {
 }
 
 // Zig: `pub fn NewZlibReader(comptime Writer: type, comptime buffer_size: usize) type`
-// TODO(port): `W` needs a trait bound exposing `write(&mut self, &[u8]) -> Result<usize, E>`.
+// `W: bun_io::Write` bound is applied on `read_all` (the only method that touches `context`).
 pub struct ZlibReader<'a, W, const BUFFER_SIZE: usize> {
     pub context: W,
     pub input: &'a [u8],
@@ -251,13 +251,9 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
     }
 
     // TODO(port): narrow error set — Zig inferred error union includes Writer's error set.
-    // TODO(b2-blocked): bun_io::Write
-    // bun_io crate does not yet compile (tier-0) and lacks a `Write` trait. Per
-    // PORTING.md §anytype: byte writers use `&mut impl bun_io::Write`. Body preserved.
-    #[cfg(any())]
     pub fn read_all(&mut self, is_done: bool) -> Result<(), bun_core::Error>
     where
-        W: bun_io::Write, // trait must expose `write(&mut self, &[u8]) -> Result<usize, E>`
+        W: bun_io::Write,
     {
         while self.state == ZlibReaderState::Uninitialized || self.state == ZlibReaderState::Inflating {
             // Before the call of inflate(), the application should ensure
@@ -287,10 +283,10 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
             //   flush parameter).
 
             if self.zlib.avail_out == 0 {
-                let mut written = self.context.write(&self.buf)?;
-                while written < self.zlib.avail_out as usize {
-                    written += self.context.write(&self.buf[written..])?;
-                }
+                // PORT NOTE: Zig did `var written = try ctx.write(&buf); while (written < avail_out) ...`
+                // but avail_out == 0 here so the loop never ran; bun_io::Write::write_all is the
+                // canonical full-buffer write and subsumes the partial-write retry loop.
+                self.context.write_all(&self.buf)?;
                 self.zlib.avail_out = BUFFER_SIZE as uInt;
                 self.zlib.next_out = self.buf.as_mut_ptr();
             }
@@ -303,11 +299,9 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
             match rc {
                 ReturnCode::StreamEnd => {
                     self.state = ZlibReaderState::End;
-                    let mut remainder = &self.buf[0..BUFFER_SIZE - self.zlib.avail_out as usize];
-                    remainder = &remainder[self.context.write(remainder)?..];
-                    while !remainder.is_empty() {
-                        remainder = &remainder[self.context.write(remainder)?..];
-                    }
+                    let remainder = &self.buf[0..BUFFER_SIZE - self.zlib.avail_out as usize];
+                    // PORT NOTE: Zig's partial-write retry loop collapses to write_all under bun_io::Write.
+                    self.context.write_all(remainder)?;
                     self.end();
                     return Ok(());
                 }

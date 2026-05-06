@@ -245,11 +245,10 @@ impl Op {
         Op { text, level, is_keyword }
     }
 
-    // TODO(b2-blocked): bun_io::Write — Zig std.json.Stringify hook writes raw bytes.
-    #[cfg(any())]
-    pub fn json_stringify<W: bun_io::Write>(&self, writer: &mut W) -> Result<(), bun_core::Error> {
-        writer.write(self.text)?;
-        Ok(())
+    // Zig std.json.Stringify hook → emits `self.text` as a JSON-encoded string
+    // (quoted + escaped), e.g. `"+"` — not raw bytes.
+    pub fn json_stringify<W: crate::JsonWriter>(&self, writer: &mut W) -> Result<(), bun_core::Error> {
+        writer.write(self.text)
     }
 }
 

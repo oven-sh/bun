@@ -341,21 +341,15 @@ impl DefineData {
     }
 
     pub fn init_static_string(str: &'static js_ast::E::EString) -> DefineData {
-        #[cfg(any())]
-        {
-            let mut flags = Flags::default();
-            flags.set_can_be_removed_if_unused(true);
-            return DefineData {
-                // Zig: @constCast(str) — Expr.Data.e_string stores *E.String.
-                // Rust port stores `StoreRef<EString>`; build one over the static.
-                value: ExprData::EString(js_ast::ast::expr::StoreRef::from_static(str)),
-                flags,
-                ..Default::default()
-            };
+        let mut flags = Flags::default();
+        flags.set_can_be_removed_if_unused(true);
+        DefineData {
+            // Zig: @constCast(str) — Expr.Data.e_string stores *E.String.
+            // Rust port stores `StoreRef<EString>`; build one over the static.
+            value: ExprData::EString(js_ast::ast::StoreRef::from_static(str)),
+            flags,
+            ..Default::default()
         }
-        // TODO(b2-blocked): bun_js_parser::ast::expr::StoreRef::from_static
-        let _ = str;
-        unimplemented!("b2-blocked: StoreRef::from_static")
     }
 
     pub fn merge(a: DefineData, b: DefineData) -> DefineData {

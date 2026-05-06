@@ -10,13 +10,12 @@ pub mod EventLoopTimer;
 
 // ────────────────────────────────────────────────────────────────────────────
 // B-2 un-gated: AnyEventLoop / SpawnSyncEventLoop / MiniEventLoop compile.
-// Un-gated this pass: DeferredTaskQueue::run, MiniEventLoop::{stdout,stderr},
-// EventLoopHandle::create_null_delimited_env_map, both put_file_poll (via new
-// MINI_EVENT_LOOP_CTX_VTABLE adapter), AnyEventLoop::{tick,tick_once}.
-// Function bodies that touch still-gated lower-tier surface — bun_uws::Loop
-// methods/fields (the bun_uws_sys::Loop module is itself `#[cfg(any())]`-gated,
-// so Loop is opaque) and bun_core::Timespec — remain individually re-gated
-// with `// TODO(b2-blocked):` markers.
+// All `#[cfg(any())]` gates removed this pass — bun_uws_sys::Loop and
+// bun_core::Timespec are now real types. `InternalLoopData::set_parent_event_loop`
+// is reached via the lower-tier `set_parent_raw(tag, ptr)` +
+// `EventLoopHandle::into_tag_ptr()`. Windows-only `MiniVM::platform_event_loop`
+// (`uws::Loop::uv_loop`) remains `#[cfg(windows)]`-guarded with a
+// `TODO(b2-blocked)` marker; the POSIX build is gate-free.
 // ────────────────────────────────────────────────────────────────────────────
 
 #[path = "MiniEventLoop.rs"]

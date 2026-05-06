@@ -105,8 +105,6 @@ impl DirInfo {
     }
 
     pub fn get_file_descriptor(&self) -> Fd {
-        // TODO(b2-blocked): bun_resolver::fs::DirEntry::fd — gated until fs.rs lands.
-        #[cfg(any())]
         if FeatureFlags::STORE_FILE_DESCRIPTORS {
             if let Some(entries) = self.get_entries(0) {
                 return entries.fd;

@@ -112,16 +112,17 @@ pub fn is_enabled() -> bool {
 pub mod features {
     use super::*;
 
-    // TODO(b2-blocked): bun_resolve_builtins::HardcodedModule
+    // TODO(b2-blocked): bun_options_types::module_loader::HardcodedModule
     // The real `HardcodedModule` enum (Zig: `bun.jsc.ModuleLoader.HardcodedModule`)
-    // lives in `bun_resolve_builtins` (per CYCLEBREAK.md, TYPE_ONLY move target
-    // is `options_types`). It must derive `enumset::EnumSetType` for use in
-    // `EnumSet<HardcodedModule>` here; that derive is not yet present, and the
-    // crate is not yet a dep of `bun_analytics`. Re-gate just this static and
-    // the formatter's builtins iterator below.
+    // currently lives in `bun_resolve_builtins` (T5). Per CYCLEBREAK.md
+    // §analytics, its TYPE_ONLY move target is `bun_options_types` (T3); that
+    // move-in has not landed yet. It must also derive `enumset::EnumSetType`
+    // for use in `EnumSet<HardcodedModule>` here. Until the move-in lands,
+    // re-gate just this static and the formatter's builtins iterator below,
+    // and add `bun_options_types.workspace = true` to Cargo.toml when un-gating.
     #[cfg(any())]
     pub static BUILTIN_MODULES: parking_lot::Mutex<
-        enumset::EnumSet<bun_resolve_builtins::HardcodedModule::HardcodedModule>,
+        enumset::EnumSet<bun_options_types::module_loader::HardcodedModule>,
     > = parking_lot::const_mutex(enumset::EnumSet::empty());
     // PORT NOTE: Zig used a plain mutable global; wrapped in a Mutex here
     // because `EnumSet` is not a single atomic word for large enums.
@@ -213,7 +214,8 @@ pub mod features {
                         writer.write_str("\n")?;
                     }
 
-                    // TODO(b2-blocked): bun_resolve_builtins::HardcodedModule
+                    // TODO(b2-blocked): bun_options_types::module_loader::HardcodedModule
+                    // (see BUILTIN_MODULES above)
                     #[cfg(any())]
                     {
                         let builtins = BUILTIN_MODULES.lock();

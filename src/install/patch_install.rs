@@ -9,20 +9,20 @@ use bun_paths::{self as path, PathBuffer};
 // MOVE_DOWN(b0): bun_resolver::fs → bun_sys::fs
 use bun_sys::fs::FileSystem;
 use bun_semver::String as SemverString;
-use bun_str::{strings, ZStr};
+use bun_string::{strings, ZStr};
 use bun_sys::{self as sys, Fd};
 use bun_threading::thread_pool::{self as thread_pool, Batch, Task as ThreadPoolTask};
 use bun_wyhash::Wyhash11;
 
-use bun_install::{
+use crate::{
     self, bun_hash_tag, lockfile::Lockfile, resolution::Resolution, DependencyID, PackageID,
     PackageInstall, PackageManager, Task,
 };
 
 // Thin re-exports (mirroring Zig `pub const X = @import(...)` lines).
-pub use bun_install::lockfile::PatchedDep;
-pub use bun_install::resolution::Resolution as ResolutionExport;
-pub use bun_install::{
+pub use crate::lockfile::PatchedDep;
+pub use crate::resolution::Resolution as ResolutionExport;
+pub use crate::{
     bun_hash_tag as bun_hash_tag_export, DependencyID as DependencyIDExport,
     PackageID as PackageIDExport, PackageInstall as PackageInstallExport,
 };
@@ -782,9 +782,9 @@ fn dupe_z(s: &[u8]) -> Box<[u8]> {
 
 // TODO(port): these enum/type references are placeholders for cross-file types that live in
 // `bun_install`. Phase B should replace with the real paths once those modules are ported.
-use bun_install::PreinstallState;
-use bun_install::package_install::{InstallMethod, InstallResult};
-use bun_install::network::Authorization;
+use crate::PreinstallState;
+use crate::package_install::{InstallMethod, InstallResult};
+use crate::network::Authorization;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

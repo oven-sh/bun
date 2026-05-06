@@ -884,21 +884,22 @@ impl StringVoidMap {
     /// Returns an RAII guard that derefs to `&mut StringVoidMap` and is
     /// returned to the pool on `Drop` (replaces Zig's `get` + `defer release`).
     #[inline]
-    // TODO(b2-blocked): bun_collections::pool::PoolGuard — ObjectPool::data() is
-    // still `unreachable!()` (round-B incomplete). The Zig side returns a pooled
-    // node guard; for now hand back a fresh owned map.
-    #[cfg(any())]
     pub fn get() -> bun_collections::pool::PoolGuard<'static, StringVoidMap> {
         StringVoidMapPool::get()
     }
 }
 
-// TODO(port): ObjectPool<StringVoidMap, init, true, 32> — `true` is thread-local,
-// `32` is preheated capacity. bun_collections::pool::ObjectPool needs equivalent params.
-// TODO(b2-blocked): ObjectPool::data() inert (round-B incomplete) + no
-// `ObjectPoolType` impl yet. Gate the alias; no caller uses it directly.
-#[cfg(any())]
-pub type StringVoidMapPool = ObjectPool<StringVoidMap, false, 32>;
+impl bun_collections::pool::ObjectPoolType for StringVoidMap {
+    const INIT: Option<fn() -> Result<Self, bun_core::Error>> = Some(StringVoidMap::init);
+    #[inline]
+    fn reset(&mut self) {
+        StringVoidMap::reset(self)
+    }
+}
+
+// Zig: `ObjectPool(StringVoidMap, init, true, 32)` — `true` is thread-local,
+// `32` is the preheated capacity.
+bun_collections::object_pool!(pub StringVoidMapPool: StringVoidMap, threadsafe, 32);
 
 pub type StringBoolMap = StringHashMap<bool>;
 pub type RefMap = HashMap<Ref, ()>; // TODO(port): RefCtx hasher + 80% load factor
@@ -1479,7 +1480,6 @@ impl Default for DeferredArrowArgErrors {
     }
 }
 
-#[cfg(any())] // round-D: Parser::to_lazy_export_ast (gated impl)
 pub fn new_lazy_export_ast<'bump>(
     bump: &'bump bun_alloc::Arena,
     define: &mut Define,

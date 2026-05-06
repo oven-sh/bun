@@ -12,12 +12,49 @@ use bun_threading::work_pool::{self, WorkPool};
 
 pub type Loop = UwsLoop;
 
+// PORT NOTE: `addActive`/`subActive` live on `PosixLoop` in Zig (uws_sys/Loop.zig)
+// but the Rust `bun_uws_sys::Loop` only exposes `inc`/`dec`/`ref_`/`unref`. The
+// `active` counter is a public field, so inline the saturating math here until
+// `bun_uws_sys` grows `add_active`/`sub_active`. On Windows the uws loop has no
+// such counter (libuv tracks active handles itself); `posix_event_loop` is only
+// reachable from non-Windows `Loop` consumers, so the Windows arm is a no-op.
+#[cfg(not(windows))]
+#[inline]
+fn loop_add_active(loop_: &mut Loop, value: u32) {
+    loop_.active = loop_.active.saturating_add(value);
+}
+#[cfg(not(windows))]
+#[inline]
+fn loop_sub_active(loop_: &mut Loop, value: u32) {
+    loop_.active = loop_.active.saturating_sub(value);
+}
+#[cfg(windows)]
+#[inline]
+fn loop_add_active(_loop: &mut Loop, _value: u32) {}
+#[cfg(windows)]
+#[inline]
+fn loop_sub_active(_loop: &mut Loop, _value: u32) {}
+
 bun_core::declare_scope!(KeepAlive, visible);
 
 // TODO(b2-blocked): bun_sys::syslog — macro not exported from bun_sys yet.
 // Local no-op shim so debug log call sites compile.
 macro_rules! syslog {
     ($($arg:tt)*) => {{ let _ = ::core::format_args!($($arg)*); }};
+}
+
+/// Local port of `Maybe(T).errnoSys` (Zig: src/runtime/node.zig). `bun_sys`
+/// does not yet expose this helper on `Result<T>`; once it does, drop this and
+/// call `sys::Result::<()>::errno_sys` directly.
+#[inline]
+fn errno_sys<R>(rc: R, syscall: sys::Tag) -> Option<sys::Result<()>>
+where
+    R: sys::GetErrno,
+{
+    match sys::get_errno(rc) {
+        sys::E::SUCCESS => None,
+        e => Some(sys::Result::Err(sys::Error::from_code(e, syscall))),
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -143,9 +180,7 @@ impl KeepAlive {
             return;
         }
         self.status = KeepAliveStatus::Inactive;
-        #[cfg(any())]
-        loop_.sub_active(1);
-        // TODO(b2-blocked): bun_uws_sys::Loop::sub_active
+        loop_sub_active(loop_, 1);
     }
 
     /// Only intended to be used from EventLoop.Pollable
@@ -154,9 +189,7 @@ impl KeepAlive {
             return;
         }
         self.status = KeepAliveStatus::Active;
-        #[cfg(any())]
-        loop_.add_active(1);
-        // TODO(b2-blocked): bun_uws_sys::Loop::add_active
+        loop_add_active(loop_, 1);
     }
 
     pub fn init() -> KeepAlive {
@@ -169,9 +202,7 @@ impl KeepAlive {
             return;
         }
         self.status = KeepAliveStatus::Inactive;
-        #[cfg(any())]
         event_loop_ctx.platform_event_loop().unref();
-        // TODO(b2-blocked): bun_uws_sys::Loop::unref
     }
 
     /// From another thread, Prevent a poll from keeping the process alive.
@@ -209,9 +240,7 @@ impl KeepAlive {
             return;
         }
         self.status = KeepAliveStatus::Active;
-        #[cfg(any())]
         event_loop_ctx.platform_event_loop().ref_();
-        // TODO(b2-blocked): bun_uws_sys::Loop::ref_
     }
 
     /// Allow a poll to keep the process alive.
@@ -257,10 +286,8 @@ static mut MAX_GENERATION_NUMBER: KQueueGenerationNumber = 0;
 
 /// Darwin uses the extended `kevent64_s` (extra `ext` field carries our
 /// generation number); FreeBSD only has the plain `struct kevent`.
-#[cfg(any())] // TODO(b2-blocked): bun_sys::darwin::kevent64_s
 #[cfg(target_os = "macos")]
 type KQueueEvent = bun_sys::darwin::kevent64_s;
-#[cfg(any())] // TODO(b2-blocked): bun_sys::freebsd::Kevent
 #[cfg(target_os = "freebsd")]
 type KQueueEvent = bun_sys::freebsd::Kevent;
 
@@ -399,7 +426,6 @@ impl FilePoll {
         bun_io::FileType::Pipe
     }
 
-    #[cfg(any())] // TODO(b2-blocked): bun_sys::darwin::kevent64_s / bun_sys::freebsd::Kevent
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     pub fn on_kqueue_event(&mut self, _loop: &mut Loop, kqueue_event: &KQueueEvent) {
         self.update_flags(Flags::from_kqueue_event(kqueue_event));
@@ -408,10 +434,9 @@ impl FilePoll {
         #[cfg(all(target_os = "macos", debug_assertions))]
         debug_assert!(self.generation_number == kqueue_event.ext[0] as usize);
 
-        self.on_update(kqueue_event.data);
+        self.on_update(kqueue_event.data as i64);
     }
 
-    #[cfg(any())] // TODO(b2-blocked): bun_sys::linux::EPOLL (via from_epoll_event)
     #[cfg(target_os = "linux")]
     pub fn on_epoll_event(&mut self, _loop: &mut Loop, epoll_event: &bun_sys::linux::epoll_event) {
         self.update_flags(Flags::from_epoll_event(epoll_event));
@@ -531,11 +556,10 @@ impl FilePoll {
     /// This decrements the active counter if it was previously incremented
     /// "active" controls whether or not the event loop should potentially idle
     pub fn disable_keeping_process_alive(&mut self, event_loop_ctx: EventLoopCtx) {
-        #[cfg(any())]
-        event_loop_ctx
-            .platform_event_loop()
-            .sub_active(self.flags.contains(Flags::HasIncrementedActiveCount) as u32);
-        // TODO(b2-blocked): bun_uws_sys::Loop::sub_active
+        loop_sub_active(
+            event_loop_ctx.platform_event_loop(),
+            self.flags.contains(Flags::HasIncrementedActiveCount) as u32,
+        );
 
         self.flags.remove(Flags::KeepsEventLoopAlive);
         self.flags.remove(Flags::HasIncrementedActiveCount);
@@ -560,11 +584,10 @@ impl FilePoll {
             return;
         }
 
-        #[cfg(any())]
-        event_loop_ctx
-            .platform_event_loop()
-            .add_active((!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32);
-        // TODO(b2-blocked): bun_uws_sys::Loop::add_active
+        loop_add_active(
+            event_loop_ctx.platform_event_loop(),
+            (!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32,
+        );
 
         self.flags.insert(Flags::KeepsEventLoopAlive);
         self.flags.insert(Flags::HasIncrementedActiveCount);
@@ -572,18 +595,12 @@ impl FilePoll {
 
     /// Only intended to be used from EventLoop.Pollable
     fn deactivate(&mut self, loop_: &mut Loop) {
-        #[cfg(any())]
-        {
-            if self.flags.contains(Flags::HasIncrementedPollCount) {
-                loop_.dec();
-            }
+        if self.flags.contains(Flags::HasIncrementedPollCount) {
+            loop_.dec();
         }
-        // TODO(b2-blocked): bun_uws_sys::Loop::dec
         self.flags.remove(Flags::HasIncrementedPollCount);
 
-        #[cfg(any())]
-        loop_.sub_active(self.flags.contains(Flags::HasIncrementedActiveCount) as u32);
-        // TODO(b2-blocked): bun_uws_sys::Loop::sub_active
+        loop_sub_active(loop_, self.flags.contains(Flags::HasIncrementedActiveCount) as u32);
         self.flags.remove(Flags::KeepsEventLoopAlive);
         self.flags.remove(Flags::HasIncrementedActiveCount);
     }
@@ -592,19 +609,13 @@ impl FilePoll {
     fn activate(&mut self, loop_: &mut Loop) {
         self.flags.remove(Flags::Closed);
 
-        #[cfg(any())]
-        {
-            if !self.flags.contains(Flags::HasIncrementedPollCount) {
-                loop_.inc();
-            }
+        if !self.flags.contains(Flags::HasIncrementedPollCount) {
+            loop_.inc();
         }
-        // TODO(b2-blocked): bun_uws_sys::Loop::inc
         self.flags.insert(Flags::HasIncrementedPollCount);
 
         if self.flags.contains(Flags::KeepsEventLoopAlive) {
-            #[cfg(any())]
-            loop_.add_active((!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32);
-            // TODO(b2-blocked): bun_uws_sys::Loop::add_active
+            loop_add_active(loop_, (!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32);
             self.flags.insert(Flags::HasIncrementedActiveCount);
         }
     }
@@ -728,15 +739,16 @@ impl FilePoll {
         one_shot: OneShotFlag,
         fd: Fd,
     ) -> sys::Result<()> {
-        #[cfg(any())]
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
         return self.register_with_fd_impl(loop_, flag, one_shot, fd);
-        // TODO(b2-blocked): bun_uws_sys::Loop (fd field) + bun_sys::linux::epoll_ctl /
-        // bun_sys::darwin::kevent64 + bun_collections::TaggedPtrUnion (Pollable).
-        let _ = (loop_, flag, one_shot, fd);
-        sys::Result::Ok(())
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd")))]
+        {
+            let _ = (loop_, flag, one_shot, fd);
+            sys::Result::Ok(())
+        }
     }
 
-    #[cfg(any())]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
     fn register_with_fd_impl(
         &mut self,
         loop_: &mut Loop,
@@ -787,22 +799,23 @@ impl FilePoll {
                 flags |= EPOLL::IN;
             }
 
+            // PORT NOTE: Zig uses `linux.epoll_event{ .data = .{ .ptr = ... } }`;
+            // libc::epoll_event flattens the union to a single `u64` field.
             let mut event = linux::epoll_event {
                 events: flags,
-                data: linux::epoll_data {
-                    u64_: Pollable::init(self).ptr() as u64,
-                },
+                u64: Pollable::init(self).ptr() as u64,
             };
 
-            let op: u32 = if self.is_registered() || self.flags.contains(Flags::NeedsRearm) {
+            let op: c_int = if self.is_registered() || self.flags.contains(Flags::NeedsRearm) {
                 EPOLL::CTL_MOD
             } else {
                 EPOLL::CTL_ADD
             };
 
-            let ctl = linux::epoll_ctl(watcher_fd, op, fd.cast(), &mut event);
+            // SAFETY: FFI syscall; `event` is a stack-local valid for the call.
+            let ctl = unsafe { linux::epoll_ctl(watcher_fd, op, fd.native(), &mut event) };
             self.flags.insert(Flags::WasEverRegistered);
-            if let Some(errno) = sys::Result::<()>::errno_sys(ctl, sys::Tag::epoll_ctl) {
+            if let Some(errno) = errno_sys(ctl, sys::Tag::epoll_ctl) {
                 self.deactivate(loop_);
                 return errno;
             }
@@ -822,7 +835,7 @@ impl FilePoll {
 
             changelist[0] = match flag {
                 Flags::Readable => kevent64_s {
-                    ident: u64::try_from(fd.cast()).unwrap(),
+                    ident: u64::try_from(fd.native()).unwrap(),
                     filter: EVFILT::READ,
                     data: 0,
                     fflags: 0,
@@ -831,7 +844,7 @@ impl FilePoll {
                     ext: [self.generation_number as u64, 0],
                 },
                 Flags::Writable => kevent64_s {
-                    ident: u64::try_from(fd.cast()).unwrap(),
+                    ident: u64::try_from(fd.native()).unwrap(),
                     filter: EVFILT::WRITE,
                     data: 0,
                     fflags: 0,
@@ -840,7 +853,7 @@ impl FilePoll {
                     ext: [self.generation_number as u64, 0],
                 },
                 Flags::Process => kevent64_s {
-                    ident: u64::try_from(fd.cast()).unwrap(),
+                    ident: u64::try_from(fd.native()).unwrap(),
                     filter: EVFILT::PROC,
                     data: 0,
                     fflags: NOTE::EXIT,
@@ -849,7 +862,7 @@ impl FilePoll {
                     ext: [self.generation_number as u64, 0],
                 },
                 Flags::Machport => kevent64_s {
-                    ident: u64::try_from(fd.cast()).unwrap(),
+                    ident: u64::try_from(fd.native()).unwrap(),
                     filter: EVFILT::MACHPORT,
                     data: 0,
                     fflags: 0,
@@ -882,7 +895,7 @@ impl FilePoll {
                         &TIMEOUT,
                     )
                 };
-                if sys::get_errno(rc) == sys::E::INTR {
+                if sys::get_errno(rc) == sys::E::EINTR {
                     continue;
                 }
                 break 'rc rc;
@@ -896,7 +909,7 @@ impl FilePoll {
             // with EV_ERROR set in flags and the system error in data. xnu ORs
             // EV_ERROR into the existing action bits, so test the bit.
             if (changelist[0].flags & EV::ERROR) != 0 && changelist[0].data != 0 {
-                return sys::Result::<()>::errno_sys(changelist[0].data, sys::Tag::kevent).unwrap();
+                return errno_sys(changelist[0].data, sys::Tag::kevent).unwrap();
                 // Otherwise, -1 will be returned, and errno will be set to
                 // indicate the error condition.
             }
@@ -922,7 +935,7 @@ impl FilePoll {
 
             changelist[0] = match flag {
                 Flags::Readable => Kevent {
-                    ident: usize::try_from(fd.cast()).unwrap(),
+                    ident: usize::try_from(fd.native()).unwrap(),
                     filter: EVFILT::READ,
                     data: 0,
                     fflags: 0,
@@ -930,7 +943,7 @@ impl FilePoll {
                     flags: EV::ADD | one_shot_flag,
                 },
                 Flags::Writable => Kevent {
-                    ident: usize::try_from(fd.cast()).unwrap(),
+                    ident: usize::try_from(fd.native()).unwrap(),
                     filter: EVFILT::WRITE,
                     data: 0,
                     fflags: 0,
@@ -938,7 +951,7 @@ impl FilePoll {
                     flags: EV::ADD | one_shot_flag,
                 },
                 Flags::Process => Kevent {
-                    ident: usize::try_from(fd.cast()).unwrap(),
+                    ident: usize::try_from(fd.native()).unwrap(),
                     filter: EVFILT::PROC,
                     data: 0,
                     fflags: NOTE::EXIT,
@@ -946,11 +959,10 @@ impl FilePoll {
                     flags: EV::ADD | one_shot_flag,
                 },
                 Flags::Machport => {
-                    return sys::Result::Err(sys::Error {
-                        errno: sys::E::OPNOTSUPP as i32,
-                        syscall: sys::Tag::kevent,
-                        ..Default::default()
-                    })
+                    return sys::Result::Err(sys::Error::from_code(
+                        sys::E::EOPNOTSUPP,
+                        sys::Tag::kevent,
+                    ))
                 }
                 _ => unreachable!(),
             };
@@ -969,21 +981,17 @@ impl FilePoll {
                         ptr::null(),
                     )
                 };
-                if sys::get_errno(rc) == sys::E::INTR {
+                if sys::get_errno(rc) == sys::E::EINTR {
                     continue;
                 }
                 break 'rc rc;
             };
 
             self.flags.insert(Flags::WasEverRegistered);
-            if let Some(err) = sys::Result::<()>::errno_sys(rc, sys::Tag::kevent) {
+            if let Some(err) = errno_sys(rc, sys::Tag::kevent) {
                 self.deactivate(loop_);
                 return err;
             }
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd")))]
-        {
-            compile_error!("unsupported platform");
         }
 
         self.activate(loop_);
@@ -1021,18 +1029,15 @@ impl FilePoll {
         // PORT NOTE: reshaped for borrowck (Zig `defer this.deactivate(loop)`) — compute the
         // syscall result first, then unconditionally deactivate. Avoids the raw-pointer scopeguard
         // the literal translation would require.
-        #[cfg(any())]
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
         let result = self.unregister_with_fd_impl(loop_, fd, force_unregister);
-        // TODO(b2-blocked): bun_uws_sys::Loop + bun_sys::linux::epoll_ctl
-        #[cfg(not(any()))]
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd")))]
         let result: sys::Result<()> = { let _ = (fd, force_unregister); sys::Result::Ok(()) };
         self.deactivate(loop_);
         result
     }
 
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_uws_sys::Loop (fd field) + bun_sys::linux::epoll_ctl /
-    // bun_sys::darwin::kevent64 + bun_collections::TaggedPtrUnion (Pollable).
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
     fn unregister_with_fd_impl(
         &mut self,
         loop_: &mut Loop,
@@ -1097,9 +1102,10 @@ impl FilePoll {
         {
             use bun_sys::linux::{self, EPOLL};
             // CTL_DEL keys on fd alone, so both directions are removed together.
-            let ctl = linux::epoll_ctl(watcher_fd, EPOLL::CTL_DEL, fd.cast(), ptr::null_mut());
+            // SAFETY: FFI syscall; null event is valid for CTL_DEL on Linux ≥2.6.9.
+            let ctl = unsafe { linux::epoll_ctl(watcher_fd, EPOLL::CTL_DEL, fd.native(), ptr::null_mut()) };
 
-            if let Some(errno) = sys::Result::<()>::errno_sys(ctl, sys::Tag::epoll_ctl) {
+            if let Some(errno) = errno_sys(ctl, sys::Tag::epoll_ctl) {
                 return errno;
             }
         }
@@ -1111,7 +1117,7 @@ impl FilePoll {
 
             changelist[0] = match flag {
                 Flags::Readable => kevent64_s {
-                    ident: u64::try_from(fd.cast()).unwrap(),
+                    ident: u64::try_from(fd.native()).unwrap(),
                     filter: EVFILT::READ,
                     data: 0,
                     fflags: 0,
@@ -1120,7 +1126,7 @@ impl FilePoll {
                     ext: [0, 0],
                 },
                 Flags::Machport => kevent64_s {
-                    ident: u64::try_from(fd.cast()).unwrap(),
+                    ident: u64::try_from(fd.native()).unwrap(),
                     filter: EVFILT::MACHPORT,
                     data: 0,
                     fflags: 0,
@@ -1129,7 +1135,7 @@ impl FilePoll {
                     ext: [0, 0],
                 },
                 Flags::Writable => kevent64_s {
-                    ident: u64::try_from(fd.cast()).unwrap(),
+                    ident: u64::try_from(fd.native()).unwrap(),
                     filter: EVFILT::WRITE,
                     data: 0,
                     fflags: 0,
@@ -1138,7 +1144,7 @@ impl FilePoll {
                     ext: [0, 0],
                 },
                 Flags::Process => kevent64_s {
-                    ident: u64::try_from(fd.cast()).unwrap(),
+                    ident: u64::try_from(fd.native()).unwrap(),
                     filter: EVFILT::PROC,
                     data: 0,
                     fflags: NOTE::EXIT,
@@ -1153,7 +1159,7 @@ impl FilePoll {
             if both_directions {
                 // kqueue keys on (fd, filter); delete EVFILT_WRITE as a second change.
                 changelist[1] = kevent64_s {
-                    ident: u64::try_from(fd.cast()).unwrap(),
+                    ident: u64::try_from(fd.native()).unwrap(),
                     filter: EVFILT::WRITE,
                     data: 0,
                     fflags: 0,
@@ -1189,7 +1195,7 @@ impl FilePoll {
             // was not written, so per-entry checks below would read our
             // own input. Report errno and stop.
             if rc < 0 {
-                return sys::Result::<()>::errno_sys(errno as i64, sys::Tag::kevent).unwrap();
+                return sys::Result::Err(sys::Error::from_code(errno, sys::Tag::kevent));
             }
 
             // If an error occurs while processing an element of the changelist
@@ -1200,10 +1206,10 @@ impl FilePoll {
             // which change failed. xnu ORs EV_ERROR into the existing action
             // bits (EV_DELETE|EV_ERROR = 0x4002), so test the bit, not equality.
             if rc >= 1 && (changelist[0].flags & EV::ERROR) != 0 && changelist[0].data != 0 {
-                return sys::Result::<()>::errno_sys(changelist[0].data, sys::Tag::kevent).unwrap();
+                return errno_sys(changelist[0].data, sys::Tag::kevent).unwrap();
             }
             if rc >= 2 && (changelist[1].flags & EV::ERROR) != 0 && changelist[1].data != 0 {
-                return sys::Result::<()>::errno_sys(changelist[1].data, sys::Tag::kevent).unwrap();
+                return errno_sys(changelist[1].data, sys::Tag::kevent).unwrap();
             }
         }
         #[cfg(target_os = "freebsd")]
@@ -1213,7 +1219,7 @@ impl FilePoll {
             let mut changelist: [Kevent; 2] = unsafe { core::mem::zeroed() };
             changelist[0] = match flag {
                 Flags::Readable => Kevent {
-                    ident: usize::try_from(fd.cast()).unwrap(),
+                    ident: usize::try_from(fd.native()).unwrap(),
                     filter: EVFILT::READ,
                     data: 0,
                     fflags: 0,
@@ -1221,7 +1227,7 @@ impl FilePoll {
                     flags: EV::DELETE,
                 },
                 Flags::Writable => Kevent {
-                    ident: usize::try_from(fd.cast()).unwrap(),
+                    ident: usize::try_from(fd.native()).unwrap(),
                     filter: EVFILT::WRITE,
                     data: 0,
                     fflags: 0,
@@ -1229,7 +1235,7 @@ impl FilePoll {
                     flags: EV::DELETE,
                 },
                 Flags::Process => Kevent {
-                    ident: usize::try_from(fd.cast()).unwrap(),
+                    ident: usize::try_from(fd.native()).unwrap(),
                     filter: EVFILT::PROC,
                     data: 0,
                     fflags: NOTE::EXIT,
@@ -1237,11 +1243,10 @@ impl FilePoll {
                     flags: EV::DELETE,
                 },
                 Flags::Machport => {
-                    return sys::Result::Err(sys::Error {
-                        errno: sys::E::OPNOTSUPP as i32,
-                        syscall: sys::Tag::kevent,
-                        ..Default::default()
-                    });
+                    return sys::Result::Err(sys::Error::from_code(
+                        sys::E::EOPNOTSUPP,
+                        sys::Tag::kevent,
+                    ));
                 }
                 _ => unreachable!(),
             };
@@ -1249,7 +1254,7 @@ impl FilePoll {
             let mut nchanges: c_int = 1;
             if both_directions {
                 changelist[1] = Kevent {
-                    ident: usize::try_from(fd.cast()).unwrap(),
+                    ident: usize::try_from(fd.native()).unwrap(),
                     filter: EVFILT::WRITE,
                     data: 0,
                     fflags: 0,
@@ -1273,13 +1278,9 @@ impl FilePoll {
                     ptr::null(),
                 )
             };
-            if let Some(err) = sys::Result::<()>::errno_sys(rc, sys::Tag::kevent) {
+            if let Some(err) = errno_sys(rc, sys::Tag::kevent) {
                 return err;
             }
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd")))]
-        {
-            compile_error!("unsupported platform");
         }
 
         self.flags.remove(Flags::NeedsRearm);
@@ -1370,10 +1371,12 @@ impl Flags {
         }
     }
 
-    #[cfg(any())] // TODO(b2-blocked): bun_sys::darwin::EVFILT
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     pub fn from_kqueue_event(kqueue_event: &KQueueEvent) -> FlagsSet {
-        use bun_sys::darwin::EVFILT; // TODO(port): freebsd EVFILT path
+        #[cfg(target_os = "macos")]
+        use bun_sys::darwin::EVFILT;
+        #[cfg(target_os = "freebsd")]
+        use bun_sys::freebsd::EVFILT;
         let mut flags = FlagsSet::empty();
         if kqueue_event.filter == EVFILT::READ {
             flags.insert(Flags::Readable);
@@ -1396,7 +1399,6 @@ impl Flags {
         flags
     }
 
-    #[cfg(any())] // TODO(b2-blocked): bun_sys::linux::EPOLL
     #[cfg(target_os = "linux")]
     pub fn from_epoll_event(epoll: &bun_sys::linux::epoll_event) -> FlagsSet {
         use bun_sys::linux::EPOLL;
@@ -1519,22 +1521,62 @@ impl Store {
 // onTick (exported)
 // ──────────────────────────────────────────────────────────────────────────
 
-#[cfg(any())] // TODO(b2-blocked): bun_collections::TaggedPtrUnion
-type Pollable = bun_collections::TaggedPtrUnion<(FilePoll,)>;
+// `Pollable` mirrors Zig `bun.TaggedPointerUnion(.{FilePoll})`.
+//
+// PORT NOTE: `bun_collections::TaggedPtrUnion<(FilePoll,)>` cannot be
+// instantiated here — `impl_tagged_ptr_union!` would generate
+// `impl TypeList for (FilePoll,)`, which trips the orphan rule (foreign trait
+// on a tuple). Since the union has exactly one variant, wrap the raw
+// `TaggedPtr` directly with the same tag scheme (`1024 - index`).
+#[derive(Copy, Clone)]
+pub struct Pollable {
+    repr: bun_collections::TaggedPointer,
+}
 
-#[cfg(any())]
-// TODO(b2-blocked): bun_collections::TaggedPtrUnion + bun_uws_sys::Loop fields
-// (current_ready_poll, ready_polls).
+impl Pollable {
+    /// Tag value for `FilePoll` (index 0 in the Zig type tuple → `1024 - 0`).
+    pub const FILE_POLL_TAG: u16 = 1024;
+
+    #[inline]
+    pub fn init(ptr: *const FilePoll) -> Self {
+        Self { repr: bun_collections::TaggedPointer::init(ptr, Self::FILE_POLL_TAG) }
+    }
+
+    #[inline]
+    pub fn from(val: *mut c_void) -> Self {
+        Self { repr: bun_collections::TaggedPointer::from(val) }
+    }
+
+    #[inline]
+    pub fn tag(self) -> u16 {
+        self.repr.data()
+    }
+
+    #[inline]
+    pub fn as_file_poll(self) -> *mut FilePoll {
+        self.repr.get::<FilePoll>()
+    }
+
+    #[inline]
+    pub fn ptr(self) -> *mut c_void {
+        self.repr.to()
+    }
+}
+
+// `current_ready_poll`/`ready_polls` only exist on the POSIX uws loop layout;
+// on Windows the libuv loop drives readiness, so this entry point is never
+// linked there. Restrict to the platforms where the fields are present.
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__internal_dispatch_ready_poll(loop_: *mut Loop, tagged_pointer: *mut c_void) {
     let tag = Pollable::from(tagged_pointer);
 
-    if tag.tag() != Pollable::tag_of::<FilePoll>() {
+    if tag.tag() != Pollable::FILE_POLL_TAG {
         return;
     }
 
     // SAFETY: tag matched FilePoll; pointer was set via Pollable::init in register_with_fd.
-    let file_poll: &mut FilePoll = unsafe { &mut *tag.as_ptr::<FilePoll>() };
+    let file_poll: &mut FilePoll = unsafe { &mut *tag.as_file_poll() };
     if file_poll.flags.contains(Flags::IgnoreUpdates) {
         return;
     }
@@ -1557,10 +1599,8 @@ pub extern "C" fn Bun__internal_dispatch_ready_poll(loop_: *mut Loop, tagged_poi
     }
 }
 
-#[cfg(any())] // TODO(b2-blocked): bun_sys::posix::timespec
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-// SAFETY: all-zero is a valid timespec
-static TIMEOUT: bun_sys::posix::timespec = unsafe { core::mem::zeroed() };
+static TIMEOUT: bun_sys::posix::timespec = bun_sys::posix::timespec { tv_sec: 0, tv_nsec: 0 };
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -1589,11 +1629,11 @@ pub struct LinuxWaker {
 }
 
 impl LinuxWaker {
-    #[cfg(any())] // TODO(b2-blocked): bun_sys::eventfd
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     pub fn init() -> Result<Self, bun_core::Error> {
         // TODO(port): std.posix.eventfd → bun_sys::eventfd
-        let fd = bun_sys::eventfd(0, 0)?;
-        Ok(Self::init_with_file_descriptor(Fd::from_native(fd)))
+        let fd = bun_sys::eventfd(0, 0).map_err(|_| bun_core::err!("SystemResources"))?;
+        Ok(Self::init_with_file_descriptor(fd))
     }
 
     pub fn get_fd(&self) -> Fd {
@@ -1619,22 +1659,21 @@ impl LinuxWaker {
     }
 }
 
-#[cfg(any())] // TODO(b2-blocked): bun_sys::darwin + bun_core::mach_port
 #[cfg(target_os = "macos")]
 pub struct KEventWaker {
-    pub kq: bun_sys::posix::fd_t,
+    pub kq: c_int,
     pub machport: bun_core::mach_port,
     pub machport_buf: Box<[u8]>,
     pub has_pending_wake: bool,
 }
 
-#[cfg(any())] // TODO(b2-blocked): bun_sys::darwin + bun_core::mach_port
+#[cfg(target_os = "macos")]
+type Kevent64 = bun_sys::darwin::kevent64_s;
+
 #[cfg(target_os = "macos")]
 impl KEventWaker {
-    type Kevent64 = bun_sys::darwin::kevent64_s;
-
     // SAFETY: all-zero is a valid kevent64_s array
-    const ZEROED: [Self::Kevent64; 16] = unsafe { core::mem::zeroed() };
+    const ZEROED: [Kevent64; 16] = unsafe { core::mem::zeroed() };
 
     pub fn wake(&mut self) {
         bun_core::mark_binding!();
@@ -1672,8 +1711,8 @@ impl KEventWaker {
 
     pub fn init() -> Result<Self, bun_core::Error> {
         // TODO(port): std.posix.kqueue → bun_sys::kqueue
-        let kq = bun_sys::posix::kqueue()?;
-        Self::init_with_file_descriptor(kq)
+        let kq = bun_sys::kqueue().map_err(|_| bun_core::err!("SystemResources"))?;
+        Self::init_with_file_descriptor(kq.native())
     }
 
     pub fn init_with_file_descriptor(kq: i32) -> Result<Self, bun_core::Error> {
@@ -1696,12 +1735,11 @@ impl KEventWaker {
 }
 
 // TODO(port): move to aio_sys
-#[cfg(any())] // TODO(b2-blocked): bun_core::mach_port
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
     fn io_darwin_close_machport(port: bun_core::mach_port);
     fn io_darwin_create_machport(
-        kq: bun_sys::posix::fd_t,
+        kq: c_int,
         buf: *mut c_void,
         len: usize,
     ) -> bun_core::mach_port;

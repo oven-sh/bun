@@ -173,7 +173,7 @@ pub type MacroCallCountType = u32;
 #[cfg(any())] pub use super::parse::*;
 #[cfg(any())] pub use super::visit::*;
 #[cfg(any())] pub use super::maybe::*;
-#[cfg(any())] pub use super::symbols::*;
+pub use super::symbols::*;
 #[cfg(any())] pub use super::lower_decorators::*;
 // `BinaryExpressionVisitor` is referenced as a field type; provide an opaque
 // stand-in until visit_binary_expression.rs un-gates.
@@ -7346,7 +7346,7 @@ pub fn null_expr_data() -> js_ast::ExprData {
 pub fn null_stmt_data() -> js_ast::StmtData {
     js_ast::StmtData::SEmpty(S::Empty {})
 }
-#[cfg(any())] // round-D: ExprData::EString wants StoreRef<EString>; Prefill::string::KEY is const-by-value now
+#[cfg(any())] // TODO(b2-blocked): ExprData::EString wants StoreRef<EString>; EString is !Sync (NonNull rope ptrs) so a `static` Prefill won't compile. Needs either a Sync wrapper around the prefill constants or `ExprData::EString` to accept by-value for the const-string fast path.
 #[inline]
 pub fn key_expr_data() -> js_ast::ExprData {
     js_ast::ExprData::EString(&Prefill::string::KEY)

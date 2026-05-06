@@ -272,8 +272,6 @@ pub fn install_on_event_loop(handle: EventLoopCtx) {
     {
         let _ = handle;
     }
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_sys::Errno + FilePoll::register (blocked on bun_uws_sys::Loop)
     #[cfg(target_os = "macos")]
     {
         // SAFETY: globals written once at startup; read-only here.
@@ -309,7 +307,7 @@ pub fn install_on_event_loop(handle: EventLoopCtx) {
             }
             bun_sys::Result::Err(err) => {
                 // ESRCH: parent already gone before we registered — treat as fired.
-                if err.errno() == bun_sys::Errno::SRCH {
+                if err.get_errno() == bun_sys::E::ESRCH {
                     Global::exit(EXIT_CODE);
                 }
                 // Any other registration error: best-effort feature, just don't watch.
@@ -554,7 +552,6 @@ fn kill_tree_rooted_at(root: libc::pid_t, expected_ppid_of_root: libc::pid_t) {
 /// parent we expected").
 #[cfg(unix)]
 fn parent_pid_of(pid: libc::pid_t) -> libc::pid_t {
-    #[cfg(any())] // TODO(b2-blocked): bun_sys::c::proc_pidinfo
     #[cfg(target_os = "macos")]
     {
         // SAFETY: info is fully written by proc_pidinfo on success (rc == size).
@@ -612,7 +609,6 @@ fn parent_pid_of(pid: libc::pid_t) -> libc::pid_t {
 /// to `out.len`.
 #[cfg(unix)]
 fn list_child_pids(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option<usize> {
-    #[cfg(any())] // TODO(b2-blocked): bun_sys::c::proc_listchildpids
     #[cfg(target_os = "macos")]
     {
         // proc_listchildpids returns the *count* of pids written (libproc.c

@@ -10,11 +10,11 @@
 
 // ─── platform impls ───────────────────────────────────────────────────────
 //
-// Each platform watcher is compiled only for its target. The Linux backend
-// is fully un-gated; macOS/Windows backends keep small `#[cfg(any())]`
-// re-gates *inside their target cfg* where their lower-tier deps
-// (`bun_sys::c` kqueue bindings, `bun_sys::windows`) are themselves still
-// gated — a host build never sees them anyway.
+// Each platform watcher is compiled only for its target. The Linux and
+// macOS/FreeBSD backends are fully un-gated. The Windows backend keeps a
+// `#[cfg(any())]` re-gate around its draft body until it can be
+// cross-compile-verified against the now-populated `bun_sys::windows`
+// surface — a host build never sees it anyway.
 
 #[cfg(target_os = "linux")]
 #[path = "INotifyWatcher.rs"]

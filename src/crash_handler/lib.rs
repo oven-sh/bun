@@ -24,6 +24,8 @@
 // that depend on T0/T1 surface not yet available are individually re-gated
 // with `#[cfg(any())]` and a `// TODO(b2-blocked): bun_X::Y` marker.
 // ──────────────────────────────────────────────────────────────────────────
+#![feature(core_intrinsics)]
+#![allow(internal_features)]
 #![allow(unused, nonstandard_style, static_mut_refs, clippy::all)]
 
 #[path = "CPUFeatures.rs"]
@@ -204,6 +206,25 @@ fn fmt_err(_: core::fmt::Error) -> bun_core::Error { bun_core::err!("WriteZero")
 use super::debug::{SelfInfo, SourceLocation, TtyConfig};
 use super::cpu_features::CPUFeatures;
 
+// ── small local helpers (B-2) ─────────────────────────────────────────────
+/// Zig: `Output.enable_ansi_colors_stderr`. bun_core only exposes the atomic.
+#[inline(always)]
+fn enable_ansi_colors_stderr() -> bool {
+    Output::ENABLE_ANSI_COLORS_STDERR.load(Ordering::Relaxed)
+}
+/// Zig: `std.posix.abort()` — bun_sys::posix has no `abort` yet; libc is
+/// async-signal-safe and equivalent on all targets.
+#[cold]
+fn abort() -> ! {
+    // SAFETY: libc::abort is async-signal-safe and never returns.
+    unsafe { libc::abort() }
+}
+/// Zig: `bun.strings.indexOf`. bun_core::strings has no `index_of` yet.
+#[inline]
+fn index_of(h: &[u8], n: &[u8]) -> Option<usize> {
+    bstr::ByteSlice::find(h, n)
+}
+
 // TODO(b0): `Cli` arrives from move-in (MOVE_DOWN bun_runtime::cli::Cli → crash_handler).
 // Only the two bits the crash handler needs — main-thread check and the
 // one-byte command tag for the trace URL — land here as plain globals that
@@ -270,7 +291,10 @@ thread_local! {
 }
 
 // PORTING.md §Concurrency: parking_lot::Mutex<Vec<..>> instead of bare Mutex + static mut Vec.
-struct CrashHandlerEntry(*mut c_void, OnBeforeCrash);
+// Stores a boxed type-erased closure (not a bare fn pointer) so that
+// `append_pre_crash_handler` can monomorphize a wrapper that actually invokes the
+// caller's typed handler — mirroring Zig's `comptime handler` trampoline.
+struct CrashHandlerEntry(*mut c_void, Box<dyn Fn(*mut c_void) + Send>);
 // SAFETY: only accessed under the mutex; the opaque ptr is never dereferenced
 // except by the registered callback on the crash thread.
 unsafe impl Send for CrashHandlerEntry {}
@@ -464,20 +488,11 @@ pub fn crash_handler(
     error_return_trace: Option<&StackTrace>,
     begin_addr: Option<usize>,
 ) -> ! {
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_analytics::Features::unsupported_uv_function
-    // TODO(b2-blocked): bun_core::maybe_handle_panic_during_process_reload
-    // TODO(b2-blocked): bun_core::auto_reload_on_crash
-    // TODO(b2-blocked): bun_core::is_process_reload_in_progress_on_another_thread
-    // TODO(b2-blocked): bun_core::set_auto_reload_on_crash
-    // TODO(b2-blocked): bun_core::reload_process
-    // TODO(b2-blocked): bun_core::Output::pretty_fmt_args  (runtime <tag> formatter)
-    {
     if cfg!(debug_assertions) {
         Output::disable_scoped_debug_writer();
     }
 
-    let mut trace_str_buf = BoundedArray::<u8, 1024>::new();
+    let mut trace_str_buf = BoundedArray::<u8, 1024>::default();
 
     match PANIC_STAGE.with(|s| s.get()) {
         0 => {
@@ -486,16 +501,14 @@ pub fn crash_handler(
             PANIC_STAGE.with(|s| s.set(1));
             let _ = PANICKING.fetch_add(1, Ordering::SeqCst);
 
-            if BEFORE_CRASH_HANDLERS_MUTEX.try_lock() {
-                // SAFETY: guarded by BEFORE_CRASH_HANDLERS_MUTEX
-                for &(ptr, cb) in unsafe { BEFORE_CRASH_HANDLERS_LIST.iter() } {
-                    cb(ptr);
+            if let Some(handlers) = BEFORE_CRASH_HANDLERS.try_lock() {
+                for CrashHandlerEntry(ptr, cb) in handlers.iter() {
+                    cb(*ptr);
                 }
             }
 
             {
-                PANIC_MUTEX.lock();
-                let _guard = scopeguard::guard((), |_| PANIC_MUTEX.unlock());
+                let _panic_guard = PANIC_MUTEX.lock();
 
                 // Use an raw unbuffered writer to stderr to avoid losing information on
                 // panic in a panic. There is also a possibility that `Output` related code
@@ -503,8 +516,9 @@ pub fn crash_handler(
                 //
                 // Output.errorWriter() is not used here because it may not be configured
                 // if the program crashes immediately at startup.
-                // TODO(port): std.fs.File.stderr().writerStreaming — using bun_sys raw stderr writer
-                let writer = &mut bun_sys::stderr_writer();
+                // TODO(port): std.fs.File.stderr().writerStreaming — local raw StderrWriter (bun_sys
+                //             FileWriter only impls std::io::Write, not the local byte-Write trait)
+                let writer = &mut stderr_writer();
 
                 // The format of the panic trace is slightly different in debug
                 // builds. Mainly, we demangle the backtrace immediately instead
@@ -514,7 +528,7 @@ pub fn crash_handler(
                 // checks for this CLI flag.
                 let debug_trace = Environment::SHOW_CRASH_TRACE && 'check_flag: {
                     for arg in bun_core::argv() {
-                        if arg == b"--debug-crash-handler-use-trace-string" {
+                        if arg == &b"--debug-crash-handler-use-trace-string"[..] {
                             break 'check_flag false;
                         }
                     }
@@ -528,17 +542,19 @@ pub fn crash_handler(
                 // SAFETY: single-threaded mutation under panic_mutex
                 if unsafe { !HAS_PRINTED_MESSAGE } {
                     Output::flush();
-                    Output::source::Stdio::restore();
+                    Output::source::stdio::restore();
 
-                    if writer.write_all(concat!("============================================================", "\n").as_bytes()).is_err() { bun_sys::posix::abort(); }
-                    if print_metadata(writer).is_err() { bun_sys::posix::abort(); }
+                    if writer.write_all(concat!("============================================================", "\n").as_bytes()).is_err() { abort(); }
+                    if print_metadata(writer).is_err() { abort(); }
 
                     if let Some(name) = INSIDE_NATIVE_PLUGIN.with(|c| c.get()) {
                         // SAFETY: name was set from a valid NUL-terminated C string
                         let native_plugin_name = unsafe { core::ffi::CStr::from_ptr(name) }.to_bytes();
                         let fmt = "\nBun has encountered a crash while running the <red><d>\"{s}\"<r> native plugin.\n\nThis indicates either a bug in the native plugin or in Bun.\n";
-                        if write!(writer, "{}", Output::pretty_fmt_args(fmt, true, format_args!("{}", bstr::BStr::new(native_plugin_name)))).is_err() { bun_sys::posix::abort(); }
-                    } else if bun_analytics::Features::unsupported_uv_function() > 0 {
+                        if write!(writer, "{}", Output::pretty_fmt_args(fmt, true, format_args!("{}", bstr::BStr::new(native_plugin_name)))).is_err() { abort(); }
+                    } else if UNSUPPORTED_UV_FUNCTION.with(|c| c.get()).is_some() {
+                        // TODO(b2-blocked): bun_analytics::Features::unsupported_uv_function — using
+                        // the threadlocal as a stand-in for the global counter check.
                         let name: &[u8] = UNSUPPORTED_UV_FUNCTION.with(|c| c.get())
                             .map(|p| {
                                 // SAFETY: p was set from a valid NUL-terminated C string via CrashHandler__unsupportedUVFunction
@@ -546,35 +562,35 @@ pub fn crash_handler(
                             })
                             .unwrap_or(b"<unknown>");
                         let fmt = "Bun encountered a crash when running a NAPI module that tried to call\nthe <red>{s}<r> libuv function.\n\nBun is actively working on supporting all libuv functions for POSIX\nsystems, please see this issue to track our progress:\n\n<cyan>https://github.com/oven-sh/bun/issues/18546<r>\n\n";
-                        if write!(writer, "{}", Output::pretty_fmt_args(fmt, true, format_args!("{}", bstr::BStr::new(name)))).is_err() { bun_sys::posix::abort(); }
+                        if write!(writer, "{}", Output::pretty_fmt_args(fmt, true, format_args!("{}", bstr::BStr::new(name)))).is_err() { abort(); }
                         // SAFETY: single-threaded mutation under panic_mutex
                         unsafe { HAS_PRINTED_MESSAGE = true; }
                     }
                 } else {
-                    if Output::enable_ansi_colors_stderr() {
-                        if writer.write_all(Output::pretty_fmt("<red>", true)).is_err() { bun_sys::posix::abort(); }
+                    if enable_ansi_colors_stderr() {
+                        if writer.write_all(&Output::pretty_fmt("<red>", true)).is_err() { abort(); }
                     }
-                    if writer.write_all(b"oh no").is_err() { bun_sys::posix::abort(); }
-                    if Output::enable_ansi_colors_stderr() {
-                        if writer.write_all(Output::pretty_fmt("<r><d>: multiple threads are crashing<r>\n", true)).is_err() { bun_sys::posix::abort(); }
+                    if writer.write_all(b"oh no").is_err() { abort(); }
+                    if enable_ansi_colors_stderr() {
+                        if writer.write_all(&Output::pretty_fmt("<r><d>: multiple threads are crashing<r>\n", true)).is_err() { abort(); }
                     } else {
-                        if writer.write_all(Output::pretty_fmt(": multiple threads are crashing\n", true)).is_err() { bun_sys::posix::abort(); }
+                        if writer.write_all(&Output::pretty_fmt(": multiple threads are crashing\n", true)).is_err() { abort(); }
                     }
                 }
 
                 if !matches!(reason, CrashReason::OutOfMemory) || debug_trace {
-                    if Output::enable_ansi_colors_stderr() {
-                        if writer.write_all(Output::pretty_fmt("<red>", true)).is_err() { bun_sys::posix::abort(); }
+                    if enable_ansi_colors_stderr() {
+                        if writer.write_all(&Output::pretty_fmt("<red>", true)).is_err() { abort(); }
                     }
 
-                    if writer.write_all(b"panic").is_err() { bun_sys::posix::abort(); }
+                    if writer.write_all(b"panic").is_err() { abort(); }
 
-                    if Output::enable_ansi_colors_stderr() {
-                        if writer.write_all(Output::pretty_fmt("<r><d>", true)).is_err() { bun_sys::posix::abort(); }
+                    if enable_ansi_colors_stderr() {
+                        if writer.write_all(&Output::pretty_fmt("<r><d>", true)).is_err() { abort(); }
                     }
 
                     if cli_state::is_main_thread() {
-                        if writer.write_all(b"(main thread)").is_err() { bun_sys::posix::abort(); }
+                        if writer.write_all(b"(main thread)").is_err() { abort(); }
                     } else {
                         #[cfg(windows)]
                         {
@@ -587,10 +603,10 @@ pub fn crash_handler(
                             if bun_sys::windows::HRESULT_CODE(result) == bun_sys::windows::S_OK && unsafe { *name } != 0 {
                                 // SAFETY: name is a valid NUL-terminated wide string
                                 let span = unsafe { bun_str::WStr::from_ptr(name) };
-                                if write!(writer, "({})", bun_fmt::utf16(span)).is_err() { bun_sys::posix::abort(); }
+                                if write!(writer, "({})", bun_fmt::utf16(span)).is_err() { abort(); }
                             } else {
                                 // SAFETY: GetCurrentThreadId is an infallible Win32 call with no pointer/precondition requirements
-                                if write!(writer, "(thread {})", unsafe { bun_sys::c::GetCurrentThreadId() }).is_err() { bun_sys::posix::abort(); }
+                                if write!(writer, "(thread {})", unsafe { bun_sys::c::GetCurrentThreadId() }).is_err() { abort(); }
                             }
                         }
                         #[cfg(any(target_os = "macos", target_os = "linux", target_os = "freebsd"))]
@@ -598,48 +614,51 @@ pub fn crash_handler(
                         // TODO(port): wasm @compileError("TODO")
                     }
 
-                    if writer.write_all(b": ").is_err() { bun_sys::posix::abort(); }
-                    if Output::enable_ansi_colors_stderr() {
-                        if writer.write_all(Output::pretty_fmt("<r>", true)).is_err() { bun_sys::posix::abort(); }
+                    if writer.write_all(b": ").is_err() { abort(); }
+                    if enable_ansi_colors_stderr() {
+                        if writer.write_all(&Output::pretty_fmt("<r>", true)).is_err() { abort(); }
                     }
-                    if write!(writer, "{}\n", reason).is_err() { bun_sys::posix::abort(); }
+                    if write!(writer, "{}\n", reason).is_err() { abort(); }
                 }
 
                 if let Some(action) = CURRENT_ACTION.with(|c| c.get()) {
-                    if write!(writer, "Crashed while {}\n", action).is_err() { bun_sys::posix::abort(); }
+                    if write!(writer, "Crashed while {}\n", action).is_err() { abort(); }
                 }
 
                 let mut addr_buf: [usize; 20] = [0; 20];
-                let mut trace_buf: StackTrace;
+                let trace_buf: StackTrace;
 
                 // If a trace was not provided, compute one now
+                // PORT NOTE: reshaped for borrowck — Zig held a StackTrace
+                // borrowing addr_buf while overwriting addr_buf; here we capture
+                // the index into a scalar, drop the borrow, mutate, then rebuild.
                 let trace: &StackTrace = 'blk: {
                     if let Some(ert) = error_return_trace {
                         if ert.index > 0 {
                             break 'blk ert;
                         }
                     }
-                    trace_buf = StackTrace {
-                        index: 0,
-                        instruction_addresses: &mut addr_buf,
+                    let desired_begin_addr = begin_addr.unwrap_or_else(|| debug::return_address());
+                    let mut idx: usize = {
+                        let mut tmp = StackTrace { index: 0, instruction_addresses: &addr_buf };
+                        debug::capture_stack_trace(desired_begin_addr, &mut tmp);
+                        tmp.index
                     };
-                    let desired_begin_addr = begin_addr.unwrap_or_else(|| bun_debug::return_address());
-                    debug::capture_stack_trace(desired_begin_addr, &mut trace_buf);
 
                     #[cfg(all(target_os = "linux", target_env = "gnu"))]
                     {
                         let mut addr_buf_libc: [usize; 20] = [0; 20];
-                        let mut trace_buf_libc = StackTrace {
-                            index: 0,
-                            instruction_addresses: &mut addr_buf_libc,
-                        };
-                        capture_libc_backtrace(desired_begin_addr, &mut trace_buf_libc);
+                        // capture_libc_backtrace only writes `.index` on the StackTrace and
+                        // writes frames into `addrs`; pass an empty-slice trace for the index.
+                        let mut idx_holder = StackTrace { index: 0, instruction_addresses: &[] };
+                        capture_libc_backtrace(desired_begin_addr, &mut addr_buf_libc, &mut idx_holder);
                         // Use stack trace from glibc's backtrace() if it has more frames
-                        if trace_buf_libc.index > trace_buf.index {
+                        if idx_holder.index > idx {
                             addr_buf = addr_buf_libc;
-                            trace_buf.index = trace_buf_libc.index;
+                            idx = idx_holder.index;
                         }
                     }
+                    trace_buf = StackTrace { index: idx, instruction_addresses: &addr_buf };
                     break 'blk &trace_buf;
                 };
 
@@ -652,15 +671,15 @@ pub fn crash_handler(
                         trace,
                         reason,
                         action: TraceStringAction::ViewTrace,
-                    }).is_err() { bun_sys::posix::abort(); }
+                    }).is_err() { abort(); }
                 } else {
                     if unsafe { !HAS_PRINTED_MESSAGE } {
                         unsafe { HAS_PRINTED_MESSAGE = true; }
-                        if writer.write_all(b"oh no").is_err() { bun_sys::posix::abort(); }
-                        if Output::enable_ansi_colors_stderr() {
-                            if writer.write_all(Output::pretty_fmt("<r><d>:<r> ", true)).is_err() { bun_sys::posix::abort(); }
+                        if writer.write_all(b"oh no").is_err() { abort(); }
+                        if enable_ansi_colors_stderr() {
+                            if writer.write_all(&Output::pretty_fmt("<r><d>:<r> ", true)).is_err() { abort(); }
                         } else {
-                            if writer.write_all(Output::pretty_fmt(": ", true)).is_err() { bun_sys::posix::abort(); }
+                            if writer.write_all(&Output::pretty_fmt(": ", true)).is_err() { abort(); }
                         }
                         if let Some(name) = INSIDE_NATIVE_PLUGIN.with(|c| c.get()) {
                             // SAFETY: name was set from a valid NUL-terminated C string
@@ -669,8 +688,9 @@ pub fn crash_handler(
                                 "Bun has encountered a crash while running the <red><d>\"{s}\"<r> native plugin.\n\nTo send a redacted crash report to Bun's team,\nplease file a GitHub issue using the link below:\n\n",
                                 true,
                                 format_args!("{}", bstr::BStr::new(native_plugin_name)),
-                            )).is_err() { bun_sys::posix::abort(); }
-                        } else if bun_analytics::Features::unsupported_uv_function() > 0 {
+                            )).is_err() { abort(); }
+                        } else if UNSUPPORTED_UV_FUNCTION.with(|c| c.get()).is_some() {
+                            // TODO(b2-blocked): bun_analytics::Features::unsupported_uv_function
                             let name: &[u8] = UNSUPPORTED_UV_FUNCTION.with(|c| c.get())
                                 .map(|p| {
                                     // SAFETY: p was set from a valid NUL-terminated C string via CrashHandler__unsupportedUVFunction
@@ -678,39 +698,39 @@ pub fn crash_handler(
                                 })
                                 .unwrap_or(b"<unknown>");
                             let fmt = "Bun encountered a crash when running a NAPI module that tried to call\nthe <red>{s}<r> libuv function.\n\nBun is actively working on supporting all libuv functions for POSIX\nsystems, please see this issue to track our progress:\n\n<cyan>https://github.com/oven-sh/bun/issues/18546<r>\n\n";
-                            if write!(writer, "{}", Output::pretty_fmt_args(fmt, true, format_args!("{}", bstr::BStr::new(name)))).is_err() { bun_sys::posix::abort(); }
+                            if write!(writer, "{}", Output::pretty_fmt_args(fmt, true, format_args!("{}", bstr::BStr::new(name)))).is_err() { abort(); }
                         } else if matches!(reason, CrashReason::OutOfMemory) {
                             if writer.write_all(
                                 b"Bun has run out of memory.\n\nTo send a redacted crash report to Bun's team,\nplease file a GitHub issue using the link below:\n\n",
-                            ).is_err() { bun_sys::posix::abort(); }
+                            ).is_err() { abort(); }
                         } else {
                             if writer.write_all(
                                 b"Bun has crashed. This indicates a bug in Bun, not your code.\n\nTo send a redacted crash report to Bun's team,\nplease file a GitHub issue using the link below:\n\n",
-                            ).is_err() { bun_sys::posix::abort(); }
+                            ).is_err() { abort(); }
                         }
                     }
 
-                    if Output::enable_ansi_colors_stderr() {
-                        if writer.write_all(Output::pretty_fmt("<cyan>", true)).is_err() { bun_sys::posix::abort(); }
+                    if enable_ansi_colors_stderr() {
+                        if writer.write_all(&Output::pretty_fmt("<cyan>", true)).is_err() { abort(); }
                     }
 
-                    if writer.write_all(b" ").is_err() { bun_sys::posix::abort(); }
+                    if writer.write_all(b" ").is_err() { abort(); }
 
                     if write!(trace_str_buf.writer(), "{}", TraceString {
                         trace,
                         reason,
                         action: TraceStringAction::OpenIssue,
-                    }).is_err() { bun_sys::posix::abort(); }
+                    }).is_err() { abort(); }
 
-                    if writer.write_all(trace_str_buf.slice()).is_err() { bun_sys::posix::abort(); }
+                    if writer.write_all(trace_str_buf.const_slice()).is_err() { abort(); }
 
-                    if writer.write_all(b"\n").is_err() { bun_sys::posix::abort(); }
+                    if writer.write_all(b"\n").is_err() { abort(); }
                 }
 
-                if Output::enable_ansi_colors_stderr() {
-                    if writer.write_all(Output::pretty_fmt("<r>\n", true)).is_err() { bun_sys::posix::abort(); }
+                if enable_ansi_colors_stderr() {
+                    if writer.write_all(&Output::pretty_fmt("<r>\n", true)).is_err() { abort(); }
                 } else {
-                    if writer.write_all(b"\n").is_err() { bun_sys::posix::abort(); }
+                    if writer.write_all(b"\n").is_err() { abort(); }
                 }
             }
 
@@ -718,7 +738,7 @@ pub fn crash_handler(
             // This is important so that we do not try to run the following reload logic twice.
             wait_for_other_thread_to_finish_panicking();
 
-            report(trace_str_buf.slice());
+            report(trace_str_buf.const_slice());
 
             // At this point, the crash handler has performed it's job. Reset the segfault handler
             // so that a crash will actually crash. We need this because we want the process to
@@ -736,10 +756,15 @@ pub fn crash_handler(
                 // attempt to prevent a double panic
                 bun_core::set_auto_reload_on_crash(false);
 
-                Output::pretty_errorln(
-                    "<d>--- Bun is auto-restarting due to crash <d>[time: <b>{}<r><d>] ---<r>",
-                    format_args!("{}", bun_core::time::milli_timestamp().max(0)),
-                );
+                // TODO(port): pretty_fmt! color tags — runtime rewrite via pretty_fmt_args
+                Output::pretty_errorln(format_args!(
+                    "{}",
+                    Output::pretty_fmt_args(
+                        "<d>--- Bun is auto-restarting due to crash <d>[time: <b>{s}<r><d>] ---<r>",
+                        enable_ansi_colors_stderr(),
+                        format_args!("{}", bun_core::time::milli_timestamp().max(0)),
+                    ),
+                ));
                 Output::flush();
 
                 // TODO(port): comptime assert void == @TypeOf(bun.reloadProcess(...))
@@ -758,9 +783,9 @@ pub fn crash_handler(
             // A panic happened while trying to print a previous panic message,
             // we're still holding the mutex but that's fine as we're going to
             // call abort()
-            let stderr = &mut bun_sys::stderr_writer();
-            if write!(stderr, "\npanic: {}\n", reason).is_err() { bun_sys::posix::abort(); }
-            if write!(stderr, "panicked during a panic. Aborting.\n").is_err() { bun_sys::posix::abort(); }
+            let stderr = &mut stderr_writer();
+            if write!(stderr, "\npanic: {}\n", reason).is_err() { abort(); }
+            if write!(stderr, "panicked during a panic. Aborting.\n").is_err() { abort(); }
         }
         3 => {
             // Panicked while printing "Panicked during a panic."
@@ -768,11 +793,9 @@ pub fn crash_handler(
         }
         _ => {
             // Panicked or otherwise looped into the panic handler while trying to exit.
-            bun_sys::posix::abort();
+            abort();
         }
     }
-    } // end #[cfg(any())]
-    let _ = (reason, error_return_trace, begin_addr);
 
     crash();
 }
@@ -1200,11 +1223,6 @@ unsafe extern "C" {
 pub static mut Bun__reported_memory_size: usize = 0;
 
 pub fn print_metadata(writer: &mut impl Write) -> Result<(), bun_core::Error> {
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_analytics::GenerateHeader::GeneratePlatform
-    // TODO(b2-blocked): bun_analytics::Features::formatter
-    // TODO(b2-blocked): bun_core::fmt::bytes  (have fmt::size, but call sites want short name)
-    {
     #[cfg(debug_assertions)]
     {
         if Output::is_ai_agent() {
@@ -1212,16 +1230,19 @@ pub fn print_metadata(writer: &mut impl Write) -> Result<(), bun_core::Error> {
         }
     }
 
-    if Output::enable_ansi_colors_stderr() {
-        writer.write_all(Output::pretty_fmt("<r><d>", true))?;
+    if enable_ansi_colors_stderr() {
+        writer.write_all(&Output::pretty_fmt("<r><d>", true))?;
     }
 
     let mut is_ancient_cpu = false;
 
     writer.write_all(METADATA_VERSION_LINE.as_bytes())?;
     {
-        let platform = bun_analytics::GenerateHeader::GeneratePlatform::for_os();
         let cpu_features = CPUFeatures::get();
+        #[cfg(any())]
+        // TODO(b2-blocked): bun_analytics::GenerateHeader::GeneratePlatform
+        {
+        let platform = bun_analytics::GenerateHeader::GeneratePlatform::for_os();
         #[cfg(all(target_os = "linux", target_env = "gnu"))]
         {
             // SAFETY: gnu_get_libc_version returns a static NUL-terminated string or null
@@ -1261,6 +1282,7 @@ pub fn print_metadata(writer: &mut impl Write) -> Result<(), bun_core::Error> {
             // TODO(port): std.zig.system.windows.detectRuntimeVersion()
             write!(writer, "Windows v{}\n", bun_sys::windows::detect_runtime_version())?;
         }
+        } // end #[cfg(any())] — bun_analytics platform block
 
         #[cfg(target_arch = "x86_64")]
         {
@@ -1268,16 +1290,16 @@ pub fn print_metadata(writer: &mut impl Write) -> Result<(), bun_core::Error> {
         }
 
         if !cpu_features.is_empty() {
-            write!(writer, "CPU: {}\n", cpu_features)?;
+            write!(writer, "CPU: {}\n", cpu_features).map_err(fmt_err)?;
         }
 
-        write!(writer, "Args: ")?;
+        write!(writer, "Args: ").map_err(fmt_err)?;
         let mut arg_chars_left: usize = if cfg!(debug_assertions) { 4096 } else { 196 };
         for (i, arg) in bun_core::argv().iter().enumerate() {
             if i != 0 {
                 writer.write_all(b" ")?;
             }
-            bun_fmt::quoted_writer(writer, &arg[0..arg.len().min(arg_chars_left)])?;
+            bun_fmt::quoted_writer(writer, &arg[0..arg.len().min(arg_chars_left)]).map_err(fmt_err)?;
             arg_chars_left = arg_chars_left.saturating_sub(arg.len());
             if arg_chars_left == 0 {
                 writer.write_all(b"...")?;
@@ -1285,8 +1307,13 @@ pub fn print_metadata(writer: &mut impl Write) -> Result<(), bun_core::Error> {
             }
         }
     }
-    write!(writer, "\n{}", bun_analytics::Features::formatter())?;
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_analytics::Features::formatter
+    { write!(writer, "\n{}", bun_analytics::Features::formatter()).map_err(fmt_err)?; }
+    writer.write_all(b"\n")?;
 
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_alloc::mimalloc::mi_process_info
     if bun_core::USE_MIMALLOC {
         let mut elapsed_msecs: usize = 0;
         let mut user_msecs: usize = 0;
@@ -1329,8 +1356,8 @@ pub fn print_metadata(writer: &mut impl Write) -> Result<(), bun_core::Error> {
         writer.write_all(b"\n")?;
     }
 
-    if Output::enable_ansi_colors_stderr() {
-        writer.write_all(Output::pretty_fmt("<r>", true))?;
+    if enable_ansi_colors_stderr() {
+        writer.write_all(&Output::pretty_fmt("<r>", true))?;
     }
     writer.write_all(b"\n")?;
 
@@ -1341,8 +1368,6 @@ pub fn print_metadata(writer: &mut impl Write) -> Result<(), bun_core::Error> {
         }
     }
     let _ = is_ancient_cpu;
-    } // end #[cfg(any())]
-    let _ = writer;
     Ok(())
 }
 
@@ -1444,10 +1469,19 @@ impl Platform {
 /// '2' - same as '1' but this build is known to be a canary build
 const VERSION_CHAR: &str = if Environment::IS_CANARY { "2" } else { "1" };
 
-const GIT_SHA: &str = if !Environment::GIT_SHA_SHORT.is_empty() {
-    Environment::GIT_SHA_SHORT
-} else {
-    "unknown"
+// Zig: `if (git_sha.len > 0) git_sha[0..7] else "unknown"` — the v1/v2 trace-string
+// format encodes exactly 7 hex chars. `Environment::GIT_SHA_SHORT` is 9 chars and would
+// shift every following VLQ byte, making bun.report unable to decode the URL.
+const GIT_SHA: &str = {
+    const fn sha7(s: &'static str) -> &'static str {
+        let bytes = s.as_bytes();
+        // SAFETY: GIT_SHA is ASCII hex; the first 7 bytes are a valid UTF-8 prefix
+        // and `bytes` is at least 7 long when non-empty (full 40-char commit hash).
+        unsafe {
+            core::str::from_utf8_unchecked(core::slice::from_raw_parts(bytes.as_ptr(), 7))
+        }
+    }
+    if !Environment::GIT_SHA.is_empty() { sha7(Environment::GIT_SHA) } else { "unknown" }
 };
 
 struct StackLine {
@@ -1840,10 +1874,6 @@ fn report(url: &[u8]) {
     if !is_reporting_enabled() {
         return;
     }
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_core::getcwd
-    // TODO(b2-blocked): bun_core::which
-    {
     #[cfg(windows)]
     {
         use bun_sys::windows;
@@ -1905,20 +1935,25 @@ fn report(url: &[u8]) {
     }
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "freebsd"))]
     {
-        let mut buf = bun_paths::PathBuffer::uninit();
-        let mut buf2 = bun_paths::PathBuffer::uninit();
+        // SAFETY: all-zero is a valid PathBuffer (#[repr(C)] [u8; N], no NonNull/NonZero fields)
+        let mut buf: bun_core::PathBuffer = unsafe { core::mem::zeroed() };
+        // SAFETY: as above
+        let mut buf2: bun_core::PathBuffer = unsafe { core::mem::zeroed() };
         let Some(path_env) = env_var::PATH::get() else { return; };
         let Ok(cwd) = bun_core::getcwd(&mut buf2) else { return; };
-        let Some(curl) = bun_core::which(&mut buf, path_env, cwd, b"curl") else { return; };
-        let mut cmd_line = BoundedArray::<u8, 4096>::new();
+        // PORT NOTE: reshaped for borrowck — capture cwd bytes by value (it
+        // borrows buf2, not buf, so no actual overlap; copy len for clarity).
+        let cwd_bytes = cwd.as_bytes();
+        let Some(curl) = bun_core::which(&mut buf, path_env, cwd_bytes, b"curl") else { return; };
+        let mut cmd_line = BoundedArray::<u8, 4096>::default();
         if cmd_line.append_slice(url).is_err() { return; }
         if cmd_line.append_slice(b"/ack").is_err() { return; }
         if cmd_line.append(0).is_err() { return; }
 
         let argv: [*const c_char; 4] = [
-            curl.as_ptr().cast(),
+            curl.as_ptr(),
             b"-fsSL\0".as_ptr().cast(),
-            cmd_line.buffer().as_ptr().cast(),
+            cmd_line.const_slice().as_ptr().cast(),
             core::ptr::null(),
         ];
         // SAFETY: fork is async-signal-safe; we're already in the crash path
@@ -1928,18 +1963,20 @@ fn report(url: &[u8]) {
             0 => {
                 for i in 0..2 {
                     // SAFETY: closing stdin/stdout in child
-                    unsafe { bun_sys::c::close(i); }
+                    unsafe { libc::close(i); }
                 }
-                // SAFETY: argv is NUL-terminated array of NUL-terminated strings
-                unsafe { bun_sys::c::execve(argv[0], argv.as_ptr(), bun_sys::c::environ()); }
-                unsafe { bun_sys::c::exit(0); }
+                unsafe extern "C" { static environ: *const *const c_char; }
+                // SAFETY: argv is NUL-terminated array of NUL-terminated strings; environ is the
+                // process environment block
+                unsafe { libc::execve(argv[0], argv.as_ptr(), environ); }
+                // SAFETY: _exit is async-signal-safe in the forked child
+                unsafe { libc::_exit(0); }
             }
             // success and failure cases: ignore the result
             _ => return,
         }
     }
     // TODO(port): wasm @compileError("Not implemented")
-    } // end #[cfg(any())]
     let _ = url;
 }
 
@@ -1968,11 +2005,19 @@ fn crash() -> ! {
             // SAFETY: &sigact is a valid sigaction; null oldact is permitted.
             unsafe { libc::sigaction(sig, &sigact, core::ptr::null_mut()); }
         }
+        // Zig: `@trap()` — emits ud2 (x86_64 → SIGILL) / brk (aarch64 → SIGTRAP).
+        // `core::intrinsics::abort()` lowers to the same trap instruction, preserving
+        // the Zig exit signal. Do NOT use `libc::abort()` here — that raises SIGABRT
+        // (exit 134), which is the *Windows* path's behaviour.
+        core::intrinsics::abort();
     }
-    // @trap() — Node.js exits with code 134 (128 + SIGABRT) instead. We use abort()
-    // as it includes a breakpoint which makes crashes easier to debug.
-    // SAFETY: intentionally trapping to terminate with a core dump.
-    unsafe { libc::abort() }
+    #[cfg(windows)]
+    {
+        // Node.js exits with code 134 (128 + SIGABRT) instead. We use abort() as it
+        // includes a breakpoint which makes crashes easier to debug.
+        // SAFETY: intentionally aborting to terminate the process.
+        unsafe { libc::abort() }
+    }
 }
 
 pub static mut VERBOSE_ERROR_TRACE: bool = false;
@@ -2352,20 +2397,21 @@ type OnBeforeCrash = fn(opaque_ptr: *mut c_void);
 /// to dump a large amount of state to a file to aid debugging a crash.
 ///
 /// Pre-crash handlers are likely, but not guaranteed to call. Errors are ignored.
-pub fn append_pre_crash_handler<T>(
+pub fn append_pre_crash_handler<T: 'static>(
     ptr: *mut T,
     handler: fn(&mut T) -> Result<(), bun_core::Error>,
 ) -> Result<(), bun_alloc::AllocError> {
-    // TODO(port): Zig used `comptime handler` to monomorphize a wrapper closure that erases T.
-    // Rust cannot capture a non-const fn pointer in an `extern "C" fn`; store a thin trampoline
-    // by boxing the closure or by requiring `handler` to already accept *mut c_void in Phase B.
-    fn on_crash_erased(_opaque_ptr: *mut c_void) {
-        // TODO(port): cannot recover the typed `handler` here without per-T monomorphization.
-        // Phase B: replace with `Box<dyn Fn(*mut c_void)>` storage in BEFORE_CRASH_HANDLERS.
-    }
-    let _ = handler;
+    // Zig monomorphizes a `wrap.onCrash` that casts the opaque ptr back to *T and calls
+    // `handler`. Rust can't capture `handler` in a bare `fn` item, so box a closure that
+    // performs the same cast+call. Errors are intentionally swallowed (best-effort dump).
+    let on_crash = Box::new(move |opaque_ptr: *mut c_void| {
+        // SAFETY: `opaque_ptr` is the `ptr.cast()` stored below; it was a valid *mut T
+        // when registered and remove_pre_crash_handler() unregisters it before drop.
+        let this = unsafe { &mut *opaque_ptr.cast::<T>() };
+        let _ = handler(this);
+    });
 
-    BEFORE_CRASH_HANDLERS.lock().push(CrashHandlerEntry(ptr.cast(), on_crash_erased));
+    BEFORE_CRASH_HANDLERS.lock().push(CrashHandlerEntry(ptr.cast(), on_crash));
     Ok(())
 }
 
@@ -2616,15 +2662,16 @@ fn print_line_from_file_any_os(
     tty_config: TtyConfig,
     source_location: &SourceLocation,
 ) -> Result<(), bun_core::Error> {
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_sys::File  (file mod is itself cfg(any())-gated in bun_sys)
-    {
     // Need this to always block even in async I/O mode, because this could potentially
     // be called from e.g. the event loop code crashing.
-    let mut f = bun_sys::File::open_at(bun_sys::Fd::cwd(), &source_location.file_name, bun_sys::O::RDONLY, 0)
+    // PORT NOTE: `File::open_at` wants `&ZStr` but `source_location.file_name`
+    // is a `Box<[u8]>` (no NUL guarantee from the debug-info backend), so route
+    // through the byte-slice `openat_a` and wrap the fd.
+    let fd = bun_sys::openat_a(bun_sys::Fd::cwd(), &source_location.file_name, bun_sys::O::RDONLY, 0)
         .map_err(bun_core::Error::from)?;
-    let _close = scopeguard::guard((), |_| { let _ = f.close(); });
+    let f = bun_sys::File::from_fd(fd);
     // TODO(port): errdefer — f closed on all paths via guard
+    let f = scopeguard::guard(f, |f| { let _ = f.close(); });
 
     let mut line_buf: [u8; 4096] = [0; 4096];
     let mut fbs_len: usize = 0;
@@ -2638,11 +2685,11 @@ fn print_line_from_file_any_os(
                 let slice = &buf[current_line_start..amt_read];
                 if let Some(pos) = strings::index_of_char(slice, b'\n') {
                     next_line += 1;
-                    if pos as usize == slice.len() - 1 {
+                    if pos == slice.len() - 1 {
                         amt_read = f.read(&mut buf[..])?;
                         current_line_start = 0;
                     } else {
-                        current_line_start += pos as usize + 1;
+                        current_line_start += pos + 1;
                     }
                 } else if amt_read < buf.len() {
                     return Err(bun_core::err!("EndOfFile"));
@@ -2655,7 +2702,7 @@ fn print_line_from_file_any_os(
         };
         let slice = &mut buf[line_start..amt_read];
         if let Some(pos) = strings::index_of_char(slice, b'\n') {
-            let line = &mut slice[0..pos as usize];
+            let line = &mut slice[0..pos];
             for b in line.iter_mut() { if *b == b'\t' { *b = b' '; } }
             let n = line.len().min(line_buf.len() - fbs_len);
             line_buf[fbs_len..fbs_len + n].copy_from_slice(&line[..n]);
@@ -2671,7 +2718,7 @@ fn print_line_from_file_any_os(
             while amt_read == buf.len() {
                 amt_read = f.read(&mut buf[..])?;
                 if let Some(pos) = strings::index_of_char(&buf[0..amt_read], b'\n') {
-                    let line = &mut buf[0..pos as usize];
+                    let line = &mut buf[0..pos];
                     for b in line.iter_mut() { if *b == b'\t' { *b = b' '; } }
                     let n2 = line.len().min(line_buf.len() - fbs_len);
                     line_buf[fbs_len..fbs_len + n2].copy_from_slice(&line[..n2]);
@@ -2690,7 +2737,7 @@ fn print_line_from_file_any_os(
         }
         // unreachable in Zig (`return;` after the if/else above)
     }
-    let line_without_newline = bun_str::strings::trim_right(&line_buf[..fbs_len], b"\n");
+    let line_without_newline = strings::trim_right(&line_buf[..fbs_len], b"\n");
     if source_location.column as usize > line_without_newline.len() {
         out_stream.write_all(line_without_newline)?;
         out_stream.write_byte(b'\n')?;
@@ -2721,9 +2768,9 @@ fn print_line_from_file_any_os(
     let highlight = &line_without_newline[left..right];
     let mut after_before_comment = &line_without_newline[right..];
     let mut comment: &[u8] = b"";
-    if let Some(pos) = strings::index_of(after_before_comment, b"//") {
-        comment = &after_before_comment[pos as usize..];
-        after_before_comment = &after_before_comment[0..pos as usize];
+    if let Some(pos) = index_of(after_before_comment, b"//") {
+        comment = &after_before_comment[pos..];
+        after_before_comment = &after_before_comment[0..pos];
     }
     tty_config.set_color(out_stream, TtyConfig::RED)?;
     tty_config.set_color(out_stream, TtyConfig::DIM)?;
@@ -2740,8 +2787,6 @@ fn print_line_from_file_any_os(
     }
     tty_config.set_color(out_stream, TtyConfig::RESET)?;
     out_stream.write_byte(b'\n')?;
-    } // end #[cfg(any())]
-    let _ = (out_stream, tty_config, source_location);
     Ok(())
 }
 

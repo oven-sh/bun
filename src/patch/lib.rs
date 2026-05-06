@@ -1658,17 +1658,19 @@ fn trim_end_any<'a>(slice: &'a [u8], values_to_strip: &[u8]) -> &'a [u8] {
 // spawnOpts / diffPostProcess / gitDiff*
 // ──────────────────────────────────────────────────────────────────────────
 
-// TODO(b2-blocked): bun_spawn::sync::Options
-// TODO(b2-blocked): bun_event_loop::AnyEventLoop
-#[cfg(any())]
+// PORT NOTE: Zig returns `bun.spawn.sync.Options` with `argv`/`envp` allocated on
+// `bun.default_allocator` and freed by the caller. `bun_spawn::sync::Options` owns
+// `argv` (`Vec<Box<[u8]>>`) but borrows `envp` (`Option<*const *const c_char>`), so
+// the null-terminated envp array is returned alongside as the second tuple element —
+// caller must keep it alive while `Options` is in use (no `Box::leak`, §Forbidden).
 pub fn spawn_opts(
     old_folder: &[u8],
     new_folder: &[u8],
     cwd: &ZStr,
     git: &ZStr,
-    loop_: &mut bun_event_loop::AnyEventLoop,
-) -> bun_spawn::sync::Options {
-    let argv: Vec<&[u8]> = {
+    loop_: &mut bun_event_loop::AnyEventLoop<'static>,
+) -> (bun_spawn::sync::Options, Vec<*const core::ffi::c_char>) {
+    let argv: Vec<Box<[u8]>> = {
         const ARGV: &[&[u8]] = &[
             b"git",
             b"-c",
@@ -1681,62 +1683,67 @@ pub fn spawn_opts(
             b"--full-index",
             b"--no-index",
         ];
-        let mut argv_buf: Vec<&[u8]> = Vec::with_capacity(ARGV.len() + 2);
-        argv_buf.push(git.as_bytes());
+        // PERF(port): Zig stored borrowed slices; `Options.argv` is
+        // `Vec<Box<[u8]>>`, so we copy. Profile in Phase B.
+        let mut argv_buf: Vec<Box<[u8]>> = Vec::with_capacity(ARGV.len() + 2);
+        argv_buf.push(Box::from(git.as_bytes()));
         for i in 1..ARGV.len() {
-            argv_buf.push(ARGV[i]);
+            argv_buf.push(Box::from(ARGV[i]));
         }
-        argv_buf.push(old_folder);
-        argv_buf.push(new_folder);
+        argv_buf.push(Box::from(old_folder));
+        argv_buf.push(Box::from(new_folder));
         argv_buf
     };
 
-    // TODO(port): envp is `[:null]?[*:0]const u8` — null-terminated array of nullable C strings.
-    let envp: Vec<Option<*const core::ffi::c_char>> = {
-        const ENV_ARR: &[&ZStr] = &[
-            // TODO(port): these need ZStr literal constructor (NUL-terminated).
-        ];
-        let env_arr: [&[u8]; 4] = [
+    // envp is `[:null]?[*:0]const u8` — null-terminated array of C strings. All
+    // entries point at `'static` storage (string literals / process env block);
+    // only the array itself is heap-backed and returned to the caller.
+    let envp_buf: Vec<*const core::ffi::c_char> = {
+        const ENV_ARR: [&[u8]; 4] = [
             b"GIT_CONFIG_NOSYSTEM\0",
             b"HOME\0",
             b"XDG_CONFIG_HOME\0",
             b"USERPROFILE\0",
         ];
-        let path = bun_core::env_var::PATH::get();
-        let mut envp_buf: Vec<Option<*const core::ffi::c_char>> =
-            Vec::with_capacity(env_arr.len() + if path.is_some() { 1 } else { 0 } + 1);
-        for s in &env_arr {
-            envp_buf.push(Some(s.as_ptr() as *const core::ffi::c_char));
+        let path = bun_core::env_var::PATH.get();
+        let mut envp_buf: Vec<*const core::ffi::c_char> =
+            Vec::with_capacity(ENV_ARR.len() + usize::from(path.is_some()) + 1);
+        for s in &ENV_ARR {
+            envp_buf.push(s.as_ptr() as *const core::ffi::c_char);
         }
         if let Some(p) = path {
-            envp_buf.push(Some(p.as_ptr() as *const core::ffi::c_char));
+            // PORT NOTE: `env_var::PATH.get()` yields a slice into the C env
+            // block (NUL byte immediately follows on POSIX — see
+            // `bun_core::getenv_z`), matching Zig's `@ptrCast(p.ptr)`.
+            envp_buf.push(p.as_ptr() as *const core::ffi::c_char);
         }
-        envp_buf.push(None); // sentinel
-        let _ = ENV_ARR;
+        envp_buf.push(core::ptr::null()); // sentinel
         envp_buf
     };
 
-    // TODO(port): bun_spawn::sync::Options shape — windows.loop variant matching.
-    bun_spawn::sync::Options {
+    #[cfg(not(windows))]
+    let _ = loop_;
+
+    let opts = bun_spawn::sync::Options {
         stdout: bun_spawn::sync::Stdio::Buffer,
         stderr: bun_spawn::sync::Stdio::Buffer,
         cwd: cwd.as_bytes().into(),
-        envp,
+        envp: Some(envp_buf.as_ptr()),
         argv,
         #[cfg(windows)]
         windows: bun_spawn::sync::WindowsOptions {
-            // CYCLEBREAK(b0): re-import — bun_jsc::{AnyEventLoop,EventLoopHandle} → bun_event_loop (T3).
-            // AnyEventLoop::Js is now a struct variant {owner, vtable}; avoid naming variant
-            // internals here — bun_event_loop owns the conversion.
-            // TODO(b0-move-in): bun_event_loop must define `EventLoopHandle` + `as_handle`.
+            // CYCLEBREAK(b0): bun_jsc::{AnyEventLoop,EventLoopHandle} → bun_event_loop (T3).
+            // Zig matched on `loop.*` to build the handle by hand; `as_handle`
+            // owns that conversion now so variant internals stay encapsulated.
             loop_: bun_event_loop::AnyEventLoop::as_handle(loop_),
+            ..Default::default()
         },
         ..Default::default()
-    }
+    };
+
+    (opts, envp_buf)
 }
 
-// TODO(b2-blocked): bun_spawn::sync::Result
-#[cfg(any())]
 pub fn diff_post_process(
     result: &mut bun_spawn::sync::Result,
     old_folder: &[u8],

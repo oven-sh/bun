@@ -34,9 +34,9 @@ impl YAML {
         log: &mut logger::Log,
         bump: &bumpalo::Bump,
     ) -> Result<Expr, YamlParseError> {
-        // TODO(b2-blocked): bun_core::analytics::Features::yaml_parse_inc
-        #[cfg(any())]
-        bun_core::analytics::Features::yaml_parse_inc(1);
+        // Zig: `bun.analytics.Features.yaml_parse += 1;` — the MOVE_DOWN'd
+        // counter API is `yaml_parse_inc()` (atomic fetch_add by 1, no arg).
+        bun_core::analytics::Features::yaml_parse_inc();
 
         // PORT NOTE: the Zig allocator param was dropped from `Parser::init`
         // (global mimalloc); `bump` is accepted for signature parity with Zig
@@ -1181,65 +1181,75 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         Ok(())
     }
 
-    pub fn try_resolve_number(
-        &mut self,
-        parser: &mut Parser<'i, Enc>,
-        first_char: FirstChar,
-    ) -> Result<(), AllocError> {
+    pub fn try_resolve_number(&mut self, first_char: FirstChar) -> Result<(), AllocError> {
+        // SAFETY: `self.parser` was set from `&mut self` in scan_plain_scalar
+        // and ctx never outlives it. Route all parser access through the raw
+        // pointer instead of taking `&mut Parser` as an argument — holding an
+        // explicit `&mut Parser` across calls into `self.append_*` (which also
+        // derive `&mut Parser` via StringBuilder::parser_mut) would create two
+        // live `&mut` to the same object (Stacked Borrows UB). Re-deriving on
+        // every access keeps each borrow non-overlapping.
+        let raw_parser: *mut Parser<'i, Enc> = self.parser;
+        macro_rules! parser {
+            () => {
+                unsafe { &mut *raw_parser }
+            };
+        }
+
         let nan = f64::NAN;
         let inf = f64::INFINITY;
 
         match first_char {
-            FirstChar::Dot => match Enc::wide(parser.next()) {
+            FirstChar::Dot => match Enc::wide(parser!().next()) {
                 0x6E /* 'n' */ => {
-                    let n_start = parser.pos;
-                    parser.inc(1);
-                    if parser.remain_starts_with(Enc::literal(b"an")) {
+                    let n_start = parser!().pos;
+                    parser!().inc(1);
+                    if parser!().remain_starts_with(Enc::literal(b"an")) {
                         self.resolve(NodeScalar::Number(nan), n_start, Enc::literal(b"nan"))?;
-                        parser.inc(2);
+                        parser!().inc(2);
                         return Ok(());
                     }
                     self.append_source(Enc::ch(b'n'), n_start)?;
                     return Ok(());
                 }
                 0x4E /* 'N' */ => {
-                    let n_start = parser.pos;
-                    parser.inc(1);
-                    if parser.remain_starts_with(Enc::literal(b"aN")) {
+                    let n_start = parser!().pos;
+                    parser!().inc(1);
+                    if parser!().remain_starts_with(Enc::literal(b"aN")) {
                         self.resolve(NodeScalar::Number(nan), n_start, Enc::literal(b"NaN"))?;
-                        parser.inc(2);
+                        parser!().inc(2);
                         return Ok(());
                     }
-                    if parser.remain_starts_with(Enc::literal(b"AN")) {
+                    if parser!().remain_starts_with(Enc::literal(b"AN")) {
                         self.resolve(NodeScalar::Number(nan), n_start, Enc::literal(b"NAN"))?;
-                        parser.inc(2);
+                        parser!().inc(2);
                         return Ok(());
                     }
                     self.append_source(Enc::ch(b'N'), n_start)?;
                     return Ok(());
                 }
                 0x69 /* 'i' */ => {
-                    let i_start = parser.pos;
-                    parser.inc(1);
-                    if parser.remain_starts_with(Enc::literal(b"nf")) {
+                    let i_start = parser!().pos;
+                    parser!().inc(1);
+                    if parser!().remain_starts_with(Enc::literal(b"nf")) {
                         self.resolve(NodeScalar::Number(inf), i_start, Enc::literal(b"inf"))?;
-                        parser.inc(2);
+                        parser!().inc(2);
                         return Ok(());
                     }
                     self.append_source(Enc::ch(b'i'), i_start)?;
                     return Ok(());
                 }
                 0x49 /* 'I' */ => {
-                    let i_start = parser.pos;
-                    parser.inc(1);
-                    if parser.remain_starts_with(Enc::literal(b"nf")) {
+                    let i_start = parser!().pos;
+                    parser!().inc(1);
+                    if parser!().remain_starts_with(Enc::literal(b"nf")) {
                         self.resolve(NodeScalar::Number(inf), i_start, Enc::literal(b"Inf"))?;
-                        parser.inc(2);
+                        parser!().inc(2);
                         return Ok(());
                     }
-                    if parser.remain_starts_with(Enc::literal(b"NF")) {
+                    if parser!().remain_starts_with(Enc::literal(b"NF")) {
                         self.resolve(NodeScalar::Number(inf), i_start, Enc::literal(b"INF"))?;
-                        parser.inc(2);
+                        parser!().inc(2);
                         return Ok(());
                     }
                     self.append_source(Enc::ch(b'I'), i_start)?;
@@ -1249,46 +1259,46 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
             },
             FirstChar::Negative | FirstChar::Positive => {
                 // PORT NOTE: Zig `a == b and c or d` parses as `(a == b and c) or d`.
-                if Enc::wide(parser.next()) == 0x2E && Enc::wide(parser.peek(1)) == 0x69
-                    || Enc::wide(parser.peek(1)) == 0x49
+                if Enc::wide(parser!().next()) == 0x2E && Enc::wide(parser!().peek(1)) == 0x69
+                    || Enc::wide(parser!().peek(1)) == 0x49
                 {
-                    self.append_source(Enc::ch(b'.'), parser.pos)?;
-                    parser.inc(1);
-                    match Enc::wide(parser.next()) {
+                    self.append_source(Enc::ch(b'.'), parser!().pos)?;
+                    parser!().inc(1);
+                    match Enc::wide(parser!().next()) {
                         0x69 /* 'i' */ => {
-                            let i_start = parser.pos;
-                            parser.inc(1);
-                            if parser.remain_starts_with(Enc::literal(b"nf")) {
+                            let i_start = parser!().pos;
+                            parser!().inc(1);
+                            if parser!().remain_starts_with(Enc::literal(b"nf")) {
                                 self.resolve(
                                     NodeScalar::Number(if first_char == FirstChar::Negative { -inf } else { inf }),
                                     i_start,
                                     Enc::literal(b"inf"),
                                 )?;
-                                parser.inc(2);
+                                parser!().inc(2);
                                 return Ok(());
                             }
                             self.append_source(Enc::ch(b'i'), i_start)?;
                             return Ok(());
                         }
                         0x49 /* 'I' */ => {
-                            let i_start = parser.pos;
-                            parser.inc(1);
-                            if parser.remain_starts_with(Enc::literal(b"nf")) {
+                            let i_start = parser!().pos;
+                            parser!().inc(1);
+                            if parser!().remain_starts_with(Enc::literal(b"nf")) {
                                 self.resolve(
                                     NodeScalar::Number(if first_char == FirstChar::Negative { -inf } else { inf }),
                                     i_start,
                                     Enc::literal(b"Inf"),
                                 )?;
-                                parser.inc(2);
+                                parser!().inc(2);
                                 return Ok(());
                             }
-                            if parser.remain_starts_with(Enc::literal(b"NF")) {
+                            if parser!().remain_starts_with(Enc::literal(b"NF")) {
                                 self.resolve(
                                     NodeScalar::Number(if first_char == FirstChar::Negative { -inf } else { inf }),
                                     i_start,
                                     Enc::literal(b"INF"),
                                 )?;
-                                parser.inc(2);
+                                parser!().inc(2);
                                 return Ok(());
                             }
                             self.append_source(Enc::ch(b'I'), i_start)?;
@@ -1303,9 +1313,9 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
             FirstChar::Other => {}
         }
 
-        let start = parser.pos;
+        let start = parser!().pos;
 
-        let mut decimal = Enc::wide(parser.next()) == 0x2E /* '.' */;
+        let mut decimal = Enc::wide(parser!().next()) == 0x2E /* '.' */;
         let mut x = false;
         let mut o = false;
         let mut e = false;
@@ -1314,13 +1324,13 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         let mut hex = false;
 
         if first_char != FirstChar::Negative && first_char != FirstChar::Positive {
-            parser.inc(1);
+            parser!().inc(1);
         }
 
         let mut first = true;
 
         // PORT NOTE: labeled-switch loop
-        let mut __c = Enc::wide(parser.next());
+        let mut __c = Enc::wide(parser!().next());
         let (end, valid): (Pos, bool) = 'end: loop {
             match __c {
                 // can only be valid if it ends on:
@@ -1332,29 +1342,29 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
                 // - ':'
                 0x20 | 0x09 | 0 | 0x0A | 0x0D | 0x3A => {
                     if first && (first_char == FirstChar::Positive || first_char == FirstChar::Negative) {
-                        break 'end (parser.pos, false);
+                        break 'end (parser!().pos, false);
                     }
-                    break 'end (parser.pos, true);
+                    break 'end (parser!().pos, true);
                 }
 
                 0x2C | 0x5D | 0x7D /* , ] } */ => {
                     first = false;
-                    match parser.context.get() {
+                    match parser!().context.get() {
                         // it's valid for ',' ']' '}' to end the scalar
                         // in flow context
-                        Context::FlowIn | Context::FlowKey => break 'end (parser.pos, true),
-                        Context::BlockIn | Context::BlockOut => break 'end (parser.pos, false),
+                        Context::FlowIn | Context::FlowKey => break 'end (parser!().pos, true),
+                        Context::BlockIn | Context::BlockOut => break 'end (parser!().pos, false),
                     }
                 }
 
                 0x30 /* '0' */ => {
                     let was_first = first;
                     first = false;
-                    parser.inc(1);
+                    parser!().inc(1);
                     if was_first {
-                        match Enc::wide(parser.next()) {
+                        match Enc::wide(parser!().next()) {
                             0x62 | 0x42 /* 'b' 'B' */ => {
-                                break 'end (parser.pos, false);
+                                break 'end (parser!().pos, false);
                             }
                             c => {
                                 __c = c;
@@ -1362,14 +1372,14 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
                             }
                         }
                     }
-                    __c = Enc::wide(parser.next());
+                    __c = Enc::wide(parser!().next());
                     continue;
                 }
 
                 0x31..=0x39 /* '1'..'9' */ => {
                     first = false;
-                    parser.inc(1);
-                    __c = Enc::wide(parser.next());
+                    parser!().inc(1);
+                    __c = Enc::wide(parser!().next());
                     continue;
                 }
 
@@ -1379,8 +1389,8 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
                         hex = true;
                     }
                     e = true;
-                    parser.inc(1);
-                    __c = Enc::wide(parser.next());
+                    parser!().inc(1);
+                    __c = Enc::wide(parser!().next());
                     continue;
                 }
 
@@ -1389,75 +1399,75 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
 
                     if first {
                         if __c == 0x62 || __c == 0x42 {
-                            break 'end (parser.pos, false);
+                            break 'end (parser!().pos, false);
                         }
                     }
                     first = false;
 
-                    parser.inc(1);
-                    __c = Enc::wide(parser.next());
+                    parser!().inc(1);
+                    __c = Enc::wide(parser!().next());
                     continue;
                 }
 
                 0x78 /* 'x' */ => {
                     first = false;
                     if x {
-                        break 'end (parser.pos, false);
+                        break 'end (parser!().pos, false);
                     }
 
                     x = true;
-                    parser.inc(1);
-                    __c = Enc::wide(parser.next());
+                    parser!().inc(1);
+                    __c = Enc::wide(parser!().next());
                     continue;
                 }
 
                 0x6F /* 'o' */ => {
                     first = false;
                     if o {
-                        break 'end (parser.pos, false);
+                        break 'end (parser!().pos, false);
                     }
 
                     o = true;
-                    parser.inc(1);
-                    __c = Enc::wide(parser.next());
+                    parser!().inc(1);
+                    __c = Enc::wide(parser!().next());
                     continue;
                 }
 
                 0x2E /* '.' */ => {
                     first = false;
                     if decimal {
-                        break 'end (parser.pos, false);
+                        break 'end (parser!().pos, false);
                     }
 
                     decimal = true;
-                    parser.inc(1);
-                    __c = Enc::wide(parser.next());
+                    parser!().inc(1);
+                    __c = Enc::wide(parser!().next());
                     continue;
                 }
 
                 0x2B /* '+' */ => {
                     first = false;
                     if x {
-                        break 'end (parser.pos, false);
+                        break 'end (parser!().pos, false);
                     }
                     plus = true;
-                    parser.inc(1);
-                    __c = Enc::wide(parser.next());
+                    parser!().inc(1);
+                    __c = Enc::wide(parser!().next());
                     continue;
                 }
                 0x2D /* '-' */ => {
                     first = false;
                     if minus {
-                        break 'end (parser.pos, false);
+                        break 'end (parser!().pos, false);
                     }
                     minus = true;
-                    parser.inc(1);
-                    __c = Enc::wide(parser.next());
+                    parser!().inc(1);
+                    __c = Enc::wide(parser!().next());
                     continue;
                 }
                 _ => {
                     first = false;
-                    break 'end (parser.pos, false);
+                    break 'end (parser!().pos, false);
                 }
             }
         };
@@ -1473,7 +1483,7 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
             if x || o || hex {
                 // TODO(port): std.fmt.parseUnsigned(u64, slice, 0) over &[Enc::Unit] —
                 // need ASCII narrowing for non-u8 encodings; Phase B.
-                let unsigned = match parse_unsigned_radix0::<Enc>(parser.slice(start, end)) {
+                let unsigned = match parse_unsigned_radix0::<Enc>(parser!().slice(start, end)) {
                     Ok(v) => v,
                     Err(_) => return Ok(()),
                 };
@@ -1481,7 +1491,7 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
             }
             // TODO(port): bun.jsc.wtf.parseDouble over &[Enc::Unit] — Phase B.
             // MOVE_DOWN(b0): wtf::parse_double → bun_str (T1)
-            let float = match parse_double_generic::<Enc>(parser.slice(start, end)) {
+            let float = match parse_double_generic::<Enc>(parser!().slice(start, end)) {
                 Ok(v) => v,
                 Err(_) => return Ok(()),
             };
@@ -2769,13 +2779,19 @@ pub struct MappingProps {
     list: Vec<G::Property>,
 }
 
-// TODO(b2-blocked): bun_logger::js_ast::{G, ExprData}
-#[cfg(any())]
 impl MappingProps {
     pub fn init() -> Self {
         Self { list: Vec::new() }
     }
 
+    pub fn append(&mut self, prop: G::Property) -> Result<(), AllocError> {
+        self.list.push(prop);
+        Ok(())
+    }
+
+    // TODO(b2-blocked): bun_logger::js_ast::G::Property — stub is field-less
+    //   `(())`; body reads `.key` and calls `yaml_merge_key_expr_eql` (also gated).
+    #[cfg(any())]
     pub fn merge(&mut self, merge_props: &[G::Property]) -> Result<(), AllocError> {
         self.list.reserve(merge_props.len());
         // PERF(port): was ensureUnusedCapacity
@@ -2794,11 +2810,10 @@ impl MappingProps {
         Ok(())
     }
 
-    pub fn append(&mut self, prop: G::Property) -> Result<(), AllocError> {
-        self.list.push(prop);
-        Ok(())
-    }
-
+    // TODO(b2-blocked): bun_logger::js_ast::{ExprData, G::Property} — stub
+    //   `ExprData` is opaque (no `EString`/`EObject`/`EArray` variants) and
+    //   `G::Property` has no `{ key, value }` fields.
+    #[cfg(any())]
     pub fn append_maybe_merge(&mut self, key: Expr, value: Expr) -> Result<(), AllocError> {
         let is_merge_key = match &key.data {
             ast::ExprData::EString(key_str) => key_str.eql_comptime(b"<<"),
@@ -2830,6 +2845,9 @@ impl MappingProps {
         }
     }
 
+    // TODO(b2-blocked): bun_logger::js_ast::G::PropertyList — type does not
+    //   exist in the T2 stub yet (Zig: `G.Property.List` = `BabyList(G.Property)`).
+    #[cfg(any())]
     pub fn move_list(&mut self) -> G::PropertyList {
         G::PropertyList::move_from_vec(&mut self.list)
     }
@@ -3481,7 +3499,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     if !ctx.resolved && ctx.str_builder.len() == 0 {
                         ctx.append_source(Enc::ch(b'-'), self.pos)?;
                         self.inc(1);
-                        ctx.try_resolve_number(self, FirstChar::Negative)?;
+                        ctx.try_resolve_number(FirstChar::Negative)?;
                         __c = Enc::wide(self.next());
                         continue;
                     }
@@ -3505,12 +3523,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             0x6E | 0x4E | 0x69 | 0x49 /* 'n' 'N' 'i' 'I' */ => {
                                 ctx.append_source(Enc::ch(b'.'), self.pos)?;
                                 self.inc(1);
-                                ctx.try_resolve_number(self, FirstChar::Dot)?;
+                                ctx.try_resolve_number(FirstChar::Dot)?;
                                 __c = Enc::wide(self.next());
                                 continue;
                             }
                             _ => {
-                                ctx.try_resolve_number(self, FirstChar::Other)?;
+                                ctx.try_resolve_number(FirstChar::Other)?;
                                 __c = Enc::wide(self.next());
                                 continue;
                             }
@@ -3742,7 +3760,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         0x2D /* '-' */ => {
                             ctx.append_source(Enc::ch(b'-'), self.pos)?;
                             self.inc(1);
-                            ctx.try_resolve_number(self, FirstChar::Negative)?;
+                            ctx.try_resolve_number(FirstChar::Negative)?;
                             __c = Enc::wide(self.next());
                             continue;
                         }
@@ -3750,13 +3768,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         0x2B /* '+' */ => {
                             ctx.append_source(Enc::ch(b'+'), self.pos)?;
                             self.inc(1);
-                            ctx.try_resolve_number(self, FirstChar::Positive)?;
+                            ctx.try_resolve_number(FirstChar::Positive)?;
                             __c = Enc::wide(self.next());
                             continue;
                         }
 
                         0x30..=0x39 /* '0'..'9' */ => {
-                            ctx.try_resolve_number(self, FirstChar::Other)?;
+                            ctx.try_resolve_number(FirstChar::Other)?;
                             __c = Enc::wide(self.next());
                             continue;
                         }
@@ -3766,12 +3784,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                                 0x6E | 0x4E | 0x69 | 0x49 /* 'n' 'N' 'i' 'I' */ => {
                                     ctx.append_source(Enc::ch(b'.'), self.pos)?;
                                     self.inc(1);
-                                    ctx.try_resolve_number(self, FirstChar::Dot)?;
+                                    ctx.try_resolve_number(FirstChar::Dot)?;
                                     __c = Enc::wide(self.next());
                                     continue;
                                 }
                                 _ => {
-                                    ctx.try_resolve_number(self, FirstChar::Other)?;
+                                    ctx.try_resolve_number(FirstChar::Other)?;
                                     __c = Enc::wide(self.next());
                                     continue;
                                 }

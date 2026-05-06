@@ -507,17 +507,13 @@ impl Map {
         Map { symbols_for_source: NestedList::move_from_list(v) }
     }
 
-    // TODO(b2-ast-round): `from_borrowed_slice_dangerous` returns ManuallyDrop and the
-    // Zig original aliases the caller's stack `list` — unsound in Rust without an
-    // explicit owner. Revisit once the single caller (printer one-shot) is ported.
-    #[cfg(any())]
+    // PORT NOTE: Zig aliased the caller's stack `[1]List` slot directly; that's
+    // unsound in Rust (would dangle on return). Take ownership of `list` and
+    // box it into a one-element NestedList instead.
+    // PERF(port): one extra allocation vs Zig — profile in Phase B (single
+    // caller is the printer one-shot, cold).
     pub fn init_with_one_list(list: List) -> Map {
-        let baby_list = unsafe {
-            core::mem::ManuallyDrop::into_inner(
-                BabyList::<List>::from_borrowed_slice_dangerous(core::slice::from_ref(&list)),
-            )
-        };
-        Self::init_list(baby_list)
+        Self::init_list(NestedList::move_from_list(vec![list]))
     }
 
     pub fn init_list(list: NestedList) -> Map {

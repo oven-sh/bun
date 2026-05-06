@@ -63,26 +63,22 @@ impl Default for Scope {
 pub type NestedScopeMap = ArrayHashMap<u32, BabyList<NonNull<Scope>>>;
 
 impl Scope {
-    // TODO(b2-blocked): bun_collections::string_hash_map prehashed adapter API
-    // (`hash`/`Prehashed`/`get_adapted`/`get_or_put_context_adapted`). The parser's
-    // hot path computes the wyhash once and reuses it for lookup+insert; until the
-    // adapter surface lands in bun_collections, callers can use `members.get(name)`
-    // / `members.entry(name)` directly (re-hashes per call).
-    #[cfg(any())]
+    // PERF(port): the parser's hot path computes the wyhash once and reuses it
+    // for lookup+insert; `StringHashMap`'s current `std::HashMap` backing
+    // ignores the precomputed hash (see `get_adapted` doc), so the rehash
+    // avoidance is lost until that map moves onto a wyhash-backed table.
     pub fn get_member_hash(name: &[u8]) -> u64 {
         bun_collections::string_hash_map::hash(name)
     }
-    #[cfg(any())]
     pub fn get_member_with_hash(&self, name: &[u8], hash_value: u64) -> Option<Member> {
         let hashed = bun_collections::string_hash_map::Prehashed { value: hash_value, input: name };
-        self.members.get_adapted(name, hashed).copied()
+        self.members.get_adapted(name, &hashed).copied()
     }
-    #[cfg(any())]
     pub fn get_or_put_member_with_hash(
         &mut self,
         name: &[u8],
         hash_value: u64,
-    ) -> bun_collections::string_hash_map::GetOrPutResult<'_, Member> {
+    ) -> bun_collections::array_hash_map::StringHashMapGetOrPut<'_, Member> {
         let hashed = bun_collections::string_hash_map::Prehashed { value: hash_value, input: name };
         self.members.get_or_put_context_adapted(name, hashed)
     }
@@ -208,7 +204,7 @@ impl Scope {
 // Do not make this a packed struct
 // Two hours of debugging time lost to that.
 // It causes a crash due to undefined memory
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct Member {
     pub ref_: Ref,
     pub loc: logger::Loc,

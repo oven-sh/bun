@@ -1111,43 +1111,56 @@ impl Data {
         }
     }
 
-    #[allow(unused_variables)]
     pub fn write_format<const ENABLE_ANSI_COLORS: bool>(
         &self,
         to: &mut impl fmt::Write,
         kind: Kind,
         redact_sensitive_information: bool,
     ) -> fmt::Result {
-        // TODO(b2-blocked): bun_core::fmt::fmt_javascript
-        // TODO(b2-blocked): bun_core::output::color_map
-        // TODO(b2-blocked): bun_core::Output::pretty_fmt (runtime fn taking fmt::Arguments —
-        //                   only `pretty_fmt!` macro on string-literals exists today)
-        #[cfg(any())]
-        {
         if self.text.is_empty() {
             return Ok(());
         }
 
-        // TODO(port): `Output.color_map.get("...")` is a comptime lookup into a
-        // ComptimeStringMap of ANSI escape strings. Model as associated consts.
+        // Local wrapper around `bun_core::pretty_fmt!` so the const-generic
+        // `ENABLE_ANSI_COLORS` selects the right comptime template at each call
+        // site (the macro pattern-matches a literal `true`/`false` token).
+        // PERF(port): was comptime bool dispatch — profile in Phase B.
+        macro_rules! pretty_write {
+            ($fmt:literal $(, $arg:expr)* $(,)?) => {
+                if ENABLE_ANSI_COLORS {
+                    write!(to, bun_core::pretty_fmt!($fmt, true) $(, $arg)*)
+                } else {
+                    write!(to, bun_core::pretty_fmt!($fmt, false) $(, $arg)*)
+                }
+            };
+        }
+
+        // Zig: `comptime Output.color_map.get("...")` — inline the ANSI
+        // sequences as `const` so the `else` arm can concat at compile time.
+        // Kept in lockstep with `bun_core::output::COLOR_MAP`.
+        const B: &str = "\x1b[1m"; // bold
+        const D: &str = "\x1b[2m"; // dim
+        const RED: &str = "\x1b[31m";
+        const BLUE: &str = "\x1b[34m";
+
         let message_color: &'static str = match kind {
-            Kind::Err => Output::color_map::B,
-            Kind::Note => Output::color_map::BLUE,
-            _ => const_format::concatcp!(Output::color_map::D, Output::color_map::B),
+            Kind::Err => B,
+            Kind::Note => BLUE,
+            _ => const_format::concatcp!(D, B),
         };
 
         let color_name: &'static str = match kind {
-            Kind::Err => Output::color_map::RED,
-            Kind::Note => Output::color_map::BLUE,
-            _ => Output::color_map::D,
+            Kind::Err => RED,
+            Kind::Note => BLUE,
+            _ => D,
         };
 
         if let Some(location) = &self.location {
             if let Some(line_text_) = location.line_text {
                 let line_text_right_trimmed =
-                    bun_str::strings::trim_right(line_text_, b" \r\n\t");
+                    bun_string::strings::trim_right(line_text_, b" \r\n\t");
                 let line_text =
-                    bun_str::strings::trim_left(line_text_right_trimmed, b"\n\r");
+                    bun_string::strings::trim_left(line_text_right_trimmed, b"\n\r");
                 if location.column > 0 && !line_text.is_empty() {
                     let mut line_offset_for_second_line: usize =
                         usize::try_from(location.column - 1).unwrap();
@@ -1155,26 +1168,12 @@ impl Data {
                     if location.line > -1 {
                         let bold = matches!(kind, Kind::Err | Kind::Warn);
                         // bold the line number for error but dim for the attached note
-                        if bold {
-                            write!(
-                                to,
-                                "{}",
-                                Output::pretty_fmt::<ENABLE_ANSI_COLORS>(format_args!(
-                                    "<b>{} | <r>",
-                                    location.line
-                                ))
-                            )?;
-                        } else {
-                            write!(
-                                to,
-                                "{}",
-                                Output::pretty_fmt::<ENABLE_ANSI_COLORS>(format_args!(
-                                    "<d>{} | <r>",
-                                    location.line
-                                ))
-                            )?;
-                        }
                         // PERF(port): was comptime bool dispatch on `bold` — profile in Phase B
+                        if bold {
+                            pretty_write!("<b>{} | <r>", location.line)?;
+                        } else {
+                            pretty_write!("<d>{} | <r>", location.line)?;
+                        }
 
                         line_offset_for_second_line += fmt_count(format_args!("{} | ", location.line));
                     }
@@ -1184,9 +1183,10 @@ impl Data {
                         "{}\n",
                         bun_core::fmt::fmt_javascript(
                             line_text,
-                            bun_core::fmt::FmtJavaScriptOpts {
+                            bun_core::fmt::HighlighterOptions {
                                 enable_colors: ENABLE_ANSI_COLORS,
                                 redact_sensitive_information,
+                                ..Default::default()
                             },
                         )
                     )?;
@@ -1196,7 +1196,7 @@ impl Data {
                         to.write_str(message_color)?;
                         to.write_str(color_name)?;
                         // always bold the ^
-                        to.write_str(Output::color_map::B)?;
+                        to.write_str(B)?;
 
                         to.write_char('^')?;
 
@@ -1214,24 +1214,13 @@ impl Data {
 
         write!(to, "{}", bstr::BStr::new(kind.string()))?;
 
-        write!(
-            to,
-            "{}",
-            Output::pretty_fmt::<ENABLE_ANSI_COLORS>(format_args!("<r><d>: <r>"))
-        )?;
+        pretty_write!("<r><d>: <r>")?;
 
         if ENABLE_ANSI_COLORS {
             to.write_str(message_color)?;
         }
 
-        write!(
-            to,
-            "{}",
-            Output::pretty_fmt::<ENABLE_ANSI_COLORS>(format_args!(
-                "{}<r>",
-                bstr::BStr::new(self.text)
-            ))
-        )?;
+        pretty_write!("{}<r>", bstr::BStr::new(&*self.text))?;
 
         if let Some(location) = &self.location {
             if !location.file.is_empty() {
@@ -1242,33 +1231,16 @@ impl Data {
                     (kind.string().len() + ": ".len()) - "at ".len(),
                 )?;
 
-                write!(
-                    to,
-                    "{}",
-                    Output::pretty_fmt::<ENABLE_ANSI_COLORS>(format_args!(
-                        "<d>at <r><cyan>{}<r>",
-                        bstr::BStr::new(location.file)
-                    ))
-                )?;
+                pretty_write!("<d>at <r><cyan>{}<r>", bstr::BStr::new(location.file))?;
 
                 if location.line > 0 && location.column > -1 {
-                    write!(
-                        to,
-                        "{}",
-                        Output::pretty_fmt::<ENABLE_ANSI_COLORS>(format_args!(
-                            "<d>:<r><yellow>{}<r><d>:<r><yellow>{}<r>",
-                            location.line, location.column
-                        ))
+                    pretty_write!(
+                        "<d>:<r><yellow>{}<r><d>:<r><yellow>{}<r>",
+                        location.line,
+                        location.column,
                     )?;
                 } else if location.line > -1 {
-                    write!(
-                        to,
-                        "{}",
-                        Output::pretty_fmt::<ENABLE_ANSI_COLORS>(format_args!(
-                            "<d>:<r><yellow>{}<r>",
-                            location.line
-                        ))
-                    )?;
+                    pretty_write!("<d>:<r><yellow>{}<r>", location.line)?;
                 }
 
                 if cfg!(debug_assertions) {
@@ -1277,28 +1249,21 @@ impl Data {
                     // i.e. comptime reflection on the writer's type name to detect
                     // a real file writer (vs Bun.inspect). No Rust equivalent;
                     // Phase B should plumb an explicit flag.
-                    if false && Output::enable_ansi_colors_stderr() {
-                        write!(
-                            to,
-                            "{}",
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>(format_args!(
-                                " <d>byte={}<r>",
-                                location.offset
-                            ))
-                        )?;
+                    if false
+                        && Output::ENABLE_ANSI_COLORS_STDERR
+                            .load(core::sync::atomic::Ordering::Relaxed)
+                    {
+                        pretty_write!(" <d>byte={}<r>", location.offset)?;
                     }
                 }
             }
         }
 
         Ok(())
-        } // end #[cfg(any())]
-        todo!("Data::write_format — gated until Output/fmt deps land")
     }
 }
 
 // Helper: Zig `to.splatByteAll(b, n)`
-#[allow(dead_code)] // TODO(b1): only caller (Data::write_format) is gated
 fn write_n_bytes(to: &mut impl fmt::Write, b: u8, n: usize) -> fmt::Result {
     for _ in 0..n {
         to.write_char(b as char)?;
@@ -1307,7 +1272,6 @@ fn write_n_bytes(to: &mut impl fmt::Write, b: u8, n: usize) -> fmt::Result {
 }
 
 // Helper: Zig `std.fmt.count(fmt, args)` — count rendered bytes without allocating.
-#[allow(dead_code)] // TODO(b1): only caller (Data::write_format) is gated
 fn fmt_count(args: fmt::Arguments<'_>) -> usize {
     struct Counter(usize);
     impl fmt::Write for Counter {

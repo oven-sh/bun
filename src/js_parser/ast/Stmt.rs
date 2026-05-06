@@ -50,8 +50,6 @@ struct Serializable {
 }
 
 impl Stmt {
-    // TODO(b2-ast-round-C): Serializable + JsonWriter::write surface.
-    #[cfg(any())]
     pub fn json_stringify<W>(&self, writer: &mut W) -> Result<(), bun_core::Error>
     where
         W: crate::ast::JsonWriter,

@@ -24,7 +24,7 @@ use core::sync::atomic::AtomicU32;
 #[cfg(any())] #[path = "h3_client/ClientSession.rs"]   pub mod ClientSession;
 #[cfg(any())] #[path = "h3_client/ClientContext.rs"]   pub mod ClientContext;
 #[cfg(any())] #[path = "h3_client/PendingConnect.rs"]  pub mod PendingConnect;
-#[cfg(any())] #[path = "h3_client/AltSvc.rs"]          pub mod AltSvc;
+#[path = "h3_client/AltSvc.rs"]                        pub mod AltSvc;
 #[cfg(any())] #[path = "h3_client/callbacks.rs"]       pub mod callbacks;
 #[cfg(any())] #[path = "h3_client/encode.rs"]          pub mod encode;
 

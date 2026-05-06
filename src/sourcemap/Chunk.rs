@@ -1,6 +1,6 @@
 use bun_str::{strings, MutableString};
 use bun_logger::{Loc, Source};
-use bun_alloc::AllocError;
+use bun_paths::{fs::FileSystem, PathBuffer};
 
 use crate::{
     append_mapping_to_buffer, internal_source_map, line_offset_table, InternalSourceMap,
@@ -45,16 +45,12 @@ impl Chunk {
     // `pub fn deinit` dropped — body only freed `self.buffer`, which `Drop` on
     // `MutableString` handles automatically.
 
-    // TODO(b2-blocked): bun_js_printer::quote_for_json — dep cycle
-    // (bun_js_printer → bun_sourcemap). Un-gate once quote_for_json moves to
-    // bun_string (lib_draft_b1.rs:584) or a lower tier.
-    #[cfg(any())]
     pub fn print_source_map_contents<const ASCII_ONLY: bool>(
         &self,
         source: &Source,
         mutable: &mut MutableString,
         include_sources_contents: bool,
-    ) -> Result<(), AllocError> {
+    ) -> Result<(), bun_core::Error> {
         print_source_map_contents_json::<ASCII_ONLY>(
             source,
             mutable,
@@ -63,8 +59,6 @@ impl Chunk {
         )
     }
 
-    // TODO(b2-blocked): bun_js_printer::quote_for_json — dep cycle (see above).
-    #[cfg(any())]
     /// `chunk.buffer` holds an InternalSourceMap blob (the runtime path). Re-encode
     /// to a standard VLQ "mappings" string before emitting JSON.
     pub fn print_source_map_contents_from_internal<const ASCII_ONLY: bool>(
@@ -72,7 +66,7 @@ impl Chunk {
         source: &Source,
         mutable: &mut MutableString,
         include_sources_contents: bool,
-    ) -> Result<(), AllocError> {
+    ) -> Result<(), bun_core::Error> {
         let ism = InternalSourceMap {
             data: self.buffer.list.as_ptr(),
         };
@@ -87,25 +81,20 @@ impl Chunk {
     }
 }
 
-// TODO(b2-blocked): bun_js_printer::quote_for_json — dep cycle
-// (bun_js_printer depends on bun_sourcemap). bun_string::quote_for_json is
-// itself gated (string/lib_draft_b1.rs). FileSystem.top_level_dir is now
-// available via bun_sys::top_level_dir(); swap when un-gating.
-#[cfg(any())]
 fn print_source_map_contents_json<const ASCII_ONLY: bool>(
     source: &Source,
     mutable: &mut MutableString,
     include_sources_contents: bool,
     mappings: &[u8],
-) -> Result<(), AllocError> {
+) -> Result<(), bun_core::Error> {
     let mut filename_buf = PathBuffer::uninit();
-    let mut filename: &[u8] = source.path.text.as_ref();
-    let top_level_dir: &[u8] = FileSystem::instance().top_level_dir.as_ref();
-    if filename.starts_with(top_level_dir) {
+    let mut filename: &[u8] = source.path.text;
+    let top_level_dir: &[u8] = FileSystem::instance().top_level_dir();
+    if strings::has_prefix(filename, top_level_dir) {
         filename = &filename[top_level_dir.len() - 1..];
     } else if !filename.is_empty() && filename[0] != b'/' {
         filename_buf[0] = b'/';
-        filename_buf[1..1 + filename.len()].copy_from_slice(filename);
+        filename_buf[1..][..filename.len()].copy_from_slice(filename);
         filename = &filename_buf[0..filename.len() + 1];
     }
 
@@ -113,7 +102,7 @@ fn print_source_map_contents_json<const ASCII_ONLY: bool>(
         .grow_if_needed(
             filename.len()
                 + 2
-                + (source.contents.len() * (include_sources_contents as usize))
+                + (source.contents().len() * (include_sources_contents as usize))
                 + mappings.len()
                 + 32
                 + 39
@@ -124,15 +113,15 @@ fn print_source_map_contents_json<const ASCII_ONLY: bool>(
         .expect("unreachable");
     mutable.append(b"{\n  \"version\":3,\n  \"sources\": [")?;
 
-    js_printer::quote_for_json::<ASCII_ONLY>(filename, mutable)?;
+    bun_str::quote_for_json(filename, mutable, ASCII_ONLY)?;
 
     if include_sources_contents {
         mutable.append(b"],\n  \"sourcesContent\": [")?;
-        js_printer::quote_for_json::<ASCII_ONLY>(source.contents.as_ref(), mutable)?;
+        bun_str::quote_for_json(source.contents(), mutable, ASCII_ONLY)?;
     }
 
     mutable.append(b"],\n  \"mappings\": ")?;
-    js_printer::quote_for_json::<ASCII_ONLY>(mappings, mutable)?;
+    bun_str::quote_for_json(mappings, mutable, ASCII_ONLY)?;
     mutable.append(b", \"names\": []\n}")?;
     Ok(())
 }

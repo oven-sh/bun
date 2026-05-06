@@ -19,8 +19,7 @@ libc.workspace = true
 bitflags.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
-# TODO(b2-blocked): bun_bundler::options::OutputFile — re-add once bun_bundler compiles.
-# bun_bundler.workspace = true
+bun_bundler.workspace = true
 bun_collections.workspace = true
 bun_dotenv.workspace = true
 bun_exe_format.workspace = true

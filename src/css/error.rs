@@ -74,38 +74,24 @@ impl<T: fmt::Display> Err<T> {
         log: &mut logger::Log,
         source: &logger::Source,
     ) -> Result<(), bun_core::Error> {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_logger::Data — `text` field is currently
-            // `&'static [u8]`; logger.rs already notes Phase B must retype it
-            // to `Box<[u8]>`. Un-gate once that lands (cannot Box::leak per
-            // PORTING.md §Forbidden).
-            use std::io::Write as _;
-            let mut text: Vec<u8> = Vec::new();
-            write!(&mut text, "{}", self.kind).map_err(|_| bun_core::err!("WriteFailed"))?;
+        use std::io::Write as _;
+        let mut text: Vec<u8> = Vec::new();
+        write!(&mut text, "{}", self.kind).map_err(|_| bun_core::err!("WriteFailed"))?;
 
-            log.add_msg(logger::Msg {
-                kind: logger::Kind::Err,
-                data: logger::Data {
-                    location: match &self.loc {
-                        Some(loc) => Some(loc.to_location(source)?),
-                        None => None,
-                    },
-                    text: text.into_boxed_slice(),
-                    ..Default::default()
+        log.add_msg(logger::Msg {
+            kind: logger::Kind::Err,
+            data: logger::Data {
+                location: match &self.loc {
+                    Some(loc) => Some(loc.to_location(source)?),
+                    None => None,
                 },
-                ..Default::default()
-            })?;
+                text: text.into(),
+            },
+            ..Default::default()
+        })?;
 
-            log.errors += 1;
-            Ok(())
-        }
-        #[cfg(not(any()))]
-        {
-            let _ = (log, source);
-            // TODO(b2-blocked): bun_logger::Data
-            Ok(())
-        }
+        log.errors += 1;
+        Ok(())
     }
 }
 

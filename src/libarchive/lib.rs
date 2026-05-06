@@ -832,11 +832,9 @@ impl Archiver {
                                 };
                                 match bun_sys::symlinkat(link_target, dir_fd, path_z) {
                                     Ok(()) => {}
-                                    // PORT NOTE: Zig matched error.AccessDenied / error.FileNotFound.
+                                    // PORT NOTE: Zig matched error.EPERM / error.ENOENT (errnoToZigErr maps 1:1).
                                     Err(err) => match err.get_errno() {
-                                        bun_sys::E::EACCES
-                                        | bun_sys::E::EPERM
-                                        | bun_sys::E::ENOENT => {
+                                        bun_sys::E::EPERM | bun_sys::E::ENOENT => {
                                             let dirname = bun_paths::dirname_simple(path_slice);
                                             if dirname.is_empty() {
                                                 return Err(err.into());

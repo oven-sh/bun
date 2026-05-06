@@ -4,12 +4,13 @@ use core::fmt;
 use bstr::BStr;
 
 use bun_alloc::AllocError;
-use bun_core::fmt::{fmt_path, PathFormatOptions, PathSep};
+use bun_core::fmt::{fmt_path_u8 as fmt_path, PathFormatOptions, PathSep};
 use bun_semver as semver;
 use bun_semver::String;
-// TODO(port): String::Buf is a nested type in Zig; map to the Rust equivalent in bun_semver
-use bun_semver::StringBuf;
-use bun_str::strings;
+// PORT NOTE: Zig `String.Buf` → `bun_semver::string::Buf<'_>`.
+use bun_semver::string::Buf as StringBuf;
+use bun_semver::version::VersionInt;
+use bun_string::strings;
 
 use crate::dependency::{self, Dependency};
 use crate::repository::Repository;
@@ -20,13 +21,13 @@ pub type OldV2Resolution = ResolutionType<u32>;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct ResolutionType<SemverInt: Copy> {
+pub struct ResolutionType<SemverInt: VersionInt> {
     pub tag: Tag,
     _padding: [u8; 7],
     pub value: Value<SemverInt>,
 }
 
-impl<SemverInt: Copy> Default for ResolutionType<SemverInt> {
+impl<SemverInt: VersionInt> Default for ResolutionType<SemverInt> {
     fn default() -> Self {
         Self {
             tag: Tag::Uninitialized,
@@ -38,7 +39,7 @@ impl<SemverInt: Copy> Default for ResolutionType<SemverInt> {
 
 /// Rust-side equivalent of `bun.meta.Tagged(Value, Tag)` — a tagged view of `Value`
 /// used by `ResolutionType::init` / `Value::init` to construct a zero-padded union.
-pub enum TaggedValue<SemverInt: Copy> {
+pub enum TaggedValue<SemverInt: VersionInt> {
     Uninitialized,
     Root,
     Npm(VersionedURLType<SemverInt>),
@@ -52,7 +53,7 @@ pub enum TaggedValue<SemverInt: Copy> {
     SingleFileModule(String),
 }
 
-impl<SemverInt: Copy> TaggedValue<SemverInt> {
+impl<SemverInt: VersionInt> TaggedValue<SemverInt> {
     #[inline]
     fn tag(&self) -> Tag {
         match self {
@@ -71,7 +72,7 @@ impl<SemverInt: Copy> TaggedValue<SemverInt> {
     }
 }
 
-impl<SemverInt: Copy> ResolutionType<SemverInt> {
+impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
     /// Use like Resolution.init(.{ .npm = VersionedURL{ ... } })
     #[inline]
     pub fn init(value: TaggedValue<SemverInt>) -> Self {
@@ -98,17 +99,17 @@ impl<SemverInt: Copy> ResolutionType<SemverInt> {
             return Ok(Self::init(TaggedValue::Root));
         }
 
-        if let Some(link) = strings::without_prefix_if_possible(res_str, b"link:") {
+        if let Some(link) = strings::without_prefix_if_possible_comptime(res_str, b"link:") {
             return Ok(Self::init(TaggedValue::Symlink(string_buf.append(link)?)));
         }
 
-        if let Some(workspace) = strings::without_prefix_if_possible(res_str, b"workspace:") {
+        if let Some(workspace) = strings::without_prefix_if_possible_comptime(res_str, b"workspace:") {
             return Ok(Self::init(TaggedValue::Workspace(
                 string_buf.append(workspace)?,
             )));
         }
 
-        if let Some(folder) = strings::without_prefix_if_possible(res_str, b"file:") {
+        if let Some(folder) = strings::without_prefix_if_possible_comptime(res_str, b"file:") {
             return Ok(Self::init(TaggedValue::Folder(string_buf.append(folder)?)));
         }
 
@@ -132,8 +133,9 @@ impl<SemverInt: Copy> ResolutionType<SemverInt> {
             }
             dependency::VersionTag::Npm => {
                 let version_literal = string_buf.append(res_str)?;
-                let parsed =
-                    semver::Version::parse(version_literal.sliced(string_buf.bytes.as_slice()));
+                let parsed = semver::VersionType::<SemverInt>::parse(
+                    version_literal.sliced(string_buf.bytes.as_slice()),
+                );
 
                 if !parsed.valid {
                     return Err(FromTextLockfileError::UnexpectedResolution);
@@ -185,21 +187,21 @@ impl<SemverInt: Copy> ResolutionType<SemverInt> {
         string_buf: &mut StringBuf,
     ) -> Result<Resolution, FromPnpmLockfileError> {
         if let Some(user_repo_tar_committish) =
-            strings::without_prefix_if_possible(res_str, b"https://codeload.github.com/")
+            strings::without_prefix_if_possible_comptime(res_str, b"https://codeload.github.com/")
         {
-            let Some(user_end) = strings::index_of_char(user_repo_tar_committish, b'/') else {
+            let Some(user_end) = strings::index_of_char_usize(user_repo_tar_committish, b'/') else {
                 return Err(FromPnpmLockfileError::InvalidPnpmLockfile);
             };
             let user = &user_repo_tar_committish[..user_end];
             let repo_tar_committish = &user_repo_tar_committish[user_end + 1..];
 
-            let Some(repo_end) = strings::index_of_char(repo_tar_committish, b'/') else {
+            let Some(repo_end) = strings::index_of_char_usize(repo_tar_committish, b'/') else {
                 return Err(FromPnpmLockfileError::InvalidPnpmLockfile);
             };
             let repo = &repo_tar_committish[..repo_end];
             let tar_committish = &repo_tar_committish[repo_end + 1..];
 
-            let Some(tar_end) = strings::index_of_char(tar_committish, b'/') else {
+            let Some(tar_end) = strings::index_of_char_usize(tar_committish, b'/') else {
                 return Err(FromPnpmLockfileError::InvalidPnpmLockfile);
             };
             let committish = &tar_committish[tar_end + 1..];
@@ -212,7 +214,7 @@ impl<SemverInt: Copy> ResolutionType<SemverInt> {
             })));
         }
 
-        if let Some(path) = strings::without_prefix_if_possible(res_str, b"file:") {
+        if let Some(path) = strings::without_prefix_if_possible_comptime(res_str, b"file:") {
             if res_str.ends_with(b".tgz") {
                 return Ok(Resolution::init(TaggedValue::LocalTarball(
                     string_buf.append(path)?,
@@ -242,8 +244,11 @@ impl<SemverInt: Copy> ResolutionType<SemverInt> {
             }
             dependency::VersionTag::Npm => {
                 let version_literal = string_buf.append(res_str)?;
-                let parsed =
-                    semver::Version::parse(version_literal.sliced(string_buf.bytes.as_slice()));
+                // PORT NOTE: this fn returns `Resolution` (= `ResolutionType<u64>`),
+                // not `Self`, so parse at `u64` regardless of the impl's SemverInt.
+                let parsed = semver::Version::parse(
+                    version_literal.sliced(string_buf.bytes.as_slice()),
+                );
 
                 if !parsed.valid {
                     return Err(FromPnpmLockfileError::InvalidPnpmLockfile);
@@ -345,22 +350,22 @@ impl<SemverInt: Copy> ResolutionType<SemverInt> {
             match self.tag {
                 Tag::Npm => Value::init(TaggedValue::Npm(self.value.npm.clone(buf, builder))),
                 Tag::LocalTarball => Value::init(TaggedValue::LocalTarball(
-                    builder.append_string(self.value.local_tarball.slice(buf)),
+                    builder.append::<String>(self.value.local_tarball.slice(buf)),
                 )),
                 Tag::Folder => Value::init(TaggedValue::Folder(
-                    builder.append_string(self.value.folder.slice(buf)),
+                    builder.append::<String>(self.value.folder.slice(buf)),
                 )),
                 Tag::RemoteTarball => Value::init(TaggedValue::RemoteTarball(
-                    builder.append_string(self.value.remote_tarball.slice(buf)),
+                    builder.append::<String>(self.value.remote_tarball.slice(buf)),
                 )),
                 Tag::Workspace => Value::init(TaggedValue::Workspace(
-                    builder.append_string(self.value.workspace.slice(buf)),
+                    builder.append::<String>(self.value.workspace.slice(buf)),
                 )),
                 Tag::Symlink => Value::init(TaggedValue::Symlink(
-                    builder.append_string(self.value.symlink.slice(buf)),
+                    builder.append::<String>(self.value.symlink.slice(buf)),
                 )),
                 Tag::SingleFileModule => Value::init(TaggedValue::SingleFileModule(
-                    builder.append_string(self.value.single_file_module.slice(buf)),
+                    builder.append::<String>(self.value.single_file_module.slice(buf)),
                 )),
                 Tag::Git => Value::init(TaggedValue::Git(self.value.git.clone(buf, builder))),
                 Tag::Github => {
@@ -449,32 +454,32 @@ impl<SemverInt: Copy> ResolutionType<SemverInt> {
                 Tag::Root => true,
                 Tag::Npm => self.value.npm.eql(&rhs.value.npm),
                 Tag::LocalTarball => self.value.local_tarball.eql(
-                    &rhs.value.local_tarball,
+                    rhs.value.local_tarball,
                     lhs_string_buf,
                     rhs_string_buf,
                 ),
                 Tag::Folder => {
                     self.value
                         .folder
-                        .eql(&rhs.value.folder, lhs_string_buf, rhs_string_buf)
+                        .eql(rhs.value.folder, lhs_string_buf, rhs_string_buf)
                 }
                 Tag::RemoteTarball => self.value.remote_tarball.eql(
-                    &rhs.value.remote_tarball,
+                    rhs.value.remote_tarball,
                     lhs_string_buf,
                     rhs_string_buf,
                 ),
                 Tag::Workspace => {
                     self.value
                         .workspace
-                        .eql(&rhs.value.workspace, lhs_string_buf, rhs_string_buf)
+                        .eql(rhs.value.workspace, lhs_string_buf, rhs_string_buf)
                 }
                 Tag::Symlink => {
                     self.value
                         .symlink
-                        .eql(&rhs.value.symlink, lhs_string_buf, rhs_string_buf)
+                        .eql(rhs.value.symlink, lhs_string_buf, rhs_string_buf)
                 }
                 Tag::SingleFileModule => self.value.single_file_module.eql(
-                    &rhs.value.single_file_module,
+                    rhs.value.single_file_module,
                     lhs_string_buf,
                     rhs_string_buf,
                 ),
@@ -493,20 +498,18 @@ impl<SemverInt: Copy> ResolutionType<SemverInt> {
     }
 }
 
-// TODO(port): this trait stands in for the duck-typed `Builder` Zig comptime param.
-// Phase B should unify with the real string-builder trait used by lockfile cloning.
-pub trait StringBuilderLike {
-    fn count(&mut self, s: &[u8]);
-    fn append_string(&mut self, s: &[u8]) -> String;
-}
+// PORT NOTE: the duck-typed `Builder` Zig comptime param maps to the
+// `bun_semver::StringBuilder` trait (`count` + `append<T>`); local alias kept
+// so dependents that named `resolution::StringBuilderLike` still resolve.
+pub use bun_semver::StringBuilder as StringBuilderLike;
 
-pub struct StorePathFormatter<'a, SemverInt: Copy> {
+pub struct StorePathFormatter<'a, SemverInt: VersionInt> {
     res: &'a ResolutionType<SemverInt>,
     string_buf: &'a [u8],
     // opts: String.StorePathFormatter.Options,
 }
 
-impl<'a, SemverInt: Copy> fmt::Display for StorePathFormatter<'a, SemverInt> {
+impl<'a, SemverInt: VersionInt> fmt::Display for StorePathFormatter<'a, SemverInt> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
         let string_buf = self.string_buf;
         let res = &self.res.value;
@@ -537,13 +540,13 @@ impl<'a, SemverInt: Copy> fmt::Display for StorePathFormatter<'a, SemverInt> {
     }
 }
 
-pub struct URLFormatter<'a, SemverInt: Copy> {
+pub struct URLFormatter<'a, SemverInt: VersionInt> {
     resolution: &'a ResolutionType<SemverInt>,
 
     buf: &'a [u8],
 }
 
-impl<'a, SemverInt: Copy> fmt::Display for URLFormatter<'a, SemverInt> {
+impl<'a, SemverInt: VersionInt> fmt::Display for URLFormatter<'a, SemverInt> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
         let buf = self.buf;
         let value = &self.resolution.value;
@@ -580,13 +583,13 @@ impl<'a, SemverInt: Copy> fmt::Display for URLFormatter<'a, SemverInt> {
     }
 }
 
-pub struct Formatter<'a, SemverInt: Copy> {
+pub struct Formatter<'a, SemverInt: VersionInt> {
     resolution: &'a ResolutionType<SemverInt>,
     buf: &'a [u8],
     path_sep: PathSep,
 }
 
-impl<'a, SemverInt: Copy> fmt::Display for Formatter<'a, SemverInt> {
+impl<'a, SemverInt: VersionInt> fmt::Display for Formatter<'a, SemverInt> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
         let buf = self.buf;
         let value = &self.resolution.value;
@@ -648,12 +651,12 @@ impl<'a, SemverInt: Copy> fmt::Display for Formatter<'a, SemverInt> {
     }
 }
 
-pub struct DebugFormatter<'a, SemverInt: Copy> {
+pub struct DebugFormatter<'a, SemverInt: VersionInt> {
     resolution: &'a ResolutionType<SemverInt>,
     buf: &'a [u8],
 }
 
-impl<'a, SemverInt: Copy> fmt::Display for DebugFormatter<'a, SemverInt> {
+impl<'a, SemverInt: VersionInt> fmt::Display for DebugFormatter<'a, SemverInt> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
         writer.write_str("Resolution{ .")?;
         writer.write_str(self.resolution.tag.name().unwrap_or("invalid"))?;
@@ -711,7 +714,7 @@ impl<'a, SemverInt: Copy> fmt::Display for DebugFormatter<'a, SemverInt> {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub union Value<SemverInt: Copy> {
+pub union Value<SemverInt: VersionInt> {
     pub uninitialized: (),
     pub root: (),
 
@@ -737,7 +740,7 @@ pub union Value<SemverInt: Copy> {
     pub single_file_module: String,
 }
 
-impl<SemverInt: Copy> Value<SemverInt> {
+impl<SemverInt: VersionInt> Value<SemverInt> {
     #[inline]
     pub fn zero() -> Self {
         // SAFETY: all-zero is a valid Value — every variant is POD with a valid

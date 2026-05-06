@@ -28,7 +28,8 @@ gated_mod!(pub mod network_task = "NetworkTask.rs";);
 gated_mod!(pub mod tarball_stream = "TarballStream.rs";);
 gated_mod!(pub mod npm = "npm.rs";);
 gated_mod!(pub mod package_manager = "PackageManager.rs";);
-gated_mod!(pub mod package_manifest_map = "PackageManifestMap.rs";);
+#[path = "PackageManifestMap.rs"]
+pub mod package_manifest_map;
 gated_mod!(pub mod package_manager_task = "PackageManagerTask.rs";);
 gated_mod!(pub mod lockfile = "lockfile.rs";);
 gated_mod!(pub mod bin = "bin.rs";);
@@ -36,7 +37,7 @@ gated_mod!(pub mod lifecycle_script_runner = "lifecycle_script_runner.rs";);
 gated_mod!(pub mod package_install = "PackageInstall.rs";);
 gated_mod!(pub mod package_installer = "PackageInstaller.rs";);
 gated_mod!(pub mod repository = "repository.rs";);
-gated_mod!(pub mod resolution = "resolution.rs";);
+pub mod resolution;
 gated_mod!(pub mod isolated_install = "isolated_install.rs";);
 #[path = "PnpmMatcher.rs"]
 pub mod pnpm_matcher;
@@ -44,7 +45,7 @@ pub mod postinstall_optimizer;
 #[path = "ExternalSlice.rs"]
 pub mod external_slice;
 pub mod integrity;
-gated_mod!(pub mod dependency = "dependency.rs";);
+pub mod dependency;
 gated_mod!(pub mod patch_install = "patch_install.rs";);
 #[path = "ConfigVersion.rs"]
 pub mod config_version;
@@ -75,7 +76,21 @@ pub mod network_task { pub struct NetworkTask; }
 pub mod tarball_stream { pub struct TarballStream; }
 #[cfg(not(any()))]
 pub mod npm {
-    pub struct PackageManifest;
+    /// Stub for `npm.PackageManifest` (src/install/npm.zig). Only the fields
+    /// read by `PackageManifestMap` are exposed; full layout lives in the
+    /// gated `npm.rs`.
+    #[derive(Clone, Default)]
+    pub struct PackageManifest {
+        pub pkg: NpmPackage,
+    }
+
+    /// Stub for `npm.PackageManifest.NpmPackage` — minimal fields for
+    /// `PackageManifestMap::by_name_hash_allow_expired`.
+    #[derive(Clone, Default)]
+    pub struct NpmPackage {
+        pub has_extended_manifest: bool,
+        pub public_max_age: u32,
+    }
 
     pub struct Registry;
     impl Registry {
@@ -301,12 +316,50 @@ pub mod npm {
             ) -> Result<Option<PackageManifest>, bun_core::Error> {
                 todo!("B-2: npm::PackageManifest::Serializer::load_by_file")
             }
+            /// Zig: `Serializer.loadByFileID(allocator, scope, cache_dir, file_id)`.
+            pub fn load_by_file_id(
+                _scope: &super::registry::Scope<'_>,
+                _cache_dir: bun_sys::Fd,
+                _file_id: u64,
+            ) -> Result<Option<PackageManifest>, bun_core::Error> {
+                todo!("B-2: npm::PackageManifest::Serializer::load_by_file_id")
+            }
         }
     }
 }
 #[cfg(not(any()))]
 pub mod package_manager {
-    pub struct PackageManager;
+    /// Stub for `PackageManager` (src/install/PackageManager.zig). Only the
+    /// fields read by un-gated modules are exposed; full layout lives in the
+    /// gated `PackageManager.rs`.
+    #[derive(Default)]
+    pub struct PackageManager {
+        pub options: options::Options,
+        pub timestamp_for_manifest_cache_control: u32,
+        pub lockfile: Box<crate::lockfile::Lockfile>,
+        // TODO(port): IdentityContext hasher (key is already a hash)
+        pub known_npm_aliases: bun_collections::HashMap<crate::PackageNameHash, ()>,
+    }
+    impl PackageManager {
+        /// Zig: `PackageManager.getCacheDirectory(this) std.fs.Dir`.
+        pub fn get_cache_directory(&mut self) -> bun_sys::Fd {
+            todo!("B-2: PackageManager::get_cache_directory")
+        }
+    }
+
+    /// Stub for `PackageManager.Options` (src/install/PackageManager/PackageManagerOptions.zig).
+    pub mod options {
+        #[derive(Default)]
+        pub struct Options {
+            pub enable: Enable,
+        }
+        #[derive(Default)]
+        pub struct Enable {
+            pub manifest_cache: bool,
+            pub manifest_cache_control: bool,
+        }
+    }
+
     pub mod security_scanner { pub struct SecurityScanSubprocess; }
 
     /// Port of `PackageManager.Subcommand` (src/install/PackageManager.zig).
@@ -374,12 +427,21 @@ pub mod package_manager {
     }
 }
 #[cfg(not(any()))]
-pub mod package_manifest_map { pub struct PackageManifestMap; }
-#[cfg(not(any()))]
 pub mod package_manager_task { pub struct Task; }
 #[cfg(not(any()))]
 pub mod lockfile {
-    pub struct Lockfile;
+    #[derive(Default)]
+    pub struct Lockfile {
+        pub buffers: Buffers,
+    }
+
+    /// Stub for `Lockfile.Buffers` (src/install/lockfile/Buffers.zig). Only the
+    /// fields read by un-gated modules are exposed.
+    #[derive(Default)]
+    pub struct Buffers {
+        pub string_bytes: Vec<u8>,
+    }
+
     pub struct PatchedDep;
     pub mod bun_lock {}
     pub mod tree { pub type Id = u32; }
@@ -400,7 +462,7 @@ pub mod lockfile {
         /// In Rust the allocator is implicit (global), so this is a value constructor.
         pub fn init_empty() -> Self {
             // TODO(b2): populate fields once Lockfile struct is un-gated.
-            Lockfile
+            Lockfile::default()
         }
 
         /// Zig: `Lockfile.loadFromDir(this, dir, ?*PackageManager, allocator, *Log,
@@ -511,15 +573,70 @@ pub mod lifecycle_script_runner { pub struct LifecycleScriptSubprocess; }
 pub mod package_install { pub struct PackageInstall; }
 #[cfg(not(any()))]
 pub mod repository {
-    #[derive(Default)]
+    use bun_semver::String as SemverString;
+    use core::cmp::Ordering;
+
+    /// Stub for `Repository` (src/install/repository.zig). `#[repr(C)]`+`Copy`
+    /// because `resolution::Value` is a `#[repr(C)] union` that embeds it
+    /// directly (lockfile binary layout).
+    #[repr(C)]
+    #[derive(Clone, Copy, Default)]
     pub struct Repository {
-        pub owner: bun_semver::String,
-        pub repo: bun_semver::String,
-        pub committish: bun_semver::String,
+        pub owner: SemverString,
+        pub repo: SemverString,
+        pub committish: SemverString,
+        pub resolved: SemverString,
+        pub package_name: SemverString,
+    }
+
+    impl Repository {
+        pub fn parse_append_git(
+            _input: &[u8],
+            _string_buf: &mut bun_semver::string::Buf<'_>,
+        ) -> Result<Repository, bun_alloc::AllocError> {
+            todo!("B-2: Repository::parse_append_git — un-gate repository.rs")
+        }
+        pub fn parse_append_github(
+            _input: &[u8],
+            _string_buf: &mut bun_semver::string::Buf<'_>,
+        ) -> Result<Repository, bun_alloc::AllocError> {
+            todo!("B-2: Repository::parse_append_github — un-gate repository.rs")
+        }
+        pub fn order(&self, _rhs: &Self, _lhs_buf: &[u8], _rhs_buf: &[u8]) -> Ordering {
+            todo!("B-2: Repository::order — un-gate repository.rs")
+        }
+        pub fn count<B: bun_semver::StringBuilder>(&self, _buf: &[u8], _builder: &mut B) {
+            todo!("B-2: Repository::count — un-gate repository.rs")
+        }
+        pub fn clone<B: bun_semver::StringBuilder>(&self, _buf: &[u8], _builder: &mut B) -> Self {
+            todo!("B-2: Repository::clone — un-gate repository.rs")
+        }
+        pub fn eql(&self, _rhs: &Self, _lhs_buf: &[u8], _rhs_buf: &[u8]) -> bool {
+            todo!("B-2: Repository::eql — un-gate repository.rs")
+        }
+        pub fn fmt_store_path<'a>(
+            &'a self,
+            _label: &'static str,
+            _buf: &'a [u8],
+        ) -> impl core::fmt::Display + 'a {
+            struct F;
+            impl core::fmt::Display for F {
+                fn fmt(&self, _f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                    todo!("B-2: Repository::fmt_store_path")
+                }
+            }
+            F
+        }
+        pub fn format_as(
+            &self,
+            _label: &'static str,
+            _buf: &[u8],
+            _writer: &mut core::fmt::Formatter<'_>,
+        ) -> core::fmt::Result {
+            todo!("B-2: Repository::format_as — un-gate repository.rs")
+        }
     }
 }
-#[cfg(not(any()))]
-pub mod resolution { pub struct Resolution; }
 #[cfg(not(any()))]
 pub mod isolated_install {
     pub mod store {
@@ -527,139 +644,6 @@ pub mod isolated_install {
         pub type EntryId = u32;
     }
     pub mod file_copier { pub struct FileCopier; }
-}
-#[cfg(not(any()))]
-pub mod dependency {
-    use bun_semver::{SlicedString, String as SemverString};
-
-    #[derive(Default)]
-    pub struct Dependency {
-        pub name_hash: crate::PackageNameHash,
-        pub name: SemverString,
-        pub version: Version,
-        pub behavior: Behavior,
-    }
-
-    impl Dependency {
-        /// Zig: `Dependency.parse(allocator, alias, ?alias_hash, dep, *SlicedString,
-        /// ?*Log, ?*PackageManager) ?Version` (src/install/dependency.zig).
-        /// Allocator dropped per PORTING.md.
-        pub fn parse(
-            _alias: SemverString,
-            _alias_hash: Option<crate::PackageNameHash>,
-            _dependency: &[u8],
-            _sliced: &SlicedString<'_>,
-            _log: Option<&mut bun_logger::Log>,
-            _manager: Option<&mut crate::package_manager::PackageManager>,
-        ) -> Option<Version> {
-            todo!("B-2: Dependency::parse — un-gate dependency.rs")
-        }
-    }
-
-    #[repr(transparent)]
-    #[derive(Clone, Copy, Default)]
-    pub struct Behavior(pub u8);
-
-    /// Port of `Dependency.Version` (struct { tag, literal, value: bare-union }).
-    /// `Value` is exposed as a struct-of-options in the stub so dependents that
-    /// match on `tag` and read the corresponding field still type-check; the
-    /// real ported layout (gated `dependency.rs`) keeps the Zig union.
-    #[derive(Default)]
-    pub struct Version {
-        pub tag: version::Tag,
-        pub literal: SemverString,
-        pub value: Value,
-    }
-
-    /// Stub layout for `Dependency.Version.Value` — see TODO(port) in
-    /// `dependency_jsc.rs` re: collapsing tag+value into a Rust enum.
-    #[derive(Default)]
-    pub struct Value {
-        pub npm: NpmInfo,
-        pub dist_tag: TagInfo,
-        pub tarball: tarball::TarballInfo,
-        pub folder: SemverString,
-        pub symlink: SemverString,
-        pub workspace: SemverString,
-        pub git: crate::repository::Repository,
-        pub github: crate::repository::Repository,
-        pub catalog: SemverString,
-    }
-
-    #[derive(Default)]
-    pub struct NpmInfo {
-        pub name: SemverString,
-        /// Zig: `version: Semver.Query.Group` (src/install/dependency.zig).
-        // TODO(b2): `Group<'a>` borrows the version literal's source buffer. The
-        // stub pins `'static` (default `input: b""`) so dependents type-check;
-        // un-gating `dependency.rs` will thread the real lifetime.
-        pub version: bun_semver::query::Group<'static>,
-        pub is_alias: bool,
-    }
-
-    #[derive(Default)]
-    pub struct TagInfo {
-        pub name: SemverString,
-        pub tag: SemverString,
-    }
-
-    /// `Dependency.Version.Tag` enum (src/install/dependency.zig). Exposed at
-    /// `dependency::version::Tag` to mirror Zig's nested-namespace path.
-    pub mod version {
-        #[repr(u8)]
-        #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, strum::IntoStaticStr)]
-        #[strum(serialize_all = "snake_case")]
-        pub enum Tag {
-            #[default]
-            Uninitialized = 0,
-            Npm = 1,
-            DistTag = 2,
-            Tarball = 3,
-            Folder = 4,
-            Symlink = 5,
-            Workspace = 6,
-            Git = 7,
-            Github = 8,
-            Catalog = 9,
-        }
-
-        impl Tag {
-            #[inline]
-            pub fn is_npm(self) -> bool { (self as u8) < 3 }
-
-            pub fn cmp(self, other: Tag) -> core::cmp::Ordering {
-                (self as u8).cmp(&(other as u8))
-            }
-
-            pub fn infer(_dependency: &[u8]) -> Tag {
-                // empty string means `latest`
-                if _dependency.is_empty() { return Tag::DistTag; }
-                todo!("B-2: dependency::version::Tag::infer — un-gate dependency.rs")
-            }
-        }
-    }
-    pub use version::Tag as VersionTag;
-
-    /// `URI` union + `TarballInfo` (src/install/dependency.zig). Exposed at
-    /// `dependency::tarball` so `dependency::tarball::Uri::{Local,Remote}`
-    /// resolves for `dependency_jsc.rs`.
-    pub mod tarball {
-        use bun_semver::String as SemverString;
-
-        pub enum Uri {
-            Local(SemverString),
-            Remote(SemverString),
-        }
-        impl Default for Uri {
-            fn default() -> Self { Uri::Local(SemverString::default()) }
-        }
-
-        #[derive(Default)]
-        pub struct TarballInfo {
-            pub uri: Uri,
-            pub package_name: SemverString,
-        }
-    }
 }
 #[cfg(not(any()))]
 pub mod patch_install { pub struct PatchTask; }
@@ -678,7 +662,12 @@ pub mod hosted_git_info {
     }
 
     impl HostedGitInfo {
-        pub fn from_url(_npa_str: &mut [u8]) -> Result<Option<Self>, bun_core::Error> {
+        // PORT NOTE: Zig signature is `fromUrl(allocator, npa_str: []u8)` (mutable
+        // — it rewrites scp-style `git@host:user/repo` in place). Callers in
+        // `dependency.rs` only have `&[u8]`; the real impl will need to dupe into
+        // a scratch buffer before mutation. Stub takes `&[u8]` so call sites
+        // type-check.
+        pub fn from_url(_npa_str: &[u8]) -> Result<Option<Self>, bun_core::Error> {
             todo!("B-2: HostedGitInfo::from_url")
         }
     }
@@ -748,6 +737,11 @@ pub mod hosted_git_info {
     pub fn parse_url(_npa_str: &mut [u8]) -> Result<ParsedUrl, bun_core::Error> {
         todo!("B-2: hosted_git_info::parse_url")
     }
+
+    /// Zig: `hosted_git_info.isGitHubShorthand(spec)` — owner/repo[#committish].
+    pub fn is_github_shorthand(_spec: &[u8]) -> bool {
+        todo!("B-2: hosted_git_info::is_github_shorthand — un-gate hosted_git_info.rs")
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -774,11 +768,8 @@ pub use isolated_install::file_copier::FileCopier;
 pub use pnpm_matcher::PnpmMatcher;
 pub use postinstall_optimizer::PostinstallOptimizer;
 
-// TODO(b1): bun_collections::identity_context::{ArrayIdentityContext,IdentityContext} missing
-// pub use bun_collections::identity_context::ArrayIdentityContext;
-// pub use bun_collections::identity_context::IdentityContext;
-pub type ArrayIdentityContext = ();
-pub type IdentityContext = ();
+pub use bun_collections::identity_context::ArrayIdentityContext;
+pub use bun_collections::identity_context::IdentityContext;
 
 pub use external_slice as external;
 pub use external::ExternalPackageNameHashList;
@@ -1392,67 +1383,48 @@ pub fn initialize_store() {
 /// That adds up in multi-threaded scenarios.
 /// ASTMemoryAllocator uses a smaller fixed buffer allocator
 pub fn initialize_mini_store() {
-    #[cfg(any())]
-    {
-        // TODO(b2-blocked): bun_js_parser::ASTMemoryAllocator (fields stack_allocator/reset/push)
-        use bun_alloc::Arena;
-        use bun_js_parser as js_ast;
+    use bun_alloc::Arena;
+    use bun_js_parser as js_ast;
 
-        struct MiniStore {
-            heap: Arena,
-            memory_allocator: js_ast::ASTMemoryAllocator,
-        }
+    struct MiniStore {
+        heap: Arena,
+        memory_allocator: js_ast::ASTMemoryAllocator,
+    }
 
-        thread_local! {
-            static INSTANCE: Cell<Option<*mut MiniStore>> = const { Cell::new(None) };
-        }
+    thread_local! {
+        static INSTANCE: Cell<Option<*mut MiniStore>> = const { Cell::new(None) };
+    }
 
-        INSTANCE.with(|instance| {
-            if instance.get().is_none() {
-                let mut heap = Arena::new();
-                // TODO(port): ASTMemoryAllocator construction — Zig threads heap.allocator()
-                // into the AST allocator; in Rust the Bump (`Arena`) is passed by reference.
-                let memory_allocator = js_ast::ASTMemoryAllocator::new(&heap);
-                let mini_store = Box::into_raw(Box::new(MiniStore {
-                    heap,
-                    memory_allocator,
-                }));
-                // SAFETY: just allocated, non-null, thread-local exclusive access
-                unsafe {
-                    (*mini_store).memory_allocator.reset();
-                    (*mini_store).memory_allocator.push();
-                }
-                instance.set(Some(mini_store));
-            } else {
-                // SAFETY: set above on this thread, never freed
-                let mini_store = unsafe { &mut *instance.get().unwrap() };
-                if mini_store
-                    .memory_allocator
-                    .stack_allocator
-                    .fixed_buffer_allocator
-                    .end_index
-                    >= mini_store
-                        .memory_allocator
-                        .stack_allocator
-                        .fixed_buffer_allocator
-                        .buffer
-                        .len()
-                        .saturating_sub(1)
-                {
-                    // PERF(port): was arena bulk-free (heap.deinit() + re-init) — profile in Phase B
-                    mini_store.heap = Arena::new();
-                    // TODO(port): re-seat memory_allocator.allocator at the new heap
-                }
-                mini_store.memory_allocator.reset();
-                mini_store.memory_allocator.push();
+    INSTANCE.with(|instance| {
+        if instance.get().is_none() {
+            let heap = Arena::new();
+            // TODO(port): ASTMemoryAllocator construction — Zig threads heap.allocator()
+            // into the AST allocator; in Rust the Bump (`Arena`) is passed by reference.
+            let memory_allocator = js_ast::ASTMemoryAllocator::new(&heap);
+            let mini_store = Box::into_raw(Box::new(MiniStore {
+                heap,
+                memory_allocator,
+            }));
+            // SAFETY: just allocated, non-null, thread-local exclusive access
+            unsafe {
+                (*mini_store).memory_allocator.reset();
+                (*mini_store).memory_allocator.push();
             }
-        });
-    }
-    #[cfg(not(any()))]
-    {
-        // TODO(b2-blocked): bun_js_parser::ASTMemoryAllocator
-        todo!("B-2: initialize_mini_store")
-    }
+            instance.set(Some(mini_store));
+        } else {
+            // SAFETY: set above on this thread, never freed
+            let mini_store = unsafe { &mut *instance.get().unwrap() };
+            // PORT NOTE: Zig checked `stack_allocator.fixed_buffer_allocator.end_index >=
+            // buffer.len() - 1` to decide whether to recycle the heap arena. The Rust
+            // `ASTMemoryAllocator` collapses SFA+fallback into a single bumpalo arena
+            // (see ASTMemoryAllocator.rs PORT STATUS), so there is no stack-buffer
+            // watermark to inspect — `reset()` already releases all bump allocations.
+            // PERF(port): was arena bulk-free (heap.deinit() + re-init) — profile in Phase B
+            let _ = &mini_store.heap;
+            mini_store.memory_allocator.reset();
+            mini_store.memory_allocator.push();
+        }
+    });
 }
 
 pub type PackageID = u32;

@@ -26,17 +26,18 @@ bun_collections.workspace = true
 # TODO(b2-blocked): bun_interchange::json::parse — parse_json body needs
 # Expr accessor surface from bun_js_parser before this is useful.
 # bun_interchange.workspace = true
-# TODO(b2-blocked): bun_io::Write — trait surface not yet landed.
-# bun_io.workspace = true
+bun_io.workspace = true
 # TODO(b2-blocked): bun_js_parser — Expr::data_store_reset / Data::is_e_* /
 # Data::as_e_array not yet exposed; needed by parse_json.
 # bun_js_parser.workspace = true
 # bun_js_printer would create a dep cycle (it depends on bun_sourcemap);
-# Chunk::print_source_map_contents* stays gated until quote_for_json moves down.
+# quote_for_json moved down to bun_string, so Chunk::print_source_map_contents*
+# is now un-gated without the cycle.
 bun_logger.workspace = true
 bun_paths.workspace = true
 bun_ptr.workspace = true
 bun_semver.workspace = true
 bun_string.workspace = true
 bun_sys.workspace = true
+bun_url.workspace = true
 bun_zstd.workspace = true

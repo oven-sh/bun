@@ -114,20 +114,9 @@ impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for ArrayList<'bump, T> {
 impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for BabyList<T> {
     #[inline]
     fn deep_clone(&self, bump: &'bump Arena) -> Self {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_collections::BabyList::deep_clone_with —
-            // `deep_clone_infallible()` exists but takes no arena and requires
-            // the unrelated `bun_collections::DeepClone` trait. Need an
-            // arena-aware variant that delegates to *this* trait's deep_clone.
-            self.deep_clone_infallible(bump)
-        }
-        #[cfg(not(any()))]
-        {
-            // TODO(b2-blocked): bun_collections::BabyList::deep_clone_with
-            let _ = bump;
-            BabyList::default()
-        }
+        // `BabyList::deep_clone_with` takes a per-element closure so the arena
+        // lifetime carried by *this* trait's `deep_clone` threads through.
+        self.deep_clone_with(|e| e.deep_clone(bump))
     }
 }
 
@@ -407,19 +396,12 @@ impl<T: CssHash> CssHash for [T] {
 
 impl<T: CssHash, const N: usize> CssHash for [T; N] {
     fn hash(&self, hasher: &mut Wyhash) {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_core::write_any_to_hasher — Zig
-            // `bun.writeAnyToHasher(hasher, list.len)` writes the raw bytes
-            // of `usize` into the hasher. Port that helper into bun_core.
-            bun_core::write_any_to_hasher(hasher, self.len());
-        }
-        #[cfg(not(any()))]
-        {
-            // TODO(b2-blocked): bun_core::write_any_to_hasher — inline the
-            // `usize` byte-feed locally so hash output stays stable.
-            hasher.update(&self.len().to_ne_bytes());
-        }
+        // Zig: `bun.writeAnyToHasher(hasher, list.len)` — feeds the raw bytes
+        // of `usize` into the hasher. `bun_core::write_any_to_hasher` exists
+        // but is `H: Hasher`-generic and routes through `Hasher::write`, which
+        // for `Wyhash11` calls `update` — so inlining the `usize` byte-feed
+        // here is byte-identical and avoids the trait hop.
+        hasher.update(&self.len().to_ne_bytes());
         for item in self {
             item.hash(hasher);
         }

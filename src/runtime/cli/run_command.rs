@@ -1182,27 +1182,124 @@ impl RunCommand {
 
         // ── package.json script lookup ──────────────────────────────────────
         if !skip_script_check {
-            // TODO(b2-blocked): full body needs `configure_env_for_run` →
-            // `Transpiler` + `DirInfo` + `PackageJSON.scripts` lookup +
-            // `run_package_script_foreground` (spawn). All gated; preserved
-            // verbatim in phase_a_draft. Until then, fall through to module
-            // resolution so `bun run foo` at least tries `./foo`.
+            // SAFETY: Phase-A out-param init pattern — `configure_env_for_run`
+            // writes the entire struct via `*this_transpiler = Transpiler::init`
+            // before any field is read. Zig: `var this_transpiler: Transpiler = undefined;`.
+            // TODO(port): use MaybeUninit<Transpiler> once `Transpiler::init`'s
+            // gated tail un-gates and stops returning `Err(TODO)`.
+            let mut this_transpiler: Transpiler<'static> = unsafe { ::core::mem::zeroed() };
+            let root_dir_info = Self::configure_env_for_run(
+                ctx,
+                &mut this_transpiler,
+                None,
+                log_errors,
+                false,
+            )?;
+            // TODO(b2-blocked): `configure_path_for_run` — bun-node fake-exe
+            // creation + PATH stitching; preserved in phase_a_draft.
             #[cfg(any())]
-            {
-                let mut this_transpiler: Transpiler = unsafe { core::mem::zeroed() };
-                let root_dir_info = Self::configure_env_for_run(
-                    ctx, &mut this_transpiler, None, log_errors, false,
-                )?;
-                if let Some(package_json) = root_dir_info.enclosing_package_json {
-                    if let Some(scripts) = &package_json.scripts {
-                        if let Some(script_content) = scripts.get(target_name) {
-                            // pre/post hooks + run_package_script_foreground …
-                            return Ok(true);
+            Self::configure_path_for_run(
+                ctx,
+                root_dir_info,
+                &mut this_transpiler,
+                None,
+                unsafe { (*root_dir_info).abs_path },
+                ctx.debug.run_in_bun,
+            )?;
+            // SAFETY: `Transpiler::init` always sets `env`.
+            let env_loader: &mut DotEnv::Loader<'static> = unsafe { &mut *this_transpiler.env };
+            env_loader.map.put(b"npm_command", b"run-script").expect("unreachable");
+
+            // SAFETY: `read_dir_info` returned non-null; resolver-cache lifetime.
+            let root_dir = unsafe { &*root_dir_info };
+            if let Some(package_json) = root_dir.enclosing_package_json {
+                if let Some(scripts) = package_json.scripts.as_deref() {
+                    if let Some(script_content) = scripts.get(target_name) {
+                        bun_core::scoped_log!(
+                            RUN,
+                            "Found matching script `{}`",
+                            bstr::BStr::new(script_content)
+                        );
+                        Global::configure_allocator(core::Global::AllocatorConfiguration {
+                            long_running: false,
+                            ..Default::default()
+                        });
+                        env_loader
+                            .map
+                            .put(b"npm_lifecycle_event", target_name)
+                            .expect("unreachable");
+
+                        // allocate enough to hold "post${scriptname}"
+                        // PORT NOTE: byte 0 is a placeholder so the "pre" slice
+                        // (`[1..]`) and the in-place "post" overwrite share one
+                        // buffer (run_command.zig:1749-1794).
+                        let mut temp_script_buffer: Vec<u8> =
+                            Vec::with_capacity(b"\x00pre".len() + target_name.len());
+                        temp_script_buffer.extend_from_slice(b"\x00pre");
+                        temp_script_buffer.extend_from_slice(target_name);
+
+                        let package_json_dir = strings::without_trailing_slash(
+                            strings::without_suffix_comptime(
+                                package_json.source.path.text,
+                                b"package.json",
+                            ),
+                        );
+                        bun_core::scoped_log!(
+                            RUN,
+                            "Running in dir `{}`",
+                            bstr::BStr::new(package_json_dir)
+                        );
+
+                        // PORT NOTE: borrowck reshape — `ctx.passthrough` is a
+                        // field of `ctx` but `run_package_script_foreground`
+                        // takes `&mut ContextData`; clone the slice up-front.
+                        let passthrough: Vec<Box<[u8]>> = ctx.passthrough.clone();
+                        let silent = ctx.debug.silent;
+                        let use_system_shell = ctx.debug.use_system_shell;
+
+                        if let Some(prescript) = scripts.get(&temp_script_buffer[1..]) {
+                            Self::run_package_script_foreground(
+                                ctx,
+                                prescript,
+                                &temp_script_buffer[1..],
+                                package_json_dir,
+                                env_loader,
+                                &[],
+                                silent,
+                                use_system_shell,
+                            )?;
                         }
+
+                        Self::run_package_script_foreground(
+                            ctx,
+                            script_content,
+                            target_name,
+                            package_json_dir,
+                            env_loader,
+                            &passthrough,
+                            silent,
+                            use_system_shell,
+                        )?;
+
+                        temp_script_buffer[..b"post".len()].copy_from_slice(b"post");
+
+                        if let Some(postscript) = scripts.get(&temp_script_buffer[..]) {
+                            Self::run_package_script_foreground(
+                                ctx,
+                                postscript,
+                                &temp_script_buffer,
+                                package_json_dir,
+                                env_loader,
+                                &[],
+                                silent,
+                                use_system_shell,
+                            )?;
+                        }
+
+                        return Ok(true);
                     }
                 }
             }
-            let _ = skip_script_check;
         }
 
         // ── module resolution fallback ──────────────────────────────────────

@@ -1,8 +1,11 @@
 use core::mem;
-use std::rc::Rc;
+use core::ptr::NonNull;
 
-use crate::webcore::jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult};
-use bun_str::{String as BunString, ZigString};
+use crate::webcore::jsc::{
+    BuiltinName, CallFrame, HTTPHeaderName, JSGlobalObject, JSType, JSValue, JsError, JsRef,
+    JsResult, StringJsc,
+};
+use bun_str::{String as BunString, ZigString, ZigStringSlice};
 use bun_core::Output;
 use bun_http_types::MimeType::MimeType;
 use bun_http_types::Method::Method;

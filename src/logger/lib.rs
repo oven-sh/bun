@@ -146,19 +146,112 @@ pub mod fs {
 
     #[derive(Clone, Default)]
     pub struct Path {
+        /// Display path — relative to cwd in the bundler; forward-slash on Windows.
+        pub pretty: &'static [u8],
+        /// Canonical location. For `file` namespace, usually absolute with native seps.
         pub text: &'static [u8],
         pub namespace: &'static [u8],
         pub name: PathName,
+        pub is_disabled: bool,
+        pub is_symlink: bool,
     }
     impl Path {
         pub fn init(text: &'static [u8]) -> Path {
-            Path { text, namespace: b"", name: PathName::init(text) }
+            Path {
+                pretty: text,
+                text,
+                namespace: b"file",
+                name: PathName::init(text),
+                is_disabled: false,
+                is_symlink: false,
+            }
         }
+
+        /// Zig: `Path.initWithPretty`.
+        pub fn init_with_pretty(text: &'static [u8], pretty: &'static [u8]) -> Path {
+            Path {
+                pretty,
+                text,
+                namespace: b"file",
+                name: PathName::init(text),
+                is_disabled: false,
+                is_symlink: false,
+            }
+        }
+
+        /// Zig: `Path.initWithNamespace`.
+        pub fn init_with_namespace(text: &'static [u8], namespace: &'static [u8]) -> Path {
+            Path {
+                pretty: text,
+                text,
+                namespace,
+                name: PathName::init(text),
+                is_disabled: false,
+                is_symlink: false,
+            }
+        }
+
+        #[inline] pub fn text(&self) -> &'static [u8] { self.text }
+        #[inline] pub fn pretty(&self) -> &'static [u8] { self.pretty }
+        #[inline] pub fn namespace(&self) -> &'static [u8] { self.namespace }
+
+        #[inline]
+        pub fn is_file(&self) -> bool {
+            self.namespace.is_empty() || self.namespace == b"file"
+        }
+
+        #[inline]
+        pub fn is_data_url(&self) -> bool { self.namespace == b"dataurl" }
+
+        #[inline]
+        pub fn is_bun(&self) -> bool { self.namespace == b"bun" }
+
+        #[inline]
+        pub fn is_macro(&self) -> bool { self.namespace == b"macro" }
 
         // Zig: `pub inline fn sourceDir(this: *const Path) string`
         #[inline]
         pub fn source_dir(&self) -> &[u8] {
             self.name.dir_with_trailing_slash()
+        }
+
+        /// Zig: `pub inline fn prettyDir(this: *const Path) string`
+        #[inline]
+        pub fn pretty_dir(&self) -> &[u8] {
+            self.name.dir_with_trailing_slash()
+        }
+
+        /// Zig: `Path.isNodeModule` — checks for `<sep>node_modules<sep>` in the
+        /// parsed dir component (`name.dir`, NOT `text`).
+        pub fn is_node_module(&self) -> bool {
+            // PORT NOTE: bun_paths is not a dep of bun_logger (T1 sibling); inline
+            // `std.fs.path.sep_str` here so the needle stays a compile-time const.
+            const SEP_STR: &str = if cfg!(windows) { "\\" } else { "/" };
+            const NEEDLE: &[u8] =
+                const_format::concatcp!(SEP_STR, "node_modules", SEP_STR).as_bytes();
+            bun_string::strings::last_index_of(self.name.dir, NEEDLE).is_some()
+        }
+
+        /// Zig: `Path.isJSXFile`.
+        #[inline]
+        pub fn is_jsx_file(&self) -> bool {
+            let f = self.name.filename;
+            f.ends_with(b".jsx") || f.ends_with(b".tsx")
+        }
+
+        /// Zig: `Path.keyForIncrementalGraph`.
+        #[inline]
+        pub fn key_for_incremental_graph(&self) -> &'static [u8] {
+            if self.is_file() { self.text } else { self.pretty }
+        }
+
+        /// Zig: `Path.setRealpath`.
+        pub fn set_realpath(&mut self, to: &'static [u8]) {
+            let old_path = self.text;
+            self.text = to;
+            self.name = PathName::init(to);
+            self.pretty = old_path;
+            self.is_symlink = true;
         }
     }
 }

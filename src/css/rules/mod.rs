@@ -320,9 +320,11 @@ deep_clone_shim!(
 use container::ContainerRule;
 use document::MozDocumentRule;
 use layer::LayerBlockRule;
+use media::MediaRule;
 use nesting::NestingRule;
 use scope::ScopeRule;
 use starting_style::StartingStyleRule;
+use supports::SupportsRule;
 deep_clone_shim!(generic:
     LayerBlockRule,
     MediaRule,

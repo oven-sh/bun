@@ -230,8 +230,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     return None;
                                 }
 
-                                let props: &[G::Property] =
-                                    stmt_bin.right.data.e_object().unwrap().properties.slice();
+                                let right_obj = stmt_bin.right.data.e_object().unwrap();
+                                let props: &[G::Property] = right_obj.properties.slice();
                                 for prop in props {
                                     // if it's not a trivial object literal, de-opt
                                     if prop.kind != G::PropertyKind::Normal

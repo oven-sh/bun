@@ -622,7 +622,7 @@ fn process_deps(
             let mut found_package_id: Option<PackageID> = None;
             'outer: for (yarn_idx, entry_) in yarn_lock_.entries.iter().enumerate() {
                 for entry_spec in entry_.specs.iter() {
-                    if entry_spec.as_ref() == dep_spec.as_slice() {
+                    if *entry_spec == dep_spec.as_slice() {
                         found_package_id = Some(yarn_entry_to_package_id[yarn_idx]);
                         break 'outer;
                     }

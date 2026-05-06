@@ -397,7 +397,8 @@ impl CronRegisterJob {
     fn start_linux(&mut self) {
         self.state = RegisterState::ReadingCrontab;
         self.stdout_reader = OutputReader::init::<CronRegisterJob>();
-        self.stdout_reader.set_parent(self as *mut Self as *mut _);
+        let self_ptr = self as *mut Self as *mut _;
+        self.stdout_reader.set_parent(self_ptr);
         let Some(crontab_path) = find_crontab() else {
             self.set_err(format_args!("crontab not found in PATH"));
             return Self::finish(self);

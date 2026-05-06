@@ -1464,37 +1464,37 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
 
         if filter.is_empty() {
             completions = RunCommand::completions::<{ CompletionKind::All }>(
-                &ctx,
+                &mut *ctx,
                 Some(DEFAULT_COMPLETIONS_LIST),
                 REJECT_LIST,
             )?;
         } else if &*filter[0] == b"s" {
             completions =
-                RunCommand::completions::<{ CompletionKind::Script }>(&ctx, None, REJECT_LIST)?;
+                RunCommand::completions::<{ CompletionKind::Script }>(&mut *ctx, None, REJECT_LIST)?;
         } else if &*filter[0] == b"i" {
             completions = RunCommand::completions::<{ CompletionKind::ScriptExclude }>(
-                &ctx,
+                &mut *ctx,
                 Some(DEFAULT_COMPLETIONS_LIST),
                 REJECT_LIST,
             )?;
         } else if &*filter[0] == b"b" {
             completions =
-                RunCommand::completions::<{ CompletionKind::Bin }>(&ctx, None, REJECT_LIST)?;
+                RunCommand::completions::<{ CompletionKind::Bin }>(&mut *ctx, None, REJECT_LIST)?;
         } else if &*filter[0] == b"r" {
             completions =
-                RunCommand::completions::<{ CompletionKind::All }>(&ctx, None, REJECT_LIST)?;
+                RunCommand::completions::<{ CompletionKind::All }>(&mut *ctx, None, REJECT_LIST)?;
         } else if &*filter[0] == b"g" {
             completions = RunCommand::completions::<{ CompletionKind::AllPlusBunJs }>(
-                &ctx,
+                &mut *ctx,
                 None,
                 REJECT_LIST,
             )?;
         } else if &*filter[0] == b"j" {
             completions =
-                RunCommand::completions::<{ CompletionKind::BunJs }>(&ctx, None, REJECT_LIST)?;
+                RunCommand::completions::<{ CompletionKind::BunJs }>(&mut *ctx, None, REJECT_LIST)?;
         } else if &*filter[0] == b"z" {
             completions = RunCommand::completions::<{ CompletionKind::ScriptAndDescriptions }>(
-                &ctx,
+                &mut *ctx,
                 None,
                 REJECT_LIST,
             )?;

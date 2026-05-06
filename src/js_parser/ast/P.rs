@@ -7567,7 +7567,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 // entry anyway. // TODO(b2-blocked): unify logger::fs::Path → bun_paths::fs::Path
                 let path_view = fs::Path { text: source.path.text, pretty: source.path.text, ..Default::default() };
                 if let Some(pkg) = path_package_name(&path_view) {
-                    if this.options.features.should_unwrap_require(pkg) {
+                    // TODO(b2-blocked): `RuntimeFeatures` is the parser.rs stub
+                    // (`should_unwrap_require: bool` placeholder for the real
+                    // `runtime.rs::Features::should_unwrap_require(pkg)` check
+                    // against `unwrap_commonjs_packages`). Swap to the method
+                    // call once `Options.features` is the real `Runtime::Features`.
+                    if this.options.features.should_unwrap_require {
                         if pkg == b"react" || pkg == b"react-dom" {
                             let version = this.options.package_version;
                             if version.len() > 2

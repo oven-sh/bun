@@ -1037,7 +1037,7 @@ pub mod waiter_thread_posix {
         AnyTaskWithExtraContext, New as AnyTaskNew,
     };
     use bun_event_loop::ConcurrentTask::{ConcurrentTask, Task, TaskTag};
-    use bun_event_loop::{EventLoopTaskPtr, task_tag};
+    use bun_event_loop::task_tag;
     use bun_threading::UnboundedQueue;
     use core::sync::atomic::AtomicPtr;
 
@@ -1061,7 +1061,7 @@ pub mod waiter_thread_posix {
         pub active: Vec<*mut T>,
     }
 
-    impl<T> NewQueue<T> {
+    impl<T: 'static> NewQueue<T> {
         pub const fn new() -> Self {
             Self {
                 queue: ConcurrentQueue::new(),
@@ -1070,7 +1070,7 @@ pub mod waiter_thread_posix {
         }
     }
 
-    impl<T> Default for NewQueue<T> {
+    impl<T: 'static> Default for NewQueue<T> {
         fn default() -> Self {
             Self::new()
         }

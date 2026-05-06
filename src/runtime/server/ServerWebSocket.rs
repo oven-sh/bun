@@ -1496,23 +1496,23 @@ impl ServerWebSocket {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old(1);
-        if args.len() < 1 {
-            return global_this.throw("subscribe requires at least 1 argument");
+        let args = callframe.arguments_old::<1>();
+        if args.len < 1 {
+            return Err(global_this.throw("subscribe requires at least 1 argument"));
         }
 
         if self.is_closed() {
             return Ok(JSValue::TRUE);
         }
 
-        if !args.ptr(0).is_string() {
-            return global_this.throw_invalid_argument_type_value("topic", "string", args.ptr(0));
+        if !args.ptr[0].is_string() {
+            return Err(global_this.throw_invalid_argument_type_value("topic", "string", args.ptr[0]));
         }
 
-        let topic = args.ptr(0).to_slice(global_this)?;
+        let topic = args.ptr[0].to_slice(global_this)?;
 
-        if topic.len() == 0 {
-            return global_this.throw("subscribe requires a non-empty topic name");
+        if topic.slice().is_empty() {
+            return Err(global_this.throw("subscribe requires a non-empty topic name"));
         }
 
         Ok(JSValue::from(self.websocket().subscribe(topic.slice())))

@@ -526,7 +526,10 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                     )
                     .throw());
             }
-            in_ = Some(&in_buf.byte_slice()[in_off as usize..][..in_len as usize]);
+            // SAFETY: bounds checked above; backing JS buffer outlives this call.
+            in_ = Some(unsafe {
+                core::slice::from_raw_parts(in_buf.ptr.add(in_off as usize), in_len as usize)
+            });
         }
 
         let Some(out_buf) = arguments[4].as_array_buffer(global_this) else {
@@ -551,7 +554,10 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 )
                 .throw());
         }
-        out = todo!("blocked_on: bun_jsc::ArrayBuffer::byte_slice_mut — need &mut [u8] view");
+        // SAFETY: bounds checked above; backing JS buffer outlives this call.
+        out = Some(unsafe {
+            core::slice::from_raw_parts_mut(out_buf.ptr.add(out_off as usize), out_len as usize)
+        });
         let _ = (in_off, in_len, out_off, out_len);
 
         if *this.write_in_progress_mut() {

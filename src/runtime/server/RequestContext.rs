@@ -1644,7 +1644,16 @@ where
     }
 
     
+    #[allow(unreachable_code, unused)]
     fn _gated_do_render_stream(pair: *mut StreamPair<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, HTTP3>) {
+        // The body below depends on `webcore::streams::HTTPServerWritable` /
+        // `ResponseStreamJSSink`, which are still aliased to c_void (see the
+        // type aliases at the top of this file). Full Phase-A body retained
+        // verbatim in git history; restore once the streams scope name-clash
+        // is resolved.
+        let _ = pair;
+        todo!("blocked_on: webcore::streams::HTTPServerWritable / ResponseStreamJSSink");
+        /*
         ctx_log!("doRenderStream");
         // SAFETY: pair is a stack local threaded through cork user-data.
         let pair = unsafe { &mut *pair };

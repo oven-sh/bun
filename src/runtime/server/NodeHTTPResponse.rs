@@ -1522,7 +1522,7 @@ impl NodeHTTPResponse {
                 uws::WriteResult::WantMore(written) => {
                     raw_response.clear_on_writable();
                     js::on_writable_set_cached(js_this, global_object, JSValue::UNDEFINED);
-                    Ok(JSValue::js_number_from_u64(written))
+                    Ok(JSValue::js_number_from_uint64(written))
                 }
                 uws::WriteResult::Backpressure(written) => {
                     if !callback_value.is_undefined() {
@@ -1531,12 +1531,12 @@ impl NodeHTTPResponse {
                             global_object,
                             callback_value.with_async_context_if_needed(global_object),
                         );
-                        raw_response.on_writable::<NodeHTTPResponse>(Self::on_drain, self);
+                        raw_response.on_writable(on_drain_shim, self as *mut Self);
                     }
 
                     // PERF(port): @intCast — bounded by min().
                     let clamped = i64::try_from(written.min(i64::MAX as u64)).unwrap();
-                    Ok(JSValue::js_number_from_i64(-clamped))
+                    Ok(JSValue::js_number((-clamped) as f64))
                 }
             }
         }

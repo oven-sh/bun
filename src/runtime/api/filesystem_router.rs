@@ -482,6 +482,13 @@ impl FileSystemRouter {
             return Ok(JSValue::NULL);
         };
 
+        // SAFETY: `Match<'p>` borrows `params` and `path` bytes. `MatchedRoute::init` clones
+        // `params` into `params_list_holder` and re-points `route_holder.params` at the heap
+        // copy; `path` is `mem::forget`ed below (intentional leak per Zig spec). Forging
+        // `'static` matches the Zig raw-slice semantics (no borrow escapes the stack `params`).
+        let route: RouterMatch<'static> =
+            unsafe { core::mem::transmute::<RouterMatch<'_>, RouterMatch<'static>>(route) };
+
         let result = MatchedRoute::init(
             route,
             this.origin,

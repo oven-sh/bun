@@ -924,7 +924,7 @@ pub mod command {
             }
             Tag::PackageManagerCommand => {
                 let ctx = init::<{ Tag::PackageManagerCommand }>(log)?;
-                PackageManagerCommand::exec(&ctx)?;
+                PackageManagerCommand::exec(ctx)?;
                 return Ok(());
             }
             Tag::TestCommand => {
@@ -1430,7 +1430,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
                         Global::crash();
                     }
                 };
-                PackageManagerCommand::print_hash(&ctx, file)?;
+                PackageManagerCommand::print_hash(ctx, file)?;
                 return Ok(());
             }
         }
@@ -1650,7 +1650,7 @@ To create a project with the official Next.js scaffolding tool, run
             Global::exit(1);
         }
 
-        let create_command_info = CreateCommand::extract_info(&ctx)?;
+        let create_command_info = CreateCommand::extract_info(&mut *ctx)?;
         let template = create_command_info.template;
         let example_tag = create_command_info.example_tag;
 
@@ -1689,7 +1689,7 @@ To create a project with the official Next.js scaffolding tool, run
             return Ok(());
         }
 
-        CreateCommand::exec(&ctx, example_tag, template)?;
+        CreateCommand::exec(&mut *ctx, example_tag, template)?;
         Ok(())
     }
 

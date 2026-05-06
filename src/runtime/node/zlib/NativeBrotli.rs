@@ -469,12 +469,12 @@ impl Context {
     }
 }
 
-fn code_for_error(err: c::BrotliDecoderErrorCode2) -> *const core::ffi::c_char {
+fn code_for_error(err: c::BrotliDecoderErrorCode2) -> &'static str {
     // Zig: `inline for (std.meta.fieldNames(E), std.enums.values(E)) |n, v|
     //          if (err == v) return "ERR_BROTLI_DECODER_" ++ n;`
     // TODO(port): comptime reflection over enum variants. Generate a static
     // match (or phf table) in bun_brotli mapping each BrotliDecoderErrorCode2
-    // variant to const_format::concatcp!("ERR_BROTLI_DECODER_", name, "\0").
+    // variant to concat!("ERR_BROTLI_DECODER_", name).
     let _ = err;
     unreachable!("ERR_BROTLI_DECODER_* table not yet generated")
 }

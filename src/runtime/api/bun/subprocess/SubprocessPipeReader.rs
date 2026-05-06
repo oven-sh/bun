@@ -3,12 +3,14 @@ use core::ptr::NonNull;
 
 use bun_aio::Loop as AsyncLoop;
 use bun_io::BufferedReader;
-use bun_jsc::{self as jsc, EventLoop, JSGlobalObject, JSValue, JsResult, MarkedArrayBuffer};
+use bun_io::max_buf::MaxBuf;
+use bun_jsc::event_loop::EventLoop;
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, MarkedArrayBuffer};
 use bun_ptr::IntrusiveRc;
 use crate::webcore::ReadableStream;
 use bun_sys;
 
-use super::{MaxBuf, StdioKind, StdioResult, Subprocess};
+use super::{StdioKind, StdioResult, Subprocess};
 
 pub type IOReader = BufferedReader;
 pub type Poll = IOReader;

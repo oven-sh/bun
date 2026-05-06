@@ -119,9 +119,9 @@ pub(super) fn init_impl(options: Options<'_>) -> jsc::JsResult<Box<DevServer>> {
 
     let mut dev = Box::new(DevServer {
         magic: Magic::Valid,
-        allocation_scope: AllocationScope,
+        allocation_scope: bun_alloc::AllocationScope,
         root: Box::from(root_static),
-        inspector_server_id: DebuggerId(0),
+        inspector_server_id: jsc::DebuggerId(0),
         configuration_hash_key: [0; 16],
         vm: options.vm as *const _,
         server: None,

@@ -16,6 +16,20 @@ use bun_js_parser as ast;
 use bun_js_printer as JSPrinter;
 use bstr::BStr;
 
+/// Helper: write `args` into `buf` and return the written subslice.
+/// Mirrors `std.fmt.bufPrint(buf, fmt, args) catch unreachable`.
+fn buf_print<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> &'a mut [u8] {
+    use std::io::Write as _;
+    let total = buf.len();
+    let mut cursor: &mut [u8] = buf;
+    cursor.write_fmt(args).expect("unreachable");
+    let remaining = cursor.len();
+    let written = total - remaining;
+    // PORT NOTE: reshaped for borrowck — re-slice from original buffer
+    // SAFETY: `written` bytes were just written contiguously from buf[0]
+    unsafe { core::slice::from_raw_parts_mut(buf.as_mut_ptr(), written) }
+}
+
 pub fn view(
     manager: &mut PackageManager,
     spec_: &[u8],

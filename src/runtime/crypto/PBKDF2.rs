@@ -3,12 +3,12 @@ use core::mem::offset_of;
 
 use bun_aio::KeepAlive;
 use bun_boringssl_sys as boringssl;
-use bun_jsc::node::StringOrBuffer;
 use bun_jsc::{
-    AnyTask, CallFrame, ConcurrentTask, JSGlobalObject, JSValue, JsPromiseStrong, JsResult,
-    VirtualMachine, ZigString,
+    AnyTask, CallFrame, ConcurrentTask, JSGlobalObject, JSPromiseStrong, JSValue, JsResult,
+    VirtualMachine, WorkPool, WorkPoolTask, ZigStringSlice,
 };
-use bun_threading::{WorkPool, WorkPoolTask};
+
+use crate::node::StringOrBuffer;
 
 use crate::crypto::create_crypto_error;
 use crate::crypto::evp::{self, Algorithm};

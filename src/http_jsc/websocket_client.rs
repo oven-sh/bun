@@ -1783,7 +1783,10 @@ impl<const SSL: bool> WebSocket<SSL> {
             group,
             if SSL { uws::DispatchKind::WsClientTls } else { uws::DispatchKind::WsClient },
             ws,
-            |owner, sock| owner.tcp = sock,
+            // SAFETY: `owner == ws` is a valid live allocation; raw-ptr field
+            // write avoids materializing a second `&mut` that would alias
+            // `ws_ref` above (Zig's `@field(owner, "tcp") = ...` equivalent).
+            |owner, sock| unsafe { core::ptr::addr_of_mut!((*owner).tcp).write(sock) },
         ) {
             ws_ref.deref();
             return core::ptr::null_mut();

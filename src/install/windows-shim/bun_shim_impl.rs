@@ -428,9 +428,14 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     // SAFETY: TEB/PEB are valid for the process lifetime.
     let teb: *mut w::TEB = unsafe { w::teb() };
     let peb = unsafe { (*teb).ProcessEnvironmentBlock };
-    let process_parameters = unsafe { &mut *(*peb).ProcessParameters };
-    let command_line = process_parameters.CommandLine;
-    let image_path_name = process_parameters.ImagePathName;
+    // SAFETY: ProcessParameters is OS-owned process-global state. The Zig spec only ever reads
+    // from it (`const ProcessParameters = peb.ProcessParameters`), so we keep it as a raw pointer
+    // and perform raw field reads rather than materializing a long-lived `&mut` that would assert
+    // exclusive access across the syscalls below (and across threads in non-standalone mode).
+    let process_parameters = unsafe { (*peb).ProcessParameters };
+    // SAFETY: process_parameters is valid for the process lifetime; UNICODE_STRING is Copy.
+    let command_line = unsafe { (*process_parameters).CommandLine };
+    let image_path_name = unsafe { (*process_parameters).ImagePathName };
 
     // these are all different views of the same data
     let image_path_b_len: usize = if IS_STANDALONE {

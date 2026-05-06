@@ -4341,6 +4341,8 @@ impl<'a> LinkerContext<'a> {
             break 'loop_;
         }
 
+        self.cycle_detector.truncate(cycle_detector_top);
+
         // If there is a potential ambiguity, all results must be the same
         for ambig in &ambiguous_results {
             if *ambig != result {

@@ -2718,7 +2718,7 @@ pub(crate) mod __forward_decls {
             _pm: &mut crate::package_json::install_stubs::PackageManager,
             _package_json: &crate::package_json::PackageJSON,
             _features: Install::Features,
-        ) -> Result<Package, bun_core::Error> {
+        ) -> core::result::Result<Package, bun_core::Error> {
             Ok(Package::default())
         }
     }

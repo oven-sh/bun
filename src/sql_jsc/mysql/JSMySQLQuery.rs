@@ -2,13 +2,14 @@ use core::cell::Cell;
 use core::ptr::NonNull;
 
 use crate::jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, VirtualMachine};
-use crate::jsc::codegen::js_mysql_query as js;
+use crate::jsc::codegen::{js_mysql_connection, js_mysql_query as js};
 use bun_sql::mysql::protocol::any_mysql_error::{self as AnyMySQLError};
 use bun_sql::mysql::MySQLQueryResult;
 use bun_sql::postgres::command_tag::CommandTag;
 use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode;
 
 use crate::mysql::protocol::any_mysql_error_jsc::mysql_error_to_js;
+use crate::postgres::command_tag_jsc::CommandTagJsc as _;
 use super::js_mysql_connection::MySQLConnection;
 // PORT NOTE: `my_sql_query` exports both the `MySQLQuery` *struct* and a
 // `declare_scope!`-generated `MySQLQuery` *static* (ScopedLogger). Importing
@@ -21,7 +22,10 @@ macro_rules! debug {
     ($($arg:tt)*) => { bun_core::scoped_log!(MySQLQuery, $($arg)*) };
 }
 
-#[bun_jsc::JsClass]
+// TODO(b2-blocked): #[bun_jsc::JsClass] — proc-macro emits shims typed against
+// `bun_jsc::{JSGlobalObject, CallFrame, JSValue, JsError}`, which are distinct
+// from this crate's local `crate::jsc::*` mirror types until `crate::jsc`
+// becomes `pub use bun_jsc as jsc;` (see lib.rs TODO). Re-enable then.
 pub struct JSMySQLQuery {
     this_value: JsRef,
     // unfortunately we cannot use #ref_count here
@@ -68,7 +72,7 @@ impl JSMySQLQuery {
         global_this: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<*mut Self> {
-        global_this.throw_invalid_arguments("MySQLQuery cannot be constructed directly", &[])
+        Err(global_this.throw_invalid_arguments("MySQLQuery cannot be constructed directly"))
     }
 
     unsafe fn deinit(this: *mut Self) {
@@ -99,18 +103,18 @@ impl JSMySQLQuery {
         let mut args = jsc::call_frame::ArgumentsSlice::init(global_this.bun_vm(), arguments);
         // defer args.deinit() — handled by Drop
         let Some(query) = args.next_eat() else {
-            return global_this.throw("query must be a string", &[]);
+            return Err(global_this.throw(format_args!("query must be a string")));
         };
         let Some(values) = args.next_eat() else {
-            return global_this.throw("values must be an array", &[]);
+            return Err(global_this.throw(format_args!("values must be an array")));
         };
 
         if !query.is_string() {
-            return global_this.throw("query must be a string", &[]);
+            return Err(global_this.throw(format_args!("query must be a string")));
         }
 
         if values.js_type() != jsc::JSType::Array {
-            return global_this.throw("values must be an array", &[]);
+            return Err(global_this.throw(format_args!("values must be an array")));
         }
 
         let pending_value: JSValue = args.next_eat().unwrap_or(JSValue::UNDEFINED);
@@ -122,15 +126,15 @@ impl JSMySQLQuery {
         let simple = js_simple.is_boolean() && js_simple.as_boolean();
         if simple {
             if values.get_length(global_this)? > 0 {
-                return global_this
-                    .throw_invalid_arguments("simple query cannot have parameters", &[]);
+                return Err(global_this
+                    .throw_invalid_arguments("simple query cannot have parameters"));
             }
-            if query.get_length(global_this)? >= i32::MAX as usize {
-                return global_this.throw_invalid_arguments("query is too long", &[]);
+            if query.get_length(global_this)? >= i32::MAX as u64 {
+                return Err(global_this.throw_invalid_arguments("query is too long"));
             }
         }
         if !pending_value.js_type().is_array_like() {
-            return global_this.throw_invalid_argument_type("query", "pendingValue", "Array");
+            return Err(global_this.throw_invalid_argument_type("query", "pendingValue", "Array"));
         }
 
         let this = Box::into_raw(Box::new(Self {

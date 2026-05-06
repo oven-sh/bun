@@ -488,59 +488,33 @@ impl JSMySQLConnection {
             drop(cfg);
         });
 
-        let mut username: &[u8] = b"";
-        let mut password: &[u8] = b"";
-        let mut database: &[u8] = b"";
-        let mut options: &[u8] = b"";
-        let mut path: &[u8] = b"";
-
         let options_str = arguments[7].to_bun_string(global_object)?;
         let path_str = arguments[8].to_bun_string(global_object)?;
 
-        let options_buf: Box<[u8]> = 'brk: {
-            let mut b = StringBuilder::default();
-            b.cap += username_str.utf8_byte_length()
-                + 1
-                + password_str.utf8_byte_length()
-                + 1
-                + database_str.utf8_byte_length()
-                + 1
-                + options_str.utf8_byte_length()
-                + 1
-                + path_str.utf8_byte_length()
-                + 1;
-
-            let _ = b.allocate();
-            let u = username_str.to_utf8_without_ref();
-            username = b.append(u.slice());
-
-            let p = password_str.to_utf8_without_ref();
-            password = b.append(p.slice());
-
-            let d = database_str.to_utf8_without_ref();
-            database = b.append(d.slice());
-
-            let o = options_str.to_utf8_without_ref();
-            options = b.append(o.slice());
-
-            let _path = path_str.to_utf8_without_ref();
-            path = b.append(_path.slice());
-
-            break 'brk b.allocated_slice();
-        };
+        // PORT NOTE: Zig packed all five strings into one `StringBuilder`-owned
+        // arena and handed `[]const u8` slices into it to `MySQLConnection.init`.
+        // The Rust `init` takes `Box<[u8]>` per field (each separately owned),
+        // so we just copy each string into its own allocation. `options_buf`
+        // (the original arena handle, kept only so `cleanup()` could free it)
+        // becomes an empty box.
+        let username: Box<[u8]> = Box::from(username_str.to_utf8_without_ref().slice());
+        let password: Box<[u8]> = Box::from(password_str.to_utf8_without_ref().slice());
+        let database: Box<[u8]> = Box::from(database_str.to_utf8_without_ref().slice());
+        let options: Box<[u8]> = Box::from(options_str.to_utf8_without_ref().slice());
+        let path: Box<[u8]> = Box::from(path_str.to_utf8_without_ref().slice());
+        let options_buf: Box<[u8]> = Box::default();
 
         // Reject null bytes in connection parameters to prevent protocol injection
         // (null bytes act as field terminators in the MySQL wire protocol).
         for (slice, msg) in [
-            (username, "username must not contain null bytes"),
-            (password, "password must not contain null bytes"),
-            (database, "database must not contain null bytes"),
-            (path, "path must not contain null bytes"),
+            (&username[..], "username must not contain null bytes"),
+            (&password[..], "password must not contain null bytes"),
+            (&database[..], "database must not contain null bytes"),
+            (&path[..], "path must not contain null bytes"),
         ] {
             if !slice.is_empty() && strings::index_of_char(slice, 0).is_some() {
-                drop(options_buf);
                 // tls_config / secure released by the guard above.
-                return global_object.throw_invalid_arguments(msg, format_args!(""));
+                return Err(global_object.throw_invalid_arguments(msg));
             }
         }
 

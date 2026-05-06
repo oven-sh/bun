@@ -2310,10 +2310,13 @@ pub mod IPCHandlers {
             let loop_ = unsafe {
                 (*(global_this.bun_vm() as *const _ as *mut VirtualMachine)).event_loop()
             };
-            loop_.enter();
+            // SAFETY: `loop_` is the VM-owned `*mut EventLoop` (lives as long
+            // as the VM); reborrow per use so `&mut EventLoop` isn't held
+            // across `on_data2`.
+            unsafe { (*loop_).enter() };
             // TODO(port): errdefer — scopeguard for loop.exit()
             on_data2(send_queue, all_data);
-            loop_.exit();
+            unsafe { (*loop_).exit() };
         }
 
         pub fn on_fd(send_queue: &mut SendQueue, _: Socket, fd: c_int) {

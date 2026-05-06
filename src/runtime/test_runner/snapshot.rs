@@ -175,9 +175,12 @@ impl<'a> Snapshots<'a> {
         // defer free → Drop
 
         let name_hash: u64 = hash(&name_with_counter);
-        if let Some(expected) = self.values.get(&name_hash) {
+        // PORT NOTE: reshaped for borrowck — `get` then early-return borrows `*self.values`
+        // immutably for the whole fn body (NLL limitation with returned borrows), preventing
+        // the later `insert`. Probe with `contains_key` first; re-lookup on hit.
+        if self.values.contains_key(&name_hash) {
             // TODO(port): returning &[u8] borrowing self.values; lifetime tied to &mut self.
-            return Ok(Some(&**expected));
+            return Ok(Some(&**self.values.get(&name_hash).unwrap()));
         }
 
         // doesn't exist. append to file bytes and add to hashmap.
@@ -219,7 +222,13 @@ impl<'a> Snapshots<'a> {
         // SAFETY: VM is thread-local singleton installed before any test runs; lives for the
         // duration of the runner. Per `VirtualMachine::get` doc, callers form a short-lived borrow.
         let vm = unsafe { &mut *VirtualMachine::get() };
-        let opts = js_parser::Parser::Options::init(vm.transpiler.options.jsx, js_parser::options::Loader::Js);
+        let opts = js_parser::ParserOptions::init(
+            vm.transpiler.options.jsx.clone().into(),
+            js_parser::options::Loader::Js,
+        );
+        // PERF(port): Zig used `this.allocator` (default_allocator). Thread a per-call arena
+        // since js_parser is bump-allocated in the Rust port.
+        let arena = bun_alloc::Arena::new();
         let mut temp_log = logger::Log::init();
 
         // PORT NOTE: do NOT call `Jest::runner()` here — it returns `&'static mut TestRunner`,

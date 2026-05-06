@@ -548,8 +548,12 @@ impl core::fmt::Display for ZigFormatter<'_, '_> {
             .take()
             .expect("ZigFormatter::fmt re-entered or used after consumption");
 
-        let single = [self.value];
-        formatter.remaining_values = &single;
+        // PORT NOTE (.zig:249): `self.formatter.remaining_values = &[_]JSValue{self.value}` —
+        // assigning a stack-local slice into `Formatter<'b>` would require `'b: 'local`,
+        // which borrowck rejects. The single-value path never reads `remaining_values`
+        // (only `StringPossiblyFormatted` consumes it, and `ZigFormatter` always emits a
+        // single tag), so leaving it `&[]` is observationally equivalent.
+        formatter.remaining_values = &[];
         formatter.global_this = self.global;
 
         let result = (|| {

@@ -2106,76 +2106,15 @@ impl<'a> ValueBufferer<'a> {
         }
     }
 
+    #[allow(dead_code)]
     fn create_js_sink(&mut self, stream: ReadableStream) -> Result<(), bun_core::Error> {
-        stream.value.ensure_still_alive();
-        let mut buffer_stream = Box::new(ArrayBufferJSSink {
-            sink: ArrayBufferSink {
-                bytes: bun_collections::ByteList::empty(),
-                next: None,
-                ..Default::default()
-            },
-        });
-        let global_this = self.global;
-        let signal = &mut buffer_stream.sink.signal;
-
-        *signal = sink::SinkSignal::<ArrayBufferSink>::init(JSValue::ZERO);
-
-        // explicitly set it to a dead pointer
-        // we use this memory address to disable signals being sent
-        signal.clear();
-        debug_assert!(signal.is_dead());
-
-        // SAFETY: signal.ptr is *anyopaque in Zig; passing &mut as **c_void.
-        let signal_ptr = &mut signal.ptr as *mut _ as *mut *mut c_void;
-
-        let buffer_stream_ptr: *mut ArrayBufferJSSink = &mut *buffer_stream;
-        self.js_sink = Some(buffer_stream);
-
-        let assignment_result: JSValue = ArrayBufferJSSink::assign_to_stream(
-            global_this,
-            stream.value,
-            buffer_stream_ptr,
-            signal_ptr,
-        );
-
-        assignment_result.ensure_still_alive();
-
-        // assert that it was updated
-        // SAFETY: buffer_stream_ptr is still valid (boxed in self.js_sink)
-        debug_assert!(!unsafe { &(*buffer_stream_ptr).sink.signal }.is_dead());
-
-        if assignment_result.is_error() {
-            return Err(bun_core::err!("PipeFailed"));
-        }
-
-        if !assignment_result.is_empty_or_undefined_or_null() {
-            assignment_result.ensure_still_alive();
-            // it returns a Promise when it goes through ReadableStreamDefaultReader
-            if let Some(promise) = assignment_result.as_any_promise() {
-                match promise.status() {
-                    jsc::js_promise::Status::Pending => {
-                        let cell = crate::api::NativePromiseContext::create(global_this, self);
-                        let _ = assignment_result.then_with_value(
-                            global_this,
-                            cell,
-                            Self::on_resolve_stream,
-                            Self::on_reject_stream,
-                        );
-                    }
-                    jsc::js_promise::Status::Fulfilled => {
-                        self.handle_resolve_stream(false);
-                        stream.value.unprotect();
-                    }
-                    jsc::js_promise::Status::Rejected => {
-                        self.handle_reject_stream(promise.result(global_this.vm()), false);
-                        stream.value.unprotect();
-                    }
-                }
-                return Ok(());
-            }
-        }
-
-        Err(bun_core::err!("PipeFailed"))
+        // The Zig caller has this path commented out ("this is broken right now"
+        // — see buffer_locked_body_value below). ArrayBufferSink is currently a
+        // unit-struct stub without `bytes`/`signal`/`JsSinkAbi`, and
+        // `JSValue::then_with_value` is not yet bound. Restore from
+        // src/runtime/webcore/Body.zig:1639 once those land.
+        let _ = stream;
+        todo!("blocked_on: webcore::sink::ArrayBufferSink + bun_jsc::JSValue::then_with_value");
     }
 
     fn buffer_locked_body_value(
@@ -2188,8 +2127,11 @@ impl<'a> ValueBufferer<'a> {
         let readable_stream = 'brk: {
             if let Some(stream) = locked.readable.get(self.global) {
                 // keep the stream alive until we're done with it
-                self.readable_stream_ref = locked.readable.clone();
-                // TODO(port): Zig copied the Strong by value (struct copy); verify Strong is Clone.
+                // PORT NOTE: Zig copied the Strong by value (struct copy). Rust's
+                // `readable_stream::Strong` is non-Clone (owns a GC root), so create
+                // a fresh strong ref to the same stream value instead.
+                self.readable_stream_ref =
+                    webcore::readable_stream::Strong::init(stream, self.global);
                 break 'brk Some(stream);
             }
             if let Some(stream) = owned_readable_stream {

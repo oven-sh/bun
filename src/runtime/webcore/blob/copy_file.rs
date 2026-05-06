@@ -686,7 +686,7 @@ impl<'a> CopyFile<'a> {
 
             if matches!(
                 self.destination_file_store.pathlike,
-                jsc::node::PathOrFileDescriptor::Fd(_)
+                PathOrFileDescriptor::Fd(_)
             ) {
                 // (empty in Zig)
             }
@@ -703,14 +703,14 @@ impl<'a> CopyFile<'a> {
                 },
             };
 
-            if bun_sys::S::ISDIR(stat.mode) {
+            if bun_sys::S::ISDIR(stat.st_mode as _) {
                 self.system_error = Some(unsupported_directory_error());
                 self.do_close();
                 return;
             }
 
-            if stat.size != 0 {
-                self.max_length = (SizeType::try_from(stat.size).unwrap().min(self.max_length))
+            if stat.st_size != 0 {
+                self.max_length = (SizeType::try_from(stat.st_size).unwrap().min(self.max_length))
                     .max(self.offset)
                     - self.offset;
                 if self.max_length == 0 {
@@ -719,14 +719,14 @@ impl<'a> CopyFile<'a> {
                 }
 
                 if PREALLOCATE_SUPPORTED
-                    && bun_sys::S::ISREG(stat.mode)
+                    && bun_sys::S::ISREG(stat.st_mode as _)
                     && self.max_length > PREALLOCATE_LENGTH
-                    && self.max_length != Blob::MAX_SIZE
+                    && self.max_length != MAX_SIZE
                 {
                     let _ = bun_sys::preallocate_file(
                         self.destination_fd.cast(),
                         0,
-                        self.max_length,
+                        self.max_length as i64,
                     );
                 }
             }
@@ -734,8 +734,8 @@ impl<'a> CopyFile<'a> {
             #[cfg(target_os = "linux")]
             {
                 // Bun.write(Bun.file("a"), Bun.file("b"))
-                if bun_sys::S::ISREG(stat.mode)
-                    && (bun_sys::S::ISREG(self.destination_file_store.mode)
+                if bun_sys::S::ISREG(stat.st_mode as _)
+                    && (bun_sys::S::ISREG(self.destination_file_store.mode as _)
                         || self.destination_file_store.mode == 0)
                 {
                     if self.destination_file_store.is_atty.unwrap_or(false) {
@@ -749,8 +749,8 @@ impl<'a> CopyFile<'a> {
                 }
 
                 // $ bun run foo.js | bun run bar.js
-                if bun_sys::S::ISFIFO(stat.mode)
-                    && bun_sys::S::ISFIFO(self.destination_file_store.mode)
+                if bun_sys::S::ISFIFO(stat.st_mode as _)
+                    && bun_sys::S::ISFIFO(self.destination_file_store.mode as _)
                 {
                     if self.destination_file_store.is_atty.unwrap_or(false) {
                         let _ = self.do_copy_file_range::<{ TryWith::Splice }, true>();

@@ -765,7 +765,21 @@ impl Writable {
     }
     pub fn on_ready(&mut self, _: Option<blob::SizeType>, _: Option<blob::SizeType>) {}
     pub fn on_start(&mut self) {}
+}
 
+impl webcore::streams::SignalHandler for Writable {
+    fn on_close(&mut self, err: Option<bun_sys::Error>) {
+        Writable::on_close(self, err)
+    }
+    fn on_ready(&mut self, amount: Option<blob::SizeType>, offset: Option<blob::SizeType>) {
+        Writable::on_ready(self, amount, offset)
+    }
+    fn on_start(&mut self) {
+        Writable::on_start(self)
+    }
+}
+
+impl Writable {
     pub fn init(
         stdio: Stdio,
         event_loop: EventLoopHandle,

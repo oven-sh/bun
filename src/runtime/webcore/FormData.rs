@@ -254,18 +254,16 @@ impl FormData {
 pub fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // PORT NOTE: `jsc.markBinding(@src())` dropped — debug-only source marker.
 
-    // TODO(port): `callframe.arguments_old(2)` — exact Rust shape of the
-    // returned buffer (`.ptr[0..2]` in Zig). Assuming indexable `[JSValue; 2]`.
-    let args = frame.arguments_old(2);
-    let input_value = args[0];
-    let boundary_value = args[1];
-    let mut boundary_slice = ZigString::Slice::empty();
+    let args = frame.arguments_old::<2>();
+    let input_value = args.ptr[0];
+    let boundary_value = args.ptr[1];
+    let mut boundary_slice = ZigStringSlice::default();
     // PORT NOTE: `defer boundary_slice.deinit()` — handled by `Drop`.
 
     let mut encoding = Encoding::URLEncoded;
 
     if input_value.is_empty_or_undefined_or_null() {
-        return global.throw_invalid_arguments(format_args!("input must not be empty"));
+        return Err(global.throw_invalid_arguments(format_args!("input must not be empty")));
     }
 
     if !boundary_value.is_empty_or_undefined_or_null() {
@@ -275,18 +273,18 @@ pub fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
             }
         } else if boundary_value.is_string() {
             boundary_slice = boundary_value.to_slice_or_null(global)?;
-            if boundary_slice.len() > 0 {
+            if !boundary_slice.slice().is_empty() {
                 encoding = Encoding::Multipart(Box::from(boundary_slice.slice()));
             }
         } else {
-            return global.throw_invalid_arguments(format_args!(
+            return Err(global.throw_invalid_arguments(format_args!(
                 "boundary must be a string or ArrayBufferView"
-            ));
+            )));
         }
     }
-    let mut input_slice = ZigString::Slice::default();
+    let mut input_slice = ZigStringSlice::default();
     // PORT NOTE: `defer input_slice.deinit()` — handled by `Drop`.
-    let mut input: &[u8] = b"";
+    let input: &[u8];
 
     if let Some(array_buffer) = input_value.as_array_buffer(global) {
         input = array_buffer.byte_slice();
@@ -294,19 +292,18 @@ pub fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
         input_slice = input_value.to_slice_or_null(global)?;
         input = input_slice.slice();
     } else if let Some(blob) = input_value.as_::<Blob>() {
-        // TODO(port): `JSValue::as_::<Blob>()` downcast helper name.
-        input = blob.shared_view();
+        // SAFETY: `blob` is a live JSC-owned cell while `input_value` is rooted.
+        input = unsafe { (*blob).shared_view() };
     } else {
-        return global
-            .throw_invalid_arguments(format_args!("input must be a string or ArrayBufferView"));
+        return Err(global
+            .throw_invalid_arguments(format_args!("input must be a string or ArrayBufferView")));
     }
 
     match FormData::to_js(global, input, &encoding) {
         Ok(v) => Ok(v),
         Err(e) if e == err!("JSError") => Err(JsError::Thrown),
         Err(e) if e == err!("JSTerminated") => Err(JsError::Terminated),
-        // TODO(port): `globalThis.throwError(err, msg)` signature.
-        Err(e) => global.throw_error(e, "while parsing FormData"),
+        Err(e) => Err(global.throw_error(e, "while parsing FormData")),
     }
 }
 
@@ -316,9 +313,9 @@ pub fn to_js_from_multipart_data(
     input: &[u8],
     boundary: &[u8],
 ) -> Result<JSValue, bun_core::Error> {
-    let form_data_value = DOMFormData::create(global);
+    let form_data_value = dom_form_data_shim::create(global);
     form_data_value.ensure_still_alive();
-    let Some(form) = DOMFormData::from_js(form_data_value) else {
+    let Some(form) = dom_form_data_shim::from_js(form_data_value) else {
         scoped_log!(FormData, "failed to create DOMFormData.fromJS");
         return Err(err!("failed to parse multipart data"));
     };

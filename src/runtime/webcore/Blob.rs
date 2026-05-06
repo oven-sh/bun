@@ -352,11 +352,11 @@ impl Blob {
 
     // TODO(b2-blocked): bun_core::FormData (gated module)
     
-    pub fn get_form_data_encoding(&mut self) -> Option<Box<bun_core::FormData::AsyncFormData>> {
+    pub fn get_form_data_encoding(&mut self) -> Option<Box<bun_core::form_data::AsyncFormData>> {
         let content_type_slice = self.get_content_type()?;
-        let encoding = bun_core::FormData::Encoding::get(content_type_slice.slice())?;
+        let encoding = bun_core::form_data::Encoding::get(content_type_slice.slice())?;
         // drop content_type_slice via Drop
-        Some(bun_core::FormData::AsyncFormData::init(encoding))
+        Some(bun_core::form_data::AsyncFormData::init(encoding))
     }
 
     pub fn has_content_type_from_user(&self) -> bool {

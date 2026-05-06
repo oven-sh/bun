@@ -1077,7 +1077,8 @@ impl UDPSocket {
                     // is expected — and root that, so phase 2 only ever sees
                     // primitive JSString cells.
                     if val.is_string() {
-                        break 'blk val.to_js_string(global_this)?.to_js();
+                        // SAFETY: to_js_string returned non-null on success path.
+                        break 'blk unsafe { (*val.to_js_string(global_this)?).to_js() };
                     }
                     return Err(global_this.throw_invalid_arguments(format_args!(
                         "Expected ArrayBufferView or string as payload"

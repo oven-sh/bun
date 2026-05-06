@@ -3271,12 +3271,14 @@ impl DuplexUpgradeContext {
 
     fn deinit_in_next_tick(&mut self) {
         self.task_event = EventState::Close;
-        self.vm.enqueue_task(jsc::Task::init(&mut self.task));
+        // SAFETY: `vm` is the per-thread singleton stored at construction.
+        unsafe { (*self.vm).enqueue_task(jsc::Task::init(&mut self.task)) };
     }
 
     fn start_tls(&mut self) {
         self.task_event = EventState::StartTLS;
-        self.vm.enqueue_task(jsc::Task::init(&mut self.task));
+        // SAFETY: `vm` is the per-thread singleton stored at construction.
+        unsafe { (*self.vm).enqueue_task(jsc::Task::init(&mut self.task)) };
     }
 
     fn deinit(&mut self) {
@@ -3290,7 +3292,9 @@ impl DuplexUpgradeContext {
             // SAFETY: BoringSSL FFI; we hold one owned ref.
             unsafe { boringssl_sys::SSL_CTX_free(ctx) };
         }
-        self.upgrade.deinit();
+        // PORT NOTE: Zig `self.upgrade.deinit()` — `UpgradedDuplex` cleanup
+        // runs via `Drop` when `Box::from_raw(self)` frees the containing
+        // struct below; an explicit call here would double-free.
         // SAFETY: `self` was Box::into_raw'd in `new()`.
         drop(unsafe { Box::from_raw(self as *mut Self) });
     }

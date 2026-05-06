@@ -54,24 +54,27 @@ impl ImmediateObject {
             // `internals.init()` below before any read.
             internals: MaybeUninit::uninit(),
         }));
-        // SAFETY: just allocated above; sole owner until toJS hands it to the JS wrapper.
-        let immediate_ref = unsafe { &mut *immediate };
-
-        let js_value = immediate_ref.to_js(global_this);
+        // PORT NOTE: `JsClass::to_js(self)` boxes `self` again; we already boxed
+        // above so call the codegen'd `Immediate__create` shim directly with the
+        // raw `m_ctx` pointer (matches `TimeoutObject::init`).
+        let js_value = bun_jsc::generated::JSImmediate::to_js(immediate.cast(), global_this);
         let _keep = EnsureStillAlive(js_value);
         // TODO(port): in-place init — TimerObjectInternals::init is an out-param constructor;
         // once it is reshaped to `fn init(...) -> Self`, replace with
-        // `immediate_ref.internals.write(TimerObjectInternals::init(...))`.
-        // SAFETY: `as_mut_ptr` yields the uninit slot; `init` writes every field before return.
-        unsafe { &mut *immediate_ref.internals.as_mut_ptr() }.init(
-            js_value,
-            global_this,
-            id,
-            super::Kind::SetImmediate,
-            0,
-            callback,
-            arguments,
-        );
+        // `(*immediate).internals.write(TimerObjectInternals::init(...))`.
+        // SAFETY: `immediate` was just allocated above and is exclusively owned here;
+        // `as_mut_ptr` yields the uninit slot; `init` writes every field before return.
+        unsafe {
+            (*(*immediate).internals.as_mut_ptr()).init(
+                js_value,
+                global_this,
+                id,
+                super::Kind::SetImmediate,
+                0,
+                callback,
+                arguments,
+            );
+        }
 
         // SAFETY: `bun_vm()` returns the live per-thread VM pointer; field read only.
         if unsafe { (*global_this.bun_vm()).is_inspector_enabled() } {

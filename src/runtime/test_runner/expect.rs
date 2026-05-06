@@ -2360,7 +2360,7 @@ impl ExpectCustomAsymmetricMatcher {
 }
 
 /// Reference: `MatcherContext` in https://github.com/jestjs/jest/blob/main/packages/expect/src/types.ts
-#[bun_jsc::JsClass]
+#[bun_jsc::JsClass(no_construct)]
 pub struct ExpectMatcherContext {
     pub flags: Flags,
 }

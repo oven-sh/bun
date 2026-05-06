@@ -468,18 +468,22 @@ impl FetchTasklet {
                     unsafe { (*bytes).on_data(StreamResult::Err(StreamError::JSValue(js_err)))? };
                 }
             }
-            if let Some(sink) = self.sink.as_ref() {
+            if let Some(sink) = self.sink {
                 if js_err.is_empty() {
                     js_err = err.to_js(global_this);
                     js_err.ensure_still_alive();
                 }
-                sink.cancel(js_err);
+                // SAFETY: sink alive while self.sink is Some
+                unsafe { (*sink).cancel(js_err) };
                 return Ok(());
             }
             // if we are buffering resolve the promise
             if let Some(response) = self.get_current_response() {
-                let body = response.get_body_value();
-                body.to_error_instance(err, global_this)?;
+                // SAFETY: response is alive (native ref or weak hit)
+                let body = unsafe { (*response).get_body_value() };
+                // PORT NOTE: `to_error_instance` returns JsResult<()> (JsError);
+                // discard non-Terminated error here (matches Zig swallowing).
+                let _ = body.to_error_instance(err, global_this);
             }
             return Ok(());
         }
@@ -489,22 +493,22 @@ impl FetchTasklet {
             if let readable_stream::Source::Bytes(bytes) = readable.ptr {
                 // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
                 let bytes = unsafe { &mut *bytes };
-                bytes.set_size_hint(self.get_size_hint());
+                bytes.size_hint = self.get_size_hint();
                 // body can be marked as used but we still need to pipe the data
                 let chunk = self.scheduled_response_buffer.list.as_slice();
 
                 if self.result.has_more {
-                    bytes.on_data(StreamResult::Temporary(
+                    bytes.on_data(StreamResult::Temporary(ManuallyDrop::into_inner(
                         bun_collections::ByteList::from_borrowed_slice_dangerous(chunk),
-                    ))?;
+                    )))?;
                 } else {
                     self.clear_stream_cancel_handler();
                     let prev = core::mem::take(&mut self.readable_stream_ref);
                     buffer_reset.set(false);
 
-                    bytes.on_data(StreamResult::TemporaryAndDone(
+                    bytes.on_data(StreamResult::TemporaryAndDone(ManuallyDrop::into_inner(
                         bun_collections::ByteList::from_borrowed_slice_dangerous(chunk),
-                    ))?;
+                    )))?;
                     drop(prev);
                 }
                 return Ok(());

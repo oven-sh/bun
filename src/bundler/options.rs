@@ -903,8 +903,17 @@ impl Loader {
             slice = &slice[1..];
         }
 
-        // TODO(port): phf custom hasher — Zig used getWithEql(.., eqlCaseInsensitiveASCIIICheckLength)
-        LOADER_NAMES.get(slice).copied()
+        // Zig: `names.getWithEql(slice, strings.eqlCaseInsensitiveASCIIICheckLength)`.
+        // phf is case-sensitive, so lowercase into a stack buffer before lookup.
+        // Longest key ("sqlite_embedded") is 15 bytes; 32 is ample headroom.
+        let mut buf = [0u8; 32];
+        if slice.len() > buf.len() {
+            return None;
+        }
+        for (i, b) in slice.iter().enumerate() {
+            buf[i] = b.to_ascii_lowercase();
+        }
+        LOADER_NAMES.get(&buf[..slice.len()]).copied()
     }
 
     pub fn supports_client_entry_point(self) -> bool {
@@ -1399,8 +1408,11 @@ pub mod jsx {
     #[derive(Debug, Clone)]
     pub struct Pragma {
         // these need to be arrays
-        pub factory: &'static [&'static [u8]], // TODO(port): may be heap-allocated; see member_list_to_components_if_different
-        pub fragment: &'static [&'static [u8]],
+        // Zig: `[]const string` — either the static `Defaults.Factory` or a
+        // heap slice from `memberListToComponentsIfDifferent`. Owned here so
+        // the alloc path doesn't leak (PORTING.md §Forbidden patterns).
+        pub factory: Box<[Box<[u8]>]>,
+        pub fragment: Box<[Box<[u8]>]>,
         pub runtime: Runtime,
         pub import_source: ImportSource,
 
@@ -1437,8 +1449,8 @@ pub mod jsx {
     impl Default for Pragma {
         fn default() -> Self {
             Pragma {
-                factory: defaults::FACTORY,
-                fragment: defaults::FRAGMENT,
+                factory: defaults::FACTORY.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
+                fragment: defaults::FRAGMENT.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
                 runtime: Runtime::Automatic,
                 import_source: ImportSource::default(),
                 classic_import_source: Box::from(b"react".as_slice()),
@@ -1452,10 +1464,10 @@ pub mod jsx {
 
     impl Pragma {
         pub fn hash_for_runtime_transpiler(&self, hasher: &mut bun_wyhash::Wyhash11) {
-            for factory in self.factory {
+            for factory in self.factory.iter() {
                 hasher.update(factory);
             }
-            for fragment in self.fragment {
+            for fragment in self.fragment.iter() {
                 hasher.update(fragment);
             }
             hasher.update(&self.import_source.development);
@@ -1525,12 +1537,9 @@ pub mod jsx {
         // ...unless new is "React.createElement" and original is ["React", "createElement"]
         // saves an allocation for the majority case
         pub fn member_list_to_components_if_different(
-            original: &'static [&'static [u8]],
+            original: Box<[Box<[u8]>]>,
             new: &[u8],
-        ) -> Result<&'static [&'static [u8]], bun_core::Error> {
-            // TODO(port): return type — Zig returns []const string which may be either the
-            // original &'static slice OR a freshly allocated slice. Rust cannot express this
-            // without Cow or leaking. Phase B: change Pragma.factory/fragment to Box<[Box<[u8]>]>.
+        ) -> Result<Box<[Box<[u8]>]>, bun_core::Error> {
             let count = strings::count_char(new, b'.') + 1;
 
             let mut needs_alloc = false;
@@ -1544,7 +1553,7 @@ pub mod jsx {
                     break;
                 }
 
-                if original[current_i] != str {
+                if &*original[current_i] != str {
                     needs_alloc = true;
                     break;
                 }
@@ -1555,21 +1564,14 @@ pub mod jsx {
                 return Ok(original);
             }
 
-            // TODO(port): allocates Box<[&[u8]]> borrowing `new`; lifetime mismatch with return type.
-            let mut out: Vec<&[u8]> = Vec::with_capacity(count);
+            let mut out: Vec<Box<[u8]>> = Vec::with_capacity(count);
             for str in new.split(|b| *b == b'.') {
                 if str.is_empty() {
                     continue;
                 }
-                out.push(str);
+                out.push(Box::from(str));
             }
-            // TODO(port): FORBIDDEN — leaking to satisfy &'static; Phase B should
-            // restructure Pragma.factory/fragment to Box<[Box<[u8]>]>. Gated to
-            // satisfy lifetime checker (`out` borrows `new`).
-            #[cfg(any())]
-            { return Ok(Box::leak(out.into_boxed_slice())); }
-            let _ = out;
-            Ok(original)
+            Ok(out.into_boxed_slice())
         }
 
         #[cfg(any())]
@@ -1578,13 +1580,17 @@ pub mod jsx {
             let mut pragma = Pragma::default();
 
             if !jsx.fragment.is_empty() {
-                pragma.fragment =
-                    Self::member_list_to_components_if_different(pragma.fragment, &jsx.fragment)?;
+                pragma.fragment = Self::member_list_to_components_if_different(
+                    core::mem::take(&mut pragma.fragment),
+                    &jsx.fragment,
+                )?;
             }
 
             if !jsx.factory.is_empty() {
-                pragma.factory =
-                    Self::member_list_to_components_if_different(pragma.factory, &jsx.factory)?;
+                pragma.factory = Self::member_list_to_components_if_different(
+                    core::mem::take(&mut pragma.factory),
+                    &jsx.factory,
+                )?;
             }
 
             pragma.runtime = jsx.runtime;

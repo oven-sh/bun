@@ -209,7 +209,19 @@ impl Blob {
     }
 
     pub fn get_file_name(&self) -> Option<&[u8]> {
-        self.store.as_deref().and_then(Store::get_path)
+        let store = self.store.as_deref()?;
+        match &store.data {
+            store::Data::Bytes(bytes) => {
+                let n = bytes.stored_name.slice();
+                if n.is_empty() { None } else { Some(n) }
+            }
+            store::Data::File(file) => match &file.pathlike {
+                PathOrFileDescriptor::Path(path) => Some(path.slice()),
+                _ => None,
+            },
+            // Zig: `s3.path()` (URL-normalized), NOT `s3.pathlike.slice()`.
+            store::Data::S3(s3) => Some(s3.path()),
+        }
     }
 
     pub fn detach(&mut self) {

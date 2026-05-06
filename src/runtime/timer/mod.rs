@@ -323,12 +323,17 @@ impl All {
     /// Remove the EventLoopTimer if necessary, then re-insert at `time`.
     pub fn update(&mut self, timer: *mut EventLoopTimer, time: &Timespec) {
         self.lock.lock();
-        // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer
-        let timer_ref = unsafe { &mut *timer };
-        if timer_ref.state == EventLoopTimerState::ACTIVE {
+        // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer.
+        // Read `state` via raw deref so we don't hold a `&mut *timer` across
+        // `remove_lock_held` (which also `&mut`-derefs the same pointer);
+        // overlapping `&mut` is UB under Stacked Borrows.
+        if unsafe { (*timer).state } == EventLoopTimerState::ACTIVE {
             self.remove_lock_held(timer);
         }
 
+        // SAFETY: `timer` is still a valid live EventLoopTimer; safe to derive
+        // an exclusive reference now that no other borrow is outstanding.
+        let timer_ref = unsafe { &mut *timer };
         // PORT NOTE: Zig asserts `&timer.next != time` (threadsafety); the
         // EventLoopTimer.Timespec and bun_core::Timespec are distinct types
         // until the lower tier unifies them, so the pointer-compare is moot

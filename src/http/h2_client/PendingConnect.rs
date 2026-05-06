@@ -49,16 +49,20 @@ impl PendingConnect {
             && strings::eql_long::<true>(&self.hostname, hostname)
     }
 
-    pub fn unregister_from(&mut self, ctx: &mut NewHTTPContext<true>) {
+    /// Remove `this` from `ctx.pending_h2_connects` and hand the owning
+    /// `Box<Self>` back to the caller. Associated fn (not `&mut self`) because
+    /// the list owns `Box<Self>` — `swap_remove` would otherwise drop the very
+    /// allocation `&mut self` borrows from (UAF). Caller holds the returned
+    /// Box until scope exit (Zig: `defer pc.deinit()`).
+    pub fn unregister_from(
+        this: *const Self,
+        ctx: &mut NewHTTPContext<true>,
+    ) -> Option<Box<Self>> {
         let list = &mut ctx.pending_h2_connects;
-        let this_ptr: *const Self = self;
         // PORT NOTE: reshaped for borrowck (was `for + swapRemove + return`)
-        if let Some(i) = list
-            .iter()
-            .position(|p| core::ptr::eq(&**p as *const Self, this_ptr))
-        {
-            list.swap_remove(i);
-        }
+        list.iter()
+            .position(|p| core::ptr::eq(&**p as *const Self, this))
+            .map(|i| list.swap_remove(i))
     }
 
     // Zig `deinit` freed `hostname`, deinited `waiters`, and `bun.destroy(this)`.

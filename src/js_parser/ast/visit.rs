@@ -48,6 +48,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
     pub fn visit_args(&mut self, args: &mut [G::Arg], opts: VisitArgsOpts) {
         let _ = (args, opts);
+        todo!("b2-ast-E: visit_args")
     }
     pub fn visit_ts_decorators(&mut self, mut decs: ExprNodeList) -> ExprNodeList {
         for dec in decs.slice_mut() {

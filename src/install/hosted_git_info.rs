@@ -50,6 +50,7 @@
 //! tags like `github:` which are handled as "shortcuts" by this library.
 
 use core::ops::Range;
+use core::ptr::NonNull;
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
@@ -287,7 +288,7 @@ impl HostedGitInfo {
         let Ok(parsed) = parse_url(git_url_mut) else {
             return Ok(None);
         };
-        // `parsed.url` is `Box<JscUrl>`; Drop handles `defer parsed.url.deinit()`.
+        // `parsed.url` is `OwnedJscUrl`; Drop handles `defer parsed.url.deinit()`.
 
         let host_provider = match parsed.proto {
             UrlProtocol::WellFormed(p) => {
@@ -370,10 +371,29 @@ pub struct StringPair {
 // parse_url
 // ──────────────────────────────────────────────────────────────────────────
 
+/// RAII handle over a heap-allocated `WTF::URL` (C++). The allocation comes from
+/// `URL__fromString` (C++ `new`), so it MUST be freed via `URL__deinit` — wrapping
+/// the pointer in `Box` is allocator-mismatch UB and never runs the C++ destructor.
+pub struct OwnedJscUrl(NonNull<JscUrl>);
+impl core::ops::Deref for OwnedJscUrl {
+    type Target = JscUrl;
+    fn deref(&self) -> &JscUrl {
+        // SAFETY: `from_string`/`from_utf8` returned a live heap WTF::URL we own.
+        unsafe { self.0.as_ref() }
+    }
+}
+impl Drop for OwnedJscUrl {
+    fn drop(&mut self) {
+        // SAFETY: pointer is the unique owner of a `new WTF::URL` from C++; `deinit`
+        // calls `URL__deinit` which `delete`s it.
+        unsafe { self.0.as_mut() }.deinit();
+    }
+}
+
 // PORT NOTE: anonymous return struct in Zig → named struct here.
 // `url` is OWNED per LIFETIMES.tsv (jsc.URL.fromString creates; caller deinits).
 pub struct ParsedUrl<'a> {
-    pub url: Box<JscUrl>,
+    pub url: OwnedJscUrl,
     pub proto: UrlProtocol<'a>,
 }
 
@@ -686,7 +706,7 @@ impl<'a> UrlProtocolPair<'a> {
     // PORT NOTE: `deinit` → Drop; `Managed(Box<[u8]>)` frees automatically.
 
     /// Given a protocol pair, create a jsc.URL if possible. May allocate, but owns its memory.
-    fn to_url(&self) -> Option<Box<JscUrl>> {
+    fn to_url(&self) -> Option<OwnedJscUrl> {
         // Ehhh.. Old IE's max path length was 2K so let's just use that. I searched for a
         // statistical distribution of URL lengths and found nothing.
         const _LONG_URL_THRESH: usize = 2048;
@@ -715,15 +735,12 @@ impl<'a> UrlProtocolPair<'a> {
         }
     }
 
-    fn concat_parts_to_url(parts: &[&[u8]]) -> Option<Box<JscUrl>> {
+    fn concat_parts_to_url(parts: &[&[u8]]) -> Option<OwnedJscUrl> {
         // TODO(markovejnovic): There is a sad unnecessary allocation here that I don't know how to
         // get rid of -- in theory, URL.zig could allocate once.
         let new_str = strings::concat(parts).ok()?;
         // Drop handles `defer allocator.free(new_str)`.
-        // TODO(port): `Box<JscUrl>` is a thin opaque-handle box; the C++ side owns the
-        // real allocation and `deinit()` must run before drop. Replace with `WhatwgUrl`
-        // (install/lib.rs) once the stub module split lands.
-        JscUrl::from_utf8(&new_str).map(|p| unsafe { Box::from_raw(p.as_ptr()) })
+        JscUrl::from_utf8(&new_str).map(OwnedJscUrl)
     }
 }
 

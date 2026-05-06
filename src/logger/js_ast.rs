@@ -437,7 +437,16 @@ pub mod E {
             None
         }
         pub fn has_property(&self, name: &[u8]) -> bool {
-            self.as_property(name).is_some()
+            // Zig `E.Object.hasProperty` checks only `prop.key` — it does NOT
+            // skip entries whose `value` is None (unlike `asProperty`).
+            for prop in self.properties.slice() {
+                let Some(key) = &prop.key else { continue };
+                let super::expr::Data::EString(key_str) = &key.data else { continue };
+                if key_str.eql_bytes(name) {
+                    return true;
+                }
+            }
+            false
         }
         pub fn put(&mut self, _bump: &Bump, key: &[u8], expr: Expr) -> Result<(), AllocError> {
             if let Some(q) = self.as_property(key) {
@@ -738,10 +747,11 @@ impl Expr {
     pub fn data_store_create() {}
     #[inline]
     pub fn data_store_reset() {
-        // PERF(port): T2 boxed payloads (`EString`/`EArray`/`EObject`) are
-        // `Box::leak`'d via `into_data_store` (json/toml/yaml/ini run once per
-        // config file, so the leak is bounded). The full `NewStore` slab lives
-        // in `bun_js_parser`; once `Data` is unified, this calls through to it.
+        // T2 boxed payloads (`EString`/`EArray`/`EObject`) are bump-allocated
+        // into the thread-local `DATA_STORE` arena via `into_data_store`. The
+        // full `NewStore` slab lives in `bun_js_parser`; once `Data` is
+        // unified, this calls through to it.
+        DATA_STORE.with(|s| s.borrow_mut().reset());
     }
 }
 
@@ -846,19 +856,26 @@ macro_rules! impl_into_expr_data_inline {
         }
     )*};
 }
+// Thread-local bump arena backing `into_data_store` for boxed payloads.
+// Mirrors Zig's thread-local `Expr.Data.Store` slab; bulk-freed via
+// `Expr::data_store_reset()`. PORTING.md §Forbidden — no `Box::leak`.
+std::thread_local! {
+    static DATA_STORE: core::cell::RefCell<Bump> =
+        core::cell::RefCell::new(Bump::new());
+}
+
 macro_rules! impl_into_expr_data_boxed {
     ($($ty:ident => $variant:ident),* $(,)?) => {$(
         impl IntoExprData for E::$ty {
             fn into_data_store(self) -> expr::Data {
-                // PERF(port): Zig interns into the thread-local `Expr.Data.Store`
-                // slab. T2 has no Store; `Box::leak` matches the "freed at
-                // process exit" lifetime json/toml/yaml/ini observe in practice
-                // (config files parse once). `bun_js_parser`'s `IntoExprData`
-                // impls go through `data::Store::append`. Unify with the Store
-                // when `Data` is unified.
-                expr::Data::$variant(StoreRef::from_non_null(
-                    NonNull::from(Box::leak(Box::new(self))),
-                ))
+                // Zig interns into the thread-local `Expr.Data.Store` slab.
+                // T2 routes through `DATA_STORE` (a `bumpalo::Bump`); pointees
+                // live until `Expr::data_store_reset()`. `bun_js_parser`'s
+                // `IntoExprData` impls go through `data::Store::append`. Unify
+                // with the Store when `Data` is unified.
+                DATA_STORE.with(|s| {
+                    expr::Data::$variant(StoreRef::from_bump(s.borrow().alloc(self)))
+                })
             }
             fn into_data_alloc(self, bump: &Bump) -> expr::Data {
                 expr::Data::$variant(StoreRef::from_bump(bump.alloc(self)))

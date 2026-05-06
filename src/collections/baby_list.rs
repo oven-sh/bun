@@ -10,7 +10,6 @@ use bun_core::strings;
 pub const SAFETY_CHECKS: bool = cfg!(debug_assertions);
 const TRACES_ENABLED: bool = cfg!(debug_assertions);
 
-#[cfg(debug_assertions)]
 #[derive(Clone)]
 enum Origin {
     Owned,
@@ -18,6 +17,7 @@ enum Origin {
         // TODO(port): StoredTrace when traces_enabled, () otherwise — Rust cannot express
         // `if (traces_enabled) StoredTrace else void` as a field type without cfg gymnastics.
         // TODO(b0): StoredTrace arrives in bun_core via move-in (MOVE_DOWN from crash_handler).
+        #[cfg(debug_assertions)]
         trace: Option<bun_core::StoredTrace>,
     },
 }
@@ -34,7 +34,10 @@ pub struct BabyList<T> {
     pub ptr: NonNull<T>,
     pub len: u32,
     pub cap: u32,
-    #[cfg(debug_assertions)]
+    // NOTE: `origin` is intentionally NOT cfg-gated. `from_bump_slice` hands out lists backed by
+    // arena memory; if `Drop` cannot see `Origin::Borrowed` in release builds it will pass arena
+    // pointers to the global allocator's `free`, which is UB. The trace payload inside `Borrowed`
+    // remains debug-only so release builds pay only one discriminant byte.
     origin: Origin,
     // PORT NOTE: Zig had `#allocator: bun.safety.CheckedAllocator` — dropped because Rust uses the
     // global mimalloc allocator (see PORTING.md §Allocators). All `allocator` params are removed.
@@ -50,7 +53,6 @@ impl<T> Default for BabyList<T> {
             ptr: NonNull::dangling(),
             len: 0,
             cap: 0,
-            #[cfg(debug_assertions)]
             origin: Origin::Owned,
         }
     }
@@ -59,10 +61,10 @@ impl<T> Default for BabyList<T> {
 impl<T> Drop for BabyList<T> {
     fn drop(&mut self) {
         // PORT NOTE: Zig `deinit` was explicit and took an allocator. In Rust the global allocator
-        // is mimalloc and Drop is implicit. Borrowed lists (from `from_borrowed_slice_dangerous`)
-        // must be wrapped in `ManuallyDrop` or leaked by the caller.
-        // TODO(port): audit all `fromBorrowedSliceDangerous` callers — they must not let Drop run.
-        #[cfg(debug_assertions)]
+        // is mimalloc and Drop is implicit. Borrowed lists (from `from_bump_slice` /
+        // `from_borrowed_slice_dangerous`) point at arena or caller-owned memory, so we MUST NOT
+        // hand that pointer to `Vec::from_raw_parts` below — freeing it via the global allocator
+        // is UB. This guard is unconditional (not debug-only) for that reason.
         if matches!(self.origin, Origin::Borrowed { .. }) {
             return;
         }
@@ -87,7 +89,6 @@ impl<T> BabyList<T> {
         ptr: NonNull::dangling(),
         len: 0,
         cap: 0,
-        #[cfg(debug_assertions)]
         origin: Origin::Owned,
     };
 
@@ -110,7 +111,6 @@ impl<T> BabyList<T> {
             ptr: unsafe { NonNull::new_unchecked(ptr) },
             len,
             cap,
-            #[cfg(debug_assertions)]
             origin: Origin::Owned,
         }
     }
@@ -139,7 +139,6 @@ impl<T> BabyList<T> {
             ptr: unsafe { NonNull::new_unchecked(ptr) },
             len: u32::try_from(items_len).unwrap(),
             cap: u32::try_from(capacity).unwrap(),
-            #[cfg(debug_assertions)]
             origin: Origin::Owned,
         }
     }
@@ -160,15 +159,13 @@ impl<T> BabyList<T> {
             ptr,
             len: u32::try_from(len).unwrap(),
             cap: u32::try_from(len).unwrap(),
-            #[cfg(debug_assertions)]
             origin: Origin::Owned,
         }
     }
 
     /// Wrap a bump-arena (or otherwise externally-owned) slice as a BabyList
     /// without taking ownership. `Drop` will *not* free the buffer (origin is
-    /// `Borrowed` in debug; in release `cap == len` and the global allocator
-    /// is never asked to free arena memory because callers never grow it).
+    /// `Borrowed`, checked unconditionally in `Drop`).
     ///
     /// Used by the JS parser for `&'bump mut [T]` AST node lists where the
     /// Zig side passed `BabyList(T).fromOwnedSlice(arena_slice)`.
@@ -183,8 +180,10 @@ impl<T> BabyList<T> {
             ptr: unsafe { NonNull::new_unchecked(items.as_mut_ptr()) },
             len: u32::try_from(len).unwrap(),
             cap: u32::try_from(len).unwrap(),
-            #[cfg(debug_assertions)]
-            origin: Origin::Borrowed { trace: None },
+            origin: Origin::Borrowed {
+                #[cfg(debug_assertions)]
+                trace: None,
+            },
         }
     }
 
@@ -207,7 +206,6 @@ impl<T> BabyList<T> {
             ptr: unsafe { NonNull::new_unchecked(buffer) },
             len: 0,
             cap: u32::try_from(buffer_len).unwrap(),
-            #[cfg(debug_assertions)]
             origin: Origin::Owned,
         }
     }
@@ -537,11 +535,16 @@ impl<T> BabyList<T> {
     // `Context.lessThan`. Rust expresses this as a comparator closure.
     pub fn sort(&mut self, mut less_than: impl FnMut(&T, &T) -> bool) {
         // PERF(port): std.sort.pdq → slice::sort_unstable_by (also pdqsort).
+        // The comparator must be a total order: since Rust 1.81 `sort_unstable_by` panics if it
+        // observes `cmp(a, b) == Greater && cmp(b, a) == Greater`. Derive `Equal` by probing the
+        // `less_than` predicate in both directions.
         self.slice_mut().sort_unstable_by(|a, b| {
             if less_than(a, b) {
                 core::cmp::Ordering::Less
-            } else {
+            } else if less_than(b, a) {
                 core::cmp::Ordering::Greater
+            } else {
+                core::cmp::Ordering::Equal
             }
         });
     }
@@ -702,25 +705,20 @@ impl<T> BabyList<T> {
     /// The returned `BabyList` must NOT be dropped (wrap in `ManuallyDrop`) and must not have any
     /// growing/freeing method called on it.
     pub unsafe fn from_borrowed_slice_dangerous(items: &[T]) -> ManuallyDrop<Self> {
-        let mut this = Self {
+        let this = Self {
             // SAFETY: slice pointer is non-null.
             ptr: unsafe { NonNull::new_unchecked(items.as_ptr() as *mut T) },
             len: u32::try_from(items.len()).unwrap(),
             cap: u32::try_from(items.len()).unwrap(),
-            #[cfg(debug_assertions)]
-            origin: Origin::Owned,
-        };
-        #[cfg(debug_assertions)]
-        {
-            this.origin = Origin::Borrowed {
+            origin: Origin::Borrowed {
+                #[cfg(debug_assertions)]
                 trace: if TRACES_ENABLED {
                     Some(bun_core::StoredTrace::capture(None))
                 } else {
                     None
                 },
-            };
-        }
-        let _ = &mut this;
+            },
+        };
         ManuallyDrop::new(this)
     }
 
@@ -733,26 +731,24 @@ impl<T> BabyList<T> {
     }
 
     fn assert_owned(&self) {
-        #[cfg(debug_assertions)]
-        {
-            if matches!(self.origin, Origin::Owned) {
-                return;
-            }
-            if TRACES_ENABLED {
-                if let Origin::Borrowed { trace: Some(trace) } = &self.origin {
-                    bun_core::Output::note("borrowed BabyList created here:");
-                    bun_core::dump_stack_trace(
-                        &trace.trace(),
-                        bun_core::DumpStackTraceOptions {
-                            frame_count: 10,
-                            stop_at_jsc_llint: true,
-                            ..Default::default()
-                        },
-                    );
-                }
-            }
-            panic!("cannot perform this operation on a BabyList that doesn't own its data");
+        if matches!(self.origin, Origin::Owned) {
+            return;
         }
+        #[cfg(debug_assertions)]
+        if TRACES_ENABLED {
+            if let Origin::Borrowed { trace: Some(trace) } = &self.origin {
+                bun_core::Output::note("borrowed BabyList created here:");
+                bun_core::dump_stack_trace(
+                    &trace.trace(),
+                    bun_core::DumpStackTraceOptions {
+                        frame_count: 10,
+                        stop_at_jsc_llint: true,
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+        panic!("cannot perform this operation on a BabyList that doesn't own its data");
     }
 
     /// Returns a `Vec<T>` view over the same buffer. The returned `ManuallyDrop` MUST be passed

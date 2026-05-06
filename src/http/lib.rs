@@ -2815,8 +2815,8 @@ impl<'a> HTTPClient<'a> {
     /// failed). Dispatch every waiter accordingly.
     fn resolve_pending_h2(&mut self, resolution: PendingH2Resolution<'_>) {
         let Some(pc) = self.pending_h2.take() else { return };
-        pc.unregister_from(self.get_ssl_ctx::<true>());
-        // pc drops at scope exit (was `defer pc.deinit()`)
+        let _owned = h2::PendingConnect::unregister_from(&*pc, self.get_ssl_ctx::<true>());
+        // pc / _owned drop at scope exit (was `defer pc.deinit()`)
 
         for waiter in pc.waiters.iter() {
             if waiter.signals.get(Signals::Aborted) {

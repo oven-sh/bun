@@ -169,22 +169,32 @@ impl SideEffects {
                 | Op::Code::UnTypeof
             ),
             ExprData::EBinary(e) => match e.op {
+                // boolean
                 Op::Code::BinStrictEq | Op::Code::BinStrictNe | Op::Code::BinLooseEq
                 | Op::Code::BinLooseNe | Op::Code::BinLt | Op::Code::BinGt
                 | Op::Code::BinLe | Op::Code::BinGe | Op::Code::BinInstanceof
                 | Op::Code::BinIn
+                // string, number, or bigint
+                | Op::Code::BinAdd | Op::Code::BinAddAssign
+                // number or bigint
                 | Op::Code::BinSub | Op::Code::BinMul | Op::Code::BinDiv
-                | Op::Code::BinRem | Op::Code::BinPow | Op::Code::BinShl
-                | Op::Code::BinShr | Op::Code::BinUShr | Op::Code::BinBitwiseOr
-                | Op::Code::BinBitwiseAnd | Op::Code::BinBitwiseXor => true,
-                // also "number or bigint" or "string" (since "+" can also concat)
-                Op::Code::BinAdd => true,
-                Op::Code::BinComma | Op::Code::BinAssign => {
-                    Self::is_primitive_with_side_effects(&e.right.data)
-                }
-                Op::Code::BinLogicalAnd | Op::Code::BinLogicalOr | Op::Code::BinNullishCoalescing => {
+                | Op::Code::BinRem | Op::Code::BinPow
+                | Op::Code::BinSubAssign | Op::Code::BinMulAssign | Op::Code::BinDivAssign
+                | Op::Code::BinRemAssign | Op::Code::BinPowAssign
+                | Op::Code::BinShl | Op::Code::BinShr | Op::Code::BinUShr
+                | Op::Code::BinShlAssign | Op::Code::BinShrAssign | Op::Code::BinUShrAssign
+                | Op::Code::BinBitwiseOr | Op::Code::BinBitwiseAnd | Op::Code::BinBitwiseXor
+                | Op::Code::BinBitwiseOrAssign | Op::Code::BinBitwiseAndAssign
+                | Op::Code::BinBitwiseXorAssign => true,
+                // These always return one of the arguments unmodified
+                Op::Code::BinLogicalAnd | Op::Code::BinLogicalOr | Op::Code::BinNullishCoalescing
+                | Op::Code::BinLogicalAndAssign | Op::Code::BinLogicalOrAssign
+                | Op::Code::BinNullishCoalescingAssign => {
                     Self::is_primitive_with_side_effects(&e.left.data)
                         && Self::is_primitive_with_side_effects(&e.right.data)
+                }
+                Op::Code::BinComma => {
+                    Self::is_primitive_with_side_effects(&e.right.data)
                 }
                 _ => false,
             },
@@ -219,8 +229,12 @@ impl SideEffects {
                 Result { value: true, side_effects: SideEffects::NoSideEffects, ok: true }
             }
             ExprData::EUnary(e) => match e.op {
-                // Never null or undefined
-                Op::Code::UnNot | Op::Code::UnTypeof | Op::Code::UnDelete => {
+                // Always number or bigint
+                Op::Code::UnPos | Op::Code::UnNeg | Op::Code::UnCpl
+                | Op::Code::UnPreDec | Op::Code::UnPreInc
+                | Op::Code::UnPostDec | Op::Code::UnPostInc
+                // Always boolean
+                | Op::Code::UnNot | Op::Code::UnTypeof | Op::Code::UnDelete => {
                     Result { value: false, side_effects: SideEffects::CouldHaveSideEffects, ok: true }
                 }
                 // Always undefined
@@ -230,7 +244,20 @@ impl SideEffects {
                 _ => Result::default(),
             },
             ExprData::EBinary(e) => match e.op {
-                Op::Code::BinStrictEq | Op::Code::BinStrictNe | Op::Code::BinLooseEq
+                // always string or number or bigint
+                Op::Code::BinAdd | Op::Code::BinAddAssign
+                // always number or bigint
+                | Op::Code::BinSub | Op::Code::BinMul | Op::Code::BinDiv
+                | Op::Code::BinRem | Op::Code::BinPow
+                | Op::Code::BinSubAssign | Op::Code::BinMulAssign | Op::Code::BinDivAssign
+                | Op::Code::BinRemAssign | Op::Code::BinPowAssign
+                | Op::Code::BinShl | Op::Code::BinShr | Op::Code::BinUShr
+                | Op::Code::BinShlAssign | Op::Code::BinShrAssign | Op::Code::BinUShrAssign
+                | Op::Code::BinBitwiseOr | Op::Code::BinBitwiseAnd | Op::Code::BinBitwiseXor
+                | Op::Code::BinBitwiseOrAssign | Op::Code::BinBitwiseAndAssign
+                | Op::Code::BinBitwiseXorAssign
+                // always boolean
+                | Op::Code::BinStrictEq | Op::Code::BinStrictNe | Op::Code::BinLooseEq
                 | Op::Code::BinLooseNe | Op::Code::BinLt | Op::Code::BinGt
                 | Op::Code::BinLe | Op::Code::BinGe | Op::Code::BinInstanceof
                 | Op::Code::BinIn => {
@@ -333,9 +360,54 @@ impl SideEffects {
                         Result::default()
                     }
                 }
+                Op::Code::BinGt => {
+                    if let Some(left_num) = e.left.data.to_finite_number() {
+                        if let Some(right_num) = e.right.data.to_finite_number() {
+                            return Result { ok: true, value: left_num > right_num, side_effects: SideEffects::NoSideEffects };
+                        }
+                    }
+                    Result::default()
+                }
+                Op::Code::BinLt => {
+                    if let Some(left_num) = e.left.data.to_finite_number() {
+                        if let Some(right_num) = e.right.data.to_finite_number() {
+                            return Result { ok: true, value: left_num < right_num, side_effects: SideEffects::NoSideEffects };
+                        }
+                    }
+                    Result::default()
+                }
+                Op::Code::BinLe => {
+                    if let Some(left_num) = e.left.data.to_finite_number() {
+                        if let Some(right_num) = e.right.data.to_finite_number() {
+                            return Result { ok: true, value: left_num <= right_num, side_effects: SideEffects::NoSideEffects };
+                        }
+                    }
+                    Result::default()
+                }
+                Op::Code::BinGe => {
+                    if let Some(left_num) = e.left.data.to_finite_number() {
+                        if let Some(right_num) = e.right.data.to_finite_number() {
+                            return Result { ok: true, value: left_num >= right_num, side_effects: SideEffects::NoSideEffects };
+                        }
+                    }
+                    Result::default()
+                }
                 _ => Result::default(),
             },
             ExprData::EInlinedEnum(e) => Self::to_boolean(p, &e.value.data),
+            ExprData::ESpecial(special) => match special {
+                E::Special::ModuleExports
+                | E::Special::ResolvedSpecifierString(_)
+                | E::Special::HotData => Result::default(),
+                E::Special::HotAccept
+                | E::Special::HotAcceptVisited
+                | E::Special::HotEnabled => {
+                    Result { ok: true, value: true, side_effects: SideEffects::NoSideEffects }
+                }
+                E::Special::HotDisabled => {
+                    Result { ok: true, value: false, side_effects: SideEffects::NoSideEffects }
+                }
+            },
             _ => Result::default(),
         }
     }

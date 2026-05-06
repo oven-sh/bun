@@ -603,16 +603,17 @@ fn parse_until_before<T, C>(
     // between the outer Parser and a stack-local "delimited" Parser. In Rust
     // `&'a mut ParserInput<'a>` is invariant and cannot be reborrowed into a
     // second `Parser<'a>` while the first lives. We instead temporarily swap
-    // `stop_before`/`at_start_of` on the *same* Parser, run the inner parse,
-    // and restore. The inner `parse_entirely` call sees identical state.
+    // `stop_before` on the *same* Parser, run the inner parse, and restore.
+    // `at_start_of` is *moved into* the inner parse (Zig moved it into the
+    // delimited Parser and left the outer null) — since we reuse the same
+    // Parser it carries through unchanged, and is consumed/cleared below
+    // rather than restored.
     let saved_stop_before = parser.stop_before;
-    let saved_at_start_of = parser.at_start_of.take();
     parser.stop_before = delimiters;
     let result = {
         let result = parser.parse_entirely(closure, parse_fn);
         if matches!(error_behavior, ParseUntilErrorBehavior::Stop) && result.is_err() {
             parser.stop_before = saved_stop_before;
-            parser.at_start_of = saved_at_start_of;
             return result;
         }
         if let Some(block_type) = parser.at_start_of.take() {
@@ -621,7 +622,6 @@ fn parse_until_before<T, C>(
         result
     };
     parser.stop_before = saved_stop_before;
-    parser.at_start_of = saved_at_start_of;
 
     // FIXME: have a special-purpose tokenizer method for this that does less work.
     loop {
@@ -3750,11 +3750,31 @@ impl Delimiters {
 pub struct ParserInput<'a> {
     pub tokenizer: Tokenizer<'a>,
     pub cached_token: Option<CachedToken>,
+    /// Owns the arena when no external `&'a Bump` was supplied, so it drops
+    /// with the parser instead of leaking. `tokenizer.allocator` borrows the
+    /// heap-stable `Bump` inside this `Box`. Declared last so it drops after
+    /// the borrow in `tokenizer`.
+    // TODO(port): remove once `&'bump Bump` is threaded from callers; see
+    // `Tokenizer::init_with_allocator`.
+    owned_arena: Option<Box<Bump>>,
 }
 
 impl<'a> ParserInput<'a> {
     pub fn new(code: &'a [u8]) -> ParserInput<'a> {
-        ParserInput { tokenizer: Tokenizer::init(code), cached_token: None }
+        let arena = Box::new(Bump::new());
+        // SAFETY: `arena` is boxed so its heap address is stable across moves
+        // of `ParserInput`. The resulting `&'a Bump` is stored only in
+        // `tokenizer.allocator` inside this same struct and is dropped before
+        // `owned_arena` (field order). No API hands out a `&'a Bump` that can
+        // outlive the `ParserInput` — `Parser<'a>` borrows `&'a mut
+        // ParserInput<'a>`, so the input outlives every `Parser` user. This
+        // replaces the former per-thread `Box::leak` (PORTING.md §Forbidden).
+        let arena_ref: &'a Bump = unsafe { &*(&*arena as *const Bump) };
+        ParserInput {
+            tokenizer: Tokenizer::init_with_allocator(code, arena_ref),
+            cached_token: None,
+            owned_arena: Some(arena),
+        }
     }
 }
 
@@ -4006,16 +4026,6 @@ const MAX_ONE_B: u32 = 0x80;
 const MAX_TWO_B: u32 = 0x800;
 const MAX_THREE_B: u32 = 0x10000;
 
-/// Per-thread placeholder arena for `Tokenizer::init` callers that don't
-/// thread one (e.g. `nth::parse_number_saturate` makes a tiny throwaway
-/// tokenizer). Real callers should use `init_with_allocator`.
-// TODO(port): thread `&'bump Bump` from ParserInput::new once arena lifetime
-// is plumbed end-to-end; this Phase-A bridge leaks a small Bump per thread.
-fn placeholder_arena() -> &'static Bump {
-    thread_local! { static ARENA: &'static Bump = Box::leak(Box::new(Bump::new())); }
-    ARENA.with(|a| *a)
-}
-
 /// Erase a source-slice borrow to `'static` for storing in `Token` payloads.
 /// `Token`'s `&'static [u8]` fields are a Phase-A placeholder for the parser
 /// arena/source lifetime (see PORTING.md §AST crates "no struct lifetime
@@ -4033,10 +4043,6 @@ unsafe fn src_str(s: &[u8]) -> &'static [u8] {
 }
 
 impl<'a> Tokenizer<'a> {
-    pub fn init(src: &'a [u8]) -> Tokenizer<'a> {
-        Self::init_with_allocator(src, placeholder_arena())
-    }
-
     pub fn init_with_allocator(src: &'a [u8], allocator: &'a Bump) -> Tokenizer<'a> {
         Tokenizer {
             src,

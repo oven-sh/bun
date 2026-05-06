@@ -140,7 +140,7 @@ impl AnyRoute {
             // SAFETY: Html ptr is a live RefCount-managed allocation while
             // held in a route table.
             AnyRoute::Html(r) => unsafe { (**r).memory_cost() },
-            AnyRoute::FrameworkRouter(_) => 0,
+            AnyRoute::FrameworkRouter(_) => core::mem::size_of::<crate::bake::FileSystemRouterType>(),
         }
     }
 
@@ -257,11 +257,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         core::mem::size_of::<Self>()
             + self.base_url_string_for_joining.len()
             + self.config.memory_cost()
-            + self.user_routes.len() * core::mem::size_of::<UserRoute<SSL, DEBUG>>()
+            + self.dev_server.as_ref().map_or(0, |d| d.memory_cost())
     }
 
     pub fn h3_alt_svc(&self) -> Option<&[u8]> {
-        if !Self::HAS_H3 || self.h3_listener.is_none() || self.h3_alt_svc.is_empty() {
+        if !Self::HAS_H3 || self.h3_alt_svc.is_empty() {
             return None;
         }
         Some(&self.h3_alt_svc)
@@ -283,18 +283,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     pub fn active_sockets_count(&self) -> u32 {
-        let Some(app) = self.app else { return 0 };
-        // SAFETY: app is a live uws handle for the lifetime of any reachable Server.
-        // TODO(b2-blocked): bun_uws_sys::App::num_connections — cycle-5-B fills this.
-        let _ = app;
-        0
-    }
-
-    pub fn has_active_web_sockets(&self) -> bool {
         self.config
             .websocket
             .as_ref()
-            .is_some_and(|ws| ws.handler.active_connections > 0)
+            .map_or(0, |ws| ws.handler.active_connections as u32)
+    }
+
+    pub fn has_active_web_sockets(&self) -> bool {
+        self.active_sockets_count() > 0
     }
 
     pub fn has_listener(&self) -> bool {
@@ -320,7 +316,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     pub fn ref_(&mut self) {
-        if !self.has_listener() {
+        if self.poll_ref.is_active() {
             return;
         }
         // TODO(b2-blocked): self.poll_ref.ref_(self.vm);
@@ -333,38 +329,56 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub fn stop_listening(&mut self, abrupt: bool) {
         // httplog!("stopListening", .{});
 
-        if let Some(listener) = self.listener.take() {
-            // SAFETY: listener is a live FFI handle until take() nulls it.
+        if Self::HAS_H3 {
+            if let Some(h3l) = self.h3_listener.take() {
+                // Graceful: GOAWAY + drain via the still-open UDP socket; the
+                // engine rejects new conns and the timer keeps in-flight streams
+                // progressing until deinit. Abrupt: close the fd now.
+                if !abrupt {
+                    if let Some(_h3a) = self.h3_app {
+                        // TODO(b2-blocked): bun_uws_sys::h3::App::close.
+                    }
+                } else {
+                    // SAFETY: h3l is a live FFI handle until take() nulls it.
+                    unsafe { (*h3l).close() };
+                }
+            }
+        }
+
+        let Some(listener) = self.listener.take() else {
+            if Self::HAS_H3 && self.h3_app.is_some() {
+                self.unref();
+                // TODO(b2-blocked): self.notify_inspector_server_stopped().
+                if abrupt {
+                    self.flags.insert(ServerFlags::TERMINATED);
+                }
+            }
+            return;
+        };
+        self.unref();
+
+        // TODO(b2-blocked): if !SSL { self.vm.remove_listening_socket_for_watch_mode(listener.socket().fd()) }
+        // TODO(b2-blocked): self.notify_inspector_server_stopped().
+
+        if let server_config::Address::Unix(path) = &self.config.address {
+            let bytes = path.to_bytes();
+            if !bytes.is_empty() && bytes[0] != 0 {
+                // SAFETY: CString guarantees NUL termination at `bytes.len()`.
+                let z = unsafe { bun_str::ZStr::from_raw(bytes.as_ptr(), bytes.len()) };
+                let _ = bun_sys::unlink(z);
+            }
+        }
+
+        if !abrupt {
+            // SAFETY: listener is a live FFI handle until take() nulled it above.
             unsafe { (*listener).close() };
-        }
-        if Self::HAS_H3 {
-            if let Some(h3_listener) = self.h3_listener.take() {
-                // SAFETY: as above.
-                unsafe { (*h3_listener).close() };
+        } else if !self.flags.contains(ServerFlags::TERMINATED) {
+            if let Some(ws) = self.config.websocket.as_mut() {
+                ws.handler.app = None;
             }
-        }
-
-        // TODO(b2-blocked): notify_debugger(self) — needs bun_jsc::Debugger.
-
-        if !self.flags.contains(ServerFlags::TERMINATED) {
-            // TODO(b2-blocked): self.vm.event_loop().drain_tasks(); poll_ref.unref().
             self.flags.insert(ServerFlags::TERMINATED);
-        }
-
-        if let Some(app) = self.app {
-            if abrupt {
-                // SAFETY: app is a live uws handle.
-                unsafe { (*app).close() };
-            } else if !self.has_active_web_sockets() {
-                // SAFETY: as above.
-                unsafe { (*app).close_idle_connections() };
-            }
-        }
-        if Self::HAS_H3 {
-            if let Some(h3_app) = self.h3_app {
-                // TODO(b2-blocked): bun_uws_sys::h3::App::{close, close_idle_connections}.
-                let _ = (h3_app, abrupt);
-            }
+            // SAFETY: app is a live uws handle (set whenever listener was set).
+            unsafe { (*self.app.unwrap()).close() };
         }
     }
 
@@ -376,15 +390,35 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     pub fn deinit_if_we_can(&mut self) {
         // httplog!("deinitIfWeCan {p} {p} {} {} {}", ...);
+
+        // TODO(b2-blocked): first `if` block (server.zig:1600-1621) —
+        // `ServerAllConnectionsClosedTask::schedule(..)` once
+        // `bun_jsc::JSPromiseStrong::{has, value, create}` are real. Gates on
+        // `!HAS_HANDLED_ALL_CLOSED_PROMISE && all_closed_promise.strong.has()`.
+
         if self.pending_requests == 0
-            && self.active_sockets_count() == 0
             && !self.has_listener()
             && !self.has_active_web_sockets()
-            && !self.flags.contains(ServerFlags::DEINIT_SCHEDULED)
         {
-            // TODO(b2-blocked): all_closed_promise.resolve() via
-            // ServerAllConnectionsClosedTask; dev_server.deinit().
-            self.schedule_deinit();
+            if let Some(ws) = self.config.websocket.as_mut() {
+                ws.handler.app = None;
+            }
+            self.unref();
+
+            // Detach DevServer. This is needed because there are aggressive
+            // tests that check for DevServer memory soundness. Keeping the JS
+            // binding alive should not pin `dev.memory_cost()` bytes.
+            if let Some(dev) = self.dev_server.take() {
+                if let Some(_app) = self.app {
+                    // TODO(b2-blocked): bun_uws_sys::App::clear_routes.
+                }
+                drop(dev); // dev.deinit()
+            }
+
+            // Only free the memory if the JS reference has been freed too.
+            // TODO(b2-blocked): bun_jsc::JsRef — gate on `self.js_value == .finalized`
+            // once JsRef is the real enum (currently an opaque newtype).
+            // self.schedule_deinit();
         }
     }
 

@@ -599,11 +599,7 @@ impl Process {
         } else if exit_code >= 0 {
             this.close();
             this.on_exit(
-                Status::Exited(Exited {
-                    code: exit_code,
-                    // SAFETY: 0 is a valid SignalCode discriminant
-                    signal: unsafe { core::mem::transmute::<u8, bun_core::SignalCode>(0) },
-                }),
+                Status::Exited(Exited { code: exit_code, signal: 0 }),
                 &rusage,
             );
         } else {
@@ -756,20 +752,13 @@ impl Default for Status {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct Exited {
     pub code: u8,
-    pub signal: bun_core::SignalCode,
-}
-
-impl Default for Exited {
-    fn default() -> Self {
-        Self {
-            code: 0,
-            // SAFETY: 0 is a valid SignalCode discriminant
-            signal: unsafe { core::mem::transmute::<u8, bun_core::SignalCode>(0) },
-        }
-    }
+    /// Raw signal number. `0` means "no signal" (Zig: `enum(u8) { @"0" = 0, … }`
+    /// open enum). `SignalCode` discriminants are 1..=31; storing it as the
+    /// enum and transmuting `0` would be UB. Convert via `Status::signal_code`.
+    pub signal: u8,
 }
 
 impl Status {
@@ -811,13 +800,7 @@ impl Status {
         }
 
         if let Some(code) = exit_code {
-            return Some(Status::Exited(Exited {
-                code,
-                // SAFETY: signal byte → SignalCode enum (#[repr(u8)])
-                signal: unsafe {
-                    core::mem::transmute::<u8, bun_core::SignalCode>(signal.unwrap_or(0))
-                },
-            }));
+            return Some(Status::Exited(Exited { code, signal: signal.unwrap_or(0) }));
         } else if let Some(sig) = signal {
             // SAFETY: signal byte → SignalCode enum (#[repr(u8)])
             return Some(Status::Signaled(unsafe {
@@ -832,8 +815,9 @@ impl Status {
         match self {
             Status::Signaled(sig) => Some(*sig),
             Status::Exited(exit) => {
-                if (exit.signal as u8) > 0 {
-                    Some(exit.signal)
+                if exit.signal > 0 && exit.signal <= bun_core::SignalCode::SIGSYS as u8 {
+                    // SAFETY: range-checked 1..=31; SignalCode is #[repr(u8)].
+                    Some(unsafe { core::mem::transmute::<u8, bun_core::SignalCode>(exit.signal) })
                 } else {
                     None
                 }

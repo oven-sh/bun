@@ -87,7 +87,10 @@ impl ProxyTunnel {
     }
     /// Drop the owning `HTTPClient` backref and release one strong ref.
     /// Called from `HTTPClient::drop` and `progress_update`.
-    pub fn detach_and_deref(&self) {
+    pub fn detach_and_deref(&mut self) {
+        // Zig: detachSocket() BEFORE deref() — if refcount > 1 the tunnel
+        // outlives this call and must not retain a dangling socket handle.
+        self.socket = Socket::None;
         // TODO(b2-blocked): wrapper.detach_owner() once SSLWrapper<*mut HTTPClient>
         // exposes the typed owner slot. For now just release the ref.
         self.deref();

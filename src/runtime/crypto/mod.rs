@@ -125,21 +125,17 @@ pub mod crypto_hasher {
             }
         )*};
     }
-    // TODO(b2-blocked): bun_boringssl_sys::{MD4_CTX, MD5_CTX} — not in the
-    // bindgen output yet; sized opaque storage until added.
-    #[repr(C, align(8))]
-    pub struct Md4CtxStorage([u8; 96]);
-    #[repr(C, align(8))]
-    pub struct Md5CtxStorage([u8; 96]);
+    // PORT NOTE: Zig `bun.sha.Hashers.*` all wrap `BoringSSL.EVP_MD_CTX`, NOT
+    // the per-algorithm `SHA*_CTX` one-shot structs (see src/sha_hmac/sha.zig).
     decl_hasher! {
-        MD4        => Md4CtxStorage,                 16;
-        MD5        => Md5CtxStorage,                 16;
-        SHA1       => bun_boringssl_sys::SHA_CTX,    20;
-        SHA224     => bun_boringssl_sys::SHA256_CTX, 28;
-        SHA256     => bun_boringssl_sys::SHA256_CTX, 32;
-        SHA384     => bun_boringssl_sys::SHA512_CTX, 48;
-        SHA512     => bun_boringssl_sys::SHA512_CTX, 64;
-        SHA512_256 => bun_boringssl_sys::SHA512_CTX, 32;
+        MD4        => bun_boringssl_sys::EVP_MD_CTX, 16;
+        MD5        => bun_boringssl_sys::EVP_MD_CTX, 16;
+        SHA1       => bun_boringssl_sys::EVP_MD_CTX, 20;
+        SHA224     => bun_boringssl_sys::EVP_MD_CTX, 28;
+        SHA256     => bun_boringssl_sys::EVP_MD_CTX, 32;
+        SHA384     => bun_boringssl_sys::EVP_MD_CTX, 48;
+        SHA512     => bun_boringssl_sys::EVP_MD_CTX, 64;
+        SHA512_256 => bun_boringssl_sys::EVP_MD_CTX, 32;
     }
 }
 /// For usage in Rust (`src/runtime/crypto/PBKDF2.zig` `pub fn pbkdf2`).

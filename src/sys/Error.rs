@@ -99,9 +99,10 @@ impl Error {
 
     #[inline]
     pub fn get_errno(&self) -> E {
-        // SAFETY: errno was originally produced from an `E` value (or a libc errno that maps to one).
-        // TODO(port): Zig `@enumFromInt` is unchecked; consider `E::from_raw` with debug-assert.
-        unsafe { core::mem::transmute::<Int, E>(self.errno) }
+        // Zig `@enumFromInt` is unchecked, but in Rust transmuting an out-of-range discriminant
+        // (e.g. TODO_ERRNO = u16::MAX-1) into a #[repr(u16)] enum is immediate UB. Use the checked
+        // constructor and fall back to SUCCESS for unmapped values.
+        SystemErrno::init(self.errno as i64).unwrap_or(SystemErrno::SUCCESS)
     }
 
     #[inline]

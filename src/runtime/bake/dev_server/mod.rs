@@ -110,40 +110,48 @@ pub enum ConsoleLogKind {
 }
 
 /// `DevServer.MessageId` — first byte of every server→client HMR frame.
+/// Discriminants MUST match `DevServer.zig` exactly (HMR wire protocol).
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum MessageId {
     Version = b'V',
-    HotUpdate = b'(',
-    FullReload = b'R',
-    SetUrlList = b'L',
-    RouteUpdateNow = b'u',
-    Errors = b'E',
-    ErrorsCleared = b'c',
-    VisualizerSync = b'v',
-    ConsoleLog = b'l',
-    ConsoleError = b'e',
-    TestingBatchAck = b'B',
+    HotUpdate = b'u',
+    Errors = b'e',
+    BrowserMessage = b'b',
+    BrowserMessageClear = b'B',
+    RequestHandlerError = b'h',
+    Visualizer = b'v',
+    MemoryVisualizer = b'M',
+    SetUrlResponse = b'n',
+    TestingWatchSynchronization = b'r',
+}
+impl MessageId {
+    #[inline] pub fn char(self) -> u8 { self as u8 }
 }
 
+/// `DevServer.IncomingMessageId` — first byte of every client→server HMR frame.
+/// Discriminants MUST match `DevServer.zig` exactly (HMR wire protocol).
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum IncomingMessageId {
+    Init = b'i',
     Subscribe = b's',
-    Unsubscribe = b'u',
     SetUrl = b'n',
+    TestingBatchEvents = b'H',
     ConsoleLog = b'l',
-    ConsoleError = b'e',
-    TestingBatchEnable = b'B',
-    TestingBatchRelease = b'b',
+    UnrefSourceMap = b'u',
 }
 
+/// `DevServer.HmrTopic`. Discriminants MUST match `DevServer.zig` exactly.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum HmrTopic {
+    HotUpdate = b'h',
+    Errors = b'e',
+    BrowserError = b'E',
     IncrementalVisualizer = b'v',
-    MemoryVisualizer = b'm',
-    TestingWatchSynchronization = b'W',
+    MemoryVisualizer = b'M',
+    TestingWatchSynchronization = b'r',
 }
 
 /// `RouteIndexAndRecurseFlag` — `packed struct(u32)` (31-bit index + 1 flag).
@@ -367,29 +375,47 @@ pub struct HotReloadEvent {
     pub concurrent_task: bun_event_loop::ConcurrentTask::ConcurrentTask,
     pub files: StringArrayHashMap<()>,
     pub dirs: StringArrayHashMap<()>,
-    pub extra_files: StringArrayHashMap<()>,
+    /// NUL-joined absolute paths (`ArrayListUnmanaged(u8)` in Zig).
+    pub extra_files: Vec<u8>,
     pub timer: std::time::Instant,
+    /// 1 if referenced, 0 if unreferenced; see `WatcherAtomics`.
+    pub contention_indicator: core::sync::atomic::AtomicU32,
 }
 
 /// `DevServer.WatcherAtomics` — three pre-allocated `HotReloadEvent`s
 /// rotated between the watcher thread and the main thread.
 pub struct WatcherAtomics {
     pub events: [HotReloadEvent; 3],
-    pub watcher_event_in_progress: core::sync::atomic::AtomicU8,
-    pub main_thread_pending: core::sync::atomic::AtomicU8,
+    /// `next_event: std.atomic.Value(NextEvent)` — encodes the `NextEvent`
+    /// `enum(u8) { 0..3 = event index, .waiting, .done }`.
+    pub next_event: core::sync::atomic::AtomicU8,
+    /// Main-thread-only; index into `events` currently being processed.
+    pub current_event: Option<u8>,
+    /// Main-thread-only; index into `events` queued behind `current_event`.
+    pub pending_event: Option<u8>,
 }
 
 /// `DevServer.DirectoryWatchStore` — sparse map of directories under watch
 /// for resolution-failure recovery. Full body gated in `DirectoryWatchStore.rs`.
 #[derive(Default)]
 pub struct DirectoryWatchStore {
-    pub watches: StringArrayHashMap<u32>,
-    pub entries: Vec<directory_watch_store::Entry>,
+    pub watches: StringArrayHashMap<directory_watch_store::Entry>,
+    pub dependencies: Vec<directory_watch_store::Dep>,
+    /// Dependencies cannot be re-ordered. This list tracks what indexes are free.
+    pub dependencies_free_list: Vec<u32>,
 }
 pub mod directory_watch_store {
+    /// `DirectoryWatchStore.Entry` — per-watched-directory state.
     pub struct Entry {
+        /// `Dep.Index` — head of the singly-linked dep chain for this dir.
+        pub first_dep: u32,
+        // TODO(b2-blocked): `dir: Watcher.Index` / `dir_fd_on_mac` field — gated
+        // on `bun_watcher::Index` un-gate.
+    }
+    /// `DirectoryWatchStore.Dep` — one resolution-failure to retry on dir change.
+    pub struct Dep {
         pub specifier: Box<[u8]>,
-        pub source_file: super::incremental_graph::FileIndex,
+        pub source_file_path: super::incremental_graph::FileIndex,
         pub next: Option<u32>,
     }
 }
@@ -476,6 +502,15 @@ pub struct DevServer {
 }
 
 impl DevServer {
+    /// `DevServer.memoryCost`. Full body gated in `../DevServer/memory_cost.rs`
+    /// (depends on `IncrementalGraph::memory_cost_detailed` + `Assets::memory_cost`
+    /// which are still draft-only). Stub returns the struct size so
+    /// `NewServer::memory_cost` reports a non-zero contribution.
+    // TODO(b2-blocked): un-gate `memory_cost_body::memory_cost`.
+    pub fn memory_cost(&self) -> usize {
+        core::mem::size_of::<Self>()
+    }
+
     #[inline]
     pub fn route_bundle_ptr(&mut self, idx: route_bundle::Index) -> &mut RouteBundle {
         &mut self.route_bundles[idx.get() as usize]

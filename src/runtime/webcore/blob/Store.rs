@@ -428,8 +428,23 @@ impl S3 {
 
     pub fn estimated_size(&self) -> usize {
         self.pathlike.estimated_size()
-            + core::mem::size_of::<S3>()
             + self.credentials.as_ref().map(|c| c.estimated_size()).unwrap_or(0)
+    }
+
+    pub fn path(&self) -> &[u8] {
+        let mut path_name = URL::parse(self.pathlike.slice()).s3_path();
+        // normalize start and ending
+        if strings::ends_with(path_name, b"/") {
+            path_name = &path_name[0..path_name.len()];
+        } else if strings::ends_with(path_name, b"\\") {
+            path_name = &path_name[0..path_name.len() - 1];
+        }
+        if strings::starts_with(path_name, b"/") {
+            path_name = &path_name[1..];
+        } else if strings::starts_with(path_name, b"\\") {
+            path_name = &path_name[1..];
+        }
+        path_name
     }
 }
 
@@ -453,22 +468,6 @@ impl S3 {
             self.request_payer,
             global_object,
         )
-    }
-
-    pub fn path(&self) -> &[u8] {
-        let mut path_name = URL::parse(self.pathlike.slice()).s3_path();
-        // normalize start and ending
-        if strings::ends_with(path_name, b"/") {
-            path_name = &path_name[0..path_name.len()];
-        } else if strings::ends_with(path_name, b"\\") {
-            path_name = &path_name[0..path_name.len() - 1];
-        }
-        if strings::starts_with(path_name, b"/") {
-            path_name = &path_name[1..];
-        } else if strings::starts_with(path_name, b"\\") {
-            path_name = &path_name[1..];
-        }
-        path_name
     }
 
     pub fn unlink(
@@ -687,14 +686,6 @@ impl S3 {
         }
     }
 
-    pub fn estimated_size(&self) -> usize {
-        self.pathlike.estimated_size()
-            + self
-                .credentials
-                .as_ref()
-                .map(|c| c.estimated_size())
-                .unwrap_or(0)
-    }
 }
 
 // PORT NOTE: S3.deinit deleted — body only freed owned fields (pathlike, credentials.deref()),

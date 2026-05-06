@@ -1301,23 +1301,12 @@ fn transpile_source_code_inner(
                 // JSValue. This is the same behaviour as `Bun.Transpiler`
                 // (which also routes JSON through the printer).
                 
+                #[cfg(any())]
                 if matches!(loader, L::Json | L::Jsonc | L::Toml | L::Yaml | L::Json5) {
-                    let jsvalue_for_export = if parse_result.empty {
-                        JSValue::create_empty_object(unsafe { &*(*jsc_vm).global }, 0)
-                    } else {
-                        parse_result.ast.parts.at(0).stmts[0]
-                            .data
-                            .s_expr
-                            .value
-                            .to_js(&arena_guard.1, unsafe { &*(*jsc_vm).global })?
-                    };
-                    return Ok(ResolvedSource {
-                        specifier: input_specifier.dupe_ref(),
-                        source_url: create_if_different(input_specifier, path.text),
-                        jsvalue_for_export,
-                        tag: ResolvedSourceTag::ExportsObject,
-                        ..Default::default()
-                    });
+                    // TODO(b2-blocked): `Expr::to_js` — gated in `bun_js_parser`
+                    // (`ast.parts.at(0).stmts[0].data.s_expr.value.to_js(...)`).
+                    // Until that surfaces, fall through to the print path below.
+                    todo!("blocked_on: bun_js_parser::Expr::to_js")
                 }
 
                 // Spec :386-398 — already-bundled (bytecode cache hit).

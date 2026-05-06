@@ -638,7 +638,7 @@ pub fn basename_posix_js_t<T: PathChar>(
     path: &[T],
     suffix: Option<&[T]>,
 ) -> JsResult<JSValue> {
-    BunString::create_utf8_for_js(global_object, basename_posix_t(path, suffix))
+    create_js_string_t::<T>(global_object, basename_posix_t(path, suffix))
 }
 
 pub fn basename_windows_js_t<T: PathChar>(
@@ -646,7 +646,7 @@ pub fn basename_windows_js_t<T: PathChar>(
     path: &[T],
     suffix: Option<&[T]>,
 ) -> JsResult<JSValue> {
-    BunString::create_utf8_for_js(global_object, basename_windows_t(path, suffix))
+    create_js_string_t::<T>(global_object, basename_windows_t(path, suffix))
 }
 
 pub fn basename_js_t<T: PathChar>(
@@ -869,7 +869,7 @@ pub fn dirname_posix_js_t<T: PathChar>(
     global_object: &JSGlobalObject,
     path: &[T],
 ) -> JsResult<JSValue> {
-    BunString::create_utf8_for_js(global_object, dirname_posix_t(path))
+    create_js_string_t::<T>(global_object, dirname_posix_t(path))
 }
 
 pub fn dirname_windows_js_t<T: PathChar>(

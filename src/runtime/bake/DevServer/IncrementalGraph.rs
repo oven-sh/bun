@@ -1,6 +1,6 @@
 use core::mem::offset_of;
 
-use bun_collections::{ArrayHashMap, DynamicBitSet, MultiArrayList};
+use bun_collections::{ArrayHashMap, DynamicBitSet};
 use bun_core::{Output, fmt as bun_fmt};
 use bun_logger::Log;
 use bun_paths::path_buffer_pool;

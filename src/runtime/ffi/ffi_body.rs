@@ -1154,10 +1154,10 @@ impl FFI {
         }
 
         if compile_c.symbols.map.len() == 0 {
-            return Err(global_this.throw("Expected at least one exported symbol", &[]));
+            return Err(global_this.throw("Expected at least one exported symbol"));
         }
 
-        if let Some(library_value) = object.get_own(global_this, "library")? {
+        if let Some(library_value) = object.get_own(global_this, &bun_str::String::borrow_utf8(b"library"))? {
             compile_c.libraries = StringArray::from_js(global_this, library_value, "library")?;
         }
 

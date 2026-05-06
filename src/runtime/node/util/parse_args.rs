@@ -931,12 +931,12 @@ pub fn parse_args(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
     }
 
     let allow_positionals =
-        validators::validate_boolean(global, config_allow_positionals, "allowPositionals", format_args!(""))?;
+        validators::validate_boolean(global, config_allow_positionals, "allowPositionals")?;
 
     let return_tokens =
-        validators::validate_boolean(global, config_return_tokens, "tokens", format_args!(""))?;
+        validators::validate_boolean(global, config_return_tokens, "tokens")?;
     let allow_negative =
-        validators::validate_boolean(global, config_allow_negative, "allowNegative", format_args!(""))?;
+        validators::validate_boolean(global, config_allow_negative, "allowNegative")?;
 
     // Phase 0.C: Parse the options definitions
 

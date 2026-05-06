@@ -54,12 +54,29 @@ impl AnyRequestContext {
 pub trait CtxKind {
     const TAG: CtxTag;
 }
-impl CtxKind for HttpCtx { const TAG: CtxTag = CtxTag::Http; }
-impl CtxKind for HttpsCtx { const TAG: CtxTag = CtxTag::Https; }
-impl CtxKind for DebugHttpCtx { const TAG: CtxTag = CtxTag::DebugHttp; }
-impl CtxKind for DebugHttpsCtx { const TAG: CtxTag = CtxTag::DebugHttps; }
-impl CtxKind for HttpsH3Ctx { const TAG: CtxTag = CtxTag::HttpsH3; }
-impl CtxKind for DebugHttpsH3Ctx { const TAG: CtxTag = CtxTag::DebugHttpsH3; }
+
+const fn ctx_tag_for(ssl: bool, dbg: bool, h3: bool) -> CtxTag {
+    match (ssl, dbg, h3) {
+        (false, false, false) => CtxTag::Http,
+        (true, false, false) => CtxTag::Https,
+        (false, true, false) => CtxTag::DebugHttp,
+        (true, true, false) => CtxTag::DebugHttps,
+        (true, false, true) => CtxTag::HttpsH3,
+        (true, true, true) => CtxTag::DebugHttpsH3,
+        // H3 requires TLS; (false, _, true) is never instantiated. Map to
+        // None so a stray dispatch is a no-op rather than a wild cast.
+        (false, _, true) => CtxTag::None,
+    }
+}
+
+// Blanket impl over the const-generic params so any `Ctx: RequestCtx` (which
+// is always a `RequestContext<_, SSL, DBG, H3>`) also satisfies `CtxKind`
+// without callers having to spell the six concrete types.
+impl<ThisServer, const SSL: bool, const DBG: bool, const H3: bool> CtxKind
+    for RequestContext<ThisServer, SSL, DBG, H3>
+{
+    const TAG: CtxTag = ctx_tag_for(SSL, DBG, H3);
+}
 
 impl AnyRequestContext {
     pub fn init<T: CtxKind>(request_ctx: *const T) -> Self {

@@ -161,22 +161,22 @@ pub extern "C" fn us_dispatch_close(
 
 #[unsafe(no_mangle)]
 pub extern "C" fn us_dispatch_timeout(s: *mut us_socket_t) -> *mut us_socket_t {
-    if let Some(f) = vt(s).on_timeout { f(s) } else { s }
+    if let Some(f) = vt(s).on_timeout { unsafe { f(s) } } else { s }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn us_dispatch_long_timeout(s: *mut us_socket_t) -> *mut us_socket_t {
-    if let Some(f) = vt(s).on_long_timeout { f(s) } else { s }
+    if let Some(f) = vt(s).on_long_timeout { unsafe { f(s) } } else { s }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn us_dispatch_end(s: *mut us_socket_t) -> *mut us_socket_t {
-    if let Some(f) = vt(s).on_end { f(s) } else { s }
+    if let Some(f) = vt(s).on_end { unsafe { f(s) } } else { s }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn us_dispatch_connect_error(s: *mut us_socket_t, code: c_int) -> *mut us_socket_t {
-    if let Some(f) = vt(s).on_connect_error { f(s, code) } else { s }
+    if let Some(f) = vt(s).on_connect_error { unsafe { f(s, code) } } else { s }
 }
 
 #[unsafe(no_mangle)]

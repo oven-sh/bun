@@ -1588,7 +1588,10 @@ impl<'a> OnBeforeParsePlugin<'a> {
         from_plugin: &mut bool,
     ) -> core::result::Result<CacheEntry, AnyError> {
         let mut args = OnBeforeParseArguments {
-            context: self as *mut _ as *mut OnBeforeParsePlugin<'static>,
+            // `context` is filled in immediately before the FFI call below —
+            // deriving it here would create a raw from `&mut self` that gets
+            // popped (Stacked Borrows) by the `&mut self` reads/writes that
+            // follow, making the callback's `&mut *args.context` UB.
             path_ptr: self.file_path.text.as_ptr(),
             path_len: self.file_path.text.len(),
             default_loader: *self.loader,
@@ -1618,22 +1621,37 @@ impl<'a> OnBeforeParsePlugin<'a> {
         };
 
         // Raw pointer with provenance over the whole `wrapper` local so
-        // `get_wrapper`'s offset_of walk-back stays in-bounds.
-        self.result = core::ptr::addr_of_mut!(wrapper.result);
+        // `get_wrapper`'s offset_of walk-back stays in-bounds. Never form
+        // `&mut wrapper.result` while this must reach the wrapper — that
+        // retags and shrinks provenance to the inner `OnBeforeParseResult`
+        // only, making `.sub(offset_of!)` in `get_wrapper` out-of-provenance
+        // UB (and pushes a Unique tag that invalidates this raw under SB).
+        let result_ptr = core::ptr::addr_of_mut!(wrapper.result);
         let namespace_str;
+        let namespace = if self.file_path.namespace == b"file" {
+            &bun_string::String::EMPTY
+        } else {
+            namespace_str = bun_string::String::init(self.file_path.namespace);
+            &namespace_str
+        };
         let path_str = bun_string::String::init(self.file_path.text);
+        // Copy the raw `*mut i32` out so passing it to FFI doesn't go through
+        // `&mut self` after `self_ptr` is derived.
+        let should_continue_running = self.should_continue_running;
+        self.result = result_ptr;
+        // Derive `args.context` *after* the last `&mut self` access above so
+        // no parent-`&mut` use pops its SharedRW tag before the FFI callbacks
+        // (`fetch_source_code` / `log_fn`) dereference it. Reuse the same raw
+        // for the `ctx` argument instead of re-deriving from `&mut self`.
+        let self_ptr = self as *mut _ as *mut OnBeforeParsePlugin<'static>;
+        args.context = self_ptr;
         let count = plugin.call_on_before_parse_plugins(
-            self as *mut _,
-            if self.file_path.namespace == b"file" {
-                &bun_string::String::EMPTY
-            } else {
-                namespace_str = bun_string::String::init(self.file_path.namespace);
-                &namespace_str
-            },
+            self_ptr.cast(),
+            namespace,
             &path_str,
             &mut args,
-            &mut wrapper.result,
-            self.should_continue_running,
+            result_ptr,
+            should_continue_running,
         );
         if cfg!(feature = "debug_logs") {
             scoped_log!(

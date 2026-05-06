@@ -1352,6 +1352,8 @@ impl Task {
                             break 'enqueue_lifecycle_scripts;
                         }
                         let mut pkg_scripts: Package::Scripts = pkg_script_lists[pkg_id];
+                        // SAFETY: read-only `PackageManager` access; see top-of-fn note.
+                        let manager = unsafe { &*manager_ptr };
                         if is_trusted
                             && manager.postinstall_optimizer.should_ignore_lifecycle_scripts(
                                 PostinstallOptimizer::Query {
@@ -1391,7 +1393,15 @@ impl Task {
                         if let Some(list) = scripts_list {
                             let clone: *mut Package::Scripts::List =
                                 Box::into_raw(Box::new(list));
-                            entry_scripts[self.entry_id.get()] = Some(clone);
+                            // SAFETY: each Task is the sole writer for its own
+                            // `entry_id`'s `scripts` slot; no other thread reads
+                            // or writes it until this Task reaches
+                            // `Step::RunPostInstallAndPrePostPrepare`. The column
+                            // is `UnsafeCell` (see Store.rs) so writing through
+                            // `&Store` provenance is sound.
+                            unsafe {
+                                *entry_scripts[self.entry_id.get()].get() = Some(clone);
+                            }
 
                             if is_trusted_through_update_request {
                                 let trusted_dep_to_add: Box<[u8]> =
@@ -1402,19 +1412,32 @@ impl Task {
                                     installer.trusted_dependencies_mutex.unlock();
                                 });
 
-                                manager
-                                    .trusted_deps_to_add_to_package_json
+                                // SAFETY: `trusted_dependencies_mutex` is held. Narrow the
+                                // exclusive borrow to the single Vec field via raw place so
+                                // no `&mut PackageManager` is formed — concurrent task
+                                // threads' `&*manager_ptr` reborrows of other fields stay
+                                // valid.
+                                unsafe {
+                                    (*core::ptr::addr_of_mut!(
+                                        (*manager_ptr).trusted_deps_to_add_to_package_json
+                                    ))
                                     .push(trusted_dep_to_add);
-                                // SAFETY: `trusted_dependencies_mutex` is held; this is the
-                                // only writer to `lockfile.trusted_dependencies` across task
-                                // threads. The shared `lockfile` / `installer.lockfile`
-                                // borrows above are all dead (NLL) before this point.
-                                let lockfile_mut = unsafe { &mut *lockfile_ptr };
-                                if lockfile_mut.trusted_dependencies.is_none() {
-                                    lockfile_mut.trusted_dependencies = Some(Default::default());
                                 }
-                                lockfile_mut
-                                    .trusted_dependencies
+                                // SAFETY: `trusted_dependencies_mutex` is held, serializing
+                                // writers. Narrow to the single `trusted_dependencies` field
+                                // via raw place so no `&mut Lockfile` is ever formed — other
+                                // task threads hold `&Lockfile` (and the `pkgs`/`pkg_*`
+                                // slices above borrow it) for their entire run(), and those
+                                // borrows never touch `trusted_dependencies`.
+                                let trusted = unsafe {
+                                    &mut *core::ptr::addr_of_mut!(
+                                        (*lockfile_ptr).trusted_dependencies
+                                    )
+                                };
+                                if trusted.is_none() {
+                                    *trusted = Some(Default::default());
+                                }
+                                trusted
                                     .as_mut()
                                     .unwrap()
                                     .insert(truncated_dep_name_hash, ());

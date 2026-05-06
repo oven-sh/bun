@@ -218,11 +218,21 @@ impl<'a> Parser<'a> {
         define: &'a Define,
         bump: &'a Arena,
     ) -> Result<Parser<'a>, Error> {
-        let log_ptr = core::ptr::NonNull::from(&mut *log);
+        // Derive the raw pointer *first* so it is the provenance parent of the
+        // `&'a mut Log` handed to the lexer. If the original `log` reference
+        // were moved into `Lexer::init` after deriving `log_ptr` from a
+        // reborrow, the lexer's first write through that parent `&mut` would
+        // pop `log_ptr`'s tag under Stacked Borrows, invalidating every later
+        // `self.log.as_{ref,mut}()` (see `log_mut`).
+        let log_ptr = core::ptr::NonNull::from(log);
+        // SAFETY: `log_ptr` was just created from a live `&'a mut Log`; the
+        // reborrow handed to the lexer is a child of `log_ptr` and lives for
+        // `'a`.
+        let lexer = js_lexer::Lexer::init(unsafe { &mut *log_ptr.as_ptr() }, source, bump)?;
         Ok(Parser {
             options,
             bump,
-            lexer: js_lexer::Lexer::init(log, source, bump)?,
+            lexer,
             define,
             source,
             log: log_ptr,
@@ -591,9 +601,12 @@ impl<'a> Parser<'a> {
 
         parse_tracer.end();
 
-        // SAFETY: see `log_mut` — `log` aliases the `&'a mut Log` handed to the
-        // lexer at `Parser::init`; reading the error count is sound.
-        if unsafe { self.log.as_ref() }.errors > 0 {
+        // Route through `p.log` — the unique `&'a mut Log` now lives inside `p`
+        // (handed off above). Reading via `self.log` (`NonNull`) here would
+        // invalidate `p.log`'s Unique tag under Stacked Borrows yet `p.log` is
+        // used again below in `prepare_for_visit_pass`/`append_part`. Zig spec
+        // (Parser.zig:292) reads `self.log.errors`; both alias the same `*Log`.
+        if p.log.errors > 0 {
             #[cfg(target_arch = "wasm32")]
             {
                 // If the logger is backed by console.log, every print appends a newline.
@@ -601,7 +614,7 @@ impl<'a> Parser<'a> {
                 // TODO(port): Zig builds a custom GenericWriter wrapping Output::print and a
                 // buffered writer over it. Phase B should provide a `bun_core::Output::buffered()`
                 // that returns an `impl core::fmt::Write` flushed on drop.
-                for msg in self.log.msgs.as_slice() {
+                for msg in p.log.msgs.as_slice() {
                     let mut m: logger::Msg = *msg;
                     let _ = m.write_format(Output::writer(), true);
                 }

@@ -1938,7 +1938,11 @@ pub mod js_bundler {
             path: &BunString,
             on_before_parse_args: Option<*mut c_void>,
             on_before_parse_result: Option<*mut c_void>,
-            should_continue: &mut i32,
+            // Raw `*mut i32` (Zig: `*i32`) — the caller hands C++ a pointer
+            // it will read in a loop while re-entering Rust callbacks that
+            // also write through the same address; a `&mut i32` here would
+            // alias those re-entrant accesses.
+            should_continue: *mut i32,
         ) -> i32 {
             // SAFETY: self is valid opaque FFI handle
             unsafe {

@@ -355,8 +355,10 @@ impl JSPromise {
         // JSC__JSPromise__wrap converts any thrown exception into a rejected promise,
         // so a pending non-termination exception here indicates a bug; assert and
         // surface termination as JsTerminated (matching JSPromise.zig:202-207).
-        scope
-            .assert_no_exception_except_termination()
+        // SAFETY: `scope_ptr` was initialized above and `_scope_guard` has not yet
+        // dropped; the short-lived `&mut` reborrow here is derived from the same
+        // raw root provenance as the guard and ends before the guard runs.
+        unsafe { (*scope_ptr).assert_no_exception_except_termination() }
             .map_err(|_| JsTerminated::JSTerminated)?;
         Ok(promise)
     }
@@ -464,8 +466,9 @@ impl JSPromise {
 
         // SAFETY: `self` and `global` are valid; FFI may run JS (microtasks).
         // `global.as_ptr()` is the opaque-ZST-handle cast (no Rust-side write-through).
-        let ok = unsafe { JSC__JSPromise__resolve(self, global.as_ptr(), value) };
-        if !ok {
+        unsafe { JSC__JSPromise__resolve(self, global.as_ptr(), value) };
+        // Mirrors cpp.zig wrapper: `Bun__RETURN_IF_EXCEPTION(global)` after the void call.
+        if global.has_exception() {
             return Err(JsTerminated::JSTerminated);
         }
         Ok(())
@@ -502,8 +505,9 @@ impl JSPromise {
 
         // SAFETY: `self` and `global` are valid; FFI may run JS (microtasks).
         // `global.as_ptr()` is the opaque-ZST-handle cast (no Rust-side write-through).
-        let ok = unsafe { JSC__JSPromise__reject(self, global.as_ptr(), err) };
-        if !ok {
+        unsafe { JSC__JSPromise__reject(self, global.as_ptr(), err) };
+        // Mirrors cpp.zig wrapper: `Bun__RETURN_IF_EXCEPTION(global)` after the void call.
+        if global.has_exception() {
             return Err(JsTerminated::JSTerminated);
         }
         Ok(())
@@ -512,8 +516,9 @@ impl JSPromise {
     pub fn reject_as_handled(&mut self, global: &JSGlobalObject, value: JSValue) -> Result<(), JsTerminated> {
         // SAFETY: `self` and `global` are valid; FFI may run JS.
         // `global.as_ptr()` is the opaque-ZST-handle cast (no Rust-side write-through).
-        let ok = unsafe { JSC__JSPromise__rejectAsHandled(self, global.as_ptr(), value) };
-        if !ok {
+        unsafe { JSC__JSPromise__rejectAsHandled(self, global.as_ptr(), value) };
+        // Mirrors cpp.zig wrapper: `Bun__RETURN_IF_EXCEPTION(global)` after the void call.
+        if global.has_exception() {
             return Err(JsTerminated::JSTerminated);
         }
         Ok(())
@@ -583,5 +588,5 @@ pub enum UnwrapMode {
 //   source:     src/jsc/JSPromise.zig (372 lines)
 //   confidence: medium
 //   todos:      5
-//   notes:      `wrap()` reshaped from comptime ArgsTuple+toJSHostCall to FnOnce+trampoline; bun.cpp FFI return encoding (bool vs JSError) needs Phase-B verification; `JsTerminated`/`JscWeak`/`JscStrong` API surface assumed.
+//   notes:      `wrap()` reshaped from comptime ArgsTuple+toJSHostCall to FnOnce+trampoline; resolve/reject/rejectAsHandled extern are void — exception checked via global.has_exception() (mirrors cpp.zig wrapper); `JsTerminated`/`JscWeak`/`JscStrong` API surface assumed.
 // ──────────────────────────────────────────────────────────────────────────

@@ -431,11 +431,12 @@ impl FileReader {
         {
             use bun_io::pipe_reader::PosixFlags;
             if file_type == FileType::Socket {
-                self.reader.flags.insert(PosixFlags::SOCKET);
+                self.reader().flags.insert(PosixFlags::SOCKET);
             }
 
-            if let Some(poll) = self.reader.handle.get_poll() {
-                if file_type == FileType::Socket || self.reader.flags.contains(PosixFlags::SOCKET) {
+            let r = self.reader();
+            if let Some(poll) = r.handle.get_poll() {
+                if file_type == FileType::Socket || r.flags.contains(PosixFlags::SOCKET) {
                     poll.flags.insert(aio::PollFlag::Socket);
                 } else {
                     // if it's a TTY, we report it as a fifo
@@ -443,7 +444,7 @@ impl FileReader {
                     poll.flags.insert(aio::PollFlag::Fifo);
                 }
 
-                if self.reader.flags.contains(PosixFlags::NONBLOCKING) {
+                if r.flags.contains(PosixFlags::NONBLOCKING) {
                     poll.flags.insert(aio::PollFlag::Nonblocking);
                 }
             }
@@ -451,7 +452,7 @@ impl FileReader {
 
         self.started = true;
 
-        if self.reader.is_done() {
+        if self.reader().is_done() {
             self.consume_reader_buffer();
             if !self.buffered.is_empty() {
                 return streams::Start::OwnedAndDone(ByteList::move_from_list(mem::take(&mut self.buffered)));
@@ -460,8 +461,8 @@ impl FileReader {
             #[cfg(unix)]
             {
                 use bun_io::pipe_reader::PosixFlags;
-                if !was_lazy && self.reader.flags.contains(PosixFlags::POLLABLE) {
-                    self.reader.read();
+                if !was_lazy && self.reader().flags.contains(PosixFlags::POLLABLE) {
+                    self.reader().read();
                 }
             }
         }
@@ -490,9 +491,9 @@ impl FileReader {
             return;
         }
         self.done = true;
-        self.reader.update_ref(false);
-        if !self.reader.is_done() {
-            self.reader.close();
+        self.reader().update_ref(false);
+        if !self.reader().is_done() {
+            self.reader().close();
         }
     }
 
@@ -502,7 +503,7 @@ impl FileReader {
     fn deinit(&mut self) {
         // Owned fields (buffered: Vec, reader: BufferedReader, pending_value: Strong,
         // lazy: Arc) drop automatically; only genuine side effects remain.
-        self.reader.update_ref(false);
+        self.reader().update_ref(false);
         // SAFETY: see `parent()`.
         unsafe { (*self.parent()).deinit() };
     }
@@ -511,11 +512,11 @@ impl FileReader {
     fn reader_is_pollable(&self) -> bool {
         #[cfg(unix)]
         {
-            self.reader.flags.contains(bun_io::pipe_reader::PosixFlags::POLLABLE)
+            self.reader().flags.contains(bun_io::pipe_reader::PosixFlags::POLLABLE)
         }
         #[cfg(windows)]
         {
-            self.reader.flags.pollable
+            self.reader().flags.pollable
         }
     }
 
@@ -530,7 +531,7 @@ impl FileReader {
         );
 
         if self.done {
-            self.reader.close();
+            self.reader().close();
             return false;
         }
         let mut close = false;
@@ -539,7 +540,7 @@ impl FileReader {
         macro_rules! close_if_needed {
             () => {
                 if close {
-                    self.reader.close();
+                    self.reader().close();
                 }
             };
         }
@@ -571,7 +572,7 @@ impl FileReader {
         // Spec FileReader.zig:337 `const reader_buffer = this.reader.buffer();` is a Zig
         // raw `*std.ArrayList(u8)` with no aliasing rules; we mirror that with a raw ptr
         // and deref only at the exact use sites below.
-        let reader_buffer: *mut Vec<u8> = self.reader.buffer();
+        let reader_buffer: *mut Vec<u8> = self.reader().buffer();
 
         if !self.read_inside_on_pull.is_none() {
             match &mut self.read_inside_on_pull {
@@ -639,7 +640,7 @@ impl FileReader {
                     break 'pending false;
                 }
 
-                let was_done = self.reader.is_done();
+                let was_done = self.reader().is_done();
 
                 if self.pending_view.len() >= buf.len() {
                     self.pending_view[0..buf.len()].copy_from_slice(buf);
@@ -662,7 +663,7 @@ impl FileReader {
 
                 // SAFETY: see `reader_buffer` decl — tight deref.
                 if bun_core::is_slice_in_buffer(buf, unsafe { (*reader_buffer).allocated_slice() }) {
-                    if self.reader.is_done() {
+                    if self.reader().is_done() {
                         // SAFETY: see `reader_buffer` decl.
                         debug_assert_eq!(buf.as_ptr(), unsafe { (*reader_buffer).as_ptr() });
                         let mut buffer = unsafe { mem::take(&mut *reader_buffer) };
@@ -679,7 +680,7 @@ impl FileReader {
                 }
 
                 if !bun_core::is_slice_in_buffer(buf, self.buffered.allocated_slice()) {
-                    self.pending.result = if self.reader.is_done() {
+                    self.pending.result = if self.reader().is_done() {
                         streams::Result::TemporaryAndDone(ByteList::from_borrowed_slice_dangerous(buf))
                     } else {
                         streams::Result::Temporary(ByteList::from_borrowed_slice_dangerous(buf))
@@ -691,7 +692,7 @@ impl FileReader {
                 let mut buffered = mem::take(&mut self.buffered);
                 buffered.truncate(buf.len()); // shrinkRetainingCapacity
 
-                self.pending.result = if self.reader.is_done() {
+                self.pending.result = if self.reader().is_done() {
                     streams::Result::OwnedAndDone(ByteList::move_from_list(buffered))
                 } else {
                     streams::Result::Owned(ByteList::move_from_list(buffered))

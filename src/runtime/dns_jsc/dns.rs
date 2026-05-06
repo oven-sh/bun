@@ -2607,13 +2607,15 @@ pub struct Resolver {
 }
 
 pub struct UvDnsPoll {
-    pub parent: *const Resolver, // BACKREF
+    // BACKREF — Zig: `parent: *Resolver` (mutable). Stored mut because the poll
+    // callback hands it to `Resolver::deref`, which may write/free `*this`.
+    pub parent: *mut Resolver,
     pub socket: c_ares::ares_socket_t,
     pub poll: libuv::uv_poll_t,
 }
 
 impl UvDnsPoll {
-    pub fn new(parent: *const Resolver, socket: c_ares::ares_socket_t) -> *mut Self {
+    pub fn new(parent: *mut Resolver, socket: c_ares::ares_socket_t) -> *mut Self {
         Box::into_raw(Box::new(Self {
             parent,
             socket,

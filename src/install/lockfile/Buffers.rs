@@ -510,21 +510,16 @@ pub fn load(
     // TODO(port): `Dependency::Context` borrows `log`, `string_buf`, and `pm_`
     // simultaneously with `&mut this`; Phase B may need to restructure borrows.
 
-    // expandToCapacity + items.len = N
-    // SAFETY: capacity reserved above; every slot is written in the loop below.
-    unsafe { this.dependencies.set_len(external_dependency_list.len()) };
-
-    {
-        let mut external_deps = external_dependency_list.as_ptr();
-        let dependencies = this.dependencies.as_mut_slice();
-        debug_assert!(external_dependency_list.len() == dependencies.len());
-        for dep in dependencies {
-            // SAFETY: `external_deps` walks exactly `external_dependency_list.len()`
-            // elements, equal to `dependencies.len()` (asserted above).
-            *dep = dependency::to_dependency(unsafe { *external_deps }, &mut extern_context);
-            unsafe { external_deps = external_deps.add(1) };
-        }
+    // PORT NOTE: Zig did `expandToCapacity` + `items.len = N` then wrote each
+    // slot via `*dep = ...`. In Rust, `set_len` then `as_mut_slice()` would form
+    // `&mut Dependency` to uninitialized memory (UB even when write-only), so we
+    // push into the reserved capacity instead — same single allocation, same
+    // element order, no uninit references.
+    for ext in external_dependency_list {
+        this.dependencies
+            .push(dependency::to_dependency(*ext, &mut extern_context));
     }
+    debug_assert!(external_dependency_list.len() == this.dependencies.len());
 
     // Legacy tree structure stores package IDs instead of dependency IDs
     if !this.trees.is_empty() && this.trees[0].dependency_id != tree::ROOT_DEP_ID {

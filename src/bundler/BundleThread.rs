@@ -66,7 +66,10 @@ pub enum BundleV2Result {
 ///
 /// - `configureBundler` is used to configure `Bundler`.
 /// - `completeOnBundleThread` is used to tell the task that it is done.
-pub struct BundleThread<C: CompletionStruct> {
+// PORT NOTE: trait bound lives on the `impl` (not the struct) so the
+// `singleton` static can name `BundleThread<JSBundleCompletionTask>` before T6
+// provides the `CompletionStruct` impl for the forward-decl.
+pub struct BundleThread<C: Node> {
     pub waker: Async::Waker,
     pub ready_event: ResetEvent,
     // `bun.UnboundedQueue(CompletionStruct, .next)` — intrusive over `C.next`;
@@ -347,25 +350,24 @@ impl<C: CompletionStruct> BundleThread<C> {
 /// Lazily-initialized singleton. This is used for `Bun.build` since the
 /// bundle thread may not be needed.
 // PORT NOTE: Zig had a per-monomorphization `singleton` struct with
-// `static var instance`. Rust forbids generic statics; the Zig source already
-// `@compileError`s for any `CompletionStruct` other than `JSBundleCompletionTask`,
-// so the singleton is instantiated once for that concrete type. T6 provides the
-// `CompletionStruct` impl for the opaque `JSBundleCompletionTask` forward-decl.
+// `static var instance`. Rust forbids generic statics, so the storage is
+// type-erased (`*mut ()`) and the accessor functions are generic over `C`.
+// The Zig source already `@compileError`s for any `CompletionStruct` other than
+// `JSBundleCompletionTask`, so in practice exactly one `C` is ever used and the
+// erased static is sound. T6 (`bun_bundler_jsc`) calls these with its concrete
+// completion-task type.
 pub mod singleton {
     use super::*;
 
     static ONCE: Once = Once::new();
-    static mut INSTANCE: *mut BundleThread<JSBundleCompletionTask> = core::ptr::null_mut();
+    static mut INSTANCE: *mut () = core::ptr::null_mut();
 
     // Blocks the calling thread until the bun build thread is created.
     // std.once also blocks other callers of this function until the first caller is done.
-    fn load_once_impl()
-    where
-        JSBundleCompletionTask: CompletionStruct,
-    {
-        let bundle_thread = Box::into_raw(Box::new(BundleThread::uninitialized()));
+    fn load_once_impl<C: CompletionStruct>() {
+        let bundle_thread = Box::into_raw(Box::new(BundleThread::<C>::uninitialized()));
         // SAFETY: only called once under ONCE.
-        unsafe { INSTANCE = bundle_thread };
+        unsafe { INSTANCE = bundle_thread as *mut () };
 
         // 2. Spawn the bun build thread.
         // SAFETY: bundle_thread is a leaked Box, valid for 'static; `spawn` takes the
@@ -381,23 +383,21 @@ pub mod singleton {
     /// against this allocation for the process lifetime, so callers MUST NOT
     /// materialize `&mut BundleThread` from it (Zig `*Self` aliasing semantics).
     /// Use `BundleThread::enqueue(get(), ...)` instead.
-    pub fn get() -> *mut BundleThread<JSBundleCompletionTask>
-    where
-        JSBundleCompletionTask: CompletionStruct,
-    {
-        ONCE.call_once(load_once_impl);
+    ///
+    /// # Safety
+    /// All calls (across the process) must use the same `C`; the static is
+    /// type-erased.
+    pub fn get<C: CompletionStruct>() -> *mut BundleThread<C> {
+        ONCE.call_once(load_once_impl::<C>);
         // SAFETY: INSTANCE is non-null after call_once and never written again; pointer is
-        // a leaked 'static Box.
-        unsafe { INSTANCE }
+        // a leaked 'static Box of `BundleThread<C>` (same `C` per the safety contract).
+        unsafe { INSTANCE as *mut BundleThread<C> }
     }
 
-    pub fn enqueue(completion: *mut JSBundleCompletionTask)
-    where
-        JSBundleCompletionTask: CompletionStruct,
-    {
+    pub fn enqueue<C: CompletionStruct>(completion: *mut C) {
         // SAFETY: `get()` returns the leaked 'static singleton whose bundle thread is
         // running; `BundleThread::enqueue` only performs raw-ptr field projections.
-        unsafe { BundleThread::enqueue(get(), completion) };
+        unsafe { BundleThread::enqueue(get::<C>(), completion) };
     }
 }
 

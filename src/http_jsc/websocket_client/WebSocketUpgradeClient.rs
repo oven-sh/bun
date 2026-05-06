@@ -131,16 +131,22 @@ pub struct HTTPClient<const SSL: bool> {
 //
 // TODO(port): expose these as a `uws::SocketHandlerSet` const for the dispatch
 // table; in Zig these were `pub const onOpen = handleOpen;` etc.
+//
+// These take `*mut Self` (not `&mut Self`) because uSockets dispatches them
+// from the raw userdata pointer and several of them can free `Self` (via
+// `deref` reaching zero) or be re-entered synchronously by `tcp.close()` /
+// C++ callbacks. Holding a `&mut Self` function-argument across either of
+// those is UB under Stacked Borrows (argument protectors / aliased `&mut`).
 impl<const SSL: bool> HTTPClient<SSL> {
-    pub const ON_OPEN: fn(&mut Self, Socket<SSL>) = Self::handle_open;
-    pub const ON_CLOSE: fn(&mut Self, Socket<SSL>, c_int, *mut c_void) = Self::handle_close;
-    pub const ON_DATA: fn(&mut Self, Socket<SSL>, &[u8]) = Self::handle_data;
-    pub const ON_WRITABLE: fn(&mut Self, Socket<SSL>) = Self::handle_writable;
-    pub const ON_TIMEOUT: fn(&mut Self, Socket<SSL>) = Self::handle_timeout;
-    pub const ON_LONG_TIMEOUT: fn(&mut Self, Socket<SSL>) = Self::handle_timeout;
-    pub const ON_CONNECT_ERROR: fn(&mut Self, Socket<SSL>, c_int) = Self::handle_connect_error;
-    pub const ON_END: fn(&mut Self, Socket<SSL>) = Self::handle_end;
-    pub const ON_HANDSHAKE: fn(&mut Self, Socket<SSL>, i32, uws::us_bun_verify_error_t) =
+    pub const ON_OPEN: unsafe fn(*mut Self, Socket<SSL>) = Self::handle_open;
+    pub const ON_CLOSE: unsafe fn(*mut Self, Socket<SSL>, c_int, *mut c_void) = Self::handle_close;
+    pub const ON_DATA: unsafe fn(*mut Self, Socket<SSL>, &[u8]) = Self::handle_data;
+    pub const ON_WRITABLE: unsafe fn(*mut Self, Socket<SSL>) = Self::handle_writable;
+    pub const ON_TIMEOUT: unsafe fn(*mut Self, Socket<SSL>) = Self::handle_timeout;
+    pub const ON_LONG_TIMEOUT: unsafe fn(*mut Self, Socket<SSL>) = Self::handle_timeout;
+    pub const ON_CONNECT_ERROR: unsafe fn(*mut Self, Socket<SSL>, c_int) = Self::handle_connect_error;
+    pub const ON_END: unsafe fn(*mut Self, Socket<SSL>) = Self::handle_end;
+    pub const ON_HANDSHAKE: unsafe fn(*mut Self, Socket<SSL>, i32, uws::us_bun_verify_error_t) =
         Self::handle_handshake;
 }
 
@@ -353,7 +359,13 @@ impl<const SSL: bool> HTTPClient<SSL> {
             offered_permessage_deflate: offer_permessage_deflate,
             subprotocols,
         }));
-        // SAFETY: just allocated above; we hold the only ref.
+        // SAFETY: just allocated above; we hold the only ref. This `&mut` is
+        // used only for pre-connect setup and MUST NOT span any
+        // `Socket::connect_*_group` call below — those install `client` as
+        // socket userdata and may synchronously dispatch
+        // `handle_connect_error(*mut Self)` (see .zig:1152), which would
+        // alias this borrow under Stacked Borrows. A fresh `&mut *client` is
+        // re-derived after each connect call returns.
         let client_ref = unsafe { &mut *client };
 
         // Store TLS config if provided (ownership transferred to client)

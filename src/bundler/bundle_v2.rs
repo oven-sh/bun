@@ -201,23 +201,26 @@ impl<'a> BundleV2<'a> {
     pub fn transpiler_for_target(&mut self, target: options::Target) -> &mut Transpiler<'a> {
         // SAFETY: all three pointers are live for `'a` (set in `init`); the
         // `client_transpiler` arm is only reached when bake populated it.
-        unsafe {
-            // bundle_v2.zig:247-263 — outside of server-components / dev-server,
-            // the only case that doesn't return the main transpiler is a
-            // browser-target request from a server-side build, which lazily
-            // spins up a client transpiler.
-            if !(*self.transpiler).options.server_components && self.linker.dev_server.is_none() {
-                if target == Target::Browser && (*self.transpiler).options.target.is_server_side() {
-                    if let Some(mut p) = self.client_transpiler {
-                        return p.as_mut();
-                    }
-                    // bundle_v2.zig:250-252 — `client_transpiler orelse initializeClientTranspiler() catch panic`.
-                    // PORT NOTE: `initialize_client_transpiler` lives in the
-                    // gated draft below; until that un-gates, this path panics.
-                    panic!("Failed to initialize client transpiler: not yet wired");
+        // bundle_v2.zig:247-263 — outside of server-components / dev-server,
+        // the only case that doesn't return the main transpiler is a
+        // browser-target request from a server-side build, which lazily
+        // spins up a client transpiler.
+        if !self.transpiler.options.server_components && self.linker.dev_server.is_none() {
+            if target == Target::Browser && self.transpiler.options.target.is_server_side() {
+                if let Some(mut p) = self.client_transpiler {
+                    // SAFETY: client_transpiler is live for `'a` (set in `init`).
+                    return unsafe { p.as_mut() };
                 }
-                return &mut *self.transpiler;
+                // bundle_v2.zig:250-252 — `client_transpiler orelse initializeClientTranspiler() catch panic`.
+                // PORT NOTE: `initialize_client_transpiler` lives in the
+                // gated draft below; until that un-gates, this path panics.
+                panic!("Failed to initialize client transpiler: not yet wired");
             }
+            return &mut *self.transpiler;
+        }
+        // SAFETY: all three pointers are live for `'a` (set in `init`); the
+        // `client_transpiler` arm is only reached when bake populated it.
+        unsafe {
             match target {
                 Target::Browser => self.client_transpiler.unwrap().as_mut(),
                 Target::BakeServerComponentsSsr => &mut *self.ssr_transpiler,
@@ -1890,11 +1893,11 @@ impl<'a> BundleV2<'a> {
         target: options::Target,
     ) {
         let transpiler = self.transpiler_for_target(target);
-        let source_dir = Fs::PathName::init(import_record.source_file).dir_with_trailing_slash();
+        let source_dir = Fs::PathName::init(&import_record.source_file).dir_with_trailing_slash();
 
         // Check the FileMap first for in-memory files
         if let Some(file_map) = self.file_map {
-            if let Some(_file_map_result) = file_map.resolve(import_record.source_file, import_record.specifier) {
+            if let Some(_file_map_result) = file_map.resolve(&import_record.source_file, &import_record.specifier) {
                 let mut file_map_result = _file_map_result;
                 let mut path_primary = file_map_result.path_pair.primary.clone();
                 let entry = self.path_to_source_index_map(target).get_or_put(&path_primary.text).expect("oom");
@@ -1912,7 +1915,7 @@ impl<'a> BundleV2<'a> {
                         &file_map_result,
                         &Logger::Source {
                             path: path_primary,
-                            contents: b"",
+                            contents: &b""[..],
                             ..Default::default()
                         },
                         loader,
@@ -1931,7 +1934,7 @@ impl<'a> BundleV2<'a> {
 
         let mut had_busted_dir_cache = false;
         let resolve_result: _resolver::Result = loop {
-            match transpiler.resolver.resolve(source_dir, import_record.specifier, import_record.kind) {
+            match transpiler.resolver.resolve(source_dir, &import_record.specifier, import_record.kind) {
                 Ok(r) => break r,
                 Err(err) => {
                     // Only perform directory busting when hot-reloading is enabled
@@ -1939,7 +1942,7 @@ impl<'a> BundleV2<'a> {
                         if let Some(dev) = self.dev_server {
                             if !had_busted_dir_cache {
                                 // Only re-query if we previously had something cached.
-                                if transpiler.resolver.bust_dir_cache_from_specifier(import_record.source_file, import_record.specifier) {
+                                if transpiler.resolver.bust_dir_cache_from_specifier(&import_record.source_file, &import_record.specifier) {
                                     had_busted_dir_cache = true;
                                     continue;
                                 }
@@ -1947,8 +1950,8 @@ impl<'a> BundleV2<'a> {
 
                             // Tell Bake's Dev Server to wait for the file to be imported.
                             dev.track_resolution_failure(
-                                import_record.source_file,
-                                import_record.specifier,
+                                &import_record.source_file,
+                                &import_record.specifier,
                                 target.bake_graph(),
                                 self.graph.input_files.items_loader()[import_record.importer_source_index as usize],
                             ).expect("oom");
@@ -1960,7 +1963,7 @@ impl<'a> BundleV2<'a> {
 
                     let mut handles_import_errors = false;
                     let mut source: Option<&Logger::Source> = None;
-                    let log = self.log_for_resolution_failures(import_record.source_file, target.bake_graph());
+                    let log = self.log_for_resolution_failures(&import_record.source_file, target.bake_graph());
 
                     let record: &mut ImportRecord = &mut self.graph.ast.items_import_records_mut()[import_record.importer_source_index as usize].slice_mut()[import_record.import_record_index as usize];
                     source = Some(&self.graph.input_files.items_source()[import_record.importer_source_index as usize]);
@@ -1974,10 +1977,10 @@ impl<'a> BundleV2<'a> {
 
                     if err == bun_core::err!("ModuleNotFound") {
                         let add_error = Logger::Log::add_resolve_error_with_text_dupe;
-                        let path_to_use = import_record.specifier;
+                        let path_to_use = &import_record.specifier;
 
                         if !handles_import_errors && !self.transpiler.options.ignore_module_resolution_errors {
-                            if is_package_path(import_record.specifier) {
+                            if is_package_path(&import_record.specifier) {
                                 if target == Target::Browser && options::ExternalModules::is_node_builtin(path_to_use) {
                                     add_error(
                                         log, source, import_record.range, self.allocator(),
@@ -2038,7 +2041,6 @@ impl<'a> BundleV2<'a> {
         let entry = self.path_to_source_index_map(target).get_or_put(&path.text).expect("oom");
         if !entry.found_existing {
             *path = self.path_with_pretty_initialized(path.clone(), target).expect("oom");
-            *entry.key_ptr = path.text.clone();
             let loader: Loader = 'brk: {
                 let record: &ImportRecord = &self.graph.ast.items_import_records()[import_record.importer_source_index as usize].slice()[import_record.import_record_index as usize];
                 if let Some(out_loader) = record.loader {
@@ -2051,7 +2053,7 @@ impl<'a> BundleV2<'a> {
                 &resolve_result,
                 &Logger::Source {
                     path: path.clone(),
-                    contents: b"",
+                    contents: &b""[..],
                     ..Default::default()
                 },
                 loader,
@@ -2120,22 +2122,21 @@ impl<'a> BundleV2<'a> {
 
         path = self.path_with_pretty_initialized(path, target)?;
         path.assert_pretty_is_valid();
-        *entry.key_ptr = path.text.clone();
         *entry.value_ptr = source_index.get();
         self.graph.ast.append(JSAst::empty());
 
         self.graph.input_files.append(crate::Graph::InputFile {
             source: Logger::Source {
                 path,
-                contents: b"",
-                index: source_index,
+                contents: &b""[..],
+                index: bun_logger::Index(source_index.get()),
                 ..Default::default()
             },
             loader,
             side_effects: result.primary_side_effects_data,
             ..Default::default()
         })?;
-        let task = self.allocator().alloc(ParseTask::init(&result, source_index, self));
+        let task = Box::leak(Box::new(ParseTask::init(&result, source_index, self)));
         task.loader = Some(loader);
         task.task.node.next = None;
         task.tree_shaking = self.linker.options.tree_shaking;
@@ -2150,12 +2151,12 @@ impl<'a> BundleV2<'a> {
         if !self.enqueue_on_load_plugin_if_needed(task) {
             if loader.should_copy_for_bundling() {
                 let additional_files: &mut BabyList<crate::AdditionalFile> = &mut self.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
-                additional_files.append(crate::AdditionalFile::SourceIndex(task.source_index.get()));
+                additional_files.push(crate::AdditionalFile::SourceIndex(task.source_index.get()));
                 self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsPureData;
                 self.graph.estimated_file_loader_count += 1;
             }
 
-            self.graph.pool.schedule(task);
+            unsafe { self.graph.pool.as_mut() }.schedule(task);
         }
         Ok(())
     }
@@ -2181,22 +2182,21 @@ impl<'a> BundleV2<'a> {
 
         *path = self.path_with_pretty_initialized(path.clone(), target)?;
         path.assert_pretty_is_valid();
-        *entry.key_ptr = path.text.clone();
         *entry.value_ptr = source_index.get();
         self.graph.ast.append(JSAst::empty());
 
         self.graph.input_files.append(crate::Graph::InputFile {
             source: Logger::Source {
                 path: path.clone(),
-                contents: b"",
-                index: source_index,
+                contents: &b""[..],
+                index: bun_logger::Index(source_index.get()),
                 ..Default::default()
             },
             loader,
             side_effects: resolve.primary_side_effects_data,
             ..Default::default()
         })?;
-        let task = self.allocator().alloc(ParseTask::init(&result, source_index, self));
+        let task = Box::leak(Box::new(ParseTask::init(&result, source_index, self)));
         task.loader = Some(loader);
         task.task.node.next = None;
         task.tree_shaking = self.linker.options.tree_shaking;
@@ -2215,12 +2215,12 @@ impl<'a> BundleV2<'a> {
         if !self.enqueue_on_load_plugin_if_needed(task) {
             if loader.should_copy_for_bundling() {
                 let additional_files: &mut BabyList<crate::AdditionalFile> = &mut self.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
-                additional_files.append(crate::AdditionalFile::SourceIndex(task.source_index.get()));
+                additional_files.push(crate::AdditionalFile::SourceIndex(task.source_index.get()));
                 self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsPureData;
                 self.graph.estimated_file_loader_count += 1;
             }
 
-            self.graph.pool.schedule(task);
+            unsafe { self.graph.pool.as_mut() }.schedule(task);
         }
 
         self.graph.entry_points.push(source_index);
@@ -2444,7 +2444,7 @@ impl<'a> BundleV2<'a> {
         debug_assert_eq!(files.set.keys().len(), files.set.values().len());
         for (abs_path, flags) in files.set.keys().iter().zip(files.set.values().iter()) {
             // Ensure we have the proper conditions set for client-side entrypoints.
-            let transpiler = if flags.client() && !flags.server()() && !flags.ssr()() {
+            let transpiler = if flags.client() && !flags.server() && !flags.ssr() {
                 self.transpiler_for_target(Target::Browser)
             } else {
                 &mut *self.transpiler
@@ -2479,8 +2479,8 @@ impl<'a> BundleV2<'a> {
                         err,
                         if flags.client() { bake::Graph::Client } else { bake::Graph::Server },
                         abs_path,
-                        transpiler.log,
-                        self,
+                        transpiler.log as *const _,
+                        self as *mut _,
                     ).expect("oom");
                     transpiler.log.reset();
                     continue;
@@ -2554,7 +2554,7 @@ impl<'a> BundleV2<'a> {
         runtime_parse_task.tree_shaking = true;
         runtime_parse_task.loader = Some(Loader::Js);
         self.increment_scan_counter();
-        self.graph.pool.schedule(runtime_parse_task);
+        unsafe { self.graph.pool.as_mut() }.schedule(runtime_parse_task);
         Ok(())
     }
 
@@ -2738,7 +2738,7 @@ impl<'a> BundleV2<'a> {
             side_effects: loader.side_effects(),
             ..Default::default()
         })?;
-        let task = self.allocator().alloc(ParseTask::init(resolve_result, source_index, self));
+        let task = Box::leak(Box::new(ParseTask::init(resolve_result, source_index, self)));
         task.loader = Some(loader);
         task.jsx = self.transpiler_for_target(known_target).options.jsx.clone();
         task.task.node.next = None;
@@ -2752,12 +2752,12 @@ impl<'a> BundleV2<'a> {
         if !self.enqueue_on_load_plugin_if_needed(task) {
             if loader.should_copy_for_bundling() {
                 let additional_files: &mut BabyList<crate::AdditionalFile> = &mut self.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
-                additional_files.append(crate::AdditionalFile::SourceIndex(task.source_index.get()));
+                additional_files.push(crate::AdditionalFile::SourceIndex(task.source_index.get()));
                 self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsPureData;
                 self.graph.estimated_file_loader_count += 1;
             }
 
-            self.graph.pool.schedule(task);
+            unsafe { self.graph.pool.as_mut() }.schedule(task);
         }
 
         Ok(source_index.get())
@@ -2808,12 +2808,12 @@ impl<'a> BundleV2<'a> {
         if !self.enqueue_on_load_plugin_if_needed(task) {
             if loader.should_copy_for_bundling() {
                 let additional_files: &mut BabyList<crate::AdditionalFile> = &mut self.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
-                additional_files.append(crate::AdditionalFile::SourceIndex(task.source_index.get()));
+                additional_files.push(crate::AdditionalFile::SourceIndex(task.source_index.get()));
                 self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsPureData;
                 self.graph.estimated_file_loader_count += 1;
             }
 
-            self.graph.pool.schedule(task);
+            unsafe { self.graph.pool.as_mut() }.schedule(task);
         }
         Ok(source_index.get())
     }
@@ -3279,7 +3279,7 @@ impl<'a> BundleV2<'a> {
                 if should_copy_for_bundling {
                     let source_index = load.source_index;
                     let additional_files: &mut BabyList<crate::AdditionalFile> = &mut this.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
-                    additional_files.append(crate::AdditionalFile::SourceIndex(source_index.get()));
+                    additional_files.push(crate::AdditionalFile::SourceIndex(source_index.get()));
                     this.graph.input_files.items_side_effects_mut()[source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsPureData;
                     this.graph.estimated_file_loader_count += 1;
                 }
@@ -3371,7 +3371,7 @@ impl<'a> BundleV2<'a> {
         let _dec_guard = scopeguard::guard((), |_| this.decrement_scan_counter());
         bun_core::scoped_log!(Bundle, "onResolve: ({}:{}, {})",
             bstr::BStr::new(&resolve.import_record.namespace),
-            bstr::BStr::new(&resolve.import_record.specifier),
+            bstr::BStr::new(&resolve.&import_record.specifier),
             <&'static str>::from(&resolve.value));
 
         let _mem_guard = scopeguard::guard((), |_| {
@@ -3388,7 +3388,7 @@ impl<'a> BundleV2<'a> {
                 if resolve.import_record.namespace == b"file" {
                     if resolve.import_record.kind == ImportKind::EntryPointBuild {
                         let target = resolve.import_record.original_target;
-                        let Ok(resolved) = this.transpiler_for_target(target).resolve_entry_point(&resolve.import_record.specifier) else {
+                        let Ok(resolved) = this.transpiler_for_target(target).resolve_entry_point(&resolve.&import_record.specifier) else {
                             return;
                         };
                         let Ok(source_index) = this.enqueue_entry_item(resolved, true, target) else {
@@ -3397,7 +3397,7 @@ impl<'a> BundleV2<'a> {
 
                         // Store the original entry point name for virtual entries that fall back to file resolution
                         if let Some(idx) = source_index {
-                            this.graph.entry_point_original_names.put(idx, resolve.import_record.specifier.clone());
+                            this.graph.entry_point_original_names.put(idx, resolve.&import_record.specifier.clone());
                         }
                         return;
                     }
@@ -3406,7 +3406,7 @@ impl<'a> BundleV2<'a> {
                     return;
                 }
 
-                let log = this.log_for_resolution_failures(&resolve.import_record.source_file, resolve.import_record.original_target.bake_graph());
+                let log = this.log_for_resolution_failures(&resolve.&import_record.source_file, resolve.import_record.original_target.bake_graph());
 
                 // When it's not a file, this is an error and we should report it.
                 //
@@ -3414,7 +3414,7 @@ impl<'a> BundleV2<'a> {
                 if resolve.import_record.kind == ImportKind::EntryPointBuild {
                     let _ = log.add_error_fmt(None, Logger::Loc::EMPTY, format_args!(
                         "Module not found {} in namespace {}",
-                        bun_core::fmt::quote(&resolve.import_record.specifier),
+                        bun_core::fmt::quote(&resolve.&import_record.specifier),
                         bun_core::fmt::quote(&resolve.import_record.namespace),
                     ));
                 } else {
@@ -3424,7 +3424,7 @@ impl<'a> BundleV2<'a> {
                         resolve.import_record.range,
                         format_args!(
                             "Module not found {} in namespace {}",
-                            bun_core::fmt::quote(&resolve.import_record.specifier),
+                            bun_core::fmt::quote(&resolve.&import_record.specifier),
                             bun_core::fmt::quote(&resolve.import_record.namespace),
                         ),
                     );
@@ -3445,7 +3445,7 @@ impl<'a> BundleV2<'a> {
                     if !existing.found_existing {
                         let _ = this.free_list.extend_from_slice(&[result.namespace.clone(), result.path.clone()]);
                         path = this.path_with_pretty_initialized(path, resolve.import_record.original_target).expect("oom");
-                        *existing.key_ptr = path.text.clone();
+                        *existing.key_ptr = path.text.to_vec().into_boxed_slice();
 
                         // We need to parse this
                         let source_index = Index::init(u32::try_from(this.graph.ast.len()).unwrap());
@@ -3457,8 +3457,8 @@ impl<'a> BundleV2<'a> {
                         this.graph.input_files.append(crate::Graph::InputFile {
                             source: Logger::Source {
                                 path: path.clone(),
-                                contents: b"",
-                                index: source_index,
+                                contents: &b""[..],
+                                index: bun_logger::Index(source_index.get()),
                                 ..Default::default()
                             },
                             loader,
@@ -3490,7 +3490,7 @@ impl<'a> BundleV2<'a> {
                         if !this.enqueue_on_load_plugin_if_needed(task) {
                             if loader.should_copy_for_bundling() {
                                 let additional_files: &mut BabyList<crate::AdditionalFile> = &mut this.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
-                                additional_files.append(crate::AdditionalFile::SourceIndex(task.source_index.get()));
+                                additional_files.push(crate::AdditionalFile::SourceIndex(task.source_index.get()));
                                 this.graph.input_files.items_side_effects_mut()[source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsPureData;
                                 this.graph.estimated_file_loader_count += 1;
                             }
@@ -3513,7 +3513,7 @@ impl<'a> BundleV2<'a> {
 
                         // Store the original entry point name for virtual entries
                         // This preserves the original name for output file naming
-                        this.graph.entry_point_original_names.put(source_index.get(), resolve.import_record.specifier.clone());
+                        this.graph.entry_point_original_names.put(source_index.get(), resolve.&import_record.specifier.clone());
                     } else {
                         let source_import_records = &mut this.graph.ast.items_import_records_mut()[resolve.import_record.importer_source_index as usize];
                         if (source_import_records.len() as u32) <= resolve.import_record.import_record_index {
@@ -3523,7 +3523,7 @@ impl<'a> BundleV2<'a> {
                                 *entry.value_ptr = BabyList::default();
                             }
                             entry.value_ptr.append(PendingImport {
-                                to_source_index: source_index,
+                                to_source_index: bun_logger::Index(source_index.get()),
                                 import_record_index: resolve.import_record.import_record_index,
                             });
                         } else {
@@ -3534,7 +3534,7 @@ impl<'a> BundleV2<'a> {
                 }
             }
             jsc_api::JSBundler::ResolveValue::Err(err) => {
-                let log = this.log_for_resolution_failures(&resolve.import_record.source_file, resolve.import_record.original_target.bake_graph());
+                let log = this.log_for_resolution_failures(&resolve.&import_record.source_file, resolve.import_record.original_target.bake_graph());
                 log.msgs.push(err.clone());
                 log.errors += (err.kind == Logger::Kind::Err) as u32;
                 log.warnings += (err.kind == Logger::Kind::Warn) as u32;
@@ -4017,8 +4017,8 @@ impl<'a> BundleV2<'a> {
                     kind: import_record.kind,
                     source_file: source_file.into(),
                     namespace: import_record.path.namespace.clone(),
-                    specifier: import_record.path.text.clone(),
-                    importer_source_index: source_index,
+                    specifier: import_record.path.text.to_vec().into_boxed_slice(),
+                    importer_source_index: bun_logger::Index(source_index.get()),
                     import_record_index,
                     range: import_record.range,
                     original_target,
@@ -4254,7 +4254,7 @@ impl<'a> BundleV2<'a> {
         'outer: for (i, import_record) in ctx.import_records.slice_mut().iter_mut().enumerate() {
             // Preserve original import specifier before resolution modifies path
             if import_record.original_path.is_empty() {
-                import_record.original_path = import_record.path.text.clone();
+                import_record.original_path = import_record.path.text.to_vec().into_boxed_slice();
             }
 
             if
@@ -4599,7 +4599,7 @@ impl<'a> BundleV2<'a> {
                             // Overload `path.text` to point to the final URL
                             // This information cannot be queried while printing because a lock wouldn't get held.
                             let hash = dev_server.asset_hash(&path.text).expect("cached asset not found");
-                            import_record.path.text = path.text.clone();
+                            import_record.path.text = path.text.to_vec().into_boxed_slice();
                             import_record.path.namespace = b"file";
                             import_record.path.pretty = self.allocator().alloc_str(&format!(
                                 "{}/{}{}",
@@ -4609,7 +4609,7 @@ impl<'a> BundleV2<'a> {
                             ));
                             import_record.path.is_disabled = false;
                         } else {
-                            import_record.path.text = path.text.clone();
+                            import_record.path.text = path.text.to_vec().into_boxed_slice();
                             import_record.path.pretty = rel.into();
                             import_record.path = self.path_with_pretty_initialized(path.clone(), target).expect("oom");
                             if loader == Loader::Html || entry.kind == bake_types::CacheKind::Css {
@@ -4666,7 +4666,7 @@ impl<'a> BundleV2<'a> {
             *path = self.path_with_pretty_initialized(path.clone(), target).expect("oom");
 
             import_record.path = path.clone();
-            *resolve_entry.key_ptr = path.text.clone();
+            *resolve_entry.key_ptr = path.text.to_vec().into_boxed_slice();
             bun_core::scoped_log!(Bundle, "created ParseTask: {}", bstr::BStr::new(&path.text));
             let resolve_task = Box::leak(Box::new(ParseTask::init(&resolve_result, Index::INVALID, self)));
 
@@ -4757,7 +4757,7 @@ impl<'a> BundleV2<'a> {
 
                 if loader.should_copy_for_bundling() {
                     let additional_files: &mut BabyList<crate::AdditionalFile> = &mut graph.input_files.items_additional_files_mut()[importer_source_index as usize];
-                    additional_files.append(crate::AdditionalFile::SourceIndex(new_task.source_index.get()));
+                    additional_files.push(crate::AdditionalFile::SourceIndex(new_task.source_index.get()));
                     graph.input_files.items_side_effects_mut()[new_task.source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsPureData;
                     graph.estimated_file_loader_count += 1;
                 }
@@ -4766,7 +4766,7 @@ impl<'a> BundleV2<'a> {
             } else {
                 if loader.should_copy_for_bundling() {
                     let additional_files: &mut BabyList<crate::AdditionalFile> = &mut graph.input_files.items_additional_files_mut()[importer_source_index as usize];
-                    additional_files.append(crate::AdditionalFile::SourceIndex(*existing.value_ptr));
+                    additional_files.push(crate::AdditionalFile::SourceIndex(*existing.value_ptr));
                     graph.estimated_file_loader_count += 1;
                 }
 
@@ -4851,7 +4851,7 @@ impl<'a> BundleV2<'a> {
         let empty_html_file_source = Logger::Source {
             path: path.clone(),
             index: Index::source(graph.input_files.len()),
-            contents: b"",
+            contents: &b""[..],
             ..Default::default()
         };
         let mut js_parser_options = bun_js_parser::Parser::Options::init(self.transpiler_for_target(target).options.jsx.clone(), Loader::Html);
@@ -5119,8 +5119,8 @@ impl<'a> BundleV2<'a> {
                             err.err,
                             err.target.bake_graph(),
                             &graph.input_files.items_source()[err.source_index.get() as usize].path.text,
-                            &err.log,
-                            this as *mut _ as *mut (),
+                            &err.log as *const _,
+                            this as *mut _,
                         ).expect("oom");
                     } else if !err.log.msgs.is_empty() {
                         err.log.clone_to_with_recycled(this.transpiler.log, true).expect("unreachable");

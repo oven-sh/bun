@@ -2,8 +2,11 @@ use bun_alloc::Arena;
 use bun_collections::{BabyList, DynamicBitSet};
 use bun_options_types::ImportRecord;
 
+use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
+use crate::Graph::InputFileListExt as _;
+
 use crate::options::Loader;
-use crate::part::List as PartList; // TODO(port): verify path of `Part.List`
+use crate::part::List as PartList;
 use crate::{Index, LinkerContext, Part};
 
 /// JavaScript modules are traversed in depth-first postorder. This is the

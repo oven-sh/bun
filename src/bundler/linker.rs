@@ -588,21 +588,6 @@ impl Linker {
                     bun_core::err!("ModuleNotFound"),
                 )?;
             }
-            #[cfg(any())]
-            {
-                let _ = opts; // keep `opts` live in non-gated build
-                log.add_resolve_error(
-                    Some(source),
-                    import_record.range,
-                    format_args!(
-                        "Could not resolve: \"{}\". Maybe you need to \"bun install\"?",
-                        bstr::BStr::new(import_record.path.text)
-                    ),
-                    import_record.path.text,
-                    to_logger_import_kind(import_record.kind),
-                    bun_core::err!("ModuleNotFound"),
-                )?;
-            }
         } else {
             log.add_resolve_error(
                 Some(source),

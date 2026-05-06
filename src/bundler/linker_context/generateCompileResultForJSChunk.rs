@@ -1,61 +1,58 @@
 use core::mem::offset_of;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use bun_threading::ThreadPool as ThreadPoolLib;
-use bun_core::Environment;
-use bun_js_parser::js_printer;
+use bun_threading::thread_pool as ThreadPoolLib;
+use bun_js_printer::{self as js_printer, PrintResult};
 use bun_js_parser::ast::Scope;
 
-use bun_bundler::{
-    BundleV2, Chunk, CompileResult, Index, PartRange,
-    thread_pool::{self as ThreadPool, Worker},
-};
-use bun_bundler::linker_context::{LinkerContext, PendingPartRange};
+use crate::linker_context_mod::{LinkerContext, PendingPartRange};
+use crate::options::OutputFormat;
+use crate::thread_pool::Worker;
+use crate::{BundleV2, Chunk, CompileResult, Index, PartRange};
 
-use super::generate_code_for_file_in_chunk_js::DeclCollector;
+use super::generate_code_for_file_in_chunk_js::{generate_code_for_file_in_chunk_js, DeclCollector};
 
 pub fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Task) {
-    // SAFETY: task points to PendingPartRange.task
+    // SAFETY: task is the `task` field embedded in a PendingPartRange (intrusive task node).
     let part_range: &PendingPartRange = unsafe {
         &*(task as *mut u8)
             .sub(offset_of!(PendingPartRange, task))
             .cast::<PendingPartRange>()
     };
     let ctx = part_range.ctx;
-    // SAFETY: ctx.c points to BundleV2.linker
+    // SAFETY: ctx.c is the `linker` field embedded in BundleV2 (`bundle_v2.zig:linker`);
+    // Zig `@fieldParentPtr("linker", ctx.c)` recovers *BundleV2, which Worker::get expects.
+    // PORT NOTE: `ctx` is `&GenerateChunkCtx` so `ctx.c` reborrows to `&LinkerContext`; cast
+    // through *const → *mut to recover the parent — sound because the bundle owns both.
     let bv2: &mut BundleV2 = unsafe {
-        &mut *(ctx.c as *mut LinkerContext as *mut u8)
+        &mut *(ctx.c as *const LinkerContext as *mut u8)
             .sub(offset_of!(BundleV2, linker))
             .cast::<BundleV2>()
     };
-    // `defer worker.unget()` → RAII: Worker::get returns a guard that Derefs to &mut Worker
-    // and calls unget() on Drop (per PORTING.md pool-get pattern).
-    let mut worker = ThreadPool::Worker::get(bv2);
+    let worker = Worker::get(bv2);
+    // `defer worker.unget()` — explicit; Worker::get returns `&'static mut Worker`.
+    let mut worker = scopeguard::guard(worker, |w| w.unget());
 
     // TODO(port): Environment.show_crash_trace — exact cfg key TBD; using feature = "show_crash_trace"
     #[cfg(feature = "show_crash_trace")]
     let _crash_guard = {
         let prev_action = bun_crash_handler::current_action();
-        scopeguard::guard(prev_action, |prev| {
-            bun_crash_handler::set_current_action(prev);
-        })
-    };
-    #[cfg(feature = "show_crash_trace")]
-    {
         bun_crash_handler::set_current_action(bun_crash_handler::Action::BundleGenerateChunk {
-            chunk: ctx.chunk,
-            context: ctx.c,
+            chunk: ctx.chunk as *const Chunk as *const (),
+            context: ctx.c as *const LinkerContext as *const (),
             part_range: &part_range.part_range,
         });
-    }
+        scopeguard::guard((), move |_| {
+            bun_crash_handler::set_current_action(prev_action);
+        })
+    };
 
     #[cfg(feature = "show_crash_trace")]
     {
-        let path = &ctx
-            .c
-            .parse_graph
-            .input_files
-            .items_source()[part_range.part_range.source_index.get()]
+        // SAFETY: parse_graph is a backref into BundleV2.graph, valid for the bundle lifetime.
+        let parse_graph = unsafe { &*ctx.c.parse_graph };
+        let path = &parse_graph.input_files.items_source()
+            [part_range.part_range.source_index.get() as usize]
             .path;
         if bun_core::cli::debug_flags::has_print_breakpoint(path) {
             // TODO(port): @breakpoint() — no stable Rust equivalent; use core::intrinsics::breakpoint behind cfg or a helper
@@ -63,11 +60,16 @@ pub fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Task) {
         }
     }
 
-    ctx.chunk.compile_results_for_chunk[part_range.i] =
+    // SAFETY: ctx.c / ctx.chunk are unique mutable for the duration of this task (one
+    // PendingPartRange per worker callback); cast through *const because `ctx` is held by `&`.
+    let c_mut: &mut LinkerContext = unsafe { &mut *(ctx.c as *const LinkerContext as *mut LinkerContext) };
+    let chunk_mut: &mut Chunk = unsafe { &mut *(ctx.chunk as *const Chunk as *mut Chunk) };
+
+    chunk_mut.compile_results_for_chunk[part_range.i as usize] =
         generate_compile_result_for_js_chunk_impl(
-            &mut *worker,
-            ctx.c,
-            ctx.chunk,
+            &mut **worker,
+            c_mut,
+            chunk_mut,
             part_range.part_range,
         );
 }
@@ -83,19 +85,23 @@ fn generate_compile_result_for_js_chunk_impl(
 
     // Client and server bundles for Bake must be globally allocated, as they
     // must outlive the bundle task.
-    // TODO(port): runtime allocator selection (dev_server vs default) — keeping &dyn Allocator
-    let allocator: &dyn bun_alloc::Allocator = 'blk: {
-        let Some(dev) = c.dev_server else { break 'blk bun_alloc::default_allocator() };
-        break 'blk dev.allocator();
-    };
+    // TODO(port): runtime allocator selection (dev_server vs default) —
+    // `DevServerHandle` does not yet expose an arena handle, and
+    // `BufferWriter::init()` / `DeclCollector.decls` use the global allocator
+    // in the Rust port. Once `dispatch::DevServerHandle::allocator()` exists,
+    // thread it here so dev-server bundles outlive the worker arena.
+    let _ = c.dev_server;
 
-    let arena = &mut worker.temporary_arena;
-    let mut buffer_writer = js_printer::BufferWriter::init(allocator);
-    let _arena_guard = scopeguard::guard((), |_| {
-        // PERF(port): was arena bulk-free (.retain_capacity) — profile in Phase B
-        arena.reset();
+    // SAFETY: temporary_arena / stmt_list are initialized in Worker::create before any task runs.
+    let arena = unsafe { worker.temporary_arena.assume_init_mut() };
+    let mut buffer_writer = js_printer::BufferWriter::init();
+    // PERF(port): was arena bulk-free (.retain_capacity) — profile in Phase B
+    let arena = scopeguard::guard(&mut *arena, |a| {
+        a.reset();
     });
-    worker.stmt_list.reset();
+    // SAFETY: see above.
+    let stmt_list = unsafe { worker.stmt_list.assume_init_mut() };
+    stmt_list.reset();
 
     let runtime_scope: &mut Scope =
         &mut c.graph.ast.items_module_scope_mut()[c.graph.files.items_input_file()[Index::RUNTIME.value].get()];
@@ -111,9 +117,15 @@ fn generate_compile_result_for_js_chunk_impl(
     let collect_decls = c.options.generate_bytecode_cache
         && c.options.output_format == OutputFormat::Esm
         && c.options.compile;
-    let mut dc = DeclCollector { allocator, ..Default::default() };
+    // PORT NOTE: Zig threaded `allocator` (dev_server or default) into
+    // DeclCollector; the Rust DeclCollector wants `*const Arena`. Use the
+    // worker heap for now (see TODO above re: dev_server allocator).
+    let mut dc = DeclCollector { allocator: worker.allocator, ..Default::default() };
 
-    let result = c.generate_code_for_file_in_chunk_js(
+    // SAFETY: worker.allocator points at worker.heap, initialized in Worker::create.
+    let worker_alloc = unsafe { &*worker.allocator };
+    let result = generate_code_for_file_in_chunk_js(
+        c,
         &mut buffer_writer,
         chunk.renamer,
         chunk,
@@ -121,9 +133,9 @@ fn generate_compile_result_for_js_chunk_impl(
         to_common_js_ref,
         to_esm_ref,
         runtime_require_ref,
-        &mut worker.stmt_list,
-        worker.allocator,
-        arena.allocator(),
+        stmt_list,
+        worker_alloc,
+        &**arena,
         if collect_decls { Some(&mut dc) } else { None },
     );
 
@@ -136,10 +148,12 @@ fn generate_compile_result_for_js_chunk_impl(
     if code_len > 0 && !part_range.source_index.is_runtime() {
         if let Some(bytes_ptr) = chunk
             .files_with_parts_in_chunk
-            .get_ptr(part_range.source_index.get())
+            .get_ptr_mut(&part_range.source_index.get())
         {
-            // SAFETY: multiple threads update this counter; treat *usize as AtomicUsize
-            let atomic: &AtomicUsize = unsafe { &*(bytes_ptr as *mut usize as *const AtomicUsize) };
+            // SAFETY: multiple threads update this counter; treat &mut usize as &AtomicUsize
+            // (same layout, monotonic add only).
+            let atomic: &AtomicUsize =
+                unsafe { &*(bytes_ptr as *mut usize as *const AtomicUsize) };
             let _ = atomic.fetch_add(code_len, Ordering::Relaxed);
         }
     }
@@ -148,25 +162,20 @@ fn generate_compile_result_for_js_chunk_impl(
         source_index: part_range.source_index.get(),
         result,
         decls: if collect_decls {
-            // TODO(port): dc.decls.items — ownership transfer of arena-backed slice
-            dc.decls.into_bump_slice()
+            dc.decls.into_boxed_slice()
         } else {
-            &[]
+            Box::new([])
         },
     }
 }
 
-pub use bun_bundler::DeferredBatchTask;
-pub use bun_bundler::ParseTask;
-
-// TODO(port): OutputFormat / PrintResult import paths — placeholder uses below
-use bun_bundler::options::OutputFormat;
-use bun_js_parser::js_printer::PrintResult;
+pub use crate::DeferredBatchTask::DeferredBatchTask;
+pub use crate::ParseTask;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/bundler/linker_context/generateCompileResultForJSChunk.zig (110 lines)
 //   confidence: medium
-//   todos:      5
-//   notes:      @fieldParentPtr parent type for Worker::get assumed BundleV2; Worker::get modeled as RAII guard (unget on Drop); show_crash_trace gated by #[cfg(feature)]; runtime allocator selection kept as &dyn
+//   todos:      3
+//   notes:      @fieldParentPtr parent type for Worker::get assumed BundleV2; Worker::get + scopeguard for unget; show_crash_trace gated by #[cfg(feature)]; dev_server allocator selection deferred (DevServerHandle has no arena accessor yet)
 // ──────────────────────────────────────────────────────────────────────────

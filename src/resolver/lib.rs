@@ -1818,6 +1818,57 @@ pub mod fs {
     /// can strip/transcode without duplicating the detect tables here.
     pub use super::fs_full::BOM;
 
+    /// Re-export `ModKey` from the full `fs.rs` port so `linker::get_mod_key`
+    /// can hash files without depending on `fs_full::RealFS` (a distinct type
+    /// from this inline `RealFS`).
+    pub use super::fs_full::ModKey;
+    impl ModKey {
+        /// RealFS-agnostic constructor. `fs_full::ModKey::generate`'s
+        /// `&mut RealFS` / `path` args are unread (fs.rs:1386); callers
+        /// reaching `ModKey` via this re-export hold the inline-`fs` `RealFS`,
+        /// which is a different type, so they need an entry point that doesn't
+        /// require `fs_full::RealFS`. Body is the spec `generate` minus the
+        /// dead args (linker.zig:58 → fs.zig `ModKey.generate`).
+        pub fn from_file(file: &bun_sys::File) -> core::result::Result<Self, bun_core::Error> {
+            let stat = file.stat()?;
+
+            const NS_PER_S: i128 = 1_000_000_000;
+            // PORT NOTE: `bun_sys::Stat` is `libc::stat`; Zig's
+            // `std.fs.File.stat()` returned a normalized struct with
+            // `mtime: i128` ns. Reconstruct from `st_mtime` (sec) +
+            // `st_mtime_nsec` (ns) where available.
+            #[cfg(target_os = "linux")]
+            let mtime: i128 = (stat.st_mtime as i128) * NS_PER_S + stat.st_mtime_nsec as i128;
+            #[cfg(target_os = "macos")]
+            let mtime: i128 = (stat.st_mtime as i128) * NS_PER_S + stat.st_mtime_nsec as i128;
+            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+            let mtime: i128 = (stat.st_mtime as i128) * NS_PER_S;
+            let seconds = mtime / NS_PER_S;
+
+            // We can't detect changes if the file system zeros out the
+            // modification time
+            if seconds == 0 && NS_PER_S == 0 {
+                return Err(bun_core::err!("Unusable"));
+            }
+
+            // Don't generate a modification key if the file is too new
+            let now = bun_core::time::nano_timestamp();
+            let now_seconds = now / NS_PER_S;
+            // PORT NOTE: Zig had `seconds > seconds` (always false) — preserved
+            #[allow(clippy::eq_op)]
+            if seconds > seconds || (seconds == now_seconds && mtime > now) {
+                return Err(bun_core::err!("Unusable"));
+            }
+
+            Ok(ModKey {
+                inode: stat.st_ino as u64,
+                size: stat.st_size as u64,
+                mtime,
+                mode: stat.st_mode as u32,
+            })
+        }
+    }
+
     pub mod file_system {
         pub use super::{DirEntry, DirnameStore, Entry, EntryKind, FilenameStore, RealFS};
         pub mod entry {

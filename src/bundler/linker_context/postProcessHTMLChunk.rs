@@ -1,4 +1,4 @@
-use bun_str::string_joiner::{self, StringJoiner};
+use bun_string::string_joiner::{self, StringJoiner};
 
 use crate::linker_context::GenerateChunkCtx;
 use crate::thread_pool;
@@ -13,8 +13,6 @@ pub fn post_process_html_chunk(
     // This is where we split output into pieces
     let c = ctx.c;
     let mut j = StringJoiner {
-        // TODO(port): bundler is an AST crate; worker.allocator may need to thread as &'bump Bump
-        allocator: &worker.allocator,
         watcher: string_joiner::Watcher {
             input: chunk.unique_key,
             ..Default::default()
@@ -31,13 +29,13 @@ pub fn post_process_html_chunk(
 
     j.ensure_newline_at_end();
 
-    chunk.intermediate_output = c
-        .break_output_into_pieces(
-            &worker.allocator,
-            &mut j,
-            ctx.chunks.len() as u32, // @truncate
-        )
-        .unwrap_or_oom(); // Zig: `catch |err| bun.handleOom(err)`
+    // SAFETY: `worker.allocator` is set by `Worker::create` and outlives the worker step.
+    let alloc = unsafe { &*worker.allocator };
+    chunk.intermediate_output = bun_core::handle_oom(c.break_output_into_pieces(
+        alloc,
+        &mut j,
+        ctx.chunks.len() as u32, // @truncate
+    )); // Zig: `catch |err| bun.handleOom(err)`
 
     // PORT NOTE: reshaped for borrowck (compute hash before assigning into chunk)
     let isolated_hash = c.generate_isolated_hash(chunk);

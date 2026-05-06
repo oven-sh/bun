@@ -909,6 +909,7 @@ pub mod command {
                 return super::repl_command::ReplCommand::exec(ctx);
             }
             Tag::RemoveCommand => {
+                // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
                 let ctx = unsafe { &mut *init(Tag::RemoveCommand, log)? };
                 return super::remove_command::RemoveCommand::exec(ctx);
             }

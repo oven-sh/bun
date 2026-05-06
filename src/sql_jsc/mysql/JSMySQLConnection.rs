@@ -763,17 +763,24 @@ impl JSMySQLConnection {
     fn fail_with_js_value(&mut self, value: JSValue) {
         self.ref_();
 
-        // TODO(port): errdefer — this guard runs the trailing cleanup on every exit path,
-        // mirroring Zig `defer { ... }`. Captures &mut self; Phase B borrowck reshape likely.
-        let _guard = scopeguard::guard((), |_| {
-            if self.vm.is_shutting_down() {
-                self.connection.close();
-            } else {
-                self.connection
-                    .clean_queue_and_close(Some(value), self.get_queries_array());
+        // Zig `defer { ...; updateReferenceType(); deref(); }` — runs on every
+        // exit path. Re-enter through a raw pointer so the closure holds no
+        // `&mut` alias of `self` and no reference is live across the potential
+        // free in `deref()`. LIFO order matches Zig: deref last.
+        let p: *mut Self = self;
+        let _guard = scopeguard::guard((), move |_| {
+            // SAFETY: `p` from live `&mut self`; the matching `ref_()` above
+            // guarantees `*p` survives until this `deref()`.
+            unsafe {
+                if (*p).vm.is_shutting_down() {
+                    (*p).connection.close();
+                } else {
+                    let queries = (*p).get_queries_array();
+                    (*p).connection.clean_queue_and_close(Some(value), queries);
+                }
+                (*p).update_reference_type();
+                Self::deref(p);
             }
-            self.update_reference_type();
-            self.deref();
         });
         self.stop_timers();
 

@@ -520,7 +520,14 @@ impl JsRef {
 
 impl VirtualMachine {
     /// `bun_jsc::VirtualMachine::get()` — TLS-backed singleton accessor.
-    pub fn get() -> &'static mut VirtualMachine {
+    ///
+    /// Spec `VirtualMachine.zig:357-366` returns a raw `*VirtualMachine`.
+    /// Returning `&'static mut` would let any two overlapping calls (e.g. a JS
+    /// callback fired from inside `vm.tick()` that itself calls `get()`) hold
+    /// two live `&'static mut` to the same allocation — UB. Callers form a
+    /// short-lived `&mut *p` at the use site instead. Mirrors
+    /// `src/jsc/VirtualMachine.rs:451`.
+    pub fn get() -> *mut VirtualMachine {
         unimplemented!("b2-blocked: bun_jsc::VirtualMachine::get")
     }
     pub fn event_loop(&self) -> &EventLoop {

@@ -835,8 +835,35 @@ pub fn bind(value: JSValue, global: &JSGlobalObject, name: BunString) -> JsResul
     // `JSHostFn` shape, not the safe Rust signature.
     let call_fn = bun_jsc::JSFunction::create(global, name.clone(), __jsc_host_call_as_function, 1, Default::default());
     let bound = JSValueTestExt::bind(call_fn, global, value, &name, 1.0, &[])?;
-    bound.set_prototype_direct(value.get_prototype(global), global)?;
+    set_prototype_direct(bound, value.get_prototype(global), global)?;
     Ok(bound)
+}
+
+/// Local shim for `JSValue::setPrototypeDirect` (not yet on `bun_jsc::JSValue`).
+/// Mirrors Zig `bun.cpp.Bun__JSValue__setPrototypeDirect` — `[[ZIG_EXPORT(check_slow)]]`,
+/// so we manually surface any pending exception as `JsError::Thrown`.
+// TODO(port): land as inherent `JSValue::set_prototype_direct` in bun_jsc.
+fn set_prototype_direct(value: JSValue, prototype: JSValue, global: &JSGlobalObject) -> JsResult<()> {
+    unsafe extern "C" {
+        fn Bun__JSValue__setPrototypeDirect(
+            value: JSValue,
+            prototype: JSValue,
+            global: *mut JSGlobalObject,
+        );
+    }
+    // SAFETY: FFI into JSC; `global` is live for the call. C++ side reads
+    // `value.getObject()` so `value` must be an object (always a JSBoundFunction here).
+    unsafe {
+        Bun__JSValue__setPrototypeDirect(
+            value,
+            prototype,
+            global as *const JSGlobalObject as *mut JSGlobalObject,
+        );
+    }
+    if global.has_exception() {
+        return Err(bun_jsc::JsError::Thrown);
+    }
+    Ok(())
 }
 
 /// Local shim for `JSValue::withAsyncContextIfNeeded` (not yet on

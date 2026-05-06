@@ -2286,19 +2286,23 @@ impl Example {
         let url_buf = unsafe { &mut NPM_REGISTRY_URL_BUF };
         let mutable = Box::leak(Box::new(MutableString::init(2048)?));
 
-        // SAFETY: single-threaded CLI access to static URL_
+        let api_url = URL::parse({
+            let mut cursor: &mut [u8] = &mut url_buf[..];
+            let cap = cursor.len();
+            write!(
+                &mut cursor,
+                "https://registry.npmjs.org/@bun-examples/{}/latest",
+                bstr::BStr::new(name)
+            )?;
+            let written = cap - cursor.len();
+            &url_buf[..written]
+        });
+        // SAFETY: `api_url` borrows from the `static mut NPM_REGISTRY_URL_BUF`;
+        // erase the local reborrow lifetime for storage in `URL_` /
+        // `AsyncHTTP::init_sync` (single-threaded CLI; same as
+        // `fetch_from_github`).
         unsafe {
-            URL_ = Some(URL::parse({
-                let mut cursor: &mut [u8] = &mut url_buf[..];
-                let cap = cursor.len();
-                write!(
-                    &mut cursor,
-                    "https://registry.npmjs.org/@bun-examples/{}/latest",
-                    bstr::BStr::new(name)
-                )?;
-                let written = cap - cursor.len();
-                &url_buf[..written]
-            }));
+            URL_ = Some(core::mem::transmute::<URL<'_>, URL<'static>>(api_url));
         }
 
         // SAFETY: `http_proxy` borrows from `env_loader`'s leaked map (see

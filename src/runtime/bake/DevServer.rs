@@ -752,15 +752,15 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         ));
     }
 
-    dev.server_transpiler.options.dev_server = Some(dev_ptr);
-    dev.client_transpiler.options.dev_server = Some(dev_ptr);
+    dev.server_transpiler.options.dev_server = dev_ptr as *const ();
+    dev.client_transpiler.options.dev_server = dev_ptr as *const ();
 
-    dev.server_transpiler.resolver.watcher = dev.bun_watcher.get_resolve_watcher();
-    dev.client_transpiler.resolver.watcher = dev.bun_watcher.get_resolve_watcher();
+    dev.server_transpiler.resolver.watcher = Some(dev.bun_watcher.get_resolve_watcher());
+    dev.client_transpiler.resolver.watcher = Some(dev.bun_watcher.get_resolve_watcher());
 
     if separate_ssr_graph {
-        dev.ssr_transpiler.options.dev_server = Some(dev_ptr);
-        dev.ssr_transpiler.resolver.watcher = dev.bun_watcher.get_resolve_watcher();
+        dev.ssr_transpiler.options.dev_server = dev_ptr as *const ();
+        dev.ssr_transpiler.resolver.watcher = Some(dev.bun_watcher.get_resolve_watcher());
     }
 
     debug_assert!(dev.server_transpiler.resolver.opts.target != bundler::options::Target::Browser);

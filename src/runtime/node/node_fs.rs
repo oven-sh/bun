@@ -3863,7 +3863,8 @@ impl NodeFS {
         // an explicit `broke` flag instead.
         let mut broke = false;
         'toplevel: while remain > 0 {
-            let amt = match Syscall::read(src_fd, &mut buf[..(buf.len() as u64).min(remain) as usize]) {
+            let read_len = (buf.len() as u64).min(remain) as usize;
+            let amt = match Syscall::read(src_fd, &mut buf[..read_len]) {
                 Maybe::Ok(result) => result,
                 Maybe::Err(err) => return Maybe::Err(if !src.is_empty() { err.with_path(src) } else { err }),
             };

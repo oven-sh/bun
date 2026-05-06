@@ -1542,32 +1542,32 @@ fn write_file_with_empty_source_to_destination(
                         match current {
                             // truncate might return EPERM when the parent directory doesn't exist
                             // #6336
-                            bun_sys::E::PERM => {
+                            bun_sys::E::EPERM => {
                                 was_eperm = true;
-                                err.errno = bun_sys::E::NOENT as _;
-                                current = bun_sys::E::NOENT;
+                                err.errno = bun_sys::E::ENOENT as _;
+                                current = bun_sys::E::ENOENT;
                                 continue;
                             }
-                            bun_sys::E::NOENT => {
+                            bun_sys::E::ENOENT => {
                                 if options.mkdirp_if_not_exists == Some(false) { break 'err; }
                                 let dirpath: &[u8] = match &file.pathlike {
-                                    node::PathLike::Path(path) => {
+                                    PathOrFileDescriptor::Path(path) => {
                                         // Zig: `std.fs.path.dirname` — Option-returning.
                                         match bun_core::dirname(path.slice()) {
                                             Some(d) => d,
                                             None => break 'err,
                                         }
                                     }
-                                    node::PathLike::Fd(_) => {
+                                    PathOrFileDescriptor::Fd(_) => {
                                         // NOTE: if this is an fd, it means the file
                                         // exists, so we shouldn't try to mkdir it
                                         if was_eperm {
-                                            err.errno = bun_sys::E::PERM as _;
+                                            err.errno = bun_sys::E::EPERM as _;
                                         }
                                         break 'err;
                                     }
                                 };
-                                let mkdir_result = node_fs.mkdir_recursive(node::fs::args::Mkdir {
+                                let mkdir_result = node_fs.mkdir_recursive(&node::fs::args::Mkdir {
                                     path: node::PathLike::String(bun_str::PathString::init(dirpath)),
                                     recursive: true,
                                     always_return_none: true,

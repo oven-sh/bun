@@ -73,12 +73,15 @@ pub fn to_contain_all_keys(
     }
 
     // handle failure
+    // PORT NOTE: Zig shares one `*Formatter` across both `to_fmt` calls; in Rust each `to_fmt`
+    // mutably borrows the formatter for the lifetime of the returned wrapper, so use two.
     let mut formatter = super::make_formatter(global);
+    let mut formatter2 = super::make_formatter(global);
     // Zig: `defer formatter.deinit();` — handled by Drop.
     let value_fmt = keys.to_fmt(&mut formatter);
-    let expected_fmt = expected.to_fmt(&mut formatter);
+    let expected_fmt = expected.to_fmt(&mut formatter2);
     if not {
-        let received_fmt = keys.to_fmt(&mut formatter);
+        // Zig's `received_fmt` is `keys.toFmt(&formatter)` — identical to `value_fmt` above.
         return this.throw(
             global,
             get_signature("toContainAllKeys", "<green>expected<r>", true),
@@ -87,7 +90,7 @@ pub fn to_contain_all_keys(
                     "\n\n",
                     "Expected to not contain all keys: <green>{}<r>\nReceived: <red>{}<r>\n",
                 ),
-                expected_fmt, received_fmt,
+                expected_fmt, value_fmt,
             ),
         );
     }

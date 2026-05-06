@@ -316,8 +316,7 @@ unsafe fn load_preloads(
             ResolveResultUnion::Success(r) => r,
             ResolveResultUnion::Failure(e) => {
                 // Spec VirtualMachine.zig:2216-2226 — `log.addErrorFmt` then
-                // `return e`. The hook signature has no error channel, so log
-                // and fail loudly.
+                // `return e`.
                 // SAFETY: `vm.log` was set to a fresh leaked `Box<Log>` by
                 // `VirtualMachine::init`.
                 if let Some(log) = unsafe { (*vm).log } {
@@ -332,14 +331,11 @@ unsafe fn load_preloads(
                         ),
                     );
                 }
-                // TODO(b2): widen `RuntimeHooks::load_preloads` return to
-                // `Result<*mut JSInternalPromise, bun_core::Error>` so this
-                // bubbles like Zig's `try`. Until then, fail loudly (PORTING.md
-                // §Forbidden: silent-no-op).
-                panic!("jsc_hooks: load_preloads resolve failure: {}", e.name());
+                return Err(e);
             }
             ResolveResultUnion::Pending(_) | ResolveResultUnion::NotFound => {
-                // Spec VirtualMachine.zig:2228-2238.
+                // Spec VirtualMachine.zig:2228-2238 — `log.addErrorFmt` then
+                // `return error.ModuleNotFound`.
                 // SAFETY: see above.
                 if let Some(log) = unsafe { (*vm).log } {
                     // SAFETY: `log` is the unique per-VM `Box<Log>`.
@@ -352,8 +348,7 @@ unsafe fn load_preloads(
                         ),
                     );
                 }
-                // TODO(b2): see above — `return error.ModuleNotFound` in Zig.
-                panic!("jsc_hooks: load_preloads: ModuleNotFound");
+                return Err(bun_core::err!("ModuleNotFound"));
             }
         };
 
@@ -371,9 +366,9 @@ unsafe fn load_preloads(
                 Ok(p) => p as *const JSInternalPromise as *mut JSInternalPromise,
                 Err(_) => {
                     // Spec: `try` propagates `error.JSError`. The exception is
-                    // already pending on `global`; the hook has no error channel.
-                    // TODO(b2): widen hook return to bubble JsError.
-                    panic!("jsc_hooks: load_preloads: JSModuleLoader.import threw");
+                    // already pending on `global`; bubble the tag so
+                    // `reload_entry_point` forwards it like Zig's `try`.
+                    return Err(bun_core::err!("JSError"));
                 }
             };
 
@@ -420,7 +415,7 @@ unsafe fn load_preloads(
 
         // SAFETY: `promise` is a live (still-protected) JSC heap cell.
         if unsafe { (*promise).status() } == PromiseStatus::Rejected {
-            return promise;
+            return Ok(promise);
         }
         // `_protect_guard` drops here → unprotect.
     }

@@ -1649,7 +1649,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             stmts,
             declared_symbols,
             import_record_indices: BabyList::<u32>::from_owned_slice(Box::new([import_record_i])),
-            tag: js_ast::PartTag::Runtime,
+            tag: crate::PartTag::Runtime,
             ..Default::default()
         });
         Ok(())
@@ -1774,7 +1774,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             stmts,
             declared_symbols,
             import_record_indices: BabyList::<u32>::from_owned_slice(Box::new([import_record_i])),
-            tag: js_ast::PartTag::Runtime,
+            tag: crate::PartTag::Runtime,
             ..Default::default()
         });
         Ok(())

@@ -248,17 +248,17 @@ pub fn find_imported_files_in_css_order<'a>(
                                 ),
                             ));
                             handle_oom(self.order.append(CssImportOrder {
-                                kind: CssImportOrderKind::ExternalPath(unsafe {
-                                    bitwise_copy(&record.path)
-                                }),
+                                kind: CssImportOrderKind::ExternalPath(
+                                    fs_path_from_import_record(&record.path),
+                                ),
                                 conditions: all_conditions,
                                 condition_import_records: all_import_records,
                             }));
                         } else {
                             handle_oom(self.order.append(CssImportOrder {
-                                kind: CssImportOrderKind::ExternalPath(unsafe {
-                                    bitwise_copy(&record.path)
-                                }),
+                                kind: CssImportOrderKind::ExternalPath(
+                                    fs_path_from_import_record(&record.path),
+                                ),
                                 // PORT NOTE: Zig `wrapping_conditions.*` is a bitwise struct copy.
                                 conditions: unsafe { bitwise_copy(wrapping_conditions) },
                                 condition_import_records: unsafe {
@@ -300,7 +300,11 @@ pub fn find_imported_files_in_css_order<'a>(
             }
             // Accumulate imports in depth-first postorder
             handle_oom(self.order.append(CssImportOrder {
-                kind: CssImportOrderKind::SourceIndex(source_index),
+                // PORT NOTE: `crate::Index` (= `bun_options_types::Index`) and the
+                // `bun_js_parser::Index` carried by `CssImportOrderKind::SourceIndex`
+                // are CYCLEBREAK TYPE_ONLY mirrors of the same Zig `bun.ast.Index`;
+                // both are `#[repr(transparent)]` over `u32`.
+                kind: CssImportOrderKind::SourceIndex(AstIndex { value: source_index.get() }),
                 // PORT NOTE: Zig `wrapping_conditions.*` is a bitwise struct copy.
                 conditions: unsafe { bitwise_copy(wrapping_conditions) },
                 condition_import_records: BabyList::default(),

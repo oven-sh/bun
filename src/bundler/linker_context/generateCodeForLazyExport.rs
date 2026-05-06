@@ -20,7 +20,7 @@ type SymbolList = BabyList<Symbol>;
 
 pub fn generate_code_for_lazy_export(
     this: &mut LinkerContext,
-    source_index: Index::Int,
+    source_index: IndexInt,
 ) -> Result<(), AllocError> {
     let exports_kind = this.graph.ast.items_exports_kind()[source_index as usize];
     let all_sources = unsafe { &(*this.parse_graph).input_files }.items_source();
@@ -90,7 +90,7 @@ pub fn generate_code_for_lazy_export(
                 all_css_asts: &'a [Option<&'a BundlerStyleSheet>],
                 all_sources: &'a [Source],
                 all_symbols: &'a [SymbolList],
-                source_index: Index::Int,
+                source_index: IndexInt,
                 log: &'a mut Log,
                 loc: Loc,
                 // PERF(port): was `std.mem.Allocator` (arena) — bundler is an AST crate; thread `&'bump Bump`.
@@ -107,7 +107,7 @@ pub fn generate_code_for_lazy_export(
                     &mut self,
                     ast: &BundlerStyleSheet,
                     ref_: CssRef,
-                    idx: Index::Int,
+                    idx: IndexInt,
                 ) {
                     debug_assert!(ref_.can_be_composed());
                     let from_this_file = ref_.source_index(idx) == self.source_index;
@@ -143,7 +143,7 @@ pub fn generate_code_for_lazy_export(
                     &mut self,
                     ast: &BundlerStyleSheet,
                     css_ref: CssRef,
-                    idx: Index::Int,
+                    idx: IndexInt,
                     compose_loc: Loc,
                 ) {
                     let ref_ = css_ref.to_real_ref(idx);
@@ -173,7 +173,7 @@ pub fn generate_code_for_lazy_export(
                     &mut self,
                     ast: &BundlerStyleSheet,
                     css_ref: CssRef,
-                    idx: Index::Int,
+                    idx: IndexInt,
                 ) {
                     let ref_ = css_ref.to_real_ref(idx);
                     if ast.composes.count() > 0 {

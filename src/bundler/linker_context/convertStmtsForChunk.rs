@@ -234,7 +234,7 @@ pub fn convert_stmts_for_chunk(
                         }
                     } else {
                         if record.source_index.is_valid() {
-                            let flag = flags[record.source_index.get() as usize];
+                            let flag = c.graph.meta.items_flags()[record.source_index.get() as usize];
                             let wrapper_ref = c.graph.ast.items_wrapper_ref()[record.source_index.get() as usize];
                             if flag.wrap == WrapKind::Esm && wrapper_ref.is_valid() {
                                 stmts.inside_wrapper_prefix.append_non_dependency(
@@ -401,7 +401,8 @@ pub fn convert_stmts_for_chunk(
                         // Be c areful to not modify the original statement
                         stmt = Stmt::alloc(
                             S::Function {
-                                func: s.func,
+                                // SAFETY: shallow bitwise copy of arena-backed G::Fn (matches Zig `s.func`).
+                                func: unsafe { core::ptr::read(&s.func) },
                             },
                             stmt.loc,
                         );
@@ -415,7 +416,8 @@ pub fn convert_stmts_for_chunk(
                         // Be careful to not modify the original statement
                         stmt = Stmt::alloc(
                             S::Class {
-                                class: s.class,
+                                // SAFETY: shallow bitwise copy of arena-backed E::Class (matches Zig `s.class`).
+                                class: unsafe { core::ptr::read(&s.class) },
                                 is_export: false,
                             },
                             stmt.loc,
@@ -500,7 +502,8 @@ pub fn convert_stmts_for_chunk(
                                         // Be careful to not modify the original statement
                                         stmt = Stmt::alloc(
                                             S::Function {
-                                                func: s2.func,
+                                                // SAFETY: shallow bitwise copy of arena-backed G::Fn (matches Zig `s2.func`).
+                                                func: unsafe { core::ptr::read(&s2.func) },
                                             },
                                             stmt.loc,
                                         );
@@ -514,7 +517,8 @@ pub fn convert_stmts_for_chunk(
                                         // Be careful to not modify the original statement
                                         stmt = Stmt::alloc(
                                             S::Class {
-                                                class: s2.class,
+                                                // SAFETY: shallow bitwise copy of arena-backed E::Class (matches Zig `s2.class`).
+                                                class: unsafe { core::ptr::read(&s2.class) },
                                                 is_export: false,
                                             },
                                             stmt.loc,

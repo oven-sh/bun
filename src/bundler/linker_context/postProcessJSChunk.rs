@@ -499,7 +499,7 @@ pub fn post_process_js_chunk(
     }
 
     // Concatenate the generated JavaScript chunks together
-    let mut prev_filename_comment: Index::Int = 0;
+    let mut prev_filename_comment: IndexInt = 0;
 
     let mut compile_results_for_source_map: MultiArrayList<CompileResultForSourceMap> =
         MultiArrayList::default();
@@ -758,7 +758,7 @@ pub fn generate_entry_point_tail_js(
     c: &mut LinkerContext,
     to_common_js_ref: Ref,
     to_esm_ref: Ref,
-    source_index: Index::Int,
+    source_index: IndexInt,
     // bundler is an AST crate: std.mem.Allocator param → &'bump Bump (Arena)
     // TODO(port): thread &'bump Bump from worker.allocator end-to-end in Phase B
     allocator: &Arena,

@@ -539,15 +539,18 @@ mod inherent_bridge {
     };
     bridge_eql!(Position, HorizontalPositionKeyword, VerticalPositionKeyword);
     bridge_deep_clone!(Position, HorizontalPositionKeyword, VerticalPositionKeyword);
+    // The inherent `PositionComponent::{eql,deep_clone}` live in an impl block
+    // bounded on `S: protocol::Parse + protocol::ToCss + …`, so a generic
+    // bridge that only has `S: Clone + PartialEq` would resolve back to the
+    // trait method (infinite recursion). Inline the trivial bodies — the
+    // inherent methods are `self == other` / `self.clone()` anyway.
     impl<S: Clone + PartialEq> CssEql for PositionComponent<S> {
         #[inline]
-        fn eql(&self, other: &Self) -> bool { PositionComponent::<S>::eql(self, other) }
+        fn eql(&self, other: &Self) -> bool { PartialEq::eq(self, other) }
     }
     impl<'bump, S: Clone + PartialEq> DeepClone<'bump> for PositionComponent<S> {
         #[inline]
-        fn deep_clone(&self, bump: &'bump Arena) -> Self {
-            PositionComponent::<S>::deep_clone(self, bump)
-        }
+        fn deep_clone(&self, _bump: &'bump Arena) -> Self { Clone::clone(self) }
     }
 
     use crate::values::rect::Rect;

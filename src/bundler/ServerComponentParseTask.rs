@@ -23,7 +23,7 @@ use crate::bundle_v2::BundleV2;
 use crate::cache::ExternalFreeFunction;
 use crate::options::{self, Loader, Target};
 use crate::parse_task::{self, on_complete, ResultValue, Success, WatcherData};
-use crate::ungate_support::EventLoop;
+use crate::ungate_support::JSAst;
 use crate::AstBuilder::AstBuilder;
 use crate::Worker;
 

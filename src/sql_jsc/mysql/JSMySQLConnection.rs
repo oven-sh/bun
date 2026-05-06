@@ -719,13 +719,13 @@ impl JSMySQLConnection {
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(method)] — see JsClass note above.
     pub fn do_ref(this: &mut Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-        this.poll_ref.r#ref(this.vm);
+        this.poll_ref.r#ref(this.vm());
         Ok(JSValue::UNDEFINED)
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(method)] — see JsClass note above.
     pub fn do_unref(this: &mut Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-        this.poll_ref.unref(this.vm);
+        this.poll_ref.unref(this.vm());
         Ok(JSValue::UNDEFINED)
     }
 
@@ -836,7 +836,7 @@ impl JSMySQLConnection {
             // SAFETY: `p` from live `&mut self`; the matching `ref_()` above
             // guarantees `*p` survives until this `deref()`.
             unsafe {
-                if (*p).vm.is_shutting_down() {
+                if (*p).vm().is_shutting_down() {
                     (*p).connection.close();
                 } else {
                     let queries = (*p).get_queries_array();
@@ -1139,7 +1139,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         let p: *mut JSMySQLConnection = this;
         // SAFETY: `p` from live `&mut this`; paired with `ref_()` above.
         let _ref_guard = scopeguard::guard((), move |_| unsafe { JSMySQLConnection::deref(p) });
-        let vm = this.vm;
+        let vm = this.vm();
 
         let _tail_guard = scopeguard::guard((), move |_| {
             // SAFETY: `p` valid — `_ref_guard` has not yet dropped, so the
@@ -1151,7 +1151,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
                 (*p).register_auto_flusher();
             }
         });
-        if this.vm.is_shutting_down() {
+        if this.vm().is_shutting_down() {
             // we are shutting down lets not process the data
             return;
         }

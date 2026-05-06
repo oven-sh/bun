@@ -1322,9 +1322,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     });
 
     if let Writable::Buffer(buffer) = &mut subprocess.stdin {
-        if let Some(err) = buffer.start().as_err() {
+        if let Err(err) = buffer.start() {
             let _ = subprocess.try_kill(subprocess.kill_signal);
-            let _ = global_this.throw_value(err.to_js(global_this)?);
+            let _ = global_this.throw_value(err.to_js(global_this));
             return Err(JsError::Thrown);
         }
     }
@@ -1333,9 +1333,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         // PORT NOTE: pass `subprocess_nn` (the `NonNull<Subprocess<'static>>`
         // captured above) instead of the live `&mut subprocess`, which would
         // alias with the `&mut subprocess.stdout` borrow held by `pipe`.
-        if let Some(err) = pipe.start(subprocess_nn, event_loop).as_err() {
+        if let Err(err) = pipe.start(subprocess_nn, event_loop) {
             let _ = subprocess.try_kill(subprocess.kill_signal);
-            let _ = global_this.throw_value(err.to_js(global_this)?);
+            let _ = global_this.throw_value(err.to_js(global_this));
             return Err(JsError::Thrown);
         }
         if (IS_SYNC || !lazy) && matches!(subprocess.stdout, Readable::Pipe(_)) {
@@ -1347,9 +1347,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     if let Readable::Pipe(pipe) = &mut subprocess.stderr {
         // PORT NOTE: see stdout arm above — avoid aliased &mut.
-        if let Some(err) = pipe.start(subprocess_nn, event_loop).as_err() {
+        if let Err(err) = pipe.start(subprocess_nn, event_loop) {
             let _ = subprocess.try_kill(subprocess.kill_signal);
-            let _ = global_this.throw_value(err.to_js(global_this)?);
+            let _ = global_this.throw_value(err.to_js(global_this));
             return Err(JsError::Thrown);
         }
 

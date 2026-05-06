@@ -311,7 +311,7 @@ fn match_dns_name(pattern: &[u8], hostname: &[u8]) -> bool {
                     {
                         let host_suffix = &hostname[dot_index + 1..];
                         // RFC 4343: DNS names are case-insensitive
-                        if strings::eql_case_insensitive_ascii::<true>(suffix, host_suffix) {
+                        if strings::eql_case_insensitive_ascii(suffix, host_suffix, true) {
                             return true;
                         }
                     }
@@ -320,7 +320,7 @@ fn match_dns_name(pattern: &[u8], hostname: &[u8]) -> bool {
         }
     }
     // RFC 4343: DNS names are case-insensitive
-    strings::eql_case_insensitive_ascii::<true>(pattern, hostname)
+    strings::eql_case_insensitive_ascii(pattern, hostname, true)
 }
 
 pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> bool {

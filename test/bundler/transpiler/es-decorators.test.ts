@@ -809,4 +809,171 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
   });
+
+  // Regression coverage for #30326 / #28316: decorator lowering used to
+  // emit a fresh `var _init = …` at module scope for every decorated
+  // class with the same `original_name`. `var` hoisting then collapsed
+  // them into a single binding, so an earlier class's constructor would
+  // end up running the last class's initializers.
+  describe.concurrent("symbol names stay unique across classes", () => {
+    test("accessor init callbacks fire on the correct class (browser bundle)", async () => {
+      using dir = tempDir("es-dec-init-unique-bundle", {
+        "entry.ts": `
+          const log: string[] = [];
+          function dec(name: string) {
+            return function (_t: any, _c: any) {
+              return { init(v: any) { log.push(\`\${name}:\${v}\`); return v; } };
+            };
+          }
+          class Foo { @dec("foo") accessor x = "X"; }
+          class Bar { @dec("bar") accessor y = "Y"; }
+          new Foo(); new Bar();
+          console.log(log.join("|"));
+        `,
+      });
+
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--target=browser", "--format=esm", "--outfile=out.js", "entry.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      expect(await build.exited).toBe(0);
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "out.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(filterStderr(rawStderr)).toBe("");
+      expect(stdout).toBe("foo:X|bar:Y\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("field decorator initializers fire on their own class (no-bundle)", async () => {
+      using dir = tempDir("es-dec-init-unique-nobundle", {
+        "entry.ts": `
+          const log: string[] = [];
+          function dec(tag: string) {
+            return function (_v: any, ctx: any) {
+              return function (init: any) { log.push(\`\${tag}:\${ctx.name}:\${init}\`); return init; };
+            };
+          }
+          class A { @dec("A") a = "a"; }
+          class B { @dec("B") b = "b"; }
+          new A(); new B();
+          console.log(log.join("|"));
+        `,
+      });
+
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--no-bundle", "--outfile=out.js", "entry.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      expect(await build.exited).toBe(0);
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "out.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(filterStderr(rawStderr)).toBe("");
+      expect(stdout).toBe("A:a:a|B:b:b\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("three decorated classes with extends keep initializers separate", async () => {
+      using dir = tempDir("es-dec-three-classes", {
+        "entry.ts": `
+          const log: string[] = [];
+          function tag(name: string) {
+            return function (_t: any, _c: any) {
+              return { init(v: any) { log.push(\`\${name}=\${v}\`); return v; } };
+            };
+          }
+          class Base { base = 0; }
+          class A extends Base { @tag("A") accessor x = 1; }
+          class B extends Base { @tag("B") accessor x = 2; }
+          class C extends Base { @tag("C") accessor x = 3; }
+          new A(); new B(); new C();
+          console.log(log.join(","));
+        `,
+      });
+
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--target=browser", "--format=esm", "--outfile=out.js", "entry.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      expect(await build.exited).toBe(0);
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "out.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(filterStderr(rawStderr)).toBe("");
+      expect(stdout).toBe("A=1,B=2,C=3\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("class decorator addInitializer + accessor initializer in same class", async () => {
+      // Class decorators alone don't exhibit the collision (their
+      // decoration runs at module-top between the `var _init = …`
+      // lines). But a class decorator whose addInitializer fires at
+      // construction time, *plus* a per-instance accessor initializer,
+      // both consult `_init` inside the constructor — the second class
+      // must see its own `_init`, not the last file-level one.
+      using dir = tempDir("es-dec-mixed", {
+        "entry.ts": `
+          const log: string[] = [];
+          function mark(tag: string) {
+            return function (target: any, ctx: any) {
+              ctx.addInitializer(function (this: any) { log.push(\`cls:\${tag}\`); });
+              return target;
+            };
+          }
+          function acc(tag: string) {
+            return function (_v: any, _c: any) {
+              return { init(v: any) { log.push(\`acc:\${tag}:\${v}\`); return v; } };
+            };
+          }
+          @mark("Foo") class Foo { @acc("Foo") accessor x = 1; }
+          @mark("Bar") class Bar { @acc("Bar") accessor y = 2; }
+          new Foo(); new Bar();
+          console.log(log.join("|"));
+        `,
+      });
+
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--target=browser", "--format=esm", "--outfile=out.js", "entry.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      expect(await build.exited).toBe(0);
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "out.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(filterStderr(rawStderr)).toBe("");
+      // Both @mark initializers fire during top-level decoration (in
+      // declaration order), then @acc's init fires per-construction.
+      expect(stdout).toBe("cls:Foo|cls:Bar|acc:Foo:1|acc:Bar:2\n");
+      expect(exitCode).toBe(0);
+    });
+  });
 });

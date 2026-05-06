@@ -118,10 +118,11 @@ fn relative_paths_list_ptr() -> *mut ImportPathsList {
 }
 
 // ── HardcodedModule alias lookup ────────────────────────────────────────
-// CYCLEBREAK FORWARD_DECL: `bun_resolve_builtins::HardcodedModule::Alias::get`.
-// `bun_resolve_builtins` is not a dependency of `bun_bundler` yet (see
-// Cargo.toml `TODO(b2-blocked)`); mirror the resolver's local `module_loader`
-// stub so `link()` type-checks. Returns `None` (no remap) until the dep lands.
+// Thin adapter over `bun_resolve_builtins::Alias::get` so the call site keeps
+// `&'static [u8]` for `import_record.path.text` (the table stores `&'static
+// ZStr`). `BundleTarget` and `bun_resolve_builtins::Target` are the same
+// `bun_options_types::BundleEnums::Target`; ditto `ImportRecordTag` /
+// `import_record::Tag`, so no transmutes are needed.
 mod hardcoded_module {
     use super::*;
     #[derive(Default, Clone, Copy)]
@@ -132,27 +133,23 @@ mod hardcoded_module {
         pub path: &'static [u8],
         pub tag: ImportRecordTag,
     }
-    #[allow(clippy::extra_unused_type_parameters)]
-    pub fn get(_name: &[u8], _target: BundleTarget, _opts: AliasOptions) -> Option<Alias> {
-        // PORTING.md §Forbidden flags silent-no-ops in non-gated code; the
-        // previous hard-coded `None` would let builtin modules (`node:fs`,
-        // `bun:sqlite`, …) silently fall through the IS_BUN linking path with
-        // wrong record state. Fail loudly until the real table lands.
-        todo!("b2-blocked: bun_resolve_builtins::HardcodedModule::Alias::get")
+    pub fn get(name: &[u8], target: BundleTarget, opts: AliasOptions) -> Option<Alias> {
+        bun_resolve_builtins::Alias::get(
+            name,
+            target,
+            bun_resolve_builtins::Cfg { rewrite_jest_for_tests: opts.rewrite_jest_for_tests },
+        )
+        .map(|a| Alias { path: a.path.as_bytes(), tag: a.tag })
     }
 }
 
-// ── ExternalModules::is_node_builtin shim ───────────────────────────────
-// `options::ExternalModules::is_node_builtin` is ``-gated for the
-// same `bun_resolve_builtins` reason. Spec (linker.zig:229) routes the
-// browser-target diagnostic through this check; returning a hard `false` here
-// would silently emit the wrong message. Gated until the dep lands — the
-// call site falls through to the generic diagnostic instead of a live panic
-// on common input (`import 'node:fs'` with `--target=browser`).
-
+// ── ExternalModules::is_node_builtin ────────────────────────────────────
+// Spec (linker.zig:229) routes the browser-target diagnostic through
+// `Options.ExternalModules.isNodeBuiltin`; that lives in `options.rs` and
+// bottoms out in the same `bun_resolve_builtins::Alias` table.
 #[inline]
-fn is_node_builtin(_path: &[u8]) -> bool {
-    todo!("b2-blocked: bun_resolve_builtins — ExternalModules::is_node_builtin")
+fn is_node_builtin(path: &[u8]) -> bool {
+    options::ExternalModules::is_node_builtin(path)
 }
 
 #[inline]

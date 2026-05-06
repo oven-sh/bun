@@ -834,9 +834,375 @@ pub mod command {
                 }
                 return Ok(());
             }
-            // TODO(b2-blocked): remaining arms — see cli_body.rs::command::start
-            _ => todo!("Command::start dispatch for {:?}", tag),
+            Tag::InfoCommand => {
+                return bun_info(log);
+            }
+            Tag::BuildCommand => {
+                // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
+                let ctx = unsafe { &mut *init(Tag::BuildCommand, log)? };
+                super::build_command::BuildCommand::exec(ctx, None)?;
+            }
+            Tag::InstallCommand => {
+                let ctx = unsafe { &mut *init(Tag::InstallCommand, log)? };
+                return super::install_command::InstallCommand::exec(ctx);
+            }
+            Tag::AddCommand => {
+                let ctx = unsafe { &mut *init(Tag::AddCommand, log)? };
+                return super::add_command::AddCommand::exec(ctx);
+            }
+            Tag::UpdateCommand => {
+                let ctx = unsafe { &mut *init(Tag::UpdateCommand, log)? };
+                return super::update_command::UpdateCommand::exec(ctx);
+            }
+            Tag::PatchCommand => {
+                let ctx = unsafe { &mut *init(Tag::PatchCommand, log)? };
+                return super::patch_command::PatchCommand::exec(ctx);
+            }
+            Tag::PatchCommitCommand => {
+                let ctx = unsafe { &mut *init(Tag::PatchCommitCommand, log)? };
+                return super::patch_commit_command::PatchCommitCommand::exec(ctx);
+            }
+            Tag::OutdatedCommand => {
+                let ctx = unsafe { &mut *init(Tag::OutdatedCommand, log)? };
+                return super::outdated_command::OutdatedCommand::exec(ctx);
+            }
+            Tag::UpdateInteractiveCommand => {
+                let ctx = unsafe { &mut *init(Tag::UpdateInteractiveCommand, log)? };
+                return super::update_interactive_command::UpdateInteractiveCommand::exec(ctx);
+            }
+            Tag::PublishCommand => {
+                let ctx = unsafe { &mut *init(Tag::PublishCommand, log)? };
+                return super::publish_command::PublishCommand::exec(ctx);
+            }
+            Tag::AuditCommand => {
+                let ctx = unsafe { &mut *init(Tag::AuditCommand, log)? };
+                super::audit_command::AuditCommand::exec(ctx)?;
+            }
+            Tag::WhyCommand => {
+                let ctx = unsafe { &mut *init(Tag::WhyCommand, log)? };
+                return super::why_command::WhyCommand::exec(ctx);
+            }
+            Tag::BunxCommand => {
+                let ctx = unsafe { &mut *init(Tag::BunxCommand, log)? };
+                // SAFETY: IS_BUNX_EXE set during which() before any threads.
+                let start_idx = if unsafe { IS_BUNX_EXE } { 0 } else { 1 };
+                return super::bunx_command::BunxCommand::exec(ctx, &bun::argv()[start_idx..]);
+            }
+            Tag::ReplCommand => {
+                // PORT NOTE: Zig inits with .RunCommand here (repl reuses run params).
+                let ctx = unsafe { &mut *init(Tag::RunCommand, log)? };
+                return super::repl_command::ReplCommand::exec(ctx);
+            }
+            Tag::RemoveCommand => {
+                let ctx = unsafe { &mut *init(Tag::RemoveCommand, log)? };
+                return super::remove_command::RemoveCommand::exec(ctx);
+            }
+            Tag::LinkCommand => {
+                let ctx = unsafe { &mut *init(Tag::LinkCommand, log)? };
+                return super::link_command::LinkCommand::exec(ctx);
+            }
+            Tag::UnlinkCommand => {
+                let ctx = unsafe { &mut *init(Tag::UnlinkCommand, log)? };
+                return super::unlink_command::UnlinkCommand::exec(ctx);
+            }
+            Tag::TestCommand => {
+                let ctx = unsafe { &mut *init(Tag::TestCommand, log)? };
+                return super::test_command::TestCommand::exec(ctx);
+            }
+            Tag::GetCompletionsCommand => {
+                return bun_getcompletes(log);
+            }
+            Tag::CreateCommand => {
+                return bun_create(log);
+            }
+            Tag::UpgradeCommand => {
+                let ctx = unsafe { &mut *init(Tag::UpgradeCommand, log)? };
+                return super::upgrade_command::UpgradeCommand::exec(ctx);
+            }
+            Tag::ExecCommand => {
+                let ctx = unsafe { &mut *init(Tag::ExecCommand, log)? };
+                if ctx.positionals.len() > 1 {
+                    super::exec_command::ExecCommand::exec(ctx)?;
+                } else {
+                    tag_print_help(Tag::ExecCommand, true);
+                }
+            }
+            Tag::FuzzilliCommand => {
+                if bun_core::Environment::ENABLE_FUZZILLI {
+                    let ctx = unsafe { &mut *init(Tag::FuzzilliCommand, log)? };
+                    return super::fuzzilli_command::FuzzilliCommand::exec(ctx);
+                }
+                return Err(bun_core::err!("UnrecognizedCommand"));
+            }
         }
+        Ok(())
+    }
+
+    // ─── helper fns hoisted from `Command.start` (kept out of `start` to keep
+    //     its stack frame small; the original Zig had them as nested closures /
+    //     inline blocks) ─────────────────────────────────────────────────────
+
+    const DEFAULT_COMPLETIONS_LIST: &[&[u8]] = &[
+        b"build", b"install", b"add", b"run", b"update", b"link", b"unlink",
+        b"remove", b"create", b"bun", b"upgrade", b"discord", b"test", b"pm",
+        b"x", b"repl", b"info",
+    ];
+
+    // PORT NOTE: Zig concatenated DEFAULT_COMPLETIONS_LIST ++ extras at
+    // comptime; hand-rolled join (small, fixed).
+    const REJECT_LIST: &[&[u8]] = &[
+        b"build", b"install", b"add", b"run", b"update", b"link", b"unlink",
+        b"remove", b"create", b"bun", b"upgrade", b"discord", b"test", b"pm",
+        b"x", b"repl", b"info",
+        // extras:
+        b"build", b"completions", b"help",
+    ];
+
+    fn bun_getcompletes(log: &mut logger::Log) -> Result<(), bun_core::Error> {
+        use super::add_completions;
+        use super::run_command::{Filter, RunCommand};
+        use super::shell_completions::ShellCompletions;
+
+        // SAFETY: single-threaded startup.
+        let ctx = unsafe { &mut *init(Tag::GetCompletionsCommand, log)? };
+        let mut filter: &[&'static [u8]] = &ctx.positionals;
+
+        for (i, item) in filter.iter().enumerate() {
+            if *item == b"getcompletes" {
+                filter = if i + 1 < filter.len() { &filter[i + 1..] } else { &[] };
+                break;
+            }
+        }
+        let mut prefilled_completions: [&[u8]; add_completions::BIGGEST_LIST] =
+            [b""; add_completions::BIGGEST_LIST];
+        let mut completions = ShellCompletions::default();
+
+        if filter.is_empty() {
+            completions = RunCommand::completions::<{ Filter::All }>(
+                ctx, Some(DEFAULT_COMPLETIONS_LIST), REJECT_LIST,
+            )?;
+        } else if filter[0] == b"s" {
+            completions = RunCommand::completions::<{ Filter::Script }>(ctx, None, REJECT_LIST)?;
+        } else if filter[0] == b"i" {
+            completions = RunCommand::completions::<{ Filter::ScriptExclude }>(
+                ctx, Some(DEFAULT_COMPLETIONS_LIST), REJECT_LIST,
+            )?;
+        } else if filter[0] == b"b" {
+            completions = RunCommand::completions::<{ Filter::Bin }>(ctx, None, REJECT_LIST)?;
+        } else if filter[0] == b"r" {
+            completions = RunCommand::completions::<{ Filter::All }>(ctx, None, REJECT_LIST)?;
+        } else if filter[0] == b"g" {
+            completions = RunCommand::completions::<{ Filter::AllPlusBunJs }>(ctx, None, REJECT_LIST)?;
+        } else if filter[0] == b"j" {
+            completions = RunCommand::completions::<{ Filter::BunJs }>(ctx, None, REJECT_LIST)?;
+        } else if filter[0] == b"z" {
+            completions = RunCommand::completions::<{ Filter::ScriptAndDescriptions }>(
+                ctx, None, REJECT_LIST,
+            )?;
+        } else if filter[0] == b"a" {
+            use add_completions::FirstLetter;
+            'outer: {
+                if filter.len() > 1 && !filter[1].is_empty() {
+                    let first_letter: FirstLetter = match filter[1][0] {
+                        b'a' => FirstLetter::A, b'b' => FirstLetter::B,
+                        b'c' => FirstLetter::C, b'd' => FirstLetter::D,
+                        b'e' => FirstLetter::E, b'f' => FirstLetter::F,
+                        b'g' => FirstLetter::G, b'h' => FirstLetter::H,
+                        b'i' => FirstLetter::I, b'j' => FirstLetter::J,
+                        b'k' => FirstLetter::K, b'l' => FirstLetter::L,
+                        b'm' => FirstLetter::M, b'n' => FirstLetter::N,
+                        b'o' => FirstLetter::O, b'p' => FirstLetter::P,
+                        b'q' => FirstLetter::Q, b'r' => FirstLetter::R,
+                        b's' => FirstLetter::S, b't' => FirstLetter::T,
+                        b'u' => FirstLetter::U, b'v' => FirstLetter::V,
+                        b'w' => FirstLetter::W, b'x' => FirstLetter::X,
+                        b'y' => FirstLetter::Y, b'z' => FirstLetter::Z,
+                        _ => break 'outer,
+                    };
+                    add_completions::init();
+                    let results = add_completions::get_packages(first_letter);
+
+                    let mut prefilled_i: usize = 0;
+                    for cur in results {
+                        if cur.is_empty() || !strings::has_prefix(cur, filter[1]) {
+                            continue;
+                        }
+                        prefilled_completions[prefilled_i] = cur;
+                        prefilled_i += 1;
+                        if prefilled_i >= prefilled_completions.len() {
+                            break;
+                        }
+                    }
+                    // PORT NOTE: borrows stack array; print() runs before the
+                    // frame returns, same lifetime as Zig stack-slice.
+                    completions.commands = prefilled_completions[0..prefilled_i].to_vec().into_boxed_slice();
+                }
+            }
+        }
+        completions.print();
+        Ok(())
+    }
+
+    fn bun_create(log: &mut logger::Log) -> Result<(), bun_core::Error> {
+        use super::bunx_command::BunxCommand;
+        use super::create_command::{CreateCommand, ExampleTag};
+        use bun_str::ZStr;
+
+        // These are templates from the legacy `bun create`
+        // most of them aren't useful but these few are kinda nice.
+        static HARDCODED_NON_BUN_X_LIST: phf::Set<&'static [u8]> = phf::phf_set! {
+            b"elysia", b"elysia-buchta", b"stric",
+        };
+
+        // Create command wraps bunx
+        // SAFETY: single-threaded startup.
+        let ctx = unsafe { &mut *init(Tag::CreateCommand, log)? };
+        let args = bun::argv();
+
+        if args.len() <= 2 {
+            tag_print_help(Tag::CreateCommand, false);
+            Global::exit(1);
+        }
+
+        let mut template_name_start: usize = 0;
+        let mut positionals: [&[u8]; 2] = [b"", b""];
+        let mut positional_i: usize = 0;
+        let mut dash_dash_bun = false;
+        let mut print_help = false;
+
+        if args.len() > 2 {
+            let remainder = &args[1..];
+            let mut remainder_i: usize = 0;
+            while remainder_i < remainder.len() && positional_i < positionals.len() {
+                let slice = strings::trim(remainder[remainder_i].as_bytes(), b" \t\n");
+                if !slice.is_empty() {
+                    if !strings::has_prefix(slice, b"--") {
+                        if positional_i == 1 {
+                            template_name_start = remainder_i + 2;
+                        }
+                        positionals[positional_i] = slice;
+                        positional_i += 1;
+                    }
+                    if slice[0] == b'-' {
+                        if slice == b"--bun" {
+                            dash_dash_bun = true;
+                        } else if slice == b"--help" || slice == b"-h" {
+                            print_help = true;
+                        }
+                    }
+                }
+                remainder_i += 1;
+            }
+        }
+
+        if print_help
+            // "bun create --" / "bun create -abc --"
+            || positional_i == 0
+            || positionals[1].is_empty()
+        {
+            tag_print_help(Tag::CreateCommand, true);
+            Global::exit(0);
+        }
+
+        let template_name = positionals[1];
+
+        // if template_name is "react" — deprecated; redirect to react-app/vite.
+        if template_name == b"react" {
+            pretty_errorln!(
+                "The \"react\" template has been deprecated.\n\
+It is recommended to use \"react-app\" or \"vite\" instead.\n\n\
+To create a project using Create React App, run\n\n\
+  <d>bun create react-app<r>\n\n\
+To create a React project using Vite, run\n\n\
+  <d>bun create vite<r>\n\n\
+Then select \"React\" from the list of frameworks.\n"
+            );
+            Global::exit(1);
+        }
+
+        // if template_name is "next" — redirect to next-app.
+        if template_name == b"next" {
+            pretty_errorln!(
+                "<yellow>warn: No template <b>create-next<r> found.\n\
+To create a project with the official Next.js scaffolding tool, run\n\
+  <b>bun create next-app <cyan>[destination]<r>"
+            );
+            Global::exit(1);
+        }
+
+        let create_command_info = CreateCommand::extract_info(ctx)?;
+        let template = create_command_info.template;
+        let example_tag = create_command_info.example_tag;
+
+        let use_bunx = !HARDCODED_NON_BUN_X_LIST.contains(template_name)
+            && (!strings::contains(template_name, b"/")
+                || strings::starts_with_char(template_name, b'@'))
+            && example_tag != ExampleTag::LocalFolder;
+
+        if use_bunx {
+            let mut bunx_args: Vec<&ZStr> = Vec::with_capacity(
+                2 + args.len() - template_name_start + (dash_dash_bun as usize),
+            );
+            bunx_args.push(ZStr::from_static(b"bunx\0"));
+            if dash_dash_bun {
+                bunx_args.push(ZStr::from_static(b"--bun\0"));
+            }
+            // PORT NOTE: `add_create_prefix` returns an owned buffer; leak it
+            // for the process lifetime (Zig allocs into `bun.default_allocator`
+            // and never frees — process exits via exec/exit).
+            let prefixed = BunxCommand::add_create_prefix(template_name)?;
+            // SAFETY: `prefixed` is NUL-terminated by add_create_prefix; leaked
+            // for process lifetime so the &'static borrow is sound.
+            let prefixed: &'static [u8] = Box::leak(prefixed.into_boxed_slice());
+            bunx_args.push(ZStr::from_static(prefixed));
+            for src in &args[template_name_start..] {
+                bunx_args.push(src);
+            }
+            return BunxCommand::exec(ctx, &bunx_args);
+        }
+
+        CreateCommand::exec(ctx, example_tag, template)
+    }
+
+    fn bun_info(log: &mut logger::Log) -> Result<(), bun_core::Error> {
+        // Parse arguments manually since the standard flow doesn't work for
+        // standalone commands.
+        let cli = bun_install::PackageManager::CommandLineArguments::parse(
+            bun_install::PackageManager::Subcommand::Info,
+        )?;
+        // SAFETY: single-threaded startup.
+        let ctx = unsafe { &mut *init(Tag::InfoCommand, log)? };
+        let (pm, _) = bun_install::PackageManager::init(
+            ctx,
+            cli,
+            bun_install::PackageManager::Subcommand::Info,
+        )?;
+
+        // Find non-flag arguments starting from argv[2] (after "bun info").
+        let mut package_name: &[u8] = b"";
+        let mut property_path: Option<&[u8]> = None;
+        let mut arg_idx: usize = 2;
+        let mut found_package = false;
+
+        let argv = bun::argv();
+        while arg_idx < argv.len() {
+            let arg = argv[arg_idx].as_bytes();
+            // Skip flags
+            if !arg.is_empty() && arg[0] == b'-' {
+                arg_idx += 1;
+                continue;
+            }
+            if !found_package {
+                package_name = arg;
+                found_package = true;
+            } else {
+                property_path = Some(arg);
+                break;
+            }
+            arg_idx += 1;
+        }
+
+        super::pm_view_command::view(pm, package_name, property_path, cli.json_output)
     }
 
     /// Per-tag clap param table. Runtime dispatch (was const-generic in Zig;

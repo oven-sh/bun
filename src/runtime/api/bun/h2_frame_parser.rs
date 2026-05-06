@@ -580,7 +580,7 @@ impl SettingsPayloadUnit {
 // TODO(port): #[repr(C, packed)] for wire layout; verify byteSwapAllFields equivalence in Phase B
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
-struct FullSettingsPayload {
+pub struct FullSettingsPayload {
     _header_table_size_type: u16,
     header_table_size: u32,
     _enable_push_type: u16,

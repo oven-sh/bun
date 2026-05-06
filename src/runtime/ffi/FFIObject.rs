@@ -20,7 +20,7 @@ use super::ffi_body::GlobalObjectFfiExt as _;
 #[allow(non_snake_case, deprecated)]
 unsafe extern "C" {
     fn JSC__JSValue__toUInt64NoTruncate(this: JSValue) -> u64;
-    fn JSC__JSValue__fromUInt64NoTruncate(global: *const JSGlobalObject, i: u64) -> JSValue;
+    fn JSC__JSValue__fromUInt64NoTruncate(global: *mut JSGlobalObject, i: u64) -> JSValue;
     fn JSBuffer__bufferFromPointerAndLengthAndDeinit(
         global: *const JSGlobalObject,
         ptr: *mut u8,

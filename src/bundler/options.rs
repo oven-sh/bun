@@ -915,11 +915,11 @@ pub fn get_loader_and_virtual_source<'a>(
     if let Some(eval_source) = unsafe { (vt.eval_source)(jsc_vm.vm) } {
         // SAFETY: eval_source outlives jsc_vm
         let eval_source: &'a logger::Source = unsafe { &*eval_source };
-        if strings::ends_with(specifier, bun_core::path_literal!(b"/[eval]")) {
+        if strings::ends_with(specifier, bun_core::path_literal!("/[eval]").as_bytes()) {
             virtual_source = Some(eval_source);
             loader = Some(Loader::Tsx);
         }
-        if strings::ends_with(specifier, bun_core::path_literal!(b"/[stdin]")) {
+        if strings::ends_with(specifier, bun_core::path_literal!("/[stdin]").as_bytes()) {
             virtual_source = Some(eval_source);
             loader = Some(Loader::Tsx);
         }
@@ -2564,9 +2564,6 @@ pub struct TransformResult {
 }
 
 impl TransformResult {
-    
-    // TODO(b2-blocked): bun_logger::Msg::clone signature (returns Result) +
-    // log.errors/warnings are u32 — body needs reshaping.
     pub fn init(
         outbase: Box<[u8]>,
         output_files: Box<[OutputFile]>,

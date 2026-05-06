@@ -1,7 +1,7 @@
 use core::ffi::{c_int, c_void};
 use core::fmt;
 use core::ptr;
-use core::sync::atomic::{AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
 use bun_collections::HiveArray;
 use bun_core::Output;
@@ -1708,7 +1708,11 @@ pub struct KEventWaker {
     pub kq: c_int,
     pub machport: bun_core::mach_port,
     pub machport_buf: Box<[u8]>,
-    pub has_pending_wake: bool,
+    /// Atomic so `wake(&self)` can be called from any thread concurrently with
+    /// `wait(&self)` (matches Zig's non-exclusive `*Self` semantics; see
+    /// `BundleThread::enqueue` which calls `wake()` while the bundle thread holds
+    /// `&Waker` in `wait()`).
+    pub has_pending_wake: AtomicBool,
 }
 
 #[cfg(target_os = "macos")]
@@ -1719,14 +1723,14 @@ impl KEventWaker {
     // SAFETY: all-zero is a valid kevent64_s array
     const ZEROED: [Kevent64; 16] = unsafe { core::mem::zeroed() };
 
-    pub fn wake(&mut self) {
+    pub fn wake(&self) {
         bun_core::mark_binding!();
         // SAFETY: FFI call to io_darwin_schedule_wakeup with a valid mach_port.
         if unsafe { io_darwin_schedule_wakeup(self.machport) } {
-            self.has_pending_wake = false;
+            self.has_pending_wake.store(false, Ordering::Release);
             return;
         }
-        self.has_pending_wake = true;
+        self.has_pending_wake.store(true, Ordering::Release);
     }
 
     pub fn get_fd(&self) -> Fd {
@@ -1773,7 +1777,7 @@ impl KEventWaker {
             kq,
             machport,
             machport_buf,
-            has_pending_wake: false,
+            has_pending_wake: AtomicBool::new(false),
         })
     }
 }

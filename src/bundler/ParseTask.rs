@@ -2080,33 +2080,50 @@ fn run_with_source_code(
         {
             options::Target::BakeServerComponentsSsr
         } else {
-            transpiler.options.target
+            transpiler_ref.options.target
         }
     });
 
-    let output_format = transpiler.options.output_format;
+    let output_format = transpiler_ref.options.output_format;
 
-    let mut opts = js_parser::parser::Options::init(task.jsx.clone(), loader);
+    // PORT NOTE: `ParserOptions::init` takes `bun_js_parser::options::JSX::Pragma`,
+    // distinct from `crate::options::jsx::Pragma` (TYPE_ONLY divergence). Until
+    // those unify, construct from defaults and copy the one field both share.
+    // TODO(port): replace with `task.jsx.clone()` once Pragma types unify.
+    let mut opts = ParserOptions::init(Default::default(), loader);
     opts.bundle = true;
     opts.warn_about_unbundled_modules = false;
-    opts.allow_unresolved = &transpiler.options.allow_unresolved;
-    opts.macro_context = transpiler.macro_context.as_mut().unwrap();
+    // TODO(port): TYPE_ONLY divergence — `transpiler.options.allow_unresolved`
+    // is `crate::options::AllowUnresolved`, distinct from
+    // `bun_js_parser::options::AllowUnresolved`.
+    opts.allow_unresolved = &js_parser::options::AllowUnresolved::DEFAULT;
+    // TODO(port): TYPE_ONLY divergence — `transpiler.macro_context` is
+    // `Option<js_ast::Macro::MacroContext>` (owned), distinct from
+    // `Option<&'a mut bun_js_parser::MacroContext>`.
+    opts.macro_context = None;
     opts.package_version = task.package_version;
 
-    opts.features.allow_runtime = !source.index.is_runtime();
+    opts.features.allow_runtime = !task.source_index.is_runtime();
     opts.features.unwrap_commonjs_to_esm =
-        output_format == options::OutputFormat::Esm && FeatureFlags::UNWRAP_COMMONJS_TO_ESM;
-    opts.features.top_level_await = output_format == options::OutputFormat::Esm
-        || output_format == options::OutputFormat::InternalBakeDev;
-    opts.features.auto_import_jsx = task.jsx.parse && transpiler.options.auto_import_jsx;
+        output_format == options::Format::Esm && FeatureFlags::UNWRAP_COMMONJS_TO_ESM;
+    opts.features.top_level_await = output_format == options::Format::Esm
+        || output_format == options::Format::InternalBakeDev;
+    opts.features.auto_import_jsx = task.jsx.parse && transpiler_ref.options.auto_import_jsx;
     opts.features.trim_unused_imports =
-        loader.is_typescript() || transpiler.options.trim_unused_imports.unwrap_or(false);
-    opts.features.inlining = transpiler.options.minify_syntax;
-    opts.output_format = output_format;
-    opts.features.minify_syntax = transpiler.options.minify_syntax;
-    opts.features.minify_identifiers = transpiler.options.minify_identifiers;
-    opts.features.minify_keep_names = transpiler.options.keep_names;
-    opts.features.minify_whitespace = transpiler.options.minify_whitespace;
+        loader.is_typescript() || transpiler_ref.options.trim_unused_imports.unwrap_or(false);
+    opts.features.inlining = transpiler_ref.options.minify_syntax;
+    // TODO(port): TYPE_ONLY divergence — `bun_options_types::Format` vs
+    // `bun_js_parser::options::Format`. Map by discriminant.
+    opts.output_format = match output_format {
+        options::Format::Esm => js_parser::options::Format::Esm,
+        options::Format::Cjs => js_parser::options::Format::Cjs,
+        options::Format::Iife => js_parser::options::Format::Iife,
+        options::Format::InternalBakeDev => js_parser::options::Format::InternalBakeDev,
+    };
+    opts.features.minify_syntax = transpiler_ref.options.minify_syntax;
+    opts.features.minify_identifiers = transpiler_ref.options.minify_identifiers;
+    opts.features.minify_keep_names = transpiler_ref.options.keep_names;
+    opts.features.minify_whitespace = transpiler_ref.options.minify_whitespace;
     opts.features.emit_decorator_metadata = task.emit_decorator_metadata;
     // emitDecoratorMetadata implies legacy/experimental decorators, as it only
     // makes sense with TypeScript's legacy decorator system (reflect-metadata).

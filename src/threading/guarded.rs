@@ -40,22 +40,25 @@ impl<Value, M: RawMutex> GuardedBy<Value, M> {
     /// Creates a guarded value with the given mutex.
     pub fn init_with_mutex(value: Value, mutex: M) -> Self {
         Self {
-            unsynchronized_value: value,
+            unsynchronized_value: UnsafeCell::new(value),
             mutex,
         }
     }
 
     /// Locks the mutex and returns a pointer to the value. Remember to call `unlock`!
-    // PORT NOTE: reshaped for borrowck — the returned &mut borrows self, so callers
-    // must drop the reference before calling `unlock`. Phase B may want an RAII guard
-    // (`lock(&self) -> Guard<'_, Value>`) instead of split lock/unlock.
-    pub fn lock(&mut self) -> &mut Value {
+    // PORT NOTE: Phase B may want an RAII guard (`lock(&self) -> Guard<'_, Value>`) instead of
+    // split lock/unlock; the split shape mirrors the Zig API for now.
+    #[allow(clippy::mut_from_ref)]
+    pub fn lock(&self) -> &mut Value {
         self.mutex.lock();
-        &mut self.unsynchronized_value
+        // SAFETY: `mutex.lock()` just acquired exclusive access; no other `&mut Value` can exist
+        // until `unlock`. `UnsafeCell` provides the interior-mutability provenance so this
+        // `&self → &mut Value` projection is sound.
+        unsafe { &mut *self.unsynchronized_value.get() }
     }
 
     /// Unlocks the mutex. Don't use any pointers returned by `lock` after calling this method!
-    pub fn unlock(&mut self) {
+    pub fn unlock(&self) {
         self.mutex.unlock();
     }
 
@@ -67,7 +70,7 @@ impl<Value, M: RawMutex> GuardedBy<Value, M> {
     pub fn into_unprotected(self) -> Value {
         // Zig: `bun.memory.deinit(&self.#mutex)` then return value, then `self.* = undefined`.
         // In Rust, moving out of `self` drops `self.mutex` automatically.
-        self.unsynchronized_value
+        self.unsynchronized_value.into_inner()
     }
 }
 
@@ -78,8 +81,8 @@ impl<Value, M: RawMutex> GuardedBy<Value, M> {
 // TODO(port): move to bun_threading if not already there; both `bun_threading::Mutex`
 // and `bun_safety::ThreadLock` must impl this.
 pub trait RawMutex {
-    fn lock(&mut self);
-    fn unlock(&mut self);
+    fn lock(&self);
+    fn unlock(&self);
 }
 
 // ──────────────────────────────────────────────────────────────────────────

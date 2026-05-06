@@ -1424,13 +1424,18 @@ mod __css_validation {
                     continue;
                 };
                 for name in compose.names.slice() {
-                    if !other_css_ast.local_scope.contains(name.v) {
+                    // SAFETY: `CustomIdent.v: *const [u8]` borrows the source arena.
+                    let name_v = unsafe { &*name.v };
+                    if !other_css_ast
+                        .local_scope
+                        .contains_adapted(name_v, SliceBoxAdapter)
+                    {
                         let _ = this.log.add_error_fmt(
                             &col_ref!(input_files)[record.source_index.get() as usize],
                             compose.loc,
                             format_args!(
                                 "The name \"{}\" never appears in \"{}\" as a CSS modules locally scoped class name. Note that \"composes\" only works with single class selectors.",
-                                bstr::BStr::new(name.v),
+                                bstr::BStr::new(name_v),
                                 bstr::BStr::new(
                                     &col_ref!(input_files)[record.source_index.get() as usize]
                                         .path
@@ -1589,7 +1594,7 @@ mod __css_validation {
                 self.visited.put(r#ref, ()).expect("unreachable");
 
                 // This local name was in a style rule that
-                if let Some(composes) = ast.composes.get_ptr(&r#ref) {
+                if let Some(composes) = ast.composes.get(&r#ref) {
                     for compose in composes.composes.slice_const() {
                         // is an import
                         if let Some(from) = compose.from.as_ref() {
@@ -1612,11 +1617,15 @@ mod __css_validation {
                                     continue;
                                 };
                                 for name in compose.names.slice() {
-                                    let Some(other_name) = other_ast.local_scope.get(name.v) else {
+                                    // SAFETY: `CustomIdent.v: *const [u8]` borrows the source arena.
+                                    let name_v = unsafe { &*name.v };
+                                    let Some(other_name) =
+                                        other_ast.local_scope.get_adapted(name_v, SliceBoxAdapter)
+                                    else {
                                         continue;
                                     };
                                     let other_name_ref = other_name
-                                        .r#ref
+                                        .ref_
                                         .to_real_ref(record.source_index.get());
                                     self.visit(
                                         record.source_index.get(),
@@ -1633,16 +1642,20 @@ mod __css_validation {
                         } else {
                             // inside this file
                             for name in compose.names.slice() {
-                                let Some(name_entry) = ast.local_scope.get(name.v) else {
+                                // SAFETY: `CustomIdent.v: *const [u8]` borrows the source arena.
+                                let name_v = unsafe { &*name.v };
+                                let Some(name_entry) =
+                                    ast.local_scope.get_adapted(name_v, SliceBoxAdapter)
+                                else {
                                     continue;
                                 };
-                                self.visit(idx, ast, name_entry.r#ref.to_real_ref(idx));
+                                self.visit(idx, ast, name_entry.ref_.to_real_ref(idx));
                             }
                         }
                     }
                 }
 
-                let Some(property_usage) = ast.local_properties.get_ptr(&r#ref) else {
+                let Some(property_usage) = ast.local_properties.get(&r#ref) else {
                     return;
                 };
                 // Warn about cross-file composition with the same CSS properties
@@ -1686,7 +1699,7 @@ mod __css_validation {
         };
         for local in root_css_ast.local_scope.values() {
             visitor.clear_retaining_capacity();
-            visitor.visit(index, root_css_ast, local.r#ref.to_real_ref(index));
+            visitor.visit(index, root_css_ast, local.ref_.to_real_ref(index));
         }
     }
 }

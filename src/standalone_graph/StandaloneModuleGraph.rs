@@ -73,28 +73,33 @@ pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str =
 
 // TODO(port): Zig used a nested `Instance` struct holding a static var. Model
 // as a process-lifetime `OnceLock` (PORTING.md §Concurrency: never `static mut`).
-// `get()` returns `&'static mut` to match the Zig API; callers mutate
-// `wtf_string` / `cached_blob` lazily. Interior mutability via `UnsafeCell` on
-// those fields is the Phase-B follow-up.
+// `get()` returns a raw `*mut` to mirror Zig's `?*StandaloneModuleGraph`; callers
+// mutate `wtf_string` / `cached_blob` / `sourcemap` lazily. Phase-B follow-up:
+// push interior mutability down to those per-`File` fields (`UnsafeCell<…>`) so
+// read-only paths (`find`, `entry_point`, `stat`) can take `&self`.
 struct Instance(core::cell::UnsafeCell<StandaloneModuleGraph>);
 // SAFETY: the graph is populated once at startup before any worker threads;
-// post-init mutation is limited to per-`File` lazy fields guarded by `INIT_LOCK`.
+// post-init mutation is limited to per-`File` lazy fields. NOTE: `INIT_LOCK`
+// only guards `LazySourceMap::load`; `File::to_wtf_string` and `cached_blob`
+// mutate without any lock and rely on idempotence + JSC's own synchronization.
 unsafe impl Sync for Instance {}
 unsafe impl Send for Instance {}
 
 static INSTANCE: std::sync::OnceLock<Instance> = std::sync::OnceLock::new();
 
 impl StandaloneModuleGraph {
-    pub fn get() -> Option<&'static mut StandaloneModuleGraph> {
-        // SAFETY: see `Instance` doc — single-init at startup; later writes
-        // only touch `File.{wtf_string,cached_blob}` under `INIT_LOCK`.
-        INSTANCE.get().map(|cell| unsafe { &mut *cell.0.get() })
+    pub fn get() -> Option<*mut StandaloneModuleGraph> {
+        // Mirrors Zig's `?*StandaloneModuleGraph`: a raw pointer with no
+        // uniqueness invariant. Do NOT hand out `&'static mut` here — multiple
+        // callers (resolver, sourcemap loader, worker threads) may hold the
+        // result concurrently, and overlapping `&mut` is UB regardless of
+        // whether either side writes.
+        INSTANCE.get().map(|cell| cell.0.get())
     }
 
-    pub fn set(instance: StandaloneModuleGraph) -> &'static mut StandaloneModuleGraph {
+    pub fn set(instance: StandaloneModuleGraph) -> *mut StandaloneModuleGraph {
         let _ = INSTANCE.set(Instance(core::cell::UnsafeCell::new(instance)));
-        // SAFETY: just set; uncontended at this point in startup.
-        unsafe { &mut *INSTANCE.get().unwrap().0.get() }
+        INSTANCE.get().unwrap().0.get()
     }
 }
 

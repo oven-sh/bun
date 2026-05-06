@@ -268,7 +268,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
             let is_scoped = Dependency::is_scoped_package_name(&name)?;
 
             if let Some(access) = manager.options.publish_config.access {
-                if access == install::package_manager::Options::Access::Restricted && !is_scoped {
+                if access == Access::Restricted && !is_scoped {
                     return Err(FromTarballError::RestrictedUnscopedPackage);
                 }
             }

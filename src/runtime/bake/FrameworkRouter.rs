@@ -1727,7 +1727,8 @@ impl JSFrameworkRouter {
         Ok(obj.to_js())
     }
 
-    #[bun_jsc::host_fn]
+    // PORT NOTE: no `#[bun_jsc::host_fn]` — `#[bun_jsc::JsClass]` on the struct
+    // emits the construct shim that calls `<Self>::constructor(__g, __f)` directly.
     pub fn constructor(
         global: &JSGlobalObject,
         callframe: &CallFrame,

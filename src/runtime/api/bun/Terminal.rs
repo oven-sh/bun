@@ -885,13 +885,11 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
         }
         Err(err) => {
             // tcgetattr failed, log in debug builds but continue without modifying termios
-            if cfg!(debug_assertions) {
-                sys::syslog(format_args!(
-                    "tcgetattr(slave_fd={}) failed: {}",
-                    slave_fd,
-                    <&'static str>::from(err)
-                ));
-            }
+            sys::syslog!(
+                "tcgetattr(slave_fd={}) failed: {}",
+                slave_fd,
+                <&'static str>::from(err),
+            );
         }
     }
 

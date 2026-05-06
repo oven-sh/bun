@@ -1843,12 +1843,12 @@ impl DevServer<'_> {
         // Extract route params by re-matching the URL
         let mut params: framework_router::MatchedParams = Default::default();
         let url_bunstr = match &req {
-            SavedRequest::Union::Stack(r) => BunString {
+            SavedRequestUnion::Stack(r) => BunString {
                 tag: BunString::Tag::ZigString,
                 // SAFETY: r is a uws Request ptr valid for the duration of the handler callback
                 value: BunString::Value::ZigString(str::ZigString::from_utf8(unsafe { &**r }.url())),
             },
-            SavedRequest::Union::Saved(data) => 'brk: {
+            SavedRequestUnion::Saved(data) => 'brk: {
                 let url = data.request.url.clone();
                 url.ref_();
                 break 'brk url;

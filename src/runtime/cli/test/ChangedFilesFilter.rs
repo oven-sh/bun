@@ -318,8 +318,10 @@ pub fn init_watch_trigger() {
             ZStr::from_bytes(existing)
         } else {
             // TODO(port): std.Random.DefaultPrng / std.time.milliTimestamp / std.c.getpid —
-            // pick Rust equivalents (likely bun_core::time::milli_timestamp() ^ sys::getpid())
-            let seed: u64 = bun_core::time::milli_timestamp() as u64 ^ sys::getpid() as u64;
+            // pick Rust equivalents (likely bun_core::time::milli_timestamp() ^ libc::getpid())
+            // SAFETY: getpid is always safe.
+            let seed: u64 =
+                bun_core::time::milli_timestamp() as u64 ^ unsafe { libc::getpid() } as u64;
             let rand: u64 = bun_wyhash::hash(&seed.to_ne_bytes());
             // TODO(port): Zig used DefaultPrng (xoshiro256++); wyhash-of-seed is a placeholder
             let tmpdir = FileSystem::RealFS::tmpdir_path();

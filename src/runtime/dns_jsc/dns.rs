@@ -1742,7 +1742,7 @@ pub mod internal {
                     (*this).libinfo.machport,
                     lib_info::getaddrinfo_async_handle_reply().unwrap(),
                 ) {
-                    libinfo_callback(libc::E::NOSYS as i32, ptr::null_mut(), this as *mut c_void);
+                    libinfo_callback(sys::E::NOSYS as i32, ptr::null_mut(), this as *mut c_void);
                 }
             }
         }

@@ -17,8 +17,10 @@ use std::io::Write as _;
 
 use bstr::BStr;
 
-use bun_core::{env_var, fmt, Environment, Output};
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, VirtualMachine};
+use bun_core::{env_var, fmt, tty, Environment, Output};
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_paths::{self as path, PathBuffer};
 use bun_str::strings;
 use bun_sys::{self as sys, Fd};

@@ -813,6 +813,7 @@ impl ExtractTarball {
     pub thread_pool: bun_threading::ThreadPool,
 }
 #[derive(Default)] pub struct PackageManagerOptionsStub {
+    pub log_level: package_manager::Options::LogLevel,
     pub enable: PackageManagerEnableStub,
     /// Zig: `Options.cache_directory` — bunfig override.
     pub cache_directory: Vec<u8>,

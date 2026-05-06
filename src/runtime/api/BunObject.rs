@@ -657,7 +657,7 @@ pub mod bun_object {
         BunObject_lazyPropCb_YAML => super::get_yaml_object,
         BunObject_lazyPropCb_Transpiler => super::get_transpiler_constructor,
         BunObject_lazyPropCb_argv => super::get_argv,
-        BunObject_lazyPropCb_cron => cron::get_cron_object,
+        BunObject_lazyPropCb_cron => super::get_cron_object,
         BunObject_lazyPropCb_cwd => super::get_cwd,
         BunObject_lazyPropCb_embeddedFiles => super::get_embedded_files,
         BunObject_lazyPropCb_enableANSIColors => super::enable_ansi_colors,

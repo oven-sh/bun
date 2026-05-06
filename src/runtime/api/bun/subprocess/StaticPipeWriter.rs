@@ -33,8 +33,8 @@ pub trait StaticPipeWriterProcess {
 /// Generic over the owning process type (e.g. `Subprocess`, `ShellSubprocess`).
 /// `P` must expose `fn on_close_io(&mut self, kind: StdioKind)`.
 pub struct StaticPipeWriter<P: StaticPipeWriterProcess> {
-    /// Intrusive refcount; `ref`/`deref` provided via `bun_ptr::IntrusiveRefCounted`.
-    pub ref_count: Cell<u32>,
+    /// Intrusive refcount; `ref`/`deref` provided via `bun_ptr::RefCount`.
+    pub ref_count: RefCount<Self>,
     pub writer: IOWriter<P>,
     pub stdio_result: StdioResult,
     pub source: Source,

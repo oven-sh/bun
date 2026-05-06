@@ -774,21 +774,25 @@ impl MatchedRoute {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_script_src(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        let mut buf = PathBuffer::uninit();
-        // TODO(port): `std.io.fixedBufferStream` — using a byte cursor writer over `buf`.
-        let mut writer = bun_io::FixedBufferWriter::new(buf.as_mut_slice());
+        // PORT NOTE: Zig used `std.io.fixedBufferStream` over a PathBuffer. The accessible
+        // `bun_object::get_public_path_with_asset_prefix` takes `core::fmt::Write`, so write
+        // into a `String` (path components are UTF-8 in practice; the underlying impl already
+        // routes through `String::from_utf8_lossy` for non-UTF-8 bytes).
+        let mut writer = String::with_capacity(MAX_PATH_BYTES);
+        let origin_url = if let Some(origin) = &this.origin {
+            URL::parse(origin.slice())
+        } else {
+            URL::default()
+        };
         bun_object::get_public_path_with_asset_prefix(
             this.route().file_path,
             if let Some(base_dir) = &this.base_dir {
                 base_dir.slice()
             } else {
-                jsc::VirtualMachine::get().transpiler.fs.top_level_dir
+                // SAFETY: VM singleton is alive on the JS thread for the duration of this getter.
+                unsafe { (*VirtualMachine::get()).transpiler.fs.top_level_dir }
             },
-            if let Some(origin) = &this.origin {
-                URL::parse(origin.slice())
-            } else {
-                URL::default()
-            },
+            &origin_url,
             if let Some(prefix) = &this.asset_prefix {
                 prefix.slice()
             } else {
@@ -797,7 +801,7 @@ impl MatchedRoute {
             &mut writer,
             path::Platform::Posix,
         );
-        Ok(ZigString::init(&buf.as_slice()[0..writer.pos()])
+        Ok(ZigString::init(writer.as_bytes())
             .with_encoding()
             .to_js(global_this))
     }

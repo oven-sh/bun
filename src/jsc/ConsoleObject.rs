@@ -1583,13 +1583,17 @@ pub mod formatter {
     impl Drop for Formatter<'_> {
         fn drop(&mut self) {
             if let Some(mut node) = self.map_node.take() {
-                node.data = core::mem::take(&mut self.map);
-                if node.data.capacity() > 512 {
-                    node.data.clear_and_free();
+                let mut map = core::mem::take(&mut self.map);
+                if map.capacity() > 512 {
+                    map.deinit();
                 } else {
-                    node.data.clear();
+                    map.clear();
                 }
-                node.release();
+                node.data = core::mem::MaybeUninit::new(map);
+                // TODO(phase-c): `Node::release()` is a pool method gated on
+                // `ObjectPool` storage wiring; until `visited::Pool` un-gates,
+                // just drop the boxed node here.
+                let _ = node;
             }
         }
     }
@@ -5002,8 +5006,9 @@ pub extern "C" fn Bun__ConsoleObject__countReset(
     let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
     let hash = bun_wyhash::hash(slice);
     // we don't delete it because deleting is implemented via tombstoning
-    let Some(entry) = this.counts.get_entry(hash) else { return };
-    *entry.value_ptr = 0;
+    if let Some(v) = this.counts.get_mut(&hash) {
+        *v = 0;
+    }
 }
 
 type PendingTimers = bun_collections::HashMap<u64, Option<bun_core::time::Timer>>;
@@ -5050,11 +5055,13 @@ pub extern "C" fn Bun__ConsoleObject__timeEnd(
     // SAFETY: caller passes a valid (ptr, len) pair.
     let slice = unsafe { core::slice::from_raw_parts(chars, len) };
     let id = bun_wyhash::hash(slice);
-    let Some(result) = PENDING_TIME_LOGS.with_borrow_mut(|m| m.fetch_put(id, None).ok().flatten())
-    else {
+    // Zig `fetchPut(id, null)` — replace with `None`, returning the previous.
+    let Some(prev) = PENDING_TIME_LOGS.with_borrow_mut(|m| {
+        m.get_mut(&id).map(|slot| core::mem::replace(slot, None))
+    }) else {
         return;
     };
-    let Some(mut value) = result.value else { return };
+    let Some(mut value) = prev else { return };
     // get the duration in microseconds, then display it in milliseconds
     Output::print_elapsed(
         (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64,

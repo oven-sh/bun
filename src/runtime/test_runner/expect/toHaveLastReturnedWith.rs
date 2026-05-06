@@ -111,8 +111,10 @@ pub fn to_have_last_returned_with(
     // Diff if possible
     if expected.is_string() && last_return_value.is_string() {
         let diff_format = DiffFormatter {
-            expected,
-            received: last_return_value,
+            received_string: None,
+            expected_string: None,
+            expected: Some(expected),
+            received: Some(last_return_value),
             global_this,
             not: false,
         };

@@ -754,7 +754,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 return JSValue::ZERO;
             };
 
-            app = match uws_sys::NewApp::<SSL>::create(ssl_options) {
+            app = match uws_sys::NewApp::<SSL>::create(to_sys_socket_options(ssl_options)) {
                 Some(a) => a,
                 None => {
                     if !global.has_exception() && !throw_ssl_error_if_necessary(global) {
@@ -769,7 +769,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
             if Self::HAS_H3 && unsafe { &*this }.config.h3 {
                 let idle_timeout = unsafe { &*this }.config.idle_timeout as u32;
-                let h3 = match uws_sys::h3::App::create(ssl_options, idle_timeout) {
+                let h3 = match uws_sys::h3::App::create(to_sys_socket_options(ssl_options), idle_timeout) {
                     Some(a) => Some(a),
                     None => {
                         if !global.has_exception() {

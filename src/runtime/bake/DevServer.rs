@@ -1420,7 +1420,9 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                                     }
                                     crate::server::GetOrStartLoadResult::Ready(ready) => {
                                         dev.plugin_state = PluginState::Loaded;
-                                        dev.bundler_options.plugin = ready;
+                                        dev.bundler_options.plugin = ready.map(|p| {
+                                            ::core::ptr::NonNull::new(p as *const _ as *mut c_void).unwrap()
+                                        });
                                     }
                                 }
                             }
@@ -1561,36 +1563,42 @@ impl DevServer<'_> {
             weakly_referenced_by_requestcontext: false,
             handler: match kind {
                 deferred_request::HandlerKind::BundledHtmlPage => 'brk: {
-                    resp.on_aborted::<DeferredRequest>(DeferredRequest::on_abort, &mut deferred.data);
+                    resp.on_aborted(
+                        |p: *mut DeferredRequest<'_>, r: AnyResponse| {
+                            // SAFETY: p is the &mut deferred.data registered below
+                            unsafe { &mut *p }.on_abort(r)
+                        },
+                        &mut deferred.data as *mut DeferredRequest<'_>,
+                    );
                     break 'brk Handler::BundledHtmlPage(ResponseAndMethod { response: resp, method });
                 }
                 deferred_request::HandlerKind::ServerHandler => 'brk: {
-                    let server_handler = match req {
-                        ReqOrSaved::Req(r) => {
-                            // SAFETY: vm is JSC_BORROW; vm.global is valid for VM lifetime
-                            let global = unsafe { &*(*self.vm).global };
-                            match self
-                                .server
-                                .as_ref()
-                                .unwrap()
-                                // SAFETY: r is a uws Request ptr valid for the duration of the handler callback
-                                .prepare_and_save_js_request_context(unsafe { &mut *r }, resp, global, method)?
-                            {
-                                Some(h) => h,
-                                None => {
-                                    self.deferred_request_pool.put(deferred_ptr);
-                                    return Ok(());
-                                }
-                            }
+                    let server_handler: SavedRequest = match req {
+                        ReqOrSaved::Req(_r) => {
+                            // TODO(port): blocked_on: server::AnyServer::prepare_and_save_js_request_context
+                            // returns server_body::SavedRequest<'_> (distinct from crate::server::SavedRequest);
+                            // unify the two SavedRequest shapes before wiring this path.
+                            let _ = (resp, method, deferred_ptr);
+                            todo!("blocked_on: server::SavedRequest unification (server_body vs server::mod)")
                         }
                         ReqOrSaved::Saved(saved) => saved,
                         _ => unreachable!(),
                     };
                     server_handler.ctx.ref_();
-                    server_handler.ctx.set_additional_on_abort_callback(
+                    server_handler.ctx.set_additional_on_abort_callback(Some(
                         crate::server::any_request_context::AdditionalOnAbortCallback {
-                            cb: DeferredRequest::on_abort_wrapper,
-                            data: &mut deferred.data as *mut _ as *mut c_void,
+                            cb: {
+                                fn cb(ptr: *mut c_void) {
+                                    DeferredRequest::on_abort_wrapper(ptr)
+                                }
+                                cb
+                            },
+                            // SAFETY: deferred.data is a live field of a HiveArray-owned node
+                            data: unsafe {
+                                ::core::ptr::NonNull::new_unchecked(
+                                    &mut deferred.data as *mut _ as *mut c_void,
+                                )
+                            },
                             deref_fn: {
                                 fn deref_fn(ptr: *mut c_void) {
                                     // SAFETY: ptr is &mut DeferredRequest from above
@@ -1601,7 +1609,7 @@ impl DevServer<'_> {
                                 deref_fn
                             },
                         },
-                    );
+                    ));
                     break 'brk Handler::ServerHandler(server_handler);
                 }
             },

@@ -4,13 +4,10 @@ pub const DEFAULT_EXTENSIONS: &[&[u8]] = &[
     b"tsx", b"jsx", b"ts", b"mjs", b"cjs", b"js",
 ];
 
-/// Opaque surface — full `.classes.ts` payload (Arena + Router + origin/asset
-/// RefStrings) lives in `_jsc_gated`.
-// TODO(b2-blocked): bun_jsc::JsClass — replace with _jsc_gated::FileSystemRouter.
-pub struct FileSystemRouter(());
-/// Opaque surface — full struct stores a borrowed `*const RouterMatch`.
-// TODO(b2-blocked): bun_jsc::JsClass — replace with _jsc_gated::MatchedRoute.
-pub struct MatchedRoute(());
+// PORT NOTE: re-export the JsClass-backed structs so `BunObject.rs`'s
+// `get_constructor::<crate::api::filesystem_router::FileSystemRouter>` resolves
+// to a `JsClass` impl.
+pub use _jsc_gated::{FileSystemRouter, MatchedRoute};
 
 pub mod kind_enum {
     pub const EXACT: &[u8] = b"exact";
@@ -35,30 +32,59 @@ pub mod kind_enum {
 
 mod _jsc_gated {
 use core::cell::RefCell;
-use std::sync::Arc;
 
 use bun_alloc::Arena as ArenaAllocator;
-use bun_core::Environment;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSObject, JSValue, JsResult};
+use bun_jsc::{LogJsc, StringJsc, JsClass as _, ObjectInitializer};
 use bun_jsc::ref_string::RefString;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_str::{ZigString, ZigStringSlice};
+use bun_jsc::zig_string::ZigString;
+use bun_str::ZigStringSlice;
 use bun_logger as Log;
 use bun_paths::{self as path, PathBuffer, MAX_PATH_BYTES};
 use bun_str::strings;
 
 use bun_http_types::URLPath;
 use bun_resolver::fs as Fs;
-use bun_resolver::Resolver;
 use bun_router::{self as Router, Match as RouterMatch, RouteConfig};
-use bun_url::{CombinedScanner, ParamList, QueryStringMap, URL};
+use bun_url::{CombinedScanner, QueryStringMap, URL};
+use bun_url::route_param::List as ParamList;
 
-// TODO(port): `jsc.WebCore.{Request,Response}` live in `src/runtime/webcore/`; confirm crate path.
 use crate::webcore::{Request, Response};
-// TODO(port): `jsc.API.Bun.getPublicPath{,WithAssetPrefix}` live in `src/runtime/api/BunObject.zig`.
 use crate::api::bun_object;
-// TODO(port): `Transpiler.ClientEntryPoint` — `bun.transpiler` maps to `bun_bundler` per crate map.
 use bun_bundler as Transpiler;
+
+// ── local shims for upstream API gaps (phase-d) ──────────────────────────
+trait ZigStringSliceExt {
+    fn length(&self) -> usize;
+    fn clone_if_borrowed(self) -> Result<ZigStringSlice, bun_core::AllocError>;
+    fn clone_with_trailing_slash(&self) -> Result<ZigStringSlice, bun_core::AllocError>;
+}
+impl ZigStringSliceExt for ZigStringSlice {
+    #[inline]
+    fn length(&self) -> usize { self.slice().len() }
+    fn clone_if_borrowed(self) -> Result<ZigStringSlice, bun_core::AllocError> {
+        match self {
+            ZigStringSlice::Owned(v) => Ok(ZigStringSlice::Owned(v)),
+            other => ZigStringSlice::init_dupe(other.slice()),
+        }
+    }
+    fn clone_with_trailing_slash(&self) -> Result<ZigStringSlice, bun_core::AllocError> {
+        let s = self.slice();
+        let mut v = Vec::with_capacity(s.len() + 1);
+        v.extend_from_slice(s);
+        if s.last() != Some(&b'/') {
+            v.push(b'/');
+        }
+        Ok(ZigStringSlice::Owned(v))
+    }
+}
+
+#[inline]
+unsafe fn ref_string_slice<'a>(ptr: *mut RefString) -> &'a [u8] {
+    // SAFETY: caller guarantees `ptr` is a live RefString for `'a`.
+    unsafe { (*ptr).leak() }
+}
 
 const DEFAULT_EXTENSIONS: &[&[u8]] = &[
     b"tsx",
@@ -71,15 +97,15 @@ const DEFAULT_EXTENSIONS: &[&[u8]] = &[
 
 #[bun_jsc::JsClass]
 pub struct FileSystemRouter {
-    pub origin: Option<Arc<RefString>>,
-    pub base_dir: Option<Arc<RefString>>,
+    pub origin: Option<*mut RefString>,
+    pub base_dir: Option<*mut RefString>,
     // PORT NOTE: Router<'a> only borrows the global FileSystem singleton — `'static` is faithful.
     pub router: Router::Router<'static>,
     // PERF(port): was arena bulk-free — Router borrows slices from this arena across calls;
     // kept as boxed arena per LIFETIMES.tsv (OWNED). Phase B: confirm bumpalo vs ArenaAllocator.
     pub arena: Box<ArenaAllocator>,
     // PORT NOTE: dropped `allocator: std.mem.Allocator` field — it was always `arena.allocator()`.
-    pub asset_prefix: Option<Arc<RefString>>,
+    pub asset_prefix: Option<*mut RefString>,
 }
 
 impl FileSystemRouter {
@@ -93,47 +119,48 @@ impl FileSystemRouter {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<Box<FileSystemRouter>> {
-        let argument_ = callframe.arguments_old(1);
-        if argument_.len() == 0 {
-            return global_this.throw_invalid_arguments("Expected object", ());
+        let argument_ = callframe.arguments_old::<1>();
+        if argument_.len == 0 {
+            return Err(global_this.throw_invalid_arguments("Expected object"));
         }
 
-        let argument = argument_.ptr()[0];
+        let argument = argument_.ptr[0];
         if argument.is_empty_or_undefined_or_null() || !argument.is_object() {
-            return global_this.throw_invalid_arguments("Expected object", ());
+            return Err(global_this.throw_invalid_arguments("Expected object"));
         }
-        let vm = global_this.bun_vm();
+        // SAFETY: `bun_vm()` returns the live VM raw pointer; valid for the call.
+        let vm = unsafe { &mut *global_this.bun_vm() };
 
-        let mut root_dir_path: ZigStringSlice =
-            ZigStringSlice::from_utf8_never_free(vm.transpiler.fs.top_level_dir);
+        let mut root_dir_path: ZigStringSlice = ZigStringSlice::from_utf8_never_free(
+            // SAFETY: `transpiler.fs` is the process-global FileSystem singleton.
+            unsafe { (*vm.transpiler.fs).top_level_dir },
+        );
         // `defer root_dir_path.deinit()` → Drop on ZigStringSlice
         let mut origin_str: ZigStringSlice = ZigStringSlice::default();
         let mut asset_prefix_slice: ZigStringSlice = ZigStringSlice::default();
 
         let mut out_buf = [0u8; MAX_PATH_BYTES * 2];
         if let Some(style_val) = argument.get(global_this, "style")? {
-            if !(style_val.get_zig_string(global_this)?).eql_comptime("nextjs") {
-                return global_this.throw_invalid_arguments(
+            if !(style_val.get_zig_string(global_this)?).eql_comptime(b"nextjs") {
+                return Err(global_this.throw_invalid_arguments(
                     "Only 'nextjs' style is currently implemented",
-                    (),
-                );
+                ));
             }
         } else {
-            return global_this.throw_invalid_arguments(
+            return Err(global_this.throw_invalid_arguments(
                 "Expected 'style' option (ex: \"style\": \"nextjs\")",
-                (),
-            );
+            ));
         }
 
         if let Some(dir) = argument.get(global_this, "dir")? {
             if !dir.is_string() {
-                return global_this.throw_invalid_arguments("Expected dir to be a string", ());
+                return Err(global_this.throw_invalid_arguments("Expected dir to be a string"));
             }
             let root_dir_path_ = dir.to_slice(global_this)?;
-            if !(root_dir_path_.len() == 0 || root_dir_path_.slice() == b".") {
+            if !(root_dir_path_.length() == 0 || root_dir_path_.slice() == b".") {
                 // resolve relative path if needed
                 let path_ = root_dir_path_.slice();
-                if path::Platform::Auto.is_absolute(path_) {
+                if path::Platform::AUTO.is_absolute(path_) {
                     root_dir_path = root_dir_path_;
                 } else {
                     let parts: [&[u8]; 1] = [path_];
@@ -148,111 +175,89 @@ impl FileSystemRouter {
             }
         } else {
             // dir is not optional
-            return global_this.throw_invalid_arguments("Expected dir to be a string", ());
+            return Err(global_this.throw_invalid_arguments("Expected dir to be a string"));
         }
         // PERF(port): was arena bulk-free — extensions/asset_prefix/log all allocated from this.
-        let mut arena = Box::new(ArenaAllocator::new());
-        // Zig `arena.allocator()` → `std.mem.Allocator`; with `bumpalo::Bump` the arena
-        // *is* the allocator handle, so borrow it directly.
-        let allocator = &*arena;
+        let arena = Box::new(ArenaAllocator::new());
         let mut extensions: Vec<&[u8]> = Vec::new();
         if let Some(file_extensions) = argument.get(global_this, "fileExtensions")? {
             if !file_extensions.js_type().is_array() {
-                return global_this
-                    .throw_invalid_arguments("Expected fileExtensions to be an Array", ());
+                return Err(global_this
+                    .throw_invalid_arguments("Expected fileExtensions to be an Array"));
             }
 
             let mut iter = file_extensions.array_iterator(global_this)?;
-            extensions.reserve_exact(iter.len());
+            extensions.reserve_exact(iter.len as usize);
             while let Some(val) = iter.next()? {
                 if !val.is_string() {
-                    return global_this.throw_invalid_arguments(
+                    return Err(global_this.throw_invalid_arguments(
                         "Expected fileExtensions to be an Array of strings",
-                        (),
-                    );
+                    ));
                 }
                 if val.get_length(global_this)? == 0 {
                     continue;
                 }
                 // PERF(port): was appendAssumeCapacity
                 // TODO(port): `toUTF8Bytes(allocator)[1..]` — slices off leading '.'; arena owns the bytes.
-                extensions.push(&val.to_utf8_bytes(global_this, &allocator)?[1..]);
+                let _ = val;
+                extensions.push(todo!("blocked_on: bun_jsc::JSValue::to_utf8_bytes"));
             }
         }
 
         if let Some(asset_prefix) = argument.get_truthy(global_this, "assetPrefix")? {
             if !asset_prefix.is_string() {
-                return global_this
-                    .throw_invalid_arguments("Expected assetPrefix to be a string", ());
+                return Err(global_this
+                    .throw_invalid_arguments("Expected assetPrefix to be a string"));
             }
 
             asset_prefix_slice = asset_prefix
                 .to_slice(global_this)?
-                .clone_if_borrowed(&allocator)?;
+                .clone_if_borrowed()?;
         }
         let orig_log = vm.transpiler.resolver.log;
-        let mut log = Log::Log::new(&allocator);
-        vm.transpiler.resolver.log = &mut log;
+        let mut log = Log::Log::new();
+        vm.transpiler.resolver.log = &mut log as *mut _;
         // TODO(port): errdefer-style restore — scopeguard would borrow `vm` for the whole scope.
         // Phase B: wrap in scopeguard or restore manually on every early-return path below.
-        let _restore_log = scopeguard::guard((), |_| {
-            vm.transpiler.resolver.log = orig_log;
+        let _restore_log = scopeguard::guard((), move |_| {
+            // SAFETY: VM singleton is alive for the JS thread; `orig_log` was the
+            // resolver's previous log pointer.
+            unsafe { (*VirtualMachine::get()).transpiler.resolver.log = orig_log; }
         });
 
-        let path_to_use = root_dir_path
-            .clone_with_trailing_slash(&allocator)
-            .expect("unreachable")
-            .slice();
+        let path_to_use_slice = root_dir_path
+            .clone_with_trailing_slash()
+            .expect("unreachable");
+        let path_to_use = path_to_use_slice.slice();
 
         let root_dir_info = match vm.transpiler.resolver.read_dir_info(path_to_use) {
             Ok(Some(info)) => info,
             Ok(None) => {
-                return global_this.throw(format_args!(
+                return Err(global_this.throw(format_args!(
                     "Unable to find directory: {}",
                     bstr::BStr::new(root_dir_path.slice())
-                ));
+                )));
             }
             Err(_) => {
                 // Build the JS error before arena teardown: `log` is backed by the arena allocator.
                 // Declaration order (arena before log) guarantees `log` drops first on return.
                 let err_value = log.to_js(global_this, "reading root directory");
-                return global_this.throw_value(err_value?);
+                return Err(global_this.throw_value(err_value?));
             }
         };
 
-        let mut router = Router::Router::init(
-            vm.transpiler.fs,
-            &allocator,
-            RouteConfig {
-                dir: Box::from(path_to_use),
-                extensions: if !extensions.is_empty() {
-                    extensions.iter().map(|s| Box::<[u8]>::from(*s)).collect()
-                } else {
-                    DEFAULT_EXTENSIONS.iter().map(|s| Box::<[u8]>::from(*s)).collect()
-                },
-                asset_prefix_path: Box::from(asset_prefix_slice.slice()),
-                ..Default::default()
-            },
-        )
-        .expect("unreachable");
-
-        let config_dir = router.config.dir.clone();
-        if let Err(_) = router.load_routes(
-            &mut log,
-            root_dir_info,
-            // TODO(port): `Resolver` passed as comptime type param + `&vm.transpiler.resolver` value.
-            &mut vm.transpiler.resolver,
-            &config_dir,
-        ) {
-            // Build the JS error before arena teardown: `log` is backed by the arena allocator.
-            // Declaration order (arena before log) guarantees `log` drops first on return.
-            let err_value = log.to_js(global_this, "loading routes");
-            return global_this.throw_value(err_value?);
-        }
+        let _ = (path_to_use, &extensions, &asset_prefix_slice);
+        // TODO(port): `Router::Router::init` takes `&'a b1_stubs::FileSystem` and
+        // `load_routes` takes `&mut b1_stubs::logger::Log` + `R: ResolverLike` —
+        // neither is satisfiable from this crate yet (private stub module + no
+        // `ResolverLike` impl for `bun_resolver::Resolver`).
+        let mut router: Router::Router<'static> = todo!(
+            "blocked_on: bun_router::Router::init / bun_router::ResolverLike for bun_resolver::Resolver"
+        );
 
         if let Some(origin) = argument.get(global_this, "origin")? {
             if !origin.is_string() {
-                return global_this.throw_invalid_arguments("Expected origin to be a string", ());
+                return Err(global_this.throw_invalid_arguments("Expected origin to be a string"));
             }
             origin_str = origin.to_slice(global_this)?;
         }
@@ -261,24 +266,27 @@ impl FileSystemRouter {
             // Build the JS error before arena teardown: `log` is backed by the arena allocator.
             // Declaration order (arena before log) guarantees `log` drops first on return.
             let err_value = log.to_js(global_this, "loading routes");
-            return global_this.throw_value(err_value?);
+            return Err(global_this.throw_value(err_value?));
         }
 
-        let base_dir_str = if !root_dir_info.abs_real_path.is_empty() {
-            root_dir_info.abs_real_path
+        // SAFETY: `root_dir_info` is a live `*mut DirInfo` from the resolver cache.
+        let root_dir = unsafe { &*root_dir_info };
+        let base_dir_str: &[u8] = if !root_dir.abs_real_path.is_empty() {
+            root_dir.abs_real_path
         } else {
-            root_dir_info.abs_path
+            root_dir.abs_path
         };
 
         let mut fs_router = Box::new(FileSystemRouter {
-            origin: if origin_str.len() > 0 {
-                Some(vm.ref_counted_string(origin_str.slice(), None, true))
+            origin: if origin_str.length() > 0 {
+                Some(vm.ref_counted_string::<true>(origin_str.slice(), None) as *mut RefString)
             } else {
                 None
             },
-            base_dir: Some(vm.ref_counted_string(base_dir_str, None, true)),
-            asset_prefix: if asset_prefix_slice.len() > 0 {
-                Some(vm.ref_counted_string(asset_prefix_slice.slice(), None, true))
+            base_dir: Some(vm.ref_counted_string::<true>(base_dir_str, None) as *mut RefString),
+            asset_prefix: if asset_prefix_slice.length() > 0 {
+                Some(vm.ref_counted_string::<true>(asset_prefix_slice.slice(), None)
+                    as *mut RefString)
             } else {
                 None
             },
@@ -289,7 +297,9 @@ impl FileSystemRouter {
         // PORT NOTE: `base_dir.?.ref()` — Zig borrowed the RefString bytes into
         // `router.config.dir` and bumped the refcount. RouteConfig::dir is now an owned
         // `Box<[u8]>`, so copy the bytes; no extra Arc leak needed.
-        fs_router.router.config.dir = Box::from(fs_router.base_dir.as_ref().unwrap().slice());
+        // SAFETY: `base_dir` was just set to a live RefString pointer above.
+        fs_router.router.config.dir =
+            Box::from(unsafe { ref_string_slice(fs_router.base_dir.unwrap()) });
 
         // TODO: Memory leak? We haven't freed `asset_prefix_slice`, but we can't do so because the
         // underlying string is borrowed in `fs_router.router.config.asset_prefix_path`.
@@ -299,16 +309,16 @@ impl FileSystemRouter {
     }
 
     pub fn bust_dir_cache_recursive(&mut self, global_this: &JSGlobalObject, input_path: &[u8]) {
-        let vm = global_this.bun_vm();
-        let mut path = input_path;
+        // SAFETY: `bun_vm()` returns the live VM raw pointer; valid for the call.
+        let vm = unsafe { &mut *global_this.bun_vm() };
+        let path = input_path;
         #[cfg(windows)]
-        {
+        let path = {
             // TODO(port): borrows thread-local buf for the duration of recursion; Zig used a
             // `ThreadlocalBuffers` pool that hands out a fresh slot per `.get()`.
-            WIN32_NORMALIZE_BUF.with_borrow_mut(|buf| {
-                path = vm.transpiler.resolver.fs.normalize_buf(buf, path);
-            });
-        }
+            let _ = path;
+            todo!("blocked_on: bun_resolver::fs::FileSystem::normalize_buf")
+        };
 
         let root_dir_info = match vm.transpiler.resolver.read_dir_info(path) {
             Ok(v) => v,
@@ -316,33 +326,12 @@ impl FileSystemRouter {
         };
 
         if let Some(dir) = root_dir_info {
-            if let Some(entries) = dir.get_entries_const() {
-                let mut iter = entries.data.iter();
-                'outer: while let Some(entry_ptr) = iter.next() {
-                    let entry = *entry_ptr.value_ptr();
-                    if entry.base()[0] == b'.' {
-                        continue 'outer;
-                    }
-                    if entry.kind(&vm.transpiler.fs.fs, false) == Fs::EntryKind::Dir {
-                        // PORT NOTE: `inline for (Router.banned_dirs)` — banned_dirs is a const
-                        // slice; plain `for` over const array is equivalent.
-                        for banned_dir in Router::BANNED_DIRS {
-                            if entry.base() == banned_dir {
-                                continue 'outer;
-                            }
-                        }
-
-                        let abs_parts_con: [&[u8]; 2] = [entry.dir(), entry.base()];
-                        let full_path = vm.transpiler.fs.abs(&abs_parts_con);
-
-                        let _ = vm
-                            .transpiler
-                            .resolver
-                            .bust_dir_cache(strings::paths::without_trailing_slash_windows_path(full_path));
-                        self.bust_dir_cache_recursive(global_this, full_path);
-                    }
-                }
-            }
+            let _ = dir;
+            // TODO(port): `DirInfo::get_entries_const` + `EntryMap` iteration —
+            // upstream `bun_resolver::dir_info::DirInfo` does not yet expose a
+            // stable iterator surface here; the directory walk recurses through
+            // `Entry::kind`/`Entry::dir` which take `&mut Implementation`.
+            todo!("blocked_on: bun_resolver::dir_info::DirInfo::get_entries_const iteration");
         }
 
         let _ = vm.transpiler.resolver.bust_dir_cache(path);
@@ -365,18 +354,17 @@ impl FileSystemRouter {
     ) -> JsResult<JSValue> {
         let this_value = callframe.this();
 
-        let mut arena = Box::new(ArenaAllocator::new());
-        // Zig `arena.allocator()` → `std.mem.Allocator`; with `bumpalo::Bump` the arena
-        // *is* the allocator handle, so borrow it directly.
-        let allocator = &*arena;
-        let vm = global_this.bun_vm();
+        let arena = Box::new(ArenaAllocator::new());
+        // SAFETY: `bun_vm()` returns the live VM raw pointer; valid for the call.
+        let vm = unsafe { &mut *global_this.bun_vm() };
 
         let orig_log = vm.transpiler.resolver.log;
-        let mut log = Log::Log::new(&allocator);
-        vm.transpiler.resolver.log = &mut log;
+        let mut log = Log::Log::new();
+        vm.transpiler.resolver.log = &mut log as *mut _;
         // TODO(port): errdefer — see note in constructor.
-        let _restore_log = scopeguard::guard((), |_| {
-            vm.transpiler.resolver.log = orig_log;
+        let _restore_log = scopeguard::guard((), move |_| {
+            // SAFETY: see constructor.
+            unsafe { (*VirtualMachine::get()).transpiler.resolver.log = orig_log; }
         });
 
         this.bust_dir_cache(global_this);
@@ -384,42 +372,25 @@ impl FileSystemRouter {
         let root_dir_info = match vm.transpiler.resolver.read_dir_info(&this.router.config.dir) {
             Ok(Some(info)) => info,
             Ok(None) => {
-                return global_this.throw(format_args!(
+                return Err(global_this.throw(format_args!(
                     "Unable to find directory: {}",
                     bstr::BStr::new(&*this.router.config.dir)
-                ));
+                )));
             }
             Err(_) => {
                 // Build the JS error before arena teardown: `log` is backed by the arena allocator.
                 // Declaration order (arena before log) guarantees `log` drops first on return.
                 let err_value = log.to_js(global_this, "reading root directory");
-                return global_this.throw_value(err_value?);
+                return Err(global_this.throw_value(err_value?));
             }
         };
 
-        let mut router = Router::Router::init(
-            vm.transpiler.fs,
-            &allocator,
-            RouteConfig {
-                dir: this.router.config.dir.clone(),
-                extensions: this.router.config.extensions.clone(),
-                asset_prefix_path: this.router.config.asset_prefix_path.clone(),
-                ..Default::default()
-            },
-        )
-        .expect("unreachable");
-        let config_dir = router.config.dir.clone();
-        if let Err(_) = router.load_routes(
-            &mut log,
-            root_dir_info,
-            &mut vm.transpiler.resolver,
-            &config_dir,
-        ) {
-            // Build the JS error before arena teardown: `log` is backed by the arena allocator.
-            // Declaration order (arena before log) guarantees `log` drops first on return.
-            let err_value = log.to_js(global_this, "loading routes");
-            return global_this.throw_value(err_value?);
-        }
+        let _ = root_dir_info;
+        // TODO(port): see `constructor` — Router::init / load_routes blocked on
+        // `b1_stubs` types and missing `ResolverLike` impl.
+        let router: Router::Router<'static> = todo!(
+            "blocked_on: bun_router::Router::init / bun_router::ResolverLike for bun_resolver::Resolver"
+        );
 
         // `this.router.deinit(); this.arena.deinit(); destroy(this.arena)` — drop old values.
         // PORT NOTE: order matters — old router borrows slices from old arena, so it must drop
@@ -427,8 +398,8 @@ impl FileSystemRouter {
         this.router = router;
         this.arena = arena;
         // TODO(port): codegen'd cached-property setter `js.routesSetCached`.
-        Self::routes_set_cached(this_value, global_this, JSValue::ZERO);
-        Ok(this_value)
+        let _ = this_value;
+        todo!("blocked_on: bun_jsc::codegen_cached_accessors!(FileSystemRouter; routes)");
     }
 
     #[bun_jsc::host_fn(method)]
@@ -437,14 +408,14 @@ impl FileSystemRouter {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let argument_ = callframe.arguments_old(2);
-        if argument_.len() == 0 {
-            return global_this.throw_invalid_arguments("Expected string, Request or Response", ());
+        let argument_ = callframe.arguments_old::<2>();
+        if argument_.len == 0 {
+            return Err(global_this.throw_invalid_arguments("Expected string, Request or Response"));
         }
 
-        let argument = argument_.ptr()[0];
+        let argument = argument_.ptr[0];
         if argument.is_empty_or_undefined_or_null() || !argument.is_cell() {
-            return global_this.throw_invalid_arguments("Expected string, Request or Response", ());
+            return Err(global_this.throw_invalid_arguments("Expected string, Request or Response"));
         }
 
         let mut path: ZigStringSlice = 'brk: {
@@ -454,19 +425,22 @@ impl FileSystemRouter {
 
             if argument.is_cell() {
                 if let Some(req) = argument.as_::<Request>() {
+                    // SAFETY: `as_` returns a live `m_ctx` pointer for the JS wrapper.
+                    let req = unsafe { &mut *req };
                     req.ensure_url().expect("unreachable");
                     break 'brk req.url.to_utf8();
                 }
 
                 if let Some(resp) = argument.as_::<Response>() {
-                    break 'brk resp.get_utf8_url();
+                    // SAFETY: see above.
+                    break 'brk unsafe { &*resp }.get_utf8_url();
                 }
             }
 
-            return global_this.throw_invalid_arguments("Expected string, Request or Response", ());
+            return Err(global_this.throw_invalid_arguments("Expected string, Request or Response"));
         };
 
-        if path.len() == 0 || (path.len() == 1 && path.ptr()[0] == b'/') {
+        if path.length() == 0 || (path.length() == 1 && path.slice()[0] == b'/') {
             path = ZigStringSlice::from_utf8_never_free(b"/");
         }
 
@@ -478,21 +452,21 @@ impl FileSystemRouter {
             path = ZigStringSlice::init_dupe(URL::parse(prev_path.slice()).pathname)?;
         }
 
-        let url_path = match URLPath::parse(path.slice()) {
+        let url_path = match bun_http_types::url_path::parse(path.slice()) {
             Ok(v) => v,
             Err(err) => {
-                return global_this.throw(format_args!(
+                return Err(global_this.throw(format_args!(
                     "{} parsing path: {}",
                     err.name(),
                     bstr::BStr::new(path.slice())
-                ));
+                )));
             }
         };
         let mut params = ParamList::default();
         // `defer params.deinit(allocator)` → Drop
         let Some(route) = this.router.routes.match_page_with_allocator(
             b"",
-            url_path,
+            &url_path,
             &mut params,
         ) else {
             return Ok(JSValue::NULL);
@@ -500,9 +474,9 @@ impl FileSystemRouter {
 
         let result = MatchedRoute::init(
             route,
-            this.origin.clone(),
-            this.asset_prefix.clone(),
-            this.base_dir.as_ref().unwrap().clone(),
+            this.origin,
+            this.asset_prefix,
+            this.base_dir.unwrap(),
         )
         .expect("unreachable");
 
@@ -519,8 +493,11 @@ impl FileSystemRouter {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_origin(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        if let Some(origin) = &this.origin {
-            return Ok(ZigString::init(origin.slice()).with_encoding().to_js(global_this));
+        if let Some(origin) = this.origin {
+            // SAFETY: `origin` is a live RefString for the lifetime of `this`.
+            return Ok(ZigString::init(unsafe { ref_string_slice(origin) })
+                .with_encoding()
+                .to_js(global_this));
         }
 
         Ok(JSValue::NULL)
@@ -537,24 +514,20 @@ impl FileSystemRouter {
             name_strings_slice[i] = ZigString::init(name).with_encoding();
             paths_strings[i] = ZigString::init(paths[i]).with_encoding();
         }
-        Ok(JSValue::from_entries(
-            global_this,
-            name_strings_slice.as_ptr(),
-            paths_strings.as_ptr(),
-            names.len(),
-            true,
-        ))
+        let _ = (global_this, name_strings_slice, paths_strings);
+        todo!("blocked_on: bun_jsc::JSValue::from_entries")
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_style(_this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(bun_str::String::static_("nextjs").to_js(global_this))
+        bun_str::String::static_("nextjs").to_js(global_this)
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_asset_prefix(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        if let Some(asset_prefix) = &this.asset_prefix {
-            return Ok(ZigString::init(asset_prefix.slice())
+        if let Some(asset_prefix) = this.asset_prefix {
+            // SAFETY: `asset_prefix` is a live RefString for the lifetime of `this`.
+            return Ok(ZigString::init(unsafe { ref_string_slice(asset_prefix) })
                 .with_encoding()
                 .to_js(global_this));
         }
@@ -564,11 +537,15 @@ impl FileSystemRouter {
 
     pub fn finalize(this: *mut FileSystemRouter) {
         // SAFETY: called by JSC finalizer on the mutator thread; `this` is the m_ctx payload.
-        let this = unsafe { &mut *this };
-        // PORT NOTE: Arc<RefString> drops handle the deref()s; Router/arena drop in Box::from_raw.
-        this.asset_prefix = None;
-        this.origin = None;
-        this.base_dir = None;
+        let this_ref = unsafe { &mut *this };
+        // PORT NOTE: RefString deref()s; Router/arena drop in Box::from_raw.
+        for p in [this_ref.asset_prefix.take(), this_ref.origin.take(), this_ref.base_dir.take()]
+            .into_iter()
+            .flatten()
+        {
+            // SAFETY: each was produced by `ref_counted_string` and is live until deref.
+            unsafe { (*p).deref() };
+        }
         // TODO(port): Zig did NOT `destroy(this.arena)` here (only `deinit`) — possible Zig bug.
         // Dropping the Box frees both contents and the allocation.
         // SAFETY: codegen guarantees `this` was Box::into_raw'd in constructor.
@@ -576,7 +553,7 @@ impl FileSystemRouter {
     }
 }
 
-#[bun_jsc::JsClass]
+#[bun_jsc::JsClass(no_construct)]
 pub struct MatchedRoute {
     /// Self-referential: always points at `self.route_holder`. See `init`.
     // PORT NOTE: `Match<'a>` borrows arena/request bytes that outlive this object via
@@ -585,11 +562,11 @@ pub struct MatchedRoute {
     pub route_holder: RouterMatch<'static>,
     pub query_string_map: Option<QueryStringMap>,
     pub param_map: Option<QueryStringMap>,
-    pub params_list_holder: ParamList,
-    pub origin: Option<Arc<RefString>>,
-    pub asset_prefix: Option<Arc<RefString>>,
+    pub params_list_holder: ParamList<'static>,
+    pub origin: Option<*mut RefString>,
+    pub asset_prefix: Option<*mut RefString>,
     pub needs_deinit: bool,
-    pub base_dir: Option<Arc<RefString>>,
+    pub base_dir: Option<*mut RefString>,
 }
 
 impl MatchedRoute {
@@ -597,7 +574,7 @@ impl MatchedRoute {
     // wired by `#[bun_jsc::JsClass]` — deleted.
 
     #[inline]
-    fn route(&self) -> &RouterMatch {
+    fn route(&self) -> &RouterMatch<'static> {
         // SAFETY: `self.route` always points at `self.route_holder` (set in `init`); the Box
         // is never moved after construction (heap-stable).
         unsafe { &*self.route }
@@ -609,31 +586,17 @@ impl MatchedRoute {
     }
 
     pub fn init(
-        match_: RouterMatch,
-        origin: Option<Arc<RefString>>,
-        asset_prefix: Option<Arc<RefString>>,
-        base_dir: Arc<RefString>,
+        match_: RouterMatch<'_>,
+        origin: Option<*mut RefString>,
+        asset_prefix: Option<*mut RefString>,
+        base_dir: *mut RefString,
     ) -> Result<Box<MatchedRoute>, bun_alloc::AllocError> {
-        let params_list = match_.params.clone()?;
-
-        let mut route = Box::new(MatchedRoute {
-            route_holder: match_,
-            route: core::ptr::null(),
-            asset_prefix,
-            origin,
-            base_dir: Some(base_dir),
-            query_string_map: None,
-            param_map: None,
-            params_list_holder: ParamList::default(),
-            needs_deinit: true,
-        });
-        // PORT NOTE: `base_dir.ref()` / `o.ref()` / `prefix.ref()` — Arc::clone at call site
-        // already bumped the refcount; no extra ref needed here.
-        route.params_list_holder = params_list;
-        route.route = &route.route_holder as *const RouterMatch;
-        route.route_holder.params = &route.params_list_holder as *const ParamList;
-
-        Ok(route)
+        // PORT NOTE: Zig clones the params list and rewires `route_holder.params`
+        // to point at `params_list_holder`. `Match<'a>` is invariant over `'a`
+        // and stores `&'a mut Vec<Param<'a>>`, which makes the self-referential
+        // wiring unrepresentable without `unsafe` lifetime erasure.
+        let _ = (match_, origin, asset_prefix, base_dir);
+        todo!("blocked_on: bun_router::Match self-referential params (invariant lifetime)")
     }
 
     // PORT NOTE: `deinit` is called only from `finalize`; not exposed as `Drop` because
@@ -657,9 +620,13 @@ impl MatchedRoute {
             this_ref.params_list_holder = ParamList::default();
         }
 
-        this_ref.origin = None;
-        this_ref.asset_prefix = None;
-        this_ref.base_dir = None;
+        for p in [this_ref.origin.take(), this_ref.asset_prefix.take(), this_ref.base_dir.take()]
+            .into_iter()
+            .flatten()
+        {
+            // SAFETY: each was produced by `ref_counted_string` and is live until deref.
+            unsafe { (*p).deref() };
+        }
 
         // SAFETY: `this` was Box::into_raw'd by codegen at construction.
         drop(unsafe { Box::from_raw(this) });
@@ -699,7 +666,7 @@ impl MatchedRoute {
         struct QueryObjectCreator<'a> {
             query: &'a mut QueryStringMap,
         }
-        impl<'a> QueryObjectCreator<'a> {
+        impl<'a> ObjectInitializer for QueryObjectCreator<'a> {
             fn create(&mut self, obj: &mut JSObject, global: &JSGlobalObject) -> JsResult<()> {
                 QUERY_STRING_VALUES_BUF.with_borrow_mut(|values_buf| {
                     QUERY_STRING_VALUE_REFS_BUF.with_borrow_mut(|refs_buf| {
@@ -726,15 +693,15 @@ impl MatchedRoute {
             }
         }
 
+        let count = map.get_name_count();
         let mut creator = QueryObjectCreator { query: map };
 
         // TODO(port): `JSObject.createWithInitializer` takes (Type, *creator, ctx, count) in Zig.
         let value = JSObject::create_with_initializer(
             &mut creator,
             ctx,
-            map.get_name_count(),
-            QueryObjectCreator::create,
-        )?;
+            count,
+        );
 
         Ok(value)
     }
@@ -752,7 +719,7 @@ impl MatchedRoute {
         // `dir = VM.top_level_dir`, `asset_prefix = ""`, `.loose`. Inline that body here.
         // SAFETY: `VirtualMachine::get()` returns a thread-local singleton pointer; this fn is
         // only called on the JS thread where the VM is alive.
-        let top_level_dir = unsafe { (*VirtualMachine::get()).transpiler.fs.top_level_dir };
+        let top_level_dir = unsafe { (*(*VirtualMachine::get()).transpiler.fs).top_level_dir };
         let mut entry_point_tempbuf = PathBuffer::uninit();
         // We don't store the framework config including the client parts in the server
         // instead, we just store a boolean saying whether we should generate this whenever the script is requested
@@ -761,7 +728,7 @@ impl MatchedRoute {
             bun_object::get_public_path_with_asset_prefix(
                 Transpiler::entry_points::ClientEntryPoint::generate_entry_point_path(
                     &mut entry_point_tempbuf,
-                    Fs::PathName::init(file_path),
+                    &Fs::PathName::init(file_path),
                 ),
                 top_level_dir,
                 origin,
@@ -788,22 +755,25 @@ impl MatchedRoute {
         // into a `String` (path components are UTF-8 in practice; the underlying impl already
         // routes through `String::from_utf8_lossy` for non-UTF-8 bytes).
         let mut writer = String::with_capacity(MAX_PATH_BYTES);
-        let origin_url = if let Some(origin) = &this.origin {
-            URL::parse(origin.slice())
+        let origin_url = if let Some(origin) = this.origin {
+            // SAFETY: `origin` is a live RefString for the lifetime of `this`.
+            URL::parse(unsafe { ref_string_slice(origin) })
         } else {
             URL::default()
         };
         bun_object::get_public_path_with_asset_prefix(
             this.route().file_path,
-            if let Some(base_dir) = &this.base_dir {
-                base_dir.slice()
+            if let Some(base_dir) = this.base_dir {
+                // SAFETY: `base_dir` is a live RefString for the lifetime of `this`.
+                unsafe { ref_string_slice(base_dir) }
             } else {
                 // SAFETY: VM singleton is alive on the JS thread for the duration of this getter.
-                unsafe { (*VirtualMachine::get()).transpiler.fs.top_level_dir }
+                unsafe { (*(*VirtualMachine::get()).transpiler.fs).top_level_dir }
             },
             &origin_url,
-            if let Some(prefix) = &this.asset_prefix {
-                prefix.slice()
+            if let Some(prefix) = this.asset_prefix {
+                // SAFETY: `prefix` is a live RefString for the lifetime of `this`.
+                unsafe { ref_string_slice(prefix) }
             } else {
                 b""
             },
@@ -815,7 +785,9 @@ impl MatchedRoute {
             .to_js(global_this))
     }
 
-    #[bun_jsc::host_fn(getter)]
+    // PORT NOTE: `host_fn(getter)` shim passes `&Self`, but this getter mutates
+    // `param_map`; until the macro grows a `getter_mut` variant the shim is
+    // omitted (codegen owns the actual link name).
     pub fn get_params(this: &mut Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         if this.route().params.len() == 0 {
             return Ok(JSValue::create_empty_object(global_this, 0));
@@ -830,19 +802,19 @@ impl MatchedRoute {
                 route.name,
                 route.params,
             );
-            this.param_map = Some(QueryStringMap::init_with_scanner(scanner)?);
+            this.param_map = QueryStringMap::init_with_scanner(scanner)?;
         }
 
         Self::create_query_object(global_this, this.param_map.as_mut().unwrap())
     }
 
-    #[bun_jsc::host_fn(getter)]
+    // PORT NOTE: see `get_params` — `host_fn(getter)` omitted for `&mut Self`.
     pub fn get_query(this: &mut Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         let route = this.route();
         if route.query_string.is_empty() && route.params.len() == 0 {
             return Ok(JSValue::create_empty_object(global_this, 0));
         } else if route.query_string.is_empty() {
-            return this.get_params(global_this);
+            return Self::get_params(this, global_this);
         }
 
         if this.query_string_map.is_none() {
@@ -854,9 +826,9 @@ impl MatchedRoute {
                     route.name,
                     route.params,
                 );
-                this.query_string_map = Some(QueryStringMap::init_with_scanner(scanner)?);
+                this.query_string_map = QueryStringMap::init_with_scanner(scanner)?;
             } else {
-                this.query_string_map = Some(QueryStringMap::init(route.query_string)?);
+                this.query_string_map = QueryStringMap::init(route.query_string)?;
             }
         }
 

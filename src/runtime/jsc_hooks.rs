@@ -3429,8 +3429,10 @@ unsafe fn resolve_hook(
     // false` paths don't leave a dangling stack pointer.
     let mut log = logger::Log::init();
     // SAFETY: `vm.log` is `Option<NonNull<Log>>`.
-    let old_log: *mut logger::Log =
-        unsafe { (*vm).log }.map(|p| p.as_ptr()).unwrap_or(ptr::null_mut());
+    let old_log: *mut logger::Log = match unsafe { (*vm).log } {
+        Some(p) => p.as_ptr(),
+        None => ptr::null_mut(),
+    };
     let log_ptr: *mut logger::Log = &mut log;
     // SAFETY: `vm` is the live per-thread VM; the log fields are raw `*mut`.
     unsafe {

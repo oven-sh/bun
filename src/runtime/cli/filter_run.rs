@@ -39,13 +39,15 @@ struct ScriptConfig {
 
 impl ScriptConfig {
     fn cmp(_: (), a: &Self, b: &Self) -> bool {
-        strings::cmp_strings_asc((), &a.package_name, &b.package_name)
+        strings::cmp_strings_asc(&(), &a.package_name, &b.package_name)
     }
 }
 
 // Anonymous struct in Zig: `process: ?struct { ptr, status }`
 struct ProcessInfo {
-    ptr: std::sync::Arc<Process>,
+    // Intrusive ref-counted (`ThreadSafeRefCount<Process>`); raw `*mut` matches
+    // `to_process()` and `set_exit_handler` callers (Zig: `*Process`).
+    ptr: *mut Process,
     status: Status,
 }
 

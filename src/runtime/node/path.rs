@@ -686,7 +686,7 @@ pub fn basename(
     validate_string(global_object, path_ptr, format_args!("path"))?;
 
     let path_zstr = path_ptr.get_zig_string(global_object)?;
-    if path_zstr.len() == 0 {
+    if path_zstr.len == 0 {
         return Ok(path_ptr);
     }
 
@@ -696,7 +696,7 @@ pub fn basename(
     let mut suffix_zslice: Option<bun_str::ZigStringSlice> = None;
     if let Some(_suffix_ptr) = suffix_ptr {
         let suffix_zstr = _suffix_ptr.get_zig_string(global_object)?;
-        if suffix_zstr.len() > 0 && suffix_zstr.len() <= path_zstr.len() {
+        if suffix_zstr.len > 0 && suffix_zstr.len <= path_zstr.len {
             suffix_zslice = Some(suffix_zstr.to_slice());
         }
     }

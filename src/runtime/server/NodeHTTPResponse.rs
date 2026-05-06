@@ -486,13 +486,17 @@ impl NodeHTTPResponse {
             self.flags.insert(Flags::UPGRADED);
             // Unref the poll_ref since the socket is now upgraded to WebSocket
             // and will have its own lifecycle management
-            self.poll_ref.unref(self.server.global_this().bun_vm());
+            // SAFETY: server.global_this() is non-null while the server is alive.
+            let vm = unsafe { &mut *(*self.server.global_this()).bun_vm() };
+            self.poll_ref.unref(vm);
+            // SAFETY: upgrade_ctx checked non-null above.
+            let ctx = unsafe { &mut *upgrade_ctx };
             let _ = raw_response.upgrade::<ServerWebSocket>(
                 ws,
                 websocket_key,
                 sec_websocket_protocol_value,
                 sec_websocket_extensions_value,
-                upgrade_ctx,
+                Some(ctx),
             );
         }
 

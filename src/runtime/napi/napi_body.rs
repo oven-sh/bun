@@ -1523,7 +1523,8 @@ pub enum AsyncWorkStatus {
 pub struct napi_async_work {
     pub task: WorkPoolTask,
     pub concurrent_task: ConcurrentTask,
-    pub event_loop: &'static EventLoop,
+    // PORT NOTE: `*mut` (not `&'static`) — `enqueue_task` needs `&mut EventLoop`.
+    pub event_loop: *mut EventLoop,
     pub global: &'static JSGlobalObject, // JSC_BORROW (lives for vm lifetime)
     pub env: NapiEnvRef,
     pub execute: napi_async_execute_callback,

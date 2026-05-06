@@ -388,7 +388,7 @@ fn cpus_impl_linux(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
 }
 
 #[cfg(target_os = "freebsd")]
-fn cpus_impl_freebsd(global_this: &JSGlobalObject) -> Result<JSValue, bun_core::Error> {
+fn cpus_impl_freebsd(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
     let mut ncpu: c_uint = 0;
     let mut ncpu_len: usize = core::mem::size_of::<c_uint>();
     // TODO(port): std.posix.sysctlbynameZ → bun_sys::posix::sysctlbyname

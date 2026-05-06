@@ -803,24 +803,26 @@ impl ServerWebSocket {
         topic_str: &JSString,
         array: &JSUint8Array,
     ) -> JsResult<JSValue> {
-        let Some(app) = self.handler.app else {
+        // SAFETY: handler outlives the ServerWebSocket (see PORT NOTE on struct).
+        let handler = unsafe { &*self.handler };
+        let Some(app) = handler.app else {
             bun_output::scoped_log!(WebSocketServer, "publish() closed");
-            return Ok(JSValue::js_number(0));
+            return Ok(JSValue::js_number(0.0));
         };
-        let flags = self.handler.flags;
+        let flags = handler.flags;
         let ssl = flags.ssl;
         let publish_to_self = flags.publish_to_self;
 
         let topic_slice = topic_str.to_slice(global_this);
-        if topic_slice.len() == 0 {
-            return global_this.throw("publishBinary requires a non-empty topic");
+        if topic_slice.slice().is_empty() {
+            return Err(global_this.throw("publishBinary requires a non-empty topic"));
         }
 
         let compress = true;
 
         let buffer = array.slice();
         if buffer.is_empty() {
-            return Ok(JSValue::js_number(0));
+            return Ok(JSValue::js_number(0.0));
         }
 
         let result = if !publish_to_self && !self.is_closed() {

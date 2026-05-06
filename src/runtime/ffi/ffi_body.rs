@@ -1351,7 +1351,7 @@ impl FFI {
                 }
                 Step::Pending => {
                     return Err(
-                        global_this.throw("Failed to compile (nothing happend!)", &[])
+                        global_this.throw("Failed to compile (nothing happend!)")
                     );
                 }
                 Step::Compiled(compiled) => {
@@ -1365,7 +1365,7 @@ impl FFI {
                         function.symbol_from_dynamic_library,
                     );
                     compiled.js_function = cb;
-                    obj.put(global_this, &str, cb);
+                    obj.put(global_this, str.slice(), cb);
                 }
             }
         }
@@ -1399,7 +1399,6 @@ impl FFI {
         {
             return Err(global_this.throw(
                 "bun:ffi callback() is not available in this build (TinyCC is disabled)",
-                &[],
             ));
         }
         jsc::mark_binding();

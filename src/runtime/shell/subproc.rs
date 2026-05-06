@@ -562,7 +562,14 @@ impl ShellSubprocess {
         *out_subproc = subprocess;
         // SAFETY: subprocess was just allocated and is uniquely owned here.
         let subproc = unsafe { &mut *subprocess };
-        subproc.process.set_exit_handler(subprocess);
+        // SAFETY: `subproc.process` is heap-allocated and never moved; the
+        // raw-ptr mutation matches the Zig single-threaded mutation model.
+        unsafe {
+            (*(Arc::as_ptr(&subproc.process) as *mut Process)).set_exit_handler(
+                subprocess.cast::<()>(),
+                &SHELL_SUBPROCESS_EXIT_VTABLE,
+            );
+        }
         stdio_consumed = true;
         let _ = scopeguard::ScopeGuard::into_inner(stdio_guard);
 

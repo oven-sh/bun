@@ -4763,12 +4763,22 @@ impl<'a> BundleV2<'a> {
                             let hash = dev_server.asset_hash(&path.text).expect("cached asset not found");
                             import_record.path.text = path.text;
                             import_record.path.namespace = b"file";
-                            import_record.path.pretty = self.allocator().alloc_str(&format!(
-                                "{}/{:016x}{}",
-                                bake_types::ASSET_PREFIX,
-                                hash,
-                                bstr::BStr::new(bun_paths::extension(&path.text)),
-                            )).as_bytes();
+                            // SAFETY: `alloc_str` returns into the bundler arena which
+                            // outlives this `ImportRecord`. Erase the `&self` lifetime so
+                            // the borrow on `self.allocator()` does not extend to `'static`
+                            // (Phase-A arena-erasure convention; see also line ~5047).
+                            import_record.path.pretty = unsafe {
+                                core::mem::transmute::<&[u8], &'static [u8]>(
+                                    self.allocator()
+                                        .alloc_str(&format!(
+                                            "{}/{:016x}{}",
+                                            bake_types::ASSET_PREFIX,
+                                            hash,
+                                            bstr::BStr::new(bun_paths::extension(&path.text)),
+                                        ))
+                                        .as_bytes(),
+                                )
+                            };
                             import_record.path.is_disabled = false;
                         } else {
                             import_record.path.text = path.text;

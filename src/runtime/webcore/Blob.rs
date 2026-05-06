@@ -2084,7 +2084,7 @@ pub fn write_file_internal(
     }
 
     // if path_or_blob is a path, convert it into a file blob
-    let mut destination_blob: Blob = match path_or_blob {
+    let mut destination_blob: Blob = match *path_or_blob {
         PathOrBlob::Path(ref mut path) => {
             let new_blob = Blob::find_or_create_file_from_path(path, global_this, true);
             if new_blob.store.is_none() {

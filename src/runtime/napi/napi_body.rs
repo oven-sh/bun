@@ -226,10 +226,10 @@ impl NapiEnv {
 pub mod napi_env_external_shared_descriptor {
     use super::*;
     pub unsafe fn ref_(env: *mut NapiEnv) {
-        NapiEnv__ref(env)
+        unsafe { NapiEnv__ref(env) }
     }
     pub unsafe fn deref(env: *mut NapiEnv) {
-        NapiEnv__deref(env)
+        unsafe { NapiEnv__deref(env) }
     }
 }
 

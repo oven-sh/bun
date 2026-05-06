@@ -288,11 +288,14 @@ impl ByteStream {
         if self.buffer.capacity() == 0 {
             match &mut stream_ {
                 streams::Result::Owned(owned) => {
-                    self.buffer = owned.move_to_vec();
+                    // TODO(port): blocked_on bun_collections::BabyList::into_vec — copying for now
+                    // (Zig: `owned.listManaged(allocator).moveToUnmanaged()` moves the buffer).
+                    self.buffer = owned.slice().to_vec();
                     self.offset += offset;
                 }
                 streams::Result::OwnedAndDone(owned) => {
-                    self.buffer = owned.move_to_vec();
+                    // TODO(port): blocked_on bun_collections::BabyList::into_vec — copying for now.
+                    self.buffer = owned.slice().to_vec();
                     self.offset += offset;
                 }
                 streams::Result::TemporaryAndDone(_) | streams::Result::Temporary(_) => {
@@ -333,7 +336,10 @@ impl ByteStream {
 
     pub fn set_value(&mut self, view: JSValue) {
         bun_jsc::mark_binding!();
-        self.pending_value.set(self.parent().global_this, view);
+        // SAFETY: `global_this` is a JSC_BORROW raw pointer stored from a live
+        // `&JSGlobalObject`; valid for the lifetime of the JS VM thread.
+        let global = unsafe { &*self.parent().global_this };
+        self.pending_value.set(global, view);
     }
 
     pub fn parent(&mut self) -> &mut Source {
@@ -379,16 +385,16 @@ impl ByteStream {
                 self.buffer.shrink_to_fit();
                 self.done = true;
 
-                return streams::Result::IntoArrayAndDone {
+                return streams::Result::IntoArrayAndDone(IntoArray {
                     value: view,
                     len: to_write as blob::SizeType, // @truncate
-                };
+                });
             }
 
-            return streams::Result::IntoArray {
+            return streams::Result::IntoArray(IntoArray {
                 value: view,
                 len: to_write as blob::SizeType, // @truncate
-            };
+            });
         }
 
         if self.has_received_last_chunk {
@@ -416,7 +422,7 @@ impl ByteStream {
 
         if !view.is_empty() {
             self.pending_buffer = Self::empty_pending_buffer();
-            self.pending.result.deinit();
+            self.pending.result.release();
             self.pending.result = streams::Result::Done;
             self.pending.run();
         }
@@ -449,10 +455,10 @@ impl ByteStream {
             self.done = true;
 
             self.pending_buffer = Self::empty_pending_buffer();
-            self.pending.result.deinit();
+            self.pending.result.release();
             self.pending.result = streams::Result::Done;
             if self.pending.state == streams::PendingState::Pending
-                && matches!(self.pending.future, streams::PendingFuture::Promise(_))
+                && matches!(self.pending.future, streams::PendingFuture::Promise { .. })
             {
                 // We must never run JavaScript inside of a GC finalizer.
                 self.pending.run_on_next_tick();
@@ -460,8 +466,10 @@ impl ByteStream {
                 self.pending.run();
             }
         }
-        if let Some(action) = self.buffer_action.as_mut() {
-            action.deinit();
+        if let Some(action) = self.buffer_action.take() {
+            // PORT NOTE: Zig `action.deinit()` only deinits the JSPromiseStrong payload of each
+            // variant; JSPromiseStrong implements Drop, so dropping the enum is equivalent.
+            drop(action);
         }
         // SAFETY: `self` is the `context` field of a heap-allocated `NewSource<ByteStream>`
         // (via `Source::new` → `Box::new`); this is the GC-finalizer teardown path.
@@ -470,7 +478,7 @@ impl ByteStream {
 
     pub fn drain(&mut self) -> ByteList {
         if !self.buffer.is_empty() {
-            return ByteList::from_vec(core::mem::take(&mut self.buffer));
+            return ByteList::move_from_list(core::mem::take(&mut self.buffer));
         }
         ByteList::default()
     }
@@ -479,7 +487,7 @@ impl ByteStream {
         if self.has_received_last_chunk {
             let buffer = core::mem::take(&mut self.buffer);
             self.done = true;
-            self.pending.result.deinit();
+            self.pending.result.release();
             self.pending.result = streams::Result::Done;
             self.parent().is_closed = true;
             return Some(blob::Any::InternalBlob(blob::Internal {

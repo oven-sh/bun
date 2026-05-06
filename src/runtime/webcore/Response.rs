@@ -340,7 +340,7 @@ impl Response {
 
 impl Response {
     #[inline]
-    pub fn get_body_len(&self) -> usize {
+    pub fn get_body_len(&mut self) -> usize {
         self.body.len() as usize
     }
 

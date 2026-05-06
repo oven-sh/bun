@@ -247,12 +247,16 @@ impl TextDecoder {
             false
         };
 
+        // PORT NOTE: hoisted out of the labeled block — `ArrayBuffer::slice` borrows
+        // from the by-value `ArrayBuffer`, so it must outlive the `'input_slice` block.
+        let array_buffer;
         let input_slice: &[u8] = 'input_slice: {
             if arguments.is_empty() || arguments[0].is_undefined() {
                 break 'input_slice b"";
             }
 
-            if let Some(array_buffer) = arguments[0].as_array_buffer(global_this) {
+            if let Some(ab) = arguments[0].as_array_buffer(global_this) {
+                array_buffer = ab;
                 break 'input_slice array_buffer.slice();
             }
 
@@ -272,7 +276,7 @@ impl TextDecoder {
     pub fn decode_without_type_checks(
         &mut self,
         global_this: &JSGlobalObject,
-        uint8array: &JSUint8Array,
+        uint8array: &mut JSUint8Array,
     ) -> JsResult<JSValue> {
         self.decode_slice::<false>(global_this, uint8array.slice())
     }
@@ -299,7 +303,7 @@ impl TextDecoder {
                 let out = strings::copy_cp1252_into_utf16(&mut bytes, buffer_slice);
                 Ok(ZigString::to_external_u16(
                     Box::into_raw(bytes) as *mut u16,
-                    out.written,
+                    out.written as usize,
                     global_this,
                 ))
             }
@@ -347,9 +351,9 @@ impl TextDecoder {
                         let err_name: &'static str = (&err).into();
                         if self.fatal {
                             if err_name == "InvalidByteSequence" {
-                                return global_this
+                                return Err(global_this
                                     .err(jsc::ErrorCode::ERR_ENCODING_INVALID_ENCODED_DATA, format_args!("Invalid byte sequence"))
-                                    .throw();
+                                    .throw());
                             }
                         }
 
@@ -398,7 +402,7 @@ impl TextDecoder {
 
                 if saw_error && self.fatal {
                     drop(decoded);
-                    return global_this
+                    return Err(global_this
                         .err(
                             jsc::ErrorCode::ERR_ENCODING_INVALID_ENCODED_DATA,
                             format_args!(
@@ -406,7 +410,7 @@ impl TextDecoder {
                                 bstr::BStr::new(enc.get_label())
                             ),
                         )
-                        .throw();
+                        .throw());
                 }
 
                 if decoded.is_empty() {
@@ -432,6 +436,7 @@ impl TextDecoder {
                     // Fallback to empty string if codec creation fails
                     return Ok(ZigString::init(b"").to_js(global_this));
                 };
+                let mut codec = CodecGuard(codec);
                 // `codec` drops at scope exit (matches `defer codec.deinit()`).
 
                 // Handle BOM stripping if needed
@@ -445,7 +450,7 @@ impl TextDecoder {
 
                 // Check for errors if fatal mode is enabled
                 if result.saw_error && self.fatal {
-                    return global_this
+                    return Err(global_this
                         .err(
                             jsc::ErrorCode::ERR_ENCODING_INVALID_ENCODED_DATA,
                             format_args!(
@@ -453,7 +458,7 @@ impl TextDecoder {
                                 bstr::BStr::new(encoding_name)
                             ),
                         )
-                        .throw();
+                        .throw());
                 }
 
                 // Return the decoded string

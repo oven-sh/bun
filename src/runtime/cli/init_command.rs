@@ -875,7 +875,7 @@ impl InitCommand {
             if let Err(err) = bun_sys::File::from_fd(fd).write_all(written) {
                 Output::pretty_errorln(format_args!(
                     "package.json failed to write due to error {}",
-                    err.name(),
+                    bstr::BStr::new(err.name()),
                 ));
                 package_json_file = None;
                 break 'write_package_json;
@@ -883,7 +883,7 @@ impl InitCommand {
             if let Err(err) = bun_sys::ftruncate(fd, i64::try_from(written.len()).unwrap()) {
                 Output::pretty_errorln(format_args!(
                     "package.json failed to write due to error {}",
-                    err.name(),
+                    bstr::BStr::new(err.name()),
                 ));
                 package_json_file = None;
                 break 'write_package_json;

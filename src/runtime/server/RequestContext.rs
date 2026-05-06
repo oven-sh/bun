@@ -3,6 +3,9 @@ use core::ptr::NonNull;
 #[allow(unused_imports)]
 use std::sync::Arc;
 
+#[allow(unused_imports)]
+use bun_sys::FdExt as _;
+
 use bun_http_types::Method::Method;
 use bun_str::String as BunString;
 use bun_uws::{self as uws, WebSocketUpgradeContext};
@@ -774,12 +777,12 @@ where
         let mut message: Vec<u8> = Vec::new();
         let _ = write!(&mut message, "{}", Output::pretty_fmt::<false>(fmt));
         // SAFETY: VirtualMachine::get() returns the live VM raw ptr.
-        let cwd = unsafe { (*(*VirtualMachine::get()).transpiler.fs).top_level_dir.clone() };
+        let cwd = unsafe { (*(*VirtualMachine::get()).transpiler.fs).top_level_dir };
         let fallback_container = Box::new(Api::FallbackMessageContainer {
             message: Some(message.into_boxed_slice()),
             router: None,
             reason: Some(Api::FallbackStep::fetch_event_handler),
-            cwd,
+            cwd: Some(cwd.to_vec().into_boxed_slice()),
             problems: Some(Api::Problems {
                 // TODO(port): @intFromError(err) — bun_core::Error wraps a
                 // private NonZeroU16; no public accessor yet.

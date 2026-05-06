@@ -198,6 +198,9 @@ pub(crate) trait H2GlobalErrExt {
     fn to_type_error_fmt(&self, code: JscErrorCode, args: core::fmt::Arguments<'_>) -> JSValue;
     /// Zig `jsc.toInvalidArguments(fmt, .{}, globalObject)` — build a TypeError JSValue.
     fn to_invalid_arguments(&self, args: core::fmt::Arguments<'_>) -> JSValue;
+    /// `JSGlobalObject::clear_exception` lives in the cfg-gated
+    /// `JSGlobalObject.rs`; until that file un-gates, expose the FFI here.
+    fn clear_exception(&self);
 }
 impl H2GlobalErrExt for JSGlobalObject {
     #[inline]
@@ -227,6 +230,14 @@ impl H2GlobalErrExt for JSGlobalObject {
     #[inline]
     fn to_invalid_arguments(&self, args: core::fmt::Arguments<'_>) -> JSValue {
         JscErrorCode::INVALID_ARG_TYPE.fmt(self, args)
+    }
+    #[inline]
+    fn clear_exception(&self) {
+        unsafe extern "C" {
+            fn JSGlobalObject__clearException(global: *const JSGlobalObject);
+        }
+        // SAFETY: FFI — &self is a valid JSGlobalObject*; no extra preconditions.
+        unsafe { JSGlobalObject__clearException(self) }
     }
 }
 
@@ -4883,7 +4894,7 @@ impl H2FrameParser {
     #[bun_jsc::host_fn(method)]
     pub fn set_next_stream_id(this: &mut Self, _global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let args_list = callframe.arguments();
-        debug_assert!(args_list.len >= 1);
+        debug_assert!(args_list.len() >= 1);
         let stream_id_arg = args_list[0];
         debug_assert!(stream_id_arg.is_number());
         this.last_stream_id = stream_id_arg.to_u32();
@@ -5075,16 +5086,16 @@ impl H2FrameParser {
         let sensitive_arg = args_list.ptr[3];
 
         let Some(headers_obj) = headers_arg.get_object() else {
-            return global_object.throw("Expected headers to be an object");
+            return Err(global_object.throw("Expected headers to be an object"));
         };
 
         if !sensitive_arg.is_object() {
-            return global_object.throw("Expected sensitiveHeaders to be an object");
+            return Err(global_object.throw("Expected sensitiveHeaders to be an object"));
         }
         // PERF(port): was BufferFallbackAllocator over shared_request_buffer — using plain Vec
         let mut encoded_headers: Vec<u8> = Vec::new();
         if encoded_headers.try_reserve(16384).is_err() {
-            return global_object.throw("Failed to allocate header buffer");
+            return Err(global_object.throw("Failed to allocate header buffer"));
         }
         // max header name length for lshpack
         let mut name_buffer = [0u8; 4096];

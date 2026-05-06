@@ -1930,7 +1930,7 @@ impl RunCommand {
     /// gated until bun_jsc / transpiler / resolver siblings are green. Called
     /// from `cli_body::bun_getcompletes`.
     pub fn completions<const FILTER: Filter>(
-        _ctx: &Command::Context,
+        _ctx: &mut Command::ContextData,
         _default_completions: Option<&[&[u8]]>,
         _reject_list: &[&[u8]],
     ) -> Result<crate::cli::shell_completions::ShellCompletions, bun_core::Error> {

@@ -2415,55 +2415,65 @@ impl BuildArtifact {
     }
 
     pub fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
-        &self,
+        &mut self,
         formatter: &mut F,
         writer: &mut W,
-    ) -> Result<(), bun_core::Error>
+    ) -> core::fmt::Result
     where
         F: bun_jsc::ConsoleFormatter,
         W: core::fmt::Write,
     {
-        // TODO(port): narrow error set
-        writer.write_str(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>BuildArtifact "))?;
+        write!(
+            writer,
+            "{}",
+            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>BuildArtifact "),
+        )?;
 
         write!(
             writer,
             "{}",
-            Output::pretty_fmt_args::<ENABLE_ANSI_COLORS>(format_args!(
+            Output::pretty_fmt_args(
                 "(<blue>{}<r>) {{\n",
-                <&'static str>::from(self.output_kind)
-            ))
+                ENABLE_ANSI_COLORS,
+                (<&'static str>::from(self.output_kind),),
+            ),
         )?;
 
         {
             formatter.indent_inc();
-            let _dedent = scopeguard::guard((), |_| formatter.indent_dec());
-            // PORT NOTE: reshaped for borrowck — can't borrow formatter twice in scopeguard.
-            // TODO(port): defer formatter.indent -= 1 — manual decrement after block instead
+            // PORT NOTE: reshaped for borrowck — scopeguard cannot reborrow
+            // `formatter` while it is also borrowed for the body; decrement
+            // after the block instead.
 
             formatter.write_indent(writer)?;
             write!(
                 writer,
                 "{}",
-                Output::pretty_fmt_args::<ENABLE_ANSI_COLORS>(format_args!(
+                Output::pretty_fmt_args(
                     "<r>path<r>: <green>\"{}\"<r>",
-                    bstr::BStr::new(&self.path)
-                ))
+                    ENABLE_ANSI_COLORS,
+                    (bstr::BStr::new(&self.path),),
+                ),
             )?;
-            formatter.print_comma::<ENABLE_ANSI_COLORS>(writer).expect("unreachable");
+            formatter
+                .print_comma::<W, ENABLE_ANSI_COLORS>(writer)
+                .expect("unreachable");
             writer.write_str("\n")?;
 
             formatter.write_indent(writer)?;
             write!(
                 writer,
                 "{}",
-                Output::pretty_fmt_args::<ENABLE_ANSI_COLORS>(format_args!(
+                Output::pretty_fmt_args(
                     "<r>loader<r>: <green>\"{}\"<r>",
-                    <&'static str>::from(self.loader)
-                ))
+                    ENABLE_ANSI_COLORS,
+                    (<&'static str>::from(self.loader),),
+                ),
             )?;
 
-            formatter.print_comma::<ENABLE_ANSI_COLORS>(writer).expect("unreachable");
+            formatter
+                .print_comma::<W, ENABLE_ANSI_COLORS>(writer)
+                .expect("unreachable");
             writer.write_str("\n")?;
 
             formatter.write_indent(writer)?;
@@ -2471,56 +2481,76 @@ impl BuildArtifact {
             write!(
                 writer,
                 "{}",
-                Output::pretty_fmt_args::<ENABLE_ANSI_COLORS>(format_args!(
+                Output::pretty_fmt_args(
                     "<r>kind<r>: <green>\"{}\"<r>",
-                    <&'static str>::from(self.output_kind)
-                ))
+                    ENABLE_ANSI_COLORS,
+                    (<&'static str>::from(self.output_kind),),
+                ),
             )?;
 
             if self.hash != 0 {
-                formatter.print_comma::<ENABLE_ANSI_COLORS>(writer).expect("unreachable");
+                formatter
+                    .print_comma::<W, ENABLE_ANSI_COLORS>(writer)
+                    .expect("unreachable");
                 writer.write_str("\n")?;
 
                 formatter.write_indent(writer)?;
                 write!(
                     writer,
                     "{}",
-                    Output::pretty_fmt_args::<ENABLE_ANSI_COLORS>(format_args!(
+                    Output::pretty_fmt_args(
                         "<r>hash<r>: <green>\"{}\"<r>",
-                        bun_core::fmt::truncated_hash32(self.hash)
-                    ))
+                        ENABLE_ANSI_COLORS,
+                        (bun_core::fmt::truncated_hash32(self.hash),),
+                    ),
                 )?;
             }
 
-            formatter.print_comma::<ENABLE_ANSI_COLORS>(writer).expect("unreachable");
+            formatter
+                .print_comma::<W, ENABLE_ANSI_COLORS>(writer)
+                .expect("unreachable");
             writer.write_str("\n")?;
 
             formatter.write_indent(writer)?;
             formatter.reset_line();
-            self.blob.write_format::<F, W, ENABLE_ANSI_COLORS>(formatter, writer)?;
+            self.blob
+                .write_format::<F, W, ENABLE_ANSI_COLORS>(formatter, writer)?;
 
             if self.output_kind != OutputKind::Sourcemap {
-                formatter.print_comma::<ENABLE_ANSI_COLORS>(writer).expect("unreachable");
+                formatter
+                    .print_comma::<W, ENABLE_ANSI_COLORS>(writer)
+                    .expect("unreachable");
                 writer.write_str("\n")?;
                 formatter.write_indent(writer)?;
-                writer.write_str(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>(
-                    "<r>sourcemap<r>: ",
-                ))?;
+                write!(
+                    writer,
+                    "{}",
+                    Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>sourcemap<r>: "),
+                )?;
 
-                if let Some(sourcemap_value) = self.sourcemap.get() {
+                let sourcemap_value = self.sourcemap.get();
+                if !sourcemap_value.is_empty() {
                     if let Some(sourcemap) = sourcemap_value.as_::<BuildArtifact>() {
-                        sourcemap.write_format::<F, W, ENABLE_ANSI_COLORS>(formatter, writer)?;
+                        // SAFETY: `as_` returned a non-null wrapper-owned pointer.
+                        unsafe { &mut *sourcemap }
+                            .write_format::<F, W, ENABLE_ANSI_COLORS>(formatter, writer)?;
                     } else {
-                        writer.write_str(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>(
-                            "<yellow>null<r>",
-                        ))?;
+                        write!(
+                            writer,
+                            "{}",
+                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<yellow>null<r>"),
+                        )?;
                     }
                 } else {
-                    writer.write_str(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>(
-                        "<yellow>null<r>",
-                    ))?;
+                    write!(
+                        writer,
+                        "{}",
+                        Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<yellow>null<r>"),
+                    )?;
                 }
             }
+
+            formatter.indent_dec();
         }
         writer.write_str("\n")?;
         formatter.write_indent(writer)?;

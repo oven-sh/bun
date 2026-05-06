@@ -1063,13 +1063,15 @@ impl Subprocess<'_> {
             // This matches Node.js behavior. Node calls resume() on the streams.
             if let Readable::Pipe(pipe) = &mut self.stdout {
                 if !pipe.reader.is_done() {
-                    pipe.reader.read();
+                    // SAFETY: RefPtr<PipeReader> has no DerefMut; mutator-thread-only.
+                    unsafe { (*pipe.data.as_ptr()).reader.read() };
                 }
             }
 
             if let Readable::Pipe(pipe) = &mut self.stderr {
                 if !pipe.reader.is_done() {
-                    pipe.reader.read();
+                    // SAFETY: RefPtr<PipeReader> has no DerefMut; mutator-thread-only.
+                    unsafe { (*pipe.data.as_ptr()).reader.read() };
                 }
             }
         }
@@ -1103,7 +1105,9 @@ impl Subprocess<'_> {
             let must_deref = self.flags.contains(Flags::DEREF_ON_STDIN_DESTROYED);
             self.flags.remove(Flags::DEREF_ON_STDIN_DESTROYED);
 
-            pipe.on_attached_process_exit(&status);
+            // SAFETY: `pipe_ptr` is live (see `pipe` borrow above); Zig mutates
+            // through `*FileSink` here on the single mutator thread.
+            unsafe { (*pipe_ptr.as_ptr()).on_attached_process_exit(&status) };
 
             if must_deref {
                 self.deref();
@@ -1141,7 +1145,7 @@ impl Subprocess<'_> {
                                 .resolve(global_this, JSValue::js_number(exited.code as f64));
                             // TODO: properly propagate exception upwards
                         }
-                        Status::Err(err) => {
+                        Status::Err(ref err) => {
                             let js_err = err.to_js(global_this);
                             promise
                                 .as_any_promise()

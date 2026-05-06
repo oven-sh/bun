@@ -250,6 +250,48 @@ impl Default for Options {
     }
 }
 
+// Local extension shims for upstream `JSValue` methods not yet exposed in
+// `bun_jsc` — see Terminal.zig `getOptional` / `withAsyncContextIfNeeded`.
+trait JSValueTerminalExt {
+    fn get_optional_i32(self, global: &JSGlobalObject, name: &[u8]) -> JsResult<Option<i32>>;
+    fn get_optional_slice(
+        self,
+        global: &JSGlobalObject,
+        name: &[u8],
+    ) -> JsResult<Option<ZigStringSlice>>;
+    fn get_optional_value(self, global: &JSGlobalObject, name: &[u8]) -> JsResult<Option<JSValue>>;
+    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue;
+}
+impl JSValueTerminalExt for JSValue {
+    fn get_optional_i32(self, global: &JSGlobalObject, name: &[u8]) -> JsResult<Option<i32>> {
+        match self.get(global, name)? {
+            Some(v) if !v.is_undefined_or_null() => Ok(Some(v.coerce::<i32>(global)?)),
+            _ => Ok(None),
+        }
+    }
+    fn get_optional_slice(
+        self,
+        global: &JSGlobalObject,
+        name: &[u8],
+    ) -> JsResult<Option<ZigStringSlice>> {
+        match self.get(global, name)? {
+            Some(v) if !v.is_undefined_or_null() => Ok(Some(v.to_slice(global)?)),
+            _ => Ok(None),
+        }
+    }
+    fn get_optional_value(self, global: &JSGlobalObject, name: &[u8]) -> JsResult<Option<JSValue>> {
+        match self.get(global, name)? {
+            Some(v) if !v.is_undefined_or_null() => Ok(Some(v)),
+            _ => Ok(None),
+        }
+    }
+    fn with_async_context_if_needed(self, _global: &JSGlobalObject) -> JSValue {
+        // TODO(port): wire to JSC__JSValue__withAsyncContextIfNeeded once
+        // exported (see js_bun_spawn_bindings.rs shim).
+        self
+    }
+}
+
 impl Options {
     /// Maximum length for terminal name (e.g., "xterm-256color")
     /// Longest known terminfo names are ~23 chars; 128 allows for custom terminals
@@ -260,20 +302,20 @@ impl Options {
         let mut options = Options::default();
         // errdefer options.deinit() — handled by Drop on early return.
 
-        if let Some(n) = js_options.get_optional::<i32>(global_object, "cols")? {
+        if let Some(n) = js_options.get_optional_i32(global_object, b"cols")? {
             if n > 0 && n <= 65535 {
                 options.cols = u16::try_from(n).unwrap();
             }
         }
 
-        if let Some(n) = js_options.get_optional::<i32>(global_object, "rows")? {
+        if let Some(n) = js_options.get_optional_i32(global_object, b"rows")? {
             if n > 0 && n <= 65535 {
                 options.rows = u16::try_from(n).unwrap();
             }
         }
 
-        if let Some(slice) = js_options.get_optional::<ZigStringSlice>(global_object, "name")? {
-            if slice.len() > Self::MAX_TERM_NAME_LEN {
+        if let Some(slice) = js_options.get_optional_slice(global_object, b"name")? {
+            if slice.slice().len() > Self::MAX_TERM_NAME_LEN {
                 drop(slice);
                 return Err(global_object.throw(format_args!(
                     "Terminal name too long (max {} characters)",
@@ -283,19 +325,19 @@ impl Options {
             options.term_name = slice;
         }
 
-        if let Some(v) = js_options.get_optional::<JSValue>(global_object, "data")? {
+        if let Some(v) = js_options.get_optional_value(global_object, b"data")? {
             if v.is_cell() && v.is_callable() {
                 options.data_callback = Some(v.with_async_context_if_needed(global_object));
             }
         }
 
-        if let Some(v) = js_options.get_optional::<JSValue>(global_object, "exit")? {
+        if let Some(v) = js_options.get_optional_value(global_object, b"exit")? {
             if v.is_cell() && v.is_callable() {
                 options.exit_callback = Some(v.with_async_context_if_needed(global_object));
             }
         }
 
-        if let Some(v) = js_options.get_optional::<JSValue>(global_object, "drain")? {
+        if let Some(v) = js_options.get_optional_value(global_object, b"drain")? {
             if v.is_cell() && v.is_callable() {
                 options.drain_callback = Some(v.with_async_context_if_needed(global_object));
             }
@@ -386,7 +428,7 @@ impl Terminal {
         let pty_result = create_pty(options.cols, options.rows)?;
 
         // Use default term name if empty
-        let term_name = if options.term_name.len() > 0 {
+        let term_name = if !options.term_name.slice().is_empty() {
             core::mem::take(&mut options.term_name)
         } else {
             ZigStringSlice::from_utf8_never_free(b"xterm-256color")
@@ -418,7 +460,10 @@ impl Terminal {
                 options.rows
             },
             term_name,
-            event_loop_handle: EventLoopHandle::init(global_object.bun_vm().event_loop()),
+            // SAFETY: bun_vm() returns the live VM raw pointer for this global.
+            event_loop_handle: EventLoopHandle::init(
+                unsafe { (*global_object.bun_vm()).event_loop() }.cast(),
+            ),
             global_this: core::ptr::NonNull::from(global_object),
             writer: IOWriter::default(),
             reader: IOReader::init::<Terminal>(),
@@ -429,7 +474,9 @@ impl Terminal {
         let terminal = unsafe { &mut *terminal };
 
         // Set reader parent
-        terminal.reader.set_parent(terminal);
+        terminal
+            .reader
+            .set_parent(terminal as *mut Terminal as *mut c_void);
 
         // Set writer parent
         terminal.writer.parent = terminal;
@@ -474,12 +521,13 @@ impl Terminal {
                 terminal.ref_();
                 #[cfg(unix)]
                 {
-                    if terminal.reader.handle.is_poll() {
-                        let poll = terminal.reader.handle.poll();
+                    if let Some(poll) = terminal.reader.handle.get_poll() {
                         // PTY behaves like a pipe, not a socket
-                        terminal.reader.flags.nonblocking = true;
-                        terminal.reader.flags.pollable = true;
-                        poll.flags.insert(bun_aio::PollFlag::Nonblocking);
+                        terminal
+                            .reader
+                            .flags
+                            .insert(bun_io::PosixFlags::NONBLOCKING | bun_io::PosixFlags::POLLABLE);
+                        poll.set_flag(bun_io::FilePollFlag::Nonblocking);
                     }
                 }
                 terminal.flags.insert(Flags::READER_STARTED);

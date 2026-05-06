@@ -242,7 +242,9 @@ impl PublishCommand {
             return false;
         }
 
-        let package_url = URL::parse(&url_buf);
+        // PORT NOTE: `URL::parse` borrows; leak so the URL outlives the local Vec
+        // (mirrors `allocPrint` ownership in the Zig spec).
+        let package_url = URL::parse(Box::leak(url_buf.into_boxed_slice()));
 
         let Ok(mut response_buf) = MutableString::init(1024) else {
             return false;

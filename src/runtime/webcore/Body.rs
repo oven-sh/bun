@@ -120,7 +120,7 @@ impl Default for Body {
 impl Body {
     // TODO(b2-blocked): Blob::get_size_for_bindings (gated in Blob.rs `_jsc_gated`).
     
-    pub fn len(&self) -> blob::SizeType {
+    pub fn len(&mut self) -> blob::SizeType {
         self.value.size()
     }
 
@@ -784,7 +784,7 @@ impl Value {
 
     // TODO(b2-blocked): Blob::get_size_for_bindings (gated in Blob.rs `_jsc_gated`).
     
-    pub fn size(&self) -> blob::SizeType {
+    pub fn size(&mut self) -> blob::SizeType {
         match self {
             Value::Blob(b) => b.get_size_for_bindings() as blob::SizeType,
             Value::InternalBlob(b) => b.slice_const().len() as blob::SizeType,
@@ -867,7 +867,8 @@ impl Value {
                 let mut blob = self.use_();
                 // defer blob.detach() — done below before return
                 blob.resolve_size();
-                let value = ReadableStream::from_blob_copy_ref(global_this, &mut blob, blob.size)?;
+                let blob_size = blob.size;
+                let value = ReadableStream::from_blob_copy_ref(global_this, &mut blob, blob_size)?;
 
                 let stream = ReadableStream::from_js(value, global_this)?.unwrap();
                 *self = Value::Locked(PendingValue {
@@ -1017,7 +1018,7 @@ impl Value {
                 let owned: Box<[u8]> = Box::from(unsafe { encoded.bytes.as_ref() });
                 drop(encoded);
                 let mut blob = Blob::init(owned.into_vec(), global_this);
-                blob.content_type = mime.to_bytes() as *const [u8];
+                blob.content_type = mime.as_bytes() as *const [u8];
                 blob.content_type_was_set = true;
                 return Ok(Value::Blob(blob));
             }
@@ -1055,7 +1056,7 @@ impl Value {
             ));
         }
 
-        let blob = match Blob::get::<true, false>(global_this, value) {
+        let blob = match Blob::get(global_this, value, true, false) {
             Ok(b) => b,
             Err(_err) => {
                 if !global_this.has_exception() {

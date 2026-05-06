@@ -3759,7 +3759,7 @@ impl Blob {
                 blob = Blob::init(Vec::new(), global_this);
             }
             _ => {
-                blob = Blob::get::<false, true>(global_this, args[0])?;
+                blob = Blob::get(global_this, args[0], false, true)?;
 
                 if args.len() > 1 {
                     let options = args[1];
@@ -3880,10 +3880,13 @@ impl Blob {
         {
             if crate::allocators::linux_mem_fd_allocator::LinuxMemFdAllocator::should_use(bytes_) {
                 if let Ok(result) = crate::allocators::linux_mem_fd_allocator::LinuxMemFdAllocator::create(bytes_) {
+                    // PORT NOTE: spell out all fields — `..Default::default()` would
+                    // attempt a partial move out of `Store` which has a `Drop` impl.
                     let store = StoreRef::from(Store::new(Store {
                         data: store::Data::Bytes(result),
+                        mime_type: bun_http_types::MimeType::NONE,
                         ref_count: AtomicU32::new(1),
-                        ..Default::default()
+                        is_all_ascii: None,
                     }));
                     let mut blob = Blob::init_with_store(store, global_this);
                     if was_string && blob.content_type_slice().is_empty() {
@@ -3991,15 +3994,8 @@ impl Blob {
         }
     }
 
-    /// `Option<bool>` view of `self.charset` for the `*_with_bytes` ASCII fast-paths.
-    #[inline]
-    fn is_all_ascii(&self) -> Option<bool> {
-        match self.charset {
-            strings::AsciiStatus::Unknown => None,
-            strings::AsciiStatus::AllAscii => Some(true),
-            strings::AsciiStatus::NonAscii => Some(false),
-        }
-    }
+    // is_all_ascii: canonical impl lives later in this file (pub). Duplicate
+    // private helper removed here to fix E0592.
 
     // needs_to_read_file: defined once above; duplicate removed to fix E0034.
 }

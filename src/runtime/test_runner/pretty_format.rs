@@ -1513,7 +1513,8 @@ impl<'a> Formatter<'a> {
                     ));
                 }
                 Tag::BigInt => {
-                    let out_str = value.get_zig_string(self.global_this)?.slice();
+                    let zig_str = value.get_zig_string(self.global_this)?;
+                    let out_str = zig_str.slice();
                     self.add_for_new_line(out_str.len());
 
                     writer.print(format_args!(
@@ -3020,8 +3021,8 @@ impl JestPrettyFormat {
             this.quote_strings = original_quote_strings;
         } else if let Some(instance) = value.as_::<expect::ExpectCustomAsymmetricMatcher>() {
             // SAFETY: `as_` returns the live m_ctx payload owned by `value`.
-            let printed = expect::ExpectCustomAsymmetricMatcher::custom_print::<true>(
-                unsafe { &*instance }, value, this.global_this, writer.ctx,
+            let printed = expect::ExpectCustomAsymmetricMatcher::custom_print(
+                unsafe { &*instance }, value, this.global_this, writer.ctx, true,
             )
             .expect("unreachable");
             if !printed {

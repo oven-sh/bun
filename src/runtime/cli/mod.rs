@@ -434,7 +434,7 @@ Join our Discord community:      <blue>https://bun.com/discord<r>
                 );
                 Output::pretty(format_args!(
                     "{}",
-                    bstr::BStr::new(&Output::pretty_fmt(CLI_HELPTEXT_FMT, true)),
+                    bstr::BStr::new(&Output::pretty_fmt::<true>(CLI_HELPTEXT_FMT)),
                 ));
                 let _ = (args, show_all_flags);
                 if show_all_flags {
@@ -446,14 +446,14 @@ Join our Discord community:      <blue>https://bun.com/discord<r>
                 }
                 Output::pretty(format_args!(
                     "{}",
-                    bstr::BStr::new(&Output::pretty_fmt(CLI_HELPTEXT_FOOTER, true)),
+                    bstr::BStr::new(&Output::pretty_fmt::<true>(CLI_HELPTEXT_FOOTER)),
                 ));
             }
             Reason::InvalidCommand => {
                 pretty_error!("<r><red>Uh-oh<r> not sure what to do with that command.\n\n");
                 Output::pretty(format_args!(
                     "{}",
-                    bstr::BStr::new(&Output::pretty_fmt(CLI_HELPTEXT_FMT, true)),
+                    bstr::BStr::new(&Output::pretty_fmt::<true>(CLI_HELPTEXT_FMT)),
                 ));
             }
         }

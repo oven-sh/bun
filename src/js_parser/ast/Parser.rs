@@ -1646,14 +1646,14 @@ impl<'a> Parser<'a> {
             }
 
             // if they didn't use any of the jest globals, don't inject it, I guess.
-            #[cfg(any())] // blocked_on: Jest::FIELDS reflection table; B::{Property,Object}/S::Import: Default; Symbol::Kind path; js_ast::ClauseItem default-init
-            { // TODO(port): Zig used `inline for (comptime std.meta.fieldNames(Jest))` — comptime
-            // reflection over Jest's Ref fields. Phase B should provide `Jest::FIELDS: &[(&'static str, fn(&Jest) -> Ref)]`
-            // or a derive. Using a placeholder iterator here.
+            // PORT NOTE: Zig used `inline for (comptime std.meta.fieldNames(Jest))` — comptime
+            // reflection over Jest's Ref fields. Rust iterates the static `Jest::FIELDS`
+            // table (`&[(&'static str, fn(&Jest) -> Ref)]`) instead; declaration order
+            // matches the Zig struct so emitted clause/property order is identical.
             let items_count: usize = {
                 let mut count: usize = 0;
                 for (_name, get_ref) in Jest::FIELDS {
-                    count += (p.symbols.as_slice()[get_ref(jest).inner_index() as usize]
+                    count += (p.symbols.as_slice()[get_ref(&p.jest).inner_index() as usize]
                         .use_count_estimate
                         > 0) as usize;
                 }
@@ -1668,109 +1668,99 @@ impl<'a> Parser<'a> {
 
             // For CommonJS modules, use require instead of import
             if exports_kind == js_ast::ExportsKind::Cjs {
-                let import_record_indices = p.allocator.alloc_slice_fill_default::<u32>(1);
                 let import_record_id = p.add_import_record(
                     bun_options_types::ImportKind::Require,
                     logger::Loc::EMPTY,
                     b"bun:test",
                 );
-                import_record_indices[0] = import_record_id;
 
                 // Create object binding pattern for destructuring
-                let properties = p.allocator.alloc_slice_fill_default::<B::Property>(items_count);
-                let mut prop_i: usize = 0;
-                // TODO(port): comptime field reflection on Jest
+                let mut properties =
+                    BumpVec::<B::Property>::with_capacity_in(items_count, p.allocator);
                 for (symbol_name, get_ref) in Jest::FIELDS {
-                    let r = get_ref(jest);
+                    let r = get_ref(&p.jest);
                     if p.symbols.as_slice()[r.inner_index() as usize].use_count_estimate > 0 {
-                        properties[prop_i] = B::Property {
-                            key: p.new_expr(
-                                E::String { data: symbol_name.as_bytes(), ..Default::default() },
-                                logger::Loc::EMPTY,
-                            ),
-                            value: p.b(B::Identifier { r#ref: r }, logger::Loc::EMPTY),
-                            ..Default::default()
-                        };
+                        let key = p.new_expr(
+                            E::String { data: symbol_name.as_bytes(), ..Default::default() },
+                            logger::Loc::EMPTY,
+                        );
+                        let value = p.b(B::Identifier { r#ref: r }, logger::Loc::EMPTY);
+                        properties.push(B::Property {
+                            flags: crate::flags::PROPERTY_NONE,
+                            key,
+                            value,
+                            default_value: None,
+                        });
                         declared_symbols.append_assume_capacity(DeclaredSymbol { ref_: r, is_top_level: true });
-                        prop_i += 1;
                     }
                 }
+                let properties: *mut [B::Property] = properties.into_bump_slice_mut();
 
                 // Create: const { test, expect, ... } = require("bun:test")
-                let decls = p.allocator.alloc_slice_fill_with::<G::Decl, _>(1, |_| G::Decl::default());
-                decls[0] = G::Decl {
-                    binding: p.b(B::Object { properties, ..Default::default() }, logger::Loc::EMPTY),
-                    value: Some(p.new_expr(
-                        E::RequireString { import_record_index: import_record_id, ..Default::default() },
-                        logger::Loc::EMPTY,
-                    )),
-                };
+                let binding = p.b(B::Object { properties, is_single_line: false }, logger::Loc::EMPTY);
+                let value = p.new_expr(
+                    E::RequireString { import_record_index: import_record_id, ..Default::default() },
+                    logger::Loc::EMPTY,
+                );
+                let mut decls = G::DeclList::init_capacity(1).expect("oom");
+                decls.append_assume_capacity(G::Decl { binding, value: Some(value) });
 
-                let part_stmts = p.allocator.alloc_slice_fill_with(1, |_| {
-                    p.s(
-                        S::Local {
-                            kind: js_ast::LocalKind::KConst,
-                            decls: {
-                                let mut dl = G::DeclList::init_capacity(decls.len()).expect("oom");
-                                for d in decls.iter_mut() {
-                                    dl.append_assume_capacity(core::mem::take(d));
-                                }
-                                dl
-                            },
-                            ..Default::default()
-                        },
-                        logger::Loc::EMPTY,
-                    )
-                });
+                let local_stmt = p.s(
+                    S::Local {
+                        kind: js_ast::LocalKind::KConst,
+                        decls,
+                        ..Default::default()
+                    },
+                    logger::Loc::EMPTY,
+                );
+                let part_stmts = p.allocator.alloc_slice_fill_with(1, |_| local_stmt);
 
                 before.push(js_ast::Part {
                     stmts: part_stmts,
                     declared_symbols,
-                    import_record_indices: BabyList::<u32>::from_slice(import_record_indices).expect("oom"),
+                    import_record_indices: BabyList::<u32>::from_owned_slice(Box::new([import_record_id])),
                     tag: crate::PartTag::BunTest,
                     ..Default::default()
                 });
             } else {
-                let import_record_indices = p.allocator.alloc_slice_fill_default::<u32>(1);
                 let import_record_id = p.add_import_record(
                     bun_options_types::ImportKind::Stmt,
                     logger::Loc::EMPTY,
                     b"bun:test",
                 );
-                import_record_indices[0] = import_record_id;
 
                 // For ESM modules, use import statement
-                let clauses = p
-                    .allocator
-                    .alloc_slice_fill_default::<js_ast::ClauseItem>(items_count);
-                let mut clause_i: usize = 0;
-                // TODO(port): comptime field reflection on Jest
+                let mut clauses =
+                    BumpVec::<js_ast::ClauseItem>::with_capacity_in(items_count, p.allocator);
                 for (symbol_name, get_ref) in Jest::FIELDS {
-                    let r = get_ref(jest);
+                    let r = get_ref(&p.jest);
                     if p.symbols.as_slice()[r.inner_index() as usize].use_count_estimate > 0 {
-                        clauses[clause_i] = js_ast::ClauseItem {
-                            name: js_ast::LocRef { ref_: r, loc: logger::Loc::EMPTY },
-                            alias: symbol_name.as_bytes(),
+                        clauses.push(js_ast::ClauseItem {
+                            name: js_ast::LocRef { ref_: Some(r), loc: logger::Loc::EMPTY },
+                            alias: symbol_name.as_bytes() as *const [u8],
                             alias_loc: logger::Loc::EMPTY,
-                            original_name: b"",
-                        };
+                            original_name: b"" as *const [u8],
+                        });
                         declared_symbols.append_assume_capacity(DeclaredSymbol { ref_: r, is_top_level: true });
-                        clause_i += 1;
                     }
                 }
+                let clauses: *mut [js_ast::ClauseItem] = clauses.into_bump_slice_mut();
 
+                let namespace_ref = p
+                    .declare_symbol(
+                        js_ast::symbol::Kind::Unbound,
+                        logger::Loc::EMPTY,
+                        b"bun_test_import_namespace_for_internal_use_only",
+                    )
+                    .expect("unreachable");
                 let import_stmt = p.s(
                     S::Import {
-                        namespace_ref: p
-                            .declare_symbol(
-                                Symbol::Kind::Unbound,
-                                logger::Loc::EMPTY,
-                                b"bun_test_import_namespace_for_internal_use_only",
-                            )
-                            .expect("unreachable"),
+                        namespace_ref,
                         items: clauses,
                         import_record_index: import_record_id,
-                        ..Default::default()
+                        default_name: None,
+                        star_name_loc: None,
+                        is_single_line: false,
                     },
                     logger::Loc::EMPTY,
                 );
@@ -1779,7 +1769,7 @@ impl<'a> Parser<'a> {
                 before.push(js_ast::Part {
                     stmts: part_stmts,
                     declared_symbols,
-                    import_record_indices: BabyList::<u32>::from_slice(import_record_indices).expect("oom"),
+                    import_record_indices: BabyList::<u32>::from_owned_slice(Box::new([import_record_id])),
                     tag: crate::PartTag::BunTest,
                     ..Default::default()
                 });
@@ -1790,11 +1780,8 @@ impl<'a> Parser<'a> {
                 // SAFETY: see PORT NOTE on `runtime_transpiler_cache` field.
                 unsafe { &mut *cache_ptr }.input_hash = None;
             }
-            } // end #[cfg(any())] Jest gate
-            let _ = jest;
         }
 
-        #[cfg(any())] // blocked_on: RuntimeImports::iter() Entry shape + GenerateImportSymbols impl for RuntimeImports
         if p.has_called_runtime {
             let mut runtime_imports: [u8; RuntimeImports::ALL.len()] =
                 [0; RuntimeImports::ALL.len()];
@@ -1811,11 +1798,16 @@ impl<'a> Parser<'a> {
             });
 
             if i > 0 {
+                // PORT NOTE: snapshot to break the `&mut self` ↔ `&self.runtime_imports`
+                // borrow overlap in `generate_import_stmt(symbols: &Sym)`; the callee
+                // never touches `self.runtime_imports`, so the clone is purely a
+                // borrow-checker workaround (Zig passed by value here).
+                let symbols = p.runtime_imports.clone();
                 p.generate_import_stmt(
                     RuntimeImports::NAME,
                     &runtime_imports[0..i],
                     &mut before,
-                    p.runtime_imports,
+                    &symbols,
                     None,
                     b"import_",
                     true,
@@ -1825,20 +1817,31 @@ impl<'a> Parser<'a> {
         }
 
         // handle new way to do automatic JSX imports which fixes symbol collision issues
-        #[cfg(any())] // blocked_on: JSXImportSymbols::{runtime_import_names,source_import_names}; JSX::Pragma::import_source(); JSXImportSymbols: GenerateImportSymbols
         if p.options.jsx.parse
             && p.options.features.auto_import_jsx
             && p.options.jsx.runtime == options::JSX::Runtime::Automatic
         {
-            let mut buf: [&[u8]; 3] = [b"", b"", b""];
-            let runtime_import_names = p.jsx_imports.runtime_import_names(&mut buf);
+            // PORT NOTE: `generate_import_stmt` takes `&mut self` plus `import_path: &'a [u8]`
+            // and `symbols: &Sym`, so the Pragma-owned `Box<[u8]>` paths are copied into the
+            // bump arena (giving them the required `'a` lifetime) and `jsx_imports` is moved
+            // out via `take` (it is `Default`) to avoid an overlapping `&self.jsx_imports`
+            // borrow. The callee never reads `self.jsx_imports`, so the take/restore is
+            // semantically a no-op vs. the Zig.
+            let import_source: &'a [u8] =
+                p.allocator.alloc_slice_copy(p.options.jsx.import_source());
+            let package_name: &'a [u8] =
+                p.allocator.alloc_slice_copy(&p.options.jsx.package_name);
+            let jsx_imports = core::mem::take(&mut p.jsx_imports);
+
+            let mut buf: [&'static [u8]; 3] = [b"", b"", b""];
+            let runtime_import_names = jsx_imports.runtime_import_names(&mut buf);
 
             if !runtime_import_names.is_empty() {
                 p.generate_import_stmt(
-                    p.options.jsx.import_source(),
+                    import_source,
                     runtime_import_names,
                     &mut before,
-                    &p.jsx_imports,
+                    &jsx_imports,
                     None,
                     b"",
                     false,
@@ -1846,19 +1849,21 @@ impl<'a> Parser<'a> {
                 .expect("unreachable");
             }
 
-            let source_import_names = p.jsx_imports.source_import_names();
+            let source_import_names = jsx_imports.source_import_names();
             if !source_import_names.is_empty() {
                 p.generate_import_stmt(
-                    p.options.jsx.package_name,
+                    package_name,
                     source_import_names,
                     &mut before,
-                    &p.jsx_imports,
+                    &jsx_imports,
                     None,
                     b"",
                     false,
                 )
                 .expect("unreachable");
             }
+
+            p.jsx_imports = jsx_imports;
         }
 
         #[cfg(any())] // blocked_on: P::generate_react_refresh_import (gated in P.rs); options::Framework::{server_components,react_fast_refresh}

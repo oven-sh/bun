@@ -174,11 +174,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     ) -> Result<(), Error> {
         // "module.exports = value"
         // Zig: p.@"module.exports"(stmt.loc) — mapped to `module_exports`
-        // blocked_on: P::module_exports is in the #[cfg(any())] heavy impl block (P.rs:5422).
+        // PORT NOTE: Zig evaluates lhs before rhs at the call site; preserve that order
+        // (`module_exports` builds via `new_expr`, `visit_expr` mutates parser state).
+        let lhs = p.module_exports(stmt.loc);
         let rhs = p.visit_expr(data.value);
-        let _ = rhs;
-        todo!("s_export_equals: P::module_exports gated");
-        stmts.push(Stmt::assign(/* p.module_exports(stmt.loc) */ Expr::default(), rhs));
+        stmts.push(Stmt::assign(lhs, rhs));
         p.record_usage(p.module_ref);
         Ok(())
     }

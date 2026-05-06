@@ -959,48 +959,36 @@ impl UnresolvedColor {
     }
 
     pub fn parse(input: &mut Parser, f: &[u8], options: &ParserOptions) -> Result<UnresolvedColor> {
+        use css_values::color::{
+            parse_hsl_hwb_components, parse_rgb_components, ComponentParser, HSL, SRGB,
+        };
         // css.todo_stuff.match_ignore_ascii_case
-        // blocked_on: values::color::gated_full_impl::{ComponentParser,
-        // parse_rgb_components, parse_hsl_hwb_components} un-gate (color.rs:873).
-        // The `rgb()`/`hsl()` arms need ComponentParser; while gated, they
-        // bail with `invalid_value` so the caller's `try_parse` falls through
-        // to `try_parse_color_token` / generic `Function` handling in
-        // `TokenList::parse_into` (round-trips correctly, just without the
-        // unresolved-alpha specialization). `light-dark()` needs no
-        // ComponentParser and is handled in full below.
-        #[cfg(any())]
-        {
-            use css_values::color::{
-                parse_hsl_hwb_components, parse_rgb_components, ComponentParser, HSL, SRGB,
-            };
-            let mut parser = ComponentParser::new(false);
-            if strings::eql_case_insensitive_ascii_check_length(f, b"rgb") {
-                return input.parse_nested_block(|input2| {
-                    parser.parse_relative::<SRGB, UnresolvedColor, _>(input2, |i, p| {
-                        let (r, g, b, is_legacy) = parse_rgb_components(i, p)?;
-                        if is_legacy {
-                            return Err(i.new_custom_error(ParserError::invalid_value));
-                        }
-                        i.expect_delim(b'/')?;
-                        let alpha = TokenListFns::parse(i, options, 0)?;
-                        Ok(UnresolvedColor::RGB { r, g, b, alpha })
-                    })
-                });
-            } else if strings::eql_case_insensitive_ascii_check_length(f, b"hsl") {
-                return input.parse_nested_block(|input2| {
-                    parser.parse_relative::<HSL, UnresolvedColor, _>(input2, |i, p| {
-                        let (h, s, l, is_legacy) = parse_hsl_hwb_components::<HSL>(i, p, false)?;
-                        if is_legacy {
-                            return Err(i.new_custom_error(ParserError::invalid_value));
-                        }
-                        i.expect_delim(b'/')?;
-                        let alpha = TokenListFns::parse(i, options, 0)?;
-                        Ok(UnresolvedColor::HSL { h, s, l, alpha })
-                    })
-                });
-            }
-        }
-        if strings::eql_case_insensitive_ascii_check_length(f, b"light-dark") {
+        let mut parser = ComponentParser::new(false);
+        if strings::eql_case_insensitive_ascii_check_length(f, b"rgb") {
+            return input.parse_nested_block(|input2| {
+                parser.parse_relative::<SRGB, UnresolvedColor, _>(input2, |i, p| {
+                    let (r, g, b, is_legacy) = parse_rgb_components(i, p)?;
+                    if is_legacy {
+                        return Err(i.new_custom_error(ParserError::invalid_value));
+                    }
+                    i.expect_delim(b'/')?;
+                    let alpha = TokenListFns::parse(i, options, 0)?;
+                    Ok(UnresolvedColor::RGB { r, g, b, alpha })
+                })
+            });
+        } else if strings::eql_case_insensitive_ascii_check_length(f, b"hsl") {
+            return input.parse_nested_block(|input2| {
+                parser.parse_relative::<HSL, UnresolvedColor, _>(input2, |i, p| {
+                    let (h, s, l, is_legacy) = parse_hsl_hwb_components::<HSL>(i, p, false)?;
+                    if is_legacy {
+                        return Err(i.new_custom_error(ParserError::invalid_value));
+                    }
+                    i.expect_delim(b'/')?;
+                    let alpha = TokenListFns::parse(i, options, 0)?;
+                    Ok(UnresolvedColor::HSL { h, s, l, alpha })
+                })
+            });
+        } else if strings::eql_case_insensitive_ascii_check_length(f, b"light-dark") {
             return input.parse_nested_block(|input2| {
                 // errdefer doesn't fire on `return .{ .err = ... }` in Zig — but in Rust,
                 // `?` drops `light` automatically on the error path.
@@ -1024,6 +1012,18 @@ impl UnresolvedColor {
             light: TokenList { v: lightlist },
             dark: TokenList { v: darklist },
         }
+    }
+}
+
+// `ComponentParser::parse_relative` is generic over `C: LightDarkOwned` so the
+// `from light-dark(...)` relative-color path can rebuild a `light-dark()` of
+// whatever output type the caller is producing. Zig duck-types this via
+// `lightDarkOwned` on both `CssColor` and `UnresolvedColor`; in Rust the trait
+// lives in `values::color` and we wire `UnresolvedColor` into it here.
+impl css_values::color::LightDarkOwned for UnresolvedColor {
+    #[inline]
+    fn light_dark_owned(light: Self, dark: Self) -> Self {
+        UnresolvedColor::light_dark_owned(light, dark)
     }
 }
 

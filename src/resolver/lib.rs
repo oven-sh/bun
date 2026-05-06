@@ -5654,26 +5654,26 @@ impl<'a> Resolver<'a> {
                 unsafe { &mut *existing }.data.clear_and_free();
             }
 
-            let dir_entries_ptr = match in_place {
-                Some(p) => p,
-                // SAFETY: all-zero is a valid Fs::file_system::DirEntry (POD, no NonNull/NonZero fields);
-                // immediately overwritten with `new_entry` on the next line. TODO(port): proper init.
-                None => Box::into_raw(Box::new(unsafe { core::mem::zeroed() })),
-            };
-            // SAFETY: dir_entries_ptr is either a live BSSMap slot (`in_place`) or a fresh Box.
-            unsafe { *dir_entries_ptr = new_entry };
-
             if self.store_fd {
-                // SAFETY: see block-wide note above.
-                unsafe { &mut *dir_entries_ptr }.fd = open_dir;
+                new_entry.fd = open_dir;
             }
+            // PORT NOTE: see `dir_info_cached_maybe_log` — `DirEntry.data` holds a `NonNull`,
+            // so a zeroed slot is UB; box `new_entry` directly for the fresh case.
+            let dir_entries_ptr = match in_place {
+                Some(p) => {
+                    // SAFETY: dir_entries_ptr is a live BSSMap slot (`in_place`).
+                    unsafe { *p = new_entry };
+                    p
+                }
+                None => Box::into_raw(Box::new(new_entry)),
+            };
 
             // bun.fs.debug("readdir({f}, {s}) = {d}", ...) — TODO(port): scoped log
 
             dir_entries_option = rfs
                 .entries
                 // SAFETY: see block-wide note above.
-                .put(&cached_dir_entry_result, Fs::file_system::real_fs::EntriesOption::Entries(unsafe { &mut *dir_entries_ptr }))
+                .put(&mut cached_dir_entry_result, Fs::file_system::real_fs::EntriesOption::Entries(unsafe { &mut *dir_entries_ptr }))
                 .expect("unreachable");
         }
 
@@ -6527,18 +6527,22 @@ impl<'a> Resolver<'a> {
                     unsafe { &mut *existing }.data.clear();
                 }
                 new_entry.fd = if self.store_fd { open_dir } else { FD::INVALID };
+                // PORT NOTE: Zig `entries_ptr = in_place orelse allocator.create(DirEntry)` then
+                // `entries_ptr.* = new_entry` (no drop glue). `DirEntry.data` is a `HashMap`
+                // (`NonNull` inside), so a zeroed slot is UB and `*ptr = new_entry` would drop it.
+                // Box `new_entry` directly for the fresh case; assign-into only for `in_place`.
                 let dir_entries_ptr = match in_place {
-                    Some(p) => p,
-                    // SAFETY: all-zero is a valid Fs::file_system::DirEntry (POD, no NonNull/NonZero fields);
-                    // immediately overwritten with `new_entry` on the next line. TODO(port): proper init.
-                    None => Box::into_raw(Box::new(unsafe { core::mem::zeroed() })),
+                    Some(p) => {
+                        // SAFETY: dir_entries_ptr is a live BSSMap slot (`in_place`).
+                        unsafe { *p = new_entry };
+                        p
+                    }
+                    None => Box::into_raw(Box::new(new_entry)),
                 };
-                // SAFETY: dir_entries_ptr is either a live BSSMap slot (`in_place`) or a fresh Box.
-                unsafe { *dir_entries_ptr = new_entry };
                 dir_entries_option = rfs!()
                     .entries
                     // SAFETY: see block-wide note above.
-                    .put(&cached_dir_entry_result, Fs::file_system::real_fs::EntriesOption::Entries(unsafe { &mut *dir_entries_ptr }))?;
+                    .put(&mut cached_dir_entry_result, Fs::file_system::real_fs::EntriesOption::Entries(unsafe { &mut *dir_entries_ptr }))?;
                 // bun.fs.debug("readdir({f}, {s}) = {d}", ...) — TODO(port): scoped log
             }
 

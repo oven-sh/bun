@@ -126,8 +126,13 @@ pub fn open_dir_for_iteration_os_path(dir: Fd, path: &bun_paths::OSPathSlice) ->
         // PORT NOTE: Zig `openDirForIterationOSPath` uses
         // `O_DIRECTORY | O_RDONLY | O_CLOEXEC` (`| O_NONBLOCK` on Linux).
         let mut buf = bun_paths::PathBuffer::default();
-        let len = path.len().min(buf.len() - 1);
-        buf[..len].copy_from_slice(&path[..len]);
+        // bun.zig:883 → `sys.openatA` → `std.posix.toPosixPath`: ENAMETOOLONG on
+        // overflow, never silently truncate (would open the wrong directory).
+        if path.len() >= buf.len() {
+            return Err(Error::from_code_int(libc::ENAMETOOLONG, Tag::open).with_path(path));
+        }
+        let len = path.len();
+        buf[..len].copy_from_slice(path);
         buf[len] = 0;
         // SAFETY: NUL-terminated above.
         let z = unsafe { ZStr::from_raw(buf.as_ptr(), len) };
@@ -224,6 +229,22 @@ pub mod O {
     #[cfg(not(target_os = "linux"))] pub const PATH: i32 = 0;
     #[cfg(not(target_os = "linux"))] pub const NOATIME: i32 = 0;
     #[cfg(not(target_os = "linux"))] pub const TMPFILE: i32 = 0;
+    // sys.zig:66-216 — defined for every platform; Darwin-only flags map to 0
+    // elsewhere so `flags & O.EVTONLY` etc. compile and are no-ops.
+    #[cfg(unix)] pub const NOFOLLOW: i32 = libc::O_NOFOLLOW;
+    #[cfg(windows)] pub const NOFOLLOW: i32 = 0o400000;
+    #[cfg(unix)] pub const SYNC: i32 = libc::O_SYNC;
+    #[cfg(windows)] pub const SYNC: i32 = 0o4010000;
+    #[cfg(unix)] pub const DSYNC: i32 = libc::O_DSYNC;
+    #[cfg(windows)] pub const DSYNC: i32 = 0o10000;
+    #[cfg(unix)] pub const NOCTTY: i32 = libc::O_NOCTTY;
+    #[cfg(windows)] pub const NOCTTY: i32 = 0;
+    #[cfg(unix)] pub const ACCMODE: i32 = libc::O_ACCMODE;
+    #[cfg(windows)] pub const ACCMODE: i32 = 3;
+    #[cfg(target_os = "macos")] pub const SYMLINK: i32 = libc::O_SYMLINK;
+    #[cfg(not(target_os = "macos"))] pub const SYMLINK: i32 = 0;
+    #[cfg(target_os = "macos")] pub const EVTONLY: i32 = libc::O_EVTONLY;
+    #[cfg(not(target_os = "macos"))] pub const EVTONLY: i32 = 0;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2121,10 +2142,13 @@ pub fn move_file_z_with_handle(
             // Seek input to 0 — caller may have left offset at EOF after writing.
             let _ = lseek(from_handle, 0, libc::SEEK_SET);
             let r = copy_file(from_handle, dst);
-            // Preserve mode/owner (best-effort).
-            // SAFETY: dst is a valid open fd.
-            let _ = unsafe { libc::fchmod(dst.native(), st.st_mode) };
-            let _ = unsafe { libc::fchown(dst.native(), st.st_uid, st.st_gid) };
+            // sys.zig:4349 — only stamp mode/owner on success; on copy error
+            // the partially-written dest keeps its openat() defaults.
+            if r.is_ok() {
+                // SAFETY: dst is a valid open fd.
+                let _ = unsafe { libc::fchmod(dst.native(), st.st_mode) };
+                let _ = unsafe { libc::fchown(dst.native(), st.st_uid, st.st_gid) };
+            }
             let _ = close(dst);
             r.map_err(bun_core::Error::from)?;
             let _ = unlinkat(from_dir, filename, 0);
@@ -2661,9 +2685,13 @@ pub fn copy_file_z_slow_with_handle(in_handle: Fd, to_dir: Fd, destination: &ZSt
     }
     let _ = lseek(in_handle, 0, libc::SEEK_SET);
     let r = copy_file(in_handle, dst);
-    // SAFETY: dst is a valid open fd.
-    let _ = unsafe { libc::fchmod(dst.native(), st.st_mode) };
-    let _ = unsafe { libc::fchown(dst.native(), st.st_uid, st.st_gid) };
+    // sys.zig:4349 — only stamp mode/owner on success; on copy error the
+    // partially-written dest keeps its openat() defaults.
+    if r.is_ok() {
+        // SAFETY: dst is a valid open fd.
+        let _ = unsafe { libc::fchmod(dst.native(), st.st_mode) };
+        let _ = unsafe { libc::fchown(dst.native(), st.st_uid, st.st_gid) };
+    }
     let _ = close(dst);
     r
 }

@@ -1876,20 +1876,22 @@ impl DevServer<'_> {
         let client_file_names = self.client_graph.bundled_files.keys();
 
         // Build a list of all files that have not yet been bundled.
-        match &self.route_bundle_ptr(rbi).data {
+        // PORT NOTE: split borrow — `route_bundle_ptr`/`type_ptr` are `&mut self`;
+        // index `route_bundles`/`types` immutably so the SoA key slices above stay live.
+        match &self.route_bundles[rbi.get() as usize].data {
             route_bundle::Data::Framework(bundle) => {
                 let mut route = self.router.route_ptr(bundle.route_index);
-                let route_type_idx = route.r#type;
-                let router_type = self.router.type_ptr(route_type_idx);
+                let router_type = self.router.type_ptr_const(route.r#type);
+                let (rt_server_file, rt_client_file) = (router_type.server_file, router_type.client_file);
                 self.append_opaque_entry_point::<{ bake::Side::Server }>(
                     server_file_names,
                     entry_points,
-                    OpaqueFileIdOrOptional::Id(router_type.server_file),
+                    OpaqueFileIdOrOptional::Id(rt_server_file),
                 )?;
                 self.append_opaque_entry_point::<{ bake::Side::Client }>(
                     client_file_names,
                     entry_points,
-                    router_type.client_file,
+                    rt_client_file,
                 )?;
                 self.append_opaque_entry_point::<{ bake::Side::Server }>(
                     server_file_names,

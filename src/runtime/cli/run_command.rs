@@ -1980,7 +1980,7 @@ use bun_core::{note, pretty_errorln};
 use bun_dotenv as DotEnv;
 use bun_http as http;
 use bun_jsc as jsc;
-use super::runner_arena;
+use super::{runner_arena, UnwrapOrOom as _};
 // TODO(b2-blocked): `bun_md` is a workspace crate but not yet a dep of
 // `bun_runtime`. The markdown render path is preserved verbatim below; once
 // `bun_md` is wired into `runtime/Cargo.toml` swap this stub back to
@@ -3554,7 +3554,7 @@ impl RunCommand {
                                 // the resolver dir-cache for the process lifetime.
                                 let value = unsafe { &**entry.1 };
                                 // SAFETY: `Transpiler::fs` is the non-null process-static singleton.
-                                if value.kind(unsafe { &(*this_transpiler.fs).fs }, true) == bun_resolver::fs::EntryKind::File {
+                                if value.kind(unsafe { &mut (*this_transpiler.fs).fs }, true) == bun_resolver::fs::EntryKind::File {
                                     if !has_copied {
                                         path_buf[..value.dir.len()].copy_from_slice(value.dir);
                                         dir_slice_len = value.dir.len();
@@ -3618,7 +3618,7 @@ impl RunCommand {
                             && !strings::contains(name, b".d.mts")
                             && !strings::contains(name, b".d.cts")
                             // SAFETY: `Transpiler::fs` is the non-null process-static singleton.
-                            && value.kind(unsafe { &(*this_transpiler.fs).fs }, true) == bun_resolver::fs::EntryKind::File
+                            && value.kind(unsafe { &mut (*this_transpiler.fs).fs }, true) == bun_resolver::fs::EntryKind::File
                         {
                             // SAFETY: `Transpiler::fs` is the non-null process-static singleton.
                             let Ok(appended) = unsafe { (*this_transpiler.fs).filename_store }.append_slice(name) else {

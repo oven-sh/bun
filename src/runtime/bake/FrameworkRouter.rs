@@ -1358,6 +1358,10 @@ impl FrameworkRouter {
         &mut self.types[i.get() as usize]
     }
 
+    pub fn type_ptr_const(&self, i: TypeIndex) -> &Type {
+        &self.types[i.get() as usize]
+    }
+
     fn new_route(&mut self, route_data: Route) -> Result<RouteIndex, AllocError> {
         let i = self.routes.len();
         self.routes.push(route_data);

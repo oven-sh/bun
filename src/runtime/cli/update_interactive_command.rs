@@ -1972,7 +1972,7 @@ impl UpdateInteractiveCommand {
 
             // Read input
             // TODO(port): std.fs.File.stdin().readerStreaming — use bun_sys stdin byte reader
-            let mut reader = bun_sys::stdin_reader();
+            let mut reader = bun_core::output::stdin_reader();
             let byte = match reader.take_byte() {
                 Ok(b) => b,
                 Err(_) => {

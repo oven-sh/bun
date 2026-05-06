@@ -101,7 +101,7 @@ use crate::api::bun_process::{self, Process};
 #[cfg(unix)]
 use crate::api::bun_process::waiter_thread_posix::ResultTask as ProcessWaiterThreadTask;
 
-use bun_bundler::DeferredBatchTask as BundleV2DeferredBatchTask;
+use bun_bundler::DeferredBatchTask::DeferredBatchTask as BundleV2DeferredBatchTask;
 
 use crate::socket::upgraded_duplex::UpgradedDuplex;
 #[cfg(windows)]

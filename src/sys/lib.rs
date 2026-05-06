@@ -4670,6 +4670,21 @@ pub fn open_dir_for_iteration(dir: Fd, path: &[u8]) -> Maybe<Fd> {
 pub fn iterate_dir(dir: Fd) -> dir_iterator::WrappedIterator {
     dir_iterator::iterate(dir)
 }
+/// sys.zig:3482 — `bun.sys.exists`. Non-NUL-terminated convenience over
+/// [`exists_z`]: copies into a stack `PathBuffer`, NUL-terminates, then
+/// `access(path, F_OK)` (POSIX) / `GetFileAttributesW` (Windows).
+pub fn exists(path: &[u8]) -> bool {
+    let mut buf = bun_paths::PathBuffer::default();
+    if path.len() >= buf.0.len() {
+        // Zig: `std.posix.toPosixPath(path) catch return false`
+        return false;
+    }
+    buf.0[..path.len()].copy_from_slice(path);
+    buf.0[path.len()] = 0;
+    // SAFETY: NUL-terminated above.
+    let z = unsafe { ZStr::from_raw(buf.0.as_ptr(), path.len()) };
+    exists_z(z)
+}
 /// sys.zig:4246 — `moveFileZ`. Tries the rename first (no source open on the
 /// hot path); on EISDIR removes the dest dir and retries; on EXDEV falls back
 /// to the slow open+copy path. Only opens the source inside the EXDEV branch.

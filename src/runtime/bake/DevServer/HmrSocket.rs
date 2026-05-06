@@ -328,7 +328,7 @@ impl HmrSocket {
             if field.contains(HmrTopic::MemoryVisualizer.as_bit()) {
                 dev.emit_memory_visualizer_events -= 1;
                 if dev.emit_incremental_visualizer_events == 0
-                    && dev.memory_visualizer_timer.state == bun_aio::TimerState::Active
+                    && dev.memory_visualizer_timer.state == EventLoopTimerState::ACTIVE
                 {
                     dev.vm.timer.remove(&mut dev.memory_visualizer_timer);
                 }

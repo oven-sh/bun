@@ -498,9 +498,26 @@ fn on_stream_error(ctx: *mut c_void, resp: AnyResponse, _err: bun_sys::Error) {
 }
 
 // Intrusive refcount: `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`
-// Macro provides `ref_()` / `deref()` over the embedded `ref_count: Cell<u32>`.
-// TODO(port): `ref` is a Rust keyword — using `ref_`; wire to bun_ptr::IntrusiveRc<FileRoute> in Phase B
-bun_ptr::intrusive_rc!(FileRoute, ref_count, FileRoute::deinit);
+// PORT NOTE: `bun_ptr` has no `intrusive_rc!` macro; the canonical Rust shape is
+// `impl bun_ptr::RefCounted` over a `RefCount<Self>` field. FileRoute keeps its
+// `Cell<u32>` field for now (initialized at 3 sites above and crossed as raw
+// userdata into FileResponseStream), so expand the mixin inline.
+// TODO(port): switch `ref_count: Cell<u32>` → `bun_ptr::RefCount<FileRoute>` and
+// `impl bun_ptr::RefCounted for FileRoute` once the FFI userdata story for
+// `IntrusiveRc<FileRoute>` is settled (see StaticRoute.rs note).
+impl FileRoute {
+    pub fn ref_(&self) {
+        self.ref_count.set(self.ref_count.get() + 1);
+    }
+
+    pub fn deref(&mut self) {
+        let n = self.ref_count.get() - 1;
+        self.ref_count.set(n);
+        if n == 0 {
+            FileRoute::deinit(self as *mut FileRoute);
+        }
+    }
+}
 } // mod _gated
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -106,35 +106,35 @@ pub fn invalid_target(diag: &mut clap::Diagnostic, target: &[u8]) -> ! {
     bun_core::process::exit(1);
 }
 
-pub use crate::build_command::BuildCommand;
-pub use crate::add_command::AddCommand;
-pub use crate::create_command::CreateCommand;
-pub use crate::create_command::Example as CreateCommandExample;
-pub use crate::create_command::CreateListExamplesCommand;
-pub use crate::discord_command::DiscordCommand;
-pub use crate::install_command::InstallCommand;
-pub use crate::link_command::LinkCommand;
-pub use crate::unlink_command::UnlinkCommand;
-pub use crate::install_completions_command::InstallCompletionsCommand;
-pub use crate::package_manager_command::PackageManagerCommand;
-pub use crate::remove_command::RemoveCommand;
-pub use crate::run_command::RunCommand;
-pub use crate::shell_completions as ShellCompletions;
-pub use crate::update_command::UpdateCommand;
-pub use crate::upgrade_command::UpgradeCommand;
-pub use crate::bunx_command::BunxCommand;
-pub use crate::exec_command::ExecCommand;
-pub use crate::patch_command::PatchCommand;
-pub use crate::patch_commit_command::PatchCommitCommand;
-pub use crate::outdated_command::OutdatedCommand;
-pub use crate::update_interactive_command::UpdateInteractiveCommand;
-pub use crate::publish_command::PublishCommand;
-pub use crate::pack_command::PackCommand;
-pub use crate::audit_command::AuditCommand;
-pub use crate::init_command::InitCommand;
-pub use crate::why_command::WhyCommand;
-pub use crate::fuzzilli_command::FuzzilliCommand;
-pub use crate::repl_command::ReplCommand;
+pub use crate::cli::build_command::BuildCommand;
+pub use crate::cli::add_command::AddCommand;
+pub use crate::cli::create_command::CreateCommand;
+pub use crate::cli::create_command::Example as CreateCommandExample;
+pub use crate::cli::create_command::CreateListExamplesCommand;
+pub use crate::cli::discord_command::DiscordCommand;
+pub use crate::cli::install_command::InstallCommand;
+pub use crate::cli::link_command::LinkCommand;
+pub use crate::cli::unlink_command::UnlinkCommand;
+pub use crate::cli::install_completions_command::InstallCompletionsCommand;
+pub use crate::cli::package_manager_command::PackageManagerCommand;
+pub use crate::cli::remove_command::RemoveCommand;
+pub use crate::cli::run_command::RunCommand;
+pub use crate::cli::shell_completions as ShellCompletions;
+pub use crate::cli::update_command::UpdateCommand;
+pub use crate::cli::upgrade_command::UpgradeCommand;
+pub use crate::cli::bunx_command::BunxCommand;
+pub use crate::cli::exec_command::ExecCommand;
+pub use crate::cli::patch_command::PatchCommand;
+pub use crate::cli::patch_commit_command::PatchCommitCommand;
+pub use crate::cli::outdated_command::OutdatedCommand;
+pub use crate::cli::update_interactive_command::UpdateInteractiveCommand;
+pub use crate::cli::publish_command::PublishCommand;
+pub use crate::cli::pack_command::PackCommand;
+pub use crate::cli::audit_command::AuditCommand;
+pub use crate::cli::init_command::InitCommand;
+pub use crate::cli::why_command::WhyCommand;
+pub use crate::cli::fuzzilli_command::FuzzilliCommand;
+pub use crate::cli::repl_command::ReplCommand;
 
 // `arguments` is mounted in the parent (`cli/mod.rs` → `#[path = "Arguments.rs"]`);
 // re-export here instead of redeclaring the module.
@@ -398,7 +398,7 @@ pub mod command {
         unsafe { GLOBAL_CLI_CTX }
     }
 
-    pub use bun_options_types::context::{
+    pub use bun_options_types::Context::{
         Context, ContextData, DebugOptions, Debugger, HotReload, MacroOptions, RuntimeOptions,
         TestOptions,
     };
@@ -1040,7 +1040,7 @@ pub mod command {
         Ok(())
     }
 
-    pub use bun_options_types::command_tag::Tag;
+    pub use bun_options_types::CommandTag::Tag;
 
     pub fn tag_params<const CMD: Tag>() -> &'static [arguments::ParamType] {
         match CMD {

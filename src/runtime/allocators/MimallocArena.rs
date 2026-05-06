@@ -325,7 +325,7 @@ unsafe fn vtable_free(_: *mut c_void, buf: &mut [u8], alignment: Alignment, _: u
     #[cfg(debug_assertions)]
     {
         debug_assert!(unsafe { mimalloc::mi_is_in_heap_region(buf.as_ptr().cast()) });
-        if mimalloc::must_use_aligned_alloc(alignment) {
+        if mimalloc::must_use_aligned_alloc(alignment.to_byte_units()) {
             unsafe { mimalloc::mi_free_size_aligned(buf.as_mut_ptr().cast(), buf.len(), alignment.to_byte_units()) };
         } else {
             unsafe { mimalloc::mi_free_size(buf.as_mut_ptr().cast(), buf.len()) };

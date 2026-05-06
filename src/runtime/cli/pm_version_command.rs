@@ -162,7 +162,7 @@ impl PmVersionCommand {
                         &package_json_dir,
                         pm.env,
                         &[],
-                        pm.options.log_level == bun_install::LogLevel::Silent,
+                        pm.options.log_level == LogLevel::Silent,
                         ctx.debug.use_system_shell,
                     )?;
                 }
@@ -245,7 +245,7 @@ impl PmVersionCommand {
                         &package_json_dir,
                         pm.env,
                         &[],
-                        pm.options.log_level == bun_install::LogLevel::Silent,
+                        pm.options.log_level == LogLevel::Silent,
                         ctx.debug.use_system_shell,
                     )?;
                 }
@@ -270,14 +270,14 @@ impl PmVersionCommand {
                         &package_json_dir,
                         pm.env,
                         &[],
-                        pm.options.log_level == bun_install::LogLevel::Silent,
+                        pm.options.log_level == LogLevel::Silent,
                         ctx.debug.use_system_shell,
                     )?;
                 }
             }
         }
 
-        Output::println(format_args!("v{}", BStr::new(&new_version_str)));
+        Output::print(format_args!("v{}\n", BStr::new(&new_version_str)));
         Output::flush();
         Ok(())
     }
@@ -390,7 +390,7 @@ impl PmVersionCommand {
 
         Output::prettyln(format_args!(
             "<r><b>bun pm version<r> <d>v{}<r>",
-            Global::PACKAGE_JSON_VERSION_WITH_SHA
+            Global::package_json_version_with_sha
         ));
         if let Some(version) = &_current_version {
             Output::prettyln(format_args!(

@@ -551,8 +551,8 @@ pub mod js_bundler {
                 if let Some(windows_icon_path) = windows.get_own(global_this, "icon")? {
                     let slice = windows_icon_path.to_slice(global_this)?;
                     if bun_sys::exists_at_type(bun_sys::Fd::cwd(), slice.slice())
-                        .unwrap_or(bun_sys::FileType::Directory)
-                        != bun_sys::FileType::File
+                        .unwrap_or(bun_sys::ExistsAtType::Directory)
+                        != bun_sys::ExistsAtType::File
                     {
                         return global_this.throw_invalid_arguments(
                             "windows.icon must be a valid path to an ico file",

@@ -19,8 +19,10 @@ use bun_url::URL;
 use bun_string::MutableString;
 use bun_js_parser::{Expr, E, G};
 use crate::cli::ci_info as ci;
-use bun_simdutf_sys as simdutf;
-use bun_sys::DirIterator;
+use bun_simdutf_sys::simdutf as simdutf;
+use bun_sys::dir_iterator as DirIterator;
+use bun_paths::resolve_path::{join_abs_string_buf_z, normalize_buf, normalize_buf_z};
+use bun_install::package_manager_real::options::{Access, AuthType, LogLevel};
 
 use crate::Command;
 use crate::cli::pack_command::{self as pack, PackCommand as Pack};
@@ -97,7 +99,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         tarball_path: &[u8],
     ) -> Result<Context<'a, DIRECTORY_PUBLISH>, FromTarballError> {
         let mut abs_buf = PathBuffer::uninit();
-        let abs_tarball_path = path::join_abs_string_buf_z(
+        let abs_tarball_path = join_abs_string_buf_z(
             FileSystem::instance().top_level_dir,
             &mut abs_buf,
             &[tarball_path],
@@ -164,7 +166,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
 
                 Output::pretty(format_args!(
                     "<b><cyan>packed<r> {} {}\n",
-                    bun_fmt::size(size, bun_fmt::SizeOptions { space_between_number_and_unit: false }),
+                    bun_fmt::size(size, bun_fmt::SizeFormatterOptions { space_between_number_and_unit: false }),
                     bun_fmt::fmt_os_path(stripped, Default::default()),
                 ));
 

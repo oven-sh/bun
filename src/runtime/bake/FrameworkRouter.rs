@@ -1753,11 +1753,13 @@ impl JSFrameworkRouter {
         // Zig's `errdefer style.deinit()` is implicit: `Style` owns a `Strong` (Drop type),
         // so `?` on any error path below drops it automatically.
 
-        let abs_root: Box<[u8]> = strings::without_trailing_slash(paths::join_abs(
-            bun_fs::FileSystem::instance().top_level_dir(),
-            paths::Platform::Auto,
-            root.slice(),
-        ))
+        let abs_root: Box<[u8]> = strings::without_trailing_slash(
+            paths::resolve_path::join_abs::<paths::platform::Auto>(
+                // SAFETY: FileSystem::instance() returns the process-global singleton; live for the program.
+                unsafe { (*bun_resolver::fs::FileSystem::instance()).top_level_dir },
+                root.slice(),
+            ),
+        )
         .into();
 
         let types: Box<[Type]> = Box::new([Type {

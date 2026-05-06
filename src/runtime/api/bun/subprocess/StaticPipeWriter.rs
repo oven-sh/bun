@@ -1,11 +1,10 @@
-use core::cell::Cell;
 use core::ffi::c_void;
 use core::mem::size_of;
 
 use bun_aio::Loop as AsyncLoop;
 use bun_io::{BufferedWriter, WriteStatus};
 use bun_jsc::EventLoopHandle;
-use bun_ptr::IntrusiveRc;
+use bun_ptr::{IntrusiveRc, RefCount, RefCounted};
 use bun_sys;
 
 use super::{Source, StdioResult};

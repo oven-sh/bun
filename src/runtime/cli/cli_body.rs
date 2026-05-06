@@ -726,12 +726,17 @@ pub mod command {
                 let mut offset_for_passthrough: usize = 0;
 
                 let ctx: &mut ContextData = 'brk: {
-                    if !graph.compile_exec_argv.is_empty() || bun::bun_options_argc() > 0 {
+                    // TODO(port): `bun.bun_options_argc`, `bun.appendOptionsEnv`, and the
+                    // mutable `bun.argv = ...` setter are not yet ported in `bun_core`.
+                    // The `--compile` exec-argv splicing path is stubbed until those land.
+                    let bun_options_argc: usize = todo!("blocked_on: bun_core::bun_options_argc");
+                    #[allow(unreachable_code)]
+                    if !graph.compile_exec_argv.is_empty() || bun_options_argc > 0 {
                         let original_argv_len = bun::argv().len();
                         // TODO(port): bun.argv is a mutable global slice of [:0]const u8
-                        let mut argv_list: Vec<&'static ZStr> = bun::argv().to_vec();
+                        let mut argv_list: Vec<&'static ZStr> = todo!("blocked_on: bun_core::argv().to_vec()");
                         if !graph.compile_exec_argv.is_empty() {
-                            bun::append_options_env(&graph.compile_exec_argv, &mut argv_list)?;
+                            todo!("blocked_on: bun_core::append_options_env");
                         }
 
                         // Store the full argv including user arguments
@@ -739,7 +744,7 @@ pub mod command {
                         let num_exec_argv_options = full_argv.len().saturating_sub(original_argv_len);
 
                         // Calculate offset: skip executable name + all exec argv options + BUN_OPTIONS args
-                        let num_parsed_options = num_exec_argv_options + bun::bun_options_argc();
+                        let num_parsed_options = num_exec_argv_options + bun_options_argc;
                         offset_for_passthrough = if full_argv.len() > 1 {
                             1 + num_parsed_options
                         } else {
@@ -749,13 +754,13 @@ pub mod command {
                         // Temporarily set bun.argv to only include executable name + exec_argv options + BUN_OPTIONS args.
                         // This prevents user arguments like --version/--help from being intercepted
                         // by Bun's argument parser (they should be passed through to user code).
-                        bun::set_argv(&full_argv[0..(1 + num_parsed_options).min(full_argv.len())]);
+                        todo!("blocked_on: bun_core::set_argv");
 
                         // Handle actual options to parse.
                         let result = init::<{ Tag::AutoCommand }>(log)?;
 
                         // Restore full argv so passthrough calculation works correctly
-                        bun::set_argv(full_argv);
+                        todo!("blocked_on: bun_core::set_argv");
 
                         break 'brk result;
                     }

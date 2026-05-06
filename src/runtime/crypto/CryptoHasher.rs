@@ -1031,7 +1031,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
             H::hash(
                 input.slice(),
                 &mut output_digest_buf,
-                Some(bun_jsc::VirtualMachine::get().rare_data().boring_engine()),
+                Some(global.bun_vm().rare_data().boring_engine()),
             );
         } else {
             H::hash(input.slice(), &mut output_digest_buf, None);
@@ -1070,7 +1070,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
             H::hash(
                 input.slice(),
                 output_digest_slice,
-                Some(bun_jsc::VirtualMachine::get().rare_data().boring_engine()),
+                Some(global.bun_vm().rare_data().boring_engine()),
             );
         } else {
             H::hash(input.slice(), output_digest_slice, None);

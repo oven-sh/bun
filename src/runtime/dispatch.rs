@@ -616,14 +616,19 @@ pub unsafe fn run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
             h.on_poll(size_or_offset as isize, hup);
         }
         poll_tag::SHELL_STATIC_PIPE_WRITER => {
-            let h = owner_as!(StaticPipeWriterPoll<crate::shell::subproc::ShellSubprocess>);
-            h.on_poll(size_or_offset as isize, hup);
+            // Body: `owner_as!(StaticPipeWriterPoll<ShellSubprocess>).on_poll(size_or_offset as isize, hup)`
+            // — `crate::shell::subproc` is gated behind the private `shell_body`
+            // module and `ShellSubprocess: StaticPipeWriterProcess` is not yet
+            // implemented.
+            let _ = (size_or_offset, hup);
+            todo!("blocked_on: crate::shell::subproc::ShellSubprocess");
         }
         poll_tag::SECURITY_SCAN_STATIC_PIPE_WRITER => {
-            let h = owner_as!(
-                StaticPipeWriterPoll<bun_install::security_scanner::SecurityScanSubprocess>
-            );
-            h.on_poll(size_or_offset as isize, hup);
+            // Body: `owner_as!(StaticPipeWriterPoll<SecurityScanSubprocess>).on_poll(size_or_offset as isize, hup)`
+            // — `bun_install::SecurityScanSubprocess` is a placeholder stub and
+            // does not yet implement `StaticPipeWriterProcess`.
+            let _ = (size_or_offset, hup);
+            todo!("blocked_on: bun_install::SecurityScanSubprocess: StaticPipeWriterProcess");
         }
         poll_tag::SHELL_BUFFERED_WRITER => {
             // `bun.shell.Interpreter.IOWriter.Poll`

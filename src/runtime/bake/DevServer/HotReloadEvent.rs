@@ -225,7 +225,7 @@ impl HotReloadEvent {
                     continue;
                 };
                 let file = file.unpack();
-                if file.kind() == crate::dev_server::incremental_graph::FileKind::Css {
+                if file.kind() == FileKind::Css {
                     entry_points.append_css(abs_path);
                 }
             }

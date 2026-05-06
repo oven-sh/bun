@@ -499,7 +499,7 @@ impl StreamPriority {
 // packed struct(u72): length: u24, type: u8, flags: u8, streamIdentifier: u32
 // TODO(port): u24 — represented as u32 here; wire encoding handled in write()/from()
 #[derive(Clone, Copy)]
-struct FrameHeader {
+pub struct FrameHeader {
     length: u32, // u24 on the wire
     type_: u8,
     flags: u8,

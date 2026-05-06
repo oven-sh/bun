@@ -3619,22 +3619,49 @@ impl HTTPClient {
     // We have to clone metadata immediately after use
     pub fn clone_metadata(&mut self) {
         debug_assert!(self.state.pending_response.is_some());
-        if let Some(response) = &self.state.pending_response {
+        // PORT NOTE: `Response<'static>` is `Copy`; bind by value so no borrow
+        // of `self.state` is held across the `pending_response = None` write
+        // below (Zig nulls it mid-block, which would trip borrowck on a `&`).
+        if let Some(response) = self.state.pending_response {
             if let Some(old) = self.state.cloned_metadata.take() {
                 drop(old); // deinit
             }
-            // TODO(port): blocked on bun_picohttp::StringBuilder — its
-            // `count`/`append` are `todo!()` stubs, so the http.zig:2164-2194
-            // deep-clone (StringBuilder count/allocate + headers_buf alloc +
-            // response.clone + builder.append(url.href)) cannot be ported yet.
-            // PORTING.md §Forbidden permits `todo!()` here because a higher-tier
-            // dep blocks it; what it *forbids* is the previous silent
-            // `HTTPResponseMetadata::default()` — every successful response would
-            // observe status 0 / no headers / empty url. Fail loud instead.
-            let _ = response;
-            todo!(
-                "clone_metadata: port http.zig:2164-2194 once bun_picohttp::StringBuilder is real"
+            let mut builder = picohttp::StringBuilder::default();
+            response.count(&mut builder);
+            builder.count(self.url.href);
+            builder.allocate();
+            // headers_buf is owned by the cloned_response (aka cloned_response.headers)
+            // PORT NOTE: `Response::clone` ties its return lifetime to
+            // `headers: &'a mut [Header]`; leak the box to obtain `'static` so
+            // the cloned response can be stored in `HTTPResponseMetadata`.
+            // Reclaimed by `Drop for HTTPResponseMetadata` (mirrors Zig
+            // `deinit` freeing `response.headers.list`).
+            let headers_buf: &'static mut [picohttp::Header] = Box::leak(
+                vec![picohttp::Header::ZERO; response.headers.list.len()].into_boxed_slice(),
             );
+            let cloned_response = response.clone(headers_buf, &mut builder);
+
+            // we clean the temporary response since cloned_metadata is now the owner
+            self.state.pending_response = None;
+
+            let href = builder.append(self.url.href) as *const [u8];
+            // Transfer the single backing allocation out of the builder
+            // (`builder.ptr.?[0..builder.cap]`) so its Drop becomes a no-op.
+            let cap = builder.cap;
+            let owned_buf: Box<[u8]> = match builder.ptr.take() {
+                // SAFETY: reconstitutes the `Box<[u8]>` forgotten in
+                // `picohttp::StringBuilder::allocate()`; `cap` is the exact
+                // length it was allocated with.
+                Some(p) => unsafe {
+                    Box::from_raw(core::slice::from_raw_parts_mut(p.as_ptr(), cap))
+                },
+                None => Box::default(),
+            };
+            self.state.cloned_metadata = Some(HTTPResponseMetadata {
+                owned_buf,
+                response: cloned_response,
+                url: href,
+            });
         } else {
             // we should never clone metadata that dont exists
             // we added a empty metadata just in case but will hit the assert

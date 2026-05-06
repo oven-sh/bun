@@ -1000,6 +1000,7 @@ pub fn build_with_vm(
         while let Some(parent_index) = next {
             let parent = router.route_ptr(parent_index);
             if let Some(file) = parent.file_layout {
+                let file = OpaqueFileId::init(file.get());
                 file_list.put_index(global, file_count, pt.preload_bundled_module(file)?)?;
                 for r#ref in pt.output_file(file).referenced_css_chunks.iter() {
                     styles.put_index(

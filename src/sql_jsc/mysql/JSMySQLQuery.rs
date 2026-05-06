@@ -149,7 +149,7 @@ impl JSMySQLQuery {
         // SAFETY: just allocated; uniquely owned here until handed to the JS wrapper.
         let this = unsafe { &mut *this };
 
-        let this_value = this.to_js(global_this);
+        let this_value = js::to_js(this, global_this);
         this_value.ensure_still_alive();
         this.this_value.set_weak(this_value);
 
@@ -162,7 +162,7 @@ impl JSMySQLQuery {
         Ok(this_value)
     }
 
-    #[bun_jsc::host_fn(method)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(method)] — see JsClass note above.
     pub fn do_run(
         this: &mut Self,
         global_object: &JSGlobalObject,
@@ -183,26 +183,28 @@ impl JSMySQLQuery {
 
         let arguments = callframe.arguments();
         if arguments.len() < 2 {
-            return global_object.throw_invalid_arguments(
+            return Err(global_object.throw_invalid_arguments(
                 "run must be called with 2 arguments connection and target",
-                &[],
-            );
+            ));
         }
-        let Some(connection) = arguments[0].as_::<MySQLConnection>() else {
-            return global_object.throw("connection must be a MySQLConnection", &[]);
+        let Some(connection) = js_mysql_connection::from_js(arguments[0]) else {
+            return Err(global_object.throw(format_args!("connection must be a MySQLConnection")));
         };
+        // SAFETY: `from_js` returned a non-null `*mut MySQLConnection` whose
+        // backing JSC wrapper is rooted by `arguments[0]` for this frame.
+        let connection: &mut MySQLConnection = unsafe { &mut *connection };
         let target = arguments[1];
         if !target.is_object() {
-            return global_object.throw_invalid_argument_type("run", "query", "Query");
+            return Err(global_object.throw_invalid_argument_type("run", "query", "Query"));
         }
         this.set_target(target);
         if let Err(err) = this.run(connection) {
             if !global_object.has_exception() {
-                return global_object.throw_value(mysql_error_to_js(
+                return Err(global_object.throw_value(mysql_error_to_js(
                     global_object,
                     "failed to execute query",
                     err,
-                ));
+                )));
             }
             return Err(jsc::JsError::Thrown);
         }
@@ -210,7 +212,7 @@ impl JSMySQLQuery {
         Ok(JSValue::UNDEFINED)
     }
 
-    #[bun_jsc::host_fn(method)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(method)] — see JsClass note above.
     pub fn do_cancel(
         _this: &mut Self,
         _global_object: &JSGlobalObject,
@@ -221,7 +223,7 @@ impl JSMySQLQuery {
         Ok(JSValue::UNDEFINED)
     }
 
-    #[bun_jsc::host_fn(method)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(method)] — see JsClass note above.
     pub fn do_done(
         _this: &mut Self,
         _global_object: &JSGlobalObject,
@@ -231,7 +233,7 @@ impl JSMySQLQuery {
         Ok(JSValue::UNDEFINED)
     }
 
-    #[bun_jsc::host_fn(method)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(method)] — see JsClass note above.
     pub fn set_mode_from_js(
         this: &mut Self,
         global_object: &JSGlobalObject,
@@ -239,18 +241,27 @@ impl JSMySQLQuery {
     ) -> JsResult<JSValue> {
         let js_mode = callframe.argument(0);
         if js_mode.is_empty_or_undefined_or_null() || !js_mode.is_number() {
-            return global_object.throw_invalid_argument_type("setMode", "mode", "Number");
+            return Err(global_object.throw_invalid_argument_type("setMode", "mode", "Number"));
         }
 
         let mode_value = js_mode.coerce::<i32>(global_object)?;
-        let Ok(mode) = SQLQueryResultMode::try_from(mode_value) else {
-            return global_object.throw_invalid_argument_type_value("mode", "Number", js_mode);
+        // PORT NOTE: `std.meta.intToEnum` → manual range match (no `TryFrom<i32>`
+        // on `SQLQueryResultMode`; it's a plain `#[repr(u8)]` enum).
+        let mode = match mode_value {
+            0 => SQLQueryResultMode::Objects,
+            1 => SQLQueryResultMode::Values,
+            2 => SQLQueryResultMode::Raw,
+            _ => {
+                return Err(global_object.throw_invalid_argument_type_value(
+                    "mode", "Number", js_mode,
+                ));
+            }
         };
         this.query.set_result_mode(mode);
         Ok(JSValue::UNDEFINED)
     }
 
-    #[bun_jsc::host_fn(method)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(method)] — see JsClass note above.
     pub fn set_pending_value_from_js(
         this: &mut Self,
         _global_object: &JSGlobalObject,
@@ -297,7 +308,8 @@ impl JSMySQLQuery {
         };
         js_tag.ensure_still_alive();
 
-        let Some(function) = this.vm().rare_data().mysql_context.on_query_resolve_fn.get() else {
+        let Some(function) = this.vm_mut().rare_data().mysql_context.on_query_resolve_fn.get()
+        else {
             return;
         };
         debug_assert!(function.is_callable(), "onQueryResolveFn is not callable");
@@ -318,9 +330,9 @@ impl JSMySQLQuery {
                 js_tag,
                 tag.to_js_number(),
                 if queries_array.is_empty() { JSValue::UNDEFINED } else { queries_array },
-                JSValue::from(is_last_result),
-                JSValue::js_number(result.last_insert_id),
-                JSValue::js_number(result.affected_rows),
+                JSValue::js_boolean(is_last_result),
+                JSValue::js_number(result.last_insert_id as f64),
+                JSValue::js_number(result.affected_rows as f64),
             ],
         );
     }
@@ -400,7 +412,7 @@ impl JSMySQLQuery {
         }
         debug_assert!(!js_error.is_empty(), "js_error is zero");
         js_error.ensure_still_alive();
-        let Some(function) = this.vm().rare_data().mysql_context.on_query_reject_fn.get() else {
+        let Some(function) = this.vm_mut().rare_data().mysql_context.on_query_reject_fn.get() else {
             return;
         };
         debug_assert!(function.is_callable(), "onQueryRejectFn is not callable");
@@ -452,7 +464,10 @@ impl JSMySQLQuery {
         {
             debug!("run failed to execute query");
             if !global_object.has_exception() {
-                return global_object.throw_value(mysql_error_to_js(
+                // PORT NOTE: Zig `return globalObject.throwValue(...)` returns
+                // `error.JSError` into the `AnyMySQLError.Error!void` set; in
+                // Rust we throw for side-effect and map to the enum variant.
+                let _ = global_object.throw_value(mysql_error_to_js(
                     global_object,
                     "failed to execute query",
                     err,
@@ -590,6 +605,14 @@ impl JSMySQLQuery {
     fn vm(&self) -> &VirtualMachine {
         // SAFETY: vm outlives every JSMySQLQuery (owned by the runtime).
         unsafe { self.vm.as_ref() }
+    }
+    #[inline]
+    fn vm_mut(&self) -> &mut VirtualMachine {
+        // SAFETY: vm outlives every JSMySQLQuery (owned by the runtime). The
+        // VM is interior-mutable on the C++/Zig side; the stored `NonNull`
+        // carries write provenance from `bun_vm_ptr()` so projecting `&mut`
+        // here mirrors the Zig spec's `*jsc.VirtualMachine`.
+        unsafe { &mut *self.vm.as_ptr() }
     }
     #[inline]
     fn global_object(&self) -> &JSGlobalObject {

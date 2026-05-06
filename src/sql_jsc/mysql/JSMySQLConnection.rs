@@ -534,8 +534,11 @@ impl JSMySQLConnection {
         let ptr: *mut JSMySQLConnection = Box::into_raw(Box::new(JSMySQLConnection {
             ref_count: Cell::new(1),
             js_value: JsRef::empty(),
-            global_object,
-            vm,
+            // SAFETY: JSC_BORROW — JSGlobalObject / VirtualMachine outlive every
+            // m_ctx payload (they own the heap that holds the JS wrapper).
+            // Lifetime-extend the param refs via raw-ptr roundtrip.
+            global_object: unsafe { &*(global_object as *const JSGlobalObject) },
+            vm: unsafe { &*(vm as *const VirtualMachine) },
             poll_ref: KeepAlive::default(),
             connection: my_sql_connection::MySQLConnection::init(
                 database,
@@ -552,12 +555,12 @@ impl JSMySQLConnection {
             connection_timeout_ms: u32::try_from(connection_timeout).unwrap(),
             max_lifetime_interval_ms: u32::try_from(max_lifetime).unwrap(),
             timer: EventLoopTimer {
-                tag: EventLoopTimer::Tag::MySQLConnectionTimeout,
+                tag: EventLoopTimerTag::MySQLConnectionTimeout,
                 next: timespec::EPOCH,
                 ..Default::default()
             },
             max_lifetime_timer: EventLoopTimer {
-                tag: EventLoopTimer::Tag::MySQLConnectionMaxLifetime,
+                tag: EventLoopTimerTag::MySQLConnectionMaxLifetime,
                 next: timespec::EPOCH,
                 ..Default::default()
             },
@@ -570,9 +573,14 @@ impl JSMySQLConnection {
 
             // MySQL always opens plain TCP first; STARTTLS adopts into the TLS
             // group after the SSLRequest exchange.
-            let group = vm.rare_data().mysql_group(vm, false);
+            // SAFETY: `mysql_group` returns a non-null `*mut SocketGroup` owned
+            // by RareData (lives for the VM's lifetime); reborrow for the
+            // connect call. `vm` reborrowed via raw ptr to avoid the
+            // `rare_data(&mut vm)` / `mysql_group(.., &vm)` aliasing conflict.
+            let vm_p = vm as *mut VirtualMachine;
+            let group = unsafe { &mut *(*vm_p).rare_data().mysql_group(&*vm_p, false) };
             let result = if !path.is_empty() {
-                SocketTCP::connect_unix_group(group, uws::DispatchKind::Mysql, None, path, ptr, false)
+                SocketTCP::connect_unix_group(group, uws::DispatchKind::Mysql, None, &path[..], ptr, false)
             } else {
                 SocketTCP::connect_group(
                     group,
@@ -599,8 +607,8 @@ impl JSMySQLConnection {
         }
         this.connection.status = my_sql_connection::Status::Connecting;
         this.reset_connection_timeout();
-        this.poll_ref.ref_(vm);
-        let js_value = this.to_js(global_object);
+        this.poll_ref.r#ref(vm);
+        let js_value = js::to_js(ptr, global_object);
         js_value.ensure_still_alive();
         this.js_value.set_strong(js_value, global_object);
         js::onconnect_set_cached(js_value, global_object, on_connect);
@@ -609,7 +617,7 @@ impl JSMySQLConnection {
         Ok(js_value)
     }
 
-    #[bun_jsc::host_fn(getter)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)] — see JsClass note above.
     pub fn get_queries(
         _this: &Self,
         this_value: JSValue,
@@ -625,12 +633,12 @@ impl JSMySQLConnection {
         Ok(array)
     }
 
-    #[bun_jsc::host_fn(getter)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)] — see JsClass note above.
     pub fn get_connected(this: &Self, _: &JSGlobalObject) -> JSValue {
         JSValue::from(this.connection.status == my_sql_connection::Status::Connected)
     }
 
-    #[bun_jsc::host_fn(getter)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)] — see JsClass note above.
     pub fn get_on_connect(_this: &Self, this_value: JSValue, _: &JSGlobalObject) -> JSValue {
         if let Some(value) = js::onconnect_get_cached(this_value) {
             return value;
@@ -638,7 +646,7 @@ impl JSMySQLConnection {
         JSValue::UNDEFINED
     }
 
-    #[bun_jsc::host_fn(setter)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(setter)] — see JsClass note above.
     pub fn set_on_connect(
         _this: &mut Self,
         this_value: JSValue,
@@ -648,7 +656,7 @@ impl JSMySQLConnection {
         js::onconnect_set_cached(this_value, global_object, value);
     }
 
-    #[bun_jsc::host_fn(getter)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)] — see JsClass note above.
     pub fn get_on_close(_this: &Self, this_value: JSValue, _: &JSGlobalObject) -> JSValue {
         if let Some(value) = js::onclose_get_cached(this_value) {
             return value;
@@ -656,7 +664,7 @@ impl JSMySQLConnection {
         JSValue::UNDEFINED
     }
 
-    #[bun_jsc::host_fn(setter)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(setter)] — see JsClass note above.
     pub fn set_on_close(
         _this: &mut Self,
         this_value: JSValue,
@@ -666,25 +674,25 @@ impl JSMySQLConnection {
         js::onclose_set_cached(this_value, global_object, value);
     }
 
-    #[bun_jsc::host_fn(method)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(method)] — see JsClass note above.
     pub fn do_ref(this: &mut Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-        this.poll_ref.ref_(this.vm);
+        this.poll_ref.r#ref(this.vm);
         Ok(JSValue::UNDEFINED)
     }
 
-    #[bun_jsc::host_fn(method)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(method)] — see JsClass note above.
     pub fn do_unref(this: &mut Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         this.poll_ref.unref(this.vm);
         Ok(JSValue::UNDEFINED)
     }
 
-    #[bun_jsc::host_fn(method)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(method)] — see JsClass note above.
     pub fn do_flush(this: &mut Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         this.register_auto_flusher();
         Ok(JSValue::UNDEFINED)
     }
 
-    #[bun_jsc::host_fn(method)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(method)] — see JsClass note above.
     pub fn do_close(
         this: &mut Self,
         _global_object: &JSGlobalObject,

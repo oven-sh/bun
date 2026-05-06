@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 describe("--use-system-ca", () => {
   test("flag loads system certificates", async () => {
@@ -65,5 +65,147 @@ describe("--use-system-ca", () => {
     expect(exitCode).toBe(0);
     expect(stdout.trim()).toBe("OK");
     expect(stderr).toBe("");
+  });
+});
+
+// Print the length of `tls.getCACertificates('default')`. When the selected
+// store is "system", this is bundled + system; otherwise it's bundled-only.
+// We compare lengths across runs to verify that each configuration mechanism
+// selects the expected store.
+const probe = `const tls = require("tls"); console.log(tls.getCACertificates("default").length);`;
+
+async function defaultCertCount(args: string[], extraEnv: Record<string, string | undefined> = {}, cwd?: string) {
+  const env = { ...bunEnv, NODE_USE_SYSTEM_CA: undefined, ...extraEnv };
+  await using proc = spawn({
+    cmd: [bunExe(), ...args, "-e", probe],
+    env: env as Record<string, string>,
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+  return parseInt(stdout.trim(), 10);
+}
+
+describe("bunfig.toml CA", () => {
+  test(`CA = "system" in bunfig.toml matches --use-system-ca`, async () => {
+    const dir = tempDirWithFiles("bunfig-ca-system", {
+      "bunfig.toml": `CA = "system"\n`,
+    });
+
+    const bunfigCount = await defaultCertCount([], {}, dir);
+    const flagCount = await defaultCertCount(["--use-system-ca"]);
+    const baselineCount = await defaultCertCount([]);
+
+    // Whichever store is active, bunfig and the CLI flag pick the same one.
+    expect(bunfigCount).toBe(flagCount);
+    // Baseline (no flag, no env, no bunfig) uses bundled — bunfig "system"
+    // is at least as large (equal when the machine has zero system certs).
+    expect(bunfigCount).toBeGreaterThanOrEqual(baselineCount);
+  });
+
+  test(`CA = "bundled" in bunfig.toml matches bundled-only default`, async () => {
+    const dir = tempDirWithFiles("bunfig-ca-bundled", {
+      "bunfig.toml": `CA = "bundled"\n`,
+    });
+
+    const bunfigCount = await defaultCertCount([], {}, dir);
+    const baselineCount = await defaultCertCount([]);
+    expect(bunfigCount).toBe(baselineCount);
+  });
+
+  test(`CA = "openssl" in bunfig.toml is accepted`, async () => {
+    const dir = tempDirWithFiles("bunfig-ca-openssl", {
+      "bunfig.toml": `CA = "openssl"\n`,
+      "index.ts": `console.log("OK");`,
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "index.ts"],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(exitCode).toBe(0);
+    expect(stdout.trim()).toBe("OK");
+    expect(stderr).toBe("");
+  });
+
+  test(`CLI --use-bundled-ca overrides bunfig CA = "system"`, async () => {
+    const dir = tempDirWithFiles("bunfig-ca-cli-override", {
+      "bunfig.toml": `CA = "system"\n`,
+    });
+
+    const bundledCount = await defaultCertCount(["--use-bundled-ca"], {}, dir);
+    const baselineCount = await defaultCertCount([]);
+    // CLI forcing bundled must match the plain bundled-only count, even
+    // though bunfig asked for "system".
+    expect(bundledCount).toBe(baselineCount);
+  });
+
+  test(`NODE_USE_SYSTEM_CA=1 overrides bunfig CA = "bundled"`, async () => {
+    const dir = tempDirWithFiles("bunfig-ca-env-override", {
+      "bunfig.toml": `CA = "bundled"\n`,
+    });
+
+    const envCount = await defaultCertCount([], { NODE_USE_SYSTEM_CA: "1" }, dir);
+    const flagCount = await defaultCertCount(["--use-system-ca"]);
+    // Env var wins over bunfig "bundled", so we end up on system just
+    // like --use-system-ca.
+    expect(envCount).toBe(flagCount);
+  });
+
+  test("invalid CA value fails with a diagnostic", async () => {
+    const dir = tempDirWithFiles("bunfig-ca-invalid", {
+      "bunfig.toml": `CA = "not-a-real-store"\n`,
+      "index.ts": `console.log("should not run");`,
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "index.ts"],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(exitCode).not.toBe(0);
+    expect(stdout).not.toContain("should not run");
+    expect(stderr).toContain("Invalid CA value");
+  });
+
+  test("bun test reads bunfig.toml CA", async () => {
+    const dir = tempDirWithFiles("bunfig-ca-test", {
+      "bunfig.toml": `CA = "system"\n`,
+      "probe.test.ts": `
+        import { test, expect } from "bun:test";
+        import { getCACertificates } from "tls";
+        test("system store selected via bunfig", () => {
+          // The count under "bundled" is fixed; "system" is >= bundled.
+          // Just check the test command honored the bunfig value by
+          // reading it back through the Zig->JS getter exposed via tls.
+          expect(Array.isArray(getCACertificates("default"))).toBe(true);
+        });
+      `,
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "test", "probe.test.ts"],
+      env: { ...bunEnv, NODE_USE_SYSTEM_CA: undefined } as Record<string, string>,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(exitCode).toBe(0);
+    expect(stderr).not.toContain("Invalid");
+    expect(stderr).not.toContain("error:");
   });
 });

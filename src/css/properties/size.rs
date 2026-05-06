@@ -432,19 +432,6 @@ pub struct SizeHandler {
     pub category: PropertyCategory,
 }
 
-impl Default for SizeHandler {
-    fn default() -> Self {
-        Self {
-            width: None, height: None, min_width: None, min_height: None,
-            max_width: None, max_height: None, block_size: None, inline_size: None,
-            min_block_size: None, min_inline_size: None, max_block_size: None,
-            max_inline_size: None, has_any: false,
-            flushed_properties: SizeProperty::empty(),
-            category: PropertyCategory::default(),
-        }
-    }
-}
-
 impl SizeHandler {
     // No-op stubs so `DeclarationHandler` compiles; real bodies are gated below.
     #[inline]

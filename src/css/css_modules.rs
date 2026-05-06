@@ -12,10 +12,9 @@ use crate::PrintErr;
 pub use crate::Error;
 
 // ─────────────────────────────────────────────────────────────────────────
-// `CssModule` is un-gated (B-2). `reference_dashed` / `handle_composes`
-// remain internally gated — they depend on still-gated `Printer.allocator` /
-// `import_record()`, `properties::css_modules::Specifier`, and
-// `selector::parser::{SelectorList, Component}`.
+// `CssModule` is un-gated (B-2). `reference_dashed` remains internally
+// gated — it depends on still-gated `properties::css_modules::Specifier`
+// (`gated_prop!` stub carries no variants) and `ImportRecord.path.text`.
 // ─────────────────────────────────────────────────────────────────────────
 pub struct CssModule<'a> {
     pub config: &'a Config,

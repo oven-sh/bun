@@ -7341,6 +7341,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             self.symbols[self.require_ref.inner_index() as usize].use_count_estimate > 0
         };
 
+        // Spec P.zig:6645: `.runtime_imports = p.runtime_imports` — move the
+        // parser's accumulated runtime-helper refs into the Ast so the linker /
+        // printer can emit `__require`, `__toESM`, etc. Precompute `require_ref`
+        // first since it reads `__require` from the same struct we're taking.
+        let require_ref = self.runtime_imports.__require.unwrap_or(self.require_ref);
+        let runtime_imports = core::mem::take(&mut self.runtime_imports);
+
         // PORT NOTE: BumpVec<'a, T> can't be moved into a global-allocator BabyList;
         // wrap the bump-backed storage as a Borrowed BabyList (Drop is no-op).
         // SAFETY: bump-arena storage lives for 'a, which outlives the Ast.
@@ -7348,18 +7355,19 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // SAFETY: same — `parts` is a BumpVec<'a, Part>.
         let parts_list = unsafe { BabyList::<js_ast::Part>::from_bump_slice(parts.as_mut_slice()) };
         // Spec P.zig:6697: `ImportRecord.List.moveFromList(&p.import_records)`.
-        // SAFETY: same as `symbols`/`parts` above — wrap the bump/Vec-backed
-        // storage as a Borrowed BabyList so downstream (printer, linker) can
-        // resolve every `S.Import`/`E.RequireString`/`E.Import` by index.
+        // Round-G fix: use the dedicated adapter so the parser-side list is
+        // left empty (Zig move-and-zero) and the BumpVec is leaked into the
+        // arena rather than dropped — downstream (printer, linker) resolves
+        // every `S.Import`/`E.RequireString`/`E.Import` by index against this.
         let import_records: BabyList<ImportRecord> =
-            unsafe { BabyList::<ImportRecord>::from_bump_slice(self.import_records.items_mut()) };
+            self.import_records.move_to_baby_list(allocator);
 
         Ok(js_ast::Ast {
-            // TODO(port): Ast.runtime_imports is the round-B opaque
-            // `ast::runtime_stub::Imports` (zero-sized stand-in), distinct from
-            // `parser::Runtime::Imports` stored on P. Once `runtime.rs::Imports`
-            // un-gates and Ast switches to it, change to `self.runtime_imports.clone()`.
-            runtime_imports: Default::default(),
+            // Spec P.zig:6644: `.runtime_imports = p.runtime_imports`.
+            // Round-G: `Ast.runtime_imports` is now the real
+            // `parser::Runtime::Imports`; move it out (P is terminal after
+            // `to_ast`).
+            runtime_imports: core::mem::take(&mut self.runtime_imports),
             module_scope,
             exports_ref: self.exports_ref,
             wrapper_ref,

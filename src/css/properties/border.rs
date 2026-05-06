@@ -1180,7 +1180,7 @@ macro_rules! flush_category {
                             && css::generic::eql(&block_end.$key, &inline_start.$key)
                             && css::generic::eql(&inline_start.$key, &inline_end.$key))
                     {
-                        let rect = <$P> {
+                        let rect = $P {
                             top: block_start.$key.take().unwrap(),
                             right: inline_end.$key.take().unwrap(),
                             bottom: block_end.$key.take().unwrap(),

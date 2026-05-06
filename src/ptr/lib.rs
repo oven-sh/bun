@@ -14,6 +14,13 @@ pub type CowSlice<'a, T> = Cow<'a, [T]>;
 pub type CowSliceZ<'a> = Cow<'a, core::ffi::CStr>;
 pub type CowString<'a> = Cow<'a, [u8]>;
 
+// `bun.ptr.CowSlice(T)` / `CowSliceZ` — the lifetime-free struct port (owns or
+// borrows a raw slice with `init_owned`/`borrow_subslice`/`length`). Distinct
+// from the `std::borrow::Cow` aliases above; callers that need the Zig-shaped
+// API (e.g. `pack_command::Pattern`) reach for `cow_slice::CowSlice<u8>`.
+#[path = "CowSlice.rs"]
+pub mod cow_slice;
+
 // owned/shared — OBSOLETE per PORTING.md §Pointers: callers
 // use std `Box`/`Rc`/`Arc` directly. Draft modules kept for diff-pass only.
  pub mod owned;

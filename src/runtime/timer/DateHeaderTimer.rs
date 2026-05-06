@@ -71,13 +71,13 @@ impl DateHeaderTimer {
     }
 
     pub fn run(&mut self, vm: &mut VirtualMachine) {
-        self.event_loop_timer.state = EventLoopTimerState::Fired;
-        let loop_ = vm.uws_loop();
-        // TODO(port): `.allow_mocked_time` is a Zig enum literal arg to timespec.now(); confirm Rust API shape
+        self.event_loop_timer.state = EventLoopTimerState::FIRED;
+        // SAFETY: uws_loop() returns a valid live *mut Loop owned by the VM.
+        let loop_ = unsafe { &mut *vm.uws_loop() };
         let now = Timespec::now_allow_mocked_time();
 
         // Record when we last ran it.
-        self.event_loop_timer.next = now;
+        self.event_loop_timer.next = ElTimespec { sec: now.sec, nsec: now.nsec };
         bun_output::scoped_log!(DateHeaderTimer, "run");
 
         // update_date() is an expensive function.
@@ -85,7 +85,8 @@ impl DateHeaderTimer {
 
         if loop_.internal_loop_data.sweep_timer_count > 0 {
             // Reschedule it automatically for 1 second later.
-            self.event_loop_timer.next = now.add_ms(MS_PER_S);
+            let next = now.add_ms(MS_PER_S);
+            self.event_loop_timer.next = ElTimespec { sec: next.sec, nsec: next.nsec };
             vm.timer.insert(&mut self.event_loop_timer);
         }
     }
@@ -93,9 +94,11 @@ impl DateHeaderTimer {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__internal_ensureDateHeaderTimerIsEnabled(loop_: *mut Loop) {
-    if let Some(vm) = VirtualMachine::get_or_null() {
-        // SAFETY: loop_ is a valid uws Loop pointer passed from C++; lives for the call duration
-        let loop_ref = unsafe { &mut *loop_ };
+    if let Some(vm_ptr) = VirtualMachine::get_or_null() {
+        // SAFETY: vm_ptr is the live thread-local VM; loop_ is a valid uws Loop pointer
+        // passed from C++ and lives for the call duration.
+        let vm = unsafe { &mut *vm_ptr };
+        let loop_ref = unsafe { &*loop_ };
         vm.timer.update_date_header_timer_if_necessary(loop_ref, vm);
     }
 }

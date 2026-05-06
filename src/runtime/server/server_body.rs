@@ -16,9 +16,10 @@ use bun_jsc::{
     self as jsc, host_fn, ArrayBuffer, CallFrame, JSGlobalObject, JSPromise, JSValue, JsError,
     JsRef, JsResult, Node, Strong, SystemError, VirtualMachine, ZigString,
 };
-use bun_jsc::WebCore::{self, AbortSignal, Blob, Body, CookieMap, Fetch, FetchHeaders, Request, Response};
+use crate::webcore::{self as WebCore, AbortSignal, Blob, Body, CookieMap, FetchHeaders, Request, Response};
+use crate::webcore::fetch as Fetch;
 use bun_jsc::Debugger::{AsyncTaskTracker, DebuggerId};
-use bun_jsc::API::{JSBundler, SocketAddress};
+use crate::api::{js_bundler as JSBundler, SocketAddress};
 use bun_logger as logger;
 use bun_paths as paths;
 use bun_ptr::{IntrusiveRc, RefPtr};
@@ -26,12 +27,13 @@ use bun_str::{self as bstr, strings, String as BunString, ZStr};
 use bun_sys as sys;
 use bun_url::URL;
 use bun_uws::{self as uws, AnyResponse, AnyWebSocket, Opcode, ResponseKind, WebSocketUpgradeContext};
+use bun_uws_sys as uws_sys;
 use crate::bake::{self as bake, DevServer, FrameworkRouter};
-use bun_fs::FileSystem;
-use crate::standalone_module_graph::StandaloneModuleGraph;
-use bun_uuid::UUID;
+use bun_paths::fs::FileSystem;
+use bun_standalone_graph::StandaloneModuleGraph;
+use bun_jsc::uuid::UUID;
 use bun_wyhash::hash;
-use bstr::BStr;
+use ::bstr::BStr;
 
 bun_output::declare_scope!(Server, visible);
 bun_output::declare_scope!(RequestContext, visible);
@@ -45,18 +47,50 @@ macro_rules! ctx_log {
 
 // ─── Re-exports ──────────────────────────────────────────────────────────────
 pub use super::web_socket_server_context::WebSocketServerContext;
-pub use super::http_status_text::HTTPStatusText;
+pub use super::http_status_text as HTTPStatusText;
 pub use super::html_bundle::{self as html_bundle, HTMLBundle};
 // TODO: rename to StaticBlobRoute? the html bundle is sometimes a static route
 pub use super::static_route::StaticRoute;
 pub use super::file_route::FileRoute;
 pub use super::file_response_stream::FileResponseStream;
-pub use super::range_request::RangeRequest;
+pub use super::range_request as RangeRequest;
 pub use super::server_config::{self as server_config, ServerConfig};
 pub use super::server_web_socket::ServerWebSocket;
 pub use super::node_http_response::NodeHTTPResponse;
 pub use super::any_request_context::AnyRequestContext;
-pub use super::request_context::NewRequestContext;
+pub use super::request_context::RequestContext as NewRequestContext;
+
+// ─── RequestCtx trait ────────────────────────────────────────────────────────
+// PORT NOTE: Zig's `NewRequestContext` exposes `Req`/`Resp`/`http3` as comptime
+// associated decls on the generated type. Stable Rust has no inherent
+// associated types, so the per-monomorphization handle types are surfaced via
+// this local trait. Only `IS_H3` is consumed for control flow; `Req`/`Resp`
+// are erased to `c_void` to match `super::request_context::{Req, Resp}`.
+pub trait RequestCtx {
+    type Req;
+    type Resp;
+    const IS_H3: bool;
+}
+impl<ThisServer, const SSL: bool, const DBG: bool, const H3: bool> RequestCtx
+    for NewRequestContext<ThisServer, SSL, DBG, H3>
+{
+    type Req = c_void;
+    type Resp = c_void;
+    const IS_H3: bool = H3;
+}
+
+// Module-level type aliases replacing the unstable inherent associated types
+// (`pub type App = …` inside `impl NewServer`).
+pub type ServerApp<const SSL: bool> = uws::NewApp<SSL>;
+pub type ServerRequestContext<const SSL: bool, const DEBUG: bool> =
+    NewRequestContext<NewServer<SSL, DEBUG>, SSL, DEBUG, false>;
+pub type ServerH3RequestContext<const SSL: bool, const DEBUG: bool> =
+    NewRequestContext<NewServer<SSL, DEBUG>, SSL, DEBUG, true>;
+pub type ServerPreparedRequest<'a, const SSL: bool, const DEBUG: bool> =
+    PreparedRequestFor<'a, ServerRequestContext<SSL, DEBUG>>;
+
+// `TypeList` impl for `AnyServer`'s `TaggedPtrUnion` (Zig comptime reflection).
+bun_ptr::impl_tagged_ptr_union!(HTTPServer, HTTPSServer, DebugHTTPServer, DebugHTTPSServer);
 
 // ─── BunInfo (CYCLEBREAK move-in from bun_core::Global) ──────────────────────
 // Spec: src/bun_core/Global.zig:195-210. `generate()` builds the struct and

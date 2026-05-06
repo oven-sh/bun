@@ -2418,11 +2418,13 @@ impl<'a> fmt::Display for TarballNameFormatter<'a> {
 fn archive_package_json(
     ctx: &mut Context<'_>,
     archive: &mut Archive,
-    entry: &mut Archive::Entry,
+    entry: *mut ArchiveEntry,
     root_dir: &Dir,
     edited_package_json: &[u8],
-) -> Result<&mut Archive::Entry, AllocError> {
-    // TODO(port): return type — Zig returns *Archive.Entry (same pointer after .clear())
+) -> Result<*mut ArchiveEntry, AllocError> {
+    // Zig: `entry: *Archive.Entry` → `*Archive.Entry` (same pointer after `.clear()`).
+    // SAFETY: caller passes a live entry from `Entry::new2`/previous `.clear()`.
+    let entry = unsafe { &*entry };
     let stat = match bun_sys::fstatat(Fd::from_std_dir(root_dir), ZStr::from_lit(b"package.json\0")).unwrap() {
         Ok(s) => s,
         Err(err) => {
@@ -2462,11 +2464,13 @@ fn add_archive_entry(
     read_buf: &mut [u8],
     file_reader: &mut BufferedFileReader,
     archive: &mut Archive,
-    entry: &mut Archive::Entry,
+    entry: *mut ArchiveEntry,
     print_buf: &mut Vec<u8>,
     bins: &[BinInfo],
-) -> Result<&mut Archive::Entry, AllocError> {
-    // TODO(port): return type — same pointer-after-clear pattern as above
+) -> Result<*mut ArchiveEntry, AllocError> {
+    // Zig: `entry: *Archive.Entry` → `*Archive.Entry` (same pointer after `.clear()`).
+    // SAFETY: caller passes a live entry from `Entry::new2`/previous `.clear()`.
+    let entry = unsafe { &*entry };
     write!(print_buf, "{}{}\x00", bstr::BStr::new(PACKAGE_PREFIX), bstr::BStr::new(filename.as_bytes())).expect("OOM");
     let pathname_len = PACKAGE_PREFIX.len() + filename.as_bytes().len();
     // SAFETY: print_buf[pathname_len] == 0 written above

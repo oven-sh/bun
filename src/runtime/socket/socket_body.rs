@@ -9,7 +9,10 @@ use core::ptr::{self, NonNull};
 use bun_aio::KeepAlive;
 use bun_ptr::IntrusiveRc;
 use bun_boringssl as boringssl;
-use bun_boringssl_sys::{SSL, SSL_CTX};
+// PORT NOTE: do NOT `use bun_boringssl_sys::SSL` here — it shadows the
+// `const SSL: bool` generic param in `NewSocket<SSL>` below, making rustc
+// resolve `<SSL>` as a type arg (E0747). Use the qualified path instead.
+use bun_boringssl_sys::SSL_CTX;
 use bun_collections::BabyList;
 use bun_core::{self, fmt as bun_fmt};
 use bun_jsc::{
@@ -35,7 +38,7 @@ pub type WindowsNamedPipeContext = ();
 
 mod tls_socket_functions;
 use crate::api::bun::h2_frame_parser::H2FrameParser;
-use crate::api::SecureContext;
+use crate::api::bun_secure_context::SecureContext;
 
 bun_output::declare_scope!(Socket, visible);
 macro_rules! log {
@@ -65,7 +68,7 @@ fn js_socket_type<const SSL: bool>() {
 /// socket back from the per-SSL ex_data slot set in `onOpen` instead.
 #[unsafe(no_mangle)]
 pub extern "C" fn select_alpn_callback(
-    ssl: *mut SSL,
+    ssl: *mut bun_boringssl_sys::SSL,
     out: *mut *const u8,
     outlen: *mut u8,
     in_: *const u8,

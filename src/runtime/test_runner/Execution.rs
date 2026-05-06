@@ -321,7 +321,7 @@ impl Execution {
     /// materializing a `&mut BunTest` while `&mut self` is live would be aliased-`&mut` UB.
     /// Callers must dereference at point-of-use into disjoint fields only, never holding the
     /// resulting `&mut BunTest` across any access through `self`.
-    fn bun_test(&mut self) -> NonNull<BunTest> {
+    fn bun_test(&mut self) -> NonNull<BunTest<'_>> {
         // SAFETY: self points to BunTest.execution (Execution is only ever constructed embedded in BunTest)
         unsafe {
             NonNull::new_unchecked(

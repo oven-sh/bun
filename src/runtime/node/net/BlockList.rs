@@ -481,8 +481,12 @@ fn _compare(l: &sockaddr, r: &sockaddr) -> Option<Ordering> {
             return Some(l_4.swap_bytes().cmp(&r_4.swap_bytes()));
         }
     }
-    if l.sin.family == AF_INET6 && r.sin.family == AF_INET6 {
-        return Some(_compare_ipv6(&l.sin6, &r.sin6));
+    // SAFETY: `sin.family` is at the same offset for both union variants.
+    if unsafe { l.sin.family } == AF_INET6 as inet::sa_family_t
+        && unsafe { r.sin.family } == AF_INET6 as inet::sa_family_t
+    {
+        // SAFETY: family == INET6 guarantees `sin6` variant is active.
+        return Some(_compare_ipv6(unsafe { &l.sin6 }, unsafe { &r.sin6 }));
     }
     None
 }

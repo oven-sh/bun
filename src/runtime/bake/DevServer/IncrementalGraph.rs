@@ -2374,7 +2374,7 @@ impl IncrementalGraph<Client> {
                     w.extend_from_slice(b"}, \"");
                     // TODO(port): std.fmt.bytesToHex(asBytes(&script_id), .lower)
                     w.extend_from_slice(
-                        bun_fmt::bytes_to_hex_lower(&options.script_id.get().to_ne_bytes()).as_bytes(),
+                        bun_fmt::bytes_to_hex_lower_string(&options.script_id.get().to_ne_bytes()).as_bytes(),
                     );
                     w.extend_from_slice(b"\")");
                 }
@@ -2384,7 +2384,7 @@ impl IncrementalGraph<Client> {
                     .as_bytes(),
             );
             w.extend_from_slice(
-                bun_fmt::bytes_to_hex_lower(&options.script_id.get().to_ne_bytes()).as_bytes(),
+                bun_fmt::bytes_to_hex_lower_string(&options.script_id.get().to_ne_bytes()).as_bytes(),
             );
             w.extend_from_slice(b".js.map\n");
             &end_list[..]

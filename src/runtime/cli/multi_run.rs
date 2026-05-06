@@ -729,12 +729,11 @@ fn add_script_configs(
 
 // TODO(port): `!noreturn` — Zig returns either an error or diverges. Using
 // `Result<Infallible, Error>` so callers can `?` it; all Ok paths call Global::exit.
-pub fn run(ctx: &mut Command::Context) -> Result<core::convert::Infallible, Error> {
+pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, Error> {
     // Validate flags
     if ctx.parallel && ctx.sequential {
         Output::pretty_errorln(
             "<r><red>error<r>: --parallel and --sequential cannot be used together",
-            (),
         );
         Global::exit(1);
     }
@@ -743,50 +742,67 @@ pub fn run(ctx: &mut Command::Context) -> Result<core::convert::Infallible, Erro
     // For RunCommand: positionals[0] is "run", skip it. For AutoCommand: no "run" prefix.
     let mut script_names: Vec<&[u8]> = Vec::new();
 
-    let mut positionals: &[&[u8]] = &ctx.positionals;
+    let mut positionals: &[Box<[u8]>] = &ctx.positionals;
     if !positionals.is_empty()
-        && (positionals[0] == b"run" || positionals[0] == b"r")
+        && (&*positionals[0] == b"run" || &*positionals[0] == b"r")
     {
         positionals = &positionals[1..];
     }
     for pos in positionals {
         if !pos.is_empty() {
-            script_names.push(pos);
+            script_names.push(&**pos);
         }
     }
     for pt in &ctx.passthrough {
         if !pt.is_empty() {
-            script_names.push(pt);
+            script_names.push(&**pt);
         }
     }
 
     if script_names.is_empty() {
         Output::pretty_errorln(
             "<r><red>error<r>: --parallel/--sequential requires at least one script name",
-            (),
         );
         Global::exit(1);
     }
 
     // Set up the transpiler/environment
     let fsinstance = bun_resolver::fs::FileSystem::init(None)?;
-    // TODO(port): out-param init pattern — Zig writes into `var this_transpiler: Transpiler = undefined;`
-    let mut this_transpiler: bun_bundler::Transpiler =
-        RunCommand::configure_env_for_run(ctx, None, true, false)?;
-    let cwd: &[u8] = fsinstance.top_level_dir;
+    // Out-param init pattern — Zig writes into `var this_transpiler: Transpiler = undefined;`
+    let mut this_transpiler_slot =
+        ::core::mem::MaybeUninit::<bun_bundler::Transpiler<'static>>::uninit();
+    let _ = RunCommand::configure_env_for_run(ctx, &mut this_transpiler_slot, None, true, false)?;
+    // SAFETY: `configure_env_for_run` fully writes the slot on the success path.
+    let this_transpiler = unsafe { this_transpiler_slot.assume_init_mut() };
+    // SAFETY: `FileSystem::init` returns the live process-lifetime singleton.
+    let cwd: &[u8] = unsafe { (*fsinstance).top_level_dir };
 
-    let event_loop = MiniEventLoop::init_global(this_transpiler.env, None);
+    // SAFETY: transpiler.env is a process-lifetime *mut Loader set in init.
+    let env_ptr: *mut DotEnvLoader<'static> = this_transpiler.env;
+    let event_loop = bun_event_loop::MiniEventLoop::init_global(
+        Some(unsafe { &mut *env_ptr }),
+        None,
+    );
     // --no-orphans: register the macOS kqueue parent watch on this MiniEventLoop
     // (the VirtualMachine.init path is never reached for --parallel). Linux is
     // already covered by prctl in enable() + linux_pdeathsig on each spawn.
-    bun_aio::ParentDeathWatchdog::install_on_event_loop(EventLoopHandle::init(event_loop));
-    // TODO(port): shell_bin must be NUL-terminated ([:0]const u8) for argv use
+    bun_aio::ParentDeathWatchdog::install_on_event_loop(event_loop_handle_to_ctx(
+        EventLoopHandle::init_mini(event_loop),
+    ));
+    // shell_bin is NUL-terminated ([:0]const u8) for argv use.
     let shell_bin: Box<[u8]> = if cfg!(unix) {
-        RunCommand::find_shell(this_transpiler.env.get(b"PATH").unwrap_or(b""), cwd)
-            .ok_or(err!("MissingShell"))?
-            .into()
+        let path_env = unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b"");
+        Box::from(
+            RunCommand::find_shell(path_env, cwd)
+                .ok_or(err!("MissingShell"))?
+                .as_bytes_with_nul(),
+        )
     } else {
-        bun::self_exe_path().map_err(|_| err!("MissingShell"))?.into()
+        Box::from(
+            bun::self_exe_path()
+                .map_err(|_| err!("MissingShell"))?
+                .as_bytes_with_nul(),
+        )
     };
 
     // Build ScriptConfigs and ProcessHandles

@@ -417,7 +417,7 @@ impl PmVersionCommand {
         Global::exit(1);
     }
 
-    fn get_current_version(ctx: &command::Context, cwd: &[u8]) -> Option<Vec<u8>> {
+    fn get_current_version(ctx: &command::ContextData, cwd: &[u8]) -> Option<Vec<u8>> {
         // PORT NOTE: reshaped — Zig returned a slice borrowing from ctx.allocator-owned
         // package.json bytes (leaked for process lifetime). Return owned Vec<u8> instead.
         let mut path_buf = PathBuffer::uninit();

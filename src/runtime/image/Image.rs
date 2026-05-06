@@ -1190,14 +1190,13 @@ impl<'a> BlobReadChain<'a> {
         // early-returns the chain is never created so its Drop can't free it.
         // (Same contract as schedule()'s detached-buffer branch.)
         let Source::Blob(strong) = &image.source else { unreachable!() };
-        let Some(blob_js) = strong.get() else {
-            drop(deliver);
-            return global.throw("Image: Blob source was collected");
-        };
+        let blob_js = strong.get();
         let Some(blob) = blob_js.as_::<Blob>() else {
             drop(deliver);
-            return global.throw("Image: Blob source is no longer a Blob");
+            return Err(global.throw("Image: Blob source is no longer a Blob"));
         };
+        // SAFETY: `as_` returned a non-null `*mut Blob` rooted by `blob_js`.
+        let blob = unsafe { &mut *blob };
 
         // Same Strong-ref contract as the regular pending_tasks bump — keeps
         // the wrapper (and its sourceJS slot) alive until the read settles.

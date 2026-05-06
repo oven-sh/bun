@@ -431,8 +431,6 @@ pub fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
                 return str;
             }
 
-            // SAFETY: chars is a writable buffer of `input.len() * 2` bytes.
-            let chars = unsafe { slice::from_raw_parts_mut(chars, input.len() * 2) };
             let wrote = strings::encode_bytes_to_hex(chars, input);
             debug_assert!(wrote == chars.len());
             str

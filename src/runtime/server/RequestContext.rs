@@ -251,7 +251,8 @@ mod NativePromiseContext {
         npc::take::<T>(cell).map(|p| unsafe { &mut *p.as_ptr() })
     }
 }
-use crate::server::{AnyRequestContext, FileResponseStream, HTTPStatusText};
+use crate::server::{file_response_stream, AnyRequestContext, FileResponseStream, HTTPStatusText};
+use bun_jsc::SysErrorJsc as _;
 use crate::server::jsc::CallFrame;
 use crate::webcore::{body as Body, s3 as S3, Blob, ReadableStream};
 

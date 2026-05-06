@@ -1189,14 +1189,14 @@ pub mod dispatch {
         pub barrel_needed_exports:
             unsafe fn(*mut ()) -> *mut bun_collections::StringHashMap<bun_collections::StringHashMap<()>>,
         pub log_for_resolution_failures:
-            unsafe fn(*mut (), &[u8], crate::bake_types::Graph) -> *mut bun_logger::Log,
+            unsafe fn(*mut (), &[u8], super::bake_types::Graph) -> *mut bun_logger::Log,
         /// `dev.finalizeBundle(bv2, result)` — DevServer.zig:2239.
         pub finalize_bundle:
             unsafe fn(*mut (), *mut super::BundleV2, *const super::DevServerOutput<'_>) -> Result<(), bun_core::Error>,
         // ── slots below cover every remaining direct DevServer access in bundler ──
         /// `dev.handleParseTaskFailure(err, graph, abs_path, log, bv2)` — DevServer.zig:3063.
         pub handle_parse_task_failure:
-            unsafe fn(*mut (), err: bun_core::Error, graph: crate::bake_types::Graph, abs_path: &[u8], log: *const bun_logger::Log, bv2: *mut super::BundleV2) -> Result<(), bun_core::Error>,
+            unsafe fn(*mut (), err: bun_core::Error, graph: super::bake_types::Graph, abs_path: &[u8], log: *const bun_logger::Log, bv2: *mut super::BundleV2) -> Result<(), bun_core::Error>,
         /// `dev.putOrOverwriteAsset(path, contents, hash)` — DevServer.zig:4398.
         /// `path` is `&fs::Path` erased; `contents` is the raw bytes (runtime impl
         /// wraps into `AnyBlob`). Ownership of contents transfers to the callee.
@@ -1204,10 +1204,10 @@ pub mod dispatch {
             unsafe fn(*mut (), path: *const (), contents: &[u8], content_hash: u64) -> Result<(), bun_core::Error>,
         /// `dev.track_resolution_failure(...)`
         pub track_resolution_failure:
-            unsafe fn(*mut (), import_source: &[u8], specifier: &[u8], renderer: crate::bake_types::Graph, loader: bun_options_types::Loader) -> Result<(), bun_core::Error>,
+            unsafe fn(*mut (), import_source: &[u8], specifier: &[u8], renderer: super::bake_types::Graph, loader: bun_options_types::Loader) -> Result<(), bun_core::Error>,
         /// `dev.is_file_cached(abs_path, side)` — None if not cached.
         pub is_file_cached:
-            unsafe fn(*mut (), abs_path: &[u8], side: crate::bake_types::Graph) -> Option<crate::bake_types::CacheEntry>,
+            unsafe fn(*mut (), abs_path: &[u8], side: super::bake_types::Graph) -> Option<super::bake_types::CacheEntry>,
         /// `dev.assets.get_hash(abs_path)`
         pub asset_hash: unsafe fn(*mut (), abs_path: &[u8]) -> Option<u64>,
         /// `dev.current_bundle.?.start_data` accessor for finish_from_bake_dev_server.
@@ -1220,7 +1220,7 @@ pub mod dispatch {
         pub fn handle_parse_task_failure(
             &self,
             err: bun_core::Error,
-            graph: crate::bake_types::Graph,
+            graph: super::bake_types::Graph,
             abs_path: &[u8],
             log: *const bun_logger::Log,
             bv2: *mut super::BundleV2,
@@ -1255,10 +1255,10 @@ pub mod dispatch {
                 )
             }
         }
-        #[inline] pub fn track_resolution_failure(&self, src: &[u8], spec: &[u8], r: crate::bake_types::Graph, l: bun_options_types::Loader) -> Result<(), bun_core::Error> {
+        #[inline] pub fn track_resolution_failure(&self, src: &[u8], spec: &[u8], r: super::bake_types::Graph, l: bun_options_types::Loader) -> Result<(), bun_core::Error> {
             unsafe { (self.vtable.track_resolution_failure)(self.owner, src, spec, r, l) }
         }
-        #[inline] pub fn is_file_cached(&self, path: &[u8], side: crate::bake_types::Graph) -> Option<crate::bake_types::CacheEntry> {
+        #[inline] pub fn is_file_cached(&self, path: &[u8], side: super::bake_types::Graph) -> Option<super::bake_types::CacheEntry> {
             unsafe { (self.vtable.is_file_cached)(self.owner, path, side) }
         }
         #[inline] pub fn asset_hash(&self, path: &[u8]) -> Option<u64> {
@@ -1361,7 +1361,7 @@ pub fn generic_path_with_pretty_initialized(
     if path.is_file() || is_node {
         let mut buf2 = bun_paths::path_buffer_pool::get();
         // TODO(port): in Zig buf2 aliases buf when target != ssr.
-        let rel = bun_paths::resolve_path::relative_platform_buf::<bun_paths::platform::Loose, false>(
+        let rel = bun_paths::resolve_path::relative_platform_buf::<bun_paths::resolve_path::platform::Loose, false>(
             &mut **buf2, top_level_dir, &path.text,
         );
         let mut path_clone = path;
@@ -1810,7 +1810,7 @@ impl<'a> BundleV2<'a> {
                     && !additional_files_imported_by_js_and_inlined_in_css.is_set(index as u32)
                 {
                     additional_files[index].clear();
-                    unique_keys[index] = b"";
+                    unique_keys[index] = b"".as_slice().into();
                     content_hashes[index] = 0;
                 }
             }
@@ -2031,7 +2031,7 @@ impl<'a> BundleV2<'a> {
 
         if path.pretty.as_ptr() == path.text.as_ptr() {
             // TODO: outbase
-            let rel = bun_paths::resolve_path::relative_platform::<bun_paths::platform::Loose, false>(&transpiler.fs.top_level_dir, &path.text);
+            let rel = bun_paths::resolve_path::relative_platform::<bun_paths::resolve_path::platform::Loose, false>(&transpiler.fs.top_level_dir, &path.text);
             path.pretty = self.allocator().alloc_slice_copy(rel);
         }
         path.assert_pretty_is_valid();
@@ -2151,8 +2151,8 @@ impl<'a> BundleV2<'a> {
         // Handle onLoad plugins as entry points
         if !self.enqueue_on_load_plugin_if_needed(task) {
             if loader.should_copy_for_bundling() {
-                let additional_files: &mut BabyList<AdditionalFile> = &mut self.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
-                additional_files.append(AdditionalFile::SourceIndex(task.source_index.get()));
+                let additional_files: &mut BabyList<crate::AdditionalFile> = &mut self.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
+                additional_files.append(crate::AdditionalFile::SourceIndex(task.source_index.get()));
                 self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsPureData;
                 self.graph.estimated_file_loader_count += 1;
             }
@@ -2216,8 +2216,8 @@ impl<'a> BundleV2<'a> {
         // Handle onLoad plugins as entry points
         if !self.enqueue_on_load_plugin_if_needed(task) {
             if loader.should_copy_for_bundling() {
-                let additional_files: &mut BabyList<AdditionalFile> = &mut self.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
-                additional_files.append(AdditionalFile::SourceIndex(task.source_index.get()));
+                let additional_files: &mut BabyList<crate::AdditionalFile> = &mut self.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
+                additional_files.append(crate::AdditionalFile::SourceIndex(task.source_index.get()));
                 self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsPureData;
                 self.graph.estimated_file_loader_count += 1;
             }
@@ -2735,7 +2735,7 @@ impl<'a> BundleV2<'a> {
         self.graph.ast.append(JSAst::empty());
 
         self.graph.input_files.append(crate::Graph::InputFile {
-            source: source.clone(),
+            source: core::mem::take(&mut *source),
             loader,
             side_effects: loader.side_effects(),
             ..Default::default()
@@ -2753,8 +2753,8 @@ impl<'a> BundleV2<'a> {
         // Handle onLoad plugins
         if !self.enqueue_on_load_plugin_if_needed(task) {
             if loader.should_copy_for_bundling() {
-                let additional_files: &mut BabyList<AdditionalFile> = &mut self.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
-                additional_files.append(AdditionalFile::SourceIndex(task.source_index.get()));
+                let additional_files: &mut BabyList<crate::AdditionalFile> = &mut self.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
+                additional_files.append(crate::AdditionalFile::SourceIndex(task.source_index.get()));
                 self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsPureData;
                 self.graph.estimated_file_loader_count += 1;
             }
@@ -2775,7 +2775,7 @@ impl<'a> BundleV2<'a> {
         self.graph.ast.append(JSAst::empty());
 
         self.graph.input_files.append(crate::Graph::InputFile {
-            source: source.clone(),
+            source: core::mem::take(&mut *source),
             loader,
             side_effects: loader.side_effects(),
             ..Default::default()
@@ -2809,8 +2809,8 @@ impl<'a> BundleV2<'a> {
         // Handle onLoad plugins
         if !self.enqueue_on_load_plugin_if_needed(task) {
             if loader.should_copy_for_bundling() {
-                let additional_files: &mut BabyList<AdditionalFile> = &mut self.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
-                additional_files.append(AdditionalFile::SourceIndex(task.source_index.get()));
+                let additional_files: &mut BabyList<crate::AdditionalFile> = &mut self.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
+                additional_files.append(crate::AdditionalFile::SourceIndex(task.source_index.get()));
                 self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsPureData;
                 self.graph.estimated_file_loader_count += 1;
             }
@@ -3156,7 +3156,7 @@ impl<'a> BundleV2<'a> {
 
                     let output_path: Box<[u8]> = {
                         // TODO: outbase
-                        let pathname = Fs::PathName::init(bun_paths::resolve_path::relative_platform::<bun_paths::platform::Loose, false>(
+                        let pathname = Fs::PathName::init(bun_paths::resolve_path::relative_platform::<bun_paths::resolve_path::platform::Loose, false>(
                             &self.transpiler.options.root_dir,
                             &source.path.text,
                         ));
@@ -3201,7 +3201,7 @@ impl<'a> BundleV2<'a> {
                         is_executable: false,
                         ..Default::default()
                     }));
-                    additional_files[index].push(AdditionalFile::OutputFile((additional_output_files.len() - 1) as u32)).expect("oom");
+                    additional_files[index].push(crate::AdditionalFile::OutputFile((additional_output_files.len() - 1) as u32)).expect("oom");
                 }
             }
 
@@ -3280,8 +3280,8 @@ impl<'a> BundleV2<'a> {
                 let should_copy_for_bundling = code.loader.should_copy_for_bundling();
                 if should_copy_for_bundling {
                     let source_index = load.source_index;
-                    let additional_files: &mut BabyList<AdditionalFile> = &mut this.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
-                    additional_files.append(AdditionalFile::SourceIndex(source_index.get()));
+                    let additional_files: &mut BabyList<crate::AdditionalFile> = &mut this.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
+                    additional_files.append(crate::AdditionalFile::SourceIndex(source_index.get()));
                     this.graph.input_files.items_side_effects_mut()[source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsPureData;
                     this.graph.estimated_file_loader_count += 1;
                 }
@@ -3491,8 +3491,8 @@ impl<'a> BundleV2<'a> {
 
                         if !this.enqueue_on_load_plugin_if_needed(task) {
                             if loader.should_copy_for_bundling() {
-                                let additional_files: &mut BabyList<AdditionalFile> = &mut this.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
-                                additional_files.append(AdditionalFile::SourceIndex(task.source_index.get()));
+                                let additional_files: &mut BabyList<crate::AdditionalFile> = &mut this.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
+                                additional_files.append(crate::AdditionalFile::SourceIndex(task.source_index.get()));
                                 this.graph.input_files.items_side_effects_mut()[source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsPureData;
                                 this.graph.estimated_file_loader_count += 1;
                             }
@@ -3693,11 +3693,11 @@ fn write_metafile_output(
         // PORT NOTE: Zig used `bun.FD.cwd().makeOpenPath()` +
         // `NodeFS.writeFileWithPathBuffer`. Route through `bun_sys::File`.
         let mut buf = bun_paths::path_buffer_pool::get();
-        let joined = bun_paths::resolve_path::join_string_buf::<bun_paths::platform::Auto>(
+        let joined = bun_paths::resolve_path::join_string_buf::<bun_paths::resolve_path::platform::Auto>(
             &mut buf.0[..], &[outdir, file_path],
         );
         // Create parent directories if needed (relative to outdir).
-        let parent = bun_paths::resolve_path::dirname::<bun_paths::platform::Loose>(joined);
+        let parent = bun_paths::resolve_path::dirname::<bun_paths::resolve_path::platform::Loose>(joined);
         if !parent.is_empty() {
             let _ = bun_sys::makedir_recursive(parent, 0o755);
         }
@@ -4304,7 +4304,7 @@ impl<'a> BundleV2<'a> {
                 if let Some(replacement) = bun_resolve_builtins::HardcodedModule::Alias::get(
                     &import_record.path.text,
                     Target::Bun,
-                    bun_resolve_builtins::HardcodedModule::AliasOptions { rewrite_jest_for_tests: self.transpiler.options.rewrite_jest_for_tests },
+                    bun_resolve_builtins::HardcodedModule::Cfg { rewrite_jest_for_tests: self.transpiler.options.rewrite_jest_for_tests },
                 ) {
                     // When bundling node builtins, remove the "node:" prefix.
                     // This supports special use cases where the bundle is put
@@ -4595,7 +4595,7 @@ impl<'a> BundleV2<'a> {
                     import_record.source_index = Index::INVALID;
 
                     if let Some(entry) = dev_server.is_file_cached(&path.text, bake_graph) {
-                        let rel = bun_paths::resolve_path::relative_platform::<bun_paths::platform::Loose, false>(&self.transpiler.fs.top_level_dir, &path.text);
+                        let rel = bun_paths::resolve_path::relative_platform::<bun_paths::resolve_path::platform::Loose, false>(&self.transpiler.fs.top_level_dir, &path.text);
                         if loader == Loader::Html && entry.kind == bake_types::CacheKind::Asset {
                             // Overload `path.text` to point to the final URL
                             // This information cannot be queried while printing because a lock wouldn't get held.
@@ -4757,8 +4757,8 @@ impl<'a> BundleV2<'a> {
                 }
 
                 if loader.should_copy_for_bundling() {
-                    let additional_files: &mut BabyList<AdditionalFile> = &mut graph.input_files.items_additional_files_mut()[importer_source_index as usize];
-                    additional_files.append(AdditionalFile::SourceIndex(new_task.source_index.get()));
+                    let additional_files: &mut BabyList<crate::AdditionalFile> = &mut graph.input_files.items_additional_files_mut()[importer_source_index as usize];
+                    additional_files.append(crate::AdditionalFile::SourceIndex(new_task.source_index.get()));
                     graph.input_files.items_side_effects_mut()[new_task.source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsPureData;
                     graph.estimated_file_loader_count += 1;
                 }
@@ -4766,8 +4766,8 @@ impl<'a> BundleV2<'a> {
                 graph.pool.schedule(new_task);
             } else {
                 if loader.should_copy_for_bundling() {
-                    let additional_files: &mut BabyList<AdditionalFile> = &mut graph.input_files.items_additional_files_mut()[importer_source_index as usize];
-                    additional_files.append(AdditionalFile::SourceIndex(*existing.value_ptr));
+                    let additional_files: &mut BabyList<crate::AdditionalFile> = &mut graph.input_files.items_additional_files_mut()[importer_source_index as usize];
+                    additional_files.append(crate::AdditionalFile::SourceIndex(*existing.value_ptr));
                     graph.estimated_file_loader_count += 1;
                 }
 

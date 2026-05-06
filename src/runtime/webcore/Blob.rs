@@ -4297,7 +4297,7 @@ impl Blob {
     pub fn to_array_buffer_with_bytes<const LIFETIME: Lifetime>(
         &mut self,
         global: &JSGlobalObject,
-        buf: &mut [u8],
+        buf: *mut [u8],
     ) -> JsResult<JSValue> {
         self.to_array_buffer_view_with_bytes::<LIFETIME, { jsc::JSType::ArrayBuffer }>(global, buf)
     }
@@ -4305,21 +4305,25 @@ impl Blob {
     pub fn to_uint8_array_with_bytes<const LIFETIME: Lifetime>(
         &mut self,
         global: &JSGlobalObject,
-        buf: &mut [u8],
+        buf: *mut [u8],
     ) -> JsResult<JSValue> {
         self.to_array_buffer_view_with_bytes::<LIFETIME, { jsc::JSType::Uint8Array }>(global, buf)
     }
 
+    /// See [`to_string_with_bytes`] for why `buf` is `*mut [u8]`.
     pub fn to_array_buffer_view_with_bytes<const LIFETIME: Lifetime, const TYPED_ARRAY_VIEW: jsc::JSType>(
         &mut self,
         global: &JSGlobalObject,
-        buf: &mut [u8],
+        buf: *mut [u8],
     ) -> JsResult<JSValue> {
+        // SAFETY: `buf` is valid for reads for the duration of this call (either a
+        // leaked Box for `Temporary` or a store-backed view otherwise).
+        let buf_len = unsafe { &*buf }.len();
         match LIFETIME {
             Lifetime::Clone => {
                 if TYPED_ARRAY_VIEW != jsc::JSType::ArrayBuffer {
                     // ArrayBuffer doesn't have this limit.
-                    if buf.len() > VirtualMachine::SYNTHETIC_ALLOCATION_LIMIT {
+                    if buf_len > VirtualMachine::SYNTHETIC_ALLOCATION_LIMIT {
                         self.detach();
                         return global.throw_out_of_memory();
                     }
@@ -4331,12 +4335,14 @@ impl Blob {
                     if let Some(store) = &self.store {
                         if let Store::Data::Bytes(bytes) = &store.data {
                             let allocated_slice = bytes.allocated_slice();
-                            if bun_core::is_slice_in_buffer(buf, allocated_slice) {
+                            // SAFETY: read-only inspection of `buf`; see top of fn.
+                            let buf_ro = unsafe { &*buf };
+                            if bun_core::is_slice_in_buffer(buf_ro, allocated_slice) {
                                 if let Some(allocator) = bun_sys::linux::MemFdAllocator::from(bytes.allocator) {
                                     let _hold = allocator.clone();
-                                    let byte_offset = (buf.as_ptr() as usize)
+                                    let byte_offset = (buf_ro.as_ptr() as usize)
                                         .saturating_sub(allocated_slice.as_ptr() as usize);
-                                    let byte_length = buf.len();
+                                    let byte_length = buf_len;
                                     let result = jsc::ArrayBuffer::to_array_buffer_from_shared_memfd(
                                         allocator.fd.cast(),
                                         global,
@@ -4359,14 +4365,19 @@ impl Blob {
                         }
                     }
                 }
-                Ok(jsc::ArrayBuffer::create(global, buf, TYPED_ARRAY_VIEW))
+                // SAFETY: `Clone` copies into a new JSC allocation; `buf` is only read.
+                Ok(jsc::ArrayBuffer::create(global, unsafe { &*buf }, TYPED_ARRAY_VIEW))
             }
             Lifetime::Share => {
-                if buf.len() > jsc::SYNTHETIC_ALLOCATION_LIMIT && TYPED_ARRAY_VIEW != jsc::JSType::ArrayBuffer {
+                if buf_len > jsc::SYNTHETIC_ALLOCATION_LIMIT && TYPED_ARRAY_VIEW != jsc::JSType::ArrayBuffer {
                     return global.throw_out_of_memory();
                 }
                 let store = self.store.as_ref().unwrap().clone();
-                Ok(jsc::ArrayBuffer::from_bytes(buf, TYPED_ARRAY_VIEW).to_js_with_context(
+                // SAFETY: `from_bytes` only records ptr+len into the FFI struct; the
+                // pointer is then handed to JSC as an external buffer backing whose
+                // lifetime is the cloned `store` ref above. No Rust-side `&` to the
+                // Store bytes is live across this reborrow. Mirrors Zig `@constCast`.
+                Ok(jsc::ArrayBuffer::from_bytes(unsafe { &mut *buf }, TYPED_ARRAY_VIEW).to_js_with_context(
                     global,
                     store.into_raw() as *mut c_void,
                     jsc::BlobArrayBuffer_deallocator,
@@ -4374,7 +4385,7 @@ impl Blob {
                 ))
             }
             Lifetime::Transfer => {
-                if buf.len() > VirtualMachine::SYNTHETIC_ALLOCATION_LIMIT
+                if buf_len > VirtualMachine::SYNTHETIC_ALLOCATION_LIMIT
                     && TYPED_ARRAY_VIEW != jsc::JSType::ArrayBuffer
                 {
                     self.detach();
@@ -4382,20 +4393,25 @@ impl Blob {
                 }
                 let store = self.store.as_ref().unwrap().clone();
                 self.transfer();
-                Ok(jsc::ArrayBuffer::from_bytes(buf, TYPED_ARRAY_VIEW).to_js_with_context(
+                // SAFETY: see `Share` arm. After `transfer()` the store ref is moved
+                // out of `self`, so JSC becomes the sole owner via the deallocator.
+                Ok(jsc::ArrayBuffer::from_bytes(unsafe { &mut *buf }, TYPED_ARRAY_VIEW).to_js_with_context(
                     global,
                     store.into_raw() as *mut c_void,
                     jsc::array_buffer::BlobArrayBuffer_deallocator,
                 ))
             }
             Lifetime::Temporary => {
-                if buf.len() > VirtualMachine::SYNTHETIC_ALLOCATION_LIMIT
+                if buf_len > VirtualMachine::SYNTHETIC_ALLOCATION_LIMIT
                     && TYPED_ARRAY_VIEW != jsc::JSType::ArrayBuffer
                 {
-                    unsafe { drop(Box::from_raw(buf as *mut [u8])) };
+                    // SAFETY: `Temporary` ⇒ `buf` is a leaked default-allocator `Box<[u8]>`.
+                    unsafe { drop(Box::from_raw(buf)) };
                     return global.throw_out_of_memory();
                 }
-                Ok(jsc::ArrayBuffer::from_bytes(buf, TYPED_ARRAY_VIEW).to_js(global))
+                // SAFETY: `Temporary` ⇒ `buf` is a leaked `Box<[u8]>` we exclusively own;
+                // ownership is transferred to JSC via `to_js` (Zig: `JSC.MarkedArrayBuffer.fromBytes`).
+                Ok(jsc::ArrayBuffer::from_bytes(unsafe { &mut *buf }, TYPED_ARRAY_VIEW).to_js(global))
             }
         }
     }
@@ -4428,15 +4444,26 @@ impl Blob {
             return Ok(jsc::ArrayBuffer::create(global, b"", TYPED_ARRAY_VIEW));
         }
 
-        // SAFETY: shared_view borrows store data; the WithBytes fns only read from
-        // it under .clone/.share and the store outlives this call.
-        let mut_view = unsafe { core::slice::from_raw_parts_mut(view_.as_ptr() as *mut u8, view_.len()) };
+        // PORT NOTE: reshaped for borrowck — Zig @constCast'd shared_view().
+        // SAFETY: `view_ptr` is derived from a shared borrow into the Store's
+        // byte allocation (via `StoreRef::deref` → `NonNull::as_ref`, so its
+        // provenance is rooted in the Store heap, not in `self`). The `Clone`
+        // arm only reads (`&*buf`); `Share`/`Transfer` hand the ptr to JSC as
+        // an external buffer backing via FFI (no Rust-side write). The sole
+        // Rust write path — `Box::from_raw` in the `Temporary` arm — is
+        // statically unreachable below. Mirrors Zig `@constCast(this.sharedView())`.
+        let view_ptr = view_ as *const [u8] as *mut [u8];
         // TODO(port): dispatch on lifetime const-generic and TYPED_ARRAY_VIEW.
         match lifetime {
-            Lifetime::Clone => self.to_array_buffer_view_with_bytes::<{ Lifetime::Clone }, TYPED_ARRAY_VIEW>(global, mut_view),
-            Lifetime::Share => self.to_array_buffer_view_with_bytes::<{ Lifetime::Share }, TYPED_ARRAY_VIEW>(global, mut_view),
-            Lifetime::Transfer => self.to_array_buffer_view_with_bytes::<{ Lifetime::Transfer }, TYPED_ARRAY_VIEW>(global, mut_view),
-            Lifetime::Temporary => self.to_array_buffer_view_with_bytes::<{ Lifetime::Temporary }, TYPED_ARRAY_VIEW>(global, mut_view),
+            Lifetime::Clone => self.to_array_buffer_view_with_bytes::<{ Lifetime::Clone }, TYPED_ARRAY_VIEW>(global, view_ptr),
+            Lifetime::Share => self.to_array_buffer_view_with_bytes::<{ Lifetime::Share }, TYPED_ARRAY_VIEW>(global, view_ptr),
+            Lifetime::Transfer => self.to_array_buffer_view_with_bytes::<{ Lifetime::Transfer }, TYPED_ARRAY_VIEW>(global, view_ptr),
+            // UB guard: `Temporary` would `Box::from_raw(view_ptr)`, but
+            // `view_ptr` has read-only provenance and points at a store-owned
+            // interior slice (not a leaked `Box<[u8]>`). No Zig caller passes
+            // `.temporary` to `toArrayBufferView`; the leaked-buffer path calls
+            // `to_array_buffer_view_with_bytes` directly with a real `*mut [u8]`.
+            Lifetime::Temporary => unreachable!("Blob::to_array_buffer_view: store-owned bytes are never Temporary"),
         }
     }
 
@@ -4453,10 +4480,17 @@ impl Blob {
             return Ok(jsc::DOMFormData::create(global));
         }
 
-        // SAFETY: view_ borrows the Store's bytes for the duration of this call; FormData parsing
-        // mutates in place (Zig passed `[]u8`). Store is uniquely referenced via &mut self here.
-        let mut_view = unsafe { core::slice::from_raw_parts_mut(view_.as_ptr() as *mut u8, view_.len()) };
-        Ok(self.to_form_data_with_bytes::<{ Lifetime::Temporary }>(global, mut_view))
+        // PORT NOTE: reshaped for borrowck — Zig @constCast'd shared_view().
+        // SAFETY: `view_ptr` is derived from a shared borrow into the Store's
+        // byte allocation (via `StoreRef::deref` → `NonNull::as_ref`, so its
+        // provenance is rooted in the Store heap, not in `self`). It is *only
+        // ever read* by `to_form_data_with_bytes` (`FormData::to_js` takes
+        // `&[u8]`), so the const→mut cast is never written through. Note: the
+        // Store is intrusively shared (`ref_count: AtomicU32`); `&mut self` does
+        // NOT imply exclusive ownership of the underlying bytes. Mirrors Zig
+        // `@constCast(this.sharedView())`.
+        let view_ptr = view_ as *const [u8] as *mut [u8];
+        Ok(self.to_form_data_with_bytes::<{ Lifetime::Temporary }>(global, view_ptr))
     }
 }
 

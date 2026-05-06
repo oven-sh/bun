@@ -2251,9 +2251,6 @@ fn run_with_source_code(
 
     *step = Step::Resolve;
 
-    // Disarm errdefer cleanup.
-    scopeguard::ScopeGuard::into_inner(cleanup);
-
     Ok(Success {
         ast,
         source,
@@ -2289,9 +2286,9 @@ pub fn run_from_thread_pool(this: &mut ParseTask) {
 fn run_from_thread_pool_impl(this: &mut ParseTask) {
     // SAFETY: ctx backref valid.
     let ctx = unsafe { &*this.ctx };
-    let mut worker = ThreadPool::Worker::get(ctx);
-    // PORT NOTE: `defer worker.unget()` — handled by guard / Drop.
-    let _worker_guard = scopeguard::guard((), |_| worker.unget());
+    let worker: &mut crate::Worker = crate::Worker::get(ctx);
+    // PORT NOTE: `defer worker.unget()` — handled at function exit (scopeguard
+    // would alias the `&mut worker` borrows below).
     scoped_log!(
         ParseTask,
         "ParseTask(0x{:x}, {}) callback",
@@ -2300,12 +2297,12 @@ fn run_from_thread_pool_impl(this: &mut ParseTask) {
     );
 
     let mut step: Step = Step::Pending;
-    let mut log = Log::init(worker.allocator);
+    let mut log = Log::init();
     debug_assert!(this.source_index.is_valid()); // forgot to set source_index
 
     let value: ResultValue = 'value: {
         if matches!(this.stage, ParseTaskStage::NeedsSourceCode) {
-            match get_source_code(this, &mut worker, &mut log) {
+            match get_source_code(this, worker, &mut log) {
                 Ok(entry) => this.stage = ParseTaskStage::NeedsParse(entry),
                 Err(e) => {
                     break 'value ResultValue::Err(ResultError {
@@ -2328,22 +2325,26 @@ fn run_from_thread_pool_impl(this: &mut ParseTask) {
                 });
             }
 
-            if ThreadPool::uses_io_pool() {
-                ctx.graph.pool.schedule_inside_thread_pool(this);
+            if crate::ThreadPool::uses_io_pool() {
+                // SAFETY: `pool` is a `NonNull<ThreadPool>` BACKREF live for the
+                // bundle pass.
+                unsafe { ctx.graph.pool.as_ref() }.schedule_inside_thread_pool(this);
+                worker.unget();
                 return;
             }
         }
 
-        let ParseTaskStage::NeedsParse(ref mut entry) = this.stage else {
-            unreachable!()
+        // PORT NOTE: reshaped for borrowck — `this` and `this.stage.needs_parse`
+        // both borrowed mutably; take the entry out, pass `&mut entry`, write back.
+        let mut entry = match core::mem::replace(&mut this.stage, ParseTaskStage::NeedsSourceCode) {
+            ParseTaskStage::NeedsParse(e) => e,
+            ParseTaskStage::NeedsSourceCode => unreachable!(),
         };
-        match run_with_source_code(this, &mut worker, &mut step, &mut log, entry) {
-            // PORT NOTE: reshaped for borrowck — `this` and `this.stage.needs_parse`
-            // both borrowed mutably; Phase B may need to restructure.
+        match run_with_source_code(this, worker, &mut step, &mut log, &mut entry) {
             Ok(ast) => {
                 // When using HMR, always flag asts with errors as parse failures.
                 // Not done outside of the dev server out of fear of breaking existing code.
-                if ctx.transpiler.options.dev_server.is_some() && ast.log.has_errors() {
+                if !ctx.transpiler().options.dev_server.is_null() && ast.log.has_errors() {
                     break 'value ResultValue::Err(ResultError {
                         err: err!("SyntaxError"),
                         step: Step::Parse,

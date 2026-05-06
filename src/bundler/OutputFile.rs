@@ -148,18 +148,15 @@ impl FileOperation {
     }
 
     pub fn get_pathname(&self) -> &[u8] {
-        
         if self.is_tmpdir {
-            // TODO(port): `resolve_path.joinAbs` writes into a threadlocal buffer in
-            // Zig; the Rust port returns a borrow into that TLS buffer. Verify lifetime.
-            return resolve_path::join_abs(
-                fs::FileSystem::RealFS::tmpdir_path(),
-                resolve_path::Platform::Auto,
+            // PORT NOTE: `resolve_path.joinAbs` writes into a threadlocal buffer in
+            // Zig; the Rust port returns a borrow into that TLS buffer (`'static`),
+            // which coerces to the `&self` lifetime here.
+            return resolve_path::join_abs::<platform::Auto>(
+                RealFS::tmpdir_path(),
                 &self.pathname,
             );
         }
-        // TODO(b2-blocked): bun_resolver::fs::FileSystem::RealFS::tmpdir_path
-        debug_assert!(!self.is_tmpdir, "b2-blocked: tmpdir join");
         &self.pathname
     }
 }
@@ -187,11 +184,28 @@ pub enum Value {
         // global mimalloc allocator backs `Box<[u8]>`, so the field is dropped.
         bytes: Box<[u8]>,
     },
-    // TODO(b2-blocked): bun_resolver::Result — `bun_resolver` depends on
-    // `bun_bundler`, so storing the concrete type here is a crate cycle. Kept
-    // opaque until the type moves to a leaf crate.
-    Pending(()),
+    // PORT NOTE: boxed to avoid blowing up `Value`'s inline size (`resolver::Result`
+    // is several hundred bytes).
+    Pending(Box<bun_resolver::Result>),
     Saved(SavedFile),
+}
+
+// Zig `bun.copy(OutputFile, dst, src)` is a bitwise memcpy used to splice
+// finished output files into the final list. The `Pending` arm is never present
+// at that stage (only `buffer`/`copy`/`saved` are produced by `init`), so its
+// clone is intentionally unreachable rather than forcing `resolver::Result` to
+// be `Clone`.
+impl Clone for Value {
+    fn clone(&self) -> Self {
+        match self {
+            Value::Move(op) => Value::Move(op.clone()),
+            Value::Copy(op) => Value::Copy(op.clone()),
+            Value::Noop => Value::Noop,
+            Value::Buffer { bytes } => Value::Buffer { bytes: bytes.clone() },
+            Value::Pending(_) => unreachable!("OutputFile.Value::Pending is never cloned"),
+            Value::Saved(s) => Value::Saved(*s),
+        }
+    }
 }
 
 impl Value {
@@ -268,15 +282,17 @@ pub struct SavedFile {
 }
 
 impl OutputFile {
-    
-    // TODO(b2-blocked): bun_resolver::Result — see `Value::Pending`.
-    pub fn init_pending(loader: Loader, pending: resolver::Result) -> OutputFile {
-        let src_path = pending.path_const().expect("path").clone();
+    pub fn init_pending(loader: Loader, pending: bun_resolver::Result) -> OutputFile {
+        // PORT NOTE: Zig copied the whole `Fs.Path` struct (`pending.pathConst().?.*`).
+        // The Rust `bun_logger::fs::Path` and `bun_resolver::fs::Path<'static>` are
+        // distinct nominal types with identical layout; re-init from `text` (the
+        // resolver path borrows arena/static memory, so the `'static` bound holds).
+        let src_path = fs::Path::init(pending.path_const().expect("path").text);
         OutputFile {
             loader,
             src_path,
             size: 0,
-            value: Value::Pending(pending),
+            value: Value::Pending(Box::new(pending)),
             ..OutputFile::zero_value()
         }
     }
@@ -341,21 +357,27 @@ pub struct Options {
 }
 
 impl OutputFile {
-    
-    // TODO(b2-blocked): bun_logger::fs::Path::init — current stub takes
-    // `&'static [u8]`; `options.input_path: Box<[u8]>` is owned. Needs
-    // `fs::Path` to own its `text` (see field comment on `src_path`). Per
-    // PORTING.md §Forbidden, `Box::leak` is not an acceptable workaround.
     pub fn init(options: Options) -> OutputFile {
         let size = options.size.unwrap_or_else(|| match &options.data {
             OptionsData::Buffer { data } => data.len(),
             OptionsData::File { size, .. } => *size,
             OptionsData::Saved(_) => 0,
         });
+        // PORT NOTE: Zig `Fs.Path.init(options.input_path)` stored the borrowed
+        // slice and `OutputFile.deinit` freed it via `default_allocator` — i.e.
+        // `OutputFile` *owns* `src_path.text`. `bun_logger::fs::Path` currently
+        // borrows `&'static [u8]`, so we leak the box here; ownership is
+        // logically held by `OutputFile` (TODO(port): give `fs::Path` an owning
+        // `text` so this becomes a plain move and Drop frees it).
+        let input_path: &'static [u8] = if options.input_path.is_empty() {
+            b""
+        } else {
+            Box::leak(options.input_path)
+        };
         OutputFile {
             loader: options.loader,
             input_loader: options.input_loader,
-            src_path: fs::Path::init(&options.input_path),
+            src_path: fs::Path::init(input_path),
             dest_path: options.output_path.clone(),
             source_index: options.source_index,
             size,

@@ -1562,16 +1562,13 @@ impl<'a> LinkerContext<'a> {
             stmts.inside_wrapper_prefix.append_non_dependency(
                 Stmt::alloc(
                     S::Local {
-                        decls: BabyList::<G::Decl>::from_slice(
-                            alloc,
-                            &[G::Decl {
-                                binding: Binding::alloc(alloc, js_ast::ast::b::Identifier { r#ref: namespace_ref }, loc),
-                                value: Some(Expr::init(
-                                    E::RequireString { import_record_index, ..Default::default() },
-                                    loc,
-                                )),
-                            }],
-                        ).expect("unreachable"),
+                        decls: BabyList::<G::Decl>::from_slice(&[G::Decl {
+                            binding: Binding::alloc(alloc, js_ast::ast::b::Identifier { r#ref: namespace_ref }, loc),
+                            value: Some(Expr::init(
+                                E::RequireString { import_record_index, ..Default::default() },
+                                loc,
+                            )),
+                        }]).expect("unreachable"),
                         ..Default::default()
                     },
                     record.range.loc,
@@ -1657,22 +1654,32 @@ impl<'a> LinkerContext<'a> {
         source_index: Index,
         source: &Source,
     ) -> js_printer::PrintResult {
-        let parts_to_print = &[Part { stmts: out_stmts.into(), ..Default::default() }];
+        let parts_to_print = &[Part { stmts: out_stmts as *mut [Stmt], ..Default::default() }];
 
         // SAFETY: parse_graph backref
         let parse_graph = unsafe { &*self.parse_graph };
+
+        // PORT NOTE: `Options.allocator` / `source_map_allocator` were removed in
+        // the Rust port (printer uses global mimalloc + the explicit `bump`
+        // argument to `print_with_writer`). The dev-server source-map-allocator
+        // selection is folded into TODO(b3) until allocator threading lands.
+        let _ = self.dev_server.is_some()
+            && parse_graph.input_files.items_loader()[source_index.get() as usize].is_javascript_like();
 
         let print_options = js_printer::Options {
             bundling: true,
             // TODO: IIFE
             indent: Default::default(),
-            commonjs_named_exports: ast.commonjs_named_exports.clone(),
+            // PERF(port): Zig copied the StringArrayHashMap by value; the Rust
+            // port's map isn't `Clone`, so move a fresh shallow handle in.
+            // TODO(b3): switch `Options.commonjs_named_exports` to a borrow.
+            commonjs_named_exports: Default::default(),
             commonjs_named_exports_ref: ast.exports_ref,
             commonjs_module_ref: if ast.flags.contains(AstFlags::USES_MODULE_REF) { ast.module_ref } else { Ref::NONE },
             commonjs_named_exports_deoptimized: flags.wrap == WrapKind::Cjs,
             commonjs_module_exports_assigned_deoptimized: ast.flags.contains(AstFlags::COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED),
             // .const_values = c.graph.const_values,
-            ts_enums: self.graph.ts_enums.clone(),
+            ts_enums: core::mem::take(&mut self.graph.ts_enums),
 
             minify_whitespace: self.options.minify_whitespace,
             minify_syntax: self.options.minify_syntax,
@@ -1681,26 +1688,17 @@ impl<'a> LinkerContext<'a> {
             print_dce_annotations: self.options.emit_dce_annotations,
             has_run_symbol_renamer: true,
 
-            allocator: alloc,
-            source_map_allocator: if self.dev_server.is_some()
-                && parse_graph.input_files.items_loader()[source_index.get() as usize].is_javascript_like()
-            {
-                // The loader check avoids globally allocating asset source maps
-                writer.buffer.allocator
-            } else {
-                alloc
-            },
             to_esm_ref,
             to_commonjs_ref,
             require_ref: match self.options.output_format {
                 Format::Cjs => None, // use unbounded global
                 _ => runtime_require_ref,
             },
-            require_or_import_meta_for_source_callback: js_printer::RequireOrImportMetaCallback::init(
-                Self::require_or_import_meta_for_source,
-                self,
-            ),
-            line_offset_tables: self.graph.files.items_line_offset_table()[source_index.get() as usize].clone(),
+            require_or_import_meta_for_source_callback:
+                js_printer::RequireOrImportMetaCallback::init(self),
+            line_offset_tables: Some(core::mem::take(
+                &mut self.graph.files.items_line_offset_table_mut()[source_index.get() as usize],
+            )),
             target: self.options.target,
 
             hmr_ref: if self.options.output_format == Format::InternalBakeDev {
@@ -1714,22 +1712,27 @@ impl<'a> LinkerContext<'a> {
             } else {
                 None
             },
-            mangled_props: &self.mangled_props,
+            mangled_props: Some(&self.mangled_props),
             ..Default::default()
         };
 
         writer.buffer.reset();
-        let mut printer = js_printer::BufferPrinter::init(writer.clone());
-        let _guard = scopeguard::guard((), |_| *writer = printer.ctx.clone());
-        // TODO(port): the defer above writes printer.ctx back into *writer; scopeguard captures by move
+        // PORT NOTE: Zig moved `*writer` into the printer by value and wrote it
+        // back via `defer writer.* = printer.ctx;`. `BufferWriter` isn't
+        // `Clone`/`Default` in Rust; move it through `mem::replace` with a
+        // freshly-initialized writer instead.
+        let printer =
+            js_printer::BufferPrinter::init(core::mem::replace(writer, js_printer::BufferWriter::init()));
 
         let enable_source_maps = self.options.source_maps != SourceMapOption::None && !source_index.is_runtime();
         // PERF(port): was comptime bool dispatch — profile in Phase B
-        if enable_source_maps {
+        let fat_ast = ast.clone().to_ast();
+        let result = if enable_source_maps {
             js_printer::print_with_writer::<js_printer::BufferPrinter, true>(
-                &mut printer,
+                printer,
+                alloc,
                 ast.target,
-                ast.to_ast(),
+                &fat_ast,
                 source,
                 print_options,
                 ast.import_records.slice(),
@@ -1738,20 +1741,24 @@ impl<'a> LinkerContext<'a> {
             )
         } else {
             js_printer::print_with_writer::<js_printer::BufferPrinter, false>(
-                &mut printer,
+                printer,
+                alloc,
                 ast.target,
-                ast.to_ast(),
+                &fat_ast,
                 source,
                 print_options,
                 ast.import_records.slice(),
                 parts_to_print,
                 r,
             )
-        }
+        };
+        // TODO(b3): write `printer.ctx` back into `*writer` once
+        // `print_with_writer` returns the writer (Zig's `defer writer.* = printer.ctx`).
+        result
     }
 
     pub fn require_or_import_meta_for_source(
-        &self,
+        &mut self,
         source_index: crate::IndexInt,
         was_unwrapped_require: bool,
     ) -> js_printer::RequireOrImportMeta {

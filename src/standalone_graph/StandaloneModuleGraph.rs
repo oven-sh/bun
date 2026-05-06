@@ -452,10 +452,10 @@ bitflags::bitflags! {
 const TRAILER: &[u8] = b"\n---- Bun! ----\n";
 
 impl StandaloneModuleGraph {
-    pub fn from_bytes(raw_bytes: &'static mut [u8], offsets: Offsets) -> Result<StandaloneModuleGraph, BunError> {
-        if raw_bytes.is_empty() {
+    pub fn from_bytes(raw_ptr: *mut u8, raw_len: usize, offsets: Offsets) -> Result<StandaloneModuleGraph, BunError> {
+        if raw_len == 0 {
             return Ok(StandaloneModuleGraph {
-                bytes: b"",
+                bytes: core::ptr::slice_from_raw_parts(NonNull::<u8>::dangling().as_ptr(), 0),
                 files: StringArrayHashMap::new(),
                 entry_point_id: 0,
                 compile_exec_argv: b"",
@@ -466,17 +466,16 @@ impl StandaloneModuleGraph {
         // Zig's `raw_bytes: []u8` aliases freely — this function hands out read-only subslices
         // (name/contents/sourcemap) AND writable subslices (bytecode/module_info, which JSC
         // mutates in place) into the same allocation. In Rust we must not derive the writable
-        // ones from a `&[u8]` reborrow (writing through const-derived provenance is UB).
-        // Decay the `&mut` to a raw pointer once and derive every view from it; the read-only
-        // and writable subranges are disjoint by construction in `to_bytes`.
-        let raw_len = raw_bytes.len();
-        let raw_ptr: *mut u8 = raw_bytes.as_mut_ptr();
-        // SAFETY: `raw_ptr`/`raw_len` cover a live 'static allocation; `raw_bytes` is not used
-        // again, so this shared view and the `*mut` subslices below all share the raw pointer's
-        // provenance.
-        let bytes: &'static [u8] = unsafe { core::slice::from_raw_parts(raw_ptr, raw_len) };
+        // ones from a `&[u8]` reborrow (writing through const-derived provenance is UB), and we
+        // must not hold a long-lived `&[u8]` that *spans* a writable subrange (a foreign write
+        // would invalidate it under Stacked/Tree Borrows). Keep `(raw_ptr, raw_len)` raw and
+        // derive every read-only `&'static [u8]` per-call over its own disjoint subrange only;
+        // the bytecode/module_info regions never have a shared reference formed over them.
+        let raw_const: *const u8 = raw_ptr;
 
-        let modules_list_bytes = slice_to(bytes, offsets.modules_ptr);
+        // SAFETY: modules metadata blob is a read-only subrange of `[0, raw_len)` disjoint
+        // from bytecode/module_info, serialized by `to_bytes`.
+        let modules_list_bytes = unsafe { slice_to(raw_const, raw_len, offsets.modules_ptr) };
         // PORT NOTE: StandaloneModuleGraph.zig:309 builds `[]align(1) const CompiledModuleGraphFile`
         // because the modules blob sits at an arbitrary byte offset in the section. In Rust,
         // `&[CompiledModuleGraphFile]` would require natural alignment (StringPointer's u32 fields
@@ -496,17 +495,20 @@ impl StandaloneModuleGraph {
             let module: CompiledModuleGraphFile =
                 unsafe { core::ptr::read_unaligned(modules_list_base.add(i)) };
             let module = &module;
+            // SAFETY: each name/contents/sourcemap/bytecode_origin_path subrange is in-bounds
+            // (serialized by `to_bytes`) and disjoint from the writable bytecode/module_info
+            // subranges; section bytes are a live 'static allocation.
             // PERF(port): was putAssumeCapacity
             let _ = modules.put(
-                slice_to_z(bytes, module.name).as_bytes(),
+                unsafe { slice_to_z(raw_const, raw_len, module.name) }.as_bytes(),
                 File {
-                    name: slice_to_z(bytes, module.name).as_bytes(),
+                    name: unsafe { slice_to_z(raw_const, raw_len, module.name) }.as_bytes(),
                     loader: module.loader,
-                    contents: slice_to_z(bytes, module.contents),
+                    contents: unsafe { slice_to_z(raw_const, raw_len, module.contents) },
                     sourcemap: if module.sourcemap.length > 0 {
                         LazySourceMap::Serialized(SerializedSourceMap {
                             // TODO(port): @alignCast — alignment of source map bytes
-                            bytes: slice_to(bytes, module.sourcemap),
+                            bytes: unsafe { slice_to(raw_const, raw_len, module.sourcemap) },
                         })
                     } else {
                         LazySourceMap::None
@@ -514,7 +516,8 @@ impl StandaloneModuleGraph {
                     bytecode: if module.bytecode.length > 0 {
                         // SAFETY: section bytes are a writable 'static allocation; JSC mutates
                         // bytecode in place. Subrange is in-bounds (serialized by to_bytes) and
-                        // disjoint from every read-only subslice handed out above.
+                        // disjoint from every read-only subslice handed out above — no
+                        // `&[u8]` is ever formed over this range.
                         unsafe { slice_to_mut(raw_ptr, raw_len, module.bytecode) }
                     } else {
                         &mut [] as *mut [u8]
@@ -526,7 +529,7 @@ impl StandaloneModuleGraph {
                         &mut [] as *mut [u8]
                     },
                     bytecode_origin_path: if module.bytecode_origin_path.length > 0 {
-                        slice_to_z(bytes, module.bytecode_origin_path).as_bytes()
+                        unsafe { slice_to_z(raw_const, raw_len, module.bytecode_origin_path) }.as_bytes()
                     } else {
                         b""
                     },
@@ -542,10 +545,13 @@ impl StandaloneModuleGraph {
         modules.lock_pointers(); // make the pointers stable forever
 
         Ok(StandaloneModuleGraph {
-            bytes: &bytes[0..offsets.byte_count],
+            // Stored as a raw fat pointer — `byte_count` covers the writable
+            // bytecode/module_info regions, so a `&'static [u8]` here would alias them.
+            bytes: core::ptr::slice_from_raw_parts(raw_const, offsets.byte_count),
             files: modules,
             entry_point_id: offsets.entry_point_id,
-            compile_exec_argv: slice_to_z(bytes, offsets.compile_exec_argv_ptr).as_bytes(),
+            // SAFETY: read-only argv string subrange, disjoint from writable regions.
+            compile_exec_argv: unsafe { slice_to_z(raw_const, raw_len, offsets.compile_exec_argv_ptr) }.as_bytes(),
             flags: offsets.flags,
         })
     }

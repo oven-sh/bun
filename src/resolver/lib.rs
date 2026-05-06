@@ -5987,7 +5987,7 @@ impl<'a> Resolver<'a> {
                     // check if the package.json in the source directory was already added to the lockfile
                     // and try to look up the dependency from there
                     // SAFETY: see function-wide note above.
-                    if let Some(package_json) = unsafe { &*dir_info }.package_json_for_dependencies {
+                    if let Some(package_json) = unsafe { &*dir_info }.package_json_for_dependencies() {
                         let mut dependencies_list: &[Dependency::Dependency] = &[];
                         let resolve_from_lockfile = package_json.package_manager_package_id != Install::INVALID_PACKAGE_ID;
 
@@ -6078,12 +6078,13 @@ impl<'a> Resolver<'a> {
 
                     // unsupported or not found dependency, we might need to install it to the cache
                     match self.enqueue_dependency_to_resolve(
-                        // SAFETY: see function-wide note above. Passed as `*const` and
-                        // re-derived `*mut` inside (Zig held `?*PackageJSON`).
+                        // SAFETY: see function-wide note above. Read the raw
+                        // `NonNull` fields directly (NOT the `&'static`-yielding
+                        // accessors) so mut-provenance from `intern_package_json`
+                        // survives to the write inside (Zig: resolver.zig:2074).
                         unsafe { &*dir_info }
                             .package_json_for_dependencies
-                            .or(unsafe { &*dir_info }.package_json())
-                            .map(|p| p as *const PackageJSON),
+                            .or(unsafe { &*dir_info }.package_json),
                         &esm,
                         dependency_behavior,
                         &mut resolved_package_id,
@@ -6422,12 +6423,11 @@ impl<'a> Resolver<'a> {
     
     fn enqueue_dependency_to_resolve(
         &mut self,
-        // PORT NOTE: Zig `package_json_: ?*PackageJSON` — DirInfo holds these as
-        // `&'static`, but the body writes `package_manager_package_id` back.
-        // Carry as `*const` and re-derive `*mut` at the single write site (the
-        // PackageJSON arena slot is interior-mutable in practice; no other
-        // borrow is live across that store).
-        package_json_: Option<*const PackageJSON>,
+        // PORT NOTE: Zig `package_json_: ?*PackageJSON` (mutable). Carried as
+        // `NonNull` end-to-end so the mut-provenance from `intern_package_json`
+        // survives to the `package_manager_package_id` write below — taking
+        // `*const` and casting back to `*mut` would be UB under Stacked Borrows.
+        package_json_: Option<core::ptr::NonNull<PackageJSON>>,
         esm: &crate::package_json::Package<'_>,
         behavior: Dependency::Behavior,
         input_package_id_: &mut Install::PackageID,
@@ -6460,10 +6460,12 @@ impl<'a> Resolver<'a> {
 
         let is_main = pm.lockfile.packages.len() == 0 && input_package_id == Install::INVALID_PACKAGE_ID;
         if is_main {
-            if let Some(package_json) = package_json_ {
+            if let Some(mut package_json) = package_json_ {
                 // SAFETY: BACKREF — `package_json` is an interned arena slot
-                // (see `intern_package_json`); no other live borrow here.
-                let package_json: &mut PackageJSON = unsafe { &mut *(package_json as *mut PackageJSON) };
+                // (see `intern_package_json`); `NonNull` carries mut-provenance
+                // from `NonNull::from(&mut **last)` and no other live borrow
+                // exists here.
+                let package_json: &mut PackageJSON = unsafe { package_json.as_mut() };
                 // PORT NOTE: borrowck reshape — Zig passed both `&pm.lockfile` and
                 // `pm` (aliasing); split via raw to keep the call-shape.
                 let lockfile: *mut _ = &mut pm.lockfile;
@@ -8532,7 +8534,10 @@ impl<'a> Resolver<'a> {
                 if parent_package_json.dependencies.map.count() > 0
                     || parent_package_json.package_manager_package_id != Install::INVALID_PACKAGE_ID
                 {
-                    info.package_json_for_dependencies = Some(parent_package_json);
+                    // PORT NOTE: store the raw `NonNull` field (not the
+                    // `&'static` accessor result) so mut-provenance flows
+                    // through to `enqueue_dependency_to_resolve`.
+                    info.package_json_for_dependencies = parent_.package_json;
                 }
             }
 
@@ -8613,7 +8618,10 @@ impl<'a> Resolver<'a> {
                         }
 
                         if pkg.dependencies.map.count() > 0 || pkg.package_manager_package_id != Install::INVALID_PACKAGE_ID {
-                            info.package_json_for_dependencies = Some(pkg);
+                            // PORT NOTE: store the raw `NonNull` field (not the
+                            // `&'static` accessor result) so mut-provenance flows
+                            // through to `enqueue_dependency_to_resolve`.
+                            info.package_json_for_dependencies = info.package_json;
                         }
 
                         if let Some(logs) = self.debug_logs.as_mut() {

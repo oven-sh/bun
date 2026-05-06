@@ -29,11 +29,13 @@ pub struct DirInfo {
     pub enclosing_browser_scope: Index,
     // PORT NOTE: lifetime — `&'static` borrows below are ARENA-backed (the
     // resolver-owned PackageJSON/TSConfigJSON caches outlive every DirInfo).
-    // Fields Zig typed `?*const T` are `Option<&'static T>`; fields Zig typed
-    // `?*T` (mutable — `package_json`/`tsconfig_json`, dropped in `reset()`)
-    // are `Option<NonNull<T>>` so mut-provenance from the allocation site is
-    // preserved through to `drop_in_place` (a `*const→*mut` cast there would
-    // be UB). Read sites use the `.package_json()`/`.tsconfig_json()` accessors.
+    // Fields Zig typed `?*const T` (`package_json_for_browser_field`,
+    // `enclosing_tsconfig_json` — dir_info.zig:12-13) are `Option<&'static T>`.
+    // Fields Zig typed `?*T` (mutable) are `Option<NonNull<T>>` so
+    // mut-provenance from the allocation site is preserved through to the
+    // write/drop sites (a `*const→*mut` cast there would be UB under Stacked
+    // Borrows). Read sites use the `.package_json()` / `.tsconfig_json()` /
+    // `.package_json_for_dependencies()` accessors.
     pub package_json_for_browser_field: Option<&'static PackageJSON>,
     pub enclosing_tsconfig_json: Option<&'static TSConfigJSON>,
 
@@ -41,9 +43,16 @@ pub struct DirInfo {
     /// it's the deepest one in the hierarchy with a "name" field
     /// or, if using `bun run`, the name field is optional
     /// https://github.com/oven-sh/bun/issues/229
+    // PORT NOTE: Zig `?*PackageJSON` (mutable, dir_info.zig:19) but no write
+    // site exists in resolver.zig or any caller — kept `Option<&'static>` for
+    // ergonomics. If a write is ever ported, retype to `Option<NonNull<_>>`.
     pub enclosing_package_json: Option<&'static PackageJSON>,
 
-    pub package_json_for_dependencies: Option<&'static PackageJSON>,
+    // PORT NOTE: Zig `?*PackageJSON` (mutable, dir_info.zig:21). `NonNull` (not
+    // `&'static`) so `enqueue_dependency_to_resolve` can write
+    // `package_manager_package_id` back through it (resolver.zig:2394) without
+    // a const→mut provenance cast. Read via `.package_json_for_dependencies()`.
+    pub package_json_for_dependencies: Option<NonNull<PackageJSON>>,
 
     // TODO(port): lifetime — slice into BSS-backed path storage; never individually freed
     pub abs_path: &'static [u8],
@@ -112,6 +121,17 @@ impl DirInfo {
         // PackageJSON arena (see `intern_package_json`); never freed until
         // `reset()` at shutdown, after which no reader exists.
         self.package_json.map(|p| unsafe { &*p.as_ptr() })
+    }
+
+    /// Read-only view of `package_json_for_dependencies`. The field stores
+    /// `NonNull` to preserve mut-provenance for the write at resolver.zig:2394;
+    /// callers that only read go through here.
+    #[inline]
+    pub fn package_json_for_dependencies(&self) -> Option<&'static PackageJSON> {
+        // SAFETY: ARENA — pointee is interned in the resolver's process-lifetime
+        // PackageJSON arena (see `intern_package_json`); never freed until
+        // `reset()` at shutdown, after which no reader exists.
+        self.package_json_for_dependencies.map(|p| unsafe { &*p.as_ptr() })
     }
 
     /// Read-only view of `tsconfig_json`. See `package_json()`.

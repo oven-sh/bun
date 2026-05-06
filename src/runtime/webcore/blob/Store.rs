@@ -108,12 +108,12 @@ impl Store {
     // PORT NOTE: Zig has only `callconv(.c)` (callback fn pointer), no `@export` — so no
     // `#[unsafe(no_mangle)]` here.
     pub extern "C" fn external(ptr: *mut c_void, _: *mut c_void, _: usize) {
-        if ptr.is_null() {
-            return;
-        }
-        // SAFETY: caller passes a *Store as the opaque pointer; mirrors Zig `bun.cast(*Store, ptr)`.
-        let this = unsafe { &mut *(ptr as *mut Store) };
-        this.deref();
+        let Some(this) = NonNull::new(ptr as *mut Store) else { return };
+        // SAFETY: caller passes a `*Store` (originally leaked via `Box::into_raw`)
+        // as the opaque pointer; mirrors Zig `bun.cast(*Store, ptr)`. Stay on raw
+        // pointers — never materialize `&mut Store` here, other `StoreRef`s may
+        // hold `&Store` to the same allocation.
+        unsafe { Store::deref(this) };
     }
 
     // TODO(b2-blocked): S3/file constructors call PathLike::to_thread_safe/clone,
@@ -257,15 +257,27 @@ impl Store {
         &[]
     }
 
-    pub fn deref(&self) {
-        let old = self.ref_count.fetch_sub(1, Ordering::Relaxed);
+    /// Decrement the intrusive refcount; frees the allocation when it hits zero.
+    ///
+    /// Takes a raw pointer (mirrors Zig `pub fn deref(this: *Blob.Store)`) rather
+    /// than `&self`: deriving the freeing `*mut` from a `&self` borrow is UB —
+    /// the shared-ref provenance forbids mutation/deallocation through it.
+    ///
+    /// # Safety
+    /// `this` must point to a live `Store` originally allocated via `Store::new`
+    /// / `Box::new` (i.e. carrying mutable provenance from `Box::into_raw`), and
+    /// the caller must own one outstanding reference being released.
+    pub unsafe fn deref(this: NonNull<Store>) {
+        // SAFETY: place-project to the atomic field without materializing a
+        // `&Store`; `AtomicU32` is interior-mutable so `&AtomicU32` here is sound
+        // even with concurrent refs.
+        let old = unsafe { (*this.as_ptr()).ref_count.fetch_sub(1, Ordering::Relaxed) };
         debug_assert!(old >= 1);
         if old == 1 {
-            // SAFETY: refcount hit zero; this Store was allocated via `Box::new` (Store::new)
-            // and we are the last owner. Mirrors Zig `this.deinit()` → `bun.destroy(this)`.
-            unsafe {
-                drop(Box::from_raw(self as *const Store as *mut Store));
-            }
+            // SAFETY: refcount hit zero; we are the sole remaining owner. `this`
+            // carries mutable provenance from `Box::into_raw`, so reconstructing
+            // the `Box` is sound. Mirrors Zig `this.deinit()` → `bun.destroy(this)`.
+            drop(unsafe { Box::from_raw(this.as_ptr()) });
         }
     }
 
@@ -399,8 +411,9 @@ impl Clone for StoreRef {
 impl Drop for StoreRef {
     #[inline]
     fn drop(&mut self) {
-        // SAFETY: invariant — `ptr` is live; `deref()` frees on last ref.
-        unsafe { self.ptr.as_ref() }.deref();
+        // SAFETY: invariant — `ptr` is live and originated from `Box::into_raw`
+        // (mutable provenance); `deref()` frees on last ref.
+        unsafe { Store::deref(self.ptr) };
     }
 }
 

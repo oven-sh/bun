@@ -75,27 +75,29 @@ pub const USE_MIMALLOC: bool = true;
 //   heap_breakdown           → macOS malloc_zone_* per-tag heaps (debug builds)
 //   basic                    → `impl GlobalAlloc for Mimalloc` above is the canonical impl
 //
- #[path = "MimallocArena.rs"]           pub mod mimalloc_arena;
-                                        pub mod allocation_scope;
  #[path = "NullableAllocator.rs"]       pub mod nullable_allocator;
- #[path = "LinuxMemFdAllocator.rs"]     pub mod linux_mem_fd_allocator;
                                         pub mod maybe_owned;
  #[path = "MaxHeapAllocator.rs"]        pub mod max_heap_allocator;
  #[path = "BufferFallbackAllocator.rs"] pub mod buffer_fallback_allocator;
                                         pub mod fallback;
 
-// CYCLEBREAK: the module bodies above are gated (they import bun_core/sys/
-// runtime, which would back-edge tier-0). Expose unit stubs at crate root so
-// downstream `use bun_alloc::X` resolves; the real ports replace these once
-// the back-edge deps MOVE_DOWN. Zig: `pub const AllocationScope =
-// AllocationScopeIn(std.mem.Allocator);` etc.
+pub use nullable_allocator::NullableAllocator;
+pub use max_heap_allocator::MaxHeapAllocator;
+pub use buffer_fallback_allocator::BufferFallbackAllocator;
+pub use maybe_owned::MaybeOwned;
+
+// CYCLEBREAK: `MimallocArena` / `allocation_scope` / `LinuxMemFdAllocator`
+// import bun_core/sys/runtime/collections (back-edge from tier-0). MOVED to
+// `bun_runtime::allocators`; expose unit stubs here so downstream
+// `use bun_alloc::X` resolves until callers migrate to the runtime path.
+// Zig: `pub const AllocationScope = AllocationScopeIn(std.mem.Allocator);` etc.
 pub struct AllocationScope;
 pub struct AllocationScopeIn;
-pub struct NullableAllocator;
 pub struct LinuxMemFdAllocator;
-pub struct MaxHeapAllocator;
-pub struct BufferFallbackAllocator;
-pub struct MaybeOwned<T>(core::marker::PhantomData<T>);
+// `MimallocArena` already aliased above to `bumpalo::Bump`.
+pub mod mimalloc_arena { pub use crate::MimallocArena; }
+pub mod allocation_scope { pub use super::{AllocationScope, AllocationScopeIn}; }
+pub mod linux_mem_fd_allocator { pub use super::LinuxMemFdAllocator; }
 
 // ── stubs ─────────────────────────────────────────────────────────────────
 // Forward refs introduced by B-0 move-out seds. Real impls in bun_core (T0

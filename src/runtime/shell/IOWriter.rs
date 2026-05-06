@@ -18,6 +18,8 @@ use core::cell::UnsafeCell;
 use core::ffi::c_void;
 
 use bun_sys::{self as sys, Fd, E};
+#[cfg(not(windows))]
+use bun_io::pipe_writer::PosixPipeWriter as _;
 
 use crate::shell::interpreter::{ByteList, EventLoopHandle, Interpreter, NodeId};
 use crate::shell::yield_::Yield;

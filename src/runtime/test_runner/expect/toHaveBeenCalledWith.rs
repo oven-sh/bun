@@ -114,7 +114,7 @@ pub fn to_have_been_called_with(
             expected_string: None,
             expected: Some(expected_args_js_array),
             received: Some(received_call_args),
-            global_this: global,
+            global_this: Some(global),
             not: false,
         };
         return this.throw(global, signature, format_args!("\n\n{}\n", diff_format));

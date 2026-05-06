@@ -1892,7 +1892,7 @@ fn spawn_cmd_generic<T: SpawnCmdTarget>(
         stderr: spawn::Stdio::Buffer(this.stderr_reader().source.as_ref().unwrap().pipe()),
         #[cfg(not(windows))]
         stderr: spawn::Stdio::Ignore,
-        cwd,
+        cwd: cwd.into(),
         argv0: resolved_argv0,
         #[cfg(windows)]
         windows: SpawnOptions::Windows {

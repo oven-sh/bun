@@ -239,15 +239,16 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
 
 #[bun_jsc::host_fn]
 pub fn size(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let arguments = callframe.arguments_old(3).slice();
-    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments);
+    let arguments = callframe.arguments_old::<3>();
+    // SAFETY: bun_vm() returns the live VM raw ptr.
+    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(unsafe { &*global.bun_vm() }, arguments.slice());
 
     // accept a path or a blob
     let mut path_or_blob = PathOrBlob::from_js_no_copy(global, &mut args)?;
 
     if let PathOrBlob::Blob(blob) = &path_or_blob {
         if blob.store.is_none() || !matches!(blob.store.as_ref().unwrap().data, blob::store::Data::S3(_)) {
-            return global.throw_invalid_arguments("Expected a S3 or path to get size", &[]);
+            return Err(global.throw_invalid_arguments("Expected a S3 or path to get size"));
         }
     }
 
@@ -255,27 +256,28 @@ pub fn size(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>
         PathOrBlob::Path(path) => {
             let options = args.next_eat();
             if matches!(path, crate::node::PathOrFileDescriptor::Fd(_)) {
-                return global.throw_invalid_arguments("Expected a S3 or path to get size", &[]);
+                return Err(global.throw_invalid_arguments("Expected a S3 or path to get size"));
             }
-            let mut blob = construct_s3_file_internal_store(global, path.path(), options)?;
+            let mut blob = construct_s3_file_internal_store(global, path.path().clone(), options)?;
 
             S3BlobStatTask::size(global, &mut blob)
         }
-        PathOrBlob::Blob(blob) => Blob::get_size(blob, global),
+        PathOrBlob::Blob(blob) => Ok(Blob::get_size(blob, global)),
     }
 }
 
 #[bun_jsc::host_fn]
 pub fn exists(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let arguments = callframe.arguments_old(3).slice();
-    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments);
+    let arguments = callframe.arguments_old::<3>();
+    // SAFETY: bun_vm() returns the live VM raw ptr.
+    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(unsafe { &*global.bun_vm() }, arguments.slice());
 
     // accept a path or a blob
     let mut path_or_blob = PathOrBlob::from_js_no_copy(global, &mut args)?;
 
     if let PathOrBlob::Blob(blob) = &path_or_blob {
         if blob.store.is_none() || !matches!(blob.store.as_ref().unwrap().data, blob::store::Data::S3(_)) {
-            return global.throw_invalid_arguments("Expected a S3 or path to check if it exists", &[]);
+            return Err(global.throw_invalid_arguments("Expected a S3 or path to check if it exists"));
         }
     }
 
@@ -283,9 +285,9 @@ pub fn exists(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValu
         PathOrBlob::Path(path) => {
             let options = args.next_eat();
             if matches!(path, crate::node::PathOrFileDescriptor::Fd(_)) {
-                return global.throw_invalid_arguments("Expected a S3 or path to check if it exists", &[]);
+                return Err(global.throw_invalid_arguments("Expected a S3 or path to check if it exists"));
             }
-            let mut blob = construct_s3_file_internal_store(global, path.path(), options)?;
+            let mut blob = construct_s3_file_internal_store(global, path.path().clone(), options)?;
 
             S3BlobStatTask::exists(global, &mut blob)
         }
@@ -299,7 +301,10 @@ fn construct_s3_file_internal_store(
     options: Option<JSValue>,
 ) -> JsResult<Blob> {
     // get credentials from env
-    let existing_credentials = global.bun_vm().transpiler.env.get_s3_credentials();
+    // SAFETY: bun_vm() returns the live VM raw ptr; `transpiler.env` is set during init
+    // and live for the VM lifetime.
+    let existing_credentials =
+        unsafe { (*(*global.bun_vm()).transpiler.env).get_s3_credentials().clone() };
     construct_s3_file_with_s3_credentials(global, path, options, existing_credentials)
 }
 

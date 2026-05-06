@@ -958,9 +958,17 @@ impl_fs_argument_stub!(
     args::StatFS, args::Stat, args::Fstat, args::Link, args::Symlink,
     args::Readlink, args::Realpath, args::Unlink, args::RmDir, args::Mkdir,
     args::MkdirTemp, args::Readdir, args::Close, args::Open, args::Futimes,
-    args::Write, args::Read, args::ReadFile, args::WriteFile, args::Exists,
+    args::Write, args::Read, args::Exists,
     args::Access, args::FdataSync, args::CopyFile, args::Fsync,
 );
+// `ReadFile`/`WriteFile` carry an `AbortSignal` field — opt them in so the
+// `const _ = assert!(…::HAVE_ABORT_SIGNAL)` invariants in `async_` hold.
+impl FsArgument for args::ReadFile {
+    const HAVE_ABORT_SIGNAL: bool = true;
+}
+impl FsArgument for args::WriteFile {
+    const HAVE_ABORT_SIGNAL: bool = true;
+}
 
 /// Convert an async-FS result payload to a `JSValue`. Mirrors Zig's
 /// `globalObject.toJS(res)` (a generic `anytype` dispatcher that calls
@@ -2283,7 +2291,7 @@ pub mod args {
             })?;
             let len: u64 = 'brk: {
                 let Some(len_value) = arguments.next() else { break 'brk 0 };
-                validators::validate_integer(ctx, len_value, b"len", None, None)?.max(0) as u64
+                validators::validate_integer(ctx, len_value, "len", None, None)?.max(0) as u64
             };
             Ok(Truncate { path, len, flags: 0 })
         }
@@ -2376,7 +2384,7 @@ pub mod args {
                 validators::validate_integer(
                     ctx,
                     arguments.next().unwrap_or(JSValue::js_number(0.0)),
-                    b"len",
+                    "len",
                     Some(i64::from(i52::MIN)),
                     Some(BLOB_SIZE_MAX as i64),
                 )?
@@ -2404,12 +2412,12 @@ pub mod args {
             let uid: UidT = 'brk: {
                 let Some(uid_value) = arguments.next() else { return Err(ctx.throw_invalid_arguments("uid is required")); };
                 arguments.eat();
-                break 'brk wrap_to::<UidT>(validators::validate_integer(ctx, uid_value, b"uid", Some(-1), Some(u32::MAX as i64))?);
+                break 'brk wrap_to::<UidT>(validators::validate_integer(ctx, uid_value, "uid", Some(-1), Some(u32::MAX as i64))?);
             };
             let gid: GidT = 'brk: {
                 let Some(gid_value) = arguments.next() else { return Err(ctx.throw_invalid_arguments("gid is required")); };
                 arguments.eat();
-                break 'brk wrap_to::<GidT>(validators::validate_integer(ctx, gid_value, b"gid", Some(-1), Some(u32::MAX as i64))?);
+                break 'brk wrap_to::<GidT>(validators::validate_integer(ctx, gid_value, "gid", Some(-1), Some(u32::MAX as i64))?);
             };
             Ok(Chown { path: scopeguard::ScopeGuard::into_inner(path), uid, gid })
         }
@@ -2429,12 +2437,12 @@ pub mod args {
             let uid: UidT = 'brk: {
                 let Some(uid_value) = arguments.next() else { return Err(ctx.throw_invalid_arguments("uid is required")); };
                 arguments.eat();
-                break 'brk wrap_to::<UidT>(validators::validate_integer(ctx, uid_value, b"uid", Some(-1), Some(u32::MAX as i64))?);
+                break 'brk wrap_to::<UidT>(validators::validate_integer(ctx, uid_value, "uid", Some(-1), Some(u32::MAX as i64))?);
             };
             let gid: GidT = 'brk: {
                 let Some(gid_value) = arguments.next() else { return Err(ctx.throw_invalid_arguments("gid is required")); };
                 arguments.eat();
-                break 'brk wrap_to::<GidT>(validators::validate_integer(ctx, gid_value, b"gid", Some(-1), Some(u32::MAX as i64))?);
+                break 'brk wrap_to::<GidT>(validators::validate_integer(ctx, gid_value, "gid", Some(-1), Some(u32::MAX as i64))?);
             };
             Ok(Fchown { fd, uid, gid })
         }
@@ -2784,10 +2792,10 @@ pub mod args {
                         else { path.deinit(); return Err(ctx.throw_invalid_arguments("The \"options.force\" property must be of type boolean.")); }
                     }
                     if let Some(delay) = val.get(ctx, "retryDelay")? {
-                        retry_delay = c_uint::try_from(validators::validate_integer(ctx, delay, b"options.retryDelay", Some(0), Some(c_uint::MAX as i64))?).unwrap();
+                        retry_delay = c_uint::try_from(validators::validate_integer(ctx, delay, "options.retryDelay", Some(0), Some(c_uint::MAX as i64))?).unwrap();
                     }
                     if let Some(retries) = val.get(ctx, "maxRetries")? {
-                        max_retries = u32::try_from(validators::validate_integer(ctx, retries, b"options.maxRetries", Some(0), Some(u32::MAX as i64))?).unwrap();
+                        max_retries = u32::try_from(validators::validate_integer(ctx, retries, "options.maxRetries", Some(0), Some(u32::MAX as i64))?).unwrap();
                     }
                 } else if !val.is_undefined() {
                     path.deinit();
@@ -2845,7 +2853,7 @@ pub mod args {
         pub encoding: Encoding,
     }
     impl Default for MkdirTemp {
-        fn default() -> Self { Self { prefix: PathLike::Buffer(Buffer { buffer: bun_jsc::ArrayBuffer::EMPTY }), encoding: Encoding::Utf8 } }
+        fn default() -> Self { Self { prefix: PathLike::Buffer(Buffer { buffer: bun_jsc::ArrayBuffer::EMPTY, owns_buffer: false }), encoding: Encoding::Utf8 } }
     }
     impl MkdirTemp {
         pub fn deinit(&self) { self.prefix.deinit(); }
@@ -3042,7 +3050,7 @@ pub mod args {
                     // fs.write(fd, buffer[, offset[, length[, position]]], callback)
                     StringOrBuffer::Buffer(_) => {
                         if current.is_undefined_or_null() || current.is_function() { break 'parse; }
-                        args.offset = u64::try_from(validators::validate_integer(ctx, current, b"offset", Some(0), Some(9007199254740991))?).unwrap();
+                        args.offset = u64::try_from(validators::validate_integer(ctx, current, "offset", Some(0), Some(9007199254740991))?).unwrap();
                         arguments.eat();
                         let Some(next) = arguments.next() else { break 'parse }; current = next;
                         if !(current.is_number() || current.is_big_int()) { break 'parse; }
@@ -3117,7 +3125,7 @@ pub mod args {
             let offset: u64 = if offset_value.is_undefined_or_null() {
                 0
             } else {
-                u64::try_from(validators::validate_integer(ctx, offset_value, b"offset", Some(0), Some(bun_jsc::MAX_SAFE_INTEGER))?).unwrap()
+                u64::try_from(validators::validate_integer(ctx, offset_value, "offset", Some(0), Some(bun_jsc::MAX_SAFE_INTEGER))?).unwrap()
             };
 
             // length |= 0;
@@ -3164,7 +3172,7 @@ pub mod args {
             let position_int: i64 = if position_value.is_undefined_or_null() {
                 -1
             } else if position_value.is_number() {
-                validators::validate_integer(ctx, position_value, b"position", Some(-1), Some(bun_jsc::MAX_SAFE_INTEGER))?
+                validators::validate_integer(ctx, position_value, "position", Some(-1), Some(bun_jsc::MAX_SAFE_INTEGER))?
             } else if let Some(position) = bun_jsc::JSBigInt::from_js(position_value) {
                 // const maxPosition = 2n ** 63n - 1n - BigInt(length)
                 let max_position = i64::MAX - length_int;

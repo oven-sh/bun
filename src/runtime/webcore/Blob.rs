@@ -12,8 +12,9 @@ use bun_core::{self as bun, Output};
 use crate::webcore::jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
 };
-use bun_str::{self, strings, String as BunString, ZigString};
-use bun_sys::{self, Fd};
+use bun_str::{self, strings, String as BunString, ZigString, ZigStringSlice};
+use bun_sys::{self, Fd, FdExt as _};
+use bun_jsc::StringJsc as _;
 use bun_http_types::MimeType::MimeType;
 
 use crate::webcore::node_types::{PathOrBlob, PathOrFileDescriptor};
@@ -828,10 +829,10 @@ impl FormDataContext {
 // ──────────────────────────────────────────────────────────────────────────
 
 impl Blob {
-    pub fn get_content_type(&self) -> Option<ZigString::Slice> {
+    pub fn get_content_type(&self) -> Option<ZigStringSlice> {
         let ct = self.content_type_slice();
         if !ct.is_empty() {
-            return Some(ZigString::Slice::from_utf8_never_free(ct));
+            return Some(ZigStringSlice::from_utf8_never_free(ct));
         }
         None
     }
@@ -858,6 +859,12 @@ impl StructuredCloneWriter {
 
 // TODO(port): Zig used std.Io.GenericWriter over StructuredCloneWriter. In Rust,
 // implement bun_io::Write for StructuredCloneWriter so write_int_le / write_all work.
+impl bun_io::Write for StructuredCloneWriter {
+    type Error = bun_core::Error;
+    fn write(&mut self, bytes: &[u8]) -> Result<usize, Self::Error> {
+        Ok(StructuredCloneWriter::write(self, bytes))
+    }
+}
 
 impl Blob {
     fn _on_structured_clone_serialize<W: bun_io::Write>(&mut self, writer: &mut W) -> Result<(), bun_core::Error> {
@@ -869,14 +876,14 @@ impl Blob {
         writer.write_all(ct)?;
         writer.write_int_le::<u8>(self.content_type_was_set as u8)?;
 
-        let store_tag: Store::SerializeTag = if let Some(store) = &self.store {
+        let store_tag: store::SerializeTag = if let Some(store) = &self.store {
             if matches!(store.data, store::Data::File(_)) {
-                Store::SerializeTag::File
+                store::SerializeTag::File
             } else {
-                Store::SerializeTag::Bytes
+                store::SerializeTag::Bytes
             }
         } else {
-            Store::SerializeTag::Empty
+            store::SerializeTag::Empty
         };
 
         writer.write_int_le::<u8>(store_tag as u8)?;
@@ -958,11 +965,11 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
 
     let content_type_was_set: bool = reader.read_int_le::<u8>()? != 0;
 
-    let store_tag = Store::SerializeTag::from_raw(reader.read_int_le::<u8>()?)
+    let store_tag = store::SerializeTag::from_raw(reader.read_int_le::<u8>()?)
         .ok_or(bun_core::err!("InvalidValue"))?;
 
     let blob: *mut Blob = match store_tag {
-        Store::SerializeTag::Bytes => 'bytes: {
+        store::SerializeTag::Bytes => 'bytes: {
             let bytes_len = reader.read_int_le::<u32>()?;
             let bytes = read_slice(reader, bytes_len as usize)?;
 
@@ -982,7 +989,7 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
                 // ScopeGuard derefs to its inner Blob.
                 if let Some(store) = &(*guard).store {
                     if let store::Data::Bytes(bytes_store) = &mut store.data_mut() {
-                        bytes_store.stored_name = bun_str::PathString::init(name);
+                        bytes_store.stored_name = bun_str::PathString::init(&name);
                         name_consumed = true;
                     }
                 }

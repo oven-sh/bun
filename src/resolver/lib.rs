@@ -2839,7 +2839,7 @@ pub mod options {
 
     /// Convert a `&[&[u8]]` default constant into the owned form the resolver
     /// stores. Mirrors `bun_bundler::options::owned_string_list`.
-    pub(crate) fn owned_string_list(s: &[&[u8]]) -> Box<[Box<[u8]>]> {
+    pub fn owned_string_list(s: &[&[u8]]) -> Box<[Box<[u8]>]> {
         s.iter().map(|s| Box::<[u8]>::from(*s)).collect()
     }
 

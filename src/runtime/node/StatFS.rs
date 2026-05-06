@@ -47,10 +47,12 @@ macro_rules! define_statfs_type {
                 if $big {
                     // TODO(port): bun.jsc.fromJSHostCall wraps an extern call with
                     // JSC exception-scope checking; map to the Rust equivalent.
-                    // SAFETY: FFI call into C++ binding; global is a valid &JSGlobalObject.
+                    // SAFETY: FFI call into C++ binding; `global.as_ptr()` yields a
+                    // sound `*mut` via JSGlobalObject's UnsafeCell interior (no
+                    // &-to-&mut cast — Zig spec passes `*JSGlobalObject` mutably).
                     return bun_jsc::from_js_host_call(global, || unsafe {
                         Bun__createJSBigIntStatFSObject(
-                            global as *const _ as *mut _,
+                            global.as_ptr(),
                             self._fstype as i64,
                             self._bsize as i64,
                             self._blocks as i64,
@@ -62,10 +64,11 @@ macro_rules! define_statfs_type {
                     });
                 }
 
-                // SAFETY: FFI call into C++ binding; global is a valid &JSGlobalObject.
+                // SAFETY: FFI call into C++ binding; `global.as_ptr()` yields a
+                // sound `*mut` via JSGlobalObject's UnsafeCell interior.
                 Ok(unsafe {
                     Bun__createJSStatFSObject(
-                        global as *const _ as *mut _,
+                        global.as_ptr(),
                         self._fstype as i64,
                         self._bsize as i64,
                         self._blocks as i64,

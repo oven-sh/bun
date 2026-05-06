@@ -35,9 +35,10 @@ use bun_bundler::transpiler::{MacroJSCtx, ParseResult};
 use bun_core::Error;
 use bun_jsc::{
     self as jsc, CallFrame, JSArrayIterator, JSGlobalObject, JSPromise, JSPropertyIterator,
-    JSPropertyIteratorOptions, JSValue, JsResult, VirtualMachine, ZigString,
+    JSPropertyIteratorOptions, JSValue, JsResult, ZigString,
 };
-use crate::node::StringOrBuffer;
+use bun_jsc::virtual_machine::VirtualMachine;
+use crate::node::{Encoding, StringOrBuffer};
 use bun_js_parser::runtime::Runtime;
 use bun_js_parser::{self as JSParser};
 use bun_js_parser::parser::ScanPassResult;
@@ -58,11 +59,11 @@ use bun_str::{self as strings, String as BunString};
 
 #[bun_jsc::JsClass]
 pub struct JSTranspiler {
-    pub transpiler: Transpiler::Transpiler,
+    pub transpiler: Transpiler::Transpiler<'static>,
     pub config: Config,
     pub scan_pass_result: ScanPassResult,
     pub buffer_writer: Option<JSPrinter::BufferWriter>,
-    pub log_level: logger::Log::Level,
+    pub log_level: logger::Level,
     // TODO(port): non-AST crate keeps an arena field for bulk-freeing config strings.
     // Consider replacing with per-field Box ownership in Phase B.
     pub arena: Arena,
@@ -70,11 +71,21 @@ pub struct JSTranspiler {
     // TODO(port): LIFETIMES.tsv classifies the consumer (`TransformTask.js_instance`) as
     // `Arc<JSTranspiler>`, but `bun.ptr.RefCount` is single-thread intrusive and `*JSTranspiler`
     // crosses FFI as `m_ctx`. Reconcile in Phase B (likely IntrusiveRc, not Arc).
-    pub ref_count: Cell<u32>,
+    pub ref_count: bun_ptr::RefCount<JSTranspiler>,
 }
 
 // `pub const ref/deref` from RefCount mixin → provided by `bun_ptr::IntrusiveRc<Self>`.
-// TODO(port): expose `ref()`/`deref()` via IntrusiveRc impl.
+impl bun_ptr::RefCounted for JSTranspiler {
+    type DestructorCtx = ();
+    unsafe fn get_ref_count(this: *mut Self) -> *mut bun_ptr::RefCount<Self> {
+        // SAFETY: caller contract — `this` points to a live Self.
+        unsafe { &raw mut (*this).ref_count }
+    }
+    unsafe fn destructor(this: *mut Self, _ctx: ()) {
+        // SAFETY: last ref dropped; allocated via Box in constructor().
+        drop(unsafe { Box::from_raw(this) });
+    }
+}
 
 const fn default_transform_options() -> api::TransformOptions {
     // SAFETY: api::TransformOptions is #[repr(C)] POD; all-zero is a valid value.
@@ -458,7 +469,7 @@ impl Config {
                     .throw_invalid_arguments("exports must be an object", format_args!(""));
             }
 
-            let mut replacements = Runtime::Features::ReplaceableExport::Map::default();
+            let mut replacements = Runtime::ReplaceableExportMap::default();
             // errdefer replacements.clearAndFree(allocator) → Drop on error path
 
             if let Some(eliminate) = exports.get_truthy(global, "eliminate")? {
@@ -518,7 +529,7 @@ impl Config {
                                 // PERF(port): was putAssumeCapacity — profile in Phase B
                                 replacements.put_assume_capacity(
                                     name_slice,
-                                    Runtime::Features::ReplaceableExport::Delete,
+                                    Runtime::ReplaceableExport::Delete,
                                 );
                             }
                         }
@@ -575,7 +586,7 @@ impl Config {
 
                         if let Some(expr) = export_replacement_value(value, global)? {
                             *entry.value_ptr =
-                                Runtime::Features::ReplaceableExport::Replace(expr);
+                                Runtime::ReplaceableExport::Replace(expr);
                             continue;
                         }
 
@@ -598,7 +609,7 @@ impl Config {
                                 }
 
                                 *entry.value_ptr =
-                                    Runtime::Features::ReplaceableExport::Inject {
+                                    Runtime::ReplaceableExport::Inject {
                                         name: replacement_name.into(),
                                         value: to_replace,
                                     };
@@ -619,7 +630,7 @@ impl Config {
         }
 
         if let Some(log_level) = object.get_truthy(global, "logLevel")? {
-            if let Some(level) = logger::Log::Level::Map::from_js(global, log_level)? {
+            if let Some(level) = logger::Level::from_js(global, log_level)? {
                 self.log.level = level;
             } else {
                 return global.throw_invalid_arguments(

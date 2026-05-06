@@ -4,36 +4,43 @@ use std::io::Write as _;
 use std::rc::Rc;
 
 use bun_collections::ByteList;
-use bun_core::MutableString;
+use bun_string::MutableString;
 #[allow(unused_imports)]
-use bun_jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult};
+use bun_jsc::virtual_machine::VirtualMachine;
 #[cfg(any())]
 use bun_str as strings;
 
 // Re-exports (thin aliases matching the Zig file's top-level `pub const X = @import(...)`)
 pub use bun_s3_signing::acl::ACL;
-pub use super::download_stream::S3HttpDownloadStreamingTask;
-pub use super::multipart_options::MultiPartUploadOptions;
-pub use super::multipart::MultiPartUpload;
+pub use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
+pub use crate::webcore::s3::multipart_options::MultiPartUploadOptions;
+pub use crate::webcore::s3::multipart::MultiPartUpload;
 pub use bun_s3_signing::storage_class::StorageClass;
 
 pub use bun_s3_signing::error as Error;
-pub use Error::throw_sign_error;
-pub use Error::get_js_sign_error;
+// PORT NOTE: `throwSignError` / `getJSSignError` live in `error_jsc.zig` (jsc-side
+// of the s3_signing error tables). The pure error module is `bun_s3_signing::error`;
+// the jsc helpers are mounted here as a child module so the umbrella re-export hub
+// matches the Zig `s3/client.zig` shape.
+#[path = "error_jsc.rs"]
+pub mod error_jsc;
+pub use error_jsc::throw_sign_error;
+pub use error_jsc::get_js_sign_error;
 
 pub use bun_s3_signing::credentials::S3Credentials;
 pub use bun_s3_signing::credentials::S3CredentialsWithOptions;
 
-pub use super::simple_request::S3HttpSimpleTask;
-pub use super::simple_request::S3UploadResult;
-pub use super::simple_request::S3StatResult;
-pub use super::simple_request::S3DownloadResult;
-pub use super::simple_request::S3DeleteResult;
-pub use super::simple_request::S3ListObjectsResult;
-pub use super::list_objects::S3ListObjectsOptions;
-pub use super::list_objects::get_list_objects_options_from_js;
+pub use crate::webcore::s3::simple_request::S3HttpSimpleTask;
+pub use crate::webcore::s3::simple_request::S3UploadResult;
+pub use crate::webcore::s3::simple_request::S3StatResult;
+pub use crate::webcore::s3::simple_request::S3DownloadResult;
+pub use crate::webcore::s3::simple_request::S3DeleteResult;
+pub use crate::webcore::s3::simple_request::S3ListObjectsResult;
+pub use crate::webcore::s3::list_objects::S3ListObjectsOptions;
+pub use crate::webcore::s3::list_objects::get_list_objects_options_from_js;
 
-use super::simple_request as s3_simple_request;
+use crate::webcore::s3::simple_request as s3_simple_request;
 #[cfg(any())]
 use crate::webcore::resumable_sink::ResumableS3UploadSink;
 use crate::webcore::ResumableSinkBackpressure;
@@ -43,7 +50,7 @@ use crate::webcore::ReadableStream;
 use crate::webcore::readable_stream::Strong as ReadableStreamStrong;
 use crate::webcore::readable_stream::Source as ReadableStreamPtr;
 
-bun_output::declare_scope!(S3UploadStream, visible);
+bun_core::declare_scope!(S3UploadStream, visible);
 
 // TODO(port): `bun.JSTerminated!T` is not in the type map; assuming a thin alias in bun_jsc.
 type JsTerminatedResult<T> = Result<T, bun_jsc::JsTerminated>;
@@ -306,8 +313,8 @@ pub fn list_objects(
             S3HttpSimpleTask::http_callback,
         )
         .init(task),
-        bun_http::Redirect::Follow,
-        bun_http::Options {
+        bun_http::FetchRedirect::Follow,
+        bun_http::async_http::Options {
             http_proxy: if !task.proxy_url.is_empty() {
                 Some(bun_url::URL::parse(&task.proxy_url))
             } else {
@@ -854,8 +861,8 @@ pub fn download_stream(
             S3HttpDownloadStreamingTask::http_callback,
         )
         .init(task),
-        bun_http::Redirect::Follow,
-        bun_http::Options {
+        bun_http::FetchRedirect::Follow,
+        bun_http::async_http::Options {
             http_proxy: if !task.proxy_url.is_empty() {
                 Some(bun_url::URL::parse(&task.proxy_url))
             } else {

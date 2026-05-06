@@ -4,11 +4,32 @@ use core::sync::atomic::{AtomicI32, Ordering};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, VirtualMachine};
 use bun_str::String as BunString;
 
-use crate::bun_test::{self, BaseScopeCfg, BunTest, DescribeScope};
-use crate::bun_test::js_fns::Signature;
-// TODO(port): `group_log` is `bun_test::debug::group` — a begin/end/log group tracer.
-// Model as RAII guard (`begin()` returns a guard whose Drop calls `end()`) + `log!` macro.
-use crate::bun_test::debug::group as group_log;
+use crate::test_runner::bun_test::{self, BaseScopeCfg, BunTest, DescribeScope};
+use crate::test_runner::bun_test::js_fns::{Signature, GetActiveCfg};
+use crate::test_runner::jest;
+
+// `group_log` wraps `test_runner::debug::group` (a begin/end/log tracer) as an RAII guard
+// so call sites read `let _g = group_log::begin();` and drop calls `end()`. The underlying
+// `group` module exposes `begin_msg`/`end`/`log` taking `fmt::Arguments`.
+mod group_log {
+    use crate::test_runner::debug::group;
+    pub struct Guard;
+    impl Drop for Guard {
+        #[inline]
+        fn drop(&mut self) {
+            group::end();
+        }
+    }
+    #[inline]
+    pub fn begin() -> Guard {
+        group::begin_msg(core::format_args!("ScopeFunctions"));
+        Guard
+    }
+    #[inline]
+    pub fn log(args: core::fmt::Arguments<'_>) {
+        group::log(args);
+    }
+}
 
 #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
 #[repr(u8)]
@@ -124,11 +145,11 @@ pub fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
     let Some(this) = ScopeFunctions::from_js(frame.this()) else {
         return global.throw(format_args!("Expected callee to be ScopeFunctions"));
     };
-    let line_no = crate::jest::capture_test_line_number(frame, global);
+    let line_no = jest::capture_test_line_number(frame, global);
 
     let buntest_strong = bun_test::js_fns::clone_active_strong(
         global,
-        bun_test::js_fns::CloneActiveStrongOpts {
+        &GetActiveCfg {
             signature: Signature::ScopeFunctions(this),
             allow_in_preload: false,
         },
@@ -185,7 +206,7 @@ pub fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
             }
 
             let formatted_label: Option<Vec<u8>> = if let Some(desc) = args.description.as_deref() {
-                Some(crate::jest::format_label(global, desc, args_list.as_slice(), test_idx)?)
+                Some(jest::format_label(global, desc, args_list.as_slice(), test_idx)?)
             } else {
                 None
             };
@@ -338,7 +359,7 @@ impl ScopeFunctions {
         // Use the file's default concurrent setting (determined once when entering the file)
         // or the global concurrent flag from the runner
         if bun_test.default_concurrent
-            || crate::jest::Jest::runner().map_or(false, |r| r.concurrent)
+            || jest::Jest::runner().map_or(false, |r| r.concurrent)
         {
             // Only set to concurrent if still inheriting
             if base.self_concurrent == SelfConcurrent::Inherit {
@@ -356,7 +377,7 @@ impl ScopeFunctions {
                 let mut matches_filter = true;
                 if let Some(reporter) = bun_test.reporter.as_ref() {
                     if let Some(filter_regex) = reporter.jest.filter_regex.as_ref() {
-                        group_log::log!("matches_filter begin");
+                        group_log::log(format_args!("matches_filter begin"));
                         debug_assert!(bun_test.collection.filter_buffer.is_empty());
                         // PORT NOTE: reshaped for borrowck — clear at end via explicit call below.
 
@@ -369,10 +390,10 @@ impl ScopeFunctions {
                         debug_assert!(rem.buf.is_empty());
 
                         let str = BunString::from_bytes(bun_test.collection.filter_buffer.as_slice());
-                        group_log::log!(
+                        group_log::log(format_args!(
                             "matches_filter \"{}\"",
                             bstr::BStr::new(bun_test.collection.filter_buffer.as_slice())
-                        );
+                        ));
                         matches_filter = filter_regex.matches(&str);
 
                         bun_test.collection.filter_buffer.clear();
@@ -384,11 +405,11 @@ impl ScopeFunctions {
                 }
 
                 debug_assert!(!bun_test.collection.locked);
-                group_log::log!(
+                group_log::log(format_args!(
                     "enqueueTestCallback / {} / in scope: {}",
                     bstr::BStr::new(description.unwrap_or(b"(unnamed)")),
                     bstr::BStr::new(bun_test.collection.active_scope.base.name.as_deref().unwrap_or(b"(unnamed)"))
-                );
+                ));
 
                 let _ = bun_test.collection.active_scope.append_test(
                     description,
@@ -670,7 +691,7 @@ pub fn parse_arguments(
     };
 
     if result.options.retry.is_none() {
-        if let Some(runner) = crate::jest::Jest::runner() {
+        if let Some(runner) = jest::Jest::runner() {
             result.options.retry = Some(runner.test_options.retry);
         }
     }
@@ -678,10 +699,10 @@ pub fn parse_arguments(
         return global.throw_pretty(format_args!("{}(): Cannot set both retry and repeats", signature));
     }
 
-    let default_timeout_ms: Option<u32> = crate::jest::Jest::runner().and_then(|runner| {
+    let default_timeout_ms: Option<u32> = jest::Jest::runner().and_then(|runner| {
         if runner.default_timeout_ms != 0 { Some(runner.default_timeout_ms) } else { None }
     });
-    let override_timeout_ms: Option<u32> = crate::jest::Jest::runner().and_then(|runner| {
+    let override_timeout_ms: Option<u32> = jest::Jest::runner().and_then(|runner| {
         if runner.default_timeout_override != u32::MAX { Some(runner.default_timeout_override) } else { None }
     });
     let timeout_option_ms: Option<u32> = timeout_option.map(|timeout| timeout as u32);

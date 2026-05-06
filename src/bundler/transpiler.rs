@@ -604,38 +604,16 @@ fn to_parser_module_type(
 fn init_file_system(
     top_level_dir: Option<&'static [u8]>,
 ) -> Result<*mut Fs::FileSystem, bun_core::Error> {
-    // SAFETY: `INSTANCE_LOADED`/`INSTANCE` are the Zig-style global singleton
-    // (`var instance: FileSystem = undefined`). Init is single-threaded by
-    // contract (called from `Transpiler::init` before any worker spawn).
-    unsafe {
-        if *(&raw const Fs::INSTANCE_LOADED) {
-            return Ok(Fs::FileSystem::instance());
-        }
-        let cwd: &'static [u8] = match top_level_dir {
-            Some(d) => d,
-            None => {
-                // Spec fs.zig:161 — `bun.getcwdAlloc(allocator)`.
-                let mut buf = bun_paths::PathBuffer::default();
-                let n = bun_sys::getcwd(&mut buf[..])
-                    .map_err(|_| bun_core::err!("MissingCwd"))?;
-                Fs::DirnameStore::instance().append_slice(&buf[..n])?
-            }
-        };
-        (*(&raw mut Fs::INSTANCE)).write(Fs::FileSystem {
-            top_level_dir: cwd,
-            fs: Fs::Implementation {
-                entries_mutex: bun_threading::Mutex::default(),
-                entries: Fs::EntriesMap::new(),
-                cwd,
-                file_limit: 0,
-                file_quota: 0,
-            },
-            dirname_store: Fs::DirnameStore::instance(),
-            filename_store: Fs::FilenameStore::instance(),
-        });
-        *(&raw mut Fs::INSTANCE_LOADED) = true;
-        Ok(Fs::FileSystem::instance())
-    }
+    // Spec fs.zig:90-108 — delegate to `FileSystem.init`, which routes through
+    // `Implementation.init` (fs.zig:823-837): that path calls `adjustUlimit()`
+    // to raise RLIMIT_NOFILE and stores the returned limit in
+    // `file_limit`/`file_quota`, and touches the `DirEntry.EntryStore`
+    // singleton. The previous hand-built `Implementation { file_limit: 0, .. }`
+    // skipped both, so `RealFS::need_to_close_files` (resolver/lib.rs:1594)
+    // evaluated `!(0 > 254 && ..)` → always `true`, defeating directory-fd
+    // caching, and the process never had its fd ulimit raised — large module
+    // graphs could hit EMFILE where the spec build does not.
+    Fs::FileSystem::init(top_level_dir)
 }
 
 /// CYCLEBREAK: project this crate's `options::BundleOptions<'a>` into the

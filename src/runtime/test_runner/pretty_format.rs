@@ -13,6 +13,52 @@ use bun_str::{strings, ZigString};
 
 use super::expect;
 
+// ── Local FFI shims for JSC C-API symbols not yet re-exported via `bun_jsc::c_api`.
+// The full `javascript_core_c_api.rs` module is `#[cfg(any())]`-gated in bun_jsc;
+// declare just the two we need here. Types match `bun_jsc::C::JSObjectRef` etc.
+// TODO(port): drop once `bun_jsc::c_api` re-exports the full C-API surface.
+mod capi_ext {
+    use bun_jsc::{C, JSGlobalObject};
+    unsafe extern "C" {
+        pub fn JSObjectGetProxyTarget(object: C::JSObjectRef) -> C::JSObjectRef;
+        pub fn JSObjectGetPropertyAtIndex(
+            ctx: *const JSGlobalObject,
+            object: C::JSObjectRef,
+            property_index: core::ffi::c_uint,
+            exception: C::ExceptionRef,
+        ) -> C::JSValueRef;
+    }
+}
+
+/// Port of Zig `JSLexer.isLatin1Identifier([]const u16, …)` — the generic in
+/// `js_lexer.rs` only covers the `[u8]` case today. Kept local to avoid
+/// touching a sibling crate this round.
+#[inline]
+fn is_latin1_identifier_utf16(name: &[u16]) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    let c0 = name[0];
+    if !((c0 >= b'a' as u16 && c0 <= b'z' as u16)
+        || (c0 >= b'A' as u16 && c0 <= b'Z' as u16)
+        || c0 == b'$' as u16
+        || c0 == b'_' as u16)
+    {
+        return false;
+    }
+    for &c in &name[1..] {
+        if !((c >= b'0' as u16 && c <= b'9' as u16)
+            || (c >= b'a' as u16 && c <= b'z' as u16)
+            || (c >= b'A' as u16 && c <= b'Z' as u16)
+            || c == b'$' as u16
+            || c == b'_' as u16)
+        {
+            return false;
+        }
+    }
+    true
+}
+
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum EventType {
@@ -249,9 +295,18 @@ pub mod visited {
     // PORT NOTE: JSValue keys live on heap; safe because every visited value is also
     // on the stack frame during format() — conservative scan still sees them. Mirrors Zig 1:1.
     pub type Map = HashMap<JSValue, ()>;
+
+    // `ObjectPool<T, ..>` requires `T: ObjectPoolType`. Mirrors Zig's
+    // `ObjectPool(Map, Map.init, true, 16)` — `INIT` allocates an empty map,
+    // `reset` is `clearRetainingCapacity` (handled by callers via `.clear()`).
+    impl bun_collections::pool::ObjectPoolType for Map {
+        const INIT: Option<fn() -> Result<Self, bun_core::Error>> =
+            Some(|| Ok(Map::default()));
+    }
+
     // TODO(port): ObjectPool with init fn, threadsafe=true, capacity=16.
-    pub type Pool = ObjectPool<Map, 16>;
-    pub type PoolNode = <Pool as ObjectPool<Map, 16>>::Node;
+    pub type Pool = ObjectPool<Map, true, 16>;
+    pub type PoolNode = <Pool as bun_collections::pool::ObjectPoolTrait>::Node;
 }
 
 pub struct Formatter<'a> {
@@ -459,8 +514,10 @@ impl Tag {
         }
 
         if js_type == JSType::GlobalProxy {
+            // SAFETY: `value` is a GlobalProxy cell (checked above); JSC C-API
+            // returns the wrapped target object (never null for a live proxy).
             return Tag::get(
-                JSValue::c(CAPI::JSObjectGetProxyTarget(value.as_object_ref())),
+                JSValue::c(unsafe { capi_ext::JSObjectGetProxyTarget(value.as_object_ref()) }),
                 global_this,
             );
         }
@@ -552,7 +609,9 @@ impl Tag {
     }
 }
 
-type CellType = CAPI::CellType;
+// PORT NOTE: Zig's `CAPI.CellType` is the same enum as `JSType` (see
+// ConsoleObject.rs). The C-API alias isn't re-exported yet.
+type CellType = jsc::JSType;
 
 thread_local! {
     static NAME_BUF: RefCell<[u8; 512]> = const { RefCell::new([0u8; 512]) };
@@ -964,7 +1023,7 @@ impl<'a, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
 
         if !is_symbol {
             // TODO: make this one pass?
-            if !key.is_16_bit() && JSLexer::is_latin1_identifier_bytes(key.slice()) {
+            if !key.is_16_bit() && JSLexer::is_latin1_identifier(key.slice()) {
                 this.add_for_new_line(key.len + 2);
 
                 writer.print(format_args!(
@@ -975,7 +1034,7 @@ impl<'a, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
                     Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
                 ));
             } else if key.is_16_bit()
-                && JSLexer::is_latin1_identifier_utf16(key.utf16_slice_aligned())
+                && is_latin1_identifier_utf16(key.utf16_slice_aligned())
             {
                 this.add_for_new_line(key.len + 2);
 
@@ -1213,8 +1272,11 @@ impl<'a> Formatter<'a> {
                         writer.write_all(str.slice());
                     } else if str.len > 0 {
                         // slow path
-                        let buf = strings::allocate_latin1_into_utf8(str.slice())
-                            .unwrap_or_else(|_| Box::<[u8]>::default());
+                        let buf = strings::allocate_latin1_into_utf8_with_list(
+                            Vec::with_capacity(str.len),
+                            0,
+                            str.slice(),
+                        );
                         if !buf.is_empty() {
                             writer.write_all(&buf);
                         }
@@ -1243,7 +1305,7 @@ impl<'a> Formatter<'a> {
                         };
                         self.add_for_new_line(digits);
                     } else {
-                        self.add_for_new_line(bun_fmt::count_decimal_i64(int));
+                        self.add_for_new_line(bun_fmt::count_int(int));
                     }
                     writer.print(format_args!(
                         "{}{}{}",
@@ -1295,7 +1357,11 @@ impl<'a> Formatter<'a> {
                             Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
                         ));
                     } else {
-                        self.add_for_new_line(bun_fmt::count_decimal_f64(num));
+                        // Width estimate for the JS double serialization.
+                        let mut dtoa_buf = [0u8; 124];
+                        self.add_for_new_line(
+                            bun_fmt::FormatDouble::dtoa(&mut dtoa_buf, num).len(),
+                        );
                         writer.print(format_args!(
                             "{}{}{}",
                             Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><yellow>"),
@@ -1419,9 +1485,13 @@ impl<'a> Formatter<'a> {
                         self.quote_strings = true;
 
                         {
-                            let element = JSValue::from_ref(CAPI::JSObjectGetPropertyAtIndex(
-                                self.global_this, r#ref, 0, core::ptr::null_mut(),
-                            ));
+                            // SAFETY: `r#ref` is a live JSObjectRef for `value`; index 0 is
+                            // bounds-checked by `len > 0` in the enclosing branch.
+                            let element = JSValue::c(unsafe {
+                                capi_ext::JSObjectGetPropertyAtIndex(
+                                    self.global_this, r#ref, 0, core::ptr::null_mut(),
+                                )
+                            });
                             let tag = Tag::get(element, self.global_this)?;
 
                             was_good_time = was_good_time
@@ -1460,9 +1530,12 @@ impl<'a> Formatter<'a> {
                             writer.write_all(b"\n");
                             self.write_indent(writer.ctx).expect("unreachable");
 
-                            let element = JSValue::from_ref(CAPI::JSObjectGetPropertyAtIndex(
-                                self.global_this, r#ref, i, core::ptr::null_mut(),
-                            ));
+                            // SAFETY: `i < len`, `r#ref` is the live object ref.
+                            let element = JSValue::c(unsafe {
+                                capi_ext::JSObjectGetPropertyAtIndex(
+                                    self.global_this, r#ref, i, core::ptr::null_mut(),
+                                )
+                            });
                             let tag = Tag::get(element, self.global_this)?;
 
                             self.format::<W, ENABLE_ANSI_COLORS>(

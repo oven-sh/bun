@@ -421,19 +421,24 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                     self.name.slice(old_string_buf),
                     self.name_hash,
                 ),
-                bin: self.bin.clone_into(
+                bin: Bin::clone(
+                    &self.bin,
                     old_string_buf,
                     old_extern_string_buf,
                     new.buffers.extern_strings.as_slice(),
                     new_extern_strings,
-                    builder,
+                    &mut *builder,
                 ),
                 name_hash: self.name_hash,
-                meta: self.meta.clone_into(id, old_string_buf, builder),
-                resolution: self.resolution.clone_into(old_string_buf, builder),
-                scripts: self.scripts.clone_into(old_string_buf, builder),
-                dependencies: DependencySlice { off: prev_len, len: end - prev_len },
-                resolutions: PackageIDSlice { off: prev_len, len: end - prev_len },
+                meta: Meta::clone_into(&self.meta, id, old_string_buf, &mut *builder),
+                resolution: ResolutionType::<SemverIntType>::clone(
+                    &self.resolution,
+                    old_string_buf,
+                    &mut *builder,
+                ),
+                scripts: Scripts::clone(&self.scripts, old_string_buf, &mut *builder),
+                dependencies: DependencySlice::new(prev_len, end - prev_len),
+                resolutions: PackageIDSlice::new(prev_len, end - prev_len),
             },
             id,
         )?;
@@ -447,7 +452,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
 
         debug_assert_eq!(old_dependencies.len(), dependencies.len());
         for (old_dep, new_dep) in old_dependencies.iter().zip(dependencies.iter_mut()) {
-            *new_dep = old_dep.clone_into(pm, old_string_buf, builder)?;
+            *new_dep = Dependency::clone(old_dep, pm, old_string_buf, &mut *builder)?;
         }
 
         builder.clamp();
@@ -504,7 +509,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
             let dependencies = package_json.dependencies.map.values();
             for dep in dependencies {
                 if dep.behavior.is_enabled(FEATURES) {
-                    dep.count(&package_json.dependencies.source_buf, &mut string_builder);
+                    dep.count(package_json.dependencies.source_buf, &mut string_builder);
                     total_dependencies_count += 1;
                 }
             }
@@ -541,16 +546,18 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
             unsafe { dependencies_list.set_len(total_len) };
             let mut dependencies: &mut [Dependency] =
                 &mut dependencies_list[dep_start..total_len];
-            dependencies.fill(Dependency::default());
+            for d in dependencies.iter_mut() {
+                *d = Dependency::default();
+            }
 
             let package_dependencies = package_json.dependencies.map.values();
-            let source_buf = &package_json.dependencies.source_buf;
+            let source_buf = package_json.dependencies.source_buf;
             for dep in package_dependencies {
                 if !dep.behavior.is_enabled(FEATURES) {
                     continue;
                 }
 
-                dependencies[0] = dep.clone_into(pm, source_buf, &mut string_builder)?;
+                dependencies[0] = Dependency::clone(dep, pm, source_buf, &mut string_builder)?;
                 dependencies = &mut dependencies[1..];
                 if dependencies.is_empty() {
                     break;

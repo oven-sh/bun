@@ -516,16 +516,6 @@ impl List {
     }
 }
 
-// ─── support trait (Phase B: move/merge into bun_install::lockfile) ─────────
-
-// TODO(port): Zig passed `comptime Builder: type, builder: Builder` to `clone`/
-// `count`. Real callers are `*Lockfile.StringBuilder` and similar. Define the
-// minimal surface here; Phase B replaces with the concrete trait/type.
-pub trait LockfileStringBuilderLike {
-    fn count(&mut self, s: &[u8]);
-    fn append_string(&mut self, s: &[u8]) -> SemverString;
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/install/lockfile/Package/Scripts.zig (384 lines)

@@ -782,8 +782,39 @@ pub mod lockfile {
         pub scratch: crate::lockfile_real::Scratch,
         /// Zig: `Lockfile.patched_dependencies`.
         pub patched_dependencies: crate::lockfile_real::PatchedDependenciesMap,
+        /// Zig: `Lockfile.trusted_dependencies: ?TrustedDependenciesSet = null`
+        /// (src/install/lockfile.zig:26).
+        pub trusted_dependencies: Option<crate::lockfile_real::TrustedDependenciesSet>,
+        /// Zig: `Lockfile.scripts` (src/install/lockfile.zig).
+        pub scripts: crate::lockfile_real::Scripts,
     }
     impl Lockfile {
+        /// Port of `Lockfile.hasTrustedDependency` (src/install/lockfile.zig).
+        pub fn has_trusted_dependency(&self, name: &[u8], resolution: &Resolution) -> bool {
+            if let Some(trusted_dependencies) = &self.trusted_dependencies {
+                let hash = bun_semver::semver_string::Builder::string_hash(name) as u32;
+                return trusted_dependencies.contains(&hash);
+            }
+            // Only allow default trusted dependencies for npm packages
+            resolution.tag == crate::resolution::Tag::Npm
+                && crate::lockfile_real::default_trusted_dependencies::has(name)
+        }
+        /// Port of `Lockfile.filter` (src/install/lockfile.zig:1348). Rebuilds
+        /// `buffers.trees` / `buffers.hoisted_dependencies` honouring the
+        /// workspace filters. Full body lives in `lockfile_real::Lockfile::
+        /// filter` and threads through `tree::Builder<{Filter}>`; the stub
+        /// `Lockfile` lacks the `package_index` / `string_pool` columns that
+        /// builder reads, so defer until the type unification (reconciler-6).
+        pub fn filter(
+            &mut self,
+            _log: *mut bun_logger::Log,
+            _manager: &mut crate::PackageManager,
+            _install_root_dependencies: bool,
+            _workspace_filters: &[crate::package_manager::WorkspaceFilter],
+            _packages_to_install: Option<&[PackageID]>,
+        ) -> Result<(), bun_core::Error> {
+            todo!("blocked_on: bun_install::lockfile_real un-gate (reconciler-6) — Lockfile::hoist::<Filter>")
+        }
         /// Zig: `Lockfile.str(slicable)` — slice into the lockfile string buffer.
         #[inline]
         pub fn str<'a, T: bun_semver::Slicable>(&'a self, slicable: &'a T) -> &'a [u8] {
@@ -794,13 +825,6 @@ pub mod lockfile {
         /// fresh, empty lockfile.
         pub fn init_empty(&mut self) {
             *self = Self::default();
-        }
-
-        /// Port of `Lockfile.str` (src/install/lockfile.zig) - project a
-        /// `String` / `ExternalString` handle into `buffers.string_bytes`.
-        #[inline]
-        pub fn str<'a, T: bun_semver::Slicable>(&'a self, slicable: &'a T) -> &'a [u8] {
-            slicable.slice(self.buffers.string_bytes.as_slice())
         }
 
         /// Port of `Lockfile.stringBuf` (src/install/lockfile.zig). Returns a
@@ -961,6 +985,21 @@ pub mod lockfile {
             todo!("blocked_on: lockfile_real PackageList (MultiArrayList<Package>) un-gate (reconciler-6)")
         }
         #[inline] pub fn items_meta(&self) -> &[package::Meta] { &self.meta }
+        /// Port of `MultiArrayList<Package>.get(i)` (Zig: copies one row from
+        /// each column into a by-value `Package`).
+        pub fn get(&self, id: PackageID) -> package::Package {
+            let i = id as usize;
+            package::Package {
+                name: self.name[i],
+                name_hash: self.name_hash[i],
+                resolution: self.resolution[i].clone(),
+                dependencies: self.dependencies[i],
+                resolutions: self.resolutions[i],
+                meta: self.meta[i],
+                bin: self.bin[i],
+                scripts: self.scripts[i],
+            }
+        }
         #[inline] pub fn items_bin(&self) -> &[crate::bin::Bin] { &self.bin }
         #[inline] pub fn items_scripts(&self) -> &[package::scripts::Scripts] { &self.scripts }
         /// Reserve capacity across all column vecs (Zig: `MultiArrayList.ensureUnusedCapacity`).
@@ -1917,6 +1956,27 @@ impl RootPackageId {
     /// Zig: `network_dedupe_map: NetworkTask.DedupeMap` — prevents duplicate
     /// tarball/manifest fetches for the same Task.Id.
     pub network_dedupe_map: std::collections::HashMap<package_manager_task::Id, ()>,
+    /// Zig: `to_update: bool = false`.
+    pub to_update: bool,
+    /// Zig: `summary: Lockfile.Package.Diff.Summary = .{}`.
+    pub summary: crate::lockfile_real::package::DiffSummary,
+    /// Zig: `peer_dependencies: std.fifo.LinearFifo(DependencyID, .Dynamic)`.
+    pub peer_dependencies:
+        bun_collections::linear_fifo::LinearFifo<DependencyID, bun_collections::linear_fifo::DynamicBuffer<DependencyID>>,
+    /// Zig: `root_lifecycle_scripts: ?Package.Scripts.List = null`.
+    pub root_lifecycle_scripts: Option<lockfile::package::scripts::List>,
+    /// Zig: `patched_dependencies_to_remove: std.ArrayHashMapUnmanaged(u64, void, …)`.
+    pub patched_dependencies_to_remove: bun_collections::ArrayHashMap<u64, ()>,
+    /// Zig: `any_failed_to_install: bool = false`.
+    pub any_failed_to_install: bool,
+}
+impl PackageManager {
+    /// Zig field-access `manager.log` derefs the borrowed `*logger.Log`.
+    /// SAFETY: `log` is non-null after `init()`; mirrors Zig's non-optional `*Log`.
+    #[inline]
+    pub fn log_mut(&self) -> &mut bun_logger::Log {
+        unsafe { self.log.unwrap().as_mut() }
+    }
 }
 
 /// Port of `PackageManager.CacheDirAndSubpath`

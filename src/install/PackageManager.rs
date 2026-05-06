@@ -633,6 +633,7 @@ impl WorkspaceFilter {
 
 // deinit → Drop is automatic for Box<[u8]> variants; no explicit impl needed.
 
+#[derive(Default)]
 pub struct PackageUpdateInfo {
     pub original_version_literal: Box<[u8]>,
     pub is_alias: bool,

@@ -161,6 +161,13 @@ pub struct GetOrPutResult<'a, K, V> {
     pub value_ptr: &'a mut V,
 }
 
+/// Zig: `std.ArrayHashMap.KV` — owned key/value pair returned by
+/// `fetchSwapRemove` / `fetchOrderedRemove`.
+pub struct KV<K, V> {
+    pub key: K,
+    pub value: V,
+}
+
 /// Iterator entry — both halves mutable, matching Zig's `Entry { key_ptr: *K,
 /// value_ptr: *V }`.
 pub struct Entry<'a, K, V> {
@@ -644,6 +651,14 @@ impl<K, V, C: ArrayHashContext<K>> ArrayHashMap<K, V, C> {
         self.values.swap_remove(i);
         self.hashes.swap_remove(i);
         true
+    }
+
+    /// Zig: `fetchSwapRemove` — swap-remove returning the removed `(K, V)` pair,
+    /// or `None` if `key` was not present.
+    pub fn fetch_swap_remove(&mut self, key: &K) -> Option<(K, V)> {
+        let i = self.get_index(key)?;
+        self.hashes.swap_remove(i);
+        Some((self.keys.swap_remove(i), self.values.swap_remove(i)))
     }
 
     /// std-HashMap-compat: ordered remove returning the value. Preserves the

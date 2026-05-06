@@ -871,23 +871,16 @@ impl Tree {
     ) -> Result<HoistDependencyResult, SubtreeError> {
         // TODO(port): narrow error set
         // Tree is Copy — snapshot the fields we need so we don't hold a borrow of builder.list.
-        let this: Tree = {
-            let list_slice = builder.list.slice();
-            list_slice.items_tree()[self_id as usize]
-        };
-        let this_dependencies_len = {
-            let list_slice = builder.list.slice();
-            this.dependencies
-                .get(list_slice.items_dependencies()[self_id as usize].as_slice())
-                .len()
-        };
+        let this: Tree = builder.list.items_tree()[self_id as usize];
+        let this_dependencies_len = this
+            .dependencies
+            .get(builder.list.items_dependencies()[self_id as usize].as_slice())
+            .len();
         for i in 0..this_dependencies_len {
             // Re-derive on each access so `builder` is not borrowed across the loop body.
-            let dep_id = {
-                let list_slice = builder.list.slice();
-                this.dependencies
-                    .get(list_slice.items_dependencies()[self_id as usize].as_slice())[i]
-            };
+            let dep_id = this
+                .dependencies
+                .get(builder.list.items_dependencies()[self_id as usize].as_slice())[i];
             let dep = &builder.dependencies[dep_id as usize];
             if dep.name_hash != dependency.name_hash {
                 continue;

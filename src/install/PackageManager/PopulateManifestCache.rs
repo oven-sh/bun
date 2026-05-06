@@ -3,11 +3,21 @@ use bun_core::Output;
 
 use crate::Dependency;
 use crate::DependencyID;
+use crate::ManifestLoad;
+use crate::NetworkTask;
 use crate::PackageID;
-use crate::PackageManager;
 use crate::Resolution;
-use crate::Task;
 use crate::invalid_package_id;
+// `Task::Id` is a namespaced type in Zig (`PackageManagerTask.Id`); import the
+// *module* under the `Task` name so `Task::Id` resolves as a path (matches
+// `runTasks.rs` / `PackageManagerEnqueue.rs`).
+use crate::package_manager_task as Task;
+use crate::resolution::Tag as ResolutionTag;
+
+use super::PackageManager;
+use super::package_manager_options as Options;
+use super::run_tasks::{self, RunTasksCallbacks};
+use super::enqueue;
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
 pub enum StartManifestTaskError {
@@ -21,7 +31,22 @@ impl From<bun_alloc::AllocError> for StartManifestTaskError {
         Self::OutOfMemory
     }
 }
-// `Into<bun_core::Error>` is auto-derived for thiserror enums (see PORTING.md type map).
+impl From<crate::network_task::ForManifestError> for StartManifestTaskError {
+    fn from(e: crate::network_task::ForManifestError) -> Self {
+        match e {
+            crate::network_task::ForManifestError::OutOfMemory => Self::OutOfMemory,
+            crate::network_task::ForManifestError::InvalidURL => Self::InvalidURL,
+        }
+    }
+}
+impl From<StartManifestTaskError> for bun_core::Error {
+    fn from(e: StartManifestTaskError) -> Self {
+        match e {
+            StartManifestTaskError::OutOfMemory => bun_core::err!(OutOfMemory),
+            StartManifestTaskError::InvalidURL => bun_core::err!(InvalidURL),
+        }
+    }
+}
 
 fn start_manifest_task(
     manager: &mut PackageManager,
@@ -30,30 +55,58 @@ fn start_manifest_task(
     needs_extended_manifest: bool,
 ) -> Result<(), StartManifestTaskError> {
     let task_id = Task::Id::for_manifest(pkg_name);
-    if manager.has_created_network_task(task_id, dep.behavior.optional) {
+    if run_tasks::has_created_network_task(manager, task_id, dep.behavior.is_optional()) {
         return Ok(());
     }
     manager.start_progress_bar_if_none();
-    // PORT NOTE: reshaped for borrowck — compute scope before borrowing the pooled task slot.
-    let scope = manager.scope_for_package_name(pkg_name);
-    let task = manager.get_network_task();
-    // TODO(port): in-place init of pooled NetworkTask slot; `package_manager` is a backref (raw ptr),
-    // `callback` was `undefined` in Zig (overwritten by `for_manifest` below).
-    *task = crate::NetworkTask {
-        package_manager: manager as *mut PackageManager,
-        callback: Default::default(), // TODO(port): Zig had `undefined`
-        task_id,
-        ..Default::default()
-    };
-    task.for_manifest(pkg_name, scope, None, dep.behavior.optional, needs_extended_manifest)?;
-    // PORT NOTE: reshaped for borrowck — `task` is a raw slot in `manager`'s pool; re-borrow `manager` here.
-    manager.enqueue_network_task(task);
+
+    // PORT NOTE: reshaped for borrowck — Zig writes the whole struct via `.* = .{}`
+    // and reads `manager` again for `scopeForPackageName`. `get_network_task()`
+    // borrows `&mut manager.preallocated_network_tasks`, so compute everything
+    // that needs `&manager` *before* taking that borrow, then populate the pool
+    // slot through a raw pointer (matches `runTasks::generate_network_task_for_tarball`).
+    let scope: *const crate::npm::registry::Scope = manager.scope_for_package_name(pkg_name);
+    // Backref address only — stored, not dereffed in this function.
+    // TODO(port): lifetime — BACKREF.
+    let manager_backref: *mut PackageManager = manager;
+
+    // Take the pool slot as a raw pointer so borrowck releases `manager` for the
+    // `enqueue_network_task` tail.
+    let net_ptr: *mut NetworkTask = run_tasks::get_network_task(manager);
+    // SAFETY: `net_ptr` is the unique handle to a freshly-vended pool slot; no
+    // other alias exists until we hand it to `enqueue_network_task`.
+    let task = unsafe { &mut *net_ptr };
+    // Zig: `task.* = .{ .package_manager = manager, .callback = undefined,
+    //                   .task_id = task_id, .allocator = manager.allocator };`
+    *task = NetworkTask::default();
+    task.task_id = task_id;
+    task.package_manager = manager_backref.cast();
+    // SAFETY: `scope` points into `manager.options` which is not mutated by
+    // `for_manifest` (it only writes the pool slot and `manager.log`).
+    task.for_manifest(
+        pkg_name,
+        unsafe { &*scope },
+        None,
+        dep.behavior.is_optional(),
+        needs_extended_manifest,
+    )?;
+
+    enqueue::enqueue_network_task(manager, net_ptr);
     Ok(())
 }
 
 pub enum Packages<'a> {
     All,
     Ids(&'a [PackageID]),
+}
+
+/// `RunTasksCallbacks` impl for the void-callback `runTasks` call in
+/// `populateManifestCache` (Zig passed an anonymous struct with `void` hooks).
+struct ManifestsOnlyCallbacks;
+impl RunTasksCallbacks for ManifestsOnlyCallbacks {
+    type Ctx = ();
+    const PROGRESS_BAR: bool = true;
+    const MANIFESTS_ONLY: bool = true;
 }
 
 /// Populate the manifest cache for packages included from `root_pkg_ids`. Only manifests of
@@ -65,13 +118,20 @@ pub fn populate_manifest_cache(
 ) -> Result<(), bun_core::Error> {
     // TODO(port): narrow error set
     let log_level = manager.options.log_level;
-    // PORT NOTE: reshaped for borrowck — these lockfile slices alias `*manager`; Phase B may need
-    // to re-derive them per use-site or hold raw pointers, since the loop bodies call &mut methods
-    // on `manager`.
-    let lockfile = &manager.lockfile;
-    let resolutions = lockfile.buffers.resolutions.items();
-    let dependencies = lockfile.buffers.dependencies.items();
-    let string_buf = lockfile.buffers.string_bytes.items();
+
+    // PORT NOTE: heavy borrowck overlap — Zig holds slices into
+    // `manager.lockfile` while the loop body calls `&mut`-taking methods on
+    // `manager`. The lockfile lives in `Box<Lockfile>` (stable address) and is
+    // not resized by anything below, so derive the slices through a raw
+    // provenance root and reborrow `manager` per-call.
+    let manager_ptr: *mut PackageManager = manager;
+    // SAFETY: `manager_ptr` is the live exclusive borrow's address; we only
+    // take *shared* projections of `lockfile` here, and the loop body never
+    // mutates `lockfile.buffers` / `lockfile.packages`.
+    let lockfile = unsafe { &*core::ptr::addr_of!((*manager_ptr).lockfile) };
+    let resolutions = lockfile.buffers.resolutions.as_slice();
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let string_buf = lockfile.buffers.string_bytes.as_slice();
     let pkgs = lockfile.packages.slice();
     let pkg_resolutions = pkgs.items_resolution();
     let pkg_names = pkgs.items_name();
@@ -95,34 +155,41 @@ pub fn populate_manifest_cache(
                 }
 
                 let res = &pkg_resolutions[pkg_id as usize];
-                if res.tag != Resolution::Tag::Npm {
+                if res.tag != ResolutionTag::Npm {
                     continue;
                 }
 
                 let pkg_name = pkg_names[pkg_id as usize];
-                let needs_extended_manifest = manager.options.minimum_release_age_ms.is_some();
+                let pkg_name_slice = pkg_name.slice(string_buf);
+                // SAFETY: see provenance-root note above; `options` is not
+                // mutated between here and the `start_manifest_task` call.
+                let needs_extended_manifest =
+                    unsafe { (*manager_ptr).options.minimum_release_age_ms.is_some() };
 
-                if manager
-                    .manifests
-                    .by_name(
-                        manager,
-                        manager.scope_for_package_name(pkg_name.slice(string_buf)),
-                        pkg_name.slice(string_buf),
-                        ManifestLoad::LoadFromMemoryFallbackToDisk,
-                        needs_extended_manifest,
-                    )
-                    .is_none()
-                {
+                // SAFETY: `scope_for_package_name` borrows `&self.options`;
+                // `manifests` is a disjoint field. `by_name` takes `pm` as a
+                // raw pointer precisely so this overlap is expressed without
+                // a second `&mut PackageManager`.
+                let scope: *const crate::npm::registry::Scope =
+                    unsafe { &*manager_ptr }.scope_for_package_name(pkg_name_slice);
+                let cached = unsafe { &mut (*manager_ptr).manifests }.by_name(
+                    manager_ptr,
+                    unsafe { &*scope },
+                    pkg_name_slice,
+                    ManifestLoad::LoadFromMemoryFallbackToDisk,
+                    needs_extended_manifest,
+                );
+                if cached.is_none() {
                     start_manifest_task(
-                        manager,
-                        pkg_name.slice(string_buf),
+                        unsafe { &mut *manager_ptr },
+                        pkg_name_slice,
                         dep,
                         needs_extended_manifest,
                     )?;
                 }
 
-                manager.flush_network_queue();
-                let _ = manager.schedule_tasks();
+                run_tasks::flush_network_queue(unsafe { &mut *manager_ptr });
+                let _ = run_tasks::schedule_tasks(unsafe { &mut *manager_ptr });
             }
         }
         Packages::Ids(ids) => {
@@ -139,37 +206,45 @@ pub fn populate_manifest_cache(
                     let dep = &dependencies[dep_id];
 
                     let resolution: &Resolution = &pkg_resolutions[pkg_id as usize];
-                    if resolution.tag != Resolution::Tag::Npm {
+                    if resolution.tag != ResolutionTag::Npm {
                         continue;
                     }
 
-                    let needs_extended_manifest = manager.options.minimum_release_age_ms.is_some();
+                    // SAFETY: see provenance-root note above.
+                    let needs_extended_manifest =
+                        unsafe { (*manager_ptr).options.minimum_release_age_ms.is_some() };
                     let package_name = pkg_names[pkg_id as usize].slice(string_buf);
-                    if manager
-                        .manifests
-                        .by_name(
-                            manager,
-                            manager.scope_for_package_name(package_name),
+                    let scope: *const crate::npm::registry::Scope =
+                        unsafe { &*manager_ptr }.scope_for_package_name(package_name);
+                    let cached = unsafe { &mut (*manager_ptr).manifests }.by_name(
+                        manager_ptr,
+                        unsafe { &*scope },
+                        package_name,
+                        ManifestLoad::LoadFromMemoryFallbackToDisk,
+                        needs_extended_manifest,
+                    );
+                    if cached.is_none() {
+                        start_manifest_task(
+                            unsafe { &mut *manager_ptr },
                             package_name,
-                            ManifestLoad::LoadFromMemoryFallbackToDisk,
+                            dep,
                             needs_extended_manifest,
-                        )
-                        .is_none()
-                    {
-                        start_manifest_task(manager, package_name, dep, needs_extended_manifest)?;
+                        )?;
 
-                        manager.flush_network_queue();
-                        let _ = manager.schedule_tasks();
+                        run_tasks::flush_network_queue(unsafe { &mut *manager_ptr });
+                        let _ = run_tasks::schedule_tasks(unsafe { &mut *manager_ptr });
                     }
                 }
             }
         }
     }
 
-    manager.flush_network_queue();
-    let _ = manager.schedule_tasks();
+    // SAFETY: provenance root; no live shared borrows of `*manager_ptr` remain.
+    let manager = unsafe { &mut *manager_ptr };
+    run_tasks::flush_network_queue(manager);
+    let _ = run_tasks::schedule_tasks(manager);
 
-    if manager.pending_task_count() > 0 {
+    if run_tasks::pending_task_count(manager) > 0 {
         struct RunClosure {
             // PORT NOTE: Zig stores `*PackageManager` non-exclusively;
             // `sleep_until` also receives this raw pointer, so storing
@@ -184,19 +259,13 @@ pub fn populate_manifest_cache(
                 // callback, so this is the unique live borrow.
                 let manager = unsafe { &mut *closure.manager };
                 let log_level = manager.options.log_level;
-                // PORT NOTE: void RunTasksCallbacks — `extract_ctx` is unit. Do NOT pass `manager`
-                // as both receiver and ctx (aliased &mut). Zig passed `(comptime *PackageManager,
-                // closure.manager)`; the generic context pair collapses to `&mut ()` in Rust.
-                if let Err(err) = manager.run_tasks(
+                // PORT NOTE: void RunTasksCallbacks — `extract_ctx` is unit. Do NOT pass
+                // `manager` as both receiver and ctx (aliased &mut). Zig passed
+                // `(comptime *PackageManager, closure.manager)`; the generic context
+                // pair collapses to `&mut ()` in Rust.
+                if let Err(err) = run_tasks::run_tasks::<ManifestsOnlyCallbacks>(
+                    manager,
                     &mut (),
-                    PackageManager::RunTasksCallbacks {
-                        on_extract: (),
-                        on_resolve: (),
-                        on_package_manifest_error: (),
-                        on_package_download_error: (),
-                        progress_bar: true,
-                        manifests_only: true,
-                    },
                     true,
                     log_level,
                 ) {
@@ -204,7 +273,7 @@ pub fn populate_manifest_cache(
                     return true;
                 }
 
-                manager.pending_task_count() == 0
+                run_tasks::pending_task_count(manager) == 0
             }
         }
 
@@ -233,14 +302,13 @@ pub fn populate_manifest_cache(
     Ok(())
 }
 
-// `.load_from_memory_fallback_to_disk` enum literal — `PackageManifestMap.When` in Zig,
-// re-exported at the crate root as `ManifestLoad`.
-use crate::ManifestLoad;
+#[allow(unused_imports)]
+use Options::LogLevel;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/install/PackageManager/PopulateManifestCache.zig (163 lines)
 //   confidence: medium
-//   todos:      6
-//   notes:      heavy borrowck overlap (manager ↔ lockfile slices, sleep_until self-borrow); NetworkTask in-place init and run_tasks callback struct shape guessed
+//   todos:      4
+//   notes:      heavy borrowck overlap (manager ↔ lockfile slices, sleep_until self-borrow) handled via raw provenance root; NetworkTask in-place init reshaped per runTasks pattern; RunTasksCallbacks void-impl as ManifestsOnlyCallbacks
 // ──────────────────────────────────────────────────────────────────────────

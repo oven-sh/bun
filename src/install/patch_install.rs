@@ -10,14 +10,15 @@ use bun_paths::{self as path, PathBuffer};
 use bun_sys::fs::FileSystem;
 use bun_semver::String as SemverString;
 use bun_string::{strings, ZStr};
-use bun_sys::{self as sys, Fd};
-use bun_threading::thread_pool::{self as thread_pool, Batch, Task as ThreadPoolTask};
+use bun_sys::{self as sys, Fd, FdExt};
+use bun_threading::thread_pool::{self as thread_pool, Batch, Node as ThreadPoolNode, Task as ThreadPoolTask};
 use bun_wyhash::Wyhash11;
 
 use crate::{
-    bun_hash_tag, lockfile::Lockfile, resolution::Resolution, DependencyID, PackageID,
-    PackageInstall, PackageManager,
+    bun_hash_tag, lockfile::Lockfile, lockfile::Package, resolution::Resolution, DependencyID,
+    PackageID, PackageManager,
 };
+use crate::package_install::PackageInstall;
 
 // Thin re-exports (mirroring Zig `pub const X = @import(...)` lines).
 pub use crate::lockfile::PatchedDep;
@@ -119,10 +120,10 @@ impl<'a> PatchTask<'a> {
     /// ownership must be returned here exactly once.
     pub unsafe fn destroy(this: *mut Self) {
         // TODO: how to deinit `this.callback.calc_hash.network_task` (carried over from Zig)
-        drop(Box::from_raw(this));
+        drop(unsafe { Box::from_raw(this) });
     }
 
-    pub extern "C" fn run_from_thread_pool(task: *mut ThreadPoolTask) {
+    pub unsafe fn run_from_thread_pool(task: *mut ThreadPoolTask) {
         // SAFETY: `task` points to the `task` field of a live `PatchTask` (set at construction).
         let patch_task: &mut PatchTask<'a> = unsafe {
             &mut *(task as *mut u8)
@@ -160,7 +161,7 @@ impl<'a> PatchTask<'a> {
 
     pub fn run_from_main_thread(
         &mut self,
-        manager: &PackageManager,
+        manager: &mut PackageManager,
         log_level: LogLevel,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
@@ -169,21 +170,30 @@ impl<'a> PatchTask<'a> {
             "runFromThreadMainThread {}",
             <&'static str>::from(&self.callback)
         );
-        let _guard = scopeguard::guard(self.pre, |pre| {
-            if pre {
-                let _ = manager
-                    .pending_pre_calc_hashes
-                    .fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
-            }
-        });
+        let pre = self.pre;
         match &mut self.callback {
-            Callback::CalcHash(_) => self.run_from_main_thread_calc_hash(manager, log_level)?,
-            Callback::Apply(_) => self.run_from_main_thread_apply(manager),
+            Callback::CalcHash(_) => {
+                let r = self.run_from_main_thread_calc_hash(manager, log_level);
+                if pre {
+                    let _ = manager
+                        .pending_pre_calc_hashes
+                        .fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
+                }
+                r?;
+            }
+            Callback::Apply(_) => {
+                self.run_from_main_thread_apply(manager);
+                if pre {
+                    let _ = manager
+                        .pending_pre_calc_hashes
+                        .fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
+                }
+            }
         }
         Ok(())
     }
 
-    pub fn run_from_main_thread_apply(&mut self, manager: &PackageManager) {
+    pub fn run_from_main_thread_apply(&mut self, manager: &mut PackageManager) {
         let _ = manager; // autofix
         let Callback::Apply(apply) = &mut self.callback else {
             unreachable!()

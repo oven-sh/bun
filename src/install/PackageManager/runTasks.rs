@@ -304,10 +304,11 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                     if task.retried < manager.options.max_retry_count {
                         task.retried += 1;
-                        manager.enqueue_network_task(task);
+                        enqueue::enqueue_network_task(manager, task_ptr);
 
                         if manager.options.log_level.is_verbose() {
-                            unsafe { &mut *manager.log }.add_warning_fmt(
+                            unsafe { &mut *manager.log }
+                                .add_warning_fmt(
                                     None,
                                     logger::Loc::EMPTY,
                                     format_args!(
@@ -536,7 +537,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         // the pre-allocated stream is safe to reuse for
                         // the retry attempt.
                         task.reset_streaming_for_retry();
-                        manager.enqueue_network_task(task);
+                        enqueue::enqueue_network_task(manager, task_ptr);
 
                         if manager.options.log_level.is_verbose() {
                             unsafe { &mut *manager.log }.add_warning_fmt(
@@ -656,7 +657,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
 
                     if let Some(removed) = manager.task_queue.remove(&task.task_id) {
-                        drop(removed.value);
+                        drop(removed);
                     }
 
                     continue;
@@ -744,7 +745,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
 
                     if let Some(removed) = manager.task_queue.remove(&task.task_id) {
-                        drop(removed.value);
+                        drop(removed);
                     }
 
                     continue;
@@ -965,7 +966,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     // `task_queue` entry too so a later install-phase
                     // `enqueuePackageForDownload` doesn't wedge on `found_existing`.
                     if let Some(removed) = manager.task_queue.remove(&task.id) {
-                        drop(removed.value);
+                        drop(removed);
                     }
 
                     continue;

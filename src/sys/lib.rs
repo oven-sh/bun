@@ -2508,6 +2508,19 @@ impl File {
     pub fn close(self) -> Maybe<()> { close(self.handle) }
     /// `bun.sys.File.readFrom` — open + read + close. Accepts `&[u8]` (Zig:
     /// `path: anytype`); `&ZStr` callers deref-coerce.
+    /// Port of `bun.sys.File.readFillBuf` (src/sys/File.zig). Reads until
+    /// `buf` is full or EOF; returns the filled prefix.
+    pub fn read_fill_buf<'b>(&self, buf: &'b mut [u8]) -> Maybe<&'b mut [u8]> {
+        let mut read_amount: usize = 0;
+        while read_amount < buf.len() {
+            match read(self.handle, &mut buf[read_amount..]) {
+                Err(err) => return Err(err),
+                Ok(0) => break,
+                Ok(n) => read_amount += n,
+            }
+        }
+        Ok(&mut buf[..read_amount])
+    }
     pub fn read_from(dir: Fd, path: &[u8]) -> Maybe<Vec<u8>> {
         let f = Self::openat(dir, path, O::RDONLY, 0)?;
         // File.zig: closes the fd on the error path too (no leak on read failure).

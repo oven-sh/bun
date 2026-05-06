@@ -1092,8 +1092,8 @@ pub fn migrate_yarn_lockfile<'a>(
                         };
 
                         if !owner_str.is_empty() && !repo_str.is_empty() {
-                            break 'blk Resolution::init(Resolution::Value::Github(
-                                Resolution::Repository {
+                            break 'blk Resolution::init(ResolutionValue::Github(
+                                Repository {
                                     owner: string_buf.append(owner_str)?,
                                     repo: string_buf.append(repo_str)?,
                                     committish: string_buf
@@ -1103,8 +1103,8 @@ pub fn migrate_yarn_lockfile<'a>(
                                 },
                             ));
                         } else {
-                            break 'blk Resolution::init(Resolution::Value::Git(
-                                Resolution::Repository {
+                            break 'blk Resolution::init(ResolutionValue::Git(
+                                Repository {
                                     owner: string_buf.append(owner_str)?,
                                     repo: string_buf.append(repo_str)?,
                                     committish: string_buf.append(commit)?,
@@ -1117,17 +1117,17 @@ pub fn migrate_yarn_lockfile<'a>(
                     break 'blk Resolution::default();
                 } else if let Some(resolved) = entry.resolved {
                     if is_direct_url_dep {
-                        break 'blk Resolution::init(Resolution::Value::RemoteTarball(
+                        break 'blk Resolution::init(ResolutionValue::RemoteTarball(
                             string_buf.append(resolved)?,
                         ));
                     }
 
                     if Entry::is_remote_tarball(resolved) {
-                        break 'blk Resolution::init(Resolution::Value::RemoteTarball(
+                        break 'blk Resolution::init(ResolutionValue::RemoteTarball(
                             string_buf.append(resolved)?,
                         ));
                     } else if resolved.ends_with(b".tgz") {
-                        break 'blk Resolution::init(Resolution::Value::RemoteTarball(
+                        break 'blk Resolution::init(ResolutionValue::RemoteTarball(
                             string_buf.append(resolved)?,
                         ));
                     }
@@ -1148,7 +1148,7 @@ pub fn migrate_yarn_lockfile<'a>(
                         string_buf.append(resolved)?
                     };
 
-                    break 'blk Resolution::init(Resolution::Value::Npm(Resolution::Npm {
+                    break 'blk Resolution::init(ResolutionValue::Npm(VersionedURL {
                         url,
                         version: result.version.min(),
                     }));
@@ -1162,22 +1162,22 @@ pub fn migrate_yarn_lockfile<'a>(
                 id: package_id,
                 origin: Origin::Npm,
                 arch: if let Some(cpu_list) = &entry.cpu {
-                    let mut arch = npm::Architecture::None.negatable();
+                    let mut arch = npm::Architecture::NONE.negatable();
                     for cpu in cpu_list.iter() {
                         arch.apply(cpu);
                     }
                     arch.combine()
                 } else {
-                    npm::Architecture::All
+                    npm::Architecture::ALL
                 },
                 os: if let Some(os_list) = &entry.os {
-                    let mut os = npm::OperatingSystem::None.negatable();
+                    let mut os = npm::OperatingSystem::NONE.negatable();
                     for os_str in os_list.iter() {
                         os.apply(os_str);
                     }
                     os.combine()
                 } else {
-                    npm::OperatingSystem::All
+                    npm::OperatingSystem::ALL
                 },
                 man_dir: SemverString::default(),
                 has_install_script: HasInstallScript::False,
@@ -1193,9 +1193,9 @@ pub fn migrate_yarn_lockfile<'a>(
         })?;
     }
 
-    let mut dependencies_list = this.packages.items_dependencies_mut();
-    let mut resolution_list = this.packages.items_resolutions_mut();
-    // TODO(port): MultiArrayList column accessor names
+    // PORT NOTE: Zig holds two `items(.field)` slices simultaneously; the
+    // derive's `&mut self` accessors can't alias, so we re-borrow per write
+    // below via `this.packages.items_*_mut()[idx] = …` instead of caching.
 
     let mut actual_root_dep_count: u32 = 0;
 

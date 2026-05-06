@@ -189,7 +189,7 @@ pub fn replace_package_manager_run(
 }
 
 pub struct LifecycleScriptSubprocess<'a> {
-    pub package_name: &'a [u8],
+    pub package_name: Box<[u8]>,
 
     pub scripts: ScriptsList,
     pub current_script_index: u8,
@@ -199,7 +199,11 @@ pub struct LifecycleScriptSubprocess<'a> {
     pub stdout: OutputReader,
     pub stderr: OutputReader,
     pub has_called_process_exit: bool,
-    pub manager: &'a PackageManager,
+    /// Zig: `manager: *PackageManager`. Stored as raw `*mut` (not `&'a`) so
+    /// callbacks may mutate manager state (`active_lifecycle_scripts`,
+    /// `progress`, `scripts_node`) through the long-lived backref without
+    /// asserting unique-borrow over the whole `PackageManager`.
+    pub manager: *mut PackageManager,
     // TODO(port): `[:null]?[*:0]const u8` — null-terminated slice of nullable C strings (envp).
     // No direct ZStr/WStr analogue; using raw repr for FFI passthrough to spawnProcess.
     pub envp: *const *const c_char,
@@ -220,14 +224,19 @@ pub struct LifecycleScriptSubprocess<'a> {
 
 pub struct InstallCtx<'a> {
     pub entry_id: entry::Id,
-    pub installer: &'a Installer<'a>,
+    /// Zig: `installer: *Installer`. Raw `*mut` for the same reason as
+    /// `LifecycleScriptSubprocess::manager` — `on_task_complete`/`start_task`
+    /// mutate Installer state from inside an exit-handler callback.
+    pub installer: *mut Installer<'a>,
 }
 
 // PORT NOTE: Zig's `Intrusive(T, Context, less)` takes the comparator as a comptime
 // fn-pointer. The Rust `io_heap::Intrusive` folds it into `HeapContext::less` on the
-// `Context` type instead, so `sort_by_started_at` is provided via a trait impl on
-// `*mut PackageManager` (the Zig context arg) rather than a third generic param.
-pub type List<'a> = io_heap::Intrusive<LifecycleScriptSubprocess<'a>, *mut PackageManager>;
+// `Context` type instead, so `sort_by_started_at` is provided via a trait impl on a
+// ZST `StartedAtCtx` (the Zig context arg `*PackageManager` is unused by `less`).
+#[derive(Default, Clone, Copy)]
+pub struct StartedAtCtx;
+pub type List<'a> = io_heap::Intrusive<LifecycleScriptSubprocess<'a>, StartedAtCtx>;
 
 impl<'a> io_heap::HeapNode for LifecycleScriptSubprocess<'a> {
     #[inline]
@@ -236,7 +245,7 @@ impl<'a> io_heap::HeapNode for LifecycleScriptSubprocess<'a> {
     }
 }
 
-impl<'a> io_heap::HeapContext<LifecycleScriptSubprocess<'a>> for *mut PackageManager {
+impl<'a> io_heap::HeapContext<LifecycleScriptSubprocess<'a>> for StartedAtCtx {
     #[inline]
     fn less(
         &self,
@@ -268,19 +277,31 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         Box::into_raw(Box::new(init))
     }
 
-    pub fn loop_(&self) -> *mut AsyncLoop {
-        #[cfg(windows)]
-        {
-            self.manager.event_loop.loop_().uv_loop
-        }
-        #[cfg(not(windows))]
-        {
-            self.manager.event_loop.loop_()
-        }
+    /// SAFETY: `manager` is a live `*mut PackageManager` set at construction.
+    #[inline]
+    fn manager(&self) -> &PackageManager {
+        // SAFETY: `manager` is non-null and outlives every subprocess (Zig
+        // `*PackageManager` is the singleton install-loop owner).
+        unsafe { &*self.manager }
     }
 
-    pub fn event_loop(&self) -> &AnyEventLoop {
-        &self.manager.event_loop
+    /// SAFETY: see [`Self::manager`]. Mutable access is sound because Zig's
+    /// `*PackageManager` is a non-exclusive pointer; no `&PackageManager`
+    /// outlives the brief field accesses below on the install thread.
+    #[inline]
+    fn manager_mut(&self) -> &mut PackageManager {
+        // SAFETY: see fn doc.
+        unsafe { &mut *self.manager }
+    }
+
+    pub fn loop_(&self) -> *mut AsyncLoop {
+        // `AnyEventLoop::r#loop()` returns `*mut UwsLoop`; on POSIX
+        // `bun_aio::Loop` is a type alias for `UwsLoop`.
+        self.manager_mut().event_loop.r#loop() as *mut AsyncLoop
+    }
+
+    pub fn event_loop(&self) -> &AnyEventLoop<'static> {
+        &self.manager().event_loop
     }
 
     pub fn script_name(&self) -> &'static [u8] {
@@ -303,7 +324,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             format_args!(
                 "<r><red>error<r>: Failed to read <b>{}<r> script output from \"<b>{}<r>\" due to error <b>{} {}<r>",
                 bstr::BStr::new(self.script_name()),
-                bstr::BStr::new(self.package_name),
+                bstr::BStr::new(&self.package_name),
                 err.errno,
                 <&'static str>::from(err.get_errno()),
             ),

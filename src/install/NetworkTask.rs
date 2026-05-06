@@ -498,7 +498,9 @@ impl NetworkTask {
 
         // Incase the ETag causes invalidation, we fallback to the last modified date.
         if !last_modified.is_empty()
-            && bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_LAST_MODIFIED_PRETEND_304.get()
+            && bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_LAST_MODIFIED_PRETEND_304
+                .get()
+                .unwrap_or(false)
         {
             self.unsafe_http_client.client.flags.force_last_modified = true;
             self.unsafe_http_client.client.if_modified_since = last_modified;
@@ -507,14 +509,14 @@ impl NetworkTask {
         Ok(())
     }
 
-    pub fn get_completion_callback(&mut self) -> http::HTTPClientResult::Callback {
-        // TODO(port): `Callback.New(*NetworkTask, notify).init(this)` is a
-        // comptime type-erased thunk generator — model as
-        // `Callback::new(self as *mut _, notify_trampoline)` in Phase B.
-        http::HTTPClientResult::Callback::new::<NetworkTask>(self, Self::notify)
+    pub fn get_completion_callback(&mut self) -> HTTPClientResultCallback {
+        // PORT NOTE: Zig `Callback.New(*NetworkTask, notify).init(this)` is a
+        // comptime type-erased thunk generator. `HTTPClientResultCallback::new`
+        // performs the same erasure over a `fn(*mut T, *mut AsyncHTTP, _)`.
+        HTTPClientResultCallback::new::<NetworkTask>(self, Self::notify)
     }
 
-    pub fn schedule(&mut self, batch: &mut ThreadPool::Batch) {
+    pub fn schedule(&mut self, batch: &mut Batch) {
         self.unsafe_http_client.schedule(batch);
     }
 }
@@ -543,25 +545,29 @@ impl From<ForTarballError> for bun_core::Error {
 impl NetworkTask {
     pub fn for_tarball(
         &mut self,
-        tarball_: &ExtractTarball,
+        tarball_: ExtractTarball,
         scope: &npm::registry::Scope,
         authorization: Authorization,
     ) -> Result<(), ForTarballError> {
         // SAFETY: BACKREF — PackageManager owns this task and outlives it.
-        let pm = unsafe { &*(self.package_manager as *mut PackageManager) };
+        let pm = unsafe { &mut *(self.package_manager as *mut PackageManager) };
 
-        self.callback = Callback::Extract(tarball_.clone());
+        self.callback = Callback::Extract(tarball_);
         let Callback::Extract(tarball) = &self.callback else {
             unreachable!()
         };
         let tarball_url = tarball.url.slice();
         if tarball_url.is_empty() {
-            self.url_buf = ExtractTarball::build_url(
+            // SAFETY: `value` is the `Npm` variant on this code path —
+            // `for_tarball` is only reached for npm tarball downloads
+            // (callers gate on `resolution.tag == .npm`).
+            let version = unsafe { tarball.resolution.value.npm }.version;
+            self.url_buf = Box::from(extract_tarball::build_url(
                 &scope.url.href,
                 &tarball.name,
-                &tarball.resolution.value.npm.version,
+                version,
                 pm.lockfile.buffers.string_bytes.as_slice(),
-            )?;
+            )?);
         } else {
             // TODO(port): Zig aliases `tarball.url` here without copying;
             // `url_buf: Box<[u8]>` forces an allocation. Revisit ownership.
@@ -599,18 +605,21 @@ impl NetworkTask {
 
             // SAFETY: `allocate()` set `content.ptr` to a valid allocation of `len` bytes.
             header_buf = unsafe {
-                core::slice::from_raw_parts(header_builder.content.ptr, header_builder.content.len)
+                core::slice::from_raw_parts(
+                    header_builder.content.ptr.unwrap().as_ptr(),
+                    header_builder.content.len,
+                )
             };
         }
 
         let url = URL::parse(&self.url_buf);
 
-        let mut http_options = AsyncHTTP::Options {
-            http_proxy: pm.http_proxy(url),
+        let mut http_options = AsyncHTTPOptions {
+            http_proxy: pm.http_proxy(&url),
             ..Default::default()
         };
 
-        if ExtractTarball::uses_streaming_extraction() {
+        if extract_tarball::uses_streaming_extraction() {
             // Tell the HTTP client to invoke `notify` for every body chunk
             // instead of buffering the whole response. `notify` pushes each
             // chunk into `tarball_stream`, which schedules a drain task on

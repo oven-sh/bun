@@ -4791,6 +4791,8 @@ impl Blob {
 // Re-export the write-file glue so sibling modules (S3File.rs) can call it
 // without reaching through the private `_jsc_gated` shim module.
 pub use _jsc_gated::{WriteFileOptions, write_file_internal};
+// Re-export the mkdirp helper + types for blob/copy_file.rs (CopyFile open path).
+pub use _jsc_gated::{MkdirpTarget, Retry, mkdir_if_not_exists};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Un-gated core constructors / JS bridging (B-2 round: init_with_store / to_js

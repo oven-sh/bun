@@ -668,14 +668,17 @@ impl HashResultValue {
             }
         )
         .expect("unreachable"); // bun.handleOom
-        let instance = global_object.create_error_instance(format_args!(
-            "Password hashing failed with error \"{}\"",
-            err.name()
-        ));
+        let instance = global_object.create_error_instance(
+            "Password hashing failed with error \"{s}\"",
+            format_args!(
+                "Password hashing failed with error \"{}\"",
+                err.name()
+            ),
+        );
         instance.put(
             global_object,
-            ZigString::static_("code"),
-            ZigString::init(&error_code).to_js(global_object),
+            b"code",
+            JscZigString::init(&error_code).to_js(global_object),
         );
         instance
     }

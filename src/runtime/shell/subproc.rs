@@ -873,12 +873,18 @@ impl Writable {
                     panic!("Unimplemented stdin pipe");
                 }
 
-                Stdio::Blob(blob) => Ok(Writable::Buffer(StaticPipeWriter::create(
-                    event_loop,
-                    subprocess,
-                    result,
-                    JscSubprocess::Source::Blob(core::mem::take(blob)),
-                ))),
+                Stdio::Blob(_) => {
+                    let blob = match core::mem::replace(&mut stdio, Stdio::Ignore) {
+                        Stdio::Blob(b) => b,
+                        _ => unreachable!(),
+                    };
+                    Ok(Writable::Buffer(StaticPipeWriter::create(
+                        event_loop,
+                        subprocess,
+                        result,
+                        JscSubprocess::Source::Blob(blob),
+                    )))
+                }
                 Stdio::ArrayBuffer(array_buffer) => {
                     Ok(Writable::Buffer(StaticPipeWriter::create(
                         event_loop,

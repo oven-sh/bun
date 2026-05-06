@@ -90,7 +90,7 @@ async function defaultCertCount(args: string[], extraEnv: Record<string, string 
   return count;
 }
 
-describe("bunfig.toml CA", () => {
+describe.concurrent("bunfig.toml CA", () => {
   test(`CA = "system" in bunfig.toml matches --use-system-ca`, async () => {
     const dir = tempDirWithFiles("bunfig-ca-system", {
       "bunfig.toml": `CA = "system"\n`,

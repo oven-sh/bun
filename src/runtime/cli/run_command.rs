@@ -3046,22 +3046,25 @@ impl RunCommand {
 
     pub fn configure_env_for_run(
         ctx: &Command::Context,
-        this_transpiler: &mut ::core::mem::MaybeUninit<Transpiler>,
-        env: Option<&mut DotEnv::Loader>,
+        this_transpiler: &mut ::core::mem::MaybeUninit<Transpiler<'static>>,
+        env: Option<*mut DotEnv::Loader<'static>>,
         log_errors: bool,
         store_root_fd: bool,
-    ) -> Result<&'static mut DirInfo, bun_core::Error> {
+    ) -> Result<*mut DirInfo, bun_core::Error> {
         // TODO(port): return type lifetime — Zig returns *DirInfo owned by resolver cache
         let args = ctx.args.clone();
         let env_is_none = env.is_none();
+        let arena: &'static bun_alloc::Arena = runner_arena();
         // PORT NOTE: out-param constructor — `MaybeUninit::write` avoids dropping
         // an uninitialized `Transpiler` (the old `*this_transpiler = …` would).
-        this_transpiler.write(Transpiler::init(ctx.log, args, env)?);
+        this_transpiler.write(Transpiler::init(arena, ctx.log, args, env)?);
         // SAFETY: just initialized via `write` on the line above.
         let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
         this_transpiler.options.env.behavior = api::DotEnvBehavior::LoadAll;
-        this_transpiler.env.quiet = true;
-        this_transpiler.options.env.prefix = b"";
+        // SAFETY: `Transpiler::init` always sets `env` (singleton or leaked).
+        let env_loader = unsafe { &mut *this_transpiler.env };
+        env_loader.quiet = true;
+        this_transpiler.options.env.prefix = Box::default();
 
         this_transpiler.resolver.care_about_bin_folder = true;
         this_transpiler.resolver.care_about_scripts = true;
@@ -3072,25 +3075,27 @@ impl RunCommand {
 
         this_transpiler.configure_linker();
 
-        let root_dir_info = match this_transpiler.resolver.read_dir_info(this_transpiler.fs.top_level_dir) {
+        // SAFETY: `Transpiler::init` always sets `fs` (process-static singleton).
+        let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
+        let root_dir_info = match this_transpiler.resolver.read_dir_info(top_level_dir) {
             Err(err) => {
                 if !log_errors {
                     return Err(bun_core::err!("CouldntReadCurrentDirectory"));
                 }
-                let _ = ctx.log.print(Output::error_writer());
-                Output::pretty_errorln(
+                // SAFETY: `ctx.log` is the process-lifetime CLI log.
+                let _ = unsafe { &*ctx.log }.print(Output::error_writer());
+                pretty_errorln!(
                     "<r><red>error<r><d>:<r> <b>{}<r> loading directory {}",
-                    (
-                        err.name(),
-                        bun_fmt::QuotedFormatter { text: this_transpiler.fs.top_level_dir },
-                    ),
+                    err.name(),
+                    bun_fmt::QuotedFormatter { text: top_level_dir },
                 );
                 Output::flush();
                 return Err(err);
             }
             Ok(None) => {
-                let _ = ctx.log.print(Output::error_writer());
-                Output::pretty_errorln("error loading current directory", ());
+                // SAFETY: `ctx.log` is the process-lifetime CLI log.
+                let _ = unsafe { &*ctx.log }.print(Output::error_writer());
+                pretty_errorln!("error loading current directory");
                 Output::flush();
                 return Err(bun_core::err!("CouldntReadCurrentDirectory"));
             }
@@ -3100,9 +3105,9 @@ impl RunCommand {
         this_transpiler.resolver.store_fd = false;
 
         if env_is_none {
-            this_transpiler.env.load_process()?;
+            env_loader.load_process()?;
 
-            if let Some(node_env) = this_transpiler.env.get(b"NODE_ENV") {
+            if let Some(node_env) = env_loader.get(b"NODE_ENV") {
                 if node_env == b"production" {
                     this_transpiler.options.production = true;
                 }
@@ -3113,10 +3118,13 @@ impl RunCommand {
             let _ = this_transpiler.run_env_loader(true);
         }
 
-        this_transpiler
-            .env
+        // SAFETY: re-borrow after `run_env_loader` may have touched the loader via the
+        // raw pointer; the singleton lives for the process.
+        let env_loader = unsafe { &mut *this_transpiler.env };
+
+        env_loader
             .map
-            .put_default(b"npm_config_local_prefix", this_transpiler.fs.top_level_dir)
+            .put_default(b"npm_config_local_prefix", top_level_dir)
             .expect("unreachable");
 
         // Propagate --no-orphans / [run] noOrphans to the script's env so any
@@ -3124,8 +3132,7 @@ impl RunCommand {
         // loader snapshots `environ` before flag parsing runs, so the
         // `setenv()` in `enable()` isn't reflected here.
         if bun_aio::ParentDeathWatchdog::is_enabled() {
-            this_transpiler
-                .env
+            env_loader
                 .map
                 .put(b"BUN_FEATURE_FLAG_NO_ORPHANS", b"1")
                 .expect("unreachable");
@@ -3134,8 +3141,7 @@ impl RunCommand {
         // we have no way of knowing what version they're expecting without running the node executable
         // running the node executable is too slow
         // so we will just hardcode it to LTS
-        this_transpiler
-            .env
+        env_loader
             .map
             .put_default(
                 b"npm_config_user_agent",
@@ -3156,50 +3162,48 @@ impl RunCommand {
             )
             .expect("unreachable");
 
-        if this_transpiler.env.get(b"npm_execpath").is_none() {
+        if env_loader.get(b"npm_execpath").is_none() {
             // we don't care if this fails
             if let Ok(self_exe_path) = bun_core::self_exe_path() {
-                this_transpiler
-                    .env
+                env_loader
                     .map
-                    .put_default(b"npm_execpath", self_exe_path)
+                    .put_default(b"npm_execpath", self_exe_path.as_bytes())
                     .expect("unreachable");
             }
         }
 
-        if let Some(package_json) = root_dir_info.enclosing_package_json {
+        // SAFETY: resolver cache owns the DirInfo for the process lifetime.
+        let root_dir_ref = unsafe { &*root_dir_info };
+        if let Some(package_json) = root_dir_ref.enclosing_package_json {
             if !package_json.name.is_empty() {
-                if this_transpiler.env.map.get(NpmArgs::PACKAGE_NAME).is_none() {
-                    this_transpiler
-                        .env
+                if env_loader.map.get(NpmArgs::PACKAGE_NAME).is_none() {
+                    env_loader
                         .map
-                        .put(NpmArgs::PACKAGE_NAME, package_json.name)
+                        .put(NpmArgs::PACKAGE_NAME, &package_json.name)
                         .expect("unreachable");
                 }
             }
 
-            this_transpiler
-                .env
+            env_loader
                 .map
                 .put_default(b"npm_package_json", package_json.source.path.text)
                 .expect("unreachable");
 
             if !package_json.version.is_empty() {
-                if this_transpiler.env.map.get(NpmArgs::PACKAGE_VERSION).is_none() {
-                    this_transpiler
-                        .env
+                if env_loader.map.get(NpmArgs::PACKAGE_VERSION).is_none() {
+                    env_loader
                         .map
-                        .put(NpmArgs::PACKAGE_VERSION, package_json.version)
+                        .put(NpmArgs::PACKAGE_VERSION, &package_json.version)
                         .expect("unreachable");
                 }
             }
 
             if let Some(config) = &package_json.config {
-                this_transpiler.env.map.ensure_unused_capacity(config.count())?;
+                env_loader.map.ensure_unused_capacity(config.count())?;
                 debug_assert_eq!(config.keys().len(), config.values().len());
                 for (k, v) in config.keys().iter().zip(config.values().iter()) {
-                    let key = strings::concat(&[b"npm_package_config_", k])?;
-                    this_transpiler.env.map.put_assume_capacity(key, v);
+                    let key = strings::concat(&[b"npm_package_config_", k.as_ref()])?;
+                    env_loader.map.put_assume_capacity(&key, v);
                     // PERF(port): was assume_capacity
                 }
             }
@@ -3217,7 +3221,10 @@ impl RunCommand {
         force_using_bun: bool,
     ) -> Result<Vec<u8>, bun_core::Error> {
         // TODO(port): return type was []u8 (slice into owned ArrayList); we return Vec<u8>
-        let path = this_transpiler.env.get(b"PATH").unwrap_or(b"");
+        // SAFETY: `Transpiler::init` always sets `env`/`fs` (process-lifetime singletons).
+        let env_loader = unsafe { &mut *this_transpiler.env };
+        let fs_ref = unsafe { &*this_transpiler.fs };
+        let path = env_loader.get(b"PATH").unwrap_or(b"");
         if let Some(op) = original_path {
             *op = path;
         }
@@ -3225,10 +3232,9 @@ impl RunCommand {
         let bun_node_exe = Self::bun_node_file_utf8()?;
         let bun_node_dir_win = bun_core::util::dirname(bun_node_exe.as_bytes())
             .ok_or(bun_core::err!("FailedToGetTempPath"))?;
-        let found_node = this_transpiler
-            .env
+        let found_node = env_loader
             .load_node_js_config(
-                this_transpiler.fs,
+                fs_ref,
                 if force_using_bun { bun_node_exe.as_bytes() } else { b"" },
             )
             .unwrap_or(false);

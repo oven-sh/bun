@@ -409,9 +409,9 @@ impl CreateCommand {
                                 node.end();
                                 progress.refresh();
 
-                                Output::pretty_error(
+                                pretty_error!(
                                     "\n<r><red>error:<r> <b>\"{}\"<r> was not found on GitHub. Here are templates you can use:\n\n",
-                                    format_args!("{}", bstr::BStr::new(template)),
+                                    bstr::BStr::new(template),
                                 );
                                 Output::flush();
 
@@ -422,7 +422,7 @@ impl CreateCommand {
                                 node.end();
                                 progress.refresh();
 
-                                Output::pretty_errorln("\n\n", format_args!(""));
+                                pretty_errorln!("\n\n");
 
                                 return Err(err);
                             }

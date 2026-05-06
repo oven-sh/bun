@@ -1055,7 +1055,7 @@ enum WriteResult {
 
 enum WriteData {
     Owned(Vec<u8>),
-    Store(Arc<BlobStore>),
+    Store(StoreRef),
 }
 
 struct WriteContext {

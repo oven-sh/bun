@@ -209,43 +209,11 @@ pub mod framework_router {
     };
 
     /// `FrameworkRouter.Style` — routing convention (`.nextjs-pages` etc).
-    /// Full enum body in gated `FrameworkRouter.rs`; variants named for
-    /// `FileSystemRouterType.style` field.
-    #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-    pub enum Style {
-        NextjsPages,
-        NextjsAppUi,
-        NextjsAppRoutes,
-        // TODO(b2-blocked): JavaScriptDefined(jsc::Strong) — needs bun_jsc.
-    }
-
-    impl Style {
-        /// `FrameworkRouter.Style.fromJS` — string → enum mapping. The full body
-        /// (including the `JavascriptDefined` callable case) lives in the gated
-        /// `framework_router_body::Style::from_js`; this keystone variant covers
-        /// the string cases `Bun.serve` needs and errors on the rest.
-        pub fn from_js(
-            value: super::jsc::JSValue,
-            global: &super::jsc::JSGlobalObject,
-        ) -> super::jsc::JsResult<Style> {
-            if value.is_string() {
-                let bun_string = value.to_bun_string(global)?;
-                let utf8 = bun_string.to_utf8();
-                match utf8.slice() {
-                    b"nextjs-pages" => return Ok(Style::NextjsPages),
-                    b"nextjs-app-ui" => return Ok(Style::NextjsAppUi),
-                    b"nextjs-app-routes" => return Ok(Style::NextjsAppRoutes),
-                    _ => {}
-                }
-            } else if value.is_callable() {
-                // TODO(b2-blocked): JavascriptDefined(jsc::Strong) variant.
-                todo!("blocked_on: framework_router::Style::JavascriptDefined")
-            }
-            Err(global.throw_invalid_arguments(format_args!(
-                "'style' must be either \"nextjs-pages\", \"nextjs-app-ui\", \"nextjs-app-routes\", or a function."
-            )))
-        }
-    }
+    // PORT NOTE: keystone stub removed — `framework_router_body::Type.style`
+    // and the body `Style::from_js` are typed against the body enum, so the
+    // duplicate here caused E0308 in `production.rs`. Re-export so
+    // `framework_router::Style` ≡ `framework_router_body::Style`.
+    pub use super::framework_router_body::Style;
 
     /// `FrameworkRouter.Route` — one node in the route tree. Full body (with
     /// `Part`, matching, deinit) gated in `FrameworkRouter.rs`.

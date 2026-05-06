@@ -186,6 +186,11 @@ pub const Debugger = union(enum) {
     },
 };
 
+/// Which CA certificate store Bun should use for TLS verification.
+/// Surfaced via `--use-*-ca` CLI flags, the `NODE_USE_SYSTEM_CA` env var, and
+/// the top-level `CA` key in `bunfig.toml`.
+pub const BunCAStore = enum(u8) { bundled, openssl, system };
+
 pub const RuntimeOptions = struct {
     smol: bool = false,
     debugger: Debugger = .{ .unspecified = {} },
@@ -207,6 +212,9 @@ pub const RuntimeOptions = struct {
     console_depth: ?u16 = null,
     cron_title: []const u8 = "",
     cron_period: []const u8 = "",
+    /// CA store selected via `bunfig.toml`'s top-level `CA` key. `null` means
+    /// unset (fall back to CLI flag, `NODE_USE_SYSTEM_CA`, then bundled).
+    ca_store: ?BunCAStore = null,
     cpu_prof: struct {
         enabled: bool = false,
         name: []const u8 = "",

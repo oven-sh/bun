@@ -704,10 +704,12 @@ impl PublishCommand {
                 loop {
                     response_buf.reset();
 
+                    // PORT NOTE: Zig copied `done_url`/`auth_headers.entries` by value each
+                    // loop turn; in Rust both move into `init_sync`, so re-clone per iteration.
                     let mut req = http::AsyncHTTP::init_sync(
                         http::Method::GET,
-                        done_url,
-                        auth_headers.entries,
+                        done_url.clone(),
+                        auth_headers.entries.clone()?,
                         // SAFETY: auth_headers.content was allocated by construct_publish_headers
                         unsafe { core::slice::from_raw_parts(auth_headers.content.ptr.unwrap().as_ptr(), auth_headers.content.len) },
                         response_buf,

@@ -116,8 +116,10 @@ DO NOT edit. Return {by_file, total, link_ok, sample_errors}.`,
 **File:** ${file}  (${n} errors; ${seen_files[file] > 1 ? `seen ${seen_files[file]}× — likely type-seam or sibling-signature drift` : "new this round"})
 **See errors:** \`grep -B2 -A10 '${file}:' /tmp/pd-build-r${round}.log\`
 
-**Fix forward:**
-- If error is in a \`#[cfg(any())]\`-gated fn or \`todo!()\`: remove the gate, port the REAL body from the .zig spec at same path. Adapt API surface (BabyList .append, ref_ not r#ref, *const[u8] deref, raw-ptr per-use reborrow per docs/PORTING.md).
+**Fix forward — NEVER re-gate:**
+- Most errors are mechanical patterns. Sweep them first: wrap newly-\`unsafe fn\` accessor calls in \`unsafe { }\`, \`r#ref\`→\`ref_\`, \`*const [u8]\` field → \`unsafe { &*p }\`, BabyList \`.push\`→\`.append\`, \`.len()\`→\`.len\` field, module-vs-type imports (\`crate::VirtualMachine\` is a module, use \`crate::virtual_machine::VirtualMachine\`).
+- If error is in a \`#[cfg(any())]\`-gated fn or \`todo!()\`: remove the gate, port the REAL body from the .zig spec at same path. Adapt API surface per docs/PORTING.md.
+- For mega-files (>200 errs): mechanical sweep first (sed-style), then per-fn port for remaining.
 - If type mismatch with a sibling crate: prefer adapting YOUR file to the sibling's signature (sibling agent owns their file).
 - If genuinely blocked on a missing upstream symbol: leave \`todo!("blocked_on: <crate>::<symbol>")\` and report in blocked_on.
 

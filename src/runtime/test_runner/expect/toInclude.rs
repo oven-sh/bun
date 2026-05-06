@@ -11,10 +11,9 @@ pub fn to_include(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // TODO(port): `defer this.postMatch(globalThis)` — scopeguard over `&mut self` conflicts
-    // with subsequent uses of `this`; Phase B should hoist post_match into a Drop guard on
-    // Expect or restructure to call at every return site.
-    let _post = scopeguard::guard((), |_| this.post_match(global));
+    // PORT NOTE: `defer this.postMatch(globalThis)` — reshaped for borrowck: scopeguard owns the
+    // `&mut Expect` and runs post_match on drop; the body re-borrows `this` through DerefMut.
+    let mut this = scopeguard::guard(this, |t| t.post_match(global));
 
     let this_value = frame.this();
     let arguments_ = frame.arguments_old::<1>();

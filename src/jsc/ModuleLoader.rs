@@ -154,6 +154,15 @@ pub struct LoaderHooks {
         referrer: &bun_string::String,
         out: *mut ErrorableResolvedSource,
     ) -> FetchBuiltinResult,
+    /// `ModuleLoader.getHardcodedModule(jsc_vm, specifier, hardcoded)` —
+    /// per-variant body of the builtin-module fast path. `false` ⇒ `None`
+    /// (recognised but not currently servable); `true` ⇒ `*out` populated.
+    pub get_hardcoded_module: unsafe fn(
+        jsc_vm: *mut VirtualMachine,
+        specifier: &bun_string::String,
+        hardcoded: HardcodedModule,
+        out: *mut ResolvedSource,
+    ) -> bool,
     /// `Bun__transpileFile` body — needs `options.getLoaderAndVirtualSource`,
     /// `node_module_module`, `webcore.Blob`, the concurrent-transpiler queue.
     /// Returns the in-flight promise when `allow_promise && async`, else null
@@ -286,6 +295,89 @@ pub extern "C" fn Bun__fetchBuiltinModule(
         FetchBuiltinResult::NotFound => false,
         FetchBuiltinResult::Found | FetchBuiltinResult::Errored => true,
     }
+}
+
+/// `HardcodedModule.Alias.bun_aliases.get(str)` — linear scan over the
+/// `BUN_ALIASES` const tables (PERF(port): Phase B replaces with phf).
+#[inline]
+fn bun_aliases_get(name: &[u8]) -> Option<bun_resolve_builtins::Alias> {
+    for table in bun_resolve_builtins::HardcodedModule::BUN_ALIASES {
+        for (k, v) in *table {
+            if *k == name {
+                return Some(*v);
+            }
+        }
+    }
+    None
+}
+
+/// Spec ModuleLoader.zig:828-848.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__resolveAndFetchBuiltinModule(
+    jsc_vm: *mut VirtualMachine,
+    specifier: *mut bun_string::String,
+    ret: *mut ErrorableResolvedSource,
+) -> bool {
+    jsc::mark_binding(core::panic::Location::caller());
+    // SAFETY: C++ passed valid pointers; `jsc_vm` is the live per-thread VM.
+    let specifier = unsafe { &*specifier };
+    let spec_utf8 = specifier.to_utf8();
+    let Some(alias) = bun_aliases_get(spec_utf8.slice()) else {
+        return false;
+    };
+    let Some(&hardcoded) = HardcodedModule::MAP.get(alias.path.as_bytes()) else {
+        bun_core::debug_assert!(false);
+        return false;
+    };
+    let Some(hooks) = loader_hooks() else {
+        return false;
+    };
+    let mut resolved = ResolvedSource::default();
+    // SAFETY: hook contract — `jsc_vm` is the live per-thread VM; `&mut
+    // resolved` is a valid out-param.
+    if !unsafe { (hooks.get_hardcoded_module)(jsc_vm, specifier, hardcoded, &mut resolved) } {
+        return false;
+    }
+    // SAFETY: C++ passed a valid out-param.
+    unsafe { *ret = ErrorableResolvedSource::ok(resolved) };
+    true
+}
+
+/// Spec ModuleLoader.zig:1332-1342. Support embedded .node files.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__resolveEmbeddedNodeFile(
+    vm: *mut VirtualMachine,
+    _in_out_str: *mut bun_string::String,
+) -> bool {
+    jsc::mark_binding(core::panic::Location::caller());
+    // SAFETY: C++ passed the live per-thread VM.
+    if unsafe { (*vm).standalone_module_graph.is_none() } {
+        return false;
+    }
+    // TODO(b2-cycle): `ModuleLoader.resolveEmbeddedFile` reaches into
+    // `bun_runtime::node::fs` + `StandaloneModuleGraph` (gated). Until then,
+    // fail closed — there is no embedded graph to probe in the non-standalone
+    // path above, and the standalone build wires the real body.
+    #[cfg(any())]
+    {
+        let input_path = unsafe { (*_in_out_str).to_utf8() };
+        let mut path_buf = bun_paths::PathBuffer::default();
+        if let Some(result) =
+            resolve_embedded_file(unsafe { &mut *vm }, &mut path_buf, input_path.slice(), b"node")
+        {
+            unsafe { *_in_out_str = bun_string::String::clone_utf8(result) };
+            return true;
+        }
+    }
+    false
+}
+
+/// Spec ModuleLoader.zig:1344-1347.
+#[unsafe(no_mangle)]
+pub extern "C" fn ModuleLoader__isBuiltin(data: *const u8, len: usize) -> bool {
+    // SAFETY: C++ guarantees `data[..len]` is a valid UTF-8 specifier slice.
+    let str = unsafe { core::slice::from_raw_parts(data, len) };
+    bun_aliases_get(str).is_some()
 }
 
 // ──────────────────────────────────────────────────────────────────────────

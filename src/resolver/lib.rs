@@ -2427,20 +2427,21 @@ impl<'a> Resolver<'a> {
     pub fn flush_debug_logs(&mut self, flush_mode: FlushMode) -> core::result::Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         if let Some(debug) = self.debug_logs.as_mut() {
+            // PORT NOTE: bun_logger takes `Str = &'static [u8]` (Zig allocated into the Log
+            // arena). Leak the accumulated `what` buffer; the Log owns it for the program
+            // lifetime in debug-logging builds only.
+            let what: &'static [u8] =
+                Box::leak(core::mem::take(&mut debug.what).into_boxed_slice());
+            let notes = core::mem::take(&mut debug.notes).into_boxed_slice();
             if flush_mode == FlushMode::Fail {
                 self.log.add_range_debug_with_notes(
                     None,
                     logger::Range { loc: logger::Loc::default(), ..Default::default() },
-                    &debug.what,
-                    core::mem::take(&mut debug.notes).into_boxed_slice(),
+                    what,
+                    notes,
                 )?;
             } else if (self.log.level as u32) <= (logger::Level::Verbose as u32) {
-                self.log.add_verbose_with_notes(
-                    None,
-                    logger::Loc::EMPTY,
-                    &debug.what,
-                    core::mem::take(&mut debug.notes).into_boxed_slice(),
-                )?;
+                self.log.add_verbose_with_notes(None, logger::Loc::EMPTY, what, notes)?;
             }
         }
         Ok(())
@@ -2969,30 +2970,37 @@ impl<'a> Resolver<'a> {
                         let parts = [dir.abs_real_path.as_ref(), query.entry.base()];
                         let mut buf = bun_paths::PathBuffer::uninit();
 
-                        let out = self.fs.abs_buf(&parts, &mut buf);
+                        // PORT NOTE: `abs_buf` returns a borrow of `buf`; capture only the
+                        // length so `buf` can be re-borrowed for null-termination below.
+                        let out_len = self.fs.abs_buf(&parts, &mut buf).len();
 
                         let store_fd = self.store_fd;
 
                         if !query.entry.cache.fd.is_valid() && store_fd {
-                            buf[out.len()] = 0;
-                            // SAFETY: buf[out.len()] == 0 written above
-                            let span = unsafe { bun_core::ZStr::from_raw(buf.as_ptr(), out.len()) };
+                            buf[out_len] = 0;
+                            // SAFETY: buf[out_len] == 0 written above
+                            let span = unsafe { bun_core::ZStr::from_raw(buf.as_ptr(), out_len) };
                             // TODO(port): std.fs.openFileAbsoluteZ → bun_sys::open
                             let file = bun_sys::open(span, bun_sys::O::RDONLY, 0).unwrap();
                             query.entry.cache.fd = file;
                             Fs::FileSystem::set_max_fd(file.native());
                         }
 
+                        // PORT NOTE: raw-ptr the entry so the `&mut query.entry` borrow ends
+                        // before the scopeguard closure (which captures `&mut self`).
+                        let entry_ptr: *mut Fs::file_system::Entry = query.entry;
                         let _close_guard = scopeguard::guard((), |_| {
                             if self.fs.fs.need_to_close_files() {
-                                if query.entry.cache.fd.is_valid() {
-                                    query.entry.cache.fd.close();
-                                    query.entry.cache.fd = FD::INVALID;
+                                // SAFETY: ARENA — Entry lives in the BSSMap singleton.
+                                let e = unsafe { &mut *entry_ptr };
+                                if e.cache.fd.is_valid() {
+                                    e.cache.fd.close();
+                                    e.cache.fd = FD::INVALID;
                                 }
                             }
                         });
 
-                        let symlink = Fs::FilenameStore::instance().append_slice(out)?;
+                        let symlink = Fs::FilenameStore::instance().append_slice(&buf[..out_len])?;
                         if let Some(debug) = self.debug_logs.as_mut() {
                             debug.add_note_fmt(format_args!(
                                 "Resolved symlink \"{}\" to \"{}\"",
@@ -3868,6 +3876,9 @@ impl<'a> Resolver<'a> {
                                 // directory path accidentally being interpreted as URL escapes.
                                 {
                                     let esm_resolution = esmodule.resolve(b"/", esm.subpath, &exports_map.root);
+                                    // PORT NOTE: drop `esmodule` (which mut-borrows `self.debug_logs`)
+                                    // before calling `&mut self` methods below.
+                                    drop(esmodule);
 
                                     if let Some(result) = self.handle_esm_resolution(esm_resolution, abs_package_path, kind, package_json, esm.subpath) {
                                         let mut result_copy = result;
@@ -5226,7 +5237,7 @@ impl<'a> Resolver<'a> {
 
             // We must initialize it as empty so that the result index is correct.
             // This is important so that browser_scope has a valid index.
-            let dir_info_ptr = self.dir_cache.put(&queue_top.result, DirInfo::DirInfo::default())?;
+            let dir_info_ptr = self.dir_cache.put(&mut queue_top.result, DirInfo::DirInfo::default())?;
 
             self.dir_info_uncached(
                 dir_info_ptr,
@@ -6489,7 +6500,11 @@ impl<'a> Resolver<'a> {
                     }
                 }
             } else if parent.is_none() {
-                tsconfig_path = self.opts.tsconfig_override.as_deref();
+                // PORT NOTE: re-borrow as 'static so the `&self.opts` borrow ends before
+                // `self.parse_tsconfig(&mut self, ...)`. `tsconfig_override` is owned by
+                // BundleOptions (lives for the resolver's lifetime).
+                tsconfig_path = self.opts.tsconfig_override.as_deref()
+                    .map(|s| unsafe { &*(s as *const [u8]) });
             }
 
             if let Some(tsconfigpath) = tsconfig_path {
@@ -6644,7 +6659,9 @@ impl<'b> BrowserMapPath<'b> {
         let cleaned = self.cleaned;
         // Check for equality
         if let Some(result) = map.get(path_to_check) {
-            self.remapped = result;
+            // SAFETY: BrowserMap values are interned in DirnameStore (see PackageJSON::parse);
+            // the `'b` borrow on `map` artificially shortens what is a `'static` slice.
+            self.remapped = unsafe { &*(result as *const [u8]) };
             // SAFETY: TODO(port): lifetime — extending borrow of caller-owned slice; consumed before checker is dropped.
             self.input_path = unsafe { &*(path_to_check as *const [u8]) };
             return true;

@@ -12,7 +12,7 @@
 //! `#[cfg(any())]` blocks; their bodies are preserved verbatim in
 //! `phase_a_draft` below.
 
-use core::ffi::c_void;
+use ::core::ffi::c_void;
 
 use bun_core::{self as core, Global, Output};
 use bun_core::{pretty, pretty_errorln, prettyln};
@@ -205,11 +205,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             this.start();
         }
         // SAFETY: `vm.global` set in `init`; `vm()` borrows the JSC VM for
-        // the API-lock FFI call. `addr_of_mut!(RUN)` yields a stable raw
-        // pointer to the static.
+        // the API-lock FFI call. `&raw mut RUN` yields a stable raw pointer
+        // to the static.
         #[allow(deprecated)]
         vm.global().vm().hold_api_lock(
-            core::ptr::addr_of_mut!(RUN) as *mut c_void,
+            (&raw mut RUN) as *mut c_void,
             trampoline,
         );
 
@@ -237,20 +237,13 @@ struct Run {
 
 // Zig: `var run: Run = undefined;` — process-global, written once in `boot`.
 static mut RUN: Run = Run {
-    vm: core::ptr::null_mut(),
+    vm: ::core::ptr::null_mut(),
     entry_path: b"",
     any_unhandled: false,
     eval_and_print: false,
 };
 
 impl Run {
-    #[inline]
-    fn vm(&mut self) -> &mut VirtualMachine {
-        // SAFETY: `vm` is the boxed-and-leaked main-thread VM; valid for
-        // process lifetime once `boot` writes it.
-        unsafe { &mut *self.vm }
-    }
-
     /// `onUnhandledRejectionBeforeClose` — record that *something* rejected so
     /// `start()` sets a non-zero exit code, then route through the VM's
     /// default error printer.
@@ -324,7 +317,12 @@ impl Run {
     /// fire `beforeExit`/`exit`, then `globalExit`. Called under the JSC API
     /// lock via `hold_api_lock`.
     fn start(&mut self) -> ! {
-        let vm = self.vm();
+        // PORT NOTE: deref the raw VM pointer once instead of going through a
+        // `&mut self` accessor so `self.{any_unhandled,entry_path,…}` stay
+        // borrowable alongside `vm` for the rest of this body.
+        // SAFETY: `self.vm` is the boxed-and-leaked main-thread VM; valid for
+        // process lifetime once `boot` writes it.
+        let vm = unsafe { &mut *self.vm };
         vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
 
         // TODO(b2-blocked): CPU/heap profiler start, `addConditionalGlobals`,
@@ -497,7 +495,7 @@ fn dump_build_error(vm: &mut VirtualMachine) {
         // `fmt::Write` adapter exists; buffer-then-dump for now.
         let mut buf = String::new();
         let _ = log.print(&mut buf);
-        Output::pretty_error(format_args!("{}", buf));
+        bun_core::pretty_error!("{}", buf);
     }
     Output::flush();
 }

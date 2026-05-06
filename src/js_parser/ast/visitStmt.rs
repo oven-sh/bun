@@ -60,24 +60,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         Ok(())
     }
 
-    fn s_export_equals(
-        p: &mut Self,
-        stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::ExportEquals,
-    ) -> Result<(), Error> {
-        // "module.exports = value"
-        stmts.push(Stmt::assign(
-            // Zig: p.@"module.exports"(stmt.loc)
-            p.module_exports(stmt.loc),
-            p.visit_expr(data.value),
-        ));
-        p.record_usage(p.module_ref);
-        Ok(())
-    }
-
     // ─── heavy visitors (bodies still gated) ────────────────────────────────
-    // blocked_on: P::inject_replacement_export (#[cfg(any())] in P.rs);
+    // blocked_on: P::{inject_replacement_export, module_exports} (#[cfg(any())] in P.rs:5364 impl block);
     //   visit_decls<const _>() -> usize return shape (visit.rs stub returns ());
     //   visit_class(loc, &mut Class, Ref) 3-arg form (visit.rs stub is 1-arg);
     //   visit_func by-value return (visit.rs stub takes &mut, returns ());
@@ -85,6 +69,17 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     //   scopeguard borrow-of-p across defer points (needs manual restructure);
     //   S::ExportClause/ExportFrom *mut [ClauseItem] indexed-write + truncate.
     //   Full draft bodies preserved verbatim under `#[cfg(any())] mod _draft` below.
+
+    fn s_export_equals(
+        p: &mut Self,
+        stmts: &mut StmtList<'a>,
+        stmt: &mut Stmt,
+        data: &mut S::ExportEquals,
+    ) -> Result<(), Error> {
+        let _ = (p, stmts, stmt, data);
+        todo!("G-round-4: s_export_equals body — blocked on P::module_exports; see _draft");
+        #[allow(unreachable_code)] Ok(())
+    }
 
     fn s_export_clause(
         p: &mut Self,

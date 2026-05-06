@@ -1831,6 +1831,199 @@ impl Data {
     pub fn is_e_number(&self) -> bool {
         matches!(self, Data::ENumber(_))
     }
+
+    // ── Remaining StoreRef<E::*> field-style accessors ──────────────────
+    // visitExpr / maybe.rs port from Zig's `data.e_dot.*` etc., which are
+    // unchecked union field reads. Rust callers `.unwrap()` (or pattern-match)
+    // — the `Option` is the cheapest sound encoding of Zig's UB-on-mismatch.
+    #[inline]
+    pub fn e_unary(&self) -> Option<StoreRef<E::Unary>> {
+        if let Data::EUnary(v) = *self { Some(v) } else { None }
+    }
+    #[inline]
+    pub fn e_unary_mut(&mut self) -> Option<&mut E::Unary> {
+        if let Data::EUnary(v) = self { Some(&mut **v) } else { None }
+    }
+    #[inline]
+    pub fn e_binary(&self) -> Option<StoreRef<E::Binary>> {
+        if let Data::EBinary(v) = *self { Some(v) } else { None }
+    }
+    #[inline]
+    pub fn e_binary_mut(&mut self) -> Option<&mut E::Binary> {
+        if let Data::EBinary(v) = self { Some(&mut **v) } else { None }
+    }
+    #[inline]
+    pub fn e_class(&self) -> Option<StoreRef<E::Class>> {
+        if let Data::EClass(v) = *self { Some(v) } else { None }
+    }
+    #[inline]
+    pub fn e_class_mut(&mut self) -> Option<&mut E::Class> {
+        if let Data::EClass(v) = self { Some(&mut **v) } else { None }
+    }
+    #[inline]
+    pub fn e_new(&self) -> Option<StoreRef<E::New>> {
+        if let Data::ENew(v) = *self { Some(v) } else { None }
+    }
+    #[inline]
+    pub fn e_new_mut(&mut self) -> Option<&mut E::New> {
+        if let Data::ENew(v) = self { Some(&mut **v) } else { None }
+    }
+    #[inline]
+    pub fn e_function(&self) -> Option<StoreRef<E::Function>> {
+        if let Data::EFunction(v) = *self { Some(v) } else { None }
+    }
+    #[inline]
+    pub fn e_function_mut(&mut self) -> Option<&mut E::Function> {
+        if let Data::EFunction(v) = self { Some(&mut **v) } else { None }
+    }
+    #[inline]
+    pub fn e_call(&self) -> Option<StoreRef<E::Call>> {
+        if let Data::ECall(v) = *self { Some(v) } else { None }
+    }
+    #[inline]
+    pub fn e_call_mut(&mut self) -> Option<&mut E::Call> {
+        if let Data::ECall(v) = self { Some(&mut **v) } else { None }
+    }
+    #[inline]
+    pub fn e_dot(&self) -> Option<StoreRef<E::Dot>> {
+        if let Data::EDot(v) = *self { Some(v) } else { None }
+    }
+    #[inline]
+    pub fn e_dot_mut(&mut self) -> Option<&mut E::Dot> {
+        if let Data::EDot(v) = self { Some(&mut **v) } else { None }
+    }
+    #[inline]
+    pub fn e_index(&self) -> Option<StoreRef<E::Index>> {
+        if let Data::EIndex(v) = *self { Some(v) } else { None }
+    }
+    #[inline]
+    pub fn e_index_mut(&mut self) -> Option<&mut E::Index> {
+        if let Data::EIndex(v) = self { Some(&mut **v) } else { None }
+    }
+    #[inline]
+    pub fn e_arrow(&self) -> Option<StoreRef<E::Arrow>> {
+        if let Data::EArrow(v) = *self { Some(v) } else { None }
+    }
+    #[inline]
+    pub fn e_arrow_mut(&mut self) -> Option<&mut E::Arrow> {
+        if let Data::EArrow(v) = self { Some(&mut **v) } else { None }
+    }
+    #[inline]
+    pub fn e_jsx_element(&self) -> Option<StoreRef<E::JSXElement>> {
+        if let Data::EJsxElement(v) = *self { Some(v) } else { None }
+    }
+    #[inline]
+    pub fn e_jsx_element_mut(&mut self) -> Option<&mut E::JSXElement> {
+        if let Data::EJsxElement(v) = self { Some(&mut **v) } else { None }
+    }
+    #[inline]
+    pub fn e_spread(&self) -> Option<StoreRef<E::Spread>> {
+        if let Data::ESpread(v) = *self { Some(v) } else { None }
+    }
+    #[inline]
+    pub fn e_spread_mut(&mut self) -> Option<&mut E::Spread> {
+        if let Data::ESpread(v) = self { Some(&mut **v) } else { None }
+    }
+    #[inline]
+    pub fn e_template(&self) -> Option<StoreRef<E::Template>> {
+        if let Data::ETemplate(v) = *self { Some(v) } else { None }
+    }
+    #[inline]
+    pub fn e_template_mut(&mut self) -> Option<&mut E::Template> {
+        if let Data::ETemplate(v) = self { Some(&mut **v) } else { None }
+    }
+    #[inline]
+    pub fn e_reg_exp(&self) -> Option<StoreRef<E::RegExp>> {
+        if let Data::ERegExp(v) = *self { Some(v) } else { None }
+    }
+    #[inline]
+    pub fn e_await(&self) -> Option<StoreRef<E::Await>> {
+        if let Data::EAwait(v) = *self { Some(v) } else { None }
+    }
+    #[inline]
+    pub fn e_await_mut(&mut self) -> Option<&mut E::Await> {
+        if let Data::EAwait(v) = self { Some(&mut **v) } else { None }
+    }
+    #[inline]
+    pub fn e_yield(&self) -> Option<StoreRef<E::Yield>> {
+        if let Data::EYield(v) = *self { Some(v) } else { None }
+    }
+    #[inline]
+    pub fn e_yield_mut(&mut self) -> Option<&mut E::Yield> {
+        if let Data::EYield(v) = self { Some(&mut **v) } else { None }
+    }
+    #[inline]
+    pub fn e_if(&self) -> Option<StoreRef<E::If>> {
+        if let Data::EIf(v) = *self { Some(v) } else { None }
+    }
+    #[inline]
+    pub fn e_if_mut(&mut self) -> Option<&mut E::If> {
+        if let Data::EIf(v) = self { Some(&mut **v) } else { None }
+    }
+    #[inline]
+    pub fn e_import(&self) -> Option<StoreRef<E::Import>> {
+        if let Data::EImport(v) = *self { Some(v) } else { None }
+    }
+    #[inline]
+    pub fn e_import_mut(&mut self) -> Option<&mut E::Import> {
+        if let Data::EImport(v) = self { Some(&mut **v) } else { None }
+    }
+    #[inline]
+    pub fn e_big_int(&self) -> Option<StoreRef<E::BigInt>> {
+        if let Data::EBigInt(v) = *self { Some(v) } else { None }
+    }
+    #[inline]
+    pub fn e_inlined_enum(&self) -> Option<StoreRef<E::InlinedEnum>> {
+        if let Data::EInlinedEnum(v) = *self { Some(v) } else { None }
+    }
+    #[inline]
+    pub fn e_name_of_symbol(&self) -> Option<StoreRef<E::NameOfSymbol>> {
+        if let Data::ENameOfSymbol(v) = *self { Some(v) } else { None }
+    }
+
+    // ── Inline (by-value) payload accessors ─────────────────────────────
+    // These variants store the payload directly (no `StoreRef`); return
+    // `Option<E::X>` by value — all are `Copy`.
+    #[inline]
+    pub fn e_identifier(&self) -> Option<E::Identifier> {
+        if let Data::EIdentifier(v) = *self { Some(v) } else { None }
+    }
+    #[inline]
+    pub fn e_import_identifier(&self) -> Option<E::ImportIdentifier> {
+        if let Data::EImportIdentifier(v) = *self { Some(v) } else { None }
+    }
+    #[inline]
+    pub fn e_private_identifier(&self) -> Option<E::PrivateIdentifier> {
+        if let Data::EPrivateIdentifier(v) = *self { Some(v) } else { None }
+    }
+    #[inline]
+    pub fn e_commonjs_export_identifier(&self) -> Option<E::CommonJSExportIdentifier> {
+        if let Data::ECommonjsExportIdentifier(v) = *self { Some(v) } else { None }
+    }
+    #[inline]
+    pub fn e_boolean(&self) -> Option<E::Boolean> {
+        if let Data::EBoolean(v) = *self { Some(v) } else { None }
+    }
+    #[inline]
+    pub fn e_number(&self) -> Option<E::Number> {
+        if let Data::ENumber(v) = *self { Some(v) } else { None }
+    }
+    #[inline]
+    pub fn e_require_string(&self) -> Option<E::RequireString> {
+        if let Data::ERequireString(v) = *self { Some(v) } else { None }
+    }
+    #[inline]
+    pub fn e_require_resolve_string(&self) -> Option<E::RequireResolveString> {
+        if let Data::ERequireResolveString(v) = *self { Some(v) } else { None }
+    }
+    #[inline]
+    pub fn e_import_meta_main(&self) -> Option<E::ImportMetaMain> {
+        if let Data::EImportMetaMain(v) = *self { Some(v) } else { None }
+    }
+    #[inline]
+    pub fn e_special(&self) -> Option<E::Special> {
+        if let Data::ESpecial(v) = *self { Some(v) } else { None }
+    }
 }
 
 impl Data {

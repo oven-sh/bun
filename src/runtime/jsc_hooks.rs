@@ -1051,9 +1051,13 @@ fn transpile_source_code_inner(
         // ────────────────────────────────────────────────────────────────────
         L::Sqlite | L::SqliteEmbedded => {
             // SAFETY: per fn contract.
-            let hot = unsafe { (*jsc_vm).hot_reload } != 0;
+            // Spec :680 — `jsc_vm.hot_reload == .hot`. `HotReload` is
+            // `{ none=0, hot=1, watch=2 }` (src/options_types/Context.zig:118);
+            // `!= 0` would also match `.watch`, which is wrong.
             // TODO(b2-cycle): `hot_reload` is `cli::Command::HotReload` enum
-            // (gated as `u8`); `!= 0` is a placeholder for `== .hot`.
+            // (gated as `u8`); compare to the `.hot` discriminant explicitly.
+            const HOT_RELOAD_HOT: u8 = 1;
+            let hot = unsafe { (*jsc_vm).hot_reload } == HOT_RELOAD_HOT;
             let sqlite_module_source_code_string: &'static [u8] = if hot {
                 SQLITE_MODULE_SOURCE_HOT
             } else {
@@ -1320,7 +1324,11 @@ fn get_hardcoded_module(
                     ..ResolvedSource::default()
                 });
             }
-            Some(ResolvedSource::default())
+            // Fail closed: until `Runtime::source_code()` un-gates, returning
+            // a default-zeroed `ResolvedSource` here would hand C++ a garbage
+            // `.tag`. Spec returns a populated source; `None` falls through to
+            // `FetchBuiltinResult::NotFound` → coherent error instead.
+            None
         }
         // Zig: `inline else => |tag| jsSyntheticModule(@field(ResolvedSource.Tag, @tagName(tag)), specifier)`
         // — every other `HardcodedModule` is served straight out of the

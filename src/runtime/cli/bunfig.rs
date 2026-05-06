@@ -1072,8 +1072,31 @@ impl<'a> Parser<'a> {
 
         if let Some(expr) = expr_get(&json, b"loader") {
             self.expect(&expr, ExprTag::EObject)?;
-            // TODO(b2-blocked): api::TransformOptions.loaders / options::Loader::from_string
-            // (bun_bundler::options) — gated until peechy + bundler options surface lands.
+            let properties = expr.data.e_object().unwrap().properties.slice();
+            for item in properties {
+                let key_expr = item.key.as_ref().unwrap();
+                let key = expr_as_string(key_expr, self.bump).unwrap();
+                if key.is_empty() {
+                    continue;
+                }
+                if key[0] != b'.' {
+                    self.add_error(
+                        key_expr.loc,
+                        b"file extension for loader must start with a '.'",
+                    )?;
+                }
+                let value = item.value.as_ref().unwrap();
+                self.expect_string(value)?;
+                if bun_bundler::options::Loader::from_string(
+                    expr_as_string(value, self.bump).unwrap(),
+                )
+                .is_none()
+                {
+                    self.add_error(value.loc, b"Invalid loader")?;
+                }
+            }
+            // TODO(b2-blocked): api::TransformOptions.loaders (peechy codegen) — only the
+            // `self.ctx.args.loaders = api::LoaderMap{…}` write is gated; validation above is live.
             #[cfg(any())]
             { /* see phase_a_draft */ }
         }

@@ -121,6 +121,26 @@ unsafe fn erase<'a>(s: &'a [u8]) -> &'static [u8] {
     unsafe { core::mem::transmute::<&'a [u8], &'static [u8]>(s) }
 }
 
+/// Free a `URL.href` slice that the caller marked as owned.
+///
+/// # Safety
+/// `href` must have been allocated via the global allocator as a `Box<[u8]>`
+/// and ownership ceded to this module via `is_url_owned = true`. Mirrors Zig
+/// `bun.default_allocator.free(url.href)`.
+#[inline]
+unsafe fn free_owned_href(href: &'static [u8]) {
+    if !href.is_empty() {
+        // SAFETY: caller guarantees `href` is the sole reference to a
+        // global-allocator `Box<[u8]>` allocation.
+        drop(unsafe {
+            Box::<[u8]>::from_raw(core::ptr::slice_from_raw_parts_mut(
+                href.as_ptr() as *mut u8,
+                href.len(),
+            ))
+        });
+    }
+}
+
 /// Read the HTTP-thread monotonic timer in nanoseconds.
 /// Mirrors Zig `http_thread.timer.read()`.
 #[inline]
@@ -223,6 +243,25 @@ fn make_client(
         hostname,
         unix_socket_path: ZigStringSlice::EMPTY,
     }
+}
+
+/// A drop-safe placeholder `HTTPClient` used when we need to move the real
+/// client out of an `AsyncHTTP` (e.g. to run its `Drop` before the user
+/// callback) without leaving the field uninitialized.
+#[inline]
+fn blank_client() -> HTTPClient {
+    make_client(
+        Method::GET,
+        URL::default(),
+        headers::EntryList::default(),
+        b"",
+        None,
+        Signals::default(),
+        0,
+        None,
+        None,
+        FetchRedirect::Follow,
+    )
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -344,9 +383,9 @@ impl Preconnect {
             // PORT NOTE: Zig `async_http.client.deinit()` — handled by Drop when
             // the Box is reclaimed below.
             if (*this).is_url_owned {
-                // PORT NOTE: Zig freed `url.href` via default_allocator. In Rust the
-                // owned href would be a `Box<[u8]>`/`Vec<u8>` on URL; rely on Drop.
-                // TODO(port): verify URL.href ownership model.
+                // SAFETY: `is_url_owned` is the caller's promise that `url.href`
+                // is a global-allocator `Box<[u8]>` we now own.
+                free_owned_href((*this).url.href);
             }
             // Reclaim and drop the heap allocation (runs Drop on `async_http`
             // — which in turn drops `HTTPClient` — and on `response_buffer`).
@@ -359,9 +398,9 @@ impl Preconnect {
 pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
     if !FeatureFlags::IS_FETCH_PRECONNECT_SUPPORTED {
         if is_url_owned {
-            // PORT NOTE: Zig freed url.href here. See note in Preconnect::on_result.
-            // TODO(port): verify URL.href ownership model.
-            drop(url);
+            // SAFETY: `is_url_owned` is the caller's promise that `url.href` is a
+            // global-allocator `Box<[u8]>` we now own.
+            unsafe { free_owned_href(url.href) };
         }
         return;
     }
@@ -620,18 +659,23 @@ fn send_sync_callback(
     // and `real` was set to the caller's stack/heap AsyncHTTP before scheduling.
     let async_http = unsafe { &mut *async_http };
     // PORT NOTE: Zig did `async_http.real.?.* = async_http.*` (whole-struct
-    // copy back into the original) then re-seated `response_buffer`. `AsyncHTTP`
-    // is not `Copy`/`Clone` in Rust; copy back only the fields the sync caller
-    // observes (response/err/state/elapsed/redirected). The response_buffer
-    // already points at the caller's buffer (it was copied by value into the
-    // HTTP-thread copy and never reassigned).
+    // bitwise copy back into the original) then re-seated `response_buffer`.
+    // `AsyncHTTP` is not `Copy`/`Clone` in Rust and a raw `ptr::read`/`ptr::write`
+    // would duplicate owned fields that are later dropped on both sides; instead
+    // enumerate every field `on_async_http_callback` (and the client path) writes
+    // and that callers of `send_sync` can observe, moving owned values out of
+    // the HTTP-thread copy where necessary.
     if let Some(real) = async_http.real {
         // SAFETY: `real` outlives the HTTP-thread copy by construction.
         let real = unsafe { &mut *real.as_ptr() };
         real.response = async_http.response;
+        real.request = async_http.request.take();
+        real.response_headers = core::mem::take(&mut async_http.response_headers);
+        real.response_encoding = async_http.response_encoding;
         real.err = async_http.err;
         real.redirected = async_http.redirected;
         real.elapsed = async_http.elapsed;
+        real.gzip_elapsed = async_http.gzip_elapsed;
         real.state
             .store(async_http.state.load(Ordering::Relaxed), Ordering::Relaxed);
         real.response_buffer = async_http.response_buffer;
@@ -652,18 +696,24 @@ impl AsyncHTTP {
     pub fn send_sync(&mut self) -> Result<picohttp::Response<'static>, bun_core::Error> {
         crate::http_thread::init(&Default::default());
 
-        // PORT NOTE: Zig leaks `ctx` (never destroyed). Preserve that for now.
-        let ctx: &'static SingleHTTPChannel = Box::leak(Box::new(SingleHTTPChannel::init()));
-        self.result_callback = HTTPClientResultCallback::new::<SingleHTTPChannel>(
-            ctx as *const _ as *mut SingleHTTPChannel,
-            send_sync_callback,
-        );
+        // PORT NOTE: Zig leaked `ctx` (never destroyed). `Box::leak` is forbidden
+        // (PORTING.md §Forbidden); allocate via `Box::into_raw` and reclaim once
+        // the single sync callback has fired and we've read the result.
+        let ctx: *mut SingleHTTPChannel = Box::into_raw(Box::new(SingleHTTPChannel::init()));
+        self.result_callback =
+            HTTPClientResultCallback::new::<SingleHTTPChannel>(ctx, send_sync_callback);
 
         let mut batch = Batch::default();
         self.schedule(&mut batch);
         crate::http_thread().schedule(batch);
 
-        let result = ctx.read_item();
+        // SAFETY: `ctx` is a live heap allocation we own; the HTTP thread only
+        // touches it inside `send_sync_callback`, whose final action is
+        // `write_item`, so by the time `read_item` returns the callback has
+        // finished and no other reference remains.
+        let result = unsafe { (*ctx).read_item() };
+        // SAFETY: see above — sole owner, callback completed.
+        drop(unsafe { Box::from_raw(ctx) });
         if let Some(err) = result.fail {
             return Err(err);
         }

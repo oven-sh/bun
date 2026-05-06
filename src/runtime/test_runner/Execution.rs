@@ -1046,6 +1046,6 @@ fn step_sequence_one(
 // PORT STATUS
 //   source:     src/test_runner/Execution.zig (694 lines)
 //   confidence: medium
-//   todos:      8
-//   notes:      Heavy aliasing of &mut self/&mut group/&mut sequence will need borrowck reshaping in Phase B; groupLog begin/end scope tracing stubbed; RefDataValue/ExecutionRef/EntryData/StepResult/Timespec method names guessed.
+//   todos:      6
+//   notes:      group/sequence carried as NonNull (raw-pointer semantics, matching Zig spec) to avoid aliased-&mut; bun_test() returns NonNull<BunTest>; on_* helpers are associated fns (no &mut self); groupLog begin/end scope tracing stubbed; RefDataValue/ExecutionRef/EntryData/StepResult/Timespec method names guessed.
 // ──────────────────────────────────────────────────────────────────────────

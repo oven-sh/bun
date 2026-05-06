@@ -1003,36 +1003,39 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
             let blob = scopeguard::ScopeGuard::into_inner(guard);
             break 'bytes Blob::new(blob);
         }
-        Store::SerializeTag::File => 'file: {
-            let pathlike_tag = PathOrFileDescriptor::SerializeTag::from_raw(reader.read_int_le::<u8>()?)
+        store::SerializeTag::File => 'file: {
+            use crate::node::types::PathOrFileDescriptorSerializeTag;
+            let pathlike_tag = PathOrFileDescriptorSerializeTag::from_raw(reader.read_int_le::<u8>()?)
                 .ok_or(bun_core::err!("InvalidValue"))?;
 
             match pathlike_tag {
-                PathOrFileDescriptor::SerializeTag::Fd => {
+                PathOrFileDescriptorSerializeTag::Fd => {
                     // TODO(port): readStruct(bun.FD) — read raw FD bytes.
                     let fd: Fd = reader.read_struct()?;
                     let mut path_or_fd = PathOrFileDescriptor::Fd(fd);
-                    break 'file Blob::new(Blob::find_or_create_file_from_path::<true>(
+                    break 'file Blob::new(Blob::find_or_create_file_from_path(
                         &mut path_or_fd,
                         global_this,
+                        true,
                     ));
                 }
-                PathOrFileDescriptor::SerializeTag::Path => {
+                PathOrFileDescriptorSerializeTag::Path => {
                     let path_len = reader.read_int_le::<u32>()?;
                     let path = read_slice(reader, path_len as usize)?;
                     let mut dest = PathOrFileDescriptor::Path(node::PathLike::String(
-                        bun_str::PathString::init(path),
+                        bun_str::PathString::init(&path),
                     ));
-                    break 'file Blob::new(Blob::find_or_create_file_from_path::<true>(
+                    break 'file Blob::new(Blob::find_or_create_file_from_path(
                         &mut dest,
                         global_this,
+                        true,
                     ));
                 }
             }
             #[allow(unreachable_code)]
             return Ok(JSValue::ZERO);
         }
-        Store::SerializeTag::Empty => Blob::new(Blob::init_empty(global_this)),
+        store::SerializeTag::Empty => Blob::new(Blob::init_empty(global_this)),
     };
     // `blob` is heap-allocated past this point; on any remaining error
     // (truncated trailer fields) tear down both the heap object and its

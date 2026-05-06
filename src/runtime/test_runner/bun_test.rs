@@ -880,7 +880,7 @@ impl<'a> BunTest<'a> {
             match (*this).phase {
                 Phase::Collection => {}
                 Phase::Execution => {
-                    if let Err(e) = (*this).execution.handle_timeout(global as *const _ as *mut JSGlobalObject) {
+                    if let Err(e) = (*this).execution.handle_timeout(global) {
                         (*this).on_uncaught_exception(global, Some(global.take_exception(e)), false, RefDataValue::Done);
                     }
                 }

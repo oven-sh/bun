@@ -3433,10 +3433,11 @@ where
 
                 if matches!(old, Body::Value::Locked(_)) {
                     let loop_ = vm.event_loop();
-                    loop_.enter();
-                    let _exit = scopeguard::guard((), |_| loop_.exit());
+                    // SAFETY: event_loop() returns a live raw ptr.
+                    unsafe { (*loop_).enter() };
+                    let _exit = scopeguard::guard((), move |_| unsafe { (*loop_).exit() });
 
-                    let _ = old.resolve(&mut body.value, global_this, None); // TODO: properly propagate exception upwards
+                    let _ = Body::Value::resolve(&mut old, body, global_this, None); // TODO: properly propagate exception upwards
                 }
                 return;
             }

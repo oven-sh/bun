@@ -881,7 +881,8 @@ impl Writable {
         match core::mem::replace(self, Writable::Ignore) {
             Writable::Fd(fd) => {
                 *self = Writable::Fd(fd);
-                JSValue::js_number(fd)
+                let _ = global_this;
+                todo!("blocked_on: bun_core::Fd → JSValue numeric conversion")
             }
             Writable::Memfd(fd) => {
                 *self = Writable::Memfd(fd);

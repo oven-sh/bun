@@ -750,7 +750,7 @@ pub fn parse_arguments(
         }
     }
     if result.options.retry.unwrap_or(0) != 0 && result.options.repeats != 0 {
-        return global.throw(format_args!("{}(): Cannot set both retry and repeats", signature));
+        return Err(global.throw(format_args!("{}(): Cannot set both retry and repeats", signature)));
     }
 
     let default_timeout_ms: Option<u32> = jest::Jest::runner().and_then(|runner| {

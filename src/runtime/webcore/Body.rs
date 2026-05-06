@@ -16,6 +16,7 @@ use crate::webcore::{
 // Re-export so callers can write `body::InternalBlob` (mirrors Zig nested-type access).
 pub use crate::webcore::InternalBlob;
 use crate::jsc::HTTPHeaderName;
+use bun_jsc::StringJsc as _;
 use bun_str::{self as strings, MutableString, String as BunString, ZigString};
 use bun_str::WTFStringImpl;
 

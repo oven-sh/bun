@@ -2814,9 +2814,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         unsafe {
             (*tls_ptr).mark_active();
             if was_reffed {
-                (*tls_ptr).poll_ref.ref_(vm);
+                (*tls_ptr)
+                    .poll_ref
+                    .ref_(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
             }
         }
+        let _ = vm;
 
         // Fire onOpen with the right `this`, then send ClientHello. Doing
         // it before ext was repointed would have ALPN/onOpen land in the

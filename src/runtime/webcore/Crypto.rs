@@ -129,20 +129,20 @@ impl Crypto {
     ) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
         if arguments.is_empty() {
-            return global.throw_dom_exception(
+            return Err(global.throw_dom_exception(
                 bun_jsc::DOMExceptionCode::TypeMismatchError,
                 format_args!("The data argument must be an integer-type TypedArray"),
-            );
+            ));
         }
 
         let Some(mut array_buffer) = arguments[0].as_array_buffer(global) else {
-            return global.throw_dom_exception(
+            return Err(global.throw_dom_exception(
                 bun_jsc::DOMExceptionCode::TypeMismatchError,
                 format_args!("The data argument must be an integer-type TypedArray"),
-            );
+            ));
         };
 
-        let slice = array_buffer.byte_slice();
+        let slice = array_buffer.byte_slice_mut();
 
         random_data(global, slice.as_mut_ptr(), slice.len());
 

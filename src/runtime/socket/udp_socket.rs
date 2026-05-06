@@ -1147,7 +1147,7 @@ impl UDPSocket {
         };
         // SAFETY: socket valid (checked above).
         let res = unsafe { (*socket).send(&payloads, &lens, &addr_ptrs) };
-        if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::Send) {
+        if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::send) {
             return Err(global_this.throw_value(err.to_js(global_this)?));
         }
         Ok(JSValue::js_number(res))
@@ -1230,7 +1230,7 @@ impl UDPSocket {
         // SAFETY: socket valid (checked above).
         let res = unsafe { (*socket).send(&[payload.as_ptr()], &[payload.len()], &[addr_ptr]) };
         drop(payload_str);
-        if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::Send) {
+        if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::send) {
             return Err(global_this.throw_value(err.to_js(global_this)?));
         }
         Ok(JSValue::from(res > 0))

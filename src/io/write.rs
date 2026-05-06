@@ -360,6 +360,10 @@ impl<B: AsMut<[u8]>> Write for FixedBufferStream<B> {
         self.pos = end;
         Ok(())
     }
+    #[inline]
+    fn written_len(&self) -> usize {
+        self.pos
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════

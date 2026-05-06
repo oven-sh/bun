@@ -1309,10 +1309,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         ) {
             Ok(n) => n,
             Err(err) => {
-                return global_this.throw_error(err, "Failed to decode file url");
+                return Err(global_this.throw_error(err.into(), "Failed to decode file url"));
             }
         };
-        let mut url_path_decoded = &path_buf2[0..decoded_len];
+        #[allow(unused_mut)]
+        let mut url_path_decoded = &path_buf2[0..decoded_len as usize];
 
         let mut url_string: BunString = BunString::empty();
         // PORT NOTE: `defer url_string.deref()` → Drop.
@@ -1383,12 +1384,15 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     }
                 };
                 #[cfg(not(windows))]
-                let cwd = global_this.bun_vm().transpiler.fs.top_level_dir;
+                // SAFETY: bun_vm() returns the live thread-local VM pointer.
+                let cwd = unsafe { (*global_this.bun_vm()).transpiler.fs.top_level_dir };
 
+                // SAFETY: bun_vm() returns the live thread-local VM pointer.
+                let main = unsafe { (*global_this.bun_vm()).main };
                 let fullpath = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
                     cwd,
                     &mut path_buf,
-                    &[global_this.bun_vm().main, b"../", url_path_decoded],
+                    &[main, b"../", url_path_decoded],
                 );
                 #[cfg(windows)]
                 {

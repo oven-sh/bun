@@ -3981,7 +3981,7 @@ impl RunCommand {
         let contents = match sys::File::read_from(Fd::cwd(), path) {
             sys::Result::Ok(bytes) => bytes,
             sys::Result::Err(err) => {
-                Output::pretty_errorln("<r><red>error<r>: {}", (err,));
+                Output::pretty_errorln(format_args!("<r><red>error<r>: {}", err));
                 Output::flush();
                 Global::exit(1);
             }
@@ -3994,7 +3994,7 @@ impl RunCommand {
             // Output.terminal_size is never populated; query stdout
             // directly. Honor COLUMNS so piped output and tests can
             // pin a width.
-            if let Some(env) = bun_core::getenv_z(b"COLUMNS") {
+            if let Some(env) = bun_core::getenv_z(bun_core::zstr!("COLUMNS")) {
                 if let Some(n) = ::core::str::from_utf8(env).ok().and_then(|s| s.parse::<u16>().ok()) {
                     if n > 0 {
                         break 'brk n;
@@ -4062,11 +4062,11 @@ impl RunCommand {
             if bun_paths::is_absolute(path) {
                 break 'blk path;
             }
-            let cwd = match sys::getcwd(&mut cwd_buf) {
-                sys::Result::Ok(c) => c,
+            let cwd: &[u8] = match sys::getcwd(&mut cwd_buf[..]) {
+                sys::Result::Ok(n) => &cwd_buf[..n],
                 sys::Result::Err(_) => break 'blk path,
             };
-            bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(cwd, &mut base_buf, &[path])
+            bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(cwd, &mut base_buf[..], &[path])
         };
         let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(abs_md_path);
         // When dirname returns empty (bare filename + getcwd failed), fall

@@ -9,26 +9,27 @@ use bun_http as http;
 use bun_http::{AsyncHTTP, CertificateInfo, FetchRedirect, HTTPClientResult, HTTPResponseMetadata, Headers, Signals, ThreadSafeStreamBuffer};
 use bun_http_types::Method;
 use bun_jsc::debugger::AsyncTaskTracker;
-use bun_jsc::{self as jsc, AnyTask, ConcurrentTask, JSGlobalObject, JSPromise, JSValue, JsResult, Strong, Task, VirtualMachine, ZigString};
-use bun_str::{self as strings, MutableString, String as BunString};
+use bun_jsc::{self as jsc, AnyTask, ConcurrentTask, JSGlobalObject, JSPromise, JSValue, JsResult, Strong, Task, VirtualMachine};
+use bun_str::{self as strings, MutableString, String as BunString, ZigStringSlice};
 use bun_threading::{Mutex, ThreadPool};
 use bun_url::URL as ZigURL;
 
-use crate::api::bun::x509 as X509;
-use crate::api::server::ServerConfig::SSLConfig;
+use crate::api::bun_x509 as X509;
+use crate::socket::ssl_config::SharedPtr as SSLConfigSharedPtr;
 use crate::webcore::blob::{Any as AnyBlob, Blob, SizeType as BlobSizeType, Store as BlobStore};
-use crate::webcore::body::{self, Body, BodyValue, BodyValueError};
-use crate::webcore::readable_stream::{self, ReadableStream, ReadableStreamStrong};
-use crate::webcore::{AbortSignal, DrainResult, FetchHeaders, Response, ResumableFetchSink, ResumableSinkBackpressure};
+use crate::webcore::body::{self, Body, BodyValue, ValueError as BodyValueError};
+use crate::webcore::readable_stream::{self, ReadableStream, Strong as ReadableStreamStrong};
+use crate::webcore::resumable_sink::ResumableFetchSink;
+use crate::webcore::{AbortSignal, DrainResult, FetchHeaders, InternalBlob, Response, ResumableSinkBackpressure};
 
 bun_output::declare_scope!(FetchTasklet, visible);
 
-pub type ResumableSink = ResumableFetchSink;
+pub type ResumableSink = ResumableFetchSink<'static>;
 
 pub struct FetchTasklet {
-    pub sink: Option<Arc<ResumableFetchSink>>,
+    pub sink: Option<Arc<ResumableSink>>,
     pub http: Option<Box<AsyncHTTP>>,
-    pub result: HTTPClientResult,
+    pub result: HTTPClientResult<'static>,
     pub metadata: Option<HTTPResponseMetadata>,
     pub javascript_vm: &'static VirtualMachine,
     pub global_this: &'static JSGlobalObject, // TODO(port): JSC_BORROW lifetime; using 'static to match javascript_vm

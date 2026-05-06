@@ -881,6 +881,7 @@ pub struct CopyFileWindows<'a> {
 }
 
 #[derive(Default)]
+#[cfg(windows)]
 pub struct ReadWriteLoop {
     pub source_fd: Fd,
     pub must_close_source_fd: bool,

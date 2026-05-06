@@ -1971,8 +1971,10 @@ impl<'a> ValueBufferer<'a> {
                 let is_pending = input.needs_to_read_file();
 
                 if is_pending {
-                    if let AnyBlob::Blob(blob) = &mut input {
-                        blob.do_read_file_internal(self, Self::on_finished_loading_file, self.global);
+                    if let AnyBlob::Blob(_blob) = &mut input {
+                        // TODO(blocked_on: blob::read_file): module is `#![cfg(any())]`-gated.
+                        // _blob.do_read_file_internal(self, Self::on_finished_loading_file, self.global);
+                        todo!("blocked_on: blob::read_file::do_read_file_internal");
                     }
                 } else {
                     let bytes = input.slice();

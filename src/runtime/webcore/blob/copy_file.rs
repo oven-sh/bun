@@ -433,7 +433,7 @@ impl<'a> CopyFile<'a> {
                         }
                         .to_system_error(),
                     );
-                    return Err(bun_sys::errno_to_error(bun_sys::E::INVAL as i32));
+                    return Err(bun_core::errno_to_zig_err(bun_sys::E::INVAL as i32));
                 }
                 errno => {
                     self.system_error = Some(
@@ -445,7 +445,7 @@ impl<'a> CopyFile<'a> {
                         }
                         .to_system_error(),
                     );
-                    return Err(bun_sys::errno_to_error(errno as i32));
+                    return Err(bun_core::errno_to_zig_err(errno as i32));
                 }
             }
 
@@ -587,12 +587,12 @@ impl<'a> CopyFile<'a> {
                                 bun_sys::Result::Ok(result) => {
                                     stat_ = Some(result);
 
-                                    if bun_sys::S::isdir(result.mode) {
+                                    if bun_sys::S::ISDIR(result.mode) {
                                         self.system_error = Some(unsupported_directory_error());
                                         return;
                                     }
 
-                                    if !bun_sys::S::isreg(result.mode) {
+                                    if !bun_sys::S::ISREG(result.mode) {
                                         break 'do_clonefile;
                                     }
                                 }
@@ -698,7 +698,7 @@ impl<'a> CopyFile<'a> {
                 },
             };
 
-            if bun_sys::S::isdir(stat.mode) {
+            if bun_sys::S::ISDIR(stat.mode) {
                 self.system_error = Some(unsupported_directory_error());
                 self.do_close();
                 return;
@@ -714,7 +714,7 @@ impl<'a> CopyFile<'a> {
                 }
 
                 if bun_sys::PREALLOCATE_SUPPORTED
-                    && bun_sys::S::isreg(stat.mode)
+                    && bun_sys::S::ISREG(stat.mode)
                     && self.max_length > bun_sys::PREALLOCATE_LENGTH
                     && self.max_length != Blob::MAX_SIZE
                 {
@@ -729,8 +729,8 @@ impl<'a> CopyFile<'a> {
             #[cfg(target_os = "linux")]
             {
                 // Bun.write(Bun.file("a"), Bun.file("b"))
-                if bun_sys::S::isreg(stat.mode)
-                    && (bun_sys::S::isreg(self.destination_file_store.mode)
+                if bun_sys::S::ISREG(stat.mode)
+                    && (bun_sys::S::ISREG(self.destination_file_store.mode)
                         || self.destination_file_store.mode == 0)
                 {
                     if self.destination_file_store.is_atty.unwrap_or(false) {
@@ -744,8 +744,8 @@ impl<'a> CopyFile<'a> {
                 }
 
                 // $ bun run foo.js | bun run bar.js
-                if bun_sys::S::isfifo(stat.mode)
-                    && bun_sys::S::isfifo(self.destination_file_store.mode)
+                if bun_sys::S::ISFIFO(stat.mode)
+                    && bun_sys::S::ISFIFO(self.destination_file_store.mode)
                 {
                     if self.destination_file_store.is_atty.unwrap_or(false) {
                         let _ = self.do_copy_file_range::<{ TryWith::Splice }, true>();
@@ -757,7 +757,7 @@ impl<'a> CopyFile<'a> {
                     return;
                 }
 
-                if bun_sys::S::isreg(stat.mode)
+                if bun_sys::S::ISREG(stat.mode)
                     || bun_sys::S::ischr(stat.mode)
                     || bun_sys::S::issock(stat.mode)
                 {

@@ -151,7 +151,9 @@ impl SocketAddress {
     /// ### `SocketAddress.parse(input: string): SocketAddress | undefined`
     /// Parse an address string (with an optional `:port`) into a `SocketAddress`.
     /// Returns `undefined` if the input is invalid.
-    #[bun_jsc::host_fn]
+    // PORT NOTE: no `#[bun_jsc::host_fn]` here — the macro's free-fn arm emits a
+    // bare `parse(__g, __f)` call which doesn't resolve inside an `impl` block.
+    // The C-ABI shim is wired by the `.classes.ts` codegen / `JsClass` derive.
     pub fn parse(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let input = {
             let input_arg = callframe.argument(0);

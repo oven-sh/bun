@@ -391,10 +391,10 @@ pub fn get_shared_sigalgs(this: &mut This, global: &JSGlobalObject, _frame: &Cal
             ffi::EVP_PKEY_RSA_PSS => {
                 sig_with_md = b"RSA-PSS";
             }
-            boringssl::EVP_PKEY_DSA => {
+            ffi::EVP_PKEY_DSA => {
                 sig_with_md = b"DSA";
             }
-            boringssl::EVP_PKEY_EC => {
+            ffi::EVP_PKEY_EC => {
                 sig_with_md = b"ECDSA";
             }
             boringssl::NID_ED25519 => {
@@ -628,13 +628,13 @@ pub fn get_ephemeral_key_info(this: &mut This, global: &JSGlobalObject, _frame: 
     let bits = unsafe { boringssl::EVP_PKEY_bits(raw_key) };
 
     match kid {
-        boringssl::EVP_PKEY_DH => {
+        ffi::EVP_PKEY_DH => {
             result.put(global, ZigString::static_("type"), BunString::static_("DH").to_js(global)?);
             result.put(global, ZigString::static_("size"), JSValue::js_number(bits));
         }
-        boringssl::EVP_PKEY_EC | boringssl::EVP_PKEY_X25519 | boringssl::EVP_PKEY_X448 => {
+        ffi::EVP_PKEY_EC | boringssl::EVP_PKEY_X25519 | boringssl::EVP_PKEY_X448 => {
             let curve_name: &[u8];
-            if kid == boringssl::EVP_PKEY_EC {
+            if kid == ffi::EVP_PKEY_EC {
                 // SAFETY: raw_key is a non-null EVP_PKEY of type EVP_PKEY_EC (checked just above).
                 let ec = unsafe { boringssl::EVP_PKEY_get1_EC_KEY(raw_key) };
                 // SAFETY: ec is the EC_KEY returned for an EC pkey; EC_KEY_get0_group on it is valid.

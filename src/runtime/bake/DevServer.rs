@@ -2917,7 +2917,7 @@ pub fn finalize_bundle(
                         chunk: source_map,
                         escaped_source: quoted_contents,
                     }),
-                }),
+                },
                 false,
             )?,
             graph @ (bake::Graph::Server | bake::Graph::Ssr) => dev.server_graph.receive_chunk(
@@ -2929,7 +2929,7 @@ pub fn finalize_bundle(
                         chunk: source_map,
                         escaped_source: quoted_contents,
                     }),
-                }),
+                },
                 graph == bake::Graph::Ssr,
             )?,
         }
@@ -3005,12 +3005,12 @@ pub fn finalize_bundle(
             incremental_graph::ReceiveChunkContent::Js {
                 code: &generated_js,
                 source_map: None,
-            }),
+            },
             false,
         )?;
         let client_index = ctx
-            .get_cached_index::<{ bake::Side::Client }>(index)
-            .unwrap_()
+            .get_cached_index(bake::Side::Client, index)
+            .unwrap::<{ bake::Side::Client }>()
             .expect("unresolved index");
         let route_bundle_index = dev.client_graph.html_route_bundle_index(client_index);
         let route_bundle = dev.route_bundle_ptr(route_bundle_index);

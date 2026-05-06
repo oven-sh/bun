@@ -624,6 +624,11 @@ pub mod asan {
     #[inline] pub fn poison_slice<T>(_: &[T]) {}
     #[inline] pub fn unpoison_slice<T>(_: &[T]) {}
     #[inline] pub fn assert_unpoisoned<T>(_: *const T) {}
+    /// LSAN root-region registration. No-op stub until the sanitizer shim lands;
+    /// callers (e.g. `Listener.group`) register mimalloc-backed regions so LSAN
+    /// can trace into uSockets-owned `us_socket_t` chains.
+    #[inline] pub fn register_root_region(_: *const core::ffi::c_void, _: usize) {}
+    #[inline] pub fn unregister_root_region(_: *const core::ffi::c_void, _: usize) {}
     pub const ENABLED: bool = false;
 }
 

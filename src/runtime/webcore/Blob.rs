@@ -5314,7 +5314,7 @@ impl Any {
         &mut self,
         global_this: &JSGlobalObject,
         action: streams::BufferActionTag,
-    ) -> jsc::JsTerminatedResult<JSValue> {
+    ) -> Result<JSValue, jsc::JsTerminated> {
         Ok(JSPromise::wrap(global_this, Self::to_action_value, (self, global_this, action)))
     }
 
@@ -5323,7 +5323,7 @@ impl Any {
         promise: jsc::AnyPromise,
         global_this: &JSGlobalObject,
         action: streams::BufferActionTag,
-    ) -> jsc::JsTerminatedResult<()> {
+    ) -> Result<(), jsc::JsTerminated> {
         promise.wrap(global_this, Self::to_action_value, (self, global_this, action))
     }
 

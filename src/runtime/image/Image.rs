@@ -703,17 +703,23 @@ impl Image {
 }
 
 // ───────────────────────── static `Bun.Image.backend` ───────────────────────
+//
+// PORT NOTE: `#[bun_jsc::host_fn(getter|setter)]` expands to a `Self`-taking
+// shim, but these are *static* class accessors (no receiver). The C-ABI shim
+// is emitted by `.classes.ts` codegen instead, so no attribute here.
 
-#[bun_jsc::host_fn(getter)]
 pub fn get_backend(global: &JSGlobalObject, _: JSValue, _: JSValue) -> JsResult<JSValue> {
-    Ok(bun_str::String::static_(<&'static str>::from(codecs::backend())).to_js(global))
+    // SAFETY: `BACKEND` only ever stores a valid `Backend as u8` discriminant.
+    let b: codecs::Backend = unsafe {
+        core::mem::transmute(codecs::BACKEND.load(core::sync::atomic::Ordering::Relaxed))
+    };
+    Ok(bun_str::String::static_(<&'static str>::from(b)).to_js(global))
 }
 
-#[bun_jsc::host_fn(setter)]
 pub fn set_backend(_: JSValue, global: &JSGlobalObject, value: JSValue) -> bool {
     match value.to_enum::<codecs::Backend>(global, "Bun.Image.backend") {
         Ok(b) => {
-            codecs::set_backend(b);
+            codecs::BACKEND.store(b as u8, core::sync::atomic::Ordering::Relaxed);
             true
         }
         Err(_) => false,

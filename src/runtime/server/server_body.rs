@@ -2287,14 +2287,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // errdefer free(base_url) — Box drops on Err automatically
 
         let dev_server = if let Some(bake_options) = &mut config.bake {
-            Some(DevServer::init(bake::DevServerInit {
-                arena: bake_options.arena.allocator(),
+            Some(DevServer::DevServer::init(DevServer::Options {
+                arena: &bake_options.arena,
                 root: bake_options.root,
                 framework: bake_options.framework,
                 bundler_options: bake_options.bundler_options,
                 vm: global.bun_vm(),
                 broadcast_console_log_from_browser_to_server:
                     config.broadcast_console_log_from_browser_to_server_for_bake,
+                dump_sources: None,
+                dump_state_on_crash: None,
             })?)
         } else {
             None

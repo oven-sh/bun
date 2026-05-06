@@ -139,7 +139,8 @@ impl Code {
         (code as u8) >= (Code::BinAssign as u8) || code == Code::BinPow
     }
 
-    pub fn binary_assign_target(code: Code) -> AssignTarget {
+    pub fn binary_assign_target(self) -> AssignTarget {
+        let code = self;
         if code == Code::BinAssign {
             return AssignTarget::Replace;
         }

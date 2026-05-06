@@ -430,7 +430,8 @@ impl Process {
         rusage: &Rusage,
     ) {
         if let Poller::WaiterThread(waiter) = &mut self.poller {
-            waiter.unref(self.event_loop);
+            let ctx = event_loop_handle_to_ctx(self.event_loop);
+            waiter.unref(ctx);
             self.poller = Poller::Detached;
         }
         self.on_wait_pid(waitpid_result, rusage);
@@ -450,10 +451,10 @@ impl Process {
 
         let status: Option<Status> = Status::from(pid, waitpid_result).or_else(|| 'brk: {
             match self.rewatch_posix() {
-                Maybe::Result(()) => {}
-                Maybe::Err(err_) => {
+                Ok(()) => {}
+                Err(err_) => {
                     #[cfg(target_os = "macos")]
-                    if err_.get_errno() == bun_sys::E::SRCH {
+                    if err_.get_errno() == bun_sys::E::ESRCH {
                         break 'brk Status::from(
                             pid,
                             &posix_spawn::wait4(

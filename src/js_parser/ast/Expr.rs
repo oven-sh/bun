@@ -1363,9 +1363,9 @@ pub enum Tag {
 
 impl Tag {
     // object, regex and array may have had side effects
-    pub fn is_primitive_literal(tag: Tag) -> bool {
+    pub fn is_primitive_literal(self) -> bool {
         matches!(
-            tag,
+            self,
             Tag::ENull
                 | Tag::EUndefined
                 | Tag::EString

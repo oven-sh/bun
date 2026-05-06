@@ -32,10 +32,16 @@ impl Default for Body {
     fn default() -> Self { Self { value: Value::Empty } }
 }
 
-// TODO(b2-blocked): bun_jsc::* — len/slice/use_/clone/write_format all forward
-// to Value JSC methods (gated below). Re-enable once `impl Value` is un-gated.
-#[cfg(any())]
-impl<'a> Body<'a> {
+impl Body {
+    // Inherent associated re-exports so callers can spell `Body::Value::Locked(..)`
+    // / `Body::InternalBlob{..}` (matches the Zig `Body.Value` namespacing).
+    // Requires `#![feature(inherent_associated_types)]` (already enabled at the
+    // crate root for the B-2 port).
+    pub type Value = Value;
+    pub type InternalBlob = InternalBlob;
+    pub type PendingValue = PendingValue;
+    pub type ValueError = ValueError;
+
     pub fn len(&self) -> blob::SizeType {
         self.value.size()
     }
@@ -48,7 +54,7 @@ impl<'a> Body<'a> {
         self.value.use_()
     }
 
-    pub fn clone(&mut self, global_this: &JSGlobalObject) -> JsResult<Body<'a>> {
+    pub fn clone(&mut self, global_this: &JSGlobalObject) -> JsResult<Body> {
         Ok(Body {
             value: self.value.clone(global_this)?,
         })
@@ -58,12 +64,17 @@ impl<'a> Body<'a> {
         &mut self,
         global_this: &JSGlobalObject,
         readable: Option<&mut ReadableStream>,
-    ) -> JsResult<Body<'a>> {
+    ) -> JsResult<Body> {
         Ok(Body {
             value: self.value.clone_with_readable_stream(global_this, readable)?,
         })
     }
+}
 
+// TODO(b2-blocked): bun_jsc::ConsoleFormatter — write_format depends on the
+// ConsoleObject formatter trait (`print_as`/`print_comma`/`write_indent`).
+#[cfg(any())]
+impl Body {
     pub fn write_format<F, W: core::fmt::Write, const ENABLE_ANSI_COLORS: bool>(
         &self,
         formatter: &mut F,
@@ -118,8 +129,6 @@ impl<'a> Body<'a> {
 // TODO(port): not a clean Drop — Value::reset mutates self to Null/Used and is called explicitly
 // at specific protocol points (e.g. resolve()). PORTING.md forbids `pub fn deinit(&mut self)`;
 // renamed to `reset()` since it cannot take `self` by value (in-place state transition).
-// TODO(b2-blocked): Value::reset gated above.
-#[cfg(any())]
 impl Body {
     pub fn reset(&mut self) {
         self.value.reset();
@@ -177,9 +186,6 @@ impl PendingValue {
     }
 }
 
-// TODO(b2-blocked): bun_jsc::* — readable.get/is_disturbed/to_any_blob,
-// JSPromise::create, JSValue::protect, global.readable_stream_to_*.
-#[cfg(any())]
 impl PendingValue {
     /// For Http Client requests
     /// when Content-Length is provided this represents the whole size of the request
@@ -426,9 +432,6 @@ pub enum ValueError {
     JSValue(jsc::strong::Optional),
 }
 
-// TODO(b2-blocked): bun_jsc::* — to_js/dupe/reset call SystemError/BunString
-// JSC methods, jsc::strong::Optional::create/get, JSValue::attach_async_stack.
-#[cfg(any())]
 impl ValueError {
     pub fn to_stream_error(&mut self, global_object: &JSGlobalObject) -> streams::result::StreamError {
         match self {
@@ -525,12 +528,6 @@ impl Value {
     }
 }
 
-// TODO(b2-blocked): bun_jsc::* — every method below either calls into gated
-// `PendingValue` JSC methods (to_any_blob/size_hint), gated `Blob` methods
-// (get_size_for_bindings/dupe/init/etc.), `WTFStringImpl::to_utf8_if_needed`,
-// or JSValue/JSPromise/ReadableStream JSC surface. Un-gate alongside the
-// PendingValue/Blob impls once `bun_jsc` is a dep of bun_runtime.
-#[cfg(any())]
 impl Value {
     // We may not have all the data yet
     // So we can't know for sure if it's empty or not

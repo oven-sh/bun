@@ -2074,7 +2074,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 }
                 js_ast::ExprData::EBinary(mut e) => {
                     // Do not substitute into an assignment position
-                    if e.op.binary_assign_target() == js_ast::AssignTarget::None {
+                    if js_ast::op::Code::binary_assign_target(e.op) == js_ast::AssignTarget::None {
                         match self.substitute_single_use_symbol_in_expr(e.left, r#ref, replacement, replacement_can_be_removed) {
                             Substitution::Continue(_) => {}
                             Substitution::Success(result) => {
@@ -2094,7 +2094,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         //   foo[fn()] = a;
                         //
                         return Substitution::Failure(expr);
-                    } else if e.op.binary_assign_target() == js_ast::AssignTarget::Update && !replacement_can_be_removed {
+                    } else if js_ast::op::Code::binary_assign_target(e.op) == js_ast::AssignTarget::Update && !replacement_can_be_removed {
                         // If this is a read-modify-write assignment and the replacement has side
                         // effects, don't reorder it past the assignment target. The assignment
                         // target is being read so it may be changed by the side effect. For
@@ -2334,10 +2334,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             return Substitution::Continue(expr);
         }
 
-        let tag: js_ast::ExprTag = expr.data.tag();
-
         // We can always reorder past primitive values
-        if tag.is_primitive_literal() {
+        if js_ast::ExprTag::is_primitive_literal(expr.data.tag()) {
             return Substitution::Continue(expr);
         }
 

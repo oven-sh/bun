@@ -371,6 +371,11 @@ impl HttpThread {
                     pending_h2_connects: Vec::new(),
                 }));
                 if let Err(err) = custom_context.init_with_client_config(client) {
+                    // Spec HTTPThread.zig:277 raw-frees without `deinit` here
+                    // because `initWithOpts` fails before `group.init()` runs.
+                    // `impl Drop for HTTPContext` now tolerates an
+                    // uninitialized group (skips close_all/destroy when
+                    // `group.loop_` is null), so reclaiming the Box is safe.
                     // SAFETY: custom_context was just Box::leak'd above and
                     // has refcount 1; reclaim and drop on error.
                     drop(unsafe { Box::from_raw(custom_context as *mut NewHttpContext<true>) });

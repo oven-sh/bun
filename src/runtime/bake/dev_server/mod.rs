@@ -1077,8 +1077,8 @@ pub struct DevServer {
     pub router: FrameworkRouter,
     pub route_bundles: Vec<RouteBundle>,
     pub graph_safety_lock: ThreadLock,
-    pub client_graph: IncrementalGraph,
-    pub server_graph: IncrementalGraph,
+    pub client_graph: IncrementalGraph<{ Side::Client }>,
+    pub server_graph: IncrementalGraph<{ Side::Server }>,
     pub barrel_files_with_deferrals: StringArrayHashMap<()>,
     pub barrel_needed_exports: StringArrayHashMap<StringHashMap<()>>,
     pub incremental_result: IncrementalResult,
@@ -1204,13 +1204,17 @@ impl DevServer {
         // `scopeguard` closure capturing `&mut self.graph_safety_lock` would
         // alias the `&self.*_graph` borrows below.
         self.graph_safety_lock.lock();
-        let g = match side {
-            Graph::Client => &self.client_graph,
-            Graph::Server | Graph::Ssr => &self.server_graph,
+        // PORT NOTE: arms duplicated because `client_graph` / `server_graph`
+        // are distinct const-generic instantiations.
+        fn check<const S: Side>(g: &IncrementalGraph<S>, path: &[u8]) -> Option<CacheEntry> {
+            g.bundled_files.get_index(path).and_then(|index| {
+                (!g.stale_files.is_set(index)).then(|| CacheEntry { kind: g.file_kind_at(index) })
+            })
+        }
+        let r = match side {
+            Graph::Client => check(&self.client_graph, path),
+            Graph::Server | Graph::Ssr => check(&self.server_graph, path),
         };
-        let r = g.bundled_files.get_index(path).and_then(|index| {
-            (!g.stale_files.is_set(index)).then(|| CacheEntry { kind: g.file_kind_at(index) })
-        });
         self.graph_safety_lock.unlock();
         r
     }

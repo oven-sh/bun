@@ -685,9 +685,6 @@ impl RunCommand {
         this_transpiler.resolver.opts.load_tsconfig_json = true;
         this_transpiler.options.load_tsconfig_json = true;
 
-        // TODO(b2-blocked): `Transpiler::configure_linker` lives in the gated
-        // `__phase_a_draft` impl (transpiler.rs:1313).
-        
         this_transpiler.configure_linker();
 
         // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
@@ -738,9 +735,6 @@ impl RunCommand {
 
             // Always skip default .env files for package.json script runner
             // (see comment in env_loader.zig:542-548 - the script's own bun instance loads .env)
-            // TODO(b2-blocked): `Transpiler::run_env_loader` is in the gated
-            // `__phase_a_draft` impl (transpiler.rs:1317).
-
             let _ = this_transpiler.run_env_loader(true);
         }
 
@@ -939,7 +933,7 @@ impl RunCommand {
                 .as_deref()
                 .map(|p| unsafe { &*(p as *const api::BunInstall) });
             b.resolver.opts.global_cache = ctx.debug.global_cache;
-            // … see phase_a_draft / src/bun.js.rs for the full list.
+            // … see src/bun.js.rs for the full list.
         }
 
         // ── enter `Run::start` under the JSC API lock ──────────────────────
@@ -2704,4 +2698,942 @@ const EVAL_TRIGGER: &[u8] = b"/[eval]";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ::core::marker::ConstParamTy)]
 pub enum Filter { Script, Bin, BunJs, All, AllPlusBunJs, ScriptExclude, ScriptAndDescriptions }
 
-/* __INSERT_COMPLETIONS_AND_HELPERS__ */
+type DoneChannel = bun_threading::Channel<u32, bun_collections::linear_fifo::StaticBuffer<u32, 256>>;
+
+/// One pending remote-image download. Lives on the heap so its
+/// `async_http.task` (embedded in ThreadPool.Task) has a stable
+/// address — HTTPThread.schedule does @fieldParentPtr on that task,
+/// so moving the struct would break the worker's callback.
+struct RemoteImageDownload {
+    // Assigned immediately after the struct literal in
+    // prefetchRemoteImages (can't be set in the literal because
+    // AsyncHTTP.init needs a pointer to response_buffer, which only
+    // has a stable address once the owning struct is live).
+    async_http: bun_http::AsyncHTTP,
+    response_buffer: bun_string::MutableString,
+    url: Box<[u8]>,
+    done: *const DoneChannel,
+}
+
+impl RemoteImageDownload {
+    fn on_done(
+        this: *mut RemoteImageDownload,
+        async_http: *mut bun_http::AsyncHTTP,
+        _result: bun_http::HTTPClientResult<'_>,
+    ) {
+        // Mirror sendSyncCallback from AsyncHTTP.zig: the worker's
+        // ThreadlocalAsyncHTTP is about to be freed, so copy its
+        // mutated state back into our owned AsyncHTTP before writing
+        // to the channel.
+        // SAFETY: `this` was passed as the callback ctx in `prefetch_remote_images`;
+        // `async_http` is the worker-thread temporary whose `.real` points back at
+        // `this.async_http`.
+        unsafe {
+            let this = &mut *this;
+            let async_http = &mut *async_http;
+            if let Some(real) = async_http.real {
+                *real.as_ptr() = ::core::ptr::read(async_http);
+                (*real.as_ptr()).response_buffer = async_http.response_buffer;
+            }
+            // Channel payload is a placeholder tick — the main thread
+            // walks `downloads[]` to read per-task state after N wakeups.
+            let _ = (*this.done).write_item(0);
+        }
+    }
+}
+
+impl RunCommand {
+    pub fn ls(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
+        let args = ctx.args.clone();
+
+        let arena: &'static bun_alloc::Arena = runner_arena();
+        let mut this_transpiler = Transpiler::init(arena, ctx.log, args, None)?;
+        this_transpiler.options.env.behavior = api::DotEnvBehavior::LoadAll;
+        this_transpiler.options.env.prefix = Box::default();
+
+        this_transpiler.resolver.care_about_bin_folder = true;
+        this_transpiler.resolver.care_about_scripts = true;
+        this_transpiler.configure_linker();
+        Ok(())
+    }
+
+    /// `bun feedback` — boots the embedded `eval/feedback.ts` script.
+    fn bun_feedback(ctx: &mut ContextData) -> Result<::core::convert::Infallible, bun_core::Error> {
+        let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
+        // SAFETY: bun_paths::PathBuffer and bun_core::PathBuffer are
+        // layout-identical newtypes over [u8; MAX_PATH_BYTES].
+        let cwd = bun_core::getcwd(unsafe {
+            &mut *(entry_point_buf.as_mut_ptr() as *mut bun_core::PathBuffer)
+        })?;
+        let cwd_len = cwd.as_bytes().len();
+        entry_point_buf[cwd_len..cwd_len + EVAL_TRIGGER.len()].copy_from_slice(EVAL_TRIGGER);
+
+        ctx.runtime_options.eval.script =
+            bun_core::runtime_embed_file!(bun_core::EmbedKind::Codegen, "eval/feedback.ts")
+                .as_bytes()
+                .to_vec()
+                .into_boxed_slice();
+
+        Self::boot(
+            ctx,
+            entry_point_buf[..cwd_len + EVAL_TRIGGER.len()].to_vec().into_boxed_slice(),
+            None,
+        )?;
+        Global::exit(0);
+    }
+
+    fn unlink_staged_path(path: &[u8]) {
+        let mut zbuf = [0u8; MAX_PATH_BYTES + 1];
+        if path.len() >= zbuf.len() {
+            return;
+        }
+        zbuf[..path.len()].copy_from_slice(path);
+        zbuf[path.len()] = 0;
+        // SAFETY: NUL-terminated above.
+        let z = unsafe { ZStr::from_raw(zbuf.as_ptr(), path.len()) };
+        let _ = sys::unlink(z);
+    }
+
+    /// Parse `contents` once with an ImageUrlCollector, download every
+    /// http(s) image URL it finds to a temp file, and populate `out_map`
+    /// with url → temp-path entries. Failures are silent — an image that
+    /// can't be downloaded just falls back to alt-text rendering.
+    fn prefetch_remote_images(
+        contents: &[u8],
+        md_opts: md::Options,
+        out_map: &mut StringHashMap<Box<[u8]>>,
+    ) {
+        let mut collector = md::ImageUrlCollector::init();
+        if md::render_with_renderer(contents, md_opts, collector.renderer()).is_err() {
+            return;
+        }
+        if collector.urls.is_empty() {
+            return;
+        }
+
+        // Walk the collected URLs once, deduping and picking out the
+        // http(s) ones. If there are no remote URLs we never spawn the
+        // HTTP worker or allocate any Download structs.
+        let mut seen: StringHashMap<()> = StringHashMap::default();
+        let mut remote_urls: Vec<Box<[u8]>> = Vec::new();
+        for u in collector.urls.iter() {
+            let u: &[u8] = u.as_ref();
+            if !u.starts_with(b"http://") && !u.starts_with(b"https://") {
+                continue;
+            }
+            let Ok(gop) = seen.get_or_put(u) else { continue };
+            if gop.found_existing {
+                continue;
+            }
+            if remote_urls.try_reserve(1).is_err() {
+                continue;
+            }
+            remote_urls.push(u.to_vec().into_boxed_slice());
+        }
+        if remote_urls.is_empty() {
+            return;
+        }
+
+        bun_http::http_thread::init(&Default::default());
+
+        // Heap-allocate each Download so AsyncHTTP.task has a stable
+        // address (see RemoteImageDownload doc comment).
+        let mut downloads: Vec<Box<RemoteImageDownload>> = Vec::new();
+        // Drop frees response_buffer + the Box for each download.
+
+        let done_channel = DoneChannel::init_static();
+
+        // Kick off every download in parallel. Accumulate tasks into a
+        // single ThreadPool.Batch, then ship the whole batch to the
+        // HTTP thread in one schedule() call — worker picks up and runs
+        // them concurrently.
+        let mut batch = bun_threading::thread_pool::Batch::default();
+        for raw_url in remote_urls.into_iter() {
+            let Ok(response_buffer) = bun_string::MutableString::init(8 * 1024) else {
+                continue;
+            };
+            let mut d = Box::new(RemoteImageDownload {
+                // SAFETY: `AsyncHTTP` has no drop side-effects on the zeroed
+                // placeholder; overwritten before first use below.
+                async_http: unsafe { ::core::mem::zeroed() },
+                response_buffer,
+                url: raw_url,
+                done: &done_channel,
+            });
+            // SAFETY: `d.url` is heap-owned and outlives the AsyncHTTP (freed
+            // only when `downloads` drops after the channel drains).
+            let url_static: &'static [u8] =
+                unsafe { ::core::slice::from_raw_parts(d.url.as_ptr(), d.url.len()) };
+            let response_buffer_ptr: *mut bun_string::MutableString = &mut d.response_buffer;
+            let d_ptr: *mut RemoteImageDownload = &mut *d;
+            d.async_http = bun_http::AsyncHTTP::init(
+                bun_http::Method::GET,
+                bun_url::URL::parse(url_static),
+                Default::default(),
+                b"",
+                response_buffer_ptr,
+                b"",
+                bun_http::HTTPClientResultCallback::new::<RemoteImageDownload>(
+                    d_ptr,
+                    RemoteImageDownload::on_done,
+                ),
+                bun_http::FetchRedirect::Follow,
+                Default::default(),
+            );
+            d.async_http.schedule(&mut batch);
+            downloads.push(d);
+        }
+        if downloads.is_empty() {
+            return;
+        }
+        bun_http::http_thread().schedule(batch);
+
+        // Block the main thread on the channel until every scheduled
+        // download has reported back. readItem() uses a mutex+condvar,
+        // no busy loop. The payload value is unused — each wakeup just
+        // means "one more task finished".
+        let mut completed: usize = 0;
+        while completed < downloads.len() {
+            if done_channel.read_item().is_err() {
+                break;
+            }
+            completed += 1;
+        }
+
+        // Second pass: walk completed downloads, write successful
+        // bodies to temp files, populate out_map. All disk I/O is done
+        // AFTER every network request has settled.
+        let tmpdir = bun_resolver::fs::RealFS::tmpdir_path();
+        for d in downloads.iter_mut() {
+            if d.async_http.err.is_some() {
+                continue;
+            }
+            let status = d.async_http.response.as_ref().map(|r| r.status_code).unwrap_or(0);
+            if status != 200 {
+                continue;
+            }
+            let bytes = d.response_buffer.slice();
+            if bytes.is_empty() {
+                continue;
+            }
+
+            // Extension is best-effort from the URL path; Kitty inspects
+            // the file's magic bytes regardless.
+            let ext: &[u8] = if d.url.ends_with(b".png") {
+                b".png"
+            } else if d.url.ends_with(b".jpg") || d.url.ends_with(b".jpeg") {
+                b".jpg"
+            } else if d.url.ends_with(b".gif") {
+                b".gif"
+            } else if d.url.ends_with(b".webp") {
+                b".webp"
+            } else {
+                b".bin"
+            };
+            let mut name_buf = [0u8; 64];
+            let name = {
+                let mut cursor = &mut name_buf[..];
+                if write!(cursor, "bun-md-{:x}{}", bun_core::fast_random(), bstr::BStr::new(ext))
+                    .is_err()
+                {
+                    continue;
+                }
+                let written = 64 - cursor.len();
+                &name_buf[..written]
+            };
+            let mut path: Vec<u8> = Vec::new();
+            if write!(&mut path, "{}/{}", bstr::BStr::new(tmpdir), bstr::BStr::new(name)).is_err()
+            {
+                continue;
+            }
+
+            let fd = match sys::open_a(
+                &path,
+                sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
+                0o600,
+            ) {
+                Ok(f) => f,
+                Err(_) => continue,
+            };
+            let ok = sys::File { handle: fd }.write_all(bytes).is_ok();
+            fd.close();
+            if !ok {
+                // openA + TRUNC leaves an orphan even on zero-byte
+                // write failure. Unlink via stack buffer so cleanup
+                // can't fail for OOM reasons.
+                Self::unlink_staged_path(&path);
+                continue;
+            }
+            // Dupe d.url for the map key — `collector.urls` owns the backing
+            // bytes and gets freed when this function returns.
+            let key = d.url.to_vec().into_boxed_slice();
+            let _ = out_map.put_owned(key, path.into_boxed_slice());
+        }
+    }
+
+    fn render_markdown_file_and_exit(path: &[u8]) -> ! {
+        // No explicit free() on contents / rendered below: every path out
+        // of this function calls Global::exit() or bun.outOfMemory() (both
+        // noreturn), so the OS reclaims the allocations on process exit.
+        let contents = match sys::File::read_from(Fd::cwd(), path) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                pretty_errorln!("<r><red>error<r>: {}", err);
+                Output::flush();
+                Global::exit(1);
+            }
+        };
+
+        // Theme selection: colors when stdout is a TTY (or forced on),
+        // hyperlinks when colors are on. Light/dark detected from env.
+        let colors = Output::enable_ansi_colors_stdout();
+        let columns: u16 = 'brk: {
+            // Output.terminal_size is never populated; query stdout
+            // directly. Honor COLUMNS so piped output and tests can
+            // pin a width.
+            if let Some(env) = bun_core::getenv_z(bun_core::zstr!("COLUMNS")) {
+                if let Some(n) =
+                    ::core::str::from_utf8(env).ok().and_then(|s| s.parse::<u16>().ok())
+                {
+                    if n > 0 {
+                        break 'brk n;
+                    }
+                }
+            }
+            #[cfg(unix)]
+            {
+                // SAFETY: all-zero is a valid winsize (#[repr(C)] POD).
+                let mut size: libc::winsize = unsafe { ::core::mem::zeroed() };
+                // SAFETY: ioctl with valid winsize ptr
+                if unsafe {
+                    libc::ioctl(
+                        libc::STDOUT_FILENO,
+                        libc::TIOCGWINSZ,
+                        &mut size as *mut libc::winsize,
+                    )
+                } == 0
+                {
+                    if size.ws_col > 0 {
+                        break 'brk size.ws_col;
+                    }
+                }
+            }
+            #[cfg(windows)]
+            {
+                if let Ok(handle) = sys::windows::GetStdHandle(sys::windows::STD_OUTPUT_HANDLE) {
+                    // SAFETY: all-zero is a valid CONSOLE_SCREEN_BUFFER_INFO (#[repr(C)] POD).
+                    let mut csbi: sys::windows::CONSOLE_SCREEN_BUFFER_INFO =
+                        unsafe { ::core::mem::zeroed() };
+                    if sys::windows::kernel32::GetConsoleScreenBufferInfo(handle, &mut csbi)
+                        != sys::windows::FALSE
+                    {
+                        let w = csbi.srWindow.Right - csbi.srWindow.Left + 1;
+                        if w > 0 {
+                            break 'brk u16::try_from(w).unwrap();
+                        }
+                    }
+                }
+            }
+            80
+        };
+        let is_tty = Output::is_stdout_tty();
+        let kitty_graphics = colors && is_tty && md::detect_kitty_graphics();
+
+        let md_opts: md::Options = md::Options::TERMINAL;
+
+        // Pre-scan for http(s) image URLs so Kitty can display them
+        // inline. Only runs when kitty_graphics is on and the document
+        // actually contains an image marker — otherwise the whole block
+        // is a no-op.
+        let mut remote_map: StringHashMap<Box<[u8]>> = StringHashMap::default();
+        if kitty_graphics && strings::contains(&contents, b"![") {
+            Self::prefetch_remote_images(&contents, md_opts, &mut remote_map);
+        }
+
+        // Relative image paths in the markdown should resolve against
+        // the document's directory, not the process cwd — otherwise
+        // `bun ./docs/README.md` from `/home/user` can't find `./img.png`
+        // that sits next to README.md. Resolve to an absolute dir first
+        // so joinAbsString downstream doesn't double-apply cwd.
+        let mut base_buf = PathBuffer::uninit();
+        let mut cwd_buf = PathBuffer::uninit();
+        let abs_md_path: &[u8] = 'blk: {
+            if paths::is_absolute(path) {
+                break 'blk path;
+            }
+            let cwd: &[u8] = match sys::getcwd(&mut cwd_buf.0[..]) {
+                Ok(n) => &cwd_buf[..n],
+                Err(_) => break 'blk path,
+            };
+            paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
+                cwd,
+                &mut base_buf.0,
+                &[path],
+            )
+        };
+        let dir = paths::resolve_path::dirname::<paths::platform::Auto>(abs_md_path);
+        // When dirname returns empty (bare filename + getcwd failed), fall
+        // back to "." instead of abs_md_path — otherwise joinAbsString
+        // downstream would treat the file path itself as a directory.
+        let image_base_dir: &[u8] = if !dir.is_empty() { dir } else { b"." };
+
+        let theme = md::AnsiTheme {
+            light: md::detect_light_background(),
+            columns,
+            colors,
+            hyperlinks: colors && is_tty,
+            kitty_graphics,
+            remote_image_paths: if remote_map.count() > 0 { Some(&remote_map) } else { None },
+            image_base_dir: Some(image_base_dir),
+        };
+
+        let rendered = match md::render_to_ansi(&contents, md_opts, theme) {
+            Err(bun_md::parser::ParserError::OutOfMemory) => bun_core::out_of_memory(),
+            Err(bun_md::parser::ParserError::StackOverflow) => {
+                pretty_errorln!(
+                    "<r><red>error<r>: markdown rendering exceeded the stack — input is too deeply nested",
+                );
+                Output::flush();
+                Global::exit(1);
+            }
+            Err(_) | Ok(None) => {
+                pretty_errorln!("<r><red>error<r>: failed to render markdown");
+                Output::flush();
+                Global::exit(1);
+            }
+            Ok(Some(r)) => r,
+        };
+
+        let _ = Output::writer().write_all(&rendered);
+        Output::flush();
+        // Temp files prefetchRemoteImages() wrote are deliberately NOT
+        // unlinked here. Output.flush() only guarantees the APC bytes
+        // reached the terminal's PTY ring buffer — Kitty reads the file
+        // asynchronously from its own event loop, so unlinking inside
+        // this process races Kitty's open() and typically drops images
+        // silently (q=2 suppresses the error). System tmp cleanup
+        // (systemd-tmpfiles, /tmp reboot wipe) eventually removes the
+        // bun-md-*.png files, which are small (~100KB each) and rare.
+        Global::exit(0);
+    }
+
+    /// Shell-completion entries for `bun run`. Called from
+    /// `cli_body::bun_getcompletes`.
+    pub fn completions<const FILTER: Filter>(
+        ctx: &mut ContextData,
+        default_completions: Option<&[&[u8]]>,
+        reject_list: &[&[u8]],
+    ) -> Result<ShellCompletions, bun_core::Error> {
+        let mut shell_out = ShellCompletions::default();
+        if FILTER != Filter::ScriptExclude {
+            if let Some(defaults) = default_completions {
+                // SAFETY: callers pass `'static` const tables; erase the elided
+                // lifetime back to `'static` (Zig stored the borrowed slice).
+                shell_out.commands = unsafe {
+                    ::core::mem::transmute::<&[&[u8]], &'static [&'static [u8]]>(defaults)
+                };
+            }
+        }
+
+        let args = ctx.args.clone();
+
+        let Ok(mut this_transpiler) = Transpiler::init(runner_arena(), ctx.log, args, None) else {
+            return Ok(shell_out);
+        };
+        this_transpiler.options.env.behavior = api::DotEnvBehavior::LoadAll;
+        this_transpiler.options.env.prefix = Box::default();
+        // SAFETY: `Transpiler::env` is a non-null process-lifetime `*mut Loader`.
+        unsafe { (*this_transpiler.env).quiet = true };
+
+        this_transpiler.resolver.care_about_bin_folder = true;
+        this_transpiler.resolver.care_about_scripts = true;
+        this_transpiler.resolver.store_fd = true;
+        this_transpiler.configure_linker();
+
+        // SAFETY: `Transpiler::fs` is the non-null process-static singleton.
+        let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
+        let Some(root_dir_info) = this_transpiler
+            .resolver
+            .read_dir_info(top_level_dir)
+            .ok()
+            .flatten()
+        else {
+            this_transpiler.resolver.care_about_bin_folder = false;
+            this_transpiler.resolver.care_about_scripts = false;
+            return Ok(shell_out);
+        };
+        // SAFETY: resolver cache owns the DirInfo for the process lifetime.
+        let root_dir_info = unsafe { &*root_dir_info };
+
+        {
+            // SAFETY: `Transpiler::env` is a non-null process-lifetime `*mut Loader`.
+            unsafe { &mut *this_transpiler.env }.load_process()?;
+
+            if let Some(node_env) = unsafe { &*this_transpiler.env }.get(b"NODE_ENV") {
+                if node_env == b"production" {
+                    this_transpiler.options.production = true;
+                }
+            }
+        }
+
+        type ResultList = ArrayHashMap<Box<[u8]>, ()>;
+
+        // SAFETY: `Transpiler::env` is a non-null process-lifetime `*mut Loader`.
+        if let Some(shell) = unsafe { &*this_transpiler.env }.get(b"SHELL") {
+            shell_out.shell = crate::cli::shell_completions::Shell::from_env(shell);
+        }
+
+        let mut results = ResultList::new();
+        let mut descriptions: Vec<&[u8]> = Vec::new();
+
+        if FILTER != Filter::ScriptExclude {
+            if let Some(defaults) = default_completions {
+                results.ensure_unused_capacity(defaults.len())?;
+                for item in defaults {
+                    let _ = results.get_or_put(Box::from(*item));
+                }
+            }
+        }
+
+        if FILTER == Filter::Bin || FILTER == Filter::All || FILTER == Filter::AllPlusBunJs {
+            // `bin_dirs()` reads process-static storage but its return slice is
+            // tied to `&self`, which would conflict with the `&mut self` borrow
+            // taken by `read_dir_info` inside the loop. Snapshot the `'static`
+            // path slices into a local Vec to detach the borrow.
+            let bin_dirs_snapshot: Vec<&'static [u8]> =
+                this_transpiler.resolver.bin_dirs().to_vec();
+            for bin_path in bin_dirs_snapshot {
+                if let Some(bin_dir) =
+                    this_transpiler.resolver.read_dir_info(bin_path).ok().flatten()
+                {
+                    // SAFETY: resolver cache owns the DirInfo for the process lifetime.
+                    if let Some(entries) = unsafe { &*bin_dir }.get_entries_const() {
+                        let mut path_buf = PathBuffer::uninit();
+                        let mut iter = entries.data.iter();
+                        let mut has_copied = false;
+                        let mut dir_slice_len: usize = 0;
+                        while let Some(entry) = iter.next() {
+                            // SAFETY: `EntryMap` stores non-null `*mut Entry` values owned by
+                            // the resolver dir-cache for the process lifetime.
+                            let value = unsafe { &**entry.1 };
+                            // SAFETY: `Transpiler::fs` is the non-null process-static singleton.
+                            if value.kind(unsafe { &mut (*this_transpiler.fs).fs }, true)
+                                == bun_resolver::fs::EntryKind::File
+                            {
+                                if !has_copied {
+                                    path_buf[..value.dir.len()].copy_from_slice(value.dir);
+                                    dir_slice_len = value.dir.len();
+                                    if !strings::ends_with_char_or_is_zero_length(value.dir, SEP) {
+                                        dir_slice_len = value.dir.len() + 1;
+                                    }
+                                    has_copied = true;
+                                }
+
+                                let base = value.base();
+                                path_buf[dir_slice_len..dir_slice_len + base.len()]
+                                    .copy_from_slice(base);
+                                path_buf[dir_slice_len + base.len()] = 0;
+                                // SAFETY: NUL terminator written above
+                                let slice = unsafe {
+                                    ZStr::from_raw(
+                                        path_buf.as_ptr(),
+                                        dir_slice_len + base.len(),
+                                    )
+                                };
+                                if !sys::is_executable_file_path(slice) {
+                                    continue;
+                                }
+                                // we need to dupe because the string may point to a pointer that only exists in the current scope
+                                // SAFETY: `Transpiler::fs` is the non-null process-static singleton.
+                                let Ok(appended) = unsafe { (*this_transpiler.fs).filename_store }
+                                    .append_slice(base)
+                                else {
+                                    continue;
+                                };
+                                let _ = results.get_or_put(Box::from(appended))?;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if FILTER == Filter::AllPlusBunJs || FILTER == Filter::BunJs {
+            if let Some(dir_info) = this_transpiler
+                .resolver
+                .read_dir_info(top_level_dir)
+                .ok()
+                .flatten()
+            {
+                // SAFETY: resolver cache owns the DirInfo for the process lifetime.
+                if let Some(entries) = unsafe { &*dir_info }.get_entries_const() {
+                    let mut iter = entries.data.iter();
+
+                    while let Some(entry) = iter.next() {
+                        // SAFETY: `EntryMap` stores non-null `*mut Entry` values owned by the
+                        // resolver dir-cache for the process lifetime.
+                        let value = unsafe { &**entry.1 };
+                        let name = value.base();
+                        if name[0] != b'.'
+                            && this_transpiler
+                                .options
+                                .loader(paths::extension(name))
+                                .can_be_run_by_bun()
+                            && !strings::contains(name, b".config")
+                            && !strings::contains(name, b".d.ts")
+                            && !strings::contains(name, b".d.mts")
+                            && !strings::contains(name, b".d.cts")
+                            // SAFETY: `Transpiler::fs` is the non-null process-static singleton.
+                            && value.kind(unsafe { &mut (*this_transpiler.fs).fs }, true)
+                                == bun_resolver::fs::EntryKind::File
+                        {
+                            // SAFETY: `Transpiler::fs` is the non-null process-static singleton.
+                            let Ok(appended) = unsafe { (*this_transpiler.fs).filename_store }
+                                .append_slice(name)
+                            else {
+                                continue;
+                            };
+                            let _ = results.get_or_put(Box::from(appended))?;
+                        }
+                    }
+                }
+            }
+        }
+
+        if FILTER == Filter::ScriptExclude
+            || FILTER == Filter::Script
+            || FILTER == Filter::All
+            || FILTER == Filter::AllPlusBunJs
+            || FILTER == Filter::ScriptAndDescriptions
+        {
+            if let Some(package_json) = root_dir_info.enclosing_package_json {
+                if let Some(scripts) = package_json.scripts.as_deref() {
+                    results.ensure_unused_capacity(scripts.count())?;
+                    if FILTER == Filter::ScriptAndDescriptions {
+                        descriptions.reserve(scripts.count());
+                    }
+
+                    let mut max_description_len: usize = 20;
+                    // SAFETY: `Transpiler::env` is a non-null process-lifetime `*mut Loader`.
+                    if let Some(max) =
+                        unsafe { &*this_transpiler.env }.get(b"MAX_DESCRIPTION_LEN")
+                    {
+                        if let Some(max_len) = ::core::str::from_utf8(max)
+                            .ok()
+                            .and_then(|s| s.parse::<usize>().ok())
+                        {
+                            max_description_len = max_len;
+                        }
+                    }
+
+                    let keys = scripts.keys();
+                    let mut key_i: usize = 0;
+                    'loop_: while key_i < keys.len() {
+                        let key: &[u8] = &keys[key_i];
+                        key_i += 1;
+
+                        if FILTER == Filter::ScriptExclude {
+                            for default in reject_list {
+                                if *default == key {
+                                    continue 'loop_;
+                                }
+                            }
+                        }
+
+                        // npm-style lifecycle hooks: a script named `pre<X>` or `post<X>` runs
+                        // automatically around `<X>`, so there's no reason to list it as a
+                        // completion target. But `prettier`, `prebuild`-with-no-`build`,
+                        // `postgres`, etc. are standalone scripts — keep them.
+                        if key.starts_with(b"pre") {
+                            if scripts.contains(&key[b"pre".len()..]) {
+                                continue 'loop_;
+                            }
+                        } else if key.starts_with(b"post") {
+                            if scripts.contains(&key[b"post".len()..]) {
+                                continue 'loop_;
+                            }
+                        }
+
+                        let Ok(entry_item) = results.get_or_put(Box::from(key)) else {
+                            continue 'loop_;
+                        };
+
+                        if FILTER == Filter::ScriptAndDescriptions && max_description_len > 0 {
+                            let mut description: &[u8] = *scripts.get(key).unwrap();
+
+                            // When the command starts with something like
+                            // NODE_OPTIONS='--max-heap-size foo' bar
+                            // ^--------------------------------^ trim that
+                            // that way, you can see the real command that's being run
+                            if !description.is_empty() {
+                                'trimmer: {
+                                    if !description.is_empty()
+                                        && description.starts_with(b"NODE_OPTIONS=")
+                                    {
+                                        if let Some(i) =
+                                            strings::index_of_char(description, b'=')
+                                        {
+                                            let i = i as usize;
+                                            let delimiter: u8 = if description.len() > i + 1 {
+                                                match description[i + 1] {
+                                                    b'\'' => b'\'',
+                                                    b'"' => b'"',
+                                                    _ => b' ',
+                                                }
+                                            } else {
+                                                break 'trimmer;
+                                            };
+
+                                            let delimiter_offset: usize =
+                                                if delimiter == b' ' { 1 } else { 2 };
+                                            if description.len() > delimiter_offset + i {
+                                                if let Some(j) = strings::index_of_char(
+                                                    &description[delimiter_offset + i..],
+                                                    delimiter,
+                                                ) {
+                                                    let j = j as usize;
+                                                    description = strings::trim(
+                                                        &description[delimiter_offset + i..]
+                                                            [j + 1..],
+                                                        b" ",
+                                                    );
+                                                } else {
+                                                    break 'trimmer;
+                                                }
+                                            } else {
+                                                break 'trimmer;
+                                            }
+                                        } else {
+                                            break 'trimmer;
+                                        }
+                                    }
+                                }
+
+                                if description.len() > max_description_len {
+                                    description = &description[..max_description_len];
+                                }
+                            }
+
+                            descriptions.insert(entry_item.index, description);
+                        }
+                    }
+                }
+            }
+        }
+
+        this_transpiler.resolver.care_about_bin_folder = false;
+        this_transpiler.resolver.care_about_scripts = false;
+
+        // PORT NOTE: `ShellCompletions` stores `&'static [&'static [u8]]`; the
+        // keys interned into `filename_store` / boxed from static tables outlive
+        // the process. The owning `results` ArrayHashMap is held in a process-
+        // lifetime arena slot so the borrowed keys remain valid (Zig never
+        // freed it either).
+        let mut all_keys: Vec<&'static [u8]> = results
+            .keys()
+            .iter()
+            .map(|k| -> &'static [u8] {
+                // SAFETY: keys are either `'static` literals or interned in the
+                // process-lifetime `FilenameStore`/package.json source; erase
+                // the Box borrow.
+                unsafe { ::core::slice::from_raw_parts(k.as_ptr(), k.len()) }
+            })
+            .collect();
+        strings::sort_asc(&mut all_keys);
+        // Park the owning maps in the runner arena (process-lifetime) so the
+        // `'static` slices above remain valid without `Box::leak`/`mem::forget`.
+        let _ = runner_arena().alloc(results);
+        shell_out.commands = runner_arena().alloc_slice_copy(&all_keys);
+        shell_out.descriptions = runner_arena().alloc_slice_copy(
+            // SAFETY: descriptions borrow into the package.json source buffer
+            // (process-lifetime); erase to `'static`.
+            unsafe {
+                ::core::slice::from_raw_parts(
+                    descriptions.as_ptr() as *const &'static [u8],
+                    descriptions.len(),
+                )
+            },
+        );
+
+        Ok(shell_out)
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Windows `.bunx` fast-path: skip the wrapper exe by reading the shim metadata
+// directly and either spawning the target binary or booting Bun in-process.
+// ─────────────────────────────────────────────────────────────────────────────
+
+bun_core::declare_scope!(BUNX_FAST_PATH_LOG, visible);
+
+/// Uninhabited namespace holder; all members are associated items.
+pub enum BunXFastPath {}
+
+impl BunXFastPath {
+    #[cfg(windows)]
+    pub static mut DIRECT_LAUNCH_BUFFER: WPathBuffer = [0; bun_paths::MAX_WPATH];
+    #[cfg(windows)]
+    static mut ENVIRONMENT_BUFFER: [u16; 32768] = [0; 32768];
+
+    /// Port of `appendWindowsArgument` (run_command.zig:2049-2091): convert a
+    /// UTF-8 argument to UTF-16, applying Windows command-line quoting/escaping
+    /// per the canonical "Everyone quotes command line arguments the wrong way"
+    /// rules. Writes into `buffer` and returns the number of u16s written.
+    #[cfg(windows)]
+    fn append_windows_argument(buffer: &mut [u16], arg: &[u8]) -> usize {
+        let mut wbuf = [0u16; bun_paths::MAX_WPATH];
+        let warg = strings::convert_utf8_to_utf16_in_buffer(&mut wbuf, arg);
+
+        let needs_quote = warg.is_empty()
+            || warg.iter().any(|&c| matches!(c as u8, b' ' | b'\t' | b'"' | b'\n' | b'\x0b'));
+
+        if !needs_quote {
+            buffer[..warg.len()].copy_from_slice(warg);
+            return warg.len();
+        }
+
+        let mut pos: usize = 0;
+        buffer[pos] = b'"' as u16;
+        pos += 1;
+        let start = pos;
+
+        // Walk the wide string in reverse, emitting escapes for `"` and
+        // backslash runs that precede a `"` (the closing quote we add last).
+        let mut quote_hit = true;
+        let mut i = warg.len();
+        while i > 0 {
+            i -= 1;
+            let c = warg[i];
+            buffer[pos] = c;
+            pos += 1;
+            if quote_hit && c == b'\\' as u16 {
+                buffer[pos] = b'\\' as u16;
+                pos += 1;
+            } else if c == b'"' as u16 {
+                quote_hit = true;
+                buffer[pos] = b'\\' as u16;
+                pos += 1;
+            } else {
+                quote_hit = false;
+            }
+        }
+
+        // Reverse the content we just wrote (between opening quote and current position)
+        buffer[start..pos].reverse();
+
+        // Add closing quote
+        buffer[pos] = b'"' as u16;
+        pos += 1;
+
+        pos
+    }
+
+    /// If this returns, it implies the fast path cannot be taken.
+    #[cfg(windows)]
+    pub fn try_launch(
+        ctx: &mut ContextData,
+        path_len: usize,
+        env: &mut DotEnv::Loader<'static>,
+        passthrough: &[Box<[u8]>],
+    ) {
+        if !bun_core::FeatureFlags::WINDOWS_BUNX_FAST_PATH {
+            return;
+        }
+
+        // SAFETY: process-lifetime static, single-threaded CLI dispatch.
+        let direct_launch_buffer =
+            unsafe { &mut *::core::ptr::addr_of_mut!(Self::DIRECT_LAUNCH_BUFFER) };
+        let (path_to_use, command_line) = direct_launch_buffer.split_at_mut(path_len);
+
+        bun_core::scoped_log!(
+            BUNX_FAST_PATH_LOG,
+            "Attempting to find and load bunx file: '{}'",
+            bun_core::fmt::utf16(path_to_use)
+        );
+        debug_assert!(paths::is_absolute_windows_wtf16(path_to_use));
+
+        let handle = match sys::open_file_at_windows_a(
+            Fd::INVALID, // absolute path is given
+            path_to_use,
+            sys::windows::STANDARD_RIGHTS_READ
+                | sys::windows::FILE_READ_DATA
+                | sys::windows::FILE_READ_ATTRIBUTES
+                | sys::windows::FILE_READ_EA
+                | sys::windows::SYNCHRONIZE,
+            sys::windows::FILE_OPEN,
+            sys::windows::FILE_NON_DIRECTORY_FILE | sys::windows::FILE_SYNCHRONOUS_IO_NONALERT,
+        ) {
+            Ok(fd) => fd.cast(),
+            Err(err) => {
+                bun_core::scoped_log!(BUNX_FAST_PATH_LOG, "Failed to open bunx file: '{}'", err);
+                return;
+            }
+        };
+
+        let mut i: usize = 0;
+        for arg in passthrough {
+            // Add space separator before each argument
+            command_line[i] = b' ' as u16;
+            i += 1;
+            i += Self::append_windows_argument(&mut command_line[i..], arg);
+        }
+
+        // SAFETY: process-lifetime static, single-threaded CLI dispatch.
+        let env_buf = unsafe { &mut *::core::ptr::addr_of_mut!(Self::ENVIRONMENT_BUFFER) };
+        let environment = match env.map.write_windows_env_block(env_buf) {
+            Ok(env) => Some(env.as_ptr()),
+            Err(_) => return,
+        };
+
+        let run_ctx = bun_install::windows_shim::bun_shim_impl::FromBunRunContext {
+            handle,
+            base_path: path_to_use[4..].as_mut_ptr(),
+            base_path_len: path_to_use.len() - 4,
+            arguments: command_line.as_mut_ptr(),
+            arguments_len: i,
+            force_use_bun: ctx.debug.run_in_bun,
+            direct_launch_with_bun_js: Self::direct_launch_callback,
+            cli_context: ctx,
+            environment,
+        };
+
+        bun_core::scoped_log!(BUNX_FAST_PATH_LOG, "run_ctx.force_use_bun: '{}'", run_ctx.force_use_bun);
+
+        bun_install::windows_shim::bun_shim_impl::try_startup_from_bun_js(run_ctx);
+
+        bun_core::scoped_log!(BUNX_FAST_PATH_LOG, "did not start via shim");
+    }
+
+    #[cfg(windows)]
+    fn direct_launch_callback(
+        wpath: &mut [u16],
+        ctx: bun_options_types::Context::Context<'_>,
+    ) {
+        // SAFETY: process-lifetime static, single-threaded CLI dispatch.
+        let direct_launch_buffer =
+            unsafe { &mut *::core::ptr::addr_of_mut!(Self::DIRECT_LAUNCH_BUFFER) };
+        // SAFETY: WPathBuffer is `[u16; N]` — reinterpret as `[u8; 2N]`
+        // for the UTF-16→UTF-8 transcoder's output buffer.
+        let out_buf = unsafe {
+            ::core::slice::from_raw_parts_mut(
+                direct_launch_buffer.as_mut_ptr().cast::<u8>(),
+                direct_launch_buffer.len() * 2,
+            )
+        };
+        let utf8 = match strings::convert_utf16_to_utf8_in_buffer(out_buf, wpath) {
+            Ok(u) => u,
+            Err(_) => return,
+        };
+        if let Err(err) = RunCommand::boot(ctx, utf8.to_vec().into_boxed_slice(), None) {
+            // SAFETY: `ctx.log` was set in `create_context_data`.
+            let _ = unsafe { &mut *ctx.log }.print(Output::error_writer() as *mut bun_core::io::Writer);
+            Output::err(
+                err,
+                "Failed to run bin \"<b>{}<r>\"",
+                (bstr::BStr::new(paths::basename(utf8)),),
+            );
+            Global::exit(1);
+        }
+    }
+}
+

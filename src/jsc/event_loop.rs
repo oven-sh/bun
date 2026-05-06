@@ -666,7 +666,9 @@ impl EventLoop {
     }
 
     pub fn deinit(&mut self) {
-        self.tasks.deinit();
+        // PORT NOTE: Zig's `tasks.deinit()` / `clearAndFree()` map to dropping
+        // the owned buffers; reassigning a fresh value drops the old in place.
+        self.tasks = Queue::init();
         self.immediate_tasks = Vec::new();
         self.next_immediate_tasks = Vec::new();
     }

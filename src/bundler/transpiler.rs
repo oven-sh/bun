@@ -2462,7 +2462,7 @@ impl<'a> Transpiler<'a> {
         self.options.transform_only = true;
 
         if self.options.output_dir_handle.is_none() {
-            let outstream = TransformOutstream::Stdout(bun_sys::File::stdout());
+            let outstream = TransformOutstream::Stdout;
             match self.options.import_path_format {
                 options::ImportPathFormat::Relative => {
                     self.process_resolve_queue(options::ImportPathFormat::Relative, outstream)?;
@@ -2478,7 +2478,7 @@ impl<'a> Transpiler<'a> {
                 }
             }
         } else {
-            let Some(output_dir) = self.options.output_dir_handle.as_ref().copied() else {
+            let Some(output_dir) = self.options.output_dir_handle else {
                 bun_core::Output::print_error("Invalid or missing output directory.");
                 bun_core::Global::crash();
             };

@@ -240,14 +240,24 @@ pub extern "C" fn Bun__SSLConfig__fromJS(
     // SAFETY: `global` is the live per-thread global; `out` is a caller stack
     // `SSLConfig` (sql_jsc passes `&mut SSLConfig as *mut c_void`).
     let global = unsafe { &*global };
-    let out = unsafe { &mut *(out as *mut crate::socket::SSLConfig) };
-    // TODO(b2-blocked): `SSLConfig::from_js` body is gated on
-    // `webcore::Blob` store / generated GenVal accessors. Until un-gated, the
-    // sql_jsc connect path that passes `tls: {…}` cannot be exercised; surface
-    // a clear failure rather than silently dropping the config.
-    let _ = (value, out);
-    let _ = global.throw_todo("SSLConfig.fromJS: tls options parsing not yet ported");
-    false
+    // SAFETY: bun_vm() never null for a Bun-owned global.
+    let vm = unsafe { &*global.bun_vm() };
+    match crate::socket::SSLConfig::from_js(vm, global, value) {
+        Ok(Some(cfg)) => {
+            // SAFETY: `out` is a caller stack `crate::socket::SSLConfig` slot;
+            // the previous value is the zeroed default (no Drop side-effects).
+            unsafe { (out as *mut crate::socket::SSLConfig).write(cfg) };
+            true
+        }
+        // `None` → no TLS config present; caller distinguishes via
+        // `has_exception()` for the throw path.
+        Ok(None) => false,
+        Err(bun_jsc::JsError::OutOfMemory) => {
+            let _ = global.throw_out_of_memory();
+            false
+        }
+        Err(_) => false,
+    }
 }
 
 /// `SSLConfig::asUSockets` — project the runtime `SSLConfig` to the C-ABI
@@ -319,51 +329,6 @@ pub fn on_reject_entry_point_result(
     bun_core::Global::exit(u32::from(unsafe { (*global.bun_vm()).exit_handler.exit_code }));
 }
 
-// ─── rare_data.zig — TLS-ciphers / stdin-fd-type host fns (un-gated bodies) ──
-
-#[bun_jsc::host_fn(export = "Bun__setTLSDefaultCiphers")]
-pub fn set_tls_default_ciphers(
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> bun_jsc::JsResult<JSValue> {
-    let ciphers = callframe.argument(0);
-    if !ciphers.is_string() {
-        return Err(global.throw_invalid_argument_type_value("ciphers", "string", ciphers));
-    }
-    let sliced = ciphers.to_slice(global)?;
-    // SAFETY: bun_vm() never null for a Bun-owned global.
-    unsafe { (*global.bun_vm()).rare_data().set_tls_default_ciphers(sliced.slice()) };
-    Ok(JSValue::UNDEFINED)
-}
-
-#[bun_jsc::host_fn(export = "Bun__getTLSDefaultCiphers")]
-pub fn get_tls_default_ciphers(
-    global: &JSGlobalObject,
-    _callframe: &CallFrame,
-) -> bun_jsc::JsResult<JSValue> {
-    // SAFETY: bun_vm() never null for a Bun-owned global.
-    let vm = unsafe { &mut *global.bun_vm() };
-    let ciphers = match vm.rare_data().tls_default_ciphers() {
-        Some(c) => c,
-        None => bun_uws::get_default_ciphers().as_bytes(),
-    };
-    Ok(bun_jsc::zig_string::ZigString::from_bytes(ciphers).to_js(global))
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__Process__getStdinFdType(vm: *mut VirtualMachine, fd: i32) -> i32 {
-    // TODO(b2-blocked): `RareData::std{in,out,err}()` accessors are gated on
-    // `BlobStore`/`FileStore`. Spec: 0=file, 1=pipe, 2=socket. Fall back to a
-    // direct fstat on the fd until the Blob-store path is un-gated.
-    let _ = vm;
-    let fd = bun_sys::Fd::from_native(fd as _);
-    match bun_sys::fstat(fd) {
-        Ok(st) if bun_sys::S::ISFIFO(st.st_mode as _) => 1,
-        Ok(st) if bun_sys::S::ISSOCK(st.st_mode as _) => 2,
-        _ => 0,
-    }
-}
-
 // ─── bindgenv2 dispatch shims (GeneratedBindings.zig: `bindgen_*_dispatch*`) ─
 //
 // These satisfy the `extern "C"` refs C++ emits from
@@ -384,29 +349,23 @@ pub extern "C" fn bindgen_NodeModuleModule_dispatch_stat1(
     true
 }
 
-#[repr(C)]
-pub struct BracesOptions {
-    pub parse: bool,
-    pub tokenize: bool,
-}
-
 /// `BunObject.braces(input, options) -> JSValue`.
 #[unsafe(no_mangle)]
 pub extern "C" fn bindgen_BunObject_dispatchBraces1(
     global: *mut JSGlobalObject,
     arg_input: *const bun_string::String,
-    arg_options: *const BracesOptions,
+    arg_options: *const crate::api::bun_object::r#gen::BracesOptions,
 ) -> JSValue {
-    // TODO(b2-blocked): `crate::api::bun_object::braces` is in the `_jsc_gated`
-    // module (depends on `Braces::Lexer` un-gating). Surface a clear error
-    // until that body un-gates.
-    let _ = (arg_input, arg_options);
-    // SAFETY: `global` is the live per-thread global.
+    // SAFETY: `global` is the live per-thread global; `arg_input`/`arg_options`
+    // are valid C++ stack locals (see GeneratedBindings.zig:203 call site).
     let global = unsafe { &*global };
-    bun_jsc::host_fn::to_js_host_call(
-        global,
-        Err(global.throw_todo("Bun.braces: shell brace-expansion not yet ported")),
-    )
+    // Zig spec passes `arg_input.*` (bitwise copy of the ref-counted handle);
+    // bump the refcount so the callee may hold/convert it independently.
+    let input = unsafe { (*arg_input).dupe_ref() };
+    let opts = unsafe { *arg_options };
+    bun_jsc::host_fn::to_js_host_call(global, core::panic::Location::caller(), || {
+        crate::api::bun_object::braces(global, input, opts)
+    })
 }
 
 /// `BunObject.gc(force) -> usize` (heap size after collection).
@@ -419,14 +378,12 @@ pub extern "C" fn bindgen_BunObject_dispatchGc1(
     // SAFETY: `global` is the live per-thread global; `arg_force`/`out` are
     // valid C++ stack locals.
     let global = unsafe { &*global };
-    let _force = unsafe { *arg_force };
-    // Spec body (BunObject.zig `gc`): force ⇒ `collectSync()`, else
-    // `collectAsync()`, then return `heap.size()`. `collect_sync` is gated in
-    // `bun_jsc::VM`; both arms call the available async path for now.
-    // TODO(b2-blocked): wire `VM::collect_sync` once un-gated.
-    let jsc_vm = unsafe { &*(*global.bun_vm()).jsc_vm };
-    jsc_vm.collect_async();
-    unsafe { *out = jsc_vm.heap_size() };
+    let force = unsafe { *arg_force };
+    // Spec body (GeneratedBindings.zig:212 → BunObject.zig `gc`):
+    // `vm.garbageCollect(force)` — mimalloc cleanup, then sync `runGC(true)`
+    // when `force`, else `collectAsync()` + `heap.size()`.
+    // SAFETY: bun_vm() never null for a Bun-owned global.
+    unsafe { *out = (*global.bun_vm()).garbage_collect(force) };
     true
 }
 

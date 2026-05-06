@@ -21,7 +21,9 @@ use crate::webcore::{AnyBlob, FetchHeaders};
 pub struct StaticRoute {
     // TODO: Remove optional. StaticRoute requires a server object or else it will
     // not ensure it is alive while sending a large blob.
-    ref_count: Cell<u32>,
+    // `pub(super)` so sibling route modules (HTMLBundle) can construct directly
+    // (Zig `bun.new(StaticRoute, .{ .ref_count = .init(), ... })`).
+    pub(super) ref_count: Cell<u32>,
     pub server: Cell<Option<AnyServer>>,
     pub status_code: u16,
     pub blob: AnyBlob,

@@ -39,10 +39,18 @@ impl<const SIDE: bake::Side> FileIndex<SIDE> {
 pub type ServerFileIndex = FileIndex<{ bake::Side::Server }>;
 pub type ClientFileIndex = FileIndex<{ bake::Side::Client }>;
 
-/// Side-erased `FileIndex` re-export name kept so existing
-/// `incremental_graph::BodyFileIndex` call sites resolve. Same
-/// `#[repr(transparent)] u32` wire shape as `FileIndex<SIDE>`.
-pub type BodyFileIndex = FileIndex;
+/// Side-erased `FileIndex` kept so existing `incremental_graph::BodyFileIndex`
+/// call sites (and the `CachedFileIndex: From<Option<_>>` impl in
+/// `DevServer.rs`) resolve. Same `#[repr(transparent)] u32` wire shape as
+/// `FileIndex<SIDE>` but a distinct nominal type so the two `From` impls
+/// don't overlap.
+#[repr(transparent)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+pub struct BodyFileIndex(pub u32);
+impl BodyFileIndex {
+    #[inline] pub const fn init(v: u32) -> Self { Self(v) }
+    #[inline] pub const fn get(self) -> u32 { self.0 }
+}
 
 /// Return shape for `IncrementalGraph::insert_empty`.
 pub struct InsertEmptyResult<const SIDE: bake::Side = { bake::Side::Server }> {

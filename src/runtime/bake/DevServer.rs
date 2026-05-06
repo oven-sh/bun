@@ -5988,12 +5988,16 @@ fn bundle_new_route_js_function_impl(
     unsafe { (*vm.event_loop()).enter() };
     let _exit = scopeguard::guard((), |_| unsafe { (*vm.event_loop()).exit() });
 
-    // TODO(port): `AnyRequestContext::dev_server()` returns the keystone
-    // `&dev_server::DevServer`, but this body needs `&mut dev_server_body::DevServer`
-    // (different struct + mutability). Shadow until the two types are unified.
+    // LAYERING: `AnyRequestContext::dev_server()` returns the keystone
+    // `dev_server::DevServer`; this file's `DevServer<'_>` is the full-port
+    // replacement. Bridge via `*mut ()` pending unification (see
+    // `new_route_params_for_bundle_promise_for_js` for the full SAFETY note).
     let _ = dev;
-    let dev: &mut DevServer =
-        todo!("blocked_on: AnyRequestContext::dev_server -> &mut dev_server_body::DevServer");
+    let Some(dev_ptr) = request.request_context.dev_server_mut() else {
+        return Err(global.throw("Request context does not belong to dev server"));
+    };
+    // SAFETY: see LAYERING note; JS-thread single-writer.
+    let dev: &mut DevServer = unsafe { &mut *(dev_ptr as *mut () as *mut DevServer) };
 
     let route_bundle_index = dev
         .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Framework(route_index))
@@ -6095,18 +6099,24 @@ fn new_route_params_for_bundle_promise_for_js(
         return Err(global.throw("URL must be a string"));
     }
 
-    // TODO(port): `webcore::Request` has no `JsClass` impl yet, so
-    // `JSValue::as_::<WebRequest>()` is unavailable. Recover the native
-    // pointer once Request's classes-codegen lands.
-    let _ = request_js;
-    let request: &mut WebRequest = todo!("blocked_on: webcore::Request JsClass impl");
-    let Some(_keystone_dev) = request.request_context.dev_server() else {
+    let Some(request_ptr) = <WebRequest as bun_jsc::JsClass>::from_js(request_js) else {
+        return Err(global.throw("Expected a Request object"));
+    };
+    // SAFETY: `from_js` returned a live native pointer; JS holds the GC ref.
+    let request: &mut WebRequest = unsafe { &mut *request_ptr };
+    let Some(dev_ptr) = request.request_context.dev_server_mut() else {
         return Err(global.throw("Request context does not belong to dev server"));
     };
-    // TODO(port): `AnyRequestContext::dev_server()` returns the keystone
-    // `&dev_server::DevServer`; this body needs `&mut dev_server_body::DevServer`.
-    let dev: &mut DevServer =
-        todo!("blocked_on: AnyRequestContext::dev_server -> &mut dev_server_body::DevServer");
+    // LAYERING: `AnyRequestContext::dev_server_mut()` is typed against the
+    // keystone `dev_server::DevServer`; this file's full-port `DevServer<'_>`
+    // is the eventual replacement. The two are field-compatible by
+    // construction (same Zig source) and will be unified by collapsing the
+    // keystone to a re-export. Until then, bridge via `*mut ()` — the
+    // pointer's provenance is the `Box<DevServer>` slot in `NewServer`, which
+    // body `set_routes` populates with this exact type once the field type
+    // narrows.
+    // SAFETY: see LAYERING note; JS-thread single-writer.
+    let dev: &mut DevServer = unsafe { &mut *(dev_ptr as *mut () as *mut DevServer) };
 
     let route_bundle_index =
         route_bundle::Index::init(u32::try_from(route_bundle_index_js.to_int32()).unwrap());

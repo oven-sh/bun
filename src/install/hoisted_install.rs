@@ -14,11 +14,10 @@ use crate::bun_bunfig::Arguments as Command;
 
 use crate::{self as install, DependencyID, PackageID, RunTasksCallbacks};
 use crate::lockfile::tree;
-#[allow(unused_imports)]
 use crate::bin_real as bin;
 use crate::PackageManager;
 use crate::package_manager::{self, WorkspaceFilter};
-use crate::package_manager_real::{options::Do, ProgressStrings};
+use crate::package_manager_real::ProgressStrings;
 use crate::package_install;
 use crate::package_installer::{NodeModulesFolder, PackageInstaller, TreeContext};
 
@@ -96,7 +95,7 @@ pub fn install_hoisted_packages(
         };
         // SAFETY: same `root_node` validity as above.
         scripts_node = unsafe { (*root_node).start(ProgressStrings::script(), 0) };
-        this.downloads_node = Some(&mut download_node);
+        this.downloads_node = Some(core::ptr::addr_of_mut!(download_node));
         this.scripts_node = NonNull::new(&mut scripts_node);
         // TODO(port): storing pointers to stack locals into `this` — Phase B must reshape
         // (move nodes into PackageManager or thread lifetimes).
@@ -161,6 +160,36 @@ pub fn install_hoisted_packages(
     let mut summary = package_install::Summary::default();
 
     {
+        // PORT NOTE: BACKREF — `Tree::Iterator` borrows the four buffer slices,
+        // and `PackageInstaller` simultaneously holds `&mut Lockfile` (plus
+        // `&[T]` column aliases into `lockfile.packages`). Zig stores
+        // non-exclusive `*const Lockfile` in the iterator. Snapshot raw `*const
+        // Vec<_>` headers here so the iterator's slice borrows are derived
+        // through `mgr_ptr` (the same provenance root as `installer.lockfile`),
+        // not through a `&this.lockfile.buffers.X` that the installer's `&mut
+        // Lockfile` would invalidate.
+        let lockfile_ptr: *mut crate::lockfile::Lockfile =
+            // SAFETY: `mgr_ptr` is the provenance root; `lockfile` is an inline
+            // field (Zig: `*Lockfile` heap-owned; stub holds it by value).
+            unsafe { core::ptr::addr_of_mut!((*mgr_ptr).lockfile) };
+        let buf_trees: *const Vec<tree::Tree> =
+            unsafe { core::ptr::addr_of!((*lockfile_ptr).buffers.trees) };
+        let buf_hoisted: *const Vec<DependencyID> =
+            unsafe { core::ptr::addr_of!((*lockfile_ptr).buffers.hoisted_dependencies) };
+        let buf_deps: *const Vec<crate::Dependency> =
+            unsafe { core::ptr::addr_of!((*lockfile_ptr).buffers.dependencies) };
+        let buf_strings: *const Vec<u8> =
+            unsafe { core::ptr::addr_of!((*lockfile_ptr).buffers.string_bytes) };
+
+        // SAFETY: see BACKREF note above — slices live for the duration of this
+        // block; `filter()` (the only buffer mutator) has already run.
+        let mut iterator = tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::from_slices(
+            unsafe { (*buf_trees).as_slice() },
+            unsafe { (*buf_hoisted).as_slice() },
+            unsafe { (*buf_deps).as_slice() },
+            unsafe { (*buf_strings).as_slice() },
+        );
+
         #[cfg(unix)]
         {
             bin::Linker::ensure_umask();
@@ -224,7 +253,18 @@ pub fn install_hoisted_packages(
             // These slices potentially get resized during iteration
             // so we want to make sure they're not accessible to the rest of this function
             // to make mistakes harder
-            let parts = this.lockfile.packages.slice();
+            //
+            // PORT NOTE: BACKREF — Zig's `var parts = packages.slice()` is a
+            // by-value `MultiArrayList.Slice` (raw ptr+len per column), so
+            // `parts.items(.field)` yields independent `[]T` regardless of
+            // mutability. Rust borrowck rejects holding `&mut Lockfile` +
+            // `&[T]` into `lockfile.packages` simultaneously (and `&[A]` +
+            // `&mut [B]` from the same `&PackageList`). Derive each column
+            // slice through the raw `lockfile_ptr` so they share `mgr_ptr`
+            // provenance with `installer.lockfile`/`installer.manager`.
+            let pkgs: *mut crate::lockfile::PackageList =
+                unsafe { core::ptr::addr_of_mut!((*lockfile_ptr).packages) };
+
             // Hoist the by-value reads out of the struct literal so they
             // finish before the long-lived `&mut *mgr_ptr` borrow for
             // `manager` begins (struct fields evaluate in source order).
@@ -232,15 +272,6 @@ pub fn install_hoisted_packages(
             let pkg_len = this.lockfile.packages.len();
             let trees_count = this.lockfile.buffers.trees.len();
             let trusted_deps = this.find_trusted_dependencies_from_update_requests();
-            // PORT NOTE: spec reads MultiArrayList column ptrs out of `parts`
-            // and stuffs them into `PackageInstaller`. The stub `PackageList`
-            // columns are typed against `crate::lockfile` (`bin::Bin`,
-            // `package::Meta`) but `PackageInstaller`'s slice fields are typed
-            // against `lockfile_real` (`bin_real::Bin`, `lockfile_real::
-            // package::Meta`). Until the two `Lockfile` shapes unify
-            // (reconciler-6) those slices cannot be borrowed across; defer the
-            // construction of those fields.
-            let _ = parts;
 
             // SAFETY: `mgr_ptr` is the provenance root for every `this` access
             // in this fn (see shadow-reborrow at top). `PackageInstaller`
@@ -253,21 +284,22 @@ pub fn install_hoisted_packages(
             // the code compiles with the spec's call shape intact.
             break 'brk PackageInstaller {
                 manager: unsafe { &mut *mgr_ptr },
-                // TODO(port): blocked_on lockfile stub/real unification
-                // (reconciler-6) — `PackageInstaller::{options, lockfile,
-                // metas, bins, names, pkg_name_hashes, resolutions,
-                // pkg_dependencies}` are typed against `lockfile_real` /
-                // `package_manager_real::Options`, but `this` carries the stub
-                // shapes. The Zig spec just aliases pointers; Rust needs the
-                // types to agree.
-                options: todo!("blocked_on: reconciler-6 — stub PackageManager.options vs package_manager_real::Options"),
-                metas: todo!("blocked_on: reconciler-6 — stub PackageList::meta vs lockfile_real::package::Meta"),
-                bins: todo!("blocked_on: reconciler-6 — stub PackageList::bin vs bin_real::Bin"),
-                names: todo!("blocked_on: reconciler-6 — stub PackageList::name vs lockfile_real column"),
-                pkg_name_hashes: todo!("blocked_on: reconciler-6 — stub PackageList::name_hash column"),
-                resolutions: todo!("blocked_on: reconciler-6 — stub PackageList::resolution (&mut) column"),
-                pkg_dependencies: todo!("blocked_on: reconciler-6 — stub PackageList::dependencies column"),
-                lockfile: todo!("blocked_on: reconciler-6 — stub Lockfile vs lockfile_real::Lockfile"),
+                // SAFETY: `mgr_ptr` BACKREF — `&PackageManager.options` aliases
+                // the `&mut PackageManager` in `manager`; Zig stores `*const
+                // Options`. Phase B retypes one of them to a raw ptr.
+                options: unsafe { &(*mgr_ptr).options },
+                // SAFETY: `pkgs` derived from `mgr_ptr` (see BACKREF note on
+                // `parts` above); columns are not resized between here and
+                // `fix_cached_lockfile_package_slices`, which re-snapshots them.
+                metas: unsafe { (*pkgs).meta.as_slice() },
+                bins: unsafe { (*pkgs).bin.as_slice() },
+                names: unsafe { (*pkgs).name.as_slice() },
+                pkg_name_hashes: unsafe { (*pkgs).name_hash.as_slice() },
+                resolutions: unsafe { (*pkgs).resolution.as_mut_slice() },
+                pkg_dependencies: unsafe { (*pkgs).dependencies.as_slice() },
+                // SAFETY: `lockfile_ptr` derived from `mgr_ptr`; aliases
+                // `installer.manager.lockfile` exactly as Zig's `*Lockfile`.
+                lockfile: unsafe { &mut *lockfile_ptr },
                 root_node_modules_folder: node_modules_folder,
                 node: &mut install_node,
                 node_modules: NodeModulesFolder {
@@ -291,15 +323,10 @@ pub fn install_hoisted_packages(
                     let mut trees: Vec<TreeContext> = Vec::with_capacity(trees_count);
                     for _i in 0..trees_count {
                         trees.push(TreeContext {
-                            // TODO(port): blocked_on reconciler-6 —
-                            // `TreeContext.binaries` is `bin::PriorityQueue
-                            // <'static>` but the queue context borrows
-                            // `&this.lockfile.buffers.{dependencies,
-                            // string_bytes}`. Zig stores raw `*ArrayList`
-                            // pointers (no lifetime); the Rust field needs the
-                            // queue to be `<'a>` once `PackageInstaller<'a>`
-                            // threads through.
-                            binaries: todo!("blocked_on: reconciler-6 — bin::PriorityQueue<'static> vs lockfile-borrowed context"),
+                            binaries: bin::PriorityQueue::init(bin::PriorityQueueContext {
+                                dependencies: buf_deps,
+                                string_buf: buf_strings,
+                            }),
                             pending_installs: Vec::new(),
                             install_count: 0,
                         });
@@ -325,37 +352,18 @@ pub fn install_hoisted_packages(
         // `PackageInstaller { manager: ... }` initialiser above.
         let this = unsafe { &mut *mgr_ptr };
 
-        // PORT NOTE: `Lockfile.Tree.Iterator(.node_modules).init(this.lockfile)`.
-        // The real iterator (`lockfile_real::tree::Iterator`) is typed against
-        // `lockfile_real::Lockfile`; the stub `this.lockfile` cannot satisfy
-        // that borrow yet (reconciler-6). Iterate the stub `buffers.trees`
-        // directly so the dependency-install loop below still type-checks.
-        let trees_snapshot = this.lockfile.buffers.trees.len();
-        let mut tree_id: u32 = 0;
-        while (tree_id as usize) < trees_snapshot {
-            // TODO(port): blocked_on reconciler-6 — replace with
-            // `lockfile_real::tree::Iterator::<{NodeModules}>::init(...)` once
-            // `this.lockfile` is the real `Lockfile`. The stub iteration below
-            // mirrors the spec's per-tree loop shape so the body compiles.
-            let node_modules_tree = this.lockfile.buffers.trees[tree_id as usize];
-            let dep_slice = node_modules_tree.dependencies;
-            if dep_slice.len == 0 {
-                installer.completed_trees.set(tree_id as usize);
-                tree_id += 1;
-                continue;
-            }
-            let hoisted = this.lockfile.buffers.hoisted_dependencies.as_slice();
-            let remaining_all: &[DependencyID] = dep_slice.get(hoisted);
+        let top_level_len =
+            strings::without_trailing_slash(FileSystem::instance().top_level_dir()).len() + 1;
 
-            installer.node_modules.path.truncate(
-                strings::without_trailing_slash(FileSystem::instance().top_level_dir()).len() + 1,
-            );
-            // TODO(port): blocked_on reconciler-6 — `relative_path` comes from
-            // `tree::relative_path_and_depth` over the real lockfile; the stub
-            // path-builder is the no-op in `crate::lockfile::tree`.
-            installer.node_modules.tree_id = tree_id;
-            installer.current_tree_id = tree_id;
-            let mut remaining = remaining_all;
+        while let Some(node_modules) = iterator.next(Some(&mut installer.completed_trees)) {
+            installer.node_modules.path.truncate(top_level_len);
+            installer
+                .node_modules
+                .path
+                .extend_from_slice(node_modules.relative_path.as_bytes());
+            installer.node_modules.tree_id = node_modules.tree_id;
+            let mut remaining: &[DependencyID] = node_modules.dependencies;
+            installer.current_tree_id = node_modules.tree_id;
 
             // cache line is 64 bytes on ARM64 and x64
             // PackageIDs are 4 bytes
@@ -388,7 +396,7 @@ pub fn install_hoisted_packages(
                         true,
                         log_level,
                     )?;
-                    if !installer.options.do_.contains(Do::INSTALL_PACKAGES) {
+                    if !installer.options.do_.install_packages {
                         return Err(bun_core::err!("InstallFailed"));
                     }
                 }
@@ -413,19 +421,15 @@ pub fn install_hoisted_packages(
                 true,
                 log_level,
             )?;
-            if !installer.options.do_.contains(Do::INSTALL_PACKAGES) {
+            if !installer.options.do_.install_packages {
                 return Err(bun_core::err!("InstallFailed"));
             }
 
             this.tick_lifecycle_scripts();
             this.report_slow_lifecycle_scripts();
-
-            tree_id += 1;
         }
 
-        while this.pending_task_count() > 0
-            && installer.options.do_.contains(Do::INSTALL_PACKAGES)
-        {
+        while this.pending_task_count() > 0 && installer.options.do_.install_packages {
             struct Closure<'a, 'b> {
                 installer: &'a mut PackageInstaller<'b>,
                 err: Option<bun_core::Error>,
@@ -522,7 +526,7 @@ pub fn install_hoisted_packages(
             scripts_node.activate();
         }
 
-        if !installer.options.do_.contains(Do::INSTALL_PACKAGES) {
+        if !installer.options.do_.install_packages {
             return Err(bun_core::err!("InstallFailed"));
         }
 
@@ -562,8 +566,12 @@ pub fn install_hoisted_packages(
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/install/hoisted_install.zig (380 lines)
-//   confidence: low
-//   todos:      reconciler-6 lockfile/options unification gates the
-//               `PackageInstaller` field borrows and the real
-//               `Tree::Iterator(.node_modules)` walk
+//   confidence: medium
+//   notes:      `PackageInstaller` field borrows + `Tree::Iterator` slices are
+//               derived through `mgr_ptr` (raw provenance root) to mirror the
+//               Zig non-exclusive `*Lockfile` / `*PackageManager` aliasing;
+//               Phase B should retype `PackageInstaller.{manager,lockfile,
+//               options,progress}` and the column slices as raw pointers
+//               (LIFETIMES.tsv: BACKREF) so Stacked Borrows holds without the
+//               unsafe reborrows.
 // ──────────────────────────────────────────────────────────────────────────

@@ -3135,8 +3135,8 @@ impl VirtualMachine {
             return Ok(());
         }
         if self.module_loader.eval_source.is_some()
-            && (specifier.ends_with(bun_paths::path_literal!("/[eval]"))
-                || specifier.ends_with(bun_paths::path_literal!("/[stdin]")))
+            && (specifier.ends_with(bun_paths::path_literal!("/[eval]").as_bytes())
+                || specifier.ends_with(bun_paths::path_literal!("/[stdin]").as_bytes()))
         {
             ret.result = None;
             ret.path = Self::dupe_resolved_path(specifier);
@@ -3242,7 +3242,7 @@ impl VirtualMachine {
                         let parts: [&[u8]; 3] = [
                             source_to_use,
                             normalized_specifier,
-                            bun_paths::path_literal!(".."),
+                            bun_paths::path_literal!("..").as_bytes(),
                         ];
                         bun_paths::resolve_path::join_abs_string_buf_z::<
                             bun_paths::resolve_path::platform::Auto,

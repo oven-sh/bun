@@ -6,6 +6,7 @@ use bun_paths::{platform, resolve_path, AbsPath, PathBuffer};
 use bun_string::strings;
 use bun_sys::{self as sys, Dir, Fd, FdDirExt};
 
+use bun_install::bin as stub_bin;
 use bun_install::bin_real as bin;
 use bun_install::lockfile_real::{package::Package, Lockfile};
 use bun_install::package_manager_real::{
@@ -128,7 +129,7 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
             &[name],
         )) {
             Ok(stat) => {
-                if !sys::posix::s_islnk(stat.st_mode as u32) {
+                if !sys::S::ISLNK(stat.st_mode as _) {
                     Output::pretty_errorln(format_args!(
                         "<r><green>success:<r> package \"{}\" is not globally linked, so there's nothing to do.",
                         BStr::new(name),
@@ -177,7 +178,7 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
         };
 
         // Step 3b. Link any global bins
-        if package.bin.tag != bin::Tag::None {
+        if package.bin.tag != stub_bin::Tag::None {
             let mut link_target_buf = PathBuffer::uninit();
             let mut link_dest_buf = PathBuffer::uninit();
             let mut link_rel_buf = PathBuffer::uninit();
@@ -212,7 +213,10 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
             let mut bin_linker = bin::Linker {
                 target_node_modules_path: &target_node_modules_path,
                 target_package_name: strings::StringOrTinyString::init(name),
-                bin: package.bin,
+                // `package.bin` is the inline stub `bin::Bin` (struct `Value`);
+                // project to the real union-`Value` shape via the
+                // `From<bin::Bin> for bin_real::Bin` bridge in `bun_install::lib`.
+                bin: bin::Bin::from(package.bin),
                 node_modules_path: &mut node_modules_path,
                 global_bin_path: manager.options.bin_path,
                 package_name: strings::StringOrTinyString::init(name),

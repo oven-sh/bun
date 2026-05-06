@@ -1949,9 +1949,14 @@ pub(crate) mod install {
 // through the inline mod so `windows_shim::bin_linking_shim` keeps resolving.
  #[path = "windows-shim/BinLinkingShim.rs"]
 mod _bin_linking_shim;
+#[cfg(windows)]
+#[path = "windows-shim/bun_shim_impl.rs"]
+mod _bun_shim_impl;
 pub mod windows_shim {
     pub mod bin_linking_shim { #[derive(Default)] pub struct BinLinkingShim; }
     pub use bin_linking_shim::BinLinkingShim;
+    #[cfg(windows)]
+    pub use crate::_bun_shim_impl as bun_shim_impl;
 }
 
  #[path = "resolvers/folder_resolver.rs"]

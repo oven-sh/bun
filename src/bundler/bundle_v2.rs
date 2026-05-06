@@ -630,6 +630,10 @@ pub mod api {
         pub struct Plugin {
             _opaque: [u8; 0],
         }
+        // `Path<'_>` is not `#[repr(C)]` yet; the C++ shim treats it as an opaque
+        // pointer (it only reads `.namespace`/`.text` via the Zig-side wrapper),
+        // so the layout warning is benign here.
+        #[allow(improper_ctypes)]
         unsafe extern "C" {
             #[link_name = "JSBundlerPlugin__anyMatchesCrossingBoundaries"]
             fn JSBundlerPlugin__anyMatches(this: *const Plugin, path: *const crate::ungate_support::bun_fs::Path, is_on_load: bool) -> bool;

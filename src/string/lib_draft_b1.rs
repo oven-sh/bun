@@ -1,4 +1,3 @@
-#![cfg(any())]
 //! Prefer using `String` instead of `ZigString` in new code.
 //!
 //! Port of `src/string/string.zig`.

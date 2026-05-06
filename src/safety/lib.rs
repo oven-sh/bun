@@ -3,8 +3,9 @@
 // alloc.rs — OBSOLETE per PORTING.md §Allocators (no `Allocator` trait; global
 // mimalloc + bumpalo for AST). The Zig allocator-identity checks it provided
 // (`assertEq`, `CheckedAllocator`) are replaced by the AtomicPtr hooks below
-// (`ALLOC_HAS_PTR`/`IS_WTF_ALLOCATOR`). Draft kept for diff-pass only.
- pub mod alloc;
+// (`ALLOC_HAS_PTR`/`IS_WTF_ALLOCATOR`). Draft dropped from build; file kept
+// on disk for diff-pass reference only.
+// pub mod alloc;
 
 #[path = "CriticalSection.rs"] mod critical_section;
 pub use critical_section::CriticalSection;

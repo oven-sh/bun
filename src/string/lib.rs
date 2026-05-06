@@ -21,9 +21,10 @@ pub mod wtf;
 // `String`/`ZigString` already implemented above; this draft is the broader
 // surface (encode_with_allocator, ref_count_allocator, etc.) and depends on
 // `bun_cpp` (BunString FFI shim crate, not yet wired) plus ~30 ZigString
-// methods that haven't been split out from `string.zig` yet. Re-gated until
-// `bun_cpp` lands; the 6 sub-gates below are now live.
- #[path = "lib_draft_b1.rs"] mod draft;
+// methods that haven't been split out from `string.zig` yet. Draft module
+// dropped from build (duplicate of live impls above); file kept on disk as
+// move-in reference until `bun_cpp` lands.
+// #[path = "lib_draft_b1.rs"] mod draft;
 
 use core::sync::atomic::{AtomicPtr, Ordering};
 pub use wtf::{WTFStringImpl, WTFStringImplStruct};

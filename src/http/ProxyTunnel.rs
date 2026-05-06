@@ -346,7 +346,9 @@ pub fn write_encrypted(ctx: *mut HTTPClient, encoded_data: &[u8]) {
     // Preserve TLS record ordering: if any encrypted bytes are buffered,
     // enqueue new bytes and flush them in FIFO via onWritable.
     if proxy.write_buffer.is_not_empty() {
-        bun_core::handle_oom(proxy.write_buffer.write(encoded_data));
+        if proxy.write_buffer.write(encoded_data).is_err() {
+            bun_core::out_of_memory();
+        }
         return;
     }
     let written = match proxy.socket {
@@ -357,7 +359,9 @@ pub fn write_encrypted(ctx: *mut HTTPClient, encoded_data: &[u8]) {
     let pending = &encoded_data[usize::try_from(written).unwrap()..];
     if !pending.is_empty() {
         // lets flush when we are truly writable
-        bun_core::handle_oom(proxy.write_buffer.write(pending));
+        if proxy.write_buffer.write(pending).is_err() {
+            bun_core::out_of_memory();
+        }
     }
 }
 

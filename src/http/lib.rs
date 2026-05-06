@@ -708,7 +708,7 @@ mod boring_extra {
 /// the ALPN protocol list for `offer`, and enables SCT/OCSP stapling. Called
 /// from `on_open` for every TLS socket — must run even when the hostname is an
 /// IP literal (with empty SNI) so ALPN is still advertised.
-fn configure_http_client_with_alpn(
+pub(crate) fn configure_http_client_with_alpn(
     ssl: *mut boringssl::c::SSL,
     hostname: *const core::ffi::c_char,
     offer: AlpnOffer,
@@ -1067,37 +1067,88 @@ fn write_to_socket_with_buffer_fallback<const IS_SSL: bool>(
 }
 
 // ── Bridge stubs removed: real impls now live in HTTPContext.rs,
-//    HTTPThread.rs, h2_client/ClientSession.rs and h3_client/ClientContext.rs.
+//    HTTPThread.rs, h2_client/ClientSession.rs, h3_client/ClientContext.rs
+//    and ProxyTunnel.rs.
 // ────────────────────────────────────────────────────────────────────────
-// ProxyTunnel real impl is still gated behind `_phase_a_draft` in
-// ProxyTunnel.rs (depends on un-ported SSLWrapper handler surface). Keep the
-// bridge so the state machine type-checks; bodies fill when ProxyTunnel.rs
-// un-gates.
-// TODO(b2-blocked): drop once ProxyTunnel.rs `_phase_a_draft` un-gates.
-impl ProxyTunnel {
-    pub fn shutdown(&mut self) {
-        todo!("ProxyTunnel::shutdown — gated in ProxyTunnel.rs")
-    }
-    pub fn on_writable<const IS_SSL: bool>(&mut self, _socket: HttpSocket<IS_SSL>) {
-        todo!("ProxyTunnel::on_writable — gated in ProxyTunnel.rs")
-    }
-    pub fn write(&mut self, _buf: &[u8]) -> Result<usize, bun_core::Error> {
-        todo!("ProxyTunnel::write — gated in ProxyTunnel.rs")
-    }
-    pub fn receive(&mut self, _buf: &[u8]) {
-        todo!("ProxyTunnel::receive — gated in ProxyTunnel.rs")
-    }
-    pub fn detach_owner(&mut self, _client: &HTTPClient) {
-        todo!("ProxyTunnel::detach_owner — gated in ProxyTunnel.rs")
-    }
-    pub fn start<const IS_SSL: bool>(
-        _client: &mut HTTPClient,
-        _socket: HttpSocket<IS_SSL>,
-        _ssl_options: crate::ssl_config::SSLConfig,
-        _start_payload: &[u8],
-    ) {
-        todo!("ProxyTunnel::start — gated in ProxyTunnel.rs")
-    }
+
+/// Zig: `BoringSSL.getCertErrorFromNo(error_no)` — maps an X509 verify code
+/// onto a `bun_core::Error` whose name is the upper-snake Zig error-set tag
+/// (e.g. `CERT_HAS_EXPIRED`). JS-side `error.code` matches on this exact
+/// string, so do NOT substitute `X509_verify_cert_error_string` output here.
+// PORT NOTE: duplicated from HTTPContext.rs (private there) so ProxyTunnel can
+// reach it without widening that module's surface; constants are the BoringSSL
+// `X509_V_ERR_*` values from `<openssl/x509.h>`.
+pub(crate) fn get_cert_error_from_no(error_no: i32) -> bun_core::Error {
+    let name: &'static str = match error_no {
+        0 => "OK", // X509_V_OK
+        2 => "UNABLE_TO_GET_ISSUER_CERT",
+        3 => "UNABLE_TO_GET_CRL",
+        4 => "UNABLE_TO_DECRYPT_CERT_SIGNATURE",
+        5 => "UNABLE_TO_DECRYPT_CRL_SIGNATURE",
+        6 => "UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY",
+        7 => "CERT_SIGNATURE_FAILURE",
+        8 => "CRL_SIGNATURE_FAILURE",
+        9 => "CERT_NOT_YET_VALID",
+        10 => "CERT_HAS_EXPIRED",
+        11 => "CRL_NOT_YET_VALID",
+        12 => "CRL_HAS_EXPIRED",
+        13 => "ERROR_IN_CERT_NOT_BEFORE_FIELD",
+        14 => "ERROR_IN_CERT_NOT_AFTER_FIELD",
+        15 => "ERROR_IN_CRL_LAST_UPDATE_FIELD",
+        16 => "ERROR_IN_CRL_NEXT_UPDATE_FIELD",
+        17 => "OUT_OF_MEM",
+        18 => "DEPTH_ZERO_SELF_SIGNED_CERT",
+        19 => "SELF_SIGNED_CERT_IN_CHAIN",
+        20 => "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+        21 => "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+        22 => "CERT_CHAIN_TOO_LONG",
+        23 => "CERT_REVOKED",
+        24 => "INVALID_CA",
+        25 => "PATH_LENGTH_EXCEEDED",
+        26 => "INVALID_PURPOSE",
+        27 => "CERT_UNTRUSTED",
+        28 => "CERT_REJECTED",
+        29 => "SUBJECT_ISSUER_MISMATCH",
+        30 => "AKID_SKID_MISMATCH",
+        31 => "AKID_ISSUER_SERIAL_MISMATCH",
+        32 => "KEYUSAGE_NO_CERTSIGN",
+        33 => "UNABLE_TO_GET_CRL_ISSUER",
+        34 => "UNHANDLED_CRITICAL_EXTENSION",
+        35 => "KEYUSAGE_NO_CRL_SIGN",
+        36 => "UNHANDLED_CRITICAL_CRL_EXTENSION",
+        37 => "INVALID_NON_CA",
+        38 => "PROXY_PATH_LENGTH_EXCEEDED",
+        39 => "KEYUSAGE_NO_DIGITAL_SIGNATURE",
+        40 => "PROXY_CERTIFICATES_NOT_ALLOWED",
+        41 => "INVALID_EXTENSION",
+        42 => "INVALID_POLICY_EXTENSION",
+        43 => "NO_EXPLICIT_POLICY",
+        44 => "DIFFERENT_CRL_SCOPE",
+        45 => "UNSUPPORTED_EXTENSION_FEATURE",
+        46 => "UNNESTED_RESOURCE",
+        47 => "PERMITTED_VIOLATION",
+        48 => "EXCLUDED_VIOLATION",
+        49 => "SUBTREE_MINMAX",
+        50 => "APPLICATION_VERIFICATION",
+        51 => "UNSUPPORTED_CONSTRAINT_TYPE",
+        52 => "UNSUPPORTED_CONSTRAINT_SYNTAX",
+        53 => "UNSUPPORTED_NAME_SYNTAX",
+        54 => "CRL_PATH_VALIDATION_ERROR",
+        56 => "SUITE_B_INVALID_VERSION",
+        57 => "SUITE_B_INVALID_ALGORITHM",
+        58 => "SUITE_B_INVALID_CURVE",
+        59 => "SUITE_B_INVALID_SIGNATURE_ALGORITHM",
+        60 => "SUITE_B_LOS_NOT_ALLOWED",
+        61 => "SUITE_B_CANNOT_SIGN_P_384_WITH_P_256",
+        62 => "HOSTNAME_MISMATCH",
+        63 => "EMAIL_MISMATCH",
+        64 => "IP_ADDRESS_MISMATCH",
+        65 => "INVALID_CALL",
+        66 => "STORE_LOOKUP",
+        67 => "NAME_CONSTRAINTS_WITHOUT_SANS",
+        _ => "UNKNOWN_CERTIFICATE_VERIFICATION_ERROR",
+    };
+    bun_core::Error::from_name(name)
 }
 
 // ── HTTPClient field accessors ──────────────────────────────────────────

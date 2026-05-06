@@ -1466,11 +1466,6 @@ pub mod waiter_thread_posix {
         }
     }
 
-    // Suppress unused warnings on non-generic helpers when only `Process` is wired.
-    #[allow(dead_code)]
-    const _: () = {
-        let _ = core::mem::size_of::<EventLoopTaskPtr>();
-    };
 }
 
 #[cfg(any())]
@@ -4290,5 +4285,5 @@ pub use spawn_process_body::sync;
 //   source:     src/runtime/api/bun/process.zig (2927 lines)
 //   confidence: low
 //   todos:      48
-//   notes:      B-2 un-gate: Process impl (init_posix/on_exit/watch/watch_or_reap/rewatch/close/kill/enable+disable_keeping_event_loop_alive), PollerPosix impl, PosixSpawnResult::to_process now real. PollerPosix::Fd holds NonNull<FilePoll> (hive slot). EventLoopHandle→EventLoopCtx bridged via local event_loop_handle_to_ctx (Js arm uses GET_VM_CTX_HOOK). WaiterThread::append stubbed (body still gated on UnboundedQueue/ConcurrentTask). sync runner / waiter-thread loop body remain gated. PollerWindows must become #[repr(C)] for offset_of.
+//   notes:      B-2 un-gate: Process impl (init_posix/on_exit/watch/watch_or_reap/rewatch/close/kill/enable+disable_keeping_event_loop_alive), PollerPosix impl, PosixSpawnResult::to_process now real. PollerPosix::Fd holds NonNull<FilePoll> (hive slot). EventLoopHandle→EventLoopCtx bridged via local event_loop_handle_to_ctx (Js arm uses GET_VM_CTX_HOOK). WaiterThreadPosix full body un-gated: append/reload_handlers/init/loop_ real (UnboundedQueue<TaskQueueEntry> + ConcurrentTask::create + AnyTaskWithExtraContext::New::init). sync runner remains gated. PollerWindows must become #[repr(C)] for offset_of.
 // ──────────────────────────────────────────────────────────────────────────

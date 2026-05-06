@@ -1378,16 +1378,30 @@ impl PartialEq for CustomPropertyName {
 }
 
 impl CustomPropertyName {
-    // blocked_on: DashedIdent::to_css (Printer::write_dashed_ident) — until
-    // that lands, both arms route through `serialize_identifier` so
-    // `properties_impl::property_mixin::to_css` resolves. The Zig spec arm
-    // for `Custom` calls `dest.writeDashedIdent`; Phase B switches once
-    // `Printer::write_dashed_ident` un-gates.
     pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
-        // SAFETY: arena-owned slice valid for printer lifetime.
-        let v = self.as_str();
-        css_parser::serializer::serialize_identifier(v, dest).map_err(|_| dest.add_fmt_error())
-        // TODO(port): Zig `Custom` arm → `dest.writeDashedIdent(custom, true)`.
+        match self {
+            CustomPropertyName::Custom(custom) => {
+                // Spec custom.zig:1496-1501 → DashedIdent.toCss → dest.writeDashedIdent(ident, true),
+                // which applies CSS-Modules dashed-ident renaming. Printer::write_dashed_ident is
+                // still `#[cfg(any())]`-gated (printer.rs:559); until it un-gates, fall back to
+                // plain identifier serialization so property_mixin::to_css keeps compiling.
+                // blocked_on: Printer::write_dashed_ident
+                #[cfg(any())]
+                {
+                    return dest.write_dashed_ident(custom, true);
+                }
+                // SAFETY: arena-owned slice valid for printer lifetime.
+                let v = unsafe { &*custom.v };
+                css_parser::serializer::serialize_identifier(v, dest)
+                    .map_err(|_| dest.add_fmt_error())
+            }
+            CustomPropertyName::Unknown(unknown) => {
+                // SAFETY: arena-owned slice valid for printer lifetime.
+                let v = unsafe { &*unknown.v };
+                css_parser::serializer::serialize_identifier(v, dest)
+                    .map_err(|_| dest.add_fmt_error())
+            }
+        }
     }
 
     pub fn from_str(name: &[u8]) -> CustomPropertyName {

@@ -6869,7 +6869,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 .expect("hot_module_reloading parse always has at least one part");
             let mut hmr_transform_ctx = ConvertESMExportsForHmr {
                 last_part,
-                is_in_node_modules: self.source.path.is_node_module(),
+                // PORT NOTE: `fs::Path::is_node_module` not yet on bun_logger::fs::Path;
+                // inline its body (Zig: `strings.contains(path.text, "/node_modules/")`).
+                is_in_node_modules: strings::contains(self.source.path.text, b"/node_modules/"),
                 imports_seen: Default::default(),
                 export_star_props: BumpVec::new_in(allocator),
                 export_props: BumpVec::new_in(allocator),
@@ -7039,7 +7041,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
             total_stmts_count += usize::from(preserve_strict_mode);
 
-            let stmts_to_copy = allocator.alloc_slice_fill_default::<Stmt>(total_stmts_count);
+            // PORT NOTE: Stmt is not Default; fill with `Stmt::empty()`.
+            let stmts_to_copy = allocator.alloc_slice_fill_with(total_stmts_count, |_| Stmt::empty());
             {
                 let mut remaining_stmts = &mut stmts_to_copy[..];
                 if preserve_strict_mode {

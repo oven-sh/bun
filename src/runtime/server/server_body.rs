@@ -2390,7 +2390,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if self.config.allow_hot && !self.config.id.is_empty() {
             // SAFETY: bun_vm() returns the per-thread singleton VM pointer.
             if let Some(hot) = unsafe { &mut *(&*self.global_this).bun_vm() }.hot_map() {
-                hot.remove(self.config.id.as_bytes());
+                hot.remove(&self.config.id);
             }
         }
 

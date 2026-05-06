@@ -53,6 +53,27 @@ use bun_watcher::Watcher;
 
 pub use crate::bake::dev_server::assets::Assets;
 pub use crate::bake::dev_server::DirectoryWatchStore;
+
+/// Shim: `bun_watcher::AnyResolveWatcher` and `bun_resolver::AnyResolveWatcher`
+/// are duplicate forward-decls of the same Zig vtable struct, defined in two
+/// crates to break a dependency cycle. Convert at the seam until the upstream
+/// move-in pass unifies them.
+#[inline]
+fn convert_resolve_watcher(w: bun_watcher::AnyResolveWatcher) -> bun_resolver::AnyResolveWatcher {
+    bun_resolver::AnyResolveWatcher {
+        // SAFETY: `Watcher::get_resolve_watcher` always stores `&mut Watcher` (non-null).
+        context: unsafe { ::core::ptr::NonNull::new_unchecked(w.context) },
+        // SAFETY: `unsafe fn(*mut (), &[u8], Fd)` and `fn(*mut (), &[u8], Fd)` have
+        // identical ABI; the resolver caller upholds the watcher callback's safety
+        // contract (ctx is the original `*mut Watcher`).
+        callback: unsafe {
+            ::core::mem::transmute::<
+                unsafe fn(*mut (), &[u8], bun_sys::Fd),
+                fn(*mut (), &[u8], bun_sys::Fd),
+            >(w.callback)
+        },
+    }
+}
 // TODO(port): ErrorReportRequest body lives in the gated draft; stub until un-gated.
 pub struct ErrorReportRequest;
 impl ErrorReportRequest {
@@ -511,7 +532,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     unsafe {
         w!(magic, Magic::Valid);
         // PORT NOTE: `bun_alloc::AllocationScope` is a unit struct stub.
-        w!(allocation_scope, AllocationScope);
+        w!(allocation_scope, bun_alloc::AllocationScope);
         w!(root, Box::from(options.root.as_bytes()));
         w!(vm, options.vm);
         w!(server, None);
@@ -628,7 +649,16 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     // every `DevServer` field is initialized (`assume_init` below precedes
     // `bun_watcher.start()`).
     // SAFETY: `FileSystem::init` returns a 'static singleton; reborrow as `&'static`.
-    let bun_watcher = match Watcher::init::<DevServer>(p, unsafe { &*fs }) {
+    // PORT NOTE: `bun_watcher::FileSystem` is a forward-decl shim distinct from
+    // `bun_resolver::fs::FileSystem`; the watcher only reads `top_level_dir`, so
+    // construct (and leak — process-lifetime singleton) the shim from the resolver
+    // singleton's field until the two types are unified upstream.
+    let watcher_fs: &'static bun_watcher::FileSystem =
+        Box::leak(Box::new(bun_watcher::FileSystem {
+            top_level_dir: unsafe { (*fs).top_level_dir },
+        }));
+    let _ = fs;
+    let bun_watcher = match Watcher::init::<DevServer>(p, watcher_fs) {
         Ok(w) => w,
         Err(err) => {
             return Err(
@@ -736,12 +766,12 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     dev.server_transpiler.options.dev_server = dev_ptr as *const ();
     dev.client_transpiler.options.dev_server = dev_ptr as *const ();
 
-    dev.server_transpiler.resolver.watcher = Some(dev.bun_watcher.get_resolve_watcher());
-    dev.client_transpiler.resolver.watcher = Some(dev.bun_watcher.get_resolve_watcher());
+    dev.server_transpiler.resolver.watcher = Some(convert_resolve_watcher(dev.bun_watcher.get_resolve_watcher()));
+    dev.client_transpiler.resolver.watcher = Some(convert_resolve_watcher(dev.bun_watcher.get_resolve_watcher()));
 
     if separate_ssr_graph {
         dev.ssr_transpiler.options.dev_server = dev_ptr as *const ();
-        dev.ssr_transpiler.resolver.watcher = Some(dev.bun_watcher.get_resolve_watcher());
+        dev.ssr_transpiler.resolver.watcher = Some(convert_resolve_watcher(dev.bun_watcher.get_resolve_watcher()));
     }
 
     debug_assert!(dev.server_transpiler.resolver.opts.target != bundler::options::Target::Browser);

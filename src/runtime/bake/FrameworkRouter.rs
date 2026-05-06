@@ -1736,7 +1736,7 @@ impl FrameworkRouter {
                                 t_index,
                                 InsertPattern::Dynamic(pattern),
                                 file_kind,
-                                fs.abs(&[file.dir(), file.base()]),
+                                fs_ref.abs(&[file.dir, file.base()]),
                                 ctx,
                                 &mut out_colliding_file_id,
                             )
@@ -1767,7 +1767,7 @@ impl FrameworkRouter {
                                 t_index,
                                 InsertPattern::Static(pattern),
                                 file_kind,
-                                fs.abs(&[file.dir(), file.base()]),
+                                fs_ref.abs(&[file.dir, file.base()]),
                                 ctx,
                                 &mut out_colliding_file_id,
                             )
@@ -1819,10 +1819,10 @@ pub struct StoredParseError {
 impl JSFrameworkRouter {
     pub fn get_bindings(global: &JSGlobalObject) -> JsResult<JSValue> {
         // TODO(port): jsc.JSObject.create with struct literal — needs builder API
-        let obj = bun_jsc::JSObject::create_empty(global, 2)?;
+        let obj = JSValue::create_empty_object(global, 2);
         obj.put(
             global,
-            "parseRoutePattern",
+            b"parseRoutePattern",
             bun_jsc::JSFunction::create(
                 global,
                 "parseRoutePattern",
@@ -1831,8 +1831,8 @@ impl JSFrameworkRouter {
                 Default::default(),
             ),
         );
-        obj.put(global, "FrameworkRouter", Self::js_get_constructor(global));
-        Ok(obj.to_js())
+        obj.put(global, b"FrameworkRouter", Self::get_constructor(global));
+        Ok(obj)
     }
 
     // PORT NOTE: no `#[bun_jsc::host_fn]` — `#[bun_jsc::JsClass]` on the struct
@@ -1845,17 +1845,16 @@ impl JSFrameworkRouter {
         if !opts.is_object() {
             return Err(global.throw_invalid_arguments(
                 "FrameworkRouter needs an object as it's first argument",
-                &[],
             ));
         }
 
-        let Some(root) = opts.get_optional::<bun_str::zig_string::Slice>(global, "root")? else {
-            return Err(global.throw_invalid_arguments("Missing options.root", &[]));
+        let root: bun_str::zig_string::Slice = match opts.get(global, "root")? {
+            Some(v) if !v.is_undefined_or_null() => v.to_slice(global)?,
+            _ => return Err(global.throw_invalid_arguments("Missing options.root")),
         };
 
         let style = Style::from_js(
-            opts.get_optional::<JSValue>(global, "style")?
-                .unwrap_or(JSValue::UNDEFINED),
+            opts.get(global, "style")?.unwrap_or(JSValue::UNDEFINED),
             global,
         )?;
         // Zig's `errdefer style.deinit()` is implicit: `Style` owns a `Strong` (Drop type),
@@ -1863,8 +1862,8 @@ impl JSFrameworkRouter {
 
         let abs_root: Box<[u8]> = strings::without_trailing_slash(
             paths::resolve_path::join_abs::<paths::platform::Auto>(
-                // SAFETY: FileSystem::instance() returns the process-global singleton; live for the program.
-                unsafe { (*bun_resolver::fs::FileSystem::instance()).top_level_dir },
+                // FileSystem::instance() returns the process-global singleton; live for the program.
+                bun_resolver::fs::FileSystem::instance().top_level_dir,
                 root.slice(),
             ),
         )
@@ -1884,7 +1883,7 @@ impl JSFrameworkRouter {
             // Unused by JSFrameworkRouter
             client_file: None,
             server_file: OpaqueFileId(0),
-            server_file_string: Strong::empty(),
+            server_file_string: StrongOptional::empty(),
             ..Default::default()
         }]);
 
@@ -1894,11 +1893,17 @@ impl JSFrameworkRouter {
             stored_parse_errors: Vec::new(),
         });
 
+        // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachine` for a Bun-owned global.
+        let resolver = unsafe { &mut (*global.bun_vm()).transpiler.resolver };
         jsfr.router.scan(
             TypeIndex::init(0),
-            &mut global.bun_vm().transpiler.resolver,
-            &mut *jsfr as &mut dyn InsertionHandler,
+            resolver,
             // TODO(port): borrowck — `jsfr.router` and `jsfr` both borrowed; needs reshape (split fields)
+            {
+                todo!("blocked_on: borrowck — JSFrameworkRouter::constructor split-borrow of router/self");
+                #[allow(unreachable_code)]
+                &mut *jsfr as &mut dyn InsertionHandler
+            },
         )?;
         if !jsfr.stored_parse_errors.is_empty() {
             let arr = JSValue::create_empty_array(global, jsfr.stored_parse_errors.len())?;

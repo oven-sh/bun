@@ -1626,16 +1626,14 @@ impl<'a> PipelineTask<'a> {
     }
 
     /// Back on the JS thread.
-    pub fn then(self: Box<Self>, promise: &mut JSPromise) -> Result<(), jsc::JsTerminated> {
+    pub fn then(mut self: Box<Self>, promise: &mut JSPromise) -> Result<(), jsc::JsTerminated> {
         // `defer self.deinit()` → handled by `Drop for PipelineTask` at scope exit.
         // JS thread again — release the per-task pin so user code can
         // transfer/detach the source now.
-        // PORT NOTE: reshaped for borrowck — take `input` out so `release()` can
-        // consume it while we still hold `&self` for the rest.
-        let input = mem::take(&mut { self }.input);
-        // TODO(port): the line above doesn't compile as-is — Phase B: destructure
-        // `*self` into locals so `input.release()` and `Drop` don't fight.
-        input.release();
+        // PORT NOTE: reshaped for borrowck — `PipelineTask: Drop` forbids
+        // moving fields out by destructure; `mem::take`/`mem::replace` the
+        // owning fields into locals instead so `Drop` still runs on the husk.
+        mem::take(&mut self.input).release();
         let global = self.global;
         // SAFETY: BACKREF; JS thread; wrapper kept alive by `this_ref` Strong.
         let image = unsafe { &mut *self.image };
@@ -1648,7 +1646,11 @@ impl<'a> PipelineTask<'a> {
             }
             _ => {}
         }
-        match self.result {
+        // PORT NOTE: `Drop` forbids moving out of `self.result`; swap in a
+        // throwaway sentinel (`Err` is `Copy`) and match the owned local.
+        let result =
+            mem::replace(&mut self.result, TaskResult::Err(codecs::Error::UnknownFormat));
+        match result {
             TaskResult::Encoded { out, format, .. } => {
                 // Ownership of `out.bytes` is transferred to JS below; suppress
                 // the codec `Drop` so the deallocator runs exactly once (via the

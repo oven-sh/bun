@@ -14,8 +14,7 @@
 use core::mem::size_of;
 
 use bun_str::strings;
-// TODO(port): move to <area>_sys / verify exact module path for simdutf bindings
-use bun_simdutf as simdutf;
+use bun_simdutf_sys::simdutf;
 
 #[inline]
 fn eql_comptime(a: &[u8], b: &'static [u8]) -> bool {
@@ -114,9 +113,15 @@ impl Flags {
     }
 }
 
-// TODO(port): @embedFile — verify the relative path resolves correctly under cargo
-// (include_bytes! is relative to this source file, same as Zig @embedFile).
+// `@embedFile("bun_shim_impl.exe")` — the shim PE is built as a separate
+// artifact by the Windows build before this crate is compiled, then embedded
+// here. It is only ever consumed from `#[cfg(windows)]` code paths
+// (`bin::Linker::create_windows_shim`), so on non-Windows hosts there is no
+// artifact to embed and the data is never read.
+#[cfg(windows)]
 pub const EMBEDDED_EXECUTABLE_DATA: &[u8] = include_bytes!("bun_shim_impl.exe");
+#[cfg(not(windows))]
+pub const EMBEDDED_EXECUTABLE_DATA: &[u8] = &[];
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 enum ExtensionType {
@@ -167,7 +172,7 @@ impl<'a> Shebang<'a> {
         Ok(Shebang {
             launcher,
             // TODO(@paperclover): what if this is invalid utf8?
-            utf16_len: u32::try_from(simdutf::length::utf16_from_utf8(launcher)).unwrap(),
+            utf16_len: u32::try_from(simdutf::length::utf16::from::utf8(launcher)).unwrap(),
             is_node_or_bun,
         })
     }

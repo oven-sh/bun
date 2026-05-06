@@ -16,7 +16,7 @@ use bun_install::{
     buntaghashbuf_make, initialize_store, invalid_package_id,
 };
 use bun_install::lockfile::{self, Lockfile, Package};
-use bun_install::lockfile::tree;
+use crate::lockfile_real::tree;
 use bun_install::package_manager::{Options, PackageManager};
 use bun_semver::String as SemverString;
 use bun_logger as logger;

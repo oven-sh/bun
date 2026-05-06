@@ -295,11 +295,14 @@ describe("system-wide bunfig.toml", () => {
     // default-path probe stays best-effort. Only the Windows default-path is
     // overridable via env (ALLUSERSPROFILE); on POSIX the path is hardcoded
     // /etc/bunfig.toml, so this only runs on Windows.
+    //
+    // The system bunfig lives in `allusers/bunfig.toml` (pointed at by
+    // ALLUSERSPROFILE); the project dir uses a separate subdirectory with its
+    // own package.json so auto-loaded project bunfig.toml lookup in cwd
+    // doesn't re-load the same broken file and re-trigger the failure path.
     using dir = tempDir("system-bunfig-auto-broken", {
-      "package.json": `{"name": "test", "version": "1.0.0"}`,
-      // Invalid `auto` value — Bunfig.Parser.addError throws
-      // error.@"Invalid Bunfig" (the non-log-only error path).
-      "bunfig.toml": `[install]\nauto = "bogus-value"\n`,
+      "allusers/bunfig.toml": `[install]\nauto = "bogus-value"\n`,
+      "project/package.json": `{"name": "test", "version": "1.0.0"}`,
     });
 
     await using proc = Bun.spawn({
@@ -311,9 +314,12 @@ describe("system-wide bunfig.toml", () => {
         // No BUN_SYSTEM_CONFIG — forces the auto-discovered path via
         // %ALLUSERSPROFILE%\bunfig.toml.
         BUN_SYSTEM_CONFIG: undefined,
-        ALLUSERSPROFILE: String(dir),
+        ALLUSERSPROFILE: join(String(dir), "allusers"),
+        // Neutralise home config lookup so only the system path is stressed.
+        XDG_CONFIG_HOME: join(String(dir), "no-home"),
+        HOME: join(String(dir), "no-home"),
       },
-      cwd: String(dir),
+      cwd: join(String(dir), "project"),
       stderr: "pipe",
     });
 

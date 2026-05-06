@@ -5025,19 +5025,22 @@ impl<'a> Resolver<'a> {
         if cfg!(debug_assertions) {
             debug_assert!(queue_slice_len > 0);
         }
-        let mut open_dir_count: usize = 0;
+        let open_dir_count = core::cell::Cell::new(0usize);
 
         // When this function halts, any item not processed means it's not found.
+        // PORT NOTE: capture only what the cleanup needs by-value (store_fd) / by-Cell
+        // (open_dir_count) so the guard doesn't pin `&mut self` across the loop body.
+        let close_dirs_store_fd = self.store_fd;
+        let close_dirs_need_close = self.fs.fs.need_to_close_files();
         let _close_dirs = scopeguard::guard((), |_| {
-            if open_dir_count > 0 && (!self.store_fd || self.fs.fs.need_to_close_files()) {
-                let open_dirs = &bufs!(open_dirs)[0..open_dir_count];
+            let n = open_dir_count.get();
+            if n > 0 && (!close_dirs_store_fd || close_dirs_need_close) {
+                let open_dirs = &bufs!(open_dirs)[0..n];
                 for open_dir in open_dirs {
                     open_dir.close();
                 }
             }
         });
-        // TODO(port): the above scopeguard captures &mut self across the loop body — Phase B
-        // may need to convert this to manual cleanup at each return point.
 
         // We want to walk in a straight line from the topmost directory to the desired directory
         // For each directory we visit, we get the entries, but not traverse into child directories
@@ -5146,8 +5149,8 @@ impl<'a> Resolver<'a> {
             if !queue_top.fd.is_valid() {
                 Fs::FileSystem::set_max_fd(open_dir.cast());
                 // these objects mostly just wrap the file descriptor, so it's fine to keep it.
-                bufs!(open_dirs)[open_dir_count] = open_dir;
-                open_dir_count += 1;
+                bufs!(open_dirs)[open_dir_count.get()] = open_dir;
+                open_dir_count.set(open_dir_count.get() + 1);
             }
 
             let dir_path: &'static [u8] = if !queue_top.safe_path.is_empty() {

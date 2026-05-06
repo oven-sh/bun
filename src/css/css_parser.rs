@@ -2079,73 +2079,7 @@ impl<'a, T: CustomAtRuleParser> DeclarationParser for NestedRuleParser<'a, T> {
     }
 }
 
-// ───────────────────────────── StyleSheetParser ─────────────────────────────
-
-pub struct StyleSheetParser<'a, P: AtRuleParser + QualifiedRuleParser> {
-    pub input: &'a mut Parser<'a>,
-    pub parser: &'a mut P,
-    pub any_rule_so_far: bool,
-}
-
-impl<'a, P> StyleSheetParser<'a, P>
-where
-    P: AtRuleParser + QualifiedRuleParser<QualifiedRule = <P as AtRuleParser>::AtRule>,
-{
-    pub fn new(input: &'a mut Parser<'a>, parser: &'a mut P) -> Self {
-        Self { input, parser, any_rule_so_far: false }
-    }
-
-    pub fn next(&mut self) -> Option<CssResult<<P as AtRuleParser>::AtRule>> {
-        loop {
-            self.input.skip_cdc_and_cdo();
-
-            let start = self.input.state();
-            let at_keyword: Option<&[u8]> = match self.input.next_byte()? {
-                b'@' => 'brk: {
-                    let at_keyword: &Token = match self.input.next_including_whitespace_and_comments() {
-                        Ok(vv) => vv,
-                        Err(_) => {
-                            self.input.reset(&start);
-                            break 'brk None;
-                        }
-                    };
-                    if let Token::AtKeyword(kw) = at_keyword {
-                        break 'brk Some(*kw);
-                    }
-                    self.input.reset(&start);
-                    None
-                }
-                _ => None,
-            };
-
-            if let Some(name) = at_keyword {
-                let first_stylesheet_rule = !self.any_rule_so_far;
-                self.any_rule_so_far = true;
-
-                if first_stylesheet_rule
-                    && strings::eql_case_insensitive_ascii(name, b"charset", true)
-                {
-                    let delimiters = Delimiters::SEMICOLON | Delimiters::CLOSE_CURLY_BRACKET;
-                    let _ = self.input.parse_until_after(delimiters, |p| Parser::parse_empty(p));
-                } else {
-                    return Some(parse_at_rule(&start, name, self.input, self.parser));
-                }
-            } else {
-                self.any_rule_so_far = true;
-                return Some(parse_qualified_rule(
-                    &start,
-                    self.input,
-                    self.parser,
-                    Delimiters::CURLY_BRACKET,
-                ));
-            }
-        }
-    }
-}
-
 } // mod rule_parsers
-#[cfg(any())]
-pub use rule_parsers::*;
 
 /// A result returned from `to_css`, including the serialized CSS and other
 /// metadata depending on the input options.
@@ -2185,13 +2119,14 @@ impl Default for MinifyOptions {
     }
 }
 
-#[cfg(any())] pub type BundlerStyleSheet = StyleSheet<BundlerAtRule>;
-#[cfg(any())] pub type BundlerCssRuleList = CssRuleList<BundlerAtRule>;
-#[cfg(any())] pub type BundlerCssRule = CssRule<BundlerAtRule>;
-#[cfg(any())] pub type BundlerLayerBlockRule = css_rules::layer::LayerBlockRule<BundlerAtRule>;
-#[cfg(any())] pub type BundlerSupportsRule = css_rules::supports::SupportsRule<BundlerAtRule>;
-#[cfg(any())] pub type BundlerMediaRule = css_rules::media::MediaRule<BundlerAtRule>;
-#[cfg(any())] pub type BundlerPrintResult = css_printer::PrintResult<BundlerAtRule>;
+pub type BundlerStyleSheet = StyleSheet<BundlerAtRule>;
+pub type BundlerCssRuleList = CssRuleList<BundlerAtRule>;
+pub type BundlerCssRule = CssRule<BundlerAtRule>;
+pub type BundlerLayerBlockRule = css_rules::layer::LayerBlockRule<BundlerAtRule>;
+pub type BundlerSupportsRule = css_rules::supports::SupportsRule<BundlerAtRule>;
+pub type BundlerMediaRule = css_rules::media::MediaRule<BundlerAtRule>;
+#[cfg(any())] // blocked_on: printer.rs PrintResult<R> generic
+pub type BundlerPrintResult = css_printer::PrintResult<BundlerAtRule>;
 
 pub struct BundlerTailwindState {
     pub source: Box<[u8]>,

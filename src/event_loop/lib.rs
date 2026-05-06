@@ -35,6 +35,12 @@ pub mod SpawnSyncEventLoop;
 pub use AnyTask::JsResult;
 pub use ConcurrentTask::{Task, TaskTag, task_tag};
 
+// snake_case alias for the file-level-struct module so higher tiers can
+// `use bun_event_loop::auto_flusher::{AutoFlusher, HasAutoFlusher}` without
+// tripping the type/module namespace collision on the PascalCase form.
+pub use AutoFlusher as auto_flusher;
+pub use DeferredTaskQueue as deferred_task_queue;
+
 pub use any_event_loop::{
     AnyEventLoop, EventLoopHandle, EventLoopTask, EventLoopTaskPtr, JsEventLoopVTable,
 };

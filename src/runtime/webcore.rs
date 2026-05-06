@@ -11,8 +11,6 @@ use core::ptr::NonNull;
 mod _gated_submods {
     pub use bun_jsc::js_error_code::DOMExceptionCode;
     pub use bun_jsc::web_worker;
-    // TODO(b2-blocked): bun_event_loop::auto_flusher
-    pub use bun_event_loop::auto_flusher;
 
     pub mod crypto;
     pub mod bake_response;

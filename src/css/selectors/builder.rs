@@ -81,23 +81,23 @@ impl<'bump, Impl: ValidSelectorImpl> SelectorBuilder<'bump, Impl> {
     /// by the given combinator.
     #[inline]
     pub fn push_combinator(&mut self, combinator: Combinator) {
-        self.combinators
-            .append(self.bump, (combinator, self.current_len));
+        // PORT NOTE: `SmallList::append/insert` no longer take an allocator —
+        // it owns its spill buffer (global allocator). The `bump` field is
+        // retained for `BuildResult.components` (BumpVec) only.
+        self.combinators.append((combinator, self.current_len));
         self.current_len = 0;
     }
 
     /// Pushes a simple selector onto the current compound selector.
     pub fn push_simple_selector(&mut self, ss: GenericComponent<Impl>) {
         debug_assert!(!ss.is_combinator());
-        self.simple_selectors.append(self.bump, ss);
+        self.simple_selectors.append(ss);
         self.current_len += 1;
     }
 
     pub fn add_nesting_prefix(&mut self) {
-        self.combinators
-            .insert(self.bump, 0, (Combinator::Descendant, 1));
-        self.simple_selectors
-            .insert(self.bump, 0, GenericComponent::Nesting);
+        self.combinators.insert(0, (Combinator::Descendant, 1));
+        self.simple_selectors.insert(0, GenericComponent::Nesting);
     }
 
     // PORT NOTE: Zig `deinit` only freed `simple_selectors` and `combinators`.
@@ -114,11 +114,10 @@ impl<'bump, Impl: ValidSelectorImpl> SelectorBuilder<'bump, Impl> {
         parsed_part: bool,
     ) -> BuildResult<'bump, Impl> {
         let specificity = compute_specificity::<Impl>(self.simple_selectors.slice());
-        let flags = SelectorFlags {
-            has_pseudo: parsed_pseudo,
-            has_slotted: parsed_slotted,
-            has_part: parsed_part,
-        };
+        let mut flags = SelectorFlags::empty();
+        if parsed_pseudo { flags |= SelectorFlags::HAS_PSEUDO; }
+        if parsed_slotted { flags |= SelectorFlags::HAS_SLOTTED; }
+        if parsed_part { flags |= SelectorFlags::HAS_PART; }
         // `build_with_specificity_and_flags()` will
         // PORT NOTE: Zig had `defer this.deinit()` here to free SmallList capacity
         // after building. In Rust, `Drop` on `SelectorBuilder` handles this when the

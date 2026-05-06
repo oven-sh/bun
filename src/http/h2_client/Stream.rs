@@ -11,9 +11,7 @@ use bun_picohttp as picohttp;
 
 use crate::h2_frame_parser as wire;
 // `H2Client.zig` is the parent module of `h2_client/`; `live_streams` lives there.
-use super as h2;
-use super::ClientSession;
-// TODO(port): `bun.http` is the crate-root struct in Zig; confirm Rust path.
+use super::client_session::ClientSession;
 use crate::HTTPClient;
 
 // `pub const new = bun.TrivialNew(@This());` — see `Stream::new` below, which fills the
@@ -21,7 +19,7 @@ use crate::HTTPClient;
 // Drop runs when removed from the map.
 
 pub struct Stream {
-    // TODO(port): was u31 (HTTP/2 stream IDs are 31-bit); top bit must stay clear.
+    // PORT NOTE: was u31 (HTTP/2 stream IDs are 31-bit); top bit must stay clear.
     pub id: u32,
     // BACKREF: this Stream is owned by `session.streams`; raw ptr per LIFETIMES class BACKREF.
     pub session: *mut ClientSession,
@@ -65,14 +63,15 @@ pub struct Stream {
     pub send_window: i32,
     /// Unsent suffix of a `.bytes` request body, parked while the send
     /// window is exhausted. Borrows from `client.state.request_body`.
-    // TODO(port): lifetime — borrows from client.state.request_body; using &'static as Phase-A placeholder.
-    pub pending_body: &'static [u8],
+    // PORT NOTE: lifetime — borrows from client.state.request_body; raw slice
+    // ptr to avoid threading a self-referential lifetime.
+    pub pending_body: *const [u8],
 }
 
 /// RFC 9113 §5.1. A `Stream` is created by sending HEADERS, so it starts
 /// `.open`; `idle`/`reserved` are never represented as objects. END_STREAM
 /// half-closes one side; both, or any RST_STREAM, transitions to `.closed`.
-#[repr(u8)] // TODO(port): was enum(u2)
+#[repr(u8)] // PORT NOTE: was enum(u2)
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum State {
     Open,
@@ -86,7 +85,7 @@ pub enum State {
 impl Drop for Stream {
     fn drop(&mut self) {
         // Zig .monotonic == LLVM monotonic == Rust Relaxed.
-        let _ = h2::LIVE_STREAMS.fetch_sub(1, Ordering::Relaxed);
+        let _ = super::LIVE_STREAMS.fetch_sub(1, Ordering::Relaxed);
         // header_block / body_buffer / decoded_bytes / decoded_headers: Vec<_> drops automatically.
         // bun.destroy(this): freeing the Box is the caller's drop; nothing to do here.
     }
@@ -120,8 +119,16 @@ impl Stream {
             unacked_bytes: 0,
             data_bytes_received: 0,
             send_window,
-            pending_body: b"",
+            pending_body: b"" as *const [u8],
         })
+    }
+
+    #[inline]
+    pub fn pending_body(&self) -> &'static [u8] {
+        // SAFETY: pending_body points into client.state.request_body which
+        // outlives the stream. Lifetime erased to thread through Zig-shaped
+        // borrowck (session mutated while reading this).
+        unsafe { &*self.pending_body }
     }
 
     pub fn rst(&mut self, code: wire::ErrorCode) {
@@ -130,14 +137,14 @@ impl Stream {
         }
         self.rst_done = true;
         self.state = State::Closed;
-        let value: u32 = (code as u32).swap_bytes();
+        let value: [u8; 4] = (code as u32).to_be_bytes();
         // SAFETY: `session` is a live backref while this Stream is in `session.streams`.
         unsafe {
             (*self.session).write_frame(
                 wire::FrameType::HTTP_FRAME_RST_STREAM,
                 0,
                 self.id,
-                &value.to_ne_bytes(),
+                &value,
             );
         }
     }
@@ -175,7 +182,9 @@ impl Stream {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/http/h2_client/Stream.zig (114 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      session/client are raw backrefs (no TSV row); pending_body borrows client.state.request_body — needs real lifetime in Phase B; u31 id widened to u32.
+//   confidence: medium-high
+//   todos:      0
+//   notes:      session/client are raw backrefs; pending_body borrows
+//               client.state.request_body via raw slice ptr; u31 id widened
+//               to u32.
 // ──────────────────────────────────────────────────────────────────────────

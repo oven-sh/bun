@@ -52,10 +52,6 @@ impl SyntaxString {
 
     pub fn parse(input: &mut css::Parser) -> CssResult<SyntaxString> {
         let string = input.expect_string()?;
-        // SAFETY: `expect_string` returns a sub-slice of `input.tokenizer.src`;
-        // see `css_parser::src_str`. Phase-A treats arena-borrowed slices as
-        // `'static` placeholders pending `'bump` threading.
-        let string: &'static [u8] = unsafe { core::mem::transmute::<&[u8], &'static [u8]>(string) };
         match SyntaxString::parse_string(string) {
             Ok(result) => Ok(result),
             Err(()) => Err(input.new_custom_error(ParserError::invalid_value)),
@@ -63,7 +59,7 @@ impl SyntaxString {
     }
 
     /// Parses a syntax string.
-    pub fn parse_string(input: &'static [u8]) -> Result<SyntaxString, ()> {
+    pub fn parse_string(input: &[u8]) -> Result<SyntaxString, ()> {
         // https://drafts.css-houdini.org/css-properties-values-api/#parsing-syntax
         let mut trimmed_input = strings::trim_left(input, SPACE_CHARACTERS);
         if trimmed_input.is_empty() {
@@ -121,7 +117,7 @@ pub struct SyntaxComponent {
 }
 
 impl SyntaxComponent {
-    pub fn parse_string(input: &mut &'static [u8]) -> Result<SyntaxComponent, ()> {
+    pub fn parse_string(input: &mut &[u8]) -> Result<SyntaxComponent, ()> {
         let kind = SyntaxComponentKind::parse_string(input)?;
 
         // Pre-multiplied types cannot have multipliers.
@@ -191,12 +187,16 @@ pub enum SyntaxComponentKind {
     /// A `<custom-ident>` component.
     CustomIdent,
     /// A literal component.
-    // TODO(port): arena-borrowed slice — `&'static` placeholder per Token/ident.rs.
-    Literal(&'static [u8]),
+    // PORT NOTE: PORTING.md §Forbidden bans laundering a parser-borrowed slice to
+    // `&'static`. Zig's arena keeps the source alive for the AST's lifetime; Rust
+    // would need a `'bump` lifetime threaded through `SyntaxString`. Phase-A owns
+    // the bytes instead — `Box<[u8]>` per §Forbidden ("the field should be
+    // `Box<[T]>` … not `&'static [T]`"). Phase B may swap for `&'bump [u8]`.
+    Literal(Box<[u8]>),
 }
 
 impl SyntaxComponentKind {
-    pub fn parse_string(input: &mut &'static [u8]) -> Result<SyntaxComponentKind, ()> {
+    pub fn parse_string(input: &mut &[u8]) -> Result<SyntaxComponentKind, ()> {
         // https://drafts.css-houdini.org/css-properties-values-api/#consume-syntax-component
         *input = strings::trim_left(*input, SPACE_CHARACTERS);
         if strings::starts_with_char(*input, b'<') {
@@ -247,7 +247,7 @@ impl SyntaxComponentKind {
             while end_idx < input.len() && is_name_code_point(input[end_idx]) {
                 end_idx += strings::utf8_byte_sequence_length(input[end_idx]) as usize;
             }
-            let literal = &input[0..end_idx];
+            let literal: Box<[u8]> = Box::from(&input[0..end_idx]);
             *input = &input[end_idx..];
             Ok(SyntaxComponentKind::Literal(literal))
         } else {
@@ -271,7 +271,7 @@ impl SyntaxComponentKind {
             SyntaxComponentKind::TransformFunction => dest.write_str("<transform-function>"),
             SyntaxComponentKind::TransformList => dest.write_str("<transform-list>"),
             SyntaxComponentKind::CustomIdent => dest.write_str("<custom-ident>"),
-            SyntaxComponentKind::Literal(l) => dest.write_str(*l),
+            SyntaxComponentKind::Literal(l) => dest.write_str(&l[..]),
         }
     }
 

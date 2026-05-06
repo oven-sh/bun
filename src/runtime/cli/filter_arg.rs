@@ -273,7 +273,7 @@ pub struct PackageFilterIterator {
     // TODO(port): lifetime — `patterns` and `root_dir` borrow from the caller in Zig. Phase-A
     // rule forbids struct lifetimes; stored as raw slices, callers must keep them alive for the
     // iterator's lifetime. Revisit in Phase B (likely `<'a>` on the struct).
-    patterns: *const [*const [u8]],
+    patterns: *const [Box<[u8]>],
     pattern_idx: usize,
     root_dir: *const [u8],
 

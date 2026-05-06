@@ -657,8 +657,10 @@ impl PmPkgCommand {
 
             if path_parts.len() == 1 {
                 let expr = Self::parse_value(value, parse_json)?;
-                root.as_e_object_mut().put(path_parts[0], expr)?;
-                // TODO(port): as_e_object_mut() assumed accessor on ExprData; verify API in Phase B
+                root.data
+                    .e_object_mut()
+                    .unwrap()
+                    .put(dummy_bump(), path_parts[0], expr)?;
                 return Ok(());
             }
 
@@ -675,7 +677,10 @@ impl PmPkgCommand {
         if path_parts.len() == 1 {
             let expr = Self::parse_value(value, parse_json)?;
 
-            root.as_e_object_mut().put(&path_parts[0], expr)?;
+            root.data
+                .e_object_mut()
+                .unwrap()
+                .put(dummy_bump(), &path_parts[0], expr)?;
 
             // PORT NOTE: Zig's `path_parts[0] = ""` here was an ownership-transfer hack to neuter
             // the caller's `defer allocator.free(part)`. That defer is gone (Vec<Box<[u8]>> drops

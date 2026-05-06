@@ -156,25 +156,25 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
             let line = strings::trim_right(raw, b"\r");
             if line.starts_with(b"SF:") {
                 let name = &line[3..];
-                let gop = by_file.get_or_put(name);
+                let gop = bun_core::handle_oom(by_file.get_or_put(name));
                 if !gop.found_existing {
                     let owned: Box<[u8]> = Box::from(name);
-                    *gop.key = owned.clone();
-                    *gop.value = FileCoverage { path: owned, ..Default::default() };
+                    *gop.key_ptr = owned.clone();
+                    *gop.value_ptr = FileCoverage { path: owned, ..Default::default() };
                 }
                 cur = Some(gop.index);
             } else if line == b"end_of_record" {
                 cur = None;
             } else if let Some(i) = cur {
-                let fc = by_file.value_at_mut(i);
+                let fc = &mut by_file.values_mut()[i];
                 if line.starts_with(b"DA:") {
                     let mut parts = line[3..].split(|b| *b == b',');
                     let Some(ln_s) = parts.next() else { continue };
                     let Ok(ln) = strings::parse_int::<u32>(ln_s, 10) else { continue };
                     let Some(cnt_s) = parts.next() else { continue };
                     let Ok(cnt) = strings::parse_int::<u32>(cnt_s, 10) else { continue };
-                    let gop = fc.da.get_or_put(ln);
-                    *gop.value = if gop.found_existing { gop.value.saturating_add(cnt) } else { cnt };
+                    let gop = bun_core::handle_oom(fc.da.get_or_put(ln));
+                    *gop.value_ptr = if gop.found_existing { gop.value_ptr.saturating_add(cnt) } else { cnt };
                 } else if line.starts_with(b"FNF:") {
                     fc.fnf = fc.fnf.max(strings::parse_int::<u32>(&line[4..], 10).unwrap_or(0));
                 } else if line.starts_with(b"FNH:") {

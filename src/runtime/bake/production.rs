@@ -45,6 +45,25 @@ macro_rules! log {
     ($($arg:tt)*) => { bun_core::scoped_log!(production, $($arg)*) };
 }
 
+/// Local shim: `bun_core::Error` has no `From<bun_jsc::JsError>` (tier-0 cannot
+/// depend on tier-6). Map every JS-side failure to the `"JSError"` sentinel the
+/// caller already pattern-matches on (production.zig: `error.JSError`).
+#[inline(always)]
+fn js_err(_: bun_jsc::JsError) -> bun_core::Error {
+    bun_core::err!("JSError")
+}
+
+/// `bun_bundler::options::Side` (the type carried on `OutputFile.side`) is a
+/// distinct nominal copy of `bake_types::Side`; no upstream `From`/`Display`.
+/// Local stringifier for the debug log line below.
+#[inline(always)]
+fn side_name(s: bun_bundler::options::Side) -> &'static str {
+    match s {
+        bun_bundler::options::Side::Client => "client",
+        bun_bundler::options::Side::Server => "server",
+    }
+}
+
 pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
     bake::print_warning();
 

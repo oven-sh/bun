@@ -12,17 +12,39 @@ use crate::command::Context;
 
 pub struct ExecCommand;
 
+/// Process-lifetime arena for the exec command's `Transpiler`. Zig passed
+/// `ctx.allocator` (== `bun.default_allocator`); the Rust port threads an
+/// `&'static Arena` per PORTING.md §AST crates. Same `Once`-guarded
+/// `static mut MaybeUninit` shape as `run_command::runner_arena` (Bump is
+/// `!Sync`, so `OnceLock` cannot hold it directly).
+fn exec_arena() -> &'static bun_alloc::Arena {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    static mut ARENA: ::core::mem::MaybeUninit<bun_alloc::Arena> =
+        ::core::mem::MaybeUninit::uninit();
+    ONCE.call_once(|| {
+        // SAFETY: one-time init under `Once`; no concurrent writer.
+        unsafe { (*(&raw mut ARENA)).write(bun_alloc::Arena::new()) };
+    });
+    // SAFETY: initialized exactly once above; `bun exec` is a single-shot CLI
+    // command on the dispatch thread, so the `!Sync` Bump is never observed
+    // concurrently.
+    unsafe { (*(&raw const ARENA)).assume_init_ref() }
+}
+
 impl ExecCommand {
     // TODO(port): narrow error set
     pub fn exec(ctx: Context) -> Result<(), bun_core::Error> {
-        let script: &[u8] = &ctx.positionals[1];
+        // PORT NOTE: reshaped for borrowck — clone the positional so `ctx`
+        // can be reborrowed `&mut` for `init_and_run_from_source` below.
+        let script: Box<[u8]> = ctx.positionals[1].clone();
         // this is a hack: make dummy bundler so we can use its `.runEnvLoader()` function to populate environment variables probably should split out the functionality
         let mut bundle = Transpiler::init(
+            exec_arena(),
             ctx.log,
             {
                 // PORT NOTE: `bun_jsc::config` is `#[cfg(any())]`-gated; inline
                 // `configure_transform_options_for_bun_vm` (3 field writes).
-                let mut args = ctx.args;
+                let mut args = ctx.args.clone();
                 args.write = Some(false);
                 args.resolve = Some(api::ResolveMode::Lazy);
                 args.target = Some(api::Target::Bun);
@@ -34,30 +56,33 @@ impl ExecCommand {
         let disable_default_env_files = bundle.options.env.disable_default_env_files;
         bundle.run_env_loader(disable_default_env_files)?;
         let mut buf = PathBuffer::uninit();
-        let cwd: &[u8] = match bun_sys::getcwd(&mut buf) {
-            Ok(p) => p,
+        let cwd: &[u8] = match bun_sys::getcwd(&mut *buf) {
+            Ok(n) => &buf[..n],
             Err(e) => {
-                Output::err(
-                    e,
-                    format_args!("failed to run script <b>{}<r>", BStr::new(script)),
-                );
+                Output::err(e, "failed to run script <b>{}<r>", (BStr::new(&script),));
                 Global::exit(1);
             }
         };
-        let mini = bun_event_loop::MiniEventLoop::init_global(bundle.env, Some(cwd));
+        // SAFETY: `Transpiler::init` always populates `env` (caller-supplied,
+        // process singleton, or freshly `Box::into_raw`'d) — never null. The
+        // loader is a thread-/process-lifetime singleton, so `&'static mut` is
+        // sound for the single CLI dispatch thread.
+        let env = unsafe { &mut *(bundle.env as *mut bun_dotenv::Loader<'static>) };
+        let mini = bun_event_loop::MiniEventLoop::init_global(Some(env), Some(cwd));
         let parts: [&[u8]; 2] = [
             cwd,
             b"[eval]",
         ];
         let script_path = bun_paths::resolve_path::join::<bun_paths::platform::Auto>(&parts);
 
-        let code = match Interpreter::init_and_run_from_source(ctx, mini, script_path, script, None) {
+        // SAFETY: `init_global` returns the thread-local singleton raw pointer;
+        // reborrow `&'static mut` for the duration of the interpreter run (no
+        // other live `&mut` to the same `MiniEventLoop` on this thread).
+        let mini_ref = unsafe { &mut *mini };
+        let code = match Interpreter::init_and_run_from_source(ctx, mini_ref, script_path, &script, None) {
             Ok(c) => c,
             Err(err) => {
-                Output::err(
-                    err,
-                    format_args!("failed to run script <b>{}<r>", BStr::new(script_path)),
-                );
+                Output::err(err, "failed to run script <b>{}<r>", (BStr::new(script_path),));
                 Global::exit(1);
             }
         };
@@ -68,7 +93,7 @@ impl ExecCommand {
         //         Output.flush();
         //     }
 
-        Global::exit(code);
+        Global::exit(u32::from(code));
         // }
     }
 }

@@ -57,7 +57,7 @@ type CssAssetId = u64;
 // The server's incremental graph does not store previously bundled code because there is
 // only one instance of the server. Instead, it stores which module graphs it is a part of.
 // This makes sure that recompilation knows what bundler options to use.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct ServerFile {
     /// Is this file built for the Server graph.
     pub is_rsc: bool,
@@ -157,6 +157,7 @@ impl Default for ClientFile {
 // a `source_map`/`html_route_bundle_index` union to fit in `4 * u64`. In Phase A we
 // store the unpacked `ClientFile` directly and rely on Phase B to re-pack if the size
 // assertion (`@sizeOf == @sizeOf(u64) * 4`) is load-bearing.
+#[derive(Default)]
 pub struct ClientFilePacked {
     unsafe_packed_data: ClientFile,
 }
@@ -228,7 +229,7 @@ impl ClientFile {
 pub trait GraphSide: Sized + 'static {
     const SIDE: Side;
     type File: FileLike;
-    type FilePacked;
+    type FilePacked: Default;
     /// Element type of `current_chunk_parts`.
     type ChunkPart;
     /// `Vec<CssAssetId>` on client, `()` on server.
@@ -394,7 +395,7 @@ pub struct Edge {
 /// Top bits cannot be relied on due to `SerializedFailure.Owner.Packed`
 // PORT NOTE: Zig `bun.GenericIndex(u30, File)` — newtype over u30; the type-tag `File`
 // is dropped (Rust newtypes are already distinct).
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(transparent)]
 pub struct FileIndex(u32);
 impl FileIndex {
@@ -410,7 +411,7 @@ impl FileIndex {
 pub const REACT_REFRESH_INDEX: FileIndex = FileIndex(0); // only meaningful when side == .client
 
 /// An index into `edges`
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 #[repr(transparent)]
 pub struct EdgeIndex(u32);
 impl EdgeIndex {
@@ -425,7 +426,7 @@ impl EdgeIndex {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct OptionalEdgeIndex(Option<EdgeIndex>);
 impl OptionalEdgeIndex {
     pub const NONE: Self = Self(None);

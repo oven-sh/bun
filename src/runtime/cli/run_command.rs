@@ -2055,7 +2055,7 @@ impl RunCommand {
         }
         static ONCE: bun_core::Once<Option<&'static ZStr>> = bun_core::Once::new();
         // TODO(port): bun.once stored args; here we capture path/cwd by closure on first call only.
-        *ONCE.call(|| {
+        ONCE.call(|| {
             if let Some(found) = Self::find_shell_impl(path, cwd) {
                 SHELL_BUF.with_borrow_mut(|shell_buf| {
                     if found.len() < shell_buf.len() {

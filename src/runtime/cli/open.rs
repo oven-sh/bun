@@ -362,14 +362,10 @@ impl Editor {
         // (the JoinHandle is dropped, detaching the thread).
         // SAFETY: `spawned_ptr` is a uniquely-owned Box raw pointer; ownership is
         // transferred to the spawned thread which reconstitutes it via Box::from_raw.
-        struct SendPtr(*mut SpawnedEditorContext);
-        unsafe impl Send for SendPtr {}
-        let send_ptr = SendPtr(spawned_ptr);
+        // Smuggled across the thread boundary as `usize` (`*mut T: !Send`).
+        let spawned_addr = spawned_ptr as usize;
         std::thread::Builder::new()
-            .spawn(move || {
-                let SendPtr(p) = send_ptr;
-                auto_close(p)
-            })
+            .spawn(move || auto_close(spawned_addr as *mut SpawnedEditorContext))
             .map_err(|_| bun_core::err!("ThreadSpawnFailed"))?;
         Ok(())
     }
@@ -460,7 +456,7 @@ fn auto_close(spawned: *mut SpawnedEditorContext) {
     // sole owner and reconstitutes the Box to drop it at scope exit.
     let spawned = unsafe { Box::from_raw(spawned) };
 
-    Global::set_thread_name("Open Editor");
+    Global::set_thread_name(bun_core::zstr!("Open Editor"));
 
     // Reconstruct argv slices from stored (ptr, len).
     let mut argv: [&[u8]; 10] = [b""; 10];
@@ -548,19 +544,17 @@ impl EditorContext {
         }
 
         // TODO(port): Zig used std.fs.Dir.writeFile / openFile. Map to bun_sys::File.
-        bun_sys::File::write_file(tmpdir, basename, blob)
-            .into_result()
-            .map_err(Into::into)?;
+        // `write_file` wants a `&ZStr`; NUL-terminate `basename` into a path buffer.
+        let mut basename_zbuf = PathBuffer::uninit();
+        let basename_z = bun_paths::resolve_path::z(basename, &mut basename_zbuf);
+        bun_sys::File::write_file(tmpdir, basename_z, blob).map_err(Into::into)?;
 
-        let opened = bun_sys::File::open_at(tmpdir, basename, bun_sys::O::RDONLY, 0)
-            .into_result()
-            .map_err(Into::into)?;
+        let opened =
+            bun_sys::File::open_at(tmpdir, basename, bun_sys::O::RDONLY, 0).map_err(Into::into)?;
         let _close = scopeguard::guard((), |_| opened.close());
 
         let mut path_buf = PathBuffer::uninit();
-        let resolved = bun_sys::get_fd_path(opened.handle(), &mut path_buf)
-            .into_result()
-            .map_err(Into::into)?;
+        let resolved = bun_sys::get_fd_path(opened.handle(), &mut path_buf).map_err(Into::into)?;
 
         editor_.open(path, resolved, Some(line), Some(column))
     }

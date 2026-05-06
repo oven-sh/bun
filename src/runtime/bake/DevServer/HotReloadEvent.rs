@@ -123,7 +123,11 @@ impl HotReloadEvent {
 
                 // Bust resolution cache, but since Bun does not watch all
                 // directories in a codebase, this only targets the following resolutions
-                let _ = dev.server_transpiler.resolver.bust_dir_cache(changed_dir);
+                // SAFETY: server_transpiler is initialized in DevServer::init before any
+                // HotReloadEvent can fire.
+                let _ = unsafe { dev.server_transpiler.assume_init_mut() }
+                    .resolver
+                    .bust_dir_cache(changed_dir);
 
                 // if a directory watch exists for resolution failures, check those now.
                 if let Some(watcher_index) =
@@ -138,22 +142,32 @@ impl HotReloadEvent {
                     while let Some(index) = it {
                         // PORT NOTE: reshaped for borrowck — re-index per iteration instead of
                         // holding `dep` ref across resolver call + appendFile + freeDependencyIndex
-                        let (source_file_path, specifier, next) = {
+                        let (source_file_index, specifier, next) = {
                             let dep =
                                 &dev.directory_watchers.dependencies[index as usize];
                             (dep.source_file_path, &*dep.specifier as *const [u8], dep.next)
                         };
                         it = next;
 
-                        if dev
-                            .server_transpiler
+                        // PORT NOTE: mod.rs `Dep.source_file_path` is a `FileIndex` into the
+                        // server graph; the Zig original stores the path slice directly. Look
+                        // the path up here. Raw ptr to dodge borrowck across the resolver call.
+                        let source_file_path: *const [u8] = &*dev
+                            .server_graph
+                            .bundled_files
+                            .keys()[source_file_index.0 as usize]
+                            as *const [u8];
+
+                        // SAFETY: server_transpiler initialized in DevServer::init; the
+                        // `source_file_path`/`specifier` raw-ptr borrows point into
+                        // `dev.server_graph` / `dev.directory_watchers.dependencies`, neither of
+                        // which is mutated until after `resolve` returns.
+                        if unsafe { dev.server_transpiler.assume_init_mut() }
                             .resolver
                             .resolve(
                                 bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                                    source_file_path,
+                                    unsafe { &*source_file_path },
                                 ),
-                                // SAFETY: specifier borrow is valid; dependencies vec is not
-                                // mutated until after this resolve call returns.
                                 unsafe { &*specifier },
                                 bun_options_types::ImportKind::Stmt,
                             )
@@ -163,7 +177,8 @@ impl HotReloadEvent {
                             // this resolution result is not preserved as passing it
                             // into BundleV2 is too complicated. the resolution is
                             // cached, anyways.
-                            self.append_file(source_file_path);
+                            // SAFETY: server_graph keys not mutated between lookup and here.
+                            self.append_file(unsafe { &*source_file_path });
                             dev.directory_watchers.free_dependency_index(index);
                         } else {
                             // rebuild a new linked list for unaffected files
@@ -194,8 +209,8 @@ impl HotReloadEvent {
 
         let changed_file_paths = self.files.keys();
         // PORT NOTE: Zig used `inline for` over a 2-tuple; written out as two calls.
-        dev.server_graph.invalidate(changed_file_paths, entry_points);
-        dev.client_graph.invalidate(changed_file_paths, entry_points);
+        let _ = dev.server_graph.invalidate(changed_file_paths, entry_points);
+        let _ = dev.client_graph.invalidate(changed_file_paths, entry_points);
 
         if entry_points.set.count() == 0 {
             Output::debug_warn(format_args!("nothing to bundle"));

@@ -82,16 +82,14 @@ fn compile_target_from_slice(
 ) -> JsResult<CompileTarget> {
     let slice = &slice_with_bun_prefix[b"bun-".len()..];
     let Ok(target_parsed) = CompileTarget::try_from(slice) else {
-        return global.throw_invalid_arguments(
-            &format!("Unknown compile target: {}", bstr::BStr::new(slice_with_bun_prefix)),
-            &[],
-        );
+        return Err(global.throw_invalid_arguments(
+            format_args!("Unknown compile target: {}", bstr::BStr::new(slice_with_bun_prefix)),
+        ));
     };
     if !target_parsed.is_supported() {
-        return global.throw_invalid_arguments(
-            &format!("Unsupported compile target: {}", bstr::BStr::new(slice_with_bun_prefix)),
-            &[],
-        );
+        return Err(global.throw_invalid_arguments(
+            format_args!("Unsupported compile target: {}", bstr::BStr::new(slice_with_bun_prefix)),
+        ));
     }
     Ok(target_parsed)
 }
@@ -100,6 +98,41 @@ pub mod js_bundler {
     use super::*;
 
     type OwnedString = MutableString;
+
+    // ── Local shims for `bun_jsc::JSValue` accessors not yet upstream. ──
+    /// `JSValue.getOptional(ZigString.Slice, ..)` — local shim until `bun_jsc` grows it.
+    fn get_optional_slice(
+        target: JSValue,
+        global: &JSGlobalObject,
+        property: &[u8],
+    ) -> JsResult<Option<bun_string::ZigStringSlice>> {
+        match target.get(global, property)? {
+            Some(v) if !v.is_undefined_or_null() => Ok(Some(v.to_slice(global)?)),
+            _ => Ok(None),
+        }
+    }
+
+    /// `JSValue.getFunction` — local shim until `bun_jsc` grows it.
+    fn get_function(
+        target: JSValue,
+        global: &JSGlobalObject,
+        property: &[u8],
+    ) -> JsResult<Option<JSValue>> {
+        match target.get(global, property)? {
+            Some(v) if v.is_callable() => Ok(Some(v)),
+            _ => Ok(None),
+        }
+    }
+
+    /// `JSValue.getOwn` with `&str` key — local shim wrapping `bun_str::String`.
+    #[inline]
+    fn get_own_str(
+        target: JSValue,
+        global: &JSGlobalObject,
+        property: &'static str,
+    ) -> JsResult<Option<JSValue>> {
+        target.get_own(global, &BunString::static_str(property))
+    }
 
     /// A map of file paths to their in-memory contents.
     /// This allows bundling with virtual files that may not exist on disk.

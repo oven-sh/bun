@@ -200,13 +200,16 @@ impl<'a> WalkTask<'a> {
         has_pending_activity: &'a AtomicUsize,
     ) -> Result<Box<AsyncGlobWalkTask<'a>>, bun_core::Error> {
         // TODO(port): narrow error set
-        let walk_task = Box::new(WalkTask {
+        let _walk_task = Box::new(WalkTask {
             walker: glob_walker,
             global: global_this,
             err: None,
             has_pending_activity,
         });
-        AsyncGlobWalkTask::create_on_js_thread(global_this, walk_task)
+        // TODO(port): `bun_jsc::ConcurrentPromiseTask` is currently a non-generic
+        // `stub_ty!` placeholder; the real generic + `create_on_js_thread` live in
+        // bun_jsc's private `_gated` module. Restore once re-exported.
+        todo!("blocked_on: bun_jsc::ConcurrentPromiseTask::create_on_js_thread")
     }
 
     pub fn run(&mut self) {

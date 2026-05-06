@@ -36,7 +36,6 @@ mod _jsc_gated {
 use core::ffi::c_void;
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer};
-use bun_str::{String as BunString, ZigString};
 use bun_core::StackCheck;
 // PORT NOTE: Zig's `bun.md` is `src/md/root.zig`; the Rust crate's lib.rs is a
 // thin mod-decl shim, so alias the `root` module (which re-exports BlockType,

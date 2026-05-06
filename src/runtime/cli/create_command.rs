@@ -2580,7 +2580,7 @@ impl GitHandler {
     }
 
     fn spawn_thread(destination: &[u8], path: &[u8], verbose: bool) {
-        Output::Source::configure_named_thread("git");
+        Output::Source::configure_named_thread(bun_core::zstr!("git"));
         let _flush = scopeguard::guard((), |_| Output::flush());
         let outcome = if verbose {
             Self::run::<true>(destination, path).unwrap_or(false)
@@ -2594,7 +2594,7 @@ impl GitHandler {
 
     pub fn wait() -> bool {
         while SUCCESS.load(Ordering::Acquire) == 0 {
-            let _ = Futex::wait(&SUCCESS, 0, 1000);
+            let _ = Futex::wait(&SUCCESS, 0, Some(1000));
         }
 
         let outcome = SUCCESS.load(Ordering::Acquire) == 1;
@@ -2641,7 +2641,7 @@ impl GitHandler {
             ];
 
             if VERBOSE {
-                Output::pretty_errorln("git backend: {}", format_args!("{}", bstr::BStr::new(git)));
+                Output::pretty_errorln(format_args!("git backend: {}", bstr::BStr::new(git)));
             }
 
             // same names, just comptime known values
@@ -2659,9 +2659,9 @@ impl GitHandler {
                 })?;
             }
 
-            Output::pretty_error("\n", format_args!(""));
+            Output::pretty_error("\n");
             Output::print_start_end(git_start, bun_core::time::nano_timestamp());
-            Output::pretty_error(" <d>git<r>\n", format_args!(""));
+            Output::pretty_error(" <d>git<r>\n");
             return Ok(true);
         }
 

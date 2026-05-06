@@ -385,10 +385,10 @@ pub fn load_config_path(
                 return Ok(());
             }
 
-            Output::pretty_errorln(
-                "{}\nreading global config \"{s}\"",
-                (err, BStr::new(config_path.as_bytes())),
-            );
+            Output::pretty_errorln(format_args!(
+                "{}\nreading global config \"{}\"",
+                err, BStr::new(config_path.as_bytes()),
+            ));
             Global::exit(1);
         }
     }

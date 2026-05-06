@@ -499,35 +499,55 @@ mod static_adapters {
     use super::*;
 
     pub fn listener_connect(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        let args = cf.arguments_old(1);
-        let opts = if args.len() >= 1 { args.ptr[0] } else { JSValue::UNDEFINED };
-        api::Listener::connect(g, opts)
+        let args = cf.arguments_old::<1>();
+        let _opts = if args.len >= 1 { args.ptr[0] } else { JSValue::UNDEFINED };
+        let _ = g;
+        todo!("blocked_on: crate::socket::Listener::connect")
     }
 
     pub fn listener_listen(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        let args = cf.arguments_old(1);
-        let opts = if args.len() >= 1 { args.ptr[0] } else { JSValue::UNDEFINED };
-        api::Listener::listen(g, opts)
+        let args = cf.arguments_old::<1>();
+        let _opts = if args.len >= 1 { args.ptr[0] } else { JSValue::UNDEFINED };
+        let _ = g;
+        todo!("blocked_on: crate::socket::Listener::listen")
     }
 
     pub fn udp_socket(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        let args = cf.arguments_old(1);
-        let opts = if args.len() >= 1 { args.ptr[0] } else { JSValue::UNDEFINED };
-        api::UDPSocket::udp_socket(g, opts)
+        let args = cf.arguments_old::<1>();
+        let _opts = if args.len >= 1 { args.ptr[0] } else { JSValue::UNDEFINED };
+        let _ = g;
+        todo!("blocked_on: crate::socket::udp_socket::UDPSocket::udp_socket")
     }
 
     pub fn subprocess_spawn(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        let args = cf.arguments_old(2);
-        let a0 = if args.len() >= 1 { args.ptr[0] } else { JSValue::UNDEFINED };
-        let a1 = if args.len() >= 2 { Some(args.ptr[1]) } else { None };
+        let args = cf.arguments_old::<2>();
+        let a0 = if args.len >= 1 { args.ptr[0] } else { JSValue::UNDEFINED };
+        let a1 = if args.len >= 2 { Some(args.ptr[1]) } else { None };
         crate::api::js_bun_spawn_bindings::spawn(g, a0, a1)
     }
 
     pub fn subprocess_spawn_sync(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        let args = cf.arguments_old(2);
-        let a0 = if args.len() >= 1 { args.ptr[0] } else { JSValue::UNDEFINED };
-        let a1 = if args.len() >= 2 { Some(args.ptr[1]) } else { None };
+        let args = cf.arguments_old::<2>();
+        let a0 = if args.len >= 1 { args.ptr[0] } else { JSValue::UNDEFINED };
+        let a1 = if args.len >= 2 { Some(args.ptr[1]) } else { None };
         crate::api::js_bun_spawn_bindings::spawn_sync(g, a0, a1)
+    }
+
+    // Shims for export-table targets whose real bodies live behind private
+    // `_jsc_gated` mods in sibling files.
+    pub fn js_bundler_build(_g: &JSGlobalObject, _cf: &CallFrame) -> JsResult<JSValue> {
+        todo!("blocked_on: crate::api::JSBundler::build_fn (gated under private _jsc_gated)")
+    }
+    pub fn parsed_shell_script_create(_g: &JSGlobalObject, _cf: &CallFrame) -> JsResult<JSValue> {
+        todo!("blocked_on: crate::shell::ParsedShellScript::create_parsed_shell_script")
+    }
+    pub fn shell_interpreter_create(_g: &JSGlobalObject, _cf: &CallFrame) -> JsResult<JSValue> {
+        todo!("blocked_on: crate::shell::Interpreter::create_shell_interpreter")
+    }
+    pub fn static_hasher_getter(_g: &JSGlobalObject, _o: &JSObject) -> JSValue {
+        // `Crypto::{MD4..SHA512_256}::getter` require `StaticHasher` impls for
+        // `bun_sha_hmac::*`, which in turn need `Default` (orphan-rule blocked).
+        todo!("blocked_on: crate::crypto::StaticHasher impls for bun_sha_hmac::*")
     }
 
     pub fn sha(_g: &JSGlobalObject, _cf: &CallFrame) -> JsResult<JSValue> {

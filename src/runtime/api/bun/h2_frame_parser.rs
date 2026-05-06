@@ -615,8 +615,8 @@ fn single_value_headers_index_of(name: &[u8]) -> Option<usize> {
 pub fn js_get_unpacked_settings(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let mut settings = FullSettingsPayload::default();
 
-    let args_list = callframe.arguments_old(1);
-    if args_list.len() < 1 {
+    let args_list = callframe.arguments_old::<1>();
+    if args_list.len < 1 {
         return Ok(settings.to_js(global_object));
     }
 
@@ -626,7 +626,7 @@ pub fn js_get_unpacked_settings(global_object: &JSGlobalObject, callframe: &Call
         let payload = array_buffer.byte_slice();
         let setting_byte_size = SettingsPayloadUnit::BYTE_SIZE;
         if payload.len() < setting_byte_size || payload.len() % setting_byte_size != 0 {
-            return global_object.throw("Expected buf to be a Buffer of at least 6 bytes and a multiple of 6 bytes");
+            return Err(global_object.throw("Expected buf to be a Buffer of at least 6 bytes and a multiple of 6 bytes"));
         }
 
         let mut i: usize = 0;
@@ -639,7 +639,7 @@ pub fn js_get_unpacked_settings(global_object: &JSGlobalObject, callframe: &Call
         }
         Ok(settings.to_js(global_object))
     } else if !data_arg.is_empty_or_undefined_or_null() {
-        global_object.throw("Expected buf to be a Buffer")
+        Err(global_object.throw("Expected buf to be a Buffer"))
     } else {
         Ok(settings.to_js(global_object))
     }

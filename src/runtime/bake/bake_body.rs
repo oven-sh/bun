@@ -985,7 +985,7 @@ impl Framework {
                     }
                 };
                 let server_entry_point =
-                    match get_optional_string(fsr_opts, global, "serverEntryPoint", refs, arena)? {
+                    match get_optional_string(fsr_opts, global, b"serverEntryPoint", refs, arena)? {
                         Some(s) => s,
                         None => {
                             return Err(global.throw_invalid_arguments(format_args!(
@@ -995,15 +995,15 @@ impl Framework {
                         }
                     };
                 let client_entry_point =
-                    get_optional_string(fsr_opts, global, "clientEntryPoint", refs, arena)?;
+                    get_optional_string(fsr_opts, global, b"clientEntryPoint", refs, arena)?;
                 let prefix =
-                    get_optional_string(fsr_opts, global, "prefix", refs, arena)?.unwrap_or(b"/");
-                let ignore_underscores = fsr_opts
-                    .get_boolean_strict(global, "ignoreUnderscores")?
-                    .unwrap_or(false);
-                let layouts = fsr_opts
-                    .get_boolean_strict(global, "layouts")?
-                    .unwrap_or(false);
+                    get_optional_string(fsr_opts, global, b"prefix", refs, arena)?.unwrap_or(b"/");
+                let ignore_underscores =
+                    get_boolean_strict(fsr_opts, global, b"ignoreUnderscores")?
+                        .unwrap_or(false);
+                let layouts =
+                    get_boolean_strict(fsr_opts, global, b"layouts")?
+                        .unwrap_or(false);
 
                 let style = style_from_js(
                     match fsr_opts.get(global, "style")? {
@@ -1023,7 +1023,7 @@ impl Framework {
                     if let Some(exts_js) = fsr_opts.get(global, "extensions")? {
                         'exts: {
                             if exts_js.is_string() {
-                                let str = exts_js.to_slice(global, arena)?;
+                                let str = exts_js.to_slice(global)?;
                                 if str.slice() == b"*" {
                                     break 'exts &[] as &[&[u8]];
                                 }
@@ -1031,11 +1031,11 @@ impl Framework {
                                 let mut it_2 = exts_js.array_iterator(global)?;
                                 let mut extensions =
                                     bun_alloc::ArenaVec::<&'static [u8]>::with_capacity_in(
-                                        exts_js.get_length(global)?,
+                                        exts_js.get_length(global)? as usize,
                                         arena,
                                     );
                                 while let Some(array_item) = it_2.next()? {
-                                    let slice = refs.track(array_item.to_slice(global, arena)?);
+                                    let slice = refs.track(array_item.to_slice(global)?);
                                     if slice == b"*" {
                                         return Err(global.throw_invalid_arguments(format_args!(
                                             "'extensions' cannot include \"*\" as an extension. Pass \"*\" instead of the array."

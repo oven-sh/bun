@@ -33,29 +33,48 @@ use crate::webcore::blob::store::Bytes as BlobStoreBytes;
 ///
 /// `ref_count` must stay at this field offset for `bun_ptr::IntrusiveArc<Self>`.
 pub struct LinuxMemFdAllocator {
-    ref_count: AtomicU32,
+    ref_count: bun_ptr::RefCount<LinuxMemFdAllocator>,
     pub fd: Fd,
     pub size: usize,
 }
 
 // Zig: `bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{})`
 // → intrusive atomic refcount; ref/deref provided by IntrusiveArc, drop runs `deinit`.
+//
+// PORT NOTE: Zig used `ThreadSafeRefCount` (atomic). `bun_ptr::RefPtr<T>`
+// requires `T: AnyRefCounted`, but the upstream crate only provides a blanket
+// impl for the single-threaded `RefCounted` flavor (the thread-safe blanket is
+// blocked on overlapping-impl rules; see `bun_ptr::ref_count` TODO). Until that
+// lands we implement `RefCounted` here so `IntrusiveArc<Self>` type-checks.
+// TODO(port): switch to `ThreadSafeRefCount` once
+// blocked_on: bun_ptr::ThreadSafeRefCounted → AnyRefCounted blanket impl.
+impl bun_ptr::RefCounted for LinuxMemFdAllocator {
+    type DestructorCtx = ();
+
+    unsafe fn get_ref_count(this: *mut Self) -> *mut bun_ptr::RefCount<Self> {
+        // SAFETY: caller contract — `this` points to a live Self.
+        unsafe { core::ptr::addr_of_mut!((*this).ref_count) }
+    }
+
+    unsafe fn destructor(this: *mut Self, _ctx: ()) {
+        // Zig `deinit`: close fd, then `bun.destroy(self)`.
+        // SAFETY: refcount hit 0; `this` came from `Box::into_raw` in
+        // `IntrusiveArc::new`. Closing fd before reclaiming the Box.
+        unsafe { (*this).fd.close() };
+        // SAFETY: sole owner; reconstruct the Box so the allocation is freed.
+        drop(unsafe { Box::from_raw(this) });
+    }
+}
+
 pub type Ref = bun_ptr::IntrusiveArc<LinuxMemFdAllocator>;
 
 static MEMFD_COUNTER: AtomicUsize = AtomicUsize::new(0);
-
-impl Drop for LinuxMemFdAllocator {
-    // Zig `deinit`: close fd; `bun.destroy(self)` is handled by IntrusiveArc's dealloc.
-    fn drop(&mut self) {
-        self.fd.close();
-    }
-}
 
 impl LinuxMemFdAllocator {
     /// Zig: `pub const new = bun.TrivialNew(@This());`
     pub fn new(fd: Fd, size: usize) -> bun_ptr::IntrusiveArc<Self> {
         bun_ptr::IntrusiveArc::new(Self {
-            ref_count: AtomicU32::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             fd,
             size,
         })
@@ -63,8 +82,9 @@ impl LinuxMemFdAllocator {
 
     /// Zig: `pub const ref = RefCount.ref;`
     pub fn ref_(&self) {
-        // Provided by IntrusiveArc; explicit here to mirror the Zig pub re-export.
-        self.ref_count.fetch_add(1, Ordering::Relaxed);
+        // SAFETY: `self` is a live `Self`; `RefCount::ref_` only touches the
+        // interior-mutable `ref_count` field.
+        unsafe { bun_ptr::RefCount::<Self>::ref_(self as *const Self as *mut Self) };
     }
 
     /// Zig: `pub const deref = RefCount.deref;`
@@ -80,17 +100,10 @@ impl LinuxMemFdAllocator {
     // allocation via `Box::from_raw(self as *const _ as *mut _)` is UB:
     // it materializes `&mut Self` (via `Drop`) while a shared `&self`
     // borrow is still live.
-    // TODO(port): route through `bun_ptr::ThreadSafeRefCount::<Self>::deref`
-    // once `Self: ThreadSafeRefCounted` is wired up.
     pub unsafe fn deref(this: *mut Self) {
-        // SAFETY: `ref_count` is `AtomicU32` (interior-mut); raw-ptr read is
-        // sound while `this` is live per caller contract.
-        if unsafe { (*this).ref_count.fetch_sub(1, Ordering::AcqRel) } == 1 {
-            // SAFETY: refcount hit zero; we are the unique owner. Reconstruct
-            // the Box that `new` leaked so `Drop` runs and the allocation is
-            // freed. `this` has `*mut` provenance from `Box::into_raw`.
-            drop(unsafe { Box::from_raw(this) });
-        }
+        // SAFETY: caller contract — `this` is live and Box-allocated; forwards
+        // to the intrusive refcount which runs `destructor` on zero.
+        unsafe { bun_ptr::RefCount::<Self>::deref(this) };
     }
 
     pub fn allocator(&self) -> &dyn Allocator {

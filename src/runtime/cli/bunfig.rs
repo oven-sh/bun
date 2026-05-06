@@ -1586,7 +1586,8 @@ mod phase_a_draft {
 
             if let Some(expr) = expr_get(serve_obj, b"define") {
                 self.expect(&expr, ExprTag::EObject)?;
-                let properties = expr.data.e_object().unwrap().properties.slice();
+                let obj = expr.data.e_object().unwrap();
+                let properties = obj.properties.slice();
                 let mut keys: Vec<Box<[u8]>> = Vec::new();
                 let mut values: Vec<Box<[u8]>> = Vec::new();
                 for prop in properties {

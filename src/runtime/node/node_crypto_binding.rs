@@ -1021,7 +1021,7 @@ impl Scrypt {
                     maxmem = Some(validators::validate_integer(
                         global,
                         maxmem_value,
-                        b"maxmem",
+                        "maxmem",
                         Some(0),
                         None,
                     )?);

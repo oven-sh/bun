@@ -60,7 +60,7 @@ use core::ffi::c_uint;
 
 use bun_jsc::{CallFrame, ErrorCode, JSGlobalObject, JSValue, JsResult, RangeErrorOptions, StrongOptional, WorkPoolTask};
 
-use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive, Error};
+use crate::node::node_zlib_binding::{CompressionContext, CompressionStream, CompressionStreamImpl, CountedKeepAlive, Error};
 use crate::node::util::validators;
 
 // Intrusive refcount: `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`.

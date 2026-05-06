@@ -39,7 +39,7 @@ test.skipIf(!isLinux)(
       const { promise, resolve } = Promise.withResolvers<void>();
       exits.push(promise);
       Bun.spawn({
-        cmd: ["/bin/true"],
+        cmd: ["true"],
         stdin: "ignore",
         stdout: "ignore",
         stderr: "ignore",

@@ -108,12 +108,8 @@ impl Echo {
     }
 }
 
-// Full body (~200 lines: -e escape processing, incremental chunked write) is
-// preserved gated until IOWriter::enqueue is real.
-
-mod echo_body {
-    include!("echo_body_gated.rs");
-}
+// Full body (~200 lines: -e escape processing, incremental chunked write) was
+// previously gated behind an include! file; now ported inline above.
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

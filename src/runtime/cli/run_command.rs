@@ -26,8 +26,9 @@ use bun_paths::{self as paths, DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP};
 use bun_paths::WPathBuffer;
 use bun_resolver::dir_info::DirInfo;
 use bun_resolver::package_json::PackageJSON;
-use bun_string::strings;
+use bun_string::{strings, MutableString};
 use bun_sys::{self as sys, Fd};
+use bun_threading::Channel;
 use bun_which::which;
 
 use crate::cli;

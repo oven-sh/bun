@@ -1420,20 +1420,16 @@ where
                     crate::webcore::node_types::PathOrFileDescriptor::Path(p) => p.slice(),
                     crate::webcore::node_types::PathOrFileDescriptor::Fd(_) => b"",
                 };
-                let mut sys = bun_sys::Error {
+                let mut sys: jsc::SystemError = bun_sys::Error {
                     errno: bun_sys::E::EISDIR as _,
                     syscall: bun_sys::Tag::read,
                     ..Default::default()
                 }
                 .with_path(path_bytes)
-                .to_system_error();
+                .to_system_error()
+                .into();
                 sys.message = BunString::static_("Cannot stream a directory as a response body");
-                let _ = (sys, global_this);
-                // `bun_sys::SystemError` is a local sys-crate struct; the JS
-                // conversion lives on `bun_jsc::SystemError`.
-                return self.run_error_handler(
-                    todo!("blocked_on: bun_sys::SystemError::to_error_instance"),
-                );
+                return self.run_error_handler(sys.to_error_instance(global_this));
             }
             (bun_io::FileType::File, false)
         };
@@ -2619,20 +2615,19 @@ where
 
                     if stream.is_locked(global_this) {
                         stream_log!("was locked but it shouldn't be");
-                        // `bun_jsc::SystemError` does not impl Default; build
-                        // via the global helper instead.
-                        let _ = (
-                            <&'static str>::from(jsc::ErrorCode::ERR_STREAM_CANNOT_PIPE),
-                            "Stream already used, please create a new one",
-                        );
+                        let err = jsc::SystemError {
+                            code: BunString::static_(<&'static str>::from(
+                                jsc::ErrorCode::ERR_STREAM_CANNOT_PIPE,
+                            )),
+                            message: BunString::static_(
+                                "Stream already used, please create a new one",
+                            ),
+                            ..Default::default()
+                        };
                         stream.value.unprotect();
-                        let js_err: JSValue =
-                            todo!("blocked_on: bun_jsc::SystemError::default");
-                        #[allow(unreachable_code)]
-                        {
-                            this.run_error_handler(js_err);
-                            return;
-                        }
+                        let js_err = err.to_error_instance(global_this);
+                        this.run_error_handler(js_err);
+                        return;
                     }
 
                     match stream.ptr {

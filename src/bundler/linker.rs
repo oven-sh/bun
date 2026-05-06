@@ -228,7 +228,7 @@ fn without_leading_slash(s: &[u8]) -> &[u8] {
 /// interner instead so the bytes are owned by a true process-lifetime
 /// singleton (the `OnceLock`-style exception PORTING.md carves out).
 #[inline]
-fn dupe(src: &[u8]) -> &'static [u8] {
+pub(crate) fn dupe(src: &[u8]) -> &'static [u8] {
     // SAFETY: `relative_paths_list_ptr()` is Once-initialized and never freed
     // (process-lifetime singleton). `append` copies `src` into its owned
     // backing buffer and returns a slice borrowing that storage; deref of the

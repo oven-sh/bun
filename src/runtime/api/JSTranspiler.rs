@@ -767,8 +767,9 @@ impl<'a> TransformTask<'a> {
                     .clone()
                     .expect("OOM"),
             },
-            // SAFETY: `transpiler` is the live `m_ctx` payload; `from_raw_ref` bumps the count.
-            js_instance: unsafe { bun_ptr::IntrusiveRc::from_raw_ref(transpiler) },
+            // SAFETY: `transpiler` is the live `m_ctx` payload; `init_ref` bumps the
+            // count (Zig: `transpiler.ref()`).
+            js_instance: unsafe { bun_ptr::IntrusiveRc::init_ref(transpiler) },
         });
 
         transform_task.transpiler.set_log(&mut transform_task.log);

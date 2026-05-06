@@ -1,6 +1,7 @@
 use bstr::BStr;
 
-use bun_core::{Global, Output};
+use bun_core::{err, Global, Output};
+use bun_logger as logger;
 use bun_paths::{AbsPath, PathBuffer};
 use bun_string::strings;
 use bun_sys::{fs::FileSystem, Dir, Fd, FdDirExt};
@@ -8,11 +9,9 @@ use bun_sys::{fs::FileSystem, Dir, Fd, FdDirExt};
 use bun_install::bin_real as bin;
 use bun_install::lockfile_real::{package::Package, Lockfile};
 use bun_install::package_manager_real::{
-    self as pm, attempt_to_create_package_json,
-    command_line_arguments::CommandLineArguments,
-    directories,
-    package_manager_options::{self as options, LogLevel},
-    update_package_json_and_install_with_manager, PackageManager, Subcommand,
+    self as pm, attempt_to_create_package_json, options::LogLevel, package_manager_options,
+    setup_global_dir, update_package_json_and_install_with_manager, CommandLineArguments,
+    PackageManager, Subcommand,
 };
 use bun_install::Features;
 
@@ -28,19 +27,23 @@ impl LinkCommand {
 
 fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
     let cli = CommandLineArguments::parse(Subcommand::Link)?;
-    let (manager_ptr, original_cwd) = match pm::init(ctx, cli, Subcommand::Link) {
+    let (manager_ptr, original_cwd) = match pm::init(&mut *ctx, cli, Subcommand::Link) {
         Ok(v) => v,
-        Err(err) if err == bun_core::err!(MissingPackageJSON) => {
+        Err(e) if e == err!(MissingPackageJSON) => {
             attempt_to_create_package_json()?;
+            // Re-parse argv: `CommandLineArguments` is not `Clone`, and `parse`
+            // is deterministic over process argv. Mirrors Zig passing the
+            // by-value `cli` struct to both `init` calls.
             let cli = CommandLineArguments::parse(Subcommand::Link)?;
-            pm::init(ctx, cli, Subcommand::Link)?
+            pm::init(&mut *ctx, cli, Subcommand::Link)?
         }
-        Err(err) => return Err(err),
+        Err(e) => return Err(e),
     };
     // `defer ctx.allocator.free(original_cwd)` — `original_cwd: Box<[u8]>` drops at scope exit.
 
-    // SAFETY: `pm::init` heap-allocates the manager and returns the sole
-    // pointer; we hold the unique reference for the rest of this CLI command.
+    // SAFETY: `pm::init` heap-allocates the process-global `PackageManager` and
+    // returns its sole pointer; no worker thread derefs it during `bun link`,
+    // so a scoped `&mut` is exclusive for the rest of this function.
     let manager: &mut PackageManager = unsafe { &mut *manager_ptr };
 
     if manager.options.should_print_command_name() {
@@ -54,88 +57,97 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
     if manager.options.positionals.len() == 1 {
         // bun link
 
-        let mut lockfile: Lockfile;
-        let name: &[u8];
+        let mut lockfile = Lockfile::default();
         let mut package = Package::default();
 
         // Step 1. parse the nearest package.json file
-        let package_json_source = match bun_logger::to_source(
-            manager.original_package_json_path.as_zstr(),
-            Default::default(),
-        ) {
-            Ok(s) => s,
-            Err(err) => {
-                Output::err_generic(
-                    "failed to read \"{s}\" for linking: {s}",
-                    (
-                        BStr::new(manager.original_package_json_path.as_bytes()),
-                        err.name(),
-                    ),
-                );
+        {
+            let package_json_source = match logger::to_source(
+                manager.original_package_json_path.as_zstr(),
+                Default::default(),
+            ) {
+                Ok(s) => s,
+                Err(e) => {
+                    Output::err_generic(
+                        "failed to read \"{s}\" for linking: {s}",
+                        (
+                            BStr::new(manager.original_package_json_path.as_bytes()),
+                            BStr::new(e.name()),
+                        ),
+                    );
+                    Global::crash();
+                }
+            };
+            lockfile.init_empty();
+
+            let mut resolver: () = ();
+            // SAFETY: `manager.log` is set to a non-null `*mut Log` by `pm::init`;
+            // mirrors Zig's non-optional `*logger.Log`. Disjoint storage from
+            // `&mut PackageManager` (raw-ptr field owned by the CLI `Context`).
+            let log = unsafe { &mut *manager.log };
+            package.parse::<()>(
+                &mut lockfile,
+                manager,
+                log,
+                &package_json_source,
+                &mut resolver,
+                Features::FOLDER,
+            )?;
+            let name = lockfile.str(&package.name);
+            if name.is_empty() {
+                if manager.options.log_level != LogLevel::Silent {
+                    Output::pretty_errorln(format_args!(
+                        "<r><red>error:<r> package.json missing \"name\" <d>in \"{}\"<r>",
+                        BStr::new(package_json_source.path.text),
+                    ));
+                }
+                Global::crash();
+            } else if !strings::is_npm_package_name(name) {
+                if manager.options.log_level != LogLevel::Silent {
+                    Output::pretty_errorln(format_args!(
+                        "<r><red>error:<r> invalid package.json name \"{}\" <d>in \"{}\"<r>",
+                        BStr::new(name),
+                        BStr::new(package_json_source.path.text),
+                    ));
+                }
                 Global::crash();
             }
-        };
-        lockfile = Lockfile::default();
-        lockfile.init_empty();
-
-        let mut resolver: () = ();
-        // SAFETY: `manager.log` is set by `pm::init` and outlives this call.
-        let log = unsafe { &mut *manager.log };
-        package.parse::<()>(
-            &mut lockfile,
-            manager,
-            log,
-            &package_json_source,
-            &mut resolver,
-            Features::folder(),
-        )?;
-        name = lockfile.str(&package.name);
-        if name.is_empty() {
-            if manager.options.log_level != LogLevel::Silent {
-                Output::pretty_errorln(format_args!(
-                    "<r><red>error:<r> package.json missing \"name\" <d>in \"{}\"<r>",
-                    BStr::new(package_json_source.path.text),
-                ));
-            }
-            Global::crash();
-        } else if !strings::is_npm_package_name(name) {
-            if manager.options.log_level != LogLevel::Silent {
-                Output::pretty_errorln(format_args!(
-                    "<r><red>error:<r> invalid package.json name \"{}\" <d>in \"{}\"<r>",
-                    BStr::new(name),
-                    BStr::new(package_json_source.path.text),
-                ));
-            }
-            Global::crash();
         }
+
+        // PORT NOTE: reshaped for borrowck — re-derive `name` here so its
+        // lifetime is tied only to `lockfile.buffers.string_bytes`, decoupled
+        // from `package_json_source` (dropped above).
+        let name = lockfile.str(&package.name);
 
         // Step 2. Setup the global directory
         let node_modules: Dir = 'brk: {
             bin::Linker::ensure_umask();
-            let mut explicit_global_dir: &[u8] = b"";
-            if let Some(install_) = ctx.install.as_ref() {
-                explicit_global_dir = install_.global_dir.as_deref().unwrap_or(explicit_global_dir);
-            }
-            manager.global_dir = Some(Dir::from_fd(options::open_global_dir(explicit_global_dir)?));
+            let explicit_global_dir: &[u8] = match &ctx.install {
+                Some(install_) => install_.global_dir.as_deref().unwrap_or(b""),
+                None => b"",
+            };
+            manager.global_dir = Some(Dir::from_fd(package_manager_options::open_global_dir(
+                explicit_global_dir,
+            )?));
 
-            directories::setup_global_dir(manager, ctx)?;
+            setup_global_dir(manager, &&mut *ctx)?;
 
-            break 'brk match manager
+            match manager
                 .global_dir
                 .unwrap()
                 .make_open_path(b"node_modules", Default::default())
             {
-                Ok(d) => d,
-                Err(err) => {
+                Ok(d) => break 'brk d,
+                Err(e) => {
                     if manager.options.log_level != LogLevel::Silent {
                         Output::pretty_errorln(format_args!(
                             "<r><red>error:<r> failed to create node_modules in global dir due to error {}",
-                            err.name(),
+                            e.name(),
                         ));
                     }
                     Global::crash();
                 }
-            };
+            }
         };
 
         // Step 3a. symlink to the node_modules folder
@@ -146,12 +158,12 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
             // create scope if specified
             if name[0] == b'@' {
                 if let Some(i) = strings::index_of_char(name, b'/') {
-                    if let Err(err) = node_modules.make_dir(&name[..i as usize]) {
-                        if err != bun_core::err!(PathAlreadyExists) {
+                    if let Err(e) = node_modules.make_dir(&name[..i as usize]) {
+                        if e != err!(PathAlreadyExists) {
                             if manager.options.log_level != LogLevel::Silent {
                                 Output::pretty_errorln(format_args!(
                                     "<r><red>error:<r> failed to create scope in global dir due to error {}",
-                                    err.name(),
+                                    e.name(),
                                 ));
                             }
                             Global::crash();
@@ -162,7 +174,7 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
 
             #[cfg(windows)]
             {
-                use bun_paths::resolve_path;
+                use bun_paths::{platform, resolve_path};
                 use bun_string::ZStr;
                 // create the junction
                 let top_level = FileSystem::instance().top_level_dir_without_trailing_slash();
@@ -172,8 +184,8 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
                 // SAFETY: NUL written at link_path_buf[top_level.len()] above.
                 let link_path =
                     unsafe { ZStr::from_raw(link_path_buf.0.as_ptr(), top_level.len()) };
-                let global_path = directories::global_link_dir_path(manager);
-                let dest_path = resolve_path::join_abs_string_z::<bun_paths::platform::Windows>(
+                let global_path = pm::global_link_dir_path(manager);
+                let dest_path = resolve_path::join_abs_string_z::<platform::Windows>(
                     global_path,
                     &[name],
                 );
@@ -182,10 +194,10 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
                     dest_path,
                     bun_sys::windows::libuv::UV_FS_SYMLINK_JUNCTION,
                 ) {
-                    Err(err) => {
+                    Err(e) => {
                         Output::pretty_errorln(format_args!(
                             "<r><red>error:<r> failed to create junction to node_modules in global dir due to error {}",
-                            err,
+                            e,
                         ));
                         Global::crash();
                     }
@@ -195,7 +207,7 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
             #[cfg(not(windows))]
             {
                 // create the symlink
-                if let Err(err) = node_modules.sym_link(
+                if let Err(e) = node_modules.sym_link(
                     FileSystem::instance().top_level_dir_without_trailing_slash(),
                     name,
                     // Zig: `.{ .is_directory = true }` — std.fs.Dir.SymLinkFlags.
@@ -204,7 +216,7 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
                     if manager.options.log_level != LogLevel::Silent {
                         Output::pretty_errorln(format_args!(
                             "<r><red>error:<r> failed to create symlink to node_modules in global dir due to error {}",
-                            err.name(),
+                            e.name(),
                         ));
                     }
                     Global::crash();
@@ -218,23 +230,32 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
             let mut link_dest_buf = PathBuffer::uninit();
             let mut link_rel_buf = PathBuffer::uninit();
 
+            // PORT NOTE: Zig passed `&node_modules_path` for both
+            // `target_node_modules_path` (`*const`) and `node_modules_path`
+            // (`*mut`). Rust forbids `&` + `&mut` to the same value, so resolve
+            // the fd path twice (cheap: one `getFdPath` syscall) into two
+            // independent `AbsPath` buffers.
             let mut node_modules_path =
-                match AbsPath::<u8>::init_fd_path(Fd::from_std_dir(&node_modules)) {
+                match <AbsPath>::init_fd_path(Fd::from_std_dir(&node_modules)) {
                     Ok(p) => p,
-                    Err(err) => {
+                    Err(e) => {
                         if manager.options.log_level != LogLevel::Silent {
-                            Output::err(err, "failed to link binary", ());
+                            Output::err(e, "failed to link binary", ());
+                        }
+                        Global::crash();
+                    }
+                };
+            let target_node_modules_path =
+                match <AbsPath>::init_fd_path(Fd::from_std_dir(&node_modules)) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        if manager.options.log_level != LogLevel::Silent {
+                            Output::err(e, "failed to link binary", ());
                         }
                         Global::crash();
                     }
                 };
             // `defer node_modules_path.deinit()` — handled by Drop.
-
-            // PORT NOTE: Zig aliased `&node_modules_path` for both fields.
-            // `Linker` holds `&mut` + `&` to the same `AbsPath`, which the
-            // borrow checker rejects; clone the path so the `target_*` borrow
-            // is independent (it is only ever read via `.slice()`).
-            let target_node_modules_path = node_modules_path.clone();
 
             let mut bin_linker = bin::Linker {
                 bin: package.bin,
@@ -248,19 +269,19 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
                 string_buf: lockfile.buffers.string_bytes.as_slice(),
                 extern_string_buf: lockfile.buffers.extern_strings.as_slice(),
                 seen: None,
-                abs_target_buf: &mut link_target_buf.0,
-                abs_dest_buf: &mut link_dest_buf.0,
-                rel_buf: &mut link_rel_buf.0,
+                abs_target_buf: link_target_buf.as_mut_slice(),
+                abs_dest_buf: link_dest_buf.as_mut_slice(),
+                rel_buf: link_rel_buf.as_mut_slice(),
                 err: None,
                 skipped_due_to_missing_bin: false,
             };
             bin_linker.link(true);
 
-            if let Some(err) = bin_linker.err {
+            if let Some(e) = bin_linker.err {
                 if manager.options.log_level != LogLevel::Silent {
                     Output::pretty_errorln(format_args!(
                         "<r><red>error:<r> failed to link bin due to error {}",
-                        err.name(),
+                        e.name(),
                     ));
                 }
                 Global::crash();
@@ -287,7 +308,7 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
         Global::exit(0);
     } else {
         // bun link lodash
-        update_package_json_and_install_with_manager(manager, ctx, &original_cwd)?;
+        update_package_json_and_install_with_manager(manager, &mut *ctx, &original_cwd)?;
     }
 
     Ok(())

@@ -112,11 +112,7 @@ use bun_sql_jsc::mysql::js_my_sql_connection::JSMySQLConnection as MySQLConnecti
 
 use crate::test_runner::bun_test::{BunTest, BunTestPtr};
 use crate::timer::{DateHeaderTimer, EventLoopDelayMonitor};
-// `crate::timer::AbortSignalTimeout` is the struct-surface mirror of
-// `bun_jsc::abort_signal::Timeout` (same `#[repr(C)]` layout) so
-// `container_of!` over `event_loop_timer` resolves; the `run` body lives on
-// the lower-tier `bun_jsc::abort_signal::Timeout` and is called via cast.
-use crate::timer::AbortSignalTimeout;
+use bun_jsc::abort_signal::Timeout as AbortSignalTimeout;
 
 #[allow(unused_imports)]
 use bun_io::pipe_writer::PosixPipeWriter; // brings `on_poll` into scope for FileSinkPoll/StaticPipeWriterPoll/etc.

@@ -2110,6 +2110,7 @@ fn normalize_specifier_for_resolution<'a>(
     query_string: &mut &'a [u8],
 ) -> &'a [u8] {
     if let Some(i) = bun_string::strings::index_of_char(specifier_, b'?') {
+        let i = i as usize;
         *query_string = &specifier_[i..];
         &specifier_[..i]
     } else {
@@ -3071,6 +3072,17 @@ impl VirtualMachine {
         ret.unwrap()
     }
 
+    /// Zig `bun.default_allocator.dupe(u8, s)` for the `_resolve`
+    /// fast-paths. The spec intentionally never frees these — they back
+    /// `ResolveFunctionResult.path` for the VM lifetime (see the field's
+    /// `TODO(port): lifetime` note). Returning a `'static` borrow of the
+    /// boxed bytes mirrors that contract.
+    fn dupe_resolved_path(s: &[u8]) -> &'static [u8] {
+        // SAFETY: allocation is VM-lifetime by spec (VirtualMachine.zig:1740,
+        // :1744, :1755, :1761) — never freed in `deinit`.
+        unsafe { &*Box::into_raw(s.to_vec().into_boxed_slice()) }
+    }
+
     /// Spec VirtualMachine.zig:1724 `_resolve`.
     ///
     /// PORT NOTE: Zig has `comptime is_a_file_path: bool`; folded to a runtime
@@ -3105,12 +3117,12 @@ impl VirtualMachine {
         }
         if specifier.starts_with(Macro::NAMESPACE_WITH_COLON) {
             ret.result = None;
-            ret.path = bun_core::handle_oom(bun_core::default_allocator::dupe(specifier));
+            ret.path = Self::dupe_resolved_path(specifier);
             return Ok(());
         }
         if specifier.starts_with(node_fallbacks::IMPORT_PATH) {
             ret.result = None;
-            ret.path = bun_core::handle_oom(bun_core::default_allocator::dupe(specifier));
+            ret.path = Self::dupe_resolved_path(specifier);
             return Ok(());
         }
         if let Some(result) = ModuleLoader::HardcodedModule::Alias::get(
@@ -3127,7 +3139,7 @@ impl VirtualMachine {
                 || specifier.ends_with(bun_paths::path_literal!("/[stdin]")))
         {
             ret.result = None;
-            ret.path = bun_core::handle_oom(bun_core::default_allocator::dupe(specifier));
+            ret.path = Self::dupe_resolved_path(specifier);
             return Ok(());
         }
         if let Some(blob_id) = specifier.strip_prefix(b"blob:".as_slice()) {
@@ -3139,7 +3151,7 @@ impl VirtualMachine {
                 .map(|h| unsafe { (h.has_blob_url)(blob_id) })
                 .unwrap_or(false);
             if has {
-                ret.path = bun_core::handle_oom(bun_core::default_allocator::dupe(specifier));
+                ret.path = Self::dupe_resolved_path(specifier);
                 return Ok(());
             }
             return Err(bun_core::err!("ModuleNotFound"));
@@ -3202,7 +3214,7 @@ impl VirtualMachine {
                         .with(|b| unsafe { &mut *b.get() })
                         .as_mut_slice();
                     let buster_name: &[u8] = if bun_paths::is_absolute(normalized_specifier) {
-                        if let Some(dir) = bun_paths::Path::dirname(normalized_specifier) {
+                        if let Some(dir) = bun_paths::dirname(normalized_specifier) {
                             if dir.len() > buf.len() {
                                 return Err(bun_core::err!("ModuleNotFound"));
                             }

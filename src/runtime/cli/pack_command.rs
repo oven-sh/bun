@@ -205,50 +205,35 @@ impl PackCommand {
         }
 
         let mut lockfile = Lockfile::default();
-        let load_from_disk_result = lockfile.load_from_cwd(
-            manager,
-            // SAFETY: `log` is non-null after `PackageManager::init()`.
-            unsafe { manager.log.unwrap().as_ptr() },
-            false,
-        );
+        // SAFETY: `log` is non-null after `PackageManager::init()`.
+        let log_ptr: *mut bun_logger::Log = unsafe { manager.log.unwrap().as_ptr() };
+        let manager_ptr: *mut PackageManager = manager;
+        let load_from_disk_result = lockfile.load_from_cwd(manager_ptr, log_ptr, false);
 
         let lockfile_ref: Option<&Lockfile> = match load_from_disk_result {
-            LoadResult::Ok(ok) => Some(ok.lockfile),
-            LoadResult::Err(cause) => {
+            LoadResult::Ok(ok) => Some(&*ok.lockfile),
+            LoadResult::Err(cause) => 'err: {
                 match cause.step {
                     LoadStep::OpenFile => {
                         if cause.value == bun_core::err!("ENOENT") {
-                            None
-                        } else {
-                            Output::err_generic("failed to open lockfile: {}", format_args!("{}", cause.value.name()));
-                            if manager.log_mut().has_errors() {
-                                let _ = manager.log_mut().print(Output::error_writer() as *mut _);
-                            }
-                            Global::crash();
+                            break 'err None;
                         }
+                        Output::err_generic("failed to open lockfile: {}", format_args!("{}", cause.value.name()));
                     }
                     LoadStep::ParseFile => {
                         Output::err_generic("failed to parse lockfile: {}", format_args!("{}", cause.value.name()));
-                        if manager.log_mut().has_errors() {
-                            let _ = manager.log_mut().print(Output::error_writer() as *mut _);
-                        }
-                        Global::crash();
                     }
                     LoadStep::ReadFile => {
                         Output::err_generic("failed to read lockfile: {}", format_args!("{}", cause.value.name()));
-                        if manager.log_mut().has_errors() {
-                            let _ = manager.log_mut().print(Output::error_writer() as *mut _);
-                        }
-                        Global::crash();
                     }
                     LoadStep::Migrating => {
                         Output::err_generic("failed to migrate lockfile: {}", format_args!("{}", cause.value.name()));
-                        if manager.log_mut().has_errors() {
-                            let _ = manager.log_mut().print(Output::error_writer() as *mut _);
-                        }
-                        Global::crash();
                     }
                 }
+                if pm_log(manager_ptr).has_errors() {
+                    let _ = pm_log(manager_ptr).print(Output::error_writer() as *mut _);
+                }
+                Global::crash();
             }
             LoadResult::NotFound => None,
         };

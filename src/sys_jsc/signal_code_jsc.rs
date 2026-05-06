@@ -32,7 +32,9 @@ pub fn from_js(arg: JSValue, global_this: &JSGlobalObject) -> JsResult<SignalCod
         // Zig enum), so the public ctor is used instead of transmute.
         return Ok(SignalCode(sig64 as u8));
     } else if arg.is_string() {
-        if arg.as_string().length() == 0 {
+        // SAFETY: `is_string()` ⇒ `as_string()` returns a non-null JSString cell;
+        // borrowed for `.length()` only.
+        if unsafe { &*arg.as_string() }.length() == 0 {
             return Ok(SignalCode::DEFAULT);
         }
         let signal_code = arg.to_enum::<SignalCode>(global_this, "signal")?;
@@ -49,8 +51,7 @@ pub fn from_js(arg: JSValue, global_this: &JSGlobalObject) -> JsResult<SignalCod
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/sys_jsc/signal_code_jsc.zig (42 lines)
-//   confidence: high — body un-gated and type-checked against crate-local
-//               bun_jsc shim surface (see lib.rs)
-//   blocked:    bun_jsc::{JSValue methods, JSGlobalObject::throw_invalid_arguments,
-//               FromJsEnum} — shimmed in lib.rs until bun_jsc compiles
+//   confidence: high
+//   todos:      0
+//   notes:      `FromJsEnum for SignalCode` lives in bun_jsc (orphan rule).
 // ──────────────────────────────────────────────────────────────────────────

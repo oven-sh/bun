@@ -922,9 +922,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         import_record: &bun_options_types::ImportRecord,
         mode: EdgeAttachmentMode,
     ) -> Result<EdgeAttachmentResult, bun_core::Error> {
-        use bun_options_types::import_record::Flags;
         // Duplicated import records are marked unused by `ConvertESMExportsForHmr`.
-        if import_record.flags.contains(Flags::IS_UNUSED) {
+        if import_record.flags.contains(bun_options_types::ImportRecordFlags::IS_UNUSED) {
             return Ok(EdgeAttachmentResult::Stop);
         }
         if import_record.source_index.is_runtime() {

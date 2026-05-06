@@ -1593,12 +1593,30 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     }
     if body.needs_to_read_file() {
         'prepare_body: {
-            // TODO(port): `body.store().data.file.pathlike` reaches through several
-            // not-yet-stabilized fields (`BlobStore.data.file` is gated). Stub the
-            // syscall path until BlobStore::data is un-gated.
-            let opened_fd_res: bun_sys::Result<bun_core::Fd> = {
-                let _ = &body;
-                todo!("blocked_on: crate::webcore::blob::Store.data.file.pathlike")
+            // PORT NOTE: Zig used the VM's `nodeFS().sync_error_buf` as scratch
+            // for `path.sliceZ()`; we use a local `PathBuffer` instead (the
+            // `vm.node_fs()` accessor is gated behind a jsc↔runtime cycle and
+            // the buffer is just NUL-termination scratch).
+            let mut open_path_buf = PathBuffer::uninit();
+            let pathlike_is_path: bool;
+            let opened_fd_res: bun_sys::Result<bun_sys::Fd> = {
+                let store = body.store().expect("needs_to_read_file implies store");
+                match &store.data.as_file().pathlike {
+                    PathOrFileDescriptor::Fd(fd) => {
+                        pathlike_is_path = false;
+                        bun_sys::dup(*fd)
+                    }
+                    PathOrFileDescriptor::Path(path) => {
+                        pathlike_is_path = true;
+                        let zpath = path.slice_z(&mut open_path_buf);
+                        let flags = if cfg!(windows) {
+                            bun_sys::O::RDONLY
+                        } else {
+                            bun_sys::O::RDONLY | bun_sys::O::NOCTTY
+                        };
+                        bun_sys::open(zpath, flags, 0)
+                    }
+                }
             };
 
             let opened_fd = match opened_fd_res {
@@ -1643,19 +1661,19 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     } else {
                         original_size.min(stat_size)
                     };
+                    let blob_offset = body.any_blob().blob().offset;
 
                     // PORT NOTE: `http::SendFile` fields are `usize`; blob sizes/offsets
                     // are `blob::SizeType` (u64). Zig's `@intCast` ↔ `as usize` here.
-                    http_body = HTTPRequestBody::Sendfile(http::SendFile {
+                    let mut sf = http::SendFile {
                         fd: opened_fd,
-                        remain: (body.any_blob().blob().offset + original_size) as usize,
-                        offset: body.any_blob().blob().offset as usize,
+                        remain: (blob_offset + original_size) as usize,
+                        offset: blob_offset as usize,
                         content_size: blob_size as usize,
-                    });
+                    };
 
                     if bun_sys::S::ISREG(stat.st_mode) {
                         let stat_size_usize = stat_size as usize;
-                        let sf = http_body.sendfile_mut();
                         sf.offset = sf.offset.min(stat_size_usize);
                         sf.remain = sf
                             .remain
@@ -1664,31 +1682,69 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                             .saturating_sub(sf.offset);
                     }
                     body.detach();
+                    body = HTTPRequestBody::Sendfile(sf);
 
                     break 'prepare_body;
                 }
             }
 
             // TODO: make this async + lazy
-            // TODO(port): node::fs::NodeFS::read_file + node_fs() field reach-through
-            // (`.sync_error_buf`, `BlobStore.data.file.pathlike`) are gated.
-            let _ = opened_fd;
-            body.detach();
-            body = HTTPRequestBody::AnyBlob(blob::Any::from_owned_slice(Vec::new()));
-            http_body = body.clone_ref();
-            todo!("blocked_on: crate::node::fs::NodeFS::read_file");
-            #[allow(unreachable_code)]
-            { break 'prepare_body; }
+            let blob_offset = body.any_blob().blob().offset;
+            let blob_size = body.any_blob().blob().size;
+            // PORT NOTE: Zig used `globalThis.bunVM().nodeFS()`; that accessor is
+            // a jsc↔runtime cycle. `read_file` with an `Fd` path only touches
+            // `self.sync_error_buf` for path-variant inputs, so a fresh `NodeFS`
+            // is sufficient here.
+            let mut node_fs = node::fs::NodeFS::default();
+            let res = node_fs.read_file(
+                &node::fs::args::ReadFile {
+                    encoding: Encoding::Buffer,
+                    path: PathOrFileDescriptor::Fd(opened_fd),
+                    offset: blob_offset,
+                    max_size: Some(blob_size),
+                    ..Default::default()
+                },
+                node::fs::Flavor::Sync,
+            );
+
+            if pathlike_is_path {
+                opened_fd.close();
+            }
+
+            match res {
+                bun_sys::Maybe::Err(err) => {
+                    is_error = true;
+                    let rejected_value =
+                        JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                            global_this,
+                            err.to_js(global_this),
+                        );
+                    body.detach();
+                    return Ok(rejected_value);
+                }
+                bun_sys::Maybe::Ok(result) => {
+                    body.detach();
+                    body = HTTPRequestBody::AnyBlob(blob::Any::from_owned_slice(
+                        result.slice().to_vec(),
+                    ));
+                }
+            }
         }
     }
 
     if url.is_s3() {
         // get ENV config
-        // TODO(port): `S3CredentialsWithOptions` is non-Default upstream; build via shim.
-        let mut credentials_with_options: s3::S3CredentialsWithOptions = {
-            // SAFETY: bun_vm() returns the live thread-local VM pointer.
-            let _env = unsafe { &(*global_this.bun_vm()).transpiler.env };
-            todo!("blocked_on: bun_s3_signing::S3CredentialsWithOptions::default + DotEnv::get_s3_credentials")
+        // SAFETY: `bun_vm()` returns the live thread-local VM pointer; `transpiler.env`
+        // is set during init and live for the VM lifetime.
+        let env_creds = s3_credentials_from_env(unsafe {
+            (*(*global_this.bun_vm()).transpiler.env).get_s3_credentials()
+        });
+        let mut credentials_with_options = s3::S3CredentialsWithOptions {
+            credentials: env_creds,
+            options: Default::default(),
+            acl: None,
+            storage_class: None,
+            ..Default::default()
         };
         // PORT NOTE: `defer credentialsWithOptions.deinit()` → Drop.
 
@@ -1697,15 +1753,17 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 let s3_options: JSValue = s3_options;
                 if s3_options.is_object() {
                     s3_options.ensure_still_alive();
-                    credentials_with_options = s3::S3Credentials::get_credentials_with_options(
-                        &credentials_with_options.credentials,
-                        Default::default(),
-                        Some(s3_options),
-                        None,
-                        None,
-                        false,
-                        global_this,
-                    )?;
+                    use crate::webcore::s3_client::S3CredentialsExt as _;
+                    credentials_with_options =
+                        <s3::S3Credentials>::get_credentials_with_options(
+                            &credentials_with_options.credentials,
+                            Default::default(),
+                            Some(s3_options),
+                            None,
+                            None,
+                            false,
+                            global_this,
+                        )?;
                 }
             }
         }
@@ -1774,13 +1832,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             method = Method::PUT;
         }
 
-        // PORT NOTE: `SignOptions` is non-Default upstream; build a minimal one.
-        let sign_opts: SignOptions = {
-            let _ = (url.s3_path(), method);
-            todo!("blocked_on: bun_s3_signing::SignOptions::default")
-        };
         let mut result = match credentials_with_options.credentials.sign_request::<false>(
-            sign_opts,
+            SignOptions {
+                path: url.s3_path(),
+                method,
+                ..Default::default()
+            },
             None,
         ) {
             Ok(r) => r,

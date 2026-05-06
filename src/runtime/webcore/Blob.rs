@@ -1902,20 +1902,23 @@ pub fn write_file_with_source_destination(
         }
         #[cfg(not(windows))]
         {
-            let _ = (
-                &destination_store,
-                &source_store,
+            let mut file_copier = copy_file::CopyFile::create(
+                destination_store,
+                source_store,
                 destination_blob.offset,
                 destination_blob.size,
                 ctx,
                 options.mkdirp_if_not_exists.unwrap_or(true),
                 options.mode,
             );
-            // `CopyFile::create` currently takes `Arc<Store>` and returns a
-            // gated `Box<ConcurrentPromiseTask>`; both diverge from the Zig
-            // shape (`*CopyFile` with `.schedule()` / `.promise`). Re-wire once
-            // copy_file.rs un-gates.
-            todo!("blocked_on: webcore::blob::copy_file::CopyFile::create (StoreRef + schedule/promise)");
+            file_copier.schedule();
+            // PORT NOTE: Zig returned `file_copier.promise.value()` directly.
+            // `ConcurrentPromiseTask` is consumed by the work-pool and freed via
+            // `ManualDeinit` → `destroy(*mut Self)`, so hand ownership over as a
+            // raw pointer (paired with `Box::from_raw` in `destroy()`).
+            let promise_value = file_copier.promise.value();
+            let _ = Box::into_raw(file_copier);
+            return Ok(promise_value);
         }
     } else if destination_type == store::DataTag::File && source_type == store::DataTag::S3 {
         let s3 = source_store.data.as_s3();

@@ -439,24 +439,16 @@ impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<'a, J
         }
     }
 
-    fn on_stream_pipe(&mut self, stream: StreamResult) {
+    fn on_stream_pipe(&mut self, mut stream: StreamResult) {
         // PORT NOTE: Zig `onStreamPipe(this, stream, allocator)` frees
         // `.owned`/`.owned_and_done` payloads with the *caller-supplied*
         // allocator. The Rust `Pipe`/`PipeHandler` reshape drops the allocator
         // param because every producer (`ByteStream::on_data` — the sole `Pipe`
         // call site) allocates with `bun.default_allocator`, which is the same
         // global mimalloc that `ByteList::clear_and_free()` frees with. The
-        // explicit `defer { switch }` becomes a `scopeguard` so the free runs
-        // on every exit (incl. after `end_pipe` may have dropped `self`).
-        let mut stream = stream;
-        let release = scopeguard::guard(&mut stream, |s| match s {
-            StreamResult::Owned(owned) | StreamResult::OwnedAndDone(owned) => {
-                owned.clear_and_free();
-            }
-            _ => {}
-        });
-        let stream = &**release;
-
+        // `defer { switch }` is hoisted to the tail below (after `end_pipe`)
+        // since `StreamResult` has no `Drop` and `stream` is a stack local
+        // independent of `self`.
         let chunk = stream.slice();
         scoped_log!(ResumableSink, "onWrite {}", chunk.len());
 
@@ -467,7 +459,7 @@ impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<'a, J
 
         if is_done {
             let err: Option<JSValue> = 'brk_err: {
-                if let StreamResult::Err(e) = stream {
+                if let StreamResult::Err(e) = &stream {
                     let (js_err, was_strong) = e.to_js_weak(self.global_this);
                     js_err.ensure_still_alive();
                     if was_strong == crate::webcore::streams::WasStrong::Strong {
@@ -478,6 +470,12 @@ impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<'a, J
                 None
             };
             self.end_pipe(err);
+            // `self` may now be dangling — do NOT touch it past this point.
+        }
+
+        // Zig `defer { owned.deinit(allocator) }` — see allocator note above.
+        if let StreamResult::Owned(owned) | StreamResult::OwnedAndDone(owned) = &mut stream {
+            owned.clear_and_free();
         }
     }
 
@@ -652,7 +650,6 @@ impl ResumableSinkContext for FetchTasklet {
 pub type ResumableFetchSink<'a> = ResumableSink<'a, JSResumableFetchSink, FetchTasklet>;
 pub type ResumableS3UploadSink<'a> = ResumableSink<'a, JSResumableS3UploadSink, S3UploadStreamWrapper>;
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     fn Bun__assignStreamIntoResumableSink(
         global_this: *const JSGlobalObject,

@@ -46,7 +46,7 @@ pub struct StatWatcherScheduler {
     vm: &'static VirtualMachine, // TODO(port): lifetime — JSC_BORROW per LIFETIMES.tsv
     watchers: WatcherQueue,
 
-    event_loop_timer: EventLoopTimer,
+    pub event_loop_timer: EventLoopTimer,
 
     ref_count: AtomicU32, // TODO(port): bun.ptr.ThreadSafeRefCount — IntrusiveArc<Self> embedded count
 }

@@ -69,7 +69,7 @@ impl OutdatedCommand {
         let silent = cli.silent;
 
         let (pm_ptr, original_cwd) =
-            match PackageManager::init(&mut **ctx, cli, Subcommand::Outdated) {
+            match PackageManager::init(&mut *ctx, cli, Subcommand::Outdated) {
                 Ok(v) => v,
                 Err(err) => {
                     if !silent {

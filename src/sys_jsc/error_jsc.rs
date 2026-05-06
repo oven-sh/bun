@@ -1,7 +1,5 @@
 //! JSC bridge for `bun.sys.Error`. Keeps `src/sys/` free of JSC types.
 
-use core::ffi::c_int;
-
 use bun_sys::Error;
 
 use crate::{CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, SystemErrorJsc};
@@ -45,7 +43,7 @@ impl TestingAPIs {
     /// Exercises Error.name() with from_libuv=true so tests can feed the
     /// negated-UV-code errno values that node_fs.zig stores and verify the
     /// integer overflow at translateUVErrorToE(-code) is fixed. Windows-only.
-    // TODO(b2-blocked): bun_jsc::host_fn — #[bun_jsc::host_fn] attribute macro not yet exported
+    #[bun_jsc::host_fn]
     pub fn sys_error_name_from_libuv(
         global: &JSGlobalObject,
         frame: &CallFrame,
@@ -69,14 +67,13 @@ impl TestingAPIs {
                 from_libuv: true,
                 ..Default::default()
             };
-            // TODO(b2-blocked): bun_string::String::create_utf8_for_js (tier-6 string_jsc)
-            return bun_string::String::create_utf8_for_js(global, err.name());
+            return bun_jsc::bun_string_jsc::create_utf8_for_js(global, err.name());
         }
     }
 
     /// Exposes libuv -> `bun.sys.E` translation so tests can feed out-of-range
     /// negative values and verify it does not panic. Windows-only.
-    // TODO(b2-blocked): bun_jsc::host_fn — #[bun_jsc::host_fn] attribute macro not yet exported
+    #[bun_jsc::host_fn]
     pub fn translate_uv_error_to_e(
         global: &JSGlobalObject,
         frame: &CallFrame,
@@ -93,12 +90,13 @@ impl TestingAPIs {
         }
         #[cfg(windows)]
         {
-            let code: c_int = arguments[0].to_int32();
-            // TODO(b2-blocked): bun_sys::windows::libuv::translate_uv_error_to_e
+            let code: core::ffi::c_int = arguments[0].to_int32();
             let result = bun_sys::windows::libuv::translate_uv_error_to_e(code);
             // @tagName(result) → IntoStaticStr derive on the E enum.
-            // TODO(b2-blocked): bun_string::String::create_utf8_for_js (tier-6 string_jsc)
-            return bun_string::String::create_utf8_for_js(global, <&'static str>::from(result));
+            return bun_jsc::bun_string_jsc::create_utf8_for_js(
+                global,
+                <&'static str>::from(result).as_bytes(),
+            );
         }
     }
 }
@@ -106,10 +104,7 @@ impl TestingAPIs {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/sys_jsc/error_jsc.zig (54 lines)
-//   confidence: high — bodies un-gated and type-checked against crate-local
-//               bun_jsc shim surface (see lib.rs); Windows arms remain
-//               unchecked on posix builds
-//   blocked:    bun_jsc::{SystemError::to_error_instance*, CallFrame::arguments,
-//               host_fn macro, JSValue::{is_number,to_int32,UNDEFINED},
-//               JSGlobalObject::throw} — shimmed in lib.rs until bun_jsc compiles
+//   confidence: high
+//   todos:      0
+//   notes:      Windows arms remain unchecked on posix builds (cfg-gated).
 // ──────────────────────────────────────────────────────────────────────────

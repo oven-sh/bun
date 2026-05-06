@@ -49,7 +49,7 @@ pub struct CreateJSFunctionOptions {
 // TODO(port): move to jsc_sys
 unsafe extern "C" {
     fn JSFunction__createFromZig(
-        global: *mut JSGlobalObject,
+        global: *const JSGlobalObject,
         fn_name: BunString,
         implementation: JSHostFn,
         arg_count: u32,

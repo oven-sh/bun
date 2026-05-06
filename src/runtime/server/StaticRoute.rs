@@ -481,22 +481,27 @@ impl StaticRoute {
         self.do_write_headers(resp);
     }
 
-    pub fn on_with_method(&self, method: Method, resp: AnyResponse) {
+    /// # Safety
+    /// See [`on_head_request`].
+    pub unsafe fn on_with_method(this: *mut Self, method: Method, resp: AnyResponse) {
         match method {
-            Method::GET => self.on(resp),
-            Method::HEAD => self.on_head(resp),
+            Method::GET => Self::on(this, resp),
+            Method::HEAD => Self::on_head(this, resp),
             _ => {
-                self.do_write_status(405, resp); // Method not allowed
+                (*this).do_write_status(405, resp); // Method not allowed
                 resp.end_without_body(resp.should_close_connection());
             }
         }
     }
 
-    fn render_304_not_modified_if_none_match(&self, req: AnyRequest, resp: AnyResponse) -> bool {
+    /// # Safety
+    /// See [`on_head_request`]. May free `*this` via `on_response_complete` when it
+    /// returns `true`.
+    unsafe fn render_304_not_modified_if_none_match(this: *mut Self, req: AnyRequest, resp: AnyResponse) -> bool {
         let Some(if_none_match) = req.header(b"if-none-match") else {
             return false;
         };
-        let Some(etag) = self.headers.get(b"etag") else {
+        let Some(etag) = (*this).headers.get(b"etag") else {
             return false;
         };
         if if_none_match.is_empty() || etag.is_empty() {
@@ -509,15 +514,15 @@ impl StaticRoute {
 
         // Return 304 Not Modified
         req.set_yield(false);
-        self.ref_();
-        if let Some(server) = self.server {
+        (*this).ref_();
+        if let Some(server) = (*this).server {
             server.on_pending_request();
             resp.timeout(server.config().idle_timeout);
         }
-        self.do_write_status(304, resp);
-        self.do_write_headers(resp);
+        (*this).do_write_status(304, resp);
+        (*this).do_write_headers(resp);
         resp.end_without_body(resp.should_close_connection());
-        self.on_response_complete(resp);
+        Self::on_response_complete(this, resp);
         true
     }
 }

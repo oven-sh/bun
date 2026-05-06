@@ -69,15 +69,17 @@ impl JSMySQLConnection {
         self.ref_count.set(self.ref_count.get() + 1);
     }
     #[inline]
-    pub fn deref(&self) {
+    pub fn deref(&mut self) {
         let n = self.ref_count.get() - 1;
         self.ref_count.set(n);
         if n == 0 {
-            // SAFETY: count hit 0; `self` came from `Box::into_raw` in
+            // Count hit 0; `self` came from `Box::into_raw` in
             // `create_instance`, so we are the unique owner here. `deinit`
             // takes ownership back via `Box::from_raw` (mirrors Zig
-            // `bun.destroy(this)`).
-            unsafe { (*(self as *const Self as *mut Self)).deinit() };
+            // `bun.destroy(this)`). Taking `&mut self` (all callers already
+            // hold `&mut`/`*mut`) avoids the `&T as *const T as *mut T`
+            // provenance-laundering cast that was UB when written through.
+            self.deinit();
         }
     }
 

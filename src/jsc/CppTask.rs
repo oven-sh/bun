@@ -25,7 +25,9 @@ impl CppTask {
     pub fn run(&mut self, global: &JSGlobalObject) -> JsResult<()> {
         bun_jsc::mark_binding!();
         // SAFETY: self is a valid C++ EventLoopTask; global outlives the call.
-        unsafe { Bun__performTask(global as *const _ as *mut _, self as *mut CppTask) };
+        // `JSGlobalObject` wraps `UnsafeCell`, so `as_mut_ptr()` yields a write-
+        // provenance `*mut` from `&self` without laundering a read-only pointer.
+        unsafe { Bun__performTask(global.as_mut_ptr(), self as *mut CppTask) };
         // TODO(port): Bun__performTask returns bun.JSError!void in Zig via generated binding;
         // confirm whether the C ABI actually surfaces an error or if this is infallible.
         Ok(())

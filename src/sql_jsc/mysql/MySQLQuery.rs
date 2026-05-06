@@ -182,8 +182,12 @@ impl MySQLQuery {
         // A generic `extern "C" fn` is fine (monomorphized per `W`), but Phase B must confirm the
         // bun_jsc API shape — it may instead take a Rust closure and handle the trampoline internally.
         extern "C" fn run<W>(ctx: *mut Ctx<'_, W>, roots: *mut MarkedArgumentBuffer) {
-            // SAFETY: `ctx` and `roots` are valid for the duration of `MarkedArgumentBuffer::run`;
-            // the buffer is stack-scoped on the C++ side and outlives this call.
+            // SAFETY (single-owner): `ctx` points at the caller's stack-local `Ctx`; the only
+            // Rust borrow of it was the ephemeral `&mut ctx as *mut _` used to derive this
+            // pointer at the `MarkedArgumentBuffer::run` call site, so no other `&mut` aliases
+            // it for the duration of this callback. `roots` points at a C++-stack-allocated
+            // `JSC::MarkedArgumentBuffer` that the trampoline hands exclusively to this
+            // callback and never re-enters; both outlive this call.
             let ctx = unsafe { &mut *ctx };
             let roots = unsafe { &mut *roots };
             ctx.result = MySQLQuery::bind_and_execute_impl(

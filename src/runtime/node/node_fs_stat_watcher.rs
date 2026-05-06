@@ -793,7 +793,8 @@ impl InitialStatTask {
         let this_ref = unsafe { &mut *this };
 
         if this_ref.closed {
-            this_ref.deref(); // Balance the ref() from createAndSchedule().
+            // SAFETY: balance the ref() from createAndSchedule(); raw ptr (not `&self`).
+            unsafe { StatWatcher::deref(this) };
             // TODO(port): with Arc field this would double-deref on Drop. Phase B: IntrusiveArc.
             core::mem::forget(initial_stat_task.watcher);
             return;

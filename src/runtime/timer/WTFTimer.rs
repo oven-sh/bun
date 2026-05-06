@@ -156,7 +156,9 @@ impl WTFTimer {
         unsafe { (*this).lock.lock() };
         // PORT NOTE: bun_threading::Mutex is lock()/unlock(), not RAII.
         // scopeguard so the early-return below still unlocks.
-        let _g = scopeguard::guard((), |()| {
+        // `move` so the closure captures `this` (a Copy raw ptr) by value,
+        // not by &-borrow — otherwise borrowck refuses the addr_of_mut! below.
+        let _g = scopeguard::guard((), move |()| {
             // SAFETY: per fn contract — `this` outlives this scope.
             unsafe { (*this).lock.unlock() };
         });

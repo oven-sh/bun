@@ -201,9 +201,28 @@ pub struct IteratorNext<'a> {
 
 impl<'a, const PATH_STYLE: IteratorPathStyle> Iterator<'a, PATH_STYLE> {
     pub fn init(lockfile: &'a Lockfile) -> Self {
+        Self::from_slices(
+            lockfile.buffers.trees.as_slice(),
+            lockfile.buffers.hoisted_dependencies.as_slice(),
+            lockfile.buffers.dependencies.as_slice(),
+            lockfile.buffers.string_bytes.as_slice(),
+        )
+    }
+
+    /// Construct from raw buffer slices. Used by `bun.lock.rs` (which holds a
+    /// `lockfile_real::Lockfile`) until the stub/real `Lockfile` types unify.
+    pub fn from_slices(
+        trees: &'a [Tree],
+        hoisted_dependencies: &'a [DependencyID],
+        dependencies: &'a [Dependency],
+        string_bytes: &'a [u8],
+    ) -> Self {
         let mut iter = Self {
             tree_id: 0,
-            lockfile,
+            trees,
+            hoisted_dependencies,
+            dependencies,
+            string_bytes,
             path_buf: PathBuffer::uninit(),
             depth_stack: [0; MAX_DEPTH],
         };
@@ -223,7 +242,7 @@ impl<'a, const PATH_STYLE: IteratorPathStyle> Iterator<'a, PATH_STYLE> {
         &mut self,
         completed_trees: Option<&mut DynamicBitSet>,
     ) -> Option<IteratorNext<'_>> {
-        let trees = self.lockfile.buffers.trees.as_slice();
+        let trees = self.trees;
 
         if (self.tree_id as usize) >= trees.len() {
             return None;
@@ -246,14 +265,12 @@ impl<'a, const PATH_STYLE: IteratorPathStyle> Iterator<'a, PATH_STYLE> {
 
         let current_tree_id = self.tree_id;
         let tree = trees[current_tree_id as usize];
-        let tree_dependencies = tree
-            .dependencies
-            .get(self.lockfile.buffers.hoisted_dependencies.as_slice());
+        let tree_dependencies = tree.dependencies.get(self.hoisted_dependencies);
 
         let (relative_path, depth) = relative_path_and_depth::<PATH_STYLE>(
             trees,
-            self.lockfile.buffers.dependencies.as_slice(),
-            self.lockfile.buffers.string_bytes.as_slice(),
+            self.dependencies,
+            self.string_bytes,
             current_tree_id,
             &mut self.path_buf,
             &mut self.depth_stack,

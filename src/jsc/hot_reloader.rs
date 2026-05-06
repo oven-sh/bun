@@ -1231,6 +1231,7 @@ impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> bun_watcher::WatcherCon
     for NewHotReloader<Ctx, EventLoopType, RELOAD_IMMEDIATELY>
 where
     Ctx: HotReloaderCtx<EventLoop = EventLoopType>,
+    EventLoopType: HotReloaderEventLoop,
 {
     fn on_file_update(
         &mut self,

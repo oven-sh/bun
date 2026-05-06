@@ -259,6 +259,18 @@ impl StringJoiner {
         }
     }
 
+    /// Walk the node chain yielding each node's slice in insertion order.
+    /// Mirrors Zig's `var el = joiner.head; while (el) |e| : (el = e.next) ...`.
+    pub fn node_slices(&self) -> NodeSlices<'_> {
+        NodeSlices {
+            cur: match &self.head {
+                Some(h) => &**h as *const Node,
+                None => ptr::null(),
+            },
+            _joiner: core::marker::PhantomData,
+        }
+    }
+
     pub fn contains(&self, slice: &[u8]) -> bool {
         let mut el: *const Node = match &self.head {
             Some(h) => &**h as *const Node,

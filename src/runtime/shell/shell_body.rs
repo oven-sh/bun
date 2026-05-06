@@ -385,8 +385,15 @@ impl<'a> GlobalJS<'a> {
 
     #[inline]
     pub fn platform_event_loop(self) -> &'a PlatformEventLoop {
-        let _ = self.event_loop_ctx();
-        todo!("blocked_on: bun_jsc::AbstractVM::platform_event_loop")
+        // Spec shell.zig GlobalJS.platformEventLoop → JsVM.platformEventLoop:
+        //   posix: `vm.event_loop_handle.?`; windows: `vm.uvLoop()`.
+        let vm = self.event_loop_ctx();
+        #[cfg(windows)]
+        // SAFETY: uv_loop() returns the live libuv loop owned by the VM; lifetime tied to 'a.
+        unsafe { return &*vm.uv_loop(); }
+        #[cfg(not(windows))]
+        // SAFETY: `event_loop_handle` is set during VM init and never freed before the VM.
+        unsafe { &*vm.event_loop_handle.expect("event_loop_handle is null") }
     }
 
     #[inline]

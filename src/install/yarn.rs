@@ -1722,8 +1722,8 @@ pub fn migrate_yarn_lockfile<'a>(
             let _ = DependencyID::try_from(this.buffers.dependencies.len()).unwrap();
 
             let name_hash = string_hash(&root_dep.name);
-            let dep_name_string = string_buf.append_with_hash(&root_dep.name, name_hash)?;
-            let dep_version_string = string_buf.append(&root_dep.version)?;
+            let dep_name_string = sbuf!().append_with_hash(&root_dep.name, name_hash)?;
+            let dep_version_string = sbuf!().append(&root_dep.version)?;
             let sliced_string = SlicedString::init(
                 dep_version_string.slice(this.buffers.string_bytes.as_slice()),
                 dep_version_string.slice(this.buffers.string_bytes.as_slice()),

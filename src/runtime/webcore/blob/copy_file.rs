@@ -84,10 +84,11 @@ impl<'a> CopyFile<'a> {
         global_this: &'a JSGlobalObject,
         mkdirp_if_not_exists: bool,
         destination_mode: Option<Mode>,
-    ) -> Box<CopyFilePromiseTask> {
+    ) -> Box<CopyFilePromiseTask<'a>> {
         let read_file = Box::new(CopyFile {
             destination_file_store: store.data.as_file().clone(),
             source_file_store: source_store.data.as_file().clone(),
+            // store.ref() / source_store.ref() — StoreRef::clone bumps the refcount
             store: Some(store.clone()),
             source_store: Some(source_store.clone()),
             offset: off,
@@ -103,9 +104,7 @@ impl<'a> CopyFile<'a> {
             read_len: 0,
             read_off: 0,
         });
-        // store.ref() / source_store.ref() — handled by StoreRef::clone above
-        let _ = (global_this, read_file);
-        todo!("blocked_on: jsc::ConcurrentPromiseTask<T>::create_on_js_thread (gated)")
+        CopyFilePromiseTask::create_on_js_thread(global_this, read_file)
     }
 
     pub fn reject(&mut self, promise: &mut JSPromise) -> Result<(), jsc::JsTerminated> {

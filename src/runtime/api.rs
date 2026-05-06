@@ -46,6 +46,24 @@ pub struct BuildMessage {
     pub msg: bun_logger::Msg,
     pub logged: bool,
 }
+impl BuildMessage {
+    /// Spec `BuildMessage.create` (BuildMessage.zig:46) — clone `msg` into a
+    /// fresh heap-allocated `BuildMessage` and wrap it in its JSC cell.
+    /// `JsClass::to_js` (macro-emitted below) boxes `self` and calls the
+    /// C++-side `BuildMessage__create(global, ptr)`; the resulting `m_ctx` is
+    /// freed by `BuildMessageClass__finalize` on lazy sweep.
+    pub fn create(
+        global: &bun_jsc::JSGlobalObject,
+        msg: bun_logger::Msg,
+    ) -> bun_jsc::JsResult<bun_jsc::JSValue> {
+        use bun_jsc::JsClass;
+        let build_error = BuildMessage {
+            msg: msg.clone()?,
+            logged: false,
+        };
+        Ok(build_error.to_js(global))
+    }
+}
 #[repr(C)]
 pub struct ResolveMessage {
     pub msg: bun_logger::Msg,

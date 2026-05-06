@@ -2509,6 +2509,9 @@ impl PackageInstall {
 #[derive(Default)] pub struct FileCopier;
 #[derive(Default)] pub struct PatchTask {
     pub callback: PatchTaskCallbackStub,
+    /// Zig: `pre: bool = false` (src/install/patch_install.zig) — set when the
+    /// task is enqueued via `enqueuePatchTaskPre` (pre-install hash calc).
+    pub pre: bool,
     /// Zig: `next: ?*PatchTask = null` (src/install/patch_install.zig:31) —
     /// intrusive link for `PatchTaskQueue` (`UnboundedQueue(PatchTask, .next)`).
     pub next: *mut PatchTask,

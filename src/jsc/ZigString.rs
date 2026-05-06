@@ -1068,22 +1068,24 @@ impl Slice {
         if self.is_allocated() {
             return Ok(self);
         }
-        let duped: &'static [u8] = Box::leak(Box::<[u8]>::from(self.slice()));
+        let len = self.len;
+        let ptr = Box::into_raw(Box::<[u8]>::from(self.slice())).cast::<u8>();
         Ok(Slice {
             allocator: NullableAllocator::default_alloc(),
-            ptr: duped.as_ptr(),
-            len: self.len,
+            ptr,
+            len,
         })
     }
 
     pub fn clone_with_trailing_slash(&self) -> Result<Slice, bun_core::Error> {
         // TODO(port): narrow error set
         let buf = strings::paths::clone_normalizing_separators(self.slice());
-        let leaked = Box::leak(buf.into_boxed_slice());
+        let len = buf.len() as u32;
+        let ptr = Box::into_raw(buf.into_boxed_slice()).cast::<u8>();
         Ok(Slice {
             allocator: NullableAllocator::default_alloc(),
-            ptr: leaked.as_ptr(),
-            len: leaked.len() as u32,
+            ptr,
+            len,
         })
     }
 

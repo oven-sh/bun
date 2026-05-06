@@ -16,7 +16,37 @@ pub(crate) mod bun_schema {
 /// (`Expr`, `ExprData`, `E*` variants) live in `bun_logger::js_ast`.
 pub(crate) mod bun_json {
     pub use bun_interchange::json::*;
-    pub use bun_logger::js_ast::{Expr, ExprData, e as E};
+    pub use bun_logger::js_ast::{Expr, ExprData, e as E, expr::Query, G::Property};
+
+    /// Phase-B accessor shim — Zig's `Expr.asString`/`asProperty`/`get` route
+    /// through `E.Object`/`E.String`; the T2 `Expr` type only exposes the raw
+    /// `data` enum, so add a thin extension trait here so install drafts don't
+    /// have to pattern-match at every call site. JSON parse_utf8 always
+    /// produces UTF-8 strings, so `as_string` can return the raw slice.
+    pub trait ExprAccessors {
+        fn as_string(&self) -> Option<&'static [u8]>;
+        fn as_property(&self, key: &[u8]) -> Option<Query>;
+        fn get(&self, key: &[u8]) -> Option<Expr>;
+    }
+    impl ExprAccessors for Expr {
+        #[inline]
+        fn as_string(&self) -> Option<&'static [u8]> {
+            if let ExprData::EString(s) = &self.data {
+                if s.is_utf8() {
+                    return Some(s.data);
+                }
+            }
+            None
+        }
+        #[inline]
+        fn as_property(&self, key: &[u8]) -> Option<Query> {
+            if let ExprData::EObject(o) = &self.data { o.as_property(key) } else { None }
+        }
+        #[inline]
+        fn get(&self, key: &[u8]) -> Option<Expr> {
+            if let ExprData::EObject(o) = &self.data { o.get(key) } else { None }
+        }
+    }
 }
 
 /// `bun_fs` → resolver-tier `FileSystem` is shimmed under `bun_sys::fs`
@@ -391,6 +421,53 @@ pub mod package_manager {
         pub fn get_cache_directory(&mut self) -> bun_sys::Fd {
             todo!("B-2: PackageManager::get_cache_directory")
         }
+        /// Zig: `PackageManager.getTemporaryDirectory(this) std.fs.Dir`.
+        pub fn get_temporary_directory(&mut self) -> TempDir {
+            todo!("B-2: PackageManager::get_temporary_directory")
+        }
+        /// Zig: `PackageManager.verbose_install` — global flag.
+        #[inline]
+        pub fn verbose_install() -> bool { false }
+    }
+
+    /// Stub for the `std.fs.Dir` return of `getTemporaryDirectory` — only the
+    /// `.handle` field is read by `npm::registry::get_package_metadata`.
+    pub struct TempDir {
+        pub handle: bun_sys::Fd,
+    }
+
+    /// Stub for `PackageManager/CommandLineArguments.zig`. Real impl gated.
+    #[derive(Default, Clone)]
+    pub struct CommandLineArguments;
+
+    /// Port of `PackageManager.WorkspaceFilter` (src/install/PackageManager.zig).
+    /// Exposed so the gated `lockfile.rs` draft type-checks against the stub
+    /// surface; real impl lives in the gated `PackageManager.rs`.
+    pub enum WorkspaceFilter {
+        All,
+        Name(Box<[u8]>),
+        Path(Box<[u8]>),
+    }
+
+    /// Zig: `PackageManager.init(ctx, cli, comptime subcommand) !struct { *PackageManager, []const u8 }`.
+    /// Allocates the global singleton, resolves the root package.json path, and
+    /// returns `(manager, original_cwd)`. `Command::Context` is bunfig-tier and
+    /// not yet available below tier-6, so the stub takes the already-loaded
+    /// `Arguments` shape directly.
+    pub fn init(
+        _ctx: crate::bun_bunfig::Arguments::Context<'_>,
+        _cli: CommandLineArguments,
+        _subcommand: Subcommand,
+    ) -> Result<(&'static mut PackageManager, Box<[u8]>), bun_core::Error> {
+        todo!("B-2: package_manager::init — un-gate PackageManager.rs")
+    }
+
+    /// Zig: `PackageManager.install(ctx) !void` — the `bun install` entry point.
+    /// Wraps `updatePackageJSONAndInstallCatchError` for `Subcommand::Install`.
+    pub fn install(
+        _ctx: crate::bun_bunfig::Arguments::Context<'_>,
+    ) -> Result<(), bun_core::Error> {
+        todo!("B-2: package_manager::install — un-gate PackageManager.rs")
     }
 
     /// Stub for `PackageManager.Options` (src/install/PackageManager/PackageManagerOptions.zig).
@@ -536,6 +613,17 @@ pub mod lockfile {
             todo!("B-2: Lockfile::load_from_dir")
         }
 
+        /// Zig: `Lockfile.saveToDisk(this, *const LoadResult, *const PackageManager.Options)`.
+        /// Serializes to text or binary format (per `load_result.save_format(options)`)
+        /// and atomically renames into place.
+        pub fn save_to_disk(
+            &mut self,
+            _load_result: &LoadResult,
+            _options: &crate::package_manager::options::Options,
+        ) {
+            todo!("B-2: Lockfile::save_to_disk")
+        }
+
         pub fn to_json_fmt(&self, _opts: JsonFmtOptions) -> impl core::fmt::Display + '_ {
             struct F<'a>(&'a Lockfile);
             impl core::fmt::Display for F<'_> {
@@ -621,11 +709,82 @@ pub mod lockfile {
 }
 #[cfg(not(any()))]
 pub mod bin {
+    use bun_semver::String as SemverString;
+    use crate::ExternalStringList;
+
     /// Stub for `Bin` (src/install/bin.zig). `#[repr(C)]`+`Copy` because
     /// `npm::PackageVersion` embeds it directly in the manifest binary layout.
+    /// Layout matches the gated `bin.rs` so `npm::PackageManifest::parse` can
+    /// build it without ungating the full `bin` module (which pulls in
+    /// `Lockfile`/`bun_sys::DirIterator`).
     #[repr(C)]
-    #[derive(Clone, Copy, Default)]
-    pub struct Bin;
+    #[derive(Clone, Copy)]
+    pub struct Bin {
+        pub tag: Tag,
+        pub _padding_tag: [u8; 3],
+        pub value: Value,
+    }
+    impl Default for Bin {
+        fn default() -> Self {
+            Self { tag: Tag::None, _padding_tag: [0; 3], value: Value::init_none() }
+        }
+    }
+    impl Bin {
+        #[inline]
+        pub fn init() -> Self { Self::default() }
+    }
+
+    #[repr(u8)]
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+    pub enum Tag {
+        #[default]
+        None = 0,
+        File = 1,
+        NamedFile = 2,
+        Dir = 3,
+        Map = 4,
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub union Value {
+        pub none: (),
+        pub file: SemverString,
+        pub named_file: [SemverString; 2],
+        pub dir: SemverString,
+        pub map: ExternalStringList,
+    }
+    impl Value {
+        #[inline]
+        pub fn init_none() -> Value {
+            // SAFETY: all-zero is a valid Value (largest member ExternalStringList is POD)
+            unsafe { core::mem::zeroed() }
+        }
+        #[inline]
+        pub fn init_file(file: SemverString) -> Value {
+            let mut v = Self::init_none();
+            v.file = file;
+            v
+        }
+        #[inline]
+        pub fn init_named_file(named_file: [SemverString; 2]) -> Value {
+            let mut v = Self::init_none();
+            v.named_file = named_file;
+            v
+        }
+        #[inline]
+        pub fn init_dir(dir: SemverString) -> Value {
+            let mut v = Self::init_none();
+            v.dir = dir;
+            v
+        }
+        #[inline]
+        pub fn init_map(map: ExternalStringList) -> Value {
+            let mut v = Self::init_none();
+            v.map = map;
+            v
+        }
+    }
 }
 #[cfg(not(any()))]
 pub mod resolvers {

@@ -5,6 +5,8 @@ use crate::jsc::{JSGlobalObject, JSValue};
 // Remaining submodules blocked on `bun_jsc` method surface (stub types have
 // no `.err()`/`.to_js()` etc.). Phase-A drafts preserved on disk via `#[path]`.
 
+#[path = "pwhash.rs"]
+pub mod pwhash;
 #[cfg(any())]
 #[path = "PasswordObject.rs"]
 pub mod password_object;
@@ -36,8 +38,8 @@ pub fn create_crypto_error(global_this: &JSGlobalObject, err_code: u32) -> JSVal
 // ─── real type surface (B-2 struct/state un-gate) ─────────────────────────
 // Full method bodies (host fns, `from_js`, WorkPool jobs) stay in the gated
 // drafts above — they need `bun_jsc::{host_fn, JSGlobalObject method surface,
-// node::StringOrBuffer}` and `bun_crypto_std::{sha3, blake2}` /
-// `bun_crypto::pwhash` (not yet vendored).
+// node::StringOrBuffer}` and `bun_crypto_std::{sha3, blake2}`. The pwhash shim
+// (argon2/bcrypt API surface) now lives at `super::pwhash`; vendor impl pending.
 pub mod password_object {
     /// Namespace marker — `Bun.password` is a plain JS object whose methods
     /// dispatch to `JSPasswordObject` host fns; no native fields.
@@ -63,7 +65,10 @@ pub mod password_object {
         pub memory_cost: u32,
     }
     impl Argon2Params {
-        pub const DEFAULT: Self = Self { time_cost: 2, memory_cost: 65536 };
+        pub const DEFAULT: Self = Self {
+            time_cost: super::pwhash::argon2::Params::INTERACTIVE_2ID_T,
+            memory_cost: super::pwhash::argon2::Params::INTERACTIVE_2ID_M,
+        };
     }
 
     /// Zig: `Algorithm.Value = union(Algorithm)`.

@@ -305,16 +305,17 @@ impl EVP {
         None
     }
 
-    pub fn by_name(name: ZigString, global: &JSGlobalObject) -> Option<EVP> {
-        #[cfg(any())]
-        {
-            let name_str = name.to_slice();
-            return Self::by_name_and_engine(global.bun_vm().rare_data().boring_engine(), name_str.slice());
-        }
-        // TODO(b2-blocked): bun_jsc::JSGlobalObject::bun_vm
-        // TODO(b2-blocked): bun_jsc::VirtualMachine::rare_data
-        let _ = (name, global);
-        None
+    pub fn by_name(name: &ZigString, global: &JSGlobalObject) -> Option<EVP> {
+        let name_str = name.to_slice();
+        // `RareData::boring_engine()` returns `*mut` to bun_jsc's local opaque `ENGINE`
+        // stub (bun_jsc has no bun_boringssl_sys dep). Both name the same C `ENGINE`
+        // struct, so cast to the real bindgen type for the FFI call.
+        let engine = global
+            .bun_vm()
+            .rare_data()
+            .boring_engine()
+            .cast::<boringssl::ENGINE>();
+        Self::by_name_and_engine(engine, name_str.slice())
     }
 }
 

@@ -84,7 +84,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     ) -> Result<SkipTypeParameterResult, Error> {
         todo!("b2-ast-E: skip_type_script_type_parameters_then_open_paren_with_backtracking")
     }
-    pub fn skip_type_script_constraint_of_infer_type_with_backtracking(&mut self) -> Result<bool, Error> {
+    pub fn skip_type_script_constraint_of_infer_type_with_backtracking(
+        &mut self,
+        flags: SkipTypeOptionsBitset,
+    ) -> Result<bool, Error> {
+        let _ = flags;
         todo!("b2-ast-E: skip_type_script_constraint_of_infer_type_with_backtracking")
     }
     pub fn skip_type_script_arrow_args_with_backtracking(&mut self) -> Result<bool, Error> {
@@ -110,7 +114,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     pub fn try_skip_type_script_arrow_args_with_backtracking(&mut self) -> bool {
         todo!("b2-ast-E: try_skip_type_script_arrow_args_with_backtracking")
     }
-    pub fn try_skip_type_script_constraint_of_infer_type_with_backtracking(&mut self) -> bool {
+    pub fn try_skip_type_script_constraint_of_infer_type_with_backtracking(
+        &mut self,
+        flags: SkipTypeOptionsBitset,
+    ) -> bool {
+        let _ = flags;
         todo!("b2-ast-E: try_skip_type_script_constraint_of_infer_type_with_backtracking")
     }
 }
@@ -121,20 +129,19 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 //   POD `LexerSnapshot` that `restore()` accepts (same as TypeScript.rs:197 blocker);
 //   TypeScript::SkipTypeOptions::Bitset path (EnumSet<SkipTypeOptions>);
 //   TypeScript::Identifier::from_bytes lookup; Metadata::{MDot, MNever, ...} variant payloads;
-//   _draft uses `const JSX: JSXTransformType` const-generic (needs J: JsxT lowering);
 //   ~1540-line bodies, >30 path/shape errors per method.
 #[allow(warnings)]
 mod _draft {
 use bun_core::{self, err, Error};
 use bun_logger as logger;
-use crate::{
-    self as js_parser, JSXTransformType, ParseStatementOptions, Ref, SkipTypeParameterResult,
-    TypeParameterFlag, TypeScript,
+use crate::parser::{
+    JsxT, ParseStatementOptions, Ref, SkipTypeParameterResult, TypeParameterFlag,
 };
-use crate::ast::{self as js_ast, Op};
-use crate::ast::Op::Level;
+use crate::ast::{self as js_ast, Op, TypeScript};
+use crate::ast::op::Level;
+use crate::ast::p::P;
 use crate::lexer::T;
-use crate::TypeScript::{Metadata, SkipTypeOptions};
+use crate::ast::TypeScript::{Metadata, SkipTypeOptions};
 // TODO(port): verify exact module paths for TypeScript::{Metadata, SkipTypeOptions, Identifier}
 // TODO(port): narrow error set
 
@@ -143,10 +150,7 @@ use crate::TypeScript::{Metadata, SkipTypeOptions};
 // in via `usingnamespace`. In Rust we collapse this into an inherent `impl` block on the parser
 // type `P` so call sites (`p.skip_type_script_type(...)`) match 1:1.
 // PORT NOTE: reshaped — the `SkipTypescript` type-returning wrapper is dropped; methods live
-// directly on `P<TS, JSX, SCAN_ONLY>`.
-
-type P<const TS: bool, const JSX: JSXTransformType, const SCAN_ONLY: bool> =
-    js_parser::NewParser_<TS, JSX, SCAN_ONLY>;
+// directly on `P<'a, TS, J, SCAN_ONLY>`.
 
 // Local alias matching Zig `const List = std.ArrayListUnmanaged;`
 // js_parser is an AST crate (§Allocators) and the Zig feeds `p.allocator` (arena) into
@@ -158,12 +162,7 @@ type SkipTypeOptionsBitset = SkipTypeOptions::Bitset;
 // TODO(port): `SkipTypeOptions::Bitset` path — in Rust `SkipTypeOptions` is likely an enum and
 // `Bitset` is `enumset::EnumSet<SkipTypeOptions>` or a sibling type. Adjust path in Phase B.
 
-impl<
-        const PARSER_FEATURE_TYPESCRIPT: bool,
-        const PARSER_FEATURE_JSX: JSXTransformType,
-        const PARSER_FEATURE_SCAN_ONLY: bool,
-    > P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>
-{
+impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
     #[inline]
     pub fn skip_typescript_return_type(&mut self) -> Result<(), Error> {
         self.skip_type_script_type_with_opts::<false>(

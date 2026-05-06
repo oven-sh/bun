@@ -33,6 +33,28 @@ use crate::{
 use crate::package_manager::WorkspaceFilter;
 use crate::migration;
 
+// ────────────────────────────────────────────────────────────────────────────
+// Sub-module declarations — Zig basenames preserved per PORTING.md, hence
+// explicit #[path] attrs for PascalCase / dotted file names.
+// ────────────────────────────────────────────────────────────────────────────
+
+#[path = "lockfile/Buffers.rs"]
+pub mod buffers;
+#[path = "lockfile/bun.lock.rs"]
+pub mod bun_lock;
+#[path = "lockfile/bun.lockb.rs"]
+pub mod bun_lockb;
+#[path = "lockfile/Tree.rs"]
+pub mod tree;
+#[path = "lockfile/Package.rs"]
+pub mod package;
+#[path = "lockfile/CatalogMap.rs"]
+pub mod catalog_map;
+#[path = "lockfile/OverrideMap.rs"]
+pub mod override_map;
+#[path = "lockfile/lockfile_json_stringify_for_debugging.rs"]
+pub mod lockfile_json_stringify_for_debugging;
+
 // Sub-module re-exports
 pub use crate::lockfile::buffers::Buffers;
 pub use crate::lockfile::bun_lockb as Serializer;
@@ -71,6 +93,27 @@ pub type StringPool = <SemverString as bun_semver::StringExt>::Builder::StringPo
 
 pub type MetaHash = [u8; 32]; // Sha512T256.digest_length
 pub const ZERO_HASH: MetaHash = [0u8; 32];
+
+/// Result of `maybe_clone_filtering_root_packages`: either the input lockfile was
+/// returned unchanged (borrowed), or a freshly-allocated cleaned lockfile is returned
+/// (owned). Spec lockfile.zig returns a `*Lockfile` in both cases; Rust distinguishes
+/// ownership so the caller can drop the `Box` when done.
+pub enum Cleaned<'a> {
+    /// No changes needed — caller's lockfile is returned as-is.
+    Same(&'a mut Lockfile),
+    /// A new lockfile was allocated by `clean`; caller owns it.
+    New(Box<Lockfile>),
+}
+
+impl<'a> Cleaned<'a> {
+    #[inline]
+    pub fn as_mut(&mut self) -> &mut Lockfile {
+        match self {
+            Cleaned::Same(l) => l,
+            Cleaned::New(l) => l,
+        }
+    }
+}
 
 // TODO(port): std.io.FixedBufferStream([]u8) — replace with cursor over &mut [u8]
 pub type Stream = bun_io::FixedBufferStream<Vec<u8>>;
@@ -635,7 +678,7 @@ impl Lockfile {
         features: Features,
         exact_versions: bool,
         log_level: PackageManager::Options::LogLevel,
-    ) -> Result<&mut Lockfile, BunError> {
+    ) -> Result<Cleaned<'_>, BunError> {
         // TODO(port): narrow error set
         let old_packages = old.packages.slice();
         let old_dependencies_lists = old_packages.items_dependencies();
@@ -674,10 +717,10 @@ impl Lockfile {
         }
 
         if !any_changes {
-            return Ok(old);
+            return Ok(Cleaned::Same(old));
         }
 
-        old.clean(manager, &mut [], exact_versions, log_level)
+        old.clean(manager, &mut [], exact_versions, log_level).map(Cleaned::New)
     }
 
     fn preprocess_update_requests(
@@ -740,8 +783,11 @@ impl Lockfile {
             }
 
             string_builder.allocate()?;
-            let _clamp = scopeguard::guard((), |_| string_builder.clamp());
-            // TODO(port): errdefer — `defer string_builder.clamp()` was unconditional in Zig.
+            // Spec lockfile.zig:507 is `defer string_builder.clamp();` — runs once after the
+            // entire second loop completes. A scopeguard would mutably capture
+            // `string_builder`, conflicting with the `append` calls below. Call `clamp()`
+            // explicitly at the end of this block instead (the inner loop has no `?` exits;
+            // the only fallible call above is `allocate()`, which precedes this point).
             // PORT NOTE: reshaped for borrowck — string_builder borrows `old` mutably; the
             // following block also needs &mut access to old.buffers.dependencies. Phase B may
             // need to split borrows.
@@ -818,6 +864,8 @@ impl Lockfile {
                     update.e_string = None;
                 }
             }
+
+            string_builder.clamp();
         }
         Ok(())
     }
@@ -828,7 +876,7 @@ impl Lockfile {
         updates: &mut [PackageManager::UpdateRequest],
         exact_versions: bool,
         log_level: PackageManager::Options::LogLevel,
-    ) -> Result<&mut Lockfile, BunError> {
+    ) -> Result<Box<Lockfile>, BunError> {
         // TODO(port): narrow error set
         // This is wasteful, but we rarely log anything so it's fine.
         let mut log = logger::Log::init();
@@ -923,7 +971,7 @@ impl Lockfile {
         log: &mut logger::Log,
         exact_versions: bool,
         log_level: PackageManager::Options::LogLevel,
-    ) -> Result<&mut Lockfile, BunError> {
+    ) -> Result<Box<Lockfile>, BunError> {
         // TODO(port): narrow error set
         let mut timer = bun_core::Timer::default();
         if log_level.is_verbose() {
@@ -948,9 +996,10 @@ impl Lockfile {
             old.preprocess_update_requests(manager, updates, exact_versions)?;
         }
 
-        let new: &mut Lockfile = Box::leak(Box::new(Lockfile::init_empty_value()));
-        // TODO(port): Zig allocates via `old.allocator.create(Lockfile)`; ownership is
-        // returned to caller. In Rust, return type should likely be Box<Lockfile> in Phase B.
+        // Spec lockfile.zig:669: `var new = try old.allocator.create(Lockfile)` — caller owns
+        // and later frees via `deinit`. PORTING.md §Forbidden patterns bans `Box::leak` to
+        // satisfy a lifetime; return `Box<Lockfile>` so Drop reclaims it.
+        let mut new: Box<Lockfile> = Box::new(Lockfile::init_empty_value());
         new.string_pool.ensure_total_capacity(old.string_pool.capacity())?;
         new.package_index
             .ensure_total_capacity(old.package_index.capacity())?;
@@ -977,7 +1026,7 @@ impl Lockfile {
         let clone_queue_ = PendingResolutions::new();
         let mut cloner = Cloner {
             old,
-            lockfile: new,
+            lockfile: &mut *new,
             mapping: &mut package_id_mapping,
             clone_queue: clone_queue_,
             log,
@@ -988,8 +1037,12 @@ impl Lockfile {
         };
 
         // try clone_queue.ensureUnusedCapacity(root.dependencies.len);
-        let _ = root.clone(manager, old, new, &mut package_id_mapping, &mut cloner)?;
+        let _ = root.clone(manager, old, &mut *new, &mut package_id_mapping, &mut cloner)?;
         // TODO(port): borrowck — cloner already borrows old/new/mapping/manager mutably.
+        // Proper fix: drop the redundant (manager, old, new, package_id_mapping) params from
+        // Package::clone and have it read them through `&mut Cloner` exclusively (Cloner
+        // already carries all four). Same applies to the call inside `Cloner::flush`.
+        // Requires editing lockfile/Package.rs (out of scope for this file).
 
         // Clone workspace_paths and workspace_versions at the end.
         if old.workspace_paths.count() > 0 || old.workspace_versions.count() > 0 {
@@ -1392,8 +1445,8 @@ impl Lockfile {
                     );
 
                     builder.allocate()?;
-                    let _clamp = scopeguard::guard((), |_| builder.clamp());
-                    // TODO(port): defer builder.clamp() — scopeguard captures &mut builder
+                    // Spec: `defer builder.clamp()` — call explicitly at end of block (no `?`
+                    // exits between here and the clamp below).
 
                     let extern_strings_list = &mut manager.lockfile.buffers.extern_strings;
                     extern_strings_list.reserve(bin_extern_strings_count as usize);
@@ -1402,18 +1455,37 @@ impl Lockfile {
                     // SAFETY: reserved above; bin.clone fills the new tail.
                     unsafe { extern_strings_list.set_len(new_len) };
                     let start = new_len - bin_extern_strings_count as usize;
-                    let (all, _) = extern_strings_list.split_at_mut(new_len);
-                    let extern_strings = &mut all[start..];
+
+                    // Spec lockfile.zig:1023/1068 passes `extern_strings_list.items` (full
+                    // slice) and a tail subslice to `bin.clone()` — these intentionally alias.
+                    // PORTING.md §Forbidden patterns: never construct two live overlapping
+                    // `&mut [_]`. `Bin::clone` only uses `all_extern_strings` for pointer
+                    // arithmetic in `ExternalStringList::init` (offset computation) and never
+                    // reads elements that overlap the tail being written.
+                    //
+                    // SAFETY: `all_extern_strings` is constructed from a raw pointer captured
+                    // before `extern_strings_slice` is borrowed. It is *only* used by
+                    // `Bin::clone` to compute `(tail.ptr - all.ptr) / size_of::<T>()` via
+                    // `ExternalStringList::init`; no element of the overlap region is
+                    // dereferenced through the shared slice while the tail is held mutably.
+                    // This matches the Zig invariant (overlapping slices, write-only tail).
+                    // TODO(port): change `Bin::clone` to take `(base_ptr: *const ExternalString,
+                    // base_len: usize)` or `(start, len)` instead of an aliasing `&[_]` to make
+                    // this fully sound under Stacked Borrows. Requires editing bin.rs.
+                    let all_ptr = extern_strings_list.as_ptr();
+                    let extern_strings_slice = &mut extern_strings_list[start..new_len];
+                    let all_extern_strings: &[ExternalString] =
+                        unsafe { core::slice::from_raw_parts(all_ptr, new_len) };
 
                     *pkg_bin = pkg.package.bin.clone(
                         manifest.string_buf,
                         manifest.extern_strings_bin_entries,
-                        all,
-                        extern_strings,
+                        all_extern_strings,
+                        extern_strings_slice,
                         &mut builder,
                     );
-                    // TODO(port): borrowck — `all` and `extern_strings` overlap; Zig passes
-                    // both items.ptr-based slices. Phase B may need raw pointers.
+
+                    builder.clamp();
 
                     if UPDATE_OS_CPU {
                         let pkg_meta = &mut pkg_metas.as_mut().unwrap()[i];
@@ -1567,12 +1639,11 @@ impl<'a> Printer<'a> {
             return Err(e.canonical_error);
         }
 
-        let env_loader: &mut DotEnv::Loader = {
-            let map = Box::leak(Box::new(DotEnv::Map::init()));
-            let loader = Box::leak(Box::new(DotEnv::Loader::init(map)));
-            loader.quiet = true;
-            loader
-        };
+        // PORTING.md §Forbidden patterns: never `Box::leak` — own `map`/`loader` as locals;
+        // they live for the function scope (one-shot CLI path, matches lockfile.zig:1179-1183).
+        let mut map = DotEnv::Map::init();
+        let mut env_loader = DotEnv::Loader::init(&mut map);
+        env_loader.quiet = true;
 
         env_loader.load_process()?;
         env_loader.load(
@@ -1582,7 +1653,7 @@ impl<'a> Printer<'a> {
             false,
         )?;
         let mut log = logger::Log::init();
-        options.load(&mut log, env_loader, None, None, PackageManager::Subcommand::Install)?;
+        options.load(&mut log, &mut env_loader, None, None, PackageManager::Subcommand::Install)?;
 
         let mut printer = Printer {
             lockfile,
@@ -2299,21 +2370,27 @@ pub use package_index::Map as PackageIndexMap;
 // FormatVersion
 // ────────────────────────────────────────────────────────────────────────────
 
-#[repr(u32)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum FormatVersion {
-    V0 = 0,
-    /// bun v0.0.x - bun v0.1.6
-    V1 = 1,
-    /// bun v0.1.7+
-    /// This change added tarball URLs to npm-resolved packages
-    V2 = 2,
-    /// Changed semver major/minor/patch to each use u64 instead of u32
-    V3 = 3,
-    // Zig has `_` (non-exhaustive). TODO(port): represent unknown values if needed.
-}
+/// Spec lockfile.zig: `enum(u32) { v0, v1, v2, v3, _ }` — non-exhaustive. The binary
+/// lockfile serializer reads this u32 directly from disk; an exhaustive Rust enum would
+/// make deserializing a future v4+ lockfile instant UB (transmute-to-enum with an
+/// invalid discriminant). PORTING.md §Forbidden patterns: never transmute disk data
+/// into an exhaustive enum. Represent as a transparent u32 with associated consts so
+/// unknown values round-trip and can be compared against `current()` for a graceful
+/// version-mismatch error.
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct FormatVersion(pub u32);
 
 impl FormatVersion {
+    pub const V0: Self = Self(0);
+    /// bun v0.0.x - bun v0.1.6
+    pub const V1: Self = Self(1);
+    /// bun v0.1.7+
+    /// This change added tarball URLs to npm-resolved packages
+    pub const V2: Self = Self(2);
+    /// Changed semver major/minor/patch to each use u64 instead of u32
+    pub const V3: Self = Self(3);
+
     pub const fn current() -> Self {
         FormatVersion::V3
     }

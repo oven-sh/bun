@@ -70,21 +70,21 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 //   is &'static [G::Arg] (arena slice rework). ~590-line bodies, >30 shape errors.
 mod _draft_bodies {
 use super::*;
-struct ParseFn<const T: bool, const J: u8, const S: bool>;
-impl<const TYPESCRIPT: bool, const JSX: u8, const SCAN_ONLY: bool>
-    ParseFn<TYPESCRIPT, JSX, SCAN_ONLY>
-{
+// Zig: `pub fn ParseFn(comptime ts, comptime jsx, comptime scan_only) type { return struct {...} }`
+// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
+// a direct `impl P` block.
+impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
     // Zig: `const is_typescript_enabled = P.is_typescript_enabled;`
-    // TODO(port): verify `NewParser::IS_TYPESCRIPT_ENABLED == TYPESCRIPT` (it should be).
     const IS_TYPESCRIPT_ENABLED: bool = TYPESCRIPT;
 
     /// This assumes the "function" token has already been parsed
     pub fn parse_fn_stmt(
-        p: &mut P<TYPESCRIPT, JSX, SCAN_ONLY>,
+        &mut self,
         loc: logger::Loc,
         opts: &mut ParseStatementOptions,
         async_range: Option<logger::Range>,
     ) -> Result<Stmt, Error> {
+        let p = self;
         let is_generator = p.lexer.token == T::TAsterisk;
         let is_async = async_range.is_some();
 
@@ -219,10 +219,11 @@ impl<const TYPESCRIPT: bool, const JSX: u8, const SCAN_ONLY: bool>
     }
 
     pub fn parse_fn(
-        p: &mut P<TYPESCRIPT, JSX, SCAN_ONLY>,
+        &mut self,
         name: Option<js_ast::LocRef>,
         opts: FnOrArrowDataParse,
     ) -> Result<G::Fn, Error> {
+        let p = self;
         // if data.allowAwait and data.allowYield {
         //     p.markSyntaxFeature(compat.AsyncGenerator, data.asyncRange)
         // }
@@ -470,11 +471,12 @@ impl<const TYPESCRIPT: bool, const JSX: u8, const SCAN_ONLY: bool>
     }
 
     pub fn parse_fn_expr(
-        p: &mut P<TYPESCRIPT, JSX, SCAN_ONLY>,
+        &mut self,
         loc: logger::Loc,
         is_async: bool,
         async_range: logger::Range,
     ) -> Result<Expr, Error> {
+        let p = self;
         p.lexer.next()?;
         let is_generator = p.lexer.token == T::TAsterisk;
         if is_generator {
@@ -543,9 +545,10 @@ impl<const TYPESCRIPT: bool, const JSX: u8, const SCAN_ONLY: bool>
     }
 
     pub fn parse_fn_body(
-        p: &mut P<TYPESCRIPT, JSX, SCAN_ONLY>,
+        &mut self,
         data: &mut FnOrArrowDataParse,
     ) -> Result<G::FnBody, Error> {
+        let p = self;
         let old_fn_or_arrow_data = p.fn_or_arrow_data_parse;
         let old_allow_in = p.allow_in;
         p.fn_or_arrow_data_parse = *data;
@@ -573,10 +576,11 @@ impl<const TYPESCRIPT: bool, const JSX: u8, const SCAN_ONLY: bool>
     }
 
     pub fn parse_arrow_body(
-        p: &mut P<TYPESCRIPT, JSX, SCAN_ONLY>,
+        &mut self,
         args: &mut [js_ast::G::Arg],
         data: &mut FnOrArrowDataParse,
     ) -> Result<E::Arrow, Error> {
+        let p = self;
         let arrow_loc = p.lexer.loc();
 
         // Newlines are not allowed before "=>"
@@ -656,5 +660,5 @@ use crate::FunctionKind;
 //   source:     src/js_parser/ast/parseFn.zig (508 lines)
 //   confidence: medium
 //   todos:      4
-//   notes:      comptime-type-returning fn → ZST + const generics; `defer p.popScope()` in parse_arrow_body manually unrolled; std.mem.toBytes/bytesToValue → plain Copy; arena-backed Vec via bumpalo
+//   notes:      comptime-type-returning fn → inherent impl on P<'a, TS, J, SCAN_ONLY>; `defer p.popScope()` in parse_arrow_body manually unrolled; std.mem.toBytes/bytesToValue → plain Copy; arena-backed Vec via bumpalo
 // ──────────────────────────────────────────────────────────────────────────

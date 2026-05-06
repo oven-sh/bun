@@ -19,12 +19,17 @@ use crate::parser::{
 
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
     pub fn visit_expr(&mut self, expr: Expr) -> Expr {
-        let _ = &expr;
-        expr // TODO(b2-ast-E): visit_expr body
+        // Zig: `if (only_scan_imports_and_do_not_visit) @compileError(...)` — SCAN_ONLY
+        // monomorphizations must never reach the visit pass.
+        debug_assert!(
+            !SCAN_ONLY,
+            "only_scan_imports_and_do_not_visit must not run visit_expr",
+        );
+        self.visit_expr_in_out(expr, ExprIn::default())
     }
     pub fn visit_expr_in_out(&mut self, expr: Expr, in_: ExprIn) -> Expr {
-        let _ = in_;
-        expr // TODO(b2-ast-E): visit_expr_in_out body
+        let _ = (expr, in_);
+        todo!("b2-ast-E: visit_expr_in_out body")
     }
 }
 

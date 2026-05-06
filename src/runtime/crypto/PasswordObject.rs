@@ -13,10 +13,10 @@ use bun_jsc::promise::{self, JSPromise};
 use bun_str::strings;
 use bun_threading::{ThreadPoolTask, WorkPool};
 
-// TODO(port): std.crypto.pwhash — Zig stdlib argon2/bcrypt. Phase B must pick
-// Rust crates (`argon2`, `bcrypt`) or vendor a C impl and expose under
-// `bun_crypto::pwhash` with a matching API surface (strHash/strVerify/Params).
-use bun_crypto::pwhash;
+// std.crypto.pwhash — Zig stdlib argon2/bcrypt. API-surface shim lives at
+// `crypto::pwhash` (this dir); vendor impl (Rust `argon2`/`bcrypt` crates or
+// Zig-stdlib staticlib) is wired there, not here.
+use super::pwhash;
 // TODO(port): bun.sha is src/sha.zig (top-level file, not a dir) — confirm crate name.
 use bun_sha::SHA512;
 

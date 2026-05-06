@@ -1361,7 +1361,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     }
 
     /// This function is very very hot.
-    #[cfg(any())] // blocked_on: const_values map; ts::Data variants; wrap_inlined_enum; find_symbol (symbols.rs)
     pub fn handle_identifier(
         &mut self,
         loc: logger::Loc,
@@ -1369,114 +1368,123 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         original_name: Option<&'a [u8]>,
         opts: IdentifierOpts,
     ) -> Expr {
-        let r#ref = ident.r#ref;
+        let ref_ = ident.ref_;
 
         if self.options.features.inlining {
-            if let Some(replacement) = self.const_values.get(&r#ref) {
+            if let Some(replacement) = self.const_values.get(&ref_) {
                 let replacement = *replacement;
-                self.ignore_usage(r#ref);
+                self.ignore_usage(ref_);
                 return replacement;
             }
         }
 
         // Create an error for assigning to an import namespace
         if (opts.assign_target != js_ast::AssignTarget::None || opts.is_delete_target)
-            && self.symbols[r#ref.inner_index() as usize].kind == js_ast::symbol::Kind::Import
+            && self.symbols[ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Import
         {
             let r = js_lexer::range_of_identifier(self.source, loc);
+            // SAFETY: original_name is an arena-owned slice valid for 'a.
+            let original = unsafe { &*self.symbols[ref_.inner_index() as usize].original_name };
             self.log
                 .add_range_error_fmt(
-                    self.source,
+                    Some(self.source),
                     r,
-                    self.allocator,
-                    format_args!(
-                        "Cannot assign to import \"{}\"",
-                        bstr::BStr::new(self.symbols[r#ref.inner_index() as usize].original_name)
-                    ),
+                    format_args!("Cannot assign to import \"{}\"", bstr::BStr::new(original)),
                 )
                 .expect("unreachable");
         }
 
         // Substitute an EImportIdentifier now if this has a namespace alias
         if opts.assign_target == js_ast::AssignTarget::None && !opts.is_delete_target {
-            let symbol = &self.symbols[r#ref.inner_index() as usize];
-            if let Some(ns_alias) = &symbol.namespace_alias {
-                let ns_alias = ns_alias.clone();
-                if let Some(ts_member_data) = self.ref_to_ts_namespace_member.get(&ns_alias.namespace_ref) {
-                    if let js_ast::ts::Data::Namespace(ns) = ts_member_data {
-                        // SAFETY: arena-owned TSNamespaceMemberMap valid for parser 'a lifetime
-                        if let Some(member) = unsafe { &**ns }.get(ns_alias.alias) {
-                            match &member.data {
-                                js_ast::ts::Data::EnumNumber(num) => {
-                                    let name = self.symbols[r#ref.inner_index() as usize].original_name;
-                                    return self.wrap_inlined_enum(
-                                        Expr { loc, data: js_ast::ExprData::ENumber(E::Number { value: *num }) },
-                                        name,
-                                    );
-                                }
-                                js_ast::ts::Data::EnumString(str_) => {
-                                    let name = self.symbols[r#ref.inner_index() as usize].original_name;
-                                    return self.wrap_inlined_enum(
-                                        Expr { loc, data: js_ast::ExprData::EString(*str_) },
-                                        name,
-                                    );
-                                }
-                                js_ast::ts::Data::Namespace(map) => {
-                                    let map = *map;
-                                    let expr = self.new_expr(
-                                        E::Dot {
-                                            target: self.new_expr(E::Identifier::init(ns_alias.namespace_ref), loc),
-                                            name: ns_alias.alias,
-                                            name_loc: loc,
-                                            ..Default::default()
-                                        },
-                                        loc,
-                                    );
-                                    self.ts_namespace = RecentlyVisitedTSNamespace {
-                                        expr: expr.data,
-                                        map: Some(map),
-                                    };
-                                    return expr;
-                                }
-                                _ => {}
+            // PORT NOTE: copy the alias out so the &self.symbols borrow is released
+            // before the &mut self calls below.
+            let ns_alias_opt = self.symbols[ref_.inner_index() as usize]
+                .namespace_alias
+                .as_ref()
+                .map(|a| (a.namespace_ref, a.alias));
+            if let Some((ns_ref, alias_ptr)) = ns_alias_opt {
+                // SAFETY: alias is an arena-owned slice valid for 'a.
+                let alias: &'a [u8] = unsafe { &*alias_ptr };
+                if let Some(js_ast::ts::Data::Namespace(ns)) =
+                    self.ref_to_ts_namespace_member.get(&ns_ref)
+                {
+                    let ns_map: *mut js_ast::TSNamespaceMemberMap = *ns;
+                    // SAFETY: arena-owned TSNamespaceMemberMap valid for parser 'a lifetime
+                    if let Some(member) = unsafe { &*ns_map }.get(alias) {
+                        match &member.data {
+                            js_ast::ts::Data::EnumNumber(num) => {
+                                let num = *num;
+                                // SAFETY: arena-owned original_name slice.
+                                let name = unsafe { &*self.symbols[ref_.inner_index() as usize].original_name };
+                                return self.wrap_inlined_enum(
+                                    Expr { loc, data: js_ast::ExprData::ENumber(E::Number { value: num }) },
+                                    name,
+                                );
                             }
+                            js_ast::ts::Data::EnumString(str_ptr) => {
+                                let str_ptr: *const E::EString = *str_ptr;
+                                // SAFETY: arena-owned original_name slice.
+                                let name = unsafe { &*self.symbols[ref_.inner_index() as usize].original_name };
+                                // SAFETY: arena-owned EString valid for 'a.
+                                let value = self.new_expr(unsafe { &*str_ptr }, loc);
+                                return self.wrap_inlined_enum(value, name);
+                            }
+                            js_ast::ts::Data::Namespace(map) => {
+                                let map: *const js_ast::TSNamespaceMemberMap = *map;
+                                let target = self.new_expr(E::Identifier::init(ns_ref), loc);
+                                // TODO(port): E::Dot.name is `&'static [u8]` pending 'bump threading.
+                                // SAFETY: alias is arena-owned and outlives every Expr.
+                                let alias_static: &'static [u8] =
+                                    unsafe { core::mem::transmute::<&'a [u8], &'static [u8]>(alias) };
+                                let expr = self.new_expr(
+                                    E::Dot { target, name: alias_static, name_loc: loc, ..Default::default() },
+                                    loc,
+                                );
+                                self.ts_namespace = RecentlyVisitedTSNamespace { expr: expr.data, map: Some(map) };
+                                return expr;
+                            }
+                            _ => {}
                         }
                     }
                 }
 
                 return self.new_expr(
-                    E::ImportIdentifier { r#ref: ident.r#ref, was_originally_identifier: true },
+                    E::ImportIdentifier { ref_: ident.ref_, was_originally_identifier: true },
                     loc,
                 );
             }
         }
 
         // Substitute an EImportIdentifier now if this is an import item
-        if self.is_import_item.contains(&r#ref) {
+        if self.is_import_item.contains_key(&ref_) {
             return self.new_expr(
-                E::ImportIdentifier { r#ref, was_originally_identifier: opts.was_originally_identifier },
+                E::ImportIdentifier { ref_, was_originally_identifier: opts.was_originally_identifier },
                 loc,
             );
         }
 
         if TYPESCRIPT {
-            if let Some(member_data) = self.ref_to_ts_namespace_member.get(&r#ref).cloned() {
+            if let Some(member_data) = self.ref_to_ts_namespace_member.get(&ref_) {
                 match member_data {
                     js_ast::ts::Data::EnumNumber(num) => {
-                        let name = self.symbols[r#ref.inner_index() as usize].original_name;
+                        let num = *num;
+                        // SAFETY: arena-owned original_name slice.
+                        let name = unsafe { &*self.symbols[ref_.inner_index() as usize].original_name };
                         return self.wrap_inlined_enum(
                             Expr { loc, data: js_ast::ExprData::ENumber(E::Number { value: num }) },
                             name,
                         );
                     }
-                    js_ast::ts::Data::EnumString(str_) => {
-                        let name = self.symbols[r#ref.inner_index() as usize].original_name;
-                        return self.wrap_inlined_enum(
-                            Expr { loc, data: js_ast::ExprData::EString(str_) },
-                            name,
-                        );
+                    js_ast::ts::Data::EnumString(str_ptr) => {
+                        let str_ptr: *const E::EString = *str_ptr;
+                        // SAFETY: arena-owned original_name slice.
+                        let name = unsafe { &*self.symbols[ref_.inner_index() as usize].original_name };
+                        // SAFETY: arena-owned EString valid for 'a.
+                        let value = self.new_expr(unsafe { &*str_ptr }, loc);
+                        return self.wrap_inlined_enum(value, name);
                     }
                     js_ast::ts::Data::Namespace(map) => {
+                        let map: *const js_ast::TSNamespaceMemberMap = *map;
                         let expr = Expr { data: js_ast::ExprData::EIdentifier(ident), loc };
                         self.ts_namespace = RecentlyVisitedTSNamespace { expr: expr.data, map: Some(map) };
                         return expr;
@@ -1486,21 +1494,22 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             }
 
             // Substitute a namespace export reference now if appropriate
-            if let Some(ns_ref) = self.is_exported_inside_namespace.get(&r#ref).copied() {
-                let name = self.symbols[r#ref.inner_index() as usize].original_name;
+            if let Some(ns_ref) = self.is_exported_inside_namespace.get(&ref_).copied() {
+                // SAFETY: arena-owned original_name slice.
+                let name: &'a [u8] = unsafe { &*self.symbols[ref_.inner_index() as usize].original_name };
+                // TODO(port): E::Dot.name is `&'static [u8]` pending 'bump threading.
+                // SAFETY: name is arena-owned and outlives every Expr.
+                let name_static: &'static [u8] =
+                    unsafe { core::mem::transmute::<&'a [u8], &'static [u8]>(name) };
 
                 self.record_usage(ns_ref);
+                let target = self.new_expr(E::Identifier::init(ns_ref), loc);
                 let prop = self.new_expr(
-                    E::Dot {
-                        target: self.new_expr(E::Identifier::init(ns_ref), loc),
-                        name,
-                        name_loc: loc,
-                        ..Default::default()
-                    },
+                    E::Dot { target, name: name_static, name_loc: loc, ..Default::default() },
                     loc,
                 );
 
-                if matches!(self.ts_namespace.expr, js_ast::ExprData::EIdentifier(e) if e.r#ref.eql(ident.r#ref)) {
+                if matches!(self.ts_namespace.expr, js_ast::ExprData::EIdentifier(e) if e.ref_.eql(ident.ref_)) {
                     self.ts_namespace.expr = prop.data;
                 }
 
@@ -1511,7 +1520,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         if let Some(name) = original_name {
             let result = self.find_symbol(loc, name).expect("unreachable");
             let mut id_clone = ident;
-            id_clone.r#ref = result.r#ref;
+            id_clone.ref_ = result.ref_;
             return self.new_expr(id_clone, loc);
         }
 
@@ -2472,18 +2481,19 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Ok(())
     }
 
-    #[cfg(any())] // TODO(b2-blocked): generated_symbol_name! macro PConvWrapper for &[u8;N]
     fn ensure_require_symbol(&mut self) {
         if self.runtime_imports.__require.is_some() {
             return;
         }
-        let static_symbol = generated_symbol_name!(b"__require");
-        self.runtime_imports.__require =
-            Some(self.declare_symbol_maybe_generated::<true>(js_ast::symbol::Kind::Other, logger::Loc::EMPTY, static_symbol).expect("oom"));
-        self.runtime_imports.put(b"__require", self.runtime_imports.__require.unwrap());
+        // PORT NOTE: Zig used `generatedSymbolName("__require")` (comptime concat).
+        // `declare_generated_symbol` performs the runtime-hash equivalent.
+        let ref_ = self
+            .declare_generated_symbol(js_ast::symbol::Kind::Other, b"__require")
+            .expect("oom");
+        self.runtime_imports.__require = Some(ref_);
+        self.runtime_imports.put(b"__require", ref_);
     }
 
-    #[cfg(any())] // blocked_on: ensure_require_symbol (gated above)
     pub fn resolve_common_js_symbols(&mut self) {
         if !self.options.features.allow_runtime {
             return;
@@ -3581,7 +3591,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     // TODO:
     pub fn check_for_non_bmp_code_point(&mut self, _: logger::Loc, _: &[u8]) {}
 
-    #[cfg(any())] // blocked_on: is_strict_mode_output_format; logger::range_data signature; logger::Data Copy
     pub fn mark_strict_mode_feature(
         &mut self,
         feature: StrictModeFeature,
@@ -3593,16 +3602,20 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             StrictModeFeature::WithStatement => b"With statements",
             StrictModeFeature::DeleteBareName => b"\"delete\" of a bare identifier",
             StrictModeFeature::ForInVarInit => b"Variable initializers within for-in loops",
-            StrictModeFeature::EvalOrArguments => {
-                let mut v = BumpVec::new_in(self.allocator);
-                let _ = write!(&mut v, "Declarations with the name \"{}\"", bstr::BStr::new(detail));
-                v.into_bump_slice()
-            }
-            StrictModeFeature::ReservedWord => {
-                let mut v = BumpVec::new_in(self.allocator);
-                let _ = write!(&mut v, "\"{}\" is a reserved word and", bstr::BStr::new(detail));
-                v.into_bump_slice()
-            }
+            StrictModeFeature::EvalOrArguments => bumpalo::format!(
+                in self.allocator,
+                "Declarations with the name \"{}\"",
+                bstr::BStr::new(detail)
+            )
+            .into_bump_str()
+            .as_bytes(),
+            StrictModeFeature::ReservedWord => bumpalo::format!(
+                in self.allocator,
+                "\"{}\" is a reserved word and",
+                bstr::BStr::new(detail)
+            )
+            .into_bump_str()
+            .as_bytes(),
             StrictModeFeature::LegacyOctalLiteral => b"Legacy octal literals",
             StrictModeFeature::LegacyOctalEscape => b"Legacy octal escape sequences",
             StrictModeFeature::IfElseFunctionStmt => b"Function declarations inside if statements",
@@ -3624,22 +3637,32 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 _ => {}
             }
             if why.is_empty() {
-                let mut v = BumpVec::new_in(self.allocator);
-                let _ = write!(
-                    &mut v,
+                why = bumpalo::format!(
+                    in self.allocator,
                     "This file is implicitly in strict mode because of the \"{}\" keyword here",
                     bstr::BStr::new(self.source.text_for_range(where_))
-                );
-                why = v.into_bump_slice();
+                )
+                .into_bump_str()
+                .as_bytes();
             }
-            let notes = self.allocator.alloc_slice_copy(&[logger::range_data(self.source, where_, why)]);
-            let mut msg = BumpVec::new_in(self.allocator);
-            let _ = write!(&mut msg, "{} cannot be used in strict mode", bstr::BStr::new(text));
-            self.log.add_range_error_with_notes(self.source, r, msg.into_bump_slice(), notes)?;
+            // logger::Data is !Copy (Cow) — build the notes Box directly.
+            let notes: Box<[logger::Data]> =
+                Box::new([logger::range_data(Some(self.source), where_, why.to_vec())]);
+            self.log.add_range_error_fmt_with_notes(
+                Some(self.source),
+                r,
+                notes,
+                format_args!("{} cannot be used in strict mode", bstr::BStr::new(text)),
+            )?;
         } else if !can_be_transformed && self.is_strict_mode_output_format() {
-            let mut msg = BumpVec::new_in(self.allocator);
-            let _ = write!(&mut msg, "{} cannot be used with the ESM output format due to strict mode", bstr::BStr::new(text));
-            self.log.add_range_error(self.source, r, msg.into_bump_slice())?;
+            self.log.add_range_error_fmt(
+                Some(self.source),
+                r,
+                format_args!(
+                    "{} cannot be used with the ESM output format due to strict mode",
+                    bstr::BStr::new(text)
+                ),
+            )?;
         }
         Ok(())
     }
@@ -3650,7 +3673,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         unsafe { &*self.current_scope }.strict_mode != js_ast::StrictModeKind::SloppyMode
     }
 
-    #[cfg(any())] // blocked_on: options::Format::is_esm()
     #[inline]
     pub fn is_strict_mode_output_format(&self) -> bool {
         self.options.bundle && self.options.output_format.is_esm()
@@ -3756,12 +3778,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 && name.as_ptr() != arguments_str.as_ptr()
                 && crate::lexer_tables::STRICT_MODE_RESERVED_WORDS.contains(name)
             {
-                // TODO(port): mark_strict_mode_feature gated above; emit a plain range error meanwhile.
-                let r = js_lexer::range_of_identifier(self.source, loc);
-                self.log.add_range_error_fmt(
-                    Some(self.source),
-                    r,
-                    format_args!("\"{}\" is a reserved word and cannot be used in strict mode", bstr::BStr::new(name)),
+                self.mark_strict_mode_feature(
+                    StrictModeFeature::ReservedWord,
+                    js_lexer::range_of_identifier(self.source, loc),
+                    name,
                 )?;
             }
         }
@@ -4418,7 +4438,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
     /// This is only allowed to be called if allow_runtime is true
     /// If --target=bun, this does nothing.
-    #[cfg(any())] // blocked_on: ensure_require_symbol; runtime_identifier_ref (round-E block)
     pub fn record_usage_of_runtime_require(&mut self) {
         // target bun does not have __require
         if self.options.features.auto_polyfill_require {
@@ -4429,7 +4448,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
     }
 
-    #[cfg(any())] // blocked_on: runtime_identifier_ref (round-E block)
     pub fn ignore_usage_of_runtime_require(&mut self) {
         if self.options.features.auto_polyfill_require {
             debug_assert!(self.runtime_imports.__require.is_some());
@@ -4446,7 +4464,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Expr { data: js_ast::ExprData::ERequireCallTarget, loc }
     }
 
-    #[cfg(any())] // blocked_on: record_usage_of_runtime_require; options.import_meta_main_value
     #[inline]
     pub fn value_for_import_meta_main(&mut self, inverted: bool, loc: logger::Loc) -> Expr {
         if let Some(known) = self.options.import_meta_main_value {
@@ -4500,7 +4517,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     }
 
     // This one is never called in places that haven't already checked if DCE is enabled.
-    #[cfg(any())] // blocked_on: G::Class.properties.iter; G::Property.kind/class_static_block; stmts_can_be_removed_if_unused
     pub fn class_can_be_removed_if_unused(&mut self, class: &G::Class) -> bool {
         if let Some(extends) = &class.extends {
             if !self.expr_can_be_removed_if_unused_without_dce_check(extends) {
@@ -4508,12 +4524,22 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             }
         }
 
-        for property in class.properties.iter() {
-            if property.kind == Property::Kind::ClassStaticBlock {
-                if !self.stmts_can_be_removed_if_unused_without_dce_check(property.class_static_block.as_ref().unwrap().stmts.slice()) {
-                    return false;
+        for property in class.properties.slice() {
+            if property.kind == js_ast::g::PropertyKind::ClassStaticBlock {
+                // TODO(port): stmts_can_be_removed_if_unused_without_dce_check is gated on
+                // StmtData payload mut access. Conservatively treat static blocks as
+                // having effects until that un-gates.
+                #[cfg(any())] // blocked_on: stmts_can_be_removed_if_unused_without_dce_check
+                {
+                    // SAFETY: arena-owned ClassStaticBlock valid for 'a.
+                    let csb = unsafe { property.class_static_block.unwrap().as_ref() };
+                    if !self.stmts_can_be_removed_if_unused_without_dce_check(csb.stmts.slice()) {
+                        return false;
+                    }
+                    continue;
                 }
-                continue;
+                #[allow(unreachable_code)]
+                return false;
             }
 
             if !self.expr_can_be_removed_if_unused_without_dce_check(property.key.as_ref().expect("unreachable")) {
@@ -4539,7 +4565,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     // TODO:
     // When React Fast Refresh is enabled, anything that's a JSX component should not be removable
     // This is to improve the reliability of fast refresh between page loads.
-    #[cfg(any())] // blocked_on: expr_can_be_removed_if_unused_without_dce_check
     pub fn expr_can_be_removed_if_unused(&mut self, expr: &Expr) -> bool {
         if !self.options.features.dead_code_elimination {
             return false;
@@ -4547,9 +4572,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         self.expr_can_be_removed_if_unused_without_dce_check(expr)
     }
 
-    #[cfg(any())] // blocked_on: class_can_be_removed_if_unused; E::Class deref; E::If/Unary/Binary field names; SideEffects::can_change_strict_to_loose
     fn expr_can_be_removed_if_unused_without_dce_check(&mut self, expr: &Expr) -> bool {
-        use js_ast::Op;
         match &expr.data {
             js_ast::ExprData::ENull(_)
             | js_ast::ExprData::EUndefined(_)
@@ -4568,9 +4591,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             js_ast::ExprData::EInlinedEnum(e) => return self.expr_can_be_removed_if_unused_without_dce_check(&e.value),
 
             js_ast::ExprData::EDot(ex) => return ex.can_be_removed_if_unused,
-            js_ast::ExprData::EClass(ex) => return self.class_can_be_removed_if_unused(ex),
+            js_ast::ExprData::EClass(ex) => return self.class_can_be_removed_if_unused(&**ex),
             js_ast::ExprData::EIdentifier(ex) => {
-                debug_assert!(!ex.r#ref.is_source_contents_slice()); // was not visited
+                debug_assert!(!ex.ref_.is_source_contents_slice()); // was not visited
 
                 if ex.must_keep_due_to_with_stmt {
                     return false;
@@ -4596,7 +4619,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 // be very conservative, which would inhibit a lot of optimizations of code
                 // inside closures. This may need to be revisited if it proves problematic.
                 if ex.can_be_removed_if_unused
-                    || self.symbols[ex.r#ref.inner_index() as usize].kind != js_ast::symbol::Kind::Unbound
+                    || self.symbols[ex.ref_.inner_index() as usize].kind != js_ast::symbol::Kind::Unbound
                 {
                     return true;
                 }
@@ -4638,9 +4661,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             js_ast::ExprData::EObject(ex) => {
                 for property in ex.properties.slice() {
                     // The key must still be evaluated if it's computed or a spread
-                    if property.kind == Property::Kind::Spread
+                    if property.kind == js_ast::g::PropertyKind::Spread
                         || (property.flags.contains(Flags::Property::IsComputed)
-                            && !property.key.unwrap().is_primitive_literal())
+                            && !property
+                                .key
+                                .as_ref()
+                                .map(Expr::is_primitive_literal)
+                                .unwrap_or(false))
                         || property.flags.contains(Flags::Property::IsSpread)
                     {
                         return false;
@@ -4699,7 +4726,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 // checks are not yet handled correctly by bun or esbuild, so this possibility is
                 // currently ignored.
                 js_ast::op::Code::UnTypeof => {
-                    if matches!(ex.value.data, js_ast::ExprData::EIdentifier(_)) && ex.flags.was_originally_typeof_identifier {
+                    if matches!(ex.value.data, js_ast::ExprData::EIdentifier(_))
+                        && ex.flags.contains(E::UnaryFlags::WAS_ORIGINALLY_TYPEOF_IDENTIFIER)
+                    {
                         return true;
                     }
                     return self.expr_can_be_removed_if_unused_without_dce_check(&ex.value);
@@ -4732,14 +4761,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 // and since "typeof x === 'object'" is considered to be side-effect free,
                 // we must also consider "typeof x == 'object'" to be side-effect free.
                 js_ast::op::Code::BinLooseEq | js_ast::op::Code::BinLooseNe => {
-                    return SideEffects::can_change_strict_to_loose(ex.left.data, ex.right.data)
+                    return js_ast::side_effects::SideEffects::can_change_strict_to_loose(&ex.left.data, &ex.right.data)
                         && self.expr_can_be_removed_if_unused_without_dce_check(&ex.left)
                         && self.expr_can_be_removed_if_unused_without_dce_check(&ex.right);
                 }
                 // Special-case "<" and ">" with string, number, or bigint arguments
                 js_ast::op::Code::BinLt | js_ast::op::Code::BinGt | js_ast::op::Code::BinLe | js_ast::op::Code::BinGe => {
-                    let left = ex.left.known_primitive();
-                    let right = ex.right.known_primitive();
+                    let left = ex.left.data.known_primitive();
+                    let right = ex.right.data.known_primitive();
                     match left {
                         js_ast::KnownPrimitive::String
                         | js_ast::KnownPrimitive::Number
@@ -4757,7 +4786,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 if templ.tag.is_none() {
                     for part in templ.parts.iter() {
                         if !self.expr_can_be_removed_if_unused_without_dce_check(&part.value)
-                            || part.value.known_primitive() == js_ast::KnownPrimitive::Unknown
+                            || part.value.data.known_primitive() == js_ast::KnownPrimitive::Unknown
                         {
                             return false;
                         }
@@ -4772,24 +4801,24 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
     // (Zig commented-out `exprCanBeHoistedForJSX` omitted — was already dead code.)
 
-    #[cfg(any())] // blocked_on: ExprData::e_identifier accessor; E::Unary.flags; E::Binary deref; EString::eql_comptime
     fn is_side_effect_free_unbound_identifier_ref(
         &mut self,
         value: Expr,
         guard_condition: Expr,
         is_yes_branch_: bool,
     ) -> bool {
-        use js_ast::Op;
         let js_ast::ExprData::EIdentifier(id) = value.data else { return false };
-        if self.symbols[id.r#ref.inner_index() as usize].kind != js_ast::symbol::Kind::Unbound {
+        if self.symbols[id.ref_.inner_index() as usize].kind != js_ast::symbol::Kind::Unbound {
             return false;
         }
         let js_ast::ExprData::EBinary(binary) = guard_condition.data else { return false };
-        let binary = *binary;
         let mut is_yes_branch = is_yes_branch_;
 
         match binary.op {
-            js_ast::op::Code::BinStrictEq | js_ast::op::Code::BinStrictNe | js_ast::op::Code::BinLooseEq | js_ast::op::Code::BinLooseNe => {
+            js_ast::op::Code::BinStrictEq
+            | js_ast::op::Code::BinStrictNe
+            | js_ast::op::Code::BinLooseEq
+            | js_ast::op::Code::BinLooseNe => {
                 // typeof x !== 'undefined'
                 let mut typeof_: js_ast::ExprData = binary.left.data;
                 let mut compare: js_ast::ExprData = binary.right.data;
@@ -4803,18 +4832,20 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 // so it should be slightly faster to compare
                 let js_ast::ExprData::EString(compare_str) = compare else { return false };
                 let js_ast::ExprData::EUnary(unary) = typeof_ else { return false };
-                let unary = *unary;
 
-                if unary.op != js_ast::op::Code::UnTypeof || !matches!(unary.value.data, js_ast::ExprData::EIdentifier(_)) {
+                if unary.op != js_ast::op::Code::UnTypeof {
                     return false;
                 }
+                let js_ast::ExprData::EIdentifier(id2) = unary.value.data else { return false };
 
-                let id2 = unary.value.data.e_identifier().r#ref;
                 ((compare_str.eql_comptime(b"undefined") == is_yes_branch)
                     == (binary.op == js_ast::op::Code::BinStrictNe || binary.op == js_ast::op::Code::BinLooseNe))
-                    && id.r#ref.eql(id2)
+                    && id.ref_.eql(id2.ref_)
             }
-            js_ast::op::Code::BinLt | js_ast::op::Code::BinGt | js_ast::op::Code::BinLe | js_ast::op::Code::BinGe => {
+            js_ast::op::Code::BinLt
+            | js_ast::op::Code::BinGt
+            | js_ast::op::Code::BinLe
+            | js_ast::op::Code::BinGe => {
                 // Pattern match for "typeof x < <string>"
                 let mut typeof_: js_ast::ExprData = binary.left.data;
                 let mut str_: js_ast::ExprData = binary.right.data;
@@ -4827,17 +4858,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 }
 
                 if let (js_ast::ExprData::EUnary(unary), js_ast::ExprData::EString(s)) = (typeof_, str_) {
-                    let unary = *unary;
                     if unary.op == js_ast::op::Code::UnTypeof
-                        && matches!(unary.value.data, js_ast::ExprData::EIdentifier(_))
-                        && unary.flags.was_originally_typeof_identifier
+                        && unary.flags.contains(E::UnaryFlags::WAS_ORIGINALLY_TYPEOF_IDENTIFIER)
                         && s.eql_comptime(b"u")
                     {
-                        // In "typeof x < 'u' ? x : null", the reference to "x" is side-effect free
-                        // In "typeof x > 'u' ? x : null", the reference to "x" is side-effect free
-                        if is_yes_branch == (binary.op == js_ast::op::Code::BinLt || binary.op == js_ast::op::Code::BinLe) {
-                            let id2 = unary.value.data.e_identifier().r#ref;
-                            if id.r#ref.eql(id2) {
+                        if let js_ast::ExprData::EIdentifier(id2) = unary.value.data {
+                            // In "typeof x < 'u' ? x : null", the reference to "x" is side-effect free
+                            // In "typeof x > 'u' ? x : null", the reference to "x" is side-effect free
+                            if is_yes_branch
+                                == (binary.op == js_ast::op::Code::BinLt
+                                    || binary.op == js_ast::op::Code::BinLe)
+                                && id.ref_.eql(id2.ref_)
+                            {
                                 return true;
                             }
                         }
@@ -4849,7 +4881,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
     }
 
-    #[cfg(any())] // blocked_on: jsx_import
     pub fn jsx_import_automatic(&mut self, loc: logger::Loc, is_static: bool) -> Expr {
         self.jsx_import(
             if is_static && !self.options.jsx.development && false /* TODO(b2-blocked): feature_flag */ {
@@ -4863,34 +4894,33 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         )
     }
 
-    #[cfg(any())] // blocked_on: jsx_imports.get_with_tag/set; handle_identifier; JSXImport.tag_name()
     pub fn jsx_import(&mut self, kind: JSXImport, loc: logger::Loc) -> Expr {
         // TODO(port): Zig used `switch (kind) { inline else => |field| ... @tagName(field) }`.
         // We replicate via tag_name() helper on the enum.
-        let r#ref: Ref = 'brk: {
-            if self.jsx_imports.get_with_tag(kind).is_none() {
+        let ref_: Ref = match self.jsx_imports.get_with_tag(kind) {
+            Some(existing) => existing,
+            None => {
                 let symbol_name = kind.tag_name();
-                let loc_ref = LocRef {
-                    loc,
-                    r#ref: Some(self.declare_generated_symbol(js_ast::symbol::Kind::Other, symbol_name).expect("unreachable")),
-                };
+                let new_ref = self
+                    .declare_generated_symbol(js_ast::symbol::Kind::Other, symbol_name)
+                    .expect("unreachable");
+                let loc_ref = LocRef { loc, ref_: Some(new_ref) };
                 // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
                 unsafe { &mut *self.module_scope }
                     .generated
-                    .push(self.allocator, loc_ref.r#ref.unwrap())
+                    .append(new_ref)
                     .expect("oom");
-                self.is_import_item.put(self.allocator, loc_ref.r#ref.unwrap(), ()).expect("unreachable");
+                self.is_import_item.insert(new_ref, ());
                 self.jsx_imports.set(kind, loc_ref);
-                break 'brk loc_ref.r#ref.unwrap();
+                new_ref
             }
-            self.jsx_imports.get_with_tag(kind).unwrap()
         };
 
-        self.record_usage(r#ref);
+        self.record_usage(ref_);
         self.handle_identifier(
             loc,
             E::Identifier {
-                r#ref,
+                ref_,
                 can_be_removed_if_unused: true,
                 call_can_be_unwrapped_if_unused: true,
                 ..Default::default()
@@ -5237,6 +5267,65 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
         stmts.push(closure);
         Ok(())
+    }
+
+    // ─── round-G: helpers extracted from the gated round-D/E impl block ───
+    // These are leaf utilities (no parse_*/visit_* deps) that block
+    // handle_identifier / jsx_import / record_usage_of_runtime_require.
+
+    pub fn wrap_inlined_enum(&mut self, value: Expr, comment: &'a [u8]) -> Expr {
+        if strings::contains(comment, b"*/") {
+            // Don't wrap with a comment
+            return value;
+        }
+        // Wrap with a comment
+        let loc = value.loc;
+        // TODO(port): E::InlinedEnum.comment is `&'static [u8]` pending crate-wide
+        // 'bump threading (see E.rs TODO). The slice is arena-owned (lives for the
+        // parser 'a, which outlives every Expr). Erase the lifetime to fit the
+        // current placeholder field type.
+        // SAFETY: arena-owned slice valid for the AST lifetime; replaced once
+        // E::InlinedEnum gains `'bump`.
+        let comment: &'static [u8] = unsafe { core::mem::transmute::<&'a [u8], &'static [u8]>(comment) };
+        self.new_expr(E::InlinedEnum { value, comment }, loc)
+    }
+
+    pub fn runtime_identifier_ref(&mut self, loc: logger::Loc, name: &'static [u8]) -> Ref {
+        self.has_called_runtime = true;
+
+        if !self.runtime_imports.contains(name) {
+            if !self.options.bundle {
+                let generated_symbol = self
+                    .declare_generated_symbol(js_ast::symbol::Kind::Other, name)
+                    .expect("unreachable");
+                self.runtime_imports.put(name, generated_symbol);
+                generated_symbol
+            } else {
+                let ref_ = self
+                    .new_symbol(js_ast::symbol::Kind::Other, name)
+                    .expect("unreachable");
+                self.runtime_imports.put(name, ref_);
+                // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
+                unsafe { &mut *self.module_scope }
+                    .generated
+                    .append(ref_)
+                    .expect("oom");
+                ref_
+            }
+        } else {
+            self.runtime_imports.at(name).unwrap()
+        }
+    }
+
+    pub fn runtime_identifier(&mut self, loc: logger::Loc, name: &'static [u8]) -> Expr {
+        let ref_ = self.runtime_identifier_ref(loc, name);
+        self.record_usage(ref_);
+        self.new_expr(E::ImportIdentifier { ref_, was_originally_identifier: false }, loc)
+    }
+
+    pub fn call_runtime(&mut self, loc: logger::Loc, name: &'static [u8], args: ExprNodeList) -> Expr {
+        let target = self.runtime_identifier(loc, name);
+        self.new_expr(E::Call { target, args, ..Default::default() }, loc)
     }
 }
 
@@ -5826,15 +5915,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Expr::init_identifier(r#ref, loc)
     }
 
-    pub fn wrap_inlined_enum(&mut self, value: Expr, comment: &'a [u8]) -> Expr {
-        if strings::contains(comment, b"*/") {
-            // Don't wrap with a comment
-            return value;
-        }
-
-        // Wrap with a comment
-        self.new_expr(E::InlinedEnum { value, comment }, value.loc)
-    }
+    // wrap_inlined_enum: moved to ungated impl (round-G).
 
     pub fn value_for_define(
         &mut self,
@@ -5982,41 +6063,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         todo!("not implemented")
     }
 
-    fn runtime_identifier_ref(&mut self, loc: logger::Loc, name: &'static [u8]) -> Ref {
-        self.has_called_runtime = true;
-
-        if !self.runtime_imports.contains(name) {
-            if !self.options.bundle {
-                let generated_symbol = self.declare_generated_symbol(js_ast::symbol::Kind::Other, name).expect("unreachable");
-                self.runtime_imports.put(name, generated_symbol);
-                generated_symbol
-            } else {
-                let loc_ref = js_ast::LocRef {
-                    loc,
-                    r#ref: Some(self.new_symbol(js_ast::symbol::Kind::Other, name).expect("unreachable")),
-                };
-                self.runtime_imports.put(name, loc_ref.r#ref.unwrap());
-                // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-                unsafe { &mut *self.module_scope }.generated.push(self.allocator, loc_ref.r#ref.unwrap()).expect("oom");
-                loc_ref.r#ref.unwrap()
-            }
-        } else {
-            self.runtime_imports.at(name).unwrap()
-        }
-    }
-
-    fn runtime_identifier(&mut self, loc: logger::Loc, name: &'static [u8]) -> Expr {
-        let r#ref = self.runtime_identifier_ref(loc, name);
-        self.record_usage(r#ref);
-        self.new_expr(E::ImportIdentifier { r#ref, was_originally_identifier: false }, loc)
-    }
-
-    pub fn call_runtime(&mut self, loc: logger::Loc, name: &'static [u8], args: &'a mut [Expr]) -> Expr {
-        self.new_expr(
-            E::Call { target: self.runtime_identifier(loc, name), args: ExprNodeList::from_owned_slice(args), ..Default::default() },
-            loc,
-        )
-    }
+    // runtime_identifier_ref / runtime_identifier / call_runtime: moved to ungated impl (round-G).
 
     pub fn extract_decls_for_binding(binding: Binding, decls: &mut ListManaged<'a, G::Decl>) -> Result<(), bun_core::Error> {
         match binding.data {

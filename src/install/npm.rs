@@ -17,7 +17,8 @@ use bun_threading::ThreadPool;
 use bun_url::URL;
 use bun_wyhash::Wyhash11;
 
-use crate::bin::Bin;
+use crate::bin::{self, Bin};
+use crate::bun_json::ExprAccessors as _;
 use crate::{
     initialize_mini_store as initialize_store, Aligner, ExternalSlice, IdentityContext,
     ExternalStringList, ExternalStringMap, PackageManager, PackageNameHash, VersionSlice,
@@ -718,11 +719,9 @@ impl<T: NegatableEnum> Negatable<T> {
         }
     }
 
-    // TODO(b2): bun_logger::js_ast::Expr surface lacks `as_string()` accessor
-    #[cfg(any())]
     pub fn from_json(expr: JSON::Expr) -> Result<T, AllocError> {
         let mut this = T::NONE.negatable();
-        match expr.data {
+        match &expr.data {
             JSON::ExprData::EArray(arr) => {
                 let items = arr.slice();
                 if !items.is_empty() {
@@ -1919,8 +1918,6 @@ impl<'a> FindVersionResult<'a> {
     }
 }
 
-// TODO(b2): bodies gated — bun_semver::query::Op / Version::order signature drift
-#[cfg(any())]
 impl PackageManifest {
     pub fn find_by_dist_tag_with_filter(
         &self,
@@ -2060,7 +2057,7 @@ impl PackageManifest {
         let left = group.head.head.range.left;
         let mut newest_filtered: Option<Semver::Version> = None;
 
-        if left.op == Semver::query::Op::Eql {
+        if left.op == Semver::range::Op::Eql {
             let result = self.find_by_version(left.version);
             if let Some(r) = result {
                 if Self::is_package_version_too_recent(r.package, min_age_ms) {
@@ -2077,7 +2074,7 @@ impl PackageManifest {
                     newest_filtered = Some(result.version);
                 }
                 if newest_filtered.is_none() {
-                    if group.flags.is_set(Semver::query::Group::Flags::PRE) {
+                    if group.flags.is_set(Semver::query::Flags::PRE) {
                         if left.version.order(&result.version, group_buf, &self.string_buf)
                             == core::cmp::Ordering::Equal
                         {
@@ -2101,7 +2098,7 @@ impl PackageManifest {
             return result;
         }
 
-        if group.flags.is_set(Semver::query::Group::Flags::PRE) {
+        if group.flags.is_set(Semver::query::Flags::PRE) {
             if let Some(result) = self.search_version_list(
                 self.pkg.prereleases.keys.get(&self.versions),
                 self.pkg.prereleases.values.get(&self.package_versions),
@@ -2124,13 +2121,13 @@ impl PackageManifest {
     pub fn find_best_version(&self, group: &Semver::query::Group, group_buf: &[u8]) -> Option<FindResult<'_>> {
         let left = group.head.head.range.left;
         // Fast path: exact version
-        if left.op == Semver::query::Op::Eql {
+        if left.op == Semver::range::Op::Eql {
             return self.find_by_version(left.version);
         }
 
         if let Some(result) = self.find_by_dist_tag(b"latest") {
             if group.satisfies(result.version, group_buf, &self.string_buf) {
-                if group.flags.is_set(Semver::query::Group::Flags::PRE) {
+                if group.flags.is_set(Semver::query::Flags::PRE) {
                     if left.version.order(&result.version, group_buf, &self.string_buf)
                         == core::cmp::Ordering::Equal
                     {
@@ -2161,7 +2158,7 @@ impl PackageManifest {
             }
         }
 
-        if group.flags.is_set(Semver::query::Group::Flags::PRE) {
+        if group.flags.is_set(Semver::query::Flags::PRE) {
             let prereleases = self.pkg.prereleases.keys.get(&self.versions);
             let mut i = prereleases.len();
             while i > 0 {

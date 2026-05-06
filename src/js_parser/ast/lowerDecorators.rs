@@ -38,7 +38,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 //   (P.rs:640 impl block); G::Property/G::Class/G::Fn full struct-init (no Default —
 //   ts_decorators/class_static_block/kind/flags all required); E::Arrow.args is &'static [G::Arg]
 //   (arena slice rework); Flags::PropertySet bitflags const names (IsComputed/IsMethod/IsStatic);
-//   _draft uses `const JSX: JSXTransformType` const-generic (needs J: JsxT lowering);
 //   ~2060-line bodies, >30 path/shape errors per method.
 #[allow(warnings)]
 mod _draft {
@@ -50,13 +49,8 @@ use bun_logger as logger;
 
 use crate::ast::{self as js_ast, B, E, Expr, ExprNodeList, Flags, G, S, Stmt, Symbol};
 use crate::ast::g::{Arg, Decl, Property};
-use crate::{self as js_parser, JSXTransformType, Ref, ARGUMENTS_STR as arguments_str};
-
-// TODO(port): `P` is the monomorphized parser type `NewParser_<TS, JSX, SCAN_ONLY>`.
-// In Phase A we model the const-param plumbing on the impl block; Phase B may
-// need to thread these generics differently once `NewParser_` is ported.
-type P<const TS: bool, const JSX: JSXTransformType, const SCAN_ONLY: bool> =
-    js_parser::NewParser_<TS, JSX, SCAN_ONLY>;
+use crate::ast::p::P;
+use crate::parser::{JsxT, Ref, ARGUMENTS_STR as arguments_str};
 
 // ── Types ────────────────────────────────────────────
 
@@ -118,39 +112,32 @@ enum RewriteKind {
     ReplaceThis { r#ref: Ref, loc: logger::Loc },
 }
 
-/// Zig: `fn LowerDecorators(comptime ts, comptime jsx, comptime scan_only) type { return struct {...} }`
-pub struct LowerDecorators<
-    const PARSER_FEATURE_TYPESCRIPT: bool,
-    const PARSER_FEATURE_JSX: JSXTransformType,
-    const PARSER_FEATURE_SCAN_ONLY: bool,
->;
-
-impl<
-        const PARSER_FEATURE_TYPESCRIPT: bool,
-        const PARSER_FEATURE_JSX: JSXTransformType,
-        const PARSER_FEATURE_SCAN_ONLY: bool,
-    > LowerDecorators<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>
-{
+// Zig: `fn LowerDecorators(comptime ts, comptime jsx, comptime scan_only) type { return struct {...} }`
+// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
+// a direct `impl P` block. `Self::foo(p, ...)` calls below resolve via UFCS to `p.foo(...)`.
+impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
     // ── Expression builder helpers ───────────────────────
 
     /// recordUsage + E.Identifier in one call.
     #[inline]
     fn use_ref(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
+        &mut self,
         r#ref: Ref,
         l: logger::Loc,
     ) -> Expr {
+        let p = self;
         p.record_usage(r#ref);
         p.new_expr(E::Identifier { r#ref }, l)
     }
 
     /// Allocate args + callRuntime in one call.
     fn call_rt(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
+        &mut self,
         l: logger::Loc,
         name: &'static [u8],
         args: &[Expr],
     ) -> Expr {
+        let p = self;
         // PERF(port): was arena alloc + @memcpy — Phase B: use bump.alloc_slice_copy
         let a = p.alloc().alloc_slice_copy(args);
         p.call_runtime(l, name, a)
@@ -158,10 +145,11 @@ impl<
 
     /// newSymbol + scope.generated.append in one call.
     fn new_sym(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
+        &mut self,
         kind: Symbol::Kind,
         name: &[u8],
     ) -> Ref {
+        let p = self;
         let r#ref = p.new_symbol(kind, name).expect("unreachable");
         p.current_scope.generated.push(r#ref);
         r#ref
@@ -169,11 +157,12 @@ impl<
 
     /// Single var declaration statement.
     fn var_decl(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
+        &mut self,
         r#ref: Ref,
         value: Option<Expr>,
         l: logger::Loc,
     ) -> Stmt {
+        let p = self;
         let decls = p.alloc().alloc_slice_fill_with(1, |_| G::Decl {
             binding: p.b(B::Identifier { r#ref }, l),
             value,
@@ -183,13 +172,14 @@ impl<
 
     /// Two-variable declaration statement.
     fn var_decl2(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
+        &mut self,
         r1: Ref,
         v1: Option<Expr>,
         r2: Ref,
         v2: Option<Expr>,
         l: logger::Loc,
     ) -> Stmt {
+        let p = self;
         // TODO(port): bumpalo slice init — Phase B may need a different ctor
         let mut decls = bumpalo::vec![in p.alloc();
             G::Decl { binding: p.b(B::Identifier { r#ref: r1 }, l), value: v1 },
@@ -203,20 +193,22 @@ impl<
 
     /// recordUsage + Expr.assign.
     fn assign_to(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
+        &mut self,
         r#ref: Ref,
         value: Expr,
         l: logger::Loc,
     ) -> Expr {
+        let p = self;
         p.record_usage(r#ref);
         Expr::assign(p.new_expr(E::Identifier { r#ref }, l), value)
     }
 
     /// new WeakMap() expression.
     fn new_weak_map_expr(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
+        &mut self,
         l: logger::Loc,
     ) -> Expr {
+        let p = self;
         let r#ref = p.find_symbol(l, b"WeakMap").expect("unreachable").r#ref;
         p.new_expr(
             E::New {
@@ -230,9 +222,10 @@ impl<
 
     /// new WeakSet() expression.
     fn new_weak_set_expr(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
+        &mut self,
         l: logger::Loc,
     ) -> Expr {
+        let p = self;
         let r#ref = p.find_symbol(l, b"WeakSet").expect("unreachable").r#ref;
         p.new_expr(
             E::New {
@@ -246,10 +239,11 @@ impl<
 
     /// Create a static block property from a single expression.
     fn make_static_block(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
+        &mut self,
         expr: Expr,
         l: logger::Loc,
     ) -> Property {
+        let p = self;
         let stmts = p.alloc().alloc_slice_fill_with(1, |_| p.s(S::SExpr { value: expr, ..Default::default() }, l));
         let sb = p.alloc().alloc(G::ClassStaticBlock {
             loc: l,
@@ -260,10 +254,11 @@ impl<
 
     /// Build property access: target.name or target[key].
     fn member_target(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
+        &mut self,
         target_expr: Expr,
         prop: &Property,
     ) -> Expr {
+        let p = self;
         let key_expr = prop.key.unwrap();
         if prop.flags.contains(Flags::Property::IsComputed) || matches!(key_expr.data, js_ast::ExprData::ENumber(_)) {
             p.new_expr(E::Index { target: target_expr, index: key_expr }, key_expr.loc)
@@ -287,7 +282,7 @@ impl<
 
     /// Emit __privateAdd for a given storage ref. Appends to constructor or static blocks.
     fn emit_private_add(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
+        &mut self,
         is_static: bool,
         storage_ref: Ref,
         value: Option<Expr>,
@@ -295,6 +290,7 @@ impl<
         constructor_inject: &mut bumpalo::collections::Vec<'_, Stmt>,
         static_blocks: &mut bumpalo::collections::Vec<'_, Property>,
     ) {
+        let p = self;
         let target = p.new_expr(E::This {}, loc);
         if let Some(v) = value {
             let call = Self::call_rt(p, loc, b"__privateAdd", &[target, Self::use_ref(p, storage_ref, loc), v]);
@@ -330,10 +326,11 @@ impl<
     // ── Generic tree rewriter ────────────────────────────
 
     fn rewrite_expr(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
+        &mut self,
         expr: &mut Expr,
         kind: RewriteKind,
     ) {
+        let p = self;
         match kind {
             RewriteKind::ReplaceRef { old, new } => {
                 if let js_ast::ExprData::EIdentifier(id) = &expr.data {
@@ -418,10 +415,11 @@ impl<
     }
 
     fn rewrite_stmts(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
+        &mut self,
         stmts: &mut [Stmt],
         kind: RewriteKind,
     ) {
+        let p = self;
         for cur_stmt in stmts.iter_mut() {
             // PORT NOTE: reshaped for borrowck — capture loc before mutating data
             let cur_loc = cur_stmt.loc;
@@ -519,11 +517,12 @@ impl<
     // ── Private access rewriting ─────────────────────────
 
     fn private_get_expr(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
+        &mut self,
         obj: Expr,
         info: PrivateLoweredInfo,
         l: logger::Loc,
     ) -> Expr {
+        let p = self;
         if let Some(desc_ref) = info.accessor_desc_ref {
             Self::call_rt(p, l, b"__privateGet", &[
                 obj,
@@ -540,12 +539,13 @@ impl<
     }
 
     fn private_set_expr(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
+        &mut self,
         obj: Expr,
         info: PrivateLoweredInfo,
         val: Expr,
         l: logger::Loc,
     ) -> Expr {
+        let p = self;
         if let Some(desc_ref) = info.accessor_desc_ref {
             Self::call_rt(p, l, b"__privateSet", &[
                 obj,
@@ -561,10 +561,11 @@ impl<
     }
 
     fn rewrite_private_accesses_in_expr(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
+        &mut self,
         expr: &mut Expr,
         map: &PrivateLoweredMap,
     ) {
+        let p = self;
         // PORT NOTE: reshaped for borrowck — capture loc before mutably borrowing data
         let expr_loc = expr.loc;
         match &mut expr.data {
@@ -694,10 +695,11 @@ impl<
     }
 
     fn rewrite_private_accesses_in_stmts(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
+        &mut self,
         stmts: &mut [Stmt],
         map: &PrivateLoweredMap,
     ) {
+        let p = self;
         for stmt_item in stmts.iter_mut() {
             match &mut stmt_item.data {
                 js_ast::StmtData::SExpr(data) => Self::rewrite_private_accesses_in_expr(p, &mut data.value, map),
@@ -783,18 +785,20 @@ impl<
     // ── Public API ───────────────────────────────────────
 
     pub fn lower_standard_decorators_stmt(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
+        &mut self,
         stmt: Stmt,
     ) -> &mut [Stmt] {
+        let p = self;
         Self::lower_impl(p, stmt, StdDecMode::Stmt)
     }
 
     pub fn lower_standard_decorators_expr(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
+        &mut self,
         class: &mut G::Class,
         l: logger::Loc,
         name_from_context: Option<&[u8]>,
     ) -> Expr {
+        let p = self;
         let result = Self::lower_impl(
             p,
             Stmt::empty(),
@@ -813,10 +817,11 @@ impl<
     // ── Core lowering ────────────────────────────────────
 
     fn lower_impl<'a>(
-        p: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
+        &mut self,
         mut stmt: Stmt,
         mode: StdDecMode<'a>,
     ) -> &'a mut [Stmt] {
+        let p = self;
         // TODO(port): return type lifetime — Zig returns arena-owned []Stmt; Phase B
         // should pin this to the parser's bump lifetime.
         let is_expr = matches!(mode, StdDecMode::Expr { .. });
@@ -1969,7 +1974,7 @@ impl<
                 |parts: &mut bumpalo::collections::Vec<'_, Expr>,
                  var_decls: &mut bumpalo::collections::Vec<'_, G::Decl>,
                  stmts_list: &[Stmt],
-                 parser: &mut P<PARSER_FEATURE_TYPESCRIPT, PARSER_FEATURE_JSX, PARSER_FEATURE_SCAN_ONLY>,
+                 parser: &mut Self,
                  l: logger::Loc| {
                     for pstmt in stmts_list.iter() {
                         match &pstmt.data {
@@ -2098,6 +2103,6 @@ impl<
 //   source:     src/js_parser/ast/lowerDecorators.zig (1495 lines)
 //   confidence: medium
 //   todos:      8
-//   notes:      heavy borrowck reshaping needed in lower_impl (overlapping &mut p / class.properties iteration); arena slice handoffs (`p.alloc()`) are placeholders pending NewParser_ port; ExprData/StmtData variant names are guessed from .e_*/.s_* tags
+//   notes:      heavy borrowck reshaping needed in lower_impl (overlapping &mut self / class.properties iteration); arena slice handoffs (`p.alloc()`) are placeholders pending P arena field; ExprData/StmtData variant names are guessed from .e_*/.s_* tags
 // ──────────────────────────────────────────────────────────────────────────
 } // end mod _draft

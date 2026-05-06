@@ -23,8 +23,6 @@ use bun_core::Output;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_sys::{Fd, FdExt as _};
 use bun_uws as uws;
-#[cfg(not(windows))]
-use bun_uws_sys::vtable::Handler as VHandler;
 
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;

@@ -1109,25 +1109,24 @@ impl CryptoJobCtx for Scrypt {
 fn pbkdf2(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
     let data = PBKDF2::from_js(global_this, call_frame, true)?;
 
-    let job = PBKDF2Job::create(VirtualMachine::get(), global_this, &data);
-    Ok(job.promise.value())
+    // SAFETY: `VirtualMachine::get()` returns the thread-local VM, non-null on the JS thread.
+    let vm: &'static VirtualMachine = unsafe { &*VirtualMachine::get() };
+    let job = PBKDF2Job::create(vm, global_this, &data);
+    // SAFETY: `job` was just boxed by `create()` and is live.
+    Ok(unsafe { (*job).promise.value() })
 }
 
 #[bun_jsc::host_fn]
 fn pbkdf2_sync(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-    let mut data = PBKDF2::from_js(global_this, call_frame, false)?;
-    // TODO(port): Zig had `defer data.deinit()` plus an extra `data.deinit()` on the
-    // OOM branch (double-deinit). Preserving the defer; the duplicate call is dropped
-    // since Rust scopeguard would also run on early return.
-    let _guard = scopeguard::guard((), |_| data.deinit());
-    let out_arraybuffer =
-        JSValue::create_buffer_from_length(global_this, u32::try_from(data.length).unwrap())?;
+    let data = PBKDF2::from_js(global_this, call_frame, false)?;
+    // PORT NOTE: Zig had `defer data.deinit()` plus an extra `data.deinit()` on the OOM
+    // branch (double-deinit). The scopeguard wraps `data` so it's released on every path;
+    // the redundant call is dropped.
+    let mut data = scopeguard::guard(data, |mut d| d.deinit());
+    let (out_arraybuffer, output) =
+        ArrayBuffer::alloc::<{ JSType::Uint8Array }>(global_this, u32::try_from(data.length).unwrap())?;
 
-    let Some(output) = out_arraybuffer.as_array_buffer(global_this) else {
-        return global_this.throw_out_of_memory();
-    };
-
-    if !data.run(output.slice()) {
+    if !data.run(output) {
         // SAFETY: FFI; ERR_get_error / ERR_clear_error have no preconditions.
         let err = create_crypto_error(global_this, unsafe { boringssl::c::ERR_get_error() });
         unsafe { boringssl::c::ERR_clear_error() };

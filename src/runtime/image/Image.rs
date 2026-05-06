@@ -870,12 +870,12 @@ pub fn clipboard_change_count(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSV
 impl Image {
     #[bun_jsc::host_fn(getter)]
     pub fn get_width(&self, _: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(self.last_width)
+        JSValue::js_number(f64::from(self.last_width))
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_height(&self, _: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(self.last_height)
+        JSValue::js_number(f64::from(self.last_height))
     }
 }
 

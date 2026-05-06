@@ -194,7 +194,7 @@ impl HTMLRewriter {
         };
         if res.is_err() {
             // errdefer: drop handler (Box drop runs ElementHandler::drop) + selector_guard fires.
-            return global.throw_value(create_lolhtml_error(global));
+            return Err(global.throw_value(create_lolhtml_error(global)));
         }
 
         let selector = scopeguard::ScopeGuard::into_inner(selector_guard);

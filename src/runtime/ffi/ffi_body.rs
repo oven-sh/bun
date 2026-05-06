@@ -367,36 +367,36 @@ impl FFI {
 
 struct CompileC {
     source: Source,
-    current_file_for_errors: Box<ZStr>, // TODO(port): lifetime — Zig stored borrowed [:0]const u8
+    current_file_for_errors: ZBox, // TODO(port): lifetime — Zig stored borrowed [:0]const u8
     libraries: StringArray,
     library_dirs: StringArray,
     include_dirs: StringArray,
     symbols: SymbolsMap,
-    define: Vec<[Box<ZStr>; 2]>,
+    define: Vec<[ZBox; 2]>,
     /// Flags to replace the default flags
-    flags: Box<ZStr>,
+    flags: ZBox,
     deferred_errors: Vec<Box<[u8]>>,
 }
 
 impl Default for CompileC {
     fn default() -> Self {
         Self {
-            source: Source::File(ZStr::empty()),
-            current_file_for_errors: ZStr::empty(),
+            source: Source::File(ZBox::from_bytes(b"")),
+            current_file_for_errors: ZBox::from_bytes(b""),
             libraries: StringArray::default(),
             library_dirs: StringArray::default(),
             include_dirs: StringArray::default(),
             symbols: SymbolsMap::default(),
             define: Vec::new(),
-            flags: ZStr::empty(),
+            flags: ZBox::from_bytes(b""),
             deferred_errors: Vec::new(),
         }
     }
 }
 
 enum Source {
-    File(Box<ZStr>),
-    Files(Vec<Box<ZStr>>),
+    File(ZBox),
+    Files(Vec<ZBox>),
 }
 
 impl Source {
@@ -410,24 +410,25 @@ impl Source {
     pub fn add(
         &self,
         state: &mut TCC::State,
-        current_file_for_errors: &mut Box<ZStr>,
+        current_file_for_errors: &mut ZBox,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         match self {
             Source::File(file) => {
-                *current_file_for_errors = file.clone(); // TODO(port): Zig stored borrowed slice
+                // TODO(port): Zig stored borrowed slice
+                *current_file_for_errors = ZBox::from_bytes(file.as_bytes());
                 state
                     .add_file(file)
                     .map_err(|_| bun_core::err!("CompilationError"))?;
-                *current_file_for_errors = ZStr::empty();
+                *current_file_for_errors = ZBox::from_bytes(b"");
             }
             Source::Files(files) => {
                 for file in files {
-                    *current_file_for_errors = file.clone();
+                    *current_file_for_errors = ZBox::from_bytes(file.as_bytes());
                     state
                         .add_file(file)
                         .map_err(|_| bun_core::err!("CompilationError"))?;
-                    *current_file_for_errors = ZStr::empty();
+                    *current_file_for_errors = ZBox::from_bytes(b"");
                 }
             }
         }

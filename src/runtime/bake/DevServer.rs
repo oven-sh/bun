@@ -4082,8 +4082,9 @@ impl DevServer<'_> {
         &mut self,
         html: &mut HTMLBundleRoute,
     ) -> Result<(), bun_core::Error> {
-        let bundle_index = self.get_or_put_route_bundle(route_bundle::UnresolvedIndex::Html(html))?;
-        self.html_router.fallback = bundle_index.to_optional();
+        let _bundle_index = self.get_or_put_route_bundle(route_bundle::UnresolvedIndex::Html(html))?;
+        // Our `HTMLRouter::fallback` is `Option<&HTMLBundleRoute>`; store the route ref.
+        self.html_router.fallback = Some(html);
         // TODO(port): Zig set `.fallback = bundle_index.toOptional()` but field type is
         // `?*HTMLBundle.HTMLBundleRoute` per LIFETIMES.tsv — likely the LIFETIMES row is
         // for an older version. Following Zig source: fallback stores RouteBundle.Index.Optional

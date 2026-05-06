@@ -16,8 +16,10 @@ use bun_core::Output;
 use bun_str::string_joiner::StringJoiner;
 use bun_sourcemap::{self as source_map, SourceMapState};
 
+#[allow(unused_imports)]
 use crate::bake::{self as bake, Side};
 use crate::bake::dev_server::{self, ChunkKind, DevServer};
+#[allow(unused_imports)]
 use crate::bake::dev_server_body::{DevAllocator, dump_bundle};
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use super::packed_map_body as packed_map;
@@ -301,14 +303,14 @@ impl Entry {
                 } else {
                     b"latest_hmr.js.map"
                 };
-                let _ = (dump_dir, rel_path_escaped, &json_bytes, dump_bundle as fn(_, _, _, _, _) -> _);
+                let _ = (dump_dir, rel_path_escaped, &json_bytes);
                 // TODO(port): `dump_bundle` takes `&mut sys::Dir` but `DevServer.dump_dir` is
                 // `Option<bun_sys::Fd>`; bridge once the Dir/Fd unification lands.
                 todo!("blocked_on: bun_sys::Dir from Fd for dump_bundle");
             }
         }
         #[cfg(not(feature = "bake_debugging_features"))]
-        let _ = (dev, dump_bundle as fn(_, _, _, _, _) -> _);
+        let _ = dev;
 
         Ok(json_bytes)
     }

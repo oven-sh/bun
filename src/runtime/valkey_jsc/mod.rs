@@ -314,6 +314,20 @@ pub mod js_valkey {
         pub ref_count: Cell<u32>,
     }
 
+    impl JSValkeyClient {
+        /// Spec js_valkey.zig `onConnectionTimeout` — fail the connect promise
+        /// and tear down. Body in the gated `_jsc_gated` draft.
+        pub fn on_connection_timeout(&mut self) {
+            todo!("blocked_on: crate::valkey_jsc::js_valkey::JSValkeyClient::on_connection_timeout")
+        }
+
+        /// Spec js_valkey.zig `onReconnectTimer` — kick off the next reconnect
+        /// attempt. Body in the gated `_jsc_gated` draft.
+        pub fn on_reconnect_timer(&mut self) {
+            todo!("blocked_on: crate::valkey_jsc::js_valkey::JSValkeyClient::on_reconnect_timer")
+        }
+    }
+
     /// `SocketHandler<SSL>` — uws dispatch vtable target. Methods gated.
     pub struct SocketHandler<const SSL: bool>;
 }

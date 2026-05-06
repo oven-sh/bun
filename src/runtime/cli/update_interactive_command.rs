@@ -887,11 +887,11 @@ impl UpdateInteractiveCommand {
 
                     // Calculate padding - account for dev/peer/optional tags
                     let mut dev_tag_len: usize = 0;
-                    if pkg.behavior.dev {
+                    if pkg.behavior.is_dev() {
                         dev_tag_len = 4; // " dev"
-                    } else if pkg.behavior.peer {
+                    } else if pkg.behavior.is_peer() {
                         dev_tag_len = 5; // " peer"
-                    } else if pkg.behavior.optional {
+                    } else if pkg.behavior.is_optional() {
                         dev_tag_len = 9; // " optional"
                     }
                     let total_name_len = pkg.name.len() + dev_tag_len;

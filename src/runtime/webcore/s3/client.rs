@@ -242,13 +242,17 @@ pub fn list_objects(
         search_params.append_fmt(format_args!("&max-keys={}", max_keys));
     }
 
-    if let Some(prefix) = &list_options.prefix {
+    if let Some(prefix_ptr) = list_options.prefix {
+        // SAFETY: borrows from `list_options._prefix` (alive for this call).
+        let prefix = unsafe { &*prefix_ptr };
         let mut buff = vec![0u8; prefix.len() * 3];
         let encoded = encode_uri_component::<true>(prefix, &mut buff).expect("unreachable");
         search_params.append_fmt(format_args!("&prefix={}", bstr::BStr::new(encoded)));
     }
 
-    if let Some(start_after) = &list_options.start_after {
+    if let Some(start_after_ptr) = list_options.start_after {
+        // SAFETY: borrows from `list_options._start_after` (alive for this call).
+        let start_after = unsafe { &*start_after_ptr };
         let mut buff = vec![0u8; start_after.len() * 3];
         let encoded =
             encode_uri_component::<true>(start_after, &mut buff).expect("unreachable");
@@ -836,8 +840,8 @@ pub fn download_stream(
         },
         range: range.map(Vec::into_boxed_slice),
         headers,
-        // SAFETY: `VirtualMachine::get()` returns the live per-thread VM singleton.
-        vm: unsafe { &*VirtualMachine::get() },
+        // `VirtualMachine::get()` returns the live per-thread VM singleton (`*mut VirtualMachine`).
+        vm: VirtualMachine::get(),
         has_schedule_callback: core::sync::atomic::AtomicBool::new(false),
         signal_store: Default::default(),
         signals: Default::default(),

@@ -5065,13 +5065,8 @@ impl PathOrFileDescriptor {
             Self::Fd(_) => b"",
         }
     }
-    #[inline]
-    pub fn to_thread_safe(&mut self) {
-        // The stub `PathLike` borrows either a `PathString` or a `Vec<u8>`;
-        // neither is GC-backed, so there is nothing to protect. The real
-        // `crate::node::PathLike::to_thread_safe` upgrades a JSC slice to an
-        // owned WTF string — that variant doesn't exist on the stub.
-    }
+    // `to_thread_safe` now lives on the real `crate::node::types::PathOrFileDescriptor`
+    // (webcore::node_types is a re-export); the local stub override is removed.
 }
 
 /// `Bun.file(pathOrFd, options?)` — entry point referenced by

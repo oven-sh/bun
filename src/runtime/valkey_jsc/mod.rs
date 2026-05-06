@@ -205,6 +205,20 @@ pub mod valkey {
                 Address::Host { host, .. } => host,
             }
         }
+
+        /// Spec valkey.zig `Address.connect` — open a TCP/TLS/Unix socket via
+        /// `uws::Socket{TLS,TCP}::connect_*_group`. Full body lives in the
+        /// gated `valkey_body` draft (`valkey.rs`).
+        #[allow(unused_variables)]
+        pub fn connect<C, G, S>(
+            &self,
+            client: C,
+            group: G,
+            ssl_ctx: Option<S>,
+            is_tls: bool,
+        ) -> Result<AnySocket, bun_core::Error> {
+            todo!("blocked_on: bun_uws::SocketTLS/SocketTCP::connect_group / connect_unix_group")
+        }
     }
 
     /// Core Valkey client implementation.

@@ -475,7 +475,7 @@ impl JSValkeyClient {
 
         let args_array = frame.argument(1);
         if !args_array.is_object() || !args_array.is_array() {
-            return global.throw(format_args!("Arguments must be an array"));
+            return Err(global.throw(format_args!("Arguments must be an array")));
         }
         let mut iter = args_array.array_iterator(global)?;
         let mut args: Vec<JSArgument> = Vec::with_capacity(iter.len as usize);
@@ -483,11 +483,11 @@ impl JSValkeyClient {
         while let Some(arg_js) = iter.next()? {
             // PERF(port): was assume_capacity
             let Some(v) = from_js(global, arg_js)? else {
-                return global.throw_invalid_argument_type(
+                return Err(global.throw_invalid_argument_type(
                     "sendCommand",
                     "argument",
                     "string or buffer",
-                );
+                ));
             };
             args.push(v);
         }
@@ -516,7 +516,7 @@ impl JSValkeyClient {
         require_not_subscriber(this, b"get")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return global.throw_invalid_argument_type("get", "key", "string or buffer");
+            return Err(global.throw_invalid_argument_type("get", "key", "string or buffer"));
         };
 
         // Send GET command
@@ -546,7 +546,7 @@ impl JSValkeyClient {
         require_not_subscriber(this, b"getBuffer")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return global.throw_invalid_argument_type("getBuffer", "key", "string or buffer");
+            return Err(global.throw_invalid_argument_type("getBuffer", "key", "string or buffer"));
         };
 
         let promise = match this.send(
@@ -555,10 +555,7 @@ impl JSValkeyClient {
             &Command {
                 command: b"GET",
                 args: CommandArgs::Args(&[key]),
-                meta: CommandMeta {
-                    return_as_buffer: true,
-                    ..Default::default()
-                },
+                meta: CommandMeta::RETURN_AS_BUFFER | CommandMeta::SUPPORTS_AUTO_PIPELINING,
             },
         ) {
             Ok(p) => p,

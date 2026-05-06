@@ -365,7 +365,10 @@ pub extern "C" fn Request__getUWSRequest(this: *mut Request) -> Option<&'static 
     // SAFETY: called from C++ with a live Request* (m_ctx payload)
     let this = unsafe { &mut *this };
     // TODO(port): lifetime of returned uws::Request is tied to request_context, not 'static
-    this.request_context.get_request()
+    this.request_context
+        .get_request()
+        // SAFETY: caller (C++) treats the pointer as borrowed for the request handler's lifetime.
+        .map(|p| unsafe { &mut *p })
 }
 
 #[unsafe(no_mangle)]
@@ -396,7 +399,7 @@ pub extern "C" fn Request__setTimeout(
         return;
     }
 
-    this.set_timeout(seconds.to::<c_uint>());
+    this.set_timeout(seconds.to_int32() as c_uint);
 }
 
 #[unsafe(no_mangle)]

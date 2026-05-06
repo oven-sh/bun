@@ -688,7 +688,7 @@ impl PublishCommand {
                         done_url,
                         auth_headers.entries,
                         // SAFETY: auth_headers.content was allocated by construct_publish_headers
-                        unsafe { core::slice::from_raw_parts(auth_headers.content.ptr.unwrap(), auth_headers.content.len) },
+                        unsafe { core::slice::from_raw_parts(auth_headers.content.ptr.unwrap().as_ptr(), auth_headers.content.len) },
                         response_buf,
                         b"",
                         None,
@@ -702,7 +702,7 @@ impl PublishCommand {
                             if e == err!(OutOfMemory) {
                                 return Err(GetOTPError::OutOfMemory);
                             }
-                            Output::err(e, format_args!("failed to send OTP request"));
+                            Output::err(e, "failed to send OTP request", ());
                             Global::crash();
                         }
                     };
@@ -713,7 +713,7 @@ impl PublishCommand {
                             let nanoseconds: u64 = 'nanoseconds: {
                                 if let Some(retry) = res.headers.get(b"retry-after") {
                                     'default: {
-                                        let trimmed = strings::trim(retry, strings::WHITESPACE_CHARS);
+                                        let trimmed = strings::trim(retry, &strings::WHITESPACE_CHARS);
                                         // PORT NOTE: std.fmt.parseInt(u32, _, 10) — header value is bytes,
                                         // not UTF-8; use the byte-slice parser per PORTING.md.
                                         let Ok(seconds) = strings::parse_int::<u32>(trimmed, 10) else {

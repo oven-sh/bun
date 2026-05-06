@@ -274,26 +274,26 @@ impl Expect {
     ) -> JsError {
         // PERF(port): was comptime bool dispatch on Output.enable_ansi_colors_stderr — profile in Phase B
         let colors = Output::enable_ansi_colors_stderr();
-        let chain: &str = match flags.promise() {
+        let chain = match flags.promise() {
             Promise::Resolves => {
                 if flags.not() {
-                    Output::pretty_fmt("resolves<d>.<r>not<d>.<r>", colors)
+                    Output::pretty_fmt_rt("resolves<d>.<r>not<d>.<r>", colors)
                 } else {
-                    Output::pretty_fmt("resolves<d>.<r>", colors)
+                    Output::pretty_fmt_rt("resolves<d>.<r>", colors)
                 }
             }
             Promise::Rejects => {
                 if flags.not() {
-                    Output::pretty_fmt("rejects<d>.<r>not<d>.<r>", colors)
+                    Output::pretty_fmt_rt("rejects<d>.<r>not<d>.<r>", colors)
                 } else {
-                    Output::pretty_fmt("rejects<d>.<r>", colors)
+                    Output::pretty_fmt_rt("rejects<d>.<r>", colors)
                 }
             }
             Promise::None => {
                 if flags.not() {
-                    Output::pretty_fmt("not<d>.<r>", colors)
+                    Output::pretty_fmt_rt("not<d>.<r>", colors)
                 } else {
-                    ""
+                    bun_core::output::PrettyBuf(Vec::new())
                 }
             }
         };
@@ -320,13 +320,16 @@ impl Expect {
         }
     }
 
-    #[bun_jsc::host_fn(getter)]
+    // PORT NOTE: `host_fn(getter)` shim passes `(&Self, &JSGlobalObject)` only,
+    // but these getters need `&mut Self` (mutate flags) AND `this_value`
+    // (returned to JS for chaining). Until the macro grows a `getter_this_mut`
+    // variant the shim is omitted (codegen owns the actual link name).
     pub fn get_not(this: &mut Self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
         this.flags.set_not(!this.flags.not());
         this_value
     }
 
-    #[bun_jsc::host_fn(getter)]
+    // PORT NOTE: see `get_not` — `host_fn(getter)` shim signature mismatch.
     pub fn get_resolves(
         this: &mut Self,
         this_value: JSValue,
@@ -341,7 +344,7 @@ impl Expect {
         Ok(this_value)
     }
 
-    #[bun_jsc::host_fn(getter)]
+    // PORT NOTE: see `get_not` — `host_fn(getter)` shim signature mismatch.
     pub fn get_rejects(
         this: &mut Self,
         this_value: JSValue,

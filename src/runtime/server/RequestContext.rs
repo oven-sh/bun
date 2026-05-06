@@ -2653,7 +2653,7 @@ where
                             // If we've received the complete body by the time this function is called
                             // we can avoid streaming it and just send it all at once.
                             if byte_stream.has_received_last_chunk {
-                                let byte_list = byte_stream.drain();
+                                let mut byte_list = byte_stream.drain();
                                 this.blob = AnyBlob::from_array_list(
                                     byte_list.move_to_list_managed(),
                                 );
@@ -2671,7 +2671,7 @@ where
 
                             // SAFETY: byte_stream_ptr came from Source::Bytes
                             this.byte_stream = Some(unsafe { NonNull::new_unchecked(byte_stream_ptr) });
-                            let response_buf = byte_stream.drain();
+                            let mut response_buf = byte_stream.drain();
                             this.response_buf_owned = response_buf.move_to_list();
 
                             // we don't set size here because even if we have a hint

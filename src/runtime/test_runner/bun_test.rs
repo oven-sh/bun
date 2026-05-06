@@ -888,7 +888,12 @@ impl<'a> BunTest<'a> {
         }));
         // errdefer bun.destroy(done_callback_test) → ManagedTask::run reconstitutes the Box
         // PORT NOTE: `jsc::ManagedTask` re-exports the *module*; struct is `ManagedTask::ManagedTask`.
-        let task = jsc::ManagedTask::ManagedTask::new::<RunTestsTask>(done_callback_test, RunTestsTask::call);
+        // `bun_event_loop::JsResult` erases the error to `*mut ()` (lower-tier
+        // crate can't name `jsc::JsError`); shim the callback signature.
+        fn call_erased(this: *mut RunTestsTask) -> core::result::Result<(), *mut ()> {
+            RunTestsTask::call(this).map_err(|_| core::ptr::null_mut())
+        }
+        let task = jsc::ManagedTask::ManagedTask::new::<RunTestsTask>(done_callback_test, call_erased);
         let vm = global_this.bun_vm();
         let Some(strong) = weak.upgrade() else {
             // PORT NOTE: `bun.Environment.ci_assert` → `cfg!(debug_assertions)` (closest analogue;
@@ -901,7 +906,8 @@ impl<'a> BunTest<'a> {
         // SAFETY: single field write through `UnsafeCell`; no other `&mut` live.
         strong.get().wants_wakeup = true;
         // we need to wake up the event loop so autoTick() doesn't wait for 16-100ms because we just enqueued a task
-        vm.enqueue_task(task);
+        // SAFETY: bun_vm() returns the live per-thread VM.
+        unsafe { (*vm).enqueue_task(task) };
     }
 
     pub fn add_result(&mut self, result: RefDataValue) {
@@ -948,7 +954,7 @@ impl<'a> BunTest<'a> {
             };
             match step_result {
                 StepResult::Waiting { timeout } => {
-                    min_timeout = Timespec::min_ignore_epoch(min_timeout, timeout);
+                    min_timeout = min_timeout.min_ignore_epoch(timeout);
                 }
                 StepResult::Complete => {
                     // SAFETY: short-lived reborrow; `_advance` does not re-enter `.get()`.

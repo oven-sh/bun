@@ -217,10 +217,11 @@ pub fn bun_fetch_preconnect(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    let arguments = callframe.arguments_old(1).slice();
+    let arguments = callframe.arguments_old::<1>();
+    let arguments = arguments.slice();
 
     if arguments.len() < 1 {
-        return global_object.throw_not_enough_arguments("fetch.preconnect", 1, arguments.len());
+        return Err(global_object.throw_not_enough_arguments("fetch.preconnect", 1, arguments.len()));
     }
 
     let url_str = jsc::URL::href_from_js(arguments[0], global_object)?;
@@ -230,15 +231,15 @@ pub fn bun_fetch_preconnect(
         return Ok(JSValue::ZERO);
     }
 
-    if url_str.tag() == BunString::Tag::Dead {
+    if url_str.tag() == BunStringTag::Dead {
         return global_object
-            .err(jsc::ErrorCode::INVALID_ARG_TYPE, "Invalid URL")
+            .err(jsc::ErrorCode::INVALID_ARG_TYPE, format_args!("Invalid URL"))
             .throw();
     }
 
     if url_str.is_empty() {
         return global_object
-            .err(jsc::ErrorCode::INVALID_ARG_TYPE, FETCH_ERROR_BLANK_URL)
+            .err(jsc::ErrorCode::INVALID_ARG_TYPE, format_args!("{}", FETCH_ERROR_BLANK_URL))
             .throw();
     }
 

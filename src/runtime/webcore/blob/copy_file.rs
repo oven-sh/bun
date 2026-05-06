@@ -210,11 +210,11 @@ impl<'a> CopyFile<'a> {
                 let mode = self.destination_mode.unwrap_or(node_fs::DEFAULT_PERMISSION);
                 self.destination_fd = match bun_sys::open(dest, OPEN_DESTINATION_FLAGS, mode) {
                     bun_sys::Result::Ok(result) => {
-                        match result.make_libuv_owned_for_syscall(bun_sys::Tag::Open, bun_sys::CloseOnFail::CloseOnFail) {
+                        match result.make_libuv_owned_for_syscall(bun_sys::Tag::Open, bun_sys::ErrorCase::CloseOnFail) {
                             bun_sys::Result::Ok(result_fd) => result_fd,
                             bun_sys::Result::Err(errno) => {
                                 self.system_error = Some(errno.to_system_error());
-                                return Err(bun_sys::errno_to_error(errno.errno));
+                                return Err(bun_core::errno_to_zig_err(errno.errno as i32));
                             }
                         }
                     }
@@ -226,7 +226,7 @@ impl<'a> CopyFile<'a> {
                                     self.source_fd.close();
                                     self.source_fd = Fd::INVALID;
                                 }
-                                return Err(bun_sys::errno_to_error(errno.errno));
+                                return Err(bun_core::errno_to_zig_err(errno.errno as i32));
                             }
                             Blob::MkdirResult::No => {}
                         }
@@ -241,7 +241,7 @@ impl<'a> CopyFile<'a> {
                                 .with_path(self.destination_file_store.pathlike.path().slice())
                                 .to_system_error(),
                         );
-                        return Err(bun_sys::errno_to_error(errno.errno));
+                        return Err(bun_core::errno_to_zig_err(errno.errno as i32));
                     }
                 };
                 break;

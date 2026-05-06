@@ -179,7 +179,7 @@ pub fn set_servername(this: &mut This, global: &JSGlobalObject, frame: &CallFram
 pub fn get_peer_x509_certificate(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::UNDEFINED) };
     // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
-    let cert = unsafe { boringssl::SSL_get_peer_certificate(ssl_ptr) };
+    let cert = unsafe { ffi::SSL_get_peer_certificate(ssl_ptr) };
     if let Some(x509) = cert {
         return X509::to_js_object(x509, global);
     }
@@ -261,7 +261,7 @@ pub fn get_peer_certificate(this: &mut This, global: &JSGlobalObject, frame: &Ca
             // SSL_get_peer_certificate returns a +1 reference; we must free it.
             // X509::to_js only borrows the pointer (X509View is non-owning).
             // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
-            let cert = unsafe { boringssl::SSL_get_peer_certificate(ssl_ptr) };
+            let cert = unsafe { ffi::SSL_get_peer_certificate(ssl_ptr) };
             if let Some(x509) = cert {
                 let guard = scopeguard::guard(x509, |c| c.free());
                 return X509::to_js(*guard, global);
@@ -283,7 +283,7 @@ pub fn get_peer_certificate(this: &mut This, global: &JSGlobalObject, frame: &Ca
     if this.is_server() {
         // SSL_get_peer_certificate returns a +1 reference; we must free it.
         // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
-        cert = unsafe { boringssl::SSL_get_peer_certificate(ssl_ptr) };
+        cert = unsafe { ffi::SSL_get_peer_certificate(ssl_ptr) };
     }
     let _guard = scopeguard::guard(cert, |c| {
         if let Some(c) = c {

@@ -5936,12 +5936,15 @@ pub trait FileCloser: Sized {
     }
 
     fn on_io_request_closed(this: &mut Self) {
-        this.io_poll().flags.remove(bun_aio::PollFlags::WasEverRegistered);
-        *this.task() = bun_threading::WorkPoolTask { callback: Self::on_close_io_request };
-        bun_threading::WorkPool::schedule(this.task());
+        this.io_poll().flags.remove(bun_aio::PollFlag::WasEverRegistered);
+        *this.task() = bun_jsc::WorkPoolTask {
+            node: Default::default(),
+            callback: Self::on_close_io_request,
+        };
+        bun_jsc::WorkPool::schedule(this.task());
     }
 
-    fn on_close_io_request(task: &mut bun_threading::WorkPoolTask) {
+    unsafe fn on_close_io_request(task: *mut bun_jsc::WorkPoolTask) {
         debug!("onCloseIORequest()");
         // SAFETY: task is the `task` field of Self.
         let this: &mut Self = unsafe {

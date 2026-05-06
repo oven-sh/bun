@@ -556,74 +556,77 @@ impl S3Client {
         drop(unsafe { Box::from_raw(this) });
         // `Arc<S3Credentials>` deref happens via Drop — matches Zig `credentials.deref()`.
     }
+}
 
-    // Static methods
+// ── Static methods ────────────────────────────────────────────────────────
+// PORT NOTE: `#[bun_jsc::host_fn]` (Free kind) emits a shim that calls the
+// function by bare name, so these must live at module scope rather than
+// inside `impl S3Client { }` (where `Self::` would be required).
 
-    #[bun_jsc::host_fn]
-    pub fn static_write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        S3File::write(global, callframe)
-    }
+#[bun_jsc::host_fn]
+pub fn static_write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    S3File::write(global, callframe)
+}
 
-    #[bun_jsc::host_fn]
-    pub fn static_presign(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        S3File::presign(global, callframe)
-    }
+#[bun_jsc::host_fn]
+pub fn static_presign(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    S3File::presign(global, callframe)
+}
 
-    #[bun_jsc::host_fn]
-    pub fn static_exists(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        S3File::exists(global, callframe)
-    }
+#[bun_jsc::host_fn]
+pub fn static_exists(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    S3File::exists(global, callframe)
+}
 
-    #[bun_jsc::host_fn]
-    pub fn static_size(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        S3File::size(global, callframe)
-    }
+#[bun_jsc::host_fn]
+pub fn static_size(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    S3File::size(global, callframe)
+}
 
-    #[bun_jsc::host_fn]
-    pub fn static_unlink(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        S3File::unlink(global, callframe)
-    }
+#[bun_jsc::host_fn]
+pub fn static_unlink(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    S3File::unlink(global, callframe)
+}
 
-    #[bun_jsc::host_fn]
-    pub fn static_file(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old(2).slice();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments);
+#[bun_jsc::host_fn]
+pub fn static_file(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    let arguments = callframe.arguments_old(2).slice();
+    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments);
 
-        let Some(path) = PathLike::from_js(global, &mut args)? else {
-            return global.throw_invalid_arguments(format_args!("Expected file path string"));
-        };
+    let Some(path) = PathLike::from_js(global, &mut args)? else {
+        return global.throw_invalid_arguments(format_args!("Expected file path string"));
+    };
 
-        S3File::construct_internal_js(global, path, args.next_eat())
-    }
+    S3File::construct_internal_js(global, path, args.next_eat())
+}
 
-    #[bun_jsc::host_fn]
-    pub fn static_stat(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        S3File::stat(global, callframe)
-    }
+#[bun_jsc::host_fn]
+pub fn static_stat(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    S3File::stat(global, callframe)
+}
 
-    #[bun_jsc::host_fn]
-    pub fn static_list_objects(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args = callframe.arguments_as_array::<2>();
-        let object_keys = args[0];
-        let options = args[1];
+#[bun_jsc::host_fn]
+pub fn static_list_objects(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    let args = callframe.arguments_as_array::<2>();
+    let object_keys = args[0];
+    let options = args[1];
 
-        // get credentials from env
-        let existing_credentials = global.bun_vm().transpiler.env.get_s3_credentials();
+    // get credentials from env
+    let existing_credentials = global.bun_vm().transpiler.env.get_s3_credentials();
 
-        let blob = scopeguard::guard(
-            S3File::construct_s3_file_with_s3_credentials(
-                global,
-                PathLike::String(PathString::empty()),
-                options,
-                existing_credentials,
-            )?,
-            |mut b| b.detach(),
-        );
+    let blob = scopeguard::guard(
+        S3File::construct_s3_file_with_s3_credentials(
+            global,
+            PathLike::String(PathString::empty()),
+            options,
+            existing_credentials,
+        )?,
+        |mut b| b.detach(),
+    );
 
-        // TODO(port): `blob.store.?.data.s3` tagged-union access — see list_objects.
-        let store = blob.store.as_ref().unwrap();
-        store.data.s3().list_objects(store, global, object_keys, options)
-    }
+    // TODO(port): `blob.store.?.data.s3` tagged-union access — see list_objects.
+    let store = blob.store.as_ref().unwrap();
+    store.data.s3().list_objects(store, global, object_keys, options)
 }
 
 // `FormatTag` / `JSType` are the ConsoleObject formatter enums

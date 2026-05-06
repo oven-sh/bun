@@ -356,7 +356,7 @@ impl ReadableStream {
                 reader.context.setup(blob, recommended_chunk_size);
                 reader.to_readable_stream(global_this)
             }
-            webcore::blob::StoreData::File(_) => {
+            webcore::blob::store::Data::File(_) => {
                 let reader = NewSource::<FileReader>::new(NewSource {
                     global_this,
                     context: FileReader {

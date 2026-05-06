@@ -6,7 +6,8 @@ use core::mem::offset_of;
 
 use bun_collections::ArrayHashMap;
 use bun_core::timespec; // TODO(port): confirm crate for `bun.timespec`
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, VirtualMachine};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::virtual_machine::VirtualMachine;
 use bun_str::String as BunString;
 use bun_threading::Mutex; // TODO(port): confirm crate for `bun.Mutex`
 use bun_uws::Loop as UwsLoop;

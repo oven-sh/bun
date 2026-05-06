@@ -1738,7 +1738,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     }
                 }
 
-                if let Some(body__) = opts.fast_get(ctx, jsc::CommonProperty::Body)? {
+                if let Some(body__) = opts.fast_get(ctx, jsc::BuiltinName::Body)? {
                     match Blob::get(ctx, body__, true, false) {
                         Ok(new_blob) => body = Body::Value::Blob(new_blob),
                         Err(_) => {

@@ -299,11 +299,13 @@ impl Listener {
         // borrow scoping in Phase B (captures `listener_allocated` + raw `this`).
 
         if let Some(ssl_cfg) = ssl.as_ref() {
-            let mut create_err = uws::CreateBunSocketError::None;
+            let mut create_err = uws::create_bun_socket_error_t::none;
             match ssl_cfg.as_usockets().create_ssl_context(&mut create_err) {
-                Some(ctx) => this_ref.secure_ctx = Some(ctx),
+                Some(ctx) => this_ref.secure_ctx = NonNull::new(ctx.cast()),
                 None => {
-                    return global.throw_value(create_err.to_js(global));
+                    return global.throw_value(
+                        crate::socket::uws_jsc::create_bun_socket_error_to_js(create_err, global),
+                    );
                 }
             }
         }
@@ -760,7 +762,8 @@ impl Listener {
         Ok(JSValue::UNDEFINED)
     }
 
-    #[bun_jsc::host_fn]
+    // PORT NOTE: no #[bun_jsc::host_fn] — BunObject.rs::static_adapters owns the
+    // C-ABI shim (it extracts `opts` from the CallFrame and calls this directly).
     pub fn connect(global: &JSGlobalObject, opts: JSValue) -> JsResult<JSValue> {
         Self::connect_inner(global, None, None, opts)
     }

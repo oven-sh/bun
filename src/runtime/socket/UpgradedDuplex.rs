@@ -231,12 +231,12 @@ impl<'a> UpgradedDuplex<'a> {
                         global,
                         None,
                         0,
-                        on_received_data,
-                        self as *mut _ as *mut (),
+                        __jsc_host_on_received_data,
+                        self as *mut Self as *mut c_void,
                     );
                     data_callback.ensure_still_alive();
 
-                    host_fn::set_function_data(data_callback, self as *mut _ as *mut ());
+                    host_fn::set_function_data(data_callback, self as *mut Self as *mut c_void);
 
                     self.on_data_callback = Strong::create(data_callback, global);
                     data_callback
@@ -253,12 +253,12 @@ impl<'a> UpgradedDuplex<'a> {
                         global,
                         None,
                         0,
-                        on_end,
-                        self as *mut _ as *mut (),
+                        __jsc_host_on_end,
+                        self as *mut Self as *mut c_void,
                     );
                     end_callback.ensure_still_alive();
 
-                    host_fn::set_function_data(end_callback, self as *mut _ as *mut ());
+                    host_fn::set_function_data(end_callback, self as *mut Self as *mut c_void);
 
                     self.on_end_callback = Strong::create(end_callback, global);
                     end_callback
@@ -314,7 +314,7 @@ impl<'a> UpgradedDuplex<'a> {
 
     pub fn start_tls(
         &mut self,
-        ssl_options: &crate::api::server_config::SSLConfig,
+        ssl_options: &crate::server::server_config::SSLConfig,
         is_client: bool,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set

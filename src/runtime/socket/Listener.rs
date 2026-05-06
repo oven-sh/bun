@@ -126,7 +126,7 @@ impl Listener {
         if args.len < 1
             || (matches!(this.listener, ListenerType::None) && this.handlers.active_connections == 0)
         {
-            return Err(global.throw("{}", format_args!("Expected 1 argument")));
+            return Err(global.throw(format_args!("Expected 1 argument")));
         }
 
         let opts = args.ptr[0];

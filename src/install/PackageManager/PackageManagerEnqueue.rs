@@ -11,15 +11,24 @@ use bun_sys::Fd;
 
 use bun_install::{
     self as install, invalid_package_id, Behavior, Dependency, DependencyID, ExtractTarball,
-    Features, FolderResolution, Integrity, Npm, PackageID, PackageNameHash, PatchTask, Repository,
+    Features, Integrity, Npm, PackageID, PackageNameHash, PatchTask, Repository,
     Resolution, TaskCallbackContext,
 };
+use crate::_folder_resolver::{
+    self as FolderResolution, FolderResolution as FolderResolutionValue, GlobalOrRelative,
+    PackageWorkspaceSearchPathFormatter,
+};
+use crate::network_task::Authorization;
+use crate::patch_install::Callback as PatchTaskCallback;
+use crate::resolution::{Tag as ResolutionTag, TaggedValue as ResolutionTagged, Value as ResolutionValue};
 use crate::{dependency, ManifestLoad};
 use crate::lockfile_real as Lockfile;
 use crate::lockfile_real::PackageIndexEntry;
 use crate::lockfile::package::Package;
 use bun_install::NetworkTask;
-use crate::package_manager_real::{FailFn, PackageManager, SuccessFn, TaskCallbackList};
+use crate::package_manager_real::{
+    self, directories, lifecycle, run_tasks, FailFn, PackageManager, SuccessFn, TaskCallbackList,
+};
 use crate::package_manager_task as Task;
 
 // `SuccessFn` / `FailFn` are bare `fn(&mut PackageManager, ...)` pointers; the

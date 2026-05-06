@@ -337,6 +337,13 @@ pub mod hash_map {
         pub found_existing: bool,
         pub value_ptr: &'a mut V,
     }
+
+    /// Zig `std.HashMap.KV` — owned `{key, value}` pair returned from
+    /// `fetchRemove` / `fetchPut`.
+    pub struct KV<K, V> {
+        pub key: K,
+        pub value: V,
+    }
 }
 
 pub mod array_list;

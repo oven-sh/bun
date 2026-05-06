@@ -19,7 +19,7 @@ use crate::{
     Npm, PackageID, PackageJSON, PackageManager, PackageNameHash, Repository,
     TruncatedPackageNameHash, UpdateRequest,
 };
-use crate::bun_json::ExprAccessors as _;
+use crate::bun_json::ExprAccessors;
 use crate::dependency::Behavior;
 // `Package.rs` is mounted as `crate::lockfile_real::package`; the parent module
 // (`super`) is the real `lockfile.rs`, distinct from the `crate::lockfile`
@@ -49,6 +49,16 @@ pub use meta::Meta;
 pub use workspace_map as WorkspaceMap;
 
 bun_output::declare_scope!(Lockfile, hidden);
+
+// PORT NOTE: `Expr` has an inherent `as_string(&self, &Bump)` (T2 AST) that
+// shadows the no-arg `ExprAccessors::as_string` trait method during method
+// resolution (inherent impls always win). Route through UFCS via this helper
+// so call sites don't have to spell `<Expr as ExprAccessors>::as_string(&e)`
+// 20+ times.
+#[inline]
+fn expr_str(e: &Expr) -> Option<&'static [u8]> {
+    ExprAccessors::as_string(e)
+}
 
 // Zig: `pub fn Package(comptime SemverIntType: type) type { return extern struct { ... } }`
 // Defaulted to `u64` so bare `Package` matches Zig's primary `Package(u64)`
@@ -250,6 +260,90 @@ impl<SemverIntType: VersionInt> bun_collections::MultiArrayElement for Package<S
         }
     }
 }
+
+// ─── PackageListExt / PackageSliceExt ────────────────────────────────────────
+//
+// Hand-expansion of what `#[derive(MultiArrayElement)]` would emit (see PORT
+// NOTE on the struct above). Both `MultiArrayList<Package<_>>` and its
+// `Slice<Package<_>>` get the same `items_<field>{,_mut}()` surface — Zig's
+// `list.items(.field)` / `slice.items(.field)` are spelled identically and
+// callers (bun.lock.rs, Tree.rs, migrators) use both forms interchangeably.
+macro_rules! pkg_ext_trait {
+    ($trait_name:ident for $target:ty) => {
+        #[allow(dead_code)]
+        pub trait $trait_name<SemverIntType: VersionInt> {
+            fn items_name(&self) -> &[String];
+            fn items_name_mut(&mut self) -> &mut [String];
+            fn items_name_hash(&self) -> &[PackageNameHash];
+            fn items_name_hash_mut(&mut self) -> &mut [PackageNameHash];
+            fn items_resolution(&self) -> &[ResolutionType<SemverIntType>];
+            fn items_resolution_mut(&mut self) -> &mut [ResolutionType<SemverIntType>];
+            fn items_dependencies(&self) -> &[DependencySlice];
+            fn items_dependencies_mut(&mut self) -> &mut [DependencySlice];
+            fn items_resolutions(&self) -> &[PackageIDSlice];
+            fn items_resolutions_mut(&mut self) -> &mut [PackageIDSlice];
+            fn items_meta(&self) -> &[Meta];
+            fn items_meta_mut(&mut self) -> &mut [Meta];
+            fn items_bin(&self) -> &[Bin];
+            fn items_bin_mut(&mut self) -> &mut [Bin];
+            fn items_scripts(&self) -> &[Scripts];
+            fn items_scripts_mut(&mut self) -> &mut [Scripts];
+        }
+        #[allow(dead_code)]
+        impl<SemverIntType: VersionInt> $trait_name<SemverIntType> for $target {
+            #[inline] fn items_name(&self) -> &[String] {
+                unsafe { self.items::<String>(PackageField::Name) }
+            }
+            #[inline] fn items_name_mut(&mut self) -> &mut [String] {
+                unsafe { self.items_mut::<String>(PackageField::Name) }
+            }
+            #[inline] fn items_name_hash(&self) -> &[PackageNameHash] {
+                unsafe { self.items::<PackageNameHash>(PackageField::NameHash) }
+            }
+            #[inline] fn items_name_hash_mut(&mut self) -> &mut [PackageNameHash] {
+                unsafe { self.items_mut::<PackageNameHash>(PackageField::NameHash) }
+            }
+            #[inline] fn items_resolution(&self) -> &[ResolutionType<SemverIntType>] {
+                unsafe { self.items::<ResolutionType<SemverIntType>>(PackageField::Resolution) }
+            }
+            #[inline] fn items_resolution_mut(&mut self) -> &mut [ResolutionType<SemverIntType>] {
+                unsafe { self.items_mut::<ResolutionType<SemverIntType>>(PackageField::Resolution) }
+            }
+            #[inline] fn items_dependencies(&self) -> &[DependencySlice] {
+                unsafe { self.items::<DependencySlice>(PackageField::Dependencies) }
+            }
+            #[inline] fn items_dependencies_mut(&mut self) -> &mut [DependencySlice] {
+                unsafe { self.items_mut::<DependencySlice>(PackageField::Dependencies) }
+            }
+            #[inline] fn items_resolutions(&self) -> &[PackageIDSlice] {
+                unsafe { self.items::<PackageIDSlice>(PackageField::Resolutions) }
+            }
+            #[inline] fn items_resolutions_mut(&mut self) -> &mut [PackageIDSlice] {
+                unsafe { self.items_mut::<PackageIDSlice>(PackageField::Resolutions) }
+            }
+            #[inline] fn items_meta(&self) -> &[Meta] {
+                unsafe { self.items::<Meta>(PackageField::Meta) }
+            }
+            #[inline] fn items_meta_mut(&mut self) -> &mut [Meta] {
+                unsafe { self.items_mut::<Meta>(PackageField::Meta) }
+            }
+            #[inline] fn items_bin(&self) -> &[Bin] {
+                unsafe { self.items::<Bin>(PackageField::Bin) }
+            }
+            #[inline] fn items_bin_mut(&mut self) -> &mut [Bin] {
+                unsafe { self.items_mut::<Bin>(PackageField::Bin) }
+            }
+            #[inline] fn items_scripts(&self) -> &[Scripts] {
+                unsafe { self.items::<Scripts>(PackageField::Scripts) }
+            }
+            #[inline] fn items_scripts_mut(&mut self) -> &mut [Scripts] {
+                unsafe { self.items_mut::<Scripts>(PackageField::Scripts) }
+            }
+        }
+    };
+}
+pkg_ext_trait!(PackageListExt for MultiArrayList<Package<SemverIntType>>);
+pkg_ext_trait!(PackageSliceExt for bun_collections::multi_array_list::Slice<Package<SemverIntType>>);
 
 /// `Package.List` (Zig: `MultiArrayList(Package)`). The associated-type
 /// indirection lets `lockfile.rs` name `<Package as PackageListProvider>::List`

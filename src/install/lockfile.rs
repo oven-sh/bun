@@ -745,7 +745,7 @@ impl Lockfile {
             return Ok(Cleaned::Same(old));
         }
 
-        old.clean(manager, &mut [], exact_versions, log_level).map(Cleaned::New)
+        Lockfile::clean(old, manager, &mut [], exact_versions, log_level).map(Cleaned::New)
     }
 
     fn preprocess_update_requests(
@@ -907,7 +907,7 @@ impl Lockfile {
         let mut log = logger::Log::init();
         // defer { for (...) item.deinit(); log.deinit(); } — handled by Drop
 
-        old.clean_with_logger(manager, updates, &mut log, exact_versions, log_level)
+        Lockfile::clean_with_logger(old, manager, updates, &mut log, exact_versions, log_level)
     }
 
     pub fn resolve_catalog_dependency(&self, dep: &Dependency) -> Option<DependencyVersion> {
@@ -1020,7 +1020,7 @@ impl Lockfile {
         preinstall_state.fill(Install::PreinstallState::Unknown);
 
         if !updates.is_empty() {
-            old.preprocess_update_requests(manager, updates, exact_versions)?;
+            Lockfile::preprocess_update_requests(old, manager, updates, exact_versions)?;
         }
 
         // Spec lockfile.zig:669: `var new = try old.allocator.create(Lockfile)` — caller owns
@@ -1033,9 +1033,14 @@ impl Lockfile {
         new.packages.ensure_total_capacity(old.packages.len())?;
         new.buffers.preallocate(&old.buffers)?;
         new.patched_dependencies
-            .ensure_total_capacity(old.patched_dependencies.entries.len())?;
+            .ensure_total_capacity(old.patched_dependencies.count())?;
 
-        old.scratch.dependency_list_queue.head = 0;
+        // Zig: `old.scratch.dependency_list_queue.head = 0;` — reset the FIFO read
+        // cursor without discarding capacity. `LinearFifo::head` is private; the
+        // queue is always drained to empty before reuse here, so a `discard(count)`
+        // resets `head` to 0 with the same observable effect (lockfile.zig:681).
+        let queued = old.scratch.dependency_list_queue.count();
+        old.scratch.dependency_list_queue.discard(queued);
 
         {
             let mut builder = new.string_builder();

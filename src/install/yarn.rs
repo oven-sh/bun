@@ -613,8 +613,8 @@ fn process_deps(
                     Some(dep_name_hash),
                     parsed_version,
                     &SlicedString::init(parsed_version, parsed_version),
-                    Some(log),
-                    Some(manager),
+                    Some(&mut *log),
+                    Some(&mut *manager),
                 )
                 .unwrap_or_default(),
                 behavior: behavior_for(dep_type, dep_entry_workspace),

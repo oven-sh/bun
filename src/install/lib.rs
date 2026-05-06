@@ -394,6 +394,46 @@ pub mod repository {
     }
 
     impl Repository {
+        /// Zig: `Repository.shared_env` (src/install/repository.zig) — process-
+        /// lifetime lazy-init env map for `git` subprocess spawns. Forwards to
+        /// the file-backed `repository_real::SHARED_ENV` static so callers
+        /// naming `crate::repository::Repository::shared_env()` resolve.
+        #[inline]
+        pub fn shared_env() -> &'static mut crate::repository_real::SharedEnv {
+            // SAFETY: process-lifetime singleton; mirrors Zig `pub var shared_env`.
+            unsafe { &mut *core::ptr::addr_of_mut!(crate::repository_real::SHARED_ENV) }
+        }
+
+        /// Zig: `Repository.findCommit(env, log, repo_dir, name, committish, task_id)`
+        /// (src/install/repository.zig). Forwards to `repository_real`.
+        #[inline]
+        pub fn find_commit(
+            env: &bun_dotenv::Map,
+            log: &mut bun_logger::Log,
+            repo_dir: bun_sys::Fd,
+            name: &[u8],
+            committish: &[u8],
+            task_id: crate::package_manager_task::Id,
+        ) -> Result<Box<[u8]>, bun_core::Error> {
+            crate::repository_real::Repository::find_commit(
+                env, log, repo_dir, name, committish, task_id,
+            )
+        }
+
+        /// Zig: `Repository.createDependencyNameFromVersionLiteral`
+        /// (src/install/repository.zig). Forwards to `repository_real`.
+        #[inline]
+        pub fn create_dependency_name_from_version_literal(
+            allocator: bun_alloc::Allocator,
+            dep: &crate::Dependency,
+            lockfile: &crate::Lockfile,
+            dep_id: crate::DependencyID,
+        ) -> Box<[u8]> {
+            crate::repository_real::Repository::create_dependency_name_from_version_literal(
+                allocator, dep, lockfile, dep_id,
+            )
+        }
+
         /// Zig: `Repository.tryHTTPS(url)` (src/install/repository.zig).
         /// Returns the URL rewritten for an HTTPS clone if the input looks
         /// like a git URL with a host component, else `None`. Full rewrite
@@ -762,9 +802,9 @@ pub mod bin {
                     self.done = true;
                     let base = path::basename(self.package_name.slice(self.string_buffer));
                     if strings::has_prefix(base, b"./") || strings::has_prefix(base, b".\\") {
-                        return Ok(Some(strings::copy(self.buf.as_mut_slice(), &base[2..])));
+                        return Ok(Some(strings::copy(&mut self.buf.0[..], &base[2..])));
                     }
-                    Ok(Some(strings::copy(self.buf.as_mut_slice(), base)))
+                    Ok(Some(strings::copy(&mut self.buf.0[..], base)))
                 }
                 Tag::NamedFile => {
                     if self.i > 0 {
@@ -775,9 +815,9 @@ pub mod bin {
                     let base =
                         path::basename(self.bin.value.named_file[0].slice(self.string_buffer));
                     if strings::has_prefix(base, b"./") || strings::has_prefix(base, b".\\") {
-                        return Ok(Some(strings::copy(self.buf.as_mut_slice(), &base[2..])));
+                        return Ok(Some(strings::copy(&mut self.buf.0[..], &base[2..])));
                     }
-                    Ok(Some(strings::copy(self.buf.as_mut_slice(), base)))
+                    Ok(Some(strings::copy(&mut self.buf.0[..], base)))
                 }
                 Tag::Map => {
                     let map = self.bin.value.map;
@@ -790,9 +830,9 @@ pub mod bin {
                     let current_string = map.get(self.extern_string_buf)[index];
                     let base = path::basename(current_string.slice(self.string_buffer));
                     if strings::has_prefix(base, b"./") || strings::has_prefix(base, b".\\") {
-                        return Ok(Some(strings::copy(self.buf.as_mut_slice(), &base[2..])));
+                        return Ok(Some(strings::copy(&mut self.buf.0[..], &base[2..])));
                     }
-                    Ok(Some(strings::copy(self.buf.as_mut_slice(), base)))
+                    Ok(Some(strings::copy(&mut self.buf.0[..], base)))
                 }
                 // `.dir` requires a `node_modules` directory handle the tree
                 // printer never sets; matches `bin_real::NamesIterator` shape
@@ -950,6 +990,21 @@ pub mod lockfile {
             // Only allow default trusted dependencies for npm packages
             resolution.tag == crate::resolution::Tag::Npm
                 && crate::lockfile_real::default_trusted_dependencies::has(name)
+        }
+        /// Port of `Lockfile.isRootDependency` (src/install/lockfile.zig).
+        /// Real body lives in `lockfile_real::Lockfile::is_root_dependency`.
+        pub fn is_root_dependency<PM>(&self, _manager: &PM, _id: DependencyID) -> bool {
+            todo!("blocked_on: lockfile_real::Lockfile stub-unification (reconciler-6)")
+        }
+        /// Port of `Lockfile.isWorkspaceDependency` (src/install/lockfile.zig).
+        #[inline]
+        pub fn is_workspace_dependency(&self, id: DependencyID) -> bool {
+            self.get_workspace_pkg_if_workspace_dep(id) != crate::invalid_package_id
+        }
+        /// Port of `Lockfile.getWorkspacePkgIfWorkspaceDep` (src/install/lockfile.zig).
+        /// Real body lives in `lockfile_real::Lockfile::get_workspace_pkg_if_workspace_dep`.
+        pub fn get_workspace_pkg_if_workspace_dep(&self, _id: DependencyID) -> PackageID {
+            todo!("blocked_on: lockfile_real::Lockfile stub-unification (reconciler-6)")
         }
         /// Port of `Lockfile.filter` (src/install/lockfile.zig:1348). Rebuilds
         /// `buffers.trees` / `buffers.hoisted_dependencies` honouring the

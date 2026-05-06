@@ -1866,6 +1866,23 @@ impl Data {
     pub fn as_e_array(&self) -> Option<StoreRef<E::Array>> {
         self.e_array()
     }
+    /// Zig: `data.e_object` field-access. Panics if not an object — callers
+    /// gate with `is_object()` / `is_e_object()` first (mirrors Zig union
+    /// access).
+    #[inline]
+    pub fn as_e_object(&self) -> StoreRef<E::Object> {
+        self.e_object().expect("ExprData::as_e_object on non-object")
+    }
+    /// Zig: `data.e_object` field-access (mutable).
+    #[inline]
+    pub fn as_e_object_mut(&mut self) -> &mut E::Object {
+        self.e_object_mut().expect("ExprData::as_e_object_mut on non-object")
+    }
+    /// Zig: `data == .e_object`.
+    #[inline]
+    pub fn is_e_object(&self) -> bool {
+        matches!(self, Data::EObject(_))
+    }
     /// Zig: `data.e_number` field-access. `E::Number` is an inline (non-Store)
     /// payload, so this returns it by value.
     #[inline]

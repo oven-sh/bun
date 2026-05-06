@@ -220,10 +220,8 @@ impl FormData {
     }
 }
 
-#[bun_jsc::host_fn]
-// TODO(port): Zig `@export(&jsc.toJSHostFn(fromMultipartData), .{ .name = "FormData__jsFunctionFromMultipartData" })`
-// — confirm `#[bun_jsc::host_fn]` emits the shim under that exact symbol name,
-// or add `#[unsafe(no_mangle)]` wrapper in Phase B.
+// Zig: `@export(&jsc.toJSHostFn(fromMultipartData), .{ .name = "FormData__jsFunctionFromMultipartData" })`
+#[bun_jsc::host_fn(export = "FormData__jsFunctionFromMultipartData")]
 pub fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // PORT NOTE: `jsc.markBinding(@src())` dropped — debug-only source marker.
 

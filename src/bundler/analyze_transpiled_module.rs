@@ -1,10 +1,33 @@
 use core::ffi::{c_char, CStr};
-use core::mem::{offset_of, size_of, MaybeUninit};
+use core::mem::size_of;
 
-use bun_collections::ArrayHashMap;
 use bun_core::{self, err};
-use bun_string::strings;
-use bun_wyhash;
+
+// ──────────────────────────────────────────────────────────────────────────
+// Re-exports from the printer crate
+//
+// `js_printer` is the sole *producer* of ModuleInfo records (it walks the AST
+// during printing); the bundler/runtime only consume the resulting bytes. The
+// canonical builder type therefore lives in `bun_js_printer` (MOVE_DOWN per
+// CYCLEBREAK), and is re-exported here so that bundler-side callers — which
+// thread a `&mut ModuleInfo` into `js_printer::Options { module_info }` — see
+// the *same* nominal type. The duplicate that used to live in this file caused
+// `expected ModuleInfo, found analyze_transpiled_module::ModuleInfo` (E0308) at
+// the print boundary.
+// ──────────────────────────────────────────────────────────────────────────
+pub use bun_js_printer::analyze_transpiled_module::{
+    FetchParameters, ModuleInfo, StringID, VarKind,
+};
+
+/// Downstream name for `FetchParameters` — mirrors how
+/// `ModuleInfoDeserialized.requested_modules_values` is consumed in
+/// `bundler_jsc::analyze_jsc::to_js_module_record`.
+pub type RequestedModuleValue = FetchParameters;
+
+/// Legacy name used by `linker_context::postProcessJSChunk` — the Zig side
+/// renamed `ImportAttributes` → `FetchParameters` but the bundler call site
+/// still spells `ImportAttributes::None`.
+pub type ImportAttributes = FetchParameters;
 
 // ──────────────────────────────────────────────────────────────────────────
 // RecordKind
@@ -134,7 +157,8 @@ pub struct ModuleInfoDeserialized {
 }
 
 pub enum Owner {
-    ModuleInfo,
+    /// `Box<ModuleInfo>` whose internal vectors back the raw slice fields.
+    ModuleInfo(*mut ModuleInfo),
     AllocatedSlice {
         /// `Box::<[u8]>::into_raw` — freed in `deinit`.
         slice: *mut [u8],
@@ -147,19 +171,19 @@ impl ModuleInfoDeserialized {
     /// deallocates the object itself and is invoked across FFI on a raw `*mut`.
     ///
     /// # Safety
-    /// `this` must have been produced by [`Self::create`] (heap box) or be the
-    /// `_deserialized` field of a `Box<ModuleInfo>` after `finalize()`.
+    /// `this` must have been produced by [`Self::create`] (heap box) or by
+    /// [`ModuleInfoExt::into_deserialized`].
     pub unsafe fn deinit(this: *mut ModuleInfoDeserialized) {
         // SAFETY: caller contract — see fn doc above.
         unsafe {
             match (*this).owner {
-                Owner::ModuleInfo => {
-                    // SAFETY: `this` points to `ModuleInfo._deserialized`; recover
-                    // the parent via container_of (Zig: @fieldParentPtr).
-                    let mi = (this as *mut u8)
-                        .sub(offset_of!(ModuleInfo, _deserialized))
-                        .cast::<ModuleInfo>();
-                    ModuleInfo::destroy(mi);
+                Owner::ModuleInfo(mi) => {
+                    // PORT NOTE: Zig recovered the parent via
+                    // `@fieldParentPtr("_deserialized", self)`. The Rust port
+                    // stores the `*mut ModuleInfo` directly because the printer
+                    // crate's `ModuleInfo` no longer embeds this struct.
+                    drop(Box::from_raw(mi));
+                    drop(Box::from_raw(this));
                 }
                 Owner::AllocatedSlice { slice } => {
                     drop(Box::from_raw(slice));
@@ -310,412 +334,139 @@ fn slice_as_bytes<T: Copy>(s: &[T]) -> &[u8] {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// StringMapKey / StringContext
+// Extension shims over the printer-crate types
+//
+// The bundler-side callers (`postProcessJSChunk`, `generateChunksInParallel`,
+// `RuntimeTranspilerStore`) were written against an earlier `Result`-returning
+// API. The canonical printer-crate `ModuleInfo` returns by value (allocation
+// failure aborts). These extension methods preserve the old call shapes so a
+// single re-export commit doesn't have to touch every call site.
 // ──────────────────────────────────────────────────────────────────────────
 
-#[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
-struct StringMapKey(u32);
-
-pub struct StringContext<'a> {
-    pub strings_buf: &'a [u8],
-    pub strings_lens: &'a [u32],
+/// Extension constructor: `StringID::from_raw(u32)`.
+pub trait StringIDExt {
+    fn from_raw(raw: u32) -> StringID;
 }
-
-impl<'a> bun_collections::array_hash_map::ArrayHashAdapter<&[u8], StringMapKey> for StringContext<'a> {
-    fn hash(&self, s: &&[u8]) -> u32 {
-        bun_wyhash::hash(s) as u32
-    }
-
-    fn eql(&self, fetch_key: &&[u8], item_key: &StringMapKey, item_i: usize) -> bool {
-        let start = item_key.0 as usize;
-        let len = self.strings_lens[item_i] as usize;
-        strings::eql_long(fetch_key, &self.strings_buf[start..start + len], true)
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// ModuleInfo
-// ──────────────────────────────────────────────────────────────────────────
-
-pub struct ModuleInfo {
-    /// all strings in wtf-8. index in hashmap = StringID
-    // TODO(port): Zig uses `ArrayHashMapUnmanaged(StringMapKey, void, void, true)`
-    // with an *adapted* context (`StringContext`) for lookup-by-slice. The
-    // `bun_collections::ArrayHashMap` API needs an adapted-getOrPut entry point
-    // to express this; placeholder key/value types kept identical.
-    strings_map: ArrayHashMap<StringMapKey, ()>,
-    strings_buf: Vec<u8>,
-    strings_lens: Vec<u32>,
-    requested_modules: ArrayHashMap<StringID, FetchParameters>,
-    buffer: Vec<StringID>,
-    record_kinds: Vec<RecordKind>,
-    flags: Flags,
-    exported_names: ArrayHashMap<StringID, ()>,
-    finalized: bool,
-
-    /// only initialized after `.finalize()` is called
-    _deserialized: MaybeUninit<ModuleInfoDeserialized>,
-}
-
-/// Re-exported at module scope to mirror Zig's `ModuleInfo.FetchParameters`
-/// being referenced from `ModuleInfoDeserialized` field types.
-#[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct FetchParameters(pub u32);
-
-impl FetchParameters {
-    pub const NONE: Self = Self(u32::MAX);
-    pub const JAVASCRIPT: Self = Self(u32::MAX - 1);
-    pub const WEBASSEMBLY: Self = Self(u32::MAX - 2);
-    pub const JSON: Self = Self(u32::MAX - 3);
-    // _ => host_defined: cast to StringID
-
-    // PascalCase aliases — `bundler_jsc::analyze_jsc` matches on these names
-    // (Zig: `enum(u32) { none, javascript, webassembly, json, _ }`).
-    pub const None: Self = Self::NONE;
-    pub const Javascript: Self = Self::JAVASCRIPT;
-    pub const Webassembly: Self = Self::WEBASSEMBLY;
-    pub const Json: Self = Self::JSON;
-
-    pub fn host_defined(value: StringID) -> FetchParameters {
-        FetchParameters(value.0)
-    }
-
-    /// Inverse of `host_defined` for the open-enum case (Zig:
-    /// `@enumFromInt(@intFromEnum(uv))`).
+impl StringIDExt for StringID {
     #[inline]
-    pub const fn as_string_id(self) -> StringID {
-        StringID(self.0)
+    fn from_raw(raw: u32) -> StringID {
+        StringID(raw)
     }
 }
 
-/// Downstream name for `FetchParameters` — mirrors how
-/// `ModuleInfoDeserialized.requested_modules_values` is consumed in
-/// `bundler_jsc::analyze_jsc::to_js_module_record`.
-pub type RequestedModuleValue = FetchParameters;
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum VarKind {
-    Declared,
-    Lexical,
-}
-
-impl ModuleInfo {
-    pub fn as_deserialized(&mut self) -> &mut ModuleInfoDeserialized {
-        debug_assert!(self.finalized);
-        // SAFETY: `finalize()` writes `_deserialized` before setting `finalized = true`.
-        unsafe { self._deserialized.assume_init_mut() }
-    }
-
-    pub fn add_var(&mut self, name: StringID, kind: VarKind) -> Result<(), bun_alloc::AllocError> {
-        match kind {
-            VarKind::Declared => self.add_declared_variable(name),
-            VarKind::Lexical => self.add_lexical_variable(name),
-        }
-    }
-
-    fn _add_record(
+/// `Result`-shaped wrappers over `bun_js_printer::analyze_transpiled_module::ModuleInfo`.
+pub trait ModuleInfoExt {
+    fn create(is_typescript: bool) -> Result<Box<ModuleInfo>, bun_alloc::AllocError>;
+    /// # Safety
+    /// `this` must originate from `Box::into_raw(ModuleInfo::create(..))`.
+    unsafe fn destroy(this: *mut ModuleInfo);
+    fn str(&mut self, value: &[u8]) -> Result<StringID, bun_alloc::AllocError>;
+    fn add_var(&mut self, name: StringID, kind: VarKind) -> Result<(), bun_alloc::AllocError>;
+    fn request_module(
         &mut self,
-        kind: RecordKind,
-        data: &[StringID],
-    ) -> Result<(), bun_alloc::AllocError> {
-        debug_assert!(!self.finalized);
-        debug_assert!(data.len() == kind.len().expect("unreachable"));
-        self.record_kinds.push(kind);
-        self.buffer.extend_from_slice(data);
+        import_record_path: StringID,
+        fetch_parameters: FetchParameters,
+    ) -> Result<(), bun_alloc::AllocError>;
+    fn add_import_info_single(
+        &mut self,
+        module_name: StringID,
+        import_name: StringID,
+        local_name: StringID,
+        only_used_as_type: bool,
+    ) -> Result<(), bun_alloc::AllocError>;
+    fn add_import_info_namespace(
+        &mut self,
+        module_name: StringID,
+        local_name: StringID,
+    ) -> Result<(), bun_alloc::AllocError>;
+    /// Finalize and box the raw-pointer `ModuleInfoDeserialized` view, taking
+    /// ownership of `self`. Replaces the Zig pattern of writing into the
+    /// embedded `_deserialized` field and handing out a `&mut` to it.
+    fn into_deserialized(self: Box<Self>) -> Box<ModuleInfoDeserialized>;
+}
+
+impl ModuleInfoExt for ModuleInfo {
+    #[inline]
+    fn create(is_typescript: bool) -> Result<Box<ModuleInfo>, bun_alloc::AllocError> {
+        Ok(ModuleInfo::create(is_typescript))
+    }
+    #[inline]
+    unsafe fn destroy(this: *mut ModuleInfo) {
+        // SAFETY: caller contract — `this` is `Box::into_raw` output.
+        drop(unsafe { Box::from_raw(this) });
+    }
+    #[inline]
+    fn str(&mut self, value: &[u8]) -> Result<StringID, bun_alloc::AllocError> {
+        Ok(ModuleInfo::str(self, value))
+    }
+    #[inline]
+    fn add_var(&mut self, name: StringID, kind: VarKind) -> Result<(), bun_alloc::AllocError> {
+        ModuleInfo::add_var(self, name, kind);
         Ok(())
     }
-
-    pub fn add_declared_variable(&mut self, id: StringID) -> Result<(), bun_alloc::AllocError> {
-        self._add_record(RecordKind::DECLARED_VARIABLE, &[id])
+    #[inline]
+    fn request_module(
+        &mut self,
+        import_record_path: StringID,
+        fetch_parameters: FetchParameters,
+    ) -> Result<(), bun_alloc::AllocError> {
+        ModuleInfo::request_module(self, import_record_path, fetch_parameters);
+        Ok(())
     }
-
-    pub fn add_lexical_variable(&mut self, id: StringID) -> Result<(), bun_alloc::AllocError> {
-        self._add_record(RecordKind::LEXICAL_VARIABLE, &[id])
-    }
-
-    pub fn add_import_info_single(
+    #[inline]
+    fn add_import_info_single(
         &mut self,
         module_name: StringID,
         import_name: StringID,
         local_name: StringID,
         only_used_as_type: bool,
     ) -> Result<(), bun_alloc::AllocError> {
-        self._add_record(
-            if only_used_as_type {
-                RecordKind::IMPORT_INFO_SINGLE_TYPE_SCRIPT
-            } else {
-                RecordKind::IMPORT_INFO_SINGLE
-            },
-            &[module_name, import_name, local_name],
-        )
-    }
-
-    pub fn add_import_info_namespace(
-        &mut self,
-        module_name: StringID,
-        local_name: StringID,
-    ) -> Result<(), bun_alloc::AllocError> {
-        self._add_record(
-            RecordKind::IMPORT_INFO_NAMESPACE,
-            &[module_name, StringID::STAR_NAMESPACE, local_name],
-        )
-    }
-
-    pub fn add_export_info_indirect(
-        &mut self,
-        export_name: StringID,
-        import_name: StringID,
-        module_name: StringID,
-    ) -> Result<(), bun_alloc::AllocError> {
-        if self._has_or_add_exported_name(export_name)? {
-            return Ok(()); // a syntax error will be emitted later in this case
-        }
-        self._add_record(
-            RecordKind::EXPORT_INFO_INDIRECT,
-            &[export_name, import_name, module_name],
-        )
-    }
-
-    pub fn add_export_info_local(
-        &mut self,
-        export_name: StringID,
-        local_name: StringID,
-    ) -> Result<(), bun_alloc::AllocError> {
-        if self._has_or_add_exported_name(export_name)? {
-            return Ok(()); // a syntax error will be emitted later in this case
-        }
-        self._add_record(
-            RecordKind::EXPORT_INFO_LOCAL,
-            &[export_name, local_name, StringID(u32::MAX)],
-        )
-    }
-
-    pub fn add_export_info_namespace(
-        &mut self,
-        export_name: StringID,
-        module_name: StringID,
-    ) -> Result<(), bun_alloc::AllocError> {
-        if self._has_or_add_exported_name(export_name)? {
-            return Ok(()); // a syntax error will be emitted later in this case
-        }
-        self._add_record(RecordKind::EXPORT_INFO_NAMESPACE, &[export_name, module_name])
-    }
-
-    pub fn add_export_info_star(
-        &mut self,
-        module_name: StringID,
-    ) -> Result<(), bun_alloc::AllocError> {
-        self._add_record(RecordKind::EXPORT_INFO_STAR, &[module_name])
-    }
-
-    pub fn _has_or_add_exported_name(
-        &mut self,
-        name: StringID,
-    ) -> Result<bool, bun_alloc::AllocError> {
-        // Zig `fetchPut` → std `HashMap::insert` (returns previous value).
-        Ok(self.exported_names.insert(name, ()).is_some())
-    }
-
-    pub fn create(is_typescript: bool) -> Box<ModuleInfo> {
-        Box::new(ModuleInfo::init(is_typescript))
-    }
-
-    fn init(is_typescript: bool) -> ModuleInfo {
-        let mut flags = Flags::default();
-        if is_typescript {
-            flags |= Flags::IS_TYPESCRIPT;
-        }
-        ModuleInfo {
-            strings_map: ArrayHashMap::default(),
-            strings_buf: Vec::new(),
-            strings_lens: Vec::new(),
-            exported_names: ArrayHashMap::default(),
-            requested_modules: ArrayHashMap::default(),
-            buffer: Vec::new(),
-            record_kinds: Vec::new(),
-            flags,
-            finalized: false,
-            _deserialized: MaybeUninit::uninit(),
-        }
-    }
-
-    // `deinit` deleted: all owned fields are `Vec`/`ArrayHashMap` and drop
-    // automatically. `ModuleInfoDeserialized` holds only raw pointers (no Drop).
-
-    /// # Safety
-    /// `this` must originate from `Box::into_raw(ModuleInfo::create(..))`.
-    pub unsafe fn destroy(this: *mut ModuleInfo) {
-        // SAFETY: caller contract — `this` is `Box::into_raw` output.
-        drop(unsafe { Box::from_raw(this) });
-    }
-
-    pub fn str(&mut self, value: &[u8]) -> Result<StringID, bun_alloc::AllocError> {
-        self.strings_buf.reserve(value.len());
-        self.strings_lens.reserve(1);
-        // PORT NOTE: reshaped for borrowck — `gpres` borrows `self.strings_map`
-        // mutably; capture `index`/`found_existing` and write key before
-        // re-borrowing `strings_buf`/`strings_lens`.
-        let (index, found_existing) = {
-            let gpres = self.strings_map.get_or_put_adapted(
-                value,
-                StringContext {
-                    strings_buf: &self.strings_buf,
-                    strings_lens: &self.strings_lens,
-                },
-            )?;
-            if !gpres.found_existing {
-                *gpres.key_ptr = StringMapKey(self.strings_buf.len() as u32);
-                *gpres.value_ptr = ();
-            }
-            (gpres.index, gpres.found_existing)
-        };
-        if found_existing {
-            return Ok(StringID(u32::try_from(index).unwrap()));
-        }
-        // PERF(port): was appendSliceAssumeCapacity / appendAssumeCapacity
-        self.strings_buf.extend_from_slice(value);
-        self.strings_lens.push(value.len() as u32);
-        Ok(StringID(u32::try_from(index).unwrap()))
-    }
-
-    pub fn request_module(
-        &mut self,
-        import_record_path: StringID,
-        fetch_parameters: FetchParameters,
-    ) -> Result<(), bun_alloc::AllocError> {
-        // jsc only records the attributes of the first import with the given
-        // import_record_path. so only put if not exists.
-        self.requested_modules
-            .entry(import_record_path)
-            .or_insert(fetch_parameters);
-        Ok(())
-    }
-
-    /// Replace all occurrences of `old_id` with `new_id` in records and
-    /// `requested_modules`. Used to fix up cross-chunk import specifiers after
-    /// final paths are computed.
-    pub fn replace_string_id(&mut self, old_id: StringID, new_id: StringID) {
-        debug_assert!(!self.finalized);
-        // Replace in record buffer
-        for item in self.buffer.iter_mut() {
-            if *item == old_id {
-                *item = new_id;
-            }
-        }
-        // Replace in requested_modules keys (preserving insertion order)
-        if let Some(idx) = self.requested_modules.get_index(&old_id) {
-            self.requested_modules.keys_mut()[idx] = new_id;
-            // Zig `catch {}` discarded OOM.
-            let _ = self.requested_modules.re_index();
-        }
-    }
-
-    /// find any exports marked as 'local' that are actually 'indirect' and fix them
-    pub fn finalize(&mut self) -> Result<(), bun_alloc::AllocError> {
-        debug_assert!(!self.finalized);
-
-        #[derive(Clone, Copy)]
-        struct Ip {
-            module_name: StringID,
-            import_name: StringID,
-            record_kinds_idx: usize,
-            is_namespace: bool,
-        }
-
-        let mut local_name_to_module_name: ArrayHashMap<StringID, Ip> = ArrayHashMap::default();
-        {
-            let mut i: usize = 0;
-            for (idx, &k) in self.record_kinds.iter().enumerate() {
-                if k == RecordKind::IMPORT_INFO_SINGLE
-                    || k == RecordKind::IMPORT_INFO_SINGLE_TYPE_SCRIPT
-                {
-                    local_name_to_module_name.insert(
-                        self.buffer[i + 2],
-                        Ip {
-                            module_name: self.buffer[i],
-                            import_name: self.buffer[i + 1],
-                            record_kinds_idx: idx,
-                            is_namespace: false,
-                        },
-                    );
-                } else if k == RecordKind::IMPORT_INFO_NAMESPACE {
-                    local_name_to_module_name.insert(
-                        self.buffer[i + 2],
-                        Ip {
-                            module_name: self.buffer[i],
-                            import_name: StringID::STAR_NAMESPACE,
-                            record_kinds_idx: idx,
-                            is_namespace: true,
-                        },
-                    );
-                }
-                i += k.len().expect("unreachable");
-            }
-        }
-
-        {
-            let mut i: usize = 0;
-            // PORT NOTE: reshaped for borrowck — Zig iterates `record_kinds.items`
-            // by `*k` and also indexes into it via `ip.record_kinds_idx` inside
-            // the loop body. Iterate by index to avoid overlapping &mut.
-            for j in 0..self.record_kinds.len() {
-                let k = self.record_kinds[j];
-                if k == RecordKind::EXPORT_INFO_LOCAL {
-                    if let Some(ip) = local_name_to_module_name.get(&self.buffer[i + 1]).copied() {
-                        // `import * as z from M; export { z }` is a Namespace export per
-                        // spec; encode it as indirect with import_name = STAR_NAMESPACE
-                        // so the record stays the same length and toJSModuleRecord
-                        // dispatches to addNamespaceExport.
-                        self.record_kinds[j] = RecordKind::EXPORT_INFO_INDIRECT;
-                        self.buffer[i + 1] = ip.import_name;
-                        self.buffer[i + 2] = ip.module_name;
-                        // In TypeScript, the re-exported import may target a type-only
-                        // export that was elided. Convert the import to SingleTypeScript
-                        // so JSC tolerates it being NotFound during linking.
-                        if !ip.is_namespace && self.flags.contains(Flags::IS_TYPESCRIPT) {
-                            self.record_kinds[ip.record_kinds_idx] =
-                                RecordKind::IMPORT_INFO_SINGLE_TYPE_SCRIPT;
-                        }
-                    }
-                }
-                i += k.len().expect("unreachable");
-            }
-        }
-
-        let (rm_keys, rm_values): (*const [StringID], *const [FetchParameters]) = (
-            self.requested_modules.keys() as *const [StringID],
-            self.requested_modules.values() as *const [FetchParameters],
+        ModuleInfo::add_import_info_single(
+            self,
+            module_name,
+            import_name,
+            local_name,
+            only_used_as_type,
         );
-
-        self._deserialized.write(ModuleInfoDeserialized {
-            strings_buf: self.strings_buf.as_slice() as *const [u8],
-            strings_lens: self.strings_lens.as_slice() as *const [u32],
-            requested_modules_keys: rm_keys,
-            requested_modules_values: rm_values,
-            buffer: self.buffer.as_slice() as *const [StringID],
-            record_kinds: self.record_kinds.as_slice() as *const [RecordKind],
-            flags: self.flags,
-            owner: Owner::ModuleInfo,
-        });
-
-        self.finalized = true;
         Ok(())
     }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// StringID
-// ──────────────────────────────────────────────────────────────────────────
-
-#[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct StringID(pub u32);
-
-impl StringID {
-    pub const STAR_DEFAULT: Self = Self(u32::MAX);
-    pub const STAR_NAMESPACE: Self = Self(u32::MAX - 1);
+    #[inline]
+    fn add_import_info_namespace(
+        &mut self,
+        module_name: StringID,
+        local_name: StringID,
+    ) -> Result<(), bun_alloc::AllocError> {
+        ModuleInfo::add_import_info_namespace(self, module_name, local_name);
+        Ok(())
+    }
+    fn into_deserialized(mut self: Box<Self>) -> Box<ModuleInfoDeserialized> {
+        // PORT NOTE: Zig wrote a self-referential `_deserialized` view inside
+        // `ModuleInfo` during `finalize()`. The Rust printer-crate `ModuleInfo`
+        // exposes a borrowed `as_deserialized()` instead; here we materialise the
+        // raw-pointer FFI shape and tie its lifetime to the leaked `Box<ModuleInfo>`.
+        let _ = self.finalize();
+        let view = self.as_deserialized();
+        let mut flags = Flags::empty();
+        flags.set(Flags::CONTAINS_IMPORT_META, view.flags.contains_import_meta);
+        flags.set(Flags::IS_TYPESCRIPT, view.flags.is_typescript);
+        flags.set(Flags::HAS_TLA, view.flags.has_tla);
+        let res = Box::new(ModuleInfoDeserialized {
+            strings_buf: view.strings_buf as *const [u8],
+            strings_lens: view.strings_lens as *const [u32],
+            requested_modules_keys: view.requested_modules_keys as *const [StringID],
+            requested_modules_values: view.requested_modules_values as *const [FetchParameters],
+            buffer: view.buffer as *const [StringID],
+            // SAFETY: printer's `RecordKind` is `#[repr(u8)]` with the same
+            // discriminant layout as this crate's transparent-newtype `RecordKind`.
+            record_kinds: core::ptr::slice_from_raw_parts(
+                view.record_kinds.as_ptr().cast::<RecordKind>(),
+                view.record_kinds.len(),
+            ),
+            flags,
+            owner: Owner::ModuleInfo(Box::into_raw(self)),
+        });
+        res
+    }
 }
 
 // zig__renderDiff, zig__ModuleInfoDeserialized__toJSModuleRecord, and the
@@ -725,13 +476,13 @@ impl StringID {
 #[unsafe(no_mangle)]
 pub extern "C" fn zig__ModuleInfo__destroy(info: *mut ModuleInfo) {
     // SAFETY: C++ caller passes a pointer obtained from `ModuleInfo::create`.
-    unsafe { ModuleInfo::destroy(info) }
+    drop(unsafe { Box::from_raw(info) });
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn zig__ModuleInfoDeserialized__deinit(info: *mut ModuleInfoDeserialized) {
     // SAFETY: C++ caller passes a pointer obtained from `create` or
-    // `ModuleInfo::as_deserialized`.
+    // `ModuleInfoExt::into_deserialized`.
     unsafe { ModuleInfoDeserialized::deinit(info) }
 }
 
@@ -747,6 +498,6 @@ pub extern "C" fn zig_log(msg: *const c_char) {
 // PORT STATUS
 //   source:     src/bundler/analyze_transpiled_module.zig (397 lines)
 //   confidence: medium
-//   todos:      7
-//   notes:      ModuleInfoDeserialized is self-referential (raw *const [T] into owner); ArrayHashMap needs adapted-context get_or_put + re_index/keys_mut; non-u8 deserialized slices are align(1) and need read_unaligned.
+//   todos:      4
+//   notes:      ModuleInfo/StringID/VarKind/FetchParameters re-exported from bun_js_printer (canonical producer); ModuleInfoDeserialized kept local as the raw-pointer FFI view; non-u8 deserialized slices are align(1) and need read_unaligned.
 // ──────────────────────────────────────────────────────────────────────────

@@ -30,7 +30,7 @@ use crate::options::{self, Target};
 use crate::parse_task::{self, ResultValue as ParseResultValue};
 use crate::transpiler::Transpiler;
 use crate::ungate_support::{EventLoop, InputFileListExtMut, UseDirective};
-use crate::DeferredBatchTask::DeferredBatchTask;
+pub use crate::DeferredBatchTask::DeferredBatchTask;
 use crate::Graph::{Graph, InputFileListExt, SideEffects};
 use crate::PathToSourceIndexMap::PathToSourceIndexMap;
 use crate::{Index, IndexInt, LinkerContext};

@@ -1300,9 +1300,11 @@ impl<const SSL: bool> WebSocket<SSL> {
             if let Some(tunnel) = &self.proxy_tunnel {
                 // In tunnel mode, route through the tunnel's TLS layer
                 // instead of the detached raw socket.
-                // SAFETY: `tunnel` holds a live ref (RefPtr has no `Deref`);
-                // `write` mutates the SSL wrapper on the owning thread.
-                match unsafe { &mut *tunnel.data.as_ptr() }.write(out_buf) {
+                // SAFETY: `tunnel` holds a live ref (RefPtr has no `Deref`).
+                // Use the raw-ptr `write` overload — `write_data()` may fire
+                // `write_encrypted(ctx)` which reborrows the tunnel; never
+                // hold a `&mut WebSocketProxyTunnel` across that dispatch.
+                match unsafe { WebSocketProxyTunnel::write(tunnel.data.as_ptr(), out_buf) } {
                     Ok(w) => Ok(w),
                     Err(_) => Err(true),
                 }
@@ -1333,7 +1335,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
-    fn send_pong(&mut self, socket: &Socket<SSL>) -> bool {
+    fn send_pong(&mut self) -> bool {
         if !self.has_tcp() {
             self.dispatch_abrupt_close(ErrorCode::Ended);
             return false;
@@ -1367,18 +1369,17 @@ impl<const SSL: bool> WebSocket<SSL> {
             let frame_len = 6 + ping_len;
             let mut frame_buf = [0u8; 6 + 125];
             frame_buf[..frame_len].copy_from_slice(&self.ping_frame_bytes[..frame_len]);
-            self.enqueue_encoded_bytes(socket, &frame_buf[..frame_len])
+            self.enqueue_encoded_bytes(&frame_buf[..frame_len])
         } else {
             self.ping_frame_bytes[2..6].fill(0); // autobahn tests require that we mask empty pongs
             let mut frame_buf = [0u8; 6];
             frame_buf.copy_from_slice(&self.ping_frame_bytes[..6]);
-            self.enqueue_encoded_bytes(socket, &frame_buf)
+            self.enqueue_encoded_bytes(&frame_buf)
         }
     }
 
     fn send_close_with_body(
         &mut self,
-        socket: &Socket<SSL>,
         code: u16,
         body: Option<&mut [u8; 125]>,
         body_len: usize,
@@ -1393,7 +1394,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // For tunnel mode, shutdownRead on the detached socket is a no-op; skip it.
         if !SSL {
             if self.proxy_tunnel.is_none() {
-                socket.shutdown_read();
+                self.tcp.shutdown_read();
             }
         }
         let mut final_body_bytes = [0u8; 128 + 8];
@@ -1437,7 +1438,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
         let slice = &final_body_bytes[..slice_len];
 
-        if self.enqueue_encoded_bytes(socket, slice) {
+        if self.enqueue_encoded_bytes(slice) {
             self.clear_data();
             self.dispatch_close(code, &mut reason);
         }
@@ -1491,22 +1492,22 @@ impl<const SSL: bool> WebSocket<SSL> {
         false
     }
 
-    pub extern "C" fn write_binary_data(this: *mut Self, ptr: *const u8, len: usize, op: u8) {
+    pub extern "C" fn write_binary_data(this_ptr: *mut Self, ptr: *const u8, len: usize, op: u8) {
         // SAFETY: called from C++ with a valid pointer
-        let this = unsafe { &mut *this };
+        let this = unsafe { &mut *this_ptr };
         // In tunnel mode, SSLWrapper.writeData() can synchronously fire
         // onClose → ws.fail() → cancel() → clear_data() and free `this`
         // before the catch block in enqueue_encoded_bytes/send_buffer runs.
         this.r#ref();
-        // PORT NOTE: reshaped for borrowck — `scopeguard` capturing `&this`
-        // would freeze it for the whole scope. Capture a raw ptr instead;
-        // the ref taken on the line above guarantees `this` outlives the guard.
-        let _guard = scopeguard::guard(this as *mut Self, |p| {
-            // SAFETY: `p` is `this`, kept alive by the `r#ref()` above;
-            // derived from `&mut Self` so it carries write provenance.
+        // PORT NOTE: capture the ORIGINAL raw `this_ptr` (parent provenance of
+        // `this`'s Unique tag) — re-deriving `*mut Self` from `this` would be
+        // popped by later `this.` uses under Stacked Borrows. The `r#ref()`
+        // above guarantees the allocation outlives the guard.
+        let _guard = scopeguard::guard(this_ptr, |p| {
+            // SAFETY: `p` is the C++-owned `Box::into_raw` pointer, kept alive
+            // by the `r#ref()` above; `this`'s borrow has ended (LIFO drop).
             unsafe { Self::deref(p) }
         });
-        // TODO(port): scopeguard borrowck — see handle_data note
 
         if !this.has_tcp() || op > 0xF {
             this.dispatch_abrupt_close(ErrorCode::Ended);
@@ -1523,11 +1524,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         if !this.has_backpressure() && frame_size < STACK_FRAME_SIZE {
             let mut inline_buf = [0u8; STACK_FRAME_SIZE];
             bytes.copy(this.global_this, &mut inline_buf[..frame_size], slice.len(), opcode);
-            // PORT NOTE: reshaped for borrowck — `&mut this` + `&this.tcp` overlap.
-            let tcp: *const Socket<SSL> = &this.tcp;
-            // SAFETY: `tcp` points into `*this`; `enqueue_encoded_bytes` only
-            // reads the socket handle (no aliasing write to `this.tcp`).
-            let _ = this.enqueue_encoded_bytes(unsafe { &*tcp }, &inline_buf[..frame_size]);
+            let _ = this.enqueue_encoded_bytes(&inline_buf[..frame_size]);
             return;
         }
 
@@ -1542,20 +1539,20 @@ impl<const SSL: bool> WebSocket<SSL> {
         !self.tcp.is_closed() && !self.tcp.is_shutdown()
     }
 
-    pub extern "C" fn write_blob(this: *mut Self, blob_value: JSValue, op: u8) {
+    pub extern "C" fn write_blob(this_ptr: *mut Self, blob_value: JSValue, op: u8) {
         // SAFETY: called from C++ with a valid pointer
-        let this = unsafe { &mut *this };
+        let this = unsafe { &mut *this_ptr };
         // See write_binary_data() — tunnel.write() can re-enter fail().
         this.r#ref();
-        // PORT NOTE: reshaped for borrowck — `scopeguard` capturing `&this`
-        // would freeze it for the whole scope. Capture a raw ptr instead;
-        // the ref taken on the line above guarantees `this` outlives the guard.
-        let _guard = scopeguard::guard(this as *mut Self, |p| {
-            // SAFETY: `p` is `this`, kept alive by the `r#ref()` above;
-            // derived from `&mut Self` so it carries write provenance.
+        // PORT NOTE: capture the ORIGINAL raw `this_ptr` (parent provenance of
+        // `this`'s Unique tag) — re-deriving `*mut Self` from `this` would be
+        // popped by later `this.` uses under Stacked Borrows. The `r#ref()`
+        // above guarantees the allocation outlives the guard.
+        let _guard = scopeguard::guard(this_ptr, |p| {
+            // SAFETY: `p` is the C++-owned `Box::into_raw` pointer, kept alive
+            // by the `r#ref()` above; `this`'s borrow has ended (LIFO drop).
             unsafe { Self::deref(p) }
         });
-        // TODO(port): scopeguard borrowck
 
         if !this.has_tcp() || op > 0xF {
             this.dispatch_abrupt_close(ErrorCode::Ended);
@@ -1590,11 +1587,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             if !this.has_backpressure() && frame_size < STACK_FRAME_SIZE {
                 let mut inline_buf = [0u8; STACK_FRAME_SIZE];
                 bytes.copy(this.global_this, &mut inline_buf[..frame_size], data.len(), opcode);
-                // PORT NOTE: reshaped for borrowck — `&mut this` + `&this.tcp` overlap.
-                let tcp: *const Socket<SSL> = &this.tcp;
-                // SAFETY: `tcp` points into `*this`; `enqueue_encoded_bytes` only
-                // reads the socket handle (no aliasing write to `this.tcp`).
-                let _ = this.enqueue_encoded_bytes(unsafe { &*tcp }, &inline_buf[..frame_size]);
+                let _ = this.enqueue_encoded_bytes(&inline_buf[..frame_size]);
                 return;
             }
 
@@ -1605,20 +1598,20 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
-    pub extern "C" fn write_string(this: *mut Self, str_: *const ZigString, op: u8) {
+    pub extern "C" fn write_string(this_ptr: *mut Self, str_: *const ZigString, op: u8) {
         // SAFETY: called from C++ with a valid pointer
-        let this = unsafe { &mut *this };
+        let this = unsafe { &mut *this_ptr };
         // See write_binary_data() — tunnel.write() can re-enter fail().
         this.r#ref();
-        // PORT NOTE: reshaped for borrowck — `scopeguard` capturing `&this`
-        // would freeze it for the whole scope. Capture a raw ptr instead;
-        // the ref taken on the line above guarantees `this` outlives the guard.
-        let _guard = scopeguard::guard(this as *mut Self, |p| {
-            // SAFETY: `p` is `this`, kept alive by the `r#ref()` above;
-            // derived from `&mut Self` so it carries write provenance.
+        // PORT NOTE: capture the ORIGINAL raw `this_ptr` (parent provenance of
+        // `this`'s Unique tag) — re-deriving `*mut Self` from `this` would be
+        // popped by later `this.` uses under Stacked Borrows. The `r#ref()`
+        // above guarantees the allocation outlives the guard.
+        let _guard = scopeguard::guard(this_ptr, |p| {
+            // SAFETY: `p` is the C++-owned `Box::into_raw` pointer, kept alive
+            // by the `r#ref()` above; `this`'s borrow has ended (LIFO drop).
             unsafe { Self::deref(p) }
         });
-        // TODO(port): scopeguard borrowck
 
         // SAFETY: str_ is a valid pointer from C++
         let str = unsafe { &*str_ };
@@ -1626,12 +1619,6 @@ impl<const SSL: bool> WebSocket<SSL> {
             this.dispatch_abrupt_close(ErrorCode::Ended);
             return;
         }
-        // PORT NOTE: reshaped for borrowck — Zig copied `this.tcp` by value;
-        // `NewSocketHandler` is not `Copy` in Rust, so hold a raw ptr instead.
-        let tcp: *const Socket<SSL> = &this.tcp;
-        // SAFETY: `tcp` points into `*this`; downstream callees only read the
-        // socket handle (no aliasing write to `this.tcp` on this path).
-        let tcp: &Socket<SSL> = unsafe { &*tcp };
 
         // Note: 0 is valid
 
@@ -1647,7 +1634,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                 let frame_size = bytes.len(&mut byte_len);
                 if !this.has_backpressure() && frame_size < STACK_FRAME_SIZE {
                     bytes.copy(this.global_this, &mut inline_buf[..frame_size], byte_len, opcode);
-                    let _ = this.enqueue_encoded_bytes(tcp, &inline_buf[..frame_size]);
+                    let _ = this.enqueue_encoded_bytes(&inline_buf[..frame_size]);
                     return;
                 }
                 // max length of a utf16 -> utf8 conversion is 4 times the length of the utf16 string
@@ -1657,7 +1644,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                 let frame_size = bytes.len(&mut byte_len);
                 debug_assert!(frame_size <= STACK_FRAME_SIZE);
                 bytes.copy(this.global_this, &mut inline_buf[..frame_size], byte_len, opcode);
-                let _ = this.enqueue_encoded_bytes(tcp, &inline_buf[..frame_size]);
+                let _ = this.enqueue_encoded_bytes(&inline_buf[..frame_size]);
                 return;
             }
         }
@@ -1699,33 +1686,27 @@ impl<const SSL: bool> WebSocket<SSL> {
         unsafe { Self::deref(self) };
     }
 
-    pub extern "C" fn close(this: *mut Self, code: u16, reason: *const ZigString) {
+    pub extern "C" fn close(this_ptr: *mut Self, code: u16, reason: *const ZigString) {
         // SAFETY: called from C++ with a valid pointer
-        let this = unsafe { &mut *this };
+        let this = unsafe { &mut *this_ptr };
         // In tunnel mode, SSLWrapper.writeData() (via send_close_with_body →
         // enqueue_encoded_bytes → tunnel.write) can synchronously fire
         // onClose → ws.fail() → cancel() → clear_data() and free `this`
         // before send_close_with_body's own clear_data/dispatch_close run.
         this.r#ref();
-        // PORT NOTE: reshaped for borrowck — `scopeguard` capturing `&this`
-        // would freeze it for the whole scope. Capture a raw ptr instead;
-        // the ref taken on the line above guarantees `this` outlives the guard.
-        let _guard = scopeguard::guard(this as *mut Self, |p| {
-            // SAFETY: `p` is `this`, kept alive by the `r#ref()` above;
-            // derived from `&mut Self` so it carries write provenance.
+        // PORT NOTE: capture the ORIGINAL raw `this_ptr` (parent provenance of
+        // `this`'s Unique tag) — re-deriving `*mut Self` from `this` would be
+        // popped by later `this.` uses under Stacked Borrows. The `r#ref()`
+        // above guarantees the allocation outlives the guard.
+        let _guard = scopeguard::guard(this_ptr, |p| {
+            // SAFETY: `p` is the C++-owned `Box::into_raw` pointer, kept alive
+            // by the `r#ref()` above; `this`'s borrow has ended (LIFO drop).
             unsafe { Self::deref(p) }
         });
-        // TODO(port): scopeguard borrowck
 
         if !this.has_tcp() {
             return;
         }
-        // PORT NOTE: reshaped for borrowck — Zig copied `this.tcp` by value;
-        // `NewSocketHandler` is not `Copy` in Rust, so hold a raw ptr instead.
-        let tcp: *const Socket<SSL> = &this.tcp;
-        // SAFETY: `tcp` points into `*this`; downstream callees only read the
-        // socket handle (no aliasing write to `this.tcp` on this path).
-        let tcp: &Socket<SSL> = unsafe { &*tcp };
         let mut close_reason_buf = [0u8; 128];
         // SAFETY: reason is null or a valid *const ZigString from C++
         if let Some(str) = unsafe { reason.as_ref() } {
@@ -1771,12 +1752,12 @@ impl<const SSL: bool> WebSocket<SSL> {
                 let wrote_len = cursor.position() as usize;
                 // SAFETY: close_reason_buf has 128 bytes; reinterpret first 125 as fixed array
                 let buf_ptr = close_reason_buf.as_mut_ptr() as *mut [u8; 125];
-                this.send_close_with_body(tcp, code, Some(unsafe { &mut *buf_ptr }), wrote_len);
+                this.send_close_with_body(code, Some(unsafe { &mut *buf_ptr }), wrote_len);
                 return;
             }
         }
 
-        this.send_close_with_body(tcp, code, None, 0);
+        this.send_close_with_body(code, None, 0);
     }
 
     pub extern "C" fn init(
@@ -1842,10 +1823,17 @@ impl<const SSL: bool> WebSocket<SSL> {
         // the field name; Rust port takes a closure to write the new socket.
         let group = {
             // PORT NOTE: reshaped for borrowck — `rare_data()` borrows `vm`
-            // mutably and `ws_client_group` also wants `&mut vm`.
+            // mutably and `ws_client_group` also wants a `vm` reference.
             let vm_ptr: *mut _ = vm;
-            // SAFETY: `vm` is the thread-local VM; both borrows are sequential.
-            unsafe { (*vm_ptr).rare_data().ws_client_group::<SSL>(&mut *vm_ptr) }
+            // SAFETY: `rare_data()` returns `&mut RareData` reached through
+            // `vm.rare_data: Option<Box<RareData>>`, i.e. a SEPARATE heap
+            // allocation behind a `Box` — the returned `&mut` does not cover
+            // any byte of `*vm_ptr` itself, so forming `&*vm_ptr` alongside
+            // it is non-overlapping under Stacked Borrows. `lazy_group` only
+            // reads `vm.uws_loop()` / `vm.event_loop_handle` and never touches
+            // `vm.rare_data`, so the shared `&VirtualMachine` argument cannot
+            // observe or invalidate the `&mut RareData` receiver.
+            unsafe { (*vm_ptr).rare_data().ws_client_group::<SSL>(&*vm_ptr) }
         };
         if !Socket::<SSL>::adopt_group(
             tcp,

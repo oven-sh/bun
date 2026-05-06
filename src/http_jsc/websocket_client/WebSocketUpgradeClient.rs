@@ -1455,15 +1455,19 @@ impl<const SSL: bool> HTTPClient<SSL> {
         }
 
         // Check if we're using a proxy tunnel (wss:// through HTTP proxy)
-        if let Some(p) = &mut self.proxy {
+        // SAFETY: short-lived `&mut` for the proxy borrow.
+        if let Some(p) = unsafe { &mut (*this).proxy } {
             if let Some(tunnel) = p.get_tunnel() {
                 // wss:// through HTTP proxy: use tunnel mode
                 // For tunnel mode, the upgrade client STAYS ALIVE to forward socket data to the tunnel.
                 // The socket continues to call handle_data on the upgrade client, which forwards to tunnel.
                 // The tunnel forwards decrypted data to the WebSocket client.
                 bun_jsc::mark_binding!();
-                if !self.tcp.is_closed() && self.outgoing_websocket.is_some() {
-                    self.tcp.timeout(0);
+                // SAFETY: short-lived reads.
+                let tcp = unsafe { (*this).tcp };
+                let has_ws = unsafe { (*this).outgoing_websocket.is_some() };
+                if !tcp.is_closed() && has_ws {
+                    tcp.timeout(0);
                     log!("onDidConnect (tunnel mode)");
 
                     // Release the ref that paired with C++'s m_upgradeClient: C++
@@ -1471,7 +1475,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     // never call cancel() to drop it. The TCP socket's ref (released
                     // in handle_close) is what keeps this struct alive to forward
                     // socket data to the tunnel after we switch to .done.
-                    let ws = self.outgoing_websocket.take().unwrap();
+                    // SAFETY: short-lived `&mut` for the field take.
+                    let ws = unsafe { (*this).outgoing_websocket.take().unwrap() };
 
                     // Create the WebSocket client with the tunnel
                     // SAFETY: live C++ back-reference.
@@ -1489,13 +1494,16 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     };
 
                     // Switch state to connected - handle_data will forward to tunnel
-                    self.state = State::Done;
-                    // SAFETY: `self: &mut Self`; drops the outgoing_websocket ref.
-                    unsafe { Self::deref(self) };
-                } else if self.tcp.is_closed() {
-                    self.terminate(ErrorCode::Cancel);
-                } else if self.outgoing_websocket.is_none() {
-                    self.tcp.close(uws::CloseCode::Failure);
+                    // SAFETY: short-lived write.
+                    unsafe { (*this).state = State::Done };
+                    // SAFETY: drops the outgoing_websocket ref; no `&mut Self` is live.
+                    unsafe { Self::deref(this) };
+                } else if tcp.is_closed() {
+                    // SAFETY: no `&mut Self` is live across this call.
+                    unsafe { Self::terminate(this, ErrorCode::Cancel) };
+                } else if !has_ws {
+                    // No `&mut Self` spans this call (handle_close reenters).
+                    tcp.close(uws::CloseCode::Failure);
                 }
                 return;
             }
@@ -1505,20 +1513,27 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // custom `us_ssl_ctx_t` to the connected WebSocket (it must outlive
         // the upgrade client because the socket's SSL* still references the
         // SSL_CTX inside it).
-        let mut saved_secure = self.secure.take(); // prevent clear_data from freeing it
+        // SAFETY: short-lived `&mut` for the field take.
+        let mut saved_secure = unsafe { (*this).secure.take() }; // prevent clear_data from freeing it
         // Any arm below that doesn't hand `saved_secure` to did_connect must
         // drop the ref it took out of `self`; SslCtxRef::Drop calls SSL_CTX_free.
-        self.clear_data();
+        // SAFETY: short-lived `&mut` for clear_data; ends before any reentrant call.
+        unsafe { (*this).clear_data() };
         bun_jsc::mark_binding!();
-        if !self.tcp.is_closed() && self.outgoing_websocket.is_some() {
-            self.tcp.timeout(0);
+        // SAFETY: short-lived reads.
+        let tcp = unsafe { (*this).tcp };
+        let has_ws = unsafe { (*this).outgoing_websocket.is_some() };
+        if !tcp.is_closed() && has_ws {
+            tcp.timeout(0);
             log!("onDidConnect");
 
-            let ws = self.outgoing_websocket.take().unwrap();
-            let socket = self.tcp;
+            // SAFETY: short-lived `&mut` for the field take/detach; ends before
+            // the FFI call below.
+            let ws = unsafe { (*this).outgoing_websocket.take().unwrap() };
+            let socket = tcp;
 
             // Normal mode: pass socket directly to WebSocket client
-            self.tcp.detach();
+            unsafe { (*this).tcp.detach() };
             if let Some(native_socket) = socket.socket().get() {
                 // SAFETY: live C++ back-reference.
                 unsafe {
@@ -1535,19 +1550,23 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     )
                 };
             } else {
-                self.terminate(ErrorCode::FailedToConnect);
+                // SAFETY: no `&mut Self` is live across this call.
+                unsafe { Self::terminate(this, ErrorCode::FailedToConnect) };
             }
-            // SAFETY: `self: &mut Self`; two refs are released here (the
-            // outgoing_websocket ref then the TCP socket ref). The first call
-            // cannot reach zero because the second ref is still held.
+            // SAFETY: two refs are released here (the outgoing_websocket ref
+            // then the TCP socket ref). The first call cannot reach zero
+            // because the second ref is still held. The second may free
+            // `this`; no `&mut Self` is live.
             // Once for the outgoing_websocket.
-            unsafe { Self::deref(self) };
+            unsafe { Self::deref(this) };
             // Once again for the TCP socket.
-            unsafe { Self::deref(self) };
-        } else if self.tcp.is_closed() {
-            self.terminate(ErrorCode::Cancel);
-        } else if self.outgoing_websocket.is_none() {
-            self.tcp.close(uws::CloseCode::Failure);
+            unsafe { Self::deref(this) };
+        } else if tcp.is_closed() {
+            // SAFETY: no `&mut Self` is live across this call.
+            unsafe { Self::terminate(this, ErrorCode::Cancel) };
+        } else if !has_ws {
+            // No `&mut Self` spans this call (handle_close reenters).
+            tcp.close(uws::CloseCode::Failure);
         }
         drop(saved_secure);
     }
@@ -1559,80 +1578,116 @@ impl<const SSL: bool> HTTPClient<SSL> {
         cost
     }
 
-    pub fn handle_writable(&mut self, socket: Socket<SSL>) {
-        debug_assert!(self.is_same_socket(socket));
+    /// # Safety
+    /// `this` must point to a live `Self`. Takes `*mut Self` because
+    /// `terminate` and the trailing `deref` may free `this`; see `fail`.
+    pub unsafe fn handle_writable(this: *mut Self, socket: Socket<SSL>) {
+        // SAFETY: short-lived `&self` for the comparison.
+        debug_assert!(unsafe { (*this).is_same_socket(socket) });
 
         // Forward to proxy tunnel if active
-        if let Some(p) = &mut self.proxy {
+        // SAFETY: short-lived `&mut` for the proxy borrow.
+        if let Some(p) = unsafe { &mut (*this).proxy } {
             if let Some(tunnel) = p.get_tunnel() {
                 tunnel.on_writable();
                 // In .done state (after WebSocket upgrade), just handle tunnel writes
-                if self.state == State::Done {
+                // SAFETY: short-lived read.
+                if unsafe { (*this).state } == State::Done {
                     return;
                 }
 
                 // Flush any unwritten upgrade request bytes through the tunnel
-                if self.to_send_len == 0 {
+                // SAFETY: short-lived read.
+                if unsafe { (*this).to_send_len } == 0 {
                     return;
                 }
-                self.r#ref();
+                // SAFETY: `ref_count` is a `Cell`; short-lived `&self`.
+                unsafe { (*this).r#ref() };
                 // TODO(port): defer self.deref() — placed at return points below.
-                let wrote = match tunnel.write(self.to_send()) {
+                // SAFETY: short-lived `&self` for `to_send()`.
+                let wrote = match tunnel.write(unsafe { (*this).to_send() }) {
                     Ok(n) => n,
                     Err(_) => {
-                        self.terminate(ErrorCode::FailedToWrite);
-                        // SAFETY: `self: &mut Self`; balances r#ref() above; last use.
-                        unsafe { Self::deref(self) };
+                        // SAFETY: no `&mut Self` is live across this call.
+                        unsafe { Self::terminate(this, ErrorCode::FailedToWrite) };
+                        // SAFETY: balances r#ref() above; may free `this`.
+                        unsafe { Self::deref(this) };
                         return;
                     }
                 };
-                self.to_send_len -= wrote.min(self.to_send_len);
-                // SAFETY: `self: &mut Self`; balances r#ref() above; last use.
-                unsafe { Self::deref(self) };
+                // SAFETY: short-lived `&mut` write.
+                unsafe {
+                    let to_send_len = &mut (*this).to_send_len;
+                    *to_send_len -= wrote.min(*to_send_len);
+                }
+                // SAFETY: balances r#ref() above; may free `this`.
+                unsafe { Self::deref(this) };
                 return;
             }
         }
 
-        if self.to_send_len == 0 {
+        // SAFETY: short-lived read.
+        if unsafe { (*this).to_send_len } == 0 {
             return;
         }
 
-        self.r#ref();
+        // SAFETY: `ref_count` is a `Cell`; short-lived `&self`.
+        unsafe { (*this).r#ref() };
         // TODO(port): defer self.deref() — placed at return points below.
 
-        let wrote = socket.write(self.to_send());
+        // SAFETY: short-lived `&self` for `to_send()`.
+        let wrote = socket.write(unsafe { (*this).to_send() });
         if wrote < 0 {
-            self.terminate(ErrorCode::FailedToWrite);
-            // SAFETY: `self: &mut Self`; balances r#ref() above; last use.
-            unsafe { Self::deref(self) };
+            // SAFETY: no `&mut Self` is live across this call.
+            unsafe { Self::terminate(this, ErrorCode::FailedToWrite) };
+            // SAFETY: balances r#ref() above; may free `this`.
+            unsafe { Self::deref(this) };
             return;
         }
         let wrote = usize::try_from(wrote).unwrap();
-        self.to_send_len -= wrote.min(self.to_send_len);
-        // SAFETY: `self: &mut Self`; balances r#ref() above; last use.
-        unsafe { Self::deref(self) };
+        // SAFETY: short-lived `&mut` write.
+        unsafe {
+            let to_send_len = &mut (*this).to_send_len;
+            *to_send_len -= wrote.min(*to_send_len);
+        }
+        // SAFETY: balances r#ref() above; may free `this`.
+        unsafe { Self::deref(this) };
     }
 
-    pub fn handle_timeout(&mut self, _: Socket<SSL>) {
-        self.terminate(ErrorCode::Timeout);
+    /// # Safety
+    /// `this` must point to a live `Self`. Takes `*mut Self` because
+    /// `terminate` may free `this`; see `fail`.
+    pub unsafe fn handle_timeout(this: *mut Self, _: Socket<SSL>) {
+        // SAFETY: forwards `this` with root provenance; no `&mut Self` is live.
+        unsafe { Self::terminate(this, ErrorCode::Timeout) };
     }
 
     /// In theory, this could be called immediately.
     /// In that case, we set `state` to `failed` and return, expecting the parent to call `destroy`.
-    pub fn handle_connect_error(&mut self, _: Socket<SSL>, _: c_int) {
-        self.tcp.detach();
+    ///
+    /// # Safety
+    /// `this` must point to a live `Self`. Takes `*mut Self` because the
+    /// trailing `deref` releases the socket ref and may free `this`; a
+    /// `&mut self` argument would carry a Stacked Borrows protector that
+    /// makes deallocating its referent UB.
+    pub unsafe fn handle_connect_error(this: *mut Self, _: Socket<SSL>, _: c_int) {
+        // SAFETY: short-lived `&mut` for detach; ends before any reentrant call.
+        unsafe { (*this).tcp.detach() };
 
         // For the TCP socket.
         // TODO(port): defer self.deref() — moved to end of fn.
 
-        if self.state == State::Reading {
-            self.terminate(ErrorCode::FailedToConnect);
+        // SAFETY: short-lived read.
+        if unsafe { (*this).state } == State::Reading {
+            // SAFETY: no `&mut Self` is live across this call.
+            unsafe { Self::terminate(this, ErrorCode::FailedToConnect) };
         } else {
-            self.state = State::Failed;
+            // SAFETY: short-lived write.
+            unsafe { (*this).state = State::Failed };
         }
 
-        // SAFETY: `self: &mut Self`; last use of `self`.
-        unsafe { Self::deref(self) };
+        // SAFETY: may free `this`; no `&mut Self` is live.
+        unsafe { Self::deref(this) };
     }
 }
 
@@ -2105,8 +2160,9 @@ macro_rules! export_http_client {
             pub unsafe extern "C" fn ${concat(Bun__, $name, __cancel)}(
                 this: *mut HTTPClient<$ssl>,
             ) {
-                // SAFETY: caller (C++) holds a live ref.
-                unsafe { (*this).cancel() };
+                // SAFETY: caller (C++) holds a live ref; `this` carries root
+                // (userdata) provenance from `Box::into_raw`.
+                unsafe { HTTPClient::<$ssl>::cancel(this) };
             }
 
             #[unsafe(no_mangle)]

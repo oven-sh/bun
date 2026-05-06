@@ -10,11 +10,12 @@ use bun_logger as Logger;
 use bun_options_types::ImportRecord;
 use crate::bun_renamer as renamer;
 
-use crate::linker_context_mod::{ChunkMeta, ChunkMetaMap};
+use crate::linker_context_mod::{ChunkMeta, ChunkMetaMap, LinkerCtx};
 use crate::LinkerContext;
+use crate::js_meta;
 use crate::{
     chunk, Chunk, CrossChunkImport, CrossChunkImportItem, CrossChunkImportItemList, Index,
-    IndexInt, JSMeta, Ref, RefImportData, ResolvedExports, StableRef,
+    IndexInt, JSMeta, Ref, RefImportData, ResolvedExports, StableRef, WrapKind,
 };
 
 macro_rules! debug {
@@ -65,15 +66,15 @@ pub fn compute_cross_chunk_dependencies(
         // mutably (ctx, symbols) at the same time; Phase B will need to restructure (e.g.
         // split-borrow `c.graph` first, or pass raw column pointers as Zig does).
 
-        c.parse_graph
-            .pool
-            .worker_pool
-            .each_ptr(
+        // SAFETY: `parse_graph` backref valid for the link pass.
+        unsafe {
+            (*(*c.parse_graph).pool.as_ref().worker_pool).each_ptr(
                 &mut cross_chunk_dependencies,
                 CrossChunkDependencies::walk,
                 chunks,
             )
-            .expect("unreachable");
+        }
+        .expect("unreachable");
         // TODO(port): `each_ptr` runs `walk` concurrently across worker threads with a shared
         // `&mut CrossChunkDependencies`. In Zig this is permitted; in Rust the shared-mutable
         // access (symbols.assignChunkIndex, chunk_meta[i] writes, import_records[i] writes)
@@ -88,7 +89,7 @@ pub struct CrossChunkDependencies<'a> {
     chunks: &'a [Chunk],
     parts: &'a [BabyList<Part>],
     import_records: &'a mut [BabyList<ImportRecord>],
-    flags: &'a [JSMeta::Flags],
+    flags: &'a [js_meta::Flags],
     entry_point_chunk_indices: &'a [IndexInt],
     imports_to_bind: &'a [RefImportData],
     wrapper_refs: &'a [Ref],
@@ -169,30 +170,30 @@ impl<'a> CrossChunkDependencies<'a> {
                 // Record each symbol used in this part. This will later be matched up
                 // with our map of which chunk a given symbol is declared in to
                 // determine if the symbol needs to be imported from another chunk.
-                for &ref_ in used_refs {
-                    let ref_to_use = 'brk: {
+                'refs: for &ref_ in used_refs {
+                    let ref_to_use = {
                         let mut ref_to_use = ref_;
                         let mut symbol = deps.symbols.get_const(ref_to_use).unwrap();
 
                         // Ignore unbound symbols
                         if symbol.kind == js_ast::ast::symbol::Kind::Unbound {
-                            continue;
+                            continue 'refs;
                         }
 
                         // Ignore symbols that are going to be replaced by undefined
                         if symbol.import_item_status == js_ast::ImportItemStatus::Missing {
-                            continue;
+                            continue 'refs;
                         }
 
                         // If this is imported from another file, follow the import
                         // reference and reference the symbol in that file instead
-                        if let Some(import_data) = imports_to_bind.get(ref_to_use) {
+                        if let Some(import_data) = imports_to_bind.get(&ref_to_use) {
                             ref_to_use = import_data.data.import_ref;
                             symbol = deps.symbols.get_const(ref_to_use).unwrap();
-                        } else if wrap == JSMeta::Wrap::Cjs && ref_to_use.eql(wrapper_ref) {
+                        } else if wrap == WrapKind::Cjs && ref_to_use.eql(wrapper_ref) {
                             // The only internal symbol that wrapped CommonJS files export
                             // is the wrapper itself.
-                            continue;
+                            continue 'refs;
                         }
 
                         // If this is an ES6 import from a CommonJS file, it will become a
@@ -202,13 +203,15 @@ impl<'a> CrossChunkDependencies<'a> {
                         if let Some(namespace_alias) = &symbol.namespace_alias {
                             ref_to_use = namespace_alias.namespace_ref;
                         }
-                        break 'brk ref_to_use;
+                        ref_to_use
                     };
 
                     if cfg!(debug_assertions) {
+                        // SAFETY: `original_name` is an arena slice valid for the link pass.
+                        let name = unsafe { &*deps.symbols.get_const(ref_to_use).unwrap().original_name };
                         debug!(
                             "Cross-chunk import: {} {:?}",
-                            bstr::BStr::new(&deps.symbols.get(ref_to_use).unwrap().original_name),
+                            bstr::BStr::new(name),
                             ref_to_use,
                         );
                     }
@@ -227,7 +230,7 @@ impl<'a> CrossChunkDependencies<'a> {
         if matches!(chunk.content, chunk::Content::Javascript(_)) {
             if chunk.entry_point.is_entry_point() {
                 let flags = deps.flags[chunk.entry_point.source_index() as usize];
-                if flags.wrap != JSMeta::Wrap::Cjs {
+                if flags.wrap != WrapKind::Cjs {
                     let resolved_exports =
                         &deps.resolved_exports[chunk.entry_point.source_index() as usize];
                     let sorted_and_filtered_export_aliases =
@@ -278,7 +281,7 @@ impl<'a> CrossChunkDependencies<'a> {
 
                 // Include the wrapper if present
                 // https://github.com/evanw/esbuild/blob/v0.27.2/internal/linker/linker.go#L1053-L1056
-                if flags.wrap != JSMeta::Wrap::None {
+                if flags.wrap != WrapKind::None {
                     chunk_meta
                         .imports
                         .put(deps.wrapper_refs[chunk.entry_point.source_index() as usize], ());

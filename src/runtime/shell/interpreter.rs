@@ -651,34 +651,49 @@ impl Interpreter {
         let mut shargs = ShellArgs::init();
 
         // ── parse ──────────────────────────────────────────────────────────
-        let mut out_lex_err: Option<Box<[u8]>> = None;
-        let mut out_parse_err: Option<Box<[u8]>> = None;
-        let script = match Self::parse(
-            shargs.arena(),
-            src,
-            &[],
-            &mut out_lex_err,
-            &mut out_parse_err,
-        ) {
-            Ok(s) => s,
-            Err(err) => {
-                if let Some(lex) = out_lex_err {
-                    bun_core::pretty_errorln!(
-                        "<r><red>error<r>: Failed to run script <b>{}<r> due to error <b>{}<r>",
-                        bstr::BStr::new(path_for_errors),
-                        bstr::BStr::new(&lex[..]),
-                    );
-                    bun_core::Global::exit(1);
+        // PORT NOTE: reshaped for borrowck — `out_parser`/`out_lex_result`
+        // borrow `shargs.__arena`, so they're scoped to a block that ends
+        // before `shargs.script_ast = script` below. The arena reference is
+        // taken via raw pointer so the `&shargs` borrow doesn't outlive the
+        // call (the returned `ast::Script` is lifetime-erased).
+        let arena_ptr: *const bun_alloc::Arena = shargs.arena();
+        let script = {
+            // SAFETY: `shargs` lives on this stack frame for the whole block;
+            // arena is not moved/dropped while `out_parser`/`out_lex_result`
+            // borrow it.
+            let arena = unsafe { &*arena_ptr };
+            let mut out_parser: Option<bun_shell_parser::Parser<'_>> = None;
+            let mut out_lex_result: Option<bun_shell_parser::LexResult<'_>> = None;
+            match Self::parse(
+                arena,
+                src,
+                &mut [],
+                &mut [],
+                &mut out_parser,
+                &mut out_lex_result,
+            ) {
+                Ok(s) => s,
+                Err(err) => {
+                    if let Some(lex) = out_lex_result.as_ref() {
+                        let str_ = lex.combine_errors(arena);
+                        bun_core::pretty_errorln!(
+                            "<r><red>error<r>: Failed to run script <b>{}<r> due to error <b>{}<r>",
+                            bstr::BStr::new(path_for_errors),
+                            bstr::BStr::new(str_),
+                        );
+                        bun_core::Global::exit(1);
+                    }
+                    if let Some(p) = out_parser.as_mut() {
+                        let errstr = p.combine_errors();
+                        bun_core::pretty_errorln!(
+                            "<r><red>error<r>: Failed to run script <b>{}<r> due to error <b>{}<r>",
+                            bstr::BStr::new(path_for_errors),
+                            bstr::BStr::new(errstr),
+                        );
+                        bun_core::Global::exit(1);
+                    }
+                    return Err(err);
                 }
-                if let Some(perr) = out_parse_err {
-                    bun_core::pretty_errorln!(
-                        "<r><red>error<r>: Failed to run script <b>{}<r> due to error <b>{}<r>",
-                        bstr::BStr::new(path_for_errors),
-                        bstr::BStr::new(&perr[..]),
-                    );
-                    bun_core::Global::exit(1);
-                }
-                return Err(err);
             }
         };
         shargs.script_ast = script;

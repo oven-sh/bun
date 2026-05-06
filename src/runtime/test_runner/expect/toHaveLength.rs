@@ -88,28 +88,24 @@ pub fn to_have_length(
 
     // handle failure
     if not {
-        const EXPECTED_LINE: &str = "Expected length: not <green>{d}<r>\n";
         // PERF(port): was comptime getSignature — const fn evaluated at compile time
         let signature: &str = get_signature("toHaveLength", "<green>expected<r>", true);
-        // TODO(port): Expect.throw fmt — Zig {d} placeholders vs Rust format_args; revisit arg-packing once Expect.throw signature is fixed
         return this.throw(
             global,
             signature,
-            const_format::concatcp!("\n\n", EXPECTED_LINE),
-            format_args!("{}", expected_length),
+            format_args!("\n\nExpected length: not <green>{}<r>\n", expected_length),
         );
     }
 
-    const EXPECTED_LINE: &str = "Expected length: <green>{d}<r>\n";
-    const RECEIVED_LINE: &str = "Received length: <red>{d}<r>\n";
     // PERF(port): was comptime getSignature — const fn evaluated at compile time
     let signature: &str = get_signature("toHaveLength", "<green>expected<r>", false);
-    // TODO(port): Expect.throw fmt — Zig {d} placeholders vs Rust format_args; revisit arg-packing once Expect.throw signature is fixed
     this.throw(
         global,
         signature,
-        const_format::concatcp!("\n\n", EXPECTED_LINE, RECEIVED_LINE),
-        format_args!("{} {}", expected_length, actual_length),
+        format_args!(
+            "\n\nExpected length: <green>{}<r>\nReceived length: <red>{}<r>\n",
+            expected_length, actual_length,
+        ),
     )
 }
 

@@ -463,22 +463,24 @@ impl WindowsNamedPipe {
 
         if let Some(tls) = ssl_ctx {
             self.flags.set_is_ssl(true);
+            // SAFETY: caller passes Some only for a live SSL_CTX*.
+            let tls_nn = unsafe { NonNull::new_unchecked(tls) };
             self.wrapper = match WrapperType::init_with_ctx(
-                tls,
+                tls_nn,
                 false,
-                WrapperType::Handlers {
+                ssl_wrapper::Handlers {
                     ctx: self as *mut _,
-                    on_open: Self::on_open,
-                    on_handshake: Self::on_handshake,
-                    on_data: Self::on_data,
-                    on_close: Self::on_close,
-                    write: Self::internal_write,
+                    on_open: Self::ssl_on_open,
+                    on_handshake: Self::ssl_on_handshake,
+                    on_data: Self::ssl_on_data,
+                    on_close: Self::ssl_on_close,
+                    write: Self::ssl_write,
                 },
             ) {
                 Ok(w) => Some(w),
                 Err(_) => {
                     return bun_sys::Result::Err(bun_sys::Error {
-                        errno: bun_sys::E::PIPE as _,
+                        errno: bun_sys::E::EPIPE as _,
                         syscall: bun_sys::Tag::connect,
                         ..Default::default()
                     });

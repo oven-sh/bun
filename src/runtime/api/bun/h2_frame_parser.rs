@@ -4490,13 +4490,13 @@ impl H2FrameParser {
 
     /// validate header name and convert to lowecase if needed
     fn to_valid_header_name<'a>(in_: &'a [u8], out: &'a mut [u8]) -> Result<&'a [u8], bun_core::Error> {
-        let mut in_slice = in_;
-        let mut out_slice = &mut out[..];
-        let mut any = false;
         if in_.len() > 4096 {
             return Err(bun_core::err!("InvalidHeaderName"));
         }
         debug_assert!(out.len() >= in_.len());
+        let mut in_slice = in_;
+        let mut out_slice = &mut out[..];
+        let mut any = false;
         // lets validate and convert to lowercase in one pass
         'begin: loop {
             for (i, &c) in in_slice.iter().enumerate() {
@@ -4574,10 +4574,9 @@ impl H2FrameParser {
         // max header name length for lshpack
         let mut name_buffer = [0u8; 4096];
 
-        let mut iter = bun_jsc::JSPropertyIterator::init(
+        let mut iter = bun_jsc::JSPropertyIterator::<{ bun_jsc::JSPropertyIteratorOptions::new(false, true) }>::init(
             global_object,
             headers_obj,
-            bun_jsc::JSPropertyIteratorOptions { skip_empty_name: false, include_value: true },
         )?;
 
         let mut single_value_headers = [false; SINGLE_VALUE_HEADERS_LEN];
@@ -4592,20 +4591,20 @@ impl H2FrameParser {
             let name = name_slice.slice();
 
             if name.first() == Some(&b':') {
-                let exception = global_object.to_type_error_fmt(bun_jsc::ErrorCode::HTTP2_INVALID_PSEUDOHEADER, format_args!("\"{}\" is an invalid pseudoheader or is used incorrectly", BStr::new(name)));
-                return global_object.throw_value(exception);
+                let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_INVALID_PSEUDOHEADER, format_args!("\"{}\" is an invalid pseudoheader or is used incorrectly", BStr::new(name)));
+                return Err(global_object.throw_value(exception));
             }
 
             let js_value = iter.value;
             if js_value.is_undefined_or_null() {
-                let exception = global_object.to_type_error_fmt(bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(name)));
-                return global_object.throw_value(exception);
+                let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(name)));
+                return Err(global_object.throw_value(exception));
             }
             let validated_name = match Self::to_valid_header_name(name, &mut name_buffer[0..name.len()]) {
                 Ok(n) => n,
                 Err(_) => {
-                    let exception = global_object.to_type_error_fmt(bun_jsc::ErrorCode::INVALID_HTTP_TOKEN, format_args!("The arguments Header name is invalid. Received {}", BStr::new(name)));
-                    return global_object.throw_value(exception);
+                    let exception = global_object.to_type_error(bun_jsc::ErrorCode::INVALID_HTTP_TOKEN, format_args!("The arguments Header name is invalid. Received {}", BStr::new(name)));
+                    return Err(global_object.throw_value(exception));
                 }
             };
 
@@ -4615,7 +4614,7 @@ impl H2FrameParser {
                 match this.encode_header_into_list(&mut encoded_headers, validated_name, value, never_index) {
                     Ok(_) => Ok(None),
                     Err(err) if err == bun_core::err!("OutOfMemory") => {
-                        global_object.throw("Failed to allocate header buffer").map(Some)
+                        Err(global_object.throw("Failed to allocate header buffer"))
                     }
                     Err(_) => {
                         stream.state = StreamState::CLOSED;
@@ -4640,24 +4639,24 @@ impl H2FrameParser {
 
                 if let Some(idx) = single_value_headers_index_of(validated_name) {
                     if value_iter.len > 1 || single_value_headers[idx] {
-                        let exception = global_object.to_type_error_fmt(bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE, format_args!("Header field \"{}\" must only have a single value", BStr::new(validated_name)));
-                        return global_object.throw_value(exception);
+                        let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE, format_args!("Header field \"{}\" must only have a single value", BStr::new(validated_name)));
+                        return Err(global_object.throw_value(exception));
                     }
                     single_value_headers[idx] = true;
                 }
 
                 while let Some(item) = value_iter.next()? {
                     if item.is_empty_or_undefined_or_null() {
-                        let exception = global_object.to_type_error_fmt(bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(validated_name)));
-                        return global_object.throw_value(exception);
+                        let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(validated_name)));
+                        return Err(global_object.throw_value(exception));
                     }
 
                     let value_str = match item.to_js_string(global_object) {
                         Ok(s) => s,
                         Err(_) => {
                             global_object.clear_exception();
-                            let exception = global_object.to_type_error_fmt(bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(validated_name)));
-                            return global_object.throw_value(exception);
+                            let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(validated_name)));
+                            return Err(global_object.throw_value(exception));
                         }
                     };
 
@@ -4675,8 +4674,8 @@ impl H2FrameParser {
             } else {
                 if let Some(idx) = single_value_headers_index_of(validated_name) {
                     if single_value_headers[idx] {
-                        let exception = global_object.to_type_error_fmt(bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE, format_args!("Header field \"{}\" must only have a single value", BStr::new(validated_name)));
-                        return global_object.throw_value(exception);
+                        let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE, format_args!("Header field \"{}\" must only have a single value", BStr::new(validated_name)));
+                        return Err(global_object.throw_value(exception));
                     }
                     single_value_headers[idx] = true;
                 }
@@ -4684,8 +4683,8 @@ impl H2FrameParser {
                     Ok(s) => s,
                     Err(_) => {
                         global_object.clear_exception();
-                        let exception = global_object.to_type_error_fmt(bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(validated_name)));
-                        return global_object.throw_value(exception);
+                        let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(validated_name)));
+                        return Err(global_object.throw_value(exception));
                     }
                 };
 
@@ -4770,21 +4769,21 @@ impl H2FrameParser {
 
     #[bun_jsc::host_fn(method)]
     pub fn write_stream(this: &mut Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args = callframe.arguments_undef(5);
+        let args = callframe.arguments_undef::<5>();
         let [stream_arg, data_arg, encoding_arg, close_arg, callback_arg] = args.ptr;
 
         if !stream_arg.is_number() {
-            return global_object.throw("Expected stream to be a number");
+            return Err(global_object.throw("Expected stream to be a number"));
         }
 
-        let stream_id = stream_arg.to_u32();
+        let stream_id = stream_arg.to_int32() as u32;
         if stream_id == 0 || stream_id > MAX_STREAM_ID {
-            return global_object.throw("Invalid stream id");
+            return Err(global_object.throw("Invalid stream id"));
         }
         let close = close_arg.to_boolean();
 
         let Some(stream_ptr) = this.streams.get(&stream_id).copied() else {
-            return global_object.throw("Invalid stream id");
+            return Err(global_object.throw("Invalid stream id"));
         };
         // SAFETY: stream_ptr is a *mut Stream stored in self.streams (Box::into_raw); valid for the lifetime of the entry, exclusive access reshaped for borrowck
         let stream = unsafe { &mut *stream_ptr };
@@ -4798,12 +4797,12 @@ impl H2FrameParser {
                 break 'brk Encoding::Utf8;
             }
             if !encoding_arg.is_string() {
-                return global_object.throw_invalid_argument_type_value("write", "encoding", encoding_arg);
+                return Err(global_object.throw_invalid_argument_type_value("write", "encoding", encoding_arg));
             }
             match Encoding::from_js(encoding_arg, global_object)? {
                 Some(e) => break 'brk e,
                 None => {
-                    return global_object.throw_invalid_argument_type_value("write", "encoding", encoding_arg);
+                    return Err(global_object.throw_invalid_argument_type_value("write", "encoding", encoding_arg));
                 }
             }
         };
@@ -4811,7 +4810,7 @@ impl H2FrameParser {
         let buffer = match StringOrBuffer::from_js_with_encoding(global_object, data_arg, encoding)? {
             Some(b) => b,
             None => {
-                return global_object.throw_invalid_argument_type_value("write", "Buffer or String", data_arg);
+                return Err(global_object.throw_invalid_argument_type_value("write", "Buffer or String", data_arg));
             }
         };
 
@@ -4940,7 +4939,7 @@ impl H2FrameParser {
         while let Some(stream) = it.next() {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
             let Some(value) = (unsafe { (*stream).js_context.get() }) else { continue };
-            this.handlers.vm.event_loop().run_callback(callback, global_object, this_value, &[value]);
+            unsafe { &mut *this.handlers.vm.event_loop() }.run_callback(callback, global_object, this_value, &[value]);
             _count += 1;
         }
         Ok(JSValue::UNDEFINED)
@@ -5017,7 +5016,7 @@ impl H2FrameParser {
 
     #[bun_jsc::host_fn(method)]
     pub fn flush_from_js(this: &mut Self, _global_object: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
-        Ok(JSValue::js_number(this.flush()))
+        Ok(JSValue::js_number(this.flush() as f64))
     }
 
     #[bun_jsc::host_fn(method)]
@@ -5080,8 +5079,8 @@ impl H2FrameParser {
                 let validated_name = match Self::to_valid_header_name(name, &mut name_buffer[0..name.len()]) {
                     Ok(n) => n,
                     Err(_) => {
-                        let exception = global_object.to_type_error_fmt(bun_jsc::ErrorCode::INVALID_HTTP_TOKEN, format_args!("The arguments Header name is invalid. Received \"{}\"", BStr::new(name)));
-                        return global_object.throw_value(exception);
+                        let exception = global_object.to_type_error(bun_jsc::ErrorCode::INVALID_HTTP_TOKEN, format_args!("The arguments Header name is invalid. Received \"{}\"", BStr::new(name)));
+                        return Err(global_object.throw_value(exception));
                     }
                 };
 
@@ -5111,8 +5110,8 @@ impl H2FrameParser {
 
                 let js_value = iter.value;
                 if js_value.is_undefined_or_null() {
-                    let exception = global_object.to_type_error_fmt(bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(name)));
-                    return global_object.throw_value(exception);
+                    let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(name)));
+                    return Err(global_object.throw_value(exception));
                 }
 
                 if js_value.js_type().is_array() {
@@ -5122,8 +5121,8 @@ impl H2FrameParser {
                     if let Some(idx) = single_value_headers_index_of(validated_name) {
                         if value_iter.len > 1 || single_value_headers[idx] {
                             if !global_object.has_exception() {
-                                let exception = global_object.to_type_error_fmt(bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE, format_args!("Header field \"{}\" must only have a single value", BStr::new(validated_name)));
-                                return global_object.throw_value(exception);
+                                let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE, format_args!("Header field \"{}\" must only have a single value", BStr::new(validated_name)));
+                                return Err(global_object.throw_value(exception));
                             }
                             return Ok(JSValue::ZERO);
                         }
@@ -5176,8 +5175,8 @@ impl H2FrameParser {
                     bun_output::scoped_log!(H2FrameParser, "single header {}", BStr::new(name));
                     if let Some(idx) = single_value_headers_index_of(validated_name) {
                         if single_value_headers[idx] {
-                            let exception = global_object.to_type_error_fmt(bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE, format_args!("Header field \"{}\" must only have a single value", BStr::new(validated_name)));
-                            return global_object.throw_value(exception);
+                            let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE, format_args!("Header field \"{}\" must only have a single value", BStr::new(validated_name)));
+                            return Err(global_object.throw_value(exception));
                         }
                         single_value_headers[idx] = true;
                     }

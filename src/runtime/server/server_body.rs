@@ -12,6 +12,7 @@ use bun_boringssl as boringssl;
 use bun_collections::{HashMap, TaggedPtrUnion};
 use bun_core::{self as core_, analytics, fmt as bun_fmt, Global, Output};
 use bun_http::{self as http, Method, MimeType};
+use bun_http_jsc::method_jsc::MethodJsc as _;
 use bun_jsc::{
     self as jsc, host_fn, ArrayBuffer, CallFrame, JSGlobalObject, JSPromise, JSValue, JsError,
     JsRef, JsResult, Node, StringJsc as _, Strong, StrongOptional, SysErrorJsc as _, SystemError, VirtualMachine,

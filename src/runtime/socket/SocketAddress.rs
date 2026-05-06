@@ -561,7 +561,7 @@ impl SocketAddress {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_flow_label(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(this.flow_label().unwrap_or(0))
+        JSValue::js_number(f64::from(this.flow_label().unwrap_or(0)))
     }
 
     /// Returns `None` for non-IPv6 addresses.

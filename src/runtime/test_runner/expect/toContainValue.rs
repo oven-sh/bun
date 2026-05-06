@@ -12,7 +12,7 @@ impl Expect {
     ) -> JsResult<JSValue> {
         // PORT NOTE: reshaped for borrowck — Zig `defer this.postMatch(globalObject)` becomes a
         // scopeguard owning `&mut self` so post_match runs on every exit path.
-        let this = scopeguard::guard(self, |t| t.post_match(global));
+        let mut this = scopeguard::guard(self, |t| t.post_match(global));
 
         let this_value = frame.this();
         let arguments_ = frame.arguments_old::<1>();

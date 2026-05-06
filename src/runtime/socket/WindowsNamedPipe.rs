@@ -228,6 +228,19 @@ impl WindowsNamedPipe {
         (self.handlers.on_data)(self.handlers.ctx, decoded_data);
     }
 
+    // ── SSLWrapper trampolines ───────────────────────────────────────────────
+    // `ssl_wrapper::Handlers<*mut Self>` carries `fn(*mut Self, ..)` slots; the
+    // method receivers above are `&mut self`, so adapt at the FFI boundary.
+    // SAFETY (all): `this` is the `ctx` we set to `self as *mut _` when building
+    // the wrapper; SSLWrapper never holds a competing `&mut WindowsNamedPipe`.
+    fn ssl_on_open(this: *mut Self) { unsafe { (*this).on_open() } }
+    fn ssl_on_handshake(this: *mut Self, ok: bool, e: us_bun_verify_error_t) {
+        unsafe { (*this).on_handshake(ok, e) }
+    }
+    fn ssl_on_data(this: *mut Self, d: &[u8]) { unsafe { (*this).on_data(d) } }
+    fn ssl_on_close(this: *mut Self) { unsafe { (*this).on_close() } }
+    fn ssl_write(this: *mut Self, d: &[u8]) { unsafe { (*this).internal_write(d) } }
+
     fn on_handshake(&mut self, handshake_success: bool, ssl_error: us_bun_verify_error_t) {
         bun_output::scoped_log!(WindowsNamedPipe, "onHandshake");
 

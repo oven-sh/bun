@@ -3,7 +3,7 @@
 
 use core::slice;
 
-use bun_str::encoding::Encoding;
+use crate::node::types::Encoding;
 use crate::webcore::jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
 use bun_str::strings;
 use bun_str::String as BunString;

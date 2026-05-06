@@ -4645,10 +4645,12 @@ pub fn handle_template_value(
         }
 
         if let Some(blob) = template_value.as_::<jsc::WebCore::Blob>() {
-            if let Some(store) = &blob.store {
+            // SAFETY: `as_` returns a live `*mut Blob` for the duration of this call;
+            // `template_value` is rooted in `marked_argument_buffer` below before any GC.
+            if let Some(store) = unsafe { &(*blob).store } {
                 if store.data.is_file() {
                     if let Some(path) = store.data.file().pathlike.as_path() {
-                        let path = path.slice();
+                        let path: &[u8] = path.slice();
 
                         // Check for null bytes in path (security: prevent null byte injection)
                         if strings::index_of_char(path, 0).is_some() {

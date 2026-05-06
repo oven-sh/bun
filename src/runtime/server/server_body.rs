@@ -4429,25 +4429,30 @@ impl AnyServer {
         method: Option<http::Method>,
     ) -> JsResult<Option<SavedRequest<'_>>> {
         Ok(match self.ptr.tag() {
+            // SAFETY: tag was just checked; as_unchecked yields the matching live *mut. AnyResponse variant matches SSL flag.
             t if t == <TaggedPtrUnion<_>>::case::<HTTPServer>() => {
-                let s = self.ptr.as_::<HTTPServer>();
-                let Some(p) = s.prepare_js_request_context(req, resp.tcp(), None, CreateJsRequest::Bake, method) else { return Ok(None); };
-                Some(p.save(global, req, resp.tcp()))
+                let s = unsafe { &mut *self.ptr.as_unchecked::<HTTPServer>() };
+                let r = unsafe { &mut *resp.assert_no_ssl() };
+                let Some(p) = s.prepare_js_request_context(req, r, None, CreateJsRequest::Bake, method) else { return Ok(None); };
+                Some(p.save(global, req, unsafe { &mut *resp.assert_no_ssl() }))
             }
             t if t == <TaggedPtrUnion<_>>::case::<HTTPSServer>() => {
-                let s = self.ptr.as_::<HTTPSServer>();
-                let Some(p) = s.prepare_js_request_context(req, resp.ssl(), None, CreateJsRequest::Bake, method) else { return Ok(None); };
-                Some(p.save(global, req, resp.ssl()))
+                let s = unsafe { &mut *self.ptr.as_unchecked::<HTTPSServer>() };
+                let r = unsafe { &mut *resp.assert_ssl() };
+                let Some(p) = s.prepare_js_request_context(req, r, None, CreateJsRequest::Bake, method) else { return Ok(None); };
+                Some(p.save(global, req, unsafe { &mut *resp.assert_ssl() }))
             }
             t if t == <TaggedPtrUnion<_>>::case::<DebugHTTPServer>() => {
-                let s = self.ptr.as_::<DebugHTTPServer>();
-                let Some(p) = s.prepare_js_request_context(req, resp.tcp(), None, CreateJsRequest::Bake, method) else { return Ok(None); };
-                Some(p.save(global, req, resp.tcp()))
+                let s = unsafe { &mut *self.ptr.as_unchecked::<DebugHTTPServer>() };
+                let r = unsafe { &mut *resp.assert_no_ssl() };
+                let Some(p) = s.prepare_js_request_context(req, r, None, CreateJsRequest::Bake, method) else { return Ok(None); };
+                Some(p.save(global, req, unsafe { &mut *resp.assert_no_ssl() }))
             }
             t if t == <TaggedPtrUnion<_>>::case::<DebugHTTPSServer>() => {
-                let s = self.ptr.as_::<DebugHTTPSServer>();
-                let Some(p) = s.prepare_js_request_context(req, resp.ssl(), None, CreateJsRequest::Bake, method) else { return Ok(None); };
-                Some(p.save(global, req, resp.ssl()))
+                let s = unsafe { &mut *self.ptr.as_unchecked::<DebugHTTPSServer>() };
+                let r = unsafe { &mut *resp.assert_ssl() };
+                let Some(p) = s.prepare_js_request_context(req, r, None, CreateJsRequest::Bake, method) else { return Ok(None); };
+                Some(p.save(global, req, unsafe { &mut *resp.assert_ssl() }))
             }
             _ => unreachable!("Invalid pointer tag"),
         })

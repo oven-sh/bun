@@ -277,7 +277,9 @@ impl Handlers {
     fn with_async_context_if_needed(&mut self, global_object: &JSGlobalObject) {
         for_each_callback_field!(self, |f| {
             if !f.is_empty() {
-                *f = f.with_async_context_if_needed(global_object);
+                // SAFETY: FFI — `global_object` is a live JSGlobalObject*, `*f` is a
+                // protect()-rooted callable JSValue; returns the (possibly wrapped) value.
+                *f = unsafe { AsyncContextFrame__withAsyncContextIfNeeded(global_object, *f) };
             }
         });
     }

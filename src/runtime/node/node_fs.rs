@@ -6734,20 +6734,20 @@ impl ReaddirEntry for Buffer {
 fn map_anyerror_to_errno(err: bun_core::Error) -> E {
     match err.name() {
         "AccessDenied" => E::EPERM,
-        "FileTooBig" => E::FBIG,
-        "SymLinkLoop" => E::LOOP,
-        "ProcessFdQuotaExceeded" => E::NFILE,
+        "FileTooBig" => E::EFBIG,
+        "SymLinkLoop" => E::ELOOP,
+        "ProcessFdQuotaExceeded" => E::ENFILE,
         "NameTooLong" => E::ENAMETOOLONG,
-        "SystemFdQuotaExceeded" => E::MFILE,
-        "SystemResources" => E::NOMEM,
+        "SystemFdQuotaExceeded" => E::EMFILE,
+        "SystemResources" => E::ENOMEM,
         "ReadOnlyFileSystem" => E::EROFS,
-        "FileSystem" => E::IO,
-        "FileBusy" | "DeviceBusy" => E::BUSY,
+        "FileSystem" => E::EIO,
+        "FileBusy" | "DeviceBusy" => E::EBUSY,
         "NotDir" => E::ENOTDIR,
         "InvalidUtf8" | "InvalidWtf8" | "BadPathName" => E::EINVAL,
         "FileNotFound" => E::ENOENT,
         "IsDir" => E::EISDIR,
-        _ => E::FAULT,
+        _ => E::EFAULT,
     }
 }
 
@@ -6756,20 +6756,20 @@ fn map_anyerror_to_errno(err: bun_core::Error) -> E {
 fn map_anyerror_to_errno_rm_tree(err: bun_core::Error) -> E {
     match err.name() {
         "AccessDenied" => E::EACCES,
-        "FileTooBig" => E::FBIG,
-        "SymLinkLoop" => E::LOOP,
-        "ProcessFdQuotaExceeded" => E::NFILE,
+        "FileTooBig" => E::EFBIG,
+        "SymLinkLoop" => E::ELOOP,
+        "ProcessFdQuotaExceeded" => E::ENFILE,
         "NameTooLong" => E::ENAMETOOLONG,
-        "SystemFdQuotaExceeded" => E::MFILE,
-        "SystemResources" => E::NOMEM,
+        "SystemFdQuotaExceeded" => E::EMFILE,
+        "SystemResources" => E::ENOMEM,
         "ReadOnlyFileSystem" => E::EROFS,
-        "FileSystem" => E::IO,
-        "FileBusy" | "DeviceBusy" => E::BUSY,
+        "FileSystem" => E::EIO,
+        "FileBusy" | "DeviceBusy" => E::EBUSY,
         "NotDir" => E::ENOTDIR,
         "InvalidUtf8" | "InvalidWtf8" | "BadPathName" => E::EINVAL,
         "FileNotFound" => E::ENOENT,
         "IsDir" => E::EISDIR,
-        _ => E::FAULT,
+        _ => E::EFAULT,
     }
 }
 
@@ -6778,14 +6778,14 @@ fn map_anyerror_to_errno_rm_tree(err: bun_core::Error) -> E {
 fn map_anyerror_to_errno_rm_narrow(err: bun_core::Error) -> E {
     match err.name() {
         "AccessDenied" => E::EACCES,
-        "SymLinkLoop" => E::LOOP,
+        "SymLinkLoop" => E::ELOOP,
         "NameTooLong" => E::ENAMETOOLONG,
-        "SystemResources" => E::NOMEM,
+        "SystemResources" => E::ENOMEM,
         "ReadOnlyFileSystem" => E::EROFS,
-        "FileBusy" => E::BUSY,
+        "FileBusy" => E::EBUSY,
         "InvalidUtf8" | "InvalidWtf8" | "BadPathName" => E::EINVAL,
         "FileNotFound" => E::ENOENT,
-        _ => E::FAULT,
+        _ => E::EFAULT,
     }
 }
 
@@ -6837,20 +6837,20 @@ fn dt_err(errno: E) -> bun_core::Error {
         E::ENOENT => "FileNotFound",
         E::EACCES => "AccessDenied",
         E::EPERM => "PermissionDenied",
-        E::LOOP => "SymLinkLoop",
+        E::ELOOP => "SymLinkLoop",
         E::ENAMETOOLONG => "NameTooLong",
-        E::NOMEM => "SystemResources",
+        E::ENOMEM => "SystemResources",
         E::EROFS => "ReadOnlyFileSystem",
-        E::IO => "FileSystem",
-        E::BUSY => "FileBusy",
+        E::EIO => "FileSystem",
+        E::EBUSY => "FileBusy",
         E::ENOTDIR => "NotDir",
         E::EISDIR => "IsDir",
-        E::NOTEMPTY => "DirNotEmpty",
-        E::MFILE => "SystemFdQuotaExceeded",
-        E::NFILE => "ProcessFdQuotaExceeded",
+        E::ENOTEMPTY => "DirNotEmpty",
+        E::EMFILE => "SystemFdQuotaExceeded",
+        E::ENFILE => "ProcessFdQuotaExceeded",
         E::EINVAL => "BadPathName",
-        E::FBIG => "FileTooBig",
-        E::NODEV => "NoDevice",
+        E::EFBIG => "FileTooBig",
+        E::ENODEV => "NoDevice",
         _ => "Unexpected",
     })
 }
@@ -7002,7 +7002,7 @@ pub fn zig_delete_tree(self_: sys::Dir, sub_path: &[u8], kind_hint: sys::FileKin
         match dt_delete_dir(parent_dir, name) {
             Ok(()) => {}
             Err(E::ENOENT) => {}
-            Err(E::NOTEMPTY) => need_to_retry = true,
+            Err(E::ENOTEMPTY) => need_to_retry = true,
             // PORT NOTE: Zig also matched `error.EXIST` → DirNotEmpty here via
             // std.fs's deleteDir; mirror that for OSes that report EEXIST.
             Err(E::EEXIST) => need_to_retry = true,
@@ -7031,7 +7031,7 @@ pub fn zig_delete_tree(self_: sys::Dir, sub_path: &[u8], kind_hint: sys::FileKin
                         Err(E::EISDIR) => { treat_as_dir = true; continue 'handle_entry; }
                         Err(E::ENOTDIR) => {
                             #[cfg(debug_assertions)] unreachable!();
-                            #[cfg(not(debug_assertions))] return Err(dt_err(E::IO));
+                            #[cfg(not(debug_assertions))] return Err(dt_err(E::EIO));
                         }
                         Err(e) => return Err(dt_err(e)),
                     }
@@ -7134,7 +7134,7 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(self_: sys::Dir, sub_path: &[u8
                             Err(E::EISDIR) => { treat_as_dir = true; continue 'handle_entry; }
                             Err(E::ENOTDIR) => {
                                 #[cfg(debug_assertions)] unreachable!();
-                                #[cfg(not(debug_assertions))] break 'scan_dir Err(dt_err(E::IO));
+                                #[cfg(not(debug_assertions))] break 'scan_dir Err(dt_err(E::EIO));
                             }
                             Err(e) => break 'scan_dir Err(dt_err(e)),
                         }
@@ -7149,7 +7149,7 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(self_: sys::Dir, sub_path: &[u8
             let dir_name: &[u8] = if dir_name_is_sub_path { sub_path } else { &dir_name_buf[..dir_name_len] };
             if let Some(d) = cleanup_dir_parent {
                 match dt_delete_dir(d, dir_name) {
-                    Ok(()) | Err(E::ENOENT) | Err(E::NOTEMPTY) | Err(E::EEXIST) => {
+                    Ok(()) | Err(E::ENOENT) | Err(E::ENOTEMPTY) | Err(E::EEXIST) => {
                         // These two things can happen due to file system race conditions.
                         d.close();
                         continue 'start_over;
@@ -7159,7 +7159,7 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(self_: sys::Dir, sub_path: &[u8
             } else {
                 match dt_delete_dir(self_, sub_path) {
                     Ok(()) | Err(E::ENOENT) => return Ok(()),
-                    Err(E::NOTEMPTY) | Err(E::EEXIST) => continue 'start_over,
+                    Err(E::ENOTEMPTY) | Err(E::EEXIST) => continue 'start_over,
                     Err(e) => return Err(dt_err(e)),
                 }
             }

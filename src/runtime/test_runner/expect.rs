@@ -2552,6 +2552,7 @@ impl ExpectTypeOf {
 
 pub mod mock {
     use super::*;
+    use bun_jsc::ComptimeStringMapExt as _;
 
     // TODO(port): move to <area>_sys
     unsafe extern "C" {

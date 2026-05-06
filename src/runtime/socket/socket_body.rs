@@ -1822,8 +1822,8 @@ impl<const SSL: bool> NewSocket<SSL> {
                     // SAFETY: overlapping copy within the same buffer.
                     unsafe {
                         core::ptr::copy(
-                            self.buffered_data_for_node_net.ptr.add(wrote_u),
-                            self.buffered_data_for_node_net.ptr,
+                            self.buffered_data_for_node_net.ptr.as_ptr().add(wrote_u),
+                            self.buffered_data_for_node_net.ptr.as_ptr(),
                             len,
                         );
                     }

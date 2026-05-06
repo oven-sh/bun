@@ -314,7 +314,7 @@ pub fn assert_stdio_result(result: StdioResult) {
         #[cfg(unix)]
         {
             if let Some(fd) = result {
-                debug_assert!(fd != bun_sys::INVALID_FD);
+                debug_assert!(fd.is_valid());
             }
         }
         #[cfg(not(unix))]

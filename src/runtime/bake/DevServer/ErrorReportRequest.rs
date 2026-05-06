@@ -371,7 +371,7 @@ impl ErrorReportRequest {
 
             let src_to_write = frame.source_url.value.zig_string().slice();
             if src_to_write.starts_with(b"/") {
-                let relative_path_buf = path_buffer_pool().get();
+                let mut relative_path_buf = path_buffer_pool::get();
                 let file = ctx.dev().relative_path(&mut relative_path_buf, src_to_write);
                 write_u32_le(&mut out, u32::try_from(file.len()).unwrap());
                 out.extend_from_slice(file);

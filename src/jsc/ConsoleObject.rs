@@ -3532,33 +3532,47 @@ pub mod formatter {
                     }
                 }
                 Tag::Array => {
-                    reseat_writer!();
+                    // PORT NOTE: inline `reseat_writer!()` as drop/call/recreate so the
+                    // recursive helper can borrow `&mut self` + `writer_` (E0499).
+                    if writer.failed { self.failed = true; }
+                    drop(writer);
                     self.print_array::<ENABLE_ANSI_COLORS>(writer_, value, js_type)?;
+                    writer = WrappedWriter {
+                        ctx: writer_,
+                        failed: false,
+                        estimated_line_length: &mut self.estimated_line_length,
+                    };
                 }
                 Tag::Private => {
-                    reseat_writer!();
+                    if writer.failed { self.failed = true; }
+                    drop(writer);
                     self.print_private::<ENABLE_ANSI_COLORS>(
                         writer_,
                         value,
                         js_type,
                         &mut remove_before_recurse,
                     )?;
+                    writer = WrappedWriter {
+                        ctx: writer_,
+                        failed: false,
+                        estimated_line_length: &mut self.estimated_line_length,
+                    };
                 }
                 Tag::NativeCode => {
                     if let Some(class_name) = value.get_class_info_name() {
-                        self.add_for_new_line("[native code: ]".len() + class_name.len());
+                        writer.add_for_new_line("[native code: ]".len() + class_name.len());
                         writer.write_all(b"[native code: ");
                         writer.write_all(class_name);
                         writer.write_all(b"]");
                     } else {
-                        self.add_for_new_line("[native code]".len());
+                        writer.add_for_new_line("[native code]".len());
                         writer.write_all(b"[native code]");
                     }
                 }
                 Tag::Promise => {
-                    if !self.single_line && self.good_time_for_a_new_line() {
+                    if !self.single_line && writer.good_time_for_a_new_line(self.indent) {
                         writer.write_all(b"\n");
-                        let _ = self.write_indent(writer_);
+                        writer.write_indent(self.indent);
                     }
 
                     writer.write_all(b"Promise { ");
@@ -3584,7 +3598,7 @@ pub mod formatter {
                         value.to_zig_string(&mut bool_value, self.global_this)?;
 
                         if bool_name.slice() != b"Boolean" {
-                            self.add_for_new_line(
+                            writer.add_for_new_line(
                                 bool_value.len + bool_name.len + "[Boolean (): ]".len(),
                             );
                             writer.print(format_args!(
@@ -3596,7 +3610,7 @@ pub mod formatter {
                             ));
                             return Ok(());
                         }
-                        self.add_for_new_line(bool_value.len + "[Boolean: ]".len());
+                        writer.add_for_new_line(bool_value.len + "[Boolean: ]".len());
                         writer.print(format_args!(
                             "{}[Boolean: {}]{}",
                             pf!("<r><yellow>"),

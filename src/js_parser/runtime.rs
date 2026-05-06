@@ -17,7 +17,7 @@ use crate::ast::{Expr, Ref};
 fn embed_debug_fallback(msg: &'static str, code: &'static [u8]) -> &'static [u8] {
     static HAS_PRINTED: AtomicBool = AtomicBool::new(false);
     if !HAS_PRINTED.swap(true, Ordering::Relaxed) {
-        Output::debug(msg, ());
+        Output::debug(msg);
     }
     code
 }

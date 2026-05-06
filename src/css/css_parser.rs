@@ -2207,9 +2207,13 @@ impl<'a, T: CustomAtRuleParser> DeclarationParser for NestedRuleParser<'a, T> {
 
     fn parse_value(this: &mut Self, name: &[u8], input: &mut Parser) -> CssResult<()> {
         // PORT NOTE: split-borrow — see `NestedComposesCtx` above.
+        // SAFETY: `input.allocator()` re-borrows the parser arena through `&self`;
+        // detach that borrow so `input` can be re-borrowed mutably below. The
+        // arena outlives the parser (it owns all parsed allocations).
+        let allocator: &Bump = unsafe { &*(input.allocator() as *const Bump) };
         let mut ctx = NestedComposesCtx {
             state: this.composes_state,
-            allocator: input.allocator(),
+            allocator,
             composes: &mut *this.composes,
             composes_refs: &mut *this.composes_refs,
         };
@@ -2429,11 +2433,10 @@ impl PropertyUsage {
 // Phase B computes the variant count via `strum::EnumCount`.
 pub type PropertyBitset = StaticBitSet<{ 1024 }>;
 
- // blocked_on: properties/ (Property variants, PropertyIdTag)
-pub fn fill_property_bit_set(
+pub fn fill_property_bit_set<'a>(
     bitset: &mut PropertyBitset,
-    block: &DeclarationBlock,
-    custom_properties: &mut BabyList<&[u8]>,
+    block: &'a DeclarationBlock<'a>,
+    custom_properties: &mut BabyList<&'a [u8]>,
 ) {
     for prop in block.declarations.iter() {
         let tag = match prop {

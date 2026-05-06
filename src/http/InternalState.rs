@@ -332,10 +332,10 @@ impl InternalState {
 
             if let Err(err) = self.decompressor.read_all(self.is_done()) {
                 if self.is_done() || err != bun_core::err!("ShortRead") {
-                    Output::pretty_errorln(
+                    Output::pretty_errorln(&format_args!(
                         "<r><red>Decompression error: {}<r>",
-                        (bstr::BStr::new(err.name()),),
-                    );
+                        bstr::BStr::new(err.name()),
+                    ));
                     Output::flush();
                     self.compressed_body.reset();
                     return Err(err);

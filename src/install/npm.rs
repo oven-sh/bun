@@ -153,7 +153,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         b"",
         None,
         None,
-        http::Redirect::Follow,
+        http::FetchRedirect::Follow,
     );
 
     let res = match req.send_sync() {
@@ -170,9 +170,9 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         response_error::<OTP_RESPONSE>(&req, &res, None, &mut response_buf)?;
     }
 
-    if let Some(notice) = res.headers.get_if_other_is_absent("npm-notice", "x-local-cache") {
+    if let Some(notice) = res.headers.get_if_other_is_absent(b"npm-notice", b"x-local-cache") {
         Output::print_error("\n", format_args!(""));
-        Output::note(format_args!("{}", bstr::BStr::new(notice)));
+        Output::note("{}", (bstr::BStr::new(notice),));
         Output::flush();
     }
 
@@ -188,11 +188,11 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         }
     };
 
-    let Some((username, _)) = json.get_string("username")? else {
+    let Some(username) = json.get(b"username").and_then(|e| e.as_string()) else {
         // no username, invalid auth probably
         return Err(WhoamiError::ProbablyInvalidAuth);
     };
-    Ok(username)
+    Ok(username.to_vec())
 }
 
 // TODO(b2): body gated — picohttp::Response field shape drift
@@ -214,10 +214,10 @@ pub fn response_error<const OTP_RESPONSE: bool>(
             Err(_) => break 'message None,
         };
 
-        let Some((error, _)) = json.get_string("error")? else {
+        let Some(error) = json.get(b"error").and_then(|e| e.as_string()) else {
             break 'message None;
         };
-        Some(error)
+        Some(error.to_vec())
     };
 
     Output::pretty_errorln(format_args!(

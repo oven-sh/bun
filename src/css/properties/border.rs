@@ -1517,7 +1517,7 @@ impl BorderHandler {
                 let mut up = unparsed.deep_clone(allocator);
                 context.add_unparsed_fallbacks(allocator, &mut up);
                 self.flushed_properties
-                    .insert(BorderProperty::try_from_property_id(up.property_id).unwrap());
+                    .insert(BorderProperty::try_from_property_id(up.property_id.tag()).unwrap());
                 dest.push(Property::Unparsed(up));
             }
         }

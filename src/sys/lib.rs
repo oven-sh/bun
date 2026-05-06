@@ -2372,11 +2372,15 @@ impl File {
     /// `bun.sys.File.readFromUserInput` (File.zig:367) — normalize a
     /// user-provided relative path against the resolver's cached
     /// `top_level_dir` (NOT a fresh `getcwd()`), then `readFrom`.
-    pub fn read_from_user_input(dir: Fd, input_path: &[u8]) -> Maybe<Vec<u8>> {
+    ///
+    /// Zig reads `bun.fs.FileSystem.instance.top_level_dir` directly; in the
+    /// Rust crate map that lives in `bun_resolver::fs` (T5) which `bun_sys`
+    /// (T1) must not depend on (PORTING.md §Forbidden: no fn-ptr hooks to
+    /// break dep cycles). Callers pass `top_level_dir` explicitly instead.
+    pub fn read_from_user_input(dir: Fd, top_level_dir: &[u8], input_path: &[u8]) -> Maybe<Vec<u8>> {
         let mut buf = bun_paths::PathBuffer::default();
-        let cwd = crate::fs::FileSystem::instance().top_level_dir();
         let normalized = bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Loose>(
-            cwd, &mut buf.0, &[input_path],
+            top_level_dir, &mut buf.0, &[input_path],
         );
         Self::read_from(dir, normalized.as_bytes())
     }

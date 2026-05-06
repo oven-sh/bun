@@ -1586,8 +1586,8 @@ fn buffered_file_reader_read(r: &mut BufferedFileReader, dest: &mut [u8]) -> bun
 
 /// Shims for `PackageManagerOptionsStub` fields missing on the upstream stub.
 #[inline]
-fn opt_dry_run(_m: &PackageManager) -> bool {
-    todo!("blocked_on: bun_install::PackageManagerOptionsStub::dry_run")
+fn opt_dry_run(m: &PackageManager) -> bool {
+    m.options.dry_run
 }
 #[inline]
 fn opt_pack_destination(_m: &PackageManager) -> &[u8] {

@@ -51,7 +51,7 @@ trait PackageManagerOptionsShim {
     fn dry_run(&self) -> bool;
 }
 impl PackageManagerOptionsShim for install::PackageManagerOptionsStub {
-    fn dry_run(&self) -> bool { todo!("blocked_on: bun_install::PackageManagerOptionsStub::dry_run") }
+    fn dry_run(&self) -> bool { self.dry_run }
 }
 trait PackageManagerShim {
     fn original_package_json_path(&self) -> &[u8];

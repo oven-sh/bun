@@ -916,6 +916,8 @@ impl ExtractTarball {
 #[derive(Default)] pub struct PackageManagerOptionsStub {
     pub log_level: package_manager::Options::LogLevel,
     pub enable: PackageManagerEnableStub,
+    /// Zig: `Options.dry_run: bool = false`.
+    pub dry_run: bool,
     /// Zig: `Options.cache_directory` — bunfig override.
     pub cache_directory: Vec<u8>,
     /// Zig: `Options.scope: Npm.Registry.Scope`.

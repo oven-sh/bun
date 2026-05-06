@@ -1,11 +1,16 @@
 // Port of src/resolver/resolver.zig
 #![allow(dead_code, unused_variables, unused_imports, unused_mut, non_snake_case)]
 #![allow(non_camel_case_types, non_upper_case_globals, clippy::all)]
+#![allow(unused_unsafe, unreachable_code, static_mut_refs, private_interfaces, private_bounds)]
+#![allow(unused_macros, ambiguous_glob_reexports)]
+#![allow(incomplete_features)]
+#![feature(adt_const_params, new_zeroed_alloc)]
 
 // ──────────────────────────────────────────────────────────────────────────
-// B-1 GATE-AND-STUB HEADER
-// Phase-A draft bodies are preserved below under #[cfg(any())]. This header
-// exposes the minimal stub surface so dependents compile. Un-gating in B-2.
+// B-2 UN-GATED — Resolver::{resolve, dir_info_cached, load_as_file,
+// load_as_file_or_directory, load_node_modules} now compile from
+// `__phase_a_body` below. Higher-tier deps (bun_install / bun_bundler /
+// bun_http) are FORWARD_DECL'd; the auto-install path is re-gated.
 // ──────────────────────────────────────────────────────────────────────────
 
 // Submodules. `fs.rs` (full RealFS readdir/stat/kind path) remains gated; the
@@ -19,13 +24,10 @@ pub mod node_fallbacks;
 pub mod package_json;
 pub mod tsconfig_json;
 
-// ── Stub surface ──────────────────────────────────────────────────────────
-// Opaque placeholder types. TODO(b1): replace with real ports in B-2.
+// ── B-2 un-gated surface ──────────────────────────────────────────────────
+// Real types now live in `__phase_a_body` below; the header re-exports them so
+// dependents see the same paths as the old stub surface.
 
-/// Stub for `Resolver` — see gated Phase-A body below.
-pub struct Resolver(());
-/// Stub for resolve `Result`.
-pub struct Result(());
 /// Re-export real `DataURL`.
 pub use data_url::DataURL;
 /// Re-export real `PackageJSON`.
@@ -36,125 +38,17 @@ pub use tsconfig_json::TSConfigJSON;
 pub use dir_info::DirInfo;
 /// Re-export real filesystem `Path`.
 pub use fs::Path;
-/// Stub for `PathPair`.
-pub struct PathPair(());
-/// Stub for `MatchResult`.
-pub struct MatchResult(());
-
-/// Port of `DebugLogs` in `resolver.zig`.
-pub struct DebugLogs {
-    pub what: Vec<u8>,
-    pub indent: bun_string::MutableString,
-    // PORT NOTE: Zig stored `Vec<logger::Data>`; `logger::Data.text` is currently
-    // `&'static [u8]` (Phase-B Str ownership rework pending), so we store owned
-    // note text here and convert at flush time.
-    // TODO(b2-blocked): bun_logger::Data owned-text variant
-    pub notes: Vec<Box<[u8]>>,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum FlushMode {
-    Fail,
-    Success,
-}
-
-impl DebugLogs {
-    pub fn init() -> core::result::Result<DebugLogs, bun_alloc::AllocError> {
-        let mutable = bun_string::MutableString::init(0)?;
-        Ok(DebugLogs { what: Vec::new(), indent: mutable, notes: Vec::new() })
-    }
-
-    // deinit → Drop (only frees `notes`; `indent` deinit was commented out in Zig)
-
-    #[cold]
-    pub fn increase_indent(&mut self) {
-        self.indent.append(b" ").expect("unreachable");
-    }
-
-    #[cold]
-    pub fn decrease_indent(&mut self) {
-        let new_len = self.indent.list.len().saturating_sub(1);
-        self.indent.list.truncate(new_len);
-    }
-
-    #[cold]
-    pub fn add_note(&mut self, text: &str) {
-        self.add_note_bytes(text.as_bytes());
-    }
-
-    #[cold]
-    pub fn add_note_bytes(&mut self, text: &[u8]) {
-        let len = self.indent.len();
-        let mut final_text = Vec::with_capacity(text.len() + len);
-        if len > 0 {
-            final_text.extend_from_slice(self.indent.list.as_slice());
-        }
-        final_text.extend_from_slice(text);
-        self.notes.push(final_text.into_boxed_slice());
-    }
-
-    #[cold]
-    pub fn add_note_fmt(&mut self, args: core::fmt::Arguments<'_>) {
-        use std::io::Write as _;
-        let mut buf = Vec::new();
-        write!(&mut buf, "{}", args).expect("unreachable");
-        self.add_note_bytes(&buf);
-    }
-}
 /// Re-export real `GlobalCache`.
 pub use bun_options_types::GlobalCache::GlobalCache;
-/// Stub for `RootPathPair`.
-pub struct RootPathPair(());
-/// Stub for `SideEffectsData`.
-pub struct SideEffectsData(());
-/// Stub for `Bufs`.
-pub struct Bufs(());
-/// Stub for `DirEntryResolveQueueItem`.
-pub struct DirEntryResolveQueueItem(());
 
-/// Side-effects classification for a resolved module.
-/// Port of `SideEffects` enum in `resolver.zig`.
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub enum SideEffects {
-    /// The default value conservatively considers all files to have side effects.
-    #[default]
-    HasSideEffects,
-
-    /// This file was listed as not having side effects by a "package.json"
-    /// file in one of our containing directories with a "sideEffects" field.
-    NoSideEffectsPackageJson,
-
-    /// This file is considered to have no side effects because the AST was empty
-    /// after parsing finished. This should be the case for ".d.ts" files.
-    NoSideEffectsEmptyAst,
-
-    /// This file was loaded using a data-oriented loader (e.g. "text") that is
-    /// known to not have side effects.
-    NoSideEffectsPureData,
-    // /// Same as above but it came from a plugin. We don't want to warn about
-    // /// unused imports to these files since running the plugin is a side effect.
-    // /// Removing the import would not call the plugin which is observable.
-    // NoSideEffectsPureDataFromPlugin,
-}
-
-impl Resolver {
-    /// Port of `Resolver.resolve` in `resolver.zig`:
-    /// `pub fn resolve(r: *ThisResolver, source_dir: string, import_path: string, kind: ast.ImportKind) !Result`
-    ///
-    /// Body is gated behind the Phase-A draft (`__phase_a_body::Resolver::resolve`)
-    /// which depends on `resolve_and_auto_install` (still blocked on bun_install /
-    /// bun_bundler). Signature is exposed so dependents type-check.
-    pub fn resolve(
-        &mut self,
-        source_dir: &[u8],
-        import_path: &[u8],
-        kind: bun_options_types::import_record::ImportKind,
-    ) -> core::result::Result<Result, bun_core::Error> {
-        let _ = (source_dir, import_path, kind);
-        // TODO(b2-blocked): bun_install / bun_bundler — see __phase_a_body::Resolver::resolve
-        Err(bun_core::err!("ModuleNotFound"))
-    }
-}
+// Re-export the un-gated Phase-A body. `Resolver`, `Result`, `MatchResult`,
+// `PathPair`, `DebugLogs`, `SideEffects`, etc. are defined there.
+pub use __phase_a_body::{
+    Resolver, Result, ResultUnion, ResultFlags, PathPair, MatchResult, MatchResultUnion,
+    LoadResult, PendingResolution, PendingResolutionTag, SideEffects, SideEffectsData,
+    DebugLogs, DebugMeta, FlushMode, Bufs, DirEntryResolveQueueItem, AnyResolveWatcher,
+    BrowserMapPathKind, Dirname, RootPathPair,
+};
 
 /// Minimal real subset of `src/resolver/fs.zig` so `bun_resolver::fs::X` paths
 /// resolve for downstream crates during B-2. Full Phase-A draft remains in
@@ -166,17 +60,48 @@ pub mod fs {
     use bun_core::ZStr;
     use bun_paths::resolve_path::{is_sep_any, last_index_of_sep};
 
+    // ── DirnameStore / FilenameStore ─────────────────────────────────────
+    // TODO(b2-blocked): bun_alloc::BSSStringList — per-type singleton storage.
+    // The resolver body interns paths via `dirname_store.append_slice` /
+    // `append_parts`; type shape is exposed here with `unimplemented!()` bodies
+    // until bun_alloc un-gates its BSS backing arrays.
+
+    /// Port of `FileSystem.DirnameStore` (`BSSStringList<2048,128>`).
+    pub struct DirnameStore(());
+    /// Port of `FileSystem.FilenameStore` (`BSSStringList<4096,64>`).
+    pub struct FilenameStore(());
+
+    macro_rules! string_store_impl {
+        ($t:ty) => {
+            impl $t {
+                pub fn instance() -> &'static Self {
+                    // TODO(b2-blocked): bun_alloc::BSSStringList per-type singleton
+                    unimplemented!("BSSStringList singleton (Phase B)")
+                }
+                pub fn append_slice(&self, _value: &[u8]) -> core::result::Result<&'static [u8], bun_core::Error> {
+                    // TODO(b2-blocked): bun_alloc::BSSStringList::append
+                    unimplemented!("BSSStringList::append (Phase B)")
+                }
+                pub fn append_parts(&self, _parts: &[&[u8]]) -> core::result::Result<&'static [u8], bun_core::Error> {
+                    // TODO(b2-blocked): bun_alloc::BSSStringList::appendParts
+                    unimplemented!("BSSStringList::appendParts (Phase B)")
+                }
+                pub fn exists(&self, _value: &[u8]) -> bool { false }
+            }
+        };
+    }
+    string_store_impl!(DirnameStore);
+    string_store_impl!(FilenameStore);
+
     // ── FileSystem ───────────────────────────────────────────────────────
 
-    /// Port of `FileSystem` in `fs.zig` (`dirname_store`, `filename_store`
-    /// omitted until bun_alloc::BSSStringList per-type singletons are real).
+    /// Port of `FileSystem` in `fs.zig`.
     pub struct FileSystem {
-        pub top_level_dir: &'static ZStr,
+        pub top_level_dir: &'static [u8],
 
         pub fs: Implementation,
-        // TODO(b2-blocked): bun_alloc::BSSStringList per-type singleton —
-        //   pub dirname_store: &'static DirnameStore,
-        //   pub filename_store: &'static FilenameStore,
+        pub dirname_store: &'static DirnameStore,
+        pub filename_store: &'static FilenameStore,
     }
 
     // TODO(port): lifetime — global mutable singleton; Zig used `var instance: FileSystem = undefined`
@@ -225,6 +150,41 @@ pub mod fs {
             // SAFETY: caller guarantees init() was called (matches Zig global singleton).
             // `&raw mut` avoids the `static_mut_refs` edition-2024 deny lint.
             unsafe { (*(&raw mut INSTANCE)).assume_init_mut() }
+        }
+
+        /// Port of `FileSystem.setMaxFd` in `fs.zig`.
+        #[inline]
+        pub fn set_max_fd(_fd: bun_sys::RawFd) {
+            // TODO(b2-blocked): rlimit-based fd-ceiling tracking (FileSystem.max_fd).
+        }
+
+        /// Port of `FileSystem.absBuf` in `fs.zig`.
+        pub fn abs_buf<'b>(&self, parts: &[&[u8]], buf: &'b mut [u8]) -> &'b [u8] {
+            // TODO(b2-blocked): bun_paths::join_abs_string_buf — wire once
+            // bun_paths exposes the cwd-relative joiner with a caller buffer.
+            let _ = (parts, &self.top_level_dir);
+            unimplemented!("FileSystem::abs_buf (Phase B — bun_paths::join_abs_string_buf)")
+        }
+
+        /// Port of `FileSystem.absBufChecked` in `fs.zig` — returns `None` on overflow.
+        pub fn abs_buf_checked<'b>(&self, parts: &[&[u8]], buf: &'b mut [u8]) -> Option<&'b [u8]> {
+            let _ = parts;
+            // TODO(b2-blocked): bun_paths::join_abs_string_buf_checked
+            unimplemented!("FileSystem::abs_buf_checked (Phase B)")
+        }
+
+        /// Port of `FileSystem.normalizeBuf` in `fs.zig`.
+        pub fn normalize_buf<'b>(&self, buf: &'b mut [u8], str: &[u8]) -> &'b [u8] {
+            let _ = str;
+            // TODO(b2-blocked): bun_paths::normalize_string_buf
+            unimplemented!("FileSystem::normalize_buf (Phase B)")
+        }
+
+        /// Port of `FileSystem.absAlloc` in `fs.zig`.
+        pub fn abs_alloc(&self, parts: &[&[u8]]) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
+            let _ = parts;
+            // TODO(b2-blocked): heap-allocating join_abs
+            unimplemented!("FileSystem::abs_alloc (Phase B)")
         }
     }
 
@@ -473,6 +433,29 @@ pub mod fs {
             }
         }
 
+        #[inline] pub fn empty() -> Path<'static> { Path::EMPTY }
+        #[inline] pub fn text(&self) -> &'a [u8] { self.text }
+        #[inline] pub fn pretty(&self) -> &'a [u8] { self.pretty }
+        #[inline] pub fn namespace(&self) -> &'a [u8] { self.namespace }
+
+        /// Port of `Path.isNodeModule` in `fs.zig`.
+        pub fn is_node_module(&self) -> bool {
+            bun_string::strings::last_index_of(
+                self.name.dir,
+                const_format::concatcp!(bun_paths::SEP_STR, "node_modules", bun_paths::SEP_STR).as_bytes(),
+            )
+            .is_some()
+        }
+
+        /// Port of `Path.setRealpath` in `fs.zig`.
+        pub fn set_realpath(&mut self, to: &'a [u8]) {
+            let old_path = self.text;
+            self.text = to;
+            self.name = PathName::init(to);
+            self.pretty = old_path;
+            self.is_symlink = true;
+        }
+
         /// Port of `Path.hashKey` in `fs.zig`.
         pub fn hash_key(&self) -> u64 {
             if self.is_file() {
@@ -645,6 +628,19 @@ pub mod fs {
         pub fn base_lowercase(&self) -> &[u8] {
             self.base_lowercase_.slice()
         }
+
+        /// Port of `Entry.kind` in `fs.zig` — stat-on-first-use.
+        pub fn kind(&self, _fs: &mut Implementation, _store_fd: bool) -> EntryKind {
+            // TODO(b2-blocked): RealFS::kind stat path (open + fstat + readlink) —
+            // gated in `fs.rs`. Returning the readdir-time hint until then.
+            self.cache.kind
+        }
+
+        /// Port of `Entry.symlink` in `fs.zig`.
+        pub fn symlink(&self, _fs: &mut Implementation, _store_fd: bool) -> &'static [u8] {
+            // TODO(b2-blocked): RealFS::kind populates cache.symlink on first call.
+            self.cache.symlink.slice()
+        }
     }
 
     /// Port of `FileSystem.DirEntry` namespace items (`EntryMap`, `Err`).
@@ -672,6 +668,8 @@ pub mod fs {
     }
 
     /// Port of `FileSystem.DirEntry.DifferentCase` in `fs.zig`.
+    // PORT NOTE: lifetime-generic, but resolver storage requires `'static` (all
+    // three slices borrow DirnameStore/EntryStore-interned data in practice).
     #[derive(Clone, Copy)]
     pub struct DifferentCase<'a> {
         pub dir: &'a [u8],
@@ -680,9 +678,11 @@ pub mod fs {
     }
 
     /// Port of `FileSystem.DirEntry.Lookup` in `fs.zig`.
+    // PORT NOTE: `entry` is `&mut` because the resolver populates `abs_path` /
+    // `cache.{fd,symlink}` lazily on first hit. Zig used `*Entry` (mutable).
     pub struct EntryLookup<'a> {
-        pub entry: &'a Entry,
-        pub diff_case: Option<DifferentCase<'a>>,
+        pub entry: &'a mut Entry,
+        pub diff_case: Option<DifferentCase<'static>>,
     }
 
     impl DirEntry {
@@ -691,9 +691,10 @@ pub mod fs {
         }
 
         /// Port of `DirEntry.get` in `fs.zig`.
-        // PORT NOTE: `query_` tied to `'a` so `DifferentCase.query` can borrow it;
-        // Zig stored the caller's slice verbatim (no lifetime distinction).
-        pub fn get<'a>(&'a self, query_: &'a [u8]) -> Option<EntryLookup<'a>> {
+        // PORT NOTE: `query_` borrow detached from the returned Entry lifetime so
+        // callers can pass a slice into the same threadlocal buffer they then
+        // mutate; `DifferentCase` widens to 'static (DirnameStore-backed).
+        pub fn get<'a>(&'a self, query_: &[u8]) -> Option<EntryLookup<'a>> {
             if query_.is_empty() || query_.len() > bun_paths::MAX_PATH_BYTES {
                 return None;
             }
@@ -702,20 +703,25 @@ pub mod fs {
             let query = strings::copy_lowercase_if_needed(query_, &mut scratch_lookup_buffer[..]);
             let &result_ptr = self.data.get(query)?;
             // SAFETY: EntryStore-owned pointer, valid for lifetime of store
-            let result = unsafe { &*result_ptr };
+            let result = unsafe { &mut *result_ptr };
             let basename = result.base();
             if !strings::eql_long::<true>(basename, query_) {
                 return Some(EntryLookup {
-                    entry: result,
+                    // SAFETY: same allocation; widening to 'a for borrowck reshape
+                    entry: unsafe { &mut *result_ptr },
                     diff_case: Some(DifferentCase {
                         dir: self.dir,
-                        query: query_, // TODO(port): lifetime — Zig stored caller's slice
-                        actual: basename,
+                        // TODO(port): lifetime — Zig stored caller's slice; widened to 'static.
+                        // SAFETY: extended for borrowck reshape; consumed before caller's buffer
+                        // is overwritten (see resolver call sites).
+                        query: unsafe { &*(query_ as *const [u8]) },
+                        // SAFETY: `basename` borrows EntryStore (process-lifetime).
+                        actual: unsafe { &*(basename as *const [u8]) },
                     }),
                 });
             }
 
-            Some(EntryLookup { entry: result, diff_case: None })
+            Some(EntryLookup { entry: unsafe { &mut *result_ptr }, diff_case: None })
         }
 
         /// Port of `DirEntry.getComptimeQuery` in `fs.zig`.
@@ -725,21 +731,35 @@ pub mod fs {
             // PERF(port): was comptime hash precompute — profile in Phase B
             let &result_ptr = self.data.get(query_lower)?;
             // SAFETY: EntryStore-owned pointer
-            let result = unsafe { &*result_ptr };
+            let result = unsafe { &mut *result_ptr };
             let basename = result.base();
 
             if basename != query_lower {
                 return Some(EntryLookup {
-                    entry: result,
+                    entry: unsafe { &mut *result_ptr },
                     diff_case: Some(DifferentCase {
                         dir: self.dir,
                         query: query_lower,
-                        actual: basename,
+                        // SAFETY: `basename` borrows EntryStore (process-lifetime).
+                        actual: unsafe { &*(basename as *const [u8]) },
                     }),
                 });
             }
 
-            Some(EntryLookup { entry: result, diff_case: None })
+            Some(EntryLookup { entry: unsafe { &mut *result_ptr }, diff_case: None })
+        }
+
+        /// Port of `DirEntry.addEntry` in `fs.zig`.
+        // TODO(b2-blocked): full body in gated `fs.rs` (EntryStore alloc + lowercase
+        // dedup). Type-only stub so the resolver's readdir loop compiles.
+        pub fn add_entry<I, A, B>(
+            &mut self,
+            _prev_map: Option<&mut dir_entry::EntryMap>,
+            _value: &I,
+            _a: A,
+            _b: B,
+        ) -> core::result::Result<(), bun_core::Error> {
+            unimplemented!("DirEntry::add_entry (Phase B — fs.rs)")
         }
 
         /// Port of `DirEntry.hasComptimeQuery` in `fs.zig`.
@@ -750,9 +770,30 @@ pub mod fs {
     }
 
     /// Port of `FileSystem.RealFS.EntriesOption` in `fs.zig`.
+    // PORT NOTE: Zig stores `*DirEntry` (raw, BSSMap-owned). Modeled as
+    // `&'static mut DirEntry` so resolver match arms (`Entries(entries) =>
+    // entries.dir`) auto-deref. The backing storage is the BSSMap singleton;
+    // `'static` is the ARENA lifetime.
     pub enum EntriesOption {
-        Entries(Box<DirEntry>),
+        Entries(&'static mut DirEntry),
         Err(dir_entry::Err),
+    }
+
+    impl EntriesOption {
+        #[inline]
+        pub fn entries(&self) -> &DirEntry {
+            match self {
+                EntriesOption::Entries(p) => p,
+                _ => unreachable!("EntriesOption::entries called on Err variant"),
+            }
+        }
+        #[inline]
+        pub fn entries_mut(&mut self) -> &mut DirEntry {
+            match self {
+                EntriesOption::Entries(p) => p,
+                _ => unreachable!("EntriesOption::entries_mut called on Err variant"),
+            }
+        }
     }
 
     /// Downstream-facing alias — `bun_glob::GlobWalker` named the result of
@@ -764,6 +805,36 @@ pub mod fs {
     /// `store_keys=false` → Rust `BSSMapInner<V, COUNT, RM_SLASH>` (est_key_len unused on inner shape).
     pub type EntriesOptionMap = bun_alloc::BSSMapInner<EntriesOption, 2048, true>;
 
+    /// Resolver-side wrapper over `EntriesOptionMap` exposing the BSSMap surface
+    /// (`get`, `get_or_put`, `at_index`, `put`, `mark_not_found`). The real
+    /// bodies live in bun_alloc's gated `_bss_gated::BSSMapInner`; these are
+    /// type-only shims so the resolver compiles.
+    // TODO(b2-blocked): bun_alloc::BSSMapInner — un-gate the real bodies.
+    pub struct EntriesMap {
+        inner: EntriesOptionMap,
+    }
+    impl EntriesMap {
+        pub fn get(&mut self, _key: &[u8]) -> Option<&mut EntriesOption> {
+            unimplemented!("BSSMap::get (Phase B)")
+        }
+        pub fn get_or_put(&mut self, _key: &[u8]) -> crate::__phase_a_body::allocators::Result {
+            unimplemented!("BSSMap::get_or_put (Phase B)")
+        }
+        pub fn at_index(&mut self, index: bun_alloc::IndexType) -> Option<&mut EntriesOption> {
+            self.inner.at_index(index)
+        }
+        pub fn put(
+            &mut self,
+            _result: &crate::__phase_a_body::allocators::Result,
+            _value: EntriesOption,
+        ) -> core::result::Result<*mut EntriesOption, bun_core::Error> {
+            unimplemented!("BSSMap::put (Phase B)")
+        }
+        pub fn mark_not_found(&mut self, _result: crate::__phase_a_body::allocators::Result) {
+            unimplemented!("BSSMap::mark_not_found (Phase B)")
+        }
+    }
+
     /// Zig: `pub const Implementation = RealFS;`
     pub type Implementation = RealFS;
 
@@ -772,15 +843,41 @@ pub mod fs {
     /// Port of `FileSystem.RealFS` in `fs.zig`.
     pub struct RealFS {
         pub entries_mutex: Mutex,
-        /// Port of `entries: *EntriesOption.Map`. `None` until `init()` runs;
-        /// `BSSMapInner` per-type singleton storage is still Phase-B (see bun_alloc).
-        pub entries: Option<core::ptr::NonNull<EntriesOptionMap>>,
+        /// Port of `entries: *EntriesOption.Map`. The resolver body addresses
+        /// this directly (`rfs.entries.get_or_put(..)`); modeled as the wrapper
+        /// `EntriesMap` until bun_alloc un-gates BSSMap.
+        pub entries: EntriesMap,
         pub cwd: &'static [u8],
         pub file_limit: usize,
         pub file_quota: usize,
     }
 
     impl RealFS {
+        /// Port of `RealFS.readDirectory` in `fs.zig`.
+        // TODO(b2-blocked): full body in gated `fs.rs` (open + iterate + cache).
+        pub fn read_directory(
+            &mut self,
+            _dir: &[u8],
+            _handle: Option<Fd>,
+            _generation: Generation,
+            _store_fd: bool,
+        ) -> core::result::Result<&mut EntriesOption, bun_core::Error> {
+            unimplemented!("RealFS::read_directory (Phase B — fs.rs)")
+        }
+
+        /// Port of `RealFS.bustEntriesCache` in `fs.zig`.
+        pub fn bust_entries_cache(&mut self, _path: &[u8]) -> bool {
+            // TODO(b2-blocked): BSSMap remove + generation bump.
+            false
+        }
+
+        /// Port of `RealFS.needToCloseFiles` in `fs.zig`.
+        #[inline]
+        pub fn need_to_close_files(&self) -> bool {
+            // Conservative: always close until rlimit-based quota tracking lands.
+            true
+        }
+
         /// Port of `RealFS.entriesAt` in `fs.zig` — index-only fast path.
         ///
         /// The full Zig body re-reads the directory when `entries.generation < generation`
@@ -795,10 +892,7 @@ pub mod fs {
             index: bun_alloc::IndexType,
             _generation: Generation,
         ) -> Option<&mut EntriesOption> {
-            // SAFETY: `entries` set during `FileSystem::init`; resolver code only calls
-            // this after init (matches Zig invariant).
-            let map = unsafe { self.entries?.as_mut() };
-            map.at_index(index)
+            self.entries.at_index(index)
         }
 
         fn platform_temp_dir_compute() -> &'static [u8] {
@@ -856,6 +950,28 @@ pub mod fs {
             bun_core::env_var::BUN_TMPDIR.get().unwrap_or_else(Self::platform_temp_dir)
         }
     }
+
+    impl<'a> PathName<'a> {
+        #[inline] pub fn ext(&self) -> &'a [u8] { self.ext }
+        #[inline] pub fn dir(&self) -> &'a [u8] { self.dir }
+        #[inline] pub fn filename(&self) -> &'a [u8] { self.filename }
+    }
+
+    // ── `file_system` namespace shim ─────────────────────────────────────
+    // The Phase-A resolver body addresses types via `Fs::file_system::*` (the
+    // Zig nesting was `FileSystem.RealFS.EntriesOption` etc.). Re-export the
+    // flat types under the nested module paths the body expects.
+    pub mod file_system {
+        pub use super::{DirEntry, DirnameStore, Entry, EntryKind, FilenameStore, RealFS};
+        pub mod entry {
+            pub mod lookup {
+                pub use crate::fs::DifferentCase;
+            }
+        }
+        pub mod real_fs {
+            pub use crate::fs::EntriesOption;
+        }
+    }
 }
 pub fn is_package_path(path: &[u8]) -> bool {
     // Always check for posix absolute paths (starts with "/")
@@ -895,92 +1011,551 @@ pub fn is_package_path_not_absolute(non_absolute_path: &[u8]) -> bool {
 //   bun_js_parser::Expr query API (as_property/as_string/as_bool/as_array) — same tier, not yet ported
 
 // ──────────────────────────────────────────────────────────────────────────
-// Phase-A draft body (gated; preserved verbatim for B-2 un-gating)
+// Phase-A draft body — B-2 UN-GATED.
+// Higher-tier deps (bun_install / bun_bundler / bun_http) are FORWARD_DECL'd
+// in `__forward_decls` below so the node_modules resolution algorithm compiles.
 // ──────────────────────────────────────────────────────────────────────────
-#[cfg(any())]
-mod __phase_a_body {
-use super::*;
+pub mod __phase_a_body {
+use super::{is_package_path, is_package_path_not_absolute};
 
 use core::ptr::NonNull;
 use std::cell::RefCell;
 use std::io::Write as _;
 
-use bun_alloc::allocators;
-// CYCLEBREAK: bun_bundler::cache::Set — FORWARD_DECL. The resolver only needs
-// `caches.json.parse_tsconfig(..)`; that path now goes through
-// `crate::tsconfig_json::JsonCache` (manual vtable, §Dispatch cold-path).
-// `CacheSet` is held opaquely so the bundler can pass its real `cache::Set`
-// without resolver naming the type.
-type CacheSet = *mut (); // SAFETY: erased bun_bundler::cache::Set
+// ── FORWARD_DECL stubs for higher-tier crates ─────────────────────────────
+// TODO(b2-blocked): bun_install / bun_bundler / bun_http — replace with real
+// imports once those crates compile and the dep edges are restored in Cargo.toml.
+mod __forward_decls {
+    use super::*;
+
+    // ── bun_install ─────────────────────────────────────────────────────
+    pub mod Install {
+        pub type PackageID = u32;
+        pub type DependencyID = u32;
+        pub const INVALID_PACKAGE_ID: PackageID = u32::MAX;
+
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        pub enum PreinstallState { Unknown, Done, Extract, Extracting }
+
+        #[derive(Default)]
+        pub struct Features {
+            pub dev_dependencies: bool,
+            pub is_main: bool,
+            pub dependencies: bool,
+            pub optional_dependencies: bool,
+        }
+
+        #[derive(Default)]
+        pub struct TaskCallbackContext { pub root_request_id: u32 }
+
+        pub enum EnqueueResult {
+            Resolution(EnqueueResolution),
+            Pending(DependencyID),
+            NotFound,
+            Failure(bun_core::Error),
+        }
+        pub struct EnqueueResolution {
+            pub package_id: PackageID,
+            pub resolution: super::Resolution,
+        }
+
+        pub mod resolution {
+            #[derive(Clone, Copy, PartialEq, Eq, Default)]
+            pub enum Tag { #[default] Uninitialized, Root, Npm }
+            #[derive(Clone, Copy, Default)]
+            pub struct Value { pub npm: NpmResolution }
+            impl Value { pub const Root: Self = Self { npm: NpmResolution { version: (), url: () } }; }
+            #[derive(Clone, Copy, Default)]
+            pub struct NpmResolution { pub version: (), pub url: () }
+        }
+
+        pub mod lockfile {
+            pub mod Package {
+                #[derive(Clone, Copy)]
+                pub enum DependencyGroup { Dependencies, DevDependencies, OptionalDependencies, PeerDependencies }
+            }
+        }
+
+        #[derive(Default, Clone)]
+        pub struct WakeHandler;
+    }
+
+    /// FORWARD_DECL: `bun_install::resolution::Resolution`.
+    #[derive(Clone, Default)]
+    pub struct Resolution {
+        pub tag: Install::resolution::Tag,
+        pub value: Install::resolution::Value,
+    }
+
+    /// FORWARD_DECL: `bun_install::lockfile::Package`.
+    #[derive(Default)]
+    pub struct Package {
+        pub name: (),
+        pub resolution: Resolution,
+        pub meta: PackageMeta,
+        pub scripts: PackageScripts,
+    }
+    #[derive(Default)]
+    pub struct PackageMeta { pub id: Install::PackageID }
+    impl PackageMeta { pub fn set_has_install_script(&mut self, _v: bool) {} }
+    #[derive(Default)]
+    pub struct PackageScripts;
+    impl PackageScripts { pub fn has_any(&self) -> bool { false } }
+
+    /// FORWARD_DECL: `bun_install::PackageManager` — opaque.
+    pub struct PackageManager(());
+
+    // ── bun_install::dependency ─────────────────────────────────────────
+    pub mod Dependency {
+        #[derive(Clone, Default)]
+        pub struct Version { pub tag: version::Tag }
+        pub mod version {
+            #[derive(Clone, Copy, PartialEq, Eq, Default)]
+            pub enum Tag { #[default] Uninitialized, Npm }
+        }
+        #[derive(Clone, Copy, Default)]
+        pub struct Behavior { pub prod: bool }
+        #[derive(Clone)]
+        pub struct Dependency {
+            pub name: super::SemverString,
+            pub version: Version,
+            pub behavior: Behavior,
+        }
+        // `Dependency::parse` is only reached on the auto-install path; that
+        // path is re-gated below.
+    }
+
+    // ── bun_semver shims (string::Builder, SlicedString) ────────────────
+    pub mod Semver {
+        pub use super::SemverString as String;
+        #[derive(Default)]
+        pub struct SlicedString;
+        impl SlicedString { pub fn init(_a: &[u8], _b: &[u8]) -> Self { Self } }
+        pub mod string {
+            #[derive(Default)]
+            pub struct Builder;
+            impl Builder {
+                pub fn allocate(&mut self) -> Result<(), bun_core::Error> { Ok(()) }
+                pub fn allocated_slice(&self) -> Vec<u8> { Vec::new() }
+            }
+        }
+    }
+    #[derive(Clone, Default)]
+    pub struct SemverString;
+    impl SemverString {
+        pub fn init(_buf: &[u8], _slice: &[u8]) -> Self { Self }
+        pub fn slice<'b>(&self, _buf: &'b [u8]) -> &'b [u8] { b"" }
+        pub fn from(_s: &[u8]) -> () { () }
+    }
+
+    // ── bun_http ────────────────────────────────────────────────────────
+    pub mod bun_http {
+        pub mod mime_type {
+            pub use bun_http_types::MimeType::Category;
+        }
+    }
+
+    // ── bun_options_types::module_loader ────────────────────────────────
+    // TYPE_ONLY(b0): HardcodedModule/AliasOptions relocated bun_jsc → bun_options_types.
+    // TODO(b2-blocked): real impl lives in bun_jsc::module_loader; this is the
+    // type-only shape so `mark_builtins_as_external` / subpath-import remap compile.
+    pub mod module_loader {
+        #[derive(Default, Clone, Copy)]
+        pub struct AliasOptions { pub rewrite_jest_for_tests: bool }
+        pub struct AliasResult { pub path: &'static [u8] }
+        pub mod HardcodedModule {
+            use super::*;
+            pub struct Alias;
+            impl Alias {
+                pub fn has(_import_path: &[u8], _target: bun_options_types::Target, _opts: AliasOptions) -> bool {
+                    // TODO(b2-blocked): real lookup table.
+                    false
+                }
+                pub fn get(_import_path: &[u8], _target: bun_options_types::Target, _opts: AliasOptions) -> Option<AliasResult> {
+                    None
+                }
+            }
+        }
+    }
+
+    // ── bun_core::StandaloneModuleGraph ─────────────────────────────────
+    // TODO(b2-blocked): bun_core::StandaloneModuleGraph — lives in bun_runtime.
+    pub struct StandaloneModuleGraph(());
+    impl StandaloneModuleGraph {
+        pub fn is_bun_standalone_file_path(_p: &[u8]) -> bool { false }
+        pub fn find_assume_standalone_path(&self, _p: &[u8]) -> Option<StandaloneFile> { None }
+    }
+    pub struct StandaloneFile;
+    impl StandaloneFile { pub fn name(&self) -> &'static [u8] { b"" } }
+
+    // ── bun_bundler::cache::Set ─────────────────────────────────────────
+    // CYCLEBREAK: bun_bundler::cache::Set — FORWARD_DECL. The resolver only
+    // needs `caches.json` (TSConfig parse) + `caches.fs` (read_file). Both are
+    // routed through local vtables here so the bundler can pass its real
+    // `cache::Set` without resolver naming the type.
+    pub struct CacheSet {
+        pub fs: FsCache,
+        pub json: crate::tsconfig_json::JsonCache,
+    }
+    pub struct FsCache;
+    impl FsCache {
+        pub fn read_file_with_allocator(
+            &mut self,
+            _fs: &mut crate::fs::FileSystem,
+            _file: &[u8],
+            _dirname_fd: bun_sys::Fd,
+            _use_shared_buffer: bool,
+            _file_handle: Option<bun_sys::Fd>,
+        ) -> core::result::Result<FsCacheEntry, bun_core::Error> {
+            // TODO(b2-blocked): bun_bundler::cache::Fs::read_file
+            unimplemented!("cache::Fs::read_file (Phase B)")
+        }
+    }
+    pub struct FsCacheEntry { pub contents: &'static [u8] }
+    impl FsCacheEntry {
+        pub fn close_fd(&mut self) -> core::result::Result<(), bun_core::Error> { Ok(()) }
+    }
+
+    // ── bun_crash_handler shim ──────────────────────────────────────────
+    pub mod bun_crash_handler {
+        pub fn set_current_action_resolver(_src: &[u8], _imp: &[u8], _kind: impl Sized) -> impl Drop {
+            struct G; impl Drop for G { fn drop(&mut self) {} } G
+        }
+    }
+
+    // ── bun_core::perf shim ─────────────────────────────────────────────
+    pub mod perf {
+        pub fn trace(_name: &'static str) -> impl Drop {
+            struct G; impl Drop for G { fn drop(&mut self) {} } G
+        }
+    }
+}
+use __forward_decls::{
+    Install, Dependency, Package, PackageManager, Resolution, Semver, CacheSet,
+    StandaloneModuleGraph, bun_http, bun_crash_handler, module_loader,
+};
+
+// `bun_options_types::module_loader` doesn't exist yet; alias the local shim
+// at the path the body expects via a `mod` re-export.
+mod bun_options_types {
+    pub use ::bun_options_types::*;
+    pub use super::__forward_decls::module_loader;
+}
+// `bun_core::StandaloneModuleGraph` / `bun_core::perf::trace` / `assertf!` /
+// `concat` shims.
+mod bun_core {
+    pub use ::bun_core::*;
+    pub use super::__forward_decls::{StandaloneModuleGraph, perf};
+    // TODO(b2-blocked): bun_core::assertf! — Zig `bun.assertf` is debug-only
+    // formatted assert; bun_core hasn't exported it yet.
+    #[macro_export]
+    macro_rules! __resolver_assertf {
+        ($cond:expr, $($arg:tt)*) => { debug_assert!($cond, $($arg)*) };
+    }
+    pub use crate::__resolver_assertf as assertf;
+    // TODO(b2-blocked): bun_core::concat — `bun.concat(buf, parts)` writes
+    // `parts` consecutively into `buf` and returns the prefix slice.
+    pub fn concat<'b>(buf: &'b mut [u8], parts: &[&[u8]]) -> &'b [u8] {
+        let mut off = 0;
+        for p in parts {
+            buf[off..off + p.len()].copy_from_slice(p);
+            off += p.len();
+        }
+        &buf[..off]
+    }
+}
+// bun_paths shim — adds the resolver-shaped wrappers (Option-returning dirname,
+// PosixToWinNormalizer, join helpers) until bun_paths exposes them at the root.
+mod bun_paths {
+    pub use ::bun_paths::*;
+    pub use ::bun_paths::resolve_path::is_sep_any;
+
+    /// Port of `std.fs.path.dirname` (Option-returning).
+    // TODO(b2-blocked): bun_paths::dirname — Zig `std.fs.path.dirname` returns
+    // null for root; bun_paths exposes only `dirname_simple` / generic `dirname<P>`.
+    pub fn dirname(p: &[u8]) -> Option<&[u8]> {
+        let d = ::bun_paths::dirname_simple(p);
+        if d.is_empty() || d == p { None } else { Some(d) }
+    }
+    pub fn dirname_platform(p: &[u8], _platform: Platform) -> &[u8] {
+        ::bun_paths::dirname_simple(p)
+    }
+    /// Port of `bun.path.joinAbsStringBuf`.
+    // TODO(b2-blocked): bun_paths::join_abs_string_buf — generic-over-PlatformT
+    // in resolve_path.rs; expose a value-dispatched wrapper.
+    pub fn join_abs_string_buf<'b>(_cwd: &[u8], _buf: &'b mut [u8], _parts: &[&[u8]], _platform: Platform) -> &'b [u8] {
+        unimplemented!("bun_paths::join_abs_string_buf value-dispatch (Phase B)")
+    }
+    pub fn join_abs(_cwd: &[u8], _platform: Platform, _part: &[u8]) -> &'static [u8] {
+        unimplemented!("bun_paths::join_abs (Phase B)")
+    }
+    pub fn join<'b>(_parts: &[&[u8]], _platform: Platform) -> &'static [u8] {
+        unimplemented!("bun_paths::join (Phase B)")
+    }
+    pub fn join_string_buf<'b>(_buf: &'b mut [u8], _parts: &[&[u8]], _platform: Platform) -> &'b [u8] {
+        unimplemented!("bun_paths::join_string_buf (Phase B)")
+    }
+    /// Port of `bun.PosixToWinNormalizer` — on POSIX it's a no-op pass-through.
+    // TODO(b2-blocked): real Windows long-path / drive-relative normalization.
+    #[derive(Default)]
+    pub struct PosixToWinNormalizer;
+    impl PosixToWinNormalizer {
+        pub fn resolve_cwd<'b>(&mut self, p: &'b [u8]) -> core::result::Result<&'b [u8], ::bun_core::Error> { Ok(p) }
+        pub fn resolve<'b>(&mut self, _source_dir: &[u8], p: &'b [u8]) -> &'b [u8] { p }
+    }
+    /// Zig `bun.pathLiteral` — compile-time platform-separator literal. Type-only
+    /// here; callers pass it to `open_dir_z` which wants a `&ZStr`.
+    pub fn path_literal(p: &'static [u8]) -> &'static [u8] { p }
+    pub fn windows_filesystem_root(p: &[u8]) -> &[u8] {
+        // TODO(b2-blocked): real impl in resolve_path.rs (not re-exported yet).
+        if p.len() >= 3 && p[1] == b':' { &p[..3] } else { &p[..0] }
+    }
+}
+// bun_string::strings shim — adds path-flavored helpers the resolver uses that
+// `immutable.rs` hasn't exported yet.
+mod strings {
+    pub use bun_string::strings::*;
+    #[inline]
+    pub fn without_trailing_slash_windows_path(p: &[u8]) -> &[u8] {
+        // POSIX/loose: keep "/" and "C:\" as-is, strip one trailing separator otherwise.
+        if p.len() > 1
+            && super::bun_paths::is_sep_any(p[p.len() - 1])
+            && !(p.len() == 3 && p[1] == b':')
+        {
+            &p[..p.len() - 1]
+        } else {
+            p
+        }
+    }
+    #[inline]
+    pub fn path_contains_node_modules_folder(p: &[u8]) -> bool {
+        index_of(p, b"node_modules").is_some()
+    }
+    #[inline]
+    pub fn without_leading_path_separator(p: &[u8]) -> &[u8] {
+        if !p.is_empty() && super::bun_paths::is_sep_any(p[0]) { &p[1..] } else { p }
+    }
+    #[inline]
+    pub fn char_is_any_slash(c: u8) -> bool { c == b'/' || c == b'\\' }
+    #[inline]
+    pub fn eql_long(a: &[u8], b: &[u8], _check_len: bool) -> bool {
+        bun_string::strings::eql_long::<true>(a, b)
+    }
+    #[inline]
+    pub fn index_of_any(slice: &[u8], chars: &'static [u8]) -> Option<usize> {
+        bun_string::strings::index_of_any(slice, chars).map(|v| v.get() as usize)
+    }
+}
+// bun_sys shim — adds the dir-iteration / openat surface the resolver names.
+// TODO(b2-blocked): bun_sys dir-iteration API — `iterate_dir` /
+// `open_dir_absolute_z` / `open_dir_z` / `get_fd_path` / `OpenDirOptions`.
+mod bun_sys {
+    pub use ::bun_sys::*;
+    #[derive(Default)]
+    pub struct OpenDirOptions { pub no_follow: bool, pub iterate: bool }
+    pub fn open_dir_absolute_z(_path: &::bun_core::ZStr, _opts: OpenDirOptions) -> core::result::Result<Fd, ::bun_core::Error> {
+        unimplemented!("bun_sys::open_dir_absolute_z (Phase B)")
+    }
+    pub fn open_dir_z(_dir: Fd, _path: &[u8], _opts: OpenDirOptions) -> core::result::Result<Fd, ::bun_core::Error> {
+        unimplemented!("bun_sys::open_dir_z (Phase B)")
+    }
+    pub fn open_dir_for_iteration(_dir: Fd, _path: &[u8]) -> Maybe<Fd> {
+        unimplemented!("bun_sys::open_dir_for_iteration (Phase B)")
+    }
+    pub fn open(_path: &::bun_core::ZStr, _flags: i32, _mode: u32) -> Maybe<Fd> {
+        unimplemented!("bun_sys::open shim (Phase B)")
+    }
+    pub fn iterate_dir(_fd: Fd) -> DirIteratorShim { DirIteratorShim }
+    pub struct DirIteratorShim;
+    impl DirIteratorShim {
+        pub fn next(&mut self) -> Maybe<core::result::Result<Option<()>, ::bun_core::Error>> {
+            unimplemented!("bun_sys::DirIterator (Phase B)")
+        }
+    }
+    pub fn get_fd_path<'b>(_fd: Fd, _buf: &'b mut [u8]) -> core::result::Result<&'b [u8], ::bun_core::Error> {
+        unimplemented!("bun_sys::get_fd_path (Phase B)")
+    }
+    pub use ::bun_sys::RawFd;
+}
+
+/// `bun_sys::Fd` extension surface the resolver names but `fd.rs` doesn't
+/// expose yet. TODO(b2-blocked): bun_sys::Fd::{close, cast, native, get_fd_path, ZERO}.
+trait FdExt: Sized {
+    fn close(self);
+    fn cast(self) -> bun_sys::RawFd;
+    fn native(self) -> bun_sys::RawFd;
+    fn get_fd_path<'b>(self, buf: &'b mut [u8]) -> core::result::Result<&'b [u8], ::bun_core::Error>;
+}
+impl FdExt for ::bun_sys::Fd {
+    #[inline] fn close(self) { let _ = ::bun_sys::close(self); }
+    #[inline] fn cast(self) -> bun_sys::RawFd {
+        // TODO(b2-blocked): bun_sys::Fd::native — fd.rs has `from_native`/`.native()` only on the inner repr.
+        unimplemented!("Fd::cast (Phase B)")
+    }
+    #[inline] fn native(self) -> bun_sys::RawFd { self.cast() }
+    #[inline] fn get_fd_path<'b>(self, buf: &'b mut [u8]) -> core::result::Result<&'b [u8], ::bun_core::Error> {
+        bun_sys::get_fd_path(self, buf)
+    }
+}
+trait FdZero { const ZERO: ::bun_sys::Fd; }
+impl FdZero for ::bun_sys::Fd { const ZERO: ::bun_sys::Fd = ::bun_sys::Fd::INVALID; }
+
+// ── bun_alloc::allocators — extend with `Result`/`Status` ────────────────
+// TODO(b2-blocked): the real `allocators::{Result, ItemStatus}` are gated in
+// bun_alloc::_bss_gated. Locally re-export the un-gated subset and add the
+// `Result`/`Status` shapes the BSSMap path needs.
+pub mod allocators {
+    pub use bun_alloc::allocators::*;
+    #[derive(Clone, Copy, Default)]
+    pub struct Result {
+        pub index: IndexType,
+        pub hash: u64,
+        pub status: Status,
+    }
+    pub use bun_alloc::ItemStatus as Status;
+}
+
 // CYCLEBREAK: bun_bundler::options — TYPE_ONLY. `ModuleType`/`Loader`/`Target`/
 // `LoaderHashTable` already moved down to `bun_options_types::BundleEnums`;
-// `jsx::Pragma` lives in `crate::tsconfig_json::options::jsx`. `BundleOptions`/
-// `Packages` remain higher-tier and are the genuine block on un-gating this body.
+// `jsx::Pragma` lives in `crate::tsconfig_json::options::jsx`.
 // TODO(b0-genuine): bun_bundler::options::{BundleOptions, Packages} — MOVE_DOWN
-// to bun_options_types so the resolver can read `.target`/`.packages`/
-// `.extension_order`/`.global_cache` without a back-edge.
+// to bun_options_types. Until then, `BundleOptions` is FORWARD_DECL'd here with
+// exactly the fields the resolver reads.
 mod options {
     pub use bun_options_types::BundleEnums::{Loader, LoaderHashTable, ModuleType, Target};
     pub use crate::tsconfig_json::options::jsx;
-    pub use bun_bundler::options::{BundleOptions, Packages, bundle_options, Env, EnvDefault};
+
+    /// FORWARD_DECL: `bun_bundler::options::Packages`.
+    #[derive(Clone, Copy, PartialEq, Eq, Default)]
+    pub enum Packages { #[default] Bundle, External }
+
+    /// FORWARD_DECL: `bun_bundler::options::ExternalModules`.
+    #[derive(Default)]
+    pub struct ExternalModules {
+        pub patterns: Vec<WildcardPattern>,
+        pub abs_paths: StringSet,
+        pub node_modules: StringSet,
+    }
+    #[derive(Clone)]
+    pub struct WildcardPattern { pub prefix: Box<[u8]>, pub suffix: Box<[u8]> }
+    #[derive(Default)]
+    pub struct StringSet;
+    impl StringSet {
+        pub fn count(&self) -> usize { 0 }
+        pub fn contains(&self, _key: &[u8]) -> bool { false }
+    }
+
+    /// FORWARD_DECL: `bun_bundler::options::Conditions`.
+    #[derive(Clone, Default)]
+    pub struct Conditions {
+        pub import: crate::package_json::ConditionsMap,
+        pub require: crate::package_json::ConditionsMap,
+        pub style: crate::package_json::ConditionsMap,
+    }
+
+    /// FORWARD_DECL: `bun_bundler::options::ExtensionOrder`.
+    #[derive(Default)]
+    pub struct ExtensionOrder {
+        pub default: ExtensionOrderGroup,
+    }
+    #[derive(Default)]
+    pub struct ExtensionOrderGroup {
+        pub default: &'static [&'static [u8]],
+        pub esm: &'static [&'static [u8]],
+    }
+    impl ExtensionOrder {
+        pub fn kind(&self, _kind: bun_options_types::ImportKind, _is_node_modules: bool) -> &'static [&'static [u8]] {
+            self.default.default
+        }
+    }
+
+    pub mod bundle_options {
+        pub mod defaults {
+            pub const CSS_EXTENSION_ORDER: &[&[u8]] = &[b".css"];
+        }
+    }
+
+    /// FORWARD_DECL: `bun_bundler::options::Framework` (Bake).
+    pub struct Framework {
+        pub built_in_modules: bun_collections::StringHashMap<bun_options_types::BuiltInModule>,
+    }
+
+    /// FORWARD_DECL: `bun_bundler::options::BundleOptions` — only the fields
+    /// the resolver reads. Real type is ~200 fields; this is the structural
+    /// subset until MOVE_DOWN to bun_options_types completes.
+    pub struct BundleOptions {
+        pub target: Target,
+        pub packages: Packages,
+        pub jsx: jsx::Pragma,
+        pub extension_order: ExtensionOrder,
+        pub conditions: Conditions,
+        pub external: ExternalModules,
+        pub extra_cjs_extensions: Vec<&'static [u8]>,
+        pub framework: Option<Framework>,
+        pub global_cache: bun_options_types::GlobalCache::GlobalCache,
+        pub install: *mut (), // FORWARD_DECL: *Install.CommandLineArguments
+        pub load_package_json: bool,
+        pub load_tsconfig_json: bool,
+        pub main_field_extension_order: &'static [&'static [u8]],
+        pub main_fields: &'static [&'static [u8]],
+        pub mark_builtins_as_external: bool,
+        pub polyfill_node_globals: bool,
+        pub prefer_offline_install: bool,
+        pub preserve_symlinks: bool,
+        pub rewrite_jest_for_tests: bool,
+        pub tsconfig_override: Option<Box<[u8]>>,
+    }
+
+    // TODO(b2-blocked): real per-target main-field tables (bundler/options.zig).
+    pub struct TargetMainFields;
+    impl TargetMainFields {
+        pub fn get(&self, _t: Target) -> &'static [&'static [u8]] { &[] }
+    }
+    pub const DEFAULT_MAIN_FIELDS: TargetMainFields = TargetMainFields;
 }
 use bun_collections::{BoundedArray, MultiArrayList};
-use bun_core::Output;
-use bun_core::{Environment, FeatureFlags, Generation, Mutex, MutableString, PathString};
+use ::bun_core::Output;
+use ::bun_core::{Environment, FeatureFlags, Generation};
+use bun_string::{MutableString, PathString};
+use bun_threading::Mutex;
 use bun_dotenv::env_loader as DotEnv;
-use bun_install as Install;
-use bun_install::dependency as Dependency;
-use bun_install::lockfile::Package;
-use bun_install::resolution::Resolution;
-use bun_install::PackageManager;
 use bun_logger as logger;
 use bun_logger::Msg;
-use bun_options_types::import_record as ast;
-use bun_paths as ResolvePath;
+use ::bun_options_types::import_record as ast;
+use self::bun_paths as ResolvePath;
 use bun_paths::{PathBuffer, MAX_PATH_BYTES, SEP, SEP_STR};
 use bun_perf::system_timer::Timer;
-use bun_semver as Semver;
-use bun_str::strings;
+use bun_string::strings;
 use bun_sys::Fd as FD;
 
 use crate::fs as Fs;
-use crate::fs::Path;
 use crate::node_fallbacks as NodeFallbackModules;
 use crate::package_json::{BrowserMap, ESModule, PackageJSON};
 use crate::tsconfig_json::TSConfigJSON;
 
 pub use crate::data_url::DataURL;
 pub use crate::dir_info as DirInfo;
-pub use bun_options_types::GlobalCache;
+pub use ::bun_options_types::GlobalCache::GlobalCache;
 
-bun_output::declare_scope!(Resolver, hidden);
+// TODO(b2-blocked): bun_output is a thin facade over bun_core::output but is
+// not in this crate's dep set; alias the underlying macros directly.
 macro_rules! debuglog {
-    ($($arg:tt)*) => { bun_output::scoped_log!(Resolver, $($arg)*) };
+    ($($arg:tt)*) => { if false { let _ = format_args!($($arg)*); } };
+}
+macro_rules! scoped_log {
+    ($scope:ident, $($arg:tt)*) => { if false { let _ = format_args!($($arg)*); } };
+}
+mod bun_output {
+    pub use super::scoped_log;
 }
 
-pub fn is_package_path(path: &[u8]) -> bool {
-    // Always check for posix absolute paths (starts with "/")
-    // But don't check window's style on posix
-    // For a more in depth explanation, look above where `isPackagePathNotAbsolute` is used.
-    !bun_paths::is_absolute(path) && is_package_path_not_absolute(path)
-}
+// PORT NOTE: `Path` in the body is the `'static`-interned variant (paths borrow
+// DirnameStore/FilenameStore). Alias here so the ~80 bare-`Path` use sites
+// resolve without a per-site lifetime annotation.
+type Path = crate::fs::Path<'static>;
+type DifferentCase = crate::fs::DifferentCase<'static>;
 
-pub fn is_package_path_not_absolute(non_absolute_path: &[u8]) -> bool {
-    if cfg!(debug_assertions) {
-        debug_assert!(!bun_paths::is_absolute(non_absolute_path));
-        debug_assert!(!non_absolute_path.starts_with(b"/"));
-    }
-
-    !non_absolute_path.starts_with(b"./")
-        && !non_absolute_path.starts_with(b"../")
-        && non_absolute_path != b"."
-        && non_absolute_path != b".."
-        && if cfg!(windows) {
-            !non_absolute_path.starts_with(b".\\") && !non_absolute_path.starts_with(b"..\\")
-        } else {
-            true
-        }
-}
+use crate::dir_info::HashMapExt as _;
 
 pub struct SideEffectsData {
     pub source: Option<NonNull<logger::Source>>, // TODO(port): lifetime — never instantiated
@@ -1181,7 +1756,7 @@ impl Default for Result {
             debug_meta: None,
             dirname_fd: FD::INVALID,
             file_fd: FD::INVALID,
-            import_kind: ast::ImportKind::default(), // Zig: undefined
+            import_kind: ast::ImportKind::Stmt, // Zig: undefined
             flags: ResultFlags::default(),
         }
     }
@@ -1464,7 +2039,7 @@ pub enum MatchResultUnion {
 }
 
 pub struct PendingResolution {
-    pub esm: crate::package_json::esmodule::package::External,
+    pub esm: crate::package_json::PackageExternal,
     pub dependency: Dependency::Version,
     pub resolution_id: Install::PackageID,
     pub root_dependency_id: Install::DependencyID,
@@ -1496,7 +2071,7 @@ impl PendingResolution {
     // deinit → Drop (frees dependency + string_buf; both have Drop)
 
     pub fn init(
-        esm: crate::package_json::ESModulePackage,
+        esm: crate::package_json::Package,
         dependency: Dependency::Version,
         resolution_id: Install::PackageID,
     ) -> core::result::Result<PendingResolution, bun_core::Error> {
@@ -1526,12 +2101,12 @@ pub struct LoadResult {
 }
 
 // This is a global so even if multiple resolvers are created, the mutex will still work
-static RESOLVER_MUTEX: Mutex = Mutex::new();
+static RESOLVER_MUTEX: Mutex = Mutex::default();
 // Zig had `resolver_Mutex_loaded` to lazily zero-init; Rust const init handles that.
 
 type BinFolderArray = BoundedArray<&'static [u8], 128>;
-static mut BIN_FOLDERS: BinFolderArray = BinFolderArray::new(); // TODO(port): proper static mut wrapper
-static BIN_FOLDERS_LOCK: Mutex = Mutex::new();
+static mut BIN_FOLDERS: BinFolderArray = BinFolderArray::default(); // TODO(port): proper static mut wrapper
+static BIN_FOLDERS_LOCK: Mutex = Mutex::default();
 static mut BIN_FOLDERS_LOADED: bool = false;
 
 pub struct AnyResolveWatcher {
@@ -1548,26 +2123,12 @@ impl AnyResolveWatcher {
 // Zig: `pub fn ResolveWatcher(comptime Context: type, comptime onWatch: anytype) type` —
 // type-generator returning a struct with `.init(ctx) -> AnyResolveWatcher` and a
 // monomorphized `watch` shim. Per PORTING.md (`fn Foo(comptime T) type` → `struct Foo<T>`).
+//
+// TODO(b2-blocked): const fn-pointer generics (`adt_const_params` for fn ptrs)
+// are forbidden on stable. Reshape to a ZST `trait OnWatch` so the watch shim
+// monomorphizes; until then callers construct `AnyResolveWatcher` directly.
+#[cfg(any())]
 pub struct ResolveWatcher<C, const ON_WATCH: fn(*mut C, &[u8], FD)>;
-
-impl<C, const ON_WATCH: fn(*mut C, &[u8], FD)> ResolveWatcher<C, ON_WATCH> {
-    pub fn init(context: *mut C) -> AnyResolveWatcher {
-        // TODO(port): const fn-pointer generics are unstable (`adt_const_params`); Phase B may
-        // need to reshape to a generic over a ZST `trait OnWatch { fn watch(&mut C, &[u8], FD) }`.
-        extern "C" fn watch<C, const ON_WATCH: fn(*mut C, &[u8], FD)>(
-            ctx: *mut (),
-            dir_path: &[u8],
-            fd: FD,
-        ) {
-            ON_WATCH(ctx as *mut C, dir_path, fd)
-        }
-        AnyResolveWatcher {
-            // SAFETY: caller guarantees `context` is non-null and outlives the watcher.
-            context: unsafe { NonNull::new_unchecked(context as *mut ()) },
-            callback: watch::<C, ON_WATCH>,
-        }
-    }
-}
 
 pub struct Resolver<'a> {
     pub opts: options::BundleOptions,
@@ -1593,7 +2154,7 @@ pub struct Resolver<'a> {
     pub generation: Generation,
 
     pub package_manager: Option<NonNull<PackageManager>>, // TODO(port): lifetime
-    pub on_wake_package_manager: bun_install::WakeHandler,
+    pub on_wake_package_manager: Install::WakeHandler,
     pub env_loader: Option<&'a DotEnv::Loader>,
     pub store_fd: bool,
 
@@ -1653,10 +2214,14 @@ pub struct Resolver<'a> {
     /// is overwritten while the resolution happens.
     ///
     /// When this is null, it is as if it is set to `&.{ path.dirname(referrer) }`.
-    pub custom_dir_paths: Option<&'a [bun_str::String]>,
+    pub custom_dir_paths: Option<&'a [bun_string::String]>,
 }
 
 impl<'a> Resolver<'a> {
+    // TODO(b2-blocked): bun_install::PackageManager + bun_http::HTTPThread —
+    // re-gated; the resolver body only reaches this on the auto-install path
+    // (`load_node_modules` global-cache block, also re-gated below).
+    #[cfg(any())]
     pub fn get_package_manager(&mut self) -> &mut PackageManager {
         if let Some(pm) = self.package_manager {
             // SAFETY: BACKREF — pm outlives resolver; lazily inited below.
@@ -1700,6 +2265,10 @@ impl<'a> Resolver<'a> {
         self.opts.global_cache.is_enabled()
     }
 
+    // TODO(b2-blocked): bun_bundler::cache::Set::init — `caches` is opaque until
+    // the bundler crate compiles; the bundler constructs `Resolver` directly with
+    // its real `cache::Set`. Re-gated until CacheSet has a real init().
+    #[cfg(any())]
     pub fn init1(
         log: &'a mut logger::Log,
         _fs: &'a mut Fs::FileSystem,
@@ -1794,7 +2363,7 @@ impl<'a> Resolver<'a> {
                     &debug.what,
                     core::mem::take(&mut debug.notes).into_boxed_slice(),
                 )?;
-            } else if (self.log.level as u32) <= (logger::log::Level::Verbose as u32) {
+            } else if (self.log.level as u32) <= (logger::Level::Verbose as u32) {
                 self.log.add_verbose_with_notes(
                     None,
                     logger::Loc::EMPTY,
@@ -1859,7 +2428,7 @@ impl<'a> Resolver<'a> {
         struct ElapsedGuard<'g, 'a>(&'g mut Resolver<'a>);
         // TODO(port): elapsed accumulation moved to end of function for borrowck
 
-        if self.log.level == logger::log::Level::Verbose {
+        if self.log.level == logger::Level::Verbose {
             if self.debug_logs.is_some() {
                 // deinit → drop
                 self.debug_logs = None;
@@ -2153,7 +2722,7 @@ impl<'a> Resolver<'a> {
         kind: ast::ImportKind,
     ) -> core::result::Result<Result, bun_core::Error> {
         // TODO(port): narrow error set
-        match self.resolve_and_auto_install(source_dir, import_path, kind, GlobalCache::Disable) {
+        match self.resolve_and_auto_install(source_dir, import_path, kind, GlobalCache::disable) {
             ResultUnion::Success(result) => Ok(result),
             ResultUnion::Pending(_) | ResultUnion::NotFound => Err(bun_core::err!("ModuleNotFound")),
             ResultUnion::Failure(e) => Err(e),
@@ -2223,7 +2792,7 @@ impl<'a> Resolver<'a> {
                     PJSideEffects::Unspecified => SideEffects::HasSideEffects,
                     PJSideEffects::False => SideEffects::NoSideEffectsPackageJson,
                     PJSideEffects::Map(map) => {
-                        if map.contains(&bun_collections::StringHashMapUnowned::Key::init(path.text())) {
+                        if map.contains(&crate::package_json::StringHashMapUnownedKey::init(path.text())) {
                             SideEffects::HasSideEffects
                         } else {
                             SideEffects::NoSideEffectsPackageJson
@@ -2261,7 +2830,7 @@ impl<'a> Resolver<'a> {
                         PJSideEffects::Unspecified => SideEffects::HasSideEffects,
                         PJSideEffects::False => SideEffects::NoSideEffectsPackageJson,
                         PJSideEffects::Map(map) => {
-                            if map.contains(&bun_collections::StringHashMapUnowned::Key::init(path.text())) {
+                            if map.contains(&crate::package_json::StringHashMapUnownedKey::init(path.text())) {
                                 SideEffects::HasSideEffects
                             } else {
                                 SideEffects::NoSideEffectsPackageJson
@@ -2326,7 +2895,7 @@ impl<'a> Resolver<'a> {
                         if !query.entry.cache.fd.is_valid() && store_fd {
                             buf[out.len()] = 0;
                             // SAFETY: buf[out.len()] == 0 written above
-                            let span = unsafe { bun_str::ZStr::from_raw(buf.as_ptr(), out.len()) };
+                            let span = unsafe { bun_core::ZStr::from_raw(buf.as_ptr(), out.len()) };
                             // TODO(port): std.fs.openFileAbsoluteZ → bun_sys::open
                             let file = bun_sys::open(span, bun_sys::O::RDONLY, 0).unwrap()?;
                             query.entry.cache.fd = file;
@@ -2342,7 +2911,7 @@ impl<'a> Resolver<'a> {
                             }
                         });
 
-                        let symlink = Fs::FileSystem::FilenameStore::instance().append_slice(out)?;
+                        let symlink = Fs::FilenameStore::instance().append_slice(out)?;
                         if let Some(debug) = self.debug_logs.as_mut() {
                             debug.add_note_fmt(format_args!(
                                 "Resolved symlink \"{}\" to \"{}\"",
@@ -2405,7 +2974,7 @@ impl<'a> Resolver<'a> {
             // loose check to avoid always doing this copy, but avoid spending
             // too much time on the check.
             if strings::index_of(import_path, b"..").is_some() {
-                let platform = bun_paths::Platform::Auto;
+                let platform = bun_paths::Platform::AUTO;
                 let ends_with_dir = platform.is_separator(import_path[import_path.len() - 1])
                     || (import_path.len() > 3
                         && platform.is_separator(import_path[import_path.len() - 3])
@@ -3021,7 +3590,7 @@ impl<'a> Resolver<'a> {
     /// to `./hello.js` or `./hello/index.js`
     pub fn bust_dir_cache_from_specifier(&mut self, import_source_file: &[u8], specifier: &[u8]) -> bool {
         if bun_paths::is_absolute(specifier) {
-            let dir = bun_paths::dirname_platform(specifier, bun_paths::Platform::Auto);
+            let dir = bun_paths::dirname_platform(specifier, bun_paths::Platform::AUTO);
             let a = self.bust_dir_cache(dir);
             let b = self.bust_dir_cache(specifier);
             return a || b;
@@ -3035,11 +3604,11 @@ impl<'a> Resolver<'a> {
         }
 
         let joined = bun_paths::join_abs(
-            bun_paths::dirname_platform(import_source_file, bun_paths::Platform::Auto),
-            bun_paths::Platform::Auto,
+            bun_paths::dirname_platform(import_source_file, bun_paths::Platform::AUTO),
+            bun_paths::Platform::AUTO,
             specifier,
         );
-        let dir = bun_paths::dirname_platform(joined, bun_paths::Platform::Auto);
+        let dir = bun_paths::dirname_platform(joined, bun_paths::Platform::AUTO);
 
         let a = self.bust_dir_cache(dir);
         let b = self.bust_dir_cache(joined);
@@ -3123,7 +3692,7 @@ impl<'a> Resolver<'a> {
             }
 
             // https://nodejs.org/api/packages.html#packages_self_referencing_a_package_using_its_name
-            let package_name = ESModule::Package::parse_name(import_path);
+            let package_name = crate::package_json::Package::parse_name(import_path);
             if let Some(_package_name) = package_name {
                 if _package_name == package_json.name.as_ref() && package_json.exports.is_some() {
                     if let Some(debug) = self.debug_logs.as_mut() {
@@ -3135,11 +3704,11 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        let esm_ = ESModule::Package::parse(import_path, bufs!(esm_subpath));
+        let esm_ = crate::package_json::Package::parse(import_path, bufs!(esm_subpath));
 
         let source_dir_info = dir_info;
         let mut any_node_modules_folder = false;
-        let use_node_module_resolver = global_cache != GlobalCache::Force;
+        let use_node_module_resolver = global_cache != GlobalCache::force;
 
         // Then check for the package in any enclosing "node_modules" directories
         // or in the package root directory if it's a self-reference
@@ -3330,6 +3899,13 @@ impl<'a> Resolver<'a> {
             && esm_.is_some()
             && strings::is_npm_package_name(esm_.as_ref().unwrap().name)
         {
+            // TODO(b2-blocked): bun_install — the global-cache auto-install path
+            // is tightly coupled to PackageManager/Lockfile internals (see
+            // FORWARD_DECL stubs above). Re-gated until those crates compile;
+            // `use_package_manager()` is `false` outside standalone+global_cache
+            // anyway, so the live resolver never reaches this on the bundler path.
+            #[cfg(any())]
+            {
             let esm = esm_.as_ref().unwrap().with_auto_version();
             'load_module_from_cache: {
                 // TODO(port): the global-cache auto-install path below is large and
@@ -3618,12 +4194,16 @@ impl<'a> Resolver<'a> {
                     }
                 }
             }
+            } // end #[cfg(any())] — TODO(b2-blocked): bun_install auto-install path
         }
 
         if let Some(d) = self.debug_logs.as_mut() { d.decrease_indent(); }
         MatchResultUnion::NotFound
     }
 
+    // TODO(b2-blocked): bun_install — re-gated; only reached from the auto-install
+    // path above (also re-gated).
+    #[cfg(any())]
     fn dir_info_for_resolution(
         &mut self,
         dir_path_maybe_trail_slash: &[u8],
@@ -3750,6 +4330,9 @@ impl<'a> Resolver<'a> {
         Ok(Some(dir_info_ptr))
     }
 
+    // TODO(b2-blocked): bun_install — re-gated; only reached from the auto-install
+    // path above (also re-gated).
+    #[cfg(any())]
     fn enqueue_dependency_to_resolve(
         &mut self,
         package_json_: Option<&mut PackageJSON>,
@@ -3865,14 +4448,14 @@ impl<'a> Resolver<'a> {
 
     fn handle_esm_resolution(
         &mut self,
-        esm_resolution_: ESModule::Resolution,
+        esm_resolution_: crate::package_json::Resolution,
         abs_package_path: &[u8],
         kind: ast::ImportKind,
         package_json: &PackageJSON,
         package_subpath: &[u8],
     ) -> Option<MatchResult> {
         let mut esm_resolution = esm_resolution_;
-        use crate::package_json::esmodule::Status;
+        use crate::package_json::Status;
         if !((matches!(esm_resolution.status, Status::Inexact | Status::Exact | Status::ExactEndsWithStar))
             && !esm_resolution.path.is_empty()
             && esm_resolution.path[0] == SEP)
@@ -3936,7 +4519,7 @@ impl<'a> Resolver<'a> {
                                         let parts = [package_json.name.as_ref(), package_subpath];
                                         debug.add_note_fmt(format_args!(
                                             "The import {} is missing the extension {}",
-                                            bstr::BStr::new(ResolvePath::join(&parts, bun_paths::Platform::Auto)),
+                                            bstr::BStr::new(ResolvePath::join(&parts, bun_paths::Platform::AUTO)),
                                             bstr::BStr::new(ext)
                                         ));
                                     }
@@ -3975,7 +4558,7 @@ impl<'a> Resolver<'a> {
                                                 let parts = [package_json.name.as_ref(), package_subpath];
                                                 debug.add_note_fmt(format_args!(
                                                     "The import {} is missing the suffix {}",
-                                                    bstr::BStr::new(ResolvePath::join(&parts, bun_paths::Platform::Auto)),
+                                                    bstr::BStr::new(ResolvePath::join(&parts, bun_paths::Platform::AUTO)),
                                                     bstr::BStr::new(&ms)
                                                 ));
                                             }
@@ -4057,7 +4640,11 @@ impl<'a> Resolver<'a> {
         file: &[u8],
         dirname_fd: FD,
     ) -> core::result::Result<Option<&'static mut TSConfigJSON>, bun_core::Error> {
-        // TODO(port): narrow error set
+        // TODO(b2-blocked): bun_bundler::cache::{Fs,Json} — `self.caches` is the
+        // FORWARD_DECL CacheSet; `read_file_with_allocator`/`TSConfigJSON::parse`
+        // signatures are guesses until the bundler crate compiles. Re-gated.
+        #[cfg(any())]
+        {
         // Since tsconfig.json is cached permanently, in our DirEntries cache
         // we must use the global allocator
         let mut entry = self.caches.fs.read_file_with_allocator(
@@ -4098,7 +4685,10 @@ impl<'a> Resolver<'a> {
             result.base_url_for_paths = self.fs.dirname_store.append_slice(self.fs.abs_buf(&paths, bufs!(tsconfig_base_url))).expect("unreachable");
         }
 
-        Ok(Some(result))
+        return Ok(Some(result));
+        } // end #[cfg(any())]
+        let _ = (file, dirname_fd);
+        unimplemented!("Resolver::parse_tsconfig (Phase B — bun_bundler::cache)")
     }
 
     pub fn bin_dirs(&self) -> &[&'static [u8]] {
@@ -4116,16 +4706,19 @@ impl<'a> Resolver<'a> {
         file: &[u8],
         dirname_fd: FD,
         package_id: Option<Install::PackageID>,
-    ) -> core::result::Result<Option<&'static mut PackageJSON>, bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> core::result::Result<Option<&'static PackageJSON>, bun_core::Error> {
+        // TODO(b2-blocked): PackageJSON::parse takes `&mut Resolver` (cycle) and
+        // its signature is still in flux in package_json.rs. Re-gated.
+        #[cfg(any())]
+        {
         let pkg = if !self.care_about_scripts {
             PackageJSON::parse(
                 self,
                 file,
                 dirname_fd,
                 package_id,
-                crate::package_json::ScriptsOption::IgnoreScripts,
-                if ALLOW_DEPENDENCIES { crate::package_json::DepsOption::Local } else { crate::package_json::DepsOption::None },
+                crate::package_json::IncludeScripts::Ignore,
+                if ALLOW_DEPENDENCIES { crate::package_json::IncludeDependencies::Local } else { crate::package_json::IncludeDependencies::None },
             )
         } else {
             PackageJSON::parse(
@@ -4133,13 +4726,16 @@ impl<'a> Resolver<'a> {
                 file,
                 dirname_fd,
                 package_id,
-                crate::package_json::ScriptsOption::IncludeScripts,
-                if ALLOW_DEPENDENCIES { crate::package_json::DepsOption::Local } else { crate::package_json::DepsOption::None },
+                crate::package_json::IncludeScripts::Include,
+                if ALLOW_DEPENDENCIES { crate::package_json::IncludeDependencies::Local } else { crate::package_json::IncludeDependencies::None },
             )
         };
         let Some(pkg) = pkg else { return Ok(None) };
 
-        Ok(Some(PackageJSON::new(pkg)))
+        return Ok(Some(PackageJSON::new(pkg)));
+        } // end #[cfg(any())]
+        let _ = (file, dirname_fd, package_id);
+        unimplemented!("Resolver::parse_package_json (Phase B)")
     }
 
     fn dir_info_cached(&mut self, path: &[u8]) -> core::result::Result<Option<*mut DirInfo::DirInfo>, bun_core::Error> {
@@ -4377,7 +4973,7 @@ impl<'a> Resolver<'a> {
                         *path.as_mut_ptr().add(queue_top.unsafe_path.len()) = prev_char;
                     });
                     // SAFETY: NUL written above
-                    let sentinel = unsafe { bun_str::ZStr::from_raw(path.as_ptr(), queue_top.unsafe_path.len()) };
+                    let sentinel = unsafe { bun_core::ZStr::from_raw(path.as_ptr(), queue_top.unsafe_path.len()) };
 
                     #[cfg(unix)]
                     let open_req: core::result::Result<FD, bun_core::Error> = {
@@ -4765,7 +5361,7 @@ impl<'a> Resolver<'a> {
 
         let esm_resolution = esmodule.resolve_imports(import_path, &imports_map.root);
 
-        if esm_resolution.status == crate::package_json::esmodule::Status::PackageResolve {
+        if esm_resolution.status == crate::package_json::Status::PackageResolve {
             // https://github.com/oven-sh/bun/issues/4972
             // Resolve a subpath import to a Bun or Node.js builtin
             //
@@ -5189,7 +5785,7 @@ impl<'a> Resolver<'a> {
                 let main_field_keys = self.opts.main_fields;
                 // TODO: check this works right. Not sure this will really work.
                 let auto_main = self.opts.main_fields.as_ptr()
-                    == options::Target::DEFAULT_MAIN_FIELDS.get(self.opts.target).as_ptr();
+                    == options::DEFAULT_MAIN_FIELDS.get(self.opts.target).as_ptr();
 
                 if let Some(debug) = self.debug_logs.as_mut() {
                     debug.add_note_fmt(format_args!(
@@ -5413,8 +6009,12 @@ impl<'a> Resolver<'a> {
         // https://github.com/microsoft/TypeScript/issues/4595
         if let Some(last_dot) = strings::last_index_of_char(base, b'.') {
             let ext = &base[last_dot..base.len()];
-            if (ext == b".js" || ext == b".jsx" || ext == b".mjs")
-                && (!FeatureFlags::DISABLE_AUTO_JS_TO_TS_IN_NODE_MODULES || !strings::path_contains_node_modules_folder(path))
+            // PORT NOTE: spec resolver.zig:3890-3891 — Zig `and` binds tighter than `or`, so the
+            // node_modules gate only applies to the `.mjs` arm. Mirror that precedence exactly.
+            if ext == b".js"
+                || ext == b".jsx"
+                || (ext == b".mjs"
+                    && (!FeatureFlags::DISABLE_AUTO_JS_TO_TS_IN_NODE_MODULES || !strings::path_contains_node_modules_folder(path)))
             {
                 let segment = &base[0..last_dot];
                 let tail = &mut bufs!(load_as_file)[path.len() - base.len()..];
@@ -5584,7 +6184,7 @@ impl<'a> Resolver<'a> {
                         unsafe {
                             if !BIN_FOLDERS_LOADED {
                                 BIN_FOLDERS_LOADED = true;
-                                BIN_FOLDERS = BinFolderArray::new();
+                                BIN_FOLDERS = BinFolderArray::default();
                             }
                         }
 
@@ -5622,7 +6222,7 @@ impl<'a> Resolver<'a> {
                             unsafe {
                                 if !BIN_FOLDERS_LOADED {
                                     BIN_FOLDERS_LOADED = true;
-                                    BIN_FOLDERS = BinFolderArray::new();
+                                    BIN_FOLDERS = BinFolderArray::default();
                                 }
                             }
 
@@ -5785,15 +6385,15 @@ impl<'a> Resolver<'a> {
                     Err(err) => {
                         let pretty = tsconfigpath;
                         if err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound") {
-                            let _ = self.log.add_error_fmt(None, logger::Loc::EMPTY, format_args!("Cannot find tsconfig file {}", bun_core::fmt::QuotedFormatter::new(pretty)));
+                            let _ = self.log.add_error_fmt(None, logger::Loc::EMPTY, format_args!("Cannot find tsconfig file {}", bun_core::fmt::quote(pretty)));
                         } else if err != bun_core::err!("ParseErrorAlreadyLogged") && err != bun_core::err!("IsDir") && err != bun_core::err!("EISDIR") {
-                            let _ = self.log.add_error_fmt(None, logger::Loc::EMPTY, format_args!("Cannot read file {}: {}", bun_core::fmt::QuotedFormatter::new(pretty), err.name()));
+                            let _ = self.log.add_error_fmt(None, logger::Loc::EMPTY, format_args!("Cannot read file {}: {}", bun_core::fmt::quote(pretty), err.name()));
                         }
                         None
                     }
                 };
                 if let Some(tsconfig_json) = info.tsconfig_json {
-                    let mut parent_configs: BoundedArray<*mut TSConfigJSON, 64> = BoundedArray::new();
+                    let mut parent_configs: BoundedArray<*mut TSConfigJSON, 64> = BoundedArray::default();
                     parent_configs.append(tsconfig_json)?;
                     let mut current = tsconfig_json;
                     // SAFETY: (loop-wide) `current`/`parent_config_ptr`/`merged_config` are heap
@@ -5803,14 +6403,14 @@ impl<'a> Resolver<'a> {
                         // SAFETY: see loop-wide note above.
                         let ts_dir_name = Dirname::dirname(unsafe { &*current }.abs_path);
                         // SAFETY: see loop-wide note above.
-                        let abs_path = ResolvePath::join_abs_string_buf(ts_dir_name, bufs!(tsconfig_path_abs), &[ts_dir_name, unsafe { &*current }.extends], bun_paths::Platform::Auto);
+                        let abs_path = ResolvePath::join_abs_string_buf(ts_dir_name, bufs!(tsconfig_path_abs), &[ts_dir_name, unsafe { &*current }.extends], bun_paths::Platform::AUTO);
                         let parent_config_maybe = match self.parse_tsconfig(abs_path, FD::INVALID) {
                             Ok(v) => v,
                             Err(err) => {
                                 let _ = self.log.add_debug_fmt(None, logger::Loc::EMPTY, format_args!(
                                     "{} loading tsconfig.json extends {}",
                                     err.name(),
-                                    bun_core::fmt::QuotedFormatter::new(abs_path)
+                                    bun_core::fmt::quote(abs_path)
                                 ));
                                 break;
                             }
@@ -5963,7 +6563,7 @@ impl<'b> BrowserMapPath<'b> {
         let index_path: &[u8] = {
             let trimmed = strings::trim_right(path_to_check, &[SEP]);
             let parts = [trimmed, const_format::concatcp!(SEP_STR, "index").as_bytes()];
-            ResolvePath::join_string_buf(bufs!(tsconfig_base_url), &parts, bun_paths::Platform::Auto)
+            ResolvePath::join_string_buf(bufs!(tsconfig_base_url), &parts, bun_paths::Platform::AUTO)
         };
 
         if let Some(_remapped) = map.get(index_path) {

@@ -27,35 +27,36 @@ pub struct DirInfo {
     // A pointer to the enclosing dirInfo with a valid "browser" field in
     // package.json. We need this to remap paths after they have been resolved.
     pub enclosing_browser_scope: Index,
-    // TODO(port): lifetime — borrowed from resolver-owned PackageJSON cache
-    pub package_json_for_browser_field: Option<NonNull<PackageJSON>>,
-    // TODO(port): lifetime — borrowed from resolver-owned TSConfigJSON cache
-    pub enclosing_tsconfig_json: Option<NonNull<TSConfigJSON>>,
+    // PORT NOTE: lifetime — all `&'static` borrows below are ARENA-backed (the
+    // resolver-owned PackageJSON/TSConfigJSON caches outlive every DirInfo). Zig
+    // used `?*PackageJSON`; modeled as `Option<&'static T>` so call sites
+    // auto-deref without `unsafe { ptr.as_ref() }` boilerplate. `reset()` casts
+    // away const to drop-in-place (the storage itself is BSS/cache-owned).
+    pub package_json_for_browser_field: Option<&'static PackageJSON>,
+    pub enclosing_tsconfig_json: Option<&'static TSConfigJSON>,
 
     /// package.json used for bundling
     /// it's the deepest one in the hierarchy with a "name" field
     /// or, if using `bun run`, the name field is optional
     /// https://github.com/oven-sh/bun/issues/229
-    // TODO(port): lifetime — borrowed from resolver-owned PackageJSON cache
-    pub enclosing_package_json: Option<NonNull<PackageJSON>>,
+    pub enclosing_package_json: Option<&'static PackageJSON>,
 
-    // TODO(port): lifetime — borrowed from resolver-owned PackageJSON cache
-    pub package_json_for_dependencies: Option<NonNull<PackageJSON>>,
+    pub package_json_for_dependencies: Option<&'static PackageJSON>,
 
     // TODO(port): lifetime — slice into BSS-backed path storage; never individually freed
     pub abs_path: &'static [u8],
     pub entries: Index,
     /// Is there a "package.json" file?
     // TODO(port): lifetime — reset() drops the pointee in-place; storage owned by resolver cache
-    pub package_json: Option<NonNull<PackageJSON>>,
+    pub package_json: Option<&'static PackageJSON>,
     /// Is there a "tsconfig.json" file in this directory or a parent directory?
     // TODO(port): lifetime — reset() drops the pointee in-place; storage owned by resolver cache
-    pub tsconfig_json: Option<NonNull<TSConfigJSON>>,
+    pub tsconfig_json: Option<&'static TSConfigJSON>,
     /// If non-empty, this is the real absolute path resolving any symlinks
     // TODO(port): lifetime — slice into BSS-backed path storage; never individually freed
     pub abs_real_path: &'static [u8],
 
-    pub flags: EnumSet<Flags>,
+    pub flags: Flags,
 }
 
 impl Default for DirInfo {
@@ -73,7 +74,7 @@ impl Default for DirInfo {
             package_json: None,
             tsconfig_json: None,
             abs_real_path: b"",
-            flags: EnumSet::empty(),
+            flags: Flags::empty(),
         }
     }
 }
@@ -113,30 +114,29 @@ impl DirInfo {
         Fd::INVALID
     }
 
-    pub fn get_entries(&self, generation: Generation) -> Option<&mut fs::DirEntry> {
+    pub fn get_entries(&self, generation: Generation) -> Option<&'static mut fs::DirEntry> {
         let entries_ptr = fs::FileSystem::instance().fs.entries_at(self.entries, generation)?;
         match entries_ptr {
-            fs::EntriesOption::Entries(entries) => Some(entries),
+            // SAFETY: ARENA — slot in the BSSMap-backed EntriesOptionMap
+            // singleton; widening the reborrow to 'static (matches Zig).
+            fs::EntriesOption::Entries(entries) => Some(unsafe { &mut *(*entries as *mut _) }),
             fs::EntriesOption::Err(_) => None,
         }
     }
 
     pub fn get_entries_const(&self) -> Option<&fs::DirEntry> {
-        // SAFETY: `entries` set during `FileSystem::init`; resolver code only calls
-        // this after init (matches Zig invariant).
-        let map = unsafe { fs::FileSystem::instance().fs.entries?.as_mut() };
-        let entries_ptr = map.at_index(self.entries)?;
+        let entries_ptr = fs::FileSystem::instance().fs.entries.at_index(self.entries)?;
         match entries_ptr {
-            fs::EntriesOption::Entries(entries) => Some(entries),
+            fs::EntriesOption::Entries(entries) => Some(&**entries),
             fs::EntriesOption::Err(_) => None,
         }
     }
 
-    pub fn get_parent(&self) -> Option<&mut DirInfo> {
-        hash_map_instance().at_index(self.parent)
+    pub fn get_parent(&self) -> Option<*mut DirInfo> {
+        hash_map_instance().at_index(self.parent).map(|p| p as *mut _)
     }
 
-    pub fn get_enclosing_browser_scope(&self) -> Option<&mut DirInfo> {
+    pub fn get_enclosing_browser_scope(&self) -> Option<&'static mut DirInfo> {
         hash_map_instance().at_index(self.enclosing_browser_scope)
     }
 }
@@ -162,15 +162,24 @@ pub fn hash_map_instance() -> &'static mut HashMap {
     }
 }
 
-#[derive(EnumSetType, Debug)]
-pub enum Flags {
-    /// This directory is a node_modules directory
-    IsNodeModules,
-    /// This directory has a node_modules subdirectory
-    HasNodeModules,
-
-    InsideNodeModules,
+bitflags::bitflags! {
+    #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+    pub struct Flags: u8 {
+        /// This directory is a node_modules directory
+        const IsNodeModules     = 1 << 0;
+        /// This directory has a node_modules subdirectory
+        const HasNodeModules    = 1 << 1;
+        const InsideNodeModules = 1 << 2;
+    }
 }
+impl Flags {
+    #[inline]
+    pub fn set_present(&mut self, flag: Flags, present: bool) {
+        self.set(flag, present);
+    }
+}
+/// Body addresses individual flags as `DirInfo::Flag::X` (Zig nesting).
+pub use Flags as Flag;
 
 impl DirInfo {
     // TODO(port): in-place cache invalidation, not Drop — DirInfo lives in BSS-backed
@@ -180,14 +189,17 @@ impl DirInfo {
         if let Some(p) = self.package_json.take() {
             // SAFETY: package_json points to a live PackageJSON in the resolver cache;
             // drop_in_place releases its owned resources in-place (storage itself is
-            // BSS/cache-owned and not freed here, matching Zig `p.deinit()`).
-            unsafe { core::ptr::drop_in_place(p.as_ptr()) };
+            // BSS/cache-owned and not freed here, matching Zig `p.deinit()`). Cast away
+            // const — the `&'static T` shape is for ergonomic auto-deref at read sites;
+            // ownership is logically held here.
+            unsafe { core::ptr::drop_in_place(p as *const PackageJSON as *mut PackageJSON) };
         }
         if let Some(t) = self.tsconfig_json.take() {
             // SAFETY: tsconfig_json points to a live TSConfigJSON in the resolver cache;
             // drop_in_place releases its owned resources in-place (storage itself is
-            // BSS/cache-owned and not freed here, matching Zig `t.deinit()`).
-            unsafe { core::ptr::drop_in_place(t.as_ptr()) };
+            // BSS/cache-owned and not freed here, matching Zig `t.deinit()`). See note
+            // above re const cast.
+            unsafe { core::ptr::drop_in_place(t as *const TSConfigJSON as *mut TSConfigJSON) };
         }
     }
 }
@@ -202,6 +214,34 @@ impl DirInfo {
 // Rust splits the comptime branch — `store_keys=false` → `BSSMapInner<V, COUNT, RM_SLASH>`.
 // `est_key_len` is unused on the inner shape. COUNT mirrors `fs::preallocate::counts::DIR_ENTRY`.
 pub type HashMap = allocators::BSSMapInner<DirInfo, 2048, true>;
+
+/// Resolver-side extension trait so the body can call BSSMap methods that are
+/// still gated in `bun_alloc::_bss_gated`. Type-only shims.
+// TODO(b2-blocked): bun_alloc::BSSMapInner — un-gate `get_or_put`/`put`/`remove`.
+pub trait HashMapExt {
+    fn get_or_put(&mut self, key: &[u8]) -> core::result::Result<crate::__phase_a_body::allocators::Result, bun_core::Error>;
+    fn put(&mut self, result: &crate::__phase_a_body::allocators::Result, value: DirInfo) -> core::result::Result<*mut DirInfo, bun_core::Error>;
+    fn mark_not_found(&mut self, result: crate::__phase_a_body::allocators::Result);
+    fn remove(&mut self, key: &[u8]) -> bool;
+    fn values_mut(&mut self) -> core::slice::IterMut<'_, DirInfo>;
+}
+impl HashMapExt for HashMap {
+    fn get_or_put(&mut self, _key: &[u8]) -> core::result::Result<crate::__phase_a_body::allocators::Result, bun_core::Error> {
+        unimplemented!("BSSMap::get_or_put (Phase B)")
+    }
+    fn put(&mut self, _result: &crate::__phase_a_body::allocators::Result, _value: DirInfo) -> core::result::Result<*mut DirInfo, bun_core::Error> {
+        unimplemented!("BSSMap::put (Phase B)")
+    }
+    fn mark_not_found(&mut self, _result: crate::__phase_a_body::allocators::Result) {
+        unimplemented!("BSSMap::mark_not_found (Phase B)")
+    }
+    fn remove(&mut self, _key: &[u8]) -> bool {
+        unimplemented!("BSSMap::remove (Phase B)")
+    }
+    fn values_mut(&mut self) -> core::slice::IterMut<'_, DirInfo> {
+        unimplemented!("BSSMap::values_mut (Phase B)")
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

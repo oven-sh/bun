@@ -1158,16 +1158,24 @@ impl Route {
     pub fn parse(
         base_: &[u8],
         extname: &[u8],
-        entry: &mut Fs::Entry,
+        entry: *mut Fs::Entry,
         log: &mut logger::Log,
         public_dir_: &[u8],
         routes_dirname_len: u16,
     ) -> Option<Route> {
         // PORT NOTE: bun_sys::fs::Entry is opaque — field reads go through
         // accessor methods (abs_path()/dir()/base()/cache()).
+        // PORT NOTE: `entry` is a raw `*mut Entry` (matching Zig's `*Entry`)
+        // because `base_`/`extname` may borrow `(*entry).base_` (tiny inline
+        // string, fs.zig:333) and a `&mut Entry` parameter would alias them.
+        // Reads go through `unsafe { &*entry }`; the single mutation
+        // (`set_abs_path`) goes through `unsafe { &mut *entry }` after
+        // `base_`/`extname` are no longer used.
         // PORT NOTE: reshaped for borrowck — bind the `PathString` so the
         // `.slice()` borrow lives across the closure below.
-        let entry_abs_path_ps = entry.abs_path();
+        // SAFETY: caller passes an EntryStore-owned pointer valid for the
+        // process lifetime; no other live `&mut` to it during this call.
+        let entry_abs_path_ps = unsafe { &*entry }.abs_path();
         let entry_abs_path = entry_abs_path_ps.slice();
         let mut abs_path_str: &[u8] = if entry_abs_path.is_empty() {
             b""
@@ -1297,11 +1305,14 @@ impl Route {
                     }
                 });
 
-                if let Some(valid) = entry.cache().fd.unwrap_valid() {
+                // SAFETY: see fn-level PORT NOTE — read-only reborrow.
+                if let Some(valid) = unsafe { &*entry }.cache().fd.unwrap_valid() {
                     *file = Some(bun_sys::File::from_fd(valid));
                     needs_close.set(false);
                 } else {
-                    let parts = [entry.dir(), entry.base()];
+                    // SAFETY: see fn-level PORT NOTE — read-only reborrow.
+                    let entry_r = unsafe { &*entry };
+                    let parts = [entry_r.dir(), entry_r.base()];
                     let abs_len =
                         FileSystem::instance().abs_buf(&parts, route_file_buf).len();
                     // Zig: `abs_path_str = FileSystem.instance.absBuf(...)`
@@ -1365,7 +1376,9 @@ impl Route {
                     .expect("unreachable");
 
                 // Zig: `entry.abs_path = PathString.init(abs_path_str)`.
-                entry.set_abs_path(bun_string::PathString::init(abs_path_str));
+                // SAFETY: sole mutation; `base_`/`extname` (which may borrow
+                // `(*entry).base_.remainder_buf`) are not used after this.
+                unsafe { &mut *entry }.set_abs_path(bun_string::PathString::init(abs_path_str));
             }
 
             #[cfg(windows)]
@@ -1384,16 +1397,18 @@ impl Route {
                 debug_assert!(!strings::index_of_char(public_path, b'\\').is_some());
                 debug_assert!(!strings::index_of_char(match_name, b'\\').is_some());
                 debug_assert!(!strings::index_of_char(abs_path.slice(), b'\\').is_some());
-                debug_assert!(!strings::index_of_char(entry.base(), b'\\').is_some());
+                // SAFETY: read-only reborrow; the `&mut` write above is dead.
+                debug_assert!(!strings::index_of_char(unsafe { &*entry }.base(), b'\\').is_some());
             }
 
             // PORT NOTE: name/match_name/public_path are already `&'static` via
-            // DirnameStore::append above. `entry.base()` is backed by the same
-            // arena in Zig, but the opaque accessor returns a borrowed `&[u8]`;
-            // intern it explicitly to get `&'static` without a lifetime transmute.
+            // DirnameStore::append above. `entry.base()` borrows the entry (it
+            // may be inline-stored for ≤31-byte names, fs.zig:333); intern it
+            // explicitly to get `&'static` without a lifetime transmute.
+            // SAFETY: read-only reborrow; the `&mut` write above is dead.
             let basename: &'static [u8] = FileSystem::instance()
                 .dirname_store()
-                .append(entry.base())
+                .append(unsafe { &*entry }.base())
                 .expect("unreachable");
 
             Some(Route {

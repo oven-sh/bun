@@ -423,3 +423,24 @@ impl fmt::Display for Error {
 //   todos:      8
 //   notes:      path/dest retyped Box<[u8]> (Zig mixed borrow/own); oom/retry consts→fns; SystemErrno raw-int lookup folded into safe from_raw; SystemError dep on bun_jsc may need relayering.
 // ──────────────────────────────────────────────────────────────────────────
+
+// ──────────────────────────────────────────────────────────────────────────
+// `bun_core::output::ErrName` impls — orphan rule lets the higher tier (sys)
+// implement the lower-tier trait for its own types.
+// ──────────────────────────────────────────────────────────────────────────
+impl bun_core::output::ErrName for Error {
+    fn name(&self) -> &[u8] { Error::name(self) }
+    fn as_sys_err_info(&self) -> Option<bun_core::output::SysErrInfo> {
+        Some(bun_core::output::SysErrInfo {
+            tag_name: Error::name(self),
+            errno: i32::from(self.errno),
+            syscall: <&'static str>::from(self.syscall),
+        })
+    }
+}
+
+impl bun_core::output::ErrName for SystemErrno {
+    fn name(&self) -> &[u8] {
+        tag_name(*self).map(str::as_bytes).unwrap_or(b"Unknown")
+    }
+}

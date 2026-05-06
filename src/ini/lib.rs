@@ -1333,7 +1333,7 @@ pub fn load_npmrc(
     source: &Source,
     configs: &mut Vec<ConfigItem>,
 ) -> OOM<()> {
-    let mut parser = Parser::init(npmrc_path.as_bytes(), source.contents.as_slice(), env);
+    let mut parser = Parser::init(npmrc_path.as_bytes(), &source.contents, env);
     // TODO(port): borrowck — `parser.arena` is borrowed while `parser` is `&mut`.
     // SAFETY: arena outlives all bump-allocated slices used below; Phase B should
     // restructure Parser so the bump is passed externally or split borrows.
@@ -1376,7 +1376,7 @@ pub fn load_npmrc(
         if let Some(str_) = query.expr.as_utf8_string_literal() {
             install.ca = Some(bun_api::Ca::Str(Box::<[u8]>::from(str_)));
         } else if let ExprData::EArray(arr) = &query.expr.data {
-            let mut list: Vec<Box<[u8]>> = Vec::with_capacity(arr.items.len() as usize);
+            let mut list: Vec<Box<[u8]>> = Vec::with_capacity(arr.items.len as usize);
             for item in arr.items.slice() {
                 if let Some(s) = item.as_string_cloned(bump)? {
                     list.push(Box::<[u8]>::from(s));
@@ -1564,7 +1564,7 @@ pub fn load_npmrc(
                 let registry = result.registry.dupe();
                 registry_map
                     .scopes
-                    .put(Box::<[u8]>::from(&*result.scope), registry)?;
+                    .put(&*result.scope, registry)?;
             }
         }
 
@@ -1726,7 +1726,7 @@ pub fn load_npmrc(
                 .iter()
                 .zip(registry_map.scopes.values_mut())
             {
-                let url = url_map.get(&**k).expect("unreachable");
+                let url = url_map.get(k).expect("unreachable");
 
                 if strings::without_trailing_slash(url.host)
                     == strings::without_trailing_slash(conf_item_url.host)

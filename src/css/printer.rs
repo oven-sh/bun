@@ -133,7 +133,7 @@ impl<'a> ImportInfo<'a> {
 /// that respects options such as `minify`, and `css_modules`.
 pub struct Printer<'a> {
     // #[cfg(feature = "sourcemap")]
-    pub sources: Option<&'a Vec<&'a [u8]>>,
+    pub sources: Option<&'a Vec<Box<[u8]>>>,
     pub dest: &'a mut dyn Write,
     pub loc: Location,
     pub indent_amt: u8,
@@ -212,7 +212,7 @@ impl<'a> Printer<'a> {
     pub fn filename(&self) -> &[u8] {
         if let Some(sources) = self.sources {
             if (self.loc.source_index as usize) < sources.len() {
-                return sources[self.loc.source_index as usize];
+                return sources[self.loc.source_index as usize].as_ref();
             }
         }
         b"unknown.css"
@@ -539,8 +539,8 @@ impl<'a> Printer<'a> {
                 let allocator = self.allocator;
                 let (config, hash, source): (&'a css::css_modules::Config, &'a [u8], &'a [u8]) = {
                     let m = self.css_module.as_ref().unwrap();
-                    let sources: &'a Vec<String> = m.sources;
-                    (m.config, m.hashes[source_index], sources[source_index].as_bytes())
+                    let sources: &'a Vec<Box<[u8]>> = m.sources;
+                    (m.config, m.hashes[source_index], sources[source_index].as_ref())
                 };
 
                 let mut first = true;
@@ -602,8 +602,8 @@ impl<'a> Printer<'a> {
             let allocator = self.allocator;
             let (config, hash, source): (&'a css::css_modules::Config, &'a [u8], &'a [u8]) = {
                 let m = self.css_module.as_ref().unwrap();
-                let sources: &'a Vec<String> = m.sources;
-                (m.config, m.hashes[source_index], sources[source_index].as_bytes())
+                let sources: &'a Vec<Box<[u8]>> = m.sources;
+                (m.config, m.hashes[source_index], sources[source_index].as_ref())
             };
 
             let mut err: Option<PrintErr> = None;

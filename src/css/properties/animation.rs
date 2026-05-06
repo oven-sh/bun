@@ -78,55 +78,55 @@ impl Animation {
 
         loop {
             if duration.is_none() {
-                if let Some(value) = input.try_parse(Time::parse) {
+                if let Ok(value) = input.try_parse(Time::parse) {
                     duration = Some(value);
                     continue;
                 }
             }
             if timing_function.is_none() {
-                if let Some(value) = input.try_parse(EasingFunction::parse) {
+                if let Ok(value) = input.try_parse(EasingFunction::parse) {
                     timing_function = Some(value);
                     continue;
                 }
             }
             if delay.is_none() {
-                if let Some(value) = input.try_parse(Time::parse) {
+                if let Ok(value) = input.try_parse(Time::parse) {
                     delay = Some(value);
                     continue;
                 }
             }
             if iteration_count.is_none() {
-                if let Some(value) = input.try_parse(AnimationIterationCount::parse) {
+                if let Ok(value) = input.try_parse(AnimationIterationCount::parse) {
                     iteration_count = Some(value);
                     continue;
                 }
             }
             if direction.is_none() {
-                if let Some(value) = input.try_parse(AnimationDirection::parse) {
+                if let Ok(value) = input.try_parse(AnimationDirection::parse) {
                     direction = Some(value);
                     continue;
                 }
             }
             if fill_mode.is_none() {
-                if let Some(value) = input.try_parse(AnimationFillMode::parse) {
+                if let Ok(value) = input.try_parse(AnimationFillMode::parse) {
                     fill_mode = Some(value);
                     continue;
                 }
             }
             if play_state.is_none() {
-                if let Some(value) = input.try_parse(AnimationPlayState::parse) {
+                if let Ok(value) = input.try_parse(AnimationPlayState::parse) {
                     play_state = Some(value);
                     continue;
                 }
             }
             if name.is_none() {
-                if let Some(value) = input.try_parse(AnimationName::parse) {
+                if let Ok(value) = input.try_parse(AnimationName::parse) {
                     name = Some(value);
                     continue;
                 }
             }
             if timeline.is_none() {
-                if let Some(value) = input.try_parse(AnimationTimeline::parse) {
+                if let Ok(value) = input.try_parse(AnimationTimeline::parse) {
                     timeline = Some(value);
                     continue;
                 }
@@ -160,24 +160,24 @@ impl Animation {
         if let Some(name_str) = name_str {
             if !self.duration.is_zero() || !self.delay.is_zero() {
                 self.duration.to_css(dest)?;
-                dest.write_char(' ')?;
+                dest.write_char(b' ')?;
             }
 
             if !self.timing_function.is_ease() || EasingFunction::is_ident(name_str) {
                 self.timing_function.to_css(dest)?;
-                dest.write_char(' ')?;
+                dest.write_char(b' ')?;
             }
 
             if !self.delay.is_zero() {
                 self.delay.to_css(dest)?;
-                dest.write_char(' ')?;
+                dest.write_char(b' ')?;
             }
 
             if self.iteration_count != AnimationIterationCount::default()
                 || strings::eql_case_insensitive_ascii(name_str, b"infinite")
             {
                 self.iteration_count.to_css(dest)?;
-                dest.write_char(' ')?;
+                dest.write_char(b' ')?;
             }
 
             if self.direction != AnimationDirection::default()
@@ -189,7 +189,7 @@ impl Animation {
                 .is_ok()
             {
                 self.direction.to_css(dest)?;
-                dest.write_char(' ')?;
+                dest.write_char(b' ')?;
             }
 
             if self.fill_mode != AnimationFillMode::default()
@@ -202,7 +202,7 @@ impl Animation {
                     .is_ok())
             {
                 self.fill_mode.to_css(dest)?;
-                dest.write_char(' ')?;
+                dest.write_char(b' ')?;
             }
 
             if self.play_state != AnimationPlayState::default()
@@ -214,14 +214,14 @@ impl Animation {
                 .is_ok()
             {
                 self.play_state.to_css(dest)?;
-                dest.write_char(' ')?;
+                dest.write_char(b' ')?;
             }
         }
 
         self.name.to_css(dest)?;
 
         if self.name != AnimationName::None && self.timeline != AnimationTimeline::default() {
-            dest.write_char(' ')?;
+            dest.write_char(b' ')?;
             self.timeline.to_css(dest)?;
         }
 

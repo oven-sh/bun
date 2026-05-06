@@ -2697,40 +2697,6 @@ impl<AtRule> StyleSheet<AtRule> {
         )
     }
 
-    pub fn parse_bundler(
-        allocator: &'static Bump,
-        code: &[u8],
-        options: ParserOptions,
-        import_records: &mut BabyList<ImportRecord>,
-        source_index: SrcIndex,
-    ) -> Maybe<(Self, StylesheetExtra), Err<ParserError>>
-    where
-        AtRule: From<BundlerAtRule>,
-    {
-        // PORT NOTE: reshaped for borrowck — Zig aliased `import_records` into
-        // both `BundlerAtRuleParser` *and* the parser's own slot, and aliased
-        // `&options` into the at-rule parser while also passing `options` by
-        // value (struct copy) to `parseWith`. Rust forbids both overlaps.
-        // - `import_records`: only the at-rule-parser holds it; `parse_with`
-        //   receives `None`. Phase B reshapes so `BundlerAtRuleParser` reaches
-        //   import records through the `Parser` instead.
-        // - `options`: shallow-copy via `ptr::read` (the Zig by-value pass) so
-        //   the original stack slot stays live for `at_rule_parser.options`.
-        // SAFETY: `ParserOptions` fields are POD/shared-ref-like (`NonNull<Log>`
-        // is Copy; `css_modules::Config` has no Drop). No double-drop hazard;
-        // mirrors Zig's bitwise struct copy.
-        let options_for_parse = unsafe { core::ptr::read(&options) };
-        let mut at_rule_parser = BundlerAtRuleParser {
-            allocator,
-            import_records,
-            options: &options,
-            layer_names: BabyList::default(),
-            anon_layer_count: 0,
-            enclosing_layer: LayerName::default(),
-        };
-        Self::parse_with(allocator, code, options_for_parse, &mut at_rule_parser, None, source_index)
-    }
-
     /// Parse a style sheet from a string.
     // TODO(port): `ParserOptions<'static>` matches the `StyleSheet.options`
     // field's `'static` erasure; re-threads to `<'bump>` alongside the rest of
@@ -2949,7 +2915,14 @@ impl<AtRule> StyleSheet<AtRule> {
                             ImportKind::At
                         },
                         range: logger::Range::NONE,
-                        ..Default::default()
+                        // NOTE: `ImportRecord` deliberately has no `Default`; spell out
+                        // remaining fields explicitly (matches on_import_rule above).
+                        tag: Default::default(),
+                        loader: None,
+                        source_index: Default::default(),
+                        module_id: 0,
+                        original_path: b"",
+                        flags: Default::default(),
                     }));
                     // PORT NOTE: reshaped for borrowck — Zig did
                     // `out.v.appendAssumeCapacity(rule.*)` (bitwise copy) then
@@ -3045,6 +3018,39 @@ impl StyleAttribute {
             exports: None,
             references: None,
         })
+    }
+}
+
+impl StyleSheet<BundlerAtRule> {
+    pub fn parse_bundler(
+        allocator: &'static Bump,
+        code: &[u8],
+        options: ParserOptions,
+        import_records: &mut BabyList<ImportRecord>,
+        source_index: SrcIndex,
+    ) -> Maybe<(Self, StylesheetExtra), Err<ParserError>> {
+        // PORT NOTE: reshaped for borrowck — Zig aliased `import_records` into
+        // both `BundlerAtRuleParser` *and* the parser's own slot, and aliased
+        // `&options` into the at-rule parser while also passing `options` by
+        // value (struct copy) to `parseWith`. Rust forbids both overlaps.
+        // - `import_records`: only the at-rule-parser holds it; `parse_with`
+        //   receives `None`. Phase B reshapes so `BundlerAtRuleParser` reaches
+        //   import records through the `Parser` instead.
+        // - `options`: shallow-copy via `ptr::read` (the Zig by-value pass) so
+        //   the original stack slot stays live for `at_rule_parser.options`.
+        // SAFETY: `ParserOptions` fields are POD/shared-ref-like (`NonNull<Log>`
+        // is Copy; `css_modules::Config` has no Drop). No double-drop hazard;
+        // mirrors Zig's bitwise struct copy.
+        let options_for_parse = unsafe { core::ptr::read(&options) };
+        let mut at_rule_parser = BundlerAtRuleParser {
+            allocator,
+            import_records,
+            options: &options,
+            layer_names: BabyList::default(),
+            anon_layer_count: 0,
+            enclosing_layer: LayerName::default(),
+        };
+        Self::parse_with(allocator, code, options_for_parse, &mut at_rule_parser, None, source_index)
     }
 }
 

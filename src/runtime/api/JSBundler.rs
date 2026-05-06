@@ -1568,13 +1568,13 @@ pub mod js_bundler {
     }
 
     impl Resolve {
-        pub fn init(bv2: *mut BundleV2, record: MiniImportRecord) -> Resolve {
+        pub fn init(bv2: *mut BundleV2<'static>, record: MiniImportRecord) -> Resolve {
             Resolve {
                 bv2,
                 import_record: record,
                 value: ResolveValue::Pending,
                 // TODO(port): task/js_task were `undefined` in Zig
-                task: jsc::AnyEventLoop::Task::default(),
+                task: jsc::AnyTaskWithExtraContext::default(),
                 js_task: jsc::AnyTask::default(),
             }
         }

@@ -674,7 +674,7 @@ pub type ParamType = clap::Param<clap::Help>;
 #[cfg(feature = "show_crash_trace")]
 macro_rules! maybe_debug_params { () => { DEBUG_PARAMS }; }
 #[cfg(not(feature = "show_crash_trace"))]
-macro_rules! maybe_debug_params { () => { [] }; }
+macro_rules! maybe_debug_params { () => { ([] as [ParamType; 0]) }; }
 
 // TODO(port): builtin.have_error_return_tracing has no direct Rust analogue (Zig-specific);
 // gate behind a debug feature.

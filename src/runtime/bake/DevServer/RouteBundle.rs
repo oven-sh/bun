@@ -65,7 +65,7 @@ pub struct HTML {
     // TODO(port): bun.ptr.RefPtr — confirm mapping (intrusive refcount wrapper).
     pub html_bundle: RefPtr<HTMLBundleRoute>,
     // TODO(port): IncrementalGraph(.client).FileIndex — Zig comptime-enum-parameterized type.
-    pub bundled_file: <IncrementalGraph as crate::dev_server::incremental_graph::Client>::FileIndex,
+    pub bundled_file: incremental_graph::FileIndex,
     /// Invalidated when the HTML file is modified, but not it's imports.
     /// The style tag is injected here.
     pub script_injection_offset: Option<ByteOffset>,

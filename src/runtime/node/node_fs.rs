@@ -1104,9 +1104,12 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
             unsafe { Self::destroy(self as *mut Self) };
             return Ok(());
         }
-        let global_object = self.evtloop.global_object().unwrap_or_else(|| {
-            panic!("No global object, this indicates a bug in Bun. Please file a GitHub issue.")
-        });
+        let go_ptr = self.evtloop.global_object();
+        if go_ptr.is_null() {
+            panic!("No global object, this indicates a bug in Bun. Please file a GitHub issue.");
+        }
+        // SAFETY: non-null erased *mut JSGlobalObject from the JS event loop vtable.
+        let global_object: &JSGlobalObject = unsafe { &*(go_ptr as *const JSGlobalObject) };
         let success = matches!(*self.result.get_mut(), Maybe::Ok(_));
         let promise_value = self.promise.value();
         // SAFETY: sole `&mut JSPromise` borrow in this scope (resolver-style accessor).

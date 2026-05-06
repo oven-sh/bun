@@ -1251,11 +1251,11 @@ impl FFI {
             return Err(JsError::Thrown);
         }
 
-        if let Some(source_value) = object.get_own(global_this, "source")? {
+        if let Some(source_value) = object.get_own(global_this, &bun_str::String::borrow_utf8(b"source"))? {
             if source_value.is_array() {
                 compile_c.source = Source::Files(Vec::new());
                 let mut iter = source_value.array_iterator(global_this)?;
-                while let Some(value) = iter.next(global_this)? {
+                while let Some(value) = iter.next()? {
                     if !value.is_string() {
                         return Err(global_this.throw_invalid_argument_type_value(
                             "source",
@@ -1264,7 +1264,7 @@ impl FFI {
                         ));
                     }
                     if let Source::Files(files) = &mut compile_c.source {
-                        files.push(value.get_zig_string(global_this)?.to_owned_slice_z()?);
+                        files.push(value.get_zig_string(global_this)?.to_owned_slice_z());
                     }
                 }
             } else if !source_value.is_string() {
@@ -1274,7 +1274,7 @@ impl FFI {
                     source_value,
                 ));
             } else {
-                let source_path = source_value.get_zig_string(global_this)?.to_owned_slice_z()?;
+                let source_path = source_value.get_zig_string(global_this)?.to_owned_slice_z();
                 compile_c.source = Source::File(source_path);
             }
         }

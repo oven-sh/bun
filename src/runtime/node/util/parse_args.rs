@@ -403,8 +403,7 @@ fn parse_option_definitions(
         validators::validate_object(
             global,
             obj,
-            "options.{}",
-            format_args!("{}", option.long_name),
+            format_args!("options.{}", option.long_name),
             Default::default(),
         )?;
 

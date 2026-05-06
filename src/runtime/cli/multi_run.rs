@@ -1072,7 +1072,7 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
         shell_bin,
         aborted: false,
         no_exit_on_error: ctx.no_exit_on_error,
-        env: this_transpiler.env,
+        env: env_ptr,
         use_colors,
     };
 

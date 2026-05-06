@@ -1561,7 +1561,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
         let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
         if let Some(resolver) = (*this).resolver.as_ref() {
             // SAFETY: IntrusiveRc holds a live ref; request_completed mutates pending_requests counter only.
-            (*resolver.as_ptr()).request_completed();
+            (*resolver.data.as_ptr()).request_completed();
         }
         Self::destroy(this);
     }
@@ -1570,8 +1570,10 @@ impl<T: CAresRecordType> CAresLookup<T> {
     /// exact pointer returned by `Box::into_raw` in `new()`. Head nodes (`!allocated`)
     /// are dropped by their owner; this is a no-op for them.
     pub unsafe fn destroy(this: *mut Self) {
-        if (*this).allocated {
-            drop(Box::from_raw(this));
+        unsafe {
+            if (*this).allocated {
+                drop(Box::from_raw(this));
+            }
         }
     }
 }
@@ -1579,16 +1581,11 @@ impl<T: CAresRecordType> CAresLookup<T> {
 impl<T: CAresRecordType> Drop for CAresLookup<T> {
     fn drop(&mut self) {
         // SAFETY: JSGlobalObject outlives the request.
-        self.poll_ref.unref(unsafe { &*self.global_this }.bun_vm());
+        let _ = unsafe { &*self.global_this };
+        self.poll_ref.unref(js_event_loop_ctx());
         // self.name / self.resolver freed by field Drop (Box / IntrusiveRc deref)
     }
 }
-
-// Extension on the record-type trait for the comptime "queryXxx" string.
-pub trait CAresRecordTypeExt: CAresRecordType {
-    fn syscall_name() -> &'static str;
-}
-// TODO(port): impl CAresRecordTypeExt for each c_ares reply type with const_format::concatcp!("query", ucfirst(TYPE_NAME))
 
 // ──────────────────────────────────────────────────────────────────────────
 // DNSLookup

@@ -186,7 +186,7 @@ pub mod BunInfo {
 }
 
 // ─── write_status ────────────────────────────────────────────────────────────
-pub fn write_status<const SSL: bool>(resp_ptr: Option<&mut uws::NewApp<SSL>::Response>, status: u16) {
+pub fn write_status<const SSL: bool>(resp_ptr: Option<&mut uws_sys::NewAppResponse<SSL>>, status: u16) {
     if let Some(resp) = resp_ptr {
         if let Some(text) = HTTPStatusText::get(status) {
             resp.write_status(text);
@@ -216,7 +216,7 @@ pub enum AnyRoute {
     ///   "dir": import.meta.resolve("./pages"),
     ///   "style": "nextjs-pages",
     /// }
-    FrameworkRouter(bake::FrameworkRouter::TypeIndex),
+    FrameworkRouter(bake::framework_router::TypeIndex),
 }
 
 impl AnyRoute {
@@ -225,7 +225,7 @@ impl AnyRoute {
             AnyRoute::Static(static_route) => static_route.memory_cost(),
             AnyRoute::File(file_route) => file_route.memory_cost(),
             AnyRoute::Html(html_bundle_route) => html_bundle_route.data.memory_cost(),
-            AnyRoute::FrameworkRouter(_) => mem::size_of::<bake::Framework::FileSystemRouterType>(),
+            AnyRoute::FrameworkRouter(_) => mem::size_of::<bake::FileSystemRouterType>(),
         }
     }
 
@@ -508,7 +508,7 @@ pub struct ServerInitContext<'a> {
     pub dedupe_html_bundle_map: HashMap<*const HTMLBundle, RefPtr<html_bundle::Route>>,
     pub js_string_allocations: bake::StringRefList,
     pub global: &'a JSGlobalObject,
-    pub framework_router_list: Vec<bake::Framework::FileSystemRouterType>,
+    pub framework_router_list: Vec<bake::FileSystemRouterType>,
     pub user_routes: &'a mut Vec<server_config::StaticRouteEntry>,
 }
 
@@ -527,7 +527,7 @@ pub enum ServePluginsState {
     Pending {
         /// Promise may be empty if the plugin load finishes synchronously.
         plugin: Box<JSBundler::Plugin>,
-        promise: jsc::JSPromise::Strong,
+        promise: jsc::JSPromiseStrong,
         html_bundle_routes: Vec<*mut html_bundle::Route>,
         // TODO(port): LIFETIMES.tsv classifies this BORROW_PARAM → Option<&'a DevServer>;
         // threading <'a> through ServePluginsState/ServePlugins deferred to Phase B.
@@ -651,7 +651,7 @@ impl ServePlugins {
         let bunfig_folder_bunstr = BunString::create_utf8_for_js(global, bunfig_folder)?;
 
         self.state = ServePluginsState::Pending {
-            promise: jsc::JSPromise::Strong::init(global),
+            promise: jsc::JSPromiseStrong::init(global),
             plugin,
             html_bundle_routes: Vec::new(),
             dev_server: None,
@@ -871,7 +871,7 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     pub request_pool_allocator: &'static RequestContextStackAllocator<SSL, DEBUG, false>,
     // TODO(port): conditional field
     pub h3_request_pool_allocator: &'static RequestContextStackAllocator<SSL, DEBUG, true>,
-    pub all_closed_promise: jsc::JSPromise::Strong,
+    pub all_closed_promise: jsc::JSPromiseStrong,
 
     pub listen_callback: jsc::AnyTask,
     // allocator field dropped — global mimalloc
@@ -2034,7 +2034,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if prom.strong.has() {
             return prom.value();
         }
-        *prom = jsc::JSPromise::Strong::init(global);
+        *prom = jsc::JSPromiseStrong::init(global);
         prom.value()
     }
 
@@ -2069,7 +2069,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 ServerAllConnectionsClosedTask {
                     global_object: unsafe { &*self.global_this },
                     // Duplicate the Strong handle so that we can hold two independent strong references to it.
-                    promise: jsc::JSPromise::Strong {
+                    promise: jsc::JSPromiseStrong {
                         strong: Strong::create(self.all_closed_promise.value(), unsafe { &*self.global_this }),
                     },
                     tracker: AsyncTaskTracker::init(vm),
@@ -2268,7 +2268,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // TODO(port): conditional field — placeholder static
                 Self::H3RequestContext::pool_get_or_init()
             },
-            all_closed_promise: jsc::JSPromise::Strong::default(),
+            all_closed_promise: jsc::JSPromiseStrong::default(),
             listen_callback: jsc::AnyTask::default(),
             poll_ref: KeepAlive::default(),
             flags: ServerFlags::default(),
@@ -4002,7 +4002,7 @@ pub enum SavedRequestUnion<'a> {
 // ─── ServerAllConnectionsClosedTask ──────────────────────────────────────────
 pub struct ServerAllConnectionsClosedTask {
     pub global_object: &'static JSGlobalObject, // JSC_BORROW
-    pub promise: jsc::JSPromise::Strong,
+    pub promise: jsc::JSPromiseStrong,
     pub tracker: AsyncTaskTracker,
 }
 

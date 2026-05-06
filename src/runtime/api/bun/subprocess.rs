@@ -122,7 +122,9 @@ impl StdioKind {
     }
 }
 
-#[bun_jsc::JsClass]
+// PORT NOTE: `#[bun_jsc::JsClass]` does not yet handle generic structs (it emits the
+// bare ident in extern signatures). The `JsClass` impl + finalize/construct C-ABI
+// hooks are hand-expanded below for `Subprocess<'_>`.
 pub struct Subprocess<'a> {
     pub ref_count: RefCount<Subprocess<'a>>,
     // ManuallyDrop so finalize() can release the strong ref at the same point as Zig's
@@ -135,9 +137,10 @@ pub struct Subprocess<'a> {
     pub pid_rusage: Option<Rusage>,
 
     /// Terminal attached to this subprocess (if spawned with terminal option)
-    pub terminal: Option<&'a Terminal>,
+    pub terminal: Option<NonNull<Terminal>>,
 
-    pub global_this: &'a JSGlobalObject,
+    // Raw pointer (Zig: `*jsc.JSGlobalObject`) — JSC global outlives every Subprocess.
+    pub global_this: *const JSGlobalObject,
     pub observable_getters: EnumSet<ObservableGetter>,
     pub closed: EnumSet<StdioKind>,
     pub this_value: JsRef,

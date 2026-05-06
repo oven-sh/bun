@@ -111,7 +111,7 @@ pub struct BundledDep {
 // ───────────────────────────────────────────────────────────────────────────
 
 impl PackCommand {
-    pub fn exec_with_manager(ctx: Command::Context, manager: &mut PackageManager) -> Result<(), bun_core::Error> {
+    pub fn exec_with_manager(ctx: Command::Context<'_>, manager: &mut PackageManager) -> Result<(), bun_core::Error> {
         if manager.options.log_level != LogLevel::Silent && manager.options.log_level != LogLevel::Quiet {
             Output::prettyln(format_args!(
                 "<r><b>bun pack <r><d>v{}<r>",
@@ -208,7 +208,7 @@ impl PackCommand {
         Ok(())
     }
 
-    pub fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
+    pub fn exec(ctx: Command::Context<'_>) -> Result<(), bun_core::Error> {
         let cli = PackageManager::CommandLineArguments::parse(PackageManager::Subcommand::Pack)?;
 
         let (manager, original_cwd) = match PackageManager::init(&ctx, cli, PackageManager::Subcommand::Pack) {

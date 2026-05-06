@@ -55,48 +55,51 @@ use crate::shell::dispatch_tasks::{
     ShellAsyncSubprocessDone, ShellCondExprStatTask, ShellGlobTask, ShellRmDirTask,
 };
 
-use crate::webcore::fetch::FetchTasklet;
+use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
 use crate::webcore::s3::simple_request::S3HttpSimpleTask;
 use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
 use crate::webcore::blob::copy_file::CopyFilePromiseTask;
-use crate::webcore::blob::read_file::ReadFileTask;
-use crate::webcore::blob::write_file::WriteFileTask;
+// `read_file::ReadFileTask` / `write_file::WriteFileTask` — module bodies are
+// `#![cfg(any())]`-gated (b2-blocked on bun_io/bun_jsc); arms below stubbed.
 use crate::webcore::file_sink::{FlushPendingTask as FlushPendingFileSinkTask, Poll as FileSinkPoll};
 use crate::webcore::streams::Pending as StreamPending;
 
 use crate::api::glob::AsyncGlobWalkTask;
 use crate::image::AsyncImageTask;
 use crate::api::JSTranspiler::AsyncTransformTask;
-use crate::api::NativePromiseContext::DeferredDerefTask as NativePromiseContextDeferredDerefTask;
+use crate::api::native_promise_context::DeferredDerefTask as NativePromiseContextDeferredDerefTask;
 use crate::api::cron::CronJob;
-use crate::api::bun::terminal::Poll as TerminalPoll;
-use crate::api::bun::subprocess::{Subprocess, StaticPipeWriter};
-use crate::api::bun::subprocess::static_pipe_writer::Poll as StaticPipeWriterPoll;
+use crate::api::bun_terminal_body::Poll as TerminalPoll;
+use crate::api::bun_subprocess::{Subprocess, StaticPipeWriter};
+use crate::api::bun_subprocess::static_pipe_writer::Poll as StaticPipeWriterPoll;
 
 use crate::napi::{napi_async_work, NapiFinalizerTask, ThreadSafeFunction};
 
 use bun_jsc::CppTask;
-use bun_jsc::JSCScheduler::JSCDeferredWorkTask;
+// `bun_jsc::jsc_scheduler::JSCDeferredWorkTask` — module sits in the gated
+// `_gated` block of `bun_jsc/lib.rs`; arm below stubbed.
 use bun_jsc::PosixSignalTask;
 use bun_jsc::RuntimeTranspilerStore;
 use bun_jsc::module_loader::AsyncModule;
 use bun_jsc::hot_reloader;
 
-use crate::bake::dev_server::hot_reload_event::HotReloadEvent as BakeHotReloadEvent;
+use crate::bake::dev_server::HotReloadEvent as BakeHotReloadEvent;
 use crate::bake::dev_server::source_map_store::SourceMapStore;
 use crate::bake::dev_server::DevServer;
 
 use crate::node::fs::async_ as fs_async;
-use crate::node::node_fs_watcher::FSWatchTask;
-use crate::node::node_fs_stat_watcher::StatWatcherScheduler;
+// `node_fs_watcher` / `node_fs_stat_watcher` — modules not yet declared in
+// `node.rs` (b2-blocked); FSWatchTask / StatWatcherScheduler arms stubbed.
 use crate::node::zlib::{NativeBrotli, NativeZlib, NativeZstd};
 use crate::node::node_zlib_binding;
 
-use crate::dns_jsc::dns::{self, get_addr_info_request, GetAddrInfoRequest, Resolver as DNSResolver};
+#[allow(unused_imports)]
+use crate::dns_jsc::{get_addr_info_request, GetAddrInfoRequest, Resolver as DNSResolver};
 use crate::server::ServerAllConnectionsClosedTask;
 
 use crate::api::bun_process::{self, Process};
-use crate::api::bun_process::waiter_thread::ResultTask as ProcessWaiterThreadTask;
+#[cfg(unix)]
+use crate::api::bun_process::waiter_thread_posix::ResultTask as ProcessWaiterThreadTask;
 
 use bun_bundler::DeferredBatchTask as BundleV2DeferredBatchTask;
 

@@ -23,6 +23,25 @@ use bun_str::{self, strings, ZStr, ZigString as ZigStringSlice};
 use bun_sys::{self as sys};
 #[cfg(windows)]
 use bun_sys::windows::libuv;
+// Non-windows libuv stub: the libuv-backed code paths are reachable only on
+// windows (gated at call sites), but the function signatures and structs that
+// reference `libuv::*` are not all `#[cfg(windows)]`-gated. Provide opaque
+// type aliases so name resolution succeeds; bodies are unreachable on POSIX.
+#[cfg(not(windows))]
+mod libuv {
+    #![allow(non_camel_case_types, dead_code)]
+    #[repr(C)]
+    pub struct uv_getaddrinfo_t {
+        _opaque: [u8; 0],
+    }
+    #[repr(C)]
+    pub struct uv_poll_t {
+        _opaque: [u8; 0],
+    }
+    pub type addrinfo = libc::addrinfo;
+    pub const UV_READABLE: core::ffi::c_int = 1;
+    pub const UV_WRITABLE: core::ffi::c_int = 2;
+}
 use bun_threading::{thread_pool, ThreadPool};
 use bun_uws::{self as uws, ConnectingSocket, Loop};
 use bun_wyhash::hash as wyhash;

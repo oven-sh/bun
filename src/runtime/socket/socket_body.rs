@@ -119,7 +119,11 @@ pub extern "C" fn select_alpn_callback(
 /// Generic socket wrapper. `SSL = false` → `TCPSocket`, `SSL = true` → `TLSSocket`.
 ///
 /// In Zig this is `fn NewSocket(comptime ssl: bool) type { return struct {...} }`.
-#[bun_jsc::JsClass]
+// PORT NOTE: `#[bun_jsc::JsClass]` cannot be applied here — the proc-macro
+// emits monomorphic `impl JsClass for NewSocket` (no generics) and a single
+// set of `${Name}__fromJS`/`__create` externs, but this type maps to TWO
+// codegen classes (`JSTCPSocket` / `JSTLSSocket`). The codegen accessors are
+// hand-dispatched per-monomorphisation in the `impl` block below instead.
 pub struct NewSocket<const SSL: bool> {
     pub socket: uws::NewSocketHandler<SSL>,
     /// `SSL_CTX*` this client connection was opened with. One owned ref —
@@ -128,7 +132,7 @@ pub struct NewSocket<const SSL: bool> {
     pub owned_ssl_ctx: Option<*mut SSL_CTX>,
 
     pub flags: Flags,
-    pub ref_count: Cell<u32>, // intrusive — see `bun_ptr::IntrusiveRc<Self>`
+    pub ref_count: bun_ptr::RefCount<Self>, // intrusive — see `bun_ptr::IntrusiveRc<Self>`
     // Zig: `handlers: ?*Handlers` — a freely-aliased mutable raw pointer.
     //
     // OWNERSHIP: in **server** mode this points at `&mut listener.handlers`

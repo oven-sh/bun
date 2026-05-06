@@ -386,7 +386,11 @@ pub struct UDPSocket {
     pub socket: Option<*mut uws::udp::Socket>,
     pub loop_: &'static uws::Loop,
 
-    pub global_this: *mut JSGlobalObject,
+    // Stored as `*const` because we only ever re-borrow it as `&JSGlobalObject`
+    // (see Zig spec: `globalThis: *JSGlobalObject` is read-only at every use site).
+    // A `*mut` here would require a `&T as *const T as *mut T` cast at construction,
+    // which is UB-adjacent provenance laundering even when never written through.
+    pub global_this: *const JSGlobalObject,
     pub this_value: JsRef,
 
     pub jsc_ref: JscRef,
@@ -415,7 +419,7 @@ impl UDPSocket {
         let this_ptr = Self::new(Self {
             socket: None,
             config: UDPSocketConfig::default(),
-            global_this: global_this as *const _ as *mut JSGlobalObject,
+            global_this: global_this as *const JSGlobalObject,
             loop_: uws::Loop::get(),
             vm,
             this_value: JsRef::empty(),

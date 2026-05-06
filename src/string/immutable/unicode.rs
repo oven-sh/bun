@@ -2137,9 +2137,13 @@ pub fn copy_utf16_into_utf8_with_buffer_impl<const ALLOW_TRUNCATED_UTF8_SEQUENCE
         }
 
         utf16_remaining = &utf16_remaining[replacement.len as usize..];
-        // SAFETY: width <= remaining.len() and we need a *[4]u8 view; encodeWTF8RuneT writes at most `width` bytes.
-        let four: &mut [u8; 4] = unsafe { &mut *(remaining.as_mut_ptr() as *mut [u8; 4]) };
-        let _ = encode_wtf8_rune_t::<u32>(four, replacement.code_point);
+        // Zig does `remaining.ptr[0..4]` (a raw *[4]u8 with no bounds claim) and
+        // encodeWTF8RuneT only writes `width` bytes. In Rust, materializing
+        // `&mut [u8; 4]` would assert 4 valid bytes even when remaining.len() < 4,
+        // so encode into a stack buffer and copy the `width` bytes that were written.
+        let mut four = [0u8; 4];
+        let _ = encode_wtf8_rune_t::<u32>(&mut four, replacement.code_point);
+        remaining[..width].copy_from_slice(&four[..width]);
         remaining = &mut remaining[width..];
     }
 

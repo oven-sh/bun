@@ -461,10 +461,11 @@ impl EventLoop {
 
     pub fn run_imminent_gc_timer(&mut self) {
         // Spec event_loop.zig:302-306: `if (swap()) |timer| timer.run(vm)`.
-        // `WTFTimer` is opaque at this tier, so the body dispatches through
-        // [`RUN_WTF_TIMER_HOOK`]. Load the hook FIRST and bail without
-        // swapping when it's null — otherwise the swap would consume the
-        // scheduled timer and silently drop it (state-destroying no-op).
+        // The real `WTFTimer` lives in `bun_runtime` (cycle), so the body
+        // dispatches through [`RUN_WTF_TIMER_HOOK`]. Load the hook FIRST and
+        // bail without swapping when it's null — otherwise the swap would
+        // consume the scheduled timer and silently drop it (state-destroying
+        // no-op).
         let hook = RUN_WTF_TIMER_HOOK.load(Ordering::Acquire);
         if hook.is_null() {
             // No high-tier dispatcher registered yet — leave `imminent_gc_timer`

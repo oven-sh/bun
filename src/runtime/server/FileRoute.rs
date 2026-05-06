@@ -1,4 +1,4 @@
-use core::cell::Cell;
+use core::cell::{Cell, UnsafeCell};
 use core::ffi::c_void;
 use core::mem::size_of;
 

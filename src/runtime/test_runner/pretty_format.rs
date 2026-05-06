@@ -2100,13 +2100,15 @@ impl<'a> Formatter<'a> {
                             SetIterator::<W, ENABLE_ANSI_COLORS>::for_each,
                         );
                         drop(iter);
+                        // PORT NOTE: Zig `defer this.indent -|= 1` / `defer this.quote_strings = prev`
+                        // run on every exit, including thrown exceptions — restore before propagating.
                         self.indent = self.indent.saturating_sub(1);
+                        self.quote_strings = prev_quote_strings;
                         result?;
                     }
                     let _ = self.write_indent(writer.ctx);
                     writer.write_all(b"}");
                     writer.write_all(b"\n");
-                    self.quote_strings = prev_quote_strings;
                 }
                 Tag::JSON => {
                     let mut str = bun_str::String::empty();

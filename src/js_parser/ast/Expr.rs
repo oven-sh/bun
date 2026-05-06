@@ -40,6 +40,15 @@ impl BlobRef {
     #[inline] fn content_type(&self) -> &[u8] { unsafe { (self.vtable.content_type)(self.owner) } }
 }
 
+/// Erase a borrowed slice to `'static` for storage in `E::String.data` (which is
+/// `&'static [u8]` pending Phase-B `'bump` threading; see E.rs `Str` alias).
+/// SAFETY: caller guarantees `s` lives in (or outlives) the AST arena that owns
+/// the resulting `Expr` node.
+#[inline(always)]
+unsafe fn arena_str(s: &[u8]) -> &'static [u8] {
+    unsafe { core::mem::transmute::<&[u8], &'static [u8]>(s) }
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // Expr
 // ───────────────────────────────────────────────────────────────────────────

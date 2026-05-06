@@ -2701,10 +2701,19 @@ impl<AtRule> StyleSheet<AtRule> {
     where
         AtRule: From<BundlerAtRule>,
     {
-        // TODO(port): borrowck — Zig aliased `import_records` into both
-        // `BundlerAtRuleParser` and the parser's own slot. Phase B reshapes:
-        // `BundlerAtRuleParser` no longer owns `import_records`; it goes through
-        // the `Parser` instead. Until then, only the at-rule-parser holds it.
+        // PORT NOTE: reshaped for borrowck — Zig aliased `import_records` into
+        // both `BundlerAtRuleParser` *and* the parser's own slot, and aliased
+        // `&options` into the at-rule parser while also passing `options` by
+        // value (struct copy) to `parseWith`. Rust forbids both overlaps.
+        // - `import_records`: only the at-rule-parser holds it; `parse_with`
+        //   receives `None`. Phase B reshapes so `BundlerAtRuleParser` reaches
+        //   import records through the `Parser` instead.
+        // - `options`: shallow-copy via `ptr::read` (the Zig by-value pass) so
+        //   the original stack slot stays live for `at_rule_parser.options`.
+        // SAFETY: `ParserOptions` fields are POD/shared-ref-like (`NonNull<Log>`
+        // is Copy; `css_modules::Config` has no Drop). No double-drop hazard;
+        // mirrors Zig's bitwise struct copy.
+        let options_for_parse = unsafe { core::ptr::read(&options) };
         let mut at_rule_parser = BundlerAtRuleParser {
             allocator,
             import_records,
@@ -2713,16 +2722,7 @@ impl<AtRule> StyleSheet<AtRule> {
             anon_layer_count: 0,
             enclosing_layer: LayerName::default(),
         };
-        // blocked_on: `options` is borrowed by `at_rule_parser` above and
-        // moved into `parse_with` here — Zig aliased; Rust needs the Phase-B
-        // borrow reshape (see TODO above) before this can be enabled.
-         {
-        return Self::parse_with(allocator, code, options, &mut at_rule_parser, None, source_index);
-        }
-        #[cfg(any())] {
-        let _ = (allocator, code, source_index, &mut at_rule_parser);
-        todo!("StyleSheet::parse_bundler — gated on BundlerAtRuleParser: CustomAtRuleParser")
-        }
+        Self::parse_with(allocator, code, options_for_parse, &mut at_rule_parser, None, source_index)
     }
 
     /// Parse a style sheet from a string.

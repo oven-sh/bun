@@ -530,6 +530,37 @@ impl ValueError {
 }
 
 impl Value {
+    /// Decrement the refcount of the enclosing pooled `HiveRef<Value>` slot.
+    ///
+    /// `RequestContext.request_body` stores `NonNull<Value>` (the pooled
+    /// payload), but the Zig field type is `?*Body.Value.HiveRef` — the slot
+    /// header carries the refcount + pool back-pointer. Recover the parent via
+    /// `offset_of!` (Zig: `@fieldParentPtr("value", this)`) and forward.
+    ///
+    /// # Safety
+    /// `self` must be the `value` field of a live `HiveRef<Value, POOL_SIZE>`
+    /// produced by `HiveRef::init`.
+    pub unsafe fn unref(&mut self) -> Option<&mut Self> {
+        // SAFETY: caller contract — `self` is the `.value` field of a HiveRef slot.
+        let parent = unsafe {
+            &mut *(self as *mut Self as *mut u8)
+                .sub(core::mem::offset_of!(HiveRef, value))
+                .cast::<HiveRef>()
+        };
+        parent.unref().map(|h| &mut h.value)
+    }
+
+    /// See [`Value::unref`] for the safety contract.
+    pub unsafe fn ref_(&mut self) -> &mut Self {
+        // SAFETY: caller contract — `self` is the `.value` field of a HiveRef slot.
+        let parent = unsafe {
+            &mut *(self as *mut Self as *mut u8)
+                .sub(core::mem::offset_of!(HiveRef, value))
+                .cast::<HiveRef>()
+        };
+        &mut parent.ref_().value
+    }
+
     pub fn tag(&self) -> Tag {
         match self {
             Value::Blob(_) => Tag::Blob,

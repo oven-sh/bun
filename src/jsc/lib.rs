@@ -1323,28 +1323,70 @@ impl JSGlobalObject {
     pub fn throw_invalid_arguments2(&self, msg: impl core::fmt::Display, _args: impl ThrowFmtArgs) -> JsError {
         self.throw_invalid_arguments(msg)
     }
+    /// `throwInvalidArgumentType(name, field, typename)` (JSGlobalObject.zig:103)
+    /// — `"Expected {field} to be a {typename} for '{name}'."` tagged
+    /// `ERR_INVALID_ARG_TYPE`.
     pub fn throw_invalid_argument_type(
         &self,
         name: &'static str,
         field: &'static str,
         typename: &'static str,
     ) -> JsError {
-        let _ = (name, field, typename);
-        // TODO(b2): full impl — gated.
-        todo!("JSGlobalObject::throw_invalid_argument_type")
+        // Zig builds the message via `comptime std.fmt.comptimePrint`; the
+        // ported port uses runtime `format_args!` (no comptime in Rust).
+        let err = self
+            .err(
+                ErrorCode::INVALID_ARG_TYPE,
+                format_args!("Expected {field} to be a {typename} for '{name}'."),
+            )
+            .to_js();
+        self.throw_value(err)
     }
-    /// `globalThis.ERR(.INVALID_ARG_TYPE, fmt, args)` — Node-compat error builder.
-    /// Returns the error JSValue; caller decides whether to throw or wrap.
+    /// `globalThis.ERR(.INVALID_ARG_TYPE, fmt, args).toJS()` — Node-compat error
+    /// builder. Returns the error JSValue; caller decides whether to throw or wrap.
     #[allow(non_snake_case)]
     pub fn ERR_INVALID_ARG_TYPE(&self, args: core::fmt::Arguments<'_>) -> JSValue {
-        let _ = args;
-        // TODO(b2): ErrorBuilder dispatch (ErrorCode.ts codegen) — gated.
-        todo!("JSGlobalObject::ERR_INVALID_ARG_TYPE")
+        ErrorCode::INVALID_ARG_TYPE.fmt(self, args)
     }
+    /// `globalThis.ERR(.INVALID_URL, fmt, args).toJS()`.
     pub fn err_invalid_url(&self, args: core::fmt::Arguments<'_>) -> JSValue {
-        let _ = args;
-        // TODO(b2): ErrorBuilder dispatch (ErrorCode.ts codegen) — gated.
-        todo!("JSGlobalObject::err_invalid_url")
+        ErrorCode::INVALID_URL.fmt(self, args)
+    }
+    /// `determineSpecificType(value)` (JSGlobalObject.zig:155) — calls into C++
+    /// (`Bun__ErrorCode__determineSpecificType`) to produce the Node-style
+    /// "Received ..." description for an arbitrary JSValue.
+    pub fn determine_specific_type(&self, value: JSValue) -> JsResult<bun_string::String> {
+        // SAFETY: `self` is a live JSGlobalObject; `value` is a valid JSValue.
+        let str = unsafe { Bun__ErrorCode__determineSpecificType(self.as_ptr(), value) };
+        if self.has_exception() {
+            str.deref();
+            return Err(JsError::Thrown);
+        }
+        Ok(str)
+    }
+    /// `throwInvalidArgumentTypeValue(argname, typename, value)`
+    /// (JSGlobalObject.zig:186) — `"The \"{argname}\" argument must be of type
+    /// {typename}. Received {actual}"` tagged `ERR_INVALID_ARG_TYPE`.
+    pub fn throw_invalid_argument_type_value(
+        &self,
+        argname: &str,
+        typename: &str,
+        value: JSValue,
+    ) -> JsError {
+        let actual = match self.determine_specific_type(value) {
+            Ok(s) => s,
+            Err(e) => return e,
+        };
+        let e = self
+            .err(
+                ErrorCode::INVALID_ARG_TYPE,
+                format_args!(
+                    "The \"{argname}\" argument must be of type {typename}. Received {actual}"
+                ),
+            )
+            .throw();
+        actual.deref();
+        e
     }
 
     pub fn take_exception(&self, proof: JsError) -> JSValue {

@@ -495,11 +495,12 @@ pub extern "C" fn Bun__resolveEmbeddedNodeFile(
     // `bun.String.cloneUTF8(result)`).
     let Some(hooks) = loader_hooks() else {
         // Reaching here requires a standalone module graph but no `bun_runtime`
-        // — an inconsistent state. Fail loud rather than silently returning
-        // `false` (which would leave the virtual specifier in `*in_out_str`
-        // and make `process.dlopen()` mis-resolve — PORTING.md §Forbidden:
-        // silent-no-op for real Zig logic).
-        todo!("b2-cycle: resolveEmbeddedFile — standalone graph present but LoaderHooks unset");
+        // — an init-ordering invariant violation (the graph is installed by the
+        // CLI entry, which runs strictly after `set_loader_hooks`). Fail loud
+        // rather than silently returning `false` (which would leave the virtual
+        // specifier in `*in_out_str` and make `process.dlopen()` mis-resolve —
+        // PORTING.md §Forbidden: silent-no-op for real Zig logic).
+        unreachable!("standalone_module_graph set but LoaderHooks unset (init ordering)");
     };
     // SAFETY: hook contract — `vm` is the live per-thread VM; `in_out_str` is a
     // valid in/out `bun.String*` (C++ ABI, BunProcess.cpp:463).

@@ -16,7 +16,7 @@ mod _impl {
 use super::*;
 use core::cell::Cell;
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, Strong, WorkPoolTask};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StrongOptional, WorkPoolTask};
 
 use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive};
 use crate::node::util::validators;

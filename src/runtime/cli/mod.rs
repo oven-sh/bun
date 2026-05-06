@@ -1026,7 +1026,12 @@ pub mod command {
 
         // SAFETY: single-threaded startup.
         let ctx = unsafe { &mut *init(Tag::GetCompletionsCommand, log)? };
-        let mut filter: &[&'static [u8]] = &ctx.positionals;
+        // PORT NOTE: `ctx.positionals` is `Vec<Box<[u8]>>`; clone into a local
+        // owned vec so `filter` doesn't borrow `ctx` (passed `&mut` below).
+        let positionals: Vec<Box<[u8]>> = ctx.positionals.clone();
+        let positionals_refs: Vec<&[u8]> =
+            positionals.iter().map(|b| &**b).collect();
+        let mut filter: &[&[u8]] = &positionals_refs;
 
         for (i, item) in filter.iter().enumerate() {
             if *item == b"getcompletes" {
@@ -1034,7 +1039,7 @@ pub mod command {
                 break;
             }
         }
-        let mut prefilled_completions: [&[u8]; add_completions::BIGGEST_LIST] =
+        let mut prefilled_completions: [&'static [u8]; add_completions::BIGGEST_LIST] =
             [b""; add_completions::BIGGEST_LIST];
         let mut completions = ShellCompletions::default();
 

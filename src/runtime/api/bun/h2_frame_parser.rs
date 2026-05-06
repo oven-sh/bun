@@ -2980,8 +2980,9 @@ impl H2FrameParser {
 
         let settings = self.remote_settings.unwrap_or(self.local_settings);
 
-        if frame.length > settings.max_frame_size {
-            bun_output::scoped_log!(H2FrameParser, "received data frame with length: {} and max frame size: {}", frame.length, settings.max_frame_size);
+        let max_frame_size = settings.max_frame_size;
+        if frame.length > max_frame_size {
+            bun_output::scoped_log!(H2FrameParser, "received data frame with length: {} and max frame size: {}", frame.length, max_frame_size);
             self.send_go_away(frame.stream_identifier, ErrorCode::FRAME_SIZE_ERROR, b"Invalid dataframe frame size", self.last_stream_id, true);
             return data.len();
         }
@@ -5118,7 +5119,7 @@ impl H2FrameParser {
             let mut iter = bun_jsc::JSPropertyIterator::init(
                 global_object,
                 headers_obj,
-                bun_jsc::JSPropertyIteratorOptions::new(false, true),
+                bun_jsc::JSPropertyIteratorOptions { skip_empty_name: false, include_value: true, ..Default::default() },
             )?;
 
             while let Some(header_name) = iter.next()? {

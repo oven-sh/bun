@@ -5,24 +5,77 @@ use std::rc::{Rc, Weak};
 use bun_alloc::AllocationScope;
 use bun_collections::LinearFifo;
 use bun_core::{Output, Timespec};
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, Strong};
+use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, Strong, JsClass as _};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::js_promise::Status as PromiseStatus;
-use super::jest::{Jest, TestRunner, FileId};
-use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use super::jest::{Jest, TestRunner, FileId, FileListExt as _};
+use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, ElTimespec};
 use crate::cli::test_command::{self, CommandLineReporter};
+use super::execution::TimespecExt as _;
 
 bun_core::declare_scope!(bun_test_group, hidden);
 // `group` in the Zig is `debug.group` (an Output.scoped). The macro form differs;
 // callers use `group_log!` / `group_begin!` / `group_end!` below.
-/// Thin macro over `debug::group::begin(file, line, col, fn_name)` so call
-/// sites stay `group_begin!()` (Zig: `group.begin(@src())`).
+/// Thin macro over `debug::group::begin()` so call sites stay `group_begin!()`
+/// (Zig: `group.begin(@src())` — Rust uses `#[track_caller]` for source loc).
 macro_rules! group_begin {
     () => {
-        $crate::test_runner::debug::group::begin(file!(), line!(), column!(), "")
+        $crate::test_runner::debug::group::begin()
     };
 }
 pub(crate) use group_begin;
+
+// ── local shims ─────────────────────────────────────────────────────────────
+
+/// `JSValue::as_promise_ptr<T>` — recover the `*mut T` smuggled through
+/// `Promise.then`'s trailing context arg. Local extension trait until
+/// upstreamed to `bun_jsc`.
+trait JSValuePromisePtrExt {
+    fn as_promise_ptr<T>(self) -> *mut T;
+}
+impl JSValuePromisePtrExt for JSValue {
+    #[inline]
+    fn as_promise_ptr<T>(self) -> *mut T {
+        // PORT NOTE: Zig `asPromisePtr` does `@ptrFromInt(@intFromFloat(asNumber()))`.
+        self.as_number() as usize as *mut T
+    }
+}
+
+/// Recover this thread's `timer::All` heap (b2-cycle: `vm.timer` is `()` in
+/// the low-tier `VirtualMachine`; the real value lives in `RuntimeState`).
+#[inline]
+fn vm_timer<'a>() -> &'a mut crate::timer::All {
+    // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
+    // single JS thread, raw-ptr-per-field re-entry pattern (jsc_hooks.rs).
+    unsafe { &mut (*crate::jsc_hooks::runtime_state()).timer }
+}
+
+/// `bun.timespec.orderIgnoreEpoch` — epoch == "no timeout", treated as +∞.
+/// Local helper so it can compare `bun_core::Timespec` against the
+/// event-loop crate's distinct `Timespec` (converted by field).
+fn order_ignore_epoch(a: &Timespec, b: &ElTimespec) -> core::cmp::Ordering {
+    let b = Timespec { sec: b.sec, nsec: b.nsec };
+    if a.eql(&b) {
+        core::cmp::Ordering::Equal
+    } else if a.eql(&Timespec::EPOCH) {
+        core::cmp::Ordering::Greater
+    } else if b.eql(&Timespec::EPOCH) {
+        core::cmp::Ordering::Less
+    } else {
+        a.order(&b)
+    }
+}
+
+/// `Strong::create` requires a `&JSGlobalObject`; recover it from the
+/// per-thread VM so `ExecutionEntry::create` (which has no global in scope)
+/// can box callbacks.
+#[inline]
+fn strong_create(value: JSValue) -> Strong {
+    // SAFETY: `VirtualMachine::get()` is the live per-thread VM; `global`
+    // is non-null after VM init.
+    let global = unsafe { &*(*VirtualMachine::get()).global };
+    Strong::create(value, global)
+}
 
 pub fn clone_active_strong() -> Option<BunTestPtr> {
     let runner = Jest::runner()?;

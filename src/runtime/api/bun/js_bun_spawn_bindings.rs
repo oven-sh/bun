@@ -57,7 +57,85 @@ impl BunStringSpawnExt for BunString {
         // PORT NOTE: Zig walks the WTFStringImpl encoding-aware; for the
         // null-byte-injection check (chr == 0) a UTF-8 view scan is equivalent.
         let zs = self.to_zig_string();
-        strings::index_of_char(zs.slice(), chr)
+        strings::index_of_char(zs.slice(), chr).map(|i| i as usize)
+    }
+}
+
+// ── AbortSignal local extension ─────────────────────────────────────────────
+// `bun_jsc::AbortSignal` is an opaque `stub_ty!` (the real impl in
+// `src/jsc/AbortSignal.rs` is gated behind `#![cfg(any())]`). Mirror the C ABI
+// directly so call sites keep the Zig-spec spelling.
+unsafe extern "C" {
+    fn WebCore__AbortSignal__fromJS(value: JSValue) -> *mut WebCore::AbortSignal;
+    fn WebCore__AbortSignal__ref(this: *mut WebCore::AbortSignal) -> *mut WebCore::AbortSignal;
+    fn WebCore__AbortSignal__unref(this: *mut WebCore::AbortSignal);
+    fn WebCore__AbortSignal__incrementPendingActivity(this: *mut WebCore::AbortSignal);
+    fn WebCore__AbortSignal__addListener(
+        this: *mut WebCore::AbortSignal,
+        ctx: *mut core::ffi::c_void,
+        callback: Option<unsafe extern "C" fn(*mut core::ffi::c_void, JSValue)>,
+    ) -> *mut WebCore::AbortSignal;
+}
+trait AbortSignalSpawnExt {
+    fn from_js(value: JSValue) -> Option<*mut WebCore::AbortSignal>;
+    fn ref_(&self) -> *mut WebCore::AbortSignal;
+    fn unref(&self);
+    fn pending_activity_ref(&self);
+    fn add_listener(
+        &self,
+        ctx: *mut core::ffi::c_void,
+        callback: extern "C" fn(*mut core::ffi::c_void, JSValue),
+    ) -> *mut WebCore::AbortSignal;
+    fn get_timeout(&self) -> Option<&crate::timer::AbortSignalTimeout>;
+}
+impl AbortSignalSpawnExt for WebCore::AbortSignal {
+    #[inline]
+    fn from_js(value: JSValue) -> Option<*mut WebCore::AbortSignal> {
+        // SAFETY: thin FFI forward; ptr borrowed from the JS wrapper.
+        let ptr = unsafe { WebCore__AbortSignal__fromJS(value) };
+        if ptr.is_null() { None } else { Some(ptr) }
+    }
+    #[inline]
+    fn ref_(&self) -> *mut WebCore::AbortSignal {
+        // SAFETY: increments C++ intrusive refcount, returns self.
+        unsafe { WebCore__AbortSignal__ref((self as *const Self).cast_mut()) }
+    }
+    #[inline]
+    fn unref(&self) {
+        // SAFETY: decrements C++ intrusive refcount.
+        unsafe { WebCore__AbortSignal__unref((self as *const Self).cast_mut()) }
+    }
+    #[inline]
+    fn pending_activity_ref(&self) {
+        // SAFETY: thin FFI forward.
+        unsafe { WebCore__AbortSignal__incrementPendingActivity((self as *const Self).cast_mut()) }
+    }
+    #[inline]
+    fn add_listener(
+        &self,
+        ctx: *mut core::ffi::c_void,
+        callback: extern "C" fn(*mut core::ffi::c_void, JSValue),
+    ) -> *mut WebCore::AbortSignal {
+        // SAFETY: self is a live WebCore::AbortSignal; addListener returns self.
+        unsafe {
+            WebCore__AbortSignal__addListener(
+                (self as *const Self).cast_mut(),
+                ctx,
+                // SAFETY: `extern "C" fn` → `unsafe extern "C" fn` is a valid coercion target.
+                Some(core::mem::transmute::<
+                    extern "C" fn(*mut core::ffi::c_void, JSValue),
+                    unsafe extern "C" fn(*mut core::ffi::c_void, JSValue),
+                >(callback)),
+            )
+        }
+    }
+    #[inline]
+    fn get_timeout(&self) -> Option<&crate::timer::AbortSignalTimeout> {
+        // TODO(port): blocked_on bun_jsc::abort_signal::AbortSignal::get_timeout
+        // (gated behind `#![cfg(any())]`). The only call site is best-effort
+        // `AbortSignal.timeout` honoring in spawnSync; returning `None` falls
+        // back to the user-supplied `timeout:` value.
+        None
     }
 }
 

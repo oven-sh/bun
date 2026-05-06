@@ -85,7 +85,9 @@ pub mod jsc {
                     use super::super::{JSGlobalObject, JSValue};
                     pub fn from_js(_v: JSValue) -> Option<*mut ()> { None }
                     pub fn from_js_direct(_v: JSValue) -> Option<*mut ()> { None }
-                    pub fn to_js_unchecked(_g: &JSGlobalObject, _p: *mut ()) -> JSValue { JSValue::default() }
+                    // PORT NOTE: generic over the wrapped type so callers may pass
+                    // `&mut Self` (as the real codegen does) without a cast.
+                    pub fn to_js_unchecked<T>(_g: &JSGlobalObject, _p: T) -> JSValue { JSValue::default() }
                 }
                 pub use $mod_name as $alias;
             )*};

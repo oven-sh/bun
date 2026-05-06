@@ -1376,26 +1376,26 @@ impl Terminal {
         let bytes = string_or_buffer.slice();
 
         if bytes.is_empty() {
-            return Ok(JSValue::js_number(0));
+            return Ok(JSValue::js_number(0.0));
         }
 
         // Write using the streaming writer
         let write_result = self.writer.write(bytes);
         match write_result {
             bun_io::WriteResult::Done(amt) => {
-                Ok(JSValue::js_number(i32::try_from(amt).unwrap()))
+                Ok(JSValue::js_number(i32::try_from(amt).unwrap() as f64))
             }
             bun_io::WriteResult::Wrote(amt) => {
-                Ok(JSValue::js_number(i32::try_from(amt).unwrap()))
+                Ok(JSValue::js_number(i32::try_from(amt).unwrap() as f64))
             }
             // On Windows the streaming writer buffers and returns .pending=0; the
             // bytes were accepted, so report bytes.len to match POSIX semantics.
             bun_io::WriteResult::Pending(amt) => {
                 let n = if cfg!(windows) { bytes.len() } else { amt };
-                Ok(JSValue::js_number(i32::try_from(n).unwrap()))
+                Ok(JSValue::js_number(i32::try_from(n).unwrap() as f64))
             }
             bun_io::WriteResult::Err(err) => {
-                Err(global_object.throw_value(err.to_js(global_object)?))
+                Err(global_object.throw_value(err.to_js(global_object)))
             }
         }
     }
@@ -1579,7 +1579,14 @@ impl Terminal {
 
     fn update_ref(&mut self, add: bool) {
         self.reader.update_ref(add);
-        self.writer.update_ref(self.event_loop_handle, add);
+        // CYCLEBREAK: bun_io::EventLoopHandle is opaque `*mut c_void`; pass the
+        // address of the stored bun_jsc::EventLoopHandle.
+        self.writer.update_ref(
+            bun_io::EventLoopHandle(
+                &self.event_loop_handle as *const EventLoopHandle as *mut c_void,
+            ),
+            add,
+        );
     }
 
     /// Close the terminal

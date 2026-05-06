@@ -1954,7 +1954,7 @@ where
         }
     }
 
-    fn end_request_streaming(&mut self) -> Result<bool, jsc::JsTerminated> {
+    fn end_request_streaming(&mut self) -> JsResult<bool> {
         debug_assert!(self.server.is_some());
 
         self.request_body_buf = Vec::new();

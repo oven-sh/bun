@@ -205,10 +205,53 @@ impl Drop for StaticRouteEntry {
     }
 }
 
+/// Local shim: `@tagName(method)` — `bun_http::Method` has no `From<Method> for &str`
+/// upstream yet (blocked_on: bun_http_types::Method as_str).
+pub(crate) fn method_as_str(m: Method) -> &'static str {
+    match m {
+        Method::ACL => "ACL",
+        Method::BIND => "BIND",
+        Method::CHECKOUT => "CHECKOUT",
+        Method::CONNECT => "CONNECT",
+        Method::COPY => "COPY",
+        Method::DELETE => "DELETE",
+        Method::GET => "GET",
+        Method::HEAD => "HEAD",
+        Method::LINK => "LINK",
+        Method::LOCK => "LOCK",
+        Method::M_SEARCH => "M-SEARCH",
+        Method::MERGE => "MERGE",
+        Method::MKACTIVITY => "MKACTIVITY",
+        Method::MKADDRESSBOOK => "MKADDRESSBOOK",
+        Method::MKCALENDAR => "MKCALENDAR",
+        Method::MKCOL => "MKCOL",
+        Method::MOVE => "MOVE",
+        Method::NOTIFY => "NOTIFY",
+        Method::OPTIONS => "OPTIONS",
+        Method::PATCH => "PATCH",
+        Method::POST => "POST",
+        Method::PROPFIND => "PROPFIND",
+        Method::PROPPATCH => "PROPPATCH",
+        Method::PURGE => "PURGE",
+        Method::PUT => "PUT",
+        Method::QUERY => "QUERY",
+        Method::REBIND => "REBIND",
+        Method::REPORT => "REPORT",
+        Method::SEARCH => "SEARCH",
+        Method::SOURCE => "SOURCE",
+        Method::SUBSCRIBE => "SUBSCRIBE",
+        Method::TRACE => "TRACE",
+        Method::UNBIND => "UNBIND",
+        Method::UNLINK => "UNLINK",
+        Method::UNLOCK => "UNLOCK",
+        Method::UNSUBSCRIBE => "UNSUBSCRIBE",
+    }
+}
+
 impl ServerConfig {
     // TODO(b2-blocked): bun_wyhash::Wyhash (std seed-0 flavor not yet ported;
     // only Wyhash11 exists) + http_method::Set iterator. Body preserved.
-    
+
     fn normalize_static_routes_list(&mut self) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         fn hash(route: &StaticRouteEntry) -> u64 {
@@ -218,7 +261,7 @@ impl ServerConfig {
                 MethodOptional::Method(set) => {
                     let mut iter = set.iter();
                     while let Some(method) = iter.next() {
-                        hasher.update(<&'static str>::from(method).as_bytes());
+                        hasher.update(method_as_str(method).as_bytes());
                     }
                 }
             }

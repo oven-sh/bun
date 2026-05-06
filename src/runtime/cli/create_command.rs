@@ -301,7 +301,7 @@ pub struct CreateCommand;
 impl CreateCommand {
     #[cold]
     pub fn exec(
-        ctx: Command::Context<'_>,
+        ctx: &Command::Context<'_>,
         example_tag: ExampleTag,
         template: &[u8],
     ) -> Result<(), bun_core::Error> {
@@ -535,7 +535,7 @@ impl CreateCommand {
                         node.name = b"Updating package.json";
                         progress.refresh();
 
-                        package_json_contents = plucker.contents.clone();
+                        package_json_contents = plucker.contents.clone()?;
                         package_json_file = Some(bun_sys::File::from_fd(plucker.fd));
                     }
                 }
@@ -757,11 +757,11 @@ impl CreateCommand {
                 }
 
                 let mut properties_list: Vec<logger::js_ast::G::Property> =
-                    package_json_expr.data.e_object_mut().unwrap().properties.slice().to_vec();
-                // PORT NOTE: Zig used fromOwnedSlice; here we copy into Vec for mutation.
+                    package_json_expr.data.e_object_mut().unwrap().properties.move_to_list_managed();
+                // PORT NOTE: Zig used fromOwnedSlice; here we move into Vec for mutation.
 
                 if log.errors > 0 {
-                    log.print(Output::error_writer())?;
+                    let _ = log.print(Output::error_writer() as *mut _);
 
                     package_json_file = None;
                     break 'process_package_json;

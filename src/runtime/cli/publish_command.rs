@@ -494,7 +494,7 @@ impl PublishCommand {
                     publish_url,
                     otp_headers.entries,
                     // SAFETY: otp_headers.content was allocated by construct_publish_headers
-                    unsafe { core::slice::from_raw_parts(otp_headers.content.ptr.unwrap(), otp_headers.content.len) },
+                    unsafe { core::slice::from_raw_parts(otp_headers.content.ptr.unwrap().as_ptr(), otp_headers.content.len) },
                     &mut response_buf,
                     &publish_req_body,
                     None,
@@ -508,20 +508,18 @@ impl PublishCommand {
                         if e == err!(OutOfMemory) {
                             return Err(PublishError::OutOfMemory);
                         }
-                        Output::err(e, format_args!("failed to publish package"));
+                        Output::err(e, "failed to publish package", ());
                         Global::crash();
                     }
                 };
 
                 match otp_res.status_code {
-                    400..=u16::MAX => {
-                        let otp_response = true;
-                        Npm::response_error(
+                    400..=u32::MAX => {
+                        Npm::response_error::<true>(
                             &otp_req,
                             &otp_res,
-                            (&ctx.package_name, &ctx.package_version),
+                            Some((&ctx.package_name, &ctx.package_version)),
                             &mut response_buf,
-                            otp_response,
                         )?;
                     }
                     _ => {
@@ -570,7 +568,9 @@ impl PublishCommand {
         let _ = original_mode;
 
         loop {
-            match Output::buffered_stdin().reader().read_byte() {
+            // SAFETY: `buffered_stdin()` returns a process-global `*mut`; single-threaded
+            // access here mirrors Zig's `Output.buffered_stdin().reader()`.
+            match unsafe { (*Output::buffered_stdin()).reader().read_byte() } {
                 Ok(b'\n') => break,
                 Ok(_) => continue,
                 Err(_) => return,

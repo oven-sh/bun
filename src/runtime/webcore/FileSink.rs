@@ -389,13 +389,13 @@ impl FileSink {
         // if we are not done yet and has pending data we just wait so we do not runPending twice
         if status == WriteStatus::Pending && has_pending_data {
             if self.pending.state == streams::PendingState::Pending {
-                self.pending.consumed = amount as u32; // @truncate
+                self.pending.consumed = amount as u64; // @truncate
             }
             return;
         }
 
         if self.pending.state == streams::PendingState::Pending {
-            self.pending.consumed = amount as u32; // @truncate
+            self.pending.consumed = amount as u64; // @truncate
 
             // when "done" is true, we will never receive more data.
             if self.done || status == WriteStatus::EndOfFile {

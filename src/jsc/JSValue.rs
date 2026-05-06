@@ -113,10 +113,12 @@ impl JSValue {
         }
         // SAFETY: FFI into JSC; `self` is a Promise (caller contract), `global`
         // is live, and `resolve`/`reject` are valid C-ABI host fns.
+        // `as_ptr()` derives `*mut` through `UnsafeCell` (interior-mut
+        // provenance) rather than laundering `&T as *const T as *mut T`.
         unsafe {
             JSC__JSValue___then(
                 self,
-                global as *const _ as *mut _,
+                global.as_ptr(),
                 JSValue::from_ptr_address(ctx as usize),
                 resolve,
                 reject,

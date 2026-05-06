@@ -1394,7 +1394,7 @@ mod __css_validation {
         // same allocation when a file composes from itself, so bind as shared.
         let css_ast: &BundlerStyleSheet =
             unsafe { &*(col_ref!(css_asts)[id].unwrap() as *const BundlerStyleSheet) };
-        let import_records: &mut [ImportRecord] = col!(import_records_list)[id].slice_mut();
+        let import_records: &[ImportRecord] = col_ref!(import_records_list)[id].slice();
 
         // Validate cross-file "composes: ... from" named imports
         for composes in css_ast.composes.values() {

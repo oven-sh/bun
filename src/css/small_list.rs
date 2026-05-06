@@ -308,7 +308,10 @@ impl<T, const N: usize> SmallList<T, N> {
 
     #[inline]
     pub fn r#mut(&mut self, idx: u32) -> &mut T {
-        // SAFETY: caller guarantees idx < len
+        // SAFETY: caller guarantees idx < len. `as_ptr` takes `&mut self` so the
+        // returned raw ptr has mutable provenance over the buffer; the produced
+        // `&mut T` reborrows from `&mut self` (elided lifetime), so no other
+        // borrow of this SmallList can coexist — unique owner, no aliasing.
         unsafe { &mut *self.as_ptr().add(idx as usize) }
     }
 

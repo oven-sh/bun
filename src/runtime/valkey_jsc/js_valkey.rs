@@ -603,9 +603,9 @@ impl JSValkeyClient {
                 vm,
                 address: match uri {
                     valkey::Protocol::StandaloneUnix | valkey::Protocol::StandaloneTlsUnix => {
-                        valkey::Address::Unix(hostname)
+                        valkey::Address::Unix(hostname.into())
                     }
-                    _ => valkey::Address::Host { host: hostname, port },
+                    _ => valkey::Address::Host { host: hostname.into(), port },
                 },
                 protocol: uri,
                 username,

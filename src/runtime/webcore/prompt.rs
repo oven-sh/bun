@@ -2,7 +2,7 @@
 
 use bun_core::Output;
 use crate::webcore::jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_str::ZigString;
+use bun_jsc::zig_string::ZigString;
 
 // TODO(b2-blocked): bun_core::Output::stdin_reader / buffered_stdin_reader —
 // the Zig used `std.fs.File.stdin().readerStreaming(..)` and

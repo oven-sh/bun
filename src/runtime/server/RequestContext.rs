@@ -3089,10 +3089,18 @@ where
         if let Some(cookies) = self.cookies.take() {
             // SAFETY: BACKREF
             let global_this = unsafe { (*self.server.unwrap()).global_this() };
-            // SAFETY: opaque FFI handle held with a ref; valid until deref below.
-            let r = unsafe { (*cookies).write(global_this, Self::RESP_KIND, self.resp.unwrap() as *mut c_void) };
-            // SAFETY: release the ref we took in set_cookies.
-            unsafe { (*cookies).deref() };
+            // `CookieMap::write` takes `&mut self`; we hold an `Rc`. Reach
+            // through the raw pointer (FFI shim — the inner type is opaque).
+            let cookies_ptr = Rc::as_ptr(&cookies) as *mut CookieMap;
+            // SAFETY: cookies Rc is live; CookieMap is an opaque FFI cell.
+            let r = unsafe {
+                (*cookies_ptr).write(
+                    global_this,
+                    Self::RESP_KIND,
+                    any_response_as_ptr(self.resp.unwrap()),
+                )
+            };
+            drop(cookies); // deref
             if r.is_err() {
                 return;
             } // TODO: properly propagate exception upwards

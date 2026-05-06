@@ -1280,7 +1280,7 @@ impl JSValkeyClient {
                 let arg_str = frame.argument(i as usize).to_bun_string(global)?;
                 // PERF(port): was assume_capacity
                 args.push(arg_str.to_utf8());
-                drop(arg_str);
+                arg_str.deref();
                 i += 1;
             }
         }

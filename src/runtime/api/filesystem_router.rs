@@ -289,7 +289,7 @@ impl FileSystemRouter {
 
         // SAFETY: `root_dir_info` is a live `*mut DirInfo` returned by `read_dir_info`.
         let base_dir_str = unsafe {
-            if !(*root_dir_info).abs_real_path.is_empty() {
+            if !(&(*root_dir_info).abs_real_path).is_empty() {
                 (*root_dir_info).abs_real_path
             } else {
                 (*root_dir_info).abs_path

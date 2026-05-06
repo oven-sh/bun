@@ -2741,7 +2741,7 @@ impl GitHandler {
         // SAFETY: single-threaded CLI access to module-level static path buffer (note: this fn
         // may run on the git thread; BUN_PATH_BUF is also touched on main thread for `--open`.
         // The two uses are sequenced — git runs before `--open` block. Matches Zig.)
-        let bun_path_buf = unsafe { &mut BUN_PATH_BUF };
+        let bun_path_buf = unsafe { &mut *(&raw mut BUN_PATH_BUF) };
         if let Some(git) = which(bun_path_buf, path, destination, b"git") {
             let git: &[u8] = git.as_bytes();
             let git_commands: [&[&[u8]]; 3] = [

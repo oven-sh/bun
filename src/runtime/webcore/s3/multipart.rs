@@ -905,8 +905,8 @@ impl MultiPartUpload {
                 let allocated_size = self.buffered.memory_cost();
                 // PORT NOTE: reshaped for borrowck — capture raw slice ptr before calling enqueue_part(&mut self)
                 let slice_ptr = self.buffered.slice() as *const [u8];
-                // SAFETY: slice_ptr is valid until self.buffered is reset/reassigned below
-                let slice_len = unsafe { (*slice_ptr).len() };
+                // raw slice pointer carries its length in metadata; no deref needed
+                let slice_len = slice_ptr.len();
 
                 // we dont care about the result because we are sending everything
                 // SAFETY: slice_ptr borrows self.buffered's storage; enqueue_part with needs_clone=false

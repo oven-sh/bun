@@ -177,6 +177,7 @@ const _: () = {
     }
 };
 
+#[repr(C)]
 pub struct Response {
     body: Body,
     init: Init,

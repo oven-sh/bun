@@ -180,8 +180,10 @@ macro_rules! extern_crypto_job {
                                 node: Default::default(),
                                 callback: Self::run_task,
                             },
-                            // SAFETY: any_task is overwritten immediately below before any use.
-                            any_task: unsafe { core::mem::zeroed() },
+                            // Overwritten immediately below before any use; `Default`
+                            // provides a non-null sentinel callback (zeroed() is UB
+                            // for the `fn` field).
+                            any_task: AnyTask::default(),
                             poll: KeepAlive::default(),
                             ctx,
                             callback: StrongOptional::create(callback, global),

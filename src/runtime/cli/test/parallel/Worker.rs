@@ -169,13 +169,9 @@ impl Worker {
                     .map_err(|_| bun_core::err!("PipeStartFailed"))?;
             }
             if !extra_pipes.is_empty() {
-                // SAFETY: coord.vm backref valid for worker lifetime; adopt()
-                // mutates the loop's socket context (interior mutability in Zig).
-                let vm_mut = unsafe {
-                    &mut *(coord.vm as *const jsc::virtual_machine::VirtualMachine
-                        as *mut jsc::virtual_machine::VirtualMachine)
-                };
-                if !this.ipc.adopt(vm_mut, extra_pipes[0].fd()) {
+                // coord.vm backref valid for worker lifetime; adopt() mutates the
+                // loop's socket context via interior mutability on the C side.
+                if !this.ipc.adopt(coord.vm, extra_pipes[0].fd()) {
                     return Err(bun_core::err!("ChannelAdoptFailed"));
                 }
             } else {

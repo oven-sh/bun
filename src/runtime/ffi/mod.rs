@@ -151,6 +151,7 @@ pub(crate) fn get_dl_error() -> Result<Box<[u8]>, bun_core::Error> {
 // ═════════════════════════════════════════════════════════════════════════════
 
 // TODO(b2-blocked): #[bun_jsc::JsClass]
+#[repr(C)]
 pub struct FFI {
     pub dylib: Option<DynLib>,
     pub functions: StringArrayHashMap<Function>,

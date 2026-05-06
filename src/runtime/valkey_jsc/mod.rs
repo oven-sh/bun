@@ -477,33 +477,30 @@ pub mod js_valkey {
     pub struct SocketHandler<const SSL: bool>;
 
     // ── JsClass wiring (codegen name = "RedisClient", see valkey.classes.ts) ──
-    // Hand-roll the externs the `.classes.ts` generator emits so
-    // `jsc::codegen::js::get_constructor::<JSValkeyClient>()` resolves.
-    // Pointee types lack #[repr(C)] but are only ever passed by pointer across FFI.
-    #[allow(improper_ctypes)]
-    unsafe extern "C" {
-        fn RedisClient__fromJS(value: JSValue) -> Option<core::ptr::NonNull<JSValkeyClient>>;
-        fn RedisClient__fromJSDirect(value: JSValue) -> Option<core::ptr::NonNull<JSValkeyClient>>;
-        fn RedisClient__create(global: *mut JSGlobalObject, ptr: *mut JSValkeyClient) -> JSValue;
-        fn RedisClient__getConstructor(global: *mut JSGlobalObject) -> JSValue;
-    }
+    // The `.classes.ts` generator already emits the
+    // `RedisClient__{fromJS,fromJSDirect,create,getConstructor}` externs (and
+    // safe wrappers) into `crate::generated_classes::RedisClient` against an
+    // opaque pointee. Route through those instead of redeclaring the externs
+    // here — a second `extern "C"` block with a different pointee trips
+    // `clashing_extern_declarations`. The opaque `RedisClient` and
+    // `JSValkeyClient` name the same `m_ctx` heap allocation on the C++ side,
+    // so the pointer cast is identity.
+    use crate::generated_classes::RedisClient as CodegenRedisClient;
+
     impl crate::jsc::JsClass for JSValkeyClient {
         fn from_js(value: JSValue) -> Option<*mut Self> {
-            // SAFETY: codegen extern; null on type mismatch.
-            unsafe { RedisClient__fromJS(value) }.map(|p| p.as_ptr())
+            CodegenRedisClient::from_js(value).map(|p| p.as_ptr().cast::<Self>())
         }
         fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-            // SAFETY: codegen extern; null on structure mismatch.
-            unsafe { RedisClient__fromJSDirect(value) }.map(|p| p.as_ptr())
+            CodegenRedisClient::from_js_direct(value).map(|p| p.as_ptr().cast::<Self>())
         }
         fn to_js(self, global: &JSGlobalObject) -> JSValue {
             let ptr = Box::into_raw(Box::new(self));
-            // SAFETY: ownership transfers to the C++ wrapper (freed via finalize).
-            unsafe { RedisClient__create(global.as_ptr(), ptr) }
+            // Ownership transfers to the C++ wrapper (freed via finalize).
+            CodegenRedisClient::to_js(ptr.cast::<CodegenRedisClient>(), global)
         }
         fn get_constructor(global: &JSGlobalObject) -> JSValue {
-            // SAFETY: `global` is live; codegen extern returns the cached ctor.
-            unsafe { RedisClient__getConstructor(global.as_ptr()) }
+            CodegenRedisClient::get_constructor(global)
         }
     }
 }

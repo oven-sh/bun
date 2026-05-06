@@ -624,7 +624,8 @@ pub mod codegen {
         js_class_fns!(crate::mysql::js_mysql_query::JSMySQLQuery,
             MySQLQuery__create,
             MySQLQuery__fromJS,
-            MySQLQuery__fromJSDirect);
+            MySQLQuery__fromJSDirect,
+            impl_js_class);
     }
     #[allow(non_snake_case)]
     pub use js_mysql_query as JSMySQLQuery;

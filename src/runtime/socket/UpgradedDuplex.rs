@@ -130,7 +130,10 @@ impl<'a> UpgradedDuplex<'a> {
     }
 
     fn call_write_or_end(&mut self, data: Option<&[u8]>, msg_more: bool) {
-        if self.vm.is_shutting_down() {
+        // `vm` is always set via `from()`; `None` only in the zeroed placeholder
+        // state, which never reaches here.
+        let Some(vm) = self.vm else { return };
+        if vm.is_shutting_down() {
             return;
         }
         let Some(duplex) = self.origin.get() else { return };

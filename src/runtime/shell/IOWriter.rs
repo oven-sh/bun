@@ -506,7 +506,7 @@ impl IOWriter {
                 return &[];
             }
             if s.writers[s.writer_idx].is_dead() {
-                drop(s);
+                let _ = s;
                 self.skip_dead();
             }
         }

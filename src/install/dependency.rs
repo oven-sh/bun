@@ -170,9 +170,12 @@ impl Dependency {
         self.count_with_different_buffers(buf, buf, builder);
     }
 
-    pub fn clone<SB: StringBuilderLike>(
+    /// Zig: `Dependency.clone`. Renamed to `clone_in` so it doesn't shadow
+    /// `std::clone::Clone::clone` (callers in `migration.rs` / `PackageManager.rs`
+    /// rely on the trait method for shallow copy).
+    pub fn clone_in<SB: StringBuilderLike, PM: NpmAliasRegistry + ?Sized>(
         &self,
-        package_manager: &mut PackageManager,
+        package_manager: &mut PM,
         buf: &[u8],
         builder: &mut SB,
     ) -> Result<Dependency, bun_core::Error> {
@@ -180,9 +183,9 @@ impl Dependency {
         self.clone_with_different_buffers(package_manager, buf, buf, builder)
     }
 
-    pub fn clone_with_different_buffers<SB: StringBuilderLike>(
+    pub fn clone_with_different_buffers<SB: StringBuilderLike, PM: NpmAliasRegistry + ?Sized>(
         &self,
-        package_manager: &mut PackageManager,
+        package_manager: &mut PM,
         name_buf: &[u8],
         version_buf: &[u8],
         builder: &mut SB,
@@ -193,7 +196,7 @@ impl Dependency {
         // Append first, then borrow the (now-stable) buffer.
         let new_literal = builder.append_string(self.version.literal.slice(version_buf));
         let new_name = builder.append_string(self.name.slice(name_buf));
-        let out_slice = builder.lockfile().buffers.string_bytes.as_slice();
+        let out_slice = builder.string_bytes();
         let sliced = new_literal.sliced(out_slice);
 
         Ok(Dependency {
@@ -206,7 +209,7 @@ impl Dependency {
                 self.version.tag,
                 &sliced,
                 None,
-                Some(package_manager),
+                Some(package_manager as &mut dyn NpmAliasRegistry),
             )
             .unwrap_or_default(),
             behavior: self.behavior,
@@ -244,19 +247,82 @@ impl Dependency {
         }
     }
 
-    pub fn eql(a: &Dependency, b: &Dependency, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool {
-        a.name_hash == b.name_hash
-            && a.name.len() == b.name.len()
-            && a.version.eql(&b.version, lhs_buf, rhs_buf)
+    pub fn eql(&self, b: &Dependency, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool {
+        self.name_hash == b.name_hash
+            && self.name.len() == b.name.len()
+            && self.version.eql(&b.version, lhs_buf, rhs_buf)
+    }
+}
+
+// PORT NOTE: Zig copies `Dependency`/`Version` by value (POD struct semantics);
+// the linked-list memory under `Semver::query::Group` is arena-owned and never
+// freed through these handles. Rust can't `derive(Clone)` because `Value` is
+// an untagged union with `ManuallyDrop` fields, so we implement a shallow
+// bitwise clone matching Zig's copy semantics.
+impl Clone for Value {
+    #[inline]
+    fn clone(&self) -> Self {
+        // SAFETY: `Value` is `repr(C)` with no `Drop` glue; every active variant
+        // is either `Copy` or `ManuallyDrop<_>` over arena-backed data. Zig
+        // copies these structs by value; we replicate that with a bitwise read.
+        unsafe { core::ptr::read(self) }
+    }
+}
+
+impl core::fmt::Debug for Value {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // Untagged union — caller must consult `Version.tag`; debug output
+        // intentionally opaque (Zig prints via `Version.literal` instead).
+        f.write_str("dependency::Value { <untagged> }")
+    }
+}
+
+impl Clone for Version {
+    #[inline]
+    fn clone(&self) -> Self {
+        Version {
+            tag: self.tag,
+            literal: self.literal,
+            value: Clone::clone(&self.value),
+        }
+    }
+}
+
+impl Clone for Dependency {
+    #[inline]
+    fn clone(&self) -> Self {
+        Dependency {
+            name_hash: self.name_hash,
+            name: self.name,
+            version: Clone::clone(&self.version),
+            behavior: self.behavior,
+        }
     }
 }
 
 // TODO(port): `comptime StringBuilder: type` param replaced with trait bound;
-// the only methods called are `.count`, `.append(String, ...)`, and `.lockfile`.
+// the only methods called are `.count`, `.append(String, ...)`, and access to
+// the backing `string_bytes` buffer.
 pub trait StringBuilderLike {
     fn count(&mut self, s: &[u8]);
     fn append_string(&mut self, s: &[u8]) -> String;
-    fn lockfile(&self) -> &crate::lockfile::Lockfile;
+    /// Full backing string buffer (Zig: `builder.lockfile.buffers.string_bytes.items`).
+    fn string_bytes(&self) -> &[u8];
+}
+
+impl<'a> StringBuilderLike for crate::lockfile_real::StringBuilder<'a> {
+    #[inline]
+    fn count(&mut self, s: &[u8]) {
+        crate::lockfile_real::StringBuilder::count(self, s);
+    }
+    #[inline]
+    fn append_string(&mut self, s: &[u8]) -> String {
+        self.append::<String>(s)
+    }
+    #[inline]
+    fn string_bytes(&self) -> &[u8] {
+        self.lockfile.buffers.string_bytes.as_slice()
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -407,14 +473,17 @@ impl Dependency {
     /// Stub-compat: B-1 stub exposed `Dependency::parse` as an associated fn;
     /// real port has it as a free fn. Delegate so downstream callers
     /// (`bun_install_jsc`) keep type-checking.
+    ///
+    /// `alias_hash`, `log`, and `manager` accept either bare values or
+    /// `Option<_>` (Zig callers pass both `null` and concrete pointers).
     #[inline]
-    pub fn parse(
+    pub fn parse<'a, 'b>(
         alias: String,
-        alias_hash: Option<PackageNameHash>,
+        alias_hash: impl Into<Option<PackageNameHash>>,
         dependency: &[u8],
         sliced: &SlicedString,
-        log: Option<&mut logger::Log>,
-        manager: Option<&mut PackageManager>,
+        log: impl Into<Option<&'a mut logger::Log>>,
+        manager: impl Into<Option<&'b mut PackageManager>>,
     ) -> Option<Version> {
         parse(alias, alias_hash, dependency, sliced, log, manager)
     }

@@ -1,6 +1,9 @@
+use core::sync::atomic::Ordering;
+
 use bun_core::Output;
-use bun_core::Progress;
 use const_format::concatcp;
+
+use crate::bun_progress::Node as ProgressNode;
 
 use super::PackageManager;
 
@@ -86,27 +89,32 @@ impl ProgressStrings {
 }
 
 impl PackageManager {
-    pub fn set_node_name<const IS_FIRST: bool>(
+    pub fn set_node_name(
         &mut self,
-        node: &mut Progress::Node,
+        node: *mut ProgressNode,
         name: &[u8],
-        emoji: &[u8],
+        emoji: &str,
+        is_first: bool,
     ) {
-        if Output::enable_ansi_colors_stderr() {
-            if IS_FIRST {
-                self.progress_name_buf[..emoji.len()].copy_from_slice(emoji);
+        let emoji = emoji.as_bytes();
+        // SAFETY: `node` is `self.downloads_node` / `self.scripts_node`, both of
+        // which point at storage owned by (or outliving) this `PackageManager`
+        // singleton; `progress_name_buf` is an inline field of that same
+        // singleton, so erasing the slice lifetime to `'static` matches Zig's
+        // raw-pointer aliasing (`node.name = this.progress_name_buf[..]`).
+        unsafe {
+            let len = if Output::enable_ansi_colors_stderr() {
+                if is_first {
+                    self.progress_name_buf[..emoji.len()].copy_from_slice(emoji);
+                }
                 self.progress_name_buf[emoji.len()..][..name.len()].copy_from_slice(name);
-                // TODO(port): self-referential borrow — node.name points into self.progress_name_buf
-                node.name = &self.progress_name_buf[..emoji.len() + name.len()];
+                emoji.len() + name.len()
             } else {
-                self.progress_name_buf[emoji.len()..][..name.len()].copy_from_slice(name);
-                // TODO(port): self-referential borrow — node.name points into self.progress_name_buf
-                node.name = &self.progress_name_buf[..emoji.len() + name.len()];
-            }
-        } else {
-            self.progress_name_buf[..name.len()].copy_from_slice(name);
-            // TODO(port): self-referential borrow — node.name points into self.progress_name_buf
-            node.name = &self.progress_name_buf[..name.len()];
+                self.progress_name_buf[..name.len()].copy_from_slice(name);
+                name.len()
+            };
+            (*node).name =
+                core::slice::from_raw_parts(self.progress_name_buf.as_ptr(), len);
         }
     }
 
@@ -118,31 +126,44 @@ impl PackageManager {
 
     pub fn start_progress_bar(&mut self) {
         self.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
-        self.downloads_node = Some(self.progress.start(ProgressStrings::download(), 0));
-        // PORT NOTE: reshaped for borrowck — Zig calls self.setNodeName(self.downloads_node.?, ...)
-        // which would be an overlapping &mut self borrow here.
-        // TODO(port): resolve overlapping borrow of self.downloads_node vs &mut self
-        self.set_node_name::<true>(
-            self.downloads_node.as_mut().unwrap(),
+        // PORT NOTE: `Progress::start` returns `&mut Node` borrowing `self.progress`;
+        // decay to a raw ptr immediately so the exclusive borrow ends before we
+        // re-borrow `&mut self` for `set_node_name` / `progress.refresh()`.
+        let node: *mut ProgressNode = self.progress.start(ProgressStrings::download(), 0);
+        self.downloads_node = Some(node);
+        self.set_node_name(
+            node,
             ProgressStrings::DOWNLOAD_NO_EMOJI_.as_bytes(),
-            ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
+            ProgressStrings::DOWNLOAD_EMOJI,
+            true,
         );
-        let total_tasks = self.total_tasks;
-        let extracted_count = self.extracted_count;
-        let pending = self.pending_task_count();
-        let node = self.downloads_node.as_mut().unwrap();
-        node.set_estimated_total_items(total_tasks + extracted_count);
-        node.set_completed_items(total_tasks - pending);
-        node.activate();
+        // SAFETY: `node` points into `self.progress.root`, live for as long as
+        // `self.progress` is.
+        unsafe {
+            (*node).set_estimated_total_items(
+                (self.total_tasks + self.extracted_count) as usize,
+            );
+            (*node).set_completed_items(
+                (self.total_tasks - self.pending_task_count()) as usize,
+            );
+            (*node).activate();
+        }
         self.progress.refresh();
     }
 
     pub fn end_progress_bar(&mut self) {
-        let Some(downloads_node) = self.downloads_node.as_mut() else {
+        let Some(downloads_node) = self.downloads_node else {
             return;
         };
-        downloads_node.set_estimated_total_items(downloads_node.unprotected_estimated_total_items);
-        downloads_node.set_completed_items(downloads_node.unprotected_estimated_total_items);
+        // SAFETY: `downloads_node` was stashed from `self.progress.start()` and
+        // remains valid until `self.progress` is reset below.
+        unsafe {
+            let total = (*downloads_node)
+                .unprotected_estimated_total_items
+                .load(Ordering::Relaxed);
+            (*downloads_node).set_estimated_total_items(total);
+            (*downloads_node).set_completed_items(total);
+        }
         self.progress.refresh();
         self.progress.root.end();
         self.progress = Default::default();
@@ -158,13 +179,14 @@ impl PackageManager {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[inline]
-pub fn set_node_name<const IS_FIRST: bool>(
+pub fn set_node_name(
     this: &mut PackageManager,
-    node: &mut Progress::Node,
+    node: *mut ProgressNode,
     name: &[u8],
-    emoji: &[u8],
+    emoji: &str,
+    is_first: bool,
 ) {
-    this.set_node_name::<IS_FIRST>(node, name, emoji)
+    this.set_node_name(node, name, emoji, is_first)
 }
 
 #[inline]
@@ -186,6 +208,6 @@ pub fn end_progress_bar(manager: &mut PackageManager) {
 // PORT STATUS
 //   source:     src/install/PackageManager/ProgressStrings.zig (100 lines)
 //   confidence: medium
-//   todos:      4
-//   notes:      node.name = &self.progress_name_buf[..] is self-referential; set_node_name call in start_progress_bar has overlapping &mut self — Phase B may need raw ptr or restructure Progress::Node ownership. Base *_NO_EMOJI_/*_EMOJI consts kept as &str (concatcp! input requirement); fn returns/params are &[u8].
+//   todos:      0
+//   notes:      `node.name` slice points into `self.progress_name_buf` (inline on a leaked singleton) — lifetime erased via `slice::from_raw_parts` to mirror Zig's raw-pointer aliasing. `set_node_name` takes `*mut Node` + runtime `is_first: bool` to match every in-tree caller; the Zig `comptime is_first` only gated a memcpy and has no codegen win worth a const-generic here.
 // ──────────────────────────────────────────────────────────────────────────

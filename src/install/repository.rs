@@ -215,37 +215,36 @@ pub struct SharedEnv {
 }
 
 impl SharedEnv {
-    pub fn get(&mut self, other: &mut bun_dotenv::Loader) -> bun_dotenv::Map {
-        if let Some(env) = &self.env {
-            return env.clone();
-        }
-        // Note: currently if the user sets this to some value that causes
-        // a prompt for a password, the stdout of the prompt will be masked
-        // by further output of the rest of the install process.
-        // A value can still be entered, but we need to find a workaround
-        // so the user can see what is being prompted. By default the settings
-        // below will cause no prompt and throw instead.
-        let mut cloned = other.map.clone();
+    pub fn get(&mut self, other: &mut bun_dotenv::Loader) -> &bun_dotenv::Map {
+        if self.env.is_none() {
+            // Note: currently if the user sets this to some value that causes
+            // a prompt for a password, the stdout of the prompt will be masked
+            // by further output of the rest of the install process.
+            // A value can still be entered, but we need to find a workaround
+            // so the user can see what is being prompted. By default the settings
+            // below will cause no prompt and throw instead.
+            let mut cloned = bun_core::handle_oom(other.map.clone_with_allocator());
 
-        if cloned.get(b"GIT_ASKPASS").is_none() {
-            let config = SloppyGlobalGitConfig::get();
-            if !config.has_askpass {
-                cloned.put(b"GIT_ASKPASS", b"echo");
+            if cloned.get(b"GIT_ASKPASS").is_none() {
+                let config = SloppyGlobalGitConfig::get();
+                if !config.has_askpass {
+                    cloned.put(b"GIT_ASKPASS", b"echo");
+                }
             }
-        }
 
-        if cloned.get(b"GIT_SSH_COMMAND").is_none() {
-            let config = SloppyGlobalGitConfig::get();
-            if !config.has_ssh_command {
-                cloned.put(
-                    b"GIT_SSH_COMMAND",
-                    b"ssh -oStrictHostKeyChecking=accept-new",
-                );
+            if cloned.get(b"GIT_SSH_COMMAND").is_none() {
+                let config = SloppyGlobalGitConfig::get();
+                if !config.has_ssh_command {
+                    cloned.put(
+                        b"GIT_SSH_COMMAND",
+                        b"ssh -oStrictHostKeyChecking=accept-new",
+                    );
+                }
             }
-        }
 
-        self.env = Some(cloned);
-        self.env.clone().unwrap()
+            self.env = Some(cloned);
+        }
+        self.env.as_ref().unwrap()
     }
 }
 
@@ -260,7 +259,7 @@ pub static HOSTS: phf::Map<&'static [u8], &'static [u8]> = phf::phf_map! {
 };
 
 impl Repository {
-    pub fn parse_append_git(input: &[u8], buf: &mut String::Buf) -> Result<Repository, AllocError> {
+    pub fn parse_append_git(input: &[u8], buf: &mut StringBuf<'_>) -> Result<Repository, AllocError> {
         let mut remain = input;
         if remain.starts_with(b"git+") {
             remain = &remain[b"git+".len()..];
@@ -280,7 +279,7 @@ impl Repository {
 
     pub fn parse_append_github(
         input: &[u8],
-        buf: &mut String::Buf,
+        buf: &mut StringBuf<'_>,
     ) -> Result<Repository, AllocError> {
         let mut remain = input;
         if remain.starts_with(b"github:") {
@@ -345,11 +344,11 @@ impl Repository {
 
         if name.is_empty() {
             let version_literal = dep.version.literal.slice(buf);
-            let mut name_buf = vec![0u8; bun_sha::evp::SHA1::DIGEST];
+            let mut name_buf = [0u8; bun_sha::SHA1::DIGEST];
             let mut sha1 = bun_sha::SHA1::init();
             sha1.update(version_literal);
-            sha1.finalize(&mut name_buf[..bun_sha::SHA1::DIGEST]);
-            return name_buf;
+            sha1.r#final(&mut name_buf);
+            return name_buf.to_vec();
         }
 
         name.to_vec()
@@ -391,11 +390,11 @@ impl Repository {
         B: StringBuilderLike,
     {
         Repository {
-            owner: builder.append::<String>(self.owner.slice(buf)),
-            repo: builder.append::<String>(self.repo.slice(buf)),
-            committish: builder.append::<String>(self.committish.slice(buf)),
-            resolved: builder.append::<String>(self.resolved.slice(buf)),
-            package_name: builder.append::<String>(self.package_name.slice(buf)),
+            owner: builder.append_string(self.owner.slice(buf)),
+            repo: builder.append_string(self.repo.slice(buf)),
+            committish: builder.append_string(self.committish.slice(buf)),
+            resolved: builder.append_string(self.resolved.slice(buf)),
+            package_name: builder.append_string(self.package_name.slice(buf)),
         }
     }
 
@@ -446,8 +445,11 @@ impl Repository {
         }
     }
 
-    fn exec(_env: bun_dotenv::Map, argv: &[&[u8]]) -> Result<Vec<u8>, Error> {
-        let mut env = _env;
+    fn exec(env: &bun_dotenv::Map, argv: &[&[u8]]) -> Result<Vec<u8>, Error> {
+        // PORT NOTE: Zig passed `DotEnv.Map` by struct-copy (shallow). Rust's
+        // `Map` is move-only; clone via `clone_with_allocator` so callers can
+        // hand us a shared `&Map` (matches `PackageManagerTask` call sites).
+        let mut env = bun_core::handle_oom(env.clone_with_allocator());
         let std_map = env.std_env_map()?;
         // TODO(port): narrow error set
 
@@ -599,7 +601,7 @@ impl Repository {
     }
 
     pub fn download(
-        env: bun_dotenv::Map,
+        env: &bun_dotenv::Map,
         log: &mut bun_logger::Log,
         cache_dir: bun_sys::Dir,
         task_id: crate::package_manager_task::Id,
@@ -619,7 +621,7 @@ impl Repository {
             write!(
                 &mut cursor,
                 "{}.git\0",
-                bun_core::fmt::hex_int_lower(task_id.get())
+                bun_core::fmt::hex_int_lower::<16>(task_id.get())
             )
             .map_err(|_| err!("NoSpaceLeft"))?;
             // TODO(port): narrow error set

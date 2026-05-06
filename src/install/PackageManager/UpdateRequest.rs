@@ -273,7 +273,14 @@ impl UpdateRequest {
 
 pub use bun_install::package_manager::command_line_arguments as CommandLineArguments;
 pub use bun_install::package_manager::Options;
-pub use bun_install::package_manager::Subcommand;
+// PORT NOTE: `Subcommand` is taken from `super` (not the crate-root façade) so
+// this file — which is mounted both at `crate::update_request` and at
+// `crate::package_manager_real::update_request` — picks up whichever
+// `Subcommand` its parent module defines. That keeps `parse(subcommand)`
+// type-compatible with each mount's caller (`bunx_command` / `update_request_jsc`
+// pass the lib.rs enum; `updatePackageJSONAndInstall` passes the
+// `package_manager_real` enum).
+pub use super::Subcommand;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

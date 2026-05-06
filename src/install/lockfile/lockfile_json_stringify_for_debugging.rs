@@ -1,12 +1,20 @@
 use bun_core::fmt as bun_fmt;
 use bun_paths::PathBuffer;
 use bun_semver::ExternalString;
+use bun_semver::string::JsonFormatterOptions;
 
-use bun_install::{
-    self as install, invalid_package_id, Dependency, DependencyID, Npm, PackageID, Repository,
+use crate::{
+    self as install, dependency, invalid_package_id, Dependency, DependencyID, Npm, Origin,
+    PackageID, Repository,
 };
-use bun_install::dependency::Behavior;
-use bun_install::lockfile::{Lockfile, Package, package_index as PackageIndex, Tree};
+use crate::dependency::{Behavior, NpmInfo, TagInfo, TarballInfo, URI};
+use crate::dependency::Tag as DependencyVersionTag;
+use crate::bin::Tag as BinTag;
+use crate::integrity::Tag as IntegrityTag;
+
+use super::{package_index, tree, FormatVersion, Lockfile, Package};
+use super::package::scripts::Scripts as PackageScripts;
+use super::tree::{IteratorPathStyle, DepthBuf, MAX_DEPTH};
 
 // TODO(port): `w: anytype` is a `std.json.WriteStream`-shaped writer. Phase B should
 // introduce a `JsonWriter` trait in bun_core (or bun_collections) with the methods
@@ -24,7 +32,7 @@ fn json_stringify_dependency<W>(
     this: &Lockfile,
     w: &mut W,
     dep_id: DependencyID,
-    dep: Dependency,
+    dep: &Dependency,
     res: PackageID,
 ) -> Result<(), bun_core::Error>
 // TODO(port): narrow error set
@@ -38,7 +46,8 @@ where
     w.object_field(b"name")?;
     w.write(dep.name.slice(sb))?;
 
-    if dep.version.tag == Dependency::Version::Tag::Npm && dep.version.value.npm.is_alias {
+    // SAFETY: tag-guarded union access — `value.npm` is the active variant when tag == Npm.
+    if dep.version.tag == DependencyVersionTag::Npm && unsafe { dep.version.value.npm.is_alias } {
         w.object_field(b"is_alias")?;
         w.write(true)?;
     }
@@ -48,11 +57,12 @@ where
 
     w.object_field(<&'static str>::from(dep.version.tag).as_bytes())?;
     match dep.version.tag {
-        Dependency::Version::Tag::Uninitialized => w.write_null()?,
-        Dependency::Version::Tag::Npm => {
+        DependencyVersionTag::Uninitialized => w.write_null()?,
+        DependencyVersionTag::Npm => {
             w.begin_object()?;
 
-            let info: Dependency::Version::NpmInfo = dep.version.value.npm;
+            // SAFETY: tag == Npm guards the `npm` union field.
+            let info: &NpmInfo = unsafe { &*dep.version.value.npm };
 
             w.object_field(b"name")?;
             w.write(info.name.slice(sb))?;
@@ -62,10 +72,11 @@ where
 
             let _ = w.end_object();
         }
-        Dependency::Version::Tag::DistTag => {
+        DependencyVersionTag::DistTag => {
             w.begin_object()?;
 
-            let info: Dependency::Version::TagInfo = dep.version.value.dist_tag;
+            // SAFETY: tag == DistTag guards the `dist_tag` union field.
+            let info: TagInfo = unsafe { dep.version.value.dist_tag };
 
             w.object_field(b"name")?;
             w.write(info.name.slice(sb))?;
@@ -75,34 +86,42 @@ where
 
             let _ = w.end_object();
         }
-        Dependency::Version::Tag::Tarball => {
+        DependencyVersionTag::Tarball => {
             w.begin_object()?;
 
-            let info: Dependency::Version::TarballInfo = dep.version.value.tarball;
-            w.object_field(<&'static str>::from(info.uri.tag()).as_bytes())?;
-            // TODO(port): `switch (info.uri) { inline else => |s| s.slice(sb) }` —
-            // every TarballURI variant payload has `.slice(sb)`. Expand to explicit
-            // match arms once the Rust TarballURI enum lands.
-            w.write(info.uri.slice(sb))?;
+            // SAFETY: tag == Tarball guards the `tarball` union field.
+            let info: TarballInfo = unsafe { dep.version.value.tarball };
+            // Zig: `@tagName(info.uri)` then `switch (info.uri) { inline else => |s| s.slice(sb) }`
+            // — every TarballURI variant payload has `.slice(sb)`.
+            let (uri_tag, uri_slice): (&'static str, &[u8]) = match info.uri {
+                URI::Local(ref s) => ("local", s.slice(sb)),
+                URI::Remote(ref s) => ("remote", s.slice(sb)),
+            };
+            w.object_field(uri_tag.as_bytes())?;
+            w.write(uri_slice)?;
 
             w.object_field(b"package_name")?;
             w.write(info.package_name.slice(sb))?;
 
             let _ = w.end_object();
         }
-        Dependency::Version::Tag::Folder => {
-            w.write(dep.version.value.folder.slice(sb))?;
+        DependencyVersionTag::Folder => {
+            // SAFETY: tag == Folder guards the `folder` union field.
+            w.write(unsafe { dep.version.value.folder }.slice(sb))?;
         }
-        Dependency::Version::Tag::Symlink => {
-            w.write(dep.version.value.symlink.slice(sb))?;
+        DependencyVersionTag::Symlink => {
+            // SAFETY: tag == Symlink guards the `symlink` union field.
+            w.write(unsafe { dep.version.value.symlink }.slice(sb))?;
         }
-        Dependency::Version::Tag::Workspace => {
-            w.write(dep.version.value.workspace.slice(sb))?;
+        DependencyVersionTag::Workspace => {
+            // SAFETY: tag == Workspace guards the `workspace` union field.
+            w.write(unsafe { dep.version.value.workspace }.slice(sb))?;
         }
-        Dependency::Version::Tag::Git => {
+        DependencyVersionTag::Git => {
             w.begin_object()?;
 
-            let info: Repository = dep.version.value.git;
+            // SAFETY: tag == Git guards the `git` union field.
+            let info: &Repository = unsafe { &*dep.version.value.git };
 
             w.object_field(b"owner")?;
             w.write(info.owner.slice(sb))?;
@@ -117,10 +136,11 @@ where
 
             let _ = w.end_object();
         }
-        Dependency::Version::Tag::Github => {
+        DependencyVersionTag::Github => {
             w.begin_object()?;
 
-            let info: Repository = dep.version.value.github;
+            // SAFETY: tag == Github guards the `github` union field.
+            let info: &Repository = unsafe { &*dep.version.value.github };
 
             w.object_field(b"owner")?;
             w.write(info.owner.slice(sb))?;
@@ -135,10 +155,11 @@ where
 
             let _ = w.end_object();
         }
-        Dependency::Version::Tag::Catalog => {
+        DependencyVersionTag::Catalog => {
             w.begin_object()?;
 
-            let info = dep.version.value.catalog;
+            // SAFETY: tag == Catalog guards the `catalog` union field.
+            let info = unsafe { dep.version.value.catalog };
 
             w.object_field(b"name")?;
             w.write(dep.name.slice(sb))?;
@@ -146,7 +167,7 @@ where
             w.object_field(b"version")?;
             w.print(format_args!(
                 "\"catalog:{}\"",
-                info.fmt_json(sb, Dependency::Version::FmtJsonOpts { quote: false })
+                info.fmt_json(sb, JsonFormatterOptions { quote: false })
             ))?;
 
             let _ = w.end_object();
@@ -164,10 +185,9 @@ where
     {
         w.begin_object()?;
 
-        // TODO(port): Zig iterated `@typeInfo(Behavior).@"struct".fields[1..len-1]` (skips
-        // the leading `_unused_first` and trailing `_padding` bool/padding fields). In Rust,
-        // expose `Behavior::NAMED_FLAGS: &[(&'static str, fn(&Behavior) -> bool)]` (or a
-        // bitflags iterator) on the ported Behavior type and iterate that here.
+        // Zig iterated `@typeInfo(Behavior).@"struct".fields[1..len-1]` (skips
+        // the leading `_unused_first` and trailing `_padding` bool/padding fields).
+        // The Rust port iterates `Behavior::NAMED_FLAGS` — a flat (name, fn) table.
         for (name, getter) in Behavior::NAMED_FLAGS {
             if getter(&dep.behavior) {
                 w.object_field(name.as_bytes())?;
@@ -194,28 +214,31 @@ where
     w.begin_object()?;
 
     w.object_field(b"format")?;
-    w.write(<&'static str>::from(this.format).as_bytes())?;
+    w.write(format_version_name(this.format).as_bytes())?;
     w.object_field(b"meta_hash")?;
-    // TODO(port): std.fmt.bytesToHex(.., .lower) — provide bun_core::fmt::bytes_to_hex_lower.
-    w.write(bun_fmt::bytes_to_hex_lower(&this.meta_hash).as_slice())?;
+    {
+        // std.fmt.bytesToHex(.., .lower)
+        let mut hex = [0u8; 64];
+        let n = bun_fmt::bytes_to_hex_lower(&this.meta_hash, &mut hex);
+        w.write(&hex[..n])?;
+    }
 
     {
         w.object_field(b"package_index")?;
         w.begin_object()?;
 
-        let mut iter = this.package_index.iterator();
-        while let Some(it) = iter.next() {
-            let entry: PackageIndex::Entry = *it.value_ptr;
+        for (_k, entry) in this.package_index.iter() {
+            let entry: &package_index::Entry = entry;
             let first_id = match entry {
-                PackageIndex::Entry::Id(id) => id,
-                PackageIndex::Entry::Ids(ref ids) => ids.as_slice()[0],
+                package_index::Entry::Id(id) => *id,
+                package_index::Entry::Ids(ids) => ids.as_slice()[0],
             };
             // TODO(port): MultiArrayList column accessor — `packages.items(.name)` in Zig.
             let name = this.packages.items_name()[first_id as usize].slice(sb);
             w.object_field(name)?;
             match entry {
-                PackageIndex::Entry::Id(id) => w.write(id)?,
-                PackageIndex::Entry::Ids(ref ids) => {
+                package_index::Entry::Id(id) => w.write(*id)?,
+                package_index::Entry::Ids(ids) => {
                     w.begin_array()?;
                     for id in ids.as_slice() {
                         w.write(*id)?;
@@ -234,7 +257,7 @@ where
         let dependencies = this.buffers.dependencies.as_slice();
         let hoisted_deps = this.buffers.hoisted_dependencies.as_slice();
         let resolutions = this.buffers.resolutions.as_slice();
-        let mut depth_buf = Tree::DepthBuf::uninit();
+        let mut depth_buf: DepthBuf = [0; MAX_DEPTH];
         let mut path_buf = PathBuffer::uninit();
         path_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
 
@@ -246,18 +269,24 @@ where
             w.object_field(b"id")?;
             w.write(tree_id)?;
 
-            let (relative_path, depth) = Lockfile::Tree::relative_path_and_depth(
-                this,
-                u32::try_from(tree_id).unwrap(),
-                &mut path_buf,
-                &mut depth_buf,
-                Tree::RelativePathMode::NodeModules,
-            );
+            let (relative_path, depth) =
+                tree::relative_path_and_depth::<{ IteratorPathStyle::NodeModules }>(
+                    this,
+                    u32::try_from(tree_id).unwrap(),
+                    &mut path_buf,
+                    &mut depth_buf,
+                );
 
             w.object_field(b"path")?;
             w.print(format_args!(
                 "\"{}\"",
-                bun_fmt::fmt_path(relative_path, bun_fmt::PathFormatOptions { path_sep: bun_fmt::PathSep::Posix, ..Default::default() })
+                bun_fmt::fmt_path(
+                    relative_path,
+                    bun_fmt::PathFormatOptions {
+                        path_sep: bun_fmt::PathSep::Posix,
+                        ..Default::default()
+                    },
+                )
             ))?;
 
             w.object_field(b"depth")?;
@@ -269,7 +298,7 @@ where
 
                 for tree_dep_id in tree.dependencies.get(hoisted_deps) {
                     let tree_dep_id = *tree_dep_id;
-                    let dep = dependencies[tree_dep_id as usize];
+                    let dep = &dependencies[tree_dep_id as usize];
                     let package_id = resolutions[tree_dep_id as usize];
 
                     w.object_field(dep.name.slice(sb))?;
@@ -303,7 +332,7 @@ where
         let resolutions = this.buffers.resolutions.as_slice();
 
         for dep_id in 0..dependencies.len() {
-            let dep = dependencies[dep_id];
+            let dep = &dependencies[dep_id];
             let res = resolutions[dep_id];
             json_stringify_dependency(this, w, u32::try_from(dep_id).unwrap(), dep, res)?;
         }
@@ -330,11 +359,11 @@ where
 
             w.object_field(b"resolution")?;
             {
-                let res = pkg.resolution;
+                let res = &pkg.resolution;
                 w.begin_object()?;
 
                 w.object_field(b"tag")?;
-                w.write(<&'static str>::from(res.tag).as_bytes())?;
+                w.write(res.tag.name().unwrap_or("").as_bytes())?;
 
                 w.object_field(b"value")?;
                 w.print(format_args!("\"{}\"", res.fmt(sb, bun_fmt::PathSep::Posix)))?;
@@ -356,28 +385,27 @@ where
                 let _ = w.end_array();
             }
 
-            if (pkg.meta.arch as u16) != Npm::Architecture::ALL_VALUE {
+            if pkg.meta.arch.0 != Npm::Architecture::ALL_VALUE {
                 w.object_field(b"arch")?;
                 w.begin_array()?;
 
-                // TODO(port): `Npm.Architecture.NameMap.kvs` is a ComptimeStringMap's
-                // backing kv array. The Rust port uses `phf::Map`; iterate `.entries()`.
-                for (key, value) in Npm::Architecture::NAME_MAP.entries() {
+                // Zig: `Npm.Architecture.NameMap.kvs` — ComptimeStringMap kv array.
+                for (key, value) in Npm::Architecture::NAME_MAP_KVS {
                     if pkg.meta.arch.has(*value) {
-                        w.write(key)?;
+                        w.write(*key)?;
                     }
                 }
 
                 let _ = w.end_array();
             }
 
-            if (pkg.meta.os as u16) != Npm::OperatingSystem::ALL_VALUE {
+            if pkg.meta.os.0 != Npm::OperatingSystem::ALL_VALUE {
                 w.object_field(b"os")?;
                 w.begin_array()?;
 
-                for (key, value) in Npm::OperatingSystem::NAME_MAP.entries() {
+                for (key, value) in Npm::OperatingSystem::NAME_MAP_KVS {
                     if pkg.meta.os.has(*value) {
-                        w.write(key)?;
+                        w.write(*key)?;
                     }
                 }
 
@@ -385,7 +413,7 @@ where
             }
 
             w.object_field(b"integrity")?;
-            if pkg.meta.integrity.tag != install::Integrity::Tag::Unknown {
+            if pkg.meta.integrity.tag != IntegrityTag::UNKNOWN {
                 w.print(format_args!("\"{}\"", pkg.meta.integrity))?;
             } else {
                 w.write_null()?;
@@ -395,39 +423,44 @@ where
             w.write(pkg.meta.man_dir.slice(sb))?;
 
             w.object_field(b"origin")?;
-            w.write(<&'static str>::from(pkg.meta.origin).as_bytes())?;
+            w.write(origin_name(pkg.meta.origin).as_bytes())?;
 
             w.object_field(b"bin")?;
             match pkg.bin.tag {
-                install::Bin::Tag::None => w.write_null()?,
-                install::Bin::Tag::File => {
+                BinTag::None => w.write_null()?,
+                BinTag::File => {
                     w.begin_object()?;
 
                     w.object_field(b"file")?;
-                    w.write(pkg.bin.value.file.slice(sb))?;
+                    // SAFETY: tag == File guards the `file` union field.
+                    w.write(unsafe { pkg.bin.value.file }.slice(sb))?;
 
                     let _ = w.end_object();
                 }
-                install::Bin::Tag::NamedFile => {
+                BinTag::NamedFile => {
                     w.begin_object()?;
 
+                    // SAFETY: tag == NamedFile guards the `named_file` union field.
+                    let named_file = unsafe { pkg.bin.value.named_file };
                     w.object_field(b"name")?;
-                    w.write(pkg.bin.value.named_file[0].slice(sb))?;
+                    w.write(named_file[0].slice(sb))?;
 
                     w.object_field(b"file")?;
-                    w.write(pkg.bin.value.named_file[1].slice(sb))?;
+                    w.write(named_file[1].slice(sb))?;
 
                     let _ = w.end_object();
                 }
-                install::Bin::Tag::Dir => {
+                BinTag::Dir => {
                     w.object_field(b"dir")?;
-                    w.write(pkg.bin.value.dir.slice(sb))?;
+                    // SAFETY: tag == Dir guards the `dir` union field.
+                    w.write(unsafe { pkg.bin.value.dir }.slice(sb))?;
                 }
-                install::Bin::Tag::Map => {
+                BinTag::Map => {
                     w.begin_object()?;
 
+                    // SAFETY: tag == Map guards the `map` union field.
                     let data: &[ExternalString] =
-                        pkg.bin.value.map.get(this.buffers.extern_strings.as_slice());
+                        unsafe { pkg.bin.value.map }.get(this.buffers.extern_strings.as_slice());
                     let mut bin_i: usize = 0;
                     while bin_i < data.len() {
                         w.object_field(data[bin_i].slice(sb))?;
@@ -443,10 +476,10 @@ where
                 w.object_field(b"scripts")?;
                 w.begin_object()?;
 
-                // TODO(port): `inline for (comptime std.meta.fieldNames(Lockfile.Scripts))` —
-                // expose `Lockfile::Scripts::FIELD_NAMES: &[(&'static str, fn(&Scripts) -> &String)]`
-                // (or a derive) on the ported Scripts struct and iterate it here.
-                for (field_name, getter) in Lockfile::Scripts::FIELD_NAMES {
+                // Zig: `inline for (comptime std.meta.fieldNames(Lockfile.Scripts))` —
+                // tabulated explicitly via `Package::Scripts::FIELD_NAMES` since
+                // Rust has no field-by-name reflection.
+                for (field_name, getter) in PackageScripts::FIELD_NAMES {
                     let script = getter(&pkg.scripts).slice(sb);
                     if !script.is_empty() {
                         w.object_field(field_name.as_bytes())?;
@@ -523,6 +556,26 @@ where
     Ok(())
 }
 
+/// Mirrors Zig `@tagName(this.format)` for the non-exhaustive `FormatVersion`.
+fn format_version_name(v: FormatVersion) -> &'static str {
+    match v {
+        FormatVersion::V0 => "v0",
+        FormatVersion::V1 => "v1",
+        FormatVersion::V2 => "v2",
+        FormatVersion::V3 => "v3",
+        _ => "",
+    }
+}
+
+/// Mirrors Zig `@tagName(pkg.meta.origin)`.
+fn origin_name(o: Origin) -> &'static str {
+    match o {
+        Origin::Local => "local",
+        Origin::Npm => "npm",
+        Origin::Tarball => "tarball",
+    }
+}
+
 // TODO(port): placeholder trait for the `w: anytype` JSON write-stream protocol.
 // Phase B: move into bun_core (or wherever std.json.WriteStream is ported) and bound
 // `write` over a `JsonScalar` trait so bool/integer/&[u8] all dispatch through it.
@@ -541,6 +594,6 @@ pub trait JsonWriter {
 // PORT STATUS
 //   source:     src/install/lockfile/lockfile_json_stringify_for_debugging.zig (427 lines)
 //   confidence: medium
-//   todos:      9
-//   notes:      JsonWriter trait is a placeholder; defer-endObject reshaped (see PORT NOTE); Behavior/Scripts field reflection needs helper consts on ported types.
+//   todos:      6
+//   notes:      JsonWriter trait is a placeholder; defer-endObject reshaped (see PORT NOTE); Behavior/Scripts field reflection via NAMED_FLAGS/FIELD_NAMES tables.
 // ──────────────────────────────────────────────────────────────────────────

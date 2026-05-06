@@ -95,6 +95,11 @@ pub enum Version {
 impl Version {
     pub const CURRENT: Version = Version::V1;
 
+    #[inline]
+    pub const fn current() -> Version {
+        Version::CURRENT
+    }
+
     pub const fn from_int(n: u32) -> Option<Version> {
         match n {
             0 => Some(Version::V0),
@@ -529,7 +534,7 @@ impl Stringifier {
                     write!(
                         writer,
                         "{}",
-                        bun_core::fmt::format_json_string_utf8(relative_path, JsonOpts { quote: false }),
+                        bun_core::fmt::format_json_string_utf8(relative_path, bun_core::fmt::JSONFormatterUTF8Options { quote: false }),
                     )?;
 
                     if *depth != 0 {
@@ -542,7 +547,7 @@ impl Stringifier {
                     write!(
                         writer,
                         "{}\": ",
-                        bun_core::fmt::format_json_string_utf8(dep_name, JsonOpts { quote: false }),
+                        bun_core::fmt::format_json_string_utf8(dep_name, bun_core::fmt::JSONFormatterUTF8Options { quote: false }),
                     )?;
 
                     let pkg_name = pkg_names[pkg_id as usize];
@@ -1461,7 +1466,7 @@ pub fn parse_into_binary_lockfile(
             let key_hash = key.as_string_hash(StringBuilder::string_hash)?.unwrap();
             lockfile.patched_dependencies.insert(
                 key_hash,
-                PatchedDep { path: string_buf.append(value.as_utf8_string_literal().unwrap())? },
+                PatchedDep { path: string_buf.append(value.as_utf8_string_literal().unwrap())?, ..Default::default() },
             );
         }
     }
@@ -2220,8 +2225,7 @@ pub fn parse_into_binary_lockfile(
 
         // a package can list the same dependency in each dependnecy group, but only the first
         // is chosen (dev -> optional -> prod -> peer)
-        let mut seen_deps: ArrayHashMap<&[u8], ()> = ArrayHashMap::default();
-        // TODO(port): bun.StringArrayHashMapUnmanaged(void) — confirm bun_collections type
+        let mut seen_deps: bun_collections::StringArrayHashMap<()> = Default::default();
 
         let pkgs = lockfile.packages.slice();
         let pkg_deps = pkgs.items_dependencies();
@@ -2265,7 +2269,7 @@ pub fn parse_into_binary_lockfile(
                 let pkg_id: PackageID = u32::try_from(_pkg_id).unwrap();
                 let workspace_name = pkg_names[pkg_id as usize].slice(lockfile.buffers.string_bytes.as_slice());
 
-                seen_deps.clear();
+                seen_deps.clear_retaining_capacity();
 
                 let deps = pkg_deps[pkg_id as usize];
                 for _dep_id in deps.begin()..deps.end() {

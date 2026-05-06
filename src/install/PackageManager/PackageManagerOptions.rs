@@ -918,6 +918,25 @@ impl Default for Enable {
     }
 }
 
+// Field-style accessors for Zig parity (`options.enable.cache = false` /
+// `if options.enable.manifest_cache { ... }`). The bitflags struct is `Copy`,
+// so getters return by value and setters take `&mut self`.
+impl Enable {
+    #[inline] pub fn cache(&self) -> bool { self.contains(Enable::CACHE) }
+    #[inline] pub fn set_cache(&mut self, v: bool) { self.set(Enable::CACHE, v); }
+    #[inline] pub fn manifest_cache(&self) -> bool { self.contains(Enable::MANIFEST_CACHE) }
+    #[inline] pub fn set_manifest_cache(&mut self, v: bool) { self.set(Enable::MANIFEST_CACHE, v); }
+    #[inline] pub fn manifest_cache_control(&self) -> bool { self.contains(Enable::MANIFEST_CACHE_CONTROL) }
+    #[inline] pub fn set_manifest_cache_control(&mut self, v: bool) { self.set(Enable::MANIFEST_CACHE_CONTROL, v); }
+    #[inline] pub fn fail_early(&self) -> bool { self.contains(Enable::FAIL_EARLY) }
+    #[inline] pub fn frozen_lockfile(&self) -> bool { self.contains(Enable::FROZEN_LOCKFILE) }
+    #[inline] pub fn force_save_lockfile(&self) -> bool { self.contains(Enable::FORCE_SAVE_LOCKFILE) }
+    #[inline] pub fn force_install(&self) -> bool { self.contains(Enable::FORCE_INSTALL) }
+    #[inline] pub fn exact_versions(&self) -> bool { self.contains(Enable::EXACT_VERSIONS) }
+    #[inline] pub fn only_missing(&self) -> bool { self.contains(Enable::ONLY_MISSING) }
+    #[inline] pub fn global_virtual_store(&self) -> bool { self.contains(Enable::GLOBAL_VIRTUAL_STORE) }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/install/PackageManager/PackageManagerOptions.zig (760 lines)

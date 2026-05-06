@@ -269,9 +269,8 @@ impl ExtractTarball {
             use bun_libarchive::Archiver;
             use bun_zlib as Zlib;
             let mut zlib_pool = Npm::Registry::BodyPool::get();
-            zlib_pool.data.reset();
-            // `defer Npm.Registry.BodyPool.release(zlib_pool)` → guard's Drop releases.
-            // TODO(port): BodyPool::get() should return an RAII guard.
+            zlib_pool.reset();
+            // `defer Npm.Registry.BodyPool.release(zlib_pool)` → PoolGuard's Drop releases.
 
             let mut esimated_output_size: usize = 0;
 
@@ -292,13 +291,10 @@ impl ExtractTarball {
                     if last_4_bytes > 16 && last_4_bytes < 64 * 1024 * 1024 {
                         // It's okay if this fails. We will just allocate as we go and that will error if we run out of memory.
                         esimated_output_size = last_4_bytes as usize;
-                        if zlib_pool.data.list.capacity() == 0 {
-                            let _ = zlib_pool
-                                .data
-                                .list
-                                .try_reserve_exact(last_4_bytes as usize);
+                        if zlib_pool.list.capacity() == 0 {
+                            let _ = zlib_pool.list.try_reserve_exact(last_4_bytes as usize);
                         } else {
-                            let _ = zlib_pool.data.ensure_unused_capacity(last_4_bytes as usize);
+                            let _ = zlib_pool.ensure_unused_capacity(last_4_bytes as usize);
                         }
                     }
                 }
@@ -306,7 +302,7 @@ impl ExtractTarball {
 
             let mut needs_to_decompress = true;
             if bun_core::FeatureFlags::is_libdeflate_enabled()
-                && zlib_pool.data.list.capacity() > 16
+                && zlib_pool.list.capacity() > 16
                 && esimated_output_size > 0
             {
                 'use_libdeflate: {
@@ -327,15 +323,15 @@ impl ExtractTarball {
                     // SAFETY: write into the full allocated capacity (Zig `allocatedSlice()` equiv).
                     let allocated = unsafe {
                         core::slice::from_raw_parts_mut(
-                            zlib_pool.data.list.as_mut_ptr(),
-                            zlib_pool.data.list.capacity(),
+                            zlib_pool.list.as_mut_ptr(),
+                            zlib_pool.list.capacity(),
                         )
                     };
                     let result = decompressor.gzip(tgz_bytes, allocated);
 
                     if result.status == libdeflate::Status::Success {
                         // SAFETY: libdeflate wrote `result.written` bytes into the backing buffer.
-                        unsafe { zlib_pool.data.list.set_len(result.written) };
+                        unsafe { zlib_pool.list.set_len(result.written) };
                         needs_to_decompress = false;
                     }
 
@@ -344,15 +340,15 @@ impl ExtractTarball {
             }
 
             if needs_to_decompress {
-                zlib_pool.data.list.clear();
-                let mut zlib_entry = Zlib::ZlibReaderArrayList::init(tgz_bytes, &mut zlib_pool.data.list)?;
+                zlib_pool.list.clear();
+                let mut zlib_entry = Zlib::ZlibReaderArrayList::init(tgz_bytes, &mut zlib_pool.list)?;
                 if let Err(err) = zlib_entry.read_all(true) {
                     log.add_error_fmt(
                         None,
                         logger::Loc::EMPTY,
                         format_args!(
                             "{} decompressing \"{}\" to \"{}\"",
-                            err.name(),
+                            err,
                             BStr::new(name),
                             bun_core::fmt::fmt_path_u8(tmpname.as_bytes(), Default::default()),
                         ),
@@ -376,17 +372,22 @@ impl ExtractTarball {
             }
 
             match self.resolution.tag {
-                Resolution::Tag::Github => {
+                ResolutionTag::Github => {
                     // BORROW_PARAM: out-param writing the first dirname back into a stack local.
                     struct DirnameReader<'a> {
                         needs_first_dirname: bool, // = true
                         outdirname: &'a mut &'a [u8],
                     }
-                    impl<'a> DirnameReader<'a> {
-                        pub fn on_first_directory_name(&mut self, first_dirname: &[u8]) {
+                    impl<'a> ArchiveAppender for DirnameReader<'a> {
+                        const HAS_ON_FIRST_DIRECTORY_NAME: bool = true;
+                        fn needs_first_dirname(&self) -> bool {
+                            self.needs_first_dirname
+                        }
+                        fn on_first_directory_name(&mut self, first_dirname: &[u8]) {
                             debug_assert!(self.needs_first_dirname);
                             self.needs_first_dirname = false;
-                            *self.outdirname = FileSystem::DirnameStore::instance()
+                            *self.outdirname = FileSystem::instance()
+                                .dirname_store()
                                 .append(first_dirname)
                                 .expect("unreachable");
                         }
@@ -396,31 +397,20 @@ impl ExtractTarball {
                         outdirname: &mut resolved,
                     };
 
-                    // PERF(port): was comptime bool dispatch on verbose_install — profile in Phase B
-                    if PackageManager::verbose_install() {
-                        let _ = Archiver::extract_to_dir::<true, _>(
-                            &zlib_pool.data.list,
-                            extract_destination,
-                            None,
-                            &mut dirname_reader,
-                            Archiver::Options {
-                                // for GitHub tarballs, the root dir is always <user>-<repo>-<commit_id>
-                                depth_to_skip: 1,
-                                ..Default::default()
-                            },
-                        )?;
-                    } else {
-                        let _ = Archiver::extract_to_dir::<false, _>(
-                            &zlib_pool.data.list,
-                            extract_destination,
-                            None,
-                            &mut dirname_reader,
-                            Archiver::Options {
-                                depth_to_skip: 1,
-                                ..Default::default()
-                            },
-                        )?;
-                    }
+                    // PERF(port): was comptime bool dispatch on verbose_install — folded into
+                    // `ExtractOptions::log` (runtime) — profile in Phase B.
+                    let _ = Archiver::extract_to_dir(
+                        &zlib_pool.list,
+                        extract_destination.fd(),
+                        None,
+                        &mut dirname_reader,
+                        ExtractOptions {
+                            // for GitHub tarballs, the root dir is always <user>-<repo>-<commit_id>
+                            depth_to_skip: 1,
+                            log: PackageManager::verbose_install(),
+                            ..Default::default()
+                        },
+                    )?;
 
                     // This tag is used to know which version of the package was
                     // installed from GitHub. package.json version becomes sort of
@@ -446,34 +436,22 @@ impl ExtractTarball {
                     }
                 }
                 _ => {
-                    // PERF(port): was comptime bool dispatch on verbose_install — profile in Phase B
-                    if PackageManager::verbose_install() {
-                        let _ = Archiver::extract_to_dir::<true, ()>(
-                            &zlib_pool.data.list,
-                            extract_destination,
-                            None,
-                            (),
-                            Archiver::Options {
-                                // packages usually have root directory `package/`, and scoped packages usually have root `<scopename>/`
-                                // https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/node_modules/pacote/lib/fetcher.js#L442
-                                depth_to_skip: 1,
-                                npm: true,
-                                ..Default::default()
-                            },
-                        )?;
-                    } else {
-                        let _ = Archiver::extract_to_dir::<false, ()>(
-                            &zlib_pool.data.list,
-                            extract_destination,
-                            None,
-                            (),
-                            Archiver::Options {
-                                depth_to_skip: 1,
-                                npm: true,
-                                ..Default::default()
-                            },
-                        )?;
-                    }
+                    // PERF(port): was comptime bool dispatch on verbose_install — folded into
+                    // `ExtractOptions::log` (runtime) — profile in Phase B.
+                    let _ = Archiver::extract_to_dir(
+                        &zlib_pool.list,
+                        extract_destination.fd(),
+                        None,
+                        &mut (),
+                        ExtractOptions {
+                            // packages usually have root directory `package/`, and scoped packages usually have root `<scopename>/`
+                            // https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/node_modules/pacote/lib/fetcher.js#L442
+                            depth_to_skip: 1,
+                            npm: true,
+                            log: PackageManager::verbose_install(),
+                            ..Default::default()
+                        },
+                    )?;
                 }
             }
 

@@ -25,6 +25,7 @@ use crate::bun_progress::{Node as ProgressNode, Progress};
 use crate::bun_schema::api as Api;
 use bun_semver::{self as Semver, String as SemverString};
 use bun_str::{strings, ZStr};
+use bun_core::ZBox;
 use bun_sys::{self, Fd};
 use bun_threading::{thread_pool, ThreadPool, UnboundedQueue};
 use bun_transpiler::{self as transpiler, Transpiler};
@@ -218,8 +219,8 @@ impl PackageManagerCommand {
 Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.
 ";
 
-        Output::pretty(intro_text);
-        Output::pretty(outro_text);
+        Output::pretty(format_args!("{}", intro_text));
+        Output::pretty(format_args!("{}", outro_text));
         Output::flush();
     }
 }

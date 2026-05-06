@@ -1650,6 +1650,12 @@ impl RootPackageId {
     pub workspace_package_json_cache: package_manager::WorkspacePackageJSONCache,
     /// Zig: `postinstall_optimizer: PostinstallOptimizer`.
     pub postinstall_optimizer: PostinstallOptimizer,
+    /// Zig: `subcommand: Subcommand`.
+    pub subcommand: Subcommand,
+    /// Zig: `update_requests: []UpdateRequest = &.{}`.
+    pub update_requests: Box<[update_request::UpdateRequest]>,
+    /// Zig: `event_loop: jsc.AnyEventLoop`.
+    pub event_loop: bun_event_loop::AnyEventLoop<'static>,
 }
 #[derive(Default)] pub struct PackageManagerOptionsStub {
     pub log_level: package_manager::Options::LogLevel,
@@ -1664,6 +1670,22 @@ impl RootPackageId {
     pub scope: npm::registry::Scope,
     /// Zig: `Options.publish_config`.
     pub publish_config: PublishConfigStub,
+    /// Zig: `Options.do: Do = .{}`.
+    pub do_: PackageManagerDoStub,
+    /// Zig: `Options.node_linker: NodeLinker = .auto`.
+    pub node_linker: bun_install_types::NodeLinker::NodeLinker,
+    /// Zig: `Options.security_scanner: ?[]const u8 = null` — bunfig
+    /// `[install.security].scanner` value.
+    pub security_scanner: Option<Box<[u8]>>,
+}
+/// Port of `Options.Do` (src/install/PackageManager/PackageManagerOptions.zig).
+/// Only the bits the security scanner / installer touch are surfaced; the
+/// rest land when `package_manager_real` un-gates.
+pub struct PackageManagerDoStub {
+    pub install_packages: bool,
+}
+impl Default for PackageManagerDoStub {
+    fn default() -> Self { Self { install_packages: true } }
 }
 /// Port of `PublishConfig` (src/install/PackageManager/PackageManagerOptions.zig).
 #[derive(Default)] pub struct PublishConfigStub {
@@ -1794,6 +1816,29 @@ static mut PACKAGE_MANAGER_INSTANCE: *mut PackageManager = core::ptr::null_mut()
 
 impl PackageManager {
     pub fn verbose_install() -> bool { false }
+
+    /// Port of `PackageManager.sleepUntil` (src/install/PackageManager.zig).
+    /// Spins the event loop, calling `is_done_fn(closure)` between ticks until
+    /// it returns `true`. Associated fn over `*mut Self` so the callback can
+    /// reborrow `&mut PackageManager` without aliasing the receiver (Zig's
+    /// `*PackageManager` carries no exclusivity contract).
+    ///
+    /// SAFETY: `this` must be valid for `&mut` access between callback
+    /// invocations; while `is_done_fn` runs the callback owns the unique
+    /// `&mut PackageManager` and `sleep_until` holds no borrow.
+    pub unsafe fn sleep_until<C>(
+        _this: *mut PackageManager,
+        closure: &mut C,
+        is_done_fn: fn(&mut C) -> bool,
+    ) {
+        bun_core::Output::flush();
+        // TODO(port): blocked_on bun_install::package_manager_real un-gate
+        // (reconciler-6) — `AnyEventLoop::tick_raw` plumbing. The stub spins
+        // `is_done_fn` once so callers can compile; the real body lives in
+        // `package_manager_real::PackageManager::sleep_until`.
+        let _ = is_done_fn(closure);
+        todo!("blocked_on: bun_install::package_manager_real::sleep_until (reconciler-6)")
+    }
 
     /// Zig: field access `manager.env` (src/install/PackageManager.zig:11).
     /// SAFETY: `env` is populated by `init()` before any caller reaches this;

@@ -11,21 +11,29 @@ use bun_threading::{thread_pool, Mutex, ThreadPool, UnboundedQueue};
 
 
 use bun_semver::String as SemverString;
+use bun_sys::{FdExt as _, FdDirExt as _};
 
 use crate::{
-    self as install, invalid_dependency_id, Bin, DependencyID, FileCopier, Lockfile, PackageID,
+    self as install, bin, invalid_dependency_id, Bin, DependencyID, Lockfile, PackageID,
     PackageManager, PackageNameHash, PostinstallOptimizer, Resolution,
     TruncatedPackageNameHash,
 };
+use crate::resolution;
+use crate::postinstall_optimizer;
 use crate::package_install::{self, Method as InstallMethod, Summary as InstallSummary};
 use crate::package_manager_real::Command;
 use crate::lockfile_real::PackageIDSlice;
 use crate::lockfile::package;
 use crate::bun_fs;
 use super::file_cloner::FileCloner;
+use super::file_copier::FileCopier;
 use super::hardlinker::Hardlinker;
 use super::symlinker::{self, Symlinker};
 use super::store::{self, Store};
+
+/// Zig: `Resolution.Tag` — Rust can't nest a type inside a struct, so the
+/// enum lives at module level in `crate::resolution`.
+type ResolutionTag = resolution::Tag;
 
 type Bitset = DynamicBitSet;
 type Progress = crate::bun_progress::Progress;
@@ -100,7 +108,7 @@ pub struct Installer<'a> {
 impl<'a> Installer<'a> {
     /// Called from main thread
     pub fn start_task(&mut self, entry_id: StoreEntryId) {
-        let task = &mut self.tasks[entry_id.get()];
+        let task = &mut self.tasks[entry_id.get() as usize];
         debug_assert!(matches!(
             task.result,
             // first time starting the task
@@ -139,13 +147,13 @@ impl<'a> Installer<'a> {
                 let pkg_name_hash = pkg_name_hashes[pkg_id];
                 let pkg_res = &pkg_resolutions[pkg_id];
 
-                let patch_info = self
-                    .package_patch_info(pkg_name, pkg_name_hash, pkg_res)
-                    .unwrap_or_oom();
+                let patch_info = bun_core::handle_oom(
+                    self.package_patch_info(pkg_name, pkg_name_hash, pkg_res),
+                );
 
                 if let PatchInfo::Patch(patch) = &patch_info {
                     let mut log = Log::init();
-                    self.apply_package_patch(entry_id, patch, &mut log);
+                    self.apply_package_patch(entry_id, &patch, &mut log);
                     if log.has_errors() {
                         // monotonic is okay because we haven't started the task yet (it isn't running
                         // on another thread)
@@ -188,13 +196,15 @@ impl<'a> Installer<'a> {
         } else {
             // No waiting entry — still surface the error so it isn't lost.
             let string_buf = self.lockfile.buffers.string_bytes.as_slice();
-            Output::err_generic(format_args!(
+            Output::err_generic(
                 "failed to download <b>{}@{}<r>: {}\n  <d>{}<r>",
-                bstr::BStr::new(name),
-                resolution.fmt(string_buf, bun_core::fmt::PathSep::Auto),
-                bstr::BStr::new(download_error_reason(err)),
-                bstr::BStr::new(url),
-            ));
+                (
+                    bstr::BStr::new(name),
+                    resolution.fmt(string_buf, bun_core::fmt::PathSep::Auto),
+                    bstr::BStr::new(download_error_reason(err)),
+                    bstr::BStr::new(url),
+                ),
+            );
             Output::flush();
         }
     }
@@ -217,15 +227,16 @@ impl<'a> Installer<'a> {
             patch.name_and_version_hash,
         );
         // patch_task dropped at end of scope
-        patch_task.apply().unwrap_or_oom();
+        bun_core::handle_oom(patch_task.apply());
 
         if patch_task.callback.apply.logger.has_errors() {
-            patch_task
-                .callback
-                .apply
-                .logger
-                .clone_to_with_recycled(log, true)
-                .unwrap_or_oom();
+            bun_core::handle_oom(
+                patch_task
+                    .callback
+                    .apply
+                    .logger
+                    .clone_to_with_recycled(log, true),
+            );
         }
     }
 
@@ -252,9 +263,9 @@ impl<'a> Installer<'a> {
         match &err {
             TaskError::LinkPackage(link_err) => {
                 Output::err(
-                    link_err,
-                    format_args!(
-                        "failed to link package: {}@{}",
+                    link_err.clone(),
+                    "failed to link package: {}@{}",
+                    (
                         bstr::BStr::new(pkg_name.slice(string_buf)),
                         pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto),
                     ),
@@ -262,40 +273,44 @@ impl<'a> Installer<'a> {
             }
             TaskError::SymlinkDependencies(symlink_err) => {
                 Output::err(
-                    symlink_err,
-                    format_args!(
-                        "failed to symlink dependencies for package: {}@{}",
+                    symlink_err.clone(),
+                    "failed to symlink dependencies for package: {}@{}",
+                    (
                         bstr::BStr::new(pkg_name.slice(string_buf)),
                         pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto),
                     ),
                 );
             }
             TaskError::Patching(patch_log) => {
-                Output::err_generic(format_args!(
+                Output::err_generic(
                     "failed to patch package: {}@{}",
-                    bstr::BStr::new(pkg_name.slice(string_buf)),
-                    pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto),
-                ));
-                let _ = patch_log.print(Output::error_writer());
+                    (
+                        bstr::BStr::new(pkg_name.slice(string_buf)),
+                        pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto),
+                    ),
+                );
+                let _ = patch_log.print(Output::error_writer() as *mut _);
             }
             TaskError::Binaries(bin_err) => {
                 Output::err(
-                    bin_err,
-                    format_args!(
-                        "failed to link binaries for package: {}@{}",
+                    *bin_err,
+                    "failed to link binaries for package: {}@{}",
+                    (
                         bstr::BStr::new(pkg_name.slice(string_buf)),
                         pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto),
                     ),
                 );
             }
             TaskError::Download(dl) => {
-                Output::err_generic(format_args!(
+                Output::err_generic(
                     "failed to download <b>{}@{}<r>: {}\n  <d>{}<r>",
-                    bstr::BStr::new(pkg_name.slice(string_buf)),
-                    pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto),
-                    bstr::BStr::new(download_error_reason(dl.err)),
-                    bstr::BStr::new(&dl.url),
-                ));
+                    (
+                        bstr::BStr::new(pkg_name.slice(string_buf)),
+                        pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto),
+                        bstr::BStr::new(download_error_reason(dl.err)),
+                        bstr::BStr::new(&dl.url),
+                    ),
+                );
             }
             _ => {}
         }
@@ -390,7 +405,7 @@ impl<'a> Installer<'a> {
         let deps = &entry_deps[entry_id.get()];
         for dep in deps.slice() {
             if entry_steps[dep.entry_id.get()].load(Ordering::Acquire) != Step::Done {
-                parent_dedupe.clear();
+                parent_dedupe.clear_retaining_capacity();
                 if self.store.is_cycle(entry_id, dep.entry_id, parent_dedupe) {
                     continue;
                 }
@@ -583,7 +598,15 @@ impl TaskError {
             TaskError::SymlinkDependencies(err) => TaskError::SymlinkDependencies(err.clone()),
             TaskError::Binaries(err) => TaskError::Binaries(*err),
             TaskError::RunScripts(err) => TaskError::RunScripts(*err),
-            TaskError::Patching(log) => TaskError::Patching(log.clone()), // TODO(port): Log clone semantics
+            TaskError::Patching(_log) => {
+                // TODO(port): `bun_logger::Log` is non-Clone; the only caller of
+                // `TaskError::clone()` is `Yield::failure` which never receives a
+                // `Patching` payload (Patching is only constructed on the main
+                // thread via `on_package_extracted`, never passed through the
+                // task-thread `Yield::Fail` path). Preserve a fresh Log so we
+                // don't UAF a borrowed one.
+                TaskError::Patching(Log::init())
+            }
             TaskError::Download(dl) => TaskError::Download(DownloadError {
                 err: dl.err,
                 url: dl.url.clone(),
@@ -774,8 +797,8 @@ impl Task {
                                                     Output::pretty_errorln(format_args!(
                                                         "<red><b>error<r><d>:<r>Failed to hardlink package folder\n{}\n<d>From: {}<r>\n<d>  To: {}<r>\n<r>",
                                                         err,
-                                                        bun_core::fmt::fmt_os_path(src.slice(), bun_core::fmt::PathSep::Auto),
-                                                        bun_core::fmt::fmt_os_path(dest.slice(), bun_core::fmt::PathSep::Auto),
+                                                        bun_core::fmt::fmt_os_path(src.slice(), bun_core::fmt::PathFormatOptions { path_sep: bun_core::fmt::PathSep::Auto, escape_backslashes: false }),
+                                                        bun_core::fmt::fmt_os_path(dest.slice(), bun_core::fmt::PathFormatOptions { path_sep: bun_core::fmt::PathSep::Auto, escape_backslashes: false }),
                                                     ));
                                                     Output::flush();
                                                 }
@@ -838,8 +861,8 @@ impl Task {
                                                     Output::pretty_errorln(format_args!(
                                                         "<red><b>error<r><d>:<r>Failed to copy package\n{}\n<d>From: {}<r>\n<d>  To: {}<r>\n<r>",
                                                         err,
-                                                        bun_core::fmt::fmt_os_path(src_path.slice(), bun_core::fmt::PathSep::Auto),
-                                                        bun_core::fmt::fmt_os_path(dest.slice(), bun_core::fmt::PathSep::Auto),
+                                                        bun_core::fmt::fmt_os_path(src_path.slice(), bun_core::fmt::PathFormatOptions { path_sep: bun_core::fmt::PathSep::Auto, escape_backslashes: false }),
+                                                        bun_core::fmt::fmt_os_path(dest.slice(), bun_core::fmt::PathFormatOptions { path_sep: bun_core::fmt::PathSep::Auto, escape_backslashes: false }),
                                                     ));
                                                     Output::flush();
                                                 }
@@ -944,7 +967,7 @@ impl Task {
                             }
                             #[cfg(not(windows))]
                             {
-                                if let Some(st) = sys::lstat(local.slice_z()).as_value() {
+                                if let Some(st) = sys::lstat(local.slice_z()).ok() {
                                     sys::posix::s_islnk(u32::try_from(st.mode).unwrap())
                                 } else {
                                     false
@@ -956,8 +979,8 @@ impl Task {
                                 #[cfg(windows)]
                                 {
                                     'win: {
-                                        if let Some(_e) = sys::rmdir(local.slice_z()).as_err() {
-                                            if let Some(e) = sys::unlink(local.slice_z()).as_err() {
+                                        if let Some(_e) = sys::rmdir(local.slice_z()).err() {
+                                            if let Some(e) = sys::unlink(local.slice_z()).err() {
                                                 break 'win Some(e);
                                             }
                                         }
@@ -966,7 +989,7 @@ impl Task {
                                 }
                                 #[cfg(not(windows))]
                                 {
-                                    sys::unlink(local.slice_z()).as_err()
+                                    sys::unlink(local.slice_z()).err()
                                 }
                             };
                             if let Some(e) = remove_err {
@@ -1009,7 +1032,7 @@ impl Task {
                                 {
                                     installer
                                         .supported_backend
-                                        .store(InstallMethod::Hardlink, Ordering::Relaxed);
+                                        .store(InstallMethod::Hardlink as u8, Ordering::Relaxed);
                                     backend = InstallMethod::Hardlink;
                                     continue 'backend;
                                 }
@@ -1106,7 +1129,7 @@ impl Task {
                                                 "<red><b>error<r><d>:<r>Failed to hardlink package\n{}\n<d>From: {}<r>\n<d>  To: {}<r>\n<r>",
                                                 err,
                                                 bstr::BStr::new(pkg_cache_dir_subpath.slice()),
-                                                bun_core::fmt::fmt_os_path(dest_subpath.slice(), bun_core::fmt::PathSep::Auto),
+                                                bun_core::fmt::fmt_os_path(dest_subpath.slice(), bun_core::fmt::PathFormatOptions { path_sep: bun_core::fmt::PathSep::Auto, escape_backslashes: false }),
                                             ));
                                             Output::flush();
                                         }
@@ -1131,7 +1154,7 @@ impl Task {
                                                 "<red><b>error<r><d>:<r>Failed to open cache directory for copyfile\n{}\n<d>From: {}<r>\n<d>  To: {}<r>\n<r>",
                                                 err,
                                                 bstr::BStr::new(pkg_cache_dir_subpath.slice()),
-                                                bun_core::fmt::fmt_os_path(dest_subpath.slice(), bun_core::fmt::PathSep::Auto),
+                                                bun_core::fmt::fmt_os_path(dest_subpath.slice(), bun_core::fmt::PathFormatOptions { path_sep: bun_core::fmt::PathSep::Auto, escape_backslashes: false }),
                                             ));
                                             Output::flush();
                                         }
@@ -1158,7 +1181,7 @@ impl Task {
                                                 "<red><b>error<r><d>:<r>Failed to copy package\n{}\n<d>From: {}<r>\n<d>  To: {}<r>\n<r>",
                                                 err,
                                                 bstr::BStr::new(pkg_cache_dir_subpath.slice()),
-                                                bun_core::fmt::fmt_os_path(dest_subpath.slice(), bun_core::fmt::PathSep::Auto),
+                                                bun_core::fmt::fmt_os_path(dest_subpath.slice(), bun_core::fmt::PathFormatOptions { path_sep: bun_core::fmt::PathSep::Auto, escape_backslashes: false }),
                                             ));
                                             Output::flush();
                                         }
@@ -2163,7 +2186,7 @@ impl<'a> Installer<'a> {
                         bun_core::fast_random(),
                     ));
                     if let Some(swap_err) =
-                        sys::renameat(Fd::cwd(), final_.slice_z(), Fd::cwd(), old.slice_z()).as_err()
+                        sys::renameat(Fd::cwd(), final_.slice_z(), Fd::cwd(), old.slice_z()).err()
                     {
                         let _ = Fd::cwd().delete_tree(staging.slice());
                         return sys::Result::Err(swap_err);
@@ -2260,7 +2283,7 @@ impl<'a> Installer<'a> {
                         }
                         #[cfg(not(windows))]
                         {
-                            if let Some(st) = sys::lstat(dest.slice_z()).as_value() {
+                            if let Some(st) = sys::lstat(dest.slice_z()).ok() {
                                 sys::posix::s_islnk(u32::try_from(st.mode).unwrap())
                             } else {
                                 true
@@ -2271,7 +2294,7 @@ impl<'a> Installer<'a> {
                     if is_symlink {
                         #[cfg(windows)]
                         {
-                            if sys::rmdir(dest.slice_z()).as_err().is_some() {
+                            if sys::rmdir(dest.slice_z()).err().is_some() {
                                 let _ = sys::unlink(dest.slice_z());
                             }
                         }

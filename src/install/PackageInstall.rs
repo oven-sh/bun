@@ -8,8 +8,9 @@ use bun_logger as logger;
 use bun_paths::{self as path, OSPathChar, OSPathSlice, PathBuffer, WPathBuffer, MAX_PATH_BYTES, SEP, SEP_STR};
 use bun_semver::String as SemverString;
 use bun_str::{strings, MutableString, ZStr};
-use bun_sys::{self as sys, walker_skippable, Dir, EntryKind, Fd, OpenDirOptions};
+use bun_sys::{self as sys, walker_skippable, Dir, EntryKind, Fd, FdExt, OpenDirOptions};
 use bun_threading::{ThreadPool, WaitGroup};
+use bun_threading::thread_pool::{Batch, Node as ThreadPoolNode};
 use bun_threading::work_pool::Task as WorkPoolTask;
 
 use crate::{
@@ -180,8 +181,8 @@ impl InstallResult {
             step,
             #[cfg(debug_assertions)]
             debug_trace: match _trace {
-                Some(t) => bun_crash_handler::StoredTrace::from(t),
-                None => bun_crash_handler::StoredTrace::capture(/* @returnAddress() */),
+                Some(t) => bun_crash_handler::StoredTrace::from(Some(t)),
+                None => bun_crash_handler::StoredTrace::capture(None /* @returnAddress() */),
             },
         })
     }
@@ -347,7 +348,7 @@ impl<TaskType> NewTaskQueue<TaskType> {
         self.wait_group.add_one();
         // SAFETY: task is a valid Box-allocated task; .task field is the intrusive node.
         self.thread_pool
-            .schedule(ThreadPool::Batch::from(unsafe { &mut (*task).task() }));
+            .schedule(Batch::from(unsafe { (*task).task() as *mut WorkPoolTask }));
     }
 
     pub fn wait(&self) {
@@ -724,7 +725,7 @@ impl<'a> PackageInstall<'a> {
         let mut total: usize = 0;
         let mut read: usize;
         mutable.reset();
-        mutable.list.expand_to_capacity();
+        mutable.expand_to_capacity();
 
         let dest_len = self.destination_dir_subpath.len();
         let suffix = {
@@ -753,30 +754,30 @@ impl<'a> PackageInstall<'a> {
             .node_modules
             .open_file(root_node_modules_dir, package_json_path)
             .ok()?;
-        let _close = scopeguard::guard(&package_json_file, |f| f.close());
+        let _close = scopeguard::guard(&package_json_file, |f| { let _ = f.close(); });
 
         // Heuristic: most package.jsons will be less than 2048 bytes.
-        read = package_json_file.read(&mut mutable.list[total..]).unwrap().ok()?;
+        read = package_json_file.read(&mut mutable.list[total..]).ok()?;
         let mut remain = &mut mutable.list[total.min(read)..];
         if read > 0 && remain.len() < 1024 {
             mutable.grow_by(4096).ok()?;
-            mutable.list.expand_to_capacity();
+            mutable.expand_to_capacity();
         }
 
         while read > 0 {
             total += read;
 
-            mutable.list.expand_to_capacity();
+            mutable.expand_to_capacity();
             // PORT NOTE: reshaped for borrowck — recompute remain after grow.
             remain = &mut mutable.list[total..];
 
             if remain.len() < 1024 {
                 mutable.grow_by(4096).ok()?;
             }
-            mutable.list.expand_to_capacity();
+            mutable.expand_to_capacity();
             remain = &mut mutable.list[total..];
 
-            read = package_json_file.read(remain).unwrap().ok()?;
+            read = package_json_file.read(remain).ok()?;
         }
 
         // If it's not long enough to have {"name": "foo", "version": "1.2.0"}, there's no way it's valid
@@ -827,8 +828,11 @@ impl<'a> PackageInstall<'a> {
 
         initialize_store();
 
+        // PORT NOTE: Zig passed `allocator` (heap); Rust `PackageJSONVersionChecker`
+        // requires a `bumpalo::Bump` for the lexer scratch.
+        let bump = bun_alloc::Arena::new();
         let Ok(mut package_json_checker) =
-            bun_json::PackageJSONVersionChecker::init(source, &mut log)
+            bun_json::PackageJSONVersionChecker::init(&bump, source, &mut log)
         else {
             return false;
         };
@@ -843,7 +847,7 @@ impl<'a> PackageInstall<'a> {
             return false;
         }
 
-        let found_version = package_json_checker.found_version;
+        let found_version = package_json_checker.found_version();
 
         // exclude build tags from comparsion
         // https://github.com/oven-sh/bun/issues/13563
@@ -877,7 +881,7 @@ impl<'a> PackageInstall<'a> {
         }
 
         // lastly, check the name.
-        package_json_checker.found_name
+        package_json_checker.found_name()
             == self.package_name.slice(&self.lockfile.buffers.string_bytes)
     }
 
@@ -1852,18 +1856,18 @@ impl<'a> PackageInstall<'a> {
                 //     1.45 ± 0.02 times faster than bun-1.1.2 install --ignore-scripts
                 //
                 let absolute_path = path::resolve_path::join_abs_string::<path::platform::Auto>(
-                    bun_fs::FileSystem::instance().top_level_dir,
+                    bun_fs::FileSystem::instance().top_level_dir(),
                     &[&self.node_modules.path, temp_path.as_bytes()],
                 );
                 let task = Box::into_raw(Box::new(UninstallTask {
                     absolute_path: absolute_path.to_vec().into_boxed_slice(),
-                    task: WorkPoolTask { callback: UninstallTask::run },
+                    task: WorkPoolTask { callback: UninstallTask::run, node: ThreadPoolNode::default() },
                 }));
                 PackageManager::get().increment_pending_tasks(1);
                 // SAFETY: task is a valid heap allocation; .task is the intrusive node.
                 PackageManager::get()
                     .thread_pool
-                    .schedule(ThreadPool::Batch::from(unsafe { &mut (*task).task }));
+                    .schedule(Batch::from(unsafe { core::ptr::addr_of_mut!((*task).task) }));
             }
         }
     }
@@ -1953,7 +1957,7 @@ impl<'a> PackageInstall<'a> {
         let to_path = match (|| -> Result<&[u8], bun_core::Error> {
             let fd = sys::openat(self.cache_dir.fd(), symlinked_path, sys::O::RDONLY, 0)?;
             let _close = scopeguard::guard(fd, |f| f.close());
-            sys::get_fd_path(fd, &mut to_buf).map_err(Into::into)
+            sys::get_fd_path(fd, &mut to_buf).map(|s| &*s).map_err(Into::into)
         })() {
             Ok(p) => p,
             Err(err) => return InstallResult::fail(err, Step::LinkingDependency, None),
@@ -2156,7 +2160,7 @@ impl<'a> PackageInstall<'a> {
                         .unwrap_or(false),
                     };
                     if exists {
-                        manager.set_preinstall_state(package_id, manager.lockfile, crate::PreinstallState::Done);
+                        manager.set_preinstall_state(package_id, &manager.lockfile, crate::PreinstallState::Done);
                     }
                     break 'brk !exists;
                 }
@@ -2178,7 +2182,7 @@ impl<'a> PackageInstall<'a> {
                 let exists =
                     sys::directory_exists_at(self.cache_dir.fd(), subpath).unwrap_or(false);
                 if exists {
-                    manager.set_preinstall_state(package_id, manager.lockfile, crate::PreinstallState::Done);
+                    manager.set_preinstall_state(package_id, &manager.lockfile, crate::PreinstallState::Done);
                 }
                 !exists
             }
@@ -2193,7 +2197,7 @@ impl<'a> PackageInstall<'a> {
         let exists = sys::directory_exists_at(self.cache_dir.fd(), self.cache_dir_subpath)
             .unwrap_or(false);
         if exists {
-            manager.set_preinstall_state(package_id, manager.lockfile, crate::PreinstallState::Done);
+            manager.set_preinstall_state(package_id, &manager.lockfile, crate::PreinstallState::Done);
         }
         !exists
     }

@@ -303,6 +303,32 @@ impl<B: AsRef<[u8]>> FixedBufferStream<B> {
         &self.buffer.as_ref()[..self.pos]
     }
 
+    /// Current cursor position. Zig: `getPos()`.
+    #[inline]
+    pub fn get_pos(&self) -> Result<usize> {
+        Ok(self.pos)
+    }
+
+    /// Zig `reader()` returns a `Reader` view over the same buffer; the read
+    /// methods here live directly on `FixedBufferStream`, so this just returns
+    /// `self` to keep call-site shape (`stream.reader().read_int_le::<T>()`).
+    #[inline]
+    pub fn reader(&mut self) -> &mut Self {
+        self
+    }
+
+    /// Read up to `out.len()` bytes from the current position, advancing it.
+    /// Returns the number of bytes read (may be `< out.len()` at EOF).
+    /// Zig: `reader().readAll(buf)`.
+    pub fn read_all(&mut self, out: &mut [u8]) -> Result<usize> {
+        let buf = self.buffer.as_ref();
+        let avail = buf.len().saturating_sub(self.pos);
+        let n = avail.min(out.len());
+        out[..n].copy_from_slice(&buf[self.pos..self.pos + n]);
+        self.pos += n;
+        Ok(n)
+    }
+
     /// Read exactly `out.len()` bytes from the current position, advancing it.
     /// Errors with `EndOfStream` if fewer bytes remain.
     pub fn read_exact(&mut self, out: &mut [u8]) -> Result<()> {

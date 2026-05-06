@@ -166,13 +166,16 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
             if C::PROGRESS_BAR {
                 let completed_items = manager.total_tasks - manager.pending_task_count();
-                let node = manager.downloads_node.as_mut().unwrap();
-                if completed_items != node.unprotected_completed_items || has_updated_this_run {
+                // SAFETY: `downloads_node` set by `start_progress_bar_if_none`;
+                // points into `manager.progress` which is live.
+                let node = unsafe { &mut *manager.downloads_node.unwrap() };
+                if completed_items != node.completed_items || has_updated_this_run {
                     node.set_completed_items(completed_items);
                     node.set_estimated_total_items(manager.total_tasks);
                 }
             }
-            manager.downloads_node.as_mut().unwrap().activate();
+            // SAFETY: see above.
+            unsafe { &mut *manager.downloads_node.unwrap() }.activate();
             manager.progress.maybe_refresh();
         }
     });
@@ -304,7 +307,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 if log_level.show_progress() {
                     if !*has_updated_this_run {
                         manager.set_node_name(
-                            manager.downloads_node.as_ref().unwrap(),
+                            manager.downloads_node.unwrap(),
                             name.slice(),
                             ProgressStrings::DOWNLOAD_EMOJI,
                             true,
@@ -795,7 +798,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 if log_level.show_progress() {
                     if !*has_updated_this_run {
                         manager.set_node_name(
-                            manager.downloads_node.as_ref().unwrap(),
+                            manager.downloads_node.unwrap(),
                             extract.name.slice(),
                             ProgressStrings::EXTRACT_EMOJI,
                             true,
@@ -905,7 +908,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 if log_level.show_progress() {
                     if !*has_updated_this_run {
                         manager.set_node_name(
-                            manager.downloads_node.as_ref().unwrap(),
+                            manager.downloads_node.unwrap(),
                             manifest.name(),
                             ProgressStrings::DOWNLOAD_EMOJI,
                             true,
@@ -1119,7 +1122,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 if log_level.show_progress() {
                     if !*has_updated_this_run {
                         manager.set_node_name(
-                            manager.downloads_node.as_ref().unwrap(),
+                            manager.downloads_node.unwrap(),
                             alias,
                             ProgressStrings::EXTRACT_EMOJI,
                             true,
@@ -1269,7 +1272,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 if log_level.show_progress() {
                     if !*has_updated_this_run {
                         manager.set_node_name(
-                            manager.downloads_node.as_ref().unwrap(),
+                            manager.downloads_node.unwrap(),
                             name,
                             ProgressStrings::DOWNLOAD_EMOJI,
                             true,
@@ -1399,7 +1402,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 if log_level.show_progress() {
                     if !*has_updated_this_run {
                         manager.set_node_name(
-                            manager.downloads_node.as_ref().unwrap(),
+                            manager.downloads_node.unwrap(),
                             alias.slice(),
                             ProgressStrings::DOWNLOAD_EMOJI,
                             true,
@@ -1432,6 +1435,21 @@ pub fn increment_pending_tasks(manager: &mut PackageManager, count: u32) {
 #[inline]
 pub fn decrement_pending_tasks(manager: &mut PackageManager) {
     let _ = manager.pending_tasks.fetch_sub(1, Ordering::Release);
+}
+
+impl PackageManager {
+    #[inline]
+    pub fn pending_task_count(&self) -> u32 {
+        pending_task_count(self)
+    }
+    #[inline]
+    pub fn increment_pending_tasks(&mut self, count: u32) {
+        increment_pending_tasks(self, count)
+    }
+    #[inline]
+    pub fn decrement_pending_tasks(&mut self) {
+        decrement_pending_tasks(self)
+    }
 }
 
 pub fn flush_network_queue(this: &mut PackageManager) {

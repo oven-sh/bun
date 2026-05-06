@@ -5371,6 +5371,20 @@ pub mod fs {
             // SAFETY: `self` is the resolver's process-static singleton.
             unsafe { (vtable().top_level_dir)(self) }
         }
+        /// Zig: `FileSystem.normalize` (fs.zig:415) —
+        /// `path_handler.normalizeString(str, true, .auto)`. Result borrows a
+        /// thread-local buffer (valid until the next call on this thread).
+        #[inline]
+        pub fn normalize<'a>(&self, str: &'a [u8]) -> &'a [u8] {
+            bun_paths::resolve_path::normalize_string::<true, bun_paths::platform::Auto>(str)
+        }
+        /// Zig: `FileSystem.relative` (fs.zig:439) —
+        /// `path_handler.relative(from, to)`. Result borrows a thread-local
+        /// buffer (caller must copy before the next call on this thread).
+        #[inline]
+        pub fn relative(&self, from: &[u8], to: &[u8]) -> &'static [u8] {
+            bun_paths::resolve_path::relative(from, to)
+        }
         /// Zig: `topLevelDirWithoutTrailingSlash`.
         pub fn top_level_dir_without_trailing_slash(&self) -> &'static [u8] {
             let d = self.top_level_dir();

@@ -1132,6 +1132,10 @@ impl FetchTasklet {
         if let Some(readable) = self.readable_stream_ref.get(self.global_this) {
             if let readable_stream::Source::Bytes(bytes) = readable.ptr {
                 // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
+                // PORT NOTE: ByteStream::parent() requires `SourceContext for ByteStream`
+                // which isn't impl'd yet (NewSource<ByteStream> is concrete via the
+                // `pub type Source` alias instead). Reach the enclosing Source via the
+                // same offset_of trick ByteStream::parent() uses internally.
                 let source = unsafe { (*bytes).parent() };
                 source.cancel_handler = None;
                 source.cancel_ctx = None;

@@ -586,7 +586,7 @@ impl<'a> Snapshots<'a> {
                         parser.lexer.expect(js_lexer::T::TCloseParen)?;
                         break 'blk (after_open_paren_loc, close_paren_loc, false);
                     }
-                    if parser.lexer.token == js_lexer::T::DotDotDot {
+                    if parser.lexer.token == js_lexer::T::TDotDotDot {
                         log.add_error_fmt(
                             &source,
                             parser.lexer.loc(),
@@ -629,7 +629,7 @@ impl<'a> Snapshots<'a> {
                         }
                     }
 
-                    if parser.lexer.token == js_lexer::T::DotDotDot {
+                    if parser.lexer.token == js_lexer::T::TDotDotDot {
                         log.add_error_fmt(
                             &source,
                             parser.lexer.loc(),

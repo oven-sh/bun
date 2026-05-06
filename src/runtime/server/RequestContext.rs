@@ -2735,20 +2735,23 @@ where
         this.do_render_blob();
     }
 
-    pub fn on_pipe(this: &mut Self, stream: WebCore::streams::Result) {
+    pub fn on_pipe(this: &mut Self, mut stream: WebCore::streams::Result) {
         // TODO(port): allocator param dropped — global mimalloc per §Allocators
         let stream_needs_deinit =
             matches!(stream, WebCore::streams::Result::Owned(_) | WebCore::streams::Result::OwnedAndDone(_));
         let is_done = stream.is_done();
-        let mut stream_ = stream;
+        // PORT NOTE: reshaped for borrowck — the defer reads `stream` through a
+        // raw ptr so the body below can keep borrowing it.
+        let stream_ptr: *mut WebCore::streams::Result = &mut stream;
         let this_ptr = this as *mut Self;
-        let _guard = scopeguard::guard((), |_| {
+        let _guard = scopeguard::guard((), move |_| {
             if is_done {
                 // SAFETY: this outlives the guard
                 unsafe { (*this_ptr).deref() };
             }
             if stream_needs_deinit {
-                match &mut stream_ {
+                // SAFETY: stream lives on the caller's stack frame past the guard.
+                match unsafe { &mut *stream_ptr } {
                     WebCore::streams::Result::OwnedAndDone(owned)
                     | WebCore::streams::Result::Owned(owned) => {
                         // BabyList::deinit → Drop in Rust.

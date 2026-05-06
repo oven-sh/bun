@@ -11,16 +11,21 @@ use bun_glob as glob;
 
 use crate::{
     Dependency, DependencyID, Features, PackageID, PackageNameHash, PatchTask,
-    Resolution, invalid_package_id,
+    Resolution, invalid_package_id, RunTasksCallbacks,
 };
+use crate::dependency::Tag as DependencyVersionTag;
+use crate::resolution::Tag as ResolutionTag;
+use crate::Subcommand;
 use crate::GetJsonResult as WorkspacePackageJsonCacheResult;
 use crate::lockfile::{self, Lockfile, Package};
 use crate::lockfile_real::bun_lock as TextLockfile;
+use crate::lockfile_real::package::{Diff, DiffSummary};
 use crate::package_install::Summary as PackageInstallSummary;
 use crate::PackageManager;
 use crate::package_manager::{Options, WorkspaceFilter};
 use super::Command;
-use super::options::{NodeLinker, ConfigVersion};
+use bun_install_types::NodeLinker::NodeLinker;
+use crate::config_version::ConfigVersion;
 use crate::hoisted_install::install_hoisted_packages;
 use crate::isolated_install::install_isolated_packages;
 
@@ -37,21 +42,21 @@ pub fn install_with_manager(
 
     // Start resolving DNS for the default registry immediately.
     // Unless you're behind a proxy.
-    if !manager.env.has_http_proxy() {
+    if !manager.env().has_http_proxy() {
         // And don't try to resolve DNS if it's an IP address.
         if !manager.options.scope.url.hostname.is_empty() && !manager.options.scope.url.is_ip_address() {
             // PERF(port): was stack-fallback alloc — profile in Phase B
-            let hostname = bun_str::ZStr::from_bytes(&manager.options.scope.url.hostname);
+            let hostname = manager.options.scope.url.hostname;
             bun_dns::internal::prefetch(
                 manager.event_loop.loop_(),
-                hostname.as_bytes(),
+                hostname,
                 manager.options.scope.url.get_port_auto(),
             );
         }
     }
 
     let mut load_result: lockfile::LoadResult = if manager.options.do_.load_lockfile {
-        manager.lockfile.load_from_cwd(manager, manager.log, true)
+        { let log = manager.log.unwrap().as_ptr(); let mgr: *mut PackageManager = manager; manager.lockfile.load_from_cwd(mgr, log, true) }
     } else {
         lockfile::LoadResult::NotFound
     };
@@ -60,8 +65,9 @@ pub fn install_with_manager(
 
     let (config_version, changed_config_version) = load_result.choose_config_version();
     manager.options.config_version = config_version;
+    let _ = changed_config_version;
 
-    let mut root = Lockfile::Package::default();
+    let mut root = lockfile::Package::default();
     let mut needs_new_lockfile = !matches!(load_result, lockfile::LoadResult::Ok { .. })
         || (load_result.ok().lockfile.buffers.dependencies.is_empty()
             && !manager.update_requests.is_empty());
@@ -78,7 +84,7 @@ pub fn install_with_manager(
     // this defaults to false
     // but we force allowing updates to the lockfile when you do bun add
     let mut had_any_diffs = false;
-    manager.progress = Progress::Progress::default();
+    manager.progress = <Progress::Progress>::default();
 
     match &load_result {
         lockfile::LoadResult::Err(cause) => {
@@ -111,9 +117,9 @@ pub fn install_with_manager(
                     Output::warn("Ignoring lockfile");
                 }
 
-                if ctx.log.errors > 0 {
-                    manager.log.print(Output::error_writer())?;
-                    manager.log.reset();
+                if unsafe { (*ctx.log).errors } > 0 {
+                    manager.log_mut().print(Output::error_writer())?;
+                    manager.log_mut().reset();
                 }
                 Output::flush();
             }
@@ -123,9 +129,9 @@ pub fn install_with_manager(
             }
         }
         lockfile::LoadResult::Ok(ok) => {
-            if manager.subcommand == PackageManager::Subcommand::Update {
+            if manager.subcommand == Subcommand::Update {
                 // existing lockfile, get the original version is updating
-                let lockfile = &*manager.lockfile;
+                let lockfile = &manager.lockfile;
                 let packages = lockfile.packages.slice();
                 let resolutions = packages.items_resolution();
                 let workspace_package_id = manager
@@ -137,8 +143,8 @@ pub fn install_with_manager(
                 let workspace_package_ids = workspace_res_list.get(&lockfile.buffers.resolutions);
                 debug_assert_eq!(workspace_deps.len(), workspace_package_ids.len());
                 for (dep, &package_id) in workspace_deps.iter().zip(workspace_package_ids) {
-                    if dep.version.tag != Dependency::VersionTag::Npm
-                        && dep.version.tag != Dependency::VersionTag::DistTag
+                    if dep.version.tag != DependencyVersionTag::Npm
+                        && dep.version.tag != DependencyVersionTag::DistTag
                     {
                         continue;
                     }
@@ -153,7 +159,7 @@ pub fn install_with_manager(
                         let original_resolution: Resolution = resolutions[package_id as usize];
                         // Just in case check if the resolution is `npm`. It should always be `npm` because the dependency version
                         // is `npm` or `dist_tag`.
-                        if original_resolution.tag != Resolution::Tag::Npm {
+                        if original_resolution.tag != ResolutionTag::Npm {
                             continue;
                         }
 
@@ -194,25 +200,26 @@ pub fn install_with_manager(
                     break 'differ;
                 }
 
-                let mut lockfile = Lockfile::init_empty();
-                let mut maybe_root = Lockfile::Package::default();
+                let mut lockfile = Lockfile::default();
+                let mut maybe_root = lockfile::Package::default();
 
+                let log = manager.log_mut();
                 let root_package_json_entry = match manager.workspace_package_json_cache.get_with_path(
-                    manager.log,
-                    root_package_json_path,
+                    log,
+                    root_package_json_path.as_bytes(),
                     Default::default(),
                 ) {
                     WorkspacePackageJsonCacheResult::Entry(entry) => entry,
                     WorkspacePackageJsonCacheResult::ReadErr(err) => {
-                        if ctx.log.errors > 0 {
-                            manager.log.print(Output::error_writer())?;
+                        if unsafe { (*ctx.log).errors } > 0 {
+                            manager.log_mut().print(Output::error_writer())?;
                         }
                         Output::err(err, "failed to read '{}'", format_args!("{}", bstr::BStr::new(root_package_json_path.as_bytes())));
                         Global::exit(1);
                     }
                     WorkspacePackageJsonCacheResult::ParseErr(err) => {
-                        if ctx.log.errors > 0 {
-                            manager.log.print(Output::error_writer())?;
+                        if unsafe { (*ctx.log).errors } > 0 {
+                            manager.log_mut().print(Output::error_writer())?;
                         }
                         Output::err(err, "failed to parse '{}'", format_args!("{}", bstr::BStr::new(root_package_json_path.as_bytes())));
                         Global::exit(1);
@@ -222,10 +229,12 @@ pub fn install_with_manager(
                 let source_copy = root_package_json_entry.source;
 
                 let mut resolver: () = ();
+                // TODO(port): Package::parse takes (&mut Lockfile, &mut PackageManager, *mut Log,
+                // &Source, resolver, Features) — full signature in lockfile_real::package.
                 maybe_root.parse(
                     &mut lockfile,
                     manager,
-                    manager.log,
+                    manager.log.unwrap().as_ptr(),
                     &source_copy,
                     &mut resolver,
                     Features::main(),
@@ -233,16 +242,26 @@ pub fn install_with_manager(
                 let mut mapping = vec![invalid_package_id; maybe_root.dependencies.len as usize].into_boxed_slice();
                 // @memset already done via vec! init
 
-                manager.summary = Package::Diff::generate(
-                    manager,
-                    manager.log,
-                    manager.lockfile,
-                    &mut lockfile,
-                    &mut root,
-                    &mut maybe_root,
-                    if manager.to_update { Some(&manager.update_requests) } else { None },
-                    &mut mapping,
-                )?;
+                // PORT NOTE: Zig passes `manager`, `manager.log`, `manager.lockfile` and a
+                // fresh `lockfile` simultaneously. Route through raw ptrs to satisfy
+                // borrowck; `Diff::generate` is ported in lockfile_real::package.
+                manager.summary = {
+                    let log = manager.log_mut();
+                    let mgr: *mut PackageManager = manager;
+                    let from_lockfile: *mut Lockfile = &mut manager.lockfile;
+                    let update_requests = if manager.to_update { Some(&manager.update_requests[..]) } else { None };
+                    // SAFETY: see PORT NOTE — disjoint storage, Zig aliasing semantics.
+                    Diff::generate(
+                        unsafe { &mut *mgr },
+                        log,
+                        unsafe { &mut *from_lockfile },
+                        &mut lockfile,
+                        &mut root,
+                        &mut maybe_root,
+                        update_requests,
+                        Some(&mut mapping[..]),
+                    )?
+                };
 
                 had_any_diffs = manager.summary.has_diffs();
 
@@ -283,12 +302,9 @@ pub fn install_with_manager(
 
                     let off = manager.lockfile.buffers.dependencies.len() as u32;
                     let len = new_dependencies.len() as u32;
-                    let mut packages = manager.lockfile.packages.slice_mut();
-                    let dep_lists = packages.items_dependencies_mut();
-                    let resolution_lists = packages.items_resolutions_mut();
-                    let old_resolutions_list = resolution_lists[0];
-                    dep_lists[0] = lockfile::DependencySlice { off, len };
-                    resolution_lists[0] = lockfile::DependencyIDSlice { off, len };
+                    let old_resolutions_list = manager.lockfile.packages.resolutions[0];
+                    manager.lockfile.packages.dependencies[0] = lockfile::DependencySlice::new(off, len);
+                    manager.lockfile.packages.resolutions[0] = lockfile::DependencyIDSlice::new(off, len);
                     builder.allocate()?;
 
                     let all_name_hashes: Vec<PackageNameHash> = 'brk: {
@@ -405,7 +421,7 @@ pub fn install_with_manager(
                                 .entry(pkg_name_and_version_hash);
                             // TODO(port): ArrayHashMap getOrPut semantics — using entry API approximation
                             match gop {
-                                bun_collections::array_hash_map::Entry::Vacant(v) => {
+                                bun_collections::array_hash_map::MapEntry::Vacant(v) => {
                                     let mut new = crate::lockfile_real::PatchedDep {
                                         path: builder.append::<SemverString>(
                                             value.path.slice(&lockfile.buffers.string_bytes),
@@ -416,7 +432,7 @@ pub fn install_with_manager(
                                     v.insert(new);
                                     // gop.value_ptr.path = gop.value_ptr.path;
                                 }
-                                bun_collections::array_hash_map::Entry::Occupied(mut o) => {
+                                bun_collections::array_hash_map::MapEntry::Occupied(mut o) => {
                                     if !strings::eql(
                                         o.get().path.slice(&manager.lockfile.buffers.string_bytes),
                                         value.path.slice(&lockfile.buffers.string_bytes),
@@ -481,7 +497,7 @@ pub fn install_with_manager(
                         for _dep_id in 0..dependencies_len {
                             let dep_id: DependencyID = u32::try_from(_dep_id).unwrap();
                             let dep = manager.lockfile.buffers.dependencies[dep_id as usize];
-                            if dep.version.tag != Dependency::VersionTag::Catalog {
+                            if dep.version.tag != DependencyVersionTag::Catalog {
                                 continue;
                             }
 
@@ -542,22 +558,23 @@ pub fn install_with_manager(
             Global::crash();
         }
 
+        let log = manager.log_mut();
         let root_package_json_entry = match manager.workspace_package_json_cache.get_with_path(
-            manager.log,
-            root_package_json_path,
+            log,
+            root_package_json_path.as_bytes(),
             Default::default(),
         ) {
             WorkspacePackageJsonCacheResult::Entry(entry) => entry,
             WorkspacePackageJsonCacheResult::ReadErr(err) => {
-                if ctx.log.errors > 0 {
-                    manager.log.print(Output::error_writer())?;
+                if unsafe { (*ctx.log).errors } > 0 {
+                    manager.log_mut().print(Output::error_writer())?;
                 }
                 Output::err(err, "failed to read '{}'", format_args!("{}", bstr::BStr::new(root_package_json_path.as_bytes())));
                 Global::exit(1);
             }
             WorkspacePackageJsonCacheResult::ParseErr(err) => {
-                if ctx.log.errors > 0 {
-                    manager.log.print(Output::error_writer())?;
+                if unsafe { (*ctx.log).errors } > 0 {
+                    manager.log_mut().print(Output::error_writer())?;
                 }
                 Output::err(err, "failed to parse '{}'", format_args!("{}", bstr::BStr::new(root_package_json_path.as_bytes())));
                 Global::exit(1);
@@ -567,14 +584,19 @@ pub fn install_with_manager(
         let source_copy = root_package_json_entry.source;
 
         let mut resolver: () = ();
-        root.parse(
-            manager.lockfile,
-            manager,
-            manager.log,
-            &source_copy,
-            &mut resolver,
-            Features::main(),
-        )?;
+        // TODO(port): Package::parse — see above.
+        {
+            let log = manager.log.unwrap().as_ptr();
+            let mgr: *mut PackageManager = manager;
+            root.parse(
+                &mut manager.lockfile,
+                mgr,
+                log,
+                &source_copy,
+                &mut resolver,
+                Features::main(),
+            )?;
+        }
 
         root = manager.lockfile.append_package(root)?;
 
@@ -583,17 +605,19 @@ pub fn install_with_manager(
             let _ = manager.get_temporary_directory();
         }
         {
-            let mut iter = manager.lockfile.patched_dependencies.iter();
-            while let Some((key, _)) = iter.next() {
-                manager.enqueue_patch_task_pre(PatchTask::new_calc_patch_hash(manager, *key, None));
+            let keys: Vec<u64> = manager.lockfile.patched_dependencies.keys().copied().collect();
+            let mgr: *mut PackageManager = manager;
+            for key in keys {
+                manager.enqueue_patch_task_pre(PatchTask::new_calc_patch_hash(mgr, key, None));
             }
         }
         manager.enqueue_dependency_list(root.dependencies);
     } else {
         {
-            let mut iter = manager.lockfile.patched_dependencies.iter();
-            while let Some((key, _)) = iter.next() {
-                manager.enqueue_patch_task_pre(PatchTask::new_calc_patch_hash(manager, *key, None));
+            let keys: Vec<u64> = manager.lockfile.patched_dependencies.keys().copied().collect();
+            let mgr: *mut PackageManager = manager;
+            for key in keys {
+                manager.enqueue_patch_task_pre(PatchTask::new_calc_patch_hash(mgr, key, None));
             }
         }
         // Anything that needs to be downloaded from an update needs to be scheduled here
@@ -647,22 +671,26 @@ pub fn install_with_manager(
         }
     }
 
-    let had_errors_before_cleaning_lockfile = manager.log.has_errors();
-    manager.log.print(Output::error_writer())?;
-    manager.log.reset();
+    let had_errors_before_cleaning_lockfile = manager.log_mut().has_errors();
+    manager.log_mut().print(Output::error_writer())?;
+    manager.log_mut().reset();
 
     // This operation doesn't perform any I/O, so it should be relatively cheap.
     // PORT NOTE: Zig copies the `*Lockfile` pointer, leaving `manager.lockfile` intact so both
     // old and new lockfiles are live for the later `eql(lockfile_before_clean, ...)` checks.
     // In Rust `manager.lockfile: Box<Lockfile>` would move; compute the new lockfile first, then
     // `mem::replace` so `lockfile_before_clean` owns the old box and `manager.lockfile` the new.
-    let new_lockfile = manager.lockfile.clean_with_logger(
-        manager,
-        &manager.update_requests,
-        manager.log,
-        manager.options.enable.exact_versions,
-        log_level,
-    )?;
+    let new_lockfile = {
+        let mgr: *mut PackageManager = manager;
+        let log = manager.log.unwrap().as_ptr();
+        manager.lockfile.clean_with_logger(
+            mgr,
+            &manager.update_requests,
+            log,
+            manager.options.enable.exact_versions,
+            log_level,
+        )?
+    };
     let lockfile_before_clean = core::mem::replace(&mut manager.lockfile, new_lockfile);
 
     if manager.lockfile.packages.len() > 0 {
@@ -682,10 +710,10 @@ pub fn install_with_manager(
         if manager.options.security_scanner.is_some() {
             let is_subcommand_to_run_scanner = matches!(
                 manager.subcommand,
-                PackageManager::Subcommand::Add
-                    | PackageManager::Subcommand::Update
-                    | PackageManager::Subcommand::Install
-                    | PackageManager::Subcommand::Remove
+                Subcommand::Add
+                    | Subcommand::Update
+                    | Subcommand::Install
+                    | Subcommand::Remove
             );
 
             if is_subcommand_to_run_scanner {
@@ -693,25 +721,25 @@ pub fn install_with_manager(
                     Err(err) => {
                         match err {
                             e if e == bun_core::err!("SecurityScannerInWorkspace") => {
-                                Output::err_generic("security scanner cannot be a dependency of a workspace package. It must be a direct dependency of the root package.", format_args!(""));
+                                Output::err_generic("security scanner cannot be a dependency of a workspace package. It must be a direct dependency of the root package.", ());
                             }
                             e if e == bun_core::err!("SecurityScannerRetryFailed") => {
-                                Output::err_generic("security scanner failed after partial install. This is probably a bug in Bun. Please report it at https://github.com/oven-sh/bun/issues", format_args!(""));
+                                Output::err_generic("security scanner failed after partial install. This is probably a bug in Bun. Please report it at https://github.com/oven-sh/bun/issues", ());
                             }
                             e if e == bun_core::err!("InvalidPackageID") => {
-                                Output::err_generic("cannot perform partial install: security scanner package ID is invalid", format_args!(""));
+                                Output::err_generic("cannot perform partial install: security scanner package ID is invalid", ());
                             }
                             e if e == bun_core::err!("PartialInstallFailed") => {
-                                Output::err_generic("failed to install security scanner package", format_args!(""));
+                                Output::err_generic("failed to install security scanner package", ());
                             }
                             e if e == bun_core::err!("NoPackagesInstalled") => {
-                                Output::err_generic("no packages were installed during security scanner installation", format_args!(""));
+                                Output::err_generic("no packages were installed during security scanner installation", ());
                             }
                             e if e == bun_core::err!("IPCPipeFailed") => {
-                                Output::err_generic("failed to create IPC pipe for security scanner", format_args!(""));
+                                Output::err_generic("failed to create IPC pipe for security scanner", ());
                             }
                             e if e == bun_core::err!("ProcessWatchFailed") => {
-                                Output::err_generic("failed to watch security scanner process", format_args!(""));
+                                Output::err_generic("failed to watch security scanner process", ());
                             }
                             e => {
                                 Output::err_generic("security scanner failed: {}", format_args!("{}", e.name()));
@@ -725,7 +753,7 @@ pub fn install_with_manager(
                         security_scanner::print_security_advisories(manager, &results);
 
                         if results.has_fatal_advisories() {
-                            Output::pretty("<red>Installation aborted due to fatal security advisories<r>\n", format_args!(""));
+                            Output::pretty(format_args!("<red>Installation aborted due to fatal security advisories<r>\n"));
                             Global::exit(1);
                         } else if results.has_warnings() {
                             if !security_scanner::prompt_for_warnings() {
@@ -745,7 +773,7 @@ pub fn install_with_manager(
     // (Zig had `defer manager.allocator.free(scripts.package_name)` here.)
 
     if let Some(root_scripts) = &manager.root_lifecycle_scripts {
-        root_scripts.append_to_lockfile(manager.lockfile);
+        root_scripts.append_to_lockfile(&mut manager.lockfile);
     }
     {
         let packages = manager.lockfile.packages.slice();
@@ -755,13 +783,13 @@ pub fn install_with_manager(
         debug_assert_eq!(resolutions.len(), metas.len());
         debug_assert_eq!(resolutions.len(), scripts_slice.len());
         for ((resolution, meta), scripts) in resolutions.iter().zip(metas).zip(scripts_slice) {
-            if resolution.tag == Resolution::Tag::Workspace {
+            if resolution.tag == ResolutionTag::Workspace {
                 if meta.has_install_script() {
                     if scripts.has_any() {
                         let (first_index, _, entries) = scripts.get_script_entries(
                             manager.lockfile,
                             &manager.lockfile.buffers.string_bytes,
-                            Resolution::Tag::Workspace,
+                            ResolutionTag::Workspace,
                             false,
                         );
 
@@ -772,18 +800,14 @@ pub fn install_with_manager(
                         if first_index != -1 {
                             // TODO(port): inline-for over `Lockfile.Scripts.names` with `@field` reflection.
                             // Phase B: replace with a generated `Scripts::list_mut(i)` accessor or unrolled match.
-                            for (i, maybe_entry) in entries.iter().enumerate() {
-                                if let Some(entry) = maybe_entry {
-                                    manager.lockfile.scripts.list_mut(i).push(*entry);
-                                    // PERF(port): was bun.handleOom on append
-                                }
-                            }
+                            let _ = entries;
+                            todo!("blocked_on: lockfile_real::Scripts::list_mut accessor (reconciler-6)");
                         }
                     } else {
                         let (first_index, _, entries) = scripts.get_script_entries(
                             manager.lockfile,
                             &manager.lockfile.buffers.string_bytes,
-                            Resolution::Tag::Workspace,
+                            ResolutionTag::Workspace,
                             true,
                         );
 
@@ -792,12 +816,8 @@ pub fn install_with_manager(
                         }
 
                         // TODO(port): inline-for over `Lockfile.Scripts.names` with `@field` reflection.
-                        for (i, maybe_entry) in entries.iter().enumerate() {
-                            if let Some(entry) = maybe_entry {
-                                manager.lockfile.scripts.list_mut(i).push(*entry);
-                                // PERF(port): was bun.handleOom on append
-                            }
-                        }
+                        let _ = (first_index, entries);
+                        todo!("blocked_on: lockfile_real::Scripts::list_mut accessor (reconciler-6)");
                     }
                 }
             }
@@ -813,7 +833,7 @@ pub fn install_with_manager(
     if manager.options.enable.frozen_lockfile && !matches!(load_result, lockfile::LoadResult::NotFound) {
         'frozen_lockfile: {
             if load_result.loaded_from_text_lockfile() {
-                if manager.lockfile.eql(&lockfile_before_clean, packages_len_before_install) {
+                if manager.lockfile.eql(&lockfile_before_clean, packages_len_before_install)? {
                     break 'frozen_lockfile;
                 }
             } else {
@@ -837,7 +857,7 @@ pub fn install_with_manager(
         }
     }
 
-    let lockfile_before_install = manager.lockfile;
+    let lockfile_before_install: *const Lockfile = &manager.lockfile;
 
     let save_format = load_result.save_format(&manager.options);
 
@@ -861,21 +881,18 @@ pub fn install_with_manager(
         if manager.options.do_.summary {
             // TODO(dylan-conway): packages aren't installed but we can still print
             // added/removed/updated direct dependencies.
-            Output::pretty(
+            Output::pretty(format_args!(
                 "\nSaved <green>{}<r> ({} package{}) ",
-                format_args!(
-                    "{} {} {}",
-                    match save_format {
-                        lockfile::Format::Text => "bun.lock",
-                        lockfile::Format::Binary => "bun.lockb",
-                    },
-                    manager.lockfile.packages.len(),
-                    if manager.lockfile.packages.len() == 1 { "" } else { "s" },
-                ),
-            );
+                match save_format {
+                    lockfile::Format::Text => "bun.lock",
+                    lockfile::Format::Binary => "bun.lockb",
+                },
+                manager.lockfile.packages.len(),
+                if manager.lockfile.packages.len() == 1 { "" } else { "s" },
+            ));
             // TODO(port): Output::pretty multi-arg formatting — Zig used positional `{s} {d} {s}`
             Output::print_start_end_stdout(ctx.start_time, nano_timestamp());
-            Output::pretty("\n", format_args!(""));
+            Output::pretty(format_args!("\n"));
         }
         Output::flush();
         return Ok(());
@@ -911,7 +928,7 @@ pub fn install_with_manager(
                 NodeLinker::Hoisted => {
                     break 'install_summary install_hoisted_packages(
                         manager,
-                        &ctx,
+                        ctx,
                         &workspace_filters,
                         install_root_dependencies,
                         log_level,
@@ -922,11 +939,11 @@ pub fn install_with_manager(
                 NodeLinker::Isolated => {
                     break 'install_summary install_isolated_packages(
                         manager,
-                        &ctx,
+                        ctx,
                         install_root_dependencies,
                         &workspace_filters,
                         None,
-                    );
+                    )?;
                     // PERF(port): was bun.handleOom — install_isolated_packages aborts on OOM internally now
                 }
             }
@@ -934,9 +951,9 @@ pub fn install_with_manager(
     };
 
     if log_level != Options::LogLevel::Silent {
-        manager.log.print(Output::error_writer())?;
+        manager.log_mut().print(Output::error_writer())?;
     }
-    if had_errors_before_cleaning_lockfile || manager.log.has_errors() {
+    if had_errors_before_cleaning_lockfile || manager.log_mut().has_errors() {
         Global::crash();
     }
 
@@ -987,11 +1004,12 @@ pub fn install_with_manager(
     }
 
     if manager.options.do_.save_yarn_lock {
-        let mut node: Option<&mut Progress::Node> = None;
+        let mut node_started = false;
         if log_level.show_progress() {
             manager.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
-            node = Some(manager.progress.start("Saving yarn.lock", 0));
+            let _ = manager.progress.start(b"Saving yarn.lock", 0);
             manager.progress.refresh();
+            node_started = true;
         } else if log_level != Options::LogLevel::Silent {
             Output::pretty_errorln("Saved yarn.lock");
             Output::flush();
@@ -999,12 +1017,12 @@ pub fn install_with_manager(
 
         manager.write_yarn_lock()?;
         if log_level.show_progress() {
-            if let Some(n) = node {
-                n.complete_one();
+            if node_started {
+                manager.progress.root.complete_one();
             }
             manager.progress.refresh();
             manager.progress.root.end();
-            manager.progress = Progress::Progress::default();
+            manager.progress = <Progress::Progress>::default();
         }
     }
 
@@ -1015,7 +1033,7 @@ pub fn install_with_manager(
             }
 
             if log_level != Options::LogLevel::Silent {
-                Output::print_error("\n", format_args!(""));
+                Output::print_error(format_args!("\n"));
                 Output::flush();
             }
             // root lifecycle scripts can run now that all dependencies are installed, dependency scripts
@@ -1086,7 +1104,7 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
         let log_level = this.options.log_level;
         if let Err(err) = this.run_tasks(
             &mut (),
-            PackageManager::RunTasksCallbacks {
+            RunTasksCallbacks {
                 on_extract: (),
                 on_resolve: (),
                 on_package_manifest_error: (),
@@ -1173,25 +1191,21 @@ fn print_install_summary(
 
     let mut printed_timestamp = false;
     if this.options.do_.summary {
-        let mut printer = crate::lockfile_real::Printer {
-            lockfile: this.lockfile,
-            options: this.options,
-            updates: &this.update_requests,
-            successfully_installed: install_summary.successfully_installed,
-        };
+        // TODO(port): `lockfile_real::Printer` is typed against `lockfile_real::Lockfile` /
+        // `package_manager_real::Options`; the stub `PackageManager` carries the stub
+        // `Lockfile` / `PackageManagerOptionsStub`. Construct via the tree-printer
+        // entrypoint directly once the type unification lands (reconciler-6).
+        let _ = (&mut this.lockfile, &this.update_requests, &install_summary.successfully_installed);
 
         {
             Output::flush();
             // Ensure at this point buffering is enabled.
             // We deliberately do not disable it after this.
             Output::enable_buffering();
-            let writer = Output::writer_buffered();
+            let _writer = Output::writer_buffered();
             // Runtime bool → comptime dispatch
-            if Output::enable_ansi_colors_stdout() {
-                crate::lockfile_real::printer::Tree::print::<_, true>(&mut printer, this, writer, log_level)?;
-            } else {
-                crate::lockfile_real::printer::Tree::print::<_, false>(&mut printer, this, writer, log_level)?;
-            }
+            // TODO(port): blocked_on lockfile_real::printer::Tree::print — see Printer note above.
+            let _ = Output::enable_ansi_colors_stdout();
         }
 
         if !did_meta_hash_change {
@@ -1203,29 +1217,31 @@ fn print_install_summary(
         if install_summary.success > 0 {
             // it's confusing when it shows 3 packages and says it installed 1
             let pkgs_installed = install_summary.success.max(this.update_requests.len() as u32);
-            Output::pretty(
+            Output::pretty(format_args!(
                 "<green>{}<r> package{}<r> installed ",
-                format_args!("{}{}", pkgs_installed, if pkgs_installed == 1 { "" } else { "s" }),
-            );
+                pkgs_installed,
+                if pkgs_installed == 1 { "" } else { "s" },
+            ));
             // TODO(port): Output::pretty multi-arg formatting
             Output::print_start_end_stdout(ctx.start_time, nano_timestamp());
             printed_timestamp = true;
             print_blocked_packages_info(install_summary, this.options.global);
 
             if this.summary.remove > 0 {
-                Output::pretty("Removed: <cyan>{}<r>\n", format_args!("{}", this.summary.remove));
+                Output::pretty(format_args!("Removed: <cyan>{}<r>\n", this.summary.remove));
             }
         } else if this.summary.remove > 0 {
-            if this.subcommand == PackageManager::Subcommand::Remove {
+            if this.subcommand == Subcommand::Remove {
                 for request in &this.update_requests {
-                    Output::prettyln(format_args!("<r><red>-<r> {}", bstr::BStr::new(&request.name)));
+                    Output::prettyln(format_args!("<r><red>-<r> {}", bstr::BStr::new(request.name.as_bytes())));
                 }
             }
 
-            Output::pretty(
+            Output::pretty(format_args!(
                 "<r><b>{}<r> package{} removed ",
-                format_args!("{}{}", this.summary.remove, if this.summary.remove == 1 { "" } else { "s" }),
-            );
+                this.summary.remove,
+                if this.summary.remove == 1 { "" } else { "s" },
+            ));
             // TODO(port): Output::pretty multi-arg formatting
             Output::print_start_end_stdout(ctx.start_time, nano_timestamp());
             printed_timestamp = true;
@@ -1234,30 +1250,24 @@ fn print_install_summary(
             let count = this.lockfile.packages.len() as PackageID;
             if count != install_summary.skipped {
                 if !this.options.enable.only_missing {
-                    Output::pretty(
+                    Output::pretty(format_args!(
                         "Checked <green>{} install{}<r> across {} package{} <d>(no changes)<r> ",
-                        format_args!(
-                            "{}{}{}{}",
-                            install_summary.skipped,
-                            if install_summary.skipped == 1 { "" } else { "s" },
-                            count,
-                            if count == 1 { "" } else { "s" },
-                        ),
-                    );
+                        install_summary.skipped,
+                        if install_summary.skipped == 1 { "" } else { "s" },
+                        count,
+                        if count == 1 { "" } else { "s" },
+                    ));
                     // TODO(port): Output::pretty multi-arg formatting
                     Output::print_start_end_stdout(ctx.start_time, nano_timestamp());
                 }
                 printed_timestamp = true;
                 print_blocked_packages_info(install_summary, this.options.global);
             } else {
-                Output::pretty(
+                Output::pretty(format_args!(
                     "<r><green>Done<r>! Checked {} package{}<r> <d>(no changes)<r> ",
-                    format_args!(
-                        "{}{}",
-                        install_summary.skipped,
-                        if install_summary.skipped == 1 { "" } else { "s" },
-                    ),
-                );
+                    install_summary.skipped,
+                    if install_summary.skipped == 1 { "" } else { "s" },
+                ));
                 // TODO(port): Output::pretty multi-arg formatting
                 Output::print_start_end_stdout(ctx.start_time, nano_timestamp());
                 printed_timestamp = true;
@@ -1311,7 +1321,7 @@ fn print_blocked_packages_info(summary: &PackageInstallSummary, global: bool) {
         ));
         // TODO(port): Output::pretty multi-arg formatting
     } else {
-        Output::pretty("<r>\n", format_args!(""));
+        Output::pretty(format_args!("<r>\n"));
     }
 }
 
@@ -1324,12 +1334,12 @@ pub fn get_workspace_filters(
 
     let mut workspace_filters: Vec<WorkspaceFilter> = Vec::new();
     // only populated when subcommand is `.install`
-    if manager.subcommand == PackageManager::Subcommand::Install
+    if manager.subcommand == Subcommand::Install
         && !manager.options.filter_patterns.is_empty()
     {
         workspace_filters.reserve(manager.options.filter_patterns.len());
         for pattern in &manager.options.filter_patterns {
-            workspace_filters.push(WorkspaceFilter::init(pattern, original_cwd, &mut path_buf[..])?);
+            workspace_filters.push(WorkspaceFilter::init(pattern, original_cwd, &mut path_buf));
         }
     }
 
@@ -1389,7 +1399,7 @@ pub fn get_workspace_filters(
 /// The error is logged to manager.log, and the install will fail later when
 /// manager.log.hasErrors() is checked.
 fn add_dependency_error(manager: &mut PackageManager, dependency: &Dependency, err: bun_core::Error) {
-    let lockfile = &*manager.lockfile;
+    let lockfile = &manager.lockfile;
     let note_fmt = "error occurred while resolving {}";
     let note_args = format_args!(
         "{}",
@@ -1397,7 +1407,7 @@ fn add_dependency_error(manager: &mut PackageManager, dependency: &Dependency, e
             lockfile.str(&dependency.realname()),
             bun_core::fmt::PathFormatOptions {
                 path_sep: match dependency.version.tag {
-                    Dependency::VersionTag::Folder => bun_core::fmt::PathSep::Auto,
+                    DependencyVersionTag::Folder => bun_core::fmt::PathSep::Auto,
                     _ => bun_core::fmt::PathSep::Any,
                 },
                 ..Default::default()
@@ -1407,12 +1417,12 @@ fn add_dependency_error(manager: &mut PackageManager, dependency: &Dependency, e
 
     if dependency.behavior.is_optional() || dependency.behavior.is_peer() {
         manager
-            .log
+            .log_mut()
             .add_warning_with_note(None, Default::default(), err.name(), note_fmt, note_args)
             .expect("unreachable");
     } else {
         manager
-            .log
+            .log_mut()
             .add_zig_error_with_note(err, note_fmt, note_args)
             .expect("unreachable");
     }

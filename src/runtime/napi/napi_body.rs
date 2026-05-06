@@ -1010,7 +1010,14 @@ fn not_implemented_yet(name: &'static str) {
     // TODO(port): bun.onceUnsafe — emit warning only once per `name`.
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
-        if VirtualMachine::get().log().level().at_least(bun_logger::Level::Warn) {
+        // SAFETY: VirtualMachine::get() returns the current thread's VM (non-null);
+        // `log` is set during init.
+        let should_warn = unsafe {
+            (*VirtualMachine::get())
+                .log
+                .map_or(true, |l| l.as_ref().level.at_least(bun_logger::Level::Warn))
+        };
+        if should_warn {
             bun_core::Output::pretty_errorln(
                 format_args!(
                     "<r><yellow>warning<r><d>:<r> Node-API function <b>\"{}\"<r> is not implemented yet.\n Track the status of Node-API in Bun: https://github.com/oven-sh/bun/issues/158",

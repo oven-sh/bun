@@ -466,8 +466,11 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
 
             Output::flush();
             Output::disable_buffering();
+            todo!("blocked_on: bun_install::lockfile_real un-gate (reconciler-6) — tree::Iterator/FmtMode");
+            #[cfg(any())]
+            {
             let lockfile = load_lockfile.ok().lockfile;
-            let mut iterator = lockfile::tree::Iterator::<{ lockfile::tree::Mode::NodeModules }>::init(lockfile);
+            let mut iterator = lockfile::tree::Iterator::<{ lockfile::tree::IteratorPathStyle::NodeModules }>::init(lockfile);
             // TODO(port): Lockfile.Tree.Iterator(.node_modules) — verify const-generic spelling
 
             let mut max_depth: usize = 0;

@@ -5106,13 +5106,17 @@ fn dump_state_due_to_crash(dev: &mut DevServer) -> Result<(), bun_core::Error> {
 #[derive(Copy, Clone)]
 pub struct RouteIndexAndRecurseFlag(u32);
 impl RouteIndexAndRecurseFlag {
+    pub fn new(route_index: framework_router::RouteIndex, should_recurse_when_visiting: bool) -> Self {
+        RouteIndexAndRecurseFlag(
+            (route_index.get() & 0x7FFF_FFFF) | ((should_recurse_when_visiting as u32) << 31),
+        )
+    }
     pub fn route_index(self) -> framework_router::RouteIndex {
         framework_router::RouteIndex::init(self.0 & 0x7FFF_FFFF)
     }
     pub fn should_recurse_when_visiting(self) -> bool {
         (self.0 >> 31) != 0
     }
-    // TODO(port): field-style construction was used; provide ctor
 }
 // TODO(port): Zig field-init `.{ .route_index = .., .should_recurse_when_visiting = .. }`
 // is used throughout; Phase B should add a `new()` and update callsites.

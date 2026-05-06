@@ -11,10 +11,10 @@ impl Expect {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        // TODO(port): `defer this.postMatch(globalThis)` — scopeguard borrows `this` for the
-        // whole scope which conflicts with the body's `&mut self` uses; reshape in Phase B
-        // (e.g. capture a raw `*mut Self` or call `post_match` on every return path).
-        let _post_match = scopeguard::guard((), |_| this.post_match(global));
+        // PORT NOTE: reshaped for borrowck — Zig `defer this.postMatch(globalThis)` becomes a
+        // scopeguard owning the `&mut Expect` borrow so post_match runs on every exit path;
+        // method calls below go through DerefMut.
+        let mut this = scopeguard::guard(this, |this| this.post_match(global));
 
         let this_value = frame.this();
         let _arguments = frame.arguments_old::<1>();
@@ -63,6 +63,6 @@ impl Expect {
 // PORT STATUS
 //   source:     src/test_runner/expect/toEqual.zig (49 lines)
 //   confidence: medium
-//   todos:      1
-//   notes:      defer post_match needs borrowck reshape; get_signature assumed const fn -> &'static str
+//   todos:      0
+//   notes:      defer post_match reshaped via scopeguard owning &mut Self; get_signature assumed const fn -> &'static str
 // ──────────────────────────────────────────────────────────────────────────

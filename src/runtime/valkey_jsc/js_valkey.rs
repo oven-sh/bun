@@ -1995,11 +1995,12 @@ impl<const SSL: bool> SocketHandler<SSL> {
         debug!("Socket closed.");
         this.ref_();
         // Ensure the socket pointer is updated.
-        this.client.socket = Socket::SocketTCP(uws::SocketTCP::detached());
-        let _defer = scopeguard::guard((), |_| {
-            this.client.status = valkey::Status::Disconnected;
-            this.update_poll_ref();
-            this.deref();
+        this.client.socket = Socket::SocketTcp(uws::SocketTCP::detached());
+        let this_ptr = this as *mut JSValkeyClient;
+        let _defer = scopeguard::guard(this_ptr, |p| unsafe {
+            (*p).client.status = valkey::Status::Disconnected;
+            (*p).update_poll_ref();
+            (*p).deref();
         });
 
         let _ = this.client.on_close(); // TODO: properly propagate exception upwards
@@ -2020,12 +2021,13 @@ impl<const SSL: bool> SocketHandler<SSL> {
         _code: i32,
     ) -> JsTerminatedResult<()> {
         // Ensure the socket pointer is updated.
-        this.client.socket = Socket::SocketTCP(uws::SocketTCP::detached());
+        this.client.socket = Socket::SocketTcp(uws::SocketTCP::detached());
         this.ref_();
-        let _defer = scopeguard::guard((), |_| {
-            this.client.status = valkey::Status::Disconnected;
-            this.update_poll_ref();
-            this.deref();
+        let this_ptr = this as *mut JSValkeyClient;
+        let _defer = scopeguard::guard(this_ptr, |p| unsafe {
+            (*p).client.status = valkey::Status::Disconnected;
+            (*p).update_poll_ref();
+            (*p).deref();
         });
 
         this.client.on_close()

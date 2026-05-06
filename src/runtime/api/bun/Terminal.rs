@@ -1462,7 +1462,7 @@ impl Terminal {
 
             // SAFETY: master_fd is open (closed flag checked above), TIOCSWINSZ
             // takes a *const winsize.
-            let ioctl_result = unsafe { ioctl(self.master_fd.cast(), TIOCSWINSZ, &winsize) };
+            let ioctl_result = unsafe { ioctl(self.master_fd.native(), TIOCSWINSZ, &winsize) };
             if ioctl_result != 0 {
                 return Err(global_object.throw(format_args!("Failed to resize terminal")));
             }
@@ -1515,7 +1515,7 @@ impl Terminal {
         {
             // Use the existing TTY mode function
             let tty_result = bun_core::tty::set_mode(
-                self.master_fd.cast(),
+                self.master_fd.native(),
                 if enabled {
                     bun_core::tty::Mode::Raw
                 } else {
@@ -1546,7 +1546,7 @@ fn get_termios(fd: Fd) -> Option<Termios> {
         return None;
     }
     #[cfg(unix)]
-    sys::posix::tcgetattr(fd.cast()).ok()
+    sys::posix::tcgetattr(fd.native()).ok()
 }
 
 /// Set terminal attributes using tcsetattr (TCSANOW = immediate)
@@ -1558,7 +1558,7 @@ fn set_termios(fd: Fd, termios_p: &Termios) -> bool {
     }
     #[cfg(unix)]
     {
-        sys::posix::tcsetattr(fd.cast(), sys::posix::TCSA::Now, termios_p).is_ok()
+        sys::posix::tcsetattr(fd.native(), sys::posix::TCSA::Now, termios_p).is_ok()
     }
 }
 

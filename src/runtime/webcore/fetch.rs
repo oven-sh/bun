@@ -529,7 +529,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             break 'extract_url str;
         }
 
-        if let Some(req) = request.as_deref_mut() {
+        if let Some(req) = request_mut!() {
             req.ensure_url(); // bun.handleOom — aborts on OOM
             break 'extract_url req.url.dupe_ref();
         }
@@ -1144,7 +1144,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
         }
 
-        if let Some(req) = request.as_deref_mut() {
+        if let Some(req) = request_mut!() {
             let body_value = req.get_body_value();
             let already_used = match body_value {
                 BodyValue::Used => true,
@@ -1248,7 +1248,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 }
             }
 
-            if let Some(req) = request.as_deref_mut() {
+            if let Some(req) = request_mut!() {
                 if let Some(head) = req.get_fetch_headers_unless_empty() {
                     break 'brk Some(head.as_ptr());
                 }

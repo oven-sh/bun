@@ -87,21 +87,6 @@ impl DigestContext {
 }
 // TODO(port): wire DigestContext as the ArrayHashMap hasher/eq (Zig: 4th generic param)
 
-/// Local shim for `BunSocketContextOptions::digest()` — the canonical impl
-/// lives on `bun_uws_sys::SocketContext::BunSocketContextOptions` but the
-/// `bun_uws` crate re-declares the struct without re-exporting that method.
-/// Until `bun_uws` forwards `digest()`, this extension trait keeps callers
-/// compiling.
-trait BunSocketContextOptionsDigestExt {
-    fn digest(&self) -> Digest;
-}
-impl BunSocketContextOptionsDigestExt for uws::SocketContext::BunSocketContextOptions {
-    #[allow(unused_variables)]
-    fn digest(&self) -> Digest {
-        todo!("blocked_on: bun_uws::SocketContext::BunSocketContextOptions::digest")
-    }
-}
-
 pub struct Entry {
     /// Nulled by `bun_ssl_ctx_cache_on_free` when BoringSSL drops the last
     /// ref. Tombstoned entries are reclaimed on the next `get_or_create` for

@@ -170,6 +170,18 @@ pub(crate) const SYSTEM_ERRNO_NAMES: &[&str] = &[
     "ENOLINK", "EPROTO", "ENOTCAPABLE", "ECAPMODE", "ENOTRECOVERABLE", "EOWNERDEAD", "EINTEGRITY",
 ];
 
+// Lock each table's length to the Zig `SystemErrno` enum's cardinality
+// (`src/errno/*_errno.zig`). A mismatch here means the duplicated table has
+// drifted from its source of truth — fix the table, not the assertion.
+#[cfg(any(target_os = "linux", target_family = "wasm"))]
+const _: () = assert!(SYSTEM_ERRNO_NAMES.len() == 134); // linux_errno.zig: 0..=EHWPOISON(133)
+#[cfg(windows)]
+const _: () = assert!(SYSTEM_ERRNO_NAMES.len() == 138); // windows_errno.zig: 0..=EFTYPE(137); UV_* sparse range excluded
+#[cfg(target_os = "macos")]
+const _: () = assert!(SYSTEM_ERRNO_NAMES.len() == 107); // darwin_errno.zig: 0..=EQFULL(106)
+#[cfg(target_os = "freebsd")]
+const _: () = assert!(SYSTEM_ERRNO_NAMES.len() == 98); // freebsd_errno.zig: 0..=EINTEGRITY(97)
+
 /// Platform errno integer → its `SystemErrno` tag name. `None` for 0/out-of-range.
 #[inline]
 pub(crate) fn system_errno_name(errno: i32) -> Option<&'static str> {

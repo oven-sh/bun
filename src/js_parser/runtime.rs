@@ -6,9 +6,9 @@ use bun_core::Output;
 // TODO(b0): RuntimeTranspilerCache arrives from move-in (was bun_jsc::RuntimeTranspilerCache → js_parser)
 use crate::RuntimeTranspilerCache;
 // TODO(port): confirm crate path for `bun.schema` (likely `bun_schema` or `bun_interchange::schema`)
-use bun_schema as schema;
-use bun_schema::api;
-use bun_str::strings;
+use bun_interchange::schema;
+use bun_interchange::schema::api;
+use bun_string::strings;
 use bun_wyhash::{Wyhash, Wyhash11};
 
 use crate::ast::{Expr, Ref};
@@ -195,8 +195,9 @@ impl Runtime {
 
 // ─────────────────────────── Runtime.Features ───────────────────────────
 
-pub static EMPTY_BUNDLER_FEATURE_FLAGS: StringSet = StringSet::EMPTY;
-// TODO(port): `bun.StringSet.initComptime()` — needs a `const`-constructible empty StringSet.
+// TODO(port): `bun.StringSet.initComptime()` — needs a `const`-constructible
+// empty StringSet (Vec-backed, so `const fn new()` would suffice). Until then,
+// `bundler_feature_flags` is `Option<&StringSet>` with `None` ≡ empty.
 
 pub struct Features<'a> {
     /// Enable the React Fast Refresh transform. What this does exactly
@@ -271,7 +272,10 @@ pub struct Features<'a> {
 
     /// Feature flags for dead-code elimination via `import { feature } from "bun:bundle"`
     /// When `feature("FLAG_NAME")` is called, it returns true if FLAG_NAME is in this set.
-    pub bundler_feature_flags: &'a StringSet,
+    ///
+    /// Zig: `*const bun.StringSet = &empty_bundler_feature_flags`. `None` ≡ the
+    /// empty static set; see `EMPTY_BUNDLER_FEATURE_FLAGS` TODO above.
+    pub bundler_feature_flags: Option<&'a StringSet>,
 
     /// REPL mode: transforms code for interactive evaluation
     /// - Wraps lone object literals `{...}` in parentheses
@@ -313,7 +317,7 @@ impl Default for Features<'_> {
             remove_cjs_module_wrapper: false,
             runtime_transpiler_cache: None,
             lower_using: true,
-            bundler_feature_flags: &EMPTY_BUNDLER_FEATURE_FLAGS,
+            bundler_feature_flags: None,
             repl_mode: false,
         }
     }

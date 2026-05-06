@@ -6198,6 +6198,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         })
     }
 
+    #[cfg(any())] // reconciler-6 re-gate: original_name *const [u8] vs &[u8]
     pub fn wrap_identifier_namespace(&mut self, loc: logger::Loc, r#ref: Ref) -> Expr {
         let enclosing_ref = self.enclosing_namespace_arg_ref.unwrap();
         self.record_usage(enclosing_ref);
@@ -6238,6 +6239,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     // value_for_define / is_dot_define_match: moved to ungated impl (round-G).
 
     // One statement could potentially expand to several statements
+    #[cfg(any())] // reconciler-6 re-gate: Prefill::data::S_EMPTY; S::Block Default
     pub fn stmts_to_single_stmt(&mut self, loc: logger::Loc, stmts: &'a mut [Stmt]) -> Stmt {
         if stmts.is_empty() {
             return Stmt { data: js_ast::StmtData::SEmpty(S::Empty {}), loc };
@@ -6251,6 +6253,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         self.s(S::Block { stmts: stmts as *mut [Stmt], ..Default::default() }, loc)
     }
 
+    #[cfg(any())] // reconciler-6 re-gate: original_name *const [u8]; add_range_error_fmt arity
     pub fn find_label_symbol(&mut self, loc: logger::Loc, name: &[u8]) -> FindLabelSymbolResult {
         let mut res = FindLabelSymbolResult { r#ref: Ref::NONE, is_loop: false, found: false };
 
@@ -6299,6 +6302,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
     // runtime_identifier_ref / runtime_identifier / call_runtime: moved to ungated impl (round-G).
 
+    #[cfg(any())] // reconciler-6 re-gate: Binding::Data variant paths
     pub fn extract_decls_for_binding(binding: Binding, decls: &mut ListManaged<'a, G::Decl>) -> Result<(), bun_core::Error> {
         match binding.data {
             Binding::Data::BMissing(_) => {}
@@ -6319,6 +6323,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Ok(())
     }
 
+    #[cfg(any())] // reconciler-6 re-gate: exports_string_name fn vs slice; E::Dot.name type
     #[inline]
     pub fn module_exports(&mut self, loc: logger::Loc) -> Expr {
         let target = self.new_expr(E::Identifier { ref_: self.module_ref, ..Default::default() }, loc);
@@ -6340,6 +6345,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     // If we do an orderedRemove, it gets very slow.
     // swapRemove is fast. But a little more dangerous.
     // Instead, we just tombstone it.
+    #[cfg(any())] // reconciler-6 re-gate: Scope NonNull deref; BabyList::push
     pub fn pop_and_flatten_scope(&mut self, scope_index: usize) {
         // Move up to the parent scope
         let to_flatten = self.current_scope;
@@ -6377,10 +6383,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
     /// When not transpiling we dont use the renamer, so our solution is to generate really
     /// hard to collide with variables, instead of actually making things collision free
+    #[cfg(any())] // reconciler-6 re-gate: calls generate_temp_ref_with_scope
     pub fn generate_temp_ref(&mut self, default_name: Option<&'a [u8]>) -> Ref {
         self.generate_temp_ref_with_scope(default_name, self.current_scope)
     }
 
+    #[cfg(any())] // reconciler-6 re-gate: BumpVec write_fmt; DeclaredSymbolList::push
     pub fn generate_temp_ref_with_scope(&mut self, default_name: Option<&'a [u8]>, scope: *mut Scope) -> Ref {
         let name = (if self.will_use_renamer() { default_name } else { None }).unwrap_or_else(|| {
             self.temp_ref_count += 1;
@@ -6469,6 +6477,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     /// with ones that were imported, so that it can share an import record.
     ///
     /// This function replaces all specifier strings with `e_special.resolved_specifier_string`
+    #[cfg(any())] // reconciler-6 re-gate: E::String shape; rewrite helper
     pub fn handle_import_meta_hot_accept_call(&mut self, call: &mut E::Call) {
         if call.args.len == 0 {
             return;
@@ -6495,6 +6504,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         call.target.data = js_ast::ExprData::ESpecial(E::Special::HotAcceptVisited);
     }
 
+    #[cfg(any())] // reconciler-6 re-gate: ResolvedSpecifierStringIndex; Path.pretty
     fn rewrite_import_meta_hot_accept_string(&mut self, str_: &E::String, loc: logger::Loc) -> Option<js_ast::ExprData> {
         let _ = str_.to_utf8(self.allocator);
         let specifier = str_.data;
@@ -6514,6 +6524,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         )))
     }
 
+    #[cfg(any())] // reconciler-6 re-gate: calls emit_react_refresh_register
     pub fn handle_react_refresh_register(
         &mut self,
         stmts: &mut ListManaged<'a, Stmt>,
@@ -6530,6 +6541,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Ok(())
     }
 
+    #[cfg(any())] // reconciler-6 re-gate: E::String fields; E::Identifier.r#ref
     pub fn emit_react_refresh_register(
         &mut self,
         stmts: &mut ListManaged<'a, Stmt>,
@@ -6576,6 +6588,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Ok(())
     }
 
+    #[cfg(any())] // reconciler-6 re-gate: ServerComponents.wraps_exports; Path.pretty
     pub fn wrap_value_for_server_component_reference(&mut self, val: Expr, original_name: &'a [u8]) -> Expr {
         debug_assert!(self.options.features.server_components.wraps_exports());
         debug_assert!(self.current_scope == self.module_scope);
@@ -6614,6 +6627,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         )
     }
 
+    #[cfg(any())] // reconciler-6 re-gate: ReactRefresh::HookContext path; BUILT_IN_HOOKS
     pub fn handle_react_refresh_hook_call(&mut self, hook_call: &mut E::Call, original_name: &[u8]) {
         debug_assert!(self.options.features.react_fast_refresh);
         debug_assert!(ReactRefresh::is_hook_name(original_name));
@@ -6703,6 +6717,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         ctx.hasher.update(b"\x00");
     }
 
+    #[cfg(any())] // reconciler-6 re-gate: ReactRefresh::HookContext path
     pub fn handle_react_refresh_post_visit_function_body(
         &mut self,
         stmts: &mut ListManaged<'a, Stmt>,
@@ -6740,6 +6755,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         stmts[0] = prepended_stmt;
     }
 
+    #[cfg(any())] // reconciler-6 re-gate: G::Decl::List API
     pub fn get_react_refresh_hook_signal_decl(&mut self, signal_cb_ref: Ref) -> Stmt {
         let loc = logger::Loc::EMPTY;
         self.react_refresh.latest_signature_ref = signal_cb_ref;
@@ -6763,6 +6779,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         )
     }
 
+    #[cfg(any())] // reconciler-6 re-gate: ReactRefresh::HookContext; E::Array items
     pub fn get_react_refresh_hook_signal_init(
         &mut self,
         ctx: &mut ReactRefresh::HookContext,

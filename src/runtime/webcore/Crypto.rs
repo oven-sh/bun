@@ -232,15 +232,15 @@ pub fn bun_random_uuid_v7(global: &JSGlobalObject, callframe: &CallFrame) -> JsR
     let mut encoding_value: JSValue = JSValue::UNDEFINED;
 
     let encoding: Encoding = 'brk: {
-        if arguments.len() > 0 {
-            if !arguments[0].is_undefined() {
-                if arguments[0].is_string() {
-                    encoding_value = arguments[0];
+        if arguments.len > 0 {
+            if !arguments.ptr[0].is_undefined() {
+                if arguments.ptr[0].is_string() {
+                    encoding_value = arguments.ptr[0];
                     break 'brk match Encoding::from_js(encoding_value, global)? {
                         Some(e) => e,
                         None => {
                             return Err(global
-                                .ERR(
+                                .err(
                                     bun_jsc::ErrorCode::UNKNOWN_ENCODING,
                                     format_args!("Encoding must be one of base64, base64url, hex, or buffer"),
                                 )
@@ -255,10 +255,10 @@ pub fn bun_random_uuid_v7(global: &JSGlobalObject, callframe: &CallFrame) -> JsR
     };
 
     let timestamp: u64 = 'brk: {
-        let timestamp_value: JSValue = if !encoding_value.is_undefined() && arguments.len() > 1 {
-            arguments[1]
-        } else if arguments.len() == 1 && encoding_value.is_undefined() {
-            arguments[0]
+        let timestamp_value: JSValue = if !encoding_value.is_undefined() && arguments.len > 1 {
+            arguments.ptr[1]
+        } else if arguments.len == 1 && encoding_value.is_undefined() {
+            arguments.ptr[0]
         } else {
             JSValue::UNDEFINED
         };
@@ -282,17 +282,18 @@ pub fn bun_random_uuid_v7(global: &JSGlobalObject, callframe: &CallFrame) -> JsR
         break 'brk u64::try_from(bun_core::time::milli_timestamp().max(0)).unwrap();
     };
 
-    let entropy = global.bun_vm().rare_data().entropy_slice(8);
+    // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
+    let entropy = unsafe { &mut *global.bun_vm() }.rare_data().entropy_slice(8);
 
     let uuid = UUID7::init(timestamp, &<[u8; 8]>::try_from(&entropy[0..8]).unwrap());
 
     if encoding == Encoding::Hex {
         let (mut str, bytes) = BunString::create_uninitialized_latin1(36);
-        uuid.print(&mut bytes[0..36]);
+        uuid.print((&mut bytes[0..36]).try_into().unwrap());
         return Ok(str.transfer_to_js(global));
     }
 
-    encoding.encode_with_max_size(global, 32, &uuid.bytes)
+    encoding.encode_with_max_size::<32>(global, &uuid.bytes)
 }
 
 // Zig: `comptime { @export(&jsc.toJSHostFn(Bun__randomUUIDv5_), .{ .name = "Bun__randomUUIDv5" }) }`

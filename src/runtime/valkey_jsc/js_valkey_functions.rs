@@ -1611,7 +1611,7 @@ impl JSValkeyClient {
 
         let arg0 = frame.argument(0);
         if !arg0.is_string() {
-            return global.throw_invalid_argument_type("publish", "channel", "string");
+            return Err(global.throw_invalid_argument_type("publish", "channel", "string"));
         }
         let channel = from_js(global, arg0)?.expect("unreachable");
 
@@ -1620,7 +1620,7 @@ impl JSValkeyClient {
 
         let arg1 = frame.argument(1);
         if !arg1.is_string() {
-            return global.throw_invalid_argument_type("publish", "message", "string");
+            return Err(global.throw_invalid_argument_type("publish", "message", "string"));
         }
         let message = from_js(global, arg1)?.expect("unreachable");
         // PERF(port): was assume_capacity

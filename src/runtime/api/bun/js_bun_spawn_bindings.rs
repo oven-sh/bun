@@ -1155,9 +1155,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
     // existing_terminal: don't close slave_fd - user manages lifecycle and can reuse
 
-    subprocess
-        .process
-        .set_exit_handler(subprocess as *mut SubprocessT as *mut (), &Subprocess::PROCESS_EXIT_VTABLE);
+    // SAFETY: see `process_mut` doc.
+    unsafe { process_mut(&subprocess.process) }
+        .set_exit_handler(subprocess_ptr as *mut (), &Subprocess::PROCESS_EXIT_VTABLE);
 
     promise_for_stream.ensure_still_alive();
     subprocess.flags.set(

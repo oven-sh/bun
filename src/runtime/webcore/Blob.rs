@@ -4009,39 +4009,7 @@ impl Blob {
         self.store = None;
     }
 
-    /// This does not duplicate
-    /// This creates a new view
-    /// and increment the reference count
-    pub fn dupe(&self) -> Blob {
-        self.dupe_with_content_type(false)
-    }
-
-    pub fn dupe_with_content_type(&self, _include_content_type: bool) -> Blob {
-        // Zig: `if (this.store != null) this.store.?.ref()` then bitwise-copy.
-        // `Option<StoreRef>::clone` bumps the intrusive `Store::ref_count`.
-        let mut duped = Blob {
-            reported_estimated_size: self.reported_estimated_size,
-            size: self.size,
-            offset: self.offset,
-            store: self.store.clone(),
-            content_type: self.content_type,
-            content_type_allocated: self.content_type_allocated,
-            content_type_was_set: self.content_type_was_set,
-            charset: self.charset,
-            is_jsdom_file: self.is_jsdom_file,
-            ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
-            global_this: self.global_this,
-            last_modified: self.last_modified,
-            name: self.name.dupe_ref(),
-        };
-        // If the source's content_type is heap-allocated, the bitwise copy above aliases
-        // the same allocation. Take our own copy so freeing one side doesn't dangle the other.
-        if duped.content_type_allocated {
-            let copy = self.content_type_slice().to_vec().into_boxed_slice();
-            duped.content_type = Box::into_raw(copy);
-        }
-        duped
-    }
+    // dupe / dupe_with_content_type: defined once below (top-level impl); duplicate removed to fix E0034.
 
     pub fn to_js(&mut self, global_object: &JSGlobalObject) -> JSValue {
         // if cfg!(debug_assertions) { debug_assert!(self.is_heap_allocated()); }

@@ -463,10 +463,57 @@ pub enum Data {
     S3(S3),
 }
 
+/// Discriminant-only tag for `Data` (Zig: `std.meta.Tag(Store.Data)`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DataTag {
+    Bytes,
+    File,
+    S3,
+}
+
 impl Data {
+    #[inline]
+    pub fn tag(&self) -> DataTag {
+        match self {
+            Self::Bytes(_) => DataTag::Bytes,
+            Self::File(_) => DataTag::File,
+            Self::S3(_) => DataTag::S3,
+        }
+    }
     /// Panics if not a `File` (Zig: `data.file` union access).
     pub fn as_file(&self) -> &File {
         match self { Self::File(f) => f, _ => unreachable!("Store.data is not .file") }
+    }
+    pub fn as_file_mut(&mut self) -> &mut File {
+        match self { Self::File(f) => f, _ => unreachable!("Store.data is not .file") }
+    }
+    /// Panics if not `S3` (Zig: `data.s3` union access).
+    pub fn as_s3(&self) -> &S3 {
+        match self { Self::S3(s) => s, _ => unreachable!("Store.data is not .s3") }
+    }
+    pub fn as_s3_mut(&mut self) -> &mut S3 {
+        match self { Self::S3(s) => s, _ => unreachable!("Store.data is not .s3") }
+    }
+    /// Panics if not `Bytes` (Zig: `data.bytes` union access).
+    pub fn as_bytes(&self) -> &Bytes {
+        match self { Self::Bytes(b) => b, _ => unreachable!("Store.data is not .bytes") }
+    }
+    pub fn as_bytes_mut(&mut self) -> &mut Bytes {
+        match self { Self::Bytes(b) => b, _ => unreachable!("Store.data is not .bytes") }
+    }
+}
+
+impl StoreRef {
+    /// Mutable access to `data` through the shared handle.
+    ///
+    /// Zig mutates `store.data` freely through any holder; the caller must
+    /// ensure no other `&mut` to the same `Store` is live (single-threaded
+    /// JS event-loop discipline).
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub fn data_mut(&self) -> &mut Data {
+        // SAFETY: Zig-semantics shared-mutable interior; see doc comment.
+        unsafe { &mut (*self.as_ptr()).data }
     }
 }
 

@@ -60,16 +60,6 @@ impl<'a> Default for Args<'a> {
     }
 }
 
-impl<'a> Default for Command<'a> {
-    fn default() -> Self {
-        Command {
-            command: b"",
-            args: Args::default(),
-            meta: Meta::default(),
-        }
-    }
-}
-
 impl<'a> Args<'a> {
     pub fn len(&self) -> usize {
         match self {

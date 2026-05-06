@@ -353,7 +353,7 @@ fn os_path_literal_empty() -> &'static OSPathSliceZ {
     #[cfg(windows)]
     { static EMPTY: [u16; 1] = [0]; unsafe { core::mem::transmute::<&[u16], &OSPathSliceZ>(&EMPTY[..0]) } }
     #[cfg(not(windows))]
-    { ZStr::from_bytes_with_nul(b"\0") }
+    { ZStr::EMPTY }
 }
 
 /// `bun.StandaloneModuleGraph::get()` — singleton accessor. The graph type

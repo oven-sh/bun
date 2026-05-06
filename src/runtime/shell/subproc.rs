@@ -941,7 +941,8 @@ impl Writable {
                 *self = Writable::Ignore;
             }
             Writable::Buffer(buffer) => {
-                buffer.update_ref(false);
+                // SAFETY: RefPtr data is live.
+                unsafe { (*buffer.data.as_ptr()).update_ref(false) };
                 drop(buffer); // deref
             }
             Writable::Memfd(fd) => {

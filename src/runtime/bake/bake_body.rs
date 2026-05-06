@@ -1149,7 +1149,7 @@ impl Framework {
         log: &mut logger::Log,
         mode: Mode,
         renderer: Graph,
-        out: &mut bun_bundler::Transpiler,
+        out: &mut core::mem::MaybeUninit<bun_bundler::Transpiler>,
         bundler_options: &BuildConfigSubset,
         source_map: bun_bundler::options::SourceMapOption,
         minify_whitespace: Option<bool>,
@@ -1166,13 +1166,18 @@ impl Framework {
         let ast_scope = ast_memory_allocator.enter();
         let _guard = scopeguard::guard(ast_scope, |s| s.exit());
 
-        *out = bun_bundler::Transpiler::init(
+        // PORT NOTE: Zig passed `out: *Transpiler` pointing at `= undefined`
+        // memory and assigned `out.* = try Transpiler.init(...)`. In Rust the
+        // caller (`DevServer::init`) hands us an uninitialized slot, so use
+        // `MaybeUninit::write` (no drop of prior bytes) then reborrow as
+        // `&mut Transpiler` for the field assignments below.
+        let out: &mut bun_bundler::Transpiler = out.write(bun_bundler::Transpiler::init(
             arena,
             log,
             // TODO(port): std.mem.zeroes(TransformOptions) — verify all-zero is valid
             bun_schema::api::TransformOptions::default(),
             None,
-        )?;
+        )?);
 
         out.options.target = match renderer {
             Graph::Client => bun_bundler::options::Target::Browser,

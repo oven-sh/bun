@@ -475,8 +475,12 @@ impl Encoding for Latin1 {
     fn ch(c: u8) -> u8 {
         c
     }
-    fn literal(s: &'static [u8]) -> &'static [u8] {
-        s
+    #[inline]
+    fn literal(s: &'static [u8]) -> EncLit<u8> {
+        debug_assert!(s.len() <= 8, "Enc::literal: bump EncLit cap");
+        let mut buf = [0u8; 8];
+        buf[..s.len()].copy_from_slice(s);
+        EncLit { buf, len: s.len() as u8 }
     }
     #[inline]
     fn key_bytes(s: &[u8]) -> &[u8] {

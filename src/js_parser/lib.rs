@@ -123,8 +123,10 @@ pub mod Macro {
         /// Zig: `pub fn getRemap(self: *MacroContext, path: []const u8) ?MacroRemapEntry`.
         /// The real `MacroContext` (bun_js_parser_jsc) carries a `MacroMap`; this
         /// lower-tier stub has no remap table, so it always reports "no remap".
+        /// Returns `'static` so callers can keep the (always-`None`) result
+        /// across `&mut self` parser calls without a borrowck conflict.
         #[inline]
-        pub fn get_remap(&self, _path: &[u8]) -> Option<&MacroRemapEntry> {
+        pub fn get_remap(&self, _path: &[u8]) -> Option<&'static MacroRemapEntry> {
             None
         }
     }

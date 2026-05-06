@@ -25,14 +25,7 @@ pub mod pbkdf2;
 pub mod boringssl_jsc;
 
 pub fn create_crypto_error(global_this: &JSGlobalObject, err_code: u32) -> JSValue {
-    
-    {
-        return boringssl_jsc::err_to_js(global_this, err_code);
-    }
-    // TODO(b2-blocked): bun_boringssl_sys::ERR_error_string_n
-    // TODO(b2-blocked): bun_jsc::JSGlobalObject::err
-    let _ = (global_this, err_code);
-    todo!("create_crypto_error: blocked on bun_boringssl_sys + bun_jsc")
+    boringssl_jsc::err_to_js(global_this, err_code)
 }
 
 // ─── real type surface (B-2 struct/state un-gate) ─────────────────────────

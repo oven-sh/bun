@@ -114,11 +114,9 @@ pub struct Entry {
 }
 
 impl Entry {
-    // TODO(port): Zig references nonexistent fields `source_contents` / `file_paths` — looks like
-    // dead/stale code in the source. Port preserved verbatim for diffing; revisit in Phase B.
-    pub fn source_contents(&self) -> &[bun_str::StringPointer] {
-        todo!("source_contents: references fields not present on Entry (stale Zig)")
-    }
+    // PORT NOTE: Zig `sourceContents()` was dead code — it indexed `entry.source_contents` and
+    // `entry.file_paths`, fields removed in 67f0c3e016a (replaced by `paths` + `files`). Zig's
+    // lazy compilation never instantiated it; no callers exist. Dropped rather than stubbed.
 
     pub fn render_mappings(
         &self,

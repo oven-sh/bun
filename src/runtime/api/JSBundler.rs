@@ -30,6 +30,9 @@ pub struct BuildArtifact(());
 /// Opaque surface — `JSBundler::Config` + plugin pipeline.
 pub struct JSBundler(());
 
+/// `jsc.API.JSBundler.Plugin` — re-exported for `crate::bake` (`SplitBundlerOptions.plugin`).
+pub use _jsc_gated::js_bundler::Plugin;
+
 // TODO(b2-blocked): bun_jsc + #[bun_jsc::host_fn]/JsClass proc-macros
 
 mod _jsc_gated {

@@ -460,8 +460,16 @@ pub fn lstatat(fd: Fd, path: &ZStr) -> Result<Stat> {
         }
     }
     #[cfg(windows)] {
-        let _ = (fd, path);
-        todo!("b2-blocked: lstatat windows (NtQueryInformationFile)")
+        // sys.zig:879 — open with `O.NOFOLLOW` (→ `FILE_OPEN_REPARSE_POINT`),
+        // `fstat` the handle, then close.
+        match openat_windows_a(fd, path.as_bytes(), O::NOFOLLOW, 0) {
+            Ok(file) => {
+                let r = fstat(file);
+                let _ = close(file);
+                r
+            }
+            Err(err) => Err(err),
+        }
     }
 }
 pub mod coreutils_error_map;

@@ -427,20 +427,18 @@ pub extern "C" fn Bun__VM__loopUnref(vm: *mut c_void) {
 pub extern "C" fn Bun__VM__postDeferredTask(
     vm: *mut VirtualMachine,
     ctx: *mut c_void,
-    cb: Option<unsafe extern "C" fn(*mut c_void) -> bool>,
+    cb: Option<bun_event_loop::DeferredTaskQueue::DeferredRepeatingTask>,
 ) {
+    // `None` only occurs from sql_jsc's current placeholder call site, where
+    // the deferred-task path is unreached; map it to a no-op that immediately
+    // unregisters itself.
+    unsafe extern "C" fn noop(_: *mut c_void) -> bool {
+        false
+    }
     // SAFETY: `vm` / `event_loop` are live for the JS thread.
     let el = unsafe { &mut *(*vm).event_loop() };
-    // SAFETY: `extern "C" fn(*mut c_void) -> bool` and the Rust-ABI
-    // `fn(*mut c_void) -> bool` (`DeferredRepeatingTask`) have identical
-    // layout (one pointer arg, bool return). `None` only occurs from sql_jsc's
-    // current placeholder call site, where the deferred-task path is unreached;
-    // map it to a no-op task that immediately unregisters itself.
-    let task: bun_event_loop::DeferredTaskQueue::DeferredRepeatingTask = match cb {
-        Some(f) => unsafe { core::mem::transmute(f) },
-        None => |_| false,
-    };
-    el.deferred_tasks.post_task(NonNull::new(ctx), task);
+    el.deferred_tasks
+        .post_task(NonNull::new(ctx), cb.unwrap_or(noop));
 }
 
 /// `vm.eventLoop().deferred_tasks.unregisterTask(ctx)` — Zig

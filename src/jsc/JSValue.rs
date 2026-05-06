@@ -233,6 +233,21 @@ impl JSValue {
             None
         }
     }
+    /// `JSValue.isError` (JSValue.zig:999) — true if this is a `JSC::ErrorInstance`
+    /// cell (i.e. constructed via `new Error()` or a subclass).
+    #[inline] pub fn is_error(self) -> bool {
+        self.is_cell() && self.js_type() == JSType::ErrorInstance
+    }
+    /// `JSValue.isAggregateError` (JSValue.zig:2194) — true if this is an
+    /// `AggregateError` instance (has an own `errors` array property per the
+    /// ES spec). Routes through C++ `JSC__JSValue__isAggregateError`.
+    #[inline] pub fn is_aggregate_error(self, global: &JSGlobalObject) -> bool {
+        unsafe extern "C" {
+            fn JSC__JSValue__isAggregateError(this: JSValue, global: *mut JSGlobalObject) -> bool;
+        }
+        // SAFETY: pure FFI predicate; `global` is live.
+        unsafe { JSC__JSValue__isAggregateError(self, global.as_ptr()) }
+    }
     #[inline] pub fn is_falsey(self) -> bool { !self.to_boolean() }
     #[inline] pub fn is_truthy(self) -> bool { self.to_boolean() }
 

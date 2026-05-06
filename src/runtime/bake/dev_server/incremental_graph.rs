@@ -867,9 +867,15 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
         let records_len = ctx.import_records[index.get() as usize].slice().len();
         for i in 0..records_len {
-            let import_record = &ctx.import_records[index.get() as usize].slice()[i];
+            // PORT NOTE: snapshot the three fields we need so the shared borrow
+            // on `ctx.import_records` ends before `process_edge_attachment`
+            // takes `&mut ctx`.
+            let (flags, src, key) = {
+                let ir = &ctx.import_records[index.get() as usize].slice()[i];
+                (ir.flags, ir.source_index, ir.path.key_for_incremental_graph())
+            };
             let _ = self.process_edge_attachment(
-                ctx, quick_lookup, new_imports, file_index, import_record,
+                ctx, quick_lookup, new_imports, file_index, flags, src, key,
                 EdgeAttachmentMode::JsOrHtml,
             )?;
         }
@@ -891,59 +897,52 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         // prevent infinite recursion.
         // PERF(port): was stackFallback(64*u32) — profile in Phase B.
         let mut queue: Vec<bun_js_parser::ast::Index> = Vec::new();
-
-        let records_len = ctx.import_records[bundler_index.get() as usize].slice().len();
-        for i in 0..records_len {
-            let ir = &ctx.import_records[bundler_index.get() as usize].slice()[i];
-            let src = ir.source_index;
-            let result = self.process_edge_attachment(
-                ctx, quick_lookup, new_imports, file_index, ir, EdgeAttachmentMode::Css,
-            )?;
-            if result == EdgeAttachmentResult::Continue && src.is_valid() {
-                queue.push(src);
-            }
-        }
+        queue.push(bundler_index);
 
         while let Some(idx) = queue.pop() {
             let records_len = ctx.import_records[idx.get() as usize].slice().len();
             for i in 0..records_len {
-                let ir = &ctx.import_records[idx.get() as usize].slice()[i];
-                let src = ir.source_index;
+                let (flags, src, key) = {
+                    let ir = &ctx.import_records[idx.get() as usize].slice()[i];
+                    (ir.flags, ir.source_index, ir.path.key_for_incremental_graph())
+                };
                 let result = self.process_edge_attachment(
-                    ctx, quick_lookup, new_imports, file_index, ir, EdgeAttachmentMode::Css,
+                    ctx, quick_lookup, new_imports, file_index, flags, src, key,
+                    EdgeAttachmentMode::Css,
                 )?;
                 if result == EdgeAttachmentResult::Continue && src.is_valid() {
-                    queue.push(src);
+                    queue.push(src.into());
                 }
             }
         }
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn process_edge_attachment(
         &mut self,
         ctx: &mut HotUpdateContext<'_>,
         quick_lookup: &mut ArrayHashMap<FileIndex, TempLookup>,
         new_imports: &mut Option<EdgeIndex>,
         file_index: FileIndex<SIDE>,
-        import_record: &bun_options_types::ImportRecord,
+        ir_flags: bun_options_types::ImportRecordFlags,
+        ir_source_index: bun_options_types::BundleEnums::Index,
+        key: &[u8],
         mode: EdgeAttachmentMode,
     ) -> Result<EdgeAttachmentResult, bun_core::Error> {
         // Duplicated import records are marked unused by `ConvertESMExportsForHmr`.
-        if import_record.flags.contains(bun_options_types::ImportRecordFlags::IS_UNUSED) {
+        if ir_flags.contains(bun_options_types::ImportRecordFlags::IS_UNUSED) {
             return Ok(EdgeAttachmentResult::Stop);
         }
-        if import_record.source_index.is_runtime() {
+        if ir_source_index.is_runtime() {
             return Ok(EdgeAttachmentResult::Stop);
         }
-
-        let key = import_record.path.key_for_incremental_graph();
 
         // Locate the FileIndex from bundle_v2's Source.Index.
         let (imported_file_index, kind): (FileIndex<SIDE>, FileKind) = 'brk: {
-            if import_record.source_index.is_valid() {
+            if ir_source_index.is_valid() {
                 let kind = if mode == EdgeAttachmentMode::Css {
-                    if ctx.loaders[import_record.source_index.get() as usize].is_css() {
+                    if ctx.loaders[ir_source_index.get() as usize].is_css() {
                         FileKind::Css
                     } else {
                         FileKind::Asset
@@ -951,10 +950,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 } else {
                     FileKind::Unknown
                 };
-                if let Some(i) = ctx
-                    .get_cached_index(SIDE, import_record.source_index)
-                    .unwrap::<SIDE>()
-                {
+                if let Some(i) = ctx.get_cached_index(SIDE, ir_source_index).unwrap::<SIDE>() {
                     break 'brk (i, kind);
                 } else if mode == EdgeAttachmentMode::Css {
                     let index = self.insert_empty(key, kind)?.index;

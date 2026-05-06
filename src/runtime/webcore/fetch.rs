@@ -1390,7 +1390,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 ReadableStream::from_blob_copy_ref(
                     global_this,
                     body.any_blob().blob(),
-                    s3::MultiPartUploadOptions::DEFAULT_PART_SIZE as webcore::blob::SizeType,
+                    s3::MultiPartUploadOptions::DEFAULT_PART_SIZE as crate::webcore::blob::SizeType,
                 )?,
                 global_this,
             )? {

@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 use std::cell::Cell;
 use std::io::Write as _;
 
-use bumpalo::Bump;
+use bun_alloc::Arena as Bump;
 use bun_core::{self, Environment, Global, Output, Progress, env_var, fmt as bun_fmt};
 use bun_core::Global::SyncCStr;
 use bun_str::MutableString;

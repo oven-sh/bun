@@ -129,7 +129,7 @@ impl Worker {
                 // Linux for the worker itself.
                 new_process_group: true,
                 #[cfg(target_os = "linux")]
-                linux_pdeathsig: Some(bun_sys::linux::SIGKILL),
+                linux_pdeathsig: Some(libc::SIGKILL as u8),
                 #[cfg(not(target_os = "linux"))]
                 linux_pdeathsig: None,
                 ..Default::default()

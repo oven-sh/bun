@@ -641,10 +641,12 @@ impl NetworkTask {
             self.signal_store
                 .response_body_streaming
                 .store(true, Ordering::Relaxed);
-            http_options.signals = http::Signals {
-                response_body_streaming: Some(&self.signal_store.response_body_streaming),
+            http_options.signals = Some(http::Signals {
+                response_body_streaming: Some(NonNull::from(
+                    &self.signal_store.response_body_streaming,
+                )),
                 ..Default::default()
-            };
+            });
         }
 
         self.unsafe_http_client = AsyncHTTP::init(

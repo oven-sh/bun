@@ -640,8 +640,8 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
 
             // PERF(port): was `inline for` — profile in Phase B
             for group in dependency_groups {
-                // TODO(port): Zig uses `@field(package_version, group.field)` reflection.
-                // Phase B: add `PackageVersion::dep_group(field: &[u8]) -> ExternalStringMap`.
+                // Zig uses `@field(package_version, group.field)` reflection;
+                // ported as `PackageVersion::dep_group(field) -> ExternalStringMap`.
                 let map: ExternalStringMap = package_version.dep_group(group.field);
                 let keys = map.name.get(manifest.external_strings);
                 let version_strings = map.value.get(manifest.external_strings_for_versions);

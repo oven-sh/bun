@@ -199,11 +199,11 @@ impl<'a> PatchTask<'a> {
             unreachable!()
         };
         if apply.logger.errors > 0 {
-            Output::err_generic(format_args!(
+            Output::err_generic(
                 "failed to apply patchfile ({})",
-                BStr::new(&apply.patchfilepath)
-            ));
-            let _ = apply.logger.print(Output::error_writer());
+                format_args!("{}", BStr::new(&apply.patchfilepath)),
+            );
+            let _ = apply.logger.print(Output::error_writer() as *mut _);
             // PORT NOTE: Zig called `apply.logger.deinit()` here under `defer`. The `Log` is a
             // field and will be dropped with the task; explicit early drop is skipped to avoid
             // double-drop. If `Log::deinit` is reset-to-empty (idempotent), Phase B can restore
@@ -214,7 +214,7 @@ impl<'a> PatchTask<'a> {
 
     fn run_from_main_thread_calc_hash(
         &mut self,
-        manager: &PackageManager,
+        manager: &mut PackageManager,
         log_level: LogLevel,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
@@ -226,23 +226,25 @@ impl<'a> PatchTask<'a> {
         let Some(hash) = calc_hash.result else {
             if log_level != LogLevel::Silent {
                 if calc_hash.logger.has_errors() {
-                    let _ = calc_hash.logger.print(Output::error_writer());
+                    let _ = calc_hash.logger.print(Output::error_writer() as *mut _);
                 } else {
-                    Output::err_generic(format_args!(
+                    Output::err_generic(
                         "Failed to calculate hash for patch <b>{}<r>",
-                        BStr::new(&calc_hash.patchfile_path)
-                    ));
+                        format_args!("{}", BStr::new(&calc_hash.patchfile_path)),
+                    );
                 }
             }
             Global::crash();
         };
 
-        let mut gop = manager
-            .lockfile
-            .patched_dependencies
-            .get_or_put(calc_hash.name_and_version_hash);
+        let gop = bun_core::handle_oom(
+            manager
+                .lockfile
+                .patched_dependencies
+                .get_or_put(calc_hash.name_and_version_hash),
+        );
         if gop.found_existing {
-            gop.value_ptr.set_patchfile_hash(hash);
+            gop.value_ptr.set_patchfile_hash(Some(hash));
         } else {
             panic!("No entry for patched dependency, this is a bug in Bun.");
         }

@@ -1156,17 +1156,17 @@ pub mod lockfile {
                 }
             }
             /// `Package.Scripts.List` — the resolved per-hook command list.
-            #[derive(Default)]
-            pub struct List {
-                pub first_index: u8,
-                pub total: u8,
-                pub items: [Option<Box<[u8]>>; 6],
-                pub cwd: Box<[u8]>,
-                pub package_name: Box<[u8]>,
-            }
+            /// Re-export the file-backed type so callers in `PackageManager` /
+            /// `PackageInstaller` agree on a single `List` shape.
+            pub use crate::lockfile_real::package::scripts::List;
         }
     }
     pub use package::Package;
+    /// Zig callers spell `.root` (a `Resolution.Tag` literal) when invoking
+    /// `Scripts.createList` for the root package; alias the tag enum here so
+    /// `lockfile::ScriptsListKind::Root` resolves until callers migrate to
+    /// `ResolutionTag` directly.
+    pub use crate::resolution::Tag as ScriptsListKind;
     /// `Lockfile.Printer` (src/install/lockfile.zig) — re-export the real
     /// struct so `printer::{tree_printer,yarn}` can name
     /// `bun_install::lockfile::Printer` until the stub/real modules unify.

@@ -980,6 +980,16 @@ impl<V, C: ArrayHashContext<[u8]> + Default> StringArrayHashMap<V, C> {
         true
     }
 
+    /// Zig: `StringArrayHashMap.fetchSwapRemove` — removes the entry (swapping
+    /// the last element into its slot) and returns the owned key/value pair.
+    pub fn fetch_swap_remove(&mut self, key: &[u8]) -> Option<KV<Box<[u8]>, V>> {
+        let i = self.find(key)?;
+        let k = self.inner.keys.swap_remove(i);
+        let v = self.inner.values.swap_remove(i);
+        self.inner.hashes.swap_remove(i);
+        Some(KV { key: k, value: v })
+    }
+
     pub fn re_index(&mut self) -> Result<(), AllocError> {
         for (i, k) in self.inner.keys.iter().enumerate() {
             self.inner.hashes[i] = self.ctx.hash(k);

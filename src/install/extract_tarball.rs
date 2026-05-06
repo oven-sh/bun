@@ -755,7 +755,7 @@ impl ExtractTarball {
                     Ok(pair) => pair,
                     Err(err) => {
                         if self.resolution.tag == ResolutionTag::Github
-                            && err.get_errno() == sys::E::NOENT
+                            && err == bun_core::err!("ENOENT")
                         {
                             // allow git dependencies without package.json
                             return Ok(ExtractData {
@@ -771,7 +771,7 @@ impl ExtractTarball {
                             format_args!(
                                 "\"package.json\" for \"{}\" failed to open: {}",
                                 BStr::new(name),
-                                BStr::new(err.name()),
+                                err.name(),
                             ),
                         )
                         .expect("unreachable");
@@ -790,7 +790,7 @@ impl ExtractTarball {
                             format_args!(
                                 "\"package.json\" for \"{}\" failed to resolve: {}",
                                 BStr::new(name),
-                                BStr::new(err.name()),
+                                err.name(),
                             ),
                         )
                         .expect("unreachable");

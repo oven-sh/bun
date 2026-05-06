@@ -1233,21 +1233,14 @@ pub fn migrate_yarn_lockfile<'a>(
                     name_hash,
                     version: Dependency::parse(
                         dep_name_string,
-                        name_hash,
+                        Some(name_hash),
                         version_string.slice(this.buffers.string_bytes.as_slice()),
                         &version_string.sliced(this.buffers.string_bytes.as_slice()),
-                        log,
-                        manager,
+                        Some(log),
+                        Some(manager),
                     )
                     .unwrap_or_default(),
-                    behavior: dependency::Behavior {
-                        prod: dep.dep_type == DependencyType::Production,
-                        dev: dep.dep_type == DependencyType::Development,
-                        optional: dep.dep_type == DependencyType::Optional,
-                        peer: dep.dep_type == DependencyType::Peer,
-                        workspace: false,
-                        ..Default::default()
-                    },
+                    behavior: behavior_for(dep.dep_type, false),
                 };
 
                 resolutions_buf[actual_root_dep_count as usize] = yarn_entry_to_package_id[idx];

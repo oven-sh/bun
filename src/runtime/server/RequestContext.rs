@@ -329,7 +329,7 @@ mod shim {
 
 use bun_options_types::schema::api as Api;
 
-use bun_js_parser::runtime::Fallback;
+use bun_js_parser::runtime_full::Fallback;
 
 bun_core::declare_scope!(RequestContext, visible);
 bun_core::declare_scope!(ReadableStream, visible);

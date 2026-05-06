@@ -1500,9 +1500,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     Ok(sync_value)
 }
 
-fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsResult<!> {
-    // TODO(port): return type — Zig returns `bun.JSError` (the error value itself).
-    // Mapped to JsResult<!> so callers can `return throw_command_not_found(...)?;` or similar.
+fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsError {
+    // Zig returns `bun.JSError` (the error value itself); callers wrap in `Err(...)`.
     let err = SystemError {
         message: BunString::create_format(format_args!(
             "Executable not found in $PATH: \"{}\"",

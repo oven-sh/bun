@@ -1434,14 +1434,14 @@ impl EntryPointMap {
     pub fn on_router_collision_error(
         &mut self,
         rel_path: &[u8],
-        other_id: OpaqueFileId,
-        ty: framework_router::FileKind,
+        other_id: fr::OpaqueFileId,
+        ty: fr::FileKind,
     ) -> Result<(), bun_alloc::AllocError> {
         bun_core::err_generic!(
             "Multiple {} matching the same route pattern is ambiguous",
             match ty {
-                framework_router::FileKind::Page => "pages",
-                framework_router::FileKind::Layout => "layout",
+                fr::FileKind::Page => "pages",
+                fr::FileKind::Layout => "layout",
             }
         );
         bun_core::pretty_errorln!("  - <blue>{}<r>", BStr::new(rel_path));

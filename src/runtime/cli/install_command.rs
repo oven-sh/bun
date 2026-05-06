@@ -1,13 +1,16 @@
 use core::ffi::c_void;
 
 use bun_core::{err, Error, Global, Output};
-use bun_install::package_manager::{CommandLineArguments, PackageManager, Subcommand};
-// TODO(port): verify exact module path for DependenciesScanner / Result under bun_bundler
-use bun_bundler::bundle_v2::dependencies_scanner::{DependenciesScanner, DependenciesScannerResult};
+use bun_install::package_manager::{PackageManager, Subcommand};
+// PORT NOTE: `bun_install::package_manager` is a stub that only re-exports `PackageManager` +
+// `Subcommand`; the real `CommandLineArguments` lives under the file-backed
+// `package_manager_real::command_line_arguments` module.
+use bun_install::package_manager_real::command_line_arguments::CommandLineArguments;
+use bun_bundler::bundle_v2::{DependenciesScanner, DependenciesScannerResult};
 
 use crate::build_command::BuildCommand;
-use crate::command::{self, Command, ContextData};
-use crate::Cli;
+use crate::command::ContextData;
+use crate::{Cli, Command};
 
 pub struct InstallCommand;
 

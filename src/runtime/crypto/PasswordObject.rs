@@ -620,12 +620,12 @@ impl HashResult {
     pub fn run_from_js(this: *mut HashResult) -> Result<(), jsc::JsTerminated> {
         // SAFETY: `this` was produced by Box::into_raw and is uniquely owned here.
         let this_ref = unsafe { &mut *this };
-        let promise = core::mem::take(&mut this_ref.promise);
+        let mut promise = core::mem::take(&mut this_ref.promise);
         // defer promise.deinit() — Drop on JSPromiseStrong at scope exit.
         // SAFETY: global was stored from a live &JSGlobalObject; VM outlives the task.
         let global = unsafe { &*this_ref.global };
-        this_ref.r#ref.unref(global.bun_vm());
-        match core::mem::replace(&mut this_ref.value, HashResultValue::Err(Error::default())) {
+        this_ref.r#ref.unref(vm_ctx());
+        match core::mem::replace(&mut this_ref.value, HashResultValue::Hash(Box::default())) {
             // TODO(port): the Zig leaves `value` in place and reads `this.value` again
             // for `toErrorInstance`; here we move it out once. Behaviour identical.
             HashResultValue::Err(err) => {
@@ -634,10 +634,10 @@ impl HashResult {
                 // SAFETY: `this` came from Box::into_raw in `HashResult::new`; the event
                 // loop hands sole ownership to this callback. `this_ref` is not used again.
                 unsafe { drop(Box::from_raw(this)) };
-                promise.reject_with_async_stack(global, error_instance)?;
+                promise.reject_with_async_stack(global, Ok(error_instance))?;
             }
             HashResultValue::Hash(value) => {
-                let js_string = ZigString::init(&value).to_js(global);
+                let js_string = JscZigString::init(&value).to_js(global);
                 drop(value); // Zig: defer bun.default_allocator.free(value)
                 // SAFETY: `this` came from Box::into_raw in `HashResult::new`; the event
                 // loop hands sole ownership to this callback. `this_ref` is not used again.

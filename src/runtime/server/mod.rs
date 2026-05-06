@@ -31,7 +31,7 @@ macro_rules! httplog {
 // `bun_jsc::debugger`, surfaced flat here for the server drafts that import it.
 pub mod jsc {
     pub use crate::jsc::*;
-    pub use bun_jsc::virtual_machine::VirtualMachine;
+    pub use bun_jsc::virtual_machine::{ExceptionList, VirtualMachine};
     pub use bun_jsc::debugger::{AsyncTaskTracker, DebuggerId};
 }
 

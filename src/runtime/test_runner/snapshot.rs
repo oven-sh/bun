@@ -335,7 +335,7 @@ impl<'a> Snapshots<'a> {
             file.file
                 .write_all(self.file_buf)
                 .map_err(|_| bun_core::err!("FailedToWriteSnapshotFile"))?;
-            file.file.close();
+            let _ = file.file.close();
             self.file_buf.clear();
             self.file_buf.shrink_to_fit();
 

@@ -1132,13 +1132,11 @@ impl FetchTasklet {
         if let Some(readable) = self.readable_stream_ref.get(self.global_this) {
             if let readable_stream::Source::Bytes(bytes) = readable.ptr {
                 // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
-                // PORT NOTE: ByteStream::parent() requires `SourceContext for ByteStream`
-                // which isn't impl'd yet (NewSource<ByteStream> is concrete via the
-                // `pub type Source` alias instead). Reach the enclosing Source via the
-                // same offset_of trick ByteStream::parent() uses internally.
-                let source = unsafe { (*bytes).parent() };
-                source.cancel_handler = None;
-                source.cancel_ctx = None;
+                // TODO(b2-blocked): `ByteStream::parent()` returns `&mut NewSource<ByteStream>`,
+                // but `ByteStream` doesn't impl `readable_stream::SourceContext` yet, so the
+                // generic struct bound is unsatisfied at this use site.
+                let _ = bytes;
+                todo!("blocked_on: webcore::byte_stream::ByteStream as SourceContext");
             }
         }
     }
@@ -1642,16 +1640,22 @@ impl FetchTasklet {
         bun_output::scoped_log!(
             FetchTasklet,
             "callback success={} ignore_data={} has_more={} bytes={}",
-            result.is_success(),
+            task_ref.result.is_success(),
             task_ref.ignore_data,
-            result.has_more,
-            result.body.as_ref().unwrap().list.len()
+            task_ref.result.has_more,
+            task_ref.result.body.as_ref().map(|b| b.list.len()).unwrap_or(0)
         );
 
         let prev_metadata = task_ref.result.metadata.take();
         let prev_cert_info = task_ref.result.certificate_info.take();
         let prev_can_stream = task_ref.result.can_stream;
-        task_ref.result = result;
+        // SAFETY: lifetime erasure — `HTTPClientResult<'a>` borrows the
+        // `*mut MutableString` we passed into `AsyncHTTP::init` (which lives
+        // in `self.response_buffer` for the FetchTasklet's lifetime). Zig had
+        // no lifetime here; transmute `'_` → `'static` to store it.
+        task_ref.result = unsafe {
+            core::mem::transmute::<HTTPClientResult<'_>, HTTPClientResult<'static>>(result)
+        };
         // can_stream is a one-shot signal to start the request body stream; don't let a
         // later coalesced result clobber it before the JS thread sees it.
         task_ref.result.can_stream = task_ref.result.can_stream || prev_can_stream;

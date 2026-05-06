@@ -44,7 +44,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
             }
             // SAFETY: same-size POD bitcast u8 -> i8
             let ival: i8 = unsafe { core::mem::transmute::<u8, i8>(val) };
-            Ok(SQLDataCell { tag: CellTag::int4, value: CellValue { int4: ival as i32 }, ..Default::default() })
+            Ok(SQLDataCell { tag: CellTag::Int4, value: CellValue { int4: ival as i32 }, ..Default::default() })
         }
         FieldType::MYSQL_TYPE_SHORT => {
             if raw {
@@ -54,7 +54,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
             if unsigned {
                 return Ok(SQLDataCell { tag: CellTag::Uint4, value: CellValue { uint4: reader.int::<u16>()? as u32 }, ..Default::default() });
             }
-            Ok(SQLDataCell { tag: CellTag::int4, value: CellValue { int4: reader.int::<i16>()? as i32 }, ..Default::default() })
+            Ok(SQLDataCell { tag: CellTag::Int4, value: CellValue { int4: reader.int::<i16>()? as i32 }, ..Default::default() })
         }
         FieldType::MYSQL_TYPE_INT24 => {
             if raw {
@@ -65,7 +65,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
                 // TODO(port): Zig `reader.int(u24)` — Rust has no native u24; NewReader port must expose int_u24()/int_i24()
                 return Ok(SQLDataCell { tag: CellTag::Uint4, value: CellValue { uint4: reader.int_u24()? }, ..Default::default() });
             }
-            Ok(SQLDataCell { tag: CellTag::int4, value: CellValue { int4: reader.int_i24()? }, ..Default::default() })
+            Ok(SQLDataCell { tag: CellTag::Int4, value: CellValue { int4: reader.int_i24()? }, ..Default::default() })
         }
         FieldType::MYSQL_TYPE_LONG => {
             if raw {
@@ -75,7 +75,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
             if unsigned {
                 return Ok(SQLDataCell { tag: CellTag::Uint4, value: CellValue { uint4: reader.int::<u32>()? }, ..Default::default() });
             }
-            Ok(SQLDataCell { tag: CellTag::int4, value: CellValue { int4: reader.int::<i32>()? }, ..Default::default() })
+            Ok(SQLDataCell { tag: CellTag::Int4, value: CellValue { int4: reader.int::<i32>()? }, ..Default::default() })
         }
         FieldType::MYSQL_TYPE_LONGLONG => {
             if raw {
@@ -106,7 +106,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
             }
             let val = reader.int::<i64>()?;
             if val >= i32::MIN as i64 && val <= i32::MAX as i64 {
-                return Ok(SQLDataCell { tag: CellTag::int4, value: CellValue { int4: i32::try_from(val).unwrap() }, ..Default::default() });
+                return Ok(SQLDataCell { tag: CellTag::Int4, value: CellValue { int4: i32::try_from(val).unwrap() }, ..Default::default() });
             }
             if bigint {
                 return Ok(SQLDataCell { tag: CellTag::int8, value: CellValue { int8: val }, ..Default::default() });

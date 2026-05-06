@@ -1013,7 +1013,6 @@ impl<'a> RouteLoader<'a> {
                 }
             }
         }
-        } // end  gated body
     }
 }
 

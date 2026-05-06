@@ -595,7 +595,11 @@ impl<'a> BunTest<'a> {
 
         // SAFETY: this_ptr was created by wrapping a RefDataPtr via asPromisePtr; we adopt the +1 it carried
         let refdata: RefDataPtr = unsafe { bun_ptr::IntrusiveRc::from_raw(this_ptr.as_promise_ptr::<RefData>()) };
-        // defer refdata.deref() → IntrusiveRc::drop at end of scope
+        // defer refdata.deref() — RefPtr<T> currently has NO Drop impl (src/ptr/ref_count.rs),
+        // so scope-exit drop is a silent no-op. Decrement the intrusive count explicitly so
+        // (a) RefData::destructor frees the box + Weak<BunTest>, and (b) a paired done() callback
+        // observes has_one_ref()==true on its turn instead of hanging.
+        let refdata = scopeguard::guard(refdata, |r| bun_ptr::IntrusiveRc::deref(&r));
         let has_one_ref = refdata.has_one_ref();
         let Some(this_strong) = refdata.buntest_weak.upgrade() else {
             bun_core::scoped_log!(bun_test_group, "bunTestThenOrCatch -> the BunTest is no longer active");
@@ -661,7 +665,10 @@ impl<'a> BunTest<'a> {
             return Ok(JSValue::UNDEFINED);
         };
         // defer this.ref = null → already taken above
-        // defer ref_in.deref() → IntrusiveRc::drop at end of scope
+        // defer ref_in.deref() — RefPtr<T> currently has NO Drop impl, so decrement the
+        // intrusive count explicitly at scope exit (mirrors .zig:472). Without this the
+        // paired promise then/catch path never sees has_one_ref()==true and the RefData leaks.
+        let ref_in = scopeguard::guard(ref_in, |r| bun_ptr::IntrusiveRc::deref(&r));
 
         // dupe the ref and enqueue a task to call the done callback.
         // this makes it so if you do something else after calling done(), the next test doesn't start running until the next tick.

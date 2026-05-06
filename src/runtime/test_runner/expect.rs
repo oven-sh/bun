@@ -211,17 +211,25 @@ impl Expect {
         parent.bun_test()
     }
 
-    pub const fn get_signature(
+    pub fn get_signature(
         matcher_name: &'static str,
         args: &'static str,
         not: bool,
     ) -> &'static str {
-        // TODO(port): comptime string concatenation — use const_format::concatcp! in Phase B
-        // const RECEIVED: &str = "<d>expect(<r><red>received<r><d>).<r>";
-        // if not { RECEIVED ++ "not<d>.<r>" ++ matcher_name ++ "<d>(<r>" ++ args ++ "<d>)<r>" }
-        // else   { RECEIVED ++ matcher_name ++ "<d>(<r>" ++ args ++ "<d>)<r>" }
-        let _ = (matcher_name, args, not);
-        "<d>expect(<r><red>received<r><d>).<r>{TODO}"
+        // .zig:103-109 comptime-concats `received ++ [not.] ++ matcher_name ++ (args)`.
+        // Rust has no comptime string concat across runtime call sites, so render
+        // at runtime and leak. This is the matcher-FAILURE path only — the test
+        // is about to print the diff and (in CI) the process exits — so the leak
+        // is bounded by failing-assertion count, which is acceptable. Returning
+        // `&'static str` keeps the ~280 call sites and `throw()`'s `signature:
+        // &'static str` parameter unchanged.
+        const RECEIVED: &str = "<d>expect(<r><red>received<r><d>).<r>";
+        let s = if not {
+            format!("{RECEIVED}not<d>.<r>{matcher_name}<d>(<r>{args}<d>)<r>")
+        } else {
+            format!("{RECEIVED}{matcher_name}<d>(<r>{args}<d>)<r>")
+        };
+        Box::leak(s.into_boxed_str())
     }
 
     pub fn throw_pretty_matcher_error(
@@ -559,7 +567,12 @@ impl Expect {
         // SAFETY: called by codegen finalize on mutator thread; `this` is the m_ctx Box payload
         unsafe {
             (*this).custom_label.deref_();
-            // parent: Option<RefDataPtr> — drop will deref the IntrusiveRc
+            // .zig:331 `if (this.parent) |parent| parent.deref();`
+            // RefDataPtr = RefPtr<RefData> has NO `Drop` impl (src/ptr/ref_count.rs)
+            // so the Box drop below would leak the +1 — release explicitly.
+            if let Some(parent) = (*this).parent.take() {
+                parent.deref();
+            }
             drop(Box::from_raw(this));
         }
     }
@@ -1021,6 +1034,10 @@ impl Expect {
 
             // 1. find the src loc of the snapshot
             let srcloc = call_frame.get_caller_src_loc(global_this);
+            // .zig:763 `defer srcloc.str.deref();` — bun_str::String is Copy
+            // with no Drop, so wrap in the RAII guard to release the +1 on
+            // every exit path (including the early returns below).
+            let _srcloc_str_guard = bun_str::OwnedString::new(srcloc.str);
             let file_id = buntest.file_id;
             let fget = runner.files.get(file_id);
 
@@ -1414,19 +1431,21 @@ impl Expect {
         if pass || silent { return Ok(pass); }
 
         // handle failure
-        let mut message_text: bun_str::String = bun_str::String::dead();
-        if message.is_undefined() {
-            message_text = bun_str::String::static_("No message was specified for this matcher.");
+        // .zig:1100-1101 `var message_text = bun.String.dead; defer message_text.deref();`
+        // bun_str::String is Copy with no Drop, so wrap in OwnedString to
+        // release the +1 returned by to_bun_string/from_js on scope exit.
+        let message_text: bun_str::OwnedString = if message.is_undefined() {
+            bun_str::OwnedString::new(bun_str::String::static_("No message was specified for this matcher."))
         } else if message.is_string() {
-            message_text = message.to_bun_string(global_this)?;
+            bun_str::OwnedString::new(message.to_bun_string(global_this)?)
         } else {
             if cfg!(debug_assertions) {
                 debug_assert!(message.is_callable()); // checked above
             }
 
             let message_result = message.call_with_global_this(global_this, &[])?;
-            message_text = bun_str::String::from_js(message_result, global_this)?;
-        }
+            bun_str::OwnedString::new(bun_str::String::from_js(message_result, global_this)?)
+        };
 
         let matcher_params = CustomMatcherParamsFormatter {
             colors: Output::enable_ansi_colors_stderr(),
@@ -1440,7 +1459,7 @@ impl Expect {
             matcher_params,
             Flags::default(),
             "{f}",
-            format_args!("{}", message_text),
+            format_args!("{}", message_text.get()),
         ))
     }
 

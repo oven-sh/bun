@@ -97,7 +97,7 @@ impl JSString {
     pub fn to_slice_clone(&self, global: &JSGlobalObject) -> JsResult<ZigStringSlice> {
         let mut str = ZigString::init(b"");
         self.to_zig_string(global, &mut str);
-        Ok(str.to_slice_clone()?)
+        Ok(str.to_slice_clone())
     }
 
     // Spec (JSString.zig:54-62): `str.toSliceZ(allocator)` guarantees a `[:0]`

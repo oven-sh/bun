@@ -1644,14 +1644,15 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                 break 'brk AtRulePrelude::Keyframes { name: keyframes_name, prefix };
             }
             if strings::eql_case_insensitive_ascii::<true>(name, b"page") {
-                let selectors: Vec<PageSelector> = gated_parse!(
-                    "PageSelector::parse",
-                    input
-                        .try_parse(|input2| {
-                            input2.parse_comma_separated(css_rules::page::PageSelector::parse)
-                        })
-                        .unwrap_or_default()
-                );
+                // Zig: tryParse(parseCommaSeparated(PageSelector.parse)) → on
+                // .err returns empty list. EOF inside `PageSelector::parse`
+                // (e.g. `@page foo` with nothing after) propagates here and is
+                // swallowed by `try_parse` — matches css_parser.zig:2073.
+                let selectors: Vec<PageSelector> = input
+                    .try_parse(|input2| {
+                        input2.parse_comma_separated(css_rules::page::PageSelector::parse)
+                    })
+                    .unwrap_or_default();
                 break 'brk AtRulePrelude::Page(selectors);
             }
             if strings::eql_case_insensitive_ascii::<true>(name, b"-moz-document") {
@@ -1672,8 +1673,7 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                 break 'brk AtRulePrelude::MozDocument;
             }
             if strings::eql_case_insensitive_ascii::<true>(name, b"layer") {
-                let names: SmallList<LayerName, 1> = gated_parse!(
-                    "LayerName::parse",
+                let names: SmallList<LayerName, 1> =
                     match input.parse_comma_separated(LayerName::parse) {
                         Ok(vv) => SmallList::<LayerName, 1>::from_list(vv),
                         Err(e) => {
@@ -1686,19 +1686,14 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                                 return Err(e);
                             }
                         }
-                    }
-                );
+                    };
                 break 'brk AtRulePrelude::Layer(names);
             }
             if strings::eql_case_insensitive_ascii::<true>(name, b"container") {
-                let container_name: Option<ContainerName> = gated_parse!(
-                    "ContainerName::parse",
-                    input.try_parse(css_rules::container::ContainerName::parse).ok()
-                );
-                let condition: ContainerCondition = gated_parse!(
-                    "ContainerCondition::parse",
-                    css_rules::container::ContainerCondition::parse(input)?
-                );
+                let container_name: Option<ContainerName> =
+                    input.try_parse(css_rules::container::ContainerName::parse).ok();
+                let condition: ContainerCondition =
+                    css_rules::container::ContainerCondition::parse(input)?;
                 break 'brk AtRulePrelude::Container { name: container_name, condition };
             }
             if strings::eql_case_insensitive_ascii::<true>(name, b"starting-style") {

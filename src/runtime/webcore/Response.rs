@@ -1017,12 +1017,13 @@ impl Response {
 
         if !arguments[0].is_undefined_or_null() && arguments[0].is_object() {
             if let Some(blob) = arguments[0].as_::<Blob>() {
+                // SAFETY: `as_` returned a live `*mut Blob` owned by the JS wrapper.
+                let blob = unsafe { &mut *blob };
                 if blob.is_s3() {
                     if !arguments[1].is_empty_or_undefined_or_null() {
-                        return global_this.throw_invalid_arguments(
+                        return Err(global_this.throw_invalid_arguments(
                             "new Response(s3File) do not support ResponseInit options",
-                            &[],
-                        );
+                        ));
                     }
                     let mut response = Response {
                         init: Init { status_code: 302, ..Default::default() },

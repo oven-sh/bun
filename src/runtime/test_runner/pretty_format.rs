@@ -1130,7 +1130,7 @@ impl<'a, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         }
         let mut classname = ZigString::EMPTY;
         value.get_class_name(global_this, &mut classname)?;
-        if !classname.is_empty() && !classname.eql_comptime(b"Object") {
+        if classname.len > 0 && !classname.eql_comptime(b"Object") {
             let _ = self.writer.write_fmt(format_args!("{} ", classname));
         }
 

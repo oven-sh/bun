@@ -814,7 +814,8 @@ impl FetchTasklet {
                 };
                 if !x509.is_null() {
                     let global_object = self.global_this;
-                    let _x509_guard = scopeguard::guard(x509, |x| x.free());
+                    let _x509_guard = scopeguard::guard(x509, |x| unsafe { X509_free(x) });
+                    // SAFETY: x509 is non-null, freshly parsed; freed by guard above.
                     let js_cert = match X509::to_js(unsafe { &mut *x509 }, global_object) {
                         Ok(v) => v,
                         Err(e) => {

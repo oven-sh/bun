@@ -447,15 +447,15 @@ impl<'a> Snapshots<'a> {
             // disarming via `into_inner` on every non-`?` exit below.
             let mut file = scopeguard::guard(
                 File { id: file_id, file: bun_sys::File::from_fd(fd) },
-                |mut f| f.file.close(),
+                |f| { let _ = bun_sys::close(f.file.handle); },
             );
 
             let file_text: Vec<u8> = file
                 .file
-                .read_to_end(usize::MAX)
+                .read_to_end()
                 .map_err(|e| Error::from(e))?;
 
-            let source = logger::Source::init_path_string(test_filename_z.as_bytes(), &file_text);
+            let source = logger::Source::init_path_string(test_filename_z.as_bytes(), file_text.as_slice());
 
             let mut result_text: Vec<u8> = Vec::new();
 

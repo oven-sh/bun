@@ -478,20 +478,114 @@ impl Response {
 
 pub struct Props {}
 
-// TODO(b2-blocked): bun_jsc::* — write_format ConsoleFormatter, getters/setters
-// host_fn bodies, constructor/from_js paths, FetchHeaders::HTTPHeaderName.
+// ─── un-gated getters & header helpers ──────────────────────────────────────
+impl Response {
+    pub fn redirect_location(&mut self) -> Option<ZigString> {
+        self.header(HTTPHeaderName::Location)
+    }
+
+    pub fn header(&mut self, name: HTTPHeaderName) -> Option<ZigString> {
+        // PORT NOTE: reshaped for borrowck — `FetchHeaders::fast_get` takes
+        // `&mut self` (FFI writes through an out-param), so we return the
+        // owned `ZigString` instead of a borrowed slice. Callers do
+        // `.slice()` themselves.
+        self.init.headers.as_mut()?.fast_get(name)
+    }
+
+    pub fn is_ok(&self) -> bool {
+        self.init.status_code >= 200 && self.init.status_code <= 299
+    }
+
+    // PORT NOTE: Zig getUrl vs getURL collide under snake_case — JS getter renamed get_url_js
+    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
+    pub fn get_url_js(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+        // https://developer.mozilla.org/en-US/docs/Web/API/Response/url
+        this.url.to_js(global_this)
+    }
+
+    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
+    pub fn get_response_type(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+        if this.init.status_code < 200 {
+            return Ok(global_this.common_strings().error());
+        }
+
+        Ok(global_this.common_strings().default())
+    }
+
+    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
+    pub fn get_status_text(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+        // https://developer.mozilla.org/en-US/docs/Web/API/Response/statusText
+        this.init.status_text.to_js(global_this)
+    }
+
+    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
+    pub fn get_redirected(this: &Self, _global: &JSGlobalObject) -> JSValue {
+        // https://developer.mozilla.org/en-US/docs/Web/API/Response/redirected
+        JSValue::from(this.redirected)
+    }
+
+    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
+    pub fn get_ok(this: &Self, _global: &JSGlobalObject) -> JSValue {
+        // https://developer.mozilla.org/en-US/docs/Web/API/Response/ok
+        JSValue::from(this.is_ok())
+    }
+
+    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
+    pub fn get_status(this: &Self, _global: &JSGlobalObject) -> JSValue {
+        // https://developer.mozilla.org/en-US/docs/Web/API/Response/status
+        JSValue::js_number(this.init.status_code as f64)
+    }
+
+    fn get_or_create_headers(&mut self, global_this: &JSGlobalObject) -> JsResult<&mut HeadersRef> {
+        if self.init.headers.is_none() {
+            self.init.headers = Some(HeadersRef::create_empty());
+
+            if let BodyValue::Blob(blob) = &self.body.value {
+                // SAFETY: Blob.content_type is always a valid (possibly empty) slice
+                // pointer (see Blob::default()/set_content_type contract).
+                let content_type = unsafe { &*blob.content_type };
+                if !content_type.is_empty() {
+                    self.init
+                        .headers
+                        .as_mut()
+                        .unwrap()
+                        .put(HTTPHeaderName::ContentType, content_type, global_this)?;
+                }
+            }
+        }
+
+        Ok(self.init.headers.as_mut().unwrap())
+    }
+
+    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
+    pub fn get_headers(this: &mut Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(this.get_or_create_headers(global_this)?.to_js(global_this))
+    }
+
+    pub fn get_content_type(&mut self) -> JsResult<Option<ZigStringSlice>> {
+        if let Some(headers) = self.init.headers.as_mut() {
+            if let Some(value) = headers.fast_get(HTTPHeaderName::ContentType) {
+                return Ok(Some(value.to_slice()));
+            }
+        }
+
+        if let BodyValue::Blob(blob) = &self.body.value {
+            // SAFETY: see note in get_or_create_headers.
+            let content_type = unsafe { &*blob.content_type };
+            if !content_type.is_empty() {
+                return Ok(Some(ZigStringSlice::from_utf8_never_free(content_type)));
+            }
+        }
+
+        Ok(None)
+    }
+}
+
+// TODO(b2-blocked): bun_jsc::* — write_format ConsoleFormatter, do_clone/
+// constructor/from_js paths (need codegen js::gc::stream slots, JsClass downcast,
+// Body::extract).
 #[cfg(any())]
 impl Response {
-    pub fn redirect_location(&self) -> Option<&[u8]> {
-        self.header(FetchHeaders::HTTPHeaderName::Location)
-    }
-
-    pub fn header(&self, name: FetchHeaders::HTTPHeaderName) -> Option<&[u8]> {
-        // TODO(port): Zig used `try` on fastGet but the enclosing fn had no error union;
-        // assuming infallible here.
-        self.init.headers.as_ref()?.fast_get(name).map(|str| str.slice())
-    }
-
     pub fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
         &mut self,
         formatter: &mut F,
@@ -1050,13 +1144,13 @@ impl Default for Init {
     }
 }
 
-// TODO(b2-blocked): bun_jsc::* — FetchHeaders::clone_this/create_from_js,
-// JSValue::is_cell/js_type/as_direct/fast_get/coerce_to_int64.
-#[cfg(any())]
 impl Init {
     pub fn clone(&self, ctx: &JSGlobalObject) -> JsResult<Init> {
         let headers = match &self.headers {
-            Some(head) => Some(head.clone_this(ctx)?),
+            // PORT NOTE: Zig `head.cloneThis(ctx)` returns `?*FetchHeaders` (deep
+            // copy on the C++ side, may be null on OOM/throw). Flatten the
+            // `Option<HeadersRef>` so a null clone leaves `headers` empty.
+            Some(head) => head.clone_this(ctx)?,
             None => None,
         };
         Ok(Init {
@@ -1081,12 +1175,17 @@ impl Init {
             return Ok(None);
         }
 
-        if js_type == bun_jsc::JSType::DOMWrapper {
+        // TODO(b2-blocked): bun_jsc::JsClass — Request/Response don't yet impl
+        // `JsClass`, so the DOMWrapper fast-path (`as_direct::<Request>`) is
+        // gated. Slow path below covers correctness; un-gate once codegen lands.
+        #[cfg(any())]
+        if js_type == JSType::DOMWrapper {
             // fast path: it's a Request object or a Response object
             // we can skip calling JS getters
             if let Some(req) = response_init.as_direct::<Request>() {
+                let req = unsafe { &mut *req };
                 if let Some(headers) = req.get_fetch_headers_unless_empty() {
-                    result.headers = Some(headers.clone_this(global_this)?);
+                    result.headers = headers.clone_this(global_this)?;
                 }
 
                 result.method = req.method;
@@ -1094,29 +1193,37 @@ impl Init {
             }
 
             if let Some(resp) = response_init.as_direct::<Response>() {
+                let resp = unsafe { &*resp };
                 return Ok(Some(resp.init.clone(global_this)?));
             }
         }
 
         if global_this.has_exception() {
-            return Err(bun_jsc::JsError::Thrown);
+            return Err(JsError::Thrown);
         }
 
-        if let Some(headers) = response_init.fast_get(global_this, bun_jsc::BuiltinName::Headers)? {
-            if let Some(orig) = headers.as_::<FetchHeaders>() {
+        if let Some(headers) = response_init.fast_get(global_this, BuiltinName::headers)? {
+            // PORT NOTE: `JSValue::as_::<FetchHeaders>()` requires `JsClass`;
+            // FetchHeaders is a hand-bound opaque, so use its dedicated
+            // `cast()` (wraps `WebCore__FetchHeaders__cast_`).
+            if let Some(orig) = FetchHeaders::cast(headers) {
+                // SAFETY: `orig` is a live `WebCore::FetchHeaders*` borrowed from JS.
+                let orig = unsafe { orig.as_ptr().as_mut().unwrap_unchecked() };
                 if !orig.is_empty() {
-                    result.headers = Some(orig.clone_this(global_this)?);
+                    result.headers = orig
+                        .clone_this(global_this)?
+                        .map(|p| unsafe { HeadersRef::adopt(p) });
                 }
             } else {
-                result.headers = FetchHeaders::create_from_js(global_this, headers)?;
+                result.headers = HeadersRef::create_from_js(global_this, headers)?;
             }
         }
 
         if global_this.has_exception() {
-            return Err(bun_jsc::JsError::Thrown);
+            return Err(JsError::Thrown);
         }
 
-        if let Some(status_value) = response_init.fast_get(global_this, bun_jsc::BuiltinName::Status)? {
+        if let Some(status_value) = response_init.fast_get(global_this, BuiltinName::status)? {
             let number = status_value.coerce_to_int64(global_this)?;
             if (200 <= number && number < 600) || number == 101 {
                 result.status_code = (u32::try_from(number).unwrap()) as u16;
@@ -1124,23 +1231,29 @@ impl Init {
                 if !global_this.has_exception() {
                     let err = global_this.create_range_error_instance(
                         "The status provided ({d}) must be 101 or in the range of [200, 599]",
-                        &[number.into()],
+                        format_args!(
+                            "The status provided ({}) must be 101 or in the range of [200, 599]",
+                            number
+                        ),
                     );
-                    return global_this.throw_value(err);
+                    return Err(global_this.throw_value(err));
                 }
-                return Err(bun_jsc::JsError::Thrown);
+                return Err(JsError::Thrown);
             }
         }
 
         if global_this.has_exception() {
-            return Err(bun_jsc::JsError::Thrown);
+            return Err(JsError::Thrown);
         }
 
-        if let Some(status_text) = response_init.get_truthy(global_this, "statusText")? {
+        if let Some(status_text) = response_init.get_truthy(global_this, b"statusText")? {
             result.status_text = BunString::from_js(status_text, global_this)?;
         }
 
-        if let Some(method_value) = response_init.get_truthy(global_this, "method")? {
+        // TODO(b2-blocked): bun_http_jsc — `Method::from_js` lives in the
+        // `bun_http_jsc` extension-trait crate (not yet a runtime dep).
+        #[cfg(any())]
+        if let Some(method_value) = response_init.get_truthy(global_this, b"method")? {
             if let Some(method) = Method::from_js(global_this, method_value)? {
                 result.method = method;
             }

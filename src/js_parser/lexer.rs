@@ -32,11 +32,6 @@ pub use tables::{
     TOKEN_TO_STRING as tokenToString,
 };
 
-#[cold]
-fn notimpl() -> ! {
-    Output::panic(format_args!("not implemented yet!"));
-}
-
 #[inline]
 fn tokenToString_get(token: T) -> &'static [u8] {
     tokenToString[token]
@@ -632,7 +627,7 @@ lexer_impl_header! {
         while iterator.next(&mut iter) {
             let width = iter.width;
             match iter.c {
-                (0x0D) => {
+                0x0D => {
                     // From the specification:
                     //
                     // 11.8.6.1 Static Semantics: TV and TRV
@@ -651,7 +646,7 @@ lexer_impl_header! {
                     continue;
                 }
 
-                (0x5C) => {
+                0x5C => {
                     if !iterator.next(&mut iter) {
                         return Ok(());
                     }
@@ -660,19 +655,19 @@ lexer_impl_header! {
                     let width2 = iter.width;
                     match c2 {
                         // https://mathiasbynens.be/notes/javascript-escapes#single
-                        (0x62) => {
+                        0x62 => {
                             buf.push(0x08);
                             continue;
                         }
-                        (0x66) => {
+                        0x66 => {
                             buf.push(0x0C);
                             continue;
                         }
-                        (0x6E) => {
+                        0x6E => {
                             buf.push(0x0A);
                             continue;
                         }
-                        (0x76) => {
+                        0x76 => {
                             // Vertical tab is invalid JSON
                             // We're going to allow it.
                             // if (comptime is_json) {
@@ -682,11 +677,11 @@ lexer_impl_header! {
                             buf.push(0x0B);
                             continue;
                         }
-                        (0x74) => {
+                        0x74 => {
                             buf.push(0x09);
                             continue;
                         }
-                        (0x72) => {
+                        0x72 => {
                             buf.push(0x0D);
                             continue;
                         }
@@ -773,7 +768,7 @@ lexer_impl_header! {
                             iter.c = c2;
                         }
                         // 2-digit hexadecimal
-                        (0x78) => {
+                        0x78 => {
                             let mut value: CodePoint = 0;
                             let mut c3: CodePoint;
                             let mut width3: u8;
@@ -824,7 +819,7 @@ lexer_impl_header! {
 
                             iter.c = value;
                         }
-                        (0x75) => {
+                        0x75 => {
                             // We're going to make this an i64 so we don't risk integer overflows
                             // when people do weird things
                             let mut value: i64 = 0;
@@ -952,7 +947,7 @@ lexer_impl_header! {
 
                             iter.c = value as CodePoint; // @truncate
                         }
-                        (0x0D) => {
+                        0x0D => {
                             if IS_JSON {
                                 self.end =
                                     start + iter.i as usize - width2 as usize;
@@ -1023,7 +1018,7 @@ lexer_impl_header! {
         let mut needs_decode = false;
         'string_literal: loop {
             match self.code_point {
-                (0x5C) => {
+                0x5C => {
                     needs_decode = true;
                     self.step();
 
@@ -1066,7 +1061,7 @@ lexer_impl_header! {
                     break 'string_literal;
                 }
 
-                (0x0D) => {
+                0x0D => {
                     if QUOTE != 0x60 {
                         self.add_default_error(b"Unterminated string literal")?;
                     }
@@ -1075,7 +1070,7 @@ lexer_impl_header! {
                     needs_decode = true;
                 }
 
-                (0x0A) => {
+                0x0A => {
                     // Implicitly-quoted strings end when they reach a newline OR end of file
                     // This only applies to .env
                     match QUOTE {
@@ -1089,7 +1084,7 @@ lexer_impl_header! {
                     }
                 }
 
-                (0x24) => {
+                0x24 => {
                     if QUOTE == 0x60 {
                         self.step();
                         if self.code_point == 0x7B {
@@ -2239,13 +2234,13 @@ lexer_impl_header! {
                 }
 
                 c if c == 0x27 => {
-                    self.parse_string_literal::<{ 0x27 }>()?;
+                    self.parse_string_literal::<0x27>()?;
                 }
                 c if c == 0x22 => {
-                    self.parse_string_literal::<{ 0x22 }>()?;
+                    self.parse_string_literal::<0x22>()?;
                 }
                 c if c == 0x60 => {
-                    self.parse_string_literal::<{ 0x60 }>()?;
+                    self.parse_string_literal::<0x60>()?;
                 }
 
                 c if c == 0x5F
@@ -3022,7 +3017,7 @@ lexer_impl_header! {
                 }
                 c if c == 0x27 => {
                     self.step();
-                    self.parse_jsx_string_literal::<{ b'\'' }>()?;
+                    self.parse_jsx_string_literal::<{b'\''}>()?;
                 }
                 c if c == 0x22 => {
                     self.step();

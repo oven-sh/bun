@@ -4,9 +4,10 @@
 //!
 //! Un-gated B-2: structural surface (struct fields, schedule, IO pool, worker
 //! map) is real so `ParseTask` / `bundle_v2` / `Graph` can name and drive it.
-//! The `Worker::create` tail that clones the `Transpiler` is sub-gated on
-//! `Transpiler::set_log` / `set_allocator` and `crate::Linker.resolver`
-//! (still opaque — see `transpiler.rs` Phase-A draft).
+//! `Worker::create` / `initialize_transpiler` are live via
+//! `Transpiler::{clone_for_worker, set_log, set_allocator}`; the
+//! `linker.resolver` backref stays a PORT NOTE while `crate::Linker` is the
+//! unit stub (wired by `configure_linker`).
 
 use core::mem::{ManuallyDrop, MaybeUninit};
 use core::ptr::{self, NonNull};
@@ -19,6 +20,7 @@ use bun_logger as Logger;
 use bun_sys::Fd;
 use bun_threading::{thread_pool as ThreadPoolLib, Mutex};
 
+#[allow(unused_imports)]
 use crate::cache::{self as CacheSet, Contents, Entry as CacheEntry, ExternalFreeFunction};
 use crate::linker_context_mod::StmtList;
 use crate::options::Target;
@@ -574,70 +576,65 @@ impl Worker {
         from: &Transpiler<'_>,
         allocator: *const ThreadLocalArena,
     ) {
-        // TODO(b2-blocked): the live `crate::Transpiler` lacks
-        // `Clone` / `set_log` / `set_allocator`, and `crate::Linker` is the
-        // unit stub `Linker(())` with no `.resolver` field. The full body
-        // un-gates with `transpiler.rs` Phase-A draft + `linker` module.
-        #[cfg(any())]
-        {
-            // Zig: `transpiler.* = from.*;`
-            // SAFETY: `from`'s `'a` arena outlives this worker (it's the
-            // BundleV2-owned transpiler); erase to `'static` to store it.
-            transpiler.write(unsafe {
-                core::mem::transmute::<Transpiler<'_>, Transpiler<'static>>(from.clone())
-            });
-            let t = unsafe { transpiler.assume_init_mut() };
-            t.set_log(unsafe { &mut *log });
-            t.set_allocator(unsafe { &*allocator });
-            t.linker.resolver = &mut t.resolver;
-            t.macro_context = Some(js_ast::Macro::MacroContext::init(t));
-            t.resolver.caches = CacheSet::Set::init();
-        }
-        let _ = (log, transpiler, from, allocator);
-        // PORT NOTE: §Forbidden — no silent no-op when the .zig has real logic.
-        // Falling through here would leave the `MaybeUninit<Transpiler>` slot
-        // unwritten and `transpiler_for_target` would `assume_init` UB. Fail
-        // loudly until the gated body above can un-gate.
-        todo!("Worker::initialize_transpiler: blocked on Transpiler::Clone/set_log/set_allocator + crate::Linker.resolver");
+        // Zig: `transpiler.* = from.*;`
+        // SAFETY: `from` is the `BundleV2`-owned transpiler which outlives every
+        // worker; the slot is `MaybeUninit` so `Drop` never runs on the bitwise
+        // copy (`clone_for_worker` contract).
+        transpiler.write(unsafe { Transpiler::<'static>::clone_for_worker(from) });
+        // SAFETY: written on the line above.
+        let t = unsafe { transpiler.assume_init_mut() };
+        t.set_log(log);
+        // SAFETY: `allocator` points at `Worker.heap` (initialized in `create`)
+        // which outlives `WorkerData`; lifetime erased to `'static` to match the
+        // slot's erased `Transpiler<'static>`.
+        t.set_allocator(unsafe { &*allocator });
+        // PORT NOTE: `transpiler.linker.resolver = &transpiler.resolver` —
+        // `crate::Linker` is still the unit stub `Linker(())` (lib.rs:158); the
+        // self-referential resolver backref is wired by `configure_linker` once
+        // the real `linker::Linker` lands in the `Transpiler` struct.
+        // PORT NOTE: `js_ast::Macro::MacroContext::init` is a `todo!()` stub
+        // (js_parser/lib.rs:108) over a unit `#[derive(Default)]` struct;
+        // `Default` is structurally identical and avoids panicking every worker
+        // create. Swap to `init(t)` once `bun_js_parser_jsc` owns the real type.
+        t.macro_context = Some(js_ast::Macro::MacroContext::default());
+        // PORT NOTE: `Resolver.caches` is `bun_resolver::cache::Set` (the
+        // MOVE_DOWN copy that broke the bundler→resolver cycle), not this
+        // crate's `cache::Set` aliased above as `CacheSet`.
+        t.resolver.caches = bun_resolver::cache::Set::init();
     }
 
     pub fn transpiler_for_target(&mut self, target: Target) -> &mut Transpiler<'static> {
-        // TODO(b2-blocked): `data.transpiler` is only written by
-        // `initialize_transpiler`, whose body is `#[cfg(any())]`-gated on
-        // `Transpiler::Clone/set_log/set_allocator`. Until that un-gates, the
-        // `assume_init_mut()` below would read uninitialized memory — gate the
-        // whole body alongside it and fail loudly so the dependency is explicit.
-        #[cfg(any())]
-        {
-            // SAFETY: callers only invoke this after `Worker::get` → `create()`.
-            let data = unsafe { self.data.assume_init_mut() };
-            // SAFETY: `create()` wrote `data.transpiler` via `initialize_transpiler`.
-            let primary = unsafe { data.transpiler.assume_init_mut() };
-            if target == Target::Browser && primary.options.target != target {
-                if data.other_transpiler.is_none() {
-                    // PORT NOTE: Zig wrote `undefined` into the Option payload then
-                    // borrowed it; mirror with an uninit Box.
-                    let mut slot: Box<MaybeUninit<Transpiler<'static>>> = Box::new_uninit();
-                    // SAFETY: ctx is a valid backref; `client_transpiler` must be
-                    // Some in this branch per Zig `.?`.
-                    let client: &Transpiler<'_> =
-                        unsafe { (*self.ctx).client_transpiler.unwrap_unchecked().as_ref() };
-                    Self::initialize_transpiler(data.log, &mut slot, client, self.allocator);
-                    // SAFETY: `initialize_transpiler` fully writes the slot.
-                    data.other_transpiler = Some(unsafe { slot.assume_init() });
-                }
-                let other = data.other_transpiler.as_deref_mut().unwrap();
-                debug_assert!(other.options.target == target);
-                return other;
+        // SAFETY: callers only invoke this after `Worker::get` → `create()`.
+        let data = unsafe { self.data.assume_init_mut() };
+        // SAFETY: `create()` wrote `data.transpiler` via `initialize_transpiler`.
+        let primary = unsafe { data.transpiler.assume_init_mut() };
+        if target == Target::Browser && primary.options.target != target {
+            if data.other_transpiler.is_none() {
+                // PORT NOTE: Zig wrote `undefined` into the Option payload then
+                // borrowed it; mirror with an uninit Box.
+                let mut slot: Box<MaybeUninit<Transpiler<'static>>> = Box::new_uninit();
+                // SAFETY: `ctx` is a valid backref; `client_transpiler` must be
+                // Some in this branch per Zig `.?`.
+                let client: &Transpiler<'_> =
+                    unsafe { (*self.ctx).client_transpiler.unwrap_unchecked().as_ref() };
+                Self::initialize_transpiler(data.log, &mut slot, client, self.allocator);
+                data.other_transpiler = Some(slot);
             }
+            // SAFETY: `initialize_transpiler` fully wrote the slot above (or on
+            // a prior call); the `MaybeUninit` wrapper exists only to suppress
+            // `Drop` on the bitwise-copied `Transpiler` (see `clone_for_worker`
+            // safety contract).
+            let other = unsafe {
+                data.other_transpiler
+                    .as_deref_mut()
+                    .unwrap_unchecked()
+                    .assume_init_mut()
+            };
+            debug_assert!(other.options.target == target);
+            return other;
+        }
 
-            return primary;
-        }
-        #[allow(unreachable_code)]
-        {
-            let _ = target;
-            todo!("Worker::transpiler_for_target: blocked on initialize_transpiler (Transpiler::Clone/set_log/set_allocator)");
-        }
+        primary
     }
 
     pub fn run(&mut self, ctx: &BundleV2<'_>) {
@@ -654,7 +651,7 @@ pub use bun_js_parser::Index;
 // PORT STATUS
 //   source:     src/bundler/ThreadPool.zig (364 lines)
 //   confidence: medium
-//   blocked_on: Transpiler::{Clone,set_log,set_allocator}; crate::Linker.resolver;
+//   blocked_on: crate::Linker.resolver (unit stub — see initialize_transpiler PORT NOTE);
 //               bun_alloc::MimallocArena (help_catch_memory_issues);
 //               bun_perf PerfEvent codegen (Bundler.Worker.create)
 //   notes:      Heavy `undefined`-init + self-referential allocator field →

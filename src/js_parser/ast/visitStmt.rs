@@ -505,11 +505,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 todo!("s_function: react_refresh hook signal emit");
             }
 
-            if core::ptr::eq(p.current_scope, p.module_scope) {
-                // blocked_on: handle_react_refresh_register in #[cfg(any())] block (P.rs:5422).
-                let _ = (original_name, ReactRefreshExportKind::Named);
-                todo!("s_function: handle_react_refresh_register");
-            }
+            // blocked_on: handle_react_refresh_register in #[cfg(any())] block (P.rs:5422)
+            //   AND hook_ctx_storage save/restore (see above). Gate loud unconditionally —
+            //   even off-module-scope, the parent's hook_ctx_storage was left active across
+            //   visit_func, mis-attributing inner hook calls. Cannot fall through silently.
+            let _ = (original_name, ReactRefreshExportKind::Named);
+            let _ = core::ptr::eq(p.current_scope, p.module_scope);
+            todo!("s_function: react_fast_refresh hook tracking + register");
         }
 
         // Zig: defer { if (mark_as_dead) p.is_control_flow_dead = original_is_dead; }

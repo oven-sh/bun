@@ -1426,6 +1426,115 @@ impl VirtualMachine {
     }
 }
 
+/// Spec VirtualMachine.zig:2032 `processFetchLog`. Synthesize a JS
+/// `BuildMessage` / `ResolveMessage` / `AggregateError` from the parser
+/// `log` and write it into `ret` as `.err(..)` so the C++ module-loader
+/// (`Bun__onFulfillAsyncModule`, ModuleLoader.cpp) rejects the import promise
+/// with a real Error instead of `undefined`.
+///
+/// Free function (file-level in Zig); takes `&JSGlobalObject` directly rather
+/// than `&mut VirtualMachine` because the body never touches VM state — Zig
+/// only used `globalThis.allocator()` for the format buffers, which is
+/// `bun.default_allocator` (= global mimalloc) and dropped per §Allocators.
+pub fn process_fetch_log(
+    global_this: &JSGlobalObject,
+    specifier: bun_string::String,
+    referrer: bun_string::String,
+    log: &mut logger::Log,
+    ret: &mut ErrorableResolvedSource,
+    err: bun_core::Error,
+) {
+    use crate::{BuildMessage, ResolveMessage, ZigString};
+
+    // Helper: `expr catch |e| globalThis.takeException(e)`.
+    let take = |r: JsResult<JSValue>| -> JSValue {
+        r.unwrap_or_else(|e| global_this.take_exception(e))
+    };
+
+    match log.msgs.len() {
+        0 => {
+            let msg = if err == bun_core::err!("UnexpectedPendingResolution") {
+                logger::Msg {
+                    data: logger::range_data(
+                        None,
+                        logger::Range::NONE,
+                        format!(
+                            "Unexpected pending import in \"{specifier}\". To automatically \
+                             install npm packages with Bun, please use an import statement \
+                             instead of require() or dynamic import().\nThis error can also \
+                             happen if dependencies import packages which are not referenced \
+                             anywhere. Worst case, run `bun install` and opt-out of the \
+                             node_modules folder until we come up with a better way to handle \
+                             this error."
+                        )
+                        .into_bytes(),
+                    ),
+                    ..Default::default()
+                }
+            } else {
+                logger::Msg {
+                    data: logger::range_data(
+                        None,
+                        logger::Range::NONE,
+                        format!("{} while building {specifier}", err.name()).into_bytes(),
+                    ),
+                    ..Default::default()
+                }
+            };
+            *ret = ErrorableResolvedSource::err(
+                err,
+                take(BuildMessage::create(global_this, msg)),
+            );
+        }
+
+        1 => {
+            // PORT NOTE: Zig copied `log.msgs.items[0]` by value; `Msg` is not
+            // `Copy` here, so move it out — the caller `defer log.deinit()`s
+            // immediately after, so consuming the vec is sound.
+            let msg = log.msgs.swap_remove(0);
+            let value = match msg.metadata {
+                logger::Metadata::Build => take(BuildMessage::create(global_this, msg)),
+                logger::Metadata::Resolve(_) => {
+                    // Zig converted `referrer` to UTF-8 and passed the slice;
+                    // `crate::ResolveMessage::create` takes `bun_string::String`
+                    // directly (it does its own to_utf8), so forward as-is.
+                    take(ResolveMessage::create(global_this, msg, referrer))
+                }
+            };
+            *ret = ErrorableResolvedSource::err(err, value);
+        }
+
+        _ => {
+            // Spec caps at 256 (`var errors_stack: [256]JSValue`). PERF(port):
+            // was inline switch — Zig stack-allocated; we heap-allocate the
+            // exact `len` since `JSValue` is a thin u64 and 256 * 8 B = 2 KiB
+            // is fine either way, but `Vec` avoids the uninit-array dance.
+            let len = log.msgs.len().min(256);
+            let mut errors: alloc::vec::Vec<JSValue> = alloc::vec::Vec::with_capacity(len);
+            for msg in log.msgs.drain(..len) {
+                let v = match msg.metadata {
+                    logger::Metadata::Build => take(BuildMessage::create(global_this, msg)),
+                    logger::Metadata::Resolve(_) => {
+                        take(ResolveMessage::create(global_this, msg, referrer))
+                    }
+                };
+                errors.push(v);
+            }
+
+            // PORT NOTE: Zig leaked the `allocPrint` buffer into a borrowed
+            // `ZigString` (the AggregateError copies it into a JSString). Keep
+            // `message_text` alive across the FFI call instead.
+            let message_text =
+                format!("{} errors building \"{specifier}\"", errors.len()).into_bytes();
+            let message = ZigString::init(&message_text);
+            *ret = ErrorableResolvedSource::err(
+                err,
+                take(global_this.create_aggregate_error(&errors, &message)),
+            );
+        }
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // `bun_runtime` / `bun_schema` / gated-sibling-dependent impl — preserved
 // verbatim from the Phase-A draft. Un-gate piecewise once the cycle breaks.
@@ -1476,7 +1585,6 @@ impl VirtualMachine {
     pub fn fetch_without_on_load_plugins<const FLAGS: FetchFlags>() { todo!() }
     pub fn resolve() { todo!() }
     pub fn resolve_maybe_needs_trailing_slash<const IS_A_FILE_PATH: bool>() { todo!() }
-    pub fn process_fetch_log() { todo!() }
     /// `VirtualMachine.deinit` — worker-thread teardown. Spec
     /// VirtualMachine.zig:2109. Only the `RuntimeHooks` dispatch is real; the
     /// remaining field deinits are gated on their `()` placeholders widening.

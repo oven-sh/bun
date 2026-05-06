@@ -179,19 +179,6 @@ pub struct LoaderHooks {
     /// `StandaloneModuleGraph`).
     pub resolve_embedded_node_file:
         unsafe fn(vm: *mut VirtualMachine, in_out_str: *mut bun_string::String) -> bool,
-    /// `VirtualMachine.processFetchLog(global, specifier, referrer, log,
-    /// &errorable, err)` (spec VirtualMachine.zig) — synthesizes a JS
-    /// Error/AggregateError from `log` messages and writes it into
-    /// `errorable.result.err.value`. Body lives in `bun_runtime` (constructs JS
-    /// error instances from logger::Msg).
-    pub process_fetch_log: unsafe fn(
-        global: *mut JSGlobalObject,
-        specifier: bun_string::String,
-        referrer: bun_string::String,
-        log: *mut logger::Log,
-        errorable: *mut ErrorableResolvedSource,
-        err: bun_core::Error,
-    ),
     /// `Bun__transpileFile` body — needs `options.getLoaderAndVirtualSource`,
     /// `node_module_module`, `webcore.Blob`, the concurrent-transpiler queue.
     /// Returns the in-flight promise when `allow_promise && async`, else null
@@ -260,10 +247,15 @@ pub fn fetch_builtin_module(
 }
 
 /// `VirtualMachine.processFetchLog(global, specifier, referrer, log, &errorable,
-/// err)` — thin shim over the §Dispatch hook. Synthesizes a JS error from the
-/// parser/resolve `log` and writes it into `errorable` so the C++ side
-/// (`Bun__onFulfillAsyncModule`, ModuleLoader.cpp:473) rejects the import
-/// promise with a real Error instead of `undefined`.
+/// err)` — synthesizes a JS error from the parser/resolve `log` and writes it
+/// into `errorable` so the C++ side (`Bun__onFulfillAsyncModule`,
+/// ModuleLoader.cpp:473) rejects the import promise with a real Error instead
+/// of `undefined`.
+///
+/// PORT NOTE: previously routed through `LoaderHooks` on the assumption the
+/// body needed `bun_runtime` types; it doesn't — `BuildMessage` /
+/// `ResolveMessage` live in this crate — so the hook slot was dropped and this
+/// forwards to the real impl in [`crate::virtual_machine::process_fetch_log`].
 pub fn process_fetch_log(
     global: *mut JSGlobalObject,
     specifier: bun_string::String,
@@ -272,15 +264,10 @@ pub fn process_fetch_log(
     errorable: &mut ErrorableResolvedSource,
     err: bun_core::Error,
 ) {
-    let Some(hooks) = loader_hooks() else {
-        // No high tier (unit tests) — fail closed: still mark `success ==
-        // false` with the bare error code so callers don't observe a stale ok.
-        *errorable = ErrorableResolvedSource::err(err, JSValue::UNDEFINED);
-        return;
-    };
-    // SAFETY: hook contract — `global` is the live JS-thread global; `log` /
-    // `errorable` are valid out-params for the call.
-    unsafe { (hooks.process_fetch_log)(global, specifier, referrer, log, errorable, err) }
+    // SAFETY: callers (AsyncModule::fulfill, Bun__transpileFile error path)
+    // pass the live JS-thread global; never null.
+    let global = unsafe { &*global };
+    crate::virtual_machine::process_fetch_log(global, specifier, referrer, log, errorable, err)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

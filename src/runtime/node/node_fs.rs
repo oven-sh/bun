@@ -4576,17 +4576,11 @@ impl NodeFS {
         let mut phase: u8 = if (total as u64) < size { 0 } else { 1 };
         loop {
             if args.aborted() { return Maybe::<ret::ReadFileWithOptions>::aborted(); }
+            // Spec parity (node_fs.zig:5327-5377): when `total == min(buf.capacity, max_size)`
+            // the next read receives an empty slice → returns 0 → `did_succeed = true; break`.
+            // Do NOT pre-grow here; growth happens only in the `total > size && amt != 0 &&
+            // !has_max_size` arm below.
             let upper = (buf.capacity() as u64).min(max_size) as usize;
-            if total >= upper {
-                // No room and no max_size cap reached → grow; otherwise we'd spin.
-                if total >= max_size as usize { did_succeed = true; break; }
-                if buf.try_reserve(8192).is_err() {
-                    return Maybe::Err(sys::Error::from_code(E::NOMEM, sys::Tag::read).with_path_like(&args.path));
-                }
-                let cap = buf.capacity();
-                buf.resize(cap, 0);
-                continue;
-            }
             match Syscall::read(fd, &mut buf[total..upper]) {
                 Maybe::Err(err) => return Maybe::Err(err),
                 Maybe::Ok(amt) => {
@@ -4639,8 +4633,9 @@ impl NodeFS {
         match args.encoding {
             Encoding::Buffer => {
                 buf.truncate(final_len);
+                let owned = buf.into_boxed_slice();
                 Maybe::Ok(ret::ReadFileWithOptions::Buffer(
-                    Buffer::from_bytes(buf.leak(), bun_jsc::JSType::Uint8Array),
+                    Buffer::from_bytes(Box::leak(owned), bun_jsc::JSType::Uint8Array),
                 ))
             }
             _ => {
@@ -4648,7 +4643,7 @@ impl NodeFS {
                     buf.truncate(final_len);
                     Maybe::Ok(ret::ReadFileWithOptions::String(buf.into_boxed_slice()))
                 } else {
-                    // null_terminated: ensure buf[total] == 0 and hand back as ZStr.
+                    // null_terminated: ensure buf[total] == 0 and hand back as ZBox.
                     if buf.len() < total + 1 {
                         if buf.try_reserve_exact(1).is_err() {
                             return Maybe::Err(sys::Error::from_code(E::NOMEM, sys::Tag::read).with_path_like(&args.path));
@@ -4658,10 +4653,8 @@ impl NodeFS {
                         buf[total] = 0;
                     }
                     buf.truncate(total + 1);
-                    let leaked = buf.leak();
-                    // SAFETY: NUL written at [total] above; len excludes the NUL.
                     Maybe::Ok(ret::ReadFileWithOptions::NullTerminated(
-                        unsafe { Box::from_raw(ZStr::from_raw_mut(leaked.as_mut_ptr(), total)) },
+                        bun_core::ZBox::from_vec_with_nul(buf),
                     ))
                 }
             }

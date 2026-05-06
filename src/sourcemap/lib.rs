@@ -1407,16 +1407,16 @@ pub fn parse_json(
 
     let content_slice: Option<Box<[u8]>> = if !matches!(hint, ParseUrlResultHint::MappingsOnly)
         && source_index.is_some()
-        && (source_index.unwrap() as usize) < sources_content.items.len()
+        && (source_index.unwrap() as usize) < sources_content.items.len as usize
     {
         'content: {
             let item = &sources_content.items.slice()[source_index.unwrap() as usize];
-            if !item.data.is_e_string() {
+            let Some(estr) = item.data.as_e_string() else {
                 break 'content None;
-            }
+            };
 
             // bun.handleOom(...) → panic on OOM, do not propagate
-            let str = item.data.as_e_string().string(arena).expect("OOM");
+            let str = estr.string(arena).expect("OOM");
             if str.is_empty() {
                 break 'content None;
             }

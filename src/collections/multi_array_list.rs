@@ -141,7 +141,7 @@ impl<T: MultiArrayElement> Slice<T> {
         self.len
     }
 
-    /// Returns the column slice for `field` typed as `&mut [F]`.
+    /// Returns the column slice for `field` typed as `&[F]`.
     ///
     /// # Safety
     /// `F` must be exactly the field's type. The derive macro generates
@@ -150,7 +150,30 @@ impl<T: MultiArrayElement> Slice<T> {
     // comptime from `field`. Rust cannot map a runtime enum value to a type;
     // the derive emits per-field safe accessors that call this with the
     // correct `F`.
-    pub unsafe fn items<F>(&self, field: T::Field) -> &mut [F] {
+    pub unsafe fn items<F>(&self, field: T::Field) -> &[F] {
+        if self.capacity == 0 {
+            return &[];
+        }
+        let byte_ptr = self.ptrs[T::field_index(field)];
+        if core::mem::size_of::<F>() == 0 {
+            // SAFETY: ZST slice; pointer is irrelevant.
+            return core::slice::from_raw_parts(ptr::NonNull::<F>::dangling().as_ptr(), self.len);
+        }
+        // SAFETY: caller guarantees `F` matches the field; `byte_ptr` is the
+        // aligned start of `capacity` contiguous `F`s and `len <= capacity`.
+        core::slice::from_raw_parts(byte_ptr.cast::<F>(), self.len)
+    }
+
+    /// Returns the column slice for `field` typed as `&mut [F]`.
+    ///
+    /// # Safety
+    /// `F` must be exactly the field's type. The derive macro generates
+    /// safe typed wrappers (`slice.field_name_mut()`); prefer those.
+    // PORT NOTE: Zig's `slice.items(field)` returned a mutable `[]F` freely
+    // because Zig has no aliasing model. In Rust, handing out `&mut [F]` from
+    // `&self` is UB under Stacked Borrows (PORTING.md §Forbidden: aliased &mut),
+    // so the mutable variant requires `&mut self`.
+    pub unsafe fn items_mut<F>(&mut self, field: T::Field) -> &mut [F] {
         if self.capacity == 0 {
             return &mut [];
         }
@@ -164,6 +187,23 @@ impl<T: MultiArrayElement> Slice<T> {
         core::slice::from_raw_parts_mut(byte_ptr.cast::<F>(), self.len)
     }
 
+    /// Raw column pointer for callers that need simultaneous mutable access to
+    /// multiple distinct columns (which `items_mut`'s `&mut self` borrow would
+    /// otherwise forbid). Zig allowed this freely via `slice.items(.a)` /
+    /// `slice.items(.b)`; in Rust the caller opts in per call site.
+    ///
+    /// # Safety
+    /// `F` must be exactly the field's type. The returned pointer is valid for
+    /// `self.len` reads/writes; the caller must not create overlapping `&mut`
+    /// references to the same column.
+    #[inline]
+    pub unsafe fn items_raw<F>(&self, field: T::Field) -> *mut F {
+        if self.capacity == 0 || core::mem::size_of::<F>() == 0 {
+            return ptr::NonNull::<F>::dangling().as_ptr();
+        }
+        self.ptrs[T::field_index(field)].cast::<F>()
+    }
+
     /// Raw column pointer for byte-level operations (internal use).
     #[inline]
     fn ptr(&self, field_index: usize) -> *mut u8 {
@@ -172,12 +212,16 @@ impl<T: MultiArrayElement> Slice<T> {
 
     pub fn set(&mut self, index: usize, elem: T) {
         // Zig: `inline for (fields) |f, i| self.items(i)[index] = @field(e, f.name)`
+        // — Zig's slice index is bounds-checked against `self.len`; mirror it.
+        assert!(index < self.len, "MultiArrayList::Slice::set: index out of bounds");
         // SAFETY: `index < len <= capacity`; ptrs are valid columns.
         unsafe { elem.scatter(&self.ptrs[..T::FIELD_COUNT], index) };
     }
 
     pub fn get(&self, index: usize) -> T {
         // Zig: `inline for (fields) |f, i| @field(result, f.name) = self.items(i)[index]`
+        // — Zig's slice index is bounds-checked against `self.len`; mirror it.
+        assert!(index < self.len, "MultiArrayList::Slice::get: index out of bounds");
         // SAFETY: `index < len <= capacity`; ptrs are valid columns.
         unsafe { T::gather(&self.ptrs[..T::FIELD_COUNT], index) }
     }

@@ -5991,12 +5991,16 @@ impl<'a> Resolver<'a> {
 
         let dir_path = strings::without_trailing_slash_windows_path(Dirname::dirname(path));
 
-        let dir_entry = match rfs.read_directory(dir_path, None, self.generation, self.store_fd) {
-            Ok(e) => e,
-            Err(_) => dec_ret!(None),
-        };
+        // SAFETY: PORT — `dir_entry` is a slot in the BSSMap singleton (ARENA, see
+        // LIFETIMES.tsv); convert to raw immediately so later `&mut self` calls
+        // (debug_logs / load_extension / dirname_store) don't trip borrowck.
+        let dir_entry: *mut Fs::file_system::real_fs::EntriesOption =
+            match unsafe { &mut *rfs }.read_directory(dir_path, None, self.generation, self.store_fd) {
+                Ok(e) => e as *mut _,
+                Err(_) => dec_ret!(None),
+            };
 
-        if let Fs::file_system::real_fs::EntriesOption::Err(err) = dir_entry {
+        if let Fs::file_system::real_fs::EntriesOption::Err(err) = unsafe { &*dir_entry } {
             match err.original_err {
                 e if e == bun_core::err!("ENOENT")
                     || e == bun_core::err!("FileNotFound")

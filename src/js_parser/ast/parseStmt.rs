@@ -484,8 +484,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         loc: logger::Loc,
     ) -> Result<Stmt> {
         let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::Block, loc)?;
-        // TODO(port): was `defer p.popScope()` — manual pop_scope before each return.
-
+        // Zig: `defer p.popScope()`. Wrap the body in an inner closure so `pop_scope` runs once on
+        // its `Result`, covering every `?` early-exit as well as explicit returns.
+        let result: Result<Stmt> = (|| {
         p.lexer.next()?;
 
         // "for await (let x of y) {}"
@@ -594,7 +595,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     r,
                     b"\"let\" must be wrapped in parentheses to be used as an expression here",
                 )?;
-                p.pop_scope();
                 return Err(err!("SyntaxError"));
             }
 
@@ -603,7 +603,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     p.lexer.expected_string(b"\"of\"")?;
                 } else {
                     p.lexer.unexpected()?;
-                    p.pop_scope();
                     return Err(err!("SyntaxError"));
                 }
             }
@@ -614,7 +613,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             p.lexer.expect(T::TCloseParen)?;
             let mut stmt_opts = ParseStatementOptions::default();
             let body = p.parse_stmt(&mut stmt_opts)?;
-            p.pop_scope();
             return Ok(p.s(
                 S::ForOf {
                     is_await: is_for_await,
@@ -634,7 +632,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             p.lexer.expect(T::TCloseParen)?;
             let mut stmt_opts = ParseStatementOptions::default();
             let body = p.parse_stmt(&mut stmt_opts)?;
-            p.pop_scope();
             return Ok(p.s(
                 S::ForIn {
                     init: init_.unwrap(),
@@ -671,7 +668,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.lexer.expect(T::TCloseParen)?;
         let mut stmt_opts = ParseStatementOptions::default();
         let body = p.parse_stmt(&mut stmt_opts)?;
-        p.pop_scope();
         Ok(p.s(
             S::For {
                 init: init_,
@@ -681,6 +677,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             },
             loc,
         ))
+        })();
+        p.pop_scope();
+        result
     }
 
     fn t_break(

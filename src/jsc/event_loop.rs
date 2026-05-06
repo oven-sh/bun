@@ -811,39 +811,6 @@ impl EventLoop {
         Ok(result)
     }
 
-    pub fn tick_immediate_tasks(&mut self, virtual_machine: &mut VirtualMachine) {
-        let mut to_run_now = core::mem::take(&mut self.immediate_tasks);
-
-        self.immediate_tasks = core::mem::take(&mut self.next_immediate_tasks);
-
-        let mut exception_thrown = false;
-        for task in to_run_now.iter() {
-            // SAFETY: ImmediateObject pointers are kept alive by JS heap until runImmediateTask consumes them
-            exception_thrown = unsafe { (**task).run_immediate_task(virtual_machine) };
-        }
-
-        if exception_thrown {
-            self.maybe_drain_microtasks();
-        }
-
-        if self.next_immediate_tasks.capacity() > 0 {
-            #[cold]
-            fn cold_merge(this: &mut EventLoop) {
-                let next = core::mem::take(&mut this.next_immediate_tasks);
-                this.immediate_tasks.extend_from_slice(&next);
-            }
-            cold_merge(self);
-        }
-
-        if to_run_now.capacity() > 1024 * 128 {
-            to_run_now = Vec::new();
-        } else {
-            to_run_now.clear();
-        }
-
-        self.next_immediate_tasks = to_run_now;
-    }
-
     // PORT NOTE: real body — installed by `bun_runtime` via
     // `virtual_machine::RuntimeHooks::auto_tick`. Preserved here for reference.
     pub fn _auto_tick_body(&mut self) {
@@ -1117,8 +1084,9 @@ pub extern "C" fn Bun__EventLoop__exit(global: *mut JSGlobalObject) {
 //   source:     src/jsc/event_loop.zig (748 lines)
 //   confidence: medium
 //   todos:      14
-//   notes:      B-2 un-gate. tick/enter/exit/drain/run_callback/concurrent-queue
-//               real; auto_tick*/tick_possibly_forever/wait_for_promise/
-//               tick_immediate_tasks gated behind cfg(any()) (bun_runtime cycle).
-//               Task dispatch hoisted to high tier via TICK_QUEUE_HOOK.
+//   notes:      B-2 un-gate. tick/enter/exit/drain/run_callback/concurrent-queue/
+//               tick_immediate_tasks real; auto_tick*/tick_possibly_forever/
+//               wait_for_promise gated behind cfg(any()) (bun_runtime cycle).
+//               Task + ImmediateObject dispatch hoisted to high tier via
+//               TICK_QUEUE_HOOK / RUN_IMMEDIATE_HOOK.
 // ──────────────────────────────────────────────────────────────────────────

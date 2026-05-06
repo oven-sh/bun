@@ -696,16 +696,11 @@ impl Tree {
 
                 if pkg_id == invalid_package_id {
                     if dependency.behavior.is_optional_peer() {
-                        // PORT NOTE: reshaped for borrowck — re-borrow list slices for hoist call.
-                        let list_slice = builder.list.slice();
-                        let trees = list_slice.items_tree_mut();
-                        let dependency_lists = list_slice.items_dependencies_mut();
-                        break 'hoisted trees[next_id as usize].hoist_dependency::<true, METHOD>(
+                        break 'hoisted Tree::hoist_dependency::<true, METHOD>(
+                            next_id,
                             hoist_root_id,
                             pkg_id,
                             &dependency,
-                            dependency_lists,
-                            trees,
                             builder,
                         )?;
                     }
@@ -721,15 +716,11 @@ impl Tree {
                     });
                 }
 
-                let list_slice = builder.list.slice();
-                let trees = list_slice.items_tree_mut();
-                let dependency_lists = list_slice.items_dependencies_mut();
-                trees[next_id as usize].hoist_dependency::<true, METHOD>(
+                Tree::hoist_dependency::<true, METHOD>(
+                    next_id,
                     hoist_root_id,
                     pkg_id,
                     &dependency,
-                    dependency_lists,
-                    trees,
                     builder,
                 )?
             };
@@ -852,24 +843,38 @@ impl Tree {
     // 1 (return hoisted) - de-duplicate (skip) the package
     // 2 (return id) - move the package to the top directory
     // 3 (return dependency_loop) - leave the package at the same (relative) directory
-    // TODO(port): borrowck — Zig passes `&mut self` (an element of `trees`) plus `trees: &mut [Tree]`
-    // and `builder: &mut Builder` simultaneously. This overlaps mutable borrows. Phase B will need
-    // to either pass `self_id: Id` and index into `trees`, or restructure with raw pointers.
+    //
+    // PORT NOTE: reshaped for borrowck — Zig passed `&mut self` (an element of `trees`) plus
+    // `trees: &mut [Tree]`, `dependency_lists: &mut [...]`, and `builder: &mut Builder`
+    // simultaneously, which overlaps mutable borrows. The body never mutates `self`, `trees`,
+    // or `dependency_lists`, so we take `self_id: Id` by value and re-derive read-only views
+    // from `builder.list` on each access. The only long-lived `&mut` is `builder`.
     fn hoist_dependency<const AS_DEFINED: bool, const METHOD: BuilderMethod>(
-        &mut self,
+        self_id: Id,
         hoist_root_id: Id,
         package_id: PackageID,
         dependency: &Dependency,
-        dependency_lists: &mut [DependencyIDList],
-        trees: &mut [Tree],
         builder: &mut Builder<'_, METHOD>,
     ) -> Result<HoistDependencyResult, SubtreeError> {
         // TODO(port): narrow error set
-        let this_dependencies = self
-            .dependencies
-            .get(dependency_lists[self.id as usize].as_slice());
-        for i in 0..this_dependencies.len() {
-            let dep_id = this_dependencies[i];
+        // Tree is Copy — snapshot the fields we need so we don't hold a borrow of builder.list.
+        let this: Tree = {
+            let list_slice = builder.list.slice();
+            list_slice.items_tree()[self_id as usize]
+        };
+        let this_dependencies_len = {
+            let list_slice = builder.list.slice();
+            this.dependencies
+                .get(list_slice.items_dependencies()[self_id as usize].as_slice())
+                .len()
+        };
+        for i in 0..this_dependencies_len {
+            // Re-derive on each access so `builder` is not borrowed across the loop body.
+            let dep_id = {
+                let list_slice = builder.list.slice();
+                this.dependencies
+                    .get(list_slice.items_dependencies()[self_id as usize].as_slice())[i]
+            };
             let dep = &builder.dependencies[dep_id as usize];
             if dep.name_hash != dependency.name_hash {
                 continue;

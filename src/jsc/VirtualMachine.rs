@@ -3286,8 +3286,8 @@ impl VirtualMachine {
             // PORT NOTE: Zig comptime-generated `AggregateErrorIterator` with
             // `extern "C"` callbacks. `JSValue::for_each` takes a C-ABI fn
             // pointer + erased ctx, so thread the captures through a struct.
-            struct AggCtx {
-                formatter: *mut crate::console_object::Formatter,
+            struct AggCtx<'a> {
+                formatter: *mut crate::console_object::Formatter<'a>,
                 writer: *mut bun_core::io::Writer,
                 allow_ansi_color: bool,
                 allow_side_effects: bool,
@@ -3299,7 +3299,7 @@ impl VirtualMachine {
                 next_value: JSValue,
             ) {
                 // SAFETY: `ctx` is `&mut AggCtx` for the duration of `for_each`.
-                let ctx = unsafe { &mut *(ctx as *mut AggCtx) };
+                let ctx = unsafe { &mut *(ctx as *mut AggCtx<'_>) };
                 // SAFETY: per-thread VM.
                 let vm = unsafe { &mut *VirtualMachine::get() };
                 // SAFETY: `formatter`/`writer` borrow the caller's stack
@@ -3332,7 +3332,7 @@ impl VirtualMachine {
             };
             let _ = errors.for_each(
                 global_ref,
-                (&mut ctx as *mut AggCtx).cast(),
+                (&mut ctx as *mut AggCtx<'_>).cast(),
                 agg_iter,
             );
             return;

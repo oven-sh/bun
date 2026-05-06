@@ -943,9 +943,100 @@ pub mod fs {
         }
 
         /// Port of `RealFS.bustEntriesCache` in `fs.zig`.
-        pub fn bust_entries_cache(&mut self, _path: &[u8]) -> bool {
-            // TODO(b2-blocked): BSSMap remove + generation bump.
-            false
+        pub fn bust_entries_cache(&mut self, file_path: &[u8]) -> bool {
+            self.entries.remove(file_path)
+        }
+
+        /// Port of `RealFS.kind` in `fs.zig` — lstat + (if symlink) open + fstat +
+        /// readlink to populate an `EntryCache`. POSIX path; the Windows reparse-
+        /// point/`GetFinalPathNameByHandle` arm lives in `fs_full::RealFS::kind`
+        /// and is wired once the inline surface switches over.
+        pub fn kind(
+            &mut self,
+            dir_: &[u8],
+            base: &[u8],
+            existing_fd: Fd,
+            store_fd: bool,
+        ) -> core::result::Result<EntryCache, bun_core::Error> {
+            use bun_paths::resolve_path::{join_abs_string_buf, platform};
+            use bun_sys::{FileKind, kind_from_mode};
+
+            let mut cache = EntryCache {
+                kind: EntryKind::File,
+                symlink: PathString::EMPTY,
+                fd: Fd::INVALID,
+            };
+
+            let combo: [&[u8]; 2] = [dir_, base];
+            let mut outpath = bun_paths::PathBuffer::uninit();
+            let entry_path_len =
+                join_abs_string_buf::<platform::Auto>(self.cwd, &mut outpath[..], &combo).len();
+
+            outpath[entry_path_len + 1] = 0;
+            outpath[entry_path_len] = 0;
+            // SAFETY: outpath[entry_path_len] == 0 written above
+            let absolute_path_c =
+                unsafe { ZStr::from_raw(outpath.as_ptr(), entry_path_len) };
+
+            #[cfg(windows)]
+            {
+                // TODO(b2-blocked): Windows reparse-point + GetFinalPathNameByHandle
+                // realpath chain — full body in `fs_full::RealFS::kind`. Fall through
+                // to the lstat path which is correct for non-reparse files/dirs.
+                let _ = (existing_fd, store_fd);
+                let stat_ = bun_sys::lstat(absolute_path_c)?;
+                let file_kind = kind_from_mode(stat_.st_mode as bun_sys::Mode);
+                cache.kind = if file_kind == FileKind::Directory { EntryKind::Dir } else { EntryKind::File };
+                return Ok(cache);
+            }
+
+            #[cfg(not(windows))]
+            {
+                let stat_ = bun_sys::lstat(absolute_path_c)?;
+                let is_symlink = kind_from_mode(stat_.st_mode as bun_sys::Mode) == FileKind::SymLink;
+                let mut file_kind = kind_from_mode(stat_.st_mode as bun_sys::Mode);
+
+                let mut symlink: &[u8] = b"";
+
+                if is_symlink {
+                    let file: Fd = if let Some(valid) = existing_fd.unwrap_valid() {
+                        valid
+                    } else if store_fd {
+                        bun_sys::open_file_absolute_z(absolute_path_c, bun_sys::OpenFlags::READ_ONLY)?.handle()
+                    } else {
+                        // PORT NOTE: Zig `bun.openFileForPath` (O_PATH on Linux); fall back to RDONLY.
+                        bun_sys::open(absolute_path_c, bun_sys::O::PATH | bun_sys::O::CLOEXEC, 0)?
+                    };
+                    FileSystem::set_max_fd(file.native());
+
+                    // PORT NOTE: Zig `defer { if (...) file.close() else cache.fd = file }` runs on
+                    // BOTH success and error paths — use scopeguard so close-or-store happens even if
+                    // fstat()/get_fd_path() return early with `?`.
+                    let need_to_close_files = self.need_to_close_files();
+                    let cache_ptr: *mut EntryCache = &mut cache;
+                    let _guard = scopeguard::guard(file, move |file| {
+                        if (!store_fd || need_to_close_files) && !existing_fd.is_valid() {
+                            let _ = bun_sys::close(file);
+                        } else if bun_core::feature_flags::STORE_FILE_DESCRIPTORS {
+                            // SAFETY: `cache_ptr` points into a stack local that outlives this guard.
+                            unsafe { (*cache_ptr).fd = file };
+                        }
+                    });
+
+                    let file_stat = bun_sys::fstat(*_guard)?;
+                    symlink = bun_sys::get_fd_path(*_guard, &mut outpath)?;
+                    file_kind = kind_from_mode(file_stat.st_mode as bun_sys::Mode);
+                }
+
+                debug_assert!(file_kind != FileKind::SymLink);
+
+                cache.kind = if file_kind == FileKind::Directory { EntryKind::Dir } else { EntryKind::File };
+                if !symlink.is_empty() {
+                    cache.symlink = PathString::init(FilenameStore::instance().append_slice(symlink)?);
+                }
+
+                Ok(cache)
+            }
         }
 
         /// Port of `RealFS.needToCloseFiles` in `fs.zig`.

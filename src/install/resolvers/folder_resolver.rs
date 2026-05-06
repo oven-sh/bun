@@ -1,3 +1,4 @@
+#![cfg(any())] // reconciler-6: re-gate (1200+ errors); stub surface in lib.rs
 use core::fmt;
 
 use bun_collections::{HashMap, IdentityContext};

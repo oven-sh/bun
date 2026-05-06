@@ -494,7 +494,6 @@ impl<'a> Printer<'a> {
         str_
     }
 
-    #[cfg(any())] // blocked_on: lookup_ident_or_ref + serializer oom signature
     pub fn write_ident_or_ref(
         &mut self,
         ident: css_values::ident::IdentOrRef,
@@ -502,76 +501,79 @@ impl<'a> Printer<'a> {
     ) -> PrintResult<()> {
         if !handle_css_module {
             if let Some(identifier) = ident.as_ident() {
-                return css::serializer::serialize_identifier(identifier.v, self)
+                // SAFETY: Ident.v is an arena-owned slice packed by IdentOrRef::from_ident.
+                let v: &[u8] = unsafe { &*identifier.v };
+                return css::serializer::serialize_identifier(v, self)
                     .map_err(|_| self.add_fmt_error());
             } else {
                 let ref_ = ident.as_ref().unwrap();
-                let Some(symbol) = self.symbols.get(ref_) else {
+                let Some(symbol) = self.symbols.get_const(ref_) else {
                     return Err(self.add_fmt_error());
                 };
-                // PORT NOTE: reshaped for borrowck
+                // PORT NOTE: copy out the &'static [u8] before re-borrowing &mut self.
                 let name = symbol.original_name;
                 return css::serializer::serialize_identifier(name, self)
                     .map_err(|_| self.add_fmt_error());
             }
         }
 
-        let str_ = self.lookup_ident_or_ref(ident);
-        // PORT NOTE: reshaped for borrowck
-        // TODO(port): avoid this clone — Zig borrowed the slice while passing &mut self.
-        let str_ = str_.to_vec();
-        css::serializer::serialize_identifier(&str_, self).map_err(|_| self.add_fmt_error())
+        // `lookup_ident_or_ref` returns an `'a`-lifetime slice (arena/symbol-table),
+        // independent of the `&self` borrow, so no clone is needed before re-borrowing
+        // `&mut self` for the writer.
+        let str_: &'a [u8] = self.lookup_ident_or_ref(ident);
+        css::serializer::serialize_identifier(str_, self).map_err(|_| self.add_fmt_error())
     }
 
     /// Writes a CSS identifier to the underlying destination, escaping it
     /// as appropriate. If the `css_modules` option was enabled, then a hash
     /// is added, and the mapping is added to the CSS module.
-    #[cfg(any())] // blocked_on: css_modules::Pattern::write closure-arity reshape
-    pub fn write_ident(&mut self, ident: &[u8], handle_css_module: bool) -> PrintResult<()> {
+    pub fn write_ident(&mut self, ident: &'a [u8], handle_css_module: bool) -> PrintResult<()> {
         if handle_css_module {
-            if let Some(css_module) = &mut self.css_module {
-                // TODO(port): borrowck — Zig captured `&mut self` inside the closure while
-                // `css_module` (a field of self) is also borrowed. Phase B may need to split
-                // the borrow or restructure pattern.write to take the printer separately.
-                struct Closure<'p, 'a> {
-                    first: bool,
-                    printer: *mut Printer<'a>,
-                    _p: core::marker::PhantomData<&'p mut Printer<'a>>,
-                }
-                let mut closure = Closure {
-                    first: true,
-                    printer: self as *mut _,
-                    _p: core::marker::PhantomData,
-                };
+            if self.css_module.is_some() {
+                // PORT NOTE: borrowck reshape — Zig captured `&mut self` inside the closure
+                // while `css_module` (a field of self) was simultaneously borrowed. We instead
+                // copy the `'a`-lifetime references out of `css_module` up front so the
+                // closure can hold the sole `&mut self`.
                 let source_index = self.loc.source_index as usize;
-                css_module.config.pattern.write(
-                    &css_module.hashes[source_index],
-                    &css_module.sources[source_index],
-                    ident,
-                    &mut closure,
-                    |self_: &mut Closure<'_, '_>, s1: &[u8], replace_dots: bool| {
-                        // PERF: stack fallback?
-                        // SAFETY: closure.printer is valid for the duration of pattern.write;
-                        // no other &mut to *self exists across this call.
-                        let printer = unsafe { &mut *self_.printer };
-                        let s: &[u8] = if !replace_dots {
-                            s1
-                        } else {
-                            Printer::replace_dots(printer.allocator, s1)
-                        };
-                        printer.col += u32::try_from(s.len()).unwrap();
-                        if self_.first {
-                            self_.first = false;
-                            css::serializer::serialize_identifier(s, printer)
-                                .unwrap_or_else(|e| css::oom(e));
-                        } else {
-                            css::serializer::serialize_name(s, printer)
-                                .unwrap_or_else(|e| css::oom(e));
-                        }
-                    },
-                );
+                let allocator = self.allocator;
+                let (config, hash, source): (&'a css::css_modules::Config, &'a [u8], &'a [u8]) = {
+                    let m = self.css_module.as_ref().unwrap();
+                    let sources: &'a Vec<String> = m.sources;
+                    (m.config, m.hashes[source_index], sources[source_index].as_bytes())
+                };
 
-                css_module.add_local(self.allocator, ident, ident, self.loc.source_index);
+                let mut first = true;
+                let mut err: Option<PrintErr> = None;
+                config.pattern.write(hash, source, ident, |s1: &[u8], replace_dots: bool| {
+                    if err.is_some() {
+                        return;
+                    }
+                    // PERF: stack fallback?
+                    let s: &[u8] = if !replace_dots {
+                        s1
+                    } else {
+                        Printer::replace_dots(allocator, s1)
+                    };
+                    self.col += u32::try_from(s.len()).unwrap();
+                    let r = if first {
+                        first = false;
+                        css::serializer::serialize_identifier(s, self)
+                    } else {
+                        css::serializer::serialize_name(s, self)
+                    };
+                    if let Err(e) = r {
+                        err = Some(e);
+                    }
+                });
+                if let Some(e) = err {
+                    return Err(e);
+                }
+
+                let src_idx = self.loc.source_index;
+                self.css_module
+                    .as_mut()
+                    .unwrap()
+                    .add_local(allocator, ident, ident, src_idx);
                 return Ok(());
             }
         }
@@ -579,7 +581,6 @@ impl<'a> Printer<'a> {
         css::serializer::serialize_identifier(ident, self).map_err(|_| self.add_fmt_error())
     }
 
-    #[cfg(any())] // blocked_on: css_modules::Pattern::write closure-arity reshape
     pub fn write_dashed_ident(
         &mut self,
         ident: &DashedIdent,
@@ -587,36 +588,52 @@ impl<'a> Printer<'a> {
     ) -> PrintResult<()> {
         self.write_str(b"--")?;
 
-        if let Some(css_module) = &mut self.css_module {
-            if css_module.config.dashed_idents {
-                // TODO(port): same borrowck reshape as write_ident — closure captures &mut self
-                // while css_module (field of self) is borrowed.
-                let source_index = self.loc.source_index as usize;
-                let this_ptr: *mut Printer<'a> = self as *mut _;
-                css_module.config.pattern.write(
-                    &css_module.hashes[source_index],
-                    &css_module.sources[source_index],
-                    &ident.v[2..],
-                    // SAFETY: this_ptr is valid for the duration of pattern.write
-                    unsafe { &mut *this_ptr },
-                    |self_: &mut Printer<'_>, s1: &[u8], replace_dots: bool| {
-                        let s: &[u8] = if !replace_dots {
-                            s1
-                        } else {
-                            Printer::replace_dots(self_.allocator, s1)
-                        };
-                        self_.col += u32::try_from(s.len()).unwrap();
-                        css::serializer::serialize_name(s, self_).unwrap_or_else(|e| css::oom(e));
-                    },
-                );
+        // SAFETY: DashedIdent.v is an arena-owned slice valid for `'a`.
+        let ident_v: &'a [u8] = unsafe { &*ident.v };
 
-                if is_declaration {
-                    css_module.add_dashed(self.allocator, ident.v, self.loc.source_index);
+        let dashed_idents = match &self.css_module {
+            Some(m) => m.config.dashed_idents,
+            None => false,
+        };
+        if dashed_idents {
+            // PORT NOTE: same borrowck reshape as `write_ident`.
+            let source_index = self.loc.source_index as usize;
+            let allocator = self.allocator;
+            let (config, hash, source): (&'a css::css_modules::Config, &'a [u8], &'a [u8]) = {
+                let m = self.css_module.as_ref().unwrap();
+                let sources: &'a Vec<String> = m.sources;
+                (m.config, m.hashes[source_index], sources[source_index].as_bytes())
+            };
+
+            let mut err: Option<PrintErr> = None;
+            config.pattern.write(hash, source, &ident_v[2..], |s1: &[u8], replace_dots: bool| {
+                if err.is_some() {
+                    return;
                 }
+                let s: &[u8] = if !replace_dots {
+                    s1
+                } else {
+                    Printer::replace_dots(allocator, s1)
+                };
+                self.col += u32::try_from(s.len()).unwrap();
+                if let Err(e) = css::serializer::serialize_name(s, self) {
+                    err = Some(e);
+                }
+            });
+            if let Some(e) = err {
+                return Err(e);
+            }
+
+            if is_declaration {
+                let src_idx = self.loc.source_index;
+                self.css_module
+                    .as_mut()
+                    .unwrap()
+                    .add_dashed(allocator, ident_v, src_idx);
             }
         }
 
-        css::serializer::serialize_name(&ident.v[2..], self).map_err(|_| self.add_fmt_error())
+        css::serializer::serialize_name(&ident_v[2..], self).map_err(|_| self.add_fmt_error())
     }
 
     pub fn write_byte(&mut self, char_: u8) -> Result<(), bun_alloc::AllocError> {
@@ -773,5 +790,5 @@ type SymbolMap = bun_logger::symbol::Map;
 //   source:     src/css/printer.zig (581 lines)
 //   confidence: medium
 //   todos:      10
-//   notes:      ctx field lifetime + write_ident/write_dashed_ident closure borrows need Phase-B reshape; get_written_amt stubbed (write_fmt panics) until bun_io::Write exposes written_len()
+//   notes:      ctx field lifetime needs Phase-B reshape (raw *const StyleContext); get_written_amt stubbed (write_fmt panics) until bun_io::Write exposes written_len(); write_ident/write_dashed_ident borrowck reshaped by hoisting 'a refs out of css_module before closure
 // ──────────────────────────────────────────────────────────────────────────

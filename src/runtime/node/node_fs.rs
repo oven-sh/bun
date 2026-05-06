@@ -109,12 +109,12 @@ pub enum Flavor {
 // ──────────────────────────────────────────────────────────────────────────
 // Async task type aliases
 // ──────────────────────────────────────────────────────────────────────────
-// TODO(b2-blocked): async task machinery (AsyncFSTask / UVFSRequest /
-// NewAsyncCpTask / AsyncReaddirRecursiveTask) depends on JSPromise::Strong,
-// AsyncTaskTracker, ConcurrentTask, EventLoopHandle — all unresolved on the
-// current bun_jsc surface. Gated as a unit; sync `impl NodeFS` below stays live.
-#[cfg(any())]
-mod _async_gated {
+// AsyncFSTask / UVFSRequest / NewAsyncCpTask / AsyncReaddirRecursiveTask are
+// the thread-pool wrappers that back every `fs.promises.*` call (and the shell
+// `cp` builtin). Un-gated so the sync `impl NodeFS` body — which references
+// `AsyncCpTask` / `AsyncReaddirRecursiveTask` directly — type-checks, and so
+// `ShellAsyncCpTask` is visible to `crate::shell::builtins::cp`.
+mod _async_tasks {
 use super::*;
 
 pub mod async_ {

@@ -115,7 +115,7 @@ impl ReplCommand {
         vm.load_extra_env_and_source_code_printer();
 
         vm.is_main_thread = true;
-        VirtualMachine::set_is_main_thread_vm(true);
+        bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.with(|c| c.set(true));
 
         // Store VM reference in REPL (safe - no JS allocation)
         repl.vm = vm;

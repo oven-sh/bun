@@ -15,6 +15,10 @@ use bun_bundler::{entry_points::MacroEntryPoint, Transpiler};
 use bun_http::MimeType;
 use bun_string::strings;
 
+// PORT NOTE: Zig spec aliases `const js = bun.jsc.C;` (Macro.zig:642) — the
+// C-API surface is intentionally `#[deprecated]` upstream but is the spec'd
+// call path for `JSObjectCallAsFunctionReturnValueHoldingAPILock`.
+#[allow(deprecated)]
 use bun_jsc::{
     self as jsc, c as js, zig_exception, ConsoleObject, JSArrayIterator, JSGlobalObject,
     JSPropertyIterator, JSValue, JsError, MarkedArgumentBuffer, ModuleLoader, WebCore,
@@ -383,6 +387,7 @@ pub struct Runner;
 type VisitMap = HashMap<JSValue, Expr>;
 
 thread_local! {
+    #[allow(deprecated)]
     static ARGS_BUF: RefCell<[js::JSObjectRef; 3]> =
         const { RefCell::new([core::ptr::null_mut(); 3]) };
     // PORT NOTE: `Holder` has no `const ZEROED` in the stub surface; use the

@@ -367,9 +367,7 @@ pub enum Action {
     GetArrayBuffer,
     GetBytes,
     GetBlob,
-    // TODO(b2-blocked): bun_core::form_data (gated). Payload boxed; concrete type
-    // swaps to `Box<bun_core::form_data::AsyncFormData>` once un-gated.
-    GetFormData(Option<Box<()>>),
+    GetFormData(Option<Box<bun_core::form_data::AsyncFormData>>),
 }
 
 impl Action {
@@ -1620,11 +1618,9 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
 
         let value = self.get_body_value();
         let mut blob = value.use_as_any_blob_allow_non_utf8_string();
-        Ok(JSPromise::wrap(
-            global_object,
-            lifetime_wrap(AnyBlob::to_json, Lifetime::Share),
-            (&mut blob, global_object),
-        ))
+        Ok(JSPromise::wrap(global_object, |g| {
+            blob.to_json(g, Lifetime::Share)
+        })?)
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(method)]

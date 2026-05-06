@@ -1403,9 +1403,11 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     debug_assert!(IS_SYNC);
 
     if can_block_entire_thread_to_reduce_cpu_usage_in_fast_path {
-        jsc_vm.counters.mark(jsc::counters::Field::SpawnSyncBlocking);
+        // SAFETY: jsc_vm_ptr is the live thread VM.
+        unsafe { &mut *jsc_vm_ptr }.counters.mark(jsc::counters::Field::SpawnSyncBlocking);
         let debug_timer = Output::DebugTimer::start();
-        subprocess.process.wait(true);
+        // SAFETY: see `process_mut` doc.
+        unsafe { process_mut(&subprocess.process) }.wait(true);
         bun_output::scoped_log!(Subprocess, "spawnSync fast path took {}", debug_timer);
 
         // watchOrReap will handle the already exited case for us.

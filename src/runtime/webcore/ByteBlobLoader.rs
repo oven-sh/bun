@@ -173,7 +173,9 @@ impl ByteBlobLoader {
         // here we take ownership via detach_store() up front.
         let store = self.detach_store()?;
         if self.offset == 0 && self.remain == store.size() && self.content_type.is_empty() {
-            if let Some(blob) = store.to_any_blob() {
+            // SAFETY: `StoreRef` deref is `&Store`; `to_any_blob` needs `&mut` to move bytes out.
+            // We hold the only outstanding ref (just detached) so exclusive access is sound.
+            if let Some(blob) = unsafe { (*store.as_ptr()).to_any_blob() } {
                 drop(store); // defer store.deref()
                 return Some(blob);
             }
@@ -186,8 +188,9 @@ impl ByteBlobLoader {
         // Make sure to preserve the content-type.
         // https://github.com/oven-sh/bun/issues/14988
         if !self.content_type.is_empty() {
-            blob.content_type = core::mem::take(&mut self.content_type);
-            blob.content_type_was_set = !blob.content_type.is_empty();
+            let ct = core::mem::take(&mut self.content_type);
+            blob.content_type_was_set = !ct.is_empty();
+            blob.content_type = Box::into_raw(ct) as *const [u8];
             blob.content_type_allocated = self.content_type_allocated;
             self.content_type_allocated = false;
         }
@@ -196,7 +199,7 @@ impl ByteBlobLoader {
         Some(blob::Any::Blob(blob))
     }
 
-    pub fn detach_store(&mut self) -> Option<Arc<BlobStore>> {
+    pub fn detach_store(&mut self) -> Option<StoreRef> {
         if let Some(store) = self.store.take() {
             self.done = true;
             return Some(store);

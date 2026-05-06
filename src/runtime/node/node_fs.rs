@@ -723,7 +723,7 @@ pub mod async_ {
                 completion_ctx: core::ptr::null_mut(),
                 completion: |_, _| {},
                 path: core::ptr::slice_from_raw_parts(core::ptr::null(), 0),
-                task: WorkPoolTask { callback: Self::work_pool_callback, ..Default::default() },
+                task: work_pool_task(Self::work_pool_callback),
             }
         }
     }
@@ -945,7 +945,7 @@ impl<R, A: FsArgument, const F: NodeFSFunctionEnum> AsyncFSTask<R, A, F> {
             args,
             result: unsafe { core::mem::zeroed() }, // SAFETY: written before read
             global_object: global_object as *const _,
-            task: WorkPoolTask { callback: Self::work_pool_callback, ..Default::default() },
+            task: work_pool_task(Self::work_pool_callback),
             r#ref: KeepAlive::default(),
             tracker: AsyncTaskTracker::init(vm),
         });
@@ -1112,7 +1112,7 @@ impl<const IS_SHELL: bool> CpSingleTask<IS_SHELL> {
             cp_task: parent,
             src,
             dest,
-            task: WorkPoolTask { callback: Self::work_pool_callback, ..Default::default() },
+            task: work_pool_task(Self::work_pool_callback),
         });
         WorkPool::schedule(&mut Box::leak(task).task);
     }
@@ -1221,7 +1221,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
             // SAFETY: all-zero is a valid Maybe<ret::Cp>; written before read
             result: core::cell::UnsafeCell::new(unsafe { core::mem::zeroed() }),
             evtloop: EventLoopHandle::init(vm.event_loop.cast()),
-            task: WorkPoolTask { callback: Self::work_pool_callback, ..Default::default() },
+            task: work_pool_task(Self::work_pool_callback),
             r#ref: KeepAlive::default(),
             tracker: AsyncTaskTracker::init(vm),
             subtask_count: AtomicUsize::new(1),
@@ -1249,7 +1249,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
             // SAFETY: all-zero is a valid Maybe<ret::Cp>; written before read
             result: core::cell::UnsafeCell::new(unsafe { core::mem::zeroed() }),
             evtloop: EventLoopHandle::Mini(mini),
-            task: WorkPoolTask { callback: Self::work_pool_callback, ..Default::default() },
+            task: work_pool_task(Self::work_pool_callback),
             r#ref: KeepAlive::default(),
             tracker: AsyncTaskTracker { id: 0 },
             subtask_count: AtomicUsize::new(1),
@@ -1847,7 +1847,7 @@ impl AsyncReaddirRecursiveTask {
             args,
             has_result: AtomicBool::new(false),
             global_object: global_object as *const _,
-            task: WorkPoolTask { callback: Self::work_pool_callback, ..Default::default() },
+            task: work_pool_task(Self::work_pool_callback),
             r#ref: KeepAlive::default(),
             tracker: AsyncTaskTracker::init(vm),
             subtask_count: AtomicUsize::new(1),

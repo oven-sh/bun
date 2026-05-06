@@ -3600,15 +3600,35 @@ where
 
         if !this.flags.has_abort_handler() {
             if let Some(req) = this.req {
-                return write!(
-                    writer,
-                    "{}",
-                    bstr::BStr::new(RequestContext::<ThisServer, SSL, DBG, H3>::req_url(req)),
-                );
+                // Inlined `req_url` body to avoid carrying the
+                // `Transport`/`NativePromiseContextType` bounds onto this
+                // formatter impl.
+                // SAFETY: req is the live uWS request handle.
+                let url: &[u8] = unsafe {
+                    if H3 {
+                        (*(req as *mut bun_uws_sys::h3::Request)).url()
+                    } else {
+                        (*(req as *mut bun_uws_sys::Request)).url()
+                    }
+                };
+                return write!(writer, "{}", bstr::BStr::new(url));
             }
         }
 
         writer.write_str("/")
+    }
+}
+
+// `WebCore::Wrap<Self>::init(this)` requires `Self: PipeHandler`.
+impl<ThisServer, const SSL_ENABLED: bool, const DEBUG_MODE: bool, const HTTP3: bool>
+    WebCore::PipeHandler for RequestContext<ThisServer, SSL_ENABLED, DEBUG_MODE, HTTP3>
+where
+    TransportFor<SSL_ENABLED, HTTP3>: Transport,
+    ThisServer: ServerLike + 'static,
+    Self: NativePromiseContext::NativePromiseContextType,
+{
+    fn on_pipe(&mut self, stream: WebCore::streams::Result) {
+        Self::on_pipe(self, stream)
     }
 }
 

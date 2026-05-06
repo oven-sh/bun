@@ -191,6 +191,24 @@ fn zstr_from_boxed_with_nul(buf: Box<[u8]>) -> Box<ZStr> {
     }
 }
 
+// Local shim: upstream `bun_jsc::AnyPromise` (lib.rs) lacks `.result()`; only
+// the per-file `jsc::any_promise::AnyPromise<'a>` has it. Hand-dispatch here.
+trait AnyPromiseResultExt {
+    fn result(self, vm: &jsc::VM) -> JSValue;
+}
+impl AnyPromiseResultExt for jsc::AnyPromise {
+    #[inline]
+    fn result(self, vm: &jsc::VM) -> JSValue {
+        match self {
+            // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
+            jsc::AnyPromise::Normal(p) => unsafe { (*p).result(vm) },
+            jsc::AnyPromise::Internal(_p) => {
+                todo!("blocked_on: bun_jsc::JSInternalPromise::result")
+            }
+        }
+    }
+}
+
 // Module-level type aliases replacing the unstable inherent associated types
 // (`pub type App = …` inside `impl NewServer`).
 pub type ServerApp<const SSL: bool> = uws::NewApp<SSL>;

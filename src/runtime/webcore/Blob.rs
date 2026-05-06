@@ -765,16 +765,13 @@ impl FormDataContext {
 
         match entry {
             FormDataEntry::String(value) => {
-                joiner.push_static(b"\"
-
-");
+                joiner.push_static(b"\"\r\n\r\n");
                 joiner.push_owned(value.to_slice().into_vec().into_boxed_slice());
             }
             FormDataEntry::File { blob, filename } => {
                 joiner.push_static(b"\"; filename=\"");
                 joiner.push_owned(filename.to_slice().into_vec().into_boxed_slice());
-                joiner.push_static(b"\"
-");
+                joiner.push_static(b"\"\r\n");
 
                 let content_type = if !blob.content_type_slice().is_empty() {
                     blob.content_type_slice()
@@ -783,9 +780,7 @@ impl FormDataContext {
                 };
                 joiner.push_static(b"Content-Type: ");
                 joiner.push_cloned(content_type);
-                joiner.push_static(b"
-
-");
+                joiner.push_static(b"\r\n\r\n");
 
                 if blob.store.is_some() {
                     if blob.size == MAX_SIZE {

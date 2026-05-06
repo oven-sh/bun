@@ -476,16 +476,16 @@ pub mod Jest {
             let arguments = callframe.arguments_old::<2>().slice();
 
             if arguments.len() < 1 || !arguments[0].is_string() {
-                return global_object.throw(format_args!("Bun.jest() expects a string filename"));
+                return Err(global_object.throw(format_args!("Bun.jest() expects a string filename")));
             }
             let str = arguments[0].to_slice(global_object)?;
             let slice = str.slice();
 
             if !bun_paths::is_absolute(slice) {
-                return global_object.throw(format_args!(
+                return Err(global_object.throw(format_args!(
                     "Bun.jest() expects an absolute file path, got '{}'",
                     bstr::BStr::new(slice)
-                ));
+                )));
             }
         }
 
@@ -503,7 +503,7 @@ pub mod Jest {
     ) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<1>().slice();
         if arguments.len() < 1 || !arguments[0].is_number() {
-            return global_object.throw(format_args!("setTimeout() expects a number (milliseconds)"));
+            return Err(global_object.throw(format_args!("setTimeout() expects a number (milliseconds)")));
         }
 
         let timeout_ms: u32 =

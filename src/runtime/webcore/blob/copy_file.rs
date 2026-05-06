@@ -132,11 +132,11 @@ impl<'a> CopyFile<'a> {
     pub fn do_close(&mut self) {
         let close_input = !matches!(
             self.destination_file_store.pathlike,
-            jsc::node::PathOrFileDescriptor::Fd(_)
+            PathOrFileDescriptor::Fd(_)
         ) && self.destination_fd != Fd::INVALID;
         let close_output = !matches!(
             self.source_file_store.pathlike,
-            jsc::node::PathOrFileDescriptor::Fd(_)
+            PathOrFileDescriptor::Fd(_)
         ) && self.source_fd != Fd::INVALID;
 
         // Apply destination mode using fchmod before closing (for POSIX platforms)

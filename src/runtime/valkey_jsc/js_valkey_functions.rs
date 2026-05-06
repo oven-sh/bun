@@ -1691,7 +1691,7 @@ impl JSValkeyClient {
         } else if channel_or_many.is_string() {
             // It is a single string channel
             let Some(channel) = from_js(global, channel_or_many)? else {
-                return global.throw_invalid_argument_type("subscribe", "channel", "string");
+                return Err(global.throw_invalid_argument_type("subscribe", "channel", "string"));
             };
             // PERF(port): was assume_capacity
             redis_channels.push(channel);
@@ -1699,27 +1699,24 @@ impl JSValkeyClient {
             this._subscription_ctx
                 .upsert_receive_handler(global, channel_or_many, handler_callback)?;
         } else {
-            return global.throw_invalid_argument_type("subscribe", "channel", "string or array");
+            return Err(global.throw_invalid_argument_type("subscribe", "channel", "string or array"));
         }
 
         let command = Command {
             command: b"SUBSCRIBE",
             args: CommandArgs::Args(&redis_channels),
-            meta: CommandMeta {
-                subscription_request: true,
-                ..Default::default()
-            },
+            meta: CommandMeta::default() | CommandMeta::SUBSCRIPTION_REQUEST,
         };
         let promise = match this.send(global, frame.this(), &command) {
             Ok(p) => p,
             Err(err) => {
                 // If we catch an error, we need to clean up any handlers we may have added and fall out of subscription mode
                 this._subscription_ctx.clear_all_receive_handlers(global)?;
-                return protocol::valkey_error_to_js(
+                return Ok(protocol::valkey_error_to_js(
                     global,
-                    "Failed to send SUBSCRIBE command",
+                    Some(b"Failed to send SUBSCRIBE command"),
                     err,
-                );
+                ));
             }
         };
 

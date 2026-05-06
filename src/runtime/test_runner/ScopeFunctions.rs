@@ -167,9 +167,12 @@ impl ScopeFunctions {
 pub fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let _g = group_log::begin();
 
-    let Some(this) = ScopeFunctions::from_js(frame.this()) else {
+    let Some(this_ptr) = ScopeFunctions::from_js(frame.this()) else {
         return Err(global.throw(format_args!("Expected callee to be ScopeFunctions")));
     };
+    // SAFETY: `from_js` returned non-null; the JS wrapper keeps the boxed
+    // ScopeFunctions alive for the duration of this call (we hold `frame.this()`).
+    let this: &mut ScopeFunctions = unsafe { &mut *this_ptr };
     let line_no = jest::capture_test_line_number(frame, global);
 
     let buntest_strong = bun_test::js_fns::clone_active_strong(

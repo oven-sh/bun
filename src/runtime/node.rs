@@ -96,6 +96,9 @@ pub mod fs;
 #[path = "node/buffer.rs"]
 pub mod buffer;
 
+#[path = "node/node_cluster_binding.rs"]
+pub mod node_cluster_binding;
+
 #[path = "node/node_net_binding.rs"]
 pub mod node_net_binding;
 

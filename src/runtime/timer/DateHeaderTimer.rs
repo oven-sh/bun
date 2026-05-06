@@ -42,9 +42,11 @@ impl DateHeaderTimer {
     /// 1. If the timer was recently updated (< 1 second ago), just reschedule it
     /// 2. If the timer is stale (> 1 second since last update), update the date immediately and reschedule
     pub fn enable(&mut self, vm: &mut VirtualMachine, now: &Timespec) {
-        debug_assert!(self.event_loop_timer.state != EventLoopTimerState::Active);
+        debug_assert!(self.event_loop_timer.state != EventLoopTimerState::ACTIVE);
 
-        let last_update = self.event_loop_timer.next;
+        // PORT NOTE: `EventLoopTimer.next` is the lower-tier `ElTimespec` stub
+        // (same {sec,nsec} layout) until bun_event_loop switches to bun_core::Timespec.
+        let last_update = Timespec { sec: self.event_loop_timer.next.sec, nsec: self.event_loop_timer.next.nsec };
         let elapsed = now.duration(&last_update).ms();
 
         // If the last update was more than 1 second ago, the date is stale
@@ -57,7 +59,8 @@ impl DateHeaderTimer {
             );
 
             // update_date() is an expensive function.
-            vm.uws_loop().update_date();
+            // SAFETY: uws_loop() returns a valid live *mut Loop owned by the VM.
+            unsafe { (*vm.uws_loop()).update_date() };
 
             vm.timer.update(&mut self.event_loop_timer, &now.add_ms(MS_PER_S));
         } else {

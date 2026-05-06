@@ -29,8 +29,7 @@ use crate::api::bun_process::{
 use crate::api::bun::Terminal;
 use crate::api::js_bun_spawn_bindings;
 use crate::jsc::ipc as IPC;
-#[path = "../../node/node_cluster_binding.rs"]
-mod node_cluster_binding;
+use crate::node::node_cluster_binding;
 use crate::timer::{EventLoopTimer, EventLoopTimerState};
 use crate::webcore::{self, AbortSignal, Blob, FileSink};
 

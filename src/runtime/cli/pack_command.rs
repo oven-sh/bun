@@ -1434,12 +1434,12 @@ type BufferedFileReader = bun_core::deprecated::BufferedReader<{ 1024 * 512 }, b
 // (`Publish.Context(true)` vs `void`). Rust const generics cannot vary return
 // type directly; using an associated-type-like Option for now. Phase B: split
 // into `pack()` and `pack_for_publish()` or use a trait.
-pub type PackReturn<const FOR_PUBLISH: bool> = Option<Publish::Context<true>>;
+pub type PackReturn<'a, const FOR_PUBLISH: bool> = Option<Publish::Context<'a, true>>;
 
 pub fn pack<const FOR_PUBLISH: bool>(
     ctx: &mut Context<'_>,
     abs_package_json_path: &ZStr,
-) -> Result<PackReturn<FOR_PUBLISH>, PackError<FOR_PUBLISH>> {
+) -> Result<PackReturn<'static, FOR_PUBLISH>, PackError<FOR_PUBLISH>> {
     let manager = &mut *ctx.manager;
     let log_level = manager.options.log_level;
     let mut json = match manager.workspace_package_json_cache.get_with_path(
@@ -1954,7 +1954,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
     let mut file_reader: Box<BufferedFileReader> = Box::new(BufferedFileReader::default());
     // TODO(port): Zig used allocator.create + manual init; Box::new equivalent
 
-    let mut entry = Archive::Entry::new2(archive);
+    let mut entry = ArchiveEntry::new2(archive);
 
     {
         let mut progress = Progress::default();
@@ -3247,7 +3247,7 @@ pub mod bindings {
             _ => {}
         }
 
-        let mut archive_entry: *mut Archive::Entry = core::ptr::null_mut();
+        let mut archive_entry: *mut ArchiveEntry = core::ptr::null_mut();
         let mut header_status = archive.read_next_header(&mut archive_entry);
 
         let mut read_buf: Vec<u8> = Vec::new();

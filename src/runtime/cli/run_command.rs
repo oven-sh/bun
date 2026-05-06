@@ -937,7 +937,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 // loop without a crate-cycle.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct Run {
+pub(crate) pub struct Run {
     vm: *mut VirtualMachine,
     entry_path: &'static [u8],
     /// Snapshot of `ctx.runtime_options.eval.eval_and_print` (the full
@@ -4595,7 +4595,9 @@ impl<'a> RemoteImageDownload<'a> {
     }
 }
 
-pub struct BunXFastPath;
+// NOTE: uninhabited enum (type-namespace only) so it does not collide with the
+// `declare_scope!(BunXFastPath, …)` static of the same name in value-namespace.
+pub enum BunXFastPath {}
 
 impl BunXFastPath {
     // TODO(port): module-level mutable WPathBuffer globals → thread_local RefCell

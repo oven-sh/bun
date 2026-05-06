@@ -219,7 +219,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         while let Some(task) = iter.next() {
             match &task.result {
                 Store::TaskResult::None => {
-                    if cfg!(feature = "ci_assert") {
+                    if cfg!(debug_assertions) {
                         debug_assert!(false);
                     }
                     installer.on_task_complete(task.entry_id, Store::CompleteStatus::Success);
@@ -257,7 +257,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
                 }
                 Store::TaskResult::Done => {
-                    if cfg!(feature = "ci_assert") {
+                    if cfg!(debug_assertions) {
                         // .monotonic is okay because we should have already synchronized with the
                         // completed task thread by virtue of popping from the `UnboundedQueue`.
                         let step = installer.store.entries.items_step()[task.entry_id.get()]
@@ -986,7 +986,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 }
 
                 manager.extracted_count += 1;
-                bun_core::analytics::Features::extracted_packages_inc(1);
+                bun_core::analytics::Features::extracted_packages_inc();
 
                 if C::HAS_ON_EXTRACT {
                     if C::IS_PACKAGE_INSTALLER {
@@ -1559,16 +1559,16 @@ pub fn is_network_task_required(this: &PackageManager, task_id: Task::Id) -> boo
     }
 }
 
-pub fn generate_network_task_for_tarball(
-    this: &mut PackageManager,
+pub fn generate_network_task_for_tarball<'a>(
+    this: &'a mut PackageManager,
     task_id: Task::Id,
     url: &[u8],
     is_required: bool,
     dependency_id: DependencyID,
-    package: Lockfile::Package,
+    package: Package,
     patch_name_and_version_hash: Option<u64>,
-    authorization: NetworkTask::Authorization,
-) -> Result<Option<&mut NetworkTask>, NetworkTask::ForTarballError> {
+    authorization: Authorization,
+) -> Result<Option<&'a mut NetworkTask>, ForTarballError> {
     if this.has_created_network_task(task_id, is_required) {
         return Ok(None);
     }

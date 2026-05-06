@@ -1,7 +1,7 @@
 use bun_collections::ArrayHashMap;
 use bun_core::Error;
 use bun_install::{Dependency, Lockfile, PackageManager, PackageNameHash};
-use bun_install::lockfile::{Package, StringBuilder};
+use super::{package::Package, StringBuilder};
 use bun_js_parser::Expr;
 use bun_logger as logger;
 use bun_output::{declare_scope, scoped_log};

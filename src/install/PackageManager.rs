@@ -63,15 +63,13 @@ impl LazyBool<fn(&PackageManager) -> bool> {
 /// let bun_runtime register the backing storage at startup.
 // MOVE_DOWN(b0): bun_runtime::api::bun::process::WaiterThread → bun_spawn
 pub struct WaiterThread;
-impl WaiterThread {
-    /// Hook (GENUINE b0): set by `bun_runtime::init()` to point at
-    /// `process::WaiterThreadPosix::set_should_use_waiter_thread`.
-    pub static SET_SHOULD_USE_WAITER_THREAD: core::sync::atomic::AtomicPtr<()> =
-        core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
-}
+/// Hook (GENUINE b0): set by `bun_runtime::init()` to point at
+/// `process::WaiterThreadPosix::set_should_use_waiter_thread`.
+pub static WAITER_THREAD_SET_SHOULD_USE: core::sync::atomic::AtomicPtr<()> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 impl WaiterThread {
     pub fn set_should_use_waiter_thread() {
-        let hook = Self::SET_SHOULD_USE_WAITER_THREAD.load(Ordering::Relaxed);
+        let hook = WAITER_THREAD_SET_SHOULD_USE.load(Ordering::Relaxed);
         if !hook.is_null() {
             // SAFETY: hook was registered by bun_runtime as `fn()`.
             unsafe { core::mem::transmute::<*mut (), fn()>(hook)() };

@@ -556,14 +556,14 @@ impl<'a> NamesIterator<'a> {
 
             let dir = self.destination_node_modules;
 
-            let joined = path::join_string_buf(self.buf.as_mut_slice(), &parts, path::Style::Auto);
+            let joined = resolve_path::join_string_buf::<PlatformAuto>(self.buf.as_mut_slice(), &parts);
             let joined_len = joined.len();
             self.buf[joined_len] = 0;
             // SAFETY: buf[joined_len] == 0 written above
             let joined_ = unsafe { ZStr::from_raw_mut(self.buf.as_mut_ptr(), joined_len) };
             // TODO(port): bun.openDir(dir, path) → bun_sys equivalent
             let child_dir = sys::open_dir(dir, joined_)?;
-            self.dir_iterator = Some(child_dir.iterate());
+            self.dir_iterator = Some(sys::iterate_dir(child_dir.fd));
         }
 
         let iter = self.dir_iterator.as_mut().unwrap();

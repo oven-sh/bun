@@ -1,17 +1,62 @@
-use core::ffi::c_void;
+use core::ptr::NonNull;
 use std::sync::Once;
 
 use bun_aio as Async;
-use bun_alloc::Arena; // MimallocArena → bumpalo::Bump
-use bun_core::{self, Output};
+use bun_alloc::Arena; // MimallocArena → bumpalo::Bump (ThreadLocalArena)
+use bun_core::{self, zstr, Output};
 use bun_js_parser as js_ast;
 use bun_logger as Logger;
-use bun_threading::WorkPool;
+use bun_threading::unbounded_queue::{Node, UnboundedQueue};
 
-use crate::BundleV2;
+use crate::bundle_v2::{FileMap, JSBundleCompletionTask, JSBundlerPlugin};
+use crate::{BundleV2, Transpiler};
 
 /// Used to keep the bundle thread from spinning on Windows
+#[cfg(windows)]
 pub extern "C" fn timer_callback(_: *mut bun_sys::windows::libuv::Timer) {}
+
+/// Port of `std.Thread.ResetEvent` — single-shot manual-reset event used to
+/// block `spawn()` until the bundle thread has initialized its `Waker`.
+// PORT NOTE: `bun_threading` has no ResetEvent; this is the minimal subset
+// (`wait`/`set`) the Zig source touches. Backed by `parking_lot` so wakeups
+// are not lost if `set()` races ahead of `wait()`.
+#[derive(Default)]
+pub struct ResetEvent {
+    inner: parking_lot::Mutex<bool>,
+    cv: parking_lot::Condvar,
+}
+
+impl ResetEvent {
+    pub fn wait(&self) {
+        let mut guard = self.inner.lock();
+        while !*guard {
+            self.cv.wait(&mut guard);
+        }
+    }
+
+    pub fn set(&self) {
+        let mut guard = self.inner.lock();
+        *guard = true;
+        self.cv.notify_all();
+    }
+}
+
+/// Result of a `Bun.build` invocation handed back to the JS thread.
+// PORT NOTE: mirrors `BundleV2.JSBundleCompletionTask.Result` (bundle_v2.zig).
+// Defined here (not re-exported from `bundle_v2`) because the un-gated
+// `bundle_v2` module keeps the draft body private; T6 (`bundler_jsc`) consumes
+// this via the `CompletionStruct` trait.
+pub struct BuildResult {
+    pub output_files: Vec<crate::options::OutputFile>,
+    pub metafile: Option<Box<[u8]>>,
+    pub metafile_markdown: Option<Box<[u8]>>,
+}
+
+pub enum BundleV2Result {
+    Pending,
+    Err(bun_core::Error),
+    Value(BuildResult),
+}
 
 /// Originally, bake.DevServer required a separate bundling thread, but that was
 /// later removed. The bundling thread's scheduling logic is generalized over
@@ -23,40 +68,60 @@ pub extern "C" fn timer_callback(_: *mut bun_sys::windows::libuv::Timer) {}
 /// - `completeOnBundleThread` is used to tell the task that it is done.
 pub struct BundleThread<C: CompletionStruct> {
     pub waker: Async::Waker,
-    pub ready_event: bun_threading::ResetEvent, // TODO(port): std.Thread.ResetEvent equivalent
-    // TODO(port): bun.UnboundedQueue is intrusive over `C.next`; encode field offset via trait/const
-    pub queue: bun_collections::UnboundedQueue<C>,
+    pub ready_event: ResetEvent,
+    // `bun.UnboundedQueue(CompletionStruct, .next)` — intrusive over `C.next`;
+    // the field offset is encoded via the `Node` supertrait on `CompletionStruct`.
+    pub queue: UnboundedQueue<C>,
     pub generation: bun_core::Generation,
 }
 
-/// Trait capturing the interface the Zig `CompletionStruct: type` parameter must satisfy.
-// TODO(port): Zig used `anytype`-style duck typing; verify field/method set matches JSBundleCompletionTask
-pub trait CompletionStruct: 'static {
+/// Trait capturing the interface the Zig `CompletionStruct: type` parameter
+/// must satisfy.
+///
+/// Zig used comptime duck typing and additionally asserted (via `@compileError`)
+/// that the *only* valid instantiation is `BundleV2.JSBundleCompletionTask`.
+/// The body of `generateInNewThread` directly touched JSBundleCompletionTask
+/// fields (`.result`, `.log`, `.plugins`, `.config.files`, `.transpiler`); in
+/// Rust those become trait accessors so the generic `BundleThread<C>` stays
+/// layout-agnostic. The concrete impl lives in T6 (`bun_bundler_jsc`).
+pub trait CompletionStruct: Node + Send + 'static {
+    /// Zig: `completion.configureBundler(transpiler, allocator)`
     fn configure_bundler(
         &mut self,
-        transpiler: &mut bun_bundler::Transpiler,
+        transpiler: &mut Transpiler<'_>,
         bump: &Arena,
     ) -> Result<(), bun_core::Error>;
+    /// Zig: `completion.completeOnBundleThread()`
     fn complete_on_bundle_thread(&mut self);
-    // Field accessors the Zig code touched directly:
-    fn set_result(&mut self, result: crate::bundle_v2::BundleResult); // TODO(port): exact result enum type
+    /// Zig: `completion.result = .{ .err | .value }`
+    fn set_result(&mut self, result: BundleV2Result);
+    /// Zig: `completion.log = out_log`
     fn set_log(&mut self, log: Logger::Log);
-    fn set_transpiler(&mut self, this: *mut BundleV2);
-    fn plugins(&self) -> Option<*mut crate::bundle_v2::JSBundlerPlugin>; // TODO(port): lifetime
-    fn config_files(&mut self) -> &mut crate::bundle_v2::FileMap; // TODO(port): exact type of completion.config.files
+    /// Zig: `completion.transpiler = this`
+    fn set_transpiler(&mut self, this: *mut BundleV2<'_>);
+    /// Zig: `completion.plugins`
+    fn plugins(&self) -> Option<NonNull<JSBundlerPlugin>>;
+    /// Zig: `if (completion.config.files.map.count() > 0) &completion.config.files else null`
+    /// — folded into a single accessor so the opaque `FileMap` layout stays in T6.
+    fn file_map(&mut self) -> Option<NonNull<FileMap>>;
+    /// Zig: `switch (CompletionStruct) { BundleV2.JSBundleCompletionTask => completion, … }`
+    /// — the comptime type-switch collapses to a cast the impl provides.
+    fn as_js_bundle_completion_task(&mut self) -> NonNull<JSBundleCompletionTask>;
 }
 
 impl<C: CompletionStruct> BundleThread<C> {
     /// To initialize, put this somewhere in memory, and then call `spawn()`
-    // TODO(port): Zig `uninitialized` left `waker` as `undefined`; using a zeroed/default placeholder.
+    // PORT NOTE: Zig `uninitialized` left `waker` as `undefined`; using a zeroed
+    // placeholder. `ready_event.wait()` in `spawn()` blocks until `thread_main`
+    // overwrites it, so the zeroed bytes are never observed.
     pub fn uninitialized() -> Self {
         Self {
             // SAFETY: waker is overwritten in thread_main before any use; ready_event.wait()
             // in spawn() blocks until that happens.
             waker: unsafe { core::mem::zeroed() },
-            queue: bun_collections::UnboundedQueue::default(),
+            queue: UnboundedQueue::new(),
             generation: 0,
-            ready_event: bun_threading::ResetEvent::default(),
+            ready_event: ResetEvent::default(),
         }
     }
 
@@ -65,15 +130,24 @@ impl<C: CompletionStruct> BundleThread<C> {
     /// accesses it). After this returns the bundle thread concurrently accesses
     /// `*instance`; callers must only touch it via the raw-pointer methods on this
     /// impl (e.g. `enqueue`) and never materialize a `&mut Self`.
-    pub unsafe fn spawn(instance: *mut Self) -> Result<bun_threading::Thread, bun_core::Error> {
-        // TODO(port): narrow error set
-        let thread = bun_threading::Thread::spawn(move || {
-            // SAFETY: caller guarantees `instance` is valid for 'static; `thread_main`
-            // accesses fields only via raw-ptr projection (never `&Self`/`&mut Self`)
-            // and is the sole writer of `waker`/`generation`, so concurrent `enqueue()`
-            // from other threads is sound.
-            unsafe { Self::thread_main(instance) }
-        })?;
+    pub unsafe fn spawn(instance: *mut Self) -> std::io::Result<std::thread::JoinHandle<()>> {
+        // PORT NOTE: `std.Thread.spawn(.{}, threadMain, .{instance})` →
+        // `std::thread::Builder` so the spawn error is surfaced (Zig used `try`).
+        struct SendPtr<T>(*mut T);
+        // SAFETY: the pointer is only dereferenced on the bundle thread via raw
+        // projections; `BundleThread<C>` itself is never moved across threads.
+        unsafe impl<T> Send for SendPtr<T> {}
+        let ptr = SendPtr(instance);
+        let thread = std::thread::Builder::new()
+            .name("Bundler".into())
+            .spawn(move || {
+                let ptr = ptr;
+                // SAFETY: caller guarantees `instance` is valid for 'static; `thread_main`
+                // accesses fields only via raw-ptr projection (never `&Self`/`&mut Self`)
+                // and is the sole writer of `waker`/`generation`, so concurrent `enqueue()`
+                // from other threads is sound.
+                unsafe { Self::thread_main(ptr.0) }
+            })?;
         // SAFETY: field projection via raw ptr — the spawned thread is concurrently
         // writing `waker`, so we must not hold `&Self`/`&mut Self` here. `ready_event`
         // itself is a sync primitive safe to wait on from this thread.
@@ -90,14 +164,14 @@ impl<C: CompletionStruct> BundleThread<C> {
         // `UnboundedQueue::push` takes `&self` (lock-free MPSC). `Waker::wake` takes
         // `&self` on all platforms (LinuxWaker/Windows/KEventWaker — the latter uses
         // `AtomicBool` for `has_pending_wake`), so this autorefs to `&Waker` and is
-        // safe to call concurrently with `wait(&self)` at .rs:thread_main and with
+        // safe to call concurrently with `wait(&self)` in `thread_main` and with
         // other `enqueue` callers.
         unsafe { (*instance).queue.push(completion) };
         unsafe { (*instance).waker.wake() };
     }
 
     unsafe fn thread_main(instance: *mut Self) {
-        Output::Source::configure_named_thread("Bundler");
+        Output::Source::configure_named_thread(zstr!("Bundler"));
 
         // SAFETY: `waker` is written exactly once here, before `ready_event.set()`
         // releases any thread that could call `enqueue` (which reads `waker`).
@@ -112,9 +186,9 @@ impl<C: CompletionStruct> BundleThread<C> {
 
         #[cfg(windows)]
         {
-            // TODO(port): libuv Timer lives on stack for the lifetime of this never-returning fn
-            let mut timer: bun_sys::windows::libuv::Timer =
-                unsafe { core::mem::zeroed() }; // SAFETY: init() fully initializes before use
+            // PORT NOTE: libuv Timer lives on stack for the lifetime of this never-returning fn.
+            // SAFETY: `init()` fully initializes before use.
+            let mut timer: bun_sys::windows::libuv::Timer = unsafe { core::mem::zeroed() };
             // SAFETY: raw place read of `waker.loop_.uv_loop` (Copy ptr); field is
             // write-once in `Waker::init()` above and never mutated by `wake()`, so a
             // concurrent `enqueue()` (possible now that `ready_event.set()` has fired)
@@ -138,7 +212,7 @@ impl<C: CompletionStruct> BundleThread<C> {
                 // SAFETY: `generation` is only read/written on this (bundle) thread.
                 let generation = unsafe { (*instance).generation };
                 if let Err(err) = Self::generate_in_new_thread(completion, generation) {
-                    completion.set_result(crate::bundle_v2::BundleResult::Err(err));
+                    completion.set_result(BundleV2Result::Err(err));
                     completion.complete_on_bundle_thread();
                 }
                 has_bundled = true;
@@ -150,7 +224,8 @@ impl<C: CompletionStruct> BundleThread<C> {
             }
 
             if has_bundled {
-                bun_alloc::mi_collect(false); // TODO(port): move to bun_alloc_sys
+                // SAFETY: `mi_collect(false)` is a thread-local heap sweep with no preconditions.
+                unsafe { bun_alloc::mimalloc::mi_collect(false) };
                 has_bundled = false;
             }
 
@@ -164,135 +239,158 @@ impl<C: CompletionStruct> BundleThread<C> {
         completion: &mut C,
         generation: bun_core::Generation,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
-        let mut heap = Arena::new(); // ThreadLocalArena.init()
-        // `defer heap.deinit()` — Drop handles this.
+        // PORT NOTE: `ThreadLocalArena.init()` → `bun_alloc::Arena::new()` (bumpalo
+        // bump arena; `defer heap.deinit()` is handled by Drop).
+        let heap = Arena::new();
 
         let bump = &heap;
         let ast_memory_allocator: &mut js_ast::ASTMemoryAllocator =
-            bump.alloc(js_ast::ASTMemoryAllocator { allocator: bump });
+            bump.alloc(js_ast::ASTMemoryAllocator::new(bump));
         ast_memory_allocator.reset();
         ast_memory_allocator.push();
 
-        let transpiler: &mut bun_bundler::Transpiler =
-            bump.alloc(bun_bundler::Transpiler::default()); // TODO(port): Zig left this uninit until configure_bundler
+        // PORT NOTE: Zig left this `undefined` until `configureBundler` filled it
+        // in-place; Rust requires an initialized value, so `Default` then configure.
+        let transpiler: &mut Transpiler<'_> = bump.alloc(Transpiler::default());
 
         completion.configure_bundler(transpiler, bump)?;
 
         transpiler.resolver.generation = generation;
 
-        let this: &mut BundleV2 = BundleV2::init(
-            transpiler,
-            None, // TODO: Kit
+        // PORT NOTE: borrowck — `BundleV2::init` (in the Zig spec) consumes the
+        // arena by value as `heap` while also borrowing `bump = &heap`. The Rust
+        // signature is being reshaped in B-2 (see `bundle_v2.rs:__phase_a_draft`);
+        // here we hand it the raw `*mut Transpiler` + arena ref and let `init`
+        // own its own pool/heap wiring.
+        let this: &mut BundleV2<'_> = bump.alloc(BundleV2::init_in_arena(
+            transpiler as *mut _,
             bump,
-            bun_event_loop::AnyEventLoop::init(),
+            // `jsc.AnyEventLoop.init(allocator)` — erased `EventLoop` slot. The
+            // bundler stores `Option<NonNull<()>>` (see `LinkerContext::EventLoop`);
+            // the concrete `MiniEventLoop` is wired by T6 when it constructs the
+            // completion task.
+            None,
             false,
-            WorkPool::get(),
-            &mut heap,
-        )?;
-        // PORT NOTE: reshaped for borrowck — `bump` borrows `heap` immutably while `&mut heap`
-        // is passed last; Phase B may need to restructure BundleV2::init signature.
+            bun_threading::work_pool::WorkPool::get(),
+        )?);
 
         this.plugins = completion.plugins();
         // Zig: switch (CompletionStruct) { BundleV2.JSBundleCompletionTask => completion, else => @compileError(...) }
-        // TODO(port): compile-time type assertion that C == JSBundleCompletionTask; for now cast.
-        this.completion = Some(completion as *mut C as *mut BundleV2::JSBundleCompletionTask);
+        this.completion = Some(completion.as_js_bundle_completion_task());
         // Set the file_map pointer for in-memory file support
-        this.file_map = if completion.config_files().map.count() > 0 {
-            Some(completion.config_files() as *mut _)
-        } else {
-            None
-        };
-        completion.set_transpiler(this);
+        this.file_map = completion.file_map();
+        completion.set_transpiler(this as *mut _);
 
         // defer { ast_memory_allocator.pop(); this.deinitWithoutFreeingArena(); }
-        let _defer = scopeguard::guard((), |_| {
-            ast_memory_allocator.pop();
-            this.deinit_without_freeing_arena();
-        });
-        // TODO(port): errdefer captures ≥2 disjoint &mut borrows (this.linker, this.transpiler.log,
-        // completion); scopeguard cannot cleanly express this alongside the defer above.
-        let _errdefer = scopeguard::guard((), |_| {
-            // Wait for wait groups to finish. There still may be ongoing work.
-            this.linker.source_maps.line_offset_wait_group.wait();
-            this.linker.source_maps.quoted_contents_wait_group.wait();
+        // errdefer { wait groups; copy log }
+        // PORT NOTE: Zig's overlapping defer/errdefer captured ≥2 disjoint &mut
+        // borrows. Restructured as straight-line: run, branch on result, then
+        // unconditional cleanup. Semantics preserved (errdefer body runs only
+        // on the error path; defer body runs on both).
+        let entry_points: &[Box<[u8]>] = unsafe { &(*this.transpiler).options.entry_points };
+        let run_result = this.run_from_js_in_new_thread(entry_points);
 
-            let mut out_log = Logger::Log::init();
-            this.transpiler.log.append_to_with_recycled(&mut out_log, true);
-            completion.set_log(out_log);
-        });
+        let out = match run_result {
+            Ok(value) => {
+                completion.set_result(BundleV2Result::Value(value));
 
-        let value = this.run_from_js_in_new_thread(&transpiler.options.entry_points)?;
-        completion.set_result(crate::bundle_v2::BundleResult::Value(value));
+                let mut out_log = Logger::Log::init();
+                // SAFETY: `this.transpiler` is the `*mut Transpiler` stored above;
+                // valid for the lifetime of `heap`.
+                unsafe { (*(*this.transpiler).log).append_to_with_recycled(&mut out_log, true) };
+                completion.set_log(out_log);
+                completion.complete_on_bundle_thread();
+                Ok(())
+            }
+            Err(err) => {
+                // Wait for wait groups to finish. There still may be ongoing work.
+                this.linker.source_maps.line_offset_wait_group.wait();
+                this.linker.source_maps.quoted_contents_wait_group.wait();
 
-        // Disarm errdefer on success.
-        scopeguard::ScopeGuard::into_inner(_errdefer);
+                let mut out_log = Logger::Log::init();
+                // SAFETY: as above.
+                unsafe { (*(*this.transpiler).log).append_to_with_recycled(&mut out_log, true) };
+                completion.set_log(out_log);
+                Err(err)
+            }
+        };
 
-        let mut out_log = Logger::Log::init();
-        this.transpiler.log.append_to_with_recycled(&mut out_log, true);
-        completion.set_log(out_log);
-        completion.complete_on_bundle_thread();
-        Ok(())
+        ast_memory_allocator.pop();
+        this.deinit_without_freeing_arena();
+        out
     }
 }
 
 /// Lazily-initialized singleton. This is used for `Bun.build` since the
 /// bundle thread may not be needed.
-// TODO(port): Zig had a per-monomorphization `singleton` struct with `static var instance`.
-// Rust forbids generic statics; Phase B should instantiate this once for the concrete
-// `JSBundleCompletionTask` type (the only valid `CompletionStruct` per the @compileError check).
+// PORT NOTE: Zig had a per-monomorphization `singleton` struct with
+// `static var instance`. Rust forbids generic statics; the Zig source already
+// `@compileError`s for any `CompletionStruct` other than `JSBundleCompletionTask`,
+// so the singleton is instantiated once for that concrete type. T6 provides the
+// `CompletionStruct` impl for the opaque `JSBundleCompletionTask` forward-decl.
 pub mod singleton {
     use super::*;
 
     static ONCE: Once = Once::new();
-    static mut INSTANCE: Option<*mut BundleThread<BundleV2::JSBundleCompletionTask>> = None;
+    static mut INSTANCE: *mut BundleThread<JSBundleCompletionTask> = core::ptr::null_mut();
 
     // Blocks the calling thread until the bun build thread is created.
     // std.once also blocks other callers of this function until the first caller is done.
-    fn load_once_impl() {
+    fn load_once_impl()
+    where
+        JSBundleCompletionTask: CompletionStruct,
+    {
         let bundle_thread = Box::into_raw(Box::new(BundleThread::uninitialized()));
         // SAFETY: only called once under ONCE.
-        unsafe { INSTANCE = Some(bundle_thread) };
+        unsafe { INSTANCE = bundle_thread };
 
         // 2. Spawn the bun build thread.
         // SAFETY: bundle_thread is a leaked Box, valid for 'static; `spawn` takes the
         // raw pointer directly so no `&mut` is materialized that would alias the
         // bundle thread's own access.
         let os_thread = unsafe { BundleThread::spawn(bundle_thread) }
-            .unwrap_or_else(|_| Output::panic("Failed to spawn bun build thread"));
-        os_thread.detach();
+            .unwrap_or_else(|_| Output::panic(format_args!("Failed to spawn bun build thread")));
+        // `std.Thread.detach()` — drop the JoinHandle without joining.
+        drop(os_thread);
     }
 
     /// Returns the raw singleton pointer. The bundle thread runs `thread_main`
     /// against this allocation for the process lifetime, so callers MUST NOT
     /// materialize `&mut BundleThread` from it (Zig `*Self` aliasing semantics).
     /// Use `BundleThread::enqueue(get(), ...)` instead.
-    pub fn get() -> *mut BundleThread<BundleV2::JSBundleCompletionTask> {
+    pub fn get() -> *mut BundleThread<JSBundleCompletionTask>
+    where
+        JSBundleCompletionTask: CompletionStruct,
+    {
         ONCE.call_once(load_once_impl);
-        // SAFETY: INSTANCE is Some after call_once and never written again; pointer is
+        // SAFETY: INSTANCE is non-null after call_once and never written again; pointer is
         // a leaked 'static Box.
-        unsafe { INSTANCE.unwrap() }
+        unsafe { INSTANCE }
     }
 
-    pub fn enqueue(completion: *mut BundleV2::JSBundleCompletionTask) {
+    pub fn enqueue(completion: *mut JSBundleCompletionTask)
+    where
+        JSBundleCompletionTask: CompletionStruct,
+    {
         // SAFETY: `get()` returns the leaked 'static singleton whose bundle thread is
         // running; `BundleThread::enqueue` only performs raw-ptr field projections.
         unsafe { BundleThread::enqueue(get(), completion) };
     }
 }
 
+pub use bun_js_parser::Index;
 pub use bun_js_parser::Ref;
 
-pub use bun_js_parser::Index;
-
 pub use crate::DeferredBatchTask;
-pub use crate::ThreadPool;
 pub use crate::ParseTask;
+pub use crate::ThreadPool;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/bundler/BundleThread.zig (195 lines)
 //   confidence: medium
-//   todos:      13
-//   notes:      generic-static singleton collapsed to concrete JSBundleCompletionTask; defer/errdefer overlap needs borrowck reshaping in Phase B
+//   todos:      0
+//   notes:      generic-static singleton collapsed to concrete JSBundleCompletionTask;
+//               defer/errdefer rewritten straight-line; Waker via bun_aio (new dep);
+//               ResetEvent ported locally (parking_lot-backed)
 // ──────────────────────────────────────────────────────────────────────────

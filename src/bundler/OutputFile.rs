@@ -18,6 +18,7 @@ use crate::bun_fs::RealFS;
 // 2. (Optional) move the file to the destination
 // This saves us from allocating a buffer
 
+#[derive(Clone)]
 pub struct OutputFile {
     pub loader: Loader,
     pub input_loader: Loader,

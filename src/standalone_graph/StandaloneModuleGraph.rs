@@ -1767,65 +1767,71 @@ pub fn to_executable(
 impl StandaloneModuleGraph {
     /// Loads the standalone module graph from the executable, allocates it on the heap,
     /// sets it globally, and returns the pointer.
-    pub fn from_executable() -> Result<Option<&'static mut StandaloneModuleGraph>, BunError> {
+    pub fn from_executable() -> Result<Option<*mut StandaloneModuleGraph>, BunError> {
         #[cfg(target_os = "macos")]
         {
-            let Some(macho_bytes) = macho::get_data() else { return Ok(None); };
-            if macho_bytes.len() < size_of::<Offsets>() + TRAILER.len() {
+            let Some((base, len)) = macho::get_data() else { return Ok(None); };
+            if len < size_of::<Offsets>() + TRAILER.len() {
                 Output::debug_warn(format_args!("bun standalone module graph is too small to be valid"));
                 return Ok(None);
             }
-            let macho_bytes_slice = &macho_bytes[macho_bytes.len() - size_of::<Offsets>() - TRAILER.len()..];
-            let trailer_bytes = &macho_bytes[macho_bytes.len() - TRAILER.len()..][..TRAILER.len()];
+            // SAFETY: `[len - Offsets - TRAILER, len)` is in-bounds (checked above) and
+            // read-only; build short-lived views via raw `read_unaligned` so no `&[u8]`
+            // ever spans the writable bytecode region carried in `base`'s provenance.
+            let offsets_ptr = unsafe { base.add(len - size_of::<Offsets>() - TRAILER.len()) };
+            let trailer_bytes =
+                unsafe { core::slice::from_raw_parts(base.add(len - TRAILER.len()), TRAILER.len()) };
             if trailer_bytes != TRAILER {
                 Output::debug_warn(format_args!("bun standalone module graph has invalid trailer"));
                 return Ok(None);
             }
-            // SAFETY: macho_bytes_slice has at least size_of::<Offsets>() bytes.
-            let offsets: Offsets = unsafe { core::ptr::read_unaligned(macho_bytes_slice.as_ptr() as *const Offsets) };
-            // SAFETY: section bytes are program-static; @constCast in Zig.
-            let raw = unsafe { core::slice::from_raw_parts_mut(macho_bytes.as_ptr() as *mut u8, macho_bytes.len()) };
-            return from_bytes_alloc(raw, offsets).map(Some);
+            // SAFETY: offsets_ptr has at least size_of::<Offsets>() bytes.
+            let offsets: Offsets = unsafe { core::ptr::read_unaligned(offsets_ptr as *const Offsets) };
+            return from_bytes_alloc(base, len, offsets).map(Some);
         }
 
         #[cfg(windows)]
         {
-            let Some(pe_bytes) = pe::get_data() else { return Ok(None); };
-            if pe_bytes.len() < size_of::<Offsets>() + TRAILER.len() {
+            let Some((base, len)) = pe::get_data() else { return Ok(None); };
+            if len < size_of::<Offsets>() + TRAILER.len() {
                 Output::debug_warn(format_args!("bun standalone module graph is too small to be valid"));
                 return Ok(None);
             }
-            let pe_bytes_slice = &pe_bytes[pe_bytes.len() - size_of::<Offsets>() - TRAILER.len()..];
-            let trailer_bytes = &pe_bytes[pe_bytes.len() - TRAILER.len()..][..TRAILER.len()];
+            // SAFETY: `[len - Offsets - TRAILER, len)` is in-bounds (checked above) and
+            // read-only; build short-lived views via raw `read_unaligned` so no `&[u8]`
+            // ever spans the writable bytecode region carried in `base`'s provenance.
+            let offsets_ptr = unsafe { base.add(len - size_of::<Offsets>() - TRAILER.len()) };
+            let trailer_bytes =
+                unsafe { core::slice::from_raw_parts(base.add(len - TRAILER.len()), TRAILER.len()) };
             if trailer_bytes != TRAILER {
                 Output::debug_warn(format_args!("bun standalone module graph has invalid trailer"));
                 return Ok(None);
             }
-            // SAFETY: pe_bytes_slice has at least size_of::<Offsets>() bytes.
-            let offsets: Offsets = unsafe { core::ptr::read_unaligned(pe_bytes_slice.as_ptr() as *const Offsets) };
-            // SAFETY: section bytes are program-static; @constCast in Zig.
-            let raw = unsafe { core::slice::from_raw_parts_mut(pe_bytes.as_ptr() as *mut u8, pe_bytes.len()) };
-            return from_bytes_alloc(raw, offsets).map(Some);
+            // SAFETY: offsets_ptr has at least size_of::<Offsets>() bytes.
+            let offsets: Offsets = unsafe { core::ptr::read_unaligned(offsets_ptr as *const Offsets) };
+            return from_bytes_alloc(base, len, offsets).map(Some);
         }
 
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         {
-            let Some(elf_bytes) = elf::get_data() else { return Ok(None); };
-            if elf_bytes.len() < size_of::<Offsets>() + TRAILER.len() {
+            let Some((base, len)) = elf::get_data() else { return Ok(None); };
+            if len < size_of::<Offsets>() + TRAILER.len() {
                 Output::debug_warn(format_args!("bun standalone module graph is too small to be valid"));
                 return Ok(None);
             }
-            let elf_bytes_slice = &elf_bytes[elf_bytes.len() - size_of::<Offsets>() - TRAILER.len()..];
-            let trailer_bytes = &elf_bytes[elf_bytes.len() - TRAILER.len()..][..TRAILER.len()];
+            // SAFETY: `[len - Offsets - TRAILER, len)` is in-bounds (checked above) and
+            // read-only; build short-lived views via raw `read_unaligned` so no `&[u8]`
+            // ever spans the writable bytecode region carried in `base`'s provenance.
+            let offsets_ptr = unsafe { base.add(len - size_of::<Offsets>() - TRAILER.len()) };
+            let trailer_bytes =
+                unsafe { core::slice::from_raw_parts(base.add(len - TRAILER.len()), TRAILER.len()) };
             if trailer_bytes != TRAILER {
                 Output::debug_warn(format_args!("bun standalone module graph has invalid trailer"));
                 return Ok(None);
             }
-            // SAFETY: elf_bytes_slice has at least size_of::<Offsets>() bytes.
-            let offsets: Offsets = unsafe { core::ptr::read_unaligned(elf_bytes_slice.as_ptr() as *const Offsets) };
-            // SAFETY: section bytes are program-static; @constCast in Zig.
-            let raw = unsafe { core::slice::from_raw_parts_mut(elf_bytes.as_ptr() as *mut u8, elf_bytes.len()) };
-            return from_bytes_alloc(raw, offsets).map(Some);
+            // SAFETY: offsets_ptr has at least size_of::<Offsets>() bytes.
+            let offsets: Offsets = unsafe { core::ptr::read_unaligned(offsets_ptr as *const Offsets) };
+            return from_bytes_alloc(base, len, offsets).map(Some);
         }
 
         #[cfg(not(any(target_os = "macos", windows, target_os = "linux", target_os = "freebsd")))]
@@ -1846,7 +1852,7 @@ impl StandaloneModuleGraph {
 
         #[cfg(not(windows))]
         {
-            let bytes: &'static [u8] = {
+            let (base, len): (*mut u8, usize) = {
                 #[cfg(target_os = "macos")]
                 { match macho::get_data() { Some(b) => b, None => return } }
                 #[cfg(target_os = "linux")]
@@ -1855,13 +1861,13 @@ impl StandaloneModuleGraph {
                 { return; }
             };
 
-            if bytes.is_empty() {
+            if len == 0 {
                 return;
             }
 
             let page: usize = bun_alloc::page_size();
-            let start = (bytes.as_ptr() as usize) & !(page - 1);
-            let end_unaligned = bytes.as_ptr() as usize + bytes.len();
+            let start = (base as usize) & !(page - 1);
+            let end_unaligned = base as usize + len;
             let end = (end_unaligned + page - 1) & !(page - 1);
 
             // std.posix.madvise hits `unreachable` on unexpected errnos; this is a
@@ -1885,8 +1891,8 @@ impl StandaloneModuleGraph {
 
 /// Allocates a StandaloneModuleGraph in the process-static `INSTANCE`,
 /// populates it from bytes, sets it globally, and returns the pointer.
-fn from_bytes_alloc(raw_bytes: &'static mut [u8], offsets: Offsets) -> Result<&'static mut StandaloneModuleGraph, BunError> {
-    let graph = StandaloneModuleGraph::from_bytes(raw_bytes, offsets)?;
+fn from_bytes_alloc(raw_ptr: *mut u8, raw_len: usize, offsets: Offsets) -> Result<*mut StandaloneModuleGraph, BunError> {
+    let graph = StandaloneModuleGraph::from_bytes(raw_ptr, raw_len, offsets)?;
     Ok(StandaloneModuleGraph::set(graph))
 }
 

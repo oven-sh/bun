@@ -3519,8 +3519,7 @@ impl<'a> BundleV2<'a> {
                     } else {
                         let source_import_records = &mut this.graph.ast.items_import_records_mut()[resolve.import_record.importer_source_index as usize];
                         if (source_import_records.len() as u32) <= resolve.import_record.import_record_index {
-                            let entry = this.resolve_tasks_waiting_for_import_source_index.get_or_put(
-                                resolve.import_record.importer_source_index,
+                            let entry = this.resolve_tasks_waiting_for_import_source_index.get_or_put(                                resolve.import_record.importer_source_index,
                             );
                             if !entry.found_existing {
                                 *entry.value_ptr = BabyList::default();
@@ -4914,7 +4913,7 @@ impl<'a> BundleV2<'a> {
         let graph = &mut this.graph;
         if parse_result.external.function.is_some() {
             let source = match &parse_result.value {
-                parse_task::ResultValue::Empty(data) => data.source_index.get(),
+                parse_task::ResultValue::Empty { source_index } => source_index.get(),
                 parse_task::ResultValue::Err(data) => data.source_index.get(),
                 parse_task::ResultValue::Success(val) => val.source.index.0,
             };
@@ -4958,14 +4957,14 @@ impl<'a> BundleV2<'a> {
         let _ = this.bun_watcher;
 
         match &mut parse_result.value {
-            parse_task::ResultValue::Empty(empty_result) => {
+            parse_task::ResultValue::Empty { source_index: empty_source_index } => {
                 let input_files = graph.input_files.slice_mut();
                 let side_effects = input_files.items_side_effects_mut();
-                side_effects[empty_result.source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsEmptyAst;
+                side_effects[(*empty_source_index).get() as usize] = _resolver::SideEffects::NoSideEffectsEmptyAst;
                 if cfg!(debug_assertions) {
                     bun_core::scoped_log!(Bundle, "onParse({}, {}) = empty",
-                        empty_result.source_index.get(),
-                        bstr::BStr::new(&input_files.items_source()[empty_result.source_index.get() as usize].path.text));
+                        (*empty_source_index).get(),
+                        bstr::BStr::new(&input_files.items_source()[(*empty_source_index).get() as usize].path.text));
                 }
             }
             parse_task::ResultValue::Success(result) => {

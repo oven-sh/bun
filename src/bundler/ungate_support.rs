@@ -466,7 +466,27 @@ pub mod html_import_manifest {
 
 /// `HTMLScanner` — gated module; ParseTask only constructs it.
 pub mod html_scanner {
-    pub struct HTMLScanner;
+    use bun_collections::BabyList;
+    use bun_options_types::ImportRecord;
+
+    pub struct HTMLScanner {
+        pub import_records: BabyList<ImportRecord>,
+    }
+    impl HTMLScanner {
+        pub fn init(
+            _bump: &bun_alloc::Arena,
+            _log: &mut bun_logger::Log,
+            _source: &bun_logger::Source,
+        ) -> HTMLScanner {
+            HTMLScanner { import_records: BabyList::default() }
+        }
+        pub fn scan(&mut self, _contents: &[u8]) -> Result<(), bun_core::Error> {
+            // TODO(port): real body lives in `crate::HTMLScanner` (gated module).
+            // ParseTask only needs `import_records` populated; un-gate forwards
+            // to the real lol-html scanner.
+            Ok(())
+        }
+    }
 }
 
 /// `LinkerGraph.zig:JSMeta` / `WrapKind` / `ExportData` — minimal surface so

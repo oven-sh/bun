@@ -30,11 +30,15 @@ impl Default for RequestedExports {
     }
 }
 
-// PORT NOTE: 'a borrows arena-backed AST alias strings (named_imports/named_exports).
-struct BarrelExportResolution<'a> {
+// PORT NOTE: `original_alias` is stored as the raw arena `*const [u8]` (the
+// `NamedImport.alias` representation) instead of a tied `&'a [u8]` so the BFS
+// loop can hold a `BarrelExportResolution` across a `&mut graph.ast` reborrow
+// without the borrow checker seeing an overlap. The pointee outlives the
+// bundler arena, so dereferencing later is sound.
+struct BarrelExportResolution {
     import_record_index: u32,
     /// The original alias in the source module (e.g. "d" for `export { d as c }`)
-    original_alias: Option<&'a [u8]>,
+    original_alias: Option<*const [u8]>,
     /// True when the underlying import is `import * as ns` — propagation
     /// through this export must treat the target as needing all exports.
     alias_is_star: bool,
@@ -43,18 +47,16 @@ struct BarrelExportResolution<'a> {
 /// Look up an export name → import_record_index by chasing
 /// named_exports[alias].ref through named_imports.
 /// Also returns the original alias from the source module for BFS propagation.
-fn resolve_barrel_export<'a>(
+fn resolve_barrel_export(
     alias: &[u8],
-    named_exports: &'a JSAst::NamedExports,
-    named_imports: &'a JSAst::NamedImports,
-) -> Option<BarrelExportResolution<'a>> {
+    named_exports: &JSAst::NamedExports,
+    named_imports: &JSAst::NamedImports,
+) -> Option<BarrelExportResolution> {
     let export_entry = named_exports.get(alias)?;
     let import_entry = named_imports.get(&export_entry.ref_)?;
     Some(BarrelExportResolution {
         import_record_index: import_entry.import_record_index,
-        // SAFETY: `alias` is an arena-backed `*const [u8]` valid for the AST's
-        // lifetime (`'a` covers the borrow of `named_imports`).
-        original_alias: import_entry.alias.map(|p| unsafe { &*p }),
+        original_alias: import_entry.alias,
         alias_is_star: import_entry.alias_is_star,
     })
 }
@@ -731,7 +733,12 @@ pub fn schedule_barrel_deferred_imports(
             barrels_to_resolve.put(barrel_idx, ())?;
         }
 
-        let propagate_alias = resolution.original_alias.unwrap_or(alias);
+        // SAFETY: `original_alias` is an arena-backed `*const [u8]` valid for
+        // the bundler-arena lifetime (see `BarrelExportResolution` PORT NOTE).
+        let propagate_alias: &[u8] = match resolution.original_alias {
+            Some(p) => unsafe { &*p },
+            None => alias,
+        };
         if resolution.import_record_index < barrel_ir.len() {
             let mut rec_si = barrel_ir.slice()[resolution.import_record_index as usize].source_index;
             if !rec_si.is_valid() {

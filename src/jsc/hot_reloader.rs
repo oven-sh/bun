@@ -113,6 +113,67 @@ impl ImportWatcher {
 pub type HotReloader = NewHotReloader<VirtualMachine, EventLoop, false>;
 pub type WatchReloader = NewHotReloader<VirtualMachine, EventLoop, true>;
 
+/// Replaces Zig's structural duck-typing on `Ctx` (`this.ctx.eventLoop()`,
+/// `this.ctx.bun_watcher`, `this.ctx.bustDirCache`, `this.ctx.getLoaders`,
+/// `this.ctx.reload`) with an explicit trait bound. Implemented by
+/// `VirtualMachine` and `bun.bake.DevServer`.
+///
+/// `bun_watcher_mut` collapses the three-way `@TypeOf(this.ctx.bun_watcher)`
+/// reflection in `getContext` (ImportWatcher / Option / bare) into one method
+/// the impl picks the right arm of.
+pub trait HotReloaderCtx {
+    type EventLoop;
+
+    fn event_loop(&self) -> *mut Self::EventLoop;
+
+    /// Zig: `this.ctx.bun_watcher` field, with comptime `@TypeOf` reflection
+    /// to unwrap `ImportWatcher`/`Option`. Implementor returns the live
+    /// `Watcher` regardless of how it's stored.
+    fn bun_watcher_mut(&mut self) -> &mut Watcher;
+
+    /// Called from `Task::run` to perform the actual reload. Zig passed the
+    /// concrete `*HotReloadTask`; Rust erases the const-generic via the
+    /// `HotReloadTask` view so this trait isn't recursively generic.
+    fn reload(&mut self, task: &mut dyn HotReloadTask);
+
+    /// Zig: `this.ctx.bustDirCache(path)`. Returns whether anything was busted.
+    fn bust_dir_cache(&mut self, path: &[u8]) -> bool;
+
+    /// Zig: `this.ctx.getLoaders()` — `&transpiler.options.loaders`.
+    fn get_loaders(&self) -> &bun_bundler::options::LoaderHashTable;
+
+    /// Zig: `if (comptime Ctx == ImportWatcher) ... ctx.rare_data.?.closeAllListenSocketsForWatchMode()`.
+    /// Default no-op; `VirtualMachine` overrides.
+    fn close_all_listen_sockets_for_watch_mode(&mut self) {}
+
+    /// Zig: `if (@hasField(Ctx, "log")) this.log.level.atLeast(.info) else false`.
+    fn log_level_at_least_info(&self) -> bool {
+        false
+    }
+}
+
+/// Type-erased view of a `Task<Ctx, EventLoopType, RELOAD_IMMEDIATELY>` so
+/// `HotReloaderCtx::reload` doesn't need to name the const generics.
+pub trait HotReloadTask {
+    fn count(&self) -> u8;
+    fn hashes(&self) -> &[u32];
+    fn paths(&self) -> &[&'static [u8]];
+}
+
+impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> HotReloadTask
+    for Task<Ctx, EventLoopType, RELOAD_IMMEDIATELY>
+{
+    fn count(&self) -> u8 {
+        self.count
+    }
+    fn hashes(&self) -> &[u32] {
+        &self.hashes[..self.count as usize]
+    }
+    fn paths(&self) -> &[&'static [u8]] {
+        &self.paths[..self.count as usize]
+    }
+}
+
 /// When non-null, `on_file_update` records the absolute path of every file
 /// it sees change before triggering a reload. Used by `bun test --changed
 /// --watch` so the restarted process can narrow its changed-file set to

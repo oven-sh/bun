@@ -80,6 +80,12 @@ pub struct FrameworkRouter {
     ///    length of the entire allocation. So we'll just allocate everything in
     ///    this arena to ensure that everything gets freed.
     pub pattern_string_arena: Arena,
+
+    /// Dead-code in the Zig source (`newEdge` references `fr.edges`/`fr.freed_edges`/`Route.Edge`
+    /// which are never otherwise defined or used). Ported as a free-list pair so the body of
+    /// `new_edge` matches the spec verbatim.
+    pub edges: Vec<RouteEdge>,
+    pub freed_edges: Vec<RouteEdgeIndex>,
 }
 
 /// The above structure is optimized for incremental updates, but
@@ -154,6 +160,26 @@ impl RouteIndex {
     #[inline]
     pub const fn to_optional(self) -> Option<RouteIndex> {
         Some(self)
+    }
+}
+
+/// Zig: `Route.Edge` — referenced only by the dead `newEdge` free-list helper in the spec.
+/// The struct body is never defined upstream; ported as an opaque unit so `new_edge` compiles
+/// with its real body.
+#[derive(Copy, Clone, Debug, Default)]
+pub struct RouteEdge;
+
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+#[repr(transparent)]
+pub struct RouteEdgeIndex(u32);
+impl RouteEdgeIndex {
+    #[inline]
+    pub const fn init(v: usize) -> Self {
+        Self(v as u32)
+    }
+    #[inline]
+    pub const fn get(self) -> usize {
+        self.0 as usize
     }
 }
 
@@ -246,6 +272,8 @@ impl FrameworkRouter {
             dynamic_routes: DynamicRouteMap::default(),
             static_routes: StaticRouteMap::default(),
             pattern_string_arena: Arena::new(),
+            edges: Vec::new(),
+            freed_edges: Vec::new(),
         })
     }
 }

@@ -500,8 +500,12 @@ impl Encoding for Utf8 {
     fn ch(c: u8) -> u8 {
         c
     }
-    fn literal(s: &'static [u8]) -> &'static [u8] {
-        s
+    #[inline]
+    fn literal(s: &'static [u8]) -> EncLit<u8> {
+        debug_assert!(s.len() <= 8, "Enc::literal: bump EncLit cap");
+        let mut buf = [0u8; 8];
+        buf[..s.len()].copy_from_slice(s);
+        EncLit { buf, len: s.len() as u8 }
     }
     #[inline]
     fn key_bytes(s: &[u8]) -> &[u8] {
@@ -521,16 +525,28 @@ impl Encoding for Utf16 {
     fn ch(c: u8) -> u16 {
         c as u16
     }
-    fn literal(_s: &'static [u8]) -> &'static [u16] {
-        // TODO(port): Zig used std.unicode.utf8ToUtf16LeStringLiteral. Rust needs
-        // a const transcoding macro (e.g. bun_str::w!). Phase B.
-        unimplemented!("Utf16::literal requires const utf8->utf16 macro")
+    #[inline]
+    fn literal(s: &'static [u8]) -> EncLit<u16> {
+        // Zig: `std.unicode.utf8ToUtf16LeStringLiteral` (comptime). All call
+        // sites pass ASCII, so widen byte-by-byte into the inline buffer.
+        debug_assert!(s.len() <= 8, "Enc::literal: bump EncLit cap");
+        let mut buf = [0u16; 8];
+        let mut i = 0;
+        while i < s.len() {
+            debug_assert!(s[i] < 0x80, "Enc::literal expects ASCII");
+            buf[i] = s[i] as u16;
+            i += 1;
+        }
+        EncLit { buf, len: s.len() as u8 }
     }
-    fn key_bytes(_s: &[u16]) -> &[u8] {
-        // TODO(port): Zig's `bun.StringHashMap` is u8-keyed; the Zig source
-        // would also fail to compile this call for Utf16. Phase B decides
-        // whether to transcode or switch to a u16-keyed map.
-        unimplemented!("Utf16::key_bytes — StringHashMap is u8-keyed")
+    #[inline]
+    fn key_bytes(s: &[u16]) -> &[u8] {
+        // Reinterpret `&[u16]` as `&[u8]` of `len * 2` for byte-keyed hashing.
+        // SAFETY: u8 alignment is 1 (always satisfied); the resulting slice
+        // covers exactly the same memory. Uniqueness is preserved (equal u16
+        // slices ⇔ equal byte slices). Same pattern as
+        // `bun_logger::ast::E::EString::hash()` for the utf16 arm.
+        unsafe { core::slice::from_raw_parts(s.as_ptr().cast::<u8>(), s.len() * 2) }
     }
     #[inline]
     fn unit_from_u16(u: u16) -> u16 {

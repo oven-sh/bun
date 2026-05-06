@@ -17,15 +17,10 @@ use bun_options_types::schema as bun_schema;
 use bun_paths::{self as paths, PathBuffer};
 use bun_str::{strings, ZStr};
 
-// `jsc.API.JSBundler.Plugin` — the real struct lives in
-// `crate::api::js_bundler::_jsc_gated::js_bundler::Plugin` which is still
-// ``-gated. Use an opaque local so the field type-checks; the
-// only call sites (`parse_plugin_array`, `Drop`) are `todo!()`-blocked below.
-// TODO(b2-blocked): crate::api::js_bundler::Plugin — un-gate _jsc_gated.
-#[repr(C)]
-pub struct Plugin {
-    _p: [u8; 0],
-}
+// `jsc.API.JSBundler.Plugin` — opaque FFI handle for the C++ JSBundlerPlugin.
+// Re-exported from `crate::api::js_bundler` so `SplitBundlerOptions.plugin`
+// shares the same type the bundler pipeline uses.
+pub use crate::api::js_bundler::Plugin;
 
 // PORT NOTE: parent `mod.rs` already declares `dev_server` / `framework_router`
 // as sibling modules of this file; pull them in instead of re-declaring (which

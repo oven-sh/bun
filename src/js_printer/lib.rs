@@ -1230,15 +1230,8 @@ pub struct PrintJsonOptions<'a> {
     pub mangled_props: Option<&'a MangledProps>,
 }
 
-/// B-2 shadow stub — real body is the ``-gated `print_json` below.
-// TODO(b2-blocked): bun_js_parser::Ast::init_test / Symbol::List::from_borrowed_slice_dangerous
-pub fn print_json<W: WriterTrait>(
-    _writer: W,
-    _expr: js_ast::Expr,
-    _opts: PrintJsonOptions<'_>,
-) -> Result<usize, bun_core::Error> {
-    todo!("b2 stub: print_json — un-gate once Ast::init_test lands")
-}
+// `print_json` lives below the `Printer` impl (after `__gated_printer`) so it
+// can name `Printer<...>` directly; see the bottom of this file.
 
 // ───────────────────────────────────────────────────────────────────────────
 // RequireOrImportMeta

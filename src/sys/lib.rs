@@ -2801,8 +2801,62 @@ pub fn exists_at_type(dir: Fd, sub: &ZStr) -> Maybe<ExistsAtType> {
         Ok(if S::ISDIR(st.st_mode as _) { ExistsAtType::Directory } else { ExistsAtType::File })
     }
     #[cfg(windows)] {
-        let _ = (dir, sub);
-        todo!("exists_at_type windows")
+        use bun_windows_sys::externs as w;
+        // sys.zig:3648 — `NtQueryAttributesFile` against an OBJECT_ATTRIBUTES
+        // built from the (optionally NT-prefixed) wide path.
+        let mut wbuf = bun_paths::w_path_buffer_pool::get();
+        let mut path = bun_str::strings::to_nt_path(&mut wbuf.0[..], sub.as_bytes()).as_slice();
+        // Trim leading `.\` — NtQueryAttributesFile expects relative paths
+        // without it.
+        if path.len() > 2 && path[0] == b'.' as u16 && path[1] == b'\\' as u16 {
+            path = &path[2..];
+        }
+        let path_len_bytes = (path.len() * 2) as u16;
+        let mut nt_name = w::UNICODE_STRING {
+            Length: path_len_bytes,
+            MaximumLength: path_len_bytes,
+            Buffer: path.as_ptr() as *mut u16,
+        };
+        let attr = w::OBJECT_ATTRIBUTES {
+            Length: core::mem::size_of::<w::OBJECT_ATTRIBUTES>() as u32,
+            RootDirectory: if bun_paths::is_absolute_windows_wtf16(path) {
+                core::ptr::null_mut()
+            } else if dir.is_valid() {
+                dir.cast()
+            } else {
+                Fd::cwd().cast()
+            },
+            Attributes: 0,
+            ObjectName: &mut nt_name,
+            SecurityDescriptor: core::ptr::null_mut(),
+            SecurityQualityOfService: core::ptr::null_mut(),
+        };
+        // SAFETY: all-zero is a valid FILE_BASIC_INFORMATION.
+        let mut basic_info: w::FILE_BASIC_INFORMATION = unsafe { core::mem::zeroed() };
+        // SAFETY: FFI; attr/basic_info valid for the call duration.
+        let rc = unsafe { w::ntdll::NtQueryAttributesFile(&attr, &mut basic_info) };
+        if rc != w::NTSTATUS::SUCCESS {
+            let errno = windows::Win32Error::from_nt_status(rc)
+                .to_system_errno()
+                .unwrap_or(E::EUNKNOWN);
+            return Err(Error::from_code(errno, Tag::access));
+        }
+        let attrs = basic_info.FileAttributes;
+        // From libuv: directories cannot be read-only.
+        // https://github.com/libuv/libuv/blob/eb5af8e3/src/win/fs.c#L2144-L2146
+        let is_dir = attrs != windows::INVALID_FILE_ATTRIBUTES
+            && (attrs & w::FILE_ATTRIBUTE_DIRECTORY) != 0
+            && (attrs & w::FILE_ATTRIBUTE_READONLY) == 0;
+        let is_regular = attrs != windows::INVALID_FILE_ATTRIBUTES
+            && ((attrs & w::FILE_ATTRIBUTE_DIRECTORY) == 0
+                || (attrs & w::FILE_ATTRIBUTE_READONLY) == 0);
+        if is_dir {
+            Ok(ExistsAtType::Directory)
+        } else if is_regular {
+            Ok(ExistsAtType::File)
+        } else {
+            Err(Error::from_code(E::EUNKNOWN, Tag::access))
+        }
     }
 }
 /// sys.zig:3533 — `directoryExistsAt(dir, sub)`. ENOENT → `Ok(false)`.

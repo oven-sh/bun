@@ -3450,6 +3450,7 @@ pub static LOADER_HOOKS_INSTANCE: LoaderHooks = LoaderHooks {
     fetch_builtin_module,
     get_hardcoded_module: get_hardcoded_module_hook,
     resolve_embedded_node_file: resolve_embedded_node_file_hook,
+    transpile_virtual_module,
     transpile_file,
     resolve: resolve_hook,
 };

@@ -139,17 +139,28 @@ impl PmPkgCommand {
         };
 
         let source = Source::init_path_string(path, &contents);
-        let result = match json::parse_package_json_utf8_with_opts(
-            &source,
-            ctx.log,
-            json::ParseOptions {
-                is_json: true,
-                allow_comments: true,
-                allow_trailing_commas: true,
-                guess_indentation: true,
-                ..Default::default()
-            },
-        ) {
+        // Zig passes the global allocator; leak an arena so the returned Expr
+        // (which may reference arena-owned nodes) outlives this frame. CLI is
+        // one-shot, so the leak is intentional.
+        let bump: &'static bun_alloc::Arena =
+            Box::leak(Box::new(bun_alloc::Arena::new()));
+        // SAFETY: ctx.log is set by `command::create_context_data()` before any
+        // subcommand runs (single-threaded CLI startup invariant).
+        let log: &mut Log = unsafe { &mut *ctx.log };
+        // const generics mirror Zig `.{ .is_json, .allow_comments,
+        // .allow_trailing_commas, .guess_indentation = true }` with the
+        // remaining JSONOptions fields at their defaults (false).
+        let result = match json::parse_package_json_utf8_with_opts::<
+            true,  // IS_JSON
+            true,  // ALLOW_COMMENTS
+            true,  // ALLOW_TRAILING_COMMAS
+            false, // IGNORE_LEADING_ESCAPE_SEQUENCES
+            false, // IGNORE_TRAILING_ESCAPE_SEQUENCES
+            false, // JSON_WARN_DUPLICATE_KEYS
+            false, // WAS_ORIGINALLY_MACRO
+            true,  // GUESS_INDENTATION
+        >(&source, log, bump)
+        {
             Ok(r) => r,
             Err(e) => {
                 Output::err_generic(format_args!("Failed to parse package.json: {}", e.name()));

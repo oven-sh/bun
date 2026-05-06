@@ -78,6 +78,7 @@ bun_sourcemap_jsc.workspace = true
 bun_standalone_graph.workspace = true
 bun_string.workspace = true
 bun_sys.workspace = true
+bun_tcc_sys.workspace = true
 bun_threading.workspace = true
 bun_transpiler.workspace = true
 bun_url.workspace = true

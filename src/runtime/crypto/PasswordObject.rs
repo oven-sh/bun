@@ -17,7 +17,7 @@ use bun_jsc::zig_string::ZigString as JscZigString;
 use bun_jsc::AnyTask::{AnyTask, JsResult as AnyTaskJsResult};
 use bun_jsc::ConcurrentTask::ConcurrentTask;
 use bun_jsc::{JSPromise, JSPromiseStrong};
-use bun_threading::thread_pool::Task as ThreadPoolTask;
+use bun_threading::thread_pool::{Node as ThreadPoolNode, Task as ThreadPoolTask};
 use bun_threading::work_pool::WorkPool;
 
 use crate::node::StringOrBuffer;

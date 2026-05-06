@@ -698,6 +698,15 @@ impl MatchedRoute {
         impl<'a> ObjectInitializer for QueryObjectCreator<'a> {
             fn create(&mut self, obj: &mut JSObject, global: &JSGlobalObject) -> JsResult<()> {
                 QUERY_STRING_VALUES_BUF.with_borrow_mut(|values_buf| {
+                    // SAFETY: thread-local stores `[&'static [u8]; 256]` only because Zig's
+                    // `threadlocal var` had no lifetime param. Entries are scratch — fully
+                    // overwritten by `iter.next()` before each read and never escape this
+                    // closure, so relaxing `'static` to the iterator lifetime is sound.
+                    let values_buf: &mut [&[u8]; 256] = unsafe {
+                        core::mem::transmute::<&mut [&'static [u8]; 256], &mut [&[u8]; 256]>(
+                            values_buf,
+                        )
+                    };
                     QUERY_STRING_VALUE_REFS_BUF.with_borrow_mut(|refs_buf| {
                         let mut iter = self.query.iter();
                         while let Some(entry) = iter.next(values_buf) {

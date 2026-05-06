@@ -4450,11 +4450,11 @@ unsafe extern "C" {
 
 fn throw_ssl_error_if_necessary(global: &JSGlobalObject) -> bool {
     // SAFETY: FFI call into BoringSSL; no preconditions
-    let err_code = unsafe { boringssl::ERR_get_error() };
+    let err_code = unsafe { bun_boringssl_sys::ERR_get_error() };
     if err_code != 0 {
         // SAFETY: FFI call into BoringSSL; no preconditions
-        let _guard = scopeguard::guard((), |_| unsafe { boringssl::ERR_clear_error() });
-        let _ = global.throw_value(jsc::API::Crypto::create_crypto_error(global, err_code));
+        let _guard = scopeguard::guard((), |_| unsafe { bun_boringssl_sys::ERR_clear_error() });
+        let _ = global.throw_value(crate::crypto::create_crypto_error(global, err_code));
         return true;
     }
     false

@@ -4369,7 +4369,7 @@ impl Resolver {
         Ok(promise)
     }
 
-    #[host_fn]
+    // FFI shim emitted by `export_host_fn!` below (JS2Native link name).
     pub fn get_runtime_default_result_order_option(
         global_this: &JSGlobalObject,
         _frame: &CallFrame,

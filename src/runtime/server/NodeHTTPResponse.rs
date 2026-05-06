@@ -1894,6 +1894,8 @@ mod generated {
 }
 } // mod _gated
 
+pub use _gated::AbortEvent;
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/server/NodeHTTPResponse.zig (1255 lines)

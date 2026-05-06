@@ -726,6 +726,23 @@ impl Expr {
     pub fn is_object(&self) -> bool {
         matches!(self.data, expr::Data::EObject(_))
     }
+
+    /// Zig: `Expr.get(key)` — if `self` is an object literal, look up the
+    /// property whose key string equals `key` and return its value. Returns
+    /// `None` if not an object or the key is absent.
+    pub fn get(&self, key: &[u8]) -> Option<Expr> {
+        match &self.data {
+            expr::Data::EObject(obj) => obj.get().get(key),
+            _ => None,
+        }
+    }
+    /// Zig: `Expr.asProperty(name)`.
+    pub fn as_property(&self, name: &[u8]) -> Option<expr::Query> {
+        match &self.data {
+            expr::Data::EObject(obj) => obj.get().as_property(name),
+            _ => None,
+        }
+    }
     #[inline]
     pub fn is_array(&self) -> bool {
         matches!(self.data, expr::Data::EArray(_))
@@ -823,6 +840,26 @@ pub mod expr {
         pub fn as_e_string(&self) -> Option<StoreRef<E::EString>> {
             self.e_string()
         }
+        #[inline]
+        pub fn as_e_array(&self) -> Option<StoreRef<E::Array>> {
+            self.e_array()
+        }
+        #[inline]
+        pub fn as_e_object(&self) -> Option<StoreRef<E::Object>> {
+            self.e_object()
+        }
+        #[inline]
+        pub fn as_e_number(&self) -> Option<E::Number> {
+            if let Data::ENumber(n) = *self { Some(n) } else { None }
+        }
+        #[inline]
+        pub fn is_e_string(&self) -> bool { matches!(self, Data::EString(_)) }
+        #[inline]
+        pub fn is_e_number(&self) -> bool { matches!(self, Data::ENumber(_)) }
+        #[inline]
+        pub fn is_e_array(&self) -> bool { matches!(self, Data::EArray(_)) }
+        #[inline]
+        pub fn is_e_object(&self) -> bool { matches!(self, Data::EObject(_)) }
     }
 
     /// `Expr.asProperty` result.

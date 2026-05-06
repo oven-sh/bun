@@ -366,18 +366,23 @@ impl<
                 self.lexer.expect(T::TCloseBrace)?;
                 Ok(new_expr(
                     E::Object {
-                        properties: G::Property::List::move_from_list(&mut properties),
+                        properties: G::PropertyList::move_from_list(properties),
                         is_single_line,
                         was_originally_macro: WAS_ORIGINALLY_MACRO,
+                        ..Default::default()
                     },
                     loc,
                 ))
             }
             _ => {
                 if MAYBE_AUTO_QUOTE {
-                    self.lexer = js_lexer::Lexer::init_json(self.log, self.source(), self.bump)?;
-                    // TODO(port): borrowck — self.log/self.source borrowed while assigning
-                    // self.lexer; may need to capture into locals first.
+                    // PORT NOTE: borrowck — capture `source` (a `&'a Source`,
+                    // Copy) before reassigning `self.lexer` so the immutable
+                    // borrow of `self` via `self.source()` doesn't overlap the
+                    // `&mut self.lexer` write.
+                    let source = self.lexer.source;
+                    self.lexer =
+                        js_lexer::Lexer::init_json(self.log, source, self.bump, Self::OPTS)?;
                     self.lexer.parse_string_literal(0)?;
                     return self.parse_expr::<false, FORCE_UTF8>();
                 }
@@ -397,9 +402,9 @@ impl<
             if !ALLOW_TRAILING_COMMAS {
                 self.log
                     .add_range_error(
-                        &self.lexer.source,
+                        Some(self.lexer.source),
                         comma_range,
-                        "JSON does not support trailing commas",
+                        b"JSON does not support trailing commas",
                     )
                     .expect("unreachable");
             }
@@ -424,7 +429,7 @@ impl<
 // In most cases, it should perform zero heap allocations because it does not create arrays or objects (It just skips them)
 
 pub struct PackageJSONVersionChecker<'a, 'bump> {
-    pub lexer: js_lexer::Lexer, // TODO(port): NewLexer(opts) — see PKG_JSON_OPTS below
+    pub lexer: js_lexer::Lexer<'a, 'bump>,
     pub source: &'a logger::Source,
     pub log: &'a mut logger::Log,
     pub bump: &'bump Bump,
@@ -468,7 +473,7 @@ impl<'a, 'bump> PackageJSONVersionChecker<'a, 'bump> {
     ) -> Result<Self, bun_core::Error> {
         // TODO(port): narrow error set
         Ok(Self {
-            lexer: js_lexer::Lexer::init(log, source, bump)?,
+            lexer: js_lexer::Lexer::init(log, source, bump, PKG_JSON_OPTS)?,
             bump,
             log,
             source,
@@ -496,7 +501,8 @@ impl<'a, 'bump> PackageJSONVersionChecker<'a, 'bump> {
 
     pub fn parse_expr(&mut self) -> Result<Expr, bun_core::Error> {
         if !self.stack_check.is_safe_to_recurse() {
-            bun_core::throw_stack_overflow()?;
+            // Zig: `bun.throwStackOverflow()`.
+            return Err(bun_core::err!("StackOverflow"));
         }
 
         let loc = self.lexer.loc();
@@ -585,21 +591,22 @@ impl<'a, 'bump> PackageJSONVersionChecker<'a, 'bump> {
                             if let (Some(key_s), Some(val_s)) =
                                 (key.data.as_e_string(), value.data.as_e_string())
                             {
-                                // TODO(port): Zig matched on `.e_string` tag and read
-                                // `.e_string.data` directly; map to whatever accessor the
-                                // ported Expr.Data exposes.
-                                if !self.has_found_name && key_s.data() == b"name" {
-                                    let len = val_s.data().len().min(self.found_name_buf.len());
+                                // Zig matched on `.e_string` tag and read
+                                // `.e_string.data` directly; `as_e_string()` returns
+                                // `StoreRef<EString>` which derefs to the payload, so
+                                // `.data` is the raw byte slice.
+                                if !self.has_found_name && key_s.data == b"name" {
+                                    let len = val_s.data.len().min(self.found_name_buf.len());
 
                                     self.found_name_buf[..len]
-                                        .copy_from_slice(&val_s.data()[..len]);
+                                        .copy_from_slice(&val_s.data[..len]);
                                     self.found_name_len = len;
                                     self.has_found_name = true;
                                     self.name_loc = value.loc;
-                                } else if !self.has_found_version && key_s.data() == b"version" {
-                                    let len = val_s.data().len().min(self.found_version_buf.len());
+                                } else if !self.has_found_version && key_s.data == b"version" {
+                                    let len = val_s.data.len().min(self.found_version_buf.len());
                                     self.found_version_buf[..len]
-                                        .copy_from_slice(&val_s.data()[..len]);
+                                        .copy_from_slice(&val_s.data[..len]);
                                     self.found_version_len = len;
                                     self.has_found_version = true;
                                 }
@@ -636,9 +643,9 @@ impl<'a, 'bump> PackageJSONVersionChecker<'a, 'bump> {
             if !PKG_JSON_OPTS.allow_trailing_commas {
                 self.log
                     .add_range_error(
-                        self.source,
+                        Some(self.source),
                         comma_range,
-                        "JSON does not support trailing commas",
+                        b"JSON does not support trailing commas",
                     )
                     .expect("unreachable");
             }
@@ -722,7 +729,7 @@ impl<T: ToAst> ToAst for [T] {
         }
         Ok(Expr::init(
             E::Array {
-                items: ExprNodeList::from_slice(exprs.into_bump_slice()),
+                items: ExprNodeList::from_slice(exprs.into_bump_slice())?,
                 ..Default::default()
             },
             logger::Loc::EMPTY,
@@ -843,17 +850,25 @@ static mut EMPTY_STRING: E::String = E::String::EMPTY;
 #[inline]
 fn empty_string_data() -> js_ast::expr::Data {
     // SAFETY: EMPTY_STRING is never mutated after init; treated as &'static.
-    js_ast::expr::Data::EString(unsafe { core::ptr::addr_of_mut!(EMPTY_STRING) })
+    // `StoreRef::from_raw` requires non-null aligned and outliving the next
+    // Store reset — a `static` trivially satisfies both.
+    js_ast::expr::Data::EString(unsafe {
+        js_ast::StoreRef::from_raw(core::ptr::addr_of_mut!(EMPTY_STRING))
+    })
 }
 #[inline]
 fn empty_object_data() -> js_ast::expr::Data {
     // SAFETY: see above.
-    js_ast::expr::Data::EObject(unsafe { core::ptr::addr_of_mut!(EMPTY_OBJECT) })
+    js_ast::expr::Data::EObject(unsafe {
+        js_ast::StoreRef::from_raw(core::ptr::addr_of_mut!(EMPTY_OBJECT))
+    })
 }
 #[inline]
 fn empty_array_data() -> js_ast::expr::Data {
     // SAFETY: see above.
-    js_ast::expr::Data::EArray(unsafe { core::ptr::addr_of_mut!(EMPTY_ARRAY) })
+    js_ast::expr::Data::EArray(unsafe {
+        js_ast::StoreRef::from_raw(core::ptr::addr_of_mut!(EMPTY_ARRAY))
+    })
 }
 
 // ──────────────────────────────────────────────────────────────────────────

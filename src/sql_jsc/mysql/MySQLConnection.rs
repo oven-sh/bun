@@ -40,6 +40,9 @@ use crate::mysql::my_sql_request_queue::MySQLRequestQueue;
 use crate::mysql::my_sql_statement::{self as mysql_statement, MySQLStatement, Param};
 
 pub use bun_sql::mysql::protocol::error_packet::ErrorPacket;
+// Zig: `pub const Status = ConnectionState;` — re-export so callers can write
+// `my_sql_connection::Status::Connected` without naming `bun_sql`.
+pub use bun_sql::mysql::connection_state::ConnectionState as Status;
 
 // TODO(port): jsc.API.ServerConfig.SSLConfig — confirm crate path in Phase B
 use crate::jsc::api::server_config::SSLConfig;
@@ -741,7 +744,7 @@ impl MySQLConnection {
                             response.decode(reader)?;
 
                             match response.status {
-                                Auth::caching_sha2_password::Status::Success => {
+                                Auth::caching_sha2_password::FastAuthStatus::SUCCESS => {
                                     debug!("success auth");
                                     self.set_status(ConnectionState::Connected);
 
@@ -749,7 +752,7 @@ impl MySQLConnection {
                                     self.queue.mark_as_ready_for_query();
                                     self.advance();
                                 }
-                                Auth::caching_sha2_password::Status::ContinueAuth => {
+                                Auth::caching_sha2_password::FastAuthStatus::CONTINUE_AUTH => {
                                     bun_core::scoped_log!(MySQLConnection, "continue auth");
 
                                     if self.ssl_mode == SSLMode::Disable {
@@ -965,7 +968,7 @@ impl MySQLConnection {
         );
         response.connect_attrs.insert(
             Box::<[u8]>::from(b"_client_version".as_slice()),
-            Box::<[u8]>::from(bun_core::Global::PACKAGE_JSON_VERSION_WITH_REVISION.as_bytes()),
+            Box::<[u8]>::from(bun_core::Global::package_json_version_with_revision.as_bytes()),
         );
 
         // Generate auth response based on plugin

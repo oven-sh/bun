@@ -6,13 +6,14 @@ use crate::jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, JsError};
 use bun_string::String as BunString;
 use bun_wyhash::hash;
 
-use super::PostgresRequest;
+use super::postgres_request as PostgresRequest;
 use super::PostgresSQLConnection;
 use super::PostgresSQLStatement;
 use super::Signature;
-use bun_sql::postgres::protocol;
+use bun_sql::postgres::PostgresProtocol as protocol;
 use bun_sql::postgres::CommandTag;
-use bun_sql::postgres::any_postgres_error::{AnyPostgresError, postgres_error_to_js};
+use bun_sql::postgres::any_postgres_error::AnyPostgresError;
+use super::error_jsc::postgres_error_to_js;
 use bun_sql::shared::SQLQueryResultMode as PostgresSQLQueryResultMode;
 
 bun_core::declare_scope!(Postgres, visible);
@@ -22,7 +23,7 @@ bun_core::declare_scope!(Postgres, visible);
 // pendingValueGetCached/pendingValueSetCached/columnsGetCached/columnsSetCached/
 // queriesGetCached/fromJS/fromJSDirect/toJS.
 pub use crate::jsc::codegen::JSPostgresSQLQuery as js;
-pub use js::{from_js, from_js_direct, to_js};
+pub use js::to_js;
 
 // TODO(b2-blocked): #[crate::jsc::JsClass] proc-macro attr
 pub struct PostgresSQLQuery {
@@ -202,7 +203,7 @@ impl PostgresSQLQuery {
             return;
         }
 
-        let _keep = crate::jsc::EnsureStillAlive(this_value);
+        this_value.ensure_still_alive();
         js::binding_set_cached(this_value, global_object, JSValue::ZERO);
         js::pending_value_set_cached(this_value, global_object, JSValue::ZERO);
         js::target_set_cached(this_value, global_object, JSValue::ZERO);

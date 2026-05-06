@@ -13,7 +13,19 @@ use bun_sql::mysql::protocol::any_mysql_error;
 use bun_sql::shared::Data;
 
 // TODO(b2-blocked): bun_runtime::webcore::Blob — bun_runtime currently fails to
-// compile (concurrent B-2 work). Only used in the gated `Value::from_js` body.
+// compile (concurrent B-2 work). Local signature-only stub so `Value::from_js`
+// type-checks; replace with `use bun_runtime::webcore::Blob` once green.
+pub struct Blob {
+    _opaque: [u8; 0],
+}
+impl Blob {
+    pub fn needs_to_read_file(&self) -> bool {
+        unimplemented!("b2-blocked: bun_runtime::webcore::Blob::needs_to_read_file")
+    }
+    pub fn shared_view(&self) -> &'static [u8] {
+        unimplemented!("b2-blocked: bun_runtime::webcore::Blob::shared_view")
+    }
+}
 
 pub fn field_type_from_js(
     global_object: &JSGlobalObject,

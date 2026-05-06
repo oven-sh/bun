@@ -585,20 +585,6 @@ fn is_selector_unused(
 /// Note that we have two serialization modules, one from lightningcss and one from servo.
 ///
 /// This is because it actually uses both implementations. This is confusing.
-/// `Printer::lookup_ident_or_ref` shim. The real method is ``-
-/// gated (blocked_on `Printer::lookup_symbol`). Inline the ident arm; the ref
-/// arm falls back to `IdentOrRef::debug_ident()` (the symbol-table path is
-/// only reachable under CSS-modules, which is itself gated upstream — see
-/// `SelectorParser::new_local_identifier`).
-#[inline]
-fn lookup_ident_or_ref(_dest: &Printer, ident: css::css_values::ident::IdentOrRef) -> &'static [u8] {
-    match ident.as_ident() {
-        // SAFETY: arena-owned slice (Phase-A `'static` placeholder).
-        Some(i) => unsafe { &*i.v },
-        None => ident.debug_ident(),
-    }
-}
-
 pub mod serialize {
     use super::*;
 
@@ -843,7 +829,7 @@ pub mod serialize {
                     let value_bytes = unsafe { &**value };
                     let mut id: Vec<u8> = Vec::new();
                     if css::serializer::serialize_identifier(value_bytes, &mut id).is_err() {
-                        return dest.add_fmt_error();
+                        return Err(dest.add_fmt_error());
                     }
 
                     // PORT NOTE: Zig routed through `css.to_css.string(CSSString, ...)`, which
@@ -851,7 +837,7 @@ pub mod serialize {
                     // since `CssString` (`*const [u8]`) does not implement `generic::ToCss`.
                     let mut s: Vec<u8> = Vec::new();
                     if css::serializer::serialize_string(value_bytes, &mut s).is_err() {
-                        return dest.add_fmt_error();
+                        return Err(dest.add_fmt_error());
                     }
 
                     let id_items = &id[..];
@@ -933,35 +919,26 @@ pub mod serialize {
             }
             Component::Class(class) => {
                 dest.write_char(b'.')?;
-                // PORT NOTE: `Printer::write_ident_or_ref` is ``-
-                // gated (blocked_on css_modules pattern.write closure-arity).
-                // Inline its non-CSS-modules path: lookup → serialize.
-                let s = lookup_ident_or_ref(dest, *class);
-                return css::serializer::serialize_identifier(s, dest)
-                    .map_err(|_| PrintErr::CSSPrintError);
+                return dest.write_ident_or_ref(*class, dest.css_module.is_some());
             }
             Component::Id(id) => {
                 dest.write_char(b'#')?;
-                let s = lookup_ident_or_ref(dest, *id);
-                return css::serializer::serialize_identifier(s, dest)
-                    .map_err(|_| PrintErr::CSSPrintError);
+                return dest.write_ident_or_ref(*id, dest.css_module.is_some());
             }
             Component::Host(selector) => {
                 dest.write_str(b":host")?;
                 if let Some(sel) = selector {
                     dest.write_char(b'(')?;
-                    // PORT NOTE: reshaped for borrowck — `dest.context()` borrows
-                    // `*dest` immutably while `serialize_selector` needs `&mut`.
-                    let ctx = dest.context().map(|c| c as *const _);
-                    serialize_selector(sel, dest, ctx.map(|c| unsafe { &*c }), false)?;
+                    let ctx = dest.ctx;
+                    serialize_selector(sel, dest, ctx, false)?;
                     dest.write_char(b')')?;
                 }
                 return Ok(());
             }
             Component::Slotted(selector) => {
                 dest.write_str(b"::slotted(")?;
-                let ctx = dest.context().map(|c| c as *const _);
-                serialize_selector(selector, dest, ctx.map(|c| unsafe { &*c }), false)?;
+                let ctx = dest.ctx;
+                serialize_selector(selector, dest, ctx, false)?;
                 dest.write_char(b')')?;
             }
             // Component::Nth(nth_data) => {
@@ -1536,12 +1513,12 @@ pub mod tocss_servo {
             }
             Component::Id(s) => {
                 dest.write_char(b'#')?;
-                let str = lookup_ident_or_ref(dest, *s);
+                let str = dest.lookup_ident_or_ref(*s);
                 dest.write_str(str)?;
             }
             Component::Class(s) => {
                 dest.write_char(b'.')?;
-                let str = lookup_ident_or_ref(dest, *s);
+                let str = dest.lookup_ident_or_ref(*s);
                 dest.write_str(str)?;
             }
             Component::LocalName(local_name) => {

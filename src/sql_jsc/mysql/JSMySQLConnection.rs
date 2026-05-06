@@ -5,8 +5,8 @@ use bun_aio::KeepAlive;
 use bun_boringssl_sys as boringssl;
 use bun_core::{err, fmt as bun_fmt, timespec, StringBuilder};
 use crate::jsc::{
-    api::server_config::SSLConfig, api::timer::EventLoopTimer, codegen::js_mysql_connection as js,
-    webcore::AutoFlusher, CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, VirtualMachine,
+    api::server_config::SSLConfig, codegen::js_mysql_connection as js, webcore::AutoFlusher,
+    CallFrame, EventLoopTimer, JSGlobalObject, JSValue, JsRef, JsResult, VirtualMachine,
 };
 use bun_ptr::IntrusiveRc;
 use bun_sql::mysql::protocol::any_mysql_error::{self as AnyMySQLError, Error as AnyMySQLErrorT};
@@ -1034,21 +1034,26 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 }
 
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
+#[derive(strum::IntoStaticStr, Debug)]
 pub enum OnResultRowError {
-    #[error("ShortRead")]
     ShortRead,
-    #[error("JSError")]
     JSError,
 }
+impl core::fmt::Display for OnResultRowError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(<&'static str>::from(self))
+    }
+}
+impl core::error::Error for OnResultRowError {}
 impl From<OnResultRowError> for bun_core::Error {
     fn from(e: OnResultRowError) -> Self {
         bun_core::Error::from_name(<&'static str>::from(&e))
     }
 }
 
-// TODO(port): ResultMode enum lives in JSMySQLQuery / shared — placeholder import.
-use super::js_mysql_query::ResultMode;
+// Result-mode enum lives in `bun_sql::shared` (`SQLQueryResultMode`); aliased
+// here as `ResultMode` to keep the call sites readable.
+use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode as ResultMode;
 
 // pub const js = jsc.Codegen.JSMySQLConnection; — re-exported via `use ... as js` above.
 // fromJS / fromJSDirect / toJS — provided by #[bun_jsc::JsClass] derive.

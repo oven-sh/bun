@@ -762,7 +762,12 @@ pub extern "C" fn PostgresSQLConnection__createInstance(
     global: *mut JSGlobalObject,
     callframe: *mut CallFrame,
 ) -> JSValue {
-    crate::jsc::to_js_host_fn(call)(global, callframe)
+    // SAFETY: JSC always passes valid non-null global/callframe pointers.
+    let (g, f) = unsafe { (&*global, &*callframe) };
+    match call(g, f) {
+        Ok(v) => v,
+        Err(_) => JSValue::ZERO,
+    }
 }
 
 // TODO(b2-blocked): #[crate::jsc::host_fn] proc-macro attr
@@ -1017,7 +1022,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         }
     }
 
-    pub fn on_open(this: &mut PostgresSQLConnection, socket: Self::SocketType) {
+    pub fn on_open(this: &mut PostgresSQLConnection, socket: SocketType<SSL>) {
         if unsafe { this.vm() }.is_shutting_down() {
             #[cold]
             fn cold(this: &mut PostgresSQLConnection) { this.close(); }
@@ -1027,7 +1032,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this.on_open(Self::_socket(socket));
     }
 
-    fn on_handshake_(this: &mut PostgresSQLConnection, _: Self::SocketType, success: i32, ssl_error: uws::us_bun_verify_error_t) {
+    fn on_handshake_(this: &mut PostgresSQLConnection, _: SocketType<SSL>, success: i32, ssl_error: uws::us_bun_verify_error_t) {
         if unsafe { this.vm() }.is_shutting_down() {
             #[cold]
             fn cold(this: &mut PostgresSQLConnection) { this.close(); }
@@ -1039,18 +1044,18 @@ impl<const SSL: bool> SocketHandler<SSL> {
 
     // pub const onHandshake = if (ssl) onHandshake_ else null;
     // TODO(port): conditional associated const fn — in Rust, expose `Option<fn(...)>`.
-    pub const ON_HANDSHAKE: Option<fn(&mut PostgresSQLConnection, Self::SocketType, i32, uws::us_bun_verify_error_t)> =
+    pub const ON_HANDSHAKE: Option<fn(&mut PostgresSQLConnection, SocketType<SSL>, i32, uws::us_bun_verify_error_t)> =
         if SSL { Some(Self::on_handshake_) } else { None };
 
-    pub fn on_close(this: &mut PostgresSQLConnection, _socket: Self::SocketType, _: i32, _: Option<*mut c_void>) {
+    pub fn on_close(this: &mut PostgresSQLConnection, _socket: SocketType<SSL>, _: i32, _: Option<*mut c_void>) {
         this.on_close();
     }
 
-    pub fn on_end(this: &mut PostgresSQLConnection, _socket: Self::SocketType) {
+    pub fn on_end(this: &mut PostgresSQLConnection, _socket: SocketType<SSL>) {
         this.on_close();
     }
 
-    pub fn on_connect_error(this: &mut PostgresSQLConnection, _socket: Self::SocketType, _: i32) {
+    pub fn on_connect_error(this: &mut PostgresSQLConnection, _socket: SocketType<SSL>, _: i32) {
         if unsafe { this.vm() }.is_shutting_down() {
             #[cold]
             fn cold(this: &mut PostgresSQLConnection) { this.close(); }
@@ -1060,7 +1065,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this.on_close();
     }
 
-    pub fn on_timeout(this: &mut PostgresSQLConnection, _socket: Self::SocketType) {
+    pub fn on_timeout(this: &mut PostgresSQLConnection, _socket: SocketType<SSL>) {
         if unsafe { this.vm() }.is_shutting_down() {
             #[cold]
             fn cold(this: &mut PostgresSQLConnection) { this.close(); }
@@ -1070,7 +1075,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this.on_timeout();
     }
 
-    pub fn on_data(this: &mut PostgresSQLConnection, _socket: Self::SocketType, data: &[u8]) {
+    pub fn on_data(this: &mut PostgresSQLConnection, _socket: SocketType<SSL>, data: &[u8]) {
         if unsafe { this.vm() }.is_shutting_down() {
             #[cold]
             fn cold(this: &mut PostgresSQLConnection) { this.close(); }
@@ -1080,7 +1085,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this.on_data(data);
     }
 
-    pub fn on_writable(this: &mut PostgresSQLConnection, _socket: Self::SocketType) {
+    pub fn on_writable(this: &mut PostgresSQLConnection, _socket: SocketType<SSL>) {
         if unsafe { this.vm() }.is_shutting_down() {
             #[cold]
             fn cold(this: &mut PostgresSQLConnection) { this.close(); }

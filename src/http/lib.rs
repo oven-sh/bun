@@ -5588,8 +5588,20 @@ pub mod ssl_config {
         use super::*;
         use bun_collections::ArrayHashMap;
 
+        /// Newtype around the raw config pointer so the map can be `Send`/`Sync`.
+        /// The pointee's allocation is kept alive by the paired weak ref while
+        /// in the map; dereference happens only under the registry mutex.
+        #[derive(Copy, Clone, PartialEq, Eq, Hash)]
+        #[repr(transparent)]
+        struct ConfigKey(*const SSLConfig);
+        // SAFETY: `*const SSLConfig` is just an address; access is guarded by
+        // the `CONFIGS` mutex and the backing allocation is kept alive by the
+        // weak ref stored alongside.
+        unsafe impl Send for ConfigKey {}
+        unsafe impl Sync for ConfigKey {}
+
         // PERF(port): was Lock-guarded — Mutex<T> owns the map.
-        static CONFIGS: Mutex<Option<ArrayHashMap<*const SSLConfig, WeakPtr>>> =
+        static CONFIGS: Mutex<Option<ArrayHashMap<ConfigKey, WeakPtr>>> =
             Mutex::new(None);
 
         /// Takes a by-value SSLConfig, wraps it in a `SharedPtr` (strong=1),
@@ -5612,10 +5624,10 @@ pub mod ssl_config {
                 // ArrayHashMap here is keyed by pointer; emulate content
                 // lookup by linear scan over the (small) map.
                 let mut found_slot: Option<usize> = None;
-                for (idx, (k, _)) in map.iter().enumerate() {
+                for (idx, k) in map.keys().iter().enumerate() {
                     // SAFETY: map keys are interned config addresses; backing
                     // allocation kept alive by the weak ref while in the map.
-                    if unsafe { (**k).is_same(&*new_ptr) } {
+                    if unsafe { (*k.0).is_same(&*new_ptr) } {
                         found_slot = Some(idx);
                         break;
                     }
@@ -5636,11 +5648,11 @@ pub mod ssl_config {
                             slot_weak,
                             new_shared.clone_weak(),
                         ));
-                        *slot_key = new_ptr;
+                        *slot_key = ConfigKey(new_ptr);
                         new_shared
                     }
                 } else {
-                    map.insert(new_ptr, new_shared.clone_weak());
+                    map.insert(ConfigKey(new_ptr), new_shared.clone_weak());
                     new_shared
                 }
             };
@@ -5662,7 +5674,7 @@ pub mod ssl_config {
                 return;
             }
             // Pointer-identity removal.
-            map.swap_remove(&config);
+            map.swap_remove(&ConfigKey(config));
         }
     }
 
@@ -5693,7 +5705,7 @@ pub mod ssl_wrapper {
 
     use crate::ssl_config::SSLConfig;
 
-    bun_output::declare_scope!(SSLWrapper, hidden);
+    bun_core::declare_scope!(SSLWrapper, hidden);
 
     // Mimics the behavior of openssl.c in uSockets, wrapping data that can be
     // received from anywhere (network, DuplexStream, etc).
@@ -5919,7 +5931,7 @@ pub mod ssl_wrapper {
             bun_boringssl::load();
 
             let ctx_opts: uws::socket_context::BunSocketContextOptions = ssl_options.as_usockets();
-            let mut err: uws::create_bun_socket_error_t = uws::create_bun_socket_error_t::None;
+            let mut err: uws::create_bun_socket_error_t = uws::create_bun_socket_error_t::none;
             let Some(ssl_ctx) = ctx_opts.create_ssl_context(&mut err).and_then(NonNull::new)
             else {
                 return Err(bun_core::err!("InvalidOptions"));
@@ -6199,8 +6211,15 @@ pub mod ssl_wrapper {
                 return us_bun_verify_error_t::default();
             }
             let Some(ssl) = self.ssl else { return us_bun_verify_error_t::default() };
-            // TODO(port): ssl.getVerifyError() — Zig method on *BoringSSL.SSL; map to bun_boringssl helper in Phase B
-            bun_boringssl::get_verify_error(ssl.as_ptr())
+            // Zig `BoringSSL.SSL.getVerifyError` — implemented in uSockets C; reads
+            // `SSL_get_verify_result` and maps it onto `us_bun_verify_error_t`.
+            unsafe extern "C" {
+                fn us_ssl_socket_verify_error_from_ssl(
+                    ssl: *mut boring_sys::SSL,
+                ) -> us_bun_verify_error_t;
+            }
+            // SAFETY: ssl is a live BoringSSL handle owned by this wrapper.
+            unsafe { us_ssl_socket_verify_error_from_ssl(ssl.as_ptr()) }
         }
 
         /// Update the handshake state. Returns true if we can call handle_reading.
@@ -6296,7 +6315,7 @@ pub mod ssl_wrapper {
 
             // read data from the input BIO
             loop {
-                bun_output::scoped_log!(SSLWrapper, "handleReading");
+                bun_core::scoped_log!(SSLWrapper, "handleReading");
                 let Some(ssl) = self.ssl else { return false };
 
                 let available = &mut buffer[read..];
@@ -6308,7 +6327,7 @@ pub mod ssl_wrapper {
                         c_int::try_from(available.len()).unwrap(),
                     )
                 };
-                bun_output::scoped_log!(SSLWrapper, "just read {}", just_read);
+                bun_core::scoped_log!(SSLWrapper, "just read {}", just_read);
                 if just_read <= 0 {
                     // SAFETY: ssl is still valid.
                     let err = unsafe { boring_sys::SSL_get_error(ssl.as_ptr(), just_read) };
@@ -6342,7 +6361,7 @@ pub mod ssl_wrapper {
 
                         // flush the reading
                         if read > 0 {
-                            bun_output::scoped_log!(SSLWrapper, "triggering data callback (read {})", read);
+                            bun_core::scoped_log!(SSLWrapper, "triggering data callback (read {})", read);
                             self.trigger_data_callback(&buffer[0..read]);
                             // The data callback may have closed the connection
                             if self.ssl.is_none() || self.flags.closed_notified() {
@@ -6352,7 +6371,7 @@ pub mod ssl_wrapper {
                         self.trigger_close_callback();
                         return false;
                     } else {
-                        bun_output::scoped_log!(SSLWrapper, "wanna read/write just break");
+                        bun_core::scoped_log!(SSLWrapper, "wanna read/write just break");
                         // we wanna read/write just break
                         break;
                     }
@@ -6362,7 +6381,7 @@ pub mod ssl_wrapper {
 
                 read += usize::try_from(just_read).unwrap();
                 if read == buffer.len() {
-                    bun_output::scoped_log!(SSLWrapper, "triggering data callback (read {}) and resetting read buffer", read);
+                    bun_core::scoped_log!(SSLWrapper, "triggering data callback (read {}) and resetting read buffer", read);
                     // we filled the buffer
                     self.trigger_data_callback(&buffer[0..read]);
                     // The callback may have closed the connection - check before continuing
@@ -6375,7 +6394,7 @@ pub mod ssl_wrapper {
             }
             // we finished reading
             if read > 0 {
-                bun_output::scoped_log!(SSLWrapper, "triggering data callback (read {})", read);
+                bun_core::scoped_log!(SSLWrapper, "triggering data callback (read {})", read);
                 self.trigger_data_callback(&buffer[0..read]);
                 // The callback may have closed the connection
                 // Check ssl first as a proxy for whether we were deinited

@@ -1274,9 +1274,9 @@ pub fn parse_json(
     };
 
     if let Some(version) = json.get(b"version") {
-        // TODO(port): Expr.data variant matching — exact API TBD in bun_js_parser
-        if !version.data.is_e_number() || version.data.as_e_number().value != 3.0 {
-            return Err(bun_core::err!("UnsupportedVersion"));
+        match version.data.as_e_number() {
+            Some(n) if n.value == 3.0 => {}
+            _ => return Err(bun_core::err!("UnsupportedVersion")),
         }
     }
 
@@ -1308,7 +1308,7 @@ pub fn parse_json(
         None => return Err(bun_core::err!("InvalidSourceMap")),
     };
 
-    if sources_content.items.len() != sources_paths.items.len() {
+    if sources_content.items.len != sources_paths.items.len {
         return Err(bun_core::err!("InvalidSourceMap"));
     }
 
@@ -1317,13 +1317,13 @@ pub fn parse_json(
     // PORT NOTE: reshaped for borrowck — Zig used a counted index `i` with
     // errdefer freeing the prefix; Rust `Vec<Box<[u8]>>` drops automatically.
     let source_paths_slice: Option<Vec<Box<[u8]>>> = if !source_only {
-        let mut v: Vec<Box<[u8]>> = Vec::with_capacity(sources_content.items.len());
+        let mut v: Vec<Box<[u8]>> = Vec::with_capacity(sources_content.items.len as usize);
         for item in sources_paths.items.slice() {
-            if !item.data.is_e_string() {
+            let Some(s) = item.data.as_e_string() else {
                 return Err(bun_core::err!("InvalidSourceMap"));
-            }
+            };
             // TODO(port): e_string.string(alloc) — exact API TBD
-            let s = item.data.as_e_string().string(arena)?;
+            let s = s.string(arena)?;
             v.push(Box::<[u8]>::from(s));
         }
         Some(v)
@@ -1333,7 +1333,7 @@ pub fn parse_json(
 
     let map: Option<Arc<ParsedSourceMap>> = if !source_only {
         let mut map_data = match mapping::parse(
-            mappings_str.data.as_e_string().slice(arena),
+            mappings_str.data.as_e_string().unwrap().slice(arena),
             None,
             i32::MAX,
             i32::MAX as usize,
@@ -1354,15 +1354,15 @@ pub fn parse_json(
                 if let Some(names) = json.get(b"names") {
                     if let Some(arr) = names.data.as_e_array() {
                         let mut names_list: Vec<bun_semver::String> =
-                            Vec::with_capacity(arr.items.len());
+                            Vec::with_capacity(arr.items.len as usize);
                         let mut names_buffer: Vec<u8> = Vec::new();
 
                         for item in arr.items.slice() {
-                            if !item.data.is_e_string() {
+                            let Some(estr) = item.data.as_e_string() else {
                                 return Err(bun_core::err!("InvalidSourceMap"));
-                            }
+                            };
 
-                            let str = item.data.as_e_string().string(arena)?;
+                            let str = estr.string(arena)?;
 
                             // PERF(port): was assume_capacity
                             names_list.push(bun_semver::String::init_append_if_needed(

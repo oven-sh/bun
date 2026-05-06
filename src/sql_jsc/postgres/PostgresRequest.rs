@@ -5,20 +5,50 @@ use bun_string::String as BunString;
 use bun_sql::postgres::PostgresProtocol as protocol;
 use bun_sql::postgres::PostgresTypes as types;
 use bun_sql::postgres::PostgresTypes::{AnyPostgresError, Int4, Short};
+use bun_sql::postgres::protocol::{ReaderContext, WriterContext};
 
 use crate::postgres::PostgresSQLConnection;
 use crate::postgres::PostgresSQLQuery;
 use crate::postgres::PostgresSQLStatement;
 use crate::postgres::Signature;
-use crate::shared::QueryBindingIterator::QueryBindingIterator;
+use crate::shared::QueryBindingIterator;
 
 bun_core::declare_scope!(Postgres, visible);
+
+/// Zig: `comptime MessageType: @Type(.enum_literal)` — the set of backend
+/// message tags `PostgresSQLConnection.on()` dispatches over. Defined here
+/// (the dispatch site) rather than in `bun_sql::postgres::protocol` because
+/// it is purely a compile-time switch tag in Zig with no wire encoding.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, strum::IntoStaticStr)]
+pub enum MessageType {
+    DataRow,
+    CopyData,
+    ParameterStatus,
+    ReadyForQuery,
+    CommandComplete,
+    BindComplete,
+    ParseComplete,
+    ParameterDescription,
+    RowDescription,
+    Authentication,
+    NoData,
+    BackendKeyData,
+    ErrorResponse,
+    PortalSuspended,
+    CloseComplete,
+    CopyInResponse,
+    NoticeResponse,
+    EmptyQueryResponse,
+    CopyOutResponse,
+    CopyDone,
+    CopyBothResponse,
+}
 
 /// The PostgreSQL wire protocol uses 16-bit integers for parameter and column counts.
 const MAX_PARAMETERS: usize = u16::MAX as usize;
 
 // TODO(port): narrow error set
-pub fn write_bind<Context>(
+pub fn write_bind<Context: WriterContext>(
     name: &[u8],
     cursor_name: BunString,
     global: &JSGlobalObject,
@@ -157,7 +187,7 @@ pub fn write_bind<Context>(
             }
             types::Tag::Timestamp | types::Tag::Timestamptz => {
                 let l = writer.length()?;
-                writer.int8(types::date::from_js(global, value)?)?;
+                writer.int8(crate::postgres::types::date::from_js(global, value)?)?;
                 l.write_excluding_self()?;
             }
             types::Tag::Bytea => {
@@ -228,7 +258,7 @@ pub fn write_bind<Context>(
     Ok(())
 }
 
-pub fn write_query<Context>(
+pub fn write_query<Context: WriterContext>(
     query: &[u8],
     name: &[u8],
     params: &[Int4],
@@ -255,7 +285,7 @@ pub fn write_query<Context>(
     Ok(())
 }
 
-pub fn prepare_and_query_with_signature<Context>(
+pub fn prepare_and_query_with_signature<Context: WriterContext>(
     global: &JSGlobalObject,
     query: &[u8],
     array_value: JSValue,
@@ -284,7 +314,7 @@ pub fn prepare_and_query_with_signature<Context>(
 }
 
 // TODO(port): narrow error set
-pub fn bind_and_execute<Context>(
+pub fn bind_and_execute<Context: WriterContext>(
     global: &JSGlobalObject,
     statement: &mut PostgresSQLStatement,
     array_value: JSValue,
@@ -318,7 +348,7 @@ pub fn bind_and_execute<Context>(
 /// like PgBouncer in transaction mode, which may reassign server connections between protocol
 /// round-trips. Without this, Parse and Bind+Execute could be routed to different backend
 /// connections, causing queries to execute against the wrong prepared statement.
-pub fn parse_and_bind_and_execute<Context>(
+pub fn parse_and_bind_and_execute<Context: WriterContext>(
     global: &JSGlobalObject,
     query: &[u8],
     statement: &mut PostgresSQLStatement,
@@ -382,7 +412,7 @@ pub fn parse_and_bind_and_execute<Context>(
 }
 
 // TODO(port): narrow error set
-pub fn execute_query<Context>(
+pub fn execute_query<Context: WriterContext>(
     query: &[u8],
     writer: protocol::NewWriter<Context>,
 ) -> Result<(), bun_core::Error> {
@@ -393,13 +423,11 @@ pub fn execute_query<Context>(
 }
 
 // TODO(port): narrow error set
-pub fn on_data<Context>(
+pub fn on_data<Context: ReaderContext>(
     connection: &mut PostgresSQLConnection,
     reader: protocol::NewReader<Context>,
 ) -> Result<(), bun_core::Error> {
-    // TODO(port): `.DataRow` etc. are enum-literal tags on `connection.on`; using
-    // `protocol::MessageKind::*` as a placeholder — verify actual enum path in Phase B.
-    use protocol::MessageKind as M;
+    use MessageType as M;
     loop {
         reader.mark_message_start();
         let c = reader.int::<u8>()?;
@@ -461,12 +489,14 @@ pub fn on_data<Context>(
     }
 }
 
-// TODO(port): `bun.LinearFifo(*PostgresSQLQuery, .Dynamic)` — verify bun_collections::LinearFifo exists;
-// element is a raw pointer (queries are JS-wrapper-owned, not Box-owned by the queue).
-pub type Queue = bun_collections::LinearFifo<*mut PostgresSQLQuery>;
+// `bun.LinearFifo(*PostgresSQLQuery, .Dynamic)` — element is a raw pointer
+// (queries are JS-wrapper-owned, not Box-owned by the queue).
+pub type Queue = bun_collections::linear_fifo::LinearFifo<
+    *mut PostgresSQLQuery,
+    bun_collections::linear_fifo::DynamicBuffer<*mut PostgresSQLQuery>,
+>;
 
-// TODO(port): TlsStatus / SslMode live on PostgresSQLConnection — import path placeholder.
-use crate::postgres::PostgresSQLConnection::{SslMode, TlsStatus};
+use crate::postgres::postgres_sql_connection::{SslMode, TlsStatus};
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

@@ -213,23 +213,19 @@ fn on_init_error_noop(err: InitError, opts: &InitOpts) -> ! {
             // TODO(port): bun_sys::exists_z once that lands.
             Output::err(
                 "HTTPThread",
-                format_args!(
-                    "failed to load CA file: '{}'",
-                    bstr::BStr::new(opts.abs_ca_file_name)
-                ),
+                "failed to load CA file: '{}'",
+                (bstr::BStr::new(opts.abs_ca_file_name),),
             );
         }
         InitError::InvalidCAFile => {
             Output::err(
                 "HTTPThread",
-                format_args!(
-                    "the CA file is invalid: '{}'",
-                    bstr::BStr::new(opts.abs_ca_file_name)
-                ),
+                "the CA file is invalid: '{}'",
+                (bstr::BStr::new(opts.abs_ca_file_name),),
             );
         }
         InitError::InvalidCA => {
-            Output::err("HTTPThread", format_args!("the provided CA is invalid"));
+            Output::err("HTTPThread", "the provided CA is invalid", ());
         }
         InitError::FailedToOpenSocket => {
             bun_core::err_generic!("failed to start HTTP client thread");
@@ -919,10 +915,10 @@ mod _event_loop_draft {
 
     fn init_once(opts: &InitOpts) {
         // Left undefined here; assigned in on_start.
-        bun_libdeflate_sys::load();
+        bun_libdeflate_sys::libdeflate::load();
         let opts_copy = opts.clone();
         let thread = std::thread::Builder::new()
-            .stack_size(bun_core::DEFAULT_THREAD_STACK_SIZE)
+            .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE)
             .spawn(move || on_start(opts_copy));
         match thread {
             Ok(t) => drop(t), // detach
@@ -931,7 +927,7 @@ mod _event_loop_draft {
     }
 
     pub fn on_start(opts: InitOpts) {
-        Output::Source::configure_named_thread("HTTP Client");
+        Output::Source::configure_named_thread(bun_core::zstr!("HTTP Client"));
         // PERF(port): was MimallocArena bulk-free for bun.http.default_allocator.
 
         let loop_ = MiniEventLoop::init_global(None, None);

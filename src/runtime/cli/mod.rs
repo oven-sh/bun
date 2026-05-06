@@ -111,8 +111,6 @@ pub mod bunfig;
 pub use bunfig::Bunfig;
 #[path = "run_command.rs"]
 pub mod run_command;
-#[path = "test_command.rs"]
-pub mod test_command;
 
 // ─── crate-local helper for param-table concatenation ────────────────────────
 // `bun_clap::parse_param!` is now a real proc-macro (const `Param<Help>`

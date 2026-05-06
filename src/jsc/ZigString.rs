@@ -243,7 +243,15 @@ impl ZigString {
     
     pub fn index_of_any(&self, chars: &'static [u8]) -> Option<strings::OptionalUsize> {
         if self.is_16bit() {
-            strings::index_of_any16(self.utf16_slice_aligned(), chars)
+            // PORT NOTE: Zig comptime-widened the `[]const u8` charset to u16.
+            // Rust has no comptime-array widening; do the scalar scan inline
+            // (matches `strings::index_of_any_t` which is also scalar for u16).
+            for (i, c) in self.utf16_slice_aligned().iter().enumerate() {
+                if chars.iter().any(|&a| u16::from(a) == *c) {
+                    return Some(i as strings::OptionalUsize);
+                }
+            }
+            None
         } else {
             strings::index_of_any(self.slice(), chars)
         }
@@ -661,7 +669,7 @@ impl ZigString {
     
     #[inline]
     pub fn to_ref(slice_: &[u8], global: &JSGlobalObject) -> c_api::JSValueRef {
-        Self::init(slice_).to_js(global).as_ref_()
+        Self::init(slice_).to_js(global).as_ref()
     }
 
     pub const EMPTY: ZigString = ZigString { _unsafe_ptr_do_not_use: b"".as_ptr(), len: 0 };
@@ -938,19 +946,20 @@ impl Slice {
     pub const EMPTY: Slice = Slice { allocator: NullableAllocator::NULL, ptr: b"".as_ptr(), len: 0 };
 
     pub fn report_extra_memory(&self, vm: &VM) {
-        if let Some(allocator) = self.allocator.get() {
-            // Don't report it if the memory is actually owned by jsc.
-            if !BunString::is_wtf_allocator(allocator) {
-                vm.deprecated_report_extra_memory(self.len as usize);
+        // Don't report it if the memory is actually owned by jsc.
+        if !self.allocator.is_null() && !self.allocator.is_wtf_allocator() {
+            // PORT NOTE: `VM::deprecated_report_extra_memory` lives in the
+            // gated `VM.rs`; inline the FFI call against the opaque `crate::VM`.
+            extern "C" {
+                fn JSC__VM__reportExtraMemory(vm: *mut VM, size: usize);
             }
+            // SAFETY: `vm` is a live opaque JSC VM handle (interior-mutable).
+            unsafe { JSC__VM__reportExtraMemory(vm.as_mut_ptr(), self.len as usize) };
         }
     }
 
     pub fn is_wtf_allocated(&self) -> bool {
-        match self.allocator.get() {
-            Some(a) => BunString::is_wtf_allocator(a),
-            None => false,
-        }
+        self.allocator.is_wtf_allocator()
     }
 
     pub fn init(input: &[u8]) -> Slice {
@@ -1039,9 +1048,10 @@ impl Slice {
     }
 
     /// Same as `into_owned_slice`, but creates a NUL-terminated slice.
-    pub fn into_owned_slice_z(self) -> Result<Box<ZStr>, AllocError> {
-        // always clones
-        Ok(ZStr::from_bytes(self.slice()))
+    pub fn into_owned_slice_z(self) -> Result<bun_core::ZBox, AllocError> {
+        // always clones — `Box<ZStr>` is intentionally unsupported (see
+        // `bun_core::ZStr` docs); `ZBox` is the owned `[:0]u8` counterpart.
+        Ok(bun_core::ZBox::from_vec_with_nul(self.slice().to_vec()))
         // self drops here
     }
 

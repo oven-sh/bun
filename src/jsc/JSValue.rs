@@ -1137,7 +1137,7 @@ impl JSValue {
     }
     /// `JSValue.isClass` — true if the callable is a class constructor.
     pub fn is_class(self, global: &JSGlobalObject) -> bool {
-        extern "C" {
+        unsafe extern "C" {
             fn JSC__JSValue__isClass(this: JSValue, global: *const JSGlobalObject) -> bool;
         }
         // SAFETY: `global` is live; FFI is infallible per JSValue.zig:1108.
@@ -1183,7 +1183,7 @@ impl JSValue {
         ctx: *mut c_void,
         callback: ForEachPropertyCallback,
     ) -> JsResult<()> {
-        extern "C" {
+        unsafe extern "C" {
             fn JSC__JSValue__forEachProperty(
                 this: JSValue,
                 global: *const JSGlobalObject,
@@ -1205,7 +1205,7 @@ impl JSValue {
         ctx: *mut c_void,
         callback: ForEachPropertyCallback,
     ) -> JsResult<()> {
-        extern "C" {
+        unsafe extern "C" {
             fn JSC__JSValue__forEachPropertyNonIndexed(
                 this: JSValue,
                 global: *const JSGlobalObject,
@@ -1222,7 +1222,7 @@ impl JSValue {
     /// own-property slot directly (no prototype walk, no getters). Returns
     /// the empty value for holes.
     pub fn get_direct_index(self, global: &JSGlobalObject, i: u32) -> JSValue {
-        extern "C" {
+        unsafe extern "C" {
             fn JSC__JSValue__getDirectIndex(
                 this: JSValue,
                 global: *const JSGlobalObject,
@@ -1242,7 +1242,7 @@ impl JSValue {
         if self.is_undefined_or_null() {
             return Ok(());
         }
-        extern "C" {
+        unsafe extern "C" {
             fn JSC__JSValue__getNameProperty(
                 this: JSValue,
                 global: *const JSGlobalObject,

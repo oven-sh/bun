@@ -24,6 +24,28 @@ impl Default for NullableAllocator {
 }
 
 impl NullableAllocator {
+    /// A `NullableAllocator` with no backing allocator. `const` so it can be
+    /// used in `const` initializers (e.g. `ZigString.Slice::EMPTY`).
+    pub const NULL: NullableAllocator =
+        NullableAllocator { ptr: core::ptr::null_mut(), vtable: None };
+
+    #[inline]
+    pub const fn null() -> NullableAllocator {
+        Self::NULL
+    }
+
+    /// Wraps the global mimalloc allocator (`bun.default_allocator`).
+    #[inline]
+    pub fn default_alloc() -> NullableAllocator {
+        Self::init(Some(crate::basic::C_ALLOCATOR))
+    }
+
+    /// True iff `allocator`'s vtable is the global mimalloc vtable.
+    #[inline]
+    pub fn is_default(allocator: StdAllocator) -> bool {
+        core::ptr::eq(allocator.vtable, crate::basic::C_ALLOCATOR.vtable)
+    }
+
     #[inline]
     pub fn init(allocator: Option<StdAllocator>) -> NullableAllocator {
         match allocator {

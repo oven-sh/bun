@@ -2845,7 +2845,19 @@ pub mod formatter {
                 writer.print(format_args!(
                     "{}{}{}{}",
                     pfmt!("<r><magenta>", C),
-                    if key.len > 0 && key.char_at(0) == u32::from(b'#') { "" } else { "$" },
+                    // PORT NOTE: `ZigString::char_at` lives on the gated
+                    // jsc-side impl; inline the 16-bit/latin1 dispatch.
+                    if key.len > 0
+                        && (if key.is_16bit() {
+                            key.utf16_slice_aligned()[0] as u32
+                        } else {
+                            key.slice()[0] as u32
+                        }) == u32::from(b'#')
+                    {
+                        ""
+                    } else {
+                        "$"
+                    },
                     key,
                     pfmt!("<r><d>:<r> ", C),
                 ));
@@ -2888,7 +2900,7 @@ pub mod formatter {
             if !name_str.eql_comptime(b"Object") {
                 return Ok(Some(name_str));
             } else if value.get_prototype(global_this).eql_value(JSValue::NULL) {
-                return Ok(Some(*ZigString::static_("[Object: null prototype]")));
+                return Ok(Some(ZigString::static_("[Object: null prototype]")));
             }
         }
         Ok(None)
@@ -2904,6 +2916,7 @@ pub mod formatter {
             max_depth: u32,
             colors: bool,
         ) -> JSValue;
+        fn JSGlobalObject__throwStackOverflow(global: *const JSGlobalObject);
     }
 
     // ───────────────────────────────────────────────────────────────────────
@@ -2971,15 +2984,26 @@ pub mod formatter {
                 if !self.stack_check.is_safe_to_recurse() {
                     self.failed = true;
                     if self.can_throw_stack_overflow {
-                        return Err(self.global_this.throw_stack_overflow());
+                        // PORT NOTE: `JSGlobalObject::throw_stack_overflow` lives
+                        // on the gated `JSGlobalObject.rs` impl; call the FFI
+                        // directly here.
+                        // SAFETY: `global_this` is a live `JSGlobalObject`.
+                        unsafe { JSGlobalObject__throwStackOverflow(self.global_this) };
+                        return Err(jsc::JsError::Thrown);
                     }
                     return Ok(());
                 }
 
                 if self.map_node.is_none() {
-                    let mut node = visited::Pool::get();
-                    node.data.clear();
-                    self.map = core::mem::take(&mut node.data);
+                    // TODO(port): `visited::Pool` storage isn't wired
+                    // (`ObjectPoolType` impl + `object_pool!` storage hook);
+                    // until it is, allocate a fresh node directly. Pool reuse
+                    // is an optimization only.
+                    let node = Box::new(visited::PoolNode {
+                        next: core::ptr::null_mut(),
+                        data: core::mem::MaybeUninit::new(visited::Map::default()),
+                    });
+                    self.map = visited::Map::default();
                     self.map_node = Some(node);
                 }
 
@@ -3016,8 +3040,8 @@ pub mod formatter {
             match FORMAT {
                 Tag::StringPossiblyFormatted => {
                     let str = value.to_slice(self.global_this)?;
-                    self.add_for_new_line(str.len);
                     let slice = str.slice();
+                    self.add_for_new_line(slice.len());
                     reseat_writer!();
                     self.write_with_formatting::<ENABLE_ANSI_COLORS>(writer_, slice, self.global_this)?;
                 }

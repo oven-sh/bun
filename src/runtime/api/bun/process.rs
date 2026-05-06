@@ -3923,7 +3923,7 @@ pub mod sync {
             for (idx, &memfd) in process.memfds[1..].iter().enumerate() {
                 if memfd {
                     out[idx] =
-                        bun_sys::File::from(out_fds[idx]).read_to_end().unwrap_or_default();
+                        (bun_sys::File { handle: out_fds[idx] }).read_to_end().unwrap_or_default();
                 }
             }
         }

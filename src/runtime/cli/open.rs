@@ -551,7 +551,9 @@ impl EditorContext {
 
         let opened =
             bun_sys::File::open_at(tmpdir, basename, bun_sys::O::RDONLY, 0).map_err(Into::into)?;
-        let _close = scopeguard::guard((), |_| opened.close());
+        let _close = scopeguard::guard((), |_| {
+            let _ = opened.close();
+        });
 
         let mut path_buf = PathBuffer::uninit();
         let resolved = bun_sys::get_fd_path(opened.handle(), &mut path_buf).map_err(Into::into)?;

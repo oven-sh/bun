@@ -153,11 +153,14 @@ impl SecureContext {
         let mut err = bun_uws_sys::create_bun_socket_error_t::none;
         // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
         let vm = unsafe { &mut *global.bun_vm() };
-        let Some(ctx) = vm
-            .rare_data()
-            .ssl_ctx_cache()
-            .get_or_create_digest(ctx_opts, d, &mut err)
-        else {
+        // `rare_data().ssl_ctx_cache()` currently returns the upstream
+        // `bun_jsc::rare_data::high_tier::SSLContextCache` opaque cycle-break
+        // stub (a private type — cannot be named or extended from this crate).
+        // The real `get_or_create_digest` lives in `crate::api::SSLContextCache`
+        // and is wired in once the rare-data vtable / type-carrier lands. Touch
+        // the accessor so the borrow shape stays exercised.
+        let _ = vm.rare_data().ssl_ctx_cache();
+        let Some(ctx) = ssl_ctx_cache_get_or_create_digest(&ctx_opts, d, &mut err) else {
             // `err` is only set for the input-validation paths (bad PEM, missing
             // file, …). When BoringSSL itself fails (e.g. unsupported curve) the
             // enum is still `.none`; surface the library error stack instead of

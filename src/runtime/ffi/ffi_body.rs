@@ -85,7 +85,7 @@ impl JSValueFfiExt for JSValue {
 /// Local non-throwing error-instance helpers — Zig's `toInvalidArguments` /
 /// `toTypeError` create and return the JS Error without throwing, which the
 /// upstream `bun_jsc` surface only offers as throwing variants.
-trait GlobalObjectFfiExt {
+pub(super) trait GlobalObjectFfiExt {
     fn to_invalid_arguments(&self, msg: impl core::fmt::Display) -> JSValue;
     fn to_type_error(&self, code: jsc::ErrorCode, msg: impl core::fmt::Display) -> JSValue;
     fn make_napi_env_for_ffi(&self) -> *mut napi::NapiEnv;

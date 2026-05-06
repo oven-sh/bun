@@ -535,7 +535,7 @@ impl PostgresSQLQuery {
                             let error_response = stmt.error_response.as_ref().unwrap().to_js(global_object)?;
                             drop(stmt);
                             // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                unsafe { Self::deref_(this) };
+                            unsafe { Self::deref_(this) };
                             return global_object.throw_value(error_response);
                         }
                         PostgresSQLStatement::Status::Prepared => {

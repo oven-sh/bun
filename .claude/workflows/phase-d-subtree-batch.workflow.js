@@ -90,7 +90,7 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
   const survey = await agent(
     `Survey: ONE cargo check, group errors by subtree, write per-subtree error files. Repo /root/bun-5.
 
-1. Run: \`rm -rf /tmp/pd-r${round} && mkdir -p /tmp/pd-r${round} && cargo check -p bun_bin --keep-going --message-format=human 2>&1 | tee /tmp/pd-r${round}/full.log\`
+1. Run: \`rm -rf /tmp/pd-r${round} && mkdir -p /tmp/pd-r${round} && cargo check --workspace --keep-going --message-format=human 2>&1 | tee /tmp/pd-r${round}/full.log\`
 2. Extract per-file counts: \`grep -oP '\\-\\-> \\K[^:]+\\.rs' /tmp/pd-r${round}/full.log | sort | uniq -c\`
 3. Group by **dirname(file)** — strip the trailing /<name>.rs. So \`src/runtime/node/node_fs.rs\` → group \`src/runtime/node\`; \`src/runtime/jsc_hooks.rs\` → group \`src/runtime\`. Shell: \`grep -oP '\\-\\-> \\K[^:]+\\.rs' /tmp/pd-r${round}/full.log | sed 's|/[^/]*\\.rs$||' | sort | uniq -c | sort -rn\`
 4. **For each subtree, extract its error blocks** to \`/tmp/pd-r${round}/<slug>.err\` (slug = subtree with /→_). Use: \`awk -v st='<subtree>/' 'BEGIN{RS="\\n\\n"} index($0,"--> "st){print $0"\\n"}' /tmp/pd-r${round}/full.log > /tmp/pd-r${round}/<slug>.err\` — each .err contains ONLY error blocks whose primary \`-->\` is in that subtree's files (not cross-ref notes).
@@ -137,9 +137,9 @@ ${seen[g.subtree] > 1 ? `**Seen ${seen[g.subtree]}× — likely cross-subtree ty
 1. \`cat ${g.errfile}\` — read all your errors. If huge: \`head -2000 ${g.errfile}\` then work in batches.
 2. **Mechanical sweep first** (most errors): wrap newly-\`unsafe fn\` calls in \`unsafe { }\`, \`r#ref\`→\`ref_\`, \`*const [u8]\` → \`unsafe { &*p }\`, BabyList \`.push\`→\`.append\` / \`.len()\`→\`.len\`, module-vs-type imports (\`crate::VirtualMachine\` is a module — use \`crate::virtual_machine::VirtualMachine\`), Option<&T>→Option<*mut T>.
 3. **Shared types in your subtree**: change once, fix all callers in your subtree.
-4. **#[cfg(any())] / todo!()**: remove, port REAL body from .zig spec at same path. Adapt API per docs/PORTING.md.
+4. **#[cfg(any())] / todo!() in your subtree**: remove, port REAL body from .zig spec. NEVER add new gates or todo!().
 5. **Type mismatch with sibling subtree**: adapt YOUR side.
-6. **Genuinely blocked**: \`todo!("blocked_on: <crate>::<symbol>")\`, list in blocked_on.
+6. **Missing lower-tier symbol**: GO ADD IT to that crate (note in files_touched). If it's a dep-cycle (lower tier needs higher tier): add a fn-ptr/vtable hook in the lower tier per docs/PORTING.md §Dispatch.
 7. Commit (can be multiple). DO NOT run cargo — next survey checks your work.
 
 ${HARD}

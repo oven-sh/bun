@@ -380,15 +380,14 @@ Never write these. The verify gate flags them as `logic-bug`.
   the ownership.
 - **`.clone()` on a `&[u8]` / `Vec` just to escape a borrow** — restructure
   (capture-len-then-reslice) or change the field type.
-- **`todo!()` / `unimplemented!()`** in any fn the `.zig` has real logic for.
-  Port the real body. The only legitimate `todo!()` is when the body genuinely
-  cannot compile because a *lower-tier* crate symbol is missing — and then
-  write `todo!("blocked_on: bun_X::symbol")` so the next pass can find it.
-- **`#[cfg(any())]` / re-gating** to hide code that doesn't compile. Never do
-  this. Fix the code forward: port from `.zig`, adapt the API surface, or
-  `todo!("blocked_on: ...")`. Gating is only for the small set of dep-cycle
-  forward-reference archives (e.g. `bun_alloc/LinuxMemFdAllocator.rs` importing
-  `bun_runtime`) that *structurally* cannot compile in their crate.
+- **`todo!()` / `unimplemented!()` / `unreachable!()` as a stub** — NEVER. Port
+  the real body from the `.zig` spec. There is no "blocked_on" deferral.
+- **`#[cfg(any())]` / `#![cfg(any())]`** — NEVER. There is no legitimate gate.
+  If a lower-tier crate needs a higher-tier symbol (dep cycle), use the
+  §Dispatch pattern: lower tier defines a fn-ptr/vtable hook, higher tier
+  registers it at startup. The hook's null-state default panics with a clear
+  "hook not registered" message — that is a *runtime* contract, not a compile
+  deferral.
 
 ## Concurrency
 

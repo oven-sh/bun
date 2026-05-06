@@ -16,7 +16,7 @@ use bun_wyhash::hash;
 
 use super::diff_format::DiffFormatter;
 use super::expect::Expect;
-use super::jest::{Jest, TestRunner};
+use super::jest::{Jest, TestRunner, FileListExt as _};
 
 // TestRunner.File.ID — concrete alias from jest.rs (`pub type FileId = u32`).
 type FileId = super::jest::FileId;

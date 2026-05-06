@@ -1266,7 +1266,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         // do not write more than available
         // if we do, it will cause this to be delayed until the next call, each time
         // TODO: should we break it in smaller chunks?
-        let to_write = (write_offset as BlobSizeType).min(self.buffer.len - 1);
+        let to_write = (write_offset as BlobSizeType).min(self.buffer.len as BlobSizeType - 1);
         // PORT NOTE: reshaped for borrowck — capture chunk len before send()
         let chunk_start = to_write as usize;
         let chunk_len = self.readable_slice().len().saturating_sub(chunk_start);

@@ -2050,26 +2050,28 @@ impl<'a> ValueBufferer<'a> {
 
     // TODO(b2-blocked): #[bun_jsc::host_fn]
     pub fn on_resolve_stream(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args = callframe.arguments_old(2);
-        let Some(sink) =
+        let args = callframe.arguments_old::<2>();
+        let Some(mut sink) =
             crate::api::NativePromiseContext::take::<Self>(args.ptr[args.len - 1])
         else {
             return Ok(JSValue::UNDEFINED);
         };
-        sink.handle_resolve_stream(true);
+        // SAFETY: NativePromiseContext::take returns the live ctx pointer set in create().
+        unsafe { sink.as_mut() }.handle_resolve_stream(true);
         Ok(JSValue::UNDEFINED)
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn]
     pub fn on_reject_stream(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args = callframe.arguments_old(2);
-        let Some(sink) =
+        let args = callframe.arguments_old::<2>();
+        let Some(mut sink) =
             crate::api::NativePromiseContext::take::<Self>(args.ptr[args.len - 1])
         else {
             return Ok(JSValue::UNDEFINED);
         };
         let err = args.ptr[0];
-        sink.handle_reject_stream(err, true);
+        // SAFETY: NativePromiseContext::take returns the live ctx pointer set in create().
+        unsafe { sink.as_mut() }.handle_reject_stream(err, true);
         Ok(JSValue::UNDEFINED)
     }
 

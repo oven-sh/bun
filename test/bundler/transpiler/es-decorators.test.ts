@@ -975,5 +975,92 @@ describe("ES Decorators", () => {
       expect(stdout).toBe("cls:Foo|cls:Bar|acc:Foo:1|acc:Bar:2\n");
       expect(exitCode).toBe(0);
     });
+
+    // #28010: a parent class's field decorators ran with the child class's
+    // `_dec` array because both classes shared a hoisted `var _dec` at
+    // module scope — so parent-class `context.name` reported child
+    // property names.
+    test("parent-class field decorators keep their own _dec array (#28010)", async () => {
+      using dir = tempDir("es-dec-28010", {
+        "entry.ts": `
+          const logs: string[] = [];
+          function decorate(name: string) {
+            return function (_v: undefined, ctx: any) {
+              return function (init: any) {
+                logs.push(\`\${name}:\${String(ctx.name)}=\${init}\`);
+                return init;
+              };
+            };
+          }
+          class Parent {
+            @decorate("Parent.foo") foo = "parent_foo";
+            @decorate("Parent.shared") shared = "parent_shared";
+          }
+          class Child extends Parent {
+            @decorate("Child.foo") foo = "child_foo";
+            @decorate("Child.childOnly") childOnly = "child_childOnly";
+          }
+          new Child();
+          console.log(logs.join("|"));
+        `,
+      });
+
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--target=browser", "--format=esm", "--outfile=out.js", "entry.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      expect(await build.exited).toBe(0);
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "out.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(filterStderr(rawStderr)).toBe("");
+      expect(stdout).toBe(
+        "Parent.foo:foo=parent_foo|Parent.shared:shared=parent_shared|Child.foo:foo=child_foo|Child.childOnly:childOnly=child_childOnly\n",
+      );
+      expect(exitCode).toBe(0);
+    });
+
+    // #29837: overriding an auto-accessor with the same name in a subclass
+    // threw "Cannot add the same private member more than once" because
+    // both classes' WeakMap-backed storage was allocated as `var _name`
+    // at module scope and collapsed onto one binding.
+    test("subclass can override an auto-accessor of the same name (#29837)", async () => {
+      using dir = tempDir("es-dec-29837", {
+        "entry.js": `
+          class A { accessor name = "A"; }
+          class B extends A {
+            accessor name = "B";
+            logNames() { console.log(this.name); console.log(super.name); }
+          }
+          new B().logNames();
+        `,
+      });
+
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--target=browser", "--format=esm", "--outfile=out.js", "entry.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      expect(await build.exited).toBe(0);
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "out.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(filterStderr(rawStderr)).toBe("");
+      expect(stdout).toBe("B\nA\n");
+      expect(exitCode).toBe(0);
+    });
   });
 });

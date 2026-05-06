@@ -1819,14 +1819,16 @@ pub struct Options {
     pub args: bun_options_types::schema::api::TransformOptions,
     pub log: Option<NonNull<logger::Log>>,
     // TODO(port): lifetime — `&'a mut bun_dot_env::Loader`.
-    pub env_loader: Option<NonNull<bun_dot_env::Loader<'static>>>,
+    pub env_loader: Option<NonNull<bun_dotenv::Loader<'static>>>,
     pub store_fd: bool,
     pub smol: bool,
     // TODO(b2-cycle): real type is `bun_runtime::api::dns::Resolver::Order`.
     pub dns_result_order: u8,
     /// `--print` needs the result from evaluating the main module.
     pub eval: bool,
-    pub graph: Option<NonNull<bun_standalone::StandaloneModuleGraph>>,
+    // TODO(b2-cycle): real type is `bun_standalone_module_graph::StandaloneModuleGraph`,
+    // but that crate is not at this tier. Stored opaque.
+    pub graph: Option<NonNull<c_void>>,
     // TODO(b2-cycle): real type is `bun_cli::Command::Debugger`.
     pub debugger: (),
     pub is_main_thread: bool,
@@ -1885,9 +1887,8 @@ impl IPCInstance {
     /// Only reached from the `get_ipc_instance` error path.
     pub fn deinit(this: *mut IPCInstance) {
         // SAFETY: `this` was produced by `IPCInstance::new` (Box::into_raw).
-        let mut boxed = unsafe { Box::from_raw(this) };
-        boxed.data.deinit();
-        drop(boxed);
+        // `SendQueue` cleans itself up via `Drop`.
+        drop(unsafe { Box::from_raw(this) });
     }
 }
 
@@ -1933,12 +1934,13 @@ unsafe extern "C" {
     );
     fn Bun__noSideEffectsToString(vm: *mut VM, global: *mut JSGlobalObject, reason: JSValue) -> JSValue;
     fn BakeCreateProdGlobal(console_ptr: *mut c_void) -> *mut JSGlobalObject;
+    fn JSC__JSGlobalObject__reload(this: *mut JSGlobalObject);
 }
 
 extern "C" fn free_ref_string(str_: *mut crate::ref_string::RefString, _: *mut c_void, _: u32) {
     // SAFETY: `str_` is the `ctx` we passed to `String::create_external` in
     // `ref_counted_string_with_was_new`; it points at a heap `RefString`.
-    unsafe { (*str_).deinit() };
+    unsafe { crate::ref_string::RefString::destroy(str_) };
 }
 
 impl VirtualMachine {

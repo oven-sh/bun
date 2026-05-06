@@ -7,7 +7,7 @@
 //! `RuntimeTranspilerStore::run_from_js_thread`). The package-manager-driven
 //! bodies (`Queue::poll_modules` / `resolve_error` / `download_error` /
 //! `resume_loading_module`) are preserved verbatim from the Phase-A draft
-//! inside `` blocks below — every body reaches into
+//! inside `#[cfg(any())]` blocks below — every body reaches into
 //! `bun_install::PackageManager` runTasks / `MultiArrayList` column accessors /
 //! `bun_bundler::linker` that aren't wired yet (see PORT STATUS).
 
@@ -144,7 +144,7 @@ impl<'a> AsyncModule<'a> {
         referrer_: BunString,
         log: &mut logger::Log,
     ) -> JsResult<()> {
-        jsc::mark_binding(core::panic::Location::caller());
+        jsc::mark_binding();
         let mut specifier = specifier_;
         let mut referrer = referrer_;
         // PORT NOTE: Zig `defer { specifier.deref(); referrer.deref(); scope.deinit(); }` —
@@ -248,6 +248,7 @@ unsafe extern "C" {
 // the `EventLoopCtx` vtable for VM is installed).
 // ──────────────────────────────────────────────────────────────────────────
 
+#[cfg(any())] // TODO(port): un-gate once (a)-(d) above land — see PORT STATUS.
 mod _gated_impl {
     use super::*;
     use core::sync::atomic::Ordering;
@@ -262,7 +263,11 @@ mod _gated_impl {
         pub fn enqueue(&mut self, global_object: &JSGlobalObject, opts: InitOpts<'_>) {
             bun_core::scoped_log!(AsyncModule, "enqueue: {}", bstr::BStr::new(opts.specifier));
             let mut module = AsyncModule::init(opts, global_object).expect("unreachable");
-            module.poll_ref.ref_(self.vm());
+            module
+                .poll_ref
+                .ref_(bun_aio::posix_event_loop::get_vm_ctx(
+                    bun_aio::AllocatorType::Js,
+                ));
 
             // PORT NOTE: allocator arg dropped (Vec uses global mimalloc).
             self.map.push(module);
@@ -289,14 +294,15 @@ mod _gated_impl {
             // removed modules.
             let vm_ptr: *mut VirtualMachine = this.vm();
             this.map.retain_mut(|module| {
-                let root_dependency_ids =
-                    module.parse_result.pending_imports.items_root_dependency_id();
-                for (dep_i, dep) in root_dependency_ids.iter().enumerate() {
-                    if *dep != root_dependency_id {
+                // PORT NOTE: Zig `MultiArrayList.items(.root_dependency_id)` →
+                // `Vec<PendingResolution>` field walk.
+                for (dep_i, pending) in
+                    module.parse_result.pending_imports.iter().enumerate()
+                {
+                    if pending.root_dependency_id != root_dependency_id {
                         continue;
                     }
-                    let import_record_id =
-                        module.parse_result.pending_imports.items_import_record_id()[dep_i];
+                    let import_record_id = pending.import_record_id;
                     // SAFETY: vm_ptr derived via @fieldParentPtr; valid for the lifetime of self.
                     let vm = unsafe { &mut *vm_ptr };
                     module
@@ -384,20 +390,18 @@ mod _gated_impl {
             // PORT NOTE: reshaped for borrowck — compaction loop → retain_mut.
             let vm_ptr: *mut VirtualMachine = self.vm();
             self.map.retain_mut(|module| {
-                let tags = module.parse_result.pending_imports.items_tag();
-                for (tag_i, tag) in tags.iter().enumerate() {
-                    if *tag == bun_resolver::PendingResolutionTag::Resolve {
-                        let esms = module.parse_result.pending_imports.items_esm();
-                        let esm = esms[tag_i];
-                        let string_bufs = module.parse_result.pending_imports.items_string_buf();
-
-                        if esm.name.slice(string_bufs[tag_i]) != name {
+                // PORT NOTE: Zig `MultiArrayList.items(.tag)` etc. →
+                // `Vec<PendingResolution>` field walk.
+                for (tag_i, pending) in
+                    module.parse_result.pending_imports.iter().enumerate()
+                {
+                    if pending.tag == bun_resolver::PendingResolutionTag::Resolve {
+                        if pending.esm.name.slice(&pending.string_buf) != name {
                             continue;
                         }
 
-                        let versions = module.parse_result.pending_imports.items_dependency();
-                        let import_record_id =
-                            module.parse_result.pending_imports.items_import_record_id()[tag_i];
+                        let version = pending.dependency.clone();
+                        let import_record_id = pending.import_record_id;
 
                         // SAFETY: vm_ptr derived via @fieldParentPtr; valid for the lifetime of self.
                         let vm = unsafe { &mut *vm_ptr };
@@ -409,7 +413,7 @@ mod _gated_impl {
                                     name,
                                     err,
                                     url,
-                                    version: versions[tag_i].clone(),
+                                    version,
                                 },
                             )
                             .expect("unreachable");
@@ -447,19 +451,20 @@ mod _gated_impl {
 
             // PORT NOTE: reshaped for borrowck — compaction loop → retain_mut.
             self.map.retain_mut(|module| {
-                let record_ids = module.parse_result.pending_imports.items_import_record_id();
-                let root_dependency_ids =
-                    module.parse_result.pending_imports.items_root_dependency_id();
-                for (import_id, dependency_id) in root_dependency_ids.iter().enumerate() {
-                    if resolution_ids[*dependency_id as usize] != package_id {
+                // PORT NOTE: Zig `MultiArrayList.items(.import_record_id)` /
+                // `.items(.root_dependency_id)` → `Vec<PendingResolution>` field
+                // walk.
+                for pending in module.parse_result.pending_imports.iter() {
+                    if resolution_ids[pending.root_dependency_id as usize] != package_id {
                         continue;
                     }
+                    let import_record_id = pending.import_record_id;
                     // SAFETY: vm_ptr derived via @fieldParentPtr; valid for the lifetime of self.
                     let vm = unsafe { &mut *vm_ptr };
                     module
                         .download_error(
                             vm,
-                            record_ids[import_id],
+                            import_record_id,
                             PackageDownloadError {
                                 name,
                                 resolution: resolution.clone(),
@@ -484,29 +489,31 @@ mod _gated_impl {
 
             // PORT NOTE: reshaped for borrowck — Zig compacted by index; Rust uses retain_mut.
             self.map.retain_mut(|module| {
-                let tags = module.parse_result.pending_imports.items_tag_mut();
-                let root_dependency_ids =
-                    module.parse_result.pending_imports.items_root_dependency_id();
+                // PORT NOTE: Zig `MultiArrayList.items(.tag)` /
+                // `.items(.root_dependency_id)` → `Vec<PendingResolution>`
+                // field walk via `iter_mut()`.
+                let pending_imports = &mut module.parse_result.pending_imports;
                 // var esms = module.parse_result.pending_imports.items(.esm);
                 // var versions = module.parse_result.pending_imports.items(.dependency);
                 let mut done_count: usize = 0;
-                let tags_len = tags.len();
+                let tags_len = pending_imports.len();
                 for tag_i in 0..tags_len {
-                    let root_id = root_dependency_ids[tag_i];
+                    let root_id = pending_imports[tag_i].root_dependency_id;
                     let resolution_ids = pm.lockfile.buffers.resolutions.as_slice();
                     if root_id as usize >= resolution_ids.len() {
                         continue;
                     }
                     let package_id = resolution_ids[root_id as usize];
 
-                    match tags[tag_i] {
+                    match pending_imports[tag_i].tag {
                         bun_resolver::PendingResolutionTag::Resolve => {
                             if package_id == install::INVALID_PACKAGE_ID {
                                 continue;
                             }
 
                             // if we get here, the package has already been resolved.
-                            tags[tag_i] = bun_resolver::PendingResolutionTag::Download;
+                            pending_imports[tag_i].tag =
+                                bun_resolver::PendingResolutionTag::Download;
                         }
                         bun_resolver::PendingResolutionTag::Download => {
                             if package_id == install::INVALID_PACKAGE_ID {
@@ -540,7 +547,8 @@ mod _gated_impl {
                             // so if enqueuing all the dependencies produces no new tasks, we are done.
                             pm.enqueue_dependency_list(package.dependencies);
                             if current_tasks == pm.total_tasks {
-                                tags[tag_i] = bun_resolver::PendingResolutionTag::Done;
+                                pending_imports[tag_i].tag =
+                                    bun_resolver::PendingResolutionTag::Done;
                                 done_count += 1;
                             }
                         }
@@ -577,7 +585,10 @@ mod _gated_impl {
         ) -> Result<AsyncModule<'a>, bun_alloc::AllocError> {
             // var stmt_blocks = js_ast.Stmt.Data.toOwnedSlice();
             // var expr_blocks = js_ast.Expr.Data.toOwnedSlice();
-            let this_promise = JSValue::create_internal_promise(global_object);
+            // PORT NOTE: `JSInternalPromise` aliases `JSPromise` upstream
+            // (JSInternalPromise.rs), so `JSPromise::create` is the
+            // `createInternalPromise` equivalent.
+            let this_promise = crate::JSPromise::create(global_object).to_js();
             let promise = StrongOptional::create(this_promise, global_object);
 
             let mut buf = bun_str::StringBuilder::default();
@@ -604,7 +615,7 @@ mod _gated_impl {
                 fd: opts.fd,
                 package_json: opts.package_json,
                 loader: opts.loader.to_api(),
-                string_buf: buf.allocated_slice(),
+                string_buf: Box::<[u8]>::from(&*buf.allocated_slice()),
                 hash: u32::MAX,
                 // .stmt_blocks = stmt_blocks,
                 // .expr_blocks = expr_blocks,
@@ -648,17 +659,21 @@ mod _gated_impl {
         }
 
         pub fn on_done(this: *mut AsyncModule<'a>) {
-            jsc::mark_binding(core::panic::Location::caller());
+            jsc::mark_binding();
             // SAFETY: `this` was Box::into_raw'd in `done`; reclaimed at end of this fn.
             let this = unsafe { &mut *this };
-            let jsc_vm = this.global_this.bun_vm();
+            // SAFETY: `bun_vm()` returns the live per-thread VM pointer.
+            let jsc_vm = unsafe { &mut *this.global_this.bun_vm() };
             jsc_vm.modules.scheduled -= 1;
             if jsc_vm.modules.scheduled == 0 {
                 jsc_vm.package_manager().end_progress_bar();
             }
             let mut log = logger::Log::init();
             let mut errorable: ErrorableResolvedSource;
-            this.poll_ref.unref(jsc_vm);
+            this.poll_ref
+                .unref(bun_aio::posix_event_loop::get_vm_ctx(
+                    bun_aio::AllocatorType::Js,
+                ));
             'outer: {
                 errorable = match this.resume_loading_module(&mut log) {
                     Ok(rs) => ErrorableResolvedSource::ok(rs),
@@ -670,7 +685,7 @@ mod _gated_impl {
                             );
                             break 'outer;
                         } else {
-                            VirtualMachine::process_fetch_log(
+                            crate::virtual_machine::process_fetch_log(
                                 this.global_this,
                                 BunString::init(ZigString::init(this.specifier)),
                                 BunString::init(ZigString::init(this.referrer)),
@@ -685,8 +700,8 @@ mod _gated_impl {
             }
             // log dropped at scope exit (defer log.deinit()).
 
-            let mut spec = BunString::init(ZigString::init(this.specifier).with_encoding());
-            let mut ref_ = BunString::init(ZigString::init(this.referrer).with_encoding());
+            let mut spec = BunString::init(ZigString::from_bytes(this.specifier));
+            let mut ref_ = BunString::init(ZigString::from_bytes(this.referrer));
             let _ = jsc::from_js_host_call_generic(this.global_this, || unsafe {
                 Bun__onFulfillAsyncModule(
                     this.global_this,
@@ -821,34 +836,28 @@ mod _gated_impl {
                 b"PackageResolveError"
             };
 
-            let error_instance = ZigString::init(&msg)
-                .with_encoding()
-                .to_error_instance(global_this);
+            let error_instance = ZigString::from_bytes(&msg).to_error_instance(global_this);
             if !result.url.is_empty() {
                 error_instance.put(
                     global_this,
                     b"url",
-                    ZigString::init(result.url).with_encoding().to_js(global_this),
+                    ZigString::from_bytes(result.url).to_js(global_this),
                 );
             }
             error_instance.put(
                 global_this,
                 b"name",
-                ZigString::init(name).with_encoding().to_js(global_this),
+                ZigString::from_bytes(name).to_js(global_this),
             );
             error_instance.put(
                 global_this,
                 b"pkg",
-                ZigString::init(result.name)
-                    .with_encoding()
-                    .to_js(global_this),
+                ZigString::from_bytes(result.name).to_js(global_this),
             );
             error_instance.put(
                 global_this,
                 b"specifier",
-                ZigString::init(self.specifier)
-                    .with_encoding()
-                    .to_js(global_this),
+                ZigString::from_bytes(self.specifier).to_js(global_this),
             );
             let location = logger::range_data(
                 Some(&self.parse_result.source),
@@ -864,9 +873,7 @@ mod _gated_impl {
             error_instance.put(
                 global_this,
                 b"sourceURL",
-                ZigString::init(self.parse_result.source.path.text)
-                    .with_encoding()
-                    .to_js(global_this),
+                ZigString::from_bytes(self.parse_result.source.path.text).to_js(global_this),
             );
             error_instance.put(
                 global_this,
@@ -877,7 +884,7 @@ mod _gated_impl {
                 error_instance.put(
                     global_this,
                     b"lineText",
-                    ZigString::init(line_text).with_encoding().to_js(global_this),
+                    ZigString::from_bytes(line_text).to_js(global_this),
                 );
             }
             error_instance.put(
@@ -889,16 +896,18 @@ mod _gated_impl {
                 error_instance.put(
                     global_this,
                     b"referrer",
-                    ZigString::init(self.referrer)
-                        .with_encoding()
-                        .to_js(global_this),
+                    ZigString::from_bytes(self.referrer).to_js(global_this),
                 );
             }
 
             let promise_value = self.promise.swap();
             let promise = promise_value.as_internal_promise().unwrap();
             promise_value.ensure_still_alive();
-            self.poll_ref.unref(vm);
+            let _ = vm;
+            self.poll_ref
+                .unref(bun_aio::posix_event_loop::get_vm_ctx(
+                    bun_aio::AllocatorType::Js,
+                ));
             // PORT NOTE: Zig called `this.deinit()` here; in Rust the caller
             // (Queue::retain_mut) returns `false` and Vec drops the element,
             // running Drop.
@@ -1018,35 +1027,29 @@ mod _gated_impl {
                 b"TarballDownloadError"
             };
 
-            let error_instance = ZigString::init(&msg)
-                .with_encoding()
-                .to_error_instance(global_this);
+            let error_instance = ZigString::from_bytes(&msg).to_error_instance(global_this);
             if !result.url.is_empty() {
                 error_instance.put(
                     global_this,
                     b"url",
-                    ZigString::init(result.url).with_encoding().to_js(global_this),
+                    ZigString::from_bytes(result.url).to_js(global_this),
                 );
             }
             error_instance.put(
                 global_this,
                 b"name",
-                ZigString::init(name).with_encoding().to_js(global_this),
+                ZigString::from_bytes(name).to_js(global_this),
             );
             error_instance.put(
                 global_this,
                 b"pkg",
-                ZigString::init(result.name)
-                    .with_encoding()
-                    .to_js(global_this),
+                ZigString::from_bytes(result.name).to_js(global_this),
             );
             if !self.specifier.is_empty() && self.specifier != b"undefined" {
                 error_instance.put(
                     global_this,
                     b"referrer",
-                    ZigString::init(self.specifier)
-                        .with_encoding()
-                        .to_js(global_this),
+                    ZigString::from_bytes(self.specifier).to_js(global_this),
                 );
             }
 
@@ -1064,7 +1067,7 @@ mod _gated_impl {
             error_instance.put(
                 global_this,
                 b"specifier",
-                ZigString::init(
+                ZigString::from_bytes(
                     self.parse_result
                         .ast
                         .import_records
@@ -1072,15 +1075,12 @@ mod _gated_impl {
                         .path
                         .text,
                 )
-                .with_encoding()
                 .to_js(global_this),
             );
             error_instance.put(
                 global_this,
                 b"sourceURL",
-                ZigString::init(self.parse_result.source.path.text)
-                    .with_encoding()
-                    .to_js(global_this),
+                ZigString::from_bytes(self.parse_result.source.path.text).to_js(global_this),
             );
             error_instance.put(
                 global_this,
@@ -1091,7 +1091,7 @@ mod _gated_impl {
                 error_instance.put(
                     global_this,
                     b"lineText",
-                    ZigString::init(line_text).with_encoding().to_js(global_this),
+                    ZigString::from_bytes(line_text).to_js(global_this),
                 );
             }
             error_instance.put(
@@ -1103,7 +1103,11 @@ mod _gated_impl {
             let promise_value = self.promise.swap();
             let promise = promise_value.as_internal_promise().unwrap();
             promise_value.ensure_still_alive();
-            self.poll_ref.unref(vm);
+            let _ = vm;
+            self.poll_ref
+                .unref(bun_aio::posix_event_loop::get_vm_ctx(
+                    bun_aio::AllocatorType::Js,
+                ));
             // PORT NOTE: Zig called `this.deinit()` here; caller drops via
             // retain_mut → false.
             // SAFETY: `promise` is a live `JSInternalPromise*` from

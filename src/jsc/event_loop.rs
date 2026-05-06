@@ -13,6 +13,7 @@ use core::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
 use bun_aio::{self as Async, Waker};
 use bun_uws as uws;
 
+use crate::js_promise::Status as PromiseStatus;
 use crate::virtual_machine::VirtualMachine;
 use crate::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 
@@ -349,7 +350,7 @@ impl EventLoop {
             return Ok(());
         }
 
-        jsc::mark_binding(core::panic::Location::caller());
+        jsc::mark_binding();
         // SAFETY: `jsc_vm` is the live JSC::VM for this thread.
         unsafe { (*jsc_vm).release_weak_refs() };
 
@@ -583,7 +584,7 @@ impl EventLoop {
     }
 
     pub fn tick(&mut self) {
-        jsc::mark_binding(core::panic::Location::caller());
+        jsc::mark_binding();
         // TODO(b2): TopExceptionScope::init guard — re-enable once API stabilises.
         self.entered_event_loop_count += 1;
         self.debug.enter();
@@ -724,7 +725,7 @@ impl EventLoop {
     }
 
     pub fn ensure_waker(&mut self) {
-        jsc::mark_binding(core::panic::Location::caller());
+        jsc::mark_binding();
         let vm = self.vm();
         // SAFETY: `vm` is the live owning VM; field reads/writes only.
         if unsafe { (*vm).event_loop_handle.is_none() } {
@@ -845,7 +846,9 @@ impl EventLoop {
 impl EventLoop {
     pub fn tick_while_paused(&mut self, done: &mut bool) {
         while !*done {
-            self.vm().event_loop_handle.as_mut().unwrap().tick();
+            // SAFETY: vm() returns the live owning VM; `event_loop_handle` is a
+            // live uws/uv loop for the VM lifetime.
+            unsafe { (*(*self.vm()).event_loop_handle.unwrap()).tick() };
         }
     }
 
@@ -856,16 +859,18 @@ impl EventLoop {
         global_object: &JSGlobalObject,
         this_value: JSValue,
         arguments: &[JSValue],
-    ) -> Result<JSValue, bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> JsResult<JSValue> {
         let result = callback.call(global_object, this_value, arguments)?;
         result.ensure_still_alive();
-        self.drain_microtasks_with_global(global_object, global_object.bun_vm().jsc_vm)?;
+        // SAFETY: bun_vm() returns the live owning VM for this global.
+        let jsc_vm = unsafe { (*global_object.bun_vm()).jsc_vm };
+        self.drain_microtasks_with_global(global_object, jsc_vm)?;
         Ok(result)
     }
 
     // PORT NOTE: real body — installed by `bun_runtime` via
     // `virtual_machine::RuntimeHooks::auto_tick`. Preserved here for reference.
+    #[cfg(any())] // TODO(b2-cycle): preserved for reference — real body lives in bun_runtime via RuntimeHooks::auto_tick
     pub fn _auto_tick_body(&mut self) {
         let loop_ = self.usockets_loop();
         let ctx = self.vm();
@@ -933,30 +938,34 @@ impl EventLoop {
 
     pub fn tick_possibly_forever(&mut self) {
         let ctx = self.vm();
-        let loop_ = self.usockets_loop();
+        let loop_ptr = self.usockets_loop();
+        // SAFETY: usockets_loop() returns a live uws loop for the VM lifetime.
+        let loop_ = unsafe { &mut *loop_ptr };
 
         #[cfg(unix)]
         {
-            let pending_unref = ctx.pending_unref_counter;
+            // SAFETY: `ctx` is the live owning VM; field reads/writes only.
+            let pending_unref = unsafe { (*ctx).pending_unref_counter };
             if pending_unref > 0 {
-                ctx.pending_unref_counter = 0;
+                // SAFETY: see above.
+                unsafe { (*ctx).pending_unref_counter = 0 };
                 loop_.unref_count(pending_unref);
             }
         }
 
         if !loop_.is_active() {
             if self.forever_timer.is_none() {
-                let t = uws::Timer::create(loop_, self as *mut _ as *mut c_void);
+                let mut t = uws::Timer::create(loop_, self as *mut _ as *mut c_void);
                 // SAFETY: t is a fresh non-null timer handle
                 unsafe {
-                    (*t).set(
+                    t.as_mut().set(
                         self as *mut _ as *mut c_void,
-                        noop_forever_timer,
+                        Some(noop_forever_timer),
                         1000 * 60 * 4,
                         1000 * 60 * 4,
                     )
                 };
-                self.forever_timer = NonNull::new(t);
+                self.forever_timer = Some(t);
             }
         }
 
@@ -964,13 +973,16 @@ impl EventLoop {
         self.process_gc_timer();
         loop_.tick();
 
-        ctx.on_after_event_loop();
+        // SAFETY: `ctx` is the live owning VM.
+        unsafe { (*ctx).on_after_event_loop() };
         self.tick_concurrent();
         self.tick();
     }
 
     pub fn auto_tick_active(&mut self) {
-        let loop_ = self.usockets_loop();
+        let loop_ptr = self.usockets_loop();
+        // SAFETY: usockets_loop() returns a live uws loop for the VM lifetime.
+        let loop_ = unsafe { &mut *loop_ptr };
         let ctx = self.vm();
 
         self.tick_immediate_tasks(ctx);
@@ -983,46 +995,47 @@ impl EventLoop {
 
         #[cfg(unix)]
         {
-            let pending_unref = ctx.pending_unref_counter;
+            // SAFETY: `ctx` is the live owning VM; field reads/writes only.
+            let pending_unref = unsafe { (*ctx).pending_unref_counter };
             if pending_unref > 0 {
-                ctx.pending_unref_counter = 0;
+                // SAFETY: see above.
+                unsafe { (*ctx).pending_unref_counter = 0 };
                 loop_.unref_count(pending_unref);
             }
         }
 
-        ctx.timer.update_date_header_timer_if_necessary(loop_, ctx);
+        // TODO(b2-cycle): `ctx.timer.update_date_header_timer_if_necessary(loop_, ctx)` —
+        // `timer` is `()` until bun_runtime widens it to `Timer::All`.
+        let _ = &loop_ptr;
 
         if loop_.is_active() {
             self.process_gc_timer();
-            // SAFETY: only read when get_timeout() returned true and wrote it
-            let mut timespec: bun_core::Timespec = unsafe { core::mem::zeroed() };
-            loop_.tick_with_timeout(if ctx.timer.get_timeout(&mut timespec, ctx) {
-                Some(&timespec)
-            } else {
-                None
-            });
+            // TODO(b2-cycle): `ctx.timer.get_timeout(&mut timespec, ctx)` — see above.
+            loop_.tick_with_timeout(None);
         } else {
             loop_.tick_without_idle();
         }
 
         #[cfg(unix)]
         {
-            ctx.timer.drain_timers(ctx);
+            // TODO(b2-cycle): `ctx.timer.drain_timers(ctx)` — see above.
         }
 
-        ctx.on_after_event_loop();
+        // SAFETY: `ctx` is the live owning VM.
+        unsafe { (*ctx).on_after_event_loop() };
     }
 
     pub fn _wait_for_promise_body(&mut self, promise: jsc::AnyPromise) {
-        let jsc_vm = self.vm().jsc_vm;
+        // SAFETY: vm() returns the live owning VM; `jsc_vm` is the live JSC::VM.
+        let jsc_vm = unsafe { &*(*self.vm()).jsc_vm };
         match promise.status() {
-            jsc::PromiseStatus::Pending => {
-                while promise.status() == jsc::PromiseStatus::Pending {
+            PromiseStatus::Pending => {
+                while promise.status() == PromiseStatus::Pending {
                     if jsc_vm.execution_forbidden() {
                         break;
                     }
                     self.tick();
-                    if promise.status() == jsc::PromiseStatus::Pending {
+                    if promise.status() == PromiseStatus::Pending {
                         self.auto_tick();
                     }
                 }
@@ -1032,12 +1045,17 @@ impl EventLoop {
     }
 
     pub fn wait_for_promise_with_termination(&mut self, promise: jsc::AnyPromise) {
-        let worker = self.vm().worker.as_ref().expect("worker is not initialized");
+        // SAFETY: vm() returns the live owning VM; `worker` is a heap `WebWorker`
+        // owned by C++ that outlives this VM (BACKREF — see field decl).
+        let worker = unsafe {
+            &*((*self.vm()).worker.expect("worker is not initialized")
+                as *const crate::web_worker::WebWorker)
+        };
         match promise.status() {
-            jsc::PromiseStatus::Pending => {
-                while !worker.has_requested_terminate() && promise.status() == jsc::PromiseStatus::Pending {
+            PromiseStatus::Pending => {
+                while !worker.has_requested_terminate() && promise.status() == PromiseStatus::Pending {
                     self.tick();
-                    if !worker.has_requested_terminate() && promise.status() == jsc::PromiseStatus::Pending {
+                    if !worker.has_requested_terminate() && promise.status() == PromiseStatus::Pending {
                         self.auto_tick();
                     }
                 }

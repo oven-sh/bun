@@ -592,6 +592,15 @@ impl JSValue {
             !v.is_empty_or_undefined_or_null() && !(v.is_string() && !v.to_boolean())
         }))
     }
+    /// JSValue.zig:1866 `getBooleanLoose` — missing/undefined → `None`; otherwise
+    /// truthy-coerce the property value (never throws on the coercion itself).
+    pub fn get_boolean_loose(
+        self,
+        global: &JSGlobalObject,
+        property: impl AsRef<[u8]>,
+    ) -> JsResult<Option<bool>> {
+        Ok(self.get(global, property)?.map(|v| v.to_boolean()))
+    }
     pub fn get_stringish(
         self,
         global: &JSGlobalObject,
@@ -1101,6 +1110,26 @@ impl JSValue {
         let v = unsafe { JSC__JSValue__getOwn(self, global, property_name) };
         if global.has_exception() { return Err(JsError::Thrown); }
         if v.is_empty() { Ok(None) } else { Ok(Some(v)) }
+    }
+    /// `JSValue.getOwnTruthy` — own-property lookup, filtered to non-undefined.
+    pub fn get_own_truthy(
+        self,
+        global: &JSGlobalObject,
+        property_name: impl AsRef<[u8]>,
+    ) -> JsResult<Option<JSValue>> {
+        let name = bun_string::String::static_(property_name.as_ref());
+        match self.get_own(global, &name)? {
+            Some(prop) if !prop.is_undefined() => Ok(Some(prop)),
+            _ => Ok(None),
+        }
+    }
+    /// `JSValue.isClass` — true if the callable is a class constructor.
+    pub fn is_class(self, global: &JSGlobalObject) -> bool {
+        extern "C" {
+            fn JSC__JSValue__isClass(this: JSValue, global: *const JSGlobalObject) -> bool;
+        }
+        // SAFETY: `global` is live; FFI is infallible per JSValue.zig:1108.
+        unsafe { JSC__JSValue__isClass(self, global) }
     }
 
     // ── Iteration (JSValue.zig:2199-2223). ────────────────────────────────

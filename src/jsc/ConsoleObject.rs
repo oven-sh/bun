@@ -1017,7 +1017,8 @@ impl<'a> TablePrinter<'a> {
                 };
                 let mut rows_iter = jsc::JSPropertyIterator::init(
                     global_object,
-                    cell.to_object(global_object),
+                    // SAFETY: `to_cell()` returned `Some` above; pointer is a live JSC heap cell.
+                    unsafe { &*cell }.to_object(global_object),
                     jsc::PropertyIteratorOptions { skip_empty_name: false, include_value: true },
                 )?;
 
@@ -1062,35 +1063,14 @@ impl<'a> TablePrinter<'a> {
 // ───────────────────────────────────────────────────────────────────────────
 
 pub fn write_trace(_writer: &mut (impl bun_io::Write + ?Sized), _global: &JSGlobalObject) {
-    // TODO(phase-c): body re-gated — `ZigString::to_error_instance` /
-    // `VirtualMachine::{remap_zig_exception, print_stack_trace}` not yet
-    // ported. `console.trace()` falls through to a no-op until then.
-    
-    {
-        let mut holder = ZigException::Holder::init();
-        let vm = VirtualMachine::get();
-        let _holder_guard = scopeguard::guard(&mut holder, |h| h.deinit(vm));
-        let exception = holder.zig_exception();
-
-        let mut source_code_slice: Option<ZigString::Slice> = None;
-
-        let err = ZigString::init(b"trace output").to_error_instance(global);
-        err.to_zig_exception(global, exception);
-        vm.remap_zig_exception(
-            exception,
-            err,
-            None,
-            &mut holder.need_to_clear_parser_arena_on_deinit,
-            &mut source_code_slice,
-            false,
-        );
-
-        if Output::enable_ansi_colors_stderr() {
-            let _ = VirtualMachine::print_stack_trace::<true>(writer, &exception.stack);
-        } else {
-            let _ = VirtualMachine::print_stack_trace::<false>(writer, &exception.stack);
-        }
-    }
+    // TODO(phase-d): body re-gated — `VirtualMachine::print_stack_trace` takes a
+    // concrete `bun_core::io::Writer` (not the generic `bun_io::Write` we receive
+    // here), and `remap_zig_exception`'s slice parameter is still typed against
+    // the unported `ZigString::Slice` path. `console.trace()` falls through to a
+    // no-op until those signatures settle.
+    todo!("blocked_on: VirtualMachine::print_stack_trace writer type / remap_zig_exception slice param");
+    #[allow(unreachable_code)]
+    let _ = Output::enable_ansi_colors_stderr();
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1195,9 +1175,6 @@ impl ErrorDisplayLevel {
     }
 }
 
-// TODO(phase-c): re-gated — body references unported `JSValue::coerce_f64` /
-// `get_boolean_loose`. Stub provided immediately below.
-
 impl FormatOptions {
     pub fn from_js(
         &mut self,
@@ -1263,17 +1240,6 @@ impl FormatOptions {
                 }
             }
         }
-        Ok(())
-    }
-}
-
-impl FormatOptions {
-    /// Phase-C stub for the gated `from_js` above.
-    pub fn from_js(
-        &mut self,
-        _global_this: &JSGlobalObject,
-        _arguments: &[JSValue],
-    ) -> JsResult<()> {
         Ok(())
     }
 }
@@ -2195,7 +2161,7 @@ pub mod formatter {
             let mut i: u32 = 0;
             let mut len: u32 = slice.len() as u32;
             let mut hit_percent = false;
-            while i < len {
+            'outer: while i < len {
                 if hit_percent {
                     i = 0;
                     hit_percent = false;
@@ -2332,7 +2298,7 @@ pub mod formatter {
                                     self.add_for_new_line("NaN".len());
                                     writer.print(format_args!("NaN"));
                                     i += 1;
-                                    continue;
+                                    continue 'outer;
                                 };
 
                                 if int < i64::from(u32::MAX) {
@@ -2368,7 +2334,7 @@ pub mod formatter {
                                         self.add_for_new_line(digits as usize);
                                         writer.print(format_args!("{int}"));
                                         i += 1;
-                                        continue;
+                                        continue 'outer;
                                     }
                                     if next_value.is_number() {
                                         break 'brk next_value.as_number();
@@ -2446,7 +2412,7 @@ pub mod formatter {
                                 next_value.json_stringify_fast(global, &mut str)?;
                                 self.add_for_new_line(str.length());
                                 writer.print(format_args!("{str}"));
-                                str.deref_();
+                                str.deref();
                             }
                         }
                         if self.remaining().is_empty() {
@@ -2520,7 +2486,7 @@ pub mod formatter {
                     if self
                         .ctx
                         .write_all(&strings::immutable::latin1_to_codepoint_bytes_assume_not_ascii(
-                            u32::from(remain[i as usize]),
+                            remain[i as usize],
                         ))
                         .is_err()
                     {
@@ -2549,9 +2515,12 @@ pub mod formatter {
 
         #[inline]
         pub fn write_16_bit(&mut self, input: &[u16]) {
-            if bun_core::fmt::format_utf16_type(input, self.ctx).is_err() {
-                self.failed = true;
-            }
+            // `format_utf16_type` requires `impl fmt::Write + Sized`; route through
+            // the `Display` adapter so we go via `bun_io::Write::write_fmt` instead.
+            self.print(format_args!(
+                "{}",
+                bun_core::fmt::FormatUTF16 { buf: input, path_fmt_opts: None }
+            ));
         }
     }
 
@@ -4884,51 +4853,6 @@ pub mod formatter {
                 SetIterator, Set, BigInt, Symbol, GlobalObject, Private, Promise, JSON,
                 ToJSON, NativeCode, JSX, Event, GetterSetter, CustomGetterSetter, Proxy,
                 RevokedProxy,
-            )
-        }
-    }
-
-    // ───────────────────────────────────────────────────────────────────────
-    // Phase-C stubs for the gated impls above. Keep the public signatures so
-    // `ConsoleFormatter` (lib.rs), `format2`, `TablePrinter`, and `ZigFormatter`
-    // continue to type-check; bodies are no-ops until the real `print_as`
-    // un-gates.
-    // ───────────────────────────────────────────────────────────────────────
-    impl<'a> Formatter<'a> {
-        /// Stubbed runtime-tag dispatcher. Real body lives in the
-        /// ``-gated impl above (calls `print_as::<{Tag::…}, C>`
-        /// per arm). Phase-C: fall through to a single debug-format write so
-        /// callers see *something* and the build links.
-        pub fn format<const ENABLE_ANSI_COLORS: bool>(
-            &mut self,
-            _result: TagResult,
-            writer: &mut dyn bun_io::Write,
-            value: JSValue,
-            global_this: &'a JSGlobalObject,
-        ) -> JsResult<()> {
-            self.global_this = global_this;
-            // Best-effort placeholder — mirrors `{value:?}` shape without
-            // pulling in the unported tag machinery.
-            let _ = writer.print(format_args!("[object {value:?}]"));
-            let _ = ENABLE_ANSI_COLORS;
-            Ok(())
-        }
-
-        /// Stubbed const-generic printer. Real body is the ~700L gated impl
-        /// above; this keeps the `ConsoleFormatter::print_as` trait method
-        /// (lib.rs) satisfied.
-        pub fn print_as<const FORMAT: Tag, const ENABLE_ANSI_COLORS: bool>(
-            &mut self,
-            writer_: &mut dyn bun_io::Write,
-            value: JSValue,
-            _js_type: jsc::JSType,
-        ) -> JsResult<()> {
-            let global = self.global_this;
-            self.format::<ENABLE_ANSI_COLORS>(
-                TagResult::default(),
-                writer_,
-                value,
-                global,
             )
         }
     }

@@ -20,8 +20,9 @@ use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
 use crate::{
     JSGlobalObject, JSInternalPromise, JSValue, JsResult,
-    ResolvedSource, RuntimeTranspilerCache, Strong,
+    ResolvedSource, RuntimeTranspilerCache,
 };
+use crate::strong::Optional as StrongOptional;
 use crate::event_loop::{ConcurrentTask, EventLoop};
 use crate::virtual_machine::VirtualMachine;
 
@@ -44,6 +45,7 @@ pub fn dump_source_string_failiable(
     written: &[u8],
 ) -> Result<(), bun_core::Error> {
      // TODO(b2-blocked): bun_sys::Dir, bun_io::BufWriter, bun_core::fmt::format_json_string_utf8, bun_paths::{dirname, basename, windows_filesystem_root}, vm.source_mappings, bun_resolver::fs::FileSystem::RealFS::platform_temp_dir
+    #[cfg(any())]
     {
     // TODO(port): narrow error set
     if !cfg!(debug_assertions) {
@@ -192,6 +194,7 @@ impl RuntimeTranspilerStore {
         vm: &mut VirtualMachine,
     ) {
          // TODO(b2-blocked): bun_collections::UnboundedQueue::{pop_batch, iterator}, EventLoop::drain_microtasks_with_global, JSGlobalObject::report_uncaught_exception_from_error
+        #[cfg(any())]
         {
         let mut batch = self.queue.pop_batch();
         let jsc_vm = vm.jsc_vm;
@@ -230,6 +233,7 @@ impl RuntimeTranspilerStore {
         package_json: Option<&PackageJSON>,
     ) -> *mut c_void {
          // TODO(b2-blocked): TranspilerJobStore::get, JSInternalPromise::create, ResolvedSource fields, ResolvedSourceTag, Strong::create, JSValue::from_cell, Fs::Path::init, PackageJSON.module_type
+        #[cfg(any())]
         {
         let job: *mut TranspilerJob = self.store.get();
         let owned_path = Fs::Path::init(Box::<[u8]>::from(path.text));
@@ -307,7 +311,7 @@ pub struct TranspilerJob {
     pub non_threadsafe_input_specifier: String,
     pub non_threadsafe_referrer: String,
     pub loader: Loader,
-    pub promise: Strong, // Strong.Optional → bun_jsc::Strong (default empty)
+    pub promise: StrongOptional, // Strong.Optional → crate::strong::Optional (default empty)
     // LIFETIMES.tsv: JSC_BORROW → `&VirtualMachine` / `&JSGlobalObject` verbatim.
     // PORT NOTE: struct is stored in HiveArray and crosses to a worker thread; a borrow
     // with no named lifetime cannot live in a struct. Stored as raw pointers; SAFETY
@@ -349,8 +353,6 @@ impl TranspilerJob {
     /// several fields are reset to sentinel values for reuse. Not exposed as `pub fn deinit`
     /// per PORTING.md; only caller is `run_from_js_thread`.
     fn reset_for_pool(&mut self) {
-         // TODO(b2-blocked): Fs::Path::empty, bun_aio::KeepAlive::disable, bun_string::String::deref_, Strong::empty
-        {
         // bun.default_allocator.free(this.path.text) → path.text is Box<[u8]> in owned_path;
         // dropping the Fs::Path frees it.
         // TODO(port): Fs::Path ownership of .text — verify in bun_resolver::fs
@@ -360,31 +362,33 @@ impl TranspilerJob {
         // self.fetcher.deinit() → Drop via replace
         self.fetcher = Fetcher::File;
         self.loader = Loader::File;
-        self.non_threadsafe_input_specifier.deref_();
-        self.non_threadsafe_referrer.deref_();
+        self.non_threadsafe_input_specifier.deref();
+        self.non_threadsafe_referrer.deref();
         // self.log.deinit() → Drop via replace
         drop(core::mem::take(&mut self.log));
         // self.promise.deinit() → Drop via replace
-        drop(core::mem::replace(&mut self.promise, Strong::empty()));
+        drop(core::mem::replace(&mut self.promise, StrongOptional::empty()));
         // self.globalThis = undefined; — no-op in Rust
-        } // end 
     }
 
     pub fn dispatch_to_main_thread(&mut self) {
          // TODO(b2-blocked): VirtualMachine.transpiler_store, UnboundedQueue::push, ConcurrentTask::create_from, EventLoop::enqueue_task_concurrent
+        #[cfg(any())]
         {
         // SAFETY: vm outlives the job (BACKREF — VM owns the store).
         let vm = unsafe { &*self.vm };
         let transpiler_store = &vm.transpiler_store;
         transpiler_store.queue.push(self);
         // Another thread may free `self` at any time after .push, so we cannot use it any more.
-        vm.event_loop()
+        unsafe { &mut *vm.event_loop() }
             .enqueue_task_concurrent(ConcurrentTask::create_from(transpiler_store));
-        } // end 
+        } // end
+        todo!("blocked_on: VirtualMachine.transpiler_store / UnboundedQueue");
     }
 
     pub fn run_from_js_thread(&mut self) -> JsResult<()> {
          // TODO(b2-blocked): Strong::swap, bun_aio::KeepAlive::unref, bun_string::String::{empty, clone_utf8, create_if_different, dupe_ref}, ResolvedSource fields, AsyncModule::fulfill, TranspilerJobStore::put
+        #[cfg(any())]
         {
         // SAFETY: vm/global_this outlive the job (BACKREF).
         let vm = unsafe { &*self.vm };
@@ -431,12 +435,14 @@ impl TranspilerJob {
     }
 
     pub fn schedule(&mut self) {
-         // TODO(b2-blocked): bun_aio::KeepAlive::ref_, bun_threading::WorkPool::schedule
+         // TODO(b2-blocked): bun_aio::KeepAlive::ref_ takes EventLoopCtx; VirtualMachine→EventLoopCtx
+         // conversion is installed in the high tier and is not yet wired here.
+        #[cfg(any())]
         {
             // SAFETY: vm outlives the job (BACKREF).
             self.poll_ref.ref_(unsafe { &*self.vm });
-            WorkPool::schedule(&mut self.work_task);
         }
+        WorkPool::schedule(&mut self.work_task);
     }
 
     pub extern "C" fn run_from_worker_thread(work_task: *mut WorkPoolTask) {

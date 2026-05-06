@@ -19,13 +19,13 @@ use bun_threading::Mutex;
 // Low-tier timer node + tag (per §Dispatch hot-path list, the `match tag`
 // dispatch lives in this crate; `bun_event_loop` only stores `(tag, ptr)`).
 pub use bun_event_loop::EventLoopTimer::{
-    EventLoopTimer, InHeap, State as EventLoopTimerState, Tag as EventLoopTimerTag,
+    EventLoopTimer, InHeap, IntrusiveField, State as EventLoopTimerState, Tag as EventLoopTimerTag,
 };
 // TODO(b2-blocked): bun_event_loop carries a local `Timespec` stub instead of
 // `bun_core::Timespec`. Same `{sec: i64, nsec: i64}` shape; alias it here so
 // `fire()`/`next` accesses type-check without a transmute. Remove once the
 // lower tier switches to `bun_core::Timespec`.
-use bun_event_loop::EventLoopTimer::Timespec as ElTimespec;
+pub(crate) use bun_event_loop::EventLoopTimer::Timespec as ElTimespec;
 
 use crate::jsc::{JSGlobalObject, JSValue, JsResult};
 
@@ -42,9 +42,6 @@ mod immediate_object_draft;
 #[cfg(any())]
 #[path = "TimerObjectInternals.rs"]
 mod timer_object_internals_draft;
-#[cfg(any())]
-#[path = "WTFTimer.rs"]
-mod wtf_timer_draft;
 #[cfg(any())]
 #[path = "DateHeaderTimer.rs"]
 mod date_header_timer_draft;
@@ -298,10 +295,9 @@ impl ImmediateObject {
 }
 
 /// A timer created by WTF code and invoked by Bun's event loop.
-// Opaque until `bun_jsc::VirtualMachine` is reachable (NonNull<VirtualMachine>
-// backref in the real struct); only ever heap-allocated and reached via
-// `*mut WTFTimer`, so layout here is irrelevant to `All`.
-pub struct WTFTimer(());
+#[path = "WTFTimer.rs"]
+pub mod wtf_timer;
+pub use wtf_timer::WTFTimer;
 
 // ─── All ─────────────────────────────────────────────────────────────────────
 
@@ -363,18 +359,26 @@ impl All {
     }
 
     fn insert_lock_held(&mut self, timer: *mut EventLoopTimer) {
-        // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer
-        let timer_ref = unsafe { &mut *timer };
-        if self.fake_timers.is_active() && timer_ref.tag.allow_fake_timers() {
+        // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer.
+        // PORT NOTE (§Forbidden aliased-&mut): `TimerHeap::insert` forms a
+        // fresh `&mut EventLoopTimer` via `(*a).heap()` for the same
+        // allocation, so we must NOT hold a `&mut *timer` across that call.
+        // Read `tag` and write `state`/`in_heap` via raw deref instead.
+        let allow_fake = unsafe { (*timer).tag }.allow_fake_timers();
+        if self.fake_timers.is_active() && allow_fake {
             // SAFETY: see fn contract
-            unsafe { self.fake_timers.timers.insert(timer) };
-            timer_ref.state = EventLoopTimerState::ACTIVE;
-            timer_ref.in_heap = InHeap::Fake;
+            unsafe {
+                self.fake_timers.timers.insert(timer);
+                (*timer).state = EventLoopTimerState::ACTIVE;
+                (*timer).in_heap = InHeap::Fake;
+            }
         } else {
             // SAFETY: see fn contract
-            unsafe { self.timers.insert(timer) };
-            timer_ref.state = EventLoopTimerState::ACTIVE;
-            timer_ref.in_heap = InHeap::Regular;
+            unsafe {
+                self.timers.insert(timer);
+                (*timer).state = EventLoopTimerState::ACTIVE;
+                (*timer).in_heap = InHeap::Regular;
+            }
             // TODO(b2-blocked): Windows uv_timer arming needs
             // `@fieldParentPtr(VirtualMachine, timer)`; gated until
             // `bun_jsc::VirtualMachine.timer: All`.
@@ -388,9 +392,12 @@ impl All {
     }
 
     fn remove_lock_held(&mut self, timer: *mut EventLoopTimer) {
-        // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer
-        let timer_ref = unsafe { &mut *timer };
-        match timer_ref.in_heap {
+        // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer.
+        // PORT NOTE (§Forbidden aliased-&mut): `TimerHeap::remove` forms a
+        // fresh `&mut EventLoopTimer` via `(*v).heap()` for the same
+        // allocation, so we must NOT hold a `&mut *timer` across that call.
+        // Read `in_heap` and write the post-remove bookkeeping via raw deref.
+        match unsafe { (*timer).in_heap } {
             InHeap::None => {
                 #[cfg(feature = "ci_assert")]
                 debug_assert!(false);
@@ -400,8 +407,11 @@ impl All {
             // SAFETY: timer is in `self.fake_timers.timers` per `in_heap`
             InHeap::Fake => unsafe { self.fake_timers.timers.remove(timer) },
         }
-        timer_ref.in_heap = InHeap::None;
-        timer_ref.state = EventLoopTimerState::CANCELLED;
+        // SAFETY: `timer` is still a valid live EventLoopTimer.
+        unsafe {
+            (*timer).in_heap = InHeap::None;
+            (*timer).state = EventLoopTimerState::CANCELLED;
+        }
     }
 
     /// Remove the EventLoopTimer if necessary, then re-insert at `time`.
@@ -494,21 +504,29 @@ impl All {
 
         let mut maybe_now: Option<Timespec> = None;
         while let Some(min) = self.timers.peek() {
-            // SAFETY: peek returns a live heap node
-            let min_ref = unsafe { &mut *min };
+            // SAFETY: peek returns a live heap node.
+            // PORT NOTE (§Forbidden aliased-&mut): `delete_min()` writes
+            // `(*min).heap` through a fresh `&mut EventLoopTimer`, so we must
+            // NOT hold a `&mut *min` across it. Read `next`/`tag` via raw
+            // deref and fire via raw deref (mirroring `drain_timers`).
+            let (min_next_sec, min_next_nsec, min_tag) = unsafe {
+                ((*min).next.sec, (*min).next.nsec, (*min).tag)
+            };
             let now = *maybe_now.get_or_insert_with(|| {
                 Timespec::now(TimespecMockMode::AllowMockedTime)
             });
 
             // bun_event_loop carries its own Timespec stub; compare field-wise.
-            let min_next = Timespec { sec: min_ref.next.sec, nsec: min_ref.next.nsec };
+            let min_next = Timespec { sec: min_next_sec, nsec: min_next_nsec };
             match now.order(&min_next) {
                 core::cmp::Ordering::Greater | core::cmp::Ordering::Equal => {
                     // Side-effect: potentially call the StopIfNecessary timer.
-                    if min_ref.tag == EventLoopTimerTag::WTFTimer {
+                    if min_tag == EventLoopTimerTag::WTFTimer {
                         let _ = self.timers.delete_min();
                         let el_now = ElTimespec { sec: now.sec, nsec: now.nsec };
-                        min_ref.fire(&el_now, vm);
+                        // SAFETY: `min` was just popped and is live; no `&mut`
+                        // to it is held across `delete_min()`.
+                        unsafe { (*min).fire(&el_now, vm) };
                         continue;
                     }
                     *spec = Timespec { sec: 0, nsec: 0 };

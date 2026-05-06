@@ -1339,6 +1339,9 @@ impl<'a> SelectorParser<'a> {
                     ));
                 }
                 // blocked_on: properties::custom (TokenList::parse_raw / TokenOrValue) un-gate.
+                // The stub `properties::custom::TokenList` is a unit struct with no `.v`;
+                // until the real module is wired, drop the unparsed args (matches the
+                // PseudoElement::CustomFunction fallback above).
                 #[cfg(any())]
                 {
                     let mut args: Vec<css::css_properties::custom::TokenOrValue> = Vec::new();
@@ -1350,14 +1353,12 @@ impl<'a> SelectorParser<'a> {
                 }
                 #[cfg(not(any()))]
                 {
-                    // Spec (parser.zig:1286-1296) calls `TokenListFns.parseRaw(parser, ...)`
-                    // which consumes the function-argument tokens. Until
-                    // `TokenList::parse_raw` un-gates, drain the nested block so
-                    // `parse_nested_block` → `expect_exhausted` passes and the
-                    // selector grammar accepts the same inputs as the spec.
-                    // TODO(port): un-gate `TokenList::parse_raw` and store the args.
+                    // Consume the function body so the outer parser stays in sync.
                     while parser.next().is_ok() {}
-                    break 'pseudo_class PseudoClass::CustomFunction { name, arguments: TokenList::default() };
+                    break 'pseudo_class PseudoClass::CustomFunction {
+                        name,
+                        arguments: TokenList::default(),
+                    };
                 }
             }
         };

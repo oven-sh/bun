@@ -511,7 +511,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             data.is_export = false;
         }
 
-        let lowered = p.lower_class(js_ast::StmtOrExpr::Stmt(*stmt));
+        // blocked_on: P::lower_class is in the #[cfg(any())] heavy impl block (P.rs:5422).
+        //   Until it un-gates, emit the class statement unchanged (Zig's no-decorator
+        //   fast path is `&[stmt]` anyway).
+        let lowered: &[Stmt] = core::slice::from_ref(&*stmt);
 
         if !mark_as_dead || was_export_inside_namespace {
             // Lower class field syntax for browsers that don't support it

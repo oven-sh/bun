@@ -53,10 +53,22 @@ pub mod options {
     }
 }
 
+/// Port of the anonymous `enum { json, jsonc }` parameter to
+/// `cache::Json.parseJSON` (cache.zig:296).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum JsonMode {
+    Json,
+    Jsonc,
+}
+
 /// CYCLEBREAK (§Dispatch, cold-path manual vtable): replaces the
 /// `bun_bundler::cache::Json` direct dep so `TSConfigJSON::parse` does not name
 /// a higher-tier type. `bun_bundler` provides a static `JsonCacheVTable` that
-/// forwards to `cache::Json::parse_tsconfig`; the resolver only sees `(*mut (), &vtable)`.
+/// forwards to `cache::Json::{parseJSON, parsePackageJSON, parseTSConfig}`; the
+/// resolver only sees `(*mut (), &vtable)`.
+///
+/// All three slots mirror cache.zig:296-313 so the resolver can call any of
+/// them without naming `bun_bundler` / `bun_json` directly.
 pub struct JsonCacheVTable {
     /// Returns `Ok(Some(expr))` on a successful parse, `Ok(None)` when the
     /// source produced no AST (empty/comments-only), `Err` on hard failure.
@@ -64,6 +76,21 @@ pub struct JsonCacheVTable {
         cache: *mut (),
         log: &mut logger::Log,
         source: &logger::Source,
+    ) -> Result<Option<js_ast::Expr>, bun_core::Error>,
+    /// Port of `cache::Json.parsePackageJSON` (cache.zig:307).
+    pub parse_package_json: unsafe fn(
+        cache: *mut (),
+        log: &mut logger::Log,
+        source: &logger::Source,
+        force_utf8: bool,
+    ) -> Result<Option<js_ast::Expr>, bun_core::Error>,
+    /// Port of `cache::Json.parseJSON` (cache.zig:296).
+    pub parse_json: unsafe fn(
+        cache: *mut (),
+        log: &mut logger::Log,
+        source: &logger::Source,
+        mode: JsonMode,
+        force_utf8: bool,
     ) -> Result<Option<js_ast::Expr>, bun_core::Error>,
 }
 
@@ -74,25 +101,62 @@ pub struct JsonCache {
 }
 
 impl JsonCache {
-    /// No-op vtable for `cache::Set::init()` — the resolver constructs a
+    /// Placeholder vtable for `cache::Set::init()` — the resolver constructs a
     /// `Resolver` before the bundler swaps in its real `cache::Json`
-    /// implementation. Calling `parse_tsconfig` on this returns `Ok(None)`,
-    /// matching Zig's `Json{}` empty-struct semantics for the never-reached
-    /// pre-init path.
-    pub const fn noop() -> JsonCache {
-        // SAFETY: `noop_parse_tsconfig` never dereferences `cache`, so a null
-        // `ptr` is fine.
-        unsafe fn noop_parse_tsconfig(
+    /// implementation.
+    ///
+    /// PORT NOTE: Zig's `Json{}` empty-struct (cache.zig:13) is fully functional
+    /// on first use (its methods statically forward to `json_parser`). The
+    /// resolver crate cannot name `bun_json` directly (CYCLEBREAK), so the
+    /// unwired vtable PANICS instead of silently returning `Ok(None)` — a
+    /// silent `None` would drop `extends`/`paths`/`baseUrl` on the floor with
+    /// no error (PORTING.md §Forbidden: silent-no-op). The bundler MUST
+    /// overwrite this vtable before any parse path runs.
+    pub const fn unwired() -> JsonCache {
+        unsafe fn unwired_tsconfig(
             _cache: *mut (),
             _log: &mut logger::Log,
             _source: &logger::Source,
         ) -> Result<Option<js_ast::Expr>, bun_core::Error> {
-            Ok(None)
+            // higher-tier dep (bun_bundler/bun_json) blocks a direct call here.
+            unimplemented!(
+                "JsonCache::parse_tsconfig — bun_bundler must install the real vtable before use"
+            )
         }
-        static NOOP_VTABLE: JsonCacheVTable = JsonCacheVTable {
-            parse_tsconfig: noop_parse_tsconfig,
+        unsafe fn unwired_package_json(
+            _cache: *mut (),
+            _log: &mut logger::Log,
+            _source: &logger::Source,
+            _force_utf8: bool,
+        ) -> Result<Option<js_ast::Expr>, bun_core::Error> {
+            unimplemented!(
+                "JsonCache::parse_package_json — bun_bundler must install the real vtable before use"
+            )
+        }
+        unsafe fn unwired_json(
+            _cache: *mut (),
+            _log: &mut logger::Log,
+            _source: &logger::Source,
+            _mode: JsonMode,
+            _force_utf8: bool,
+        ) -> Result<Option<js_ast::Expr>, bun_core::Error> {
+            unimplemented!(
+                "JsonCache::parse_json — bun_bundler must install the real vtable before use"
+            )
+        }
+        static UNWIRED_VTABLE: JsonCacheVTable = JsonCacheVTable {
+            parse_tsconfig: unwired_tsconfig,
+            parse_package_json: unwired_package_json,
+            parse_json: unwired_json,
         };
-        JsonCache { ptr: core::ptr::null_mut(), vtable: &NOOP_VTABLE }
+        JsonCache { ptr: core::ptr::null_mut(), vtable: &UNWIRED_VTABLE }
+    }
+
+    /// Deprecated alias for [`JsonCache::unwired`]. Kept so out-of-crate
+    /// callers compile while they migrate; new code must not use this.
+    #[deprecated = "use JsonCache::unwired() — noop() implied a silent Ok(None), which it no longer is"]
+    pub const fn noop() -> JsonCache {
+        Self::unwired()
     }
 
     #[inline]
@@ -104,6 +168,31 @@ impl JsonCache {
         // SAFETY: `ptr` points to the cache instance the vtable was minted for;
         // caller (bun_bundler) guarantees they were paired.
         unsafe { (self.vtable.parse_tsconfig)(self.ptr, log, source) }
+    }
+
+    /// Port of `cache::Json.parsePackageJSON` (cache.zig:307).
+    #[inline]
+    pub fn parse_package_json(
+        &mut self,
+        log: &mut logger::Log,
+        source: &logger::Source,
+        force_utf8: bool,
+    ) -> Result<Option<js_ast::Expr>, bun_core::Error> {
+        // SAFETY: see `parse_tsconfig`.
+        unsafe { (self.vtable.parse_package_json)(self.ptr, log, source, force_utf8) }
+    }
+
+    /// Port of `cache::Json.parseJSON` (cache.zig:296).
+    #[inline]
+    pub fn parse_json(
+        &mut self,
+        log: &mut logger::Log,
+        source: &logger::Source,
+        mode: JsonMode,
+        force_utf8: bool,
+    ) -> Result<Option<js_ast::Expr>, bun_core::Error> {
+        // SAFETY: see `parse_tsconfig`.
+        unsafe { (self.vtable.parse_json)(self.ptr, log, source, mode, force_utf8) }
     }
 }
 

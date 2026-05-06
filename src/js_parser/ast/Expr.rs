@@ -1477,11 +1477,9 @@ impl fmt::Display for Tag {
 // Expr methods (continued)
 // ───────────────────────────────────────────────────────────────────────────
 
-// TODO(b2-ast-round-C): is_boolean/assign/at/not/maybe_simplify_not/etc.
-#[cfg(any())]
 impl Expr {
-    pub fn is_boolean(a: &Expr) -> bool {
-        match &a.data {
+    pub fn is_boolean(&self) -> bool {
+        match self.data {
             Data::EBoolean(_) | Data::EBranchBoolean(_) => true,
             Data::EIf(ex) => ex.yes.is_boolean() && ex.no.is_boolean(),
             Data::EUnary(ex) => ex.op == crate::ast::OpCode::UnNot || ex.op == crate::ast::OpCode::UnDelete,
@@ -1504,38 +1502,33 @@ impl Expr {
         }
     }
 
-    pub fn assign(a: Expr, b: Expr) -> Expr {
-        Expr::init(
-            E::Binary { op: crate::ast::OpCode::BinAssign, left: a, right: b },
-            a.loc,
-        )
-    }
+    // `assign` lives in the `init`/`allocate` impl block above (round-A hoist).
 
     #[inline]
-    pub fn at<T: IntoExprData>(expr: &Expr, t: T) -> Expr {
-        Expr::init(t, expr.loc)
+    pub fn at<T: IntoExprData>(&self, t: T) -> Expr {
+        Expr::init(t, self.loc)
     }
 
     // Wraps the provided expression in the "!" prefix operator. The expression
     // will potentially be simplified to avoid generating unnecessary extra "!"
     // operators. For example, calling this with "!!x" will return "!x" instead
     // of returning "!!!x".
-    pub fn not(expr: &Expr, bump: &Bump) -> Expr {
-        expr.maybe_simplify_not(bump).unwrap_or_else(|| {
+    pub fn not(&self, bump: &Bump) -> Expr {
+        self.maybe_simplify_not(bump).unwrap_or_else(|| {
             Expr::init(
                 E::Unary {
                     op: crate::ast::OpCode::UnNot,
-                    value: *expr,
-                    ..Default::default()
+                    value: *self,
+                    flags: E::UnaryFlags::empty(),
                 },
-                expr.loc,
+                self.loc,
             )
         })
     }
 
     #[inline]
-    pub fn has_value_for_this_in_call(expr: &Expr) -> bool {
-        matches!(expr.data, Data::EDot(_) | Data::EIndex(_))
+    pub fn has_value_for_this_in_call(&self) -> bool {
+        matches!(self.data, Data::EDot(_) | Data::EIndex(_))
     }
 
     /// The given "expr" argument should be the operand of a "!" prefix operator
@@ -1543,8 +1536,9 @@ impl Expr {
     /// whole operator (i.e. the "!x") if it can be simplified, or false if not.
     /// It's separate from "Not()" above to avoid allocation on failure in case
     /// that is undesired.
-    pub fn maybe_simplify_not(expr: &Expr, bump: &Bump) -> Option<Expr> {
-        match &expr.data {
+    pub fn maybe_simplify_not(&self, bump: &Bump) -> Option<Expr> {
+        let expr = self;
+        match expr.data {
             Data::ENull(_) | Data::EUndefined(_) => {
                 return Some(expr.at(E::Boolean { value: true }));
             }
@@ -1570,11 +1564,15 @@ impl Expr {
                     return Some(un.value);
                 }
             }
-            Data::EBinary(ex) => {
+            Data::EBinary(mut ex) => {
                 // TODO: evaluate whether or not it is safe to do this mutation since it's modifying in-place.
                 // Make sure that these transformations are all safe for special values.
                 // For example, "!(a < b)" is not the same as "a >= b" if a and/or b are
                 // NaN (or undefined, or null, or possibly other problem cases too).
+                //
+                // PORT: Zig captured `*E.Binary` and wrote through it; `StoreRef` is a
+                // `Copy` `NonNull` handle, so copying it out of the (immutable) `Data`
+                // and `DerefMut`-ing reaches the same arena slot.
                 match ex.op {
                     crate::ast::OpCode::BinLooseEq => {
                         // "!(a == b)" => "a != b"
@@ -1613,9 +1611,10 @@ impl Expr {
         None
     }
 
-    pub fn to_string_expr_without_side_effects(expr: &Expr, bump: &Bump) -> Option<Expr> {
+    pub fn to_string_expr_without_side_effects(&self, bump: &Bump) -> Option<Expr> {
+        let expr = self;
         let unwrapped = expr.unwrap_inlined();
-        let slice: Option<&[u8]> = match &unwrapped.data {
+        let slice: Option<&[u8]> = match unwrapped.data {
             Data::ENull(_) => Some(b"null"),
             Data::EString(_) => return Some(*expr),
             Data::EUndefined(_) => Some(b"undefined"),
@@ -1635,14 +1634,14 @@ impl Expr {
                     };
                 }
                 None
-            },
+            }
             _ => None,
         };
         slice.map(|s| Expr::init(E::String::init(s), expr.loc))
     }
 
-    pub fn is_optional_chain(self_: &Expr) -> bool {
-        match &self_.data {
+    pub fn is_optional_chain(&self) -> bool {
+        match self.data {
             Data::EDot(d) => d.optional_chain.is_some(),
             Data::EIndex(i) => i.optional_chain.is_some(),
             Data::ECall(c) => c.optional_chain.is_some(),
@@ -1651,8 +1650,8 @@ impl Expr {
     }
 
     #[inline]
-    pub fn known_primitive(self_: &Expr) -> PrimitiveType {
-        self_.data.known_primitive()
+    pub fn known_primitive(&self) -> PrimitiveType {
+        self.data.known_primitive()
     }
 }
 

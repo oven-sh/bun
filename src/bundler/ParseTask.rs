@@ -187,6 +187,21 @@ pub enum Step {
 // ───────────────────────────────────────────────────────────────────────────
 
 impl ParseTask {
+    // blocked_on: cross-crate type divergence —
+    //   - `_resolver::Result.path_pair.primary` is `bun_resolver::fs::Path<'_>`
+    //     (lifetime'd mirror), distinct from the `'static` `bun_resolver::fs::Path`
+    //     this struct stores;
+    //   - `_resolver::Result.jsx` is `bun_resolver::options::jsx::Pragma`
+    //     (resolver-local TYPE_ONLY mirror), distinct from
+    //     `crate::options::jsx::Pragma`;
+    //   - `_resolver::Result.module_type` is
+    //     `bun_options_types::BundleEnums::ModuleType`, distinct from
+    //     `crate::options::ModuleType` (`options_impl::ModuleType` — local enum
+    //     not yet unified with the lower-tier def).
+    // All three collapse to `clone()`/direct-assign once the TYPE_ONLY mirrors
+    // unify (lib.rs `pub mod options` shadow + resolver `fs::Path` lifetime
+    // erasure). Body preserved verbatim for that flip.
+    #[cfg(any())]
     pub fn init(
         resolve_result: &_resolver::Result,
         source_index: Index,
@@ -216,14 +231,8 @@ impl ParseTask {
                 file: resolve_result.file_fd,
             },
             side_effects: resolve_result.primary_side_effects_data,
-            // TODO(port): `_resolver::Result.jsx` is `bun_resolver::options::jsx::Pragma`
-            // (resolver-local mirror), distinct from `crate::options::jsx::Pragma`.
-            // The two are structurally identical (CYCLEBREAK TYPE_ONLY); once the
-            // type unifies this becomes `resolve_result.jsx.clone()`.
-            jsx: options::jsx::Pragma::default(),
+            jsx: resolve_result.jsx.clone(),
             source_index,
-            // PORT NOTE: `_resolver::options::ModuleType` and
-            // `crate::options::ModuleType` are the same `bun_options_types` enum.
             module_type: resolve_result.module_type,
             emit_decorator_metadata: resolve_result.flags.emit_decorator_metadata(),
             experimental_decorators: resolve_result.flags.experimental_decorators(),
@@ -469,9 +478,15 @@ fn get_runtime_source_comptime(target: options::Target) -> RuntimeSource {
         // PORT NOTE: `logger::Source.path` is `bun_logger::fs::Path`, distinct
         // from `bun_resolver::fs::Path` (CYCLEBREAK TYPE_ONLY mirror). Construct
         // directly rather than `clone()` across the type boundary.
-        path: bun_logger::fs::Path::init_with_namespace(b"runtime", b"bun:runtime"),
+        path: bun_logger::fs::Path {
+            text: b"runtime",
+            namespace: b"bun:runtime",
+            name: bun_logger::fs::PathName::init(b"runtime"),
+        },
         contents: runtime_code.as_bytes(),
-        index: Index::RUNTIME,
+        // PORT NOTE: `Source.index` is `bun_logger::Index` (newtype `u32`),
+        // distinct from `bun_options_types::Index`. Runtime source is index 0.
+        index: bun_logger::Index(Index::RUNTIME.get()),
         ..Default::default()
     };
     RuntimeSource { parse_task, source }
@@ -1208,7 +1223,7 @@ fn get_code_for_parse_task(
 pub struct OnBeforeParsePlugin<'a> {
     task: &'a mut ParseTask,
     log: &'a mut Log,
-    transpiler: &'a mut Transpiler,
+    transpiler: &'a mut Transpiler<'a>,
     resolver: &'a mut Resolver,
     bump: &'a Bump,
     file_path: &'a mut Fs::Path,
@@ -1314,17 +1329,26 @@ impl BunLogOptions {
         b""
     }
 
-    pub fn append(&self, log: &mut Log, namespace: &[u8]) {
-        // TODO(port): zig used log.msgs.allocator; using global alloc.
+    pub fn append(&self, log: &mut Log, namespace: &'static [u8]) {
+        // TODO(port): zig used `log.msgs.allocator.dupe(u8, ...)`; until
+        // `bun_logger::Str` carries an owning variant we leak via `Box::leak`
+        // (matches the Phase-A `'static` slice convention used everywhere else
+        // in this file). The leaked bytes live for the bundle pass.
+        fn dupe_static(s: &[u8]) -> &'static [u8] {
+            if s.is_empty() {
+                return b"";
+            }
+            Box::leak(Box::<[u8]>::from(s))
+        }
         let source_line_text = self.source_line_text();
         let location = Location::init(
-            self.path(),
+            dupe_static(self.path()),
             namespace,
             self.line.max(-1),
             self.column.max(-1),
-            (self.column_end - self.column).max(0),
+            (self.column_end - self.column).max(0) as u32,
             if !source_line_text.is_empty() {
-                Some(Box::<[u8]>::from(source_line_text))
+                Some(dupe_static(source_line_text))
             } else {
                 None
             },
@@ -1332,7 +1356,7 @@ impl BunLogOptions {
         let mut msg = Msg {
             data: logger::Data {
                 location: Some(location),
-                text: Box::<[u8]>::from(self.message()),
+                text: std::borrow::Cow::Owned(self.message().to_vec()),
                 ..Default::default()
             },
             ..Default::default()
@@ -1349,7 +1373,7 @@ impl BunLogOptions {
         } else if msg.kind == logger::Kind::Warn {
             log.warnings += 1;
         }
-        log.add_msg(msg);
+        let _ = log.add_msg(msg);
     }
 
     pub extern "C" fn log_fn(
@@ -2154,6 +2178,18 @@ pub use crate::DeferredBatchTask::DeferredBatchTask;
 // PORT STATUS
 //   source:     src/bundler/ParseTask.zig (1496 lines)
 //   confidence: medium
-//   todos:      19
-//   notes:      Arena lifetimes for &[u8] fields placeholdered as &'static; init() should switch to ..Default::default() in Phase B; errdefer scopeguards in run_with_source_code/get_source_code reshaped for borrowck and need Phase B verification; OnBeforeParseResultWrapper.check field layout differs in release.
+//   todos:      21
+//   notes:      `parse_worker` module un-gated B-2: get_runtime_source +
+//               task_callback/io_task_callback + FFI structs (OnBeforeParse*,
+//               BunLogOptions) + on_complete are real. Per-function gates
+//               remain on getAST/getCodeForParseTask*/runWithSourceCode/
+//               runFromThreadPool bodies — blocked on `crate::ThreadPool`
+//               (gated bundler-worker module), opaque `JSBundlerPlugin`/
+//               `FileMap` forward-decls, and `parser::options` ↔
+//               `BundleOptions` type-mirror unification (ModuleType, jsx::
+//               Pragma, AllowUnresolved, Framework). `init()` gated on the
+//               same TYPE_ONLY divergence. Arena lifetimes for &[u8] fields
+//               placeholdered as &'static. errdefer scopeguards reshaped for
+//               borrowck (Phase-B verify). OnBeforeParseResultWrapper.check
+//               field layout differs in release.
 // ──────────────────────────────────────────────────────────────────────────

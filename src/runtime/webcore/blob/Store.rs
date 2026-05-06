@@ -624,7 +624,7 @@ impl S3 {
             }
         }
 
-        // PORT NOTE: Wrapper.deinit body deleted — store.deref() handled by Arc::drop,
+        // PORT NOTE: Wrapper.deinit body deleted — store.deref() handled by StoreRef::drop,
         // promise.deinit() handled by JSPromiseStrong::drop, bun.destroy(wrap) handled by
         // Box::from_raw + drop in resolve().
 
@@ -638,7 +638,6 @@ impl S3 {
         let proxy = proxy_url.as_ref().map(|url| url.href());
         let aws_options = self.get_credentials_with_options(extra_options, global_this)?;
         // `defer aws_options.deinit()` → Drop handles it.
-        store.ref_();
 
         s3::delete(
             &aws_options.credentials,
@@ -646,11 +645,9 @@ impl S3 {
             Wrapper::resolve as *const _,
             Box::into_raw(Wrapper::new(Wrapper {
                 promise,
-                // TODO(port): see Wrapper.store note — Arc::from intrusive refcount mismatch.
-                // SAFETY: `store` was Box-allocated via Store::new and ref()'d just above;
-                // Arc::from_raw is a Phase-A placeholder for the intrusive refcount handle
-                // pending IntrusiveArc reconciliation in Phase B.
-                store: unsafe { Arc::from_raw(store as *const Store) },
+                // SAFETY: `store` is a live heap `Store`; `retained` bumps the
+                // intrusive refcount (Zig: `store.ref()`).
+                store: unsafe { StoreRef::retained(NonNull::from(store)) },
                 global: global_this as *const _,
             })) as *mut c_void,
             proxy,
@@ -676,9 +673,7 @@ impl S3 {
 
         struct Wrapper {
             promise: bun_jsc::JSPromiseStrong,
-            // LIFETIMES.tsv: SHARED → Arc<Store>
-            // TODO(port): see unlink::Wrapper.store note re intrusive refcount.
-            store: Arc<Store>,
+            store: StoreRef,
             resolved_list_options: S3ListObjectsOptions,
             // TODO(port): lifetime — JSC_BORROW per LIFETIMES.tsv; raw pointer for heap struct.
             global: *const JSGlobalObject,
@@ -724,7 +719,7 @@ impl S3 {
             }
         }
 
-        // PORT NOTE: Wrapper.deinit/destroy bodies deleted — store.deref() via Arc::drop,
+        // PORT NOTE: Wrapper.deinit/destroy bodies deleted — store.deref() via StoreRef::drop,
         // promise.deinit() via JSPromiseStrong::drop, resolvedlistOptions.deinit() via
         // S3ListObjectsOptions::drop, bun.destroy(self) via Box::from_raw + drop.
 
@@ -740,7 +735,6 @@ impl S3 {
         // `defer aws_options.deinit()` → Drop handles it.
 
         let options = s3::get_list_objects_options_from_js(global_this, list_options)?;
-        store.ref_();
 
         s3::list_objects(
             &aws_options.credentials,
@@ -748,11 +742,9 @@ impl S3 {
             Wrapper::resolve as *const _,
             Box::into_raw(Box::new(Wrapper {
                 promise,
-                // TODO(port): see Wrapper.store note — Arc::from intrusive refcount mismatch.
-                // SAFETY: `store` was Box-allocated via Store::new and ref()'d just above;
-                // Arc::from_raw is a Phase-A placeholder for the intrusive refcount handle
-                // pending IntrusiveArc reconciliation in Phase B.
-                store: unsafe { Arc::from_raw(store as *const Store) },
+                // SAFETY: `store` is a live heap `Store`; `retained` bumps the
+                // intrusive refcount (Zig: `store.ref()`).
+                store: unsafe { StoreRef::retained(NonNull::from(store)) },
                 resolved_list_options: options,
                 global: global_this as *const _,
             })) as *mut c_void,
@@ -872,5 +864,5 @@ impl Bytes {
 //   source:     src/runtime/webcore/blob/Store.zig (577 lines)
 //   confidence: medium
 //   todos:      13
-//   notes:      Store is intrusively refcounted + crosses FFI; LIFETIMES.tsv says Arc<Store> for Wrapper fields — Phase B must reconcile with bun_ptr::IntrusiveArc. Bytes collapsed to Vec<u8> per TSV.
+//   notes:      Store is intrusively refcounted + crosses FFI; `StoreRef` (NonNull<Store> + ref_/deref) is the canonical handle. Bytes collapsed to Vec<u8> per TSV.
 // ──────────────────────────────────────────────────────────────────────────

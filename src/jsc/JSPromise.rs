@@ -8,7 +8,7 @@ use crate::{JSGlobalObject, JSValue, JsError, JsResult, VM};
 // so import them under aliases.
 use crate::strong::Optional as JscStrong;
 use crate::weak::{Weak as JscWeak, WeakRefType};
-use crate::JsTerminated;
+use crate::{JsTerminated, TopExceptionScope};
 use crate::virtual_machine::VirtualMachine;
 
 /// Opaque handle to a `JSC::JSPromise` cell. Always used by reference; never
@@ -279,6 +279,8 @@ impl JSPromise {
             crate::to_js_host_call(g, (this.f.take().unwrap())(g))
         }
 
+        // TODO(port): @src() source-location plumbing for TopExceptionScope.
+        let mut scope = TopExceptionScope::init(global);
         let mut ctx = Wrapper { f: Some(f) };
         // SAFETY: `ctx` outlives the synchronous FFI call; `call::<F>` matches the
         // expected `extern "C" fn(*mut c_void, *mut JSGlobalObject) -> JSValue` signature.
@@ -289,9 +291,12 @@ impl JSPromise {
                 call::<F>,
             )
         };
-        // TODO(b2): `TopExceptionScope::init(global).assert_no_exception_except_termination()?`
-        // — TopExceptionScope::init signature differs at this tier; verify in Phase B.
-        if global.has_exception() { return Err(JsTerminated::JSTerminated); }
+        // JSC__JSPromise__wrap converts any thrown exception into a rejected promise,
+        // so a pending non-termination exception here indicates a bug; assert and
+        // surface termination as JsTerminated (matching JSPromise.zig:202-207).
+        scope
+            .assert_no_exception_except_termination()
+            .map_err(|_| JsTerminated::JSTerminated)?;
         Ok(promise)
     }
 
@@ -314,8 +319,13 @@ impl JSPromise {
     }
 
     pub fn status(&self) -> Status {
-        // SAFETY: `self` is a valid `*const JSPromise`; result is one of {0,1,2}.
-        unsafe { core::mem::transmute::<u32, Status>(JSC__JSPromise__status(self)) }
+        // SAFETY: `self` is a valid `*const JSPromise`.
+        match unsafe { JSC__JSPromise__status(self) } {
+            0 => Status::Pending,
+            1 => Status::Fulfilled,
+            2 => Status::Rejected,
+            n => unreachable!("invalid JSPromise status {n}"),
+        }
     }
 
     pub fn result(&mut self, vm: &mut VM) -> JSValue {

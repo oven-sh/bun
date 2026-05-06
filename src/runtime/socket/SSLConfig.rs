@@ -20,9 +20,9 @@ pub struct SSLConfig {
 
     pub passphrase: Option<CString>,
 
-    pub key: Option<Vec<CString>>,
-    pub cert: Option<Vec<CString>>,
-    pub ca: Option<Vec<CString>>,
+    pub key: Option<CStringList>,
+    pub cert: Option<CStringList>,
+    pub ca: Option<CStringList>,
 
     pub secure_options: u32,
     pub request_cert: i32,
@@ -36,6 +36,48 @@ pub struct SSLConfig {
     pub low_memory_mode: bool,
     pub cached_hash: u64,
 }
+
+/// Owned list of NUL-terminated strings paired with a contiguous
+/// `[*const c_char]` side-buffer. The side-buffer is what uSockets'
+/// `us_bun_socket_context_options_t.{key,cert,ca}` expects (a `**const char`
+/// with thin-pointer stride), matching the Zig `?[][*:0]const u8` layout.
+///
+/// `ptrs[i]` always equals `strings[i].as_ptr()`. The pointed-to buffers are
+/// the `CString` heap allocations, which are stable for the lifetime of
+/// `strings` (moving a `CString` does not move its backing `Box<[u8]>`).
+pub struct CStringList {
+    strings: Vec<CString>,
+    ptrs: Vec<*const c_char>,
+}
+
+impl CStringList {
+    pub fn from_vec(strings: Vec<CString>) -> Self {
+        let ptrs: Vec<*const c_char> = strings.iter().map(|s| s.as_ptr()).collect();
+        Self { strings, ptrs }
+    }
+
+    #[inline]
+    pub fn as_ptr_array(&self) -> *const *const c_char {
+        self.ptrs.as_ptr()
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        debug_assert_eq!(self.strings.len(), self.ptrs.len());
+        self.strings.len()
+    }
+
+    #[inline]
+    pub fn iter(&self) -> core::slice::Iter<'_, CString> {
+        self.strings.iter()
+    }
+}
+
+// SAFETY: `ptrs` only ever points into the heap allocations owned by
+// `strings` in the same struct; those allocations move with the struct and
+// are freed by its Drop. No shared mutable state is exposed.
+unsafe impl Send for CStringList {}
+unsafe impl Sync for CStringList {}
 
 /// Atomic shared pointer with weak support. Refcounting and allocation are
 /// managed non-intrusively by `Arc`; the SSLConfig struct itself has no
@@ -78,22 +120,16 @@ impl SSLConfig {
         }
         ctx_opts.ssl_prefer_low_memory_usage = self.low_memory_mode as core::ffi::c_int;
 
-        // TODO(port): Vec<CString> is NOT layout-compatible with [*const c_char].
-        // The Zig stored `[][*:0]const u8` (slice of raw pointers) so `.ptr` was
-        // a contiguous `**const u8`. With Vec<CString> we need a side-buffer of
-        // `*const c_char` to hand to uSockets. Phase B: either change field type
-        // to Vec<*mut c_char> (matching Zig layout) or build a temp pointer array
-        // here and stash it in BunSocketContextOptions.
         if let Some(key) = &self.key {
-            ctx_opts.key = key.as_ptr() as *const *const c_char;
+            ctx_opts.key = key.as_ptr_array();
             ctx_opts.key_count = u32::try_from(key.len()).unwrap();
         }
         if let Some(cert) = &self.cert {
-            ctx_opts.cert = cert.as_ptr() as *const *const c_char;
+            ctx_opts.cert = cert.as_ptr_array();
             ctx_opts.cert_count = u32::try_from(cert.len()).unwrap();
         }
         if let Some(ca) = &self.ca {
-            ctx_opts.ca = ca.as_ptr() as *const *const c_char;
+            ctx_opts.ca = ca.as_ptr_array();
             ctx_opts.ca_count = u32::try_from(ca.len()).unwrap();
         }
 
@@ -172,14 +208,14 @@ fn opt_str_eq(first: &Option<CString>, second: &Option<CString>) -> bool {
     }
 }
 
-fn opt_strs_eq(first: &Option<Vec<CString>>, second: &Option<Vec<CString>>) -> bool {
+fn opt_strs_eq(first: &Option<CStringList>, second: &Option<CStringList>) -> bool {
     match (first, second) {
         (Some(slice1), Some(slice2)) => {
             if slice1.len() != slice2.len() {
                 return false;
             }
             debug_assert_eq!(slice1.len(), slice2.len());
-            for (a, b) in slice1.iter().zip(slice2) {
+            for (a, b) in slice1.iter().zip(slice2.iter()) {
                 if !strings_equal(a, b) {
                     return false;
                 }
@@ -213,12 +249,14 @@ fn free_sensitive_bytes(mut bytes: Vec<u8>) {
     drop(bytes);
 }
 
-fn free_strings(slice: &mut Option<Vec<CString>>) {
+fn free_strings(slice: &mut Option<CStringList>) {
     let Some(inner) = slice.take() else { return };
-    for string in inner {
+    let CStringList { strings, ptrs } = inner;
+    drop(ptrs);
+    for string in strings {
         free_sensitive_bytes(string.into_bytes_with_nul());
     }
-    // outer Vec freed by drop
+    // outer Vecs freed by drop
 }
 
 fn free_string(string: &mut Option<CString>) {
@@ -265,13 +303,13 @@ impl Drop for SSLConfig {
 // clone
 // ──────────────────────────────────────────────────────────────────────────
 
-fn clone_strings(slice: &Option<Vec<CString>>) -> Option<Vec<CString>> {
+fn clone_strings(slice: &Option<CStringList>) -> Option<CStringList> {
     let inner = slice.as_ref()?;
     let mut result = Vec::with_capacity(inner.len());
-    for string in inner {
+    for string in inner.iter() {
         result.push(string.clone());
     }
-    Some(result)
+    Some(CStringList::from_vec(result))
 }
 
 fn clone_string(string: &Option<CString>) -> Option<CString> {
@@ -353,9 +391,9 @@ fn hash_opt_str(hasher: &mut Wyhash11, value: &Option<CString>) {
     hasher.update(&[0]);
 }
 
-fn hash_opt_strs(hasher: &mut Wyhash11, value: &Option<Vec<CString>>) {
+fn hash_opt_strs(hasher: &mut Wyhash11, value: &Option<CStringList>) {
     if let Some(slice) = value {
-        for s in slice {
+        for s in slice.iter() {
             hasher.update(s.as_bytes());
             hasher.update(&[0]);
         }
@@ -648,9 +686,9 @@ mod _gated_from_js {
                 || generated.request_cert
                 || result.secure_options != 0;
 
-            result.ca = handle_file_for_field(global, "ca", &generated.ca)?;
-            result.cert = handle_file_for_field(global, "cert", &generated.cert)?;
-            result.key = handle_file_for_field(global, "key", &generated.key)?;
+            result.ca = handle_file_for_field(global, "ca", &generated.ca)?.map(CStringList::from_vec);
+            result.cert = handle_file_for_field(global, "cert", &generated.cert)?.map(CStringList::from_vec);
+            result.key = handle_file_for_field(global, "key", &generated.key)?.map(CStringList::from_vec);
             result.requires_custom_request_ctx = result.requires_custom_request_ctx
                 || result.ca.is_some()
                 || result.cert.is_some()
@@ -858,6 +896,7 @@ impl SSLConfig {
 //               take_{protos,server_name} real. from_js/from_generated/file
 //               helpers + GlobalRegistry::intern gated on tier-6 surfaces
 //               (webcore::Blob store, node::fs::NodeFS, generated GenVal
-//               accessors, ArrayHashMap content-hash context). Vec<CString> not
-//               layout-compatible with [*const c_char] for as_usockets().
+//               accessors, ArrayHashMap content-hash context). key/cert/ca use
+//               CStringList (owned CString + thin-ptr side-buffer) so
+//               as_usockets() hands a layout-correct **const c_char to uSockets.
 // ──────────────────────────────────────────────────────────────────────────

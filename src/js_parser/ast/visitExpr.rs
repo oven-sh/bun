@@ -181,9 +181,28 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     // MacroContext::call.
 
     fn e_import_meta(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
-        let _ = (p, in_);
-        todo!("G-round-4: e_import_meta body — see _draft");
-        #[allow(unreachable_code)] expr
+        // TODO: delete import.meta might not work
+        let is_delete_target = matches!(p.delete_target, Data::EImportMeta(..));
+
+        if let Some(meta) = p.define.dots.get(b"meta".as_slice()) {
+            for define in meta {
+                // blocked_on: P::is_dot_define_match + P::value_for_define live in the
+                // gated round-D impl (P.rs `#[cfg(any())]` ~5380); `defines::DotDefine.parts`
+                // is the round-C `Vec<Box<[u8]>>` stub (full type is `*const [*const [u8]]`).
+                // TODO: clean up how we do define matches
+                let is_match: bool = {
+                    let _ = &define.parts;
+                    todo!("e_import_meta: P::is_dot_define_match (gated)")
+                };
+                if is_match {
+                    // Substitute user-specified defines
+                    let _ = (in_.assign_target, is_delete_target, &define.data);
+                    return todo!("e_import_meta: P::value_for_define (gated)");
+                }
+            }
+        }
+
+        expr
     }
 
     fn e_identifier(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {

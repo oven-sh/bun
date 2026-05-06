@@ -29,13 +29,19 @@ use bun_jsc::module_loader::{
 use bun_jsc::virtual_machine::{
     InitOptions, RuntimeHooks, RuntimeState as OpaqueRuntimeState, VirtualMachine,
 };
-use bun_jsc::{ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSValue, ResolvedSource};
+use bun_jsc::{
+    AnyPromise, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSModuleLoader, JSValue,
+    ResolvedSource,
+};
+use bun_jsc::js_promise::Status as PromiseStatus;
 
 use bun_bundler::entry_points::ServerEntryPoint;
 use bun_bundler::options::{self, Loader, ModuleType};
+use bun_options_types::import_record::ImportKind;
 use bun_resolve_builtins::Module as HardcodedModule;
 use bun_resolver::fs as Fs;
 use bun_resolver::node_fallbacks;
+use bun_resolver::{GlobalCache, ResultUnion as ResolveResultUnion};
 
 use crate::timer;
 
@@ -224,21 +230,189 @@ unsafe fn generate_entry_point(
     ServerEntryPoint::generate(unsafe { &mut (*state).entry_point }, watch, entry_path).is_ok()
 }
 
-/// `loadPreloads()` — runs `--preload` scripts. Returns the in-flight promise
-/// if a preload is async, else null.
+/// `loadPreloads()` — runs `--preload` scripts. Returns the first rejected
+/// preload promise if any, else null. Spec VirtualMachine.zig:2204-2280.
 ///
 /// # Safety
 /// `vm` is the live per-thread VM.
-unsafe fn load_preloads(_vm: *mut VirtualMachine) -> *mut JSInternalPromise {
-    // Spec VirtualMachine.zig:2204-2280: set `is_in_preload = true`, resolve
-    // each `vm.preload` entry via `transpiler.resolver.resolveAndAutoInstall`,
-    // `JSModuleLoader.import` it, `wait_for_promise`, return the first rejected
-    // promise, then clear `vm.preload`. The low tier already short-circuits on
-    // `vm.preload.is_empty()`, so reaching here means there ARE preloads to
-    // run — returning `null_mut()` would silently skip them (PORTING.md
-    // §Forbidden: silent-no-op). Fail loudly until `transpiler.resolver`
-    // un-gates.
-    todo!("jsc_hooks: load_preloads")
+unsafe fn load_preloads(vm: *mut VirtualMachine) -> *mut JSInternalPromise {
+    // PORT NOTE: reshaped for borrowck — `wait_for_promise` / `event_loop().tick()`
+    // need `&mut VirtualMachine` while we're also iterating `vm.preload` and
+    // touching `vm.transpiler.resolver` / `vm.log`. Dereference per-field via
+    // the raw `vm` ptr; iterate preloads by index (the `Box<[u8]>` payloads are
+    // heap-stable so a raw `*const [u8]` survives the resolver borrow).
+
+    // ── is_in_preload guard ─────────────────────────────────────────────
+    // SAFETY: per fn contract — `vm` is the live per-thread VM.
+    unsafe { (*vm).is_in_preload = true };
+    let _preload_guard = scopeguard::guard((), |_| {
+        // SAFETY: per fn contract.
+        unsafe { (*vm).is_in_preload = false };
+    });
+
+    // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
+    let global: *mut JSGlobalObject = unsafe { (*vm).global };
+    // SAFETY: `vm.transpiler.fs` points at the process-global `Fs::FileSystem`
+    // singleton (transpiler.rs:66 — Zig used `Fs.FileSystem.instance`).
+    let top_level_dir: *const [u8] = unsafe { (*(*vm).transpiler.fs).top_level_dir };
+    // Spec VirtualMachine.zig:2213 — `if (this.standalone_module_graph == null)
+    // .read_only else .disable`.
+    // SAFETY: per fn contract.
+    let global_cache = if unsafe { (*vm).standalone_module_graph.is_none() } {
+        GlobalCache::read_only
+    } else {
+        GlobalCache::disable
+    };
+
+    // SAFETY: per fn contract.
+    let n = unsafe { (*vm).preload.len() };
+    for i in 0..n {
+        // SAFETY: `i < n`; the `Box<[u8]>` allocation is stable across the
+        // `resolve_and_auto_install` call below (which only touches
+        // `vm.transpiler.resolver`, not `vm.preload`).
+        let preload: *const [u8] = unsafe { &*(*vm).preload[i] };
+        // Spec VirtualMachine.zig:1865 — `normalizeSource`: strip "file://".
+        // SAFETY: `preload` points at a live boxed slice for this iteration.
+        let normalized: &[u8] = {
+            let s = unsafe { &*preload };
+            s.strip_prefix(b"file://".as_slice()).unwrap_or(s)
+        };
+
+        // ── resolve ─────────────────────────────────────────────────────
+        // SAFETY: per fn contract; `top_level_dir` is the `'static` fs
+        // singleton field.
+        let mut result = match unsafe {
+            (*vm).transpiler.resolver.resolve_and_auto_install(
+                &*top_level_dir,
+                normalized,
+                ImportKind::Stmt,
+                global_cache,
+            )
+        } {
+            ResolveResultUnion::Success(r) => r,
+            ResolveResultUnion::Failure(e) => {
+                // Spec VirtualMachine.zig:2216-2226 — `log.addErrorFmt` then
+                // `return e`. The hook signature has no error channel, so log
+                // and fail loudly.
+                // SAFETY: `vm.log` was set to a fresh leaked `Box<Log>` by
+                // `VirtualMachine::init`.
+                if let Some(log) = unsafe { (*vm).log } {
+                    // SAFETY: `log` is the unique per-VM `Box<Log>`.
+                    let _ = unsafe { &mut *log.as_ptr() }.add_error_fmt(
+                        None,
+                        bun_logger::Loc::EMPTY,
+                        format_args!(
+                            "{} resolving preload {}",
+                            e.name(),
+                            bun_core::fmt::format_json_string_latin1(unsafe { &*preload }),
+                        ),
+                    );
+                }
+                // TODO(b2): widen `RuntimeHooks::load_preloads` return to
+                // `Result<*mut JSInternalPromise, bun_core::Error>` so this
+                // bubbles like Zig's `try`. Until then, fail loudly (PORTING.md
+                // §Forbidden: silent-no-op).
+                panic!("jsc_hooks: load_preloads resolve failure: {}", e.name());
+            }
+            ResolveResultUnion::Pending(_) | ResolveResultUnion::NotFound => {
+                // Spec VirtualMachine.zig:2228-2238.
+                // SAFETY: see above.
+                if let Some(log) = unsafe { (*vm).log } {
+                    // SAFETY: `log` is the unique per-VM `Box<Log>`.
+                    let _ = unsafe { &mut *log.as_ptr() }.add_error_fmt(
+                        None,
+                        bun_logger::Loc::EMPTY,
+                        format_args!(
+                            "preload not found {}",
+                            bun_core::fmt::format_json_string_latin1(unsafe { &*preload }),
+                        ),
+                    );
+                }
+                // TODO(b2): see above — `return error.ModuleNotFound` in Zig.
+                panic!("jsc_hooks: load_preloads: ModuleNotFound");
+            }
+        };
+
+        // ── import ──────────────────────────────────────────────────────
+        // Spec VirtualMachine.zig:2241 —
+        // `try JSModuleLoader.import(this.global, &String.fromBytes(result.path().?.text))`.
+        let path_text = result
+            .path()
+            .expect("resolver Success result has a primary path")
+            .text;
+        let module_name = bun_string::String::from_bytes(path_text);
+        // SAFETY: `global` is live for the VM lifetime.
+        let promise: *mut JSInternalPromise =
+            match JSModuleLoader::import(unsafe { &*global }, &module_name) {
+                Ok(p) => p as *const JSInternalPromise as *mut JSInternalPromise,
+                Err(_) => {
+                    // Spec: `try` propagates `error.JSError`. The exception is
+                    // already pending on `global`; the hook has no error channel.
+                    // TODO(b2): widen hook return to bubble JsError.
+                    panic!("jsc_hooks: load_preloads: JSModuleLoader.import threw");
+                }
+            };
+
+        // SAFETY: per fn contract.
+        unsafe { (*vm).pending_internal_promise = Some(promise) };
+        JSValue::from_cell(promise).protect();
+        let _protect_guard = scopeguard::guard((), move |_| {
+            JSValue::from_cell(promise).unprotect();
+        });
+
+        // ── wait ────────────────────────────────────────────────────────
+        // SAFETY: per fn contract.
+        if unsafe { (*vm).is_watcher_enabled() } {
+            // pending_internal_promise can change if hot module reloading is
+            // enabled (spec VirtualMachine.zig:2248-2261).
+            // SAFETY: `el` is the live per-thread event loop.
+            let el = unsafe { (*vm).event_loop() };
+            unsafe { (*el).perform_gc() };
+            loop {
+                // SAFETY: `pending_internal_promise` was set just above (or
+                // swapped by HMR to another live cell); `status()` is a
+                // read-only FFI call on a live JSC heap cell.
+                let pip = unsafe { (*vm).pending_internal_promise }.unwrap_or(promise);
+                if unsafe { (*pip).status() } != PromiseStatus::Pending {
+                    break;
+                }
+                // SAFETY: `el` is the live per-thread event loop.
+                unsafe { (*el).tick() };
+                let pip = unsafe { (*vm).pending_internal_promise }.unwrap_or(promise);
+                if unsafe { (*pip).status() } == PromiseStatus::Pending {
+                    // SAFETY: per fn contract — short-lived `&mut *vm` for the
+                    // dispatched `auto_tick` hook (same shape as
+                    // `wait_for_promise` below).
+                    unsafe { (*vm).auto_tick() };
+                }
+            }
+        } else {
+            // SAFETY: `el` is the live per-thread event loop.
+            unsafe { (*(*vm).event_loop()).perform_gc() };
+            // SAFETY: per fn contract — short-lived `&mut *vm`; `promise` is a
+            // live protected JSC heap cell.
+            unsafe { (*vm).wait_for_promise(AnyPromise::Internal(promise)) };
+        }
+
+        // SAFETY: `promise` is a live (still-protected) JSC heap cell.
+        if unsafe { (*promise).status() } == PromiseStatus::Rejected {
+            return promise;
+        }
+        // `_protect_guard` drops here → unprotect.
+    }
+
+    // Spec VirtualMachine.zig:2275-2278 — under --isolate each test file gets
+    // a fresh global, so preloads must re-execute for every file. Otherwise,
+    // only load preloads once.
+    // SAFETY: per fn contract.
+    if !unsafe { (*vm).test_isolation_enabled } {
+        // PORT NOTE: Zig sets `this.preload.len = 0` (truncate without freeing
+        // the backing allocation). `Vec::clear` matches — drops the `Box<[u8]>`
+        // payloads but keeps capacity.
+        unsafe { (*vm).preload.clear() };
+    }
+
+    ptr::null_mut()
 }
 
 /// `ensureDebugger(block_until_connected)` — no-op when no debugger.

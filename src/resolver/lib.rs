@@ -1058,7 +1058,7 @@ pub mod cache {
                     use_alternate_source_cache: false,
                     stream: false,
                 },
-                json: Json::noop(),
+                json: Json::unwired(),
             }
         }
     }
@@ -1108,16 +1108,88 @@ pub mod cache {
         fn default() -> Self { Self::NONE }
     }
 
-    /// Port of `Fs.Entry` (cache.zig:19). `contents` is a lifetime-erased slice
-    /// (`string` in Zig) that may borrow:
-    ///   • the per-thread `shared_buffer` (when `use_shared_buffer`),
-    ///   • a `Box::leak`ed allocation owned by this entry (default-allocator path),
-    ///   • native-plugin memory freed via `external_free_function`, or
-    ///   • static/arena bytes the caller keeps alive.
-    /// Ownership is **manual** (`deinit`), matching Zig — callers thread `Entry`
-    /// through `logger::Source.contents: &'static [u8]` and free explicitly.
+    /// Provenance-tagged backing for [`Entry`] source bytes.
+    ///
+    /// Replaces the prior `&'static [u8]` + `Box::leak`/`Box::from_raw` pair
+    /// (forbidden per docs/PORTING.md §Forbidden patterns). Zig's `string`
+    /// field (cache.zig:20) carried an implicit allocator contract; Rust makes
+    /// provenance explicit so `deinit` matches on the variant instead of
+    /// guessing — the old scheme would `Box::from_raw` a `MutableString`-owned
+    /// pointer on the `use_shared_buffer=true` path (UB).
+    pub enum Contents {
+        /// Empty / static literal. No-op on `deinit`.
+        Empty,
+        /// Heap-owned buffer (default-allocator path). Freed when this variant
+        /// drops. Stored as `Vec<u8>` (not `Box<[u8]>`) so a sentinel NUL can
+        /// sit in spare capacity past `len`, matching fs.zig:1671.
+        Owned(Vec<u8>),
+        /// Borrows the per-thread `shared_buffer` (or other caller-kept-alive
+        /// storage). Caller guarantees the pointee outlives all reads through
+        /// this `Entry`. NOT freed on `deinit`.
+        SharedBuffer { ptr: *const u8, len: usize },
+        /// Native-plugin memory; freed via `Entry.external_free_function.call()`.
+        External { ptr: *const u8, len: usize },
+    }
+
+    impl Default for Contents {
+        fn default() -> Self { Contents::Empty }
+    }
+
+    impl Contents {
+        #[inline]
+        pub fn as_slice(&self) -> &[u8] {
+            match self {
+                Contents::Empty => b"",
+                Contents::Owned(v) => v.as_slice(),
+                // SAFETY: ARENA — caller-established invariant (see variant
+                // docs): `ptr[..len]` is valid for reads for the lifetime of
+                // this `Entry`.
+                Contents::SharedBuffer { ptr, len } | Contents::External { ptr, len } => unsafe {
+                    core::slice::from_raw_parts(*ptr, *len)
+                },
+            }
+        }
+
+        #[inline]
+        pub fn is_empty(&self) -> bool {
+            match self {
+                Contents::Empty => true,
+                Contents::Owned(v) => v.is_empty(),
+                Contents::SharedBuffer { len, .. } | Contents::External { len, .. } => *len == 0,
+            }
+        }
+
+        #[inline]
+        pub fn len(&self) -> usize {
+            match self {
+                Contents::Empty => 0,
+                Contents::Owned(v) => v.len(),
+                Contents::SharedBuffer { len, .. } | Contents::External { len, .. } => *len,
+            }
+        }
+
+        #[inline]
+        pub fn as_ptr(&self) -> *const u8 { self.as_slice().as_ptr() }
+    }
+
+    impl From<Vec<u8>> for Contents {
+        fn from(v: Vec<u8>) -> Self {
+            if v.is_empty() { Contents::Empty } else { Contents::Owned(v) }
+        }
+    }
+
+    impl From<Box<[u8]>> for Contents {
+        fn from(b: Box<[u8]>) -> Self {
+            if b.is_empty() { Contents::Empty } else { Contents::Owned(b.into_vec()) }
+        }
+    }
+
+    /// Port of `Fs.Entry` (cache.zig:19). `contents` is provenance-tagged (see
+    /// [`Contents`]); callers feed `entry.contents()` into `logger::Source`.
+    /// Ownership is **manual** (`deinit`), matching Zig — callers frequently
+    /// hand the bytes off to a `Source` that outlives the `Entry`.
     pub struct Entry {
-        pub contents: &'static [u8],
+        pub contents: Contents,
         pub fd: Fd,
         /// When `contents` comes from a native plugin, this field is populated
         /// with information on how to free it.
@@ -1126,24 +1198,18 @@ pub mod cache {
 
     impl Default for Entry {
         fn default() -> Self {
-            Entry { contents: b"", fd: Fd::INVALID, external_free_function: ExternalFreeFunction::NONE }
+            Entry { contents: Contents::Empty, fd: Fd::INVALID, external_free_function: ExternalFreeFunction::NONE }
         }
     }
 
     impl Entry {
-        /// Convenience: take ownership of a heap buffer, leak it into the
-        /// lifetime-erased `contents` slot. `deinit` reconstitutes and frees it.
+        /// Convenience: take ownership of a heap buffer.
         pub fn new(contents: Box<[u8]>, fd: Fd, external_free_function: ExternalFreeFunction) -> Entry {
-            // PORT NOTE: Zig stored an allocator+slice pair; Rust leaks the Box
-            // and reclaims it in `deinit` to keep `contents` a plain `&[u8]`
-            // assignable to `logger::Source.contents`.
-            let contents: &'static [u8] =
-                if contents.is_empty() { b"" } else { Box::leak(contents) };
-            Entry { contents, fd, external_free_function }
+            Entry { contents: Contents::from(contents), fd, external_free_function }
         }
 
         #[inline]
-        pub fn contents(&self) -> &[u8] { self.contents }
+        pub fn contents(&self) -> &[u8] { self.contents.as_slice() }
 
         /// Port of `Entry.deinit` (cache.zig:39). NOT `Drop` — Zig callers free
         /// explicitly (and frequently hand `contents` off to a `Source` that
@@ -1152,20 +1218,12 @@ pub mod cache {
             if let Some(func) = self.external_free_function.function {
                 // SAFETY: ctx/function pair was supplied together by the native plugin.
                 unsafe { func(self.external_free_function.ctx) };
-            } else if !self.contents.is_empty() {
-                // SAFETY: ARENA — `contents` was produced by `Box::leak` in
-                // `Entry::new` / `read_file*`; reconstructing the Box matches Zig's
-                // `allocator.free(entry.contents)`. Callers that stored a borrowed
-                // (shared-buffer / static) slice must NOT call `deinit` — same
-                // contract as the Zig original.
-                unsafe {
-                    drop(Box::<[u8]>::from_raw(core::ptr::slice_from_raw_parts_mut(
-                        self.contents.as_ptr() as *mut u8,
-                        self.contents.len(),
-                    )));
-                }
-                self.contents = b"";
             }
+            // Replacing the variant drops `Owned(Vec<u8>)` (matches Zig's
+            // `allocator.free(entry.contents)`); `SharedBuffer`/`External`/
+            // `Empty` have trivial drops, so the shared-buffer path is a
+            // correct no-op instead of the UB `Box::from_raw` it used to be.
+            self.contents = Contents::Empty;
         }
 
         /// Port of `Entry.closeFD` (cache.zig:48).
@@ -1369,56 +1427,84 @@ pub mod cache {
 
         /// Inlined subset of `RealFS.readFileWithHandleAndAllocator` (fs.zig:1564) —
         /// the resolver's full port of that method is in the gated `fs.rs` Phase-A
-        /// draft, so we go to `bun_sys` directly. Returns a `'static` slice per the
+        /// draft, so we go to `bun_sys` directly. Returns a [`Contents`] per the
         /// `Entry` contract above (borrows `shared_buffer` when `use_shared_buffer`,
-        /// else a `Box::leak`).
+        /// else owns a `Vec`).
+        ///
+        /// `stream` selects the non-seekable path (cache.zig:114-127 / fs.zig
+        /// `readFileWithHandle` `stream=true` arm): skip `get_end_pos()` and
+        /// loop-read until EOF, so pipes / growing files work.
         // TODO(port): switch back to `rfs.read_file_with_handle_and_allocator` once
-        // `fs_full` un-gates; this drops the BOM-strip / pread-loop refinements
-        // that path carries.
+        // `fs_full` un-gates; this still drops the BOM-strip refinement that path
+        // carries.
         fn read_handle_into(
             file: &bun_sys::File,
             _path: &[u8],
             use_shared_buffer: bool,
             shared: &mut MutableString,
-            _stream: bool,
-        ) -> Result<&'static [u8], bun_core::Error> {
+            stream: bool,
+        ) -> Result<Contents, bun_core::Error> {
             if use_shared_buffer {
                 shared.reset();
-                let size = file.get_end_pos().map_err(bun_core::Error::from)?;
-                if size == 0 {
-                    // SAFETY: ARENA — the empty slice into `shared.list` is what Zig
-                    // returned; callers treat it as borrowed-until-reset.
-                    return Ok(b"");
-                }
-                shared.list.reserve(size + 1);
-                // SAFETY: capacity reserved above; `read_all` writes initialized bytes
-                // and we set_len to exactly the count returned.
-                let n = unsafe {
-                    let dst = core::slice::from_raw_parts_mut(
-                        shared.list.as_mut_ptr(),
-                        shared.list.capacity(),
-                    );
-                    let n = file.read_all(dst).map_err(bun_core::Error::from)?;
-                    shared.list.set_len(n);
-                    n
+                let n = if stream {
+                    // Streaming arm: don't pre-size via fstat (pipes report 0 /
+                    // error); read in chunks until EOF.
+                    const CHUNK: usize = 16 * 1024;
+                    loop {
+                        let len = shared.list.len();
+                        shared.list.reserve(CHUNK);
+                        // SAFETY: capacity reserved above; `read` writes
+                        // initialized bytes and we extend `len` by exactly the
+                        // count returned.
+                        let got = unsafe {
+                            let dst = core::slice::from_raw_parts_mut(
+                                shared.list.as_mut_ptr().add(len),
+                                shared.list.capacity() - len,
+                            );
+                            let got = file.read(dst).map_err(bun_core::Error::from)?;
+                            shared.list.set_len(len + got);
+                            got
+                        };
+                        if got == 0 {
+                            break shared.list.len();
+                        }
+                    }
+                } else {
+                    let size = file.get_end_pos().map_err(bun_core::Error::from)?;
+                    if size == 0 {
+                        return Ok(Contents::Empty);
+                    }
+                    shared.list.reserve(size + 1);
+                    // SAFETY: capacity reserved above; `read_all` writes
+                    // initialized bytes and we set_len to exactly the count
+                    // returned.
+                    unsafe {
+                        let dst = core::slice::from_raw_parts_mut(
+                            shared.list.as_mut_ptr(),
+                            shared.list.capacity(),
+                        );
+                        let n = file.read_all(dst).map_err(bun_core::Error::from)?;
+                        shared.list.set_len(n);
+                        n
+                    }
                 };
+                if n == 0 {
+                    return Ok(Contents::Empty);
+                }
                 // Sentinel NUL past len when capacity allows (matches fs.zig:1671).
                 if shared.list.capacity() > n {
                     // SAFETY: capacity > len, so writing one byte past len is in-bounds.
                     unsafe { *shared.list.as_mut_ptr().add(n) = 0 };
                 }
-                // SAFETY: ARENA — lifetime-erase the borrow of `shared.list`. Zig
-                // hands this slice straight to `logger::Source.contents`; the
-                // caller owns `shared` and resets it via `reset_shared_buffer`
-                // before reuse.
-                Ok(unsafe { core::slice::from_raw_parts(shared.list.as_ptr(), n) })
+                // ARENA — caller owns `shared` and resets it via
+                // `reset_shared_buffer` before reuse. `Contents::SharedBuffer`
+                // records provenance so `deinit()` is a no-op for this variant.
+                Ok(Contents::SharedBuffer { ptr: shared.list.as_ptr(), len: n })
             } else {
+                // `read_to_end` already loop-reads without pre-sizing, so it is
+                // correct for both `stream` and `!stream`.
                 let bytes = file.read_to_end().map_err(bun_core::Error::from)?;
-                if bytes.is_empty() {
-                    return Ok(b"");
-                }
-                // SAFETY: see `Entry::deinit` — reclaimed there via `Box::from_raw`.
-                Ok(Box::leak(bytes.into_boxed_slice()))
+                Ok(Contents::from(bytes))
             }
         }
     }

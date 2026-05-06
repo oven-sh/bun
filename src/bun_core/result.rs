@@ -80,45 +80,106 @@ const SEED: &[&str] = &[
     "ERANGE",  // 45
 ];
 
-/// `errno → SEED index` for the contiguous POSIX 1..=34 block. Index 0 is a
-/// hole (errno 0 is "success"). Mirrors the comptime `errno_map` in bun.zig.
-const ERRNO_SEED: &[u16] = &[
-    0,  // 0: (no error)
-    12, // 1: EPERM
-    13, // 2: ENOENT
-    14, // 3: ESRCH
-    15, // 4: EINTR
-    16, // 5: EIO
-    17, // 6: ENXIO
-    18, // 7: E2BIG
-    19, // 8: ENOEXEC
-    20, // 9: EBADF
-    21, // 10: ECHILD
-    22, // 11: EAGAIN
-    23, // 12: ENOMEM
-    24, // 13: EACCES
-    25, // 14: EFAULT
-    26, // 15: ENOTBLK
-    27, // 16: EBUSY
-    28, // 17: EEXIST
-    29, // 18: EXDEV
-    30, // 19: ENODEV
-    31, // 20: ENOTDIR
-    32, // 21: EISDIR
-    33, // 22: EINVAL
-    34, // 23: ENFILE
-    35, // 24: EMFILE
-    36, // 25: ENOTTY
-    37, // 26: ETXTBSY
-    38, // 27: EFBIG
-    39, // 28: ENOSPC
-    40, // 29: ESPIPE
-    41, // 30: EROFS
-    42, // 31: EMLINK
-    43, // 32: EPIPE
-    44, // 33: EDOM
-    45, // 34: ERANGE
+// ── per-platform errno → tag-name table ───────────────────────────────────
+//
+// Mirrors the comptime `for (std.enums.values(sys.SystemErrno))` loop in
+// bun.zig:2841-2851. Index = raw OS errno; value = `@tagName(SystemErrno)`.
+// Index 0 ("SUCCESS") is the no-error hole. These tables are duplicated from
+// `bun_errno`'s per-platform `SystemErrno` enums because `bun_errno` depends
+// on `bun_core` (cycle); keep in lockstep with `src/errno/*_errno.rs`.
+
+#[cfg(any(target_os = "linux", target_family = "wasm"))]
+pub(crate) const SYSTEM_ERRNO_NAMES: &[&str] = &[
+    "SUCCESS", "EPERM", "ENOENT", "ESRCH", "EINTR", "EIO", "ENXIO", "E2BIG", "ENOEXEC", "EBADF",
+    "ECHILD", "EAGAIN", "ENOMEM", "EACCES", "EFAULT", "ENOTBLK", "EBUSY", "EEXIST", "EXDEV",
+    "ENODEV", "ENOTDIR", "EISDIR", "EINVAL", "ENFILE", "EMFILE", "ENOTTY", "ETXTBSY", "EFBIG",
+    "ENOSPC", "ESPIPE", "EROFS", "EMLINK", "EPIPE", "EDOM", "ERANGE", "EDEADLK", "ENAMETOOLONG",
+    "ENOLCK", "ENOSYS", "ENOTEMPTY", "ELOOP", "EWOULDBLOCK", "ENOMSG", "EIDRM", "ECHRNG",
+    "EL2NSYNC", "EL3HLT", "EL3RST", "ELNRNG", "EUNATCH", "ENOCSI", "EL2HLT", "EBADE", "EBADR",
+    "EXFULL", "ENOANO", "EBADRQC", "EBADSLT", "EDEADLOCK", "EBFONT", "ENOSTR", "ENODATA", "ETIME",
+    "ENOSR", "ENONET", "ENOPKG", "EREMOTE", "ENOLINK", "EADV", "ESRMNT", "ECOMM", "EPROTO",
+    "EMULTIHOP", "EDOTDOT", "EBADMSG", "EOVERFLOW", "ENOTUNIQ", "EBADFD", "EREMCHG", "ELIBACC",
+    "ELIBBAD", "ELIBSCN", "ELIBMAX", "ELIBEXEC", "EILSEQ", "ERESTART", "ESTRPIPE", "EUSERS",
+    "ENOTSOCK", "EDESTADDRREQ", "EMSGSIZE", "EPROTOTYPE", "ENOPROTOOPT", "EPROTONOSUPPORT",
+    "ESOCKTNOSUPPORT", "ENOTSUP", "EPFNOSUPPORT", "EAFNOSUPPORT", "EADDRINUSE", "EADDRNOTAVAIL",
+    "ENETDOWN", "ENETUNREACH", "ENETRESET", "ECONNABORTED", "ECONNRESET", "ENOBUFS", "EISCONN",
+    "ENOTCONN", "ESHUTDOWN", "ETOOMANYREFS", "ETIMEDOUT", "ECONNREFUSED", "EHOSTDOWN",
+    "EHOSTUNREACH", "EALREADY", "EINPROGRESS", "ESTALE", "EUCLEAN", "ENOTNAM", "ENAVAIL", "EISNAM",
+    "EREMOTEIO", "EDQUOT", "ENOMEDIUM", "EMEDIUMTYPE", "ECANCELED", "ENOKEY", "EKEYEXPIRED",
+    "EKEYREVOKED", "EKEYREJECTED", "EOWNERDEAD", "ENOTRECOVERABLE", "ERFKILL", "EHWPOISON",
 ];
+
+#[cfg(windows)]
+pub(crate) const SYSTEM_ERRNO_NAMES: &[&str] = &[
+    "SUCCESS", "EPERM", "ENOENT", "ESRCH", "EINTR", "EIO", "ENXIO", "E2BIG", "ENOEXEC", "EBADF",
+    "ECHILD", "EAGAIN", "ENOMEM", "EACCES", "EFAULT", "ENOTBLK", "EBUSY", "EEXIST", "EXDEV",
+    "ENODEV", "ENOTDIR", "EISDIR", "EINVAL", "ENFILE", "EMFILE", "ENOTTY", "ETXTBSY", "EFBIG",
+    "ENOSPC", "ESPIPE", "EROFS", "EMLINK", "EPIPE", "EDOM", "ERANGE", "EDEADLK", "ENAMETOOLONG",
+    "ENOLCK", "ENOSYS", "ENOTEMPTY", "ELOOP", "EWOULDBLOCK", "ENOMSG", "EIDRM", "ECHRNG",
+    "EL2NSYNC", "EL3HLT", "EL3RST", "ELNRNG", "EUNATCH", "ENOCSI", "EL2HLT", "EBADE", "EBADR",
+    "EXFULL", "ENOANO", "EBADRQC", "EBADSLT", "EDEADLOCK", "EBFONT", "ENOSTR", "ENODATA", "ETIME",
+    "ENOSR", "ENONET", "ENOPKG", "EREMOTE", "ENOLINK", "EADV", "ESRMNT", "ECOMM", "EPROTO",
+    "EMULTIHOP", "EDOTDOT", "EBADMSG", "EOVERFLOW", "ENOTUNIQ", "EBADFD", "EREMCHG", "ELIBACC",
+    "ELIBBAD", "ELIBSCN", "ELIBMAX", "ELIBEXEC", "EILSEQ", "ERESTART", "ESTRPIPE", "EUSERS",
+    "ENOTSOCK", "EDESTADDRREQ", "EMSGSIZE", "EPROTOTYPE", "ENOPROTOOPT", "EPROTONOSUPPORT",
+    "ESOCKTNOSUPPORT", "ENOTSUP", "EPFNOSUPPORT", "EAFNOSUPPORT", "EADDRINUSE", "EADDRNOTAVAIL",
+    "ENETDOWN", "ENETUNREACH", "ENETRESET", "ECONNABORTED", "ECONNRESET", "ENOBUFS", "EISCONN",
+    "ENOTCONN", "ESHUTDOWN", "ETOOMANYREFS", "ETIMEDOUT", "ECONNREFUSED", "EHOSTDOWN",
+    "EHOSTUNREACH", "EALREADY", "EINPROGRESS", "ESTALE", "EUCLEAN", "ENOTNAM", "ENAVAIL", "EISNAM",
+    "EREMOTEIO", "EDQUOT", "ENOMEDIUM", "EMEDIUMTYPE", "ECANCELED", "ENOKEY", "EKEYEXPIRED",
+    "EKEYREVOKED", "EKEYREJECTED", "EOWNERDEAD", "ENOTRECOVERABLE", "ERFKILL", "EHWPOISON",
+    "EUNKNOWN", "ECHARSET", "EOF", "EFTYPE",
+    // TODO(port): the sparse UV_* range (negated libuv codes) is covered by
+    // bun_errno::SystemErrno::init_c_int on Windows; not duplicated here.
+];
+
+#[cfg(target_os = "macos")]
+pub(crate) const SYSTEM_ERRNO_NAMES: &[&str] = &[
+    "SUCCESS", "EPERM", "ENOENT", "ESRCH", "EINTR", "EIO", "ENXIO", "E2BIG", "ENOEXEC", "EBADF",
+    "ECHILD", "EDEADLK", "ENOMEM", "EACCES", "EFAULT", "ENOTBLK", "EBUSY", "EEXIST", "EXDEV",
+    "ENODEV", "ENOTDIR", "EISDIR", "EINVAL", "ENFILE", "EMFILE", "ENOTTY", "ETXTBSY", "EFBIG",
+    "ENOSPC", "ESPIPE", "EROFS", "EMLINK", "EPIPE", "EDOM", "ERANGE", "EAGAIN", "EINPROGRESS",
+    "EALREADY", "ENOTSOCK", "EDESTADDRREQ", "EMSGSIZE", "EPROTOTYPE", "ENOPROTOOPT",
+    "EPROTONOSUPPORT", "ESOCKTNOSUPPORT", "ENOTSUP", "EPFNOSUPPORT", "EAFNOSUPPORT", "EADDRINUSE",
+    "EADDRNOTAVAIL", "ENETDOWN", "ENETUNREACH", "ENETRESET", "ECONNABORTED", "ECONNRESET",
+    "ENOBUFS", "EISCONN", "ENOTCONN", "ESHUTDOWN", "ETOOMANYREFS", "ETIMEDOUT", "ECONNREFUSED",
+    "ELOOP", "ENAMETOOLONG", "EHOSTDOWN", "EHOSTUNREACH", "ENOTEMPTY", "EPROCLIM", "EUSERS",
+    "EDQUOT", "ESTALE", "EREMOTE", "EBADRPC", "ERPCMISMATCH", "EPROGUNAVAIL", "EPROGMISMATCH",
+    "EPROCUNAVAIL", "ENOLCK", "ENOSYS", "EFTYPE", "EAUTH", "ENEEDAUTH", "EPWROFF", "EDEVERR",
+    "EOVERFLOW", "EBADEXEC", "EBADARCH", "ESHLIBVERS", "EBADMACHO", "ECANCELED", "EIDRM", "ENOMSG",
+    "EILSEQ", "ENOATTR", "EBADMSG", "EMULTIHOP", "ENODATA", "ENOLINK", "ENOSR", "ENOSTR", "EPROTO",
+    "ETIME", "EOPNOTSUPP", "ENOPOLICY", "ENOTRECOVERABLE", "EOWNERDEAD", "EQFULL",
+];
+
+#[cfg(target_os = "freebsd")]
+pub(crate) const SYSTEM_ERRNO_NAMES: &[&str] = &[
+    "SUCCESS", "EPERM", "ENOENT", "ESRCH", "EINTR", "EIO", "ENXIO", "E2BIG", "ENOEXEC", "EBADF",
+    "ECHILD", "EDEADLK", "ENOMEM", "EACCES", "EFAULT", "ENOTBLK", "EBUSY", "EEXIST", "EXDEV",
+    "ENODEV", "ENOTDIR", "EISDIR", "EINVAL", "ENFILE", "EMFILE", "ENOTTY", "ETXTBSY", "EFBIG",
+    "ENOSPC", "ESPIPE", "EROFS", "EMLINK", "EPIPE", "EDOM", "ERANGE", "EAGAIN", "EINPROGRESS",
+    "EALREADY", "ENOTSOCK", "EDESTADDRREQ", "EMSGSIZE", "EPROTOTYPE", "ENOPROTOOPT",
+    "EPROTONOSUPPORT", "ESOCKTNOSUPPORT", "EOPNOTSUPP", "EPFNOSUPPORT", "EAFNOSUPPORT",
+    "EADDRINUSE", "EADDRNOTAVAIL", "ENETDOWN", "ENETUNREACH", "ENETRESET", "ECONNABORTED",
+    "ECONNRESET", "ENOBUFS", "EISCONN", "ENOTCONN", "ESHUTDOWN", "ETOOMANYREFS", "ETIMEDOUT",
+    "ECONNREFUSED", "ELOOP", "ENAMETOOLONG", "EHOSTDOWN", "EHOSTUNREACH", "ENOTEMPTY", "EPROCLIM",
+    "EUSERS", "EDQUOT", "ESTALE", "EREMOTE", "EBADRPC", "ERPCMISMATCH", "EPROGUNAVAIL",
+    "EPROGMISMATCH", "EPROCUNAVAIL", "ENOLCK", "ENOSYS", "EFTYPE", "EAUTH", "ENEEDAUTH", "EIDRM",
+    "ENOMSG", "EOVERFLOW", "ECANCELED", "EILSEQ", "ENOATTR", "EDOOFUS", "EBADMSG", "EMULTIHOP",
+    "ENOLINK", "EPROTO", "ENOTCAPABLE", "ECAPMODE", "ENOTRECOVERABLE", "EOWNERDEAD", "EINTEGRITY",
+];
+
+/// Platform errno integer → its `SystemErrno` tag name. `None` for 0/out-of-range.
+#[inline]
+pub(crate) fn system_errno_name(errno: i32) -> Option<&'static str> {
+    let n = if cfg!(windows) { errno.unsigned_abs() } else {
+        if errno <= 0 { return None; }
+        errno as u32
+    };
+    match SYSTEM_ERRNO_NAMES.get(n as usize) {
+        Some(&name) if n != 0 => Some(name),
+        _ => None,
+    }
+}
 
 /// Dynamically interned names (codes `> SEED.len()`). Append-only; never
 /// shrinks, never reorders, so a code handed out stays valid for the process.
@@ -204,16 +265,28 @@ impl Error {
     /// Port of `bun.errnoToZigErr`: map a raw OS errno to its named error.
     /// Unknown errnos collapse to `Unexpected` (matching the Zig `@memset`).
     pub fn from_errno(errno: i32) -> Self {
+        // Zig builds `errno_map: [max+1]anyerror` at comptime (bun.zig:2841);
+        // we build the equivalent once at first use by interning every
+        // platform `SystemErrno` tag name. After init, lookup is a plain
+        // bounds-checked array index — same cost as the Zig version.
+        static ERRNO_MAP: std::sync::OnceLock<Box<[Error]>> = std::sync::OnceLock::new();
+        let map = ERRNO_MAP.get_or_init(|| {
+            SYSTEM_ERRNO_NAMES
+                .iter()
+                .map(|&name| {
+                    // Index 0 ("SUCCESS") is the no-error hole → Unexpected,
+                    // matching the Zig `@memset(&map, error.Unexpected)`.
+                    if name == "SUCCESS" { Error::UNEXPECTED } else { Error::intern(name) }
+                })
+                .collect()
+        });
+
         // Windows libuv errnos are negative; normalise like the Zig original.
-        let n = if cfg!(windows) { errno.unsigned_abs() } else { errno as u32 };
-        if let Some(&seed) = ERRNO_SEED.get(n as usize) {
-            if seed != 0 {
-                // SAFETY: every non-zero ERRNO_SEED entry is a valid SEED index.
-                return Self(unsafe { NonZeroU16::new_unchecked(seed) });
-            }
-        }
-        // TODO(b2): full SystemErrno table from bun_errno for n > 34.
-        Self::UNEXPECTED
+        let n = if cfg!(windows) { errno.unsigned_abs() } else {
+            if errno <= 0 { return Self::UNEXPECTED; }
+            errno as u32
+        };
+        map.get(n as usize).copied().unwrap_or(Self::UNEXPECTED)
     }
 }
 
@@ -236,37 +309,371 @@ impl From<bun_alloc::AllocError> for Error {
     fn from(_: bun_alloc::AllocError) -> Self { Self::OUT_OF_MEMORY }
 }
 
-// ─── coreutils_error_map (unchanged from Phase-A move-in) ─────────────────
-// Zig builds a comptime EnumMap<SystemErrno, []const u8>. Port the lookup as a
-// fn module so output.rs's `coreutils_error_map::get(errno)` resolves; the
-// actual table is generated into bun_errno (T0 sibling) and referenced here.
+// ─── coreutils_error_map ─────────────────────────────────────────────────
+// Zig builds a comptime `EnumMap<SystemErrno, []const u8>` with a per-OS
+// `switch (Environment.os)` body (src/sys/coreutils_error_map.zig). The full
+// EnumMap lives in `bun_sys::coreutils_error_map`; that crate is tier-above
+// `bun_core`, so for `output.rs`'s integer-errno hot path we keep a parallel
+// table here, keyed by `SystemErrno` *name* and resolved through the per-OS
+// `SYSTEM_ERRNO_NAMES` index — i.e. the same `errno → SystemErrno → message`
+// composition the Zig does, just without the cross-crate enum.
 pub mod coreutils_error_map {
     /// Returns the GNU-coreutils-style short label for an errno, if known.
     #[inline]
     pub fn get(errno: i32) -> Option<&'static str> {
-        // TODO(port): Zig source builds this from src/sys/coreutils_error_map.zig
-        // via a comptime block over SystemErrno. Phase B: codegen into bun_errno
-        // and re-export. Minimal hand subset covers the hot output.rs path.
-        Some(match errno {
-            1  => "Operation not permitted",
-            2  => "No such file or directory",
-            3  => "No such process",
-            4  => "Interrupted system call",
-            5  => "Input/output error",
-            9  => "Bad file descriptor",
-            11 => "Resource temporarily unavailable",
-            12 => "Cannot allocate memory",
-            13 => "Permission denied",
-            17 => "File exists",
-            20 => "Not a directory",
-            21 => "Is a directory",
-            22 => "Invalid argument",
-            24 => "Too many open files",
-            28 => "No space left on device",
-            32 => "Broken pipe",
-            _ => return None,
-        })
+        super::system_errno_name(errno).and_then(|name| MESSAGES.get(name).copied())
     }
+
+    // macOS and Linux have slightly different error messages.
+    // Since windows is just an emulation of linux, it derives the linux messages.
+    #[cfg(any(target_os = "linux", windows, target_family = "wasm"))]
+    static MESSAGES: phf::Map<&'static str, &'static str> = phf::phf_map! {
+        "EPERM" => "Operation not permitted",
+        "ENOENT" => "No such file or directory",
+        "ESRCH" => "No such process",
+        "EINTR" => "Interrupted system call",
+        "EIO" => "Input/output error",
+        "ENXIO" => "No such device or address",
+        "E2BIG" => "Argument list too long",
+        "ENOEXEC" => "Exec format error",
+        "EBADF" => "Bad file descriptor",
+        "ECHILD" => "No child processes",
+        "EAGAIN" => "Resource temporarily unavailable",
+        "ENOMEM" => "Cannot allocate memory",
+        "EACCES" => "Permission denied",
+        "EFAULT" => "Bad address",
+        "ENOTBLK" => "Block device required",
+        "EBUSY" => "Device or resource busy",
+        "EEXIST" => "File exists",
+        "EXDEV" => "Invalid cross-device link",
+        "ENODEV" => "No such device",
+        "ENOTDIR" => "Not a directory",
+        "EISDIR" => "Is a directory",
+        "EINVAL" => "Invalid argument",
+        "ENFILE" => "Too many open files in system",
+        "EMFILE" => "Too many open files",
+        "ENOTTY" => "Inappropriate ioctl for device",
+        "ETXTBSY" => "Text file busy",
+        "EFBIG" => "File too large",
+        "ENOSPC" => "No space left on device",
+        "ESPIPE" => "Illegal seek",
+        "EROFS" => "Read-only file system",
+        "EMLINK" => "Too many links",
+        "EPIPE" => "Broken pipe",
+        "EDOM" => "Numerical argument out of domain",
+        "ERANGE" => "Numerical result out of range",
+        "EDEADLK" => "Resource deadlock avoided",
+        "ENAMETOOLONG" => "File name too long",
+        "ENOLCK" => "No locks available",
+        "ENOSYS" => "Function not implemented",
+        "ENOTEMPTY" => "Directory not empty",
+        "ELOOP" => "Too many levels of symbolic links",
+        "ENOMSG" => "No message of desired type",
+        "EIDRM" => "Identifier removed",
+        "ECHRNG" => "Channel number out of range",
+        "EL2NSYNC" => "Level 2 not synchronized",
+        "EL3HLT" => "Level 3 halted",
+        "EL3RST" => "Level 3 reset",
+        "ELNRNG" => "Link number out of range",
+        "EUNATCH" => "Protocol driver not attached",
+        "ENOCSI" => "No CSI structure available",
+        "EL2HLT" => "Level 2 halted",
+        "EBADE" => "Invalid exchange",
+        "EBADR" => "Invalid request descriptor",
+        "EXFULL" => "Exchange full",
+        "ENOANO" => "No anode",
+        "EBADRQC" => "Invalid request code",
+        "EBADSLT" => "Invalid slot",
+        "EBFONT" => "Bad font file format",
+        "ENOSTR" => "Device not a stream",
+        "ENODATA" => "No data available",
+        "ETIME" => "Timer expired",
+        "ENOSR" => "Out of streams resources",
+        "ENONET" => "Machine is not on the network",
+        "ENOPKG" => "Package not installed",
+        "EREMOTE" => "Object is remote",
+        "ENOLINK" => "Link has been severed",
+        "EADV" => "Advertise error",
+        "ESRMNT" => "Srmount error",
+        "ECOMM" => "Communication error on send",
+        "EPROTO" => "Protocol error",
+        "EMULTIHOP" => "Multihop attempted",
+        "EDOTDOT" => "RFS specific error",
+        "EBADMSG" => "Bad message",
+        "EOVERFLOW" => "Value too large for defined data type",
+        "ENOTUNIQ" => "Name not unique on network",
+        "EBADFD" => "File descriptor in bad state",
+        "EREMCHG" => "Remote address changed",
+        "ELIBACC" => "Can not access a needed shared library",
+        "ELIBBAD" => "Accessing a corrupted shared library",
+        "ELIBSCN" => ".lib section in a.out corrupted",
+        "ELIBMAX" => "Attempting to link in too many shared libraries",
+        "ELIBEXEC" => "Cannot exec a shared library directly",
+        "EILSEQ" => "Invalid or incomplete multibyte or wide character",
+        "ERESTART" => "Interrupted system call should be restarted",
+        "ESTRPIPE" => "Streams pipe error",
+        "EUSERS" => "Too many users",
+        "ENOTSOCK" => "Socket operation on non-socket",
+        "EDESTADDRREQ" => "Destination address required",
+        "EMSGSIZE" => "Message too long",
+        "EPROTOTYPE" => "Protocol wrong type for socket",
+        "ENOPROTOOPT" => "Protocol not available",
+        "EPROTONOSUPPORT" => "Protocol not supported",
+        "ESOCKTNOSUPPORT" => "Socket type not supported",
+        "EOPNOTSUPP" => "Operation not supported",
+        "EPFNOSUPPORT" => "Protocol family not supported",
+        "EAFNOSUPPORT" => "Address family not supported by protocol",
+        "EADDRINUSE" => "Address already in use",
+        "EADDRNOTAVAIL" => "Cannot assign requested address",
+        "ENETDOWN" => "Network is down",
+        "ENETUNREACH" => "Network is unreachable",
+        "ENETRESET" => "Network dropped connection on reset",
+        "ECONNABORTED" => "Software caused connection abort",
+        "ECONNRESET" => "Connection reset by peer",
+        "ENOBUFS" => "No buffer space available",
+        "EISCONN" => "Transport endpoint is already connected",
+        "ENOTCONN" => "Transport endpoint is not connected",
+        "ESHUTDOWN" => "Cannot send after transport endpoint shutdown",
+        "ETOOMANYREFS" => "Too many references: cannot splice",
+        "ETIMEDOUT" => "Connection timed out",
+        "ECONNREFUSED" => "Connection refused",
+        "EHOSTDOWN" => "Host is down",
+        "EHOSTUNREACH" => "No route to host",
+        "EALREADY" => "Operation already in progress",
+        "EINPROGRESS" => "Operation now in progress",
+        "ESTALE" => "Stale file handle",
+        "EUCLEAN" => "Structure needs cleaning",
+        "ENOTNAM" => "Not a XENIX named type file",
+        "ENAVAIL" => "No XENIX semaphores available",
+        "EISNAM" => "Is a named type file",
+        "EREMOTEIO" => "Remote I/O error",
+        "EDQUOT" => "Disk quota exceeded",
+        "ENOMEDIUM" => "No medium found",
+        "EMEDIUMTYPE" => "Wrong medium type",
+        "ECANCELED" => "Operation canceled",
+        "ENOKEY" => "Required key not available",
+        "EKEYEXPIRED" => "Key has expired",
+        "EKEYREVOKED" => "Key has been revoked",
+        "EKEYREJECTED" => "Key was rejected by service",
+        "EOWNERDEAD" => "Owner died",
+        "ENOTRECOVERABLE" => "State not recoverable",
+        "ERFKILL" => "Operation not possible due to RF-kill",
+        "EHWPOISON" => "Memory page has hardware error",
+    };
+
+    // Mac has slightly different messages. To keep it consistent with
+    // bash/coreutils, it uses those altered messages.
+    #[cfg(target_os = "macos")]
+    static MESSAGES: phf::Map<&'static str, &'static str> = phf::phf_map! {
+        "E2BIG" => "Argument list too long",
+        "EACCES" => "Permission denied",
+        "EADDRINUSE" => "Address already in use",
+        "EADDRNOTAVAIL" => "Can't assign requested address",
+        "EAFNOSUPPORT" => "Address family not supported by protocol family",
+        "EAGAIN" => "non-blocking and interrupt i/o. Resource temporarily unavailable",
+        "EALREADY" => "Operation already in progress",
+        "EAUTH" => "Authentication error",
+        "EBADARCH" => "Bad CPU type in executable",
+        "EBADEXEC" => "Program loading errors. Bad executable",
+        "EBADF" => "Bad file descriptor",
+        "EBADMACHO" => "Malformed Macho file",
+        "EBADMSG" => "Bad message",
+        "EBADRPC" => "RPC struct is bad",
+        "EBUSY" => "Device / Resource busy",
+        "ECANCELED" => "Operation canceled",
+        "ECHILD" => "No child processes",
+        "ECONNABORTED" => "Software caused connection abort",
+        "ECONNREFUSED" => "Connection refused",
+        "ECONNRESET" => "Connection reset by peer",
+        "EDEADLK" => "Resource deadlock avoided",
+        "EDESTADDRREQ" => "Destination address required",
+        "EDEVERR" => "Device error, for example paper out",
+        "EDOM" => "math software. Numerical argument out of domain",
+        "EDQUOT" => "Disc quota exceeded",
+        "EEXIST" => "File or folder exists",
+        "EFAULT" => "Bad address",
+        "EFBIG" => "File too large",
+        "EFTYPE" => "Inappropriate file type or format",
+        "EHOSTDOWN" => "Host is down",
+        "EHOSTUNREACH" => "No route to host",
+        "EIDRM" => "Identifier removed",
+        "EILSEQ" => "Illegal byte sequence",
+        "EINPROGRESS" => "Operation now in progress",
+        "EINTR" => "Interrupted system call",
+        "EINVAL" => "Invalid argument",
+        "EIO" => "Input/output error",
+        "EISCONN" => "Socket is already connected",
+        "EISDIR" => "Is a directory",
+        "ELOOP" => "Too many levels of symbolic links",
+        "EMFILE" => "Too many open files",
+        "EMLINK" => "Too many links",
+        "EMSGSIZE" => "Message too long",
+        "EMULTIHOP" => "Reserved",
+        "ENAMETOOLONG" => "File name too long",
+        "ENEEDAUTH" => "Need authenticator",
+        "ENETDOWN" => "ipc/network software - operational errors Network is down",
+        "ENETRESET" => "Network dropped connection on reset",
+        "ENETUNREACH" => "Network is unreachable",
+        "ENFILE" => "Too many open files in system",
+        "ENOATTR" => "Attribute not found",
+        "ENOBUFS" => "No buffer space available",
+        "ENODATA" => "No message available on STREAM",
+        "ENODEV" => "Operation not supported by device",
+        "ENOENT" => "No such file or directory",
+        "ENOEXEC" => "Exec format error",
+        "ENOLCK" => "No locks available",
+        "ENOLINK" => "Reserved",
+        "ENOMEM" => "Out of memory",
+        "ENOMSG" => "No message of desired type",
+        "ENOPOLICY" => "No such policy registered",
+        "ENOPROTOOPT" => "Protocol not available",
+        "ENOSPC" => "No space left on device",
+        "ENOSR" => "No STREAM resources",
+        "ENOSTR" => "Not a STREAM",
+        "ENOSYS" => "Function not implemented",
+        "ENOTBLK" => "Block device required",
+        "ENOTCONN" => "Socket is not connected",
+        "ENOTDIR" => "Not a directory",
+        "ENOTEMPTY" => "Directory not empty",
+        "ENOTRECOVERABLE" => "State not recoverable",
+        "ENOTSOCK" => "ipc/network software - argument errors. Socket operation on non-socket",
+        "ENOTSUP" => "Operation not supported",
+        "ENOTTY" => "Inappropriate ioctl for device",
+        "ENXIO" => "Device not configured",
+        "EOVERFLOW" => "Value too large to be stored in data type",
+        "EOWNERDEAD" => "Previous owner died",
+        "EPERM" => "Operation not permitted",
+        "EPFNOSUPPORT" => "Protocol family not supported",
+        "EPIPE" => "Broken pipe",
+        "EPROCLIM" => "quotas & mush. Too many processes",
+        "EPROCUNAVAIL" => "Bad procedure for program",
+        "EPROGMISMATCH" => "Program version wrong",
+        "EPROGUNAVAIL" => "RPC prog. not avail",
+        "EPROTO" => "Protocol error",
+        "EPROTONOSUPPORT" => "Protocol not supported",
+        "EPROTOTYPE" => "Protocol wrong type for socket",
+        "EPWROFF" => "Intelligent device errors. Device power is off",
+        "EQFULL" => "Interface output queue is full",
+        "ERANGE" => "Result too large",
+        "EREMOTE" => "Too many levels of remote in path",
+        "EROFS" => "Read-only file system",
+        "ERPCMISMATCH" => "RPC version wrong",
+        "ESHLIBVERS" => "Shared library version mismatch",
+        "ESHUTDOWN" => "Can't send after socket shutdown",
+        "ESOCKTNOSUPPORT" => "Socket type not supported",
+        "ESPIPE" => "Illegal seek",
+        "ESRCH" => "No such process",
+        "ESTALE" => "Network File System. Stale NFS file handle",
+        "ETIME" => "STREAM ioctl timeout",
+        "ETIMEDOUT" => "Operation timed out",
+        "ETOOMANYREFS" => "Too many references: can't splice",
+        "ETXTBSY" => "Text file busy",
+        "EUSERS" => "Too many users",
+        "EWOULDBLOCK" => "Operation would block",
+        "EXDEV" => "Cross-device link",
+    };
+
+    // From FreeBSD's libc strerror table (lib/libc/gen/errlst.c).
+    #[cfg(target_os = "freebsd")]
+    static MESSAGES: phf::Map<&'static str, &'static str> = phf::phf_map! {
+        "EPERM" => "Operation not permitted",
+        "ENOENT" => "No such file or directory",
+        "ESRCH" => "No such process",
+        "EINTR" => "Interrupted system call",
+        "EIO" => "Input/output error",
+        "ENXIO" => "Device not configured",
+        "E2BIG" => "Argument list too long",
+        "ENOEXEC" => "Exec format error",
+        "EBADF" => "Bad file descriptor",
+        "ECHILD" => "No child processes",
+        "EDEADLK" => "Resource deadlock avoided",
+        "ENOMEM" => "Cannot allocate memory",
+        "EACCES" => "Permission denied",
+        "EFAULT" => "Bad address",
+        "ENOTBLK" => "Block device required",
+        "EBUSY" => "Device busy",
+        "EEXIST" => "File exists",
+        "EXDEV" => "Cross-device link",
+        "ENODEV" => "Operation not supported by device",
+        "ENOTDIR" => "Not a directory",
+        "EISDIR" => "Is a directory",
+        "EINVAL" => "Invalid argument",
+        "ENFILE" => "Too many open files in system",
+        "EMFILE" => "Too many open files",
+        "ENOTTY" => "Inappropriate ioctl for device",
+        "ETXTBSY" => "Text file busy",
+        "EFBIG" => "File too large",
+        "ENOSPC" => "No space left on device",
+        "ESPIPE" => "Illegal seek",
+        "EROFS" => "Read-only file system",
+        "EMLINK" => "Too many links",
+        "EPIPE" => "Broken pipe",
+        "EDOM" => "Numerical argument out of domain",
+        "ERANGE" => "Result too large",
+        "EAGAIN" => "Resource temporarily unavailable",
+        "EINPROGRESS" => "Operation now in progress",
+        "EALREADY" => "Operation already in progress",
+        "ENOTSOCK" => "Socket operation on non-socket",
+        "EDESTADDRREQ" => "Destination address required",
+        "EMSGSIZE" => "Message too long",
+        "EPROTOTYPE" => "Protocol wrong type for socket",
+        "ENOPROTOOPT" => "Protocol not available",
+        "EPROTONOSUPPORT" => "Protocol not supported",
+        "ESOCKTNOSUPPORT" => "Socket type not supported",
+        "EOPNOTSUPP" => "Operation not supported",
+        "EPFNOSUPPORT" => "Protocol family not supported",
+        "EAFNOSUPPORT" => "Address family not supported by protocol family",
+        "EADDRINUSE" => "Address already in use",
+        "EADDRNOTAVAIL" => "Can't assign requested address",
+        "ENETDOWN" => "Network is down",
+        "ENETUNREACH" => "Network is unreachable",
+        "ENETRESET" => "Network dropped connection on reset",
+        "ECONNABORTED" => "Software caused connection abort",
+        "ECONNRESET" => "Connection reset by peer",
+        "ENOBUFS" => "No buffer space available",
+        "EISCONN" => "Socket is already connected",
+        "ENOTCONN" => "Socket is not connected",
+        "ESHUTDOWN" => "Can't send after socket shutdown",
+        "ETOOMANYREFS" => "Too many references: can't splice",
+        "ETIMEDOUT" => "Operation timed out",
+        "ECONNREFUSED" => "Connection refused",
+        "ELOOP" => "Too many levels of symbolic links",
+        "ENAMETOOLONG" => "File name too long",
+        "EHOSTDOWN" => "Host is down",
+        "EHOSTUNREACH" => "No route to host",
+        "ENOTEMPTY" => "Directory not empty",
+        "EPROCLIM" => "Too many processes",
+        "EUSERS" => "Too many users",
+        "EDQUOT" => "Disc quota exceeded",
+        "ESTALE" => "Stale NFS file handle",
+        "EREMOTE" => "Too many levels of remote in path",
+        "EBADRPC" => "RPC struct is bad",
+        "ERPCMISMATCH" => "RPC version wrong",
+        "EPROGUNAVAIL" => "RPC prog. not avail",
+        "EPROGMISMATCH" => "Program version wrong",
+        "EPROCUNAVAIL" => "Bad procedure for program",
+        "ENOLCK" => "No locks available",
+        "ENOSYS" => "Function not implemented",
+        "EFTYPE" => "Inappropriate file type or format",
+        "EAUTH" => "Authentication error",
+        "ENEEDAUTH" => "Need authenticator",
+        "EIDRM" => "Identifier removed",
+        "ENOMSG" => "No message of desired type",
+        "EOVERFLOW" => "Value too large to be stored in data type",
+        "ECANCELED" => "Operation canceled",
+        "EILSEQ" => "Illegal byte sequence",
+        "ENOATTR" => "Attribute not found",
+        "EDOOFUS" => "Programming error",
+        "EBADMSG" => "Bad message",
+        "EMULTIHOP" => "Multihop attempted",
+        "ENOLINK" => "Link has been severed",
+        "EPROTO" => "Protocol error",
+        "ENOTCAPABLE" => "Capabilities insufficient",
+        "ECAPMODE" => "Not permitted in capability mode",
+        "ENOTRECOVERABLE" => "State not recoverable",
+        "EOWNERDEAD" => "Previous owner died",
+        "EINTEGRITY" => "Integrity check failed",
+    };
 }
 
 /// Zig: `pub fn Result(comptime T: type, comptime E: type) type { return union(enum) { ok: T, err: E, ... } }`
@@ -315,6 +722,28 @@ mod tests {
         assert_eq!(Error::from_errno(12), Error::intern("ENOMEM"));
         assert_eq!(Error::from_errno(0), Error::UNEXPECTED);
         assert_eq!(Error::from_errno(9999), Error::UNEXPECTED);
+        // errno 11 is platform-specific: EAGAIN on linux/windows, EDEADLK on darwin/bsd.
+        #[cfg(any(target_os = "linux", windows, target_family = "wasm"))]
+        {
+            assert_eq!(Error::from_errno(11), Error::intern("EAGAIN"));
+            assert_eq!(Error::from_errno(104), Error::intern("ECONNRESET"));
+        }
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+        {
+            assert_eq!(Error::from_errno(11), Error::intern("EDEADLK"));
+            assert_eq!(Error::from_errno(35), Error::intern("EAGAIN"));
+            assert_eq!(Error::from_errno(54), Error::intern("ECONNRESET"));
+        }
+    }
+
+    #[test]
+    fn coreutils_map() {
+        assert_eq!(coreutils_error_map::get(2), Some("No such file or directory"));
+        #[cfg(any(target_os = "linux", windows, target_family = "wasm"))]
+        assert_eq!(coreutils_error_map::get(11), Some("Resource temporarily unavailable"));
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+        assert_eq!(coreutils_error_map::get(11), Some("Resource deadlock avoided"));
+        assert_eq!(coreutils_error_map::get(0), None);
     }
 
     #[test]
@@ -331,9 +760,12 @@ mod tests {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/bun.zig (anyerror / errno_map / errnoToZigErr)
+//               src/sys/coreutils_error_map.zig
 //               src/bun_core/result.zig (11 lines)
 //   confidence: high
-//   todos:      1 (full SystemErrno table via bun_errno)
-//   notes:      Error is now #[repr(transparent)] NonZeroU16 string-interned;
+//   todos:      1 (Windows UV_* sparse range in SYSTEM_ERRNO_NAMES)
+//   notes:      Error is #[repr(transparent)] NonZeroU16 string-interned;
 //               err!() yields distinct comparable codes; name() round-trips.
+//               errno_map / coreutils_error_map are cfg-gated per target_os
+//               (tables duplicated from bun_errno because of the dep cycle).
 // ──────────────────────────────────────────────────────────────────────────

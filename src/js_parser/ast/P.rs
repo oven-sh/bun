@@ -1550,6 +1550,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Expr { data: js_ast::ExprData::EIdentifier(ident), loc }
     }
 
+    #[cfg(any())] // blocked_on: DeclaredSymbolList::push, BabyList::push, ClauseItem field shapes,
+    //   NamedImport.{alias,alias_loc} Option-wrapping, Part::Tag path syntax
     pub fn generate_import_stmt_for_bake_response(
         &mut self,
         parts: &mut ListManaged<'a, js_ast::Part>,
@@ -1628,6 +1630,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Ok(())
     }
 
+    #[cfg(any())] // blocked_on: same as generate_import_stmt_for_bake_response (DeclaredSymbolList/
+    //   BabyList push surface, ClauseItem/NamedImport field shapes, Part::Tag path)
     pub fn generate_import_stmt<I, Sym>(
         &mut self,
         import_path: &'a [u8],
@@ -2357,6 +2361,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Substitution::Failure(expr)
     }
 
+    #[cfg(any())] // blocked_on: ScopeOrder Default, BabyList/ArrayHashMap allocator-arg surface,
+    //   options::JSX::Pragma raw-ptr text deref, ServerComponents variant set, hoist_symbols ungate
     pub fn prepare_for_visit_pass(&mut self) -> Result<(), bun_core::Error> {
         {
             let mut i: usize = 0;
@@ -2553,37 +2559,51 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         self.options.bundle || self.options.features.minify_identifiers
     }
 
-    #[cfg(any())] // blocked_on: Scope.members.iter_mut() entry shape; get_or_put_member_with_hash key_ptr; logger::range_data
     fn hoist_symbols(&mut self, scope: *mut js_ast::Scope) {
-        // SAFETY: scope is arena-owned and valid for parser lifetime
-        let scope_ref = unsafe { &mut *scope };
-        if !scope_ref.kind_stops_hoisting() {
+        // SAFETY: scope is arena-owned and valid for the parser 'a lifetime; the
+        // visit pass is single-threaded so no aliasing &mut is outstanding.
+        if !unsafe { &*scope }.kind_stops_hoisting() {
             let allocator = self.allocator;
             // PORT NOTE: Zig captured `var symbols = p.symbols.items;` and asserted it
             // wasn't resized; we re-borrow `self.symbols` after each `new_symbol` call.
 
             // Check for collisions that would prevent to hoisting "var" symbols up to the enclosing function scope
-            if let Some(parent_scope) = scope_ref.parent {
-                // SAFETY: arena-owned pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-                let parent_scope = unsafe { &mut *parent_scope };
-                let mut iter = scope_ref.members.iter_mut();
-                'next_member: while let Some(res) = iter.next() {
-                    let mut value = *res.value();
-                    let mut symbol_idx = value.r#ref.inner_index() as usize;
+            if let Some(scope_parent) = unsafe { &*scope }.parent {
+                // PORT NOTE: reshaped for borrowck — Zig iterated `scope.members` while
+                // pushing to `scope.generated` and inserting into ancestor scopes' members.
+                // The loop never inserts into `scope.members` itself (only ancestors), so
+                // snapshotting `(name_ptr, Member)` pairs up front is semantically identical
+                // and lets us re-borrow `*scope` mutably inside the body.
+                let member_snapshot: BumpVec<'a, (*const [u8], js_ast::scope::Member)> = {
+                    // SAFETY: see above.
+                    let members = &unsafe { &*scope }.members;
+                    let mut v = BumpVec::with_capacity_in(members.count(), allocator);
+                    for (k, m) in members.iter() {
+                        v.push((k.as_ref() as *const [u8], *m));
+                    }
+                    v
+                };
 
-                    let name = self.symbols[symbol_idx].original_name;
+                'next_member: for (_key_ptr, mut value) in member_snapshot.into_iter() {
+                    let mut symbol_idx = value.ref_.inner_index() as usize;
+
+                    // SAFETY: Symbol.original_name is arena-owned `*const [u8]` valid for 'a.
+                    let name: &'a [u8] = unsafe { &*self.symbols[symbol_idx].original_name };
                     let mut hash: Option<u64> = None;
 
-                    if parent_scope.kind == js_ast::scope::Kind::CatchBinding
+                    // SAFETY: scope_parent is an arena-owned NonNull<Scope>; only borrowed
+                    // immutably here for the catch-binding fast check.
+                    if unsafe { scope_parent.as_ref() }.kind == js_ast::scope::Kind::CatchBinding
                         && self.symbols[symbol_idx].kind != js_ast::symbol::Kind::Hoisted
                     {
                         hash = Some(Scope::get_member_hash(name));
-                        if let Some(existing_member) = parent_scope.get_member_with_hash(name, hash.unwrap()) {
+                        if let Some(existing_member) =
+                            unsafe { scope_parent.as_ref() }.get_member_with_hash(name, hash.unwrap())
+                        {
                             self.log
                                 .add_symbol_already_declared_error(
-                                    self.allocator,
                                     self.source,
-                                    self.symbols[symbol_idx].original_name,
+                                    name,
                                     value.loc,
                                     existing_member.loc,
                                 )
@@ -2596,15 +2616,16 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         continue;
                     }
 
-                    let mut __scope = scope_ref.parent;
+                    let mut __scope: Option<NonNull<Scope>> = Some(scope_parent);
                     debug_assert!(__scope.is_some());
 
                     let mut is_sloppy_mode_block_level_fn_stmt = false;
-                    let original_member_ref = value.r#ref;
+                    let original_member_ref = value.ref_;
 
                     if self.will_use_renamer() && self.symbols[symbol_idx].kind == js_ast::symbol::Kind::HoistedFunction {
                         // Block-level function declarations behave like "let" in strict mode
-                        if scope_ref.strict_mode != js_ast::StrictModeKind::SloppyMode {
+                        // SAFETY: see above.
+                        if unsafe { &*scope }.strict_mode != js_ast::StrictModeKind::SloppyMode {
                             continue;
                         }
 
@@ -2626,13 +2647,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         //   }
                         //   f();
                         //
-                        let original_name = self.symbols[symbol_idx].original_name;
+                        // SAFETY: Symbol.original_name is arena-owned `*const [u8]` valid for 'a.
+                        let original_name: &'a [u8] = unsafe { &*self.symbols[symbol_idx].original_name };
                         let hoisted_ref = self.new_symbol(js_ast::symbol::Kind::Hoisted, original_name).expect("unreachable");
-                        scope_ref.generated.push(self.allocator, hoisted_ref).expect("oom");
-                        self.hoisted_ref_for_sloppy_mode_block_fn
-                            .put(self.allocator, value.r#ref, hoisted_ref)
-                            .expect("unreachable");
-                        value.r#ref = hoisted_ref;
+                        // SAFETY: see top of fn — `scope` is arena-owned; no live & borrow of
+                        // `scope.generated` exists here (the members snapshot was taken by value).
+                        unsafe { &mut *scope }.generated.append(hoisted_ref).expect("oom");
+                        self.hoisted_ref_for_sloppy_mode_block_fn.insert(value.ref_, hoisted_ref);
+                        value.ref_ = hoisted_ref;
                         symbol_idx = hoisted_ref.inner_index() as usize;
                         is_sloppy_mode_block_level_fn_stmt = true;
                     }
@@ -2641,9 +2663,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         hash = Some(Scope::get_member_hash(name));
                     }
 
-                    while let Some(_scope_ptr) = __scope {
-                        // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-                        let _scope = unsafe { &mut *_scope_ptr };
+                    while let Some(mut _scope_ptr) = __scope {
+                        // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime;
+                        // `_scope_ptr` walks the parent chain so it never aliases `scope`
+                        // (whose only live borrow is the by-value members snapshot above).
+                        let _scope = unsafe { _scope_ptr.as_mut() };
                         let scope_kind = _scope.kind;
 
                         // Variable declarations hoisted past a "with" statement may actually end
@@ -2661,8 +2685,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         }
 
                         if let Some(member_in_scope) = _scope.get_member_with_hash(name, hash.unwrap()) {
-                            let member_in_scope = *member_in_scope;
-                            let existing_idx = member_in_scope.r#ref.inner_index() as usize;
+                            let existing_idx = member_in_scope.ref_.inner_index() as usize;
                             let existing_kind = self.symbols[existing_idx].kind;
 
                             // We can hoist the symbol from the child scope into the symbol in
@@ -2679,12 +2702,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                                     && (scope_kind == js_ast::scope::Kind::Entry || scope_kind == js_ast::scope::Kind::FunctionBody))
                             {
                                 // Silently merge this symbol into the existing symbol
-                                self.symbols[symbol_idx].link = member_in_scope.r#ref;
-                                let entry = _scope
-                                    .get_or_put_member_with_hash(self.allocator, name, hash.unwrap())
-                                    .expect("unreachable");
-                                *entry.value_ptr = member_in_scope;
-                                *entry.key_ptr = name;
+                                self.symbols[symbol_idx].link = member_in_scope.ref_;
+                                // PORT NOTE: Zig also wrote `entry.key_ptr.* = name`; the Rust
+                                // `StringHashMap` get_or_put already stores the key on insert and
+                                // cannot hand out `&mut K` (see StringHashMapGetOrPut docs), so
+                                // the key write is a no-op here.
+                                *_scope.get_or_put_member_with_hash(name, hash.unwrap()).value_ptr = member_in_scope;
                                 continue 'next_member;
                             }
 
@@ -2697,19 +2720,19 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                                 {
                                     if !is_sloppy_mode_block_level_fn_stmt {
                                         let r = js_lexer::range_of_identifier(self.source, value.loc);
-                                        let mut msg = BumpVec::new_in(allocator);
+                                        let mut msg = Vec::<u8>::new();
                                         let _ = write!(&mut msg, "{} was originally declared here", bstr::BStr::new(name));
-                                        let notes = allocator.alloc_slice_copy(&[logger::range_data(self.source, r, msg.into_bump_slice())]);
+                                        let notes: Box<[logger::Data]> =
+                                            Box::new([logger::range_data(Some(self.source), r, msg)]);
                                         self.log
                                             .add_range_error_fmt_with_notes(
-                                                self.source,
+                                                Some(self.source),
                                                 js_lexer::range_of_identifier(self.source, member_in_scope.loc),
-                                                allocator,
                                                 notes,
                                                 format_args!("{} has already been declared", bstr::BStr::new(name)),
                                             )
                                             .expect("unreachable");
-                                    } else if _scope_ptr == scope_ref.parent.unwrap() {
+                                    } else if _scope_ptr == scope_parent {
                                         // Never mind about this, turns out it's not needed after all
                                         let _ = self.hoisted_ref_for_sloppy_mode_block_fn.remove(&original_member_ref);
                                     }
@@ -2719,20 +2742,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
                             // If this is a catch identifier, silently merge the existing symbol
                             // into this symbol but continue hoisting past this catch scope
-                            self.symbols[existing_idx].link = value.r#ref;
-                            let entry = _scope
-                                .get_or_put_member_with_hash(self.allocator, name, hash.unwrap())
-                                .expect("unreachable");
-                            *entry.value_ptr = value;
-                            *entry.key_ptr = name;
+                            self.symbols[existing_idx].link = value.ref_;
+                            *_scope.get_or_put_member_with_hash(name, hash.unwrap()).value_ptr = value;
                         }
 
                         if _scope.kind_stops_hoisting() {
-                            let entry = _scope
-                                .get_or_put_member_with_hash(allocator, name, hash.unwrap())
-                                .expect("unreachable");
-                            *entry.value_ptr = value;
-                            *entry.key_ptr = name;
+                            *_scope.get_or_put_member_with_hash(name, hash.unwrap()).value_ptr = value;
                             break;
                         }
 
@@ -2743,10 +2758,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
 
         {
-            // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
+            // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; the
+            // recursive calls only touch descendant scopes.
             let children = unsafe { &*scope }.children.slice();
             for child in children {
-                self.hoist_symbols(*child);
+                self.hoist_symbols(child.as_ptr());
             }
         }
     }
@@ -4213,6 +4229,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
     }
 
+    #[cfg(any())] // blocked_on: Part::Tag path syntax, G::Decl::List, declared_symbols container API
     pub fn append_part(
         &mut self,
         parts: &mut ListManaged<'a, js_ast::Part>,

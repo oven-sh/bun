@@ -116,14 +116,11 @@ macro_rules! debug_tree_shake {
     ($($arg:tt)*) => { bun_core::scoped_log!(TreeShake, $($arg)*) };
 }
 
-// Re-exports from sibling modules.
-// TODO(b2-blocked): the `linker_context/` submodule directory is gated until
-// `LinkerGraph.rs` un-gates (every file in there reaches into `graph.files`
-// SoA accessors). The function names are kept here so callers can reference
-// `crate::linker_context_mod::scan_imports_and_exports` etc.; bodies live in
-// the gated files.
-#[cfg(any())]
-mod __linker_context_reexports {
+// Re-exports from sibling modules in `linker_context/`.
+// `LinkerGraph` SoA accessors are real now (`#[derive(MultiArrayElement)]` on
+// `JSAst`/`JSMeta`/`File`); the submodule bodies un-gate against those. Module
+// declarations live in `lib.rs::linker_context` — any that haven't landed yet
+// are concurrent-agent edits and surface as unresolved-module errors here.
 pub use crate::linker_context::output_file_list_builder as OutputFileListBuilder;
 pub use crate::linker_context::static_route_visitor as StaticRouteVisitor;
 pub use crate::linker_context::metafile_builder as MetafileBuilder;
@@ -149,7 +146,6 @@ pub use crate::linker_context::convert_stmts_for_chunk::convert_stmts_for_chunk;
 pub use crate::linker_context::convert_stmts_for_chunk_for_dev_server::convert_stmts_for_chunk_for_dev_server;
 pub use crate::linker_context::generate_code_for_file_in_chunk_js::generate_code_for_file_in_chunk_js;
 pub use crate::linker_context::write_output_files_to_disk::write_output_files_to_disk;
-} // end #[cfg(any())] __linker_context_reexports
 
 // TODO(port): DeferredBatchTask, ParseTask re-exports — Zig re-exports from bundle_v2
 pub use crate::DeferredBatchTask::DeferredBatchTask;

@@ -2352,21 +2352,20 @@ thread_local! {
 }
 
 #[derive(Clone)]
-pub struct Path {
+pub struct Path<'a> {
     /// The display path. In the bundler, this is relative to the current
     /// working directory. Since it can be emitted in bundles (and used
     /// for content hashes), this should contain forward slashes on Windows.
-    pub pretty: &'static [u8],
+    pub pretty: &'a [u8],
     /// The location of this resource. For the `file` namespace, this is
     /// usually an absolute path with native slashes or an empty string.
-    pub text: &'static [u8],
-    pub namespace: &'static [u8],
+    pub text: &'a [u8],
+    pub namespace: &'a [u8],
     // TODO(@paperclover): investigate removing or simplifying this property (it's 64 bytes)
-    pub name: PathName,
+    pub name: PathName<'a>,
     pub is_disabled: bool,
     pub is_symlink: bool,
 }
-// TODO(port): lifetime — text/pretty/namespace borrow caller storage or interned stores; struct should be Path<'a>
 
 const NS_BLOB: &[u8] = b"blob";
 const NS_BUN: &[u8] = b"bun";
@@ -2380,8 +2379,8 @@ pub struct PackageRelative {
     pub is_parent_package: bool,
 }
 
-impl Path {
-    pub const EMPTY: Path = Path {
+impl<'a> Path<'a> {
+    pub const EMPTY: Path<'static> = Path {
         pretty: b"",
         text: b"",
         namespace: b"file",
@@ -2528,7 +2527,7 @@ impl Path {
 
     // This duplicates but only when strictly necessary
     // This will skip allocating if it's already in FilenameStore or DirnameStore
-    pub fn dupe_alloc(&self) -> Result<Path, bun_core::Error> {
+    pub fn dupe_alloc(&self) -> Result<Path<'a>, bun_core::Error> {
         if core::ptr::eq(self.text.as_ptr(), self.pretty.as_ptr()) && self.text.len() == self.pretty.len() {
             if FilenameStore::instance().exists(self.text) || DirnameStore::instance().exists(self.text) {
                 return Ok(self.clone());
@@ -2583,8 +2582,10 @@ impl Path {
                     .copy_from_slice(self.pretty);
                 let buf_len = buf.len();
                 buf[buf_len - 1] = 0;
-                // TODO(port): ownership — leaking to return &'static slices (matches Zig allocator-owned)
-                let buf = Box::leak(buf.into_boxed_slice());
+                // PORT NOTE: Zig used `allocator.alloc` (caller-owned). Intern into the
+                // process-static FilenameStore so the returned slices are truly `'static`
+                // without `Box::leak` (forbidden per PORTING.md).
+                let buf = FilenameStore::instance().append(&buf)?;
                 let new_pretty = &buf[self.text.len() + 1..][..self.pretty.len()];
                 let mut new_path = Path::init(&buf[..self.text.len()]);
                 new_path.pretty = new_pretty;
@@ -2595,7 +2596,7 @@ impl Path {
         }
     }
 
-    pub fn dupe_alloc_fix_pretty(&self) -> Result<Path, bun_core::Error> {
+    pub fn dupe_alloc_fix_pretty(&self) -> Result<Path<'a>, bun_core::Error> {
         if self.is_pretty_path_posix() {
             return self.dupe_alloc();
         }
@@ -2603,15 +2604,17 @@ impl Path {
         let mut new = self.clone();
         new.pretty = b"";
         new = new.dupe_alloc()?;
-        // TODO(port): ownership — leaking to return `'static` slice (matches Zig allocator-owned).
-        let pretty = Box::leak(Box::<[u8]>::from(self.pretty));
-        path_handler::platform_to_posix_in_place::<u8>(pretty);
-        new.pretty = pretty;
+        // PORT NOTE: Zig used `allocator.dupe` (caller-owned). Build the posix-normalized
+        // copy in a temp Vec, then intern into FilenameStore (process-static) — avoids
+        // `Box::leak` (forbidden per PORTING.md).
+        let mut owned: Vec<u8> = self.pretty.to_vec();
+        path_handler::platform_to_posix_in_place::<u8>(&mut owned);
+        new.pretty = FilenameStore::instance().append(&owned)?;
         new.assert_pretty_is_valid();
         Ok(new)
     }
 
-    pub fn set_realpath(&mut self, to: &'static [u8]) {
+    pub fn set_realpath(&mut self, to: &'a [u8]) {
         let old_path = self.text;
         self.text = to;
         self.name = PathName::init(to);
@@ -2630,9 +2633,7 @@ impl Path {
         Ok(v.into_boxed_slice())
     }
 
-    pub fn init(text: &[u8]) -> Path {
-        // SAFETY: see TODO(port) on Path struct lifetime
-        let text: &'static [u8] = unsafe { core::mem::transmute(text) };
+    pub fn init(text: &'a [u8]) -> Path<'a> {
         Path {
             pretty: text,
             text,
@@ -2643,10 +2644,7 @@ impl Path {
         }
     }
 
-    pub fn init_with_pretty(text: &[u8], pretty: &[u8]) -> Path {
-        // SAFETY: see TODO(port) on Path struct lifetime
-        let text: &'static [u8] = unsafe { core::mem::transmute(text) };
-        let pretty: &'static [u8] = unsafe { core::mem::transmute(pretty) };
+    pub fn init_with_pretty(text: &'a [u8], pretty: &'a [u8]) -> Path<'a> {
         Path {
             pretty,
             text,
@@ -2657,10 +2655,7 @@ impl Path {
         }
     }
 
-    pub fn init_with_namespace(text: &[u8], namespace: &[u8]) -> Path {
-        // SAFETY: see TODO(port) on Path struct lifetime
-        let text: &'static [u8] = unsafe { core::mem::transmute(text) };
-        let namespace: &'static [u8] = unsafe { core::mem::transmute(namespace) };
+    pub fn init_with_namespace(text: &'a [u8], namespace: &'a [u8]) -> Path<'a> {
         Path {
             pretty: text,
             text,
@@ -2681,7 +2676,7 @@ impl Path {
         text: &'static [u8],
         namespace: &'static [u8],
         pretty: &'static [u8],
-    ) -> Path {
+    ) -> Path<'static> {
         Path {
             pretty,
             is_symlink: true,
@@ -2700,7 +2695,7 @@ impl Path {
         package: &'static [u8],
         pretty: &'static [u8],
         text: &'static [u8],
-    ) -> Path {
+    ) -> Path<'static> {
         Path {
             pretty,
             is_symlink: true,

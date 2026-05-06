@@ -7,7 +7,6 @@
 use core::ffi::{c_char, c_void};
 use core::ptr::NonNull;
 use core::sync::atomic::AtomicU32;
-use std::sync::Arc;
 
 use bun_core::{self as bun, Output};
 use crate::webcore::jsc::{
@@ -28,7 +27,7 @@ macro_rules! debug {
 
 #[path = "blob/Store.rs"]
 pub mod store;
-pub use store::Store;
+pub use store::{Store, StoreRef};
 // `Store` is referenced as both a module path (`Store::Data::*`) and a type
 // name in the Phase-A draft. Alias the module form so `Store::Data` resolves.
 pub use store as Store_;
@@ -51,10 +50,9 @@ pub struct Blob {
 
     pub size: SizeType,
     pub offset: SizeType,
-    // LIFETIMES.tsv: SHARED → Option<Arc<Store>>
-    // TODO(port): Store uses intrusive atomic refcount (.ref()/.deref()) across FFI;
-    // verify Arc<Store> vs IntrusiveArc<Store> in Phase B.
-    pub store: Option<Arc<Store>>,
+    /// Intrusively-refcounted backing store. `StoreRef::clone`/`drop` map
+    /// directly to Zig's `store.ref()`/`store.deref()`; see `blob/Store.rs`.
+    pub store: Option<StoreRef>,
     /// Either a `&'static [u8]` (mime constant / literal) or a heap allocation
     /// owned by this Blob, discriminated by `content_type_allocated`.
     // TODO(port): model as Cow<'static, [u8]> once callers are audited.
@@ -226,14 +224,9 @@ impl Blob {
     }
 
     pub fn detach(&mut self) {
-        if let Some(store) = self.store.take() {
-            // Keep the intrusive `Store::ref_count` in sync with Blob ownership so
-            // `Store::has_one_ref()` reflects actual sharing (see dupe_with_content_type).
-            // Do NOT call `Store::deref()` — it would `Box::from_raw` on zero, but this
-            // Store lives inside an Arc whose Drop owns deallocation.
-            store.ref_count.fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
-            // Arc::drop decrements the strong count and frees on zero.
-        }
+        // Zig: `if (this.store != null) this.store.?.deref(); this.store = null;`
+        // `StoreRef::drop` calls `Store::deref()`.
+        self.store = None;
     }
 
     pub fn shared_view(&self) -> &[u8] {
@@ -1375,11 +1368,11 @@ fn write_file_with_empty_source_to_destination(
                 }
             };
 
-            // TODO(port): local Wrapper struct { promise, store: Arc<Store>, global }
+            // TODO(port): local Wrapper struct { promise, store: StoreRef, global }
             // with `resolve(result, opaque_this)` callback. See Zig lines 1098-1146.
             struct Wrapper {
                 promise: jsc::JSPromiseStrong,
-                store: Arc<Store>,
+                store: StoreRef,
                 global: *mut JSGlobalObject,
             }
             impl Wrapper {
@@ -1601,9 +1594,9 @@ pub fn write_file_with_source_destination(
                         ));
                     }
                 } else {
-                    // TODO(port): local Wrapper struct { store: Arc<Store>, promise, global } with resolve cb.
+                    // TODO(port): local Wrapper struct { store: StoreRef, promise, global } with resolve cb.
                     struct Wrapper {
-                        store: Arc<Store>,
+                        store: StoreRef,
                         promise: jsc::JSPromiseStrong,
                         global: *mut JSGlobalObject,
                     }
@@ -1714,9 +1707,9 @@ pub fn write_file_internal(
         }
     }
 
-    let input_store: Option<Arc<Store>> =
+    let input_store: Option<StoreRef> =
         if let PathOrBlob::Blob(ref b) = path_or_blob { b.store.clone() } else { None };
-    // PORT NOTE: Zig manually ref/deref's; Arc clone+drop achieves the same.
+    // PORT NOTE: Zig manually ref/deref's; StoreRef clone+drop achieves the same.
     let _input_store_hold = input_store;
 
     let mut needs_async = false;
@@ -1893,7 +1886,7 @@ pub fn write_file_internal(
     let _source_detach = scopeguard::guard(&mut source_blob, |b| b.detach());
 
     let destination_store = destination_blob.store.clone();
-    // PORT NOTE: Zig manually ref/deref's; Arc clone+drop covers this.
+    // PORT NOTE: Zig manually ref/deref's; StoreRef clone+drop covers this.
     let _dest_hold = destination_store;
 
     write_file_with_source_destination(global_this, &mut source_blob, &mut destination_blob, &options)
@@ -2181,8 +2174,8 @@ pub fn jsdom_file_construct_(
             }
         } else if !name_value_str.is_empty() {
             // not store but we have a name so we need a store
-            blob.store = Some(Arc::new(Store::new_raw(Store::Init {
-                data: Store::Data::Bytes(Store::Bytes::init_empty_with_name(
+            blob.store = Some(StoreRef::from(Store::new(Store {
+                data: store::Data::Bytes(store::Bytes::init_empty_with_name(
                     bun_core::PathString::init(name_value_str.to_utf8_bytes()),
                 )),
                 ref_count: AtomicU32::new(1),
@@ -3554,7 +3547,7 @@ impl Blob {
 }
 
 /// resolve file stat like size, last_modified
-fn resolve_file_stat(store: &Arc<Store>) {
+fn resolve_file_stat(store: &Store) {
     let file = store.data.as_file_mut();
     match &file.pathlike {
         node::PathLike::Path(path) => {
@@ -3661,7 +3654,7 @@ impl Blob {
 
     pub fn init_with_all_ascii(bytes: Vec<u8>, global_this: &JSGlobalObject, is_all_ascii: bool) -> Blob {
         // avoid allocating a Blob.Store if the buffer is actually empty
-        let mut store: Option<Arc<Store>> = None;
+        let mut store: Option<StoreRef> = None;
         let len = bytes.len();
         if len > 0 {
             let s = Store::init(bytes);
@@ -3718,8 +3711,8 @@ impl Blob {
         {
             if bun_sys::linux::MemFdAllocator::should_use(bytes_) {
                 if let bun_sys::Result::Ok(result) = bun_sys::linux::MemFdAllocator::create(bytes_) {
-                    let store = Arc::new(Store::new_raw(Store::Init {
-                        data: Store::Data::Bytes(result),
+                    let store = StoreRef::from(Store::new(Store {
+                        data: store::Data::Bytes(result),
                         ref_count: AtomicU32::new(1),
                         ..Default::default()
                     }));
@@ -3739,7 +3732,7 @@ impl Blob {
         Self::try_create(bytes_, global_this, was_string).expect("oom")
     }
 
-    pub fn init_with_store(store: Arc<Store>, global_this: &JSGlobalObject) -> Blob {
+    pub fn init_with_store(store: StoreRef, global_this: &JSGlobalObject) -> Blob {
         let size = store.size();
         let content_type = if let Store::Data::File(ref f) = store.data {
             f.mime_type.value as *const [u8]
@@ -3769,24 +3762,17 @@ impl Blob {
     // It is a move
     #[inline]
     fn transfer(&mut self) {
-        // PORT NOTE: in Zig this just nulls the field without deref. With Arc<Store>
-        // we cannot drop without decrementing; use ManuallyDrop to leak the count.
-        // TODO(port): if Store is intrusive-refcounted, replace Arc with IntrusiveArc
-        // so transfer is a plain `self.store = None` without the leak hack.
+        // Zig: `this.store = null` without `.deref()`. The receiver already
+        // holds the same `*Store`; leak our +1 into theirs.
         if let Some(s) = self.store.take() {
-            core::mem::forget(s);
+            let _ = s.into_raw();
         }
     }
 
     pub fn detach(&mut self) {
-        if let Some(store) = self.store.take() {
-            // Keep the intrusive `Store::ref_count` in sync with Blob ownership so
-            // `Store::has_one_ref()` reflects actual sharing (see dupe_with_content_type).
-            // Do NOT call `Store::deref()` — it would `Box::from_raw` on zero, but this
-            // Store lives inside an Arc whose Drop owns deallocation.
-            store.ref_count.fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
-            // Arc::drop decrements the strong count and frees on zero.
-        }
+        // Zig: `if (this.store != null) this.store.?.deref(); this.store = null;`
+        // `StoreRef::drop` calls `Store::deref()`.
+        self.store = None;
     }
 
     /// This does not duplicate
@@ -3797,13 +3783,8 @@ impl Blob {
     }
 
     pub fn dupe_with_content_type(&self, _include_content_type: bool) -> Blob {
-        // PORT NOTE: Zig does `this.store.?.ref()` then bitwise-copies the struct.
-        // Cloning the Option<Arc<Store>> bumps the Arc strong count, but
-        // `Store::has_one_ref()` reads the *intrusive* `ref_count` field — so we
-        // must also bump that to keep it in sync with the number of Blob views.
-        if let Some(s) = self.store.as_ref() {
-            s.ref_();
-        }
+        // Zig: `if (this.store != null) this.store.?.ref()` then bitwise-copy.
+        // `Option<StoreRef>::clone` bumps the intrusive `Store::ref_count`.
         let mut duped = Blob {
             reported_estimated_size: self.reported_estimated_size,
             size: self.size,
@@ -3961,17 +3942,17 @@ impl Blob {
             Lifetime::Clone => {
                 let store = self.store.as_ref().unwrap().clone();
                 // we don't need to worry about UTF-8 BOM in this case because the store owns the memory.
-                Ok(ZigString::init(buf).external(global, Arc::into_raw(store) as *mut c_void, Store::external))
+                Ok(ZigString::init(buf).external(global, store.into_raw() as *mut c_void, Store::external))
             }
             Lifetime::Transfer => {
                 let store = self.store.as_ref().unwrap().clone();
                 debug_assert!(matches!(store.data, Store::Data::Bytes(_)));
                 self.transfer();
-                Ok(ZigString::init(buf).external(global, Arc::into_raw(store) as *mut c_void, Store::external))
+                Ok(ZigString::init(buf).external(global, store.into_raw() as *mut c_void, Store::external))
             }
             Lifetime::Share => {
                 let store = self.store.as_ref().unwrap().clone();
-                Ok(ZigString::init(buf).external(global, Arc::into_raw(store) as *mut c_void, Store::external))
+                Ok(ZigString::init(buf).external(global, store.into_raw() as *mut c_void, Store::external))
             }
             Lifetime::Temporary => {
                 // if there was a UTF-8 BOM, we need to clone the buffer because
@@ -4172,7 +4153,7 @@ impl Blob {
                 let store = self.store.as_ref().unwrap().clone();
                 Ok(jsc::ArrayBuffer::from_bytes(buf, TYPED_ARRAY_VIEW).to_js_with_context(
                     global,
-                    Arc::into_raw(store) as *mut c_void,
+                    store.into_raw() as *mut c_void,
                     jsc::BlobArrayBuffer_deallocator,
                     None,
                 ))
@@ -4188,7 +4169,7 @@ impl Blob {
                 self.transfer();
                 Ok(jsc::ArrayBuffer::from_bytes(buf, TYPED_ARRAY_VIEW).to_js_with_context(
                     global,
-                    Arc::into_raw(store) as *mut c_void,
+                    store.into_raw() as *mut c_void,
                     jsc::array_buffer::BlobArrayBuffer_deallocator,
                 ))
             }
@@ -4582,15 +4563,15 @@ unsafe extern "C" {
 
 impl Blob {
     /// Construct a Blob viewing an existing `Store`. Accepts both `Box<Store>`
-    /// (from `Store::new` / `Store::init*`) and `Arc<Store>` (cloned refs) —
+    /// (from `Store::new` / `Store::init*`) and `StoreRef` (cloned refs) —
     /// callers across the tree pass either depending on which constructor they
-    /// hit, and `From<Box<T>> for Arc<T>` covers the former.
-    pub fn init_with_store<S: Into<Arc<Store>>>(store: S, global_this: &JSGlobalObject) -> Blob {
-        let store: Arc<Store> = store.into();
+    /// hit, and `From<Box<Store>> for StoreRef` covers the former.
+    pub fn init_with_store<S: Into<StoreRef>>(store: S, global_this: &JSGlobalObject) -> Blob {
+        let store: StoreRef = store.into();
         let size = store.size();
         // PORT NOTE: `MimeType::value` is `Cow<'static, [u8]>`; the raw slice
         // pointer is stable for the life of `store` (either 'static or backed
-        // by the Arc'd heap allocation we hold below).
+        // by the heap allocation we hold a ref to below).
         let content_type: *const [u8] = if let store::Data::File(ref f) = store.data {
             f.mime_type.value.as_ref() as *const [u8]
         } else {
@@ -4652,13 +4633,8 @@ impl Blob {
     }
 
     pub fn dupe_with_content_type(&self, _include_content_type: bool) -> Blob {
-        // PORT NOTE: Zig does `this.store.?.ref()` then bitwise-copies the struct.
-        // Cloning the Option<Arc<Store>> bumps the Arc strong count, but
-        // `Store::has_one_ref()` reads the *intrusive* `ref_count` field — so we
-        // must also bump that to keep it in sync with the number of Blob views.
-        if let Some(s) = self.store.as_ref() {
-            s.ref_();
-        }
+        // Zig: `if (this.store != null) this.store.?.ref()` then bitwise-copy.
+        // `Option<StoreRef>::clone` bumps the intrusive `Store::ref_count`.
         let mut duped = Blob {
             reported_estimated_size: self.reported_estimated_size,
             size: self.size,
@@ -5024,7 +5000,7 @@ impl Any {
             if let Some(s) = &blob.store {
                 if matches!(s.data, Store::Data::Bytes(_)) && s.has_one_ref() {
                     let internal = s.data.as_bytes_mut().to_internal_blob();
-                    // PORT NOTE: Zig deref's the store; Arc drop on replace handles it.
+                    // PORT NOTE: Zig deref's the store; StoreRef::drop on replace handles it.
                     *self = Any::InternalBlob(internal);
                     return;
                 }
@@ -5212,12 +5188,10 @@ impl Any {
 }
 
 impl Any {
-    pub fn store(&self) -> Option<&Arc<Store>> {
+    pub fn store(&self) -> Option<&Store> {
         // Spec (Blob.zig:4651-4657) returns a borrow with no refcount change.
-        // Cloning the Arc here would bump the strong count for the temporary,
-        // diverging from spec semantics.
         if let Any::Blob(b) = self {
-            return b.store.as_ref();
+            return b.store.as_deref();
         }
         None
     }

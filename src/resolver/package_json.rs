@@ -818,7 +818,7 @@ impl PackageJSON {
         // PORT NOTE: `logger::Source.path` is the lightweight `logger::fs::Path` (no
         // `pretty`/`is_node_module`); `key_path` is only used for `text`, so init the
         // source directly from the interned path.
-        let json_source = logger::Source::init_path_string(package_json_path, entry_contents);
+        let json_source = logger::Source::init_path_string(package_json_path, entry_contents.as_slice());
 
         let json: js_ast::Expr = match r.caches.json.parse_package_json(r.log, &json_source, true) {
             Ok(Some(v)) => v,

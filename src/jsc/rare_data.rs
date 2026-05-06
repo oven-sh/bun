@@ -69,15 +69,58 @@ use high_tier::{
 type DnsGlobalData = high_tier::DnsGlobalData;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Forward decls of field types whose full bodies are gated below.
-// Full impls live in `mod _accessor_body` (gated).
+// HotMap — forward decl + un-gated body.
+//
+// Full typed `get<T>`/`insert<T>` (TaggedPtrUnion) stay gated in
+// `_accessor_body` until the high-tier `bun_runtime::api` type list lands;
+// the storage shape and `init`/`get_entry`/`remove` are real.
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct HotMap {
     _map: StringArrayHashMap<HotMapEntry>,
 }
+/// Erased `(tag, ptr)` payload — see `_accessor_body::HotMapEntry` for the
+/// `TaggedPtrUnion` shape this stands in for.
 #[derive(Copy, Clone)]
 pub struct HotMapEntry { pub tag: u8, pub ptr: *mut () }
+impl Default for HotMapEntry {
+    fn default() -> Self { Self { tag: 0, ptr: core::ptr::null_mut() } }
+}
+
+impl HotMap {
+    pub fn init() -> HotMap {
+        HotMap { _map: StringArrayHashMap::new() }
+    }
+
+    pub fn get_entry(&self, key: &[u8]) -> Option<HotMapEntry> {
+        self._map.get(key).copied()
+    }
+
+    /// Untyped insert — typed `insert<T>` stays gated until `TaggedPtrUnion`
+    /// over the high-tier `api::*` types is wired.
+    pub fn insert_raw(&mut self, key: &[u8], entry: HotMapEntry) {
+        let gop = bun_core::handle_oom(self._map.get_or_put(key));
+        if gop.found_existing {
+            panic!("HotMap already contains key");
+        }
+        // PORT NOTE: `get_or_put` already boxed the key; Zig wrote
+        // `entry.key_ptr.* = dupe(key)` because its map didn't own keys.
+        *gop.value_ptr = entry;
+    }
+
+    pub fn remove(&mut self, key: &[u8]) {
+        // PORT NOTE: Zig captured the stored key ptr to free post-removal; here
+        // the map owns the Box<[u8]> key and `swap_remove` drops it. Preserve
+        // the aliasing assert (caller must not pass the map's own key storage).
+        // Ordering doesn't matter for HotMap consumers — Zig's `orderedRemove`
+        // was incidental, not load-bearing.
+        let Some(i) = self._map.get_index(key) else { return };
+        let stored = &self._map.keys()[i];
+        let is_same_slice = stored.as_ptr() == key.as_ptr() && stored.len() == key.len();
+        debug_assert!(!is_same_slice);
+        self._map.swap_remove(key);
+    }
+}
 
 pub struct EntropyCache { pub cache: [u8; Self::SIZE], pub index: usize }
 impl EntropyCache {
@@ -106,7 +149,29 @@ pub type CleanupHookFunction = unsafe extern "C" fn(*mut c_void);
 pub struct CleanupHook {
     pub ctx: *mut c_void,
     pub func: CleanupHookFunction,
+    // TODO(port): LIFETIMES.tsv says &'a JSGlobalObject (JSC_BORROW); raw ptr avoids a lifetime param in Phase A.
     pub global_this: *const JSGlobalObject,
+}
+
+impl CleanupHook {
+    pub fn eql(self, other: CleanupHook) -> bool {
+        self.ctx == other.ctx
+            && (self.func as usize) == (other.func as usize)
+            && core::ptr::eq(self.global_this, other.global_this)
+    }
+
+    pub fn execute(self) {
+        // SAFETY: ctx/func were registered together by the N-API caller.
+        unsafe { (self.func)(self.ctx) };
+    }
+
+    pub fn from(
+        global_this: &JSGlobalObject,
+        ctx: *mut c_void,
+        func: CleanupHookFunction,
+    ) -> CleanupHook {
+        CleanupHook { ctx, func, global_this: global_this as *const _ }
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

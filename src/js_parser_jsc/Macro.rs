@@ -796,7 +796,7 @@ impl<'a> Run<'a> {
 
 impl Runner {
     pub fn run(
-        macro_: Macro<'_>,
+        macro_: Macro,
         log: &mut Log,
         function_name: &[u8],
         caller: Expr,
@@ -832,7 +832,9 @@ impl Runner {
                     }
                 }
                 js_ast::ExprData::ETemplate(_) => {
-                    todo!("support template literals in macros");
+                    // PORT NOTE: faithful port — Zig source is
+                    // `@panic("TODO: support template literals in macros");`
+                    panic!("TODO: support template literals in macros");
                 }
                 _ => {
                     panic!("Unexpected caller type");

@@ -63,38 +63,89 @@ fn to_u64<T: ToU64>(value: T) -> u64 {
     value.to_u64()
 }
 
+/// Platform-specific accessors over `libc::stat` mirroring Zig's
+/// `Stat.atime()` / `.mtime()` / `.ctime()` / `.birthtime()` helpers.
+#[inline]
+fn stat_atime(s: &Stat) -> Timespec {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    { Timespec { sec: s.st_atime as i64, nsec: s.st_atime_nsec as i64 } }
+    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly"))]
+    { Timespec { sec: s.st_atimespec.tv_sec as i64, nsec: s.st_atimespec.tv_nsec as i64 } }
+    #[cfg(windows)]
+    { let _ = s; Timespec::EPOCH }
+}
+#[inline]
+fn stat_mtime(s: &Stat) -> Timespec {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    { Timespec { sec: s.st_mtime as i64, nsec: s.st_mtime_nsec as i64 } }
+    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly"))]
+    { Timespec { sec: s.st_mtimespec.tv_sec as i64, nsec: s.st_mtimespec.tv_nsec as i64 } }
+    #[cfg(windows)]
+    { let _ = s; Timespec::EPOCH }
+}
+#[inline]
+fn stat_ctime(s: &Stat) -> Timespec {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    { Timespec { sec: s.st_ctime as i64, nsec: s.st_ctime_nsec as i64 } }
+    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly"))]
+    { Timespec { sec: s.st_ctimespec.tv_sec as i64, nsec: s.st_ctimespec.tv_nsec as i64 } }
+    #[cfg(windows)]
+    { let _ = s; Timespec::EPOCH }
+}
+#[inline]
+fn stat_birthtime(s: &Stat) -> Timespec {
+    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly"))]
+    { Timespec { sec: s.st_birthtimespec.tv_sec as i64, nsec: s.st_birthtimespec.tv_nsec as i64 } }
+    #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly")))]
+    { let _ = s; Timespec::EPOCH }
+}
+
 impl PosixStat {
     /// Convert platform-specific bun.Stat to PosixStat
     pub fn init(stat_: &Stat) -> PosixStat {
-        let atime_val = stat_.atime();
-        let mtime_val = stat_.mtime();
-        let ctime_val = stat_.ctime();
-        let birthtime_val = {
-            #[cfg(target_os = "linux")]
-            {
-                Timespec::EPOCH
-            }
-            #[cfg(not(target_os = "linux"))]
-            {
-                stat_.birthtime()
-            }
-        };
+        let atime_val = stat_atime(stat_);
+        let mtime_val = stat_mtime(stat_);
+        let ctime_val = stat_ctime(stat_);
+        let birthtime_val = stat_birthtime(stat_);
 
-        PosixStat {
-            dev: to_u64(stat_.dev),
-            ino: to_u64(stat_.ino),
-            mode: to_u64(stat_.mode),
-            nlink: to_u64(stat_.nlink),
-            uid: to_u64(stat_.uid),
-            gid: to_u64(stat_.gid),
-            rdev: to_u64(stat_.rdev),
-            size: to_u64(stat_.size),
-            blksize: to_u64(stat_.blksize),
-            blocks: to_u64(stat_.blocks),
-            atim: Timespec { sec: atime_val.sec, nsec: atime_val.nsec },
-            mtim: Timespec { sec: mtime_val.sec, nsec: mtime_val.nsec },
-            ctim: Timespec { sec: ctime_val.sec, nsec: ctime_val.nsec },
-            birthtim: Timespec { sec: birthtime_val.sec, nsec: birthtime_val.nsec },
+        #[cfg(unix)]
+        {
+            PosixStat {
+                dev: to_u64(stat_.st_dev),
+                ino: to_u64(stat_.st_ino),
+                mode: to_u64(stat_.st_mode),
+                nlink: to_u64(stat_.st_nlink),
+                uid: to_u64(stat_.st_uid),
+                gid: to_u64(stat_.st_gid),
+                rdev: to_u64(stat_.st_rdev),
+                size: to_u64(stat_.st_size),
+                blksize: to_u64(stat_.st_blksize),
+                blocks: to_u64(stat_.st_blocks),
+                atim: atime_val,
+                mtim: mtime_val,
+                ctim: ctime_val,
+                birthtim: birthtime_val,
+            }
+        }
+        #[cfg(windows)]
+        {
+            // Windows `Stat` is a libuv-shaped struct; field-for-field copy.
+            PosixStat {
+                dev: to_u64(stat_.st_dev),
+                ino: to_u64(stat_.st_ino),
+                mode: to_u64(stat_.st_mode),
+                nlink: to_u64(stat_.st_nlink),
+                uid: to_u64(stat_.st_uid),
+                gid: to_u64(stat_.st_gid),
+                rdev: to_u64(stat_.st_rdev),
+                size: to_u64(stat_.st_size),
+                blksize: 0,
+                blocks: 0,
+                atim: atime_val,
+                mtim: mtime_val,
+                ctim: ctime_val,
+                birthtim: birthtime_val,
+            }
         }
     }
 

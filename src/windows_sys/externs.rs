@@ -154,9 +154,75 @@ pub const FILE_OPEN_REPARSE_POINT: ULONG = 0x0020_0000;
 
 // Standard access rights (`winnt.h`).
 pub const DELETE: ACCESS_MASK = 0x0001_0000;
+pub const READ_CONTROL: ACCESS_MASK = 0x0002_0000;
 pub const SYNCHRONIZE: ACCESS_MASK = 0x0010_0000;
+pub const STANDARD_RIGHTS_READ: ACCESS_MASK = READ_CONTROL;
 pub const GENERIC_READ: ACCESS_MASK = 0x8000_0000;
 pub const GENERIC_WRITE: ACCESS_MASK = 0x4000_0000;
+
+// File-specific access rights (`winnt.h`).
+pub const FILE_READ_DATA: ACCESS_MASK = 0x0001;
+pub const FILE_LIST_DIRECTORY: ACCESS_MASK = 0x0001;
+pub const FILE_ADD_FILE: ACCESS_MASK = 0x0002;
+pub const FILE_APPEND_DATA: ACCESS_MASK = 0x0004;
+pub const FILE_ADD_SUBDIRECTORY: ACCESS_MASK = 0x0004;
+pub const FILE_READ_EA: ACCESS_MASK = 0x0008;
+pub const FILE_TRAVERSE: ACCESS_MASK = 0x0020;
+pub const FILE_READ_ATTRIBUTES: ACCESS_MASK = 0x0080;
+pub const FILE_WRITE_ATTRIBUTES: ACCESS_MASK = 0x0100;
+
+// `CreateFileW` dwCreationDisposition (`winbase.h`).
+pub const CREATE_NEW: DWORD = 1;
+pub const CREATE_ALWAYS: DWORD = 2;
+pub const OPEN_EXISTING: DWORD = 3;
+pub const OPEN_ALWAYS: DWORD = 4;
+pub const TRUNCATE_EXISTING: DWORD = 5;
+
+// `CreateFileW` dwFlagsAndAttributes (`winbase.h`).
+pub const FILE_FLAG_BACKUP_SEMANTICS: DWORD = 0x0200_0000;
+pub const FILE_FLAG_OPEN_REPARSE_POINT: DWORD = 0x0020_0000;
+
+/// `FILE_BASIC_INFORMATION` (`wdm.h`) — output of `NtQueryAttributesFile`.
+#[repr(C)]
+pub struct FILE_BASIC_INFORMATION {
+    pub CreationTime: LARGE_INTEGER,
+    pub LastAccessTime: LARGE_INTEGER,
+    pub LastWriteTime: LARGE_INTEGER,
+    pub ChangeTime: LARGE_INTEGER,
+    pub FileAttributes: ULONG,
+}
+
+/// `FILE_DIRECTORY_INFORMATION` (`ntifs.h`) — `NtQueryDirectoryFile` record.
+/// `FileName` is a flexible array; declared `[WCHAR; 1]` to match C layout
+/// (read past it via `FileNameLength`).
+#[repr(C)]
+pub struct FILE_DIRECTORY_INFORMATION {
+    pub NextEntryOffset: ULONG,
+    pub FileIndex: ULONG,
+    pub CreationTime: LARGE_INTEGER,
+    pub LastAccessTime: LARGE_INTEGER,
+    pub LastWriteTime: LARGE_INTEGER,
+    pub ChangeTime: LARGE_INTEGER,
+    pub EndOfFile: LARGE_INTEGER,
+    pub AllocationSize: LARGE_INTEGER,
+    pub FileAttributes: ULONG,
+    pub FileNameLength: ULONG,
+    pub FileName: [WCHAR; 1],
+}
+
+/// `FILE_INFORMATION_CLASS` (`wdm.h`) — selector for `NtQuery*` /
+/// `NtSetInformationFile`. Newtype-over-u32 to keep parity with Zig's
+/// non-exhaustive enum.
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct FILE_INFORMATION_CLASS(pub u32);
+impl FILE_INFORMATION_CLASS {
+    pub const FileDirectoryInformation: Self = Self(1);
+    pub const FileBasicInformation: Self = Self(4);
+    pub const FileRenameInformation: Self = Self(10);
+    pub const FileDispositionInformation: Self = Self(13);
+    pub const FileDispositionInformationEx: Self = Self(64);
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // ntdll namespace (subset). Zig: `pub const ntdll = std.os.windows.ntdll`
@@ -178,6 +244,30 @@ pub mod ntdll {
             CreateOptions: ULONG,
             EaBuffer: *mut c_void,
             EaLength: ULONG,
+        ) -> NTSTATUS;
+        pub fn NtQueryDirectoryFile(
+            FileHandle: HANDLE,
+            Event: HANDLE,
+            ApcRoutine: *mut c_void,
+            ApcContext: *mut c_void,
+            IoStatusBlock: *mut IO_STATUS_BLOCK,
+            FileInformation: *mut c_void,
+            Length: ULONG,
+            FileInformationClass: FILE_INFORMATION_CLASS,
+            ReturnSingleEntry: BOOLEAN,
+            FileName: *mut UNICODE_STRING,
+            RestartScan: BOOLEAN,
+        ) -> NTSTATUS;
+        pub fn NtQueryAttributesFile(
+            ObjectAttributes: *const OBJECT_ATTRIBUTES,
+            FileInformation: *mut FILE_BASIC_INFORMATION,
+        ) -> NTSTATUS;
+        pub fn NtSetInformationFile(
+            FileHandle: HANDLE,
+            IoStatusBlock: *mut IO_STATUS_BLOCK,
+            FileInformation: *mut c_void,
+            Length: ULONG,
+            FileInformationClass: FILE_INFORMATION_CLASS,
         ) -> NTSTATUS;
     }
     pub use super::RtlNtStatusToDosError;

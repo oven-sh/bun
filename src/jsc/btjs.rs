@@ -158,7 +158,7 @@ mod zig_std_debug {
                         if bytes_read >= 0 {
                             return bytes_read as usize == buf.len();
                         }
-                        match bun_sys::errno() {
+                        match bun_sys::last_errno() {
                             libc::EFAULT => return false,
                             // EPERM (containers), ENOMEM, ENOSYS (qemu) → fall through to /proc/pid/mem
                             _ => {}
@@ -232,7 +232,7 @@ mod zig_std_debug {
             // SAFETY: msync only inspects the mapping; aligned_address is page-aligned.
             let rc = unsafe { libc::msync(aligned_address as *mut c_void, page_size, libc::MS_ASYNC) };
             if rc != 0 {
-                return bun_sys::errno() != libc::ENOMEM;
+                return bun_sys::last_errno() != libc::ENOMEM;
             }
             true
         }

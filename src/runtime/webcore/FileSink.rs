@@ -677,10 +677,16 @@ impl FileSink {
         self.run_pending_later.has = true;
         if let EventLoopHandle::Js { owner, vtable } = self.event_loop() {
             self.ref_();
-            let _ = (owner, vtable);
-            // `EventLoopHandle::Js` erases the `*mut jsc::EventLoop`; the vtable
-            // does not yet expose `enqueue_task(Task)`.
-            todo!("blocked_on: bun_event_loop::JsEventLoopVTable::enqueue_task");
+            // `jsc.Task.init(&this.run_pending_later)` — the comptime type→tag
+            // map lives in `bun_runtime::dispatch`; the resolved tag for
+            // `*FlushPendingTask` is `task_tag::FlushPendingFileSinkTask`.
+            let task = bun_event_loop::Task::new(
+                bun_event_loop::task_tag::FlushPendingFileSinkTask,
+                &mut self.run_pending_later as *mut FlushPendingTask as *mut (),
+            );
+            // SAFETY: vtable registered by `bun_runtime::init()`; `owner` is the
+            // erased `*mut jsc::EventLoop` for the Js arm.
+            unsafe { (vtable.enqueue_task)(owner, task) };
         }
     }
 

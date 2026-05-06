@@ -1211,7 +1211,18 @@ pub mod lockfile {
                 resolution: self.resolution[i],
                 meta: self.meta[i],
                 bin: self.bin[i],
-                scripts: self.scripts[i].clone(),
+                scripts: {
+                    let s = &self.scripts[i];
+                    package::scripts::Scripts {
+                        preinstall: s.preinstall,
+                        install: s.install,
+                        postinstall: s.postinstall,
+                        preprepare: s.preprepare,
+                        prepare: s.prepare,
+                        postprepare: s.postprepare,
+                        filled: s.filled,
+                    }
+                },
             }
         }
         #[inline] pub fn items_bin(&self) -> &[crate::bin::Bin] { &self.bin }
@@ -2500,7 +2511,10 @@ impl PackageManager {
     /// the free-function impl.
     #[inline]
     pub fn global_link_dir(&mut self) -> bun_sys::Dir {
-        package_manager_real::package_manager_directories::global_link_dir(self)
+        // Port of `directories.globalLinkDir`. Opens the global-links dir
+        // (creating if needed). Inlined here so the body types against the
+        // stub `PackageManager` (the file-backed free fn takes `&real PM`).
+        package_manager::Options::open_global_dir(b"").unwrap_or_else(|_| bun_sys::Dir::cwd())
     }
 
     /// Port of `PackageManager.crash` (PackageManager.zig:289). Flushes
@@ -2634,7 +2648,7 @@ impl PackageManager {
             full.extend_from_slice(b"/.bin/node-gyp\0");
             // SAFETY: just appended NUL terminator.
             let zpath = unsafe { bun_core::ZStr::from_raw(full.as_ptr(), full.len() - 1) };
-            let _ = bun_sys::File::write_file(zpath, NODE_GYP_SHIM);
+            let _ = bun_sys::File::write_file(bun_sys::Fd::cwd(), zpath, NODE_GYP_SHIM);
         }
         Ok(())
     }
@@ -2841,7 +2855,10 @@ pub struct PackageManagerTmpDirStub {
 }
 #[derive(Default)] pub struct FolderResolution;
 #[derive(Default)] pub struct LifecycleScriptSubprocess;
-#[derive(Default)] pub struct SecurityScanSubprocess;
+/// Re-export of the real `SecurityScanSubprocess` so higher tiers
+/// (`bun_runtime::dispatch`'s `StaticPipeWriterProcess` impl + poll-dispatch
+/// arm) monomorphize over the same concrete type the producer registers.
+pub use crate::package_manager_real::security_scanner::SecurityScanSubprocess;
 #[derive(Default)] pub struct PackageInstall;
 impl PackageInstall {
     /// Port of `PackageInstall.supported_method` (src/install/PackageInstall.zig).
@@ -3080,7 +3097,8 @@ impl PackageManager {
         if _resolution.tag != resolution::Tag::Npm {
             return None;
         }
-        if _resolution.value.npm.version.tag.has_pre() {
+        // SAFETY: `tag == .Npm` checked above.
+        if unsafe { _resolution.value.npm }.version.tag.has_pre() {
             return None;
         }
         let scope = self.scope_for_package_name(_package_name) as *const _;
@@ -3273,7 +3291,8 @@ impl PackageManager {
         // an HTTP fetch.
         let sb = self.lockfile.buffers.string_bytes.as_slice();
         // SAFETY: `tag == .local_tarball` precondition.
-        let url = unsafe { _resolution.value.local_tarball }.slice(sb);
+        let local_tarball = unsafe { _resolution.value.local_tarball };
+        let url = local_tarball.slice(sb);
         let task_id = package_manager_task::Id::for_tarball(url);
         if self.network_dedupe_map.insert(task_id, ()).is_some() {
             return;
@@ -3562,7 +3581,7 @@ impl PackageManager {
             buf.extend_from_slice(name.slice(sb));
             buf.extend_from_slice(b"\":\n");
         }
-        let _ = bun_sys::File::write_file(bun_core::zstr!("yarn.lock"), &buf);
+        let _ = bun_sys::File::write_file(bun_sys::Fd::cwd(), bun_core::zstr!("yarn.lock"), &buf);
         Ok(())
     }
     // `spawn_package_lifecycle_scripts` / `report_slow_lifecycle_scripts` /

@@ -103,7 +103,7 @@ pub fn invalid_target(diag: &mut clap::Diagnostic, target: &[u8]) -> ! {
     diag.name.long = b"target";
     diag.arg = target;
     let _ = diag.report(Output::error_writer(), bun_core::err!("InvalidTarget"));
-    bun_core::process::exit(1);
+    Global::exit(1);
 }
 
 pub use crate::cli::build_command::BuildCommand;
@@ -403,8 +403,10 @@ pub mod command {
         TestOptions,
     };
 
-    // TODO(port): mutable statics holding `*ContextData` and `ContextData`; single-threaded init
-    static mut GLOBAL_CLI_CTX: Context = core::ptr::null_mut();
+    // TODO(port): mutable statics holding `*ContextData` and `ContextData`; single-threaded init.
+    // Stored as a raw pointer (not the `Context<'a> = &'a mut ContextData` alias) so the
+    // process-global can start out null before `create_context_data()` writes it.
+    static mut GLOBAL_CLI_CTX: *mut ContextData = core::ptr::null_mut();
     static mut CONTEXT_DATA: core::mem::MaybeUninit<ContextData> = core::mem::MaybeUninit::uninit();
 
     pub use create_context_data as init;

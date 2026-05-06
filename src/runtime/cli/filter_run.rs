@@ -669,13 +669,12 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
             continue;
         }
 
-        let Some(pkgjson) = bun_resolver::PackageJSON::parse(
+        let Some(pkgjson) = bun_resolver::PackageJSON::parse::<{ IncludeDependencies::Main }>(
             &mut this_transpiler.resolver,
             dirpath,
-            bun_resolver::Invalid,
+            bun_sys::Fd::invalid(),
             None,
-            bun_resolver::IncludeScripts,
-            bun_resolver::Main,
+            IncludeScripts::IncludeScripts,
         ) else {
             Output::warn("Failed to read package.json\n", ());
             continue;

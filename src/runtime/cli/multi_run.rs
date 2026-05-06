@@ -508,15 +508,18 @@ impl AbortHandler {
     pub fn install() {
         #[cfg(unix)]
         {
-            // TODO(port): exact Sigaction layout / sigemptyset / SA_* flags via bun_sys
-            let action = bun_sys::posix::Sigaction {
-                handler: bun_sys::posix::SigHandler::SigAction(Self::posix_signal_handler),
-                mask: bun_sys::posix::sigemptyset(),
-                flags: bun_sys::posix::SA_SIGINFO
-                    | bun_sys::posix::SA_RESTART
-                    | bun_sys::posix::SA_RESETHAND,
-            };
-            bun_sys::posix::sigaction(bun_sys::posix::SIG_INT, &action, None);
+            // bun_sys::posix::Sigaction is a re-export of libc::sigaction; construct
+            // via zeroed() (POD C struct) and populate sa_sigaction/sa_mask/sa_flags.
+            // SAFETY: all-zero is a valid `libc::sigaction`; sigemptyset/sigaction are
+            // FFI calls with no extra preconditions beyond valid pointers.
+            unsafe {
+                let mut action: bun_sys::posix::Sigaction = core::mem::zeroed();
+                action.sa_sigaction = Self::posix_signal_handler as usize;
+                libc::sigemptyset(&mut action.sa_mask);
+                action.sa_flags =
+                    (libc::SA_SIGINFO | libc::SA_RESTART | libc::SA_RESETHAND) as _;
+                bun_sys::posix::sigaction(libc::SIGINT, &action, core::ptr::null_mut());
+            }
         }
         #[cfg(not(unix))]
         {

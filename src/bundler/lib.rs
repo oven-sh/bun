@@ -1,4 +1,5 @@
 #![feature(inherent_associated_types)]
+#![feature(adt_const_params)]
 #![allow(incomplete_features)] // inherent_associated_types — used only for ThreadPool::Worker path compat with Zig
 #![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
 // AUTOGEN: mod declarations only — real exports added in B-1.

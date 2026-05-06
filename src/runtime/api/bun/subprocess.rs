@@ -1228,8 +1228,8 @@ impl Subprocess<'_> {
         }
         this.set_event_loop_timer_refd(false);
 
-        MaxBuf::remove_from_subprocess(&mut this.stdout_maxbuf);
-        MaxBuf::remove_from_subprocess(&mut this.stderr_maxbuf);
+        MaxBuf::MaxBuf::remove_from_subprocess(&mut this.stdout_maxbuf);
+        MaxBuf::MaxBuf::remove_from_subprocess(&mut this.stderr_maxbuf);
 
         if let Some(ipc_data) = this.ipc_data.take() {
             // In normal operation the socket is already `.closed` by the time we
@@ -1450,7 +1450,7 @@ pub mod testing_apis {
 
         // Mirror what the real error path does (onStreamRead on Windows,
         // read() on Posix) so the teardown exercised is identical.
-        let fake_err = bun_sys::Error::from_code(bun_sys::Errno::BADF, bun_sys::Syscall::Read);
+        let fake_err = bun_sys::Error::from_code(bun_sys::Errno::BADF, bun_sys::Tag::read);
         #[cfg(windows)]
         {
             let _ = pipe.reader.stop_reading();

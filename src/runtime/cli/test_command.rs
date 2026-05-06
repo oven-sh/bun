@@ -1447,7 +1447,7 @@ impl CommandLineReporter {
                     // SAFETY: NUL written above
                     unsafe { bun_str::ZStr::from_raw(shortname_buf.as_ptr(), len) }
                 };
-                let path = bun_path::join_abs_string_buf_z(relative_dir, &mut lcov_name_buf, &[&opts.reports_directory, tmpname.as_bytes()], bun_path::Style::Auto);
+                let path = resolve_path::join_abs_string_buf_z::<bun_path::platform::Auto>(relative_dir, &mut lcov_name_buf, &[&opts.reports_directory, tmpname.as_bytes()]);
                 let file = File::openat(
                     Fd::cwd(),
                     path,
@@ -1589,10 +1589,9 @@ impl CommandLineReporter {
                     cwd,
                     lcov_name,
                     cwd,
-                    bun_path::join_abs_string_z(
+                    resolve_path::join_abs_string_z::<bun_path::platform::Auto>(
                         relative_dir,
                         &[&opts.reports_directory, b"lcov.info"],
-                        bun_path::Style::Auto,
                     ),
                 ) {
                     Output::err(err, format_args!("Failed to save lcov.info file"));

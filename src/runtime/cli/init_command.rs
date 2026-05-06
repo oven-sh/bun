@@ -122,6 +122,9 @@ impl InitCommand {
         let mut initial_draw = true;
         let mut reprint_menu = true;
 
+        // Zig: `std.fs.File.stdin().readerStreaming(&stdin_b)` then `takeByte()`.
+        let mut stdin = bun_core::output::stdin_reader();
+
         // The Zig has `errdefer reprint_menu = false;` followed by a `defer { ... }`
         // that uses `reprint_menu`. We model both with a single guard whose state we
         // mutate, and flip `reprint_menu = false` on the error paths before returning.

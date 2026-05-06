@@ -1019,7 +1019,6 @@ pub fn constructor(
     Ok(Box::into_raw(this))
 }
 
-impl JSTranspiler {
     pub fn finalize(this: *mut JSTranspiler) {
         // SAFETY: called by JSC codegen on the mutator thread with the m_ctx payload.
         unsafe { <JSTranspiler as bun_ptr::AnyRefCounted>::rc_deref_with_context(this, ()) };

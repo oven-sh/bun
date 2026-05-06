@@ -311,7 +311,7 @@ use self::bake_types as bake;
 pub mod bake_types {
     /// Mirrors src/bake/lib.zig `Side`.
     #[repr(u8)]
-    #[derive(Copy, Clone, Eq, PartialEq, Debug)]
+    #[derive(Copy, Clone, Eq, PartialEq, Debug, core::marker::ConstParamTy)]
     pub enum Side { Client = 0, Server = 1 }
     /// Mirrors src/bake/lib.zig `Graph`.
     #[repr(u8)]

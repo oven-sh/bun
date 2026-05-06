@@ -194,7 +194,7 @@ impl PostgresSQLConnection {
     }
 
     pub fn on_auto_flush(&mut self) -> bool {
-        if self.flags.has_backpressure {
+        if self.flags.contains(ConnectionFlags::HAS_BACKPRESSURE) {
             debug!("onAutoFlush: has backpressure");
             self.auto_flusher.registered = false;
             // if we have backpressure, wait for onWritable
@@ -206,7 +206,7 @@ impl PostgresSQLConnection {
         self.drain_internal();
 
         // if we dont have backpressure and if we still have data to send, return true otherwise return false and wait for onWritable
-        let keep_flusher_registered = !self.flags.has_backpressure && self.write_buffer.len() > 0;
+        let keep_flusher_registered = !self.flags.contains(ConnectionFlags::HAS_BACKPRESSURE) && self.write_buffer.len() > 0;
         debug!("onAutoFlush: keep_flusher_registered: {}", keep_flusher_registered);
         self.auto_flusher.registered = keep_flusher_registered;
         Self::deref(self as *mut Self);
@@ -217,11 +217,11 @@ impl PostgresSQLConnection {
         let data_to_send = self.write_buffer.len();
         debug!(
             "registerAutoFlusher: backpressure: {} registered: {} data_to_send: {}",
-            self.flags.has_backpressure, self.auto_flusher.registered, data_to_send
+            self.flags.contains(ConnectionFlags::HAS_BACKPRESSURE), self.auto_flusher.registered, data_to_send
         );
 
         if !self.auto_flusher.registered // should not be registered
-            && !self.flags.has_backpressure // if has backpressure we need to wait for onWritable event
+            && !self.flags.contains(ConnectionFlags::HAS_BACKPRESSURE) // if has backpressure we need to wait for onWritable event
             && data_to_send > 0 // we need data to send
             && self.status == Status::Connected
         // and we need to be connected
@@ -256,7 +256,7 @@ impl PostgresSQLConnection {
 
     pub fn reset_connection_timeout(&mut self) {
         // if we are processing data, don't reset the timeout, wait for the data to be processed
-        if self.flags.is_processing_data {
+        if self.flags.contains(ConnectionFlags::IS_PROCESSING_DATA) {
             return;
         }
         let interval = self.get_timeout_interval();
@@ -348,7 +348,7 @@ impl PostgresSQLConnection {
         debug!("onConnectionTimeout");
 
         self.timer.state = EventLoopTimerState::FIRED;
-        if self.flags.is_processing_data {
+        if self.flags.contains(ConnectionFlags::IS_PROCESSING_DATA) {
             return;
         }
 
@@ -490,7 +490,7 @@ impl PostgresSQLConnection {
 
     pub fn flush_data(&mut self) {
         // we know we still have backpressure so just return we will flush later
-        if self.flags.has_backpressure {
+        if self.flags.contains(ConnectionFlags::HAS_BACKPRESSURE) {
             debug!("flushData: has backpressure");
             return;
         }
@@ -502,7 +502,7 @@ impl PostgresSQLConnection {
         }
 
         let wrote = self.socket.write(chunk);
-        self.flags.has_backpressure = wrote < 0 || (wrote as usize) < chunk.len();
+        self.flags.set(ConnectionFlags::HAS_BACKPRESSURE, wrote < 0 || (wrote as usize) < chunk.len());
         debug!("flushData: wrote {}/{} bytes", wrote, chunk.len());
         if wrote > 0 {
             SocketMonitor::write(&chunk[..usize::try_from(wrote).unwrap()]);
@@ -682,7 +682,7 @@ impl PostgresSQLConnection {
 
     pub fn on_drain(&mut self) {
         debug!("onDrain");
-        self.flags.has_backpressure = false;
+        self.flags.remove(ConnectionFlags::HAS_BACKPRESSURE);
         // Don't send any other messages while we're waiting for TLS.
         if let TLSStatus::MessageSent(sent) = self.tls_status {
             if sent < 8 {
@@ -705,7 +705,7 @@ impl PostgresSQLConnection {
 
         self.flush_data();
 
-        if !self.flags.has_backpressure && self.flags.is_ready_for_query {
+        if !self.flags.contains(ConnectionFlags::HAS_BACKPRESSURE) && self.flags.contains(ConnectionFlags::IS_READY_FOR_QUERY) {
             // no backpressure yet so pipeline more if possible and flush again
             self.advance();
             self.flush_data();
@@ -715,7 +715,7 @@ impl PostgresSQLConnection {
 
     pub fn on_data(&mut self, data: &[u8]) {
         self.r#ref();
-        self.flags.is_processing_data = true;
+        self.flags.insert(ConnectionFlags::IS_PROCESSING_DATA);
         let vm = unsafe { self.vm() };
 
         self.disable_connection_timeout();
@@ -796,7 +796,7 @@ impl PostgresSQLConnection {
             // Keep the process alive if there's something to do.
             self.poll_ref.r#ref(vm);
         }
-        self.flags.is_processing_data = false;
+        self.flags.remove(ConnectionFlags::IS_PROCESSING_DATA);
 
         // reset the connection timeout after we're done processing the data
         self.reset_connection_timeout();
@@ -1323,7 +1323,7 @@ impl PostgresSQLConnection {
     }
 
     pub fn has_query_running(&self) -> bool {
-        !self.flags.is_ready_for_query || self.current().is_some()
+        !self.flags.contains(ConnectionFlags::IS_READY_FOR_QUERY) || self.current().is_some()
     }
 
     pub fn can_pipeline(&self) -> bool {
@@ -1336,7 +1336,7 @@ impl PostgresSQLConnection {
         self.nonpipelinable_requests == 0 // need to wait for non pipelinable requests to finish
             && !self.flags.use_unnamed_prepared_statements // unnamed statements are not pipelinable
             && !self.flags.waiting_to_prepare // cannot pipeline when waiting prepare
-            && !self.flags.has_backpressure // dont make sense to buffer more if we have backpressure
+            && !self.flags.contains(ConnectionFlags::HAS_BACKPRESSURE) // dont make sense to buffer more if we have backpressure
             && self.write_buffer.len() < MAX_PIPELINE_SIZE // buffer is too big need to flush before pipeline more
     }
 }
@@ -1513,14 +1513,14 @@ impl PostgresSQLConnection {
     }
 
     pub fn can_prepare_query(&self) -> bool {
-        self.flags.is_ready_for_query && !self.flags.waiting_to_prepare && self.pipelined_requests == 0
+        self.flags.contains(ConnectionFlags::IS_READY_FOR_QUERY) && !self.flags.waiting_to_prepare && self.pipelined_requests == 0
     }
 
     /// Process pending requests and flush. Called from the enqueue path when
     /// unnamed prepared statements with params skip writeQuery+Sync and need
     /// advance() to send everything atomically on an idle connection.
     pub fn advance_and_flush(&mut self) {
-        if !self.flags.has_backpressure && self.flags.is_ready_for_query {
+        if !self.flags.contains(ConnectionFlags::HAS_BACKPRESSURE) && self.flags.contains(ConnectionFlags::IS_READY_FOR_QUERY) {
             self.advance();
             self.flush_data();
         }
@@ -1556,7 +1556,7 @@ impl PostgresSQLConnection {
             }};
         }
 
-        while self.requests.readable_length() > offset && !self.flags.has_backpressure {
+        while self.requests.readable_length() > offset && !self.flags.contains(ConnectionFlags::HAS_BACKPRESSURE) {
             if unsafe { self.vm() }.is_shutting_down() {
                 self.close();
                 defer_cleanup!(self);
@@ -1569,10 +1569,10 @@ impl PostgresSQLConnection {
             match req.status {
                 PostgresSQLQuery::Status::Pending => {
                     if req.flags.simple {
-                        if self.pipelined_requests > 0 || !self.flags.is_ready_for_query {
+                        if self.pipelined_requests > 0 || !self.flags.contains(ConnectionFlags::IS_READY_FOR_QUERY) {
                             debug!(
                                 "cannot execute simple query, pipelined_requests: {}, is_ready_for_query: {}",
-                                self.pipelined_requests, self.flags.is_ready_for_query
+                                self.pipelined_requests, self.flags.contains(ConnectionFlags::IS_READY_FOR_QUERY)
                             );
                             // need to wait for the previous request to finish before starting simple queries
                             defer_cleanup!(self);

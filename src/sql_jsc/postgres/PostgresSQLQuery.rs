@@ -121,6 +121,14 @@ impl Status {
 }
 
 impl PostgresSQLQuery {
+    /// Raw-pointer view of the statement for callers (PostgresSQLConnection) that
+    /// mutate it in place. Mirrors Zig `?*PostgresSQLStatement`.
+    /// SAFETY: caller must not outlive the Rc nor alias with another &mut.
+    #[inline]
+    pub fn statement_ptr(&self) -> Option<*mut PostgresSQLStatement> {
+        self.statement.as_ref().map(|rc| Rc::as_ptr(rc) as *mut PostgresSQLStatement)
+    }
+
     // pub const ref = RefCount.ref; pub const deref = RefCount.deref;
     // TODO(port): these are IntrusiveRc inc/dec; deref_ runs deinit (Drop + Box::from_raw) at 0.
     pub fn ref_(&self) {

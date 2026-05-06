@@ -1484,7 +1484,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
         }
 
         // SAFETY: short-lived read.
-        if websocket_accept_header.value() != unsafe { &(*this).expected_accept[..] } {
+        // SAFETY: `this` is live (caller contract); short-lived shared borrow of the field.
+        if websocket_accept_header.value() != unsafe { &(&(*this).expected_accept)[..] } {
             // SAFETY: no `&mut Self` is live across this call.
             unsafe { Self::terminate(this, ErrorCode::MismatchWebsocketAcceptHeader) };
             return;

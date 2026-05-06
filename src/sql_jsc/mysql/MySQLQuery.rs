@@ -338,14 +338,17 @@ impl MySQLQuery {
         let mut query_str: Option<bun_string::zig_string::Slice> = None;
         // `defer if (query_str) |str| str.deinit()` — deleted: `Utf8Slice` impls `Drop`.
 
-        if self.statement.is_none() {
+        if self.statement.is_null() {
             let query = self.query.to_utf8();
-            let mut signature = match Signature::generate(global_object, query.as_slice(), binding_value, columns_value) {
+            let mut signature = match Signature::generate(global_object, query.slice(), binding_value, columns_value) {
                 Ok(s) => s,
                 Err(err) => {
                     if !global_object.has_exception() {
-                        return global_object
-                            .throw_value(mysql_error_to_js(global_object, "failed to generate signature", err));
+                        // PORT NOTE: Zig calls `AnyMySQLError.mysqlErrorToJS` here, but the
+                        // Rust `Signature::generate` returns a wider `bun_core::Error`. Use
+                        // `throw_error` (which builds an `Error` instance from the error
+                        // name + message) instead of forcing into the MySQL enum.
+                        let _ = global_object.throw_error(err, "failed to generate signature");
                     }
                     return Err(bun_core::err!("JSError"));
                 }
@@ -355,40 +358,51 @@ impl MySQLQuery {
             // found_existing success path below we explicitly drop it (Zig calls deinit + reassigns empty).
             let entry = match connection.get_statement_from_signature_hash(bun_wyhash::hash(&signature.name)) {
                 Ok(e) => e,
-                Err(err) => return global_object.throw_error(err, "failed to allocate statement"),
+                Err(err) => {
+                    return Err(global_object
+                        .throw_error(err, "failed to allocate statement")
+                        .err()
+                        .unwrap()
+                        .into());
+                }
             };
 
             if entry.found_existing {
-                let stmt = entry.value_ptr.clone();
-                // TODO(port): mutation through `Rc<MySQLStatement>` — see field note. Reading `status`
-                // is fine; Phase B must expose interior mutability or use `IntrusiveRc`.
-                if stmt.status == my_sql_statement::Status::Failed {
-                    let error_response = stmt.error_response.to_js(global_object);
+                let stmt: *mut MySQLStatement = *entry.value_ptr;
+                // SAFETY: `found_existing` ⇒ the map already holds a live, ref-counted
+                // `*mut MySQLStatement`; this thread is the only mutator.
+                if unsafe { (*stmt).status } == my_sql_statement::Status::Failed {
+                    // SAFETY: same as above.
+                    let error_response = unsafe { (*stmt).error_response.to_js(global_object) };
                     // If the statement failed, we need to throw the error
-                    return global_object.throw_value(error_response);
+                    return Err(global_object.throw_value(error_response).into());
                 }
-                // Zig: `this.#statement = stmt; stmt.ref();` — with `Rc`, the clone above IS the ref.
-                self.statement = Some(stmt);
+                // Zig: `this.#statement = stmt; stmt.ref();`
+                self.statement = stmt;
+                // SAFETY: `stmt` is a live boxed `MySQLStatement` (owned by the map).
+                unsafe { MySQLStatement::ref_(stmt) };
                 drop(signature);
                 signature = Signature::default();
                 let _ = signature; // matches Zig reassign-to-empty; silences unused.
             } else {
-                let stmt = Rc::new(MySQLStatement {
+                // Zig: `bun.new(MySQLStatement, .{ .ref_count = .initExactRefs(2), ... })`
+                // — one ref for `self.statement`, one for the map entry.
+                let stmt = Box::into_raw(Box::new(MySQLStatement {
                     signature,
                     status: my_sql_statement::Status::Pending,
                     statement_id: 0,
-                    // TODO(port): Zig sets intrusive `ref_count = .initExactRefs(2)` (self + map).
-                    // With `Rc`, storing two clones below yields strong_count == 2.
+                    ref_count: core::cell::Cell::new(2),
                     ..Default::default()
-                });
-                self.statement = Some(stmt.clone());
+                }));
+                self.statement = stmt;
                 *entry.value_ptr = stmt;
             }
         }
-        // TODO(port): `Rc::get_mut` will fail when the connection map also holds a ref. The Zig
-        // mutates through a shared `*MySQLStatement`. Phase B: `IntrusiveRc` or `RefCell`.
-        let stmt = self.statement.as_ref().expect("set above");
-        match stmt.status {
+        let stmt: *mut MySQLStatement = self.statement;
+        debug_assert!(!stmt.is_null(), "set above");
+        // SAFETY: `stmt` is non-null and kept alive by the intrusive ref in
+        // `self.statement`; this thread is the only mutator.
+        match unsafe { (*stmt).status } {
             my_sql_statement::Status::Failed => {
                 debug!("failed");
                 let error_response = stmt.error_response.to_js(global_object);

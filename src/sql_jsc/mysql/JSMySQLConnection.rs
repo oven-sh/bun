@@ -158,11 +158,11 @@ impl JSMySQLConnection {
 
     fn stop_timers(&mut self) {
         bun_core::scoped_log!(MySQLConnection, "stopTimers");
-        if self.timer.state == EventLoopTimer::State::ACTIVE {
-            self.vm.timer.remove(&mut self.timer);
+        if self.timer.state == EventLoopTimerState::ACTIVE {
+            self.vm_mut().timer().remove(&mut self.timer);
         }
-        if self.max_lifetime_timer.state == EventLoopTimer::State::ACTIVE {
-            self.vm.timer.remove(&mut self.max_lifetime_timer);
+        if self.max_lifetime_timer.state == EventLoopTimerState::ACTIVE {
+            self.vm_mut().timer().remove(&mut self.max_lifetime_timer);
         }
     }
 
@@ -182,8 +182,8 @@ impl JSMySQLConnection {
     pub fn reset_connection_timeout(&mut self) {
         let interval = self.get_timeout_interval();
         bun_core::scoped_log!(MySQLConnection, "resetConnectionTimeout {}", interval);
-        if self.timer.state == EventLoopTimer::State::ACTIVE {
-            self.vm.timer.remove(&mut self.timer);
+        if self.timer.state == EventLoopTimerState::ACTIVE {
+            self.vm_mut().timer().remove(&mut self.timer);
         }
         if self.connection.status == my_sql_connection::Status::Failed
             || self.connection.is_processing_data()
@@ -193,12 +193,12 @@ impl JSMySQLConnection {
         }
 
         self.timer.next =
-            timespec::ms_from_now(timespec::Mode::AllowMockedTime, interval.into());
-        self.vm.timer.insert(&mut self.timer);
+            timespec::ms_from_now(TimespecMockMode::AllowMockedTime, interval.into());
+        self.vm_mut().timer().insert(&mut self.timer);
     }
 
     pub fn on_connection_timeout(&mut self) {
-        self.timer.state = EventLoopTimer::State::FIRED;
+        self.timer.state = EventLoopTimerState::FIRED;
 
         if self.connection.is_processing_data() {
             return;
@@ -216,7 +216,7 @@ impl JSMySQLConnection {
         match self.connection.status {
             my_sql_connection::Status::Connected => {
                 self.fail_fmt(
-                    err!("IdleTimeout"),
+                    AnyMySQLErrorT::IdleTimeout,
                     format_args!(
                         "Idle timeout reached after {}",
                         bun_fmt::fmt_duration_one_decimal(
@@ -227,7 +227,7 @@ impl JSMySQLConnection {
             }
             my_sql_connection::Status::Connecting => {
                 self.fail_fmt(
-                    err!("ConnectionTimedOut"),
+                    AnyMySQLErrorT::ConnectionTimedOut,
                     format_args!(
                         "Connection timeout after {}",
                         bun_fmt::fmt_duration_one_decimal(
@@ -240,7 +240,7 @@ impl JSMySQLConnection {
             | my_sql_connection::Status::Authenticating
             | my_sql_connection::Status::AuthenticationAwaitingPk => {
                 self.fail_fmt(
-                    err!("ConnectionTimedOut"),
+                    AnyMySQLErrorT::ConnectionTimedOut,
                     format_args!(
                         "Connection timeout after {} (during authentication)",
                         bun_fmt::fmt_duration_one_decimal(
@@ -254,12 +254,12 @@ impl JSMySQLConnection {
     }
 
     pub fn on_max_lifetime_timeout(&mut self) {
-        self.max_lifetime_timer.state = EventLoopTimer::State::FIRED;
+        self.max_lifetime_timer.state = EventLoopTimerState::FIRED;
         if self.connection.status == my_sql_connection::Status::Failed {
             return;
         }
         self.fail_fmt(
-            err!("LifetimeTimeout"),
+            AnyMySQLErrorT::LifetimeTimeout,
             format_args!(
                 "Max lifetime timeout reached after {}",
                 bun_fmt::fmt_duration_one_decimal(

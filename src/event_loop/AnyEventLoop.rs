@@ -100,11 +100,17 @@ impl<'a> AnyEventLoop<'a> {
         unsafe { (*self.r#loop()).wakeup() };
     }
 
-    pub fn file_polls(&mut self) -> &mut bun_aio::file_poll::Store {
+    /// Returns the FilePoll store as a raw pointer (mirrors Zig `*FilePoll.Store`).
+    /// The `Js` arm reaches VM-owned storage via an erased `*mut ()`; multiple
+    /// `AnyEventLoop::Js` (and `EventLoopHandle::Js`) may name the same VM, so
+    /// promoting to `&mut` here would assert uniqueness we can't prove. Callers
+    /// deref locally for the brief region they need `&mut` — same contract as
+    /// [`EventLoopHandle::file_polls`].
+    pub fn file_polls(&mut self) -> *mut bun_aio::file_poll::Store {
         match self {
-            // SAFETY: vtable contract — returns a valid &mut Store owned by the VM.
-            AnyEventLoop::Js { owner, vtable } => unsafe { &mut *(vtable.file_polls)(*owner) },
-            AnyEventLoop::Mini(mini) => mini.file_polls(),
+            // SAFETY: vtable contract — slot returns a valid live *mut Store.
+            AnyEventLoop::Js { owner, vtable } => unsafe { (vtable.file_polls)(*owner) },
+            AnyEventLoop::Mini(mini) => mini.file_polls() as *mut _,
         }
     }
 

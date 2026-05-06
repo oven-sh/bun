@@ -27,7 +27,10 @@ pub struct NativeZstd {
     pub ref_count: Cell<u32>,
     // LIFETIMES.tsv: JSC_BORROW → &JSGlobalObject; stored raw because the struct is the
     // heap-allocated `m_ctx` payload of a .classes.ts wrapper (no lifetime param in Phase A).
-    pub global_this: *mut JSGlobalObject,
+    // Stored `*const` (not `*mut`): provenance comes from a `&JSGlobalObject` host-fn arg and
+    // is only ever re-borrowed as `&JSGlobalObject` (see node_zlib_binding.rs). Casting that
+    // shared borrow to `*mut` would be UB if a `&mut` were later materialized from it.
+    pub global_this: *const JSGlobalObject,
     pub stream: Context,
     // LIFETIMES.tsv: BORROW_PARAM → Option<*mut u32> (points into JS Uint32Array backing store)
     pub write_result: Option<*mut u32>,
@@ -80,7 +83,9 @@ impl NativeZstd {
 
         let mut ptr = Box::new(Self {
             ref_count: Cell::new(1), // RefCount.init()
-            global_this: global as *const _ as *mut _,
+            // SAFETY: JSC_BORROW — the JSGlobalObject outlives this payload (the C++ wrapper
+            // is owned by that global's heap). Stored as `*const` and only re-borrowed shared.
+            global_this: global as *const JSGlobalObject,
             stream: Context::default(),
             write_result: None,
             poll_ref: CountedKeepAlive::default(),

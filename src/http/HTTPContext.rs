@@ -1061,20 +1061,26 @@ impl<const SSL: bool> Handler<SSL> {
         }
     }
 
-    fn add_memory_back_to_pool(pooled: &mut PooledSocket<SSL>) {
-        pooled.ssl_config = None;
-        if let Some(rp) = pooled.proxy_tunnel.take() {
+    unsafe fn add_memory_back_to_pool(pooled: *mut PooledSocket<SSL>) {
+        // SAFETY: caller guarantees `pooled` points at a live HiveArray slot.
+        // Hoist `owner` first so the `&mut HiveArray` receiver formed by
+        // `pending_sockets.put` (covering this very slot) is created *after*
+        // we are done deriving from `pooled` — avoids Stacked Borrows
+        // invalidation of the slot pointer.
+        let owner = unsafe { (*pooled).owner };
+        unsafe { (*pooled).ssl_config = None };
+        if let Some(rp) = unsafe { (*pooled).proxy_tunnel.take() } {
             // SAFETY: pool owns one strong ref while parked.
             unsafe { ProxyTunnel::deref(rp.as_ptr()) };
         }
-        pooled.target_hostname = Box::default();
-        if let Some(s) = pooled.h2_session.take() {
+        unsafe { (*pooled).target_hostname = Box::default() };
+        if let Some(s) = unsafe { (*pooled).h2_session.take() } {
             // SAFETY: pool owns one strong ref while parked.
             unsafe { h2::ClientSession::deref(s.as_ptr()) };
         }
         // SAFETY: owner is the HiveArray backing this slot; address-stable
         // (static or Box-allocated) and outlives any pooled entry.
-        let ok = unsafe { (*pooled.owner).pending_sockets.put(pooled as *mut _) };
+        let ok = unsafe { (*owner).pending_sockets.put(pooled) };
         debug_assert!(ok);
     }
 

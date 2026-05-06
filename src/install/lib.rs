@@ -878,7 +878,8 @@ impl PackageManager {
                 Ok(dir) => return dir.fd,
                 Err(err) => {
                     bun_core::Output::pretty_errorln(
-                        format_args!("<r><red>error<r>: bun is unable to write files: {}", err),
+                        "<r><red>error<r>: bun is unable to write files: {}",
+                        (err,),
                     );
                     bun_core::Global::crash();
                 }
@@ -916,15 +917,15 @@ impl PackageManager {
         // straight to the cache-relative `.tmp` (the path Zig falls back to
         // anyway whenever the system tempdir is on a different mount — which
         // it almost always is on Linux/macOS with `/tmp` on tmpfs).
-        let tempdir = match Dir { fd: cache_directory }
+        let tempdir = match (Dir { fd: cache_directory })
             .make_open_path(b".tmp", OpenDirOptions::default())
         {
             Ok(d) => d,
             Err(err) => {
-                bun_core::Output::pretty_errorln(format_args!(
+                bun_core::Output::pretty_errorln(
                     "<r><red>error<r>: bun is unable to access tempdir: {}",
-                    err
-                ));
+                    (err,),
+                );
                 bun_core::Global::crash();
             }
         };

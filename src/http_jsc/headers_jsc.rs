@@ -30,15 +30,16 @@ pub fn to_fetch_headers(
             && core::mem::align_of::<HeaderStringPointer>() == core::mem::align_of::<StringPointer>()
     );
     // SAFETY: column type for both fields is `HeaderStringPointer` (see
-    // `HeaderEntry::FIELD_SIZES`); `items` returns `&mut [F]` over live storage.
-    let names: &mut [HeaderStringPointer] =
+    // `HeaderEntry::FIELD_SIZES`); `items` returns `&[F]` over live storage.
+    let names: &[HeaderStringPointer] =
         unsafe { this.entries.items::<HeaderStringPointer>(HeaderEntryField::Name) };
-    let values: &mut [HeaderStringPointer] =
+    let values: &[HeaderStringPointer] =
         unsafe { this.entries.items::<HeaderStringPointer>(HeaderEntryField::Value) };
     FetchHeaders::create(
         global,
-        names.as_mut_ptr().cast::<StringPointer>(),
-        values.as_mut_ptr().cast::<StringPointer>(),
+        // PORT NOTE: C++ side reads only; cast_mut() is safe (no mutation).
+        names.as_ptr().cast_mut().cast::<StringPointer>(),
+        values.as_ptr().cast_mut().cast::<StringPointer>(),
         // Spec headers_jsc.zig:12 uses `ZigString.fromBytes` (scans for
         // non-ASCII and tags UTF-8); `init` would leave the buffer Latin-1
         // and mojibake any UTF-8 header value bytes ≥0x80.

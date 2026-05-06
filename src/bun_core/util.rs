@@ -1665,6 +1665,42 @@ macro_rules! generic_index_int { ($($t:ty),*) => { $(
 )* } }
 generic_index_int!(u8, u16, u32, u64, usize);
 
+/// Generic-integer bound replacing Zig's `comptime T: type` + `@typeInfo(T).Int`
+/// in `validateIntegerRange` / `validateBigIntRange` / `getInteger`
+/// (src/jsc/JSGlobalObject.zig). Provides the small surface those callers need:
+/// signedness, range as `i128`, and lossy/wrapping casts from the JSC numeric
+/// carriers (i32 / f64 / i64 / u64).
+pub trait Integer: Copy + Default {
+    const SIGNED: bool;
+    const MIN_I128: i128;
+    const MAX_I128: i128;
+    const ZERO: Self;
+    fn from_i32(v: i32) -> Self;
+    fn from_f64(v: f64) -> Self;
+    fn from_i64(v: i64) -> Self;
+    fn from_u64(v: u64) -> Self;
+    fn to_f64(self) -> f64;
+}
+macro_rules! impl_integer {
+    ($($t:ty: $signed:expr),* $(,)?) => { $(
+        impl Integer for $t {
+            const SIGNED: bool = $signed;
+            const MIN_I128: i128 = <$t>::MIN as i128;
+            const MAX_I128: i128 = <$t>::MAX as i128;
+            const ZERO: Self = 0;
+            #[inline] fn from_i32(v: i32) -> Self { v as Self }
+            #[inline] fn from_f64(v: f64) -> Self { v as Self }
+            #[inline] fn from_i64(v: i64) -> Self { v as Self }
+            #[inline] fn from_u64(v: u64) -> Self { v as Self }
+            #[inline] fn to_f64(self) -> f64 { self as f64 }
+        }
+    )* };
+}
+impl_integer!(
+    i8: true, i16: true, i32: true, i64: true, isize: true,
+    u8: false, u16: false, u32: false, u64: false, usize: false,
+);
+
 // ── mach_port ─────────────────────────────────────────────────────────────
 // Zig: `if (Environment.isMac) std.c.mach_port_t else u32`.
 #[cfg(target_os = "macos")]

@@ -23,22 +23,22 @@
 use core::cell::Cell;
 use core::ffi::c_int;
 use core::ptr;
+use core::ptr::NonNull;
 
 use bun_boringssl as boringssl;
 use bun_io::StreamBuffer;
-use bun_ptr::IntrusiveRc;
-use bun_runtime::socket::ssl_wrapper::SslWrapper;
-use bun_str::{strings, ZStr};
-use bun_uws::NewSocketHandler;
-use bun_uws_sys::us_bun_verify_error_t;
+use bun_string::{strings, ZStr};
+// CYCLEBREAK: SslWrapper was MOVE_DOWN'd from bun_runtime::socket → bun_uws::ssl_wrapper.
+use bun_uws::ssl_wrapper::{Handlers as SslHandlers, SslWrapper};
+use bun_uws::{us_bun_verify_error_t, NewSocketHandler};
 
 use crate::websocket_client::ErrorCode;
-use super::web_socket_upgrade_client::{HttpUpgradeClient, HttpsUpgradeClient, NewHttpUpgradeClient};
+use super::websocket_upgrade_client::{HttpUpgradeClient, HttpsUpgradeClient, NewHttpUpgradeClient};
 
-// TODO(port): verify exact module path for SSLConfig (jsc.API.ServerConfig.SSLConfig in Zig)
-use bun_runtime::api::server_config::SslConfig;
+// CYCLEBREAK: SSLConfig was MOVE_DOWN'd from bun_runtime::api::server_config → bun_http::ssl_config.
+use bun_http::ssl_config::SslConfig;
 
-bun_output::declare_scope!(WebSocketProxyTunnel, visible);
+bun_core::declare_scope!(WebSocketProxyTunnel, visible);
 
 /// Union type for upgrade client to maintain type safety.
 /// The upgrade client can be either HTTP or HTTPS depending on the proxy connection.
@@ -85,7 +85,7 @@ impl UpgradeClientUnion {
     }
 }
 
-type WebSocketClient = crate::websocket_client::NewWebSocketClient<false>;
+type WebSocketClient = crate::websocket_client::WebSocket<false>;
 
 pub struct WebSocketProxyTunnel {
     ref_count: Cell<u32>,
@@ -179,7 +179,7 @@ impl WebSocketProxyTunnel {
         socket: NewSocketHandler<SSL>,
         sni_hostname: &[u8],
         reject_unauthorized: bool,
-    ) -> Result<IntrusiveRc<WebSocketProxyTunnel>, bun_alloc::AllocError> {
+    ) -> Result<NonNull<WebSocketProxyTunnel>, bun_alloc::AllocError> {
         // TODO(port): const-generic bool → variant selection requires pointer casts in stable Rust;
         // these casts are identity when SSL matches the alias (HttpUpgradeClient = NewHttpUpgradeClient<false>, etc).
         let (upgrade_client, socket) = if SSL {
@@ -206,8 +206,9 @@ impl WebSocketProxyTunnel {
             sni_hostname: Some(Box::<[u8]>::from(sni_hostname)),
             reject_unauthorized,
         });
-        // SAFETY: ref_count initialized to 1; IntrusiveRc takes ownership of the Box allocation.
-        Ok(unsafe { IntrusiveRc::from_box(boxed) })
+        // ref_count initialized to 1; caller owns the Box allocation via the
+        // returned raw pointer (paired with `deref()` for release).
+        Ok(NonNull::from(Box::leak(boxed)))
     }
 
     /// Start TLS handshake inside the tunnel
@@ -225,10 +226,13 @@ impl WebSocketProxyTunnel {
         // check uses self.reject_unauthorized field.
         let options = ssl_options.for_client_verification();
 
-        let wrapper = SslWrapperType::init(
-            options,
+        // CYCLEBREAK: tier-neutral `init_from_options` takes the lowered
+        // `BunSocketContextOptions` (= what `SSLConfig.asUSockets()` produces);
+        // the `SSLConfig`-taking `init` lives in bun_runtime.
+        let wrapper = SslWrapperType::init_from_options(
+            options.as_usockets(),
             true,
-            SslWrapperType::Handlers {
+            SslHandlers {
                 // Store the Box-provenance pointer directly so callback derefs
                 // remain valid regardless of intervening reborrows.
                 ctx: this,
@@ -267,7 +271,7 @@ impl WebSocketProxyTunnel {
         // the `SslWrapper::start()` frame that invoked us.
         let this = unsafe { &*this };
 
-        bun_output::scoped_log!(WebSocketProxyTunnel, "onOpen");
+        bun_core::scoped_log!(WebSocketProxyTunnel, "onOpen");
         // Configure SNI with hostname
         if let Some(wrapper) = this.wrapper.as_ref() {
             if let Some(ssl_ptr) = wrapper.ssl {
@@ -288,7 +292,7 @@ impl WebSocketProxyTunnel {
         // SAFETY: ctx pointer set in `start`; SSLWrapper guarantees it is live during callbacks.
         let _guard = unsafe { Self::ref_scope(this) };
 
-        bun_output::scoped_log!(WebSocketProxyTunnel, "onData: {} bytes", decrypted_data.len());
+        bun_core::scoped_log!(WebSocketProxyTunnel, "onData: {} bytes", decrypted_data.len());
         if decrypted_data.is_empty() {
             return;
         }
@@ -317,7 +321,7 @@ impl WebSocketProxyTunnel {
         // SAFETY: ctx pointer set in `start`; SSLWrapper guarantees it is live during callbacks.
         let _guard = unsafe { Self::ref_scope(this) };
 
-        bun_output::scoped_log!(WebSocketProxyTunnel, "onHandshake: success={}", success);
+        bun_core::scoped_log!(WebSocketProxyTunnel, "onHandshake: success={}", success);
 
         // Snapshot the fields we need; `terminate()` / `on_proxy_tls_handshake_complete()`
         // re-enter `tunnel.detach_upgrade_client()` / `tunnel.write()`, so no borrow of
@@ -369,7 +373,7 @@ impl WebSocketProxyTunnel {
         // SAFETY: ctx pointer set in `start`; SSLWrapper guarantees it is live during callbacks.
         let _guard = unsafe { Self::ref_scope(this) };
 
-        bun_output::scoped_log!(WebSocketProxyTunnel, "onClose");
+        bun_core::scoped_log!(WebSocketProxyTunnel, "onClose");
 
         // Snapshot backref pointers; `fail()`/`terminate()` re-enter
         // `tunnel.clear_connected_web_socket()` / `tunnel.shutdown()` /
@@ -398,7 +402,7 @@ impl WebSocketProxyTunnel {
     /// This transitions the tunnel from upgrade phase to connected phase.
     /// After calling this, decrypted data will be forwarded to the WebSocket client.
     pub fn set_connected_web_socket(&mut self, ws: *mut WebSocketClient) {
-        bun_output::scoped_log!(WebSocketProxyTunnel, "setConnectedWebSocket");
+        bun_core::scoped_log!(WebSocketProxyTunnel, "setConnectedWebSocket");
         self.connected_websocket = ws;
         // Clear the upgrade client reference since we're now in connected phase
         self.upgrade_client = UpgradeClientUnion::None;
@@ -426,7 +430,7 @@ impl WebSocketProxyTunnel {
         // to this body is sound — the callers (`receive`/`on_writable`/`write`/`shutdown`)
         // hold no `&mut Self` across the SslWrapper drive that fires us.
         let this = unsafe { &mut *this };
-        bun_output::scoped_log!(WebSocketProxyTunnel, "writeEncrypted: {} bytes", encrypted_data.len());
+        bun_core::scoped_log!(WebSocketProxyTunnel, "writeEncrypted: {} bytes", encrypted_data.len());
 
         // If data is already buffered, queue this to maintain TLS record ordering
         if this.write_buffer.is_not_empty() {

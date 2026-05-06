@@ -1450,6 +1450,10 @@ pub mod codegen {
             MySQLQueryPrototype__targetGetCachedValue,
             MySQLQueryPrototype__targetSetCachedValue);
         get_constructor!(MySQLQuery__getConstructor);
+        js_class_fns!(crate::mysql::JSMySQLQuery,
+            MySQLQuery__create,
+            MySQLQuery__fromJS,
+            MySQLQuery__fromJSDirect);
     }
     #[allow(non_snake_case)]
     pub use js_mysql_query as JSMySQLQuery;

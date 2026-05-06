@@ -7,7 +7,7 @@ use bun_string::{self as bstr_mod, strings, String as BunString};
 use crate::jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, VirtualMachine};
 use bun_uws as uws;
 use bun_aio::KeepAlive;
-use bun_boringssl_sys as BoringSSL;
+use bun_boringssl as BoringSSL;
 use bun_collections::{HashMap, StringMap, OffsetByteList};
 use crate::jsc::EventLoopTimer;
 use crate::jsc::webcore::AutoFlusher;
@@ -29,6 +29,7 @@ use bun_sql::postgres::Status;
 use bun_sql::postgres::TLSStatus;
 use bun_sql::postgres::AnyPostgresError;
 use crate::postgres::error_jsc::{create_postgres_error, postgres_error_to_js};
+use bun_sql::postgres::PostgresErrorOptions;
 
 // Aliases for PostgresRequest's `on_data` dispatch (Zig used PascalCase nested types).
 pub use bun_sql::postgres::SSLMode as SslMode;
@@ -519,7 +520,7 @@ impl PostgresSQLConnection {
         use std::io::Write as _;
         let _ = write!(&mut message, "{}", args);
 
-        let err = match create_postgres_error(self.global(), &message, create_postgres_error::Options { code: Some(code), ..Default::default() }) {
+        let err = match create_postgres_error(self.global(), &message, PostgresErrorOptions { code: Some(code), ..Default::default() }) {
             Ok(v) => v,
             Err(e) => self.global().take_error(e),
         };
@@ -1342,6 +1343,15 @@ impl Writer {
     }
 }
 
+impl protocol::WriterContext for Writer {
+    #[inline]
+    fn offset(self) -> usize { Writer::offset(&self) }
+    #[inline]
+    fn write(mut self, bytes: &[u8]) -> Result<(), AnyPostgresError> { Writer::write(&mut self, bytes) }
+    #[inline]
+    fn pwrite(mut self, bytes: &[u8], i: usize) -> Result<(), AnyPostgresError> { Writer::pwrite(&mut self, bytes, i) }
+}
+
 impl PostgresSQLConnection {
     pub fn writer(&mut self) -> protocol::NewWriter<Writer> {
         protocol::NewWriter {
@@ -1426,6 +1436,21 @@ impl Reader {
 
         Err(AnyPostgresError::ShortRead)
     }
+}
+
+impl protocol::ReaderContext for Reader {
+    #[inline]
+    fn mark_message_start(&mut self) { Reader::mark_message_start(self) }
+    #[inline]
+    fn peek(&self) -> &[u8] { Reader::peek(self) }
+    #[inline]
+    fn skip(&mut self, count: usize) { Reader::skip(self, count) }
+    #[inline]
+    fn ensure_length(&mut self, count: usize) -> bool { Reader::ensure_length(self, count) }
+    #[inline]
+    fn read(&mut self, count: usize) -> Result<Data, AnyPostgresError> { Reader::read(self, count) }
+    #[inline]
+    fn read_z(&mut self) -> Result<Data, AnyPostgresError> { Reader::read_z(self) }
 }
 
 impl PostgresSQLConnection {

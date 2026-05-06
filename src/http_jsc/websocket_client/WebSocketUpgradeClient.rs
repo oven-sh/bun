@@ -30,27 +30,40 @@ use bun_collections::StringSet;
 use bun_core::fmt::HostFormatter;
 use bun_core::FeatureFlags;
 use bun_http::{HeaderValueIterator, Headers};
-use bun_jsc::{JSGlobalObject, JSValue, VirtualMachine};
+use bun_jsc::{JSGlobalObject, JSValue, VirtualMachineRef};
 use bun_picohttp as picohttp;
-use bun_str::strings;
-use bun_str::{String as BunString, Utf8Slice};
-use bun_uws::{self as uws, SocketHandler, SocketKind, SslCtxRef};
+use bun_string::strings;
+use bun_string::{String as BunString, ZigStringSlice as Utf8Slice};
+use bun_uws::{self as uws, SocketHandler, SocketKind, SslCtx};
 
-use super::cpp_web_socket::CppWebSocket;
-use super::web_socket_deflate as WebSocketDeflate;
-use super::web_socket_proxy::WebSocketProxy;
-use super::web_socket_proxy_tunnel::WebSocketProxyTunnel;
+use super::cpp_websocket::CppWebSocket;
+use super::websocket_deflate as WebSocketDeflate;
+use super::websocket_proxy::WebSocketProxy;
+use super::websocket_proxy_tunnel::WebSocketProxyTunnel;
 use crate::websocket_client::ErrorCode;
 
-// TODO(port): confirm crate path — Zig is `jsc.API.ServerConfig.SSLConfig`
-use bun_runtime::api::server_config::SSLConfig;
+// CYCLEBREAK: SSLConfig was MOVE_DOWN'd from bun_runtime::api::server_config →
+// bun_http::ssl_config (data + as_usockets/for_client_verification). The
+// JSC-dependent `from_js` constructor stays in bun_runtime; see
+// `Bun__WebSocket__parseSSLConfig` body-level gate below.
+use bun_http::ssl_config::SSLConfig;
 
-bun_output::declare_scope!(WebSocketUpgradeClient, visible);
+bun_core::declare_scope!(WebSocketUpgradeClient, visible);
 
 macro_rules! log {
     ($($arg:tt)*) => {
-        bun_output::scoped_log!(WebSocketUpgradeClient, $($arg)*)
+        bun_core::scoped_log!(WebSocketUpgradeClient, $($arg)*)
     };
+}
+
+/// Local `VirtualMachine → EventLoopCtx` adapter for `KeepAlive::{ref,unref}`.
+/// Reuses the vtable defined in the parent `websocket_client` module.
+#[inline]
+fn vm_loop_ctx(vm: *mut VirtualMachineRef) -> bun_aio::EventLoopCtx {
+    bun_aio::EventLoopCtx {
+        owner: vm as *mut (),
+        vtable: &crate::websocket_client::WS_VM_EVENT_LOOP_CTX_VTABLE,
+    }
 }
 
 /// `uws.NewSocketHandler(ssl)`
@@ -234,9 +247,14 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // (ws.WebSocket's `perMessageDeflate` option; true by default).
         offer_permessage_deflate: bool,
     ) -> Option<*mut Self> {
-        let vm = global.bun_vm();
+        let vm_ptr = global.bun_vm();
+        // SAFETY: `bun_vm()` never returns null for a Bun-owned global; VM
+        // outlives this call. `vm` is rebound as a fresh `&mut` at each use
+        // site below to avoid stacking exclusive borrows across re-entrant
+        // calls.
+        let vm = unsafe { &mut *vm_ptr };
 
-        debug_assert!(vm.event_loop_handle().is_some());
+        debug_assert!(vm.event_loop_handle.is_some());
 
         // Decode all BunString inputs into UTF-8 slices. The underlying
         // JavaScript strings may be Latin1 or UTF-16; `String.to_utf8()` either
@@ -378,7 +396,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         };
         let connect_port = if using_proxy { proxy_port } else { port };
 
-        client_ref.poll_ref.r#ref(vm);
+        client_ref.poll_ref.r#ref(vm_loop_ctx(vm_ptr));
         let display_host: &[u8] = if FeatureFlags::HARDCODE_LOCALHOST_TO_127_0_0_1
             && display_host_ == b"localhost"
         {
@@ -394,7 +412,13 @@ impl<const SSL: bool> HTTPClient<SSL> {
             using_proxy
         );
 
-        let group = vm.rare_data().ws_upgrade_group(vm, SSL);
+        // PORT NOTE: reshaped for borrowck — `rare_data()` borrows `vm` mutably and
+        // `ws_upgrade_group` also wants a `vm` reference. See websocket_client.rs.
+        let group = {
+            // SAFETY: `rare_data()` returns `&mut RareData` reached through a
+            // separate Box; the `&*vm_ptr` argument does not overlap.
+            unsafe { (*vm_ptr).rare_data().ws_upgrade_group::<SSL>(&*vm_ptr) }
+        };
         let kind: SocketKind = if SSL {
             SocketKind::WsClientUpgradeTls
         } else {
@@ -407,12 +431,12 @@ impl<const SSL: bool> HTTPClient<SSL> {
             'brk: {
                 if let Some(config) = &client_ref.ssl_config {
                     if config.requires_custom_request_ctx {
-                        let mut err = uws::create_bun_socket_error_t::None;
+                        let mut err = uws::create_bun_socket_error_t::none;
                         // Per-VM weak cache: every `new WebSocket(wss://, {tls:{ca}})`
                         // with the same CA shares one CTX with each other and with
                         // any `Bun.connect`/Postgres/etc. that named it.
-                        let ctx = match vm
-                            .rare_data()
+                        // SAFETY: see `group` above — non-overlapping reborrow of `*vm_ptr`.
+                        let ctx = match unsafe { (*vm_ptr).rare_data() }
                             .ssl_ctx_cache()
                             .get_or_create_opts(config.as_usockets_for_client_verification(), &mut err)
                         {
@@ -427,7 +451,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                                     "createSSLContext failed for WebSocket: {}",
                                     <&'static str>::from(err)
                                 );
-                                client_ref.poll_ref.unref(vm);
+                                client_ref.poll_ref.unref(vm_loop_ctx(vm_ptr));
                                 // SAFETY: `client` from Box::into_raw above; sole owner.
                                 unsafe { Self::deref(client) };
                                 return None;
@@ -441,7 +465,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
                         break 'brk client_ref.secure.as_deref();
                     }
                 }
-                Some(vm.rare_data().default_client_ssl_ctx())
+                // SAFETY: see `group` above — non-overlapping reborrow of `*vm_ptr`.
+                Some(unsafe { (*vm_ptr).rare_data() }.default_client_ssl_ctx())
             }
         } else {
             None
@@ -468,7 +493,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
                         unsafe { Self::deref(client) };
                         return None;
                     }
-                    bun_analytics::Features::WEB_SOCKET.increment();
+                    bun_analytics::features::web_socket
+                        .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
                     if SSL {
                         // SNI uses the URL host (defaulted to "localhost" in
@@ -513,7 +539,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     unsafe { Self::deref(client) };
                     return None;
                 }
-                bun_analytics::Features::WEB_SOCKET.increment();
+                bun_analytics::features::web_socket
+                    .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
                 if SSL {
                     // SNI for the outer TLS socket must use the host we actually
@@ -545,7 +572,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     }
 
     pub fn clear_data(&mut self) {
-        self.poll_ref.unref(VirtualMachine::get());
+        self.poll_ref.unref(vm_loop_ctx(bun_jsc::virtual_machine::get()));
 
         self.subprotocols.clear_and_free();
         self.clear_input();

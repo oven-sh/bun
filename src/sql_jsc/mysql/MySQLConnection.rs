@@ -1587,12 +1587,12 @@ pub struct QueryResult {
 
 // TODO(port): IdentityContext(u64) hasher — bun_collections::HashMap should support identity hash for u64 keys
 pub type PreparedStatementsMap = HashMap<u64, *mut MySQLStatement>;
+/// Result of `PreparedStatementsMap::get_or_put` — surfaced for
+/// `JSMySQLConnection::get_statement_from_signature_hash`.
+pub type PreparedStatementsMapGetOrPutResult<'a> =
+    bun_collections::hash_map::GetOrPutResult<'a, *mut MySQLStatement>;
 
 const MAX_PIPELINE_SIZE: usize = u16::MAX as usize; // about 64KB per connection
-
-// TODO(b2-blocked): bun_collections::hash_map::GetOrPutResult — type path
-// unconfirmed; remove the alias until JSMySQLConnection (the only consumer) is
-// un-gated.
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

@@ -1,5 +1,4 @@
 use crate::postgres::types::int_types::int4;
-use crate::postgres::protocol::new_writer::WriterContext;
 
 // `std.mem.toBytes(Int32(n))` — Zig's `Int32` casts `n` to `int4` (u32) and
 // `@byteSwap`s it to network order; `toBytes` then bit-casts to `[4]u8`. The net
@@ -79,8 +78,8 @@ pub use crate::shared::column_identifier::ColumnIdentifier;
 pub use crate::postgres::protocol::decoder_wrap::DecoderWrap;
 pub use crate::postgres::protocol::field_message::FieldMessage;
 pub use crate::postgres::protocol::field_type::FieldType;
-pub use crate::postgres::protocol::new_reader::NewReader;
-pub use crate::postgres::protocol::new_writer::NewWriter;
+pub use crate::postgres::protocol::new_reader::{NewReader, ReaderContext};
+pub use crate::postgres::protocol::new_writer::{NewWriter, WriterContext};
 pub use crate::postgres::protocol::portal_or_prepared_statement::PortalOrPreparedStatement;
 pub use crate::postgres::protocol::write_wrap::WriteWrap;
 

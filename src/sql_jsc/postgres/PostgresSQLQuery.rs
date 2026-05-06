@@ -229,7 +229,7 @@ impl PostgresSQLQuery {
         ]);
     }
 
-    pub fn on_error(&mut self, err: PostgresSQLStatement::Error, global_object: &JSGlobalObject) {
+    pub fn on_error(&mut self, err: super::postgres_sql_statement::Error, global_object: &JSGlobalObject) {
         let Ok(e) = err.to_js(global_object) else { return };
         self.on_js_error(e, global_object);
     }

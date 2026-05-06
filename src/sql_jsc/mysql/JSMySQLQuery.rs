@@ -10,10 +10,12 @@ use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode;
 
 use crate::mysql::protocol::any_mysql_error_jsc::mysql_error_to_js;
 use super::js_mysql_connection::MySQLConnection;
+// PORT NOTE: `my_sql_query` exports both the `MySQLQuery` *struct* and a
+// `declare_scope!`-generated `MySQLQuery` *static* (ScopedLogger). Importing
+// the name once pulls in both namespaces, so the `debug!` macro below resolves
+// against the imported static — no second `declare_scope!` here.
 use super::my_sql_query::MySQLQuery;
 use super::my_sql_statement::MySQLStatement;
-
-bun_core::declare_scope!(MySQLQuery, visible);
 
 macro_rules! debug {
     ($($arg:tt)*) => { bun_core::scoped_log!(MySQLQuery, $($arg)*) };
@@ -59,7 +61,9 @@ impl JSMySQLQuery {
         core::mem::size_of::<Self>()
     }
 
-    #[bun_jsc::host_fn]
+    // TODO(b2-blocked): #[bun_jsc::host_fn] — free-fn shim emitted inside an
+    // `impl` block tries to call `constructor()` unqualified; re-enable once the
+    // proc-macro emits `Self::constructor` for receiverless impl items.
     pub fn constructor(
         global_this: &JSGlobalObject,
         _callframe: &CallFrame,
@@ -85,7 +89,8 @@ impl JSMySQLQuery {
         }
     }
 
-    #[bun_jsc::host_fn]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(export = "MySQLQuery__createInstance")]
+    // — same proc-macro limitation as `constructor` above.
     pub fn create_instance(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,

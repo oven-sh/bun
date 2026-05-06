@@ -21,7 +21,11 @@ use bun_uws::{self as uws, AnySocket, NewSocketHandler, SocketTCP};
 
 use crate::mysql::protocol::any_mysql_error_jsc::mysql_error_to_js;
 use super::js_mysql_query::JSMySQLQuery;
-use super::my_sql_connection::{self as my_sql_connection, MySQLConnection};
+// PORT NOTE: `my_sql_connection::MySQLConnection` (the protocol-layer struct)
+// is intentionally NOT imported by name — that ident is taken in this module's
+// value namespace by the `declare_scope!` static and in the type namespace by
+// the `pub use JSMySQLConnection as MySQLConnection` re-export below.
+use super::my_sql_connection::{self as my_sql_connection};
 use super::my_sql_statement::MySQLStatement;
 use super::protocol::result_set::{self as ResultSet};
 
@@ -44,7 +48,7 @@ pub struct JSMySQLConnection {
     // pub(crate): MySQLRequestQueue::advance projects `connection.queue` via
     // `addr_of_mut!` from a `*mut JSMySQLConnection` so that the queue pointer
     // and the connection pointer share one Stacked Borrows provenance tag.
-    pub(crate) connection: MySQLConnection,
+    pub(crate) connection: my_sql_connection::MySQLConnection,
 
     pub auto_flusher: AutoFlusher,
 
@@ -255,7 +259,9 @@ impl JSMySQLConnection {
         self.vm.timer.insert(&mut self.max_lifetime_timer);
     }
 
-    #[bun_jsc::host_fn]
+    // TODO(b2-blocked): #[bun_jsc::host_fn] — free-fn shim emitted inside an
+    // `impl` block tries to call `constructor()` unqualified; re-enable once the
+    // proc-macro emits `Self::constructor` for receiverless impl items.
     pub fn constructor(
         global_object: &JSGlobalObject,
         _callframe: &CallFrame,
@@ -377,7 +383,8 @@ impl JSMySQLConnection {
         self.poll_ref.unref(self.vm);
     }
 
-    #[bun_jsc::host_fn]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(export = "MySQLConnection__createInstance")]
+    // — same proc-macro limitation as `constructor` above.
     pub fn create_instance(
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -528,7 +535,7 @@ impl JSMySQLConnection {
             global_object,
             vm,
             poll_ref: KeepAlive::default(),
-            connection: MySQLConnection::init(
+            connection: my_sql_connection::MySQLConnection::init(
                 database,
                 username,
                 password,
@@ -849,7 +856,7 @@ impl JSMySQLConnection {
         request.resolve(self.get_queries_array(), result);
     }
 
-    pub fn on_result_row<C>(
+    pub fn on_result_row<C: bun_sql::mysql::protocol::ReaderContext>(
         &mut self,
         request: &mut JSMySQLQuery,
         statement: &mut MySQLStatement,
@@ -970,9 +977,12 @@ impl JSMySQLConnection {
     pub fn get_statement_from_signature_hash(
         &mut self,
         signature_hash: u64,
-    ) -> Result<my_sql_connection::PreparedStatementsMapGetOrPutResult, bun_core::Error> {
-        // TODO(port): narrow error set
-        self.connection.statements.get_or_put(signature_hash)
+    ) -> Result<my_sql_connection::PreparedStatementsMapGetOrPutResult<'_>, bun_core::Error> {
+        // TODO(port): narrow error set — `get_or_put` currently yields `AllocError`.
+        self.connection
+            .statements
+            .get_or_put(signature_hash)
+            .map_err(|_| bun_core::err!("OutOfMemory"))
     }
 }
 

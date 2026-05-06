@@ -10,7 +10,7 @@
 
 use core::ffi::c_void;
 
-use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::virtual_machine as VirtualMachine;
 use bun_string::{String as BunString, ZigString};
 use bun_uws_sys::{Socket, SslCtx};
 
@@ -58,7 +58,9 @@ unsafe extern "C" {
 // would force needless `unsafe { &mut *ptr }` at every site.
 impl CppWebSocket {
     pub fn did_abrupt_close(&self, reason: ErrorCode) {
-        let event_loop = VirtualMachine::get().event_loop();
+        // SAFETY: VirtualMachine::get() returns the live current-thread VM;
+        // event_loop() yields its raw event-loop pointer (live for VM lifetime).
+        let event_loop = unsafe { &mut *(*VirtualMachine::get()).event_loop() };
         event_loop.enter();
         // SAFETY: self is a valid C++ WebCore::WebSocket; event loop is entered.
         unsafe { WebSocket__didAbruptClose(self, reason) };
@@ -66,7 +68,9 @@ impl CppWebSocket {
     }
 
     pub fn did_close(&self, code: u16, reason: &mut BunString) {
-        let event_loop = VirtualMachine::get().event_loop();
+        // SAFETY: VirtualMachine::get() returns the live current-thread VM;
+        // event_loop() yields its raw event-loop pointer (live for VM lifetime).
+        let event_loop = unsafe { &mut *(*VirtualMachine::get()).event_loop() };
         event_loop.enter();
         // SAFETY: self is a valid C++ WebCore::WebSocket; reason outlives the call.
         unsafe { WebSocket__didClose(self, code, reason) };
@@ -74,7 +78,9 @@ impl CppWebSocket {
     }
 
     pub fn did_receive_text(&self, clone: bool, text: &ZigString) {
-        let event_loop = VirtualMachine::get().event_loop();
+        // SAFETY: VirtualMachine::get() returns the live current-thread VM;
+        // event_loop() yields its raw event-loop pointer (live for VM lifetime).
+        let event_loop = unsafe { &mut *(*VirtualMachine::get()).event_loop() };
         event_loop.enter();
         // SAFETY: self is a valid C++ WebCore::WebSocket; text outlives the call.
         unsafe { WebSocket__didReceiveText(self, clone, text) };
@@ -82,7 +88,9 @@ impl CppWebSocket {
     }
 
     pub fn did_receive_bytes(&self, bytes: *const u8, byte_len: usize, opcode: u8) {
-        let event_loop = VirtualMachine::get().event_loop();
+        // SAFETY: VirtualMachine::get() returns the live current-thread VM;
+        // event_loop() yields its raw event-loop pointer (live for VM lifetime).
+        let event_loop = unsafe { &mut *(*VirtualMachine::get()).event_loop() };
         event_loop.enter();
         // SAFETY: self is a valid C++ WebCore::WebSocket; bytes points to byte_len valid bytes.
         unsafe { WebSocket__didReceiveBytes(self, bytes, byte_len, opcode) };
@@ -90,7 +98,9 @@ impl CppWebSocket {
     }
 
     pub fn reject_unauthorized(&self) -> bool {
-        let event_loop = VirtualMachine::get().event_loop();
+        // SAFETY: VirtualMachine::get() returns the live current-thread VM;
+        // event_loop() yields its raw event-loop pointer (live for VM lifetime).
+        let event_loop = unsafe { &mut *(*VirtualMachine::get()).event_loop() };
         event_loop.enter();
         // SAFETY: self is a valid C++ WebCore::WebSocket.
         let result = unsafe { WebSocket__rejectUnauthorized(self) };
@@ -106,7 +116,9 @@ impl CppWebSocket {
         deflate_params: Option<&websocket_deflate::Params>,
         secure: Option<&mut SslCtx>,
     ) {
-        let event_loop = VirtualMachine::get().event_loop();
+        // SAFETY: VirtualMachine::get() returns the live current-thread VM;
+        // event_loop() yields its raw event-loop pointer (live for VM lifetime).
+        let event_loop = unsafe { &mut *(*VirtualMachine::get()).event_loop() };
         event_loop.enter();
         // SAFETY: self is a valid C++ WebCore::WebSocket; all pointers are valid for the call duration.
         unsafe {
@@ -129,7 +141,9 @@ impl CppWebSocket {
         buffered_len: usize,
         deflate_params: Option<&websocket_deflate::Params>,
     ) {
-        let event_loop = VirtualMachine::get().event_loop();
+        // SAFETY: VirtualMachine::get() returns the live current-thread VM;
+        // event_loop() yields its raw event-loop pointer (live for VM lifetime).
+        let event_loop = unsafe { &mut *(*VirtualMachine::get()).event_loop() };
         event_loop.enter();
         // SAFETY: self is a valid C++ WebCore::WebSocket; tunnel/buffered_data are valid for the call duration.
         unsafe {

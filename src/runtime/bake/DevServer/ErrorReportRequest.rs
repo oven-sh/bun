@@ -213,7 +213,7 @@ impl ErrorReportRequest {
             let Some(result) = gop.value_ptr.as_ref() else {
                 continue;
             };
-            let result: &SourceMapStore::GetResult = result;
+            let result: &GetResult<'_> = result;
 
             // When before the first generated line, remap to the HMR runtime.
             //

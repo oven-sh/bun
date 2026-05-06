@@ -128,7 +128,7 @@ impl SecureContext {
                 // SAFETY: FFI; ERR_get_error reads the thread-local BoringSSL error queue, no preconditions.
                 let code = unsafe { boringssl::ERR_get_error() };
                 if code != 0 {
-                    return Err(global.throw_value(bun_boringssl::err_to_js(global, code)));
+                    return Err(global.throw_value(err_to_js(global, code)));
                 }
                 return Err(global.throw("Failed to create SSL context"));
             }

@@ -3110,7 +3110,16 @@ pub mod JSZstd {
             // SAFETY: job is freshly allocated and exclusively owned here.
             let job_ref = unsafe { &mut *job };
             job_ref.promise = jsc::JSPromiseStrong::init(global_this);
-            job_ref.any_task = jsc::AnyTask::new::<ZstdJob>(ZstdJob::run_from_js).init(job);
+            // PORT NOTE: Zig `jsc.AnyTask.New(ZstdJob, runFromJS).init(job)` monomorphizes
+            // a wrapper at comptime; Rust's `AnyTask::New<T>` cannot bind a callback
+            // const-generically yet, so build the AnyTask inline with an erased shim.
+            job_ref.any_task = jsc::AnyTask::AnyTask {
+                ctx: core::ptr::NonNull::new(job.cast::<c_void>()),
+                callback: |p: *mut c_void| {
+                    ZstdJob::run_from_js(p.cast::<ZstdJob>())
+                        .map_err(|_| core::ptr::null_mut::<()>())
+                },
+            };
             job_ref.poll.ref_(vm);
             WorkPool::schedule(&mut job_ref.task);
 

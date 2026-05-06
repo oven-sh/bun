@@ -166,8 +166,8 @@ pub struct Subprocess<'a> {
     pub event_loop_timer: EventLoopTimer,
     pub kill_signal: SignalCode,
 
-    pub stdout_maxbuf: Option<Arc<MaxBuf>>,
-    pub stderr_maxbuf: Option<Arc<MaxBuf>>,
+    pub stdout_maxbuf: Option<NonNull<MaxBuf::MaxBuf>>,
+    pub stderr_maxbuf: Option<NonNull<MaxBuf::MaxBuf>>,
     pub exited_due_to_maxbuf: Option<MaxBuf::Kind>,
 }
 

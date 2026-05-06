@@ -393,9 +393,9 @@ pub static mut IS_BUNX_EXE: bool = false;
 pub mod command {
     use super::*;
 
-    pub fn get() -> Context {
+    pub fn get() -> Context<'static> {
         // SAFETY: only called after `start()` initialized GLOBAL_CLI_CTX
-        unsafe { GLOBAL_CLI_CTX }
+        unsafe { &mut *GLOBAL_CLI_CTX }
     }
 
     pub use bun_options_types::Context::{

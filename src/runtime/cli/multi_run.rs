@@ -458,8 +458,7 @@ impl<'a> State<'a> {
         for handle in self.handles.iter_mut() {
             if let Some(proc) = &mut handle.process {
                 if matches!(proc.status, Status::Running) {
-                    // TODO(port): SIGINT constant location
-                    let _ = proc.ptr.kill(bun_sys::posix::SIG_INT);
+                    let _ = proc.ptr.kill(bun_sys::SignalCode::SIGINT.0);
                 }
             }
         }

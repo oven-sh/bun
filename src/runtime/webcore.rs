@@ -395,6 +395,14 @@ pub mod multipart_options_impl;
 pub mod s3 {
     pub use super::multipart_options_impl as multipart_options;
     pub use super::multipart_options_impl::MultiPartUploadOptions;
+    // Forward the credential / enum stubs so `crate::webcore::s3::{ACL, ...}`
+    // resolves for S3Client.rs (its `crate::s3` path is being migrated here).
+    // TODO(b2-blocked): replace with real bun_s3 types once that crate exists.
+    pub use super::s3_stub::{
+        S3Credentials, S3CredentialsWithOptions, S3DeleteResult, S3ListObjectsOptions,
+        S3ListObjectsResult, ACL, StorageClass, S3SimpleRequestResult,
+        S3DownloadStreamWrapper, S3HttpSimpleTask,
+    };
 
     // PORT NOTE: `client` is the umbrella re-export hub (matches Zig's `s3/client.zig`
     // which `pub const X = @import(...)`-s every sibling). It pulls in `simple_request`

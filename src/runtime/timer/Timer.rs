@@ -888,11 +888,8 @@ pub mod internal_bindings {
 const US_PER_S: i64 = 1_000_000;
 const NS_PER_US: i64 = 1_000;
 
-// TODO(port): these enum types live in EventLoopTimer.zig; referenced here for
-// field access. Phase B should import them from `bun_event_loop::EventLoopTimer`.
-use bun_event_loop::event_loop_timer::{
-    InHeap, State as EventLoopTimerState, Tag as EventLoopTimerTag,
-};
+// These enum types live in EventLoopTimer.rs; re-exported through `super` (mod.rs).
+use super::{InHeap, EventLoopTimerState, EventLoopTimerTag};
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

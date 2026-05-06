@@ -79,7 +79,7 @@ pub fn get_candidate_package_patterns<'a>(
                     bun_sys::Errno::NOENT | bun_sys::Errno::ACCES | bun_sys::Errno::PERM => {
                         break 'body;
                     }
-                    errno => return Err(bun_core::errno_to_error(errno)),
+                    _ => return Err(err.into()),
                 },
                 Ok(source) => source,
             };

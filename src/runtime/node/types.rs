@@ -753,20 +753,22 @@ impl Encoding {
         global_object: &JSGlobalObject,
         input: &[u8; SIZE],
     ) -> JsResult<JSValue> {
+        // PERF(port): Zig used comptime-sized stack buffers; stable Rust forbids
+        // const-generic arithmetic in array lengths, so we heap-allocate. Revisit
+        // once `generic_const_exprs` stabilizes or callers pass concrete sizes.
         match self {
             Self::Base64 => {
-                // TODO(port): std.base64.standard.Encoder.calcSize — using bun_core::base64
-                let mut buf = [0u8; bun_core::base64::standard_encoded_len(SIZE)];
+                let mut buf = vec![0u8; bun_core::base64::standard_encoder_calc_size(SIZE)];
                 let len = bun_core::base64::encode(&mut buf, input);
                 Ok(ZigString::init(&buf[..len]).to_js(global_object))
             }
             Self::Base64url => {
-                let mut buf = [0u8; bun_core::base64::url_safe_no_pad_encoded_len(SIZE)];
-                let encoded = bun_core::base64::url_safe_no_pad_encode(&mut buf, input);
-                Ok(ZigString::init(&buf[..encoded.len()]).to_js(global_object))
+                let mut buf = vec![0u8; bun_base64::simdutf_encode_len_url_safe(SIZE)];
+                let encoded = bun_base64::simdutf_encode_url_safe(&mut buf, input);
+                Ok(ZigString::init(&buf[..encoded]).to_js(global_object))
             }
             Self::Hex => {
-                let mut buf = [0u8; SIZE * 4];
+                let mut buf = vec![0u8; SIZE * 4];
                 use std::io::Write;
                 let mut cursor: &mut [u8] = &mut buf[..];
                 // TODO(port): Zig "{x}" on a byte slice prints lowercase hex per byte.

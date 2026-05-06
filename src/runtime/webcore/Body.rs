@@ -2088,7 +2088,7 @@ impl<'a> ValueBufferer<'a> {
 
     fn create_js_sink(&mut self, stream: ReadableStream) -> Result<(), bun_core::Error> {
         stream.value.ensure_still_alive();
-        let mut buffer_stream = Box::new(ArrayBufferSink::JSSink {
+        let mut buffer_stream = Box::new(ArrayBufferJSSink {
             sink: ArrayBufferSink {
                 bytes: bun_collections::ByteList::empty(),
                 next: None,
@@ -2098,7 +2098,7 @@ impl<'a> ValueBufferer<'a> {
         let global_this = self.global;
         let signal = &mut buffer_stream.sink.signal;
 
-        *signal = ArrayBufferSink::JSSink::SinkSignal::init(JSValue::ZERO);
+        *signal = sink::SinkSignal::<ArrayBufferSink>::init(JSValue::ZERO);
 
         // explicitly set it to a dead pointer
         // we use this memory address to disable signals being sent

@@ -79,7 +79,8 @@ impl<'a> CopyFile<'a> {
             read_off: 0,
         });
         // store.ref() / source_store.ref() — handled by Arc::clone above
-        CopyFilePromiseTask::create_on_js_thread(global_this, read_file)
+        let _ = (global_this, read_file);
+        todo!("blocked_on: jsc::ConcurrentPromiseTask<T>::create_on_js_thread (gated)")
     }
 
     pub fn reject(&mut self, promise: &mut JSPromise) -> jsc::JSTerminatedResult<()> {

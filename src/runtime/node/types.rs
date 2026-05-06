@@ -645,6 +645,24 @@ pub static ENCODING_MAP: phf::Map<&'static [u8], Encoding> = phf::phf_map! {
     b"base64url" => Encoding::Base64url,
 };
 
+impl From<Encoding> for bun_str::NodeEncoding {
+    fn from(e: Encoding) -> Self {
+        // Both enums are `#[repr(u8)]` with identical discriminant order
+        // (Utf8, Ucs2, Utf16le, Latin1, Ascii, Base64, Base64url, Hex, Buffer).
+        match e {
+            Encoding::Utf8 => Self::Utf8,
+            Encoding::Ucs2 => Self::Ucs2,
+            Encoding::Utf16le => Self::Utf16le,
+            Encoding::Latin1 => Self::Latin1,
+            Encoding::Ascii => Self::Ascii,
+            Encoding::Base64 => Self::Base64,
+            Encoding::Base64url => Self::Base64url,
+            Encoding::Hex => Self::Hex,
+            Encoding::Buffer => Self::Buffer,
+        }
+    }
+}
+
 impl Encoding {
     pub fn is_binary_to_text(self) -> bool {
         matches!(self, Self::Hex | Self::Base64 | Self::Base64url)

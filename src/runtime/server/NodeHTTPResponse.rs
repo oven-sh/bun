@@ -1484,12 +1484,12 @@ impl NodeHTTPResponse {
         if IS_END {
             // Discard the body read ref if it's pending and no onData callback is set at this point.
             // This is the equivalent of req._dump().
-            if self.body_read_ref.has()
+            if self.body_read_ref.has
                 && self.body_read_state == BodyReadState::Pending
                 && (!self.flags.contains(Flags::HAS_CUSTOM_ON_DATA)
                     || js::on_data_get_cached(this_value).is_none())
             {
-                self.body_read_ref.unref(VirtualMachine::get());
+                self.body_read_ref.unref(vm_get());
                 self.body_read_state = BodyReadState::None;
             }
 

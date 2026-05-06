@@ -274,19 +274,22 @@ impl FileResponseStream {
     }
 
     pub fn on_reader_done(&mut self) {
-        let _guard = scopeguard::guard((), |_| self.deref());
+        let this: *mut Self = self;
+        let _guard = scopeguard::guard((), move |_| unsafe { Self::deref(this) });
         self.finish();
     }
 
     pub fn on_reader_error(&mut self, err: sys::Error) {
-        let _guard = scopeguard::guard((), |_| self.deref());
+        let this: *mut Self = self;
+        let _guard = scopeguard::guard((), move |_| unsafe { Self::deref(this) });
         self.fail_with(err);
     }
 
     fn on_writable(&mut self, _: u64, _: AnyResponse) -> bool {
         bun_output::scoped_log!(FileResponseStream, "onWritable");
         self.r#ref();
-        let _guard = scopeguard::guard((), |_| self.deref());
+        let this: *mut Self = self;
+        let _guard = scopeguard::guard((), move |_| unsafe { Self::deref(this) });
 
         if self.mode == Mode::Sendfile {
             return self.on_sendfile();
@@ -490,7 +493,9 @@ impl FileResponseStream {
             (self.on_complete)(self.ctx, self.resp);
         }
 
-        self.deref();
+        // SAFETY: `self` is the unique &mut handed in by the uWS callback
+        // trampoline; provenance traces back to Box::into_raw in `start()`.
+        unsafe { Self::deref(self) };
     }
 
     pub fn event_loop(&self) -> EventLoopHandle {

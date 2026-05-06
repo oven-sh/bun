@@ -2929,5 +2929,5 @@ impl JestPrettyFormat {
 //   source:     src/test_runner/pretty_format.zig (2144 lines)
 //   confidence: medium
 //   todos:      18
-//   notes:      Heavy borrowck reshaping needed (WrappedWriter aliases writer_/self); Output::pretty_fmt assumed const-generic; visited::Pool needs RAII guard; ZigFormatter Display has &self→&mut UB; bun_io::Write adapter for fmt::Formatter needed.
+//   notes:      Heavy borrowck reshaping needed (WrappedWriter aliases writer_/self); Output::pretty_fmt assumed const-generic; visited::Pool needs RAII guard; bun_io::Write adapter for fmt::Formatter needed.
 // ──────────────────────────────────────────────────────────────────────────

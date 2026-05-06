@@ -5250,7 +5250,7 @@ impl H2FrameParser {
 
                     if let Err(err) = this.encode_header_into_list(&mut encoded_headers, validated_name, value, never_index) {
                         if err == bun_core::err!("OutOfMemory") {
-                            return global_object.throw("Failed to allocate header buffer");
+                            return Err(global_object.throw("Failed to allocate header buffer"));
                         }
                         let Some(stream) = this.handle_received_stream_id(stream_id) else {
                             return Ok(JSValue::js_number(-1.0));

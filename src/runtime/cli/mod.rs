@@ -766,8 +766,9 @@ pub mod command {
             Tag::InitCommand => {
                 // InitCommand parses its own argv (no Context); Zig:
                 //   .InitCommand => return try InitCommand.exec(allocator, bun.argv[@min(2, bun.argv.len)..])
+                let argv = argv_zslice();
                 return super::init_command::InitCommand::exec(
-                    &bun::argv()[2.min(bun::argv().len())..],
+                    &argv[2.min(argv.len())..],
                 );
             }
             Tag::InstallCompletionsCommand => {
@@ -937,7 +938,8 @@ pub mod command {
                 let ctx = unsafe { &mut *init(Tag::BunxCommand, log)? };
                 // SAFETY: IS_BUNX_EXE set during which() before any threads.
                 let start_idx = if unsafe { IS_BUNX_EXE } { 0 } else { 1 };
-                return super::bunx_command::BunxCommand::exec(ctx, &bun::argv()[start_idx..]);
+                let argv = argv_zslice();
+                return super::bunx_command::BunxCommand::exec(ctx, &argv[start_idx..]);
             }
             Tag::ReplCommand => {
                 // PORT NOTE: Zig inits with .RunCommand here (repl reuses run params).

@@ -526,13 +526,12 @@ impl ByteStream {
         }
 
         self.buffer_action = Some(match action {
-            streams::BufferActionTag::Blob => BufferAction::Blob(BufferAction::Payload::init(global_this)),
-            streams::BufferActionTag::Bytes => BufferAction::Bytes(BufferAction::Payload::init(global_this)),
-            streams::BufferActionTag::ArrayBuffer => BufferAction::ArrayBuffer(BufferAction::Payload::init(global_this)),
-            streams::BufferActionTag::Json => BufferAction::Json(BufferAction::Payload::init(global_this)),
-            streams::BufferActionTag::Text => BufferAction::Text(BufferAction::Payload::init(global_this)),
+            streams::BufferActionTag::Blob => BufferAction::Blob(JSPromiseStrong::init(global_this)),
+            streams::BufferActionTag::Bytes => BufferAction::Bytes(JSPromiseStrong::init(global_this)),
+            streams::BufferActionTag::ArrayBuffer => BufferAction::ArrayBuffer(JSPromiseStrong::init(global_this)),
+            streams::BufferActionTag::Json => BufferAction::Json(JSPromiseStrong::init(global_this)),
+            streams::BufferActionTag::Text => BufferAction::Text(JSPromiseStrong::init(global_this)),
         });
-        // TODO(port): `BufferAction` variant payload type — Zig uses `.init(globalThis)` per-variant.
 
         Ok(self.buffer_action.as_ref().unwrap().value())
     }

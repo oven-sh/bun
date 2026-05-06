@@ -766,6 +766,84 @@ pub fn NativeZstd(global: &JSGlobalObject) -> JSValue {
 
 pub use _impl::{CompressionContext, CompressionStreamImpl};
 
+/// Implements [`CompressionContext`] for a `Context` type and
+/// [`CompressionStreamImpl`] for its owning `Native*` struct by delegating to
+/// the inherent methods / fields that already exist on each (mirrors Zig's
+/// comptime duck-typed `CompressionStream(T)` mixin).
+///
+/// All three `Native{Zlib,Brotli,Zstd}` structs share the exact field layout
+/// (`global_this`, `stream`, `write_result`, `poll_ref`, `this_value`,
+/// `write_in_progress`, `pending_close`, `pending_reset`, `closed`, `task`,
+/// `ref_count`), so the macro can stamp the impls uniformly.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __impl_compression_stream {
+    ($native:ty, $ctx:ty) => {
+        impl $crate::node::node_zlib_binding::CompressionContext for $ctx {
+            #[inline] fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>) { Self::set_buffers(self, in_, out) }
+            #[inline] fn set_flush(&mut self, flush: i32) { Self::set_flush(self, flush) }
+            #[inline] fn do_work(&mut self) { Self::do_work(self) }
+            #[inline] fn reset(&mut self) -> $crate::node::node_zlib_binding::Error { Self::reset(self) }
+            #[inline] fn close(&mut self) { Self::close(self) }
+            #[inline] fn get_error_info(&mut self) -> $crate::node::node_zlib_binding::Error { Self::get_error_info(self) }
+            #[inline] fn update_write_result(&mut self, avail_in: &mut u32, avail_out: &mut u32) { Self::update_write_result(self, avail_in, avail_out) }
+        }
+
+        impl $crate::node::node_zlib_binding::CompressionStreamImpl for $native {
+            type Stream = $ctx;
+
+            #[inline] fn global_this(&self) -> *mut ::bun_jsc::JSGlobalObject { self.global_this as *mut ::bun_jsc::JSGlobalObject }
+            #[inline] fn stream_mut(&mut self) -> &mut Self::Stream { &mut self.stream }
+            #[inline] fn write_result_ptr(&mut self) -> Option<*mut u32> { self.write_result.map(|p| p as *mut u32) }
+            #[inline] fn poll_ref_mut(&mut self) -> &mut $crate::node::node_zlib_binding::CountedKeepAlive { &mut self.poll_ref }
+            #[inline] fn this_value_mut(&mut self) -> &mut ::bun_jsc::StrongOptional { &mut self.this_value }
+            #[inline] fn task_mut(&mut self) -> &mut ::bun_jsc::WorkPoolTask { &mut self.task }
+            #[inline] fn write_in_progress_mut(&mut self) -> &mut bool { &mut self.write_in_progress }
+            #[inline] fn pending_close_mut(&mut self) -> &mut bool { &mut self.pending_close }
+            #[inline] fn pending_reset_mut(&mut self) -> &mut bool { &mut self.pending_reset }
+            #[inline] fn closed_mut(&mut self) -> &mut bool { &mut self.closed }
+
+            #[inline]
+            unsafe fn from_task(task: *mut ::bun_jsc::WorkPoolTask) -> *mut Self {
+                // SAFETY: `task` points at the `task` field of a live `Self`
+                // (Zig `@fieldParentPtr("task", task)`); offset_of yields the
+                // byte offset within `Self`.
+                unsafe {
+                    task.cast::<u8>()
+                        .sub(::core::mem::offset_of!(Self, task))
+                        .cast::<Self>()
+                }
+            }
+
+            #[inline] fn ref_(&self) { self.ref_count.set(self.ref_count.get() + 1); }
+            #[inline] fn deref(&self) {
+                let n = self.ref_count.get() - 1;
+                self.ref_count.set(n);
+                if n == 0 {
+                    // TODO(port): blocked_on: bun_ptr::IntrusiveRc — invoke
+                    // `Self::deinit` and free the Box. Deferred until the
+                    // refcount wrapper lands; the JSC finalizer path keeps the
+                    // payload alive in the meantime.
+                }
+            }
+
+            // Per-class `T.js.*` cached-property accessors are emitted by
+            // `generate-classes.ts`; the Rust codegen path is not yet wired.
+            // TODO(port): blocked_on: bun_jsc::codegen::js — replace with the
+            // generated `JSNative{Zlib,Brotli,Zstd}::*_get_cached` once available.
+            #[inline] fn write_callback_get_cached(_this_value: ::bun_jsc::JSValue) -> Option<::bun_jsc::JSValue> {
+                todo!("blocked_on: bun_jsc::codegen::JSNative*::writeCallbackGetCached")
+            }
+            #[inline] fn error_callback_get_cached(_this_value: ::bun_jsc::JSValue) -> Option<::bun_jsc::JSValue> {
+                todo!("blocked_on: bun_jsc::codegen::JSNative*::errorCallbackGetCached")
+            }
+            #[inline] fn error_callback_set_cached(_this_value: ::bun_jsc::JSValue, _global: &::bun_jsc::JSGlobalObject, _cb: ::bun_jsc::JSValue) {
+                // generated: JSNative*.errorCallbackSetCached — no-op until codegen lands.
+            }
+        }
+    };
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/node/node_zlib_binding.zig (396 lines)

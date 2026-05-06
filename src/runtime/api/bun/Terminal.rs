@@ -1241,10 +1241,10 @@ impl Terminal {
         #[cfg(unix)]
         {
             if self.flags.contains(Flags::CLOSED) || self.master_fd == Fd::INVALID {
-                return JSValue::js_number(0);
+                return JSValue::js_number(0.0);
             }
             let Some(termios_data) = get_termios(self.master_fd) else {
-                return JSValue::js_number(0);
+                return JSValue::js_number(0.0);
             };
             // TODO(port): Zig used @typeInfo to extract the packed-struct backing
             // integer of std.posix tc_*flag_t. In Rust/libc these are already raw
@@ -1274,7 +1274,7 @@ impl Terminal {
             if self.flags.contains(Flags::CLOSED) || self.master_fd == Fd::INVALID {
                 return Ok(());
             }
-            let num = value.coerce::<f64>(global_object)?;
+            let num = value.coerce_f64(global_object)?;
             let Some(mut termios_data) = get_termios(self.master_fd) else {
                 return Ok(());
             };

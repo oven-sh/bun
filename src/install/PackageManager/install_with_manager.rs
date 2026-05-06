@@ -1458,18 +1458,15 @@ fn add_dependency_error(manager: &mut PackageManager, dependency: &Dependency, e
     // taking `&mut` on `manager.log` (Zig held both via shared `*` pointers).
     let realname = dependency.realname();
     let path = manager.lockfile.str(&realname).to_vec();
-    let note_args = format_args!(
-        "error occurred while resolving {}",
-        bun_core::fmt::fmt_path(
-            &path,
-            bun_core::fmt::PathFormatOptions {
-                path_sep: match dependency.version.tag {
-                    DependencyVersionTag::Folder => bun_core::fmt::PathSep::Auto,
-                    _ => bun_core::fmt::PathSep::Any,
-                },
-                ..Default::default()
+    let path_fmt = bun_core::fmt::fmt_path(
+        &path,
+        bun_core::fmt::PathFormatOptions {
+            path_sep: match dependency.version.tag {
+                DependencyVersionTag::Folder => bun_core::fmt::PathSep::Auto,
+                _ => bun_core::fmt::PathSep::Any,
             },
-        )
+            ..Default::default()
+        },
     );
 
     if dependency.behavior.is_optional() || dependency.behavior.is_peer() {
@@ -1477,10 +1474,13 @@ fn add_dependency_error(manager: &mut PackageManager, dependency: &Dependency, e
             None,
             Default::default(),
             err.name().as_bytes(),
-            note_args,
+            format_args!("error occurred while resolving {}", path_fmt),
         ));
     } else {
-        bun_core::handle_oom(manager.log_mut().add_zig_error_with_note(err, note_args));
+        bun_core::handle_oom(manager.log_mut().add_zig_error_with_note(
+            err,
+            format_args!("error occurred while resolving {}", path_fmt),
+        ));
     }
 }
 

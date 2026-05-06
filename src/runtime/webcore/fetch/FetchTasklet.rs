@@ -352,7 +352,7 @@ impl FetchTasklet {
     fn clear_sink(&mut self) {
         if let Some(sink) = self.sink.take() {
             // SAFETY: sink came from init_exact_refs; FetchTasklet holds one ref.
-            unsafe { (*sink).deref_() };
+            unsafe { ResumableFetchSink::deref_(sink) };
         }
         if let Some(buffer) = self.request_body_streaming_buffer.take() {
             // SAFETY: intrusive-refcounted heap allocation from `ThreadSafeStreamBuffer::new`;

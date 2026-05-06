@@ -359,12 +359,25 @@ bun_core::declare_scope!(ReadableStream, visible);
 macro_rules! ctx_log { ($($t:tt)*) => { bun_core::scoped_log!(RequestContext, $($t)*) }; }
 macro_rules! stream_log { ($($t:tt)*) => { bun_core::scoped_log!(ReadableStream, $($t)*) }; }
 
+/// Per-monomorphization C-ABI shim table for the four promise-reaction host
+/// fns. Zig's `toJSHostFn(onResolve)` mints a fresh `extern fn` per comptime
+/// instantiation; Rust generics can't own `extern "C"` items, so the concrete
+/// shims live in `request_ctx_exports!` (bottom of file) and each
+/// instantiation routes to its own via this trait. `then_with_value` then
+/// passes `Self::ON_RESOLVE` etc. — the actual C-ABI pointers JSC will call.
+pub trait RequestContextHostFns {
+    const ON_RESOLVE: bun_jsc::JSHostFn;
+    const ON_REJECT: bun_jsc::JSHostFn;
+    const ON_RESOLVE_STREAM: bun_jsc::JSHostFn;
+    const ON_REJECT_STREAM: bun_jsc::JSHostFn;
+}
+
 impl<ThisServer, const SSL_ENABLED: bool, const DEBUG_MODE: bool, const HTTP3: bool>
     RequestContext<ThisServer, SSL_ENABLED, DEBUG_MODE, HTTP3>
 where
     TransportFor<SSL_ENABLED, HTTP3>: Transport,
     ThisServer: ServerLike + 'static,
-    Self: NativePromiseContext::NativePromiseContextType,
+    Self: NativePromiseContext::NativePromiseContextType + RequestContextHostFns,
 {
     const RESP_KIND: uws::ResponseKind = uws::ResponseKind::from(SSL_ENABLED, HTTP3);
 

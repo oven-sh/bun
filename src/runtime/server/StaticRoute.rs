@@ -199,6 +199,27 @@ impl StaticRoute {
         }
     }
 
+    /// Direct field constructor — mirrors Zig `bun.new(StaticRoute, .{...})`.
+    /// Used by `HTMLBundle.Route.onComplete` to materialize routes for each
+    /// bundler output file.
+    pub fn new(
+        blob: AnyBlob,
+        server: Option<AnyServer>,
+        status_code: u16,
+        headers: Headers,
+        cached_blob_size: u64,
+    ) -> *mut StaticRoute {
+        Box::into_raw(Box::new(StaticRoute {
+            ref_count: Cell::new(1),
+            blob,
+            cached_blob_size,
+            has_content_disposition: false,
+            headers,
+            server: Cell::new(server),
+            status_code,
+        }))
+    }
+
     /// Ownership of `blob` is transferred to this function.
     pub fn init_from_any_blob(blob: &AnyBlob, options: InitFromBytesOptions<'_>) -> *mut StaticRoute {
         let mut headers = Headers::from(

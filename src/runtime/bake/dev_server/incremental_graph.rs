@@ -1633,8 +1633,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         let runtime: bake::HmrRuntime = match kind {
             ChunkKind::InitialResponse => bake::get_hmr_runtime(Side::Client),
             ChunkKind::HmrChunk => bake::HmrRuntime {
-                code: bun_str::ZStr::from_bytes_with_nul(b"self[Symbol.for(\"bun:hmr\")]({\n\0")
-                    .unwrap(),
+                code: bun_str::ZStr::from_static(b"self[Symbol.for(\"bun:hmr\")]({\n\0"),
                 line_count: 1,
             },
         };
@@ -1736,7 +1735,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         let runtime: bake::HmrRuntime = match options.kind {
             ChunkKind::InitialResponse => bake::get_hmr_runtime(Side::Server),
             ChunkKind::HmrChunk => bake::HmrRuntime {
-                code: bun_str::ZStr::from_bytes_with_nul(b"({\0").unwrap(),
+                code: bun_str::ZStr::from_static(b"({\0"),
                 line_count: 0,
             },
         };
@@ -1765,9 +1764,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             Side::Client => {
                 let mut file_paths: Vec<&'static [u8]> =
                     Vec::with_capacity(self.current_chunk_parts.len());
-                let mut contained_maps: bun_collections::MultiArrayList<packed_map::Shared> =
-                    Default::default();
-                contained_maps.ensure_total_capacity(self.current_chunk_parts.len())?;
+                let mut contained_maps: Vec<packed_map::Shared> =
+                    Vec::with_capacity(self.current_chunk_parts.len());
                 let mut overlapping_memory_cost: usize = 0;
 
                 for file_index in &self.current_chunk_parts {
@@ -1785,13 +1783,15 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     if let Some(map) = sm.get() {
                         overlapping_memory_cost += map.memory_cost();
                     }
-                    contained_maps.append_assume_capacity(sm);
+                    contained_maps.push(sm);
                 }
-                overlapping_memory_cost += contained_maps.memory_cost()
+                overlapping_memory_cost += contained_maps.capacity()
+                    * core::mem::size_of::<packed_map::Shared>()
                     + file_paths.len() * core::mem::size_of::<&[u8]>();
 
                 let ref_count = out.ref_count;
                 *out = source_map_store::Entry {
+                    dev_allocator: bun_alloc::AllocationScope,
                     ref_count,
                     paths: file_paths.into_boxed_slice(),
                     files: contained_maps,
@@ -1801,9 +1801,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             Side::Server => {
                 let mut file_paths: Vec<&'static [u8]> =
                     Vec::with_capacity(self.current_chunk_source_maps.len());
-                let mut contained_maps: bun_collections::MultiArrayList<packed_map::Shared> =
-                    Default::default();
-                contained_maps.ensure_total_capacity(self.current_chunk_source_maps.len())?;
+                let mut contained_maps: Vec<packed_map::Shared> =
+                    Vec::with_capacity(self.current_chunk_source_maps.len());
                 let mut overlapping_memory_cost: u32 = 0;
 
                 for item in &self.current_chunk_source_maps {
@@ -1814,14 +1813,16 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         )
                     };
                     file_paths.push(p);
-                    contained_maps.append_assume_capacity(item.source_map.clone());
+                    contained_maps.push(item.source_map.clone());
                     overlapping_memory_cost += item.source_map.memory_cost() as u32;
                 }
-                overlapping_memory_cost += (contained_maps.memory_cost()
+                overlapping_memory_cost += (contained_maps.capacity()
+                    * core::mem::size_of::<packed_map::Shared>()
                     + file_paths.len() * core::mem::size_of::<&[u8]>())
                     as u32;
 
                 *out = source_map_store::Entry {
+                    dev_allocator: bun_alloc::AllocationScope,
                     ref_count: out.ref_count,
                     paths: file_paths.into_boxed_slice(),
                     files: contained_maps,

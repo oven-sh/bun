@@ -2,9 +2,11 @@
 
 use core::ffi::c_int;
 
-use bun_sys::{Fd, FdExt, FdKind};
+use bun_sys::{Fd, FdExt};
+#[cfg(windows)]
+use bun_sys::FdKind;
 
-use crate::{JSGlobalObject, JSValue, JsResult, RangeErrorOptions, SystemErrorJsc};
+use crate::{JSGlobalObject, JSValue, JsResult, RangeErrorOptions};
 
 /// Extension trait wiring `to_js` / `from_js` onto `bun_sys::Fd`.
 /// In Zig these are free functions re-exported onto `bun.FD` via the
@@ -80,7 +82,7 @@ impl FdJsc for Fd {
             Ok(fd) => fd,
             Err(_) => {
                 self.close();
-                let err_instance = (bun_sys::SystemError {
+                let err_instance = (bun_jsc::SystemError {
                     message: bun_string::String::static_(b"EMFILE, too many open files"),
                     code: bun_string::String::static_(b"EMFILE"),
                     ..Default::default()
@@ -124,9 +126,8 @@ impl FdJsc for Fd {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/sys_jsc/fd_jsc.zig (80 lines)
-//   confidence: high — bodies un-gated and type-checked against crate-local
-//               bun_jsc shim surface (see lib.rs)
-//   blocked:    bun_jsc::{JSValue methods, JSGlobalObject::{throw_range_error,vm},
-//               VM::throw_error, SystemError::to_error_instance} — shimmed in
-//               lib.rs until bun_jsc compiles
+//   confidence: high
+//   todos:      0
+//   notes:      uses bun_jsc::{JSValue, JSGlobalObject, VM, SystemError,
+//               RangeErrorOptions} directly.
 // ──────────────────────────────────────────────────────────────────────────

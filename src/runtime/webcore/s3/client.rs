@@ -601,7 +601,7 @@ impl S3UploadStreamWrapper {
         bun_output::scoped_log!(S3UploadStream, "detachSink {}", self.sink.is_some());
         if let Some(sink) = self.sink.take() {
             // SAFETY: sink is a live Box-allocated ResumableSink; deref_ releases our ref.
-            unsafe { (*sink).deref_() };
+            unsafe { ResumableS3UploadSink::deref_(sink) };
         }
     }
 

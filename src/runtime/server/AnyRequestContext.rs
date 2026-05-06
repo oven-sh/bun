@@ -220,6 +220,21 @@ impl AnyRequestContext {
         })
     }
 
+    /// Mutable access to the attached DevServer. Zig passed `*DevServer`
+    /// freely; the Rust accessor above hands out `&` only. The `Box` slot
+    /// inside `NewServer` has a stable address, so deriving `&mut` here is
+    /// sound as long as the caller upholds the usual single-writer rule on the
+    /// JS thread.
+    pub fn dev_server_mut(self) -> Option<*mut crate::bake::DevServer::DevServer> {
+        dispatch!(self, None, |_T, ctx| {
+            // SAFETY: server backref outlives this context; `dev_server` is a
+            // `Box` field never moved while requests are in flight.
+            let server = ctx.server?;
+            let ds = unsafe { (*server).dev_server.as_deref_mut()? };
+            Some(ds as *mut _)
+        })
+    }
+
     pub fn deref(self) {
         dispatch!(self, (), |_T, ctx| ctx.deref())
     }

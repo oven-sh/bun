@@ -2207,14 +2207,121 @@ pub fn write_file_internal(
 
     // TODO: implement a writev() fast path
     let mut source_blob: Blob = 'brk: {
-        // TODO(port): `data.as_::<Response>()` / `data.as_::<Request>()` —
-        // `JsClass` is not yet derived for Response/Request (no codegen), and
-        // `Body::Value::Locked` task plumbing (`as_locked_mut().task` /
-        // `on_receive_value` + `WriteFileWaitFromLockedValueTask::then_wrap`)
-        // is gated. See Zig Blob.zig lines 1496-1660.
-        if false {
-            let _ = (&mut destination_blob, &options, global_this);
-            todo!("blocked_on: bun_jsc::JsClass for Response/Request + Body::Value::Locked task wiring");
+        // PORT NOTE: Zig has two near-identical arms for `Response` and
+        // `Request`. Both expose `get_body_value()` /
+        // `get_body_readable_stream()`; collapse into one helper that takes the
+        // body-value pointer and a `get_stream` closure.
+        let body_dispatch = |body_value: *mut webcore::body::Value,
+                             get_stream: &mut dyn FnMut(
+            &JSGlobalObject,
+        )
+            -> Option<ReadableStream>|
+         -> JsResult<core::ops::ControlFlow<JSValue, Blob>> {
+            use core::ops::ControlFlow;
+            use webcore::body::Value as BodyValue;
+            // SAFETY: `body_value` is `&mut Body::Value` from a live JS heap
+            // Response/Request `m_ctx`; raw to allow re-borrow after `use_()`.
+            let body_value_ref = unsafe { &mut *body_value };
+            match body_value_ref {
+                BodyValue::WTFStringImpl(_)
+                | BodyValue::InternalBlob(_)
+                | BodyValue::Used
+                | BodyValue::Empty
+                | BodyValue::Blob(_)
+                | BodyValue::Null => Ok(ControlFlow::Continue(body_value_ref.use_())),
+                BodyValue::Error(err_ref) => {
+                    let err_js = err_ref.to_js(global_this);
+                    destination_blob.detach();
+                    let _ = unsafe { &mut *body_value }.use_();
+                    Ok(ControlFlow::Break(
+                        JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                            global_this, err_js,
+                        ),
+                    ))
+                }
+                BodyValue::Locked(_) => {
+                    if destination_blob.is_s3() {
+                        let dest_store = destination_blob.store.as_ref().unwrap().clone();
+                        let s3 = dest_store.data.as_s3();
+                        let aws_options =
+                            s3.get_credentials_with_options(options.extra_options, global_this)?;
+                        let _ = body_value_ref.to_readable_stream(global_this)?;
+                        let readable_opt = get_stream(global_this).or_else(|| {
+                            // SAFETY: re-borrow after `to_readable_stream`.
+                            let BodyValue::Locked(locked) = unsafe { &mut *body_value } else {
+                                return None;
+                            };
+                            locked.readable.get(global_this)
+                        });
+                        if let Some(readable) = readable_opt {
+                            if readable.is_disturbed(global_this) {
+                                destination_blob.detach();
+                                return Err(global_this.throw_invalid_arguments(
+                                    "ReadableStream has already been used",
+                                ));
+                            }
+                            let proxy_owned = http_proxy_href(global_this);
+                            let proxy_url = proxy_owned.as_deref();
+                            return Ok(ControlFlow::Break(s3_client::upload_stream(
+                                &aws_options.credentials,
+                                s3.path(),
+                                readable,
+                                global_this,
+                                aws_options.options,
+                                aws_options.acl,
+                                aws_options.storage_class,
+                                destination_blob.content_type_or_mime_type(),
+                                // SAFETY: `*const [u8]` borrows from sibling
+                                // `_*_slice` fields on `aws_options`, which
+                                // outlives this call.
+                                aws_options.content_disposition.map(|p| unsafe { &*p }),
+                                aws_options.content_encoding.map(|p| unsafe { &*p }),
+                                proxy_url,
+                                aws_options.request_payer,
+                                None,
+                                core::ptr::null_mut(),
+                            )?));
+                        }
+                        destination_blob.detach();
+                        return Err(global_this
+                            .throw_invalid_arguments("ReadableStream has already been used"));
+                    }
+                    let task = Box::into_raw(Box::new(WriteFileWaitFromLockedValueTask {
+                        global_this,
+                        file_blob: destination_blob.dupe(),
+                        promise: jsc::JSPromiseStrong::init(global_this),
+                        mkdirp_if_not_exists: options.mkdirp_if_not_exists.unwrap_or(true),
+                    }));
+                    // SAFETY: re-borrow after the early-return paths.
+                    let BodyValue::Locked(locked) = unsafe { &mut *body_value } else {
+                        unreachable!()
+                    };
+                    locked.task = Some(task.cast::<c_void>());
+                    locked.on_receive_value = Some(WriteFileWaitFromLockedValueTask::then_wrap);
+                    // SAFETY: `task` was just Box::into_raw'd; consumed in `then_wrap`.
+                    Ok(ControlFlow::Break(unsafe { (*task).promise.value() }))
+                }
+            }
+        };
+
+        if let Some(response) = data.as_::<Response>() {
+            // SAFETY: `as_` returns the live `m_ctx` pointer.
+            let response = unsafe { &mut *response };
+            let bv = response.get_body_value() as *mut _;
+            match body_dispatch(bv, &mut |g| response.get_body_readable_stream(g))? {
+                core::ops::ControlFlow::Break(v) => return Ok(v),
+                core::ops::ControlFlow::Continue(b) => break 'brk b,
+            }
+        }
+
+        if let Some(request) = data.as_::<Request>() {
+            // SAFETY: `as_` returns the live `m_ctx` pointer.
+            let request = unsafe { &mut *request };
+            let bv = request.get_body_value() as *mut _;
+            match body_dispatch(bv, &mut |g| request.get_body_readable_stream(g))? {
+                core::ops::ControlFlow::Break(v) => return Ok(v),
+                core::ops::ControlFlow::Continue(b) => break 'brk b,
+            }
         }
 
         // Check for Archive - allows Bun.write() and S3 writes to accept Archive instances
@@ -2613,8 +2720,11 @@ pub fn construct_bun_file(
 
     if let PathOrFileDescriptor::Path(ref p) = path {
         if p.slice().starts_with(b"s3://") {
-            let _ = (p, options);
-            todo!("blocked_on: webcore::node_types::PathLike vs crate::node::PathLike (S3File::construct_internal_js)");
+            // PORT NOTE (layering): `webcore::node_types::PathLike` re-exports
+            // `crate::node::types::PathLike`, so no conversion is needed —
+            // clone the path (Zig consumed it; the Rust `path` is dropped at
+            // scope exit by `deinit_and_unprotect` below).
+            return S3File::construct_internal_js(global_object, p.clone(), options);
         }
     }
     // PORT NOTE: Zig `defer path.deinitAndUnprotect()` — stub PathOrFileDescriptor

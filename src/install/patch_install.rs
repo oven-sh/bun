@@ -337,7 +337,7 @@ impl<'a> PatchTask<'a> {
                     );
                     if manager.get_preinstall_state(pkg_meta_id) == PreinstallState::ApplyPatch {
                         manager.set_preinstall_state(pkg_meta_id, PreinstallState::ApplyingPatch);
-                        manager.enqueue_patch_task(patch_task as *mut crate::PatchTask);
+                        manager.enqueue_patch_task(patch_task);
                     }
                 }
                 _ => {}

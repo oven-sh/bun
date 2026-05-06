@@ -450,14 +450,13 @@ impl bun_io::pipe_reader::BufferedReaderParent for WorkerPipe {
         // SAFETY: worker/coord backrefs valid for pipe lifetime.
         unsafe { (*(*(*this).worker).coord).vm.uv_loop().cast() }
     }
-    unsafe fn event_loop(_this: *mut Self) -> bun_io::EventLoopHandle {
-        // CYCLEBREAK: bun_io::EventLoopHandle is an opaque `*mut c_void` whose
-        // concrete repr is a stored `bun_jsc::EventLoopHandle`. WorkerPipe has
-        // no such stored handle — the Zig side dispatched through `coord.vm`
-        // directly. The FilePoll vtable bridge needs a real address; until a
-        // VM→io::EventLoopHandle helper lands, this path is unreachable for
-        // test-parallel pipes (poll registration goes through `loop_`).
-        todo!("blocked_on: bun_io::EventLoopHandle bridge from VirtualMachine")
+    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
+        // CYCLEBREAK: bun_io::EventLoopHandle is an opaque `*mut c_void`; pass
+        // the raw `*mut jsc::EventLoop` through. The FilePoll vtable (registered
+        // by bun_runtime::init) knows how to interpret it.
+        // SAFETY: worker/coord backrefs valid for pipe lifetime; `vm.event_loop()`
+        // returns a live pointer for the VM lifetime.
+        bun_io::EventLoopHandle(unsafe { (*(*(*this).worker).coord).vm.event_loop() } as *mut c_void)
     }
 }
 

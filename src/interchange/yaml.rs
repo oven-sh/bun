@@ -17,8 +17,6 @@ use bun_alloc::AllocError;
 use bun_collections::{BabyList, StringHashMap};
 use bun_core::{self, StackCheck};
 // MOVE_DOWN(b0): bun_js_parser::ast → bun_logger::ast (js_ast remapped into logger, T2)
-// `Expr`/`E`/`G` resolve to T2 stub shapes; AST-producing parse_* fns stay
-// gated below until the real `E::*` field sets land.
 use bun_logger::ast::{self, Expr, E, G};
 use bun_logger::{self as logger, Loc, Log, Source};
 

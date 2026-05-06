@@ -69,6 +69,39 @@ pub use util::validators;
 #[path = "node/node_fs.rs"]
 pub mod fs;
 
+// ─── un-gated in B-2 round 3 (net/zlib/buffer; JSC bodies re-gated inside) ───
+// Type defs + non-JSC FFI bodies are live; every `#[bun_jsc::host_fn]` /
+// `#[bun_jsc::JsClass]` item is wrapped in `#[cfg(any())] mod _impl` inside
+// each file. dgram/tls/tty have no `.rs` ports yet — nothing to wire.
+#[path = "node/buffer.rs"]
+pub mod buffer;
+
+#[path = "node/node_net_binding.rs"]
+pub mod node_net_binding;
+
+#[path = "node/node_zlib_binding.rs"]
+pub mod node_zlib_binding;
+
+#[path = "node/net/BlockList.rs"]
+mod block_list_impl;
+pub mod net {
+    pub use super::block_list_impl as block_list;
+}
+
+#[path = "node/zlib/NativeZlib.rs"]
+mod native_zlib_impl;
+#[path = "node/zlib/NativeBrotli.rs"]
+mod native_brotli_impl;
+#[path = "node/zlib/NativeZstd.rs"]
+mod native_zstd_impl;
+pub mod zlib {
+    // Re-export so `super::NodeMode` resolves inside the gated NativeZstd body.
+    pub use bun_zlib::NodeMode;
+    pub use super::native_zlib_impl as native_zlib;
+    pub use super::native_brotli_impl as native_brotli;
+    pub use super::native_zstd_impl as native_zstd;
+}
+
 // ─── submodule re-exports ─────────────────────────────────────────────────
 // All `node/` subdir modules depend heavily on `bun_jsc` (currently broken
 // under concurrent B-2 work) — gated until the lower tier is green.

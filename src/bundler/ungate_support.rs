@@ -523,3 +523,60 @@ pub use js_meta::{
 pub mod JSMeta {
     pub use super::js_meta::{Flags, Wrap};
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// B-2 un-gate surface for `bundle_v2.rs::on_parse_task_complete`.
+// SoA column accessors on `MultiArrayList<InputFile>` that the Phase-A draft
+// body wrote as `items_<field>_mut()` but `Graph::InputFileListExt` (un-gated
+// B-2) only covers the read-side. Kept as a separate ext trait so `Graph.rs`
+// stays untouched (out-of-scope file); collapses into `InputFileListExt` once
+// that file is next touched.
+// ──────────────────────────────────────────────────────────────────────────
+pub trait InputFileListExtMut {
+    fn items_loader_mut(&mut self) -> &mut [crate::options::Loader];
+    fn items_side_effects_mut(&mut self) -> &mut [crate::Graph::SideEffects];
+    fn items_unique_key_for_additional_file_mut(&mut self) -> &mut [Box<[u8]>];
+    fn items_content_hash_for_additional_file_mut(&mut self) -> &mut [u64];
+    fn items_flags(&self) -> &[crate::Graph::InputFileFlags];
+    fn items_flags_mut(&mut self) -> &mut [crate::Graph::InputFileFlags];
+}
+impl InputFileListExtMut for bun_collections::MultiArrayList<crate::Graph::InputFile> {
+    #[inline]
+    fn items_loader_mut(&mut self) -> &mut [crate::options::Loader] {
+        // SAFETY: column type matches `InputFile.loader`; `&mut self` enforces
+        // exclusive access (PORTING.md §Forbidden re aliased-&mut).
+        unsafe { self.items::<crate::options::Loader>(crate::Graph::InputFileField::loader) }
+    }
+    #[inline]
+    fn items_side_effects_mut(&mut self) -> &mut [crate::Graph::SideEffects] {
+        // SAFETY: column type matches `InputFile.side_effects`.
+        unsafe { self.items::<crate::Graph::SideEffects>(crate::Graph::InputFileField::side_effects) }
+    }
+    #[inline]
+    fn items_unique_key_for_additional_file_mut(&mut self) -> &mut [Box<[u8]>] {
+        // SAFETY: column type matches `InputFile.unique_key_for_additional_file`.
+        unsafe { self.items::<Box<[u8]>>(crate::Graph::InputFileField::unique_key_for_additional_file) }
+    }
+    #[inline]
+    fn items_content_hash_for_additional_file_mut(&mut self) -> &mut [u64] {
+        // SAFETY: column type matches `InputFile.content_hash_for_additional_file`.
+        unsafe { self.items::<u64>(crate::Graph::InputFileField::content_hash_for_additional_file) }
+    }
+    #[inline]
+    fn items_flags(&self) -> &[crate::Graph::InputFileFlags] {
+        // SAFETY: column type matches `InputFile.flags`.
+        unsafe { self.items::<crate::Graph::InputFileFlags>(crate::Graph::InputFileField::flags) }
+    }
+    #[inline]
+    fn items_flags_mut(&mut self) -> &mut [crate::Graph::InputFileFlags] {
+        // SAFETY: column type matches `InputFile.flags`.
+        unsafe { self.items::<crate::Graph::InputFileFlags>(crate::Graph::InputFileField::flags) }
+    }
+}
+
+/// `bundle_v2.zig` aliased `EventLoop = bun.jsc.AnyEventLoop`; the bundler only
+/// stores it on `LinkerContext.loop` (already typed there as
+/// `Option<NonNull<()>>` — erased handle) and calls `.tick(...)` from
+/// `wait_for_parse`. Re-export the LinkerContext alias so `bundle_v2.rs` and
+/// `ParseTask.rs` agree on the spelling.
+pub use crate::linker_context_mod::EventLoop;

@@ -41,6 +41,10 @@ pub struct Declaration {
     pub value: &'static [u8],
 }
 
+// blocked_on: generics::{CssEql,CssHash,DeepClone} impls for SupportsCondition/
+// Declaration. Zig's `css.implement*` helpers were @typeInfo reflection; the
+// Rust port requires per-type trait impls (or a derive macro). Phase B: derive.
+#[cfg(any())]
 impl Declaration {
     pub fn eql(&self, other: &Self) -> bool {
         // TODO(port): css.implementEql is comptime-reflection equality — replace with #[derive(PartialEq)] in Phase B
@@ -53,11 +57,8 @@ impl Declaration {
     }
 }
 
+#[cfg(any())]
 impl SupportsCondition {
-    // PORT NOTE: `pub fn deinit` dropped — body only freed Box/Vec payloads which Rust
-    // drops automatically. Input-slice variants (`Declaration`/`Selector`/`Unknown`)
-    // were no-ops in Zig as well (arena/input-owned).
-
     pub fn clone_with_import_records(
         &self,
         bump: &bun_alloc::Arena,
@@ -66,7 +67,7 @@ impl SupportsCondition {
         self.deep_clone(bump)
     }
 
-    pub fn hash(&self, hasher: &mut impl core::hash::Hasher) {
+    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
         // TODO(port): css.implementHash is comptime-reflection — replace with #[derive(Hash)] in Phase B
         css::implement_hash(self, hasher)
     }
@@ -80,6 +81,12 @@ impl SupportsCondition {
         // TODO(port): css.implementDeepClone is comptime-reflection — replace with derive/trait in Phase B
         css::implement_deep_clone(self, bump)
     }
+}
+
+impl SupportsCondition {
+    // PORT NOTE: `pub fn deinit` dropped — body only freed Box/Vec payloads which Rust
+    // drops automatically. Input-slice variants (`Declaration`/`Selector`/`Unknown`)
+    // were no-ops in Zig as well (arena/input-owned).
 
     fn needs_parens(&self, parent: &SupportsCondition) -> bool {
         match self {

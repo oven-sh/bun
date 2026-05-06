@@ -119,7 +119,7 @@ impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<'a, J
     pub fn init(
         global_this: &'a JSGlobalObject,
         stream: ReadableStream,
-        context: *const Context,
+        context: *mut Context,
     ) -> *mut Self {
         Self::init_exact_refs(global_this, stream, context, 1)
     }
@@ -127,7 +127,7 @@ impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<'a, J
     pub fn init_exact_refs(
         global_this: &'a JSGlobalObject,
         stream: ReadableStream,
-        context: *const Context,
+        context: *mut Context,
         ref_count: u32,
     ) -> *mut Self {
         // TODO(port): bun.TrivialNew — allocate via IntrusiveRc / Box::into_raw so

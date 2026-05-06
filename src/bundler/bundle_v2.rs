@@ -8,16 +8,21 @@
 
 use core::ptr::NonNull;
 
-use bun_collections::{ArrayHashMap, BabyList};
+use bun_collections::{ArrayHashMap, BabyList, StringHashMap};
 use bun_core::ThreadLock;
+use bun_logger as Logger;
 
 use crate::bake_types as bake;
-use crate::barrel_imports::RequestedExports;
+use crate::barrel_imports::{self, RequestedExports};
 use crate::cache::ExternalFreeFunction;
 use crate::dispatch;
+use crate::options::{self, Target};
+use crate::parse_task::{self, ResultValue as ParseResultValue};
 use crate::transpiler::Transpiler;
+use crate::ungate_support::{EventLoop, InputFileListExtMut, UseDirective};
 use crate::DeferredBatchTask::DeferredBatchTask;
-use crate::Graph::Graph;
+use crate::Graph::{Graph, InputFileListExt, SideEffects};
+use crate::PathToSourceIndexMap::PathToSourceIndexMap;
 use crate::{Index, IndexInt, LinkerContext};
 
 // ── re-exports for the B-1 inline `pub mod bundle_v2 { … }` shim surface ──

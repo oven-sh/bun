@@ -248,6 +248,7 @@ use core::ptr;
 use std::io::Write as _;
 
 use bun_alloc::{AllocError, Arena, ArenaVec};
+use bun_api::{self, BunInstall, Ca, NpmRegistry, NpmRegistryMap, npm_registry};
 use bun_collections::ArrayHashMap;
 use bun_core::{Global, Output};
 use bun_dotenv::Loader as DotEnvLoader;
@@ -1223,8 +1224,6 @@ pub struct ScopeIterator<'a> {
 
 pub struct ScopeItem {
     pub scope: Box<[u8]>,
-    // TODO(b2-blocked): bun_api::NpmRegistry
-    #[cfg(any())]
     pub registry: NpmRegistry,
 }
 
@@ -1242,15 +1241,11 @@ impl<'a> ScopeIterator<'a> {
             if let Some(key) = keyexpr.as_utf8_string_literal() {
                 if strings::has_prefix(key, b"@") && strings::ends_with(key, b":registry") {
                     if !self.count {
-                        // TODO(b2-blocked): bun_api::npm_registry::Parser
-                        // TODO(b2-blocked): bun_api::NpmRegistry
-                        #[cfg(any())]
-                        {
                         let registry = 'brk: {
                             if let Some(value) = prop.value {
                                 if let Some(str_) = value.as_utf8_string_literal() {
-                                    let mut parser = bun_api::npm_registry::Parser {
-                                        log: self.log,
+                                    let mut parser = npm_registry::Parser {
+                                        log: &mut *self.log,
                                         source: self.source,
                                     };
                                     break 'brk parser.parse_registry_url_string_impl(str_)?;
@@ -1263,9 +1258,6 @@ impl<'a> ScopeIterator<'a> {
                             scope: Box::<[u8]>::from(&key[1..key.len() - b":registry".len()]),
                             registry,
                         })));
-                        } // end #[cfg(any())]
-                        let _ = prop.value;
-                        todo!("b2-blocked: bun_api::npm_registry::Parser / bun_api::NpmRegistry");
                     }
                 }
             }
@@ -1279,19 +1271,19 @@ impl<'a> ScopeIterator<'a> {
 // loadNpmrcConfig / loadNpmrc
 // ──────────────────────────────────────────────────────────────────────────
 
-// TODO(b2-blocked): bun_api::BunInstall
-// TODO(b2-blocked): bun_api::NpmRegistry
-// TODO(b2-blocked): bun_api::NpmRegistryMap
-// TODO(b2-blocked): bun_api::npm_registry::Parser
-// TODO(b2-blocked): bun_api::Ca
-// TODO(b2-blocked): bun_install_types::NodeLinker::PnpmMatcher::from_expr
+// TODO(b2-blocked): bun_core::output::ErrName for bun_sys::Error
+// TODO(b2-blocked): bun_js_parser::Expr::{as_property,get,as_bool,is_array,as_string,as_string_cloned}
+// TODO(b2-blocked): bun_install_types::NodeLinker::PnpmMatcher::from_expr (Expr type unification — currently takes bun_logger::ast::Expr, callers have bun_js_parser::Expr)
 //
-// `load_npmrc_config` / `load_npmrc` / `handle_auth` are blocked wholesale on
-// the schema types (`BunInstall`/`NpmRegistry`/`NpmRegistryMap`/`Ca` —
-// `bun_api` is currently an empty crate root) and on the gated `Expr`
-// accessor surface in `bun_js_parser`. Signatures name the missing types, so
-// the fns themselves stay gated (not just bodies); shadow stubs preserve the
-// public symbol names so dependents type-check.
+// `load_npmrc_config` / `load_npmrc` stay gated:
+//   • `load_npmrc_config` — `Output::err(err: bun_sys::Error, ..)` needs the
+//     `ErrName for bun_sys::Error` impl (TODO(b0) in bun_core/output.rs); and
+//     `Log::print` wants `&mut impl fmt::Write` but `Output::error_writer()`
+//     yields `*mut io::Writer`.
+//   • `load_npmrc` — depends on the wide `bun_js_parser::Expr` accessor
+//     surface listed above and on `PnpmMatcher::from_expr` accepting a
+//     `bun_js_parser::Expr` (currently typed against `bun_logger::ast::Expr`).
+// Shadow stubs preserve the public symbol names so dependents type-check.
 
 pub fn load_npmrc_config() { todo!("b2-blocked: bun_api::BunInstall") }
 pub fn load_npmrc() { todo!("b2-blocked: bun_api::BunInstall / bun_js_parser::Expr accessors") }
@@ -1808,7 +1800,6 @@ pub fn load_npmrc(
     Ok(())
 }
 
-#[cfg(any())]
 fn handle_auth(
     v: &mut NpmRegistry,
     conf_item: &ConfigItem,
@@ -1817,7 +1808,7 @@ fn handle_auth(
 ) -> OOM<()> {
     if conf_item.value.is_empty() {
         log.add_error_opts(
-            "invalid _auth value, expected base64 encoded \"<username>:<password>\", received an empty string",
+            b"invalid _auth value, expected base64 encoded \"<username>:<password>\", received an empty string",
             logger::AddErrorOptions {
                 source: Some(source),
                 loc: conf_item.loc,
@@ -1832,7 +1823,7 @@ fn handle_auth(
     let result = bun_base64::decode(&mut decoded[..], &conf_item.value);
     if !result.is_successful() {
         log.add_error_opts(
-            "invalid _auth value, expected valid base64",
+            b"invalid _auth value, expected valid base64",
             logger::AddErrorOptions {
                 source: Some(source),
                 loc: conf_item.loc,
@@ -1845,7 +1836,7 @@ fn handle_auth(
     let username_password = &decoded[..result.count];
     let Some(colon_idx) = username_password.iter().position(|&b| b == b':') else {
         log.add_error_opts(
-            "invalid _auth value, expected base64 encoded \"<username>:<password>\"",
+            b"invalid _auth value, expected base64 encoded \"<username>:<password>\"",
             logger::AddErrorOptions {
                 source: Some(source),
                 loc: conf_item.loc,
@@ -1858,7 +1849,7 @@ fn handle_auth(
     let username = &username_password[..colon_idx];
     if colon_idx + 1 >= username_password.len() {
         log.add_error_opts(
-            "invalid _auth value, expected base64 encoded \"<username>:<password>\"",
+            b"invalid _auth value, expected base64 encoded \"<username>:<password>\"",
             logger::AddErrorOptions {
                 source: Some(source),
                 loc: conf_item.loc,
@@ -1881,5 +1872,5 @@ fn handle_auth(
 //   source:     src/ini/ini.zig (1357 lines)
 //   confidence: medium
 //   todos:      6
-//   notes:      B-2: Parser::parse()/prepare_str()/ConfigIterator::next()/ScopeIterator::next() bodies un-gated against live bun_js_parser accessor surface (Object::get/put/get_or_put_object, Array::push, ExprData::e_object_mut/e_array_mut, Expr::as_utf8_string_literal, IntoExprData, BabyList::at/len). Quoted-value JSON fast path in prepare_str() un-gated against bun_interchange::json::parse_utf8_impl — T2 result lifted to bun_js_parser::Expr inline for scalars; Array/Object stringify pending T2/T4 Expr unification. ScopeIterator::next inner registry-parse block + ScopeItem.registry field stay gated on bun_api::NpmRegistry/npm_registry::Parser. load_npmrc/load_npmrc_config/handle_auth stay gated wholesale on empty bun_api crate (BunInstall/NpmRegistry/NpmRegistryMap/Ca/npm_registry::Parser).
+//   notes:      B-2: Parser::parse()/prepare_str()/ConfigIterator::next()/ScopeIterator::next() bodies un-gated against live bun_js_parser accessor surface (Object::get/put/get_or_put_object, Array::push, ExprData::e_object_mut/e_array_mut, Expr::as_utf8_string_literal, IntoExprData, BabyList::at/len). Quoted-value JSON fast path in prepare_str() un-gated against bun_interchange::json::parse_utf8_impl — T2 result lifted to bun_js_parser::Expr inline for scalars; Array/Object stringify pending T2/T4 Expr unification. ScopeIterator::next inner registry-parse block + ScopeItem.registry field + handle_auth() un-gated against bun_api::{NpmRegistry,npm_registry::Parser} + bun_base64. load_npmrc_config stays gated on bun_core::output::ErrName-for-bun_sys::Error + Log::print/Output::error_writer() type bridge. load_npmrc stays gated on bun_js_parser::Expr accessor surface (as_property/get/as_bool/is_array/as_string/as_string_cloned) + PnpmMatcher::from_expr Expr-type unification (bun_logger::ast::Expr vs bun_js_parser::Expr).
 // ──────────────────────────────────────────────────────────────────────────

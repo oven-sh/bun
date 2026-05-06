@@ -1980,5 +1980,5 @@ pub mod memory;
 //   source:     src/bun_alloc/bun_alloc.zig (937 lines)
 //   confidence: low
 //   todos:      32
-//   notes:      generic_const_exprs + per-monomorphization statics blocked on stable Rust; BSSMap key_list_overflow calls non-existent OverflowList API in upstream Zig (likely dead code); parking_lot::Mutex needs RAII guard (BSSList::append intentionally won't borrowck until then); BSSList.head dual-semantics (sibling-ref vs heap) needs enum split.
+//   notes:      per-monomorphization statics solved via declare-site `bss_*!` macros (SyncUnsafeCell<MaybeUninit> + Once + init_at); BSSMap key_list_overflow calls non-existent OverflowList API in upstream Zig (likely dead code); parking_lot::Mutex needs RAII guard; BSSList.head dual-semantics (sibling-ref vs heap) needs enum split.
 // ──────────────────────────────────────────────────────────────────────────

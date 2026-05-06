@@ -3,16 +3,16 @@ use crate as css;
 use css::PrintErr;
 use css::Printer;
 
-// ─── B-2 round 3 status ────────────────────────────────────────────────────
-// Hub un-gated. Every leaf rule module (`style`, `media`, `supports`,
-// `keyframes`, `font_face`, ...) bottoms out on `declaration::DeclarationBlock`,
-// `selectors::parser` (real grammar), `properties_generated`, and the
-// `values/` calc lattice — all still gated. The leaves stay
-// `#[cfg(any())]`-gated below and re-expose data-only stubs for the types
-// `css_parser::AtRulePrelude` / `TopLevelRuleParser` reach into by name. The
-// `CssRule` enum is real (so `css_parser` can construct/match it) but every
-// variant payload is the stub from its gated submodule; the heavy `to_css`/
-// `minify` impl bodies are `#[cfg(any())]`-gated until the leaves un-gate.
+// ─── B-2 round 4 status ────────────────────────────────────────────────────
+// Hub un-gated. `style` / `media` / `supports` leaf modules now compile for
+// real (struct/enum bodies) with their behavior impls (`to_css`/`minify`/
+// `parse`/`deep_clone`) internally `#[cfg(any())]`-gated on the still-missing
+// `CssRuleList::{to_css,minify}`, `selector::` helpers, `PropertyId` methods,
+// and `DeclarationBlock` behavior. Remaining leaves (`keyframes`,
+// `font_face`, ...) stay `gated_rule!`-stubbed below and re-expose data-only
+// stubs for the types `css_parser::AtRulePrelude` / `TopLevelRuleParser`
+// reach into by name. The `CssRule` enum is real; the heavy `to_css`/`minify`
+// impl bodies are `#[cfg(any())]`-gated until the rest of the leaves un-gate.
 
 macro_rules! gated_rule {
     ($name:ident) => {
@@ -60,16 +60,7 @@ gated_rule!(layer, {
         pub loc: super::Location,
     }
 });
-gated_rule!(style, {
-    /// A style rule (selector list + declaration block + nested rules).
-    pub struct StyleRule<R> {
-        pub selectors: crate::selectors::SelectorList,
-        pub vendor_prefix: crate::VendorPrefix,
-        pub declarations: crate::css_parser::DeclarationBlock,
-        pub rules: super::CssRuleList<R>,
-        pub loc: super::Location,
-    }
-});
+pub mod style;
 gated_rule!(keyframes, {
     #[derive(Default)]
     pub struct KeyframesRule;
@@ -86,17 +77,7 @@ gated_rule!(page, {
     #[derive(Default)]
     pub struct PageRule;
 });
-gated_rule!(supports, {
-    /// `@supports` condition tree.
-    #[derive(Default, Clone)]
-    pub struct SupportsCondition;
-    /// `@supports (...) { ... }` block.
-    pub struct SupportsRule<R> {
-        pub condition: SupportsCondition,
-        pub rules: super::CssRuleList<R>,
-        pub loc: super::Location,
-    }
-});
+pub mod supports;
 gated_rule!(counter_style, {
     #[derive(Default)]
     pub struct CounterStyleRule;
@@ -156,13 +137,7 @@ gated_rule!(scope, {
         pub loc: super::Location,
     }
 });
-gated_rule!(media, {
-    pub struct MediaRule<R> {
-        pub query: crate::media_query::MediaList,
-        pub rules: super::CssRuleList<R>,
-        pub loc: super::Location,
-    }
-});
+pub mod media;
 gated_rule!(starting_style, {
     pub struct StartingStyleRule<R> {
         pub rules: super::CssRuleList<R>,

@@ -48,7 +48,6 @@ pub mod result {
 /// Options payload for the `Start::FileSink` variant. Mirrors
 /// `jsc.WebCore.FileSink.Options` (path-or-fd + chunk size).
 // TODO(port): once `crate::webcore::file_sink::Options` is exported, alias to it.
-#[derive(Debug)]
 pub struct FileSinkOptions {
     pub chunk_size: BlobSizeType,
     pub input_path: crate::webcore::PathOrFileDescriptor,
@@ -789,18 +788,11 @@ impl StreamResult {
             StreamResult::OwnedAndDone(list) => {
                 ArrayBuffer::from_bytes(list.slice_mut(), JSType::Uint8Array).to_js(global_this)
             }
-            StreamResult::Temporary(temp) => {
+            StreamResult::Temporary(temp) | StreamResult::TemporaryAndDone(temp) => {
                 let array =
                     JSValue::create_uninitialized_uint8_array(global_this, temp.len as usize)?;
-                let slice_ = array.as_array_buffer(global_this).unwrap().slice_mut();
-                let temp_slice = temp.slice();
-                slice_[..temp_slice.len()].copy_from_slice(temp_slice);
-                Ok(array)
-            }
-            StreamResult::TemporaryAndDone(temp) => {
-                let array =
-                    JSValue::create_uninitialized_uint8_array(global_this, temp.len as usize)?;
-                let slice_ = array.as_array_buffer(global_this).unwrap().slice_mut();
+                let mut buf = array.as_array_buffer(global_this).unwrap();
+                let slice_ = buf.slice_mut();
                 let temp_slice = temp.slice();
                 slice_[..temp_slice.len()].copy_from_slice(temp_slice);
                 Ok(array)
@@ -1850,6 +1842,76 @@ impl NetworkSink {
     }
     // TODO(port): bun.TrivialDeinit → relies on Drop; explicit deinit is no-op here
 
+    pub fn connect(&mut self, signal: Signal) {
+        self.signal = signal;
+    }
+
+    pub fn to_sink(&mut self) -> *mut NetworkSinkJSSink {
+        // SAFETY: JSSink wraps Self at offset 0 (repr guarantee from codegen)
+        self as *mut Self as *mut NetworkSinkJSSink
+        // TODO(port): @ptrCast(this) to JSSink — depends on codegen layout
+    }
+
+    pub fn finalize(&mut self) {
+        self.detach_writable();
+    }
+
+    fn detach_writable(&mut self) {
+        if let Some(_task) = self.task.take() {
+            // TODO(b2-blocked): `task.deref()` once `bun_s3::MultiPartUpload` is real.
+        }
+    }
+
+    pub fn finalize_and_destroy(this: *mut Self) {
+        // SAFETY: this is Box-allocated
+        let this_ref = unsafe { &mut *this };
+        this_ref.finalize();
+        // SAFETY: this was Box::into_raw'd
+        drop(unsafe { Box::from_raw(this) });
+    }
+
+    pub fn abort(&mut self) {
+        self.ended = true;
+        self.done = true;
+        self.signal.close(None);
+        self.cancel = true;
+        self.finalize();
+    }
+
+    pub fn flush(&mut self) -> bun_sys::Result<()> {
+        Ok(())
+    }
+
+    pub fn start(&mut self, stream_start: Start) -> bun_sys::Result<()> {
+        if self.ended {
+            return Ok(());
+        }
+
+        if let Start::ChunkSize(chunk_size) = stream_start {
+            if chunk_size > 0 {
+                self.high_water_mark = chunk_size;
+            }
+        }
+        self.ended = false;
+        self.signal.start();
+        Ok(())
+    }
+
+    pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
+        NetworkSinkJSSink::create_object(global_this, self, 0)
+        // TODO(port): JSSink.createObject — codegen-provided
+    }
+
+    pub const NAME: &'static str = "NetworkSink";
+}
+
+// TODO(b2-blocked): the methods below dereference `self.task` as
+// `*mut MultiPartUpload` and call `part_size_in_bytes()` / `path()` /
+// `write_bytes()` / `is_queue_empty()` on it. `bun_s3::MultiPartUpload` is
+// currently an opaque `c_void` stub (see top of file); un-gate once
+// `crate::webcore::s3::multipart::MultiPartUpload` is wired.
+#[cfg(any())]
+impl NetworkSink {
     fn get_high_water_mark(&self) -> BlobSizeType {
         if let Some(task) = self.task {
             // SAFETY: task is ref-counted, alive while held
@@ -2111,7 +2173,6 @@ pub type NetworkSinkJSSink = crate::webcore::sink::JSSink<NetworkSink>;
 // BufferAction
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(strum::IntoStaticStr)]
 pub enum BufferAction {
     Text(JSPromiseStrong),
     ArrayBuffer(JSPromiseStrong),
@@ -2131,6 +2192,10 @@ pub enum BufferActionTag {
 }
 
 impl BufferAction {
+    // TODO(b2-blocked): `AnyBlob::wrap` takes `(jsc::AnyPromise, &JSGlobalObject,
+    // BufferActionTag)`; `swap()` here yields `*mut JSPromise`. Un-gate once an
+    // `AnyPromise::from(*mut JSPromise)` adapter exists.
+    #[cfg(any())]
     pub fn fulfill(&mut self, global: &JSGlobalObject, blob: &mut AnyBlob) -> JsResult<()> {
         // TODO(port): narrow error set — Zig: bun.JSTerminated!void
         blob.wrap(
@@ -2144,13 +2209,17 @@ impl BufferAction {
     pub fn reject(&mut self, global: &JSGlobalObject, err: StreamError) -> JsResult<()> {
         // TODO(port): narrow error set — Zig: bun.JSTerminated!void
         // SAFETY: swap returns valid promise ptr
-        unsafe { &mut *self.swap() }.reject(global, err.to_js_weak(global).0)
+        unsafe { &mut *self.swap() }
+            .reject(global, Ok(err.to_js_weak(global).0))
+            .map_err(|_| JsError::Terminated)
     }
 
     pub fn resolve(&mut self, global: &JSGlobalObject, result: JSValue) -> JsResult<()> {
         // TODO(port): narrow error set — Zig: bun.JSTerminated!void
         // SAFETY: swap returns valid promise ptr
-        unsafe { &mut *self.swap() }.resolve(global, result)
+        unsafe { &mut *self.swap() }
+            .resolve(global, result)
+            .map_err(|_| JsError::Terminated)
     }
 
     pub fn value(&self) -> JSValue {
@@ -2169,7 +2238,7 @@ impl BufferAction {
             | BufferAction::ArrayBuffer(p)
             | BufferAction::Blob(p)
             | BufferAction::Bytes(p)
-            | BufferAction::Json(p) => p.get(),
+            | BufferAction::Json(p) => p.get() as *mut JSPromise,
         }
     }
 
@@ -2179,11 +2248,11 @@ impl BufferAction {
             | BufferAction::ArrayBuffer(p)
             | BufferAction::Blob(p)
             | BufferAction::Bytes(p)
-            | BufferAction::Json(p) => p.swap(),
+            | BufferAction::Json(p) => p.swap() as *mut JSPromise,
         }
     }
 
-    fn tag(&self) -> BufferActionTag {
+    pub fn tag(&self) -> BufferActionTag {
         match self {
             BufferAction::Text(_) => BufferActionTag::Text,
             BufferAction::ArrayBuffer(_) => BufferActionTag::ArrayBuffer,
@@ -2239,10 +2308,21 @@ impl ReadResult {
                 let owned = slice_ref.as_ptr() != buf.as_ptr();
                 let done = is_done || (close_on_empty && slice_ref.is_empty());
 
+                // PORT NOTE: Zig `bun.ByteList.fromOwnedSlice(slice)` adopts an
+                // existing heap allocation by pointer/len. The Rust
+                // `BabyList::from_owned_slice` takes `Box<[T]>`; reconstructing
+                // a Box here would assume the global allocator owns `slice`,
+                // which the caller does not guarantee. Use `from_slice` (copies)
+                // for now; Phase B should add `BabyList::adopt_raw(ptr, len)`.
+                // TODO(port): avoid copy — adopt raw allocation.
                 break 'brk if owned && done {
-                    StreamResult::OwnedAndDone(ByteList::from_owned_slice(slice_ref))
+                    StreamResult::OwnedAndDone(
+                        ByteList::from_slice(slice_ref).unwrap_or_else(|_| bun_core::out_of_memory()),
+                    )
                 } else if owned {
-                    StreamResult::Owned(ByteList::from_owned_slice(slice_ref))
+                    StreamResult::Owned(
+                        ByteList::from_slice(slice_ref).unwrap_or_else(|_| bun_core::out_of_memory()),
+                    )
                 } else if done {
                     StreamResult::IntoArrayAndDone(IntoArray {
                         len: slice_ref.len() as BlobSizeType,
@@ -2258,8 +2338,6 @@ impl ReadResult {
         }
     }
 }
-
-} // mod _jsc_gated2
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

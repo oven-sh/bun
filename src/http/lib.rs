@@ -388,6 +388,9 @@ pub trait SocketTimeout {
 
 // lowercase hash header names so that we can be sure
 pub fn hash_header_name(name: &[u8]) -> u64 {
+    // TODO(port): spec http.zig:781 uses `std.hash.Wyhash` (NOT Wyhash11 — see
+    // PORTING.md §Crate-map). bun_wyhash currently only exports Wyhash11; swap
+    // this alias once `bun_wyhash::Wyhash` (std algorithm) lands.
     use bun_wyhash::Wyhash11 as Wyhash;
     let mut hasher = Wyhash::init(0);
     let mut remain = name;
@@ -536,6 +539,10 @@ use bun_core::{FeatureFlags, Global, Output, err};
 use bun_string::{immutable as strings, String as BunString, Tag as BunStringTag};
 use bun_string::string_builder::StringBuilder;
 use bun_uws as uws;
+// TODO(port): spec http.zig:829 uses `std.hash.Wyhash` (NOT Wyhash11 — see
+// PORTING.md §Crate-map). bun_wyhash currently only exports Wyhash11; swap
+// once `bun_wyhash::Wyhash` (std algorithm) lands so proxy_auth_hash() and
+// header-name hashing match any component still computing the Zig hash.
 use bun_wyhash::Wyhash11 as Wyhash;
 use bun_http_types::ETag::{HeaderEntryField, StringPointer};
 
@@ -2496,7 +2503,10 @@ impl HTTPClient {
 
         self.state.response_message_buffer = MutableString::default();
 
-        let body_out_str = self.state.body_out_str.take().unwrap();
+        // PORT NOTE: copy the NonNull, do NOT `.take()` — http.zig:1098 reads
+        // `this.state.body_out_str.?` without clearing it, so the
+        // TooManyRedirects `fail()` below still sees a populated body pointer.
+        let body_out_str = self.state.body_out_str.unwrap();
         self.remaining_redirect_count = self.remaining_redirect_count.saturating_sub(1);
         self.flags.redirected = true;
         debug_assert!(self.redirect_type == FetchRedirect::Follow);
@@ -3591,13 +3601,17 @@ impl HTTPClient {
             if let Some(old) = self.state.cloned_metadata.take() {
                 drop(old); // deinit
             }
-            // TODO(b2-blocked): picohttp::Response::clone_into + StringBuilder
-            // ownership transfer (`into_owned_slice`) — both still pending in
-            // bun_picohttp / bun_string. Stub the deep-clone until they land.
+            // TODO(port): picohttp::Response::{count,clone} currently take a
+            // local `bun_picohttp::StringBuilder` stub whose body is `todo!()`,
+            // so the http.zig:2164-2194 deep-clone (StringBuilder count/allocate
+            // + headers_buf alloc + response.clone + builder.append(url.href))
+            // cannot be ported yet. Until those helpers land, hand back empty
+            // metadata instead of panicking — every successful response path
+            // reaches here, and a live `todo!()` is forbidden (PORTING.md
+            // §Forbidden).
             let _ = response;
             self.state.pending_response = None;
             self.state.cloned_metadata = Some(HTTPResponseMetadata::default());
-            todo!("clone_metadata deep-clone — picohttp::Response::clone_into / StringBuilder::into_owned_slice");
         } else {
             // we should never clone metadata that dont exists
             // we added a empty metadata just in case but will hit the assert
@@ -3658,6 +3672,13 @@ impl HTTPClient {
         // PORT NOTE: reshaped for borrowck — read Copy fields before to_result()
         // takes &mut self, then re-borrow via raw pointer for the post-mutations.
         let body = self.state.body_out_str;
+        // Snapshot the body buffer's CONTENTS by value (http.zig:2238-2239
+        // `const body = out_str.*`) so that `state.reset()` — which calls
+        // `body.reset()` and clears the list — doesn't deliver an empty body
+        // when `is_done`. Restored below before the callback (http.zig:2307
+        // `result.body.?.* = body`).
+        // SAFETY: body points at the caller-owned MutableString.
+        let body_snapshot = body.map(|p| unsafe { core::mem::take(&mut (*p.as_ptr()).list) });
         let callback = self.result_callback;
         let this_ptr = self as *mut Self;
         let mut result = self.to_result();
@@ -3742,6 +3763,11 @@ impl HTTPClient {
             bun_core::scoped_log!(fetch, "done");
         }
 
+        // Restore the body bytes that `state.reset()` cleared (http.zig:2307).
+        if let (Some(p), Some(v)) = (body, body_snapshot) {
+            // SAFETY: p points at the caller-owned MutableString.
+            unsafe { (*p.as_ptr()).list = v };
+        }
         // SAFETY: result.body aliases self_.state.body_out_str's pointee; the
         // caller-owned MutableString outlives both.
         result.body = body.map(|p| unsafe { &mut *p.as_ptr() });
@@ -3770,6 +3796,10 @@ impl HTTPClient {
         // PORT NOTE: reshaped for borrowck — read Copy fields before to_result()
         // takes &mut self, then re-borrow via raw pointer for the post-mutations.
         let body = self.state.body_out_str;
+        // Snapshot the body buffer's CONTENTS by value (http.zig:2326-2327
+        // `const body = out_str.*`); restored below (http.zig:2340).
+        // SAFETY: body points at the caller-owned MutableString.
+        let body_snapshot = body.map(|p| unsafe { core::mem::take(&mut (*p.as_ptr()).list) });
         let callback = self.result_callback;
         let this_ptr = self as *mut Self;
         let mut result = self.to_result();
@@ -3784,6 +3814,11 @@ impl HTTPClient {
             self_.state.request_stage = RequestStage::Done;
             self_.state.stage = Stage::Done;
             self_.flags.proxy_tunneling = false;
+        }
+        // Restore the body bytes that `state.reset()` cleared (http.zig:2340).
+        if let (Some(p), Some(v)) = (body, body_snapshot) {
+            // SAFETY: p points at the caller-owned MutableString.
+            unsafe { (*p.as_ptr()).list = v };
         }
         // SAFETY: see send_progress_update_without_stage_check
         result.body = body.map(|p| unsafe { &mut *p.as_ptr() });
@@ -3812,7 +3847,10 @@ impl HTTPClient {
             b""
         };
         self.state.response_message_buffer = MutableString::default();
-        let body_out_str = self.state.body_out_str.take().unwrap();
+        // PORT NOTE: copy the NonNull, do NOT `.take()` — http.zig:2360 reads
+        // `this.state.body_out_str.?` without clearing it, so the
+        // TooManyRedirects `fail()` below still sees a populated body pointer.
+        let body_out_str = self.state.body_out_str.unwrap();
         self.remaining_redirect_count = self.remaining_redirect_count.saturating_sub(1);
         self.flags.redirected = true;
         debug_assert!(self.redirect_type == FetchRedirect::Follow);

@@ -130,8 +130,6 @@ pub mod json5;
 pub mod toml;
 
 // ───── yaml ───────────────────────────────────────────────────────────────
-// Scanner + utility types compile against a local opaque `Expr` stub; the
-// AST-producing parse_* fns remain gated on the js_ast MOVE_DOWN.
 #[path = "yaml.rs"]
 pub mod yaml;
 

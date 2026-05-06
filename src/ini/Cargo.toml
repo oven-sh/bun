@@ -18,6 +18,7 @@ enumset.workspace = true
 libc.workspace = true
 bitflags.workspace = true
 thiserror.workspace = true
+bun_api.workspace = true
 bun_base64.workspace = true
 bun_dotenv.workspace = true
 bun_install_types.workspace = true

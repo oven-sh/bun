@@ -1,0 +1,11 @@
+[package]
+name = "bun_hash"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+# XxHash32 / XxHash64 / XxHash3 — reference-compatible, matches Zig std.hash.XxHash* output.
+twox-hash = { version = "2", default-features = false, features = ["xxhash32", "xxhash64", "xxhash3_64"] }

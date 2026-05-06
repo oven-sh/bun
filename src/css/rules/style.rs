@@ -1,20 +1,23 @@
-use bun_css as css;
-use bun_css::printer::{PrintErr, Printer};
-use bun_css::selector;
-use bun_css::targets::Targets;
-use bun_css::{
-    CssRuleList, DeclarationBlock, Location, MinifyContext, MinifyErr, PrinterErrorKind, Property,
-    PropertyHandlerContext, VendorPrefix,
-};
+use crate as css;
+use crate::css_rules::{CssRuleList, Location, MinifyContext};
+use crate::declaration::DeclarationBlock;
+use crate::error::MinifyErr;
+use crate::selectors::selector;
+use crate::{PrintErr, Printer, VendorPrefix};
 
 // `fn StyleRule(comptime R: type) type { return struct {...} }` → generic struct.
+//
+// PORT NOTE: `DeclarationBlock<'bump>` borrows the parser arena (bumpalo Vecs).
+// Threading `'bump` here cascades into `CssRule<'bump, R>` / `CssRuleList<'bump, R>`
+// (rules/mod.rs PORT NOTE) which is deferred until the leaf rules un-gate
+// together; for now the lifetime is erased to `'static`.
 pub struct StyleRule<R> {
     /// The selectors for the style rule.
     pub selectors: selector::parser::SelectorList,
     /// A vendor prefix override, used during selector printing.
     pub vendor_prefix: VendorPrefix,
     /// The declarations within the style rule.
-    pub declarations: DeclarationBlock,
+    pub declarations: DeclarationBlock<'static>,
     /// Nested rules within the style rule.
     pub rules: CssRuleList<R>,
     /// The location of the rule in the source file.
@@ -27,7 +30,24 @@ impl<R> StyleRule<R> {
         self.selectors.v.is_empty()
             || (self.declarations.is_empty() && self.rules.v.len() == 0)
     }
+}
 
+// ─── behavior bodies ──────────────────────────────────────────────────────
+// blocked_on:
+//   - selectors::selector::{get_prefix,downlevel_selectors,is_compatible,
+//     is_unused, serialize::serialize_selector_list} — selector.rs body gated
+//     on values/ident Fns + parser grammar.
+//   - SelectorList::{hash,deep_clone,eql} — parser.rs gated.
+//   - DeclarationBlock::{minify,hash_property_ids,deep_clone} — declaration.rs
+//     behavior block gated on properties_generated + rule_parsers.
+//   - CssRuleList::{minify,to_css,deep_clone} — rules/mod.rs heavy impl block.
+//   - Property::{Composes,to_css,property_id} — properties_generated gated.
+//   - MinifyContext::{handler,important_handler,handler_context,allocator,
+//     unused_symbols,extra} fields — stub carries `targets`/`css_modules` only.
+//   - Printer::{minify,css_module,with_context,vendor_prefix,context,targets}
+//     field/method surface.
+#[cfg(any())]
+impl<R> StyleRule<R> {
     /// Returns a hash of this rule for use when deduplicating.
     /// Includes the selectors and properties.
     pub fn hash_key(&self) -> u64 {
@@ -51,7 +71,7 @@ impl<R> StyleRule<R> {
 
     pub fn update_prefix(&mut self, context: &mut MinifyContext) {
         self.vendor_prefix = selector::get_prefix(&self.selectors);
-        if self.vendor_prefix.none() && context.targets.should_compile_selectors() {
+        if self.vendor_prefix.contains(VendorPrefix::NONE) && context.targets.should_compile_selectors() {
             self.vendor_prefix = selector::downlevel_selectors(
                 context.allocator,
                 self.selectors.v.slice_mut(),
@@ -60,7 +80,7 @@ impl<R> StyleRule<R> {
         }
     }
 
-    pub fn is_compatible(&self, targets: Targets) -> bool {
+    pub fn is_compatible(&self, targets: css::targets::Targets) -> bool {
         selector::is_compatible(self.selectors.v.slice(), targets)
     }
 
@@ -95,9 +115,13 @@ impl<R> StyleRule<R> {
     }
 
     fn to_css_base(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        use css::context::DeclarationContext;
+        use css::error::PrinterErrorKind;
+        use css::properties::Property;
+
         // If supported, or there are no targets, preserve nesting. Otherwise, write nested rules after parent.
         let supports_nesting = self.rules.v.len() == 0
-            || !Targets::should_compile_same(&dest.targets, css::Feature::Nesting);
+            || !css::targets::Targets::should_compile_same(&dest.targets, css::Feature::Nesting);
 
         let len = self.declarations.declarations.len()
             + self.declarations.important_declarations.len();
@@ -210,6 +234,8 @@ impl<R> StyleRule<R> {
         context: &mut MinifyContext,
         parent_is_unused: bool,
     ) -> Result<bool, MinifyErr> {
+        use css::context::{DeclarationContext, PropertyHandlerContext};
+
         let mut unused = false;
         if context.unused_symbols.count() > 0 {
             if selector::is_unused(
@@ -242,18 +268,18 @@ impl<R> StyleRule<R> {
         //   context.pure_css_modules = false;
         // }
 
-        context.handler_context.context = css::DeclarationContext::StyleRule;
+        context.handler_context.context = DeclarationContext::StyleRule;
         self.declarations.minify(
             context.handler,
             context.important_handler,
             &mut context.handler_context,
         );
-        context.handler_context.context = css::DeclarationContext::None;
+        context.handler_context.context = DeclarationContext::None;
 
         if self.rules.v.len() > 0 {
             let mut handler_context = context
                 .handler_context
-                .child(css::DeclarationContext::StyleRule);
+                .child(DeclarationContext::StyleRule);
             core::mem::swap::<PropertyHandlerContext>(
                 &mut context.handler_context,
                 &mut handler_context,
@@ -315,5 +341,5 @@ impl<R> StyleRule<R> {
 //   source:     src/css/rules/style.zig (249 lines)
 //   confidence: medium
 //   todos:      1
-//   notes:      VendorPrefix::FIELDS iteration and css_module &mut alias in to_css_base need Phase-B borrowck reshape.
+//   notes:      struct + is_empty un-gated; declarations field uses DeclarationBlock<'static> until 'bump threads through CssRule; hash_key/deep_clone/update_prefix/is_compatible/to_css/minify/is_duplicate gated on selector helpers + DeclarationBlock behavior + MinifyContext full layout + Property enum
 // ──────────────────────────────────────────────────────────────────────────

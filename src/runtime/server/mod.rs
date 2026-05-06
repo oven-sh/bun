@@ -6,12 +6,25 @@
 //! `bun_uws` write/close surface stay `#[cfg(any())]`-gated inside each file.
 //! The full Phase-A draft of every gated body is preserved in `server_body.rs`.
 
-use core::ffi::c_void;
+use core::ffi::{c_char, c_int, c_void};
+use core::sync::atomic::Ordering;
 use std::rc::Rc;
 
 use bun_aio::KeepAlive;
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
+use bun_uws_sys::app::c as uws_app_c;
+
+use bun_jsc::{JSGlobalObject, JSValue, JsResult};
+
+// ─── httplog ─────────────────────────────────────────────────────────────────
+// Output.scoped(.Server, .visible) — debug-build no-op until bun_output wires.
+macro_rules! httplog {
+    ($($arg:tt)*) => {{
+        #[cfg(debug_assertions)]
+        { let _ = format_args!($($arg)*); }
+    }};
+}
 
 // ─── server-local jsc re-export ──────────────────────────────────────────────
 // `bun_jsc` is now a dep; forward to it. `AsyncTaskTracker` lives under
@@ -217,7 +230,7 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// times due to SNI, so we have to store them.
     pub user_routes: Vec<UserRoute<SSL, DEBUG>>,
 
-    pub on_clienterror: jsc::Strong,
+    pub on_clienterror: jsc::StrongOptional,
 
     pub inspector_server_id: jsc::DebuggerId,
 }

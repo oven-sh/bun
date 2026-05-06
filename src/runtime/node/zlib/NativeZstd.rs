@@ -1,3 +1,13 @@
+// ─── gated: JsClass payload + Context (ZSTD FFI path unresolved) ──────────
+// `Context` references `bun_sys::c::ZSTD_*`, but the ZSTD bindings live in
+// `bun_zstd::c` and lack several of the streaming-compress fns used here
+// (ZSTD_createCCtx, ZSTD_CCtx_setParameter, ZSTD_compressStream2, ZSTD_e_*,
+// ZSTD_error_* consts, ZSTD_getErrorCode/String). The `Error` field shapes
+// (`msg: Option<_>`, `code: &str`) also diverge from `node_zlib_binding::Error`.
+// No JSC-free body is currently compilable here.
+// TODO(b2-blocked): un-gate once bun_zstd surfaces the streaming-compress C API + Error shape unified.
+#[cfg(any())]
+mod _impl {
 use core::cell::Cell;
 use core::ffi::{c_int, c_uint, c_void, CStr};
 use core::ptr;
@@ -42,9 +52,8 @@ pub struct NativeZstd {
 //   write, run_from_js_thread, write_sync, reset, close, set_on_error, get_on_error, finalize
 // TODO(port): expose via `impl CompressionStream for NativeZstd` (trait with default methods) so
 // the .classes.ts codegen can resolve them as inherent-looking methods.
-pub use CompressionStream::<NativeZstd>::emit_error as _compression_stream_marker;
-// (the line above is a Phase-A placeholder so reviewers see the dependency; Phase B replaces with
-// the real trait impl / associated fns.)
+// PORT NOTE: Phase-A draft had `pub use CompressionStream::<NativeZstd>::emit_error as _marker;`
+// here as a reviewer breadcrumb — that's not valid Rust path syntax, so it's dropped to a comment.
 
 impl NativeZstd {
     // TODO(port): exact constructor host-fn attribute form
@@ -421,6 +430,7 @@ impl Context {
         self.state.unwrap_or(ptr::null_mut())
     }
 }
+} // mod _impl
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

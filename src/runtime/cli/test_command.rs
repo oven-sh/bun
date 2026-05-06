@@ -1563,13 +1563,14 @@ impl TestCommand {
             Output::flush();
         }
 
-        let env_loader = 'brk: {
+        // PORT NOTE: Zig used `ctx.allocator.create` with no destroy. PORTING.md
+        // §Forbidden bans `Box::leak`; keep an owned `Box` local — `exec()` never
+        // returns before process exit, so its lifetime spans the process.
+        let mut env_loader: Box<DotEnv::Loader> = 'brk: {
             let map = Box::new(DotEnv::Map::new());
             let loader = Box::new(DotEnv::Loader::new(map));
             break 'brk loader;
         };
-        // TODO(port): leaked Box (no destroy in Zig either) — Phase B may revisit
-        let env_loader = Box::leak(env_loader);
         jsc::initialize(false);
         HTTPThread::init(&Default::default());
 
@@ -1600,7 +1601,11 @@ impl TestCommand {
             ArrayHashMap::new();
         VirtualMachine::set_is_bun_test(true);
 
-        let reporter = Box::leak(Box::new(CommandLineReporter {
+        // PORT NOTE: Zig used `ctx.allocator.create` with no destroy. PORTING.md
+        // §Forbidden bans `Box::leak`; keep an owned `Box` local — `exec()` never
+        // returns before process exit, so the heap allocation outlives all
+        // raw-pointer observers (e.g. `Jest::RUNNER` below).
+        let mut reporter: Box<CommandLineReporter> = Box::new(CommandLineReporter {
             jest: TestRunner {
                 allocator: (), // TODO(port): allocator field dropped
                 default_timeout_ms: ctx.test_options.default_timeout_ms,
@@ -1633,12 +1638,12 @@ impl TestCommand {
             skips_to_repeat_buf: Vec::new(),
             todos_to_repeat_buf: Vec::new(),
             reporters: ReportersConfig::default(),
-        }));
-        // TODO(port): `defer { if (reporter.reporters.junit) |fr| fr.deinit() }` — handled by Drop;
-        // reporter itself is leaked (was ctx.allocator.create with no destroy in Zig).
+        });
+        // PORT NOTE: `defer { if (reporter.reporters.junit) |fr| fr.deinit() }` — handled by Drop.
         reporter.repeat_count = ctx.test_options.repeat_count.max(1);
-        // SAFETY: single-threaded CLI startup; `reporter` is `Box::leak`ed so
-        // `&mut reporter.jest` is valid for `'static`.
+        // SAFETY: single-threaded CLI startup; `reporter` is a `Box` that lives
+        // until `exec()` exits the process, so `&mut reporter.jest` remains
+        // valid for the process lifetime.
         unsafe {
             jest::Jest::RUNNER =
                 Some(core::ptr::NonNull::from(&mut reporter.jest));
@@ -1662,7 +1667,7 @@ impl TestCommand {
         let vm = VirtualMachine::init(VirtualMachine::InitOptions {
             args: ctx.args,
             log: ctx.log,
-            env_loader: Some(env_loader),
+            env_loader: Some(&mut *env_loader),
             // we must store file descriptors because we reuse them for
             // iterating through the directory tree recursively
             //
@@ -1727,7 +1732,7 @@ impl TestCommand {
         if ctx.test_options.test_worker {
             // Worker mode: skip discovery; files arrive over stdin and
             // results go out over fd 3. Never returns.
-            ParallelRunner::run_as_worker(reporter, vm, &ctx)?;
+            ParallelRunner::run_as_worker(&mut reporter, vm, &ctx)?;
         }
 
         // Start the debugger before we scan for files
@@ -1772,7 +1777,10 @@ impl TestCommand {
                             vm.run_with_api_lock(vm, VirtualMachine::global_exit);
                         }
                     }
-                    Err(_) => {}
+                    // Zig switches exhaustively over `error{OutOfMemory, DoesNotExist}`;
+                    // any other variant would have been a compile error there. Do not
+                    // silently swallow unknown scan errors (PORTING.md §Forbidden).
+                    Err(e) => unreachable!("Scanner::scan returned unexpected error: {e:?}"),
                 }
             }
         } else {
@@ -1795,10 +1803,14 @@ impl TestCommand {
             scanner.filter_names = filter_names_normalized;
             // TODO(port): type mismatch on Windows (Vec<Box<[u8]>> vs &[&[u8]]) — Phase B unify
 
+            // PORT NOTE: Zig used `vm.allocator.dupe` (arena-scoped). PORTING.md
+            // §Forbidden bans `Box::leak` to satisfy a borrow — own the joined
+            // path in a hoisted buffer and borrow from it.
+            let dir_to_scan_owned: Vec<u8>;
             let dir_to_scan: &[u8] = 'brk: {
                 if !ctx.debug.test_directory.is_empty() {
-                    break 'brk Box::leak(Box::<[u8]>::from(bun_path::join_abs(scanner.fs.top_level_dir, bun_path::Style::Auto, &ctx.debug.test_directory)));
-                    // TODO(port): leaked dupe — Zig used vm.allocator.dupe with no free
+                    dir_to_scan_owned = bun_path::join_abs(scanner.fs.top_level_dir, bun_path::Style::Auto, &ctx.debug.test_directory).into();
+                    break 'brk &dir_to_scan_owned;
                 }
 
                 break 'brk scanner.fs.top_level_dir;
@@ -1817,7 +1829,10 @@ impl TestCommand {
                     vm.is_shutting_down = true;
                     vm.run_with_api_lock(vm, VirtualMachine::global_exit);
                 }
-                Err(_) => {}
+                // Zig switches exhaustively over `error{OutOfMemory, DoesNotExist}`;
+                // any other variant would have been a compile error there. Do not
+                // silently swallow unknown scan errors (PORTING.md §Forbidden).
+                Err(e) => unreachable!("Scanner::scan returned unexpected error: {e:?}"),
             }
         }
 
@@ -1959,9 +1974,9 @@ impl TestCommand {
             }
 
             if ctx.test_options.parallel > 0 {
-                ran_parallel = ParallelRunner::run_as_coordinator(reporter, vm, test_files, &ctx, &mut coverage_options)?;
+                ran_parallel = ParallelRunner::run_as_coordinator(&mut reporter, vm, test_files, &ctx, &mut coverage_options)?;
             } else {
-                Self::run_all_tests(reporter, vm, test_files);
+                Self::run_all_tests(&mut reporter, vm, test_files);
             }
         }
 

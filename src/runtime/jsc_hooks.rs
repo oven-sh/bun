@@ -138,7 +138,7 @@ unsafe fn init_runtime_state(
 /// # Safety
 /// `state` must be the exact pointer returned by [`init_runtime_state`] for
 /// this thread (or null), and must not be used again after this call.
-pub unsafe fn deinit_runtime_state(_vm: *mut VirtualMachine, state: OpaqueRuntimeState) {
+unsafe fn deinit_runtime_state(_vm: *mut VirtualMachine, state: OpaqueRuntimeState) {
     RUNTIME_STATE.with(|c| c.set(ptr::null_mut()));
     if state.is_null() {
         return;
@@ -330,6 +330,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
 /// The static `RuntimeHooks` instance handed to `bun_jsc`.
 pub static RUNTIME_HOOKS_INSTANCE: RuntimeHooks = RuntimeHooks {
     init_runtime_state,
+    deinit_runtime_state,
     generate_entry_point,
     load_preloads,
     ensure_debugger,

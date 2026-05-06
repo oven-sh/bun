@@ -4,7 +4,7 @@
 #![allow(unused_unsafe, unreachable_code, static_mut_refs, private_interfaces, private_bounds)]
 #![allow(unused_macros, ambiguous_glob_reexports)]
 #![allow(incomplete_features)]
-#![feature(adt_const_params, new_zeroed_alloc)]
+#![feature(adt_const_params, new_zeroed_alloc, sync_unsafe_cell)]
 
 // ──────────────────────────────────────────────────────────────────────────
 // B-2 UN-GATED — Resolver::{resolve, dir_info_cached, load_as_file,
@@ -61,37 +61,50 @@ pub mod fs {
     use bun_paths::resolve_path::{is_sep_any, last_index_of_sep};
 
     // ── DirnameStore / FilenameStore ─────────────────────────────────────
-    // TODO(b2-blocked): bun_alloc::BSSStringList — per-type singleton storage.
     // The resolver body interns paths via `dirname_store.append_slice` /
-    // `append_parts`; type shape is exposed here with `unimplemented!()` bodies
-    // until bun_alloc un-gates its BSS backing arrays.
+    // `append_parts`. Backed by `bun_alloc::BSSStringList` singletons emitted
+    // via `bss_string_list!` (per-monomorphization static + first-call init).
+    //
+    // Zig type params are pre-transformed to match `BSSStringList<COUNT, ITEM_LENGTH>`'s
+    // `COUNT = _COUNT * 2, ITEM_LENGTH = _ITEM_LENGTH + 1` const-generic encoding.
+
+    // PORT NOTE: `BSSStringList(2048, 128)` → `<{2048*2}, {128+1}>`
+    bun_alloc::bss_string_list! { pub dirname_store_backing : 4096, 129 }
+    // PORT NOTE: `BSSStringList(4096, 64)` → `<{4096*2}, {64+1}>`
+    bun_alloc::bss_string_list! { pub filename_store_backing : 8192, 65 }
 
     /// Port of `FileSystem.DirnameStore` (`BSSStringList<2048,128>`).
     pub struct DirnameStore(());
     /// Port of `FileSystem.FilenameStore` (`BSSStringList<4096,64>`).
     pub struct FilenameStore(());
 
+    static DIRNAME_STORE_ZST: DirnameStore = DirnameStore(());
+    static FILENAME_STORE_ZST: FilenameStore = FilenameStore(());
+
     macro_rules! string_store_impl {
-        ($t:ty) => {
+        ($t:ty, $zst:ident, $backing:ident) => {
             impl $t {
-                pub fn instance() -> &'static Self {
-                    // TODO(b2-blocked): bun_alloc::BSSStringList per-type singleton
-                    unimplemented!("BSSStringList singleton (Phase B)")
+                #[inline]
+                pub fn instance() -> &'static Self { &$zst }
+                pub fn append_slice(&self, value: &[u8]) -> core::result::Result<&'static [u8], bun_core::Error> {
+                    let s = $backing().append(value).map_err(|_| bun_core::err!("OutOfMemory"))?;
+                    // SAFETY: `append` returns a slice into the singleton's backing storage
+                    // (heap-owned by a `'static` `BSSStringList` or a leaked mi_malloc); the
+                    // borrow tied to `&mut self` is artificially short — re-erase to `'static`.
+                    Ok(unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) })
                 }
-                pub fn append_slice(&self, _value: &[u8]) -> core::result::Result<&'static [u8], bun_core::Error> {
-                    // TODO(b2-blocked): bun_alloc::BSSStringList::append
-                    unimplemented!("BSSStringList::append (Phase B)")
+                pub fn append_parts(&self, parts: &[&[u8]]) -> core::result::Result<&'static [u8], bun_core::Error> {
+                    let s = $backing().append(parts).map_err(|_| bun_core::err!("OutOfMemory"))?;
+                    // SAFETY: see `append_slice`.
+                    Ok(unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) })
                 }
-                pub fn append_parts(&self, _parts: &[&[u8]]) -> core::result::Result<&'static [u8], bun_core::Error> {
-                    // TODO(b2-blocked): bun_alloc::BSSStringList::appendParts
-                    unimplemented!("BSSStringList::appendParts (Phase B)")
-                }
-                pub fn exists(&self, _value: &[u8]) -> bool { false }
+                #[inline]
+                pub fn exists(&self, value: &[u8]) -> bool { $backing().exists(value) }
             }
         };
     }
-    string_store_impl!(DirnameStore);
-    string_store_impl!(FilenameStore);
+    string_store_impl!(DirnameStore, DIRNAME_STORE_ZST, dirname_store_backing);
+    string_store_impl!(FilenameStore, FILENAME_STORE_ZST, filename_store_backing);
 
     // ── FileSystem ───────────────────────────────────────────────────────
 
@@ -805,33 +818,47 @@ pub mod fs {
     /// `store_keys=false` → Rust `BSSMapInner<V, COUNT, RM_SLASH>` (est_key_len unused on inner shape).
     pub type EntriesOptionMap = bun_alloc::BSSMapInner<EntriesOption, 2048, true>;
 
+    // Per-monomorphization singleton storage for `EntriesOption.Map` — Zig kept
+    // `var instance` inside the generic; Rust emits it here at the declare site.
+    bun_alloc::bss_map_inner! { pub entries_option_map : EntriesOption, 2048, true }
+
     /// Resolver-side wrapper over `EntriesOptionMap` exposing the BSSMap surface
-    /// (`get`, `get_or_put`, `at_index`, `put`, `mark_not_found`). The real
-    /// bodies live in bun_alloc's gated `_bss_gated::BSSMapInner`; these are
-    /// type-only shims so the resolver compiles.
-    // TODO(b2-blocked): bun_alloc::BSSMapInner — un-gate the real bodies.
-    pub struct EntriesMap {
-        inner: EntriesOptionMap,
-    }
+    /// (`get`, `get_or_put`, `at_index`, `put`, `mark_not_found`). ZST handle —
+    /// every call resolves to the `entries_option_map()` singleton; this keeps
+    /// `RealFS.entries` field-shaped without inlining the (large) backing array.
+    pub struct EntriesMap(());
     impl EntriesMap {
-        pub fn get(&mut self, _key: &[u8]) -> Option<&mut EntriesOption> {
-            unimplemented!("BSSMap::get (Phase B)")
+        #[inline]
+        pub const fn new() -> Self { Self(()) }
+        #[inline]
+        fn inner(&mut self) -> &'static mut EntriesOptionMap { entries_option_map() }
+        pub fn get(&mut self, key: &[u8]) -> Option<&mut EntriesOption> {
+            self.inner().get(key)
         }
-        pub fn get_or_put(&mut self, _key: &[u8]) -> core::result::Result<crate::__phase_a_body::allocators::Result, bun_core::Error> {
-            unimplemented!("BSSMap::get_or_put (Phase B)")
+        pub fn get_or_put(&mut self, key: &[u8]) -> core::result::Result<crate::__phase_a_body::allocators::Result, bun_core::Error> {
+            self.inner().get_or_put(key).map_err(|_| bun_core::err!("OutOfMemory"))
         }
         pub fn at_index(&mut self, index: bun_alloc::IndexType) -> Option<&mut EntriesOption> {
-            self.inner.at_index(index)
+            self.inner().at_index(index)
         }
         pub fn put(
             &mut self,
-            _result: &crate::__phase_a_body::allocators::Result,
-            _value: EntriesOption,
+            result: &crate::__phase_a_body::allocators::Result,
+            value: EntriesOption,
         ) -> core::result::Result<*mut EntriesOption, bun_core::Error> {
-            unimplemented!("BSSMap::put (Phase B)")
+            // PORT NOTE: `BSSMapInner::put` mutates `result.index` to record placement; the
+            // resolver body passes `&Result` and never re-reads it post-`put`, so copy locally.
+            let mut r = *result;
+            self.inner()
+                .put(&mut r, value)
+                .map(|v| v as *mut EntriesOption)
+                .map_err(|_| bun_core::err!("OutOfMemory"))
         }
-        pub fn mark_not_found(&mut self, _result: crate::__phase_a_body::allocators::Result) {
-            unimplemented!("BSSMap::mark_not_found (Phase B)")
+        pub fn mark_not_found(&mut self, result: crate::__phase_a_body::allocators::Result) {
+            self.inner().mark_not_found(result)
+        }
+        pub fn remove(&mut self, key: &[u8]) -> bool {
+            self.inner().remove(key)
         }
     }
 

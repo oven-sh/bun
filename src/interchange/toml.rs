@@ -640,5 +640,5 @@ impl<'a> TOML<'a> {
 //   source:     src/interchange/toml.zig (392 lines)
 //   confidence: medium
 //   todos:      9
-//   notes:      AST-arena crate; Expr.data accessor names (e_object/e_array), Rope path, and E::* struct shapes are guessed from bun_js_parser; HashMapPool is dead code; raw *mut used where Zig aliases into Expr.data.
+//   notes:      AST-arena crate; HashMapPool is dead code; raw *mut used where Zig aliases into Expr.data; set_rope/get_or_put_array provided locally via ObjectRopeExt (T2 js_ast omits them).
 // ──────────────────────────────────────────────────────────────────────────

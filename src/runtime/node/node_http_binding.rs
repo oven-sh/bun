@@ -1,3 +1,15 @@
+//! `node:http` native binding — `getBunServerAllClosedPromise` /
+//! `{get,set}MaxHTTPHeaderSize`.
+//
+// ─── gated: no standalone type defs to hoist. Every fn body is a JSC host fn
+//     that dispatches on `crate::api::{HTTPServer,HTTPSServer,DebugHTTP*}` (whose
+//     `.as_::<T>()` / `.get_all_closed_promise()` method surface is still gated)
+//     or reads/writes `bun_http::max_http_header_size` (accessor not yet
+//     exported by `bun_http`). Same shape as `node_process.rs`.
+// TODO(b2-blocked): un-gate once `bun_http::{max_http_header_size,set_max_http_header_size}`
+// land and `crate::server::*Server::get_all_closed_promise` is real.
+#[cfg(any())]
+mod _impl {
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 
 // TODO(port): jsc.API.* server types are re-exported via bun.jsc but defined in
@@ -54,6 +66,7 @@ pub fn set_max_http_header_size(global: &JSGlobalObject, frame: &CallFrame) -> J
     bun_http::set_max_http_header_size(u64::try_from(num).unwrap());
     Ok(JSValue::js_number(bun_http::max_http_header_size()))
 }
+} // mod _impl
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

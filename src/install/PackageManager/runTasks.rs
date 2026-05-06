@@ -1535,7 +1535,8 @@ pub fn get_network_task(this: &mut PackageManager) -> *mut NetworkTask {
 
 pub fn alloc_github_url(this: &PackageManager, repository: &Repository) -> Vec<u8> {
     let mut github_api_url: &[u8] = b"https://api.github.com";
-    if let Some(url) = this.env.get(b"GITHUB_API_URL") {
+    // SAFETY: `env` is set during `PackageManager::init` and outlives all tasks.
+    if let Some(url) = unsafe { this.env.unwrap().as_ref() }.get(b"GITHUB_API_URL") {
         if !url.is_empty() {
             github_api_url = url;
         }

@@ -1025,7 +1025,7 @@ pub fn install_isolated_packages(
             let new_entry_dependencies: store::entry::Dependencies = if dedupe_entry.found_existing && new_entry_is_workspace {
                 store::entry::Dependencies::default()
             } else {
-                store::entry::Dependencies::with_capacity(node_nodes[entry.node_id.get()].len())
+                store::entry::Dependencies::init_capacity(node_nodes[entry.node_id.get() as usize].len())?
             };
 
             let mut new_entry_parents: Vec<store::entry::Id> = Vec::with_capacity(1);

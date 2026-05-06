@@ -2349,11 +2349,14 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                                     debug_assert!(i == extern_strings.len());
                                 }
                                 self.bin = Bin {
-                                    tag: Bin::Tag::Map,
-                                    value: Bin::Value::map(ExternalStringList::init(
-                                        lockfile.buffers.extern_strings.as_slice(),
-                                        extern_strings,
-                                    )),
+                                    tag: bin::Tag::Map,
+                                    value: bin::Value {
+                                        map: ExternalStringList::init(
+                                            lockfile.buffers.extern_strings.as_slice(),
+                                            extern_strings,
+                                        ),
+                                    },
+                                    ..Default::default()
                                 };
                             }
                         }

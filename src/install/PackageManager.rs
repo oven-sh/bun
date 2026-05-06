@@ -952,12 +952,12 @@ impl PackageManager {
 
     // Helper: deref env (UNKNOWN ownership wrapper)
     #[inline]
-    fn env(&self) -> &dot_env::Loader<'static> {
+    pub fn env(&self) -> &dot_env::Loader<'static> {
         // SAFETY: env is set during init() and never null afterward
         unsafe { self.env.unwrap().as_ref() }
     }
     #[inline]
-    fn env_mut(&mut self) -> &mut dot_env::Loader<'static> {
+    pub fn env_mut(&mut self) -> &mut dot_env::Loader<'static> {
         // SAFETY: env is set during init() and never null afterward
         unsafe { self.env.unwrap().as_mut() }
     }

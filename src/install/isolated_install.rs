@@ -2341,7 +2341,7 @@ pub fn install_isolated_packages(
 
         if Environment::CI_ASSERT {
             let mut done = true;
-            'next_entry: for (_entry_id, entry_step) in store.entries.items().step.iter().enumerate() {
+            'next_entry: for (_entry_id, entry_step) in store.entries.items_step().iter().enumerate() {
                 let entry_id = store::entry::Id::from(u32::try_from(_entry_id).unwrap());
                 // .monotonic is okay because `Wait.isDone` should have already synchronized with
                 // the completed task threads, via popping from the `UnboundedQueue` in `runTasks`,
@@ -2356,13 +2356,13 @@ pub fn install_isolated_packages(
 
                 log!("entry not done: {}, {}\n", entry_id.get(), <&'static str>::from(step));
 
-                let deps = &store.entries.items().dependencies[entry_id.get()];
+                let deps = &store.entries.items_dependencies()[entry_id.get() as usize];
                 for dep in deps.slice() {
                     // .monotonic is okay because `Wait.isDone` already synchronized with the tasks.
                     let dep_step = entry_steps[dep.entry_id.get()].load(Ordering::Relaxed);
                     if dep_step != installer::Step::Done {
                         log!(", parents:\n - ");
-                        let parent_ids = StoreEntry::debug_gather_all_parents(entry_id, installer.store);
+                        let parent_ids = store::entry::debug_gather_all_parents(entry_id, installer.store);
                         for &parent_id in &parent_ids {
                             if parent_id == store::entry::Id::ROOT {
                                 log!("root ");

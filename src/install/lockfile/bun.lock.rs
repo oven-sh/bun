@@ -1803,8 +1803,7 @@ pub fn parse_into_binary_lockfile(
                 let mut pkg = Package::default();
 
                 pkg.resolution = Resolution::init(
-                    ResolutionTag::Workspace,
-                    ResolutionValue { workspace: string_buf.append(path)?, ..Default::default() },
+                    crate::resolution::TaggedValue::Workspace(string_buf.append(path)?),
                 );
 
                 let name = value.get(b"name").unwrap().as_utf8_string_literal().unwrap();

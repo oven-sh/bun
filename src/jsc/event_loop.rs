@@ -1077,9 +1077,10 @@ pub extern "C" fn Bun__EventLoop__runCallback1(
     this_value: JSValue,
     arg0: JSValue,
 ) {
-    // SAFETY: called from C++ with a valid live global
+    // SAFETY: called from C++ with a valid live global; bun_vm() and
+    // event_loop() return non-null raw pointers into the owning VM.
     let global = unsafe { &*global };
-    global.bun_vm().event_loop().run_callback(callback, global, this_value, &[arg0]);
+    unsafe { (*(*global.bun_vm()).event_loop()).run_callback(callback, global, this_value, &[arg0]) };
 }
 
 #[unsafe(no_mangle)]
@@ -1090,9 +1091,10 @@ pub extern "C" fn Bun__EventLoop__runCallback2(
     arg0: JSValue,
     arg1: JSValue,
 ) {
-    // SAFETY: called from C++ with a valid live global
+    // SAFETY: called from C++ with a valid live global; bun_vm() and
+    // event_loop() return non-null raw pointers into the owning VM.
     let global = unsafe { &*global };
-    global.bun_vm().event_loop().run_callback(callback, global, this_value, &[arg0, arg1]);
+    unsafe { (*(*global.bun_vm()).event_loop()).run_callback(callback, global, this_value, &[arg0, arg1]) };
 }
 
 #[unsafe(no_mangle)]
@@ -1104,9 +1106,10 @@ pub extern "C" fn Bun__EventLoop__runCallback3(
     arg1: JSValue,
     arg2: JSValue,
 ) {
-    // SAFETY: called from C++ with a valid live global
+    // SAFETY: called from C++ with a valid live global; bun_vm() and
+    // event_loop() return non-null raw pointers into the owning VM.
     let global = unsafe { &*global };
-    global.bun_vm().event_loop().run_callback(callback, global, this_value, &[arg0, arg1, arg2]);
+    unsafe { (*(*global.bun_vm()).event_loop()).run_callback(callback, global, this_value, &[arg0, arg1, arg2]) };
 }
 
 #[unsafe(no_mangle)]

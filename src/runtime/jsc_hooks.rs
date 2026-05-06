@@ -1220,29 +1220,20 @@ export default db;
 ///
 /// PORT NOTE: `name` is the canonical specifier string (e.g. `b"node:fs"`).
 /// Zig threads `ResolvedSource.Tag.@"node:fs"` (a generated `u32` enum); the
-/// Rust enum is gated, so we carry the string and resolve to the numeric tag
-/// inside the `#[cfg(any())]` block until `resolved_source_tag` un-gates.
+/// Rust side carries the string and resolves to the numeric tag via
+/// `Tag::from_name` (PHF over the codegen table in `bun_jsc::resolved_source_tag`).
 #[inline]
 fn js_synthetic_module(name: &'static [u8], specifier: &bun_string::String) -> ResolvedSource {
-    let _ = (name, specifier);
-    #[cfg(any())]
-    // TODO(b2-cycle): `ResolvedSource` is `stub_ty!` in `bun_jsc::lib`; the
-    // real `#[repr(C)]` struct + generated `resolved_source_tag::Tag` are
-    // gated. Once un-gated, this body is exact.
-    {
-        use bun_jsc::resolved_source::Tag;
-        return ResolvedSource {
-            allocator: core::ptr::null_mut(),
-            source_code: bun_string::String::empty(),
-            specifier: *specifier,
-            source_url: bun_string::String::static_(name),
-            tag: Tag::from_name(name),
-            source_code_needs_deref: false,
-            ..ResolvedSource::default()
-        };
+    use bun_jsc::resolved_source::Tag;
+    ResolvedSource {
+        allocator: core::ptr::null_mut(),
+        source_code: bun_string::String::empty(),
+        specifier: *specifier,
+        source_url: bun_string::String::static_(name),
+        tag: Tag::from_name(name),
+        source_code_needs_deref: false,
+        ..ResolvedSource::default()
     }
-    #[allow(unreachable_code)]
-    ResolvedSource::default()
 }
 
 /// `ModuleLoader.zig` `getHardcodedModule(jsc_vm, specifier, hardcoded)` —

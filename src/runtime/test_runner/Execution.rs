@@ -318,6 +318,7 @@ impl Execution {
     ) -> JsResult<StepResult> {
         let _scope = group_log::begin();
         let buntest = buntest_strong.get();
+        let buntest_ptr = NonNull::from(&mut *buntest);
         let this = &mut buntest.execution;
         let mut now = Timespec::now_force_real_time();
 
@@ -331,21 +332,27 @@ impl Execution {
                 // step the sequence
                 // if the group is complete, step the group
 
-                let Some((sequence, group)) = this.get_current_and_valid_execution_sequence(&data)
+                let Some((sequence_ptr, group_ptr)) =
+                    this.get_current_and_valid_execution_sequence(&data)
                 else {
                     group_log::log(
                         "runOneCompleted: the data is outdated, invalid, or did not know the sequence",
                     );
                     return Ok(StepResult::Waiting { timeout: None });
                 };
-                let sequence_index = data.execution().entry_data.unwrap().sequence_index;
+                let sequence_index = match &data {
+                    RefDataValue::Execution { entry_data: Some(ed), .. } => ed.sequence_index,
+                    // get_current_and_valid_execution_sequence returned Some ⇒ data is Execution with entry_data
+                    _ => unreachable!(),
+                };
 
                 #[cfg(feature = "ci_assert")]
-                debug_assert!(sequence.active_entry.is_some());
-                this.advance_sequence(sequence, group);
+                // SAFETY: sequence_ptr points into this.sequences; valid while BunTest is alive.
+                debug_assert!(unsafe { sequence_ptr.as_ref() }.active_entry.is_some());
+                Execution::advance_sequence(buntest_ptr, sequence_ptr, group_ptr);
 
                 let sequence_result =
-                    step_sequence(buntest_strong, global_this, group, sequence_index, &mut now)?;
+                    step_sequence(buntest_strong, global_this, group_ptr, sequence_index, &mut now)?;
                 match sequence_result {
                     AdvanceSequenceStatus::Done => {}
                     AdvanceSequenceStatus::Execute { timeout } => {
@@ -355,24 +362,27 @@ impl Execution {
                     }
                 }
                 // this sequence is complete; execute the next sequence
-                // PORT NOTE: reshaped for borrowck — recompute slice each iteration
-                while group.next_sequence_index < group.sequences(this).len() {
-                    let target_sequence =
-                        &mut group.sequences(this)[group.next_sequence_index];
-                    if target_sequence.executing {
+                // PORT NOTE: re-slice from `this` each iteration via the group's range; carry
+                // `group` as NonNull so no `&mut ConcurrentGroup` aliases `&mut Execution`.
+                loop {
+                    // SAFETY: group_ptr points into this.groups (disjoint from this.sequences).
+                    let group = unsafe { &mut *group_ptr.as_ptr() };
+                    let seq_len = group.sequence_end - group.sequence_start;
+                    if group.next_sequence_index >= seq_len {
+                        break;
+                    }
+                    let next_idx = group.next_sequence_index;
+                    let abs_idx = group.sequence_start + next_idx;
+                    if this.sequences[abs_idx].executing {
                         group.next_sequence_index += 1;
                         continue;
                     }
-                    let sequence_status = step_sequence(
-                        buntest_strong,
-                        global_this,
-                        group,
-                        group.next_sequence_index,
-                        &mut now,
-                    )?;
+                    let sequence_status =
+                        step_sequence(buntest_strong, global_this, group_ptr, next_idx, &mut now)?;
                     match sequence_status {
                         AdvanceSequenceStatus::Done => {
-                            group.next_sequence_index += 1;
+                            // SAFETY: see above
+                            unsafe { &mut *group_ptr.as_ptr() }.next_sequence_index += 1;
                             continue;
                         }
                         AdvanceSequenceStatus::Execute { timeout } => {
@@ -383,7 +393,8 @@ impl Execution {
                     }
                 }
                 // all sequences have started
-                if group.remaining_incomplete_entries == 0 {
+                // SAFETY: see above
+                if unsafe { group_ptr.as_ref() }.remaining_incomplete_entries == 0 {
                     return step_group(buntest_strong, global_this, &mut now);
                 }
                 return Ok(StepResult::Waiting { timeout: None });

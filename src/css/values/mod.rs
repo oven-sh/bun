@@ -77,7 +77,7 @@ pub mod position;
 pub mod size;
 pub mod rect;
 pub mod easing;
-gated_value!(syntax);
+pub mod syntax;
 gated_value!(gradient);
 gated_value!(image);
 gated_value!(color, { pub use crate::values_stub::color::*; });

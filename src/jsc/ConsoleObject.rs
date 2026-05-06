@@ -4811,7 +4811,8 @@ pub extern "C" fn Bun__ConsoleObject__count(
     ptr: *const u8,
     len: usize,
 ) {
-    let this = vm_console(global_this);
+    // SAFETY: see `vm_console` — single short-lived `&mut` for this entry point.
+    let this = unsafe { &mut *vm_console(global_this) };
     // SAFETY: caller passes a valid (ptr, len) pair.
     let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
     let hash = bun_wyhash::hash(slice);
@@ -4847,7 +4848,8 @@ pub extern "C" fn Bun__ConsoleObject__countReset(
     ptr: *const u8,
     len: usize,
 ) {
-    let this = vm_console(global_this);
+    // SAFETY: see `vm_console` — single short-lived `&mut` for this entry point.
+    let this = unsafe { &mut *vm_console(global_this) };
     // SAFETY: caller passes a valid (ptr, len) pair.
     let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
     let hash = bun_wyhash::hash(slice);
@@ -4960,7 +4962,8 @@ pub extern "C" fn Bun__ConsoleObject__timeLog(
         can_throw_stack_overflow: true,
         ..Formatter::new(global)
     };
-    let console = vm_console(global);
+    // SAFETY: see `vm_console` — single short-lived `&mut` for this entry point.
+    let console = unsafe { &mut *vm_console(global) };
     let writer = console.error_writer();
     // SAFETY: caller passes a valid (args, args_len) pair.
     for &arg in unsafe { core::slice::from_raw_parts(args, args_len) } {

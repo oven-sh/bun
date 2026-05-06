@@ -607,11 +607,16 @@ pub fn range_of_slice_in_buffer(slice: &[u8], buffer: &[u8]) -> Option<[u32; 2]>
 pub fn free_sensitive<T: Copy>(mut slice: Box<[T]>) {
     // SAFETY: `slice` is exclusively owned; writing `size_of_val` zero bytes
     // over its storage is sound for `T: Copy` (no drop glue, no invariants on
-    // the bit pattern we're discarding). Volatile prevents dead-store elision.
+    // the bit pattern we're discarding). Volatile writes match
+    // `std.crypto.secureZero` and cannot be dead-store-eliminated.
     unsafe {
         let len = core::mem::size_of_val::<[T]>(&slice);
-        core::ptr::write_bytes(slice.as_mut_ptr().cast::<u8>(), 0, len);
-        // Compiler fence: ensure the volatile-ish zeroing isn't reordered past drop.
+        let ptr = slice.as_mut_ptr().cast::<u8>();
+        let mut i = 0usize;
+        while i < len {
+            core::ptr::write_volatile(ptr.add(i), 0u8);
+            i += 1;
+        }
         core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
     }
     drop(slice);
@@ -706,17 +711,18 @@ pub mod allocators {
 macro_rules! bss_singleton {
     ($(#[$m:meta])* $vis:vis fn $name:ident() -> $ty:ty) => {
         $(#[$m])*
-        $vis fn $name() -> &'static mut $ty {
+        $vis fn $name() -> *mut $ty {
             static STORAGE: ::core::cell::SyncUnsafeCell<::core::mem::MaybeUninit<$ty>> =
                 ::core::cell::SyncUnsafeCell::new(::core::mem::MaybeUninit::uninit());
             static ONCE: ::std::sync::Once = ::std::sync::Once::new();
             // SAFETY: STORAGE is private to this fn; ONCE ensures single init before any
             // read; matches Zig's `var instance / var loaded` lazy-singleton pattern.
-            // Callers must not hold overlapping `&mut` (same contract as Zig's raw `*Self`).
+            // Returns a raw `*mut` (same contract as Zig's `*Self`) — fabricating
+            // `&'static mut` here would alias on every call (forbidden).
             unsafe {
                 let slot = (*STORAGE.get()).as_mut_ptr();
                 ONCE.call_once(|| <$ty>::init_at(slot));
-                &mut *slot
+                slot
             }
         }
     };

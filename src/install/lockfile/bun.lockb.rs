@@ -135,68 +135,57 @@ pub fn save(
     }
 
     // TODO(port): Zig passes `StreamType` (type) + `stream` (value) + `@TypeOf(writer)` + `writer`
-    // as separate comptime/runtime args. In Rust the type params are inferred; the callees take
-    // `&mut StreamType` and `&mut Vec<u8>` (or a Write impl). Phase B: align with
-    // `Lockfile::Package::Serializer::save` / `Lockfile::Buffers::save` signatures.
-    Lockfile::Package::Serializer::save(&this.packages, &mut StreamType { bytes }, bytes)?;
-    Lockfile::Buffers::save(this, options, &mut StreamType { bytes }, bytes)?;
-    {
-        let mut writer = Writer { bytes };
-        writer.write_int_u64_le(0)?;
-    }
+    // as separate comptime/runtime args. In Rust the type params are inferred and the callees take
+    // a single `&mut StreamType` (which exposes both stream and writer methods). Phase B: align
+    // with `Lockfile::Package::Serializer::save` / `Lockfile::Buffers::save` signatures.
+    Lockfile::Package::Serializer::save(&this.packages, &mut stream)?;
+    Lockfile::Buffers::save(this, options, &mut stream)?;
+    stream.write_int_u64_le(0)?;
 
     // < Bun v1.0.4 stopped right here when reading the lockfile
     // So we add an extra 8 byte tag to say "hey, there's more data here"
     if this.workspace_versions.count() > 0 {
-        let mut writer = Writer { bytes };
-        writer.write_all(&HAS_WORKSPACE_PACKAGE_IDS_TAG.to_ne_bytes())?;
-        drop(writer);
+        stream.write_all(&HAS_WORKSPACE_PACKAGE_IDS_TAG.to_ne_bytes())?;
 
         // We need to track the "version" field in "package.json" of workspace member packages
         // We do not necessarily have that in the Resolution struct. So we store it here.
         Lockfile::Buffers::write_array::<PackageNameHash>(
-            &mut StreamType { bytes },
-            bytes,
+            &mut stream,
             this.workspace_versions.keys(),
         )?;
         Lockfile::Buffers::write_array::<semver::Version>(
-            &mut StreamType { bytes },
-            bytes,
+            &mut stream,
             this.workspace_versions.values(),
         )?;
 
         Lockfile::Buffers::write_array::<PackageNameHash>(
-            &mut StreamType { bytes },
-            bytes,
+            &mut stream,
             this.workspace_paths.keys(),
         )?;
         Lockfile::Buffers::write_array::<SemverString>(
-            &mut StreamType { bytes },
-            bytes,
+            &mut stream,
             this.workspace_paths.values(),
         )?;
     }
 
     if let Some(trusted_dependencies) = &this.trusted_dependencies {
         if trusted_dependencies.count() > 0 {
-            Writer { bytes }.write_all(&HAS_TRUSTED_DEPENDENCIES_TAG.to_ne_bytes())?;
+            stream.write_all(&HAS_TRUSTED_DEPENDENCIES_TAG.to_ne_bytes())?;
 
             Lockfile::Buffers::write_array::<u32>(
-                &mut StreamType { bytes },
-                bytes,
+                &mut stream,
                 trusted_dependencies.keys(),
             )?;
         } else {
-            Writer { bytes }.write_all(&HAS_EMPTY_TRUSTED_DEPENDENCIES_TAG.to_ne_bytes())?;
+            stream.write_all(&HAS_EMPTY_TRUSTED_DEPENDENCIES_TAG.to_ne_bytes())?;
         }
     }
 
     if this.overrides.map.count() > 0 {
-        Writer { bytes }.write_all(&HAS_OVERRIDES_TAG.to_ne_bytes())?;
+        stream.write_all(&HAS_OVERRIDES_TAG.to_ne_bytes())?;
 
         Lockfile::Buffers::write_array::<PackageNameHash>(
-            &mut StreamType { bytes },
-            bytes,
+            &mut stream,
             this.overrides.map.keys(),
         )?;
         // PERF(port): Zig uses z_allocator + initCapacity then sets items.len directly.
@@ -207,8 +196,7 @@ pub fn save(
         }
 
         Lockfile::Buffers::write_array::<Dependency::External>(
-            &mut StreamType { bytes },
-            bytes,
+            &mut stream,
             &external_overrides,
         )?;
     }
@@ -218,27 +206,24 @@ pub fn save(
             debug_assert!(!patched_dep.patchfile_hash_is_null);
         }
 
-        Writer { bytes }.write_all(&HAS_PATCHED_DEPENDENCIES_TAG.to_ne_bytes())?;
+        stream.write_all(&HAS_PATCHED_DEPENDENCIES_TAG.to_ne_bytes())?;
 
         Lockfile::Buffers::write_array::<PackageNameAndVersionHash>(
-            &mut StreamType { bytes },
-            bytes,
+            &mut stream,
             this.patched_dependencies.keys(),
         )?;
 
         Lockfile::Buffers::write_array::<PatchedDep>(
-            &mut StreamType { bytes },
-            bytes,
+            &mut stream,
             this.patched_dependencies.values(),
         )?;
     }
 
     if this.catalogs.has_any() {
-        Writer { bytes }.write_all(&HAS_CATALOGS_TAG.to_ne_bytes())?;
+        stream.write_all(&HAS_CATALOGS_TAG.to_ne_bytes())?;
 
         Lockfile::Buffers::write_array::<SemverString>(
-            &mut StreamType { bytes },
-            bytes,
+            &mut stream,
             this.catalogs.default.keys(),
         )?;
 
@@ -250,22 +235,19 @@ pub fn save(
         }
 
         Lockfile::Buffers::write_array::<Dependency::External>(
-            &mut StreamType { bytes },
-            bytes,
+            &mut stream,
             &external_deps_buf,
         )?;
         external_deps_buf.clear();
 
         Lockfile::Buffers::write_array::<SemverString>(
-            &mut StreamType { bytes },
-            bytes,
+            &mut stream,
             this.catalogs.groups.keys(),
         )?;
 
         for catalog_deps in this.catalogs.groups.values() {
             Lockfile::Buffers::write_array::<SemverString>(
-                &mut StreamType { bytes },
-                bytes,
+                &mut stream,
                 catalog_deps.keys(),
             )?;
 
@@ -277,21 +259,20 @@ pub fn save(
             }
 
             Lockfile::Buffers::write_array::<Dependency::External>(
-                &mut StreamType { bytes },
-                bytes,
+                &mut stream,
                 &external_deps_buf,
             )?;
             external_deps_buf.clear();
         }
     }
 
-    Writer { bytes }.write_all(&HAS_CONFIG_VERSION_TAG.to_ne_bytes())?;
+    stream.write_all(&HAS_CONFIG_VERSION_TAG.to_ne_bytes())?;
     let config_version: ConfigVersion = options.config_version.unwrap_or(ConfigVersion::CURRENT);
-    Writer { bytes }.write_int_u64_le(config_version as u64)?;
+    stream.write_int_u64_le(config_version as u64)?;
 
-    *total_size = StreamType { bytes }.get_pos()?;
+    *total_size = stream.get_pos()?;
 
-    Writer { bytes }.write_all(&ALIGNMENT_BYTES_TO_REPEAT_BUFFER)?;
+    stream.write_all(&ALIGNMENT_BYTES_TO_REPEAT_BUFFER)?;
 
     Ok(())
 }

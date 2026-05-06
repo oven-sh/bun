@@ -129,16 +129,13 @@ impl Expr {
 }
 
 impl Expr {
-    // TODO(b2-ast-round-C): clone/deep_clone forward to `Data::clone`/
-    // `Data::deep_clone` (gated below). Un-gate together.
-    
-    pub fn clone_in(this: Expr, bump: &Bump) -> Result<Expr, bun_core::Error> {
+    pub fn clone_in(&self, bump: &Bump) -> Result<Expr, bun_core::Error> {
         // TODO(port): narrow error set
-        Ok(Expr { loc: this.loc, data: this.data.clone(bump)? })
+        Ok(Expr { loc: self.loc, data: Data::clone_in(self.data, bump)? })
     }
-    
-    pub fn deep_clone(this: Expr, bump: &Bump) -> Result<Expr, AllocError> {
-        Ok(Expr { loc: this.loc, data: this.data.deep_clone(bump)? })
+
+    pub fn deep_clone(&self, bump: &Bump) -> Result<Expr, AllocError> {
+        Ok(Expr { loc: self.loc, data: self.data.deep_clone(bump)? })
     }
 
     pub fn wrap_in_arrow(this: Expr, bump: &Bump) -> Result<Expr, bun_core::Error> {
@@ -160,27 +157,35 @@ impl Expr {
         ))
     }
 
-    // TODO(b2-blocked): bun_http_types::MimeType + bun_interchange::json::parse — this is the
-    // macro-expansion `Expr.fromBlob` path (cold). High tier (`js_parser_jsc`) should own it
-    // anyway since it touches `jsc::webcore::Blob`. Gate body until those land.
-    
+    // PORT NOTE: `Expr.fromBlob` (Zig) lives at the JSC tier — it touches
+    // `bun.http.MimeType`, `JSON.parseForMacro`, and `jsc::webcore::Blob`. The
+    // `bun_http_types` crate is not a dependency of `bun_js_parser`, so the
+    // Rust port routes through a vtable (`BlobRef`) and a content-type byte
+    // slice instead of the typed `MimeType` struct. Category detection is
+    // inlined here from `MimeType::Category` (Zig: `mime_type.category ==
+    // .json` / `.isTextLike()`).
     pub fn from_blob(
         blob: BlobRef,
         bump: &Bump,
-        mime_type_: Option<MimeType>,
+        mime_type_: Option<&[u8]>,
         log: &mut logger::Log,
         loc: Loc,
     ) -> Result<Expr, bun_core::Error> {
         let bytes = blob.shared_view();
+        let mime_type: &[u8] = mime_type_.unwrap_or_else(|| blob.content_type());
 
-        let mime_type = mime_type_.unwrap_or_else(|| MimeType::init(blob.content_type(), None, None));
+        // MimeType::Category::Json — `application/json` or `+json` suffix.
+        let is_json = mime_type == b"application/json"
+            || mime_type.ends_with(b"+json")
+            || mime_type.ends_with(b"/json");
 
-        if mime_type.category == MimeType::Category::Json {
+        if is_json {
             let source = &logger::Source::init_path_string(b"fetch.json", bytes);
-            let mut out_expr = match crate::interchange_json_stub::parse_for_macro(source, log, bump) {
-                Ok(e) => e,
-                Err(_) => return Err(bun_core::err!("MacroFailed")),
-            };
+            let mut out_expr: Expr =
+                match bun_interchange::json::parse_for_macro(source, log, bump) {
+                    Ok(e) => e.into(),
+                    Err(_) => return Err(bun_core::err!("MacroFailed")),
+                };
             out_expr.loc = loc;
 
             match &mut out_expr.data {
@@ -196,23 +201,50 @@ impl Expr {
             return Ok(out_expr);
         }
 
-        if mime_type.category.is_text_like() {
+        // MimeType::Category::isTextLike — text/*, application/javascript-ish, css, html.
+        let is_text_like = mime_type.starts_with(b"text/")
+            || mime_type == b"application/javascript"
+            || mime_type == b"application/x-javascript"
+            || mime_type == b"application/ecmascript"
+            || mime_type == b"application/xml";
+
+        if is_text_like {
             let mut output = bun_string::MutableString::init_empty();
             // MOVE_DOWN: was bun_js_printer::quote_for_json → bun_str (T1)
             bun_string::quote_for_json(bytes, &mut output, true)?;
-            let mut list = output.into_owned_slice();
+            let owned = output.to_owned_slice();
             // remove the quotes
-            if !list.is_empty() {
-                list = &list[1..list.len() - 1];
-            }
-            return Ok(Expr::init(E::String::init(list), loc));
+            // PERF(port): Zig sliced the owned buffer in place; here we re-copy
+            // into the bump arena so the `E.String` data outlives `owned`.
+            let unquoted: &[u8] = if owned.len() >= 2 {
+                &owned[1..owned.len() - 1]
+            } else {
+                &owned[..]
+            };
+            let data = bump.alloc_slice_copy(unquoted);
+            return Ok(Expr::init(
+                E::String { data, ..Default::default() },
+                loc,
+            ));
         }
 
+        // Fallback: base64 data URL.
+        let prefix = b"data:";
+        let mid = b";base64,";
+        let encoded_len = bun_base64::encode_len(bytes);
+        let total = prefix.len() + mime_type.len() + mid.len() + encoded_len;
+        let buf: &mut [u8] = bump.alloc_slice_fill_copy(total, 0u8);
+        let mut i = 0usize;
+        buf[i..i + prefix.len()].copy_from_slice(prefix);
+        i += prefix.len();
+        buf[i..i + mime_type.len()].copy_from_slice(mime_type);
+        i += mime_type.len();
+        buf[i..i + mid.len()].copy_from_slice(mid);
+        i += mid.len();
+        let n = bun_base64::encode(&mut buf[i..], bytes);
+        let data: &[u8] = &buf[..i + n];
         Ok(Expr::init(
-            E::String {
-                data: bun_string::ZigString::init(bytes).to_base64_data_url(bump)?,
-                ..Default::default()
-            },
+            E::String { data, ..Default::default() },
             loc,
         ))
     }

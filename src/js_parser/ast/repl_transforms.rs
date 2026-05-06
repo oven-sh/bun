@@ -5,35 +5,23 @@
 //! - Wraps code with await in async IIFE with variable hoisting
 //! - Hoists declarations for variable persistence across REPL lines
 
-use core::marker::PhantomData;
-
 use bumpalo::collections::Vec as BumpVec;
 use bumpalo::Bump;
 
 use bun_logger as logger;
 
 use crate::ast as js_ast;
-use crate::ast::{
-    B, Binding, E, Expr, ExprNodeList, G, S, Stmt,
-};
-// TODO(port): verify exact module paths for nested types (Decl::List, G::Property::List,
-// S::Local::Kind, stmt::Data / binding::Data variant names) once bun_js_parser crate lands.
-use crate::ast::G::Decl;
+use crate::ast::stmt::Data as StmtData;
+use crate::ast::{B, Binding, E, Expr, ExprNodeList, G, S, Stmt};
+use crate::flags;
 
-/// Zig: `pub fn ReplTransforms(comptime P: type) type { return struct { ... } }`
-///
-/// Zero-sized namespace struct; all fns are associated and take `p: &mut P`.
 // Zig: `pub fn ReplTransforms(comptime P: type) type { return struct { ... } }`
-// — file-split mixin pattern. Round-C lowered to direct `impl P` block.
-//
-// TODO(b2-ast-D): body has 141 errors against E/S/G/B/Stmt/Binding shapes (path fixups,
-// ExprData variant names, BabyList/BumpVec method names). The `apply` surface is stubbed;
-// full draft body preserved under  mod _draft below.
+// — file-split mixin pattern. Round-D lowered to direct `impl P` block.
 
-use crate::ast::p::P as PReal;
+use crate::ast::p::P;
 use crate::parser::JsxT;
 
-impl<'a, const TS: bool, J: JsxT, const SCAN: bool> PReal<'a, TS, J, SCAN> {
+impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
     /// Apply REPL-mode transforms to the AST.
     /// This transforms code for interactive evaluation:
     /// - Wraps the last expression in { value: expr } for result capture
@@ -43,30 +31,16 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> PReal<'a, TS, J, SCAN> {
         parts: &mut BumpVec<'bump, js_ast::Part>,
         bump: &'bump Bump,
     ) -> Result<(), bun_alloc::AllocError> {
-        let _ = (parts, bump);
-        todo!("b2-ast-D: apply_repl_transforms body")
-    }
-}
-
- // TODO(b2-ast-D): full body draft
-mod _draft {
-use super::*;
-struct ReplTransforms<P>(PhantomData<P>);
-impl<P> ReplTransforms<P> {
-    pub fn apply<'bump>(
-        p: &mut P,
-        parts: &mut BumpVec<'bump, js_ast::Part>,
-        bump: &'bump Bump,
-    ) -> Result<(), bun_alloc::AllocError> {
         // Skip transform if there's a top-level return (indicates module pattern)
-        if p.has_top_level_return {
+        if self.has_top_level_return {
             return Ok(());
         }
 
         // Collect all statements
         let mut total_stmts_count: usize = 0;
         for part in parts.iter() {
-            total_stmts_count += part.stmts.len();
+            // SAFETY: arena-owned `*mut [Stmt]` valid for 'a; read-only iteration.
+            total_stmts_count += unsafe { &*part.stmts }.len();
         }
 
         if total_stmts_count == 0 {
@@ -77,17 +51,18 @@ impl<P> ReplTransforms<P> {
         // PERF(port): was bun.handleOom(allocator.alloc(Stmt, n)) — bump alloc + index fill
         let mut all_stmts = BumpVec::with_capacity_in(total_stmts_count, bump);
         for part in parts.iter() {
-            for stmt in part.stmts.iter() {
+            // SAFETY: arena-owned slice valid for 'a.
+            for stmt in unsafe { &*part.stmts }.iter() {
                 all_stmts.push(*stmt);
             }
         }
-        let all_stmts = all_stmts.into_bump_slice();
+        let all_stmts: &mut [Stmt] = all_stmts.into_bump_slice_mut();
 
         // Check if there's top-level await or imports (imports become dynamic awaited imports)
-        let mut has_top_level_await = p.top_level_await_keyword.len > 0;
+        let mut has_top_level_await = self.top_level_await_keyword.len > 0;
         if !has_top_level_await {
             for stmt in all_stmts.iter() {
-                if matches!(stmt.data, stmt::Data::SImport(_)) {
+                if matches!(stmt.data, StmtData::SImport(_)) {
                     has_top_level_await = true;
                     break;
                 }
@@ -95,15 +70,15 @@ impl<P> ReplTransforms<P> {
         }
 
         // Apply transform with is_async based on presence of top-level await
-        Self::transform_with_hoisting(p, parts, all_stmts, bump, has_top_level_await)
+        self.repl_transform_with_hoisting(parts, all_stmts, bump, has_top_level_await)
     }
 
     /// Transform code with hoisting and IIFE wrapper
     /// `is_async`: true for async IIFE (when top-level await present), false for sync IIFE
-    fn transform_with_hoisting<'bump>(
-        p: &mut P,
+    fn repl_transform_with_hoisting<'bump>(
+        &mut self,
         parts: &mut BumpVec<'bump, js_ast::Part>,
-        all_stmts: &'bump [Stmt],
+        all_stmts: &[Stmt],
         bump: &'bump Bump,
         is_async: bool,
     ) -> Result<(), bun_alloc::AllocError> {
@@ -112,33 +87,31 @@ impl<P> ReplTransforms<P> {
         }
 
         // Lists for hoisted declarations and inner statements
-        let mut hoisted_stmts = BumpVec::<Stmt>::new_in(bump);
-        let mut inner_stmts = BumpVec::<Stmt>::new_in(bump);
-        hoisted_stmts.reserve(all_stmts.len());
-        inner_stmts.reserve(all_stmts.len());
+        let mut hoisted_stmts = BumpVec::<Stmt>::with_capacity_in(all_stmts.len(), bump);
+        let mut inner_stmts = BumpVec::<Stmt>::with_capacity_in(all_stmts.len(), bump);
 
         // Process each statement - hoist all declarations for REPL persistence
         for stmt in all_stmts.iter() {
-            match &stmt.data {
-                stmt::Data::SLocal(local) => {
+            match stmt.data {
+                StmtData::SLocal(local) => {
                     // Hoist all declarations as var so they become context properties
                     // In sloppy mode, var at top level becomes a property of the global/context object
                     // This is essential for REPL variable persistence across vm.runInContext calls
-                    let kind = S::Local::Kind::KVar;
+                    let kind = S::Kind::KVar;
 
                     // Extract individual identifiers from binding patterns for hoisting
                     let mut hoisted_decl_list = BumpVec::<G::Decl>::new_in(bump);
                     for decl in local.decls.slice() {
-                        Self::extract_identifiers_from_binding(p, decl.binding, &mut hoisted_decl_list)?;
+                        self.repl_extract_identifiers_from_binding(decl.binding, &mut hoisted_decl_list)?;
                     }
 
                     if !hoisted_decl_list.is_empty() {
-                        hoisted_stmts.push(p.s(
-                            S::Local {
-                                kind,
-                                decls: Decl::List::from_owned_slice(hoisted_decl_list.into_bump_slice()),
-                                ..Default::default()
-                            },
+                        // SAFETY: bump-owned slice handed to BabyList::Borrowed; never grown.
+                        let decls = unsafe {
+                            G::DeclList::from_bump_slice(hoisted_decl_list.into_bump_slice_mut())
+                        };
+                        hoisted_stmts.push(self.s(
+                            S::Local { kind, decls, ..Default::default() },
                             stmt.loc,
                         ));
                     }
@@ -147,146 +120,207 @@ impl<P> ReplTransforms<P> {
                     for decl in local.decls.slice() {
                         if let Some(value) = decl.value {
                             // Create assignment expression: binding = value
-                            let assign_expr = Self::create_binding_assignment(p, decl.binding, value, bump);
-                            inner_stmts.push(p.s(S::SExpr { value: assign_expr, ..Default::default() }, stmt.loc));
+                            let assign_expr =
+                                self.repl_create_binding_assignment(decl.binding, value, bump);
+                            inner_stmts.push(self.s(
+                                S::SExpr { value: assign_expr, ..Default::default() },
+                                stmt.loc,
+                            ));
                         }
                     }
                 }
-                stmt::Data::SFunction(func) => {
+                StmtData::SFunction(func) => {
                     // For function declarations:
                     // Hoist as: var funcName;
                     // Inner: this.funcName = funcName; function funcName() {}
                     if let Some(name_loc) = func.func.name {
-                        hoisted_stmts.push(p.s(
+                        let name_ref = name_loc.ref_.unwrap();
+                        hoisted_stmts.push(self.s(
                             S::Local {
-                                kind: S::Local::Kind::KVar,
-                                decls: Decl::List::from_owned_slice(bump.alloc_slice_copy(&[G::Decl {
-                                    binding: p.b(B::Identifier { ref_: name_loc.ref_.unwrap() }, name_loc.loc),
-                                    value: None,
-                                }])),
+                                kind: S::Kind::KVar,
+                                decls: repl_one_decl(
+                                    bump,
+                                    self.b(B::Identifier { r#ref: name_ref }, name_loc.loc),
+                                ),
                                 ..Default::default()
                             },
                             stmt.loc,
                         ));
 
                         // Add this.funcName = funcName assignment
-                        let this_expr = p.new_expr(E::This {}, stmt.loc);
-                        let this_dot = p.new_expr(
+                        let this_expr = self.new_expr(E::This {}, stmt.loc);
+                        // SAFETY: `original_name` is an arena-owned slice valid for 'a; raw-ptr
+                        // deref yields an unbounded lifetime accepted by `Dot.name: &'static [u8]`
+                        // (Phase-A `Str` placeholder — see E.rs line 28).
+                        let name_str: &'static [u8] = unsafe {
+                            &*self.symbols[name_ref.inner_index() as usize].original_name
+                        };
+                        let this_dot = self.new_expr(
                             E::Dot {
                                 target: this_expr,
-                                name: p.symbols[name_loc.ref_.unwrap().inner_index()].original_name,
+                                name: name_str,
                                 name_loc: name_loc.loc,
                                 ..Default::default()
                             },
                             stmt.loc,
                         );
-                        let func_id = p.new_expr(E::Identifier { ref_: name_loc.ref_.unwrap(), ..Default::default() }, name_loc.loc);
-                        let assign = p.new_expr(
+                        let func_id = self.new_expr(
+                            E::Identifier { ref_: name_ref, ..Default::default() },
+                            name_loc.loc,
+                        );
+                        let assign = self.new_expr(
                             E::Binary {
-                                op: js_ast::Op::BinAssign,
+                                op: js_ast::OpCode::BinAssign,
                                 left: this_dot,
                                 right: func_id,
                             },
                             stmt.loc,
                         );
-                        inner_stmts.push(p.s(S::SExpr { value: assign, ..Default::default() }, stmt.loc));
+                        inner_stmts.push(
+                            self.s(S::SExpr { value: assign, ..Default::default() }, stmt.loc),
+                        );
                     }
                     // Add the function declaration itself
                     inner_stmts.push(*stmt);
                 }
-                stmt::Data::SClass(class) => {
+                StmtData::SClass(mut class) => {
                     // For class declarations:
                     // Hoist as: var ClassName; (use var so it persists to vm context)
                     // Inner: ClassName = class ClassName {}
                     if let Some(name_loc) = class.class.class_name {
-                        hoisted_stmts.push(p.s(
+                        let name_ref = name_loc.ref_.unwrap();
+                        hoisted_stmts.push(self.s(
                             S::Local {
-                                kind: S::Local::Kind::KVar,
-                                decls: Decl::List::from_owned_slice(bump.alloc_slice_copy(&[G::Decl {
-                                    binding: p.b(B::Identifier { ref_: name_loc.ref_.unwrap() }, name_loc.loc),
-                                    value: None,
-                                }])),
+                                kind: S::Kind::KVar,
+                                decls: repl_one_decl(
+                                    bump,
+                                    self.b(B::Identifier { r#ref: name_ref }, name_loc.loc),
+                                ),
                                 ..Default::default()
                             },
                             stmt.loc,
                         ));
 
                         // Convert class declaration to assignment: ClassName = class ClassName {}
-                        let class_expr = p.new_expr(class.class, stmt.loc);
-                        let class_id = p.new_expr(E::Identifier { ref_: name_loc.ref_.unwrap(), ..Default::default() }, name_loc.loc);
-                        let assign = p.new_expr(
+                        // PORT NOTE: G::Class is non-Copy (owns a BabyList); the original
+                        // S::Class store entry is dead after this rewrite, so move it out.
+                        let class_value = core::mem::take(&mut class.class);
+                        let class_expr = self.new_expr(class_value, stmt.loc);
+                        let class_id = self.new_expr(
+                            E::Identifier { ref_: name_ref, ..Default::default() },
+                            name_loc.loc,
+                        );
+                        let assign = self.new_expr(
                             E::Binary {
-                                op: js_ast::Op::BinAssign,
+                                op: js_ast::OpCode::BinAssign,
                                 left: class_id,
                                 right: class_expr,
                             },
                             stmt.loc,
                         );
-                        inner_stmts.push(p.s(S::SExpr { value: assign, ..Default::default() }, stmt.loc));
+                        inner_stmts.push(
+                            self.s(S::SExpr { value: assign, ..Default::default() }, stmt.loc),
+                        );
                     } else {
                         inner_stmts.push(*stmt);
                     }
                 }
-                stmt::Data::SImport(import_data) => {
+                StmtData::SImport(import_data) => {
                     // Convert static imports to dynamic imports for REPL evaluation:
                     //   import X from 'mod'      -> var X = (await import('mod')).default
                     //   import { a, b } from 'mod' -> var {a, b} = await import('mod')
                     //   import * as X from 'mod'   -> var X = await import('mod')
                     //   import 'mod'              -> await import('mod')
-                    let path_str = p.import_records[import_data.import_record_index as usize].path.text;
-                    let import_expr = p.new_expr(
+                    let path_str: &'static [u8] = self.import_records.items()
+                        [import_data.import_record_index as usize]
+                        .path
+                        .text;
+                    let str_expr = self.new_expr(
+                        E::String { data: path_str, ..Default::default() },
+                        stmt.loc,
+                    );
+                    let import_expr = self.new_expr(
                         E::Import {
-                            expr: p.new_expr(E::String { data: path_str, ..Default::default() }, stmt.loc),
+                            expr: str_expr,
+                            options: Expr::EMPTY,
                             import_record_index: u32::MAX,
-                            ..Default::default()
                         },
                         stmt.loc,
                     );
-                    let await_expr = p.new_expr(E::Await { value: import_expr }, stmt.loc);
+                    let await_expr = self.new_expr(E::Await { value: import_expr }, stmt.loc);
+
+                    // SAFETY: `items` is an arena-owned `*mut [ClauseItem]` valid for 'a.
+                    let import_items: &[crate::ClauseItem] = unsafe { &*import_data.items };
 
                     if import_data.star_name_loc.is_some() {
                         // import * as X from 'mod' -> var X = await import('mod')
-                        hoisted_stmts.push(p.s(
+                        hoisted_stmts.push(self.s(
                             S::Local {
-                                kind: S::Local::Kind::KVar,
-                                decls: Decl::List::from_owned_slice(bump.alloc_slice_copy(&[G::Decl {
-                                    binding: p.b(B::Identifier { ref_: import_data.namespace_ref }, stmt.loc),
-                                    value: None,
-                                }])),
+                                kind: S::Kind::KVar,
+                                decls: repl_one_decl(
+                                    bump,
+                                    self.b(
+                                        B::Identifier { r#ref: import_data.namespace_ref },
+                                        stmt.loc,
+                                    ),
+                                ),
                                 ..Default::default()
                             },
                             stmt.loc,
                         ));
-                        let assign = p.new_expr(
-                            E::Binary {
-                                op: js_ast::Op::BinAssign,
-                                left: p.new_expr(E::Identifier { ref_: import_data.namespace_ref, ..Default::default() }, stmt.loc),
-                                right: await_expr,
+                        let left = self.new_expr(
+                            E::Identifier {
+                                ref_: import_data.namespace_ref,
+                                ..Default::default()
                             },
                             stmt.loc,
                         );
-                        inner_stmts.push(p.s(S::SExpr { value: assign, ..Default::default() }, stmt.loc));
+                        let assign = self.new_expr(
+                            E::Binary { op: js_ast::OpCode::BinAssign, left, right: await_expr },
+                            stmt.loc,
+                        );
+                        inner_stmts.push(
+                            self.s(S::SExpr { value: assign, ..Default::default() }, stmt.loc),
+                        );
                     } else if let Some(default_name) = import_data.default_name {
                         // import X from 'mod' -> var X = (await import('mod')).default
                         // import X, { a } from 'mod' -> var __ns = await import('mod'); var X = __ns.default; var a = __ns.a;
-                        hoisted_stmts.push(p.s(
+                        let default_ref = default_name.ref_.unwrap();
+                        hoisted_stmts.push(self.s(
                             S::Local {
-                                kind: S::Local::Kind::KVar,
-                                decls: Decl::List::from_owned_slice(bump.alloc_slice_copy(&[G::Decl {
-                                    binding: p.b(B::Identifier { ref_: default_name.ref_.unwrap() }, default_name.loc),
-                                    value: None,
-                                }])),
+                                kind: S::Kind::KVar,
+                                decls: repl_one_decl(
+                                    bump,
+                                    self.b(
+                                        B::Identifier { r#ref: default_ref },
+                                        default_name.loc,
+                                    ),
+                                ),
                                 ..Default::default()
                             },
                             stmt.loc,
                         ));
 
-                        if !import_data.items.is_empty() {
+                        if !import_items.is_empty() {
                             // Share a single await import() between default and named imports.
                             // namespace_ref is synthesized by processImportStatement for all non-star imports.
-                            Self::convert_named_imports(p, import_data, await_expr, &mut hoisted_stmts, &mut inner_stmts, bump, stmt.loc)?;
-                            let ns_ref_expr = p.new_expr(E::Identifier { ref_: import_data.namespace_ref, ..Default::default() }, stmt.loc);
-                            let dot_default = p.new_expr(
+                            self.repl_convert_named_imports(
+                                &*import_data,
+                                import_items,
+                                await_expr,
+                                &mut hoisted_stmts,
+                                &mut inner_stmts,
+                                bump,
+                                stmt.loc,
+                            )?;
+                            let ns_ref_expr = self.new_expr(
+                                E::Identifier {
+                                    ref_: import_data.namespace_ref,
+                                    ..Default::default()
+                                },
+                                stmt.loc,
+                            );
+                            let dot_default = self.new_expr(
                                 E::Dot {
                                     target: ns_ref_expr,
                                     name: b"default",
@@ -295,17 +329,24 @@ impl<P> ReplTransforms<P> {
                                 },
                                 stmt.loc,
                             );
-                            let assign = p.new_expr(
+                            let left = self.new_expr(
+                                E::Identifier { ref_: default_ref, ..Default::default() },
+                                default_name.loc,
+                            );
+                            let assign = self.new_expr(
                                 E::Binary {
-                                    op: js_ast::Op::BinAssign,
-                                    left: p.new_expr(E::Identifier { ref_: default_name.ref_.unwrap(), ..Default::default() }, default_name.loc),
+                                    op: js_ast::OpCode::BinAssign,
+                                    left,
                                     right: dot_default,
                                 },
                                 stmt.loc,
                             );
-                            inner_stmts.push(p.s(S::SExpr { value: assign, ..Default::default() }, stmt.loc));
+                            inner_stmts.push(self.s(
+                                S::SExpr { value: assign, ..Default::default() },
+                                stmt.loc,
+                            ));
                         } else {
-                            let dot_default = p.new_expr(
+                            let dot_default = self.new_expr(
                                 E::Dot {
                                     target: await_expr,
                                     name: b"default",
@@ -314,28 +355,53 @@ impl<P> ReplTransforms<P> {
                                 },
                                 stmt.loc,
                             );
-                            let assign = p.new_expr(
+                            let left = self.new_expr(
+                                E::Identifier { ref_: default_ref, ..Default::default() },
+                                default_name.loc,
+                            );
+                            let assign = self.new_expr(
                                 E::Binary {
-                                    op: js_ast::Op::BinAssign,
-                                    left: p.new_expr(E::Identifier { ref_: default_name.ref_.unwrap(), ..Default::default() }, default_name.loc),
+                                    op: js_ast::OpCode::BinAssign,
+                                    left,
                                     right: dot_default,
                                 },
                                 stmt.loc,
                             );
-                            inner_stmts.push(p.s(S::SExpr { value: assign, ..Default::default() }, stmt.loc));
+                            inner_stmts.push(self.s(
+                                S::SExpr { value: assign, ..Default::default() },
+                                stmt.loc,
+                            ));
                         }
-                    } else if !import_data.items.is_empty() {
+                    } else if !import_items.is_empty() {
                         // import { a, b } from 'mod' -> destructure from await import('mod')
-                        Self::convert_named_imports(p, import_data, await_expr, &mut hoisted_stmts, &mut inner_stmts, bump, stmt.loc)?;
+                        self.repl_convert_named_imports(
+                            &*import_data,
+                            import_items,
+                            await_expr,
+                            &mut hoisted_stmts,
+                            &mut inner_stmts,
+                            bump,
+                            stmt.loc,
+                        )?;
                     } else {
                         // import 'mod' (side-effect only) -> await import('mod')
-                        inner_stmts.push(p.s(S::SExpr { value: await_expr, ..Default::default() }, stmt.loc));
+                        inner_stmts.push(self.s(
+                            S::SExpr { value: await_expr, ..Default::default() },
+                            stmt.loc,
+                        ));
                     }
                 }
-                stmt::Data::SDirective(directive) => {
+                StmtData::SDirective(directive) => {
                     // In REPL mode, treat directives (string literals) as expressions
-                    let str_expr = p.new_expr(E::String { data: directive.value, ..Default::default() }, stmt.loc);
-                    inner_stmts.push(p.s(S::SExpr { value: str_expr, ..Default::default() }, stmt.loc));
+                    // SAFETY: arena-owned `*const [u8]` valid for 'a; Phase-A `Str` is `&'static [u8]`.
+                    let value_str: &'static [u8] = unsafe { &*directive.value };
+                    let str_expr = self.new_expr(
+                        E::String { data: value_str, ..Default::default() },
+                        stmt.loc,
+                    );
+                    inner_stmts.push(
+                        self.s(S::SExpr { value: str_expr, ..Default::default() }, stmt.loc),
+                    );
                 }
                 _ => {
                     inner_stmts.push(*stmt);
@@ -344,25 +410,25 @@ impl<P> ReplTransforms<P> {
         }
 
         // Wrap the last expression in return { value: expr }
-        Self::wrap_last_expression_with_return(p, &mut inner_stmts, bump);
+        self.repl_wrap_last_expression_with_return(&mut inner_stmts, bump);
 
         // Create the IIFE: (() => { ...inner_stmts... })() or (async () => { ... })()
-        let arrow = p.new_expr(
+        let inner_slice: &mut [Stmt] = inner_stmts.into_bump_slice_mut();
+        let arrow = self.new_expr(
             E::Arrow {
                 args: &[],
-                body: G::FnBody { loc: logger::Loc::EMPTY, stmts: inner_stmts.into_bump_slice() },
+                body: G::FnBody {
+                    loc: logger::Loc::EMPTY,
+                    stmts: inner_slice as *mut [Stmt],
+                },
                 is_async,
                 ..Default::default()
             },
             logger::Loc::EMPTY,
         );
 
-        let iife = p.new_expr(
-            E::Call {
-                target: arrow,
-                args: ExprNodeList::default(),
-                ..Default::default()
-            },
+        let iife = self.new_expr(
+            E::Call { target: arrow, args: ExprNodeList::default(), ..Default::default() },
             logger::Loc::EMPTY,
         );
 
@@ -373,12 +439,14 @@ impl<P> ReplTransforms<P> {
         for stmt in hoisted_stmts.iter() {
             final_stmts.push(*stmt);
         }
-        final_stmts.push(p.s(S::SExpr { value: iife, ..Default::default() }, logger::Loc::EMPTY));
-        let final_stmts = final_stmts.into_bump_slice();
+        final_stmts.push(
+            self.s(S::SExpr { value: iife, ..Default::default() }, logger::Loc::EMPTY),
+        );
+        let final_slice: &mut [Stmt] = final_stmts.into_bump_slice_mut();
 
         // Update parts
         if !parts.is_empty() {
-            parts[0].stmts = final_stmts;
+            parts[0].stmts = final_slice as *mut [Stmt];
             parts.truncate(1);
         }
 
@@ -389,9 +457,11 @@ impl<P> ReplTransforms<P> {
     /// import { a, b as c } from 'mod' ->
     ///   var a; var c;  (hoisted)
     ///   var __mod = await import('mod'); a = __mod.a; c = __mod.b;  (inner)
-    fn convert_named_imports<'bump>(
-        p: &mut P,
+    #[allow(clippy::too_many_arguments)]
+    fn repl_convert_named_imports<'bump>(
+        &mut self,
         import_data: &S::Import,
+        import_items: &[crate::ClauseItem],
         await_expr: Expr,
         hoisted_stmts: &mut BumpVec<'bump, Stmt>,
         inner_stmts: &mut BumpVec<'bump, Stmt>,
@@ -399,67 +469,73 @@ impl<P> ReplTransforms<P> {
         loc: logger::Loc,
     ) -> Result<(), bun_alloc::AllocError> {
         // Store the module in the namespace ref: var __ns = await import('mod')
-        hoisted_stmts.push(p.s(
+        hoisted_stmts.push(self.s(
             S::Local {
-                kind: S::Local::Kind::KVar,
-                decls: Decl::List::from_owned_slice(bump.alloc_slice_copy(&[G::Decl {
-                    binding: p.b(B::Identifier { ref_: import_data.namespace_ref }, loc),
-                    value: None,
-                }])),
+                kind: S::Kind::KVar,
+                decls: repl_one_decl(
+                    bump,
+                    self.b(B::Identifier { r#ref: import_data.namespace_ref }, loc),
+                ),
                 ..Default::default()
             },
             loc,
         ));
-        let ns_assign = p.new_expr(
-            E::Binary {
-                op: js_ast::Op::BinAssign,
-                left: p.new_expr(E::Identifier { ref_: import_data.namespace_ref, ..Default::default() }, loc),
-                right: await_expr,
-            },
+        let left = self.new_expr(
+            E::Identifier { ref_: import_data.namespace_ref, ..Default::default() },
             loc,
         );
-        inner_stmts.push(p.s(S::SExpr { value: ns_assign, ..Default::default() }, loc));
+        let ns_assign = self.new_expr(
+            E::Binary { op: js_ast::OpCode::BinAssign, left, right: await_expr },
+            loc,
+        );
+        inner_stmts.push(self.s(S::SExpr { value: ns_assign, ..Default::default() }, loc));
 
         // For each named import: var name; name = __ns.originalName;
-        for item in import_data.items.iter() {
-            hoisted_stmts.push(p.s(
+        for item in import_items.iter() {
+            let item_ref = item.name.ref_.unwrap();
+            hoisted_stmts.push(self.s(
                 S::Local {
-                    kind: S::Local::Kind::KVar,
-                    decls: Decl::List::from_owned_slice(bump.alloc_slice_copy(&[G::Decl {
-                        binding: p.b(B::Identifier { ref_: item.name.ref_.unwrap() }, item.name.loc),
-                        value: None,
-                    }])),
+                    kind: S::Kind::KVar,
+                    decls: repl_one_decl(
+                        bump,
+                        self.b(B::Identifier { r#ref: item_ref }, item.name.loc),
+                    ),
                     ..Default::default()
                 },
                 loc,
             ));
-            let ns_ref_expr = p.new_expr(E::Identifier { ref_: import_data.namespace_ref, ..Default::default() }, loc);
-            let prop_access = p.new_expr(
+            let ns_ref_expr = self.new_expr(
+                E::Identifier { ref_: import_data.namespace_ref, ..Default::default() },
+                loc,
+            );
+            // SAFETY: `alias` is an arena-owned `*const [u8]` valid for 'a; Phase-A `Str`.
+            let alias_str: &'static [u8] = unsafe { &*item.alias };
+            let prop_access = self.new_expr(
                 E::Dot {
                     target: ns_ref_expr,
-                    name: item.alias,
+                    name: alias_str,
                     name_loc: item.name.loc,
                     ..Default::default()
                 },
                 loc,
             );
-            let item_assign = p.new_expr(
-                E::Binary {
-                    op: js_ast::Op::BinAssign,
-                    left: p.new_expr(E::Identifier { ref_: item.name.ref_.unwrap(), ..Default::default() }, item.name.loc),
-                    right: prop_access,
-                },
+            let left = self.new_expr(
+                E::Identifier { ref_: item_ref, ..Default::default() },
+                item.name.loc,
+            );
+            let item_assign = self.new_expr(
+                E::Binary { op: js_ast::OpCode::BinAssign, left, right: prop_access },
                 loc,
             );
-            inner_stmts.push(p.s(S::SExpr { value: item_assign, ..Default::default() }, loc));
+            inner_stmts.push(self.s(S::SExpr { value: item_assign, ..Default::default() }, loc));
         }
 
         Ok(())
     }
 
     /// Wrap the last expression in return { value: expr }
-    fn wrap_last_expression_with_return<'bump>(
-        p: &mut P,
+    fn repl_wrap_last_expression_with_return<'bump>(
+        &mut self,
         inner_stmts: &mut BumpVec<'bump, Stmt>,
         bump: &'bump Bump,
     ) {
@@ -468,12 +544,13 @@ impl<P> ReplTransforms<P> {
             while last_idx > 0 {
                 last_idx -= 1;
                 let last_stmt = inner_stmts[last_idx];
-                match &last_stmt.data {
-                    stmt::Data::SEmpty(_) | stmt::Data::SComment(_) => continue,
-                    stmt::Data::SExpr(expr_data) => {
+                match last_stmt.data {
+                    StmtData::SEmpty(_) | StmtData::SComment(_) => continue,
+                    StmtData::SExpr(expr_data) => {
                         // Wrap in return { value: expr }
-                        let wrapped = Self::wrap_expr_in_value_object(p, expr_data.value, bump);
-                        inner_stmts[last_idx] = p.s(S::Return { value: Some(wrapped) }, last_stmt.loc);
+                        let wrapped = self.repl_wrap_expr_in_value_object(expr_data.value, bump);
+                        inner_stmts[last_idx] =
+                            self.s(S::Return { value: Some(wrapped) }, last_stmt.loc);
                         break;
                     }
                     _ => break,
@@ -483,119 +560,142 @@ impl<P> ReplTransforms<P> {
     }
 
     /// Extract individual identifiers from a binding pattern for hoisting
-    fn extract_identifiers_from_binding<'bump>(
-        p: &mut P,
+    fn repl_extract_identifiers_from_binding<'bump>(
+        &mut self,
         binding: Binding,
         decls: &mut BumpVec<'bump, G::Decl>,
     ) -> Result<(), bun_alloc::AllocError> {
-        match &binding.data {
-            binding::Data::BIdentifier(ident) => {
+        match binding.data {
+            B::B::BIdentifier(ident) => {
+                // SAFETY: arena-owned `*mut Identifier` valid for 'a.
+                let ident = unsafe { &*ident };
                 decls.push(G::Decl {
-                    binding: p.b(B::Identifier { ref_: ident.ref_ }, binding.loc),
+                    binding: self.b(B::Identifier { r#ref: ident.r#ref }, binding.loc),
                     value: None,
                 });
             }
-            binding::Data::BArray(arr) => {
-                for item in arr.items.iter() {
-                    Self::extract_identifiers_from_binding(p, item.binding, decls)?;
+            B::B::BArray(arr) => {
+                // SAFETY: arena-owned `*mut Array` valid for 'a.
+                let arr = unsafe { &*arr };
+                for item in arr.items().iter() {
+                    self.repl_extract_identifiers_from_binding(item.binding, decls)?;
                 }
             }
-            binding::Data::BObject(obj) => {
-                for prop in obj.properties.iter() {
-                    Self::extract_identifiers_from_binding(p, prop.value, decls)?;
+            B::B::BObject(obj) => {
+                // SAFETY: arena-owned `*mut Object` valid for 'a.
+                let obj = unsafe { &*obj };
+                for prop in obj.properties().iter() {
+                    self.repl_extract_identifiers_from_binding(prop.value, decls)?;
                 }
             }
-            binding::Data::BMissing(_) => {}
+            B::B::BMissing(_) => {}
         }
         Ok(())
     }
 
     /// Create { __proto__: null, value: expr } wrapper object
     /// Uses null prototype to create a clean data object
-    fn wrap_expr_in_value_object<'bump>(p: &mut P, expr: Expr, bump: &'bump Bump) -> Expr {
-        // PERF(port): was bun.handleOom(allocator.alloc(G.Property, 2))
-        let properties = bump.alloc_slice_copy(&[
-            // __proto__: null - creates null-prototype object
-            G::Property {
-                key: Some(p.new_expr(E::String { data: b"__proto__", ..Default::default() }, expr.loc)),
-                value: Some(p.new_expr(E::Null {}, expr.loc)),
-                ..Default::default()
-            },
-            // value: expr - the actual result value
-            G::Property {
-                key: Some(p.new_expr(E::String { data: b"value", ..Default::default() }, expr.loc)),
-                value: Some(expr),
-                ..Default::default()
-            },
-        ]);
-        p.new_expr(
-            E::Object {
-                properties: G::Property::List::from_owned_slice(properties),
-                ..Default::default()
-            },
-            expr.loc,
-        )
+    fn repl_wrap_expr_in_value_object<'bump>(&mut self, expr: Expr, bump: &'bump Bump) -> Expr {
+        // PERF(port): was bun.handleOom(allocator.alloc(G.Property, 2)).
+        // G::Property is non-Copy (owns BabyList) → use bump Vec instead of alloc_slice_copy.
+        let mut properties = BumpVec::<G::Property>::with_capacity_in(2, bump);
+        // __proto__: null - creates null-prototype object
+        properties.push(G::Property {
+            key: Some(self.new_expr(
+                E::String { data: b"__proto__", ..Default::default() },
+                expr.loc,
+            )),
+            value: Some(self.new_expr(E::Null {}, expr.loc)),
+            ..Default::default()
+        });
+        // value: expr - the actual result value
+        properties.push(G::Property {
+            key: Some(
+                self.new_expr(E::String { data: b"value", ..Default::default() }, expr.loc),
+            ),
+            value: Some(expr),
+            ..Default::default()
+        });
+        // SAFETY: bump-owned slice handed to BabyList::Borrowed; never grown.
+        let prop_list =
+            unsafe { G::PropertyList::from_bump_slice(properties.into_bump_slice_mut()) };
+        self.new_expr(E::Object { properties: prop_list, ..Default::default() }, expr.loc)
     }
 
     /// Create assignment expression from binding pattern
-    fn create_binding_assignment<'bump>(p: &mut P, binding: Binding, value: Expr, bump: &'bump Bump) -> Expr {
-        match &binding.data {
-            binding::Data::BIdentifier(ident) => p.new_expr(
-                E::Binary {
-                    op: js_ast::Op::BinAssign,
-                    left: p.new_expr(E::Identifier { ref_: ident.ref_, ..Default::default() }, binding.loc),
-                    right: value,
-                },
-                binding.loc,
-            ),
-            binding::Data::BArray(_) => {
+    fn repl_create_binding_assignment<'bump>(
+        &mut self,
+        binding: Binding,
+        value: Expr,
+        bump: &'bump Bump,
+    ) -> Expr {
+        match binding.data {
+            B::B::BIdentifier(ident) => {
+                // SAFETY: arena-owned `*mut Identifier` valid for 'a.
+                let ident = unsafe { &*ident };
+                let left = self.new_expr(
+                    E::Identifier { ref_: ident.r#ref, ..Default::default() },
+                    binding.loc,
+                );
+                self.new_expr(
+                    E::Binary { op: js_ast::OpCode::BinAssign, left, right: value },
+                    binding.loc,
+                )
+            }
+            B::B::BArray(_) => {
                 // For array destructuring, create: [a, b] = value
-                p.new_expr(
-                    E::Binary {
-                        op: js_ast::Op::BinAssign,
-                        left: Self::convert_binding_to_expr(p, binding, bump),
-                        right: value,
-                    },
+                let left = self.repl_convert_binding_to_expr(binding, bump);
+                self.new_expr(
+                    E::Binary { op: js_ast::OpCode::BinAssign, left, right: value },
                     binding.loc,
                 )
             }
-            binding::Data::BObject(_) => {
+            B::B::BObject(_) => {
                 // For object destructuring, create: {a, b} = value
-                p.new_expr(
-                    E::Binary {
-                        op: js_ast::Op::BinAssign,
-                        left: Self::convert_binding_to_expr(p, binding, bump),
-                        right: value,
-                    },
+                let left = self.repl_convert_binding_to_expr(binding, bump);
+                self.new_expr(
+                    E::Binary { op: js_ast::OpCode::BinAssign, left, right: value },
                     binding.loc,
                 )
             }
-            binding::Data::BMissing(_) => {
+            B::B::BMissing(_) => {
                 // Return Missing expression to match convertBindingToExpr
-                p.new_expr(E::Missing {}, binding.loc)
+                self.new_expr(E::Missing {}, binding.loc)
             }
         }
     }
 
     /// Convert a binding pattern to an expression (for assignment targets)
     /// Handles spread/rest patterns in arrays and objects to match Binding.toExpr behavior
-    fn convert_binding_to_expr<'bump>(p: &mut P, binding: Binding, bump: &'bump Bump) -> Expr {
-        match &binding.data {
-            binding::Data::BIdentifier(ident) => {
-                p.new_expr(E::Identifier { ref_: ident.ref_, ..Default::default() }, binding.loc)
+    fn repl_convert_binding_to_expr<'bump>(
+        &mut self,
+        binding: Binding,
+        bump: &'bump Bump,
+    ) -> Expr {
+        match binding.data {
+            B::B::BIdentifier(ident) => {
+                // SAFETY: arena-owned `*mut Identifier` valid for 'a.
+                let ident = unsafe { &*ident };
+                self.new_expr(
+                    E::Identifier { ref_: ident.r#ref, ..Default::default() },
+                    binding.loc,
+                )
             }
-            binding::Data::BArray(arr) => {
+            B::B::BArray(arr) => {
+                // SAFETY: arena-owned `*mut Array` valid for 'a.
+                let arr = unsafe { &*arr };
+                let arr_items = arr.items();
                 // PERF(port): was bun.handleOom(allocator.alloc(Expr, n))
-                let mut items = BumpVec::with_capacity_in(arr.items.len(), bump);
-                for (i, item) in arr.items.iter().enumerate() {
-                    let expr = Self::convert_binding_to_expr(p, item.binding, bump);
+                let mut items = BumpVec::with_capacity_in(arr_items.len(), bump);
+                for (i, item) in arr_items.iter().enumerate() {
+                    let expr = self.repl_convert_binding_to_expr(item.binding, bump);
                     // Check for spread pattern: if has_spread and this is the last element
-                    if arr.has_spread && i == arr.items.len() - 1 {
-                        items.push(p.new_expr(E::Spread { value: expr }, expr.loc));
+                    if arr.has_spread && i == arr_items.len() - 1 {
+                        items.push(self.new_expr(E::Spread { value: expr }, expr.loc));
                     } else if let Some(default_val) = item.default_value {
-                        items.push(p.new_expr(
+                        items.push(self.new_expr(
                             E::Binary {
-                                op: js_ast::Op::BinAssign,
+                                op: js_ast::OpCode::BinAssign,
                                 left: expr,
                                 right: default_val,
                             },
@@ -605,58 +705,73 @@ impl<P> ReplTransforms<P> {
                         items.push(expr);
                     }
                 }
-                p.new_expr(
+                // SAFETY: bump-owned slice handed to BabyList::Borrowed; never grown.
+                let item_list =
+                    unsafe { ExprNodeList::from_bump_slice(items.into_bump_slice_mut()) };
+                self.new_expr(
                     E::Array {
-                        items: ExprNodeList::from_owned_slice(items.into_bump_slice()),
+                        items: item_list,
                         is_single_line: arr.is_single_line,
                         ..Default::default()
                     },
                     binding.loc,
                 )
             }
-            binding::Data::BObject(obj) => {
+            B::B::BObject(obj) => {
+                // SAFETY: arena-owned `*mut Object` valid for 'a.
+                let obj = unsafe { &*obj };
+                let obj_props = obj.properties();
                 // PERF(port): was bun.handleOom(allocator.alloc(G.Property, n))
-                let mut properties = BumpVec::with_capacity_in(obj.properties.len(), bump);
-                for prop in obj.properties.iter() {
+                let mut properties = BumpVec::with_capacity_in(obj_props.len(), bump);
+                for prop in obj_props.iter() {
                     properties.push(G::Property {
                         flags: prop.flags,
-                        key: prop.key,
+                        key: Some(prop.key),
                         // Set kind to .spread if the property has spread flag
-                        kind: if prop.flags.contains(js_ast::PropertyFlags::IsSpread) {
-                            G::Property::Kind::Spread
+                        kind: if prop.flags.contains(flags::Property::IsSpread) {
+                            G::PropertyKind::Spread
                         } else {
-                            G::Property::Kind::Normal
+                            G::PropertyKind::Normal
                         },
-                        value: Some(Self::convert_binding_to_expr(p, prop.value, bump)),
+                        value: Some(self.repl_convert_binding_to_expr(prop.value, bump)),
                         initializer: prop.default_value,
                         ..Default::default()
                     });
                 }
-                p.new_expr(
+                // SAFETY: bump-owned slice handed to BabyList::Borrowed; never grown.
+                let prop_list =
+                    unsafe { G::PropertyList::from_bump_slice(properties.into_bump_slice_mut()) };
+                self.new_expr(
                     E::Object {
-                        properties: G::Property::List::from_owned_slice(properties.into_bump_slice()),
+                        properties: prop_list,
                         is_single_line: obj.is_single_line,
                         ..Default::default()
                     },
                     binding.loc,
                 )
             }
-            binding::Data::BMissing(_) => p.new_expr(E::Missing {}, binding.loc),
+            B::B::BMissing(_) => self.new_expr(E::Missing {}, binding.loc),
         }
     }
 }
 
-// TODO(port): these `stmt::Data` / `binding::Data` module paths are placeholders for the
-// Rust enum that replaces Zig's `Stmt.Data` / `Binding.Data` union(enum). Phase B: align
-// with actual crate::ast variant naming.
-use crate::ast::stmt;
-use crate::ast::binding;
-} // end mod _draft
+/// Bump-allocate a single-element `G::DeclList` (Zig: `Decl.List.fromOwnedSlice(allocator.dupe(...))`).
+#[inline]
+fn repl_one_decl(bump: &Bump, binding: Binding) -> G::DeclList {
+    let slice: &mut [G::Decl] =
+        bump.alloc_slice_fill_with(1, |_| G::Decl { binding, value: None });
+    // SAFETY: bump-owned slice handed to BabyList::Borrowed; never grown.
+    unsafe { G::DeclList::from_bump_slice(slice) }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/js_parser/ast/repl_transforms.zig (510 lines)
 //   confidence: medium
-//   todos:      3
-//   notes:      Generic-P mixin needs a ParserLike trait bound; AST nested type paths (S::Local::Kind, Decl::List, stmt::Data variants) are guesses pending bun_js_parser crate shape.
+//   todos:      0
+//   notes:      Generic-P mixin lowered to direct `impl P<'a, TS, J, SCAN>`. Zig nested type
+//               paths (`S.Local.Kind`, `Decl.List`, `G.Property.List`) mapped to free aliases
+//               (`S::Kind`, `G::DeclList`, `G::PropertyList`). All `*mut [T]` arena slices
+//               accessed via `unsafe { &* }` per Phase-A raw-pointer convention; `&'static [u8]`
+//               assignments to `E::Dot.name` / `E::String.data` lean on the Phase-A `Str` lie.
 // ──────────────────────────────────────────────────────────────────────────

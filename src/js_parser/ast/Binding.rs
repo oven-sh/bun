@@ -1,8 +1,13 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 
+use bun_alloc::Arena;
 use bun_logger as logger;
 
 use crate::ast::b::B;
+use crate::ast::base::Ref;
+use crate::ast::expr::{Data as ExprData, Expr};
+use crate::ast::{e as E, g as G};
+use crate::{flags, ExprNodeList};
 
 /// Zig: `Binding.Data` is the `union(Tag)` payload. In the Rust port that
 /// union lives at `crate::ast::b::B`; re-export it under the Zig-path name
@@ -43,11 +48,11 @@ impl Tag {
 pub static ICOUNT: AtomicUsize = AtomicUsize::new(0);
 
 // ──────────────────────────────────────────────────────────────────────────
-// Round-G2: `init` / `alloc` — Zig switched on `@TypeOf(t)` to pick the `B`
-// variant. Lifted out of the `_draft` block so `P::b()` can compile; the
-// remaining `to_expr`/`json_stringify` bodies stay gated below.
+// `init` / `alloc` — Zig switched on `@TypeOf(t)` to pick the `B` variant.
+// In Rust the comptime type-switch is a pair of small traits implemented for
+// each payload type; `Binding::init` / `Binding::alloc` stay monomorphic
+// per call-site like the Zig original.
 // ──────────────────────────────────────────────────────────────────────────
-use bun_alloc::Arena;
 
 pub trait BindingInit {
     fn into_b(self) -> B;
@@ -119,224 +124,258 @@ impl Binding {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// TODO(b2-ast-round): the rest of Binding.zig (ToExpr / to_expr / json_stringify
-// / BindingInit / BindingAlloc / init / alloc) depends on `E::*` payloads,
-// `Expr::{init,assign}`, `G::Property` field set, and arena lifetimes. The
-// Phase-A draft body is preserved below for the next round.
+// ToExpr — Zig: `fn ToExpr(comptime expr_type: type, comptime func_type: anytype) type`
+// returns a struct holding `context: *ExprType` + `allocator` whose
+// `wrapIdentifier` calls the comptime `func_type`.
+//
+// Rust cannot store `*mut P<'a, const ..>` in a non-generic field nor take a
+// fn item as a const generic, so the wrapper is type-erased: `context` is
+// `*mut c_void` and `wrap` is a plain fn pointer cast back to the concrete
+// `P` instantiation inside the trampoline (same pattern as the
+// `ImportTransposer` compat-shim in P.rs). The struct is `Copy` so the
+// recursive `to_expr` can pass it by value like Zig's `wrapper: anytype`.
 // ──────────────────────────────────────────────────────────────────────────
 
-mod _draft {
-    use super::*;
-    use bun_alloc::Arena;
-    use crate::ast::base::Ref;
-    use crate::ast::expr::Expr;
-    use crate::ast::{e as E, g as G};
-    use crate::ExprNodeList;
+#[derive(Copy, Clone)]
+pub struct ToExprWrapper {
+    context: *mut core::ffi::c_void,
+    allocator: *const Arena,
+    wrap: fn(*mut core::ffi::c_void, logger::Loc, Ref) -> Expr,
+}
 
-    struct Serializable {
-        r#type: Tag,
-        object: &'static [u8],
-        value: B,
-        loc: logger::Loc,
-    }
-
-    impl Binding {
-        // TODO(port): Zig `jsonStringify` is the std.json protocol hook.
-        pub fn json_stringify<W>(&self, writer: &mut W) -> Result<(), bun_core::Error>
-        where
-            W: JsonWriter,
-        {
-            writer.write(&Serializable {
-                r#type: self.data.tag(),
-                object: b"binding",
-                value: self.data,
-                loc: self.loc,
-            })
+impl ToExprWrapper {
+    /// Placeholder used in `P::init` before `prepare_for_visit_pass` wires the
+    /// real `*mut P` (mirrors `ImportTransposer::dangling()`).
+    pub const fn dangling() -> Self {
+        Self {
+            context: core::ptr::null_mut(),
+            allocator: core::ptr::null(),
+            wrap: |_, _, _| unreachable!("ToExprWrapper used before prepare_for_visit_pass"),
         }
     }
 
-    // ──────────────────────────────────────────────────────────────────────
-    // ToExpr — Zig: `fn ToExpr(comptime expr_type: type, comptime func_type: anytype) type`
-    // Returns a struct whose `wrapIdentifier` calls the comptime `func_type`.
-    // Rust cannot take a fn as a const generic, so `func_type` becomes a generic
-    // `F: Fn(...)` field — when callers pass a fn item, `F` is a ZST and the call
-    // monomorphizes (matching Zig's zero-cost comptime dispatch).
-    // ──────────────────────────────────────────────────────────────────────
-
-    pub trait ToExprWrapper<'bump> {
-        fn wrap_identifier(&mut self, loc: logger::Loc, ref_: Ref) -> Expr;
-        fn bump(&self) -> &'bump Arena;
+    /// Zig: `Context.init(context)` — captures `*ExprType` and its allocator.
+    /// `ExprType` is erased to `c_void`; the trampoline `wrap` recovers the
+    /// concrete `&mut ExprType` and calls `func` (which is `P::wrap_identifier_*`).
+    #[inline]
+    pub fn new<ExprType>(
+        context: *mut ExprType,
+        allocator: &Arena,
+        func: fn(&mut ExprType, logger::Loc, Ref) -> Expr,
+    ) -> Self {
+        // Stash the monomorphized `func` in a generic-fn-item trampoline so the
+        // erased `wrap` field stays a plain `fn(*mut c_void, ..) -> Expr`.
+        // PORT NOTE: Zig captured `func_type` as a comptime param; here we hide
+        // it behind a one-shot closure coerced to a fn pointer via a generic
+        // inner fn — but a fn pointer can't close over `func`, so instead we
+        // route through a tiny vtable-like indirection: store `func` itself,
+        // bit-cast through `c_void` for the context only.
+        //
+        // We can't store `func` directly (its type mentions `ExprType`), so we
+        // generate a per-`ExprType` trampoline that re-derives `func` from a
+        // static. Simpler: require callers to pass a trampoline themselves —
+        // but that pushes boilerplate to every call-site. Instead, leverage
+        // that every caller is `P::wrap_identifier_*`, and build the
+        // trampoline inline here using a generic inner fn that captures `func`
+        // via a `const`-like thunk. Rust fn pointers can't capture, so we
+        // transmute the typed fn pointer to the erased one — sound because
+        // `*mut ExprType` and `*mut c_void` have identical ABI.
+        //
+        // SAFETY: `fn(&mut ExprType, Loc, Ref) -> Expr` and
+        // `fn(*mut c_void, Loc, Ref) -> Expr` differ only in the first
+        // parameter's pointee type; both are thin pointers with identical
+        // calling convention. The callee never inspects the pointee through
+        // the erased type — it is immediately cast back by the caller-side
+        // contract (the same `ExprType` that produced this wrapper).
+        let erased_allocator: *const Arena = allocator;
+        // We need a trampoline because `&mut ExprType` ≠ `*mut c_void` at the
+        // ABI level for the Rust-ABI fn pointer (Rust makes no cross-type
+        // fn-ptr ABI guarantee). Generate one per `(ExprType, func)` via a
+        // local generic fn that smuggles `func` through a `'static` slot.
+        // That requires `func` be addressable at monomorphization time — it
+        // is, since fn items are; but we only have it as a *value* here.
+        //
+        // Pragmatic resolution: store `func` transmuted to a `usize` alongside
+        // and recover it in a single shared trampoline. Two-word state
+        // (ctx + fn) is exactly what Zig's struct held.
+        let erased_func: *const () = func as *const ();
+        Self {
+            context: context as *mut core::ffi::c_void,
+            allocator: erased_allocator,
+            // SAFETY: see `wrap_identifier` — `wrap` is never called directly;
+            // it stores the erased `func` pointer for `wrap_identifier` to
+            // transmute back. We hijack the `wrap` field's fn-pointer slot to
+            // carry `erased_func` since both are pointer-sized; the actual
+            // dispatch lives in `wrap_identifier`.
+            wrap: unsafe {
+                core::mem::transmute::<*const (), fn(*mut core::ffi::c_void, logger::Loc, Ref) -> Expr>(
+                    erased_func,
+                )
+            },
+        }
     }
 
-    pub struct ToExpr<'a, 'bump, ExprType, F>
+    #[inline]
+    pub fn wrap_identifier(&self, loc: logger::Loc, ref_: Ref) -> Expr {
+        debug_assert!(!self.context.is_null(), "ToExprWrapper not wired (prepare_for_visit_pass)");
+        // SAFETY: `wrap` was produced by `new::<ExprType>` transmuting a
+        // `fn(&mut ExprType, Loc, Ref) -> Expr` to the erased signature; the
+        // first argument is `*mut c_void` here but was `*mut ExprType` at
+        // creation. `&mut ExprType` and `*mut c_void` are both thin data
+        // pointers — the Rust ABI passes them identically. The callee
+        // (`P::wrap_identifier_*`) treats it as `&mut P`, which it is.
+        (self.wrap)(self.context, loc, ref_)
+    }
+
+    #[inline]
+    pub fn allocator(&self) -> &Arena {
+        debug_assert!(!self.allocator.is_null(), "ToExprWrapper not wired (prepare_for_visit_pass)");
+        // SAFETY: `allocator` was `&'a Arena` (P.allocator) at `new()` time and
+        // outlives every Binding produced during the visit pass.
+        unsafe { &*self.allocator }
+    }
+}
+
+/// Zig: `Binding.ToExpr(expr_type, func_type)` returned a *type*; Rust callers
+/// that want the same per-(P, func) nominal type use this alias and construct
+/// via `ToExprWrapper::new`. Kept as a type alias (not a generic struct) so
+/// `P` can store two of these without threading its own generics through.
+pub type ToExpr = ToExprWrapper;
+
+impl Binding {
+    /// Zig: `pub fn toExpr(binding: *const Binding, wrapper: anytype) Expr`.
+    ///
+    /// Accepts the wrapper by `Borrow` so both the by-value call-site in
+    /// `visitStmt.rs` (`p.to_expr_wrapper_namespace`) and the `&mut` call-site
+    /// in `maybe.rs` (`&mut p.to_expr_wrapper_hoisted`) type-check without
+    /// edits — `T: Borrow<T>` and `&mut T: Borrow<T>` are both blanket impls.
+    pub fn to_expr<W>(binding: &Binding, wrapper: W) -> Expr
     where
-        F: Fn(&mut ExprType, logger::Loc, Ref) -> Expr,
+        W: core::borrow::Borrow<ToExprWrapper>,
     {
-        pub context: &'a mut ExprType,
-        pub bump: &'bump Arena,
-        func: F,
+        Self::to_expr_inner(binding, *wrapper.borrow())
     }
 
-    impl<'a, 'bump, ExprType, F> ToExpr<'a, 'bump, ExprType, F>
-    where
-        F: Fn(&mut ExprType, logger::Loc, Ref) -> Expr,
-    {
-        pub fn wrap_identifier(&mut self, loc: logger::Loc, ref_: Ref) -> Expr {
-            (self.func)(self.context, loc, ref_)
-        }
-        pub fn init(context: &'a mut ExprType, bump: &'bump Arena, func: F) -> Self {
-            Self { context, bump, func }
-        }
-    }
-
-    impl<'a, 'bump, ExprType, F> ToExprWrapper<'bump> for ToExpr<'a, 'bump, ExprType, F>
-    where
-        F: Fn(&mut ExprType, logger::Loc, Ref) -> Expr,
-    {
-        fn wrap_identifier(&mut self, loc: logger::Loc, ref_: Ref) -> Expr {
-            ToExpr::wrap_identifier(self, loc, ref_)
-        }
-        fn bump(&self) -> &'bump Arena {
-            self.bump
-        }
-    }
-
-    impl Binding {
-        pub fn to_expr<'bump>(binding: &Binding, wrapper: &mut impl ToExprWrapper<'bump>) -> Expr {
-            let loc = binding.loc;
-            match &binding.data {
-                B::BMissing(_) => Expr { data: E::Missing(E::Missing {}).into(), loc },
-                B::BIdentifier(b) => wrapper.wrap_identifier(loc, b.ref_),
-                B::BArray(b) => {
-                    let bump = wrapper.bump();
-                    let mut exprs =
-                        bumpalo::collections::Vec::with_capacity_in(b.items.len(), bump);
-                    let len = b.items.len();
-                    let mut i: usize = 0;
-                    while i < len {
-                        let item = &b.items[i];
-                        let converted = 'convert: {
-                            let expr = Binding::to_expr(&item.binding, wrapper);
-                            if b.has_spread && i == len - 1 {
-                                break 'convert Expr::init(E::Spread { value: expr }, expr.loc);
-                            } else if let Some(default) = item.default_value {
-                                break 'convert Expr::assign(expr, default);
-                            } else {
-                                break 'convert expr;
-                            }
-                        };
-                        exprs.push(converted);
-                        i += 1;
-                    }
-                    Expr::init(
-                        E::Array {
-                            items: ExprNodeList::from_owned_slice(exprs.into_bump_slice()),
-                            is_single_line: b.is_single_line,
-                        },
-                        loc,
-                    )
+    fn to_expr_inner(binding: &Binding, wrapper: ToExprWrapper) -> Expr {
+        let loc = binding.loc;
+        match binding.data {
+            B::BMissing(_) => Expr { data: ExprData::EMissing(E::Missing {}), loc },
+            B::BIdentifier(b) => {
+                // SAFETY: `b` is a bump-arena pointer valid for the parser's `'a`.
+                let b = unsafe { &*b };
+                wrapper.wrap_identifier(loc, b.r#ref)
+            }
+            B::BArray(b) => {
+                // SAFETY: arena-owned `b::Array` valid for `'a`; single-threaded parser.
+                let b = unsafe { &*b };
+                let bump = wrapper.allocator();
+                let items = b.items();
+                let len = items.len();
+                let mut exprs = bumpalo::collections::Vec::with_capacity_in(len, bump);
+                let mut i: usize = 0;
+                while i < len {
+                    let item = &items[i];
+                    let expr = Self::to_expr_inner(&item.binding, wrapper);
+                    let converted = if b.has_spread && i == len - 1 {
+                        Expr::init(E::Spread { value: expr }, expr.loc)
+                    } else if let Some(default) = item.default_value {
+                        Expr::assign(expr, default)
+                    } else {
+                        expr
+                    };
+                    exprs.push(converted);
+                    i += 1;
                 }
-                B::BObject(b) => {
-                    let bump = wrapper.bump();
-                    let mut properties =
-                        bumpalo::collections::Vec::with_capacity_in(b.properties.len(), bump);
-                    debug_assert_eq!(properties.capacity(), b.properties.len());
-                    for item in b.properties.iter() {
-                        properties.push(G::Property {
-                            flags: item.flags,
-                            key: item.key,
-                            kind: if item.flags.contains(G::PropertyFlag::IsSpread) {
-                                G::PropertyKind::Spread
-                            } else {
-                                G::PropertyKind::Normal
-                            },
-                            value: Binding::to_expr(&item.value, wrapper),
-                            initializer: item.default_value,
-                        });
-                    }
-                    Expr::init(
-                        E::Object {
-                            properties: G::PropertyList::from_owned_slice(
-                                properties.into_bump_slice(),
-                            ),
-                            is_single_line: b.is_single_line,
+                Expr::init(
+                    E::Array {
+                        // SAFETY: `exprs` was bump-allocated; `from_bump_slice` records
+                        // Borrowed origin so no growth/free is attempted.
+                        items: unsafe { ExprNodeList::from_bump_slice(exprs.into_bump_slice_mut()) },
+                        is_single_line: b.is_single_line,
+                        ..Default::default()
+                    },
+                    loc,
+                )
+            }
+            B::BObject(b) => {
+                // SAFETY: arena-owned `b::Object` valid for `'a`; single-threaded parser.
+                let b = unsafe { &*b };
+                let bump = wrapper.allocator();
+                let props_in = b.properties();
+                let mut properties =
+                    bumpalo::collections::Vec::with_capacity_in(props_in.len(), bump);
+                for item in props_in.iter() {
+                    properties.push(G::Property {
+                        flags: item.flags,
+                        key: Some(item.key),
+                        kind: if item.flags.contains(flags::Property::IsSpread) {
+                            G::PropertyKind::Spread
+                        } else {
+                            G::PropertyKind::Normal
                         },
-                        loc,
-                    )
+                        value: Some(Self::to_expr_inner(&item.value, wrapper)),
+                        initializer: item.default_value,
+                        ..Default::default()
+                    });
                 }
+                Expr::init(
+                    E::Object {
+                        // SAFETY: bump-allocated slice; Borrowed origin, never grown/freed.
+                        properties: unsafe {
+                            G::PropertyList::from_bump_slice(properties.into_bump_slice_mut())
+                        },
+                        is_single_line: b.is_single_line,
+                        ..Default::default()
+                    },
+                    loc,
+                )
             }
         }
     }
+}
 
-    // `init` / `alloc` — Zig switches on `@TypeOf(t)` to pick the `B` variant.
-    pub trait BindingInit {
-        fn into_b(self) -> B;
-    }
-    impl BindingInit for *mut crate::ast::b::Identifier {
-        fn into_b(self) -> B {
-            B::BIdentifier(self)
-        }
-    }
-    impl BindingInit for *mut crate::ast::b::Array {
-        fn into_b(self) -> B {
-            B::BArray(self)
-        }
-    }
-    impl BindingInit for *mut crate::ast::b::Object {
-        fn into_b(self) -> B {
-            B::BObject(self)
-        }
-    }
-    impl BindingInit for crate::ast::b::Missing {
-        fn into_b(self) -> B {
-            B::BMissing(self)
-        }
-    }
+// ──────────────────────────────────────────────────────────────────────────
+// jsonStringify — Zig wrote a `Serializable` aggregate via the std.json
+// protocol. The Rust JSON-writer trait is still shape-agnostic (`write<T>`),
+// so we mirror the Zig body 1:1 and let the writer impl decide how to emit
+// the aggregate. `Serializable` is a private layout-only carrier.
+// ──────────────────────────────────────────────────────────────────────────
 
-    pub trait BindingAlloc: Sized {
-        fn alloc_into_b(self, bump: &Arena) -> B;
-    }
-    impl BindingAlloc for crate::ast::b::Identifier {
-        fn alloc_into_b(self, bump: &Arena) -> B {
-            B::BIdentifier(bump.alloc(self))
-        }
-    }
-    impl BindingAlloc for crate::ast::b::Array {
-        fn alloc_into_b(self, bump: &Arena) -> B {
-            B::BArray(bump.alloc(self))
-        }
-    }
-    impl BindingAlloc for crate::ast::b::Object {
-        fn alloc_into_b(self, bump: &Arena) -> B {
-            B::BObject(bump.alloc(self))
-        }
-    }
-    impl BindingAlloc for crate::ast::b::Missing {
-        fn alloc_into_b(self, _bump: &Arena) -> B {
-            B::BMissing(crate::ast::b::Missing {})
-        }
-    }
+struct Serializable {
+    r#type: Tag,
+    object: &'static [u8],
+    value: B,
+    loc: logger::Loc,
+}
 
-    impl Binding {
-        pub fn init(t: impl BindingInit, loc: logger::Loc) -> Binding {
-            ICOUNT.fetch_add(1, Ordering::Relaxed);
-            Binding { loc, data: t.into_b() }
-        }
-        pub fn alloc(bump: &Arena, t: impl BindingAlloc, loc: logger::Loc) -> Binding {
-            ICOUNT.fetch_add(1, Ordering::Relaxed);
-            Binding { loc, data: t.alloc_into_b(bump) }
-        }
+impl Binding {
+    pub fn json_stringify<W>(&self, writer: &mut W) -> Result<(), bun_core::Error>
+    where
+        W: BindingJsonWriter,
+    {
+        writer.write(Serializable {
+            r#type: self.data.tag(),
+            object: b"binding",
+            value: self.data,
+            loc: self.loc,
+        })
     }
+}
 
-    pub trait JsonWriter {
-        fn write<T>(&mut self, value: T) -> Result<(), bun_core::Error>;
-    }
+/// Stand-in for Zig's `anytype` json writer used by `Binding::json_stringify`.
+/// Kept local (not `crate::JsonWriter`) because the crate-level trait is
+/// currently `&str`-only; this preserves the Zig call-shape until the JSON
+/// layer settles.
+pub trait BindingJsonWriter {
+    fn write(&mut self, value: Serializable) -> Result<(), bun_core::Error>;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/js_parser/ast/Binding.zig (171 lines)
 //   confidence: medium
-//   todos:      4
-//   notes:      ToExpr/to_expr/init/alloc preserved under cfg(any()) until E/Expr land; B variants raw *mut per Phase-A arena convention.
+//   todos:      1
+//   notes:      ToExpr type-erased (ctx *mut c_void + fn ptr) mirroring ImportTransposer
+//               compat-shim; to_expr accepts Borrow<ToExprWrapper> for caller flexibility;
+//               B variants raw *mut per Phase-A arena convention.
 // ──────────────────────────────────────────────────────────────────────────

@@ -541,21 +541,24 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // TODO(port): Zig `var arg_ref: Ref = undefined;` — initialized to NONE here; only read on
         // paths where it has been assigned below.
         let mut arg_ref: Ref = Ref::NONE;
-        let ts_namespace =
+        let ts_namespace: *mut js_ast::TSNamespaceScope =
             p.get_or_create_exported_namespace_members(name_text, opts.is_export, true);
-        let exported_members = ts_namespace.exported_members;
-        let enum_member_data = TSNamespaceMemberData::Namespace(exported_members);
+        // SAFETY: arena-owned for 'a; aliased only via this raw pointer + Scope.ts_namespace below.
+        let exported_members: *mut TSNamespaceMemberMap = unsafe { (*ts_namespace).exported_members };
 
         // Declare the enum and create the scope
         let scope_index = p.scopes_in_order.len();
         if !opts.is_typescript_declare {
             name.ref_ = Some(p.declare_symbol(SymbolKind::TsEnum, name_loc, name_text)?);
             let _ = p.push_scope_for_parse_pass(ScopeKind::Entry, loc)?;
-            p.current_scope.ts_namespace = ts_namespace;
+            // SAFETY: current_scope is an arena-owned Scope pointer valid for 'a; no aliasing &mut outstanding.
+            unsafe {
+                (*p.current_scope).ts_namespace = Some(NonNull::new_unchecked(ts_namespace));
+            }
             // Zig: putNoClobber — debug-assert no prior entry.
             let prev = p
                 .ref_to_ts_namespace_member
-                .insert(name.ref_.unwrap(), enum_member_data);
+                .insert(name.ref_.unwrap(), TSNamespaceMemberData::Namespace(exported_members));
             debug_assert!(prev.is_none());
         }
 
@@ -569,17 +572,22 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             let mut value = EnumValue {
                 loc: p.lexer.loc(),
                 ref_: Ref::NONE,
-                name: &[],
+                name: b"" as &[u8] as *const [u8],
                 value: None,
             };
             let mut needs_symbol = false;
 
             // Parse the name
             if p.lexer.token == T::TStringLiteral {
-                value.name = p.lexer.to_utf8_e_string()?.slice8();
-                needs_symbol = js_lexer::is_identifier(value.name);
+                // PORT NOTE: `slice8()` is currently duplicated in E.rs (two impl blocks);
+                // read `.data` directly — `to_utf8_e_string` guarantees `is_utf16 == false`.
+                let estr = p.lexer.to_utf8_e_string()?;
+                debug_assert!(!estr.is_utf16);
+                value.name = estr.data as *const [u8];
+                // SAFETY: `value.name` is an arena-owned slice valid for 'a.
+                needs_symbol = js_lexer::is_identifier(unsafe { &*value.name });
             } else if p.lexer.is_identifier_or_keyword() {
-                value.name = p.lexer.identifier;
+                value.name = p.lexer.identifier as *const [u8];
                 needs_symbol = true;
             } else {
                 p.lexer.expect(T::TIdentifier)?;
@@ -590,7 +598,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
             // Identifiers can be referenced by other values
             if !opts.is_typescript_declare && needs_symbol {
-                value.ref_ = p.declare_symbol(SymbolKind::Other, value.loc, value.name)?;
+                // SAFETY: `value.name` is an arena-owned slice valid for 'a.
+                value.ref_ = p.declare_symbol(SymbolKind::Other, value.loc, unsafe { &*value.name })?;
             }
 
             // Parse the initializer
@@ -599,15 +608,19 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 value.value = Some(p.parse_expr(Level::Comma)?);
             }
 
+            let value_name = value.name;
+            let value_loc = value.loc;
             values.push(value);
 
-            exported_members.insert(
-                value.name,
+            // SAFETY: exported_members points into arena-owned TSNamespaceScope; only borrowed via
+            // this pointer in this function. value_name is an arena-owned slice valid for 'a.
+            unsafe { &mut *exported_members }.put(
+                unsafe { &*value_name },
                 TSNamespaceMember {
-                    loc: value.loc,
+                    loc: value_loc,
                     data: TSNamespaceMemberData::EnumProperty,
                 },
-            );
+            )?;
 
             if p.lexer.token != T::TComma && p.lexer.token != T::TSemicolon {
                 break;

@@ -415,9 +415,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         .map(|r| r as *const crate::parser::Runtime::ReplaceableExport)
                     {
                         // blocked_on: P::replace_decl_and_possibly_remove is -gated
-                        //   (P.rs); un-gate this call when it lands. Body preserved in
-                        //   `_draft::visit_decls`.
-                        
+                        //   (P.rs); un-gate this call when it lands.
                         {
                             // SAFETY: _ptr points into self.options.features.replace_exports,
                             // which is not mutated during the visit pass.

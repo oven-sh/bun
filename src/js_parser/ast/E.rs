@@ -1111,225 +1111,6 @@ impl Object {
         Ok(out)
     }
 
-    fn _dup_removed_marker_start(
-        &mut self,
-        bump: &Bump,
-        key: &[u8],
-        value: &[u8],
-    ) -> Result<(), AllocError> {
-        self.put(bump, key, Expr::init(EString::init(value), logger::Loc::EMPTY))
-    }
-
-    pub fn set(&self, key: Expr, bump: &Bump, value: Expr) -> Result<(), SetError> {
-        if self.has_property(key.data.e_string().data) {
-            return Err(SetError::Clobber);
-        }
-        // TODO(port): Zig takes `*const Object` but mutates `properties` (BabyList interior).
-        // Mirroring with raw cast; Phase B should make this `&mut self`.
-        // SAFETY: BabyList stores ptr/len/cap; Zig mutates through `*const Object` here and
-        // callers never hold an aliasing borrow over the properties slice.
-        let this = unsafe { &mut *(self as *const Object as *mut Object) };
-        this.properties.append(
-            bump,
-            G::Property { key: Some(key), value: Some(value), ..G::Property::default() },
-        )?;
-        Ok(())
-    }
-
-    // this is terribly, shamefully slow
-    pub fn set_rope(
-        &mut self,
-        rope: &Rope<'_>,
-        bump: &Bump,
-        value: Expr,
-    ) -> Result<(), SetError> {
-        if let Some(existing) = self.get(rope.head.data.e_string().data) {
-            match &existing.data {
-                crate::ast::expr::Data::EArray(array) => {
-                    if rope.next.is_none() {
-                        array.push(bump, value)?;
-                        return Ok(());
-                    }
-
-                    if let Some(last) = array.items.last() {
-                        if !matches!(last.data, crate::ast::expr::Data::EObject(_)) {
-                            return Err(SetError::Clobber);
-                        }
-
-                        last.data.e_object_mut().set_rope(rope.next.unwrap(), bump, value)?;
-                        return Ok(());
-                    }
-
-                    array.push(bump, value)?;
-                    return Ok(());
-                }
-                crate::ast::expr::Data::EObject(object) => {
-                    if let Some(next) = rope.next {
-                        object.set_rope(next, bump, value)?;
-                        return Ok(());
-                    }
-
-                    return Err(SetError::Clobber);
-                }
-                _ => {
-                    return Err(SetError::Clobber);
-                }
-            }
-        }
-
-        let mut value_ = value;
-        if let Some(next) = rope.next {
-            let obj = Expr::init(Object { properties: Default::default(), ..Object::default() }, rope.head.loc);
-            obj.data.e_object_mut().set_rope(next, bump, value)?;
-            value_ = obj;
-        }
-
-        self.properties.append(
-            bump,
-            G::Property { key: Some(rope.head), value: Some(value_), ..G::Property::default() },
-        )?;
-        Ok(())
-    }
-
-    pub fn get_or_put_object(
-        &mut self,
-        rope: &Rope<'_>,
-        bump: &Bump,
-    ) -> Result<Expr, SetError> {
-        if let Some(existing) = self.get(rope.head.data.e_string().data) {
-            match &existing.data {
-                crate::ast::expr::Data::EArray(array) => {
-                    if rope.next.is_none() {
-                        return Err(SetError::Clobber);
-                    }
-
-                    if let Some(last) = array.items.last() {
-                        if !matches!(last.data, crate::ast::expr::Data::EObject(_)) {
-                            return Err(SetError::Clobber);
-                        }
-
-                        return last.data.e_object_mut().get_or_put_object(rope.next.unwrap(), bump);
-                    }
-
-                    return Err(SetError::Clobber);
-                }
-                crate::ast::expr::Data::EObject(object) => {
-                    if let Some(next) = rope.next {
-                        return object.get_or_put_object(next, bump);
-                    }
-
-                    // success
-                    return Ok(existing);
-                }
-                _ => {
-                    return Err(SetError::Clobber);
-                }
-            }
-        }
-
-        if let Some(next) = rope.next {
-            let obj = Expr::init(Object { properties: Default::default(), ..Object::default() }, rope.head.loc);
-            let out = obj.data.e_object_mut().get_or_put_object(next, bump)?;
-            self.properties.append(
-                bump,
-                G::Property { key: Some(rope.head), value: Some(obj), ..G::Property::default() },
-            )?;
-            return Ok(out);
-        }
-
-        let out = Expr::init(Object::default(), rope.head.loc);
-        self.properties.append(
-            bump,
-            G::Property { key: Some(rope.head), value: Some(out), ..G::Property::default() },
-        )?;
-        Ok(out)
-    }
-
-    pub fn get_or_put_array(
-        &mut self,
-        rope: &Rope<'_>,
-        bump: &Bump,
-    ) -> Result<Expr, SetError> {
-        if let Some(existing) = self.get(rope.head.data.e_string().data) {
-            match &existing.data {
-                crate::ast::expr::Data::EArray(array) => {
-                    if rope.next.is_none() {
-                        return Ok(existing);
-                    }
-
-                    if let Some(last) = array.items.last() {
-                        if !matches!(last.data, crate::ast::expr::Data::EObject(_)) {
-                            return Err(SetError::Clobber);
-                        }
-
-                        return last.data.e_object_mut().get_or_put_array(rope.next.unwrap(), bump);
-                    }
-
-                    return Err(SetError::Clobber);
-                }
-                crate::ast::expr::Data::EObject(object) => {
-                    if rope.next.is_none() {
-                        return Err(SetError::Clobber);
-                    }
-
-                    return object.get_or_put_array(rope.next.unwrap(), bump);
-                }
-                _ => {
-                    return Err(SetError::Clobber);
-                }
-            }
-        }
-
-        if let Some(next) = rope.next {
-            let obj = Expr::init(Object { properties: Default::default(), ..Object::default() }, rope.head.loc);
-            let out = obj.data.e_object_mut().get_or_put_array(next, bump)?;
-            self.properties.append(
-                bump,
-                G::Property { key: Some(rope.head), value: Some(obj), ..G::Property::default() },
-            )?;
-            return Ok(out);
-        }
-
-        let out = Expr::init(Array::default(), rope.head.loc);
-        self.properties.append(
-            bump,
-            G::Property { key: Some(rope.head), value: Some(out), ..G::Property::default() },
-        )?;
-        Ok(out)
-    }
-
-    pub fn has_property(&self, name: &[u8]) -> bool {
-        for prop in self.properties.slice() {
-            let Some(key) = &prop.key else { continue };
-            if !matches!(key.data, crate::ast::expr::Data::EString(_)) {
-                continue;
-            }
-            if key.data.e_string().eql_bytes(name) {
-                return true;
-            }
-        }
-        false
-    }
-
-    pub fn as_property(&self, name: &[u8]) -> Option<crate::ast::expr::Query> {
-        for (i, prop) in self.properties.slice().iter().enumerate() {
-            let Some(value) = prop.value else { continue };
-            let Some(key) = &prop.key else { continue };
-            if !matches!(key.data, crate::ast::expr::Data::EString(_)) {
-                continue;
-            }
-            let key_str = key.data.e_string();
-            if key_str.eql_bytes(name) {
-                return Some(crate::ast::expr::Query {
-                    expr: value,
-                    loc: key.loc,
-                    i: i as u32,
-                });
-            }
-        }
-
-        None
-    }
 
     /// Assumes each key in the property is a string
     pub fn alphabetize_properties(&mut self) {
@@ -1560,7 +1341,7 @@ impl EString {
 
     pub fn eql_bytes(&self, other: &[u8]) -> bool {
         if self.is_utf8() {
-            strings::eql_long::<true>(self.data, other)
+            strings::eql_long(self.data, other, true)
         } else {
             strings::utf16_eql_string(self.slice16(), other)
         }
@@ -1585,7 +1366,7 @@ impl EString {
         let mut i = 0usize;
         let mut next: Option<&EString> = Some(self);
         while let Some(cur) = next {
-            if !strings::eql_long::<false>(cur.data, &value[i..i + cur.data.len()]) {
+            if !strings::eql_long(cur.data, &value[i..i + cur.data.len()], false) {
                 return false;
             }
             i += cur.data.len();
@@ -1735,7 +1516,7 @@ impl EString {
     pub fn eql_string(&self, other: &EString) -> bool {
         if self.is_utf8() {
             if other.is_utf8() {
-                strings::eql_long::<true>(self.data, other.data)
+                strings::eql_long(self.data, other.data, true)
             } else {
                 strings::utf16_eql_string(other.slice16(), self.data)
             }

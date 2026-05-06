@@ -1312,20 +1312,20 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                                 }
                             }
                             js_ast::StmtData::SIf(if_statement) => {
-                                let result = SideEffects::to_boolean(self, if_statement.test_.data);
+                                let result = SideEffects::to_boolean(self, &if_statement.test_.data);
                                 if !(result.ok && result.side_effects == SideEffects::NoSideEffects && !result.value) {
                                     break 'can_remove_part false;
                                 }
                             }
                             js_ast::StmtData::SWhile(while_statement) => {
-                                let result = SideEffects::to_boolean(self, while_statement.test_.data);
+                                let result = SideEffects::to_boolean(self, &while_statement.test_.data);
                                 if !(result.ok && result.side_effects == SideEffects::NoSideEffects && !result.value) {
                                     break 'can_remove_part false;
                                 }
                             }
                             js_ast::StmtData::SFor(for_statement) => {
                                 if let Some(expr) = &for_statement.test_ {
-                                    let result = SideEffects::to_boolean(self, expr.data);
+                                    let result = SideEffects::to_boolean(self, &expr.data);
                                     if !(result.ok && result.side_effects == SideEffects::NoSideEffects && !result.value) {
                                         break 'can_remove_part false;
                                     }
@@ -1336,12 +1336,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                                     break 'can_remove_part false;
                                 }
                                 if let Some(name) = &func.func.name {
-                                    let name_ref = name.r#ref.unwrap();
+                                    let name_ref = name.ref_.unwrap();
                                     let symbol: &Symbol = &self.symbols[name_ref.inner_index() as usize];
 
                                     if name_ref.eql(default_export_ref)
                                         || symbol.use_count_estimate > 0
-                                        || self.named_exports.contains_key(symbol.original_name)
+                                        // SAFETY: Symbol.original_name is `*const [u8]` arena-owned for 'a.
+                                        || self.named_exports.contains_key(unsafe { &*symbol.original_name })
                                         || self.named_imports.contains(&name_ref)
                                         || self.is_import_item.get(&name_ref).is_some()
                                     {
@@ -1359,12 +1360,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                                     break 'can_remove_part false;
                                 }
                                 if let Some(name) = &class.class.class_name {
-                                    let name_ref = name.r#ref.unwrap();
+                                    let name_ref = name.ref_.unwrap();
                                     let symbol: &Symbol = &self.symbols[name_ref.inner_index() as usize];
 
                                     if name_ref.eql(default_export_ref)
                                         || symbol.use_count_estimate > 0
-                                        || self.named_exports.contains_key(symbol.original_name)
+                                        // SAFETY: Symbol.original_name is `*const [u8]` arena-owned for 'a.
+                                        || self.named_exports.contains_key(unsafe { &*symbol.original_name })
                                         || self.named_imports.contains(&name_ref)
                                         || self.is_import_item.get(&name_ref).is_some()
                                     {
@@ -1380,11 +1382,16 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 };
 
                 if is_dead {
-                    self.clear_symbol_usages_from_dead_part(&part);
+                    // PORT NOTE: reshaped for borrowck — Zig passed `part` by
+                    // value to `clearSymbolUsagesFromDeadPart`; reborrow via
+                    // raw ptr so `parts_[i]` can be reused below.
+                    let part_ptr: *const js_ast::Part = &parts_[i];
+                    // SAFETY: arena-backed slice element valid for parser 'a.
+                    self.clear_symbol_usages_from_dead_part(unsafe { &*part_ptr });
                     continue;
                 }
 
-                parts_[parts_end] = part;
+                parts_.swap(parts_end, i);
                 parts_end += 1;
             }
 
@@ -1401,7 +1408,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             let mut stmts_count: usize = 0;
             for (i, part) in parts_.iter().enumerate() {
                 if part.tag == crate::PartTag::None {
-                    stmts_count += part.stmts.len();
+                    // SAFETY: arena-owned `*mut [Stmt]` valid for parser 'a lifetime.
+                    stmts_count += unsafe { &*part.stmts }.len();
                     first_none_part = i.min(first_none_part);
                 }
             }
@@ -1409,13 +1417,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             if first_none_part < parts_.len() {
                 let stmts_list = self
                     .allocator
-                    .alloc_slice_fill_default::<Stmt>(stmts_count);
+                    .alloc_slice_fill_with::<Stmt>(stmts_count, |_| Stmt::empty());
                 let mut stmts_remain = &mut stmts_list[..];
 
                 for part in parts_.iter() {
                     if part.tag == crate::PartTag::None {
-                        stmts_remain[..part.stmts.len()].copy_from_slice(part.stmts);
-                        stmts_remain = &mut stmts_remain[part.stmts.len()..];
+                        // SAFETY: arena-owned `*mut [Stmt]` valid for parser 'a lifetime.
+                        let src = unsafe { &*part.stmts };
+                        stmts_remain[..src.len()].copy_from_slice(src);
+                        stmts_remain = &mut stmts_remain[src.len()..];
                     }
                 }
 
@@ -1455,7 +1465,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // Add everything in the file to the histogram
         let mut freq = js_ast::CharFreq { freqs: [0i32; 64] };
 
-        freq.scan(self.source.contents, 1);
+        freq.scan(&self.source.contents, 1);
 
         // Subtract out all comments
         for comment_range in self.lexer.all_comments.iter() {

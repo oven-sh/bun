@@ -399,10 +399,10 @@ impl MySQLConnection {
     ) -> Result<bool, AnyMySQLError> {
         bun_core::scoped_log!(
             MySQLConnection,
-            "onHandshake: {} {} {}",
+            "onHandshake: {} {} {:?}",
             success,
             ssl_error.error_no,
-            <&'static str>::from(self.ssl_mode)
+            self.ssl_mode
         );
         let handshake_success = success == 1;
         self.sequence_id = self.sequence_id.wrapping_add(1);
@@ -590,11 +590,14 @@ impl MySQLConnection {
         reader: NewReader<C>,
     ) -> Result<(), AnyMySQLError> {
         let mut handshake = HandshakeV10::default();
-        handshake.decode(reader)?;
+        handshake.decode_internal(reader)?;
         // handshake dropped at scope exit
 
         // Store server info
-        self.server_version = handshake.server_version.to_owned()?;
+        self.server_version = handshake
+            .server_version
+            .to_owned()
+            .map_err(|_| AnyMySQLError::OutOfMemory)?;
         self.connection_id = handshake.connection_id;
         // Negotiate capabilities: only request capabilities that the server also supports.
         // Per MySQL protocol, the client MUST intersect its desired capabilities with the
@@ -644,7 +647,7 @@ impl MySQLConnection {
         self.set_status(ConnectionState::Authenticating);
 
         // https://dev.mysql.com/doc/dev/mysql-server/8.4.6/page_protocol_connection_phase_packets_protocol_ssl_request.html
-        if self.capabilities.client_ssl() {
+        if self.capabilities.CLIENT_SSL {
             let mut response = SSLRequest {
                 capability_flags: self.capabilities,
                 max_packet_size: 0, // 16777216,
@@ -652,7 +655,7 @@ impl MySQLConnection {
                 // bun always send connection attributes
                 has_connection_attributes: true,
             };
-            response.write(self.writer())?;
+            response.write_internal(self.writer())?;
             self.capabilities = response.capability_flags;
             self.tls_status = TLSStatus::MessageSent;
             self.flush_data();
@@ -690,9 +693,9 @@ impl MySQLConnection {
         self.set_status(ConnectionState::Authenticating);
 
         let mut encrypted_password = Auth::caching_sha2_password::EncryptedPassword {
-            password: &self.password,
-            public_key: response.data.slice(),
-            nonce: &self.auth_data,
+            password: &*self.password as *const [u8],
+            public_key: response.data.slice() as *const [u8],
+            nonce: &*self.auth_data as *const [u8],
             sequence_id: self.sequence_id,
         };
         encrypted_password.write(self.writer())?;

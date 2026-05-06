@@ -317,11 +317,11 @@ impl JSMySQLQuery {
         };
         debug_assert!(function.is_callable(), "onQueryResolveFn is not callable");
 
-        let event_loop = this.vm().event_loop();
-
         let pending_value = this.get_pending_value().unwrap_or(JSValue::UNDEFINED);
         pending_value.ensure_still_alive();
         this.set_pending_value(JSValue::UNDEFINED);
+
+        let event_loop = this.vm().event_loop();
 
         event_loop.run_callback(
             function,

@@ -174,6 +174,28 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
     }
 }
 
+// PORT NOTE: blanket forward so a `NewReader<&mut C>` works wherever a
+// `NewReader<C>` does. Zig passed the wrapper struct by value (cheap copy of a
+// pointer-sized Context); in Rust the dispatch loop in `PostgresRequest::on_data`
+// must reborrow per-iteration instead of moving the reader. See `reborrow()`.
+impl<C: ReaderContext + ?Sized> ReaderContext for &mut C {
+    #[inline] fn mark_message_start(&mut self) { (**self).mark_message_start() }
+    #[inline] fn peek(&self) -> &[u8] { (**self).peek() }
+    #[inline] fn skip(&mut self, count: usize) { (**self).skip(count) }
+    #[inline] fn ensure_length(&mut self, count: usize) -> bool { (**self).ensure_length(count) }
+    #[inline] fn read(&mut self, count: usize) -> Result<Data, AnyPostgresError> { (**self).read(count) }
+    #[inline] fn read_z(&mut self) -> Result<Data, AnyPostgresError> { (**self).read_z() }
+}
+
+impl<Context: ReaderContext> NewReaderWrap<Context> {
+    /// Reborrow as a by-value `NewReader<&mut Context>` so callees that consume
+    /// the wrapper (per the Zig by-value convention) don't move the original.
+    #[inline]
+    pub fn reborrow(&mut self) -> NewReaderWrap<&mut Context> {
+        NewReaderWrap { wrapped: &mut self.wrapped }
+    }
+}
+
 // Zig: `pub fn NewReader(comptime Context: type) type { return NewReaderWrap(Context, Context.markMessageStart, ...); }`
 // The trait bound on `NewReaderWrap` already enforces the method set, so this is a plain alias.
 pub type NewReader<Context> = NewReaderWrap<Context>;

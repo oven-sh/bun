@@ -1704,8 +1704,8 @@ impl JSValkeyClient {
         memory_cost
     }
 
-    // Called by IntrusiveRc when ref_count hits 0.
-    fn deinit(this: *mut JSValkeyClient) {
+    // Called by RefCounted::destructor when ref_count hits 0.
+    unsafe fn deinit(this: *mut JSValkeyClient) {
         // SAFETY: last ref dropped; exclusive access.
         let this = unsafe { &mut *this };
         debug_assert!(this.client.socket.is_closed());
@@ -1716,7 +1716,7 @@ impl JSValkeyClient {
         this.client.deinit(None);
         this.poll_ref.disable();
         this.stop_timers();
-        RefCount::assert_no_refs(this);
+        this.ref_count.assert_no_refs();
 
         // bun.destroy(this) → reclaim the Box allocated in `new()`.
         // SAFETY: `this` was created via Box::into_raw in `new()`.
@@ -1755,10 +1755,10 @@ impl JSValkeyClient {
         if has_activity || self.client.status == valkey::Status::Connecting {
             // If we currently have pending activity or we are connecting, we need to keep the
             // event loop alive.
-            self.poll_ref.ref_(self.client.vm);
+            self.poll_ref.ref_(vm_event_loop_ctx());
         } else {
             // There is no pending activity so it is safe to remove the event loop.
-            self.poll_ref.unref(self.client.vm);
+            self.poll_ref.unref(vm_event_loop_ctx());
         }
 
         if self.this_value.is_empty() {

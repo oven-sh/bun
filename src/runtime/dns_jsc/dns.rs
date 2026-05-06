@@ -3566,7 +3566,8 @@ impl Resolver {
             let mut prev_global = (*key.lookup).head.global_this;
             let mut array = super::cares_jsc::addr_info_to_js_array(&mut *addr, &*prev_global).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
             // SAFETY: addr is the c-ares-allocated AddrInfo; freed once after all consumers run.
-            let _free_addr = scopeguard::guard((), |_| c_ares::AddrInfo::destroy(addr));
+            // Move the raw pointer into the guard so the loop body can keep borrowing `*addr`.
+            let _free_addr = scopeguard::guard(addr, |a| c_ares::AddrInfo::destroy(a));
             array.ensure_still_alive();
             DNSLookup::on_complete_with_array(ptr::addr_of_mut!((*key.lookup).head), array);
             drop(Box::from_raw(key.lookup));

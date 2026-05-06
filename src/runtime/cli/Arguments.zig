@@ -1043,17 +1043,17 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             Global.exit(1);
         }
 
-        // CLI overrides env var (NODE_USE_SYSTEM_CA)
+        // Precedence: CLI flag > NODE_USE_SYSTEM_CA env var > bunfig.toml `CA` > bundled (default)
         if (use_bundled_ca) {
             Bun__Node__CAStore = .bundled;
         } else if (use_openssl_ca) {
             Bun__Node__CAStore = .openssl;
         } else if (use_system_ca) {
             Bun__Node__CAStore = .system;
-        } else {
-            if (bun.env_var.NODE_USE_SYSTEM_CA.get()) {
-                Bun__Node__CAStore = .system;
-            }
+        } else if (bun.env_var.NODE_USE_SYSTEM_CA.get()) {
+            Bun__Node__CAStore = .system;
+        } else if (ctx.runtime_options.ca_store) |ca_store| {
+            Bun__Node__CAStore = ca_store;
         }
 
         // Back-compat boolean used by native code until fully migrated
@@ -1710,7 +1710,7 @@ export var Bun__Node__ZeroFillBuffers = false;
 export var Bun__Node__ProcessNoDeprecation = false;
 export var Bun__Node__ProcessThrowDeprecation = false;
 
-pub const BunCAStore = enum(u8) { bundled, openssl, system };
+pub const BunCAStore = Command.BunCAStore;
 pub export var Bun__Node__CAStore: BunCAStore = .bundled;
 pub export var Bun__Node__UseSystemCA = false;
 

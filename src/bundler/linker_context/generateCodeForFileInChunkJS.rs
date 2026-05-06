@@ -14,7 +14,7 @@ use bun_js_printer::renamer;
 use crate::{
     Chunk, DeclInfo, DeclInfoKind, Index, JSAst, JSMeta, LinkerContext, Part, PartRange, WrapKind,
 };
-use crate::bundle_v2::generic_path_with_pretty_initialized;
+use crate::ungate_support::generic_path_with_pretty_initialized;
 use crate::linker_context_mod::{StmtList, StmtListWhich};
 use crate::options::Format as OutputFormat;
 

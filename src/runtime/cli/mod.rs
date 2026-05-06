@@ -500,6 +500,8 @@ pub use reserved_command as ReservedCommand;
 // ─── Command (Tag + which() + dispatch skeleton) ─────────────────────────────
 pub mod command {
     use super::*;
+    // Self-referential alias so `crate::command::Command` resolves (Zig: `pub const Command = struct {…}`).
+    pub use super::Command;
 
     pub use bun_options_types::CommandTag::Tag;
     pub use bun_options_types::CommandTag::{

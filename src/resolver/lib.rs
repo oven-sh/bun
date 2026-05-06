@@ -2887,8 +2887,8 @@ fn intern_package_json(pkg: PackageJSON) -> &'static PackageJSON {
 
 /// Intern tsconfig.json source bytes into the process-lifetime DirInfo arena.
 /// `use_shared_buffer = false` at the read site guarantees `Owned`/`Empty`.
-fn intern_tsconfig_contents(contents: Fs::file_system::cache_entry::Contents) -> &'static [u8] {
-    use Fs::file_system::cache_entry::Contents;
+fn intern_tsconfig_contents(contents: crate::cache::Contents) -> &'static [u8] {
+    use crate::cache::Contents;
     let owned: Box<[u8]> = match contents {
         Contents::Empty => return b"",
         Contents::Owned(v) => v.into_boxed_slice(),

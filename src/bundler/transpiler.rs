@@ -1430,10 +1430,19 @@ impl<'a> Transpiler<'a> {
 
                                 symbols[i] = js_ast::Symbol {
                                     original_name: match bun_string::MutableString::ensure_valid_identifier(name) {
-                                        // PORT NOTE: Phase-A `Str` convention —
-                                        // arena/heap slice with erased lifetime
-                                        // (`Symbol.original_name: *const [u8]`).
-                                        Ok(boxed) => Box::into_raw(boxed) as *const [u8],
+                                        // Spec transpiler.zig:1049 calls
+                                        // `MutableString.ensureValidIdentifier(name, allocator)`
+                                        // — the identifier lives in the
+                                        // per-parse arena. Arena-copy the
+                                        // owned `Box<[u8]>` so it is freed
+                                        // with the arena instead of leaking
+                                        // (PORTING.md §Forbidden patterns
+                                        // bars `Box::into_raw` for `&'static`).
+                                        // SAFETY: ARENA — `allocator` outlives
+                                        // the returned `ParseResult.ast`.
+                                        Ok(boxed) => {
+                                            allocator.alloc_slice_copy(&boxed) as *const [u8]
+                                        }
                                         Err(_) => return None,
                                     },
                                     ..Default::default()
@@ -1561,10 +1570,14 @@ impl<'a> Transpiler<'a> {
             }
             options::Loader::Md => {
                 let html: &'static [u8] = match bun_md::root::render_to_html(source.contents) {
-                    // PORT NOTE: Phase-A `Str` convention — `E::String.data:
-                    // &'static [u8]`. The Zig allocator-backed `[]u8` becomes a
-                    // leaked `Box<[u8]>` until Phase B threads `'bump`.
-                    Ok(h) => &*Box::leak(h),
+                    // Spec transpiler.zig:1162 allocates the rendered HTML via
+                    // `allocator` (the per-parse arena), so it is freed with the
+                    // arena. Arena-copy the heap `Box<[u8]>` and let it drop;
+                    // PORTING.md §Forbidden patterns bars `Box::leak` here.
+                    // SAFETY: ARENA — `allocator` outlives the returned
+                    // `ParseResult.ast` (Phase-A `Str` convention erases
+                    // `'bump` to `'static` for `E::String.data`).
+                    Ok(h) => unsafe { &*(allocator.alloc_slice_copy(&h) as *const [u8]) },
                     Err(_) => {
                         let _ = log.add_error_fmt(
                             None,

@@ -1321,14 +1321,51 @@ fn transpile_source_code_inner(
                     // ModuleLoader.zig:446 compares against the cache enum's
                     // `.cjs`.
                     use bun_bundler::cache::MetadataModuleType;
+                    let is_commonjs_module =
+                        entry.metadata.module_type == MetadataModuleType::Cjs;
+                    // Spec :448-464 — when the cached entry was detected as
+                    // CJS but lives inside a `"type":"module"` package, emit
+                    // `package_json_type_module` so the C++ loader applies the
+                    // correct evaluation context on cache hits.
+                    let tag = if is_commonjs_module && source.path.is_file() {
+                        // SAFETY: per fn contract — `transpiler.resolver` is a
+                        // value field of the VM; `read_dir_info` is re-entrant
+                        // on the JS thread and returns a stable cache slot.
+                        let pkg = match unsafe {
+                            (*jsc_vm)
+                                .transpiler
+                                .resolver
+                                .read_dir_info(source.path.name.dir)
+                        } {
+                            Ok(Some(dir_info)) => {
+                                // SAFETY: `*mut DirInfo` is interned in the
+                                // resolver's arena; `PackageJSON` refs are
+                                // `'static` (dir_info.rs).
+                                let dir_info = unsafe { &*dir_info };
+                                dir_info
+                                    .package_json
+                                    .or(dir_info.enclosing_package_json)
+                            }
+                            _ => None,
+                        };
+                        if pkg
+                            .map(|p| p.module_type == ModuleType::Esm)
+                            .unwrap_or(false)
+                        {
+                            ResolvedSourceTag::PackageJsonTypeModule
+                        } else {
+                            ResolvedSourceTag::Javascript
+                        }
+                    } else {
+                        ResolvedSourceTag::Javascript
+                    };
                     return Ok(ResolvedSource {
                         source_code,
                         specifier: input_specifier.dupe_ref(),
                         source_url: create_if_different(input_specifier, path.text),
-                        is_commonjs_module: entry.metadata.module_type
-                            == MetadataModuleType::Cjs,
-                        // TODO(b2-blocked): `module_info` + `tag` package_json probe (:448-464).
-                        tag: ResolvedSourceTag::Javascript,
+                        is_commonjs_module,
+                        // TODO(b2-blocked): `module_info` (:423-428).
+                        tag,
                         ..Default::default()
                     });
                 }
@@ -1625,11 +1662,16 @@ fn transpile_source_code_inner(
             // `JSGlobalObject` for the FFI call.
             let global = unsafe { &*global_object };
             let value = if !unsafe { (*jsc_vm).origin.is_empty() } {
-                // TODO(b2-cycle): `api::Bun::get_public_path` — gated. Spec
-                // rewrites `path.text` against `vm.origin`; until that lands
-                // emit the absolute path verbatim (matches the `origin.is_empty()`
-                // branch).
-                bun_jsc::bun_string_jsc::create_utf8_for_js(global, path.text)
+                // Spec :805-815 — rewrite `specifier` against `vm.origin` so
+                // importing an asset via the file loader yields the public URL,
+                // not the absolute filesystem path.
+                let mut buf: Vec<u8> = Vec::new();
+                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                // `URL<'static>` is a view struct; clone borrows the same
+                // process-lifetime `href`.
+                let origin = unsafe { (*jsc_vm).origin.clone() };
+                crate::api::bun_object::get_public_path(specifier, origin, &mut buf);
+                bun_jsc::bun_string_jsc::create_utf8_for_js(global, &buf)
                     .map_err(|_| bun_core::err!("JSError"))?
             } else {
                 bun_jsc::bun_string_jsc::create_utf8_for_js(global, path.text)

@@ -506,10 +506,18 @@ impl VirtualMachine {
     /// Port of `VirtualMachine.sourceMapHandler` (VirtualMachine.zig:441).
     /// Returns a small adaptor whose `get()` produces the erased
     /// `js_printer::SourceMapHandler` for `print_with_source_map`.
+    ///
+    /// PORT NOTE: takes `*mut BufferPrinter` (raw), not `&'a mut`, because the
+    /// SAME `BufferPrinter` is also passed as the live `writer` to
+    /// `print_with_source_map`. Creating an `&'a mut` here would alias with
+    /// that writer borrow for the entire print; instead we stash the raw
+    /// pointer and only reborrow inside `on_source_map_chunk` once the
+    /// writer's last use (`print_slice`) has retired. See jsc_hooks.rs
+    /// `print_with_source_map` call-site PORT NOTE.
     #[inline]
     pub fn source_map_handler<'a>(
         &'a mut self,
-        printer: &'a mut bun_js_printer::BufferPrinter,
+        printer: *mut bun_js_printer::BufferPrinter,
     ) -> SourceMapHandlerGetter<'a> {
         SourceMapHandlerGetter {
             vm: self,

@@ -4,15 +4,35 @@ use crate::{Parser, Printer, PrintErr, VendorPrefix};
 
 /// A value for the [display](https://drafts.csswg.org/css-display-3/#the-display-properties) property.
 #[derive(Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(any(), derive(css::Parse, css::ToCss))] // blocked_on: DisplayPair::parse phf case-insensitive lookup
 pub enum Display {
     /// A display keyword.
     Keyword(DisplayKeyword),
     /// The inside and outside display values.
     Pair(DisplayPair),
 }
-// PORT NOTE: Zig `DeriveParse`/`DeriveToCss`/`implementDeepClone`/`implementHash`/`implementEql`
-// are comptime-reflection helpers — replaced by `#[derive(Clone, PartialEq, Eq, Hash, Parse, ToCss)]`.
+
+// PORT NOTE: Zig `DeriveParse`/`DeriveToCss` for a 2-payload union(enum) tries each
+// payload's `parse` in declaration order; `toCss` dispatches to the active payload.
+impl Display {
+    pub fn parse(input: &mut Parser) -> css::Result<Self> {
+        if let Ok(kw) = input.try_parse(DisplayKeyword::parse) {
+            return Ok(Display::Keyword(kw));
+        }
+        DisplayPair::parse(input).map(Display::Pair)
+    }
+
+    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        match self {
+            Display::Keyword(kw) => kw.to_css(dest),
+            Display::Pair(p) => p.to_css(dest),
+        }
+    }
+
+    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+        // All payloads are Copy.
+        self.clone()
+    }
+}
 
 /// A value for the [visibility](https://drafts.csswg.org/css-display-3/#visibility) property.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]

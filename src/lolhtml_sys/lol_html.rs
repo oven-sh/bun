@@ -1209,35 +1209,47 @@ unsafe extern "C" {
 pub type DocTypeCallback = unsafe extern "C" fn(*mut DocType, *mut c_void) -> Directive;
 
 impl DocType {
-    pub fn get_name(&self) -> HTMLString {
+    /// # Safety
+    /// `this` must be a valid `*mut DocType` passed to a handler.
+    pub unsafe fn get_name(this: *mut DocType) -> HTMLString {
         auto_disable();
-        // SAFETY: self valid
-        unsafe { lol_html_doctype_name_get(self) }
+        // SAFETY: caller guarantees `this` is valid
+        unsafe { lol_html_doctype_name_get(this) }
     }
-    pub fn get_public_id(&self) -> HTMLString {
+    /// # Safety
+    /// `this` must be a valid `*mut DocType` passed to a handler.
+    pub unsafe fn get_public_id(this: *mut DocType) -> HTMLString {
         auto_disable();
-        // SAFETY: self valid
-        unsafe { lol_html_doctype_public_id_get(self) }
+        // SAFETY: caller guarantees `this` is valid
+        unsafe { lol_html_doctype_public_id_get(this) }
     }
-    pub fn get_system_id(&self) -> HTMLString {
+    /// # Safety
+    /// `this` must be a valid `*mut DocType` passed to a handler.
+    pub unsafe fn get_system_id(this: *mut DocType) -> HTMLString {
         auto_disable();
-        // SAFETY: self valid
-        unsafe { lol_html_doctype_system_id_get(self) }
+        // SAFETY: caller guarantees `this` is valid
+        unsafe { lol_html_doctype_system_id_get(this) }
     }
-    pub fn remove(&mut self) {
+    /// # Safety
+    /// `this` must be a valid `*mut DocType` passed to a handler.
+    pub unsafe fn remove(this: *mut DocType) {
         auto_disable();
-        // SAFETY: self valid
-        unsafe { lol_html_doctype_remove(self) }
+        // SAFETY: caller guarantees `this` is valid
+        unsafe { lol_html_doctype_remove(this) }
     }
-    pub fn is_removed(&self) -> bool {
+    /// # Safety
+    /// `this` must be a valid `*mut DocType` passed to a handler.
+    pub unsafe fn is_removed(this: *mut DocType) -> bool {
         auto_disable();
-        // SAFETY: self valid
-        unsafe { lol_html_doctype_is_removed(self) }
+        // SAFETY: caller guarantees `this` is valid
+        unsafe { lol_html_doctype_is_removed(this) }
     }
-    pub fn get_source_location_bytes(&self) -> SourceLocationBytes {
+    /// # Safety
+    /// `this` must be a valid `*mut DocType` passed to a handler.
+    pub unsafe fn get_source_location_bytes(this: *mut DocType) -> SourceLocationBytes {
         auto_disable();
-        // SAFETY: self valid
-        unsafe { lol_html_doctype_source_location_bytes(self) }
+        // SAFETY: caller guarantees `this` is valid
+        unsafe { lol_html_doctype_source_location_bytes(this) }
     }
 }
 

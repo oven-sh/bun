@@ -1567,8 +1567,8 @@ pub enum PrinterFormat {
 }
 
 pub mod printer {
-    pub use crate::lockfile::printer::tree_printer as Tree;
-    pub use crate::lockfile::printer::yarn as Yarn;
+    pub use super::printer_mods::tree_printer as Tree;
+    pub use super::printer_mods::yarn as Yarn;
 }
 
 impl<'a> Printer<'a> {
@@ -1592,7 +1592,7 @@ impl<'a> Printer<'a> {
             let cwd = bun_sys::getcwd(&mut lockfile_path_buf1)?;
             let parts = [path];
             let lockfile_path__ =
-                Path::join_abs_string_buf(cwd, &mut lockfile_path_buf2, &parts, Path::Style::Auto);
+                resolve_path::join_abs_string_buf::<platform::Auto>(cwd, &mut lockfile_path_buf2, &parts);
             lockfile_path_buf2[lockfile_path__.len()] = 0;
             // SAFETY: NUL written at [len] above.
             lockfile_path =
@@ -2707,7 +2707,7 @@ impl Lockfile {
                     string_builder.fmt_count(format_args!(
                         "{}@{}\n",
                         bstr::BStr::new(names[i + j].slice(bytes)),
-                        resolutions[i + j].fmt(bytes, Path::Style::Posix)
+                        resolutions[i + j].fmt(bytes, PathSep::Posix)
                     ));
                 }
                 i += 16;
@@ -2719,7 +2719,7 @@ impl Lockfile {
                 string_builder.fmt_count(format_args!(
                     "{}@{}\n",
                     bstr::BStr::new(names[i].slice(bytes)),
-                    resolutions[i].fmt(bytes, Path::Style::Posix)
+                    resolutions[i].fmt(bytes, PathSep::Posix)
                 ));
                 i += 1;
             }

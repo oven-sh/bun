@@ -1197,13 +1197,13 @@ fn make_directory(
     {
         match bun_sys::mkdirat_z(dest_fd, path, Mode::try_from(mode).unwrap()) {
             Ok(()) => {}
-            Err(e) => match e.errno() {
-                bun_sys::E::EXIST | bun_sys::E::NOTDIR => {}
+            Err(e) => match e.get_errno() {
+                bun_sys::E::EEXIST | bun_sys::E::ENOTDIR => {}
                 _ => {
                     let Some(dir) = bun_paths::dirname(path_slice) else {
                         return;
                     };
-                    let _ = dest_fd.make_path::<u8>(dir);
+                    let _ = dest_fd.make_path(dir);
                     let _ = bun_sys::mkdirat_z(dest_fd, path, 0o777);
                 }
             },

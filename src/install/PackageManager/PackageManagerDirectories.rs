@@ -218,10 +218,9 @@ fn ensure_cache_directory(this: &mut PackageManager) -> Dir {
             }
         }
 
-        this.cache_directory_path = ZStr::from_bytes(path::join_abs_string(
+        this.cache_directory_path = ZStr::from_bytes(path::resolve_path::join_abs_string::<path::platform::Auto>(
             FileSystem::instance().top_level_dir(),
             &[b"node_modules", b".cache"],
-            path::Platform::Auto,
         ));
 
         match Dir::cwd().make_open_path(b"node_modules/.cache", Default::default()) {
@@ -276,7 +275,7 @@ pub fn fetch_cache_directory_path(env: &mut DotEnvLoader, options: Option<&Optio
 
 // ─────────────────────── cached folder name printers ──────────────────────────
 
-pub fn cached_git_folder_name_print(buf: &mut [u8], resolved: &[u8], patch_hash: Option<u64>) -> &ZStr {
+pub fn cached_git_folder_name_print<'a>(buf: &'a mut [u8], resolved: &[u8], patch_hash: Option<u64>) -> &'a ZStr {
     buf_print_z(buf, format_args!("@G@{}{}", bstr::BStr::new(resolved), PatchHashFmt { hash: patch_hash }))
         .expect("unreachable")
 }

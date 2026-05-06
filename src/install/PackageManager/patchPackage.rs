@@ -999,7 +999,7 @@ fn overwrite_package_in_node_modules_folder(
 type NodeModulesIterator<'a> = tree::Iterator<'a, { tree::IteratorPathStyle::NodeModules }>;
 type NodeModulesNext<'a> = tree::IteratorNext<'a>;
 
-fn node_modules_folder_for_dependency_ids(iterator: &mut NodeModulesIterator, ids: &[IdPair]) -> Result<Option<NodeModulesNext>, bun_core::Error> {
+fn node_modules_folder_for_dependency_ids<'a>(iterator: &'a mut NodeModulesIterator<'_>, ids: &[IdPair]) -> Result<Option<NodeModulesNext<'a>>, bun_core::Error> {
     while let Some(node_modules) = iterator.next(None) {
         for id in ids {
             if node_modules.dependencies.iter().position(|d| *d == id.0).is_none() {
@@ -1011,7 +1011,7 @@ fn node_modules_folder_for_dependency_ids(iterator: &mut NodeModulesIterator, id
     Ok(None)
 }
 
-fn node_modules_folder_for_dependency_id(iterator: &mut NodeModulesIterator, dependency_id: DependencyID) -> Result<Option<NodeModulesNext>, bun_core::Error> {
+fn node_modules_folder_for_dependency_id<'a>(iterator: &'a mut NodeModulesIterator<'_>, dependency_id: DependencyID) -> Result<Option<NodeModulesNext<'a>>, bun_core::Error> {
     while let Some(node_modules) = iterator.next(None) {
         if node_modules.dependencies.iter().position(|d| *d == dependency_id).is_none() {
             continue;
@@ -1024,13 +1024,13 @@ fn node_modules_folder_for_dependency_id(iterator: &mut NodeModulesIterator, dep
 
 type IdPair = (DependencyID, PackageID);
 
-fn pkg_info_for_name_and_version(
+fn pkg_info_for_name_and_version<'a>(
     lockfile: &mut Lockfile,
-    iterator: &mut NodeModulesIterator,
+    iterator: &'a mut NodeModulesIterator<'_>,
     pkg_maybe_version_to_patch: &[u8],
     name: &[u8],
     version: Option<&[u8]>,
-) -> (PackageID, NodeModulesNext) {
+) -> (PackageID, NodeModulesNext<'a>) {
     // PERF(port): was stack-fallback alloc — profile in Phase B
     let mut pairs: Vec<IdPair> = Vec::with_capacity(8);
 

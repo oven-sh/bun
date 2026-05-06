@@ -34,7 +34,7 @@ impl Default for SavedSourceMap {
         Self {
             map: ptr::null_mut(),
             mutex: Mutex::default(),
-            find_cache: Default::default(),
+            find_cache: FindCache::default(),
             last_path_hash: 0,
             last_ism: None,
         }
@@ -47,7 +47,7 @@ impl SavedSourceMap {
         this.write(Self {
             map,
             mutex: Mutex::default(),
-            find_cache: Default::default(),
+            find_cache: FindCache::default(),
             last_path_hash: 0,
             last_ism: None,
         });
@@ -303,15 +303,14 @@ impl SavedSourceMap {
         // PORT NOTE: Zig `default_allocator.dupe(u8, mappings.list.items)` —
         // `MutableString.list` is `Vec<u8>`; box a copy so the table owns the
         // blob (the incoming `MutableString` may be backed by the printer's
-        // recycled buffer or a moved-in cache record).
-        #[cfg(any())] // TODO(b2-blocked): `put_value`'s body is gated (see below). Gating the
-        // `Box::into_raw` here too keeps the live stub allocation-free — otherwise every call
-        // leaks one heap blob (PORTING.md §Forbidden: `Box::leak` semantics). Un-gate together.
-        {
+        // recycled buffer or a moved-in cache record). `Box::into_raw` is NOT a
+        // leak: ownership transfers to the table via `put_value`, and is
+        // reclaimed by `InternalSourceMap::free_owned` (see `put_value` /
+        // `Drop`). On the error path the Box is reconstituted and dropped.
         let blob: Box<[u8]> = Box::<[u8]>::from(mappings.list.as_slice());
         let blob_ptr: *mut [u8] = Box::into_raw(blob);
         // errdefer: on error, reconstitute and drop the Box.
-        return match self.put_value(
+        match self.put_value(
             source.path.text,
             Value::init(blob_ptr as *mut u8 as *mut InternalSourceMap),
         ) {
@@ -321,52 +320,52 @@ impl SavedSourceMap {
                 drop(unsafe { Box::<[u8]>::from_raw(blob_ptr) });
                 Err(e)
             }
-        };
-        } // end #[cfg(any())]
-        Ok(())
+        }
     }
 
     pub fn put_value(&mut self, path: &[u8], value: Value) -> Result<(), bun_core::Error> {
-        #[cfg(any())] // TODO(b2-blocked): bun_collections::HashMap::get_or_put result shape, TaggedPtrUnion::from(*mut c_void), InternalSourceMap::deinit
-        {
+        use std::collections::hash_map::Entry;
+
         // TODO(port): narrow error set
         self.lock();
-        // PORT NOTE: reshaped for borrowck — explicit unlock before each return.
+        // PORT NOTE: reshaped for borrowck — explicit unlock paired manually.
 
-        #[cfg(any())] // TODO(b2-blocked): bun_sourcemap::FindCache::invalidate_all
-        {
-            self.find_cache.invalidate_all();
-        }
+        self.find_cache.invalidate_all();
         self.last_ism = None;
+
         // SAFETY: `map` points at the live sibling HashTable on VirtualMachine.
+        // `bun_collections::HashMap` derefs to `std::collections::HashMap`, so
+        // the std `entry()` API is used directly (Zig `getOrPut`).
         let map = unsafe { &mut *self.map };
-        let entry = match map.get_or_put(hash(path)) {
-            Ok(e) => e,
-            Err(e) => {
-                self.unlock();
-                return Err(e.into());
+        match map.entry(hash(path)) {
+            Entry::Occupied(mut o) => {
+                let old_value = Value::from(Some(*o.get()));
+                if let Some(parsed_source_map) = old_value.get::<ParsedSourceMap>() {
+                    #[cfg(any())] // TODO(b2-blocked): `ParsedSourceMap: ThreadSafeRefCounted` — wire `ThreadSafeRefCount::deref` once the trait impl lands in bun_sourcemap.
+                    {
+                        // SAFETY: pointer was stored by us and is live until replaced.
+                        unsafe {
+                            bun_ptr::ThreadSafeRefCount::<ParsedSourceMap>::deref(
+                                parsed_source_map,
+                            )
+                        };
+                    }
+                    let _ = parsed_source_map;
+                } else if let Some(_provider) = old_value.get::<SourceProviderMap>() {
+                    // do nothing, we did not hold a ref to ZigSourceProvider
+                } else if let Some(ism) = old_value.get::<InternalSourceMap>() {
+                    // SAFETY: blob was heap-allocated via `put_mappings`
+                    // (`Box<[u8]>::into_raw`); the tagged pointer's address IS
+                    // the blob's data pointer (InternalSourceMap is a thin view).
+                    (InternalSourceMap { data: ism as *const u8 }).free_owned();
+                }
+                *o.get_mut() = value.ptr();
             }
-        };
-        if entry.found_existing {
-            let old_value = Value::from(*entry.value_ptr());
-            if let Some(parsed_source_map) = old_value.get::<ParsedSourceMap>() {
-                let source_map: *mut ParsedSourceMap = parsed_source_map;
-                // SAFETY: pointer was stored by us and is live until replaced.
-                unsafe { (*source_map).deref_() };
-            } else if let Some(_provider) = old_value.get::<SourceProviderMap>() {
-                // do nothing, we did not hold a ref to ZigSourceProvider
-            } else if let Some(ism) = old_value.get::<InternalSourceMap>() {
-                (InternalSourceMap {
-                    data: ism as *mut _ as *mut u8,
-                })
-                .deinit();
+            Entry::Vacant(v) => {
+                v.insert(value.ptr());
             }
         }
-        *entry.value_ptr_mut() = value.ptr();
         self.unlock();
-        return Ok(());
-        } // end #[cfg(any())]
-        let _ = (path, value);
         Ok(())
     }
 

@@ -1227,19 +1227,38 @@ fn transpile_source_code_inner(
 
                 // Spec :386-398 — already-bundled (bytecode cache hit).
                 if !matches!(parse_result.already_bundled, AlreadyBundled::None) {
-                    let bytecode_slice = parse_result.already_bundled.bytecode_slice();
+                    // PORT NOTE: spec stores a default_allocator-owned `[]u8`
+                    // in `ResolvedSource.bytecode_cache` and lets C++ adopt it
+                    // (ModuleLoader.zig:387-398). The Rust port keeps the bytes
+                    // in `AlreadyBundled::Bytecode(Box<[u8]>)`, which would drop
+                    // when `parse_result` drops on return — UAF on the C++ side.
+                    // Move the variant out and `Box::into_raw` so ownership
+                    // transfers to C++ exactly as in the spec.
+                    let already_bundled =
+                        core::mem::take(&mut parse_result.already_bundled);
+                    let is_commonjs_module = already_bundled.is_common_js();
+                    let (bytecode_cache, bytecode_cache_size) = match already_bundled {
+                        AlreadyBundled::Bytecode(bytes)
+                        | AlreadyBundled::BytecodeCjs(bytes) => {
+                            let len = bytes.len();
+                            if len == 0 {
+                                (core::ptr::null_mut(), 0)
+                            } else {
+                                // C++ side becomes the owner (matches Zig
+                                // default_allocator semantics).
+                                (Box::into_raw(bytes).cast::<u8>(), len)
+                            }
+                        }
+                        _ => (core::ptr::null_mut(), 0),
+                    };
                     return Ok(ResolvedSource {
                         source_code: bun_string::String::clone_latin1(source.contents),
                         specifier: input_specifier.dupe_ref(),
                         source_url: create_if_different(input_specifier, path.text),
                         already_bundled: true,
-                        bytecode_cache: if bytecode_slice.is_empty() {
-                            core::ptr::null_mut()
-                        } else {
-                            bytecode_slice.as_ptr().cast_mut()
-                        },
-                        bytecode_cache_size: bytecode_slice.len(),
-                        is_commonjs_module: parse_result.already_bundled.is_common_js(),
+                        bytecode_cache,
+                        bytecode_cache_size,
+                        is_commonjs_module,
                         ..Default::default()
                     });
                 }

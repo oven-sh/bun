@@ -1731,6 +1731,12 @@ impl RealFS {
     // https://twitter.com/jarredsumner/status/1655464485245845506
     /// Caller borrows the returned EntriesOption. When `FeatureFlags::ENABLE_ENTRY_CACHE` is `false`,
     /// it is not safe to store this pointer past the current function call.
+    ///
+    /// PORT NOTE: returns a raw `*mut EntriesOption` (matching Zig's `*EntriesOption`), not
+    /// `&'static mut`. Handing out `&'static mut` from a safe `pub fn` would let two callers
+    /// (sequential or across the resolver thread pool) each hold a live `&mut` aliasing the
+    /// same BSSMap slot — instant UB under Rust's `&mut` noalias model. Callers form a
+    /// short-lived `&mut` at the use site under whatever serialization they already perform.
     pub fn read_directory_with_iterator<I: DirEntryIterator>(
         &mut self,
         dir_maybe_trail_slash: &[u8],
@@ -1738,7 +1744,7 @@ impl RealFS {
         generation: Generation,
         store_fd: bool,
         iterator: I,
-    ) -> Result<&'static mut EntriesOption, bun_core::Error> {
+    ) -> Result<*mut EntriesOption, bun_core::Error> {
         let mut dir = strings::paths::without_trailing_slash_windows_path(dir_maybe_trail_slash);
 
         crate::Resolver::assert_valid_cache_key(dir);
@@ -1764,9 +1770,11 @@ impl RealFS {
 
             let cr = cache_result.as_ref().unwrap();
             if cr.has_checked_if_exists() {
-                // SAFETY: `entries_mutex` is held; sole `&mut` to this slot.
+                // SAFETY: `entries_mutex` is held; sole access to the singleton map.
                 if let Some(cached_result) = unsafe { self.entries.at_index(cr.index) } {
-                    match cached_result {
+                    // SAFETY: `entries_mutex` held; form a short-lived `&mut` for the
+                    // match only — the raw `*mut` is what escapes to the caller.
+                    match unsafe { &mut *cached_result } {
                         EntriesOption::Err(_) => return Ok(cached_result),
                         EntriesOption::Entries(e) if e.generation >= generation => {
                             return Ok(cached_result);
@@ -1781,8 +1789,8 @@ impl RealFS {
                             original_err: bun_core::err!("ENOENT"),
                             canonical_error: bun_core::err!("ENOENT"),
                         }));
-                        // SAFETY: just wrote; threadlocal storage outlives caller
-                        unsafe { &mut *slot.as_mut_ptr() }
+                        // PORT NOTE: threadlocal storage outlives caller; return raw `*mut`.
+                        slot.as_mut_ptr()
                     }));
                 }
             }
@@ -1870,7 +1878,7 @@ impl RealFS {
                     let mut boxed = Box::new(DirEntry::init(dir, generation));
                     *boxed = entries;
                     let result = EntriesOption::Entries(boxed);
-                    // SAFETY: `entries_mutex` held; sole `&mut` to this slot.
+                    // SAFETY: `entries_mutex` held; sole access to this slot.
                     unsafe { self.entries.put(cache_result.as_mut().unwrap(), result) }?
                 }
             };
@@ -1880,8 +1888,8 @@ impl RealFS {
 
         Ok(TEMP_ENTRIES_OPTION.with_borrow_mut(|slot| {
             slot.write(EntriesOption::Entries(Box::new(entries)));
-            // SAFETY: just wrote; threadlocal storage outlives caller
-            unsafe { &mut *slot.as_mut_ptr() }
+            // PORT NOTE: threadlocal storage outlives caller; return raw `*mut`.
+            slot.as_mut_ptr()
         }))
     }
 

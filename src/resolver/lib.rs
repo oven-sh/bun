@@ -4744,10 +4744,11 @@ impl<'a> Resolver<'a> {
             if let Ok(Some(import_dir_info_ptr)) = self.dir_info_cached(dirname) {
                 // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver (see LIFETIMES.tsv).
                 let import_dir_info_outer = unsafe { &*import_dir_info_ptr };
-                // SAFETY: resolver mutex held; sole `&mut DirInfo` for this index.
+                // SAFETY: resolver mutex held; raw ptr re-borrowed narrowly below.
                 if let Some(import_dir_info) = unsafe { import_dir_info_outer.get_enclosing_browser_scope() } {
-                    let pkg = import_dir_info.package_json.unwrap();
-                    if let Some(remap) = self.check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(import_dir_info, abs_path) {
+                    // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver.
+                    let pkg = unsafe { &*import_dir_info }.package_json.unwrap();
+                    if let Some(remap) = self.check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(unsafe { &*import_dir_info }, abs_path) {
                         // Is the path disabled?
                         if remap.is_empty() {
                             let mut _path = Path::init(unsafe { &mut *self.fs() }.dirname_store.append_slice(abs_path).expect("unreachable"));
@@ -4758,7 +4759,8 @@ impl<'a> Resolver<'a> {
                             });
                         }
 
-                        match self.resolve_without_remapping(import_dir_info, remap, kind, global_cache) {
+                        // SAFETY: ARENA — DirInfo ptr is a BSSMap slot; uniquely re-borrowed mutably here.
+                        match self.resolve_without_remapping(unsafe { &mut *import_dir_info }, remap, kind, global_cache) {
                             MatchResultUnion::Success(match_result) => {
                                 let mut flags = ResultFlags::default();
                                 flags.set_is_external(match_result.is_external);
@@ -4859,10 +4861,11 @@ impl<'a> Resolver<'a> {
         if self.care_about_browser_field {
             // Support remapping one package path to another via the "browser" field
             // SAFETY: ARENA — `source_dir_info` is a BSSMap-backed DirInfo slot that outlives the resolver (see LIFETIMES.tsv).
-            // SAFETY: resolver mutex held; sole `&mut DirInfo` for this index.
+            // SAFETY: resolver mutex held; raw ptr re-borrowed narrowly below.
             if let Some(browser_scope) = unsafe { (*source_dir_info).get_enclosing_browser_scope() } {
-                if let Some(package_json) = browser_scope.package_json {
-                    if let Some(remapped) = self.check_browser_map::<{ BrowserMapPathKind::PackagePath }>(browser_scope, import_path) {
+                // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver.
+                if let Some(package_json) = unsafe { &*browser_scope }.package_json {
+                    if let Some(remapped) = self.check_browser_map::<{ BrowserMapPathKind::PackagePath }>(unsafe { &*browser_scope }, import_path) {
                         if remapped.is_empty() {
                             // "browser": {"module": false}
                             // does the module exist in the filesystem?
@@ -4900,7 +4903,7 @@ impl<'a> Resolver<'a> {
                         }
 
                         import_path = remapped;
-                        source_dir_info = browser_scope as *const _ as *mut _;
+                        source_dir_info = browser_scope;
                     }
                 }
             }
@@ -4940,14 +4943,16 @@ impl<'a> Resolver<'a> {
                         },
                     };
                     // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver (see LIFETIMES.tsv).
-                    // SAFETY: resolver mutex held; sole `&mut DirInfo` for this index.
+                    // SAFETY: resolver mutex held; raw ptr re-borrowed narrowly below.
                     if let Some(browser_scope) = unsafe { (*base_dir_info).get_enclosing_browser_scope() } {
-                        if let Some(remap) = self.check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(browser_scope, result.path_pair.primary.text()) {
+                        // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver.
+                        if let Some(remap) = self.check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(unsafe { &*browser_scope }, result.path_pair.primary.text()) {
                             if remap.is_empty() {
                                 result.path_pair.primary.is_disabled = true;
                                 result.path_pair.primary = Fs::Path::init_with_namespace(remap, b"file");
                             } else {
-                                match self.resolve_without_remapping(browser_scope, remap, kind, global_cache) {
+                                // SAFETY: ARENA — uniquely re-borrowed mutably here.
+                                match self.resolve_without_remapping(unsafe { &mut *browser_scope }, remap, kind, global_cache) {
                                     MatchResultUnion::Success(remapped) => {
                                         result.path_pair = remapped.path_pair;
                                         result.dirname_fd = remapped.dirname_fd;
@@ -6463,10 +6468,9 @@ impl<'a> Resolver<'a> {
                 top_parent = result;
             } else {
                 bufs!(dir_entry_paths_to_resolve)[usize::try_from(i).unwrap()].write(DirEntryResolveQueueItem {
-                    // SAFETY: extending lifetime to 'static for threadlocal buf storage; consumed before fn returns.
-                    unsafe_path: unsafe { &*(root_path as *const [u8]) },
+                    unsafe_path: root_path as *const [u8],
                     result,
-                    safe_path: b"",
+                    safe_path: b"" as *const [u8],
                     fd: FD::INVALID,
                 });
                 // SAFETY: resolver mutex held; sole `&mut` to this slot.
@@ -6475,7 +6479,7 @@ impl<'a> Resolver<'a> {
                         Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
                             // SAFETY: slot was written immediately above.
                             let slot = unsafe { bufs!(dir_entry_paths_to_resolve)[usize::try_from(i).unwrap()].assume_init_mut() };
-                            slot.safe_path = entries.dir;
+                            slot.safe_path = entries.dir as *const [u8];
                             slot.fd = entries.fd;
                         }
                         Fs::file_system::real_fs::EntriesOption::Err(err) => {
@@ -6537,6 +6541,12 @@ impl<'a> Resolver<'a> {
         while queue_slice_len > 0 {
             // SAFETY: every slot in `0..queue_slice_len` was `.write()`-initialised above.
             let mut queue_top = unsafe { bufs!(dir_entry_paths_to_resolve)[queue_slice_len - 1].assume_init_ref() }.clone();
+            // SAFETY: `unsafe_path` was set to a slice of the threadlocal
+            // `dir_info_uncached_path` buffer earlier in this fn; valid for the
+            // remainder of the fn body. `safe_path` is either `b""` or a
+            // dirname_store-backed `&'static [u8]`.
+            let queue_top_unsafe_path: &[u8] = unsafe { &*queue_top.unsafe_path };
+            let queue_top_safe_path: &[u8] = unsafe { &*queue_top.safe_path };
             // defer top_parent = queue_top.result — done at end of loop body
             queue_slice_len -= 1;
 
@@ -6546,16 +6556,16 @@ impl<'a> Resolver<'a> {
                 'open_dir: {
                     // This saves us N copies of .toPosixPath
                     // which was likely the perf gain from resolving directories relative to the parent directory, anyway.
-                    let prev_char = path[queue_top.unsafe_path.len()..].first().copied().unwrap_or(0);
+                    let prev_char = path[queue_top_unsafe_path.len()..].first().copied().unwrap_or(0);
                     // SAFETY: path is &mut into the threadlocal buffer; index in-bounds (≤ input_path.len()).
                     // Snapshot the raw byte pointer so the `restore` guard captures only
                     // a Copy `*mut u8` and `path` stays reborrowable below.
-                    let restore_at: *mut u8 = unsafe { path.as_mut_ptr().add(queue_top.unsafe_path.len()) };
+                    let restore_at: *mut u8 = unsafe { path.as_mut_ptr().add(queue_top_unsafe_path.len()) };
                     // SAFETY: `restore_at` is in-bounds of the threadlocal path buffer.
                     unsafe { *restore_at = 0 };
                     let restore = scopeguard::guard((), move |_| unsafe { *restore_at = prev_char });
                     // SAFETY: NUL written above
-                    let sentinel = unsafe { bun_core::ZStr::from_raw(path.as_ptr(), queue_top.unsafe_path.len()) };
+                    let sentinel = unsafe { bun_core::ZStr::from_raw(path.as_ptr(), queue_top_unsafe_path.len()) };
 
                     #[cfg(unix)]
                     let open_req: core::result::Result<FD, bun_core::Error> = {
@@ -6597,7 +6607,7 @@ impl<'a> Resolver<'a> {
                                 return Ok(None);
                             }
                             // SAFETY: resolver mutex held; no aliased map access.
-                            let cached_dir_entry_result = unsafe { rfs!().entries.get_or_put(queue_top.unsafe_path) }.expect("unreachable");
+                            let cached_dir_entry_result = unsafe { rfs!().entries.get_or_put(queue_top_unsafe_path) }.expect("unreachable");
                             // If we don't properly cache not found, then we repeatedly attempt to open the same directories,
                             // which causes a perf trace that looks like this stupidity;
                             //
@@ -6608,7 +6618,7 @@ impl<'a> Resolver<'a> {
                             unsafe { rfs!().entries.mark_not_found(cached_dir_entry_result) };
                             if !(err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound")) {
                                 if ENABLE_LOGGING {
-                                    let pretty = queue_top.unsafe_path;
+                                    let pretty = queue_top_unsafe_path;
                                     let _ = unsafe { &mut *self.log() }.add_error_fmt(
                                         None,
                                         logger::Loc::default(),
@@ -6634,8 +6644,9 @@ impl<'a> Resolver<'a> {
                 open_dir_count.set(open_dir_count.get() + 1);
             }
 
-            let dir_path: &'static [u8] = if !queue_top.safe_path.is_empty() {
-                queue_top.safe_path
+            let dir_path: &'static [u8] = if !queue_top_safe_path.is_empty() {
+                // SAFETY: non-empty `safe_path` is always a dirname_store-backed `&'static [u8]`.
+                unsafe { &*queue_top.safe_path }
             } else {
                 // ensure trailing slash
                 if _safe_path.is_none() {
@@ -6650,8 +6661,8 @@ impl<'a> Resolver<'a> {
 
                 let safe_path = _safe_path.unwrap();
 
-                let dir_path_i = strings::index_of(safe_path, queue_top.unsafe_path).expect("unreachable");
-                let mut end = dir_path_i + queue_top.unsafe_path.len();
+                let dir_path_i = strings::index_of(safe_path, queue_top_unsafe_path).expect("unreachable");
+                let mut end = dir_path_i + queue_top_unsafe_path.len();
 
                 // Directories must always end in a trailing slash or else various bugs can occur.
                 // This covers "what happens when the trailing"

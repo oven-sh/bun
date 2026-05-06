@@ -2843,8 +2843,8 @@ impl<'a> LinkerContext<'a> {
                     // property access. Don't do this if the namespace reference is invalid
                     // though. This is the case for star imports, where the import is the
                     // namespace.
-                    let named_import: NamedImport = self.graph.ast.items_named_imports()[prev_source_index as usize]
-                        .get(&tracker.import_ref).unwrap().clone();
+                    let named_import: &NamedImport = self.graph.ast.items_named_imports()[prev_source_index as usize]
+                        .get(&tracker.import_ref).unwrap();
 
                     if named_import.namespace_ref.is_some() && named_import.namespace_ref.unwrap().is_valid() {
                         if result.kind == MatchImportKind::Normal {
@@ -2882,8 +2882,8 @@ impl<'a> LinkerContext<'a> {
                     // if the file was rewritten from CommonJS into ESM
                     // and the developer imported an export that doesn't exist
                     // We don't do a runtime error since that CJS would have returned undefined.
-                    let named_import: NamedImport = self.graph.ast.items_named_imports()[prev_source_index as usize]
-                        .get(&tracker.import_ref).unwrap().clone();
+                    let named_import: &NamedImport = self.graph.ast.items_named_imports()[prev_source_index as usize]
+                        .get(&tracker.import_ref).unwrap();
 
                     if named_import.namespace_ref.is_some() && named_import.namespace_ref.unwrap().is_valid() {
                         // SAFETY: get() returns a stable *mut Symbol; ref is valid.
@@ -2900,8 +2900,8 @@ impl<'a> LinkerContext<'a> {
 
                 ImportTrackerStatus::DynamicFallback => {
                     // If it's a file with dynamic export fallback, rewrite the import to a property access
-                    let named_import: NamedImport = self.graph.ast.items_named_imports()[prev_source_index as usize]
-                        .get(&tracker.import_ref).unwrap().clone();
+                    let named_import: &NamedImport = self.graph.ast.items_named_imports()[prev_source_index as usize]
+                        .get(&tracker.import_ref).unwrap();
                     if named_import.namespace_ref.is_some() && named_import.namespace_ref.unwrap().is_valid() {
                         if result.kind == MatchImportKind::Normal {
                             result.kind = MatchImportKind::NormalAndNamespace;
@@ -2921,8 +2921,8 @@ impl<'a> LinkerContext<'a> {
                     // Report mismatched imports and exports
                     // SAFETY: get() returns a stable *mut Symbol; ref is valid.
                     let symbol = unsafe { &mut *self.graph.symbols.get(tracker.import_ref).unwrap() };
-                    let named_import: NamedImport = self.graph.ast.items_named_imports()[prev_source_index as usize]
-                        .get(&tracker.import_ref).unwrap().clone();
+                    let named_import: &NamedImport = self.graph.ast.items_named_imports()[prev_source_index as usize]
+                        .get(&tracker.import_ref).unwrap();
                     let source = self.get_source(prev_source_index as usize);
 
                     let next_source = self.get_source(next_tracker.source_index.get() as usize);
@@ -2943,9 +2943,9 @@ impl<'a> LinkerContext<'a> {
 
                         // SAFETY: resolver backref into BundleV2.transpiler.resolver (LIFETIMES.tsv)
                         if unsafe { (*self.resolver).opts.target } == Target::Browser
-                            && bun_resolve_builtins::HardcodedModule::Alias::has(
+                            && resolve_builtins_shim::HardcodedModule::Alias::has(
                                 &next_source.path.pretty,
-                                bun_resolve_builtins::RuntimeTarget::Bun,
+                                resolve_builtins_shim::RuntimeTarget::Bun,
                                 Default::default(),
                             )
                         {
@@ -3095,19 +3095,24 @@ impl<'a> LinkerContext<'a> {
         source_index: crate::IndexInt,
     ) {
         // PORT NOTE: Zig clones into a local, sorts, iterates, then writes back.
-        // `ArrayHashMap` has no in-place key sort, so we sort an index vector
-        // over the cloned keys/values instead — same observable iteration order
-        // (ascending `inner_index`). Write-back is a `*ptr = clone` at the end.
-        let named_imports = named_imports_ptr.clone().expect("OOM");
-
-        let keys: &[Ref] = named_imports.keys();
-        let values: &[NamedImport] = named_imports.values();
-        let mut order: Vec<usize> = (0..keys.len()).collect();
-        order.sort_by(|&a, &b| keys[a].inner_index().cmp(&keys[b].inner_index()));
+        // `ArrayHashMap` has no in-place key sort and `NamedImport` is non-Clone
+        // (owns a `BabyList`), so we sort an index vector over the live
+        // keys/values instead — same observable iteration order (ascending
+        // `inner_index`). The write-back is a no-op here since we never mutate
+        // the local; the Zig clone existed only because `match_import_with_export`
+        // re-read `named_imports` via the SoA column, which we re-fetch fresh
+        // each call.
+        let keys: *const [Ref] = named_imports_ptr.keys();
+        let values: *const [NamedImport] = named_imports_ptr.values();
+        // SAFETY: `keys`/`values` borrow stable backing storage; the loop body
+        // never mutates `named_imports_ptr` (only `imports_to_bind`/`log`/`symbols`).
+        let mut order: Vec<usize> = (0..unsafe { (*keys).len() }).collect();
+        order.sort_by(|&a, &b| unsafe { (*keys)[a].inner_index().cmp(&(*keys)[b].inner_index()) });
 
         for &i in &order {
-            let import_ref = keys[i];
-            let named_import = &values[i];
+            // SAFETY: see above.
+            let import_ref = unsafe { (*keys)[i] };
+            let named_import = unsafe { &(*values)[i] };
 
             // Re-use memory for the cycle detector
             self.cycle_detector.clear();
@@ -3115,7 +3120,7 @@ impl<'a> LinkerContext<'a> {
             let mut re_exports: Vec<Dependency> = Vec::new();
             let result = self.match_import_with_export(
                 ImportTracker {
-                    source_index: Index::source(source_index),
+                    source_index: crate::Index::init(source_index),
                     import_ref,
                     ..Default::default()
                 },
@@ -3129,7 +3134,7 @@ impl<'a> LinkerContext<'a> {
                         crate::ImportData {
                             re_exports: BabyList::<Dependency>::move_from_list(re_exports),
                             data: ImportTracker {
-                                source_index: Index::source(result.source_index),
+                                source_index: crate::Index::init(result.source_index),
                                 import_ref: result.r#ref,
                                 ..Default::default()
                             },
@@ -3142,6 +3147,7 @@ impl<'a> LinkerContext<'a> {
                         Some(G::NamespaceAlias {
                             namespace_ref: result.namespace_ref,
                             alias: result.alias,
+                            ..Default::default()
                         });
                 }
                 MatchImportKind::NormalAndNamespace => {
@@ -3150,7 +3156,7 @@ impl<'a> LinkerContext<'a> {
                         crate::ImportData {
                             re_exports: BabyList::<Dependency>::move_from_list(re_exports),
                             data: ImportTracker {
-                                source_index: Index::source(result.source_index),
+                                source_index: crate::Index::init(result.source_index),
                                 import_ref: result.r#ref,
                                 ..Default::default()
                             },
@@ -3162,6 +3168,7 @@ impl<'a> LinkerContext<'a> {
                         Some(G::NamespaceAlias {
                             namespace_ref: result.namespace_ref,
                             alias: result.alias,
+                            ..Default::default()
                         });
                 }
                 MatchImportKind::Cycle => {
@@ -3214,9 +3221,6 @@ impl<'a> LinkerContext<'a> {
                 MatchImportKind::Ignore => {}
             }
         }
-
-        // PORT NOTE: Zig `defer named_imports_ptr.* = named_imports;` — write-back at end.
-        *named_imports_ptr = named_imports;
     }
 
     /// Spec: `linker_context/doStep5.zig`.
@@ -3245,7 +3249,9 @@ impl<'a> LinkerContext<'a> {
         // that ungets on Drop.
 
         // we must use this allocator here
-        let allocator: &Bump = worker.allocator();
+        // SAFETY: `Worker::create` initializes `allocator` to point at
+        // `worker.heap` (see ThreadPool.rs:548); valid for the worker's life.
+        let allocator: &Bump = unsafe { &*worker.allocator };
 
         // PORT NOTE: reshaped for borrowck — Zig held overlapping
         // `&mut graph.meta` / `&graph.meta` borrows; we go through raw column

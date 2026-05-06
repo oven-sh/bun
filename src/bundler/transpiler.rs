@@ -3409,11 +3409,18 @@ impl<'a> Transpiler<'a> {
                             else {
                                 return None;
                             };
+                            // PORT NOTE: Zig `expandToCapacity()` leaves slots
+                            // uninitialized, which is inert in Zig. The loop
+                            // below writes sparsely at index `i` and `continue`s
+                            // on `"default"` / duplicate keys, so some slots are
+                            // never assigned. In Rust an uninit live `Vec<T>`
+                            // element is UB the moment it is observed
+                            // (truncate/into_boxed_slice/index-assign), so
+                            // pre-fill every slot with `Default` instead of
+                            // `set_len`. PERF(port): was
+                            // ArrayListUnmanaged.initCapacity + expandToCapacity.
                             let mut decls: Vec<js_ast::G::Decl> =
-                                Vec::with_capacity(properties.len());
-                            // SAFETY: capacity reserved; elements written below before read.
-                            unsafe { decls.set_len(properties.len()) };
-                            // PERF(port): was ArrayListUnmanaged.initCapacity + expandToCapacity
+                                vec![js_ast::G::Decl::default(); properties.len()];
 
                             let Ok(syms) =
                                 allocator.try_alloc_slice_fill_default::<js_ast::Symbol>(properties.len())

@@ -633,7 +633,12 @@ pub struct BackgroundHandler {
 }
 
 impl BackgroundHandler {
-    // No-op stubs so `DeclarationHandler` compiles; real bodies are gated below.
+    // PORTING.md §Forbidden: silent no-op where the .zig has real logic is flagged.
+    // Real bodies are gated below in `mod background_handler_body` behind
+    // `#[cfg(any())]` pending Property variant payloads + Image/CssColor fallback
+    // methods + SmallList helpers. Until those land, fail loudly so the missing
+    // shorthand-collapse / fallback / `-webkit-background-clip: text` prefixing
+    // is not silently skipped.
     #[inline]
     pub fn handle_property(
         &mut self,
@@ -641,7 +646,7 @@ impl BackgroundHandler {
         _dest: &mut DeclarationList<'_>,
         _context: &mut PropertyHandlerContext<'_>,
     ) -> bool {
-        false
+        todo!("blocked_on: Property variant payloads + Image/CssColor fallback methods + SmallList helpers — see background_handler_body below (background.zig:608-1043)")
     }
     #[inline]
     pub fn finalize(
@@ -649,6 +654,7 @@ impl BackgroundHandler {
         _dest: &mut DeclarationList<'_>,
         _context: &mut PropertyHandlerContext<'_>,
     ) {
+        todo!("blocked_on: Property variant payloads + Image/CssColor fallback methods + SmallList helpers — see background_handler_body below (background.zig:608-1043)")
     }
 }
 

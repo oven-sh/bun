@@ -1377,7 +1377,10 @@ impl<T: CAresRecordType> CAresLookup<T> {
         })
     }
 
-    pub fn process_resolve(&mut self, err_: Option<c_ares::Error>, _timeout: i32, result: Option<*mut T>) {
+    /// SAFETY: `this` must be a live node — either the inline head of a `*Request`
+    /// (allocated == false; owner drops it) or a Boxed tail node (allocated == true;
+    /// freed via `Self::destroy`). No `&mut` may alias `*this` across this call.
+    pub unsafe fn process_resolve(this: *mut Self, err_: Option<c_ares::Error>, _timeout: i32, result: Option<*mut T>) {
         // syscall = "query" + ucfirst(TYPE_NAME)
         // TODO(port): const-eval — Zig built this at comptime
         let syscall = T::syscall_name(); // e.g. "querySrv"
@@ -1387,42 +1390,43 @@ impl<T: CAresRecordType> CAresLookup<T> {
         let _free = scopeguard::guard(result, |r| {
             if let Some(r) = r {
                 // SAFETY: r is the c-ares-allocated reply; we own it on this path.
-                unsafe { T::destroy(r) };
+                T::destroy(r);
             }
         });
 
+        // SAFETY: JSGlobalObject outlives the request.
+        let global_this = &*(*this).global_this;
         if let Some(err) = err_ {
-            err.to_deferred(syscall, Some(&self.name), &mut self.promise)
-                .reject_later(self.global_this);
-            // SAFETY: self is either the inline head (drop_in_place) or a Boxed tail node.
-            unsafe { Self::destroy(self as *mut Self) };
+            err.to_deferred(syscall, Some(&(*this).name), &mut (*this).promise)
+                .reject_later(global_this);
+            Self::destroy(this);
             return;
         }
         let Some(node) = result else {
             c_ares::Error::ENOTFOUND
-                .to_deferred(syscall, Some(&self.name), &mut self.promise)
-                .reject_later(self.global_this);
-            // SAFETY: self is either the inline head (drop_in_place) or a Boxed tail node.
-            unsafe { Self::destroy(self as *mut Self) };
+                .to_deferred(syscall, Some(&(*this).name), &mut (*this).promise)
+                .reject_later(global_this);
+            Self::destroy(this);
             return;
         };
 
         // SAFETY: node is a valid c-ares reply for the callback's duration; freed by `_free` guard.
-        let array = unsafe { (*node).to_js_response(self.global_this, T::TYPE_NAME) }
+        let array = (*node).to_js_response(global_this, T::TYPE_NAME)
             .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
-        self.on_complete(array);
+        Self::on_complete(this, array);
     }
 
-    pub fn on_complete(&mut self, result: JSValue) {
-        let promise = core::mem::take(&mut self.promise);
-        let global_this = self.global_this;
+    /// SAFETY: see `process_resolve`.
+    pub unsafe fn on_complete(this: *mut Self, result: JSValue) {
+        let promise = core::mem::take(&mut (*this).promise);
+        // SAFETY: JSGlobalObject outlives the request.
+        let global_this = &*(*this).global_this;
         let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
-        if let Some(resolver) = self.resolver.as_ref() {
+        if let Some(resolver) = (*this).resolver.as_ref() {
             // SAFETY: IntrusiveRc holds a live ref; request_completed mutates pending_requests counter only.
-            unsafe { (*resolver.as_ptr()).request_completed() };
+            (*resolver.as_ptr()).request_completed();
         }
-        // SAFETY: self is either the inline head (drop_in_place) or a Boxed tail node.
-        unsafe { Self::destroy(self as *mut Self) };
+        Self::destroy(this);
     }
 
     /// SAFETY: `this` must point at a live node; if `(*this).allocated`, it must be the
@@ -1479,26 +1483,32 @@ impl DNSLookup {
         }))
     }
 
-    pub fn on_complete_native(&mut self, result: GetAddrInfo::Result::Any) {
+    /// SAFETY: `this` must be a live node — either the inline head of a `*Request`
+    /// (allocated == false; owner drops it) or a Boxed tail node (allocated == true;
+    /// freed via `Self::destroy`). No `&mut` may alias `*this` across this call.
+    pub unsafe fn on_complete_native(this: *mut Self, result: GetAddrInfo::Result::Any) {
         bun_output::scoped_log!(DNSLookup, "onCompleteNative");
-        let array = result.to_js(self.global_this).unwrap_or(JSValue::ZERO).unwrap(); // TODO: properly propagate exception upwards
-        self.on_complete_with_array(array);
+        // SAFETY: JSGlobalObject outlives the request.
+        let array = result.to_js(&*(*this).global_this).unwrap_or(JSValue::ZERO).unwrap(); // TODO: properly propagate exception upwards
+        Self::on_complete_with_array(this, array);
     }
 
-    pub fn process_get_addr_info_native(&mut self, status: i32, result: *mut libc::addrinfo) {
+    /// SAFETY: see `on_complete_native`.
+    pub unsafe fn process_get_addr_info_native(this: *mut Self, status: i32, result: *mut libc::addrinfo) {
         bun_output::scoped_log!(DNSLookup, "processGetAddrInfoNative: status={}", status);
         if let Some(err) = c_ares::Error::init_eai(status) {
-            err.to_deferred("getaddrinfo", None, &mut self.promise)
-                .reject_later(self.global_this);
-            // SAFETY: self is either the inline head (drop_in_place) or a Boxed tail node.
-            unsafe { Self::destroy(self as *mut Self) };
+            // SAFETY: JSGlobalObject outlives the request.
+            err.to_deferred("getaddrinfo", None, &mut (*this).promise)
+                .reject_later(&*(*this).global_this);
+            Self::destroy(this);
             return;
         }
-        self.on_complete_native(GetAddrInfo::Result::Any::Addrinfo(result));
+        Self::on_complete_native(this, GetAddrInfo::Result::Any::Addrinfo(result));
     }
 
-    pub fn process_get_addr_info(
-        &mut self,
+    /// SAFETY: see `on_complete_native`.
+    pub unsafe fn process_get_addr_info(
+        this: *mut Self,
         err_: Option<c_ares::Error>,
         _timeout: i32,
         result: Option<*mut c_ares::AddrInfo>,
@@ -1510,49 +1520,51 @@ impl DNSLookup {
         let _free = scopeguard::guard(result, |r| {
             if let Some(r) = r {
                 // SAFETY: r is the c-ares-allocated AddrInfo; we own it on this path.
-                unsafe { c_ares::AddrInfo::destroy(r) };
+                c_ares::AddrInfo::destroy(r);
             }
         });
 
+        // SAFETY: JSGlobalObject outlives the request.
+        let global_this = &*(*this).global_this;
         if let Some(err) = err_ {
-            err.to_deferred("getaddrinfo", None, &mut self.promise)
-                .reject_later(self.global_this);
-            // SAFETY: self is either the inline head (drop_in_place) or a Boxed tail node.
-            unsafe { Self::destroy(self as *mut Self) };
+            err.to_deferred("getaddrinfo", None, &mut (*this).promise)
+                .reject_later(global_this);
+            Self::destroy(this);
             return;
         }
 
         // SAFETY: `r` is the c-ares-allocated AddrInfo valid for the callback's duration.
-        let Some(r) = result.filter(|r| unsafe { !(**r).node.is_null() }) else {
+        let Some(r) = result.filter(|r| !(**r).node.is_null()) else {
             c_ares::Error::ENOTFOUND
-                .to_deferred("getaddrinfo", None, &mut self.promise)
-                .reject_later(self.global_this);
-            // SAFETY: self is either the inline head (drop_in_place) or a Boxed tail node.
-            unsafe { Self::destroy(self as *mut Self) };
+                .to_deferred("getaddrinfo", None, &mut (*this).promise)
+                .reject_later(global_this);
+            Self::destroy(this);
             return;
         };
-        self.on_complete(r);
+        Self::on_complete(this, r);
     }
 
-    pub fn on_complete(&mut self, result: *mut c_ares::AddrInfo) {
+    /// SAFETY: see `on_complete_native`.
+    pub unsafe fn on_complete(this: *mut Self, result: *mut c_ares::AddrInfo) {
         bun_output::scoped_log!(DNSLookup, "onComplete");
         // SAFETY: result is a live c-ares AddrInfo owned by the caller's scopeguard.
-        let array = unsafe { (*result).to_js_array(self.global_this) }
+        let array = (*result).to_js_array(&*(*this).global_this)
             .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
-        self.on_complete_with_array(array);
+        Self::on_complete_with_array(this, array);
     }
 
-    pub fn on_complete_with_array(&mut self, result: JSValue) {
+    /// SAFETY: see `on_complete_native`.
+    pub unsafe fn on_complete_with_array(this: *mut Self, result: JSValue) {
         bun_output::scoped_log!(DNSLookup, "onCompleteWithArray");
-        let promise = core::mem::take(&mut self.promise);
-        let global_this = self.global_this;
+        let promise = core::mem::take(&mut (*this).promise);
+        // SAFETY: JSGlobalObject outlives the request.
+        let global_this = &*(*this).global_this;
         let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
-        if let Some(resolver) = self.resolver.as_ref() {
+        if let Some(resolver) = (*this).resolver.as_ref() {
             // SAFETY: IntrusiveRc holds a live ref; request_completed mutates pending_requests counter only.
-            unsafe { (*resolver.as_ptr()).request_completed() };
+            (*resolver.as_ptr()).request_completed();
         }
-        // SAFETY: self is either the inline head (drop_in_place) or a Boxed tail node.
-        unsafe { Self::destroy(self as *mut Self) };
+        Self::destroy(this);
     }
 
     /// SAFETY: `this` must point at a live node; if `(*this).allocated`, it must be the

@@ -386,7 +386,7 @@ impl NodeHTTPResponse {
         }
         let raw = self.raw_response.as_ref().unwrap();
         // SAFETY: see get_this_value.
-        unsafe { Bun__getNodeHTTPServerSocketThisValue(raw.is_ssl(), raw.socket()) }
+        unsafe { Bun__getNodeHTTPServerSocketThisValue(any_response_is_ssl(raw), raw.socket().cast()) }
     }
 
     pub fn pause_socket(&mut self) {

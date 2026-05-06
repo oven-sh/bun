@@ -665,10 +665,41 @@ impl<R, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, F> {
 /// Trait abstracting over Argument types' deinit/toThreadSafe.
 pub trait FsArgument {
     const HAVE_ABORT_SIGNAL: bool = false;
-    fn to_thread_safe(&mut self);
-    fn deinit_and_unprotect(&mut self);
+    /// Zig: every Arguments struct defines `toThreadSafe(self: *@This())` —
+    /// clone any borrowed JS-backed slices so the work-pool callback may run
+    /// off-thread. Default body is a porting stub; per-type overrides land
+    /// with each Arguments port.
+    fn to_thread_safe(&mut self) {
+        // TODO(port): per-Argument toThreadSafe — most are PathLike/slice
+        // clones; leave as no-op until each `args::*` is fleshed out.
+    }
+    /// Zig: `deinitAndUnprotect` — free clones from `to_thread_safe` and
+    /// `JSValue.unprotect` any retained handles. Default no-op stub.
+    fn deinit_and_unprotect(&mut self) {
+        // TODO(port): per-Argument deinitAndUnprotect.
+    }
     fn signal(&self) -> Option<&AbortSignal> { None }
 }
+
+/// Mass-implement [`FsArgument`] for the `args::*` payload structs so the
+/// generic `AsyncFSTask::<R, A, F>::run_from_js_thread` is callable from the
+/// high-tier dispatch table. Per-type `to_thread_safe`/`deinit_and_unprotect`
+/// bodies override the defaults as each Arguments port lands.
+macro_rules! impl_fs_argument_stub {
+    ( $( $ty:ty ),+ $(,)? ) => {
+        $( impl FsArgument for $ty {} )+
+    };
+}
+impl_fs_argument_stub!(
+    args::Rename, args::Truncate, args::Writev, args::Readv, args::FTruncate,
+    args::Chown, args::Fchown, args::Lutimes, args::Chmod, args::FChmod,
+    args::StatFS, args::Stat, args::Fstat, args::Link, args::Symlink,
+    args::Readlink, args::Realpath, args::Unlink, args::RmDir, args::Mkdir,
+    args::MkdirTemp, args::Readdir, args::Close, args::Open, args::Futimes,
+    args::Write, args::Read, args::ReadFile, args::WriteFile, args::Exists,
+    args::Access, args::FdataSync, args::CopyFile, args::Fsync,
+);
+
 
 pub struct AsyncFSTask<R, A, const F: NodeFSFunctionEnum> {
     pub promise: JSPromiseStrong,

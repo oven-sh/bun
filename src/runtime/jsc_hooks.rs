@@ -1815,7 +1815,7 @@ fn transpile_source_code_inner(
                 // wrapper over `get_public_path_with_asset_prefix` with
                 // `dir = VM.top_level_dir`, `asset_prefix = ""`, `.loose`.
                 // Inline that body here (mirrors filesystem_router.rs).
-                let top_level_dir = unsafe { (*jsc_vm).transpiler.fs.top_level_dir };
+                let top_level_dir = unsafe { (*(*jsc_vm).transpiler.fs).top_level_dir };
                 crate::api::bun_object::get_public_path_with_asset_prefix(
                     specifier,
                     top_level_dir,

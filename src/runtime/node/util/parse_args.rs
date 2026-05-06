@@ -419,8 +419,7 @@ fn parse_option_definitions(
             validators::validate_string(
                 global,
                 short_option,
-                "options.{}.short",
-                format_args!("{}", option.long_name),
+                format_args!("options.{}.short", option.long_name),
             )?;
             let short_option_str = short_option.to_bun_string(global)?;
             if short_option_str.length() != 1 {

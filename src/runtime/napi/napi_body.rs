@@ -644,7 +644,7 @@ pub extern "C" fn napi_create_int32(env_: napi_env, value: i32, result_: *mut na
     let env = get_env!(env_);
     env.check_gc();
     let result = get_out!(env, result_);
-    result.set(env, JSValue::js_number(value));
+    result.set(env, JSValue::js_number(value as f64));
     env.ok()
 }
 
@@ -654,7 +654,7 @@ pub extern "C" fn napi_create_uint32(env_: napi_env, value: u32, result_: *mut n
     let env = get_env!(env_);
     env.check_gc();
     let result = get_out!(env, result_);
-    result.set(env, JSValue::js_number(value));
+    result.set(env, JSValue::js_number(value as f64));
     env.ok()
 }
 
@@ -664,7 +664,7 @@ pub extern "C" fn napi_create_int64(env_: napi_env, value: i64, result_: *mut na
     let env = get_env!(env_);
     env.check_gc();
     let result = get_out!(env, result_);
-    result.set(env, JSValue::js_number(value));
+    result.set(env, JSValue::js_number(value as f64));
     env.ok()
 }
 

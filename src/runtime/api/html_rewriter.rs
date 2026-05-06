@@ -1202,10 +1202,17 @@ where
     // duration of the rewriter.
     let this = unsafe { &mut *this };
     let global = this.global();
+    // SAFETY: bun_vm() returns the live VM raw ptr; VM outlives this call.
+    let vm: &mut VirtualMachine = unsafe { &mut *global.bun_vm() };
 
-    // Use a TopExceptionScope to properly handle exceptions from the JavaScript callback
-    let mut scope = TopExceptionScope::init(global);
-    let _scope_guard = scopeguard::guard(&mut scope, |s| s.deinit());
+    // PORT NOTE: Zig used a stack-pinned `TopExceptionScope` (in-place init).
+    // The Rust `TopExceptionScope::init` is `&mut self`-based with a Pin
+    // requirement that isn't yet wrapped in an RAII guard. For Phase A we
+    // capture the pending exception via `try_take_exception` (which both reads
+    // and clears it) — semantically equivalent for the two checks below.
+    let capture_pending_exception = |g: &JSGlobalObject| -> Option<JSValue> {
+        g.try_take_exception()
+    };
 
     let cb = get_callback(this).expect("callback must be set if handler registered");
     let result = match cb.call(
@@ -1217,20 +1224,17 @@ where
     ) {
         Ok(v) => v,
         Err(_) => {
-            // If there's an exception in the scope, capture it for later retrieval
-            if let Some(exc) = scope.exception() {
-                let exc_value = JSValue::from_cell(exc);
+            // If there's an exception, capture it for later retrieval
+            if let Some(exc_value) = capture_pending_exception(global) {
                 // Store the exception in the VM's unhandled rejection capture
                 // mechanism if it's available (this is the same mechanism used
                 // by BufferOutputSink)
-                if let Some(err_ptr) = global.bun_vm().unhandled_pending_rejection_to_capture {
+                if let Some(err_ptr) = vm.unhandled_pending_rejection_to_capture {
                     // SAFETY: VM-owned pointer set by BufferOutputSink::init.
-                    unsafe { *err_ptr.as_ptr() = exc_value };
+                    unsafe { *err_ptr = exc_value };
                     exc_value.protect();
                 }
             }
-            // Clear the exception from the scope to prevent assertion failures
-            scope.clear_exception();
             // Return true to indicate failure to LOLHTML, which will cause the
             // write operation to fail and the error handling logic to take over.
             return true;
@@ -1238,31 +1242,26 @@ where
     };
 
     // Check if there's an exception that was thrown but not caught by the error union
-    if let Some(exc) = scope.exception() {
-        let exc_value = JSValue::from_cell(exc);
+    if let Some(exc_value) = capture_pending_exception(global) {
         // Store the exception in the VM's unhandled rejection capture mechanism
-        if let Some(err_ptr) = global.bun_vm().unhandled_pending_rejection_to_capture {
+        if let Some(err_ptr) = vm.unhandled_pending_rejection_to_capture {
             // SAFETY: VM-owned pointer set by BufferOutputSink::init.
-            unsafe { *err_ptr.as_ptr() = exc_value };
+            unsafe { *err_ptr = exc_value };
             exc_value.protect();
         }
-        // Clear the exception to prevent assertion failures
-        scope.clear_exception();
         return true;
     }
 
     if !result.is_undefined_or_null() {
-        if result.is_error() || result.is_aggregate_error(global) {
+        if result.is_any_error() {
             return true;
         }
 
         if let Some(promise) = result.as_any_promise() {
-            global.bun_vm().wait_for_promise(promise);
+            vm.wait_for_promise(promise);
             let fail = promise.status() == jsc::js_promise::Status::Rejected;
             if fail {
-                global
-                    .bun_vm()
-                    .unhandled_rejection(global, promise.result(global.vm()), promise.as_value());
+                vm.unhandled_rejection(global, promise.result(global.vm()), promise.as_value());
             }
             return fail;
         }

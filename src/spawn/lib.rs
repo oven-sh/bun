@@ -192,7 +192,7 @@ pub mod subprocess {
         _parent: core::marker::PhantomData<*const P>,
     }
 
-    impl<P: ?Sized + StaticPipeWriterProcess> StaticPipeWriter<P> {
+    impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         /// Monomorphic thunk so the runtime can invoke `P::on_close_io`
         /// without naming `P` (PORTING.md §Dispatch — manual vtable arm).
         unsafe fn on_close_io_thunk(parent: *mut core::ffi::c_void, kind: StdioKind) {

@@ -116,7 +116,6 @@ const _: () = {
     if USE_SMALL_PATH_STRING_ {
         assert!(core::mem::size_of::<PathString>() * 8 == 64, "PathString must be 64 bits");
     } else {
-        // TODO(port): unreachable on current targets (backing int is hard-coded u64).
         assert!(core::mem::size_of::<PathString>() * 8 == 128, "PathString must be 128 bits");
     }
 };
@@ -124,7 +123,7 @@ const _: () = {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/string/PathString.zig (64 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      packed-struct → repr(transparent) u64 with shift accessors; comptime u64/u128 backing-type selection hard-coded to u64 (all Bun targets are 64-bit)
+//   confidence: high
+//   todos:      0
+//   notes:      packed-struct → repr(transparent) over PathStringBackingInt with shift accessors; comptime u64/u128 backing-type selection mapped via cfg(target_os) (macOS → u64, others → u128)
 // ──────────────────────────────────────────────────────────────────────────

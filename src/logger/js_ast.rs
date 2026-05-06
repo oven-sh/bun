@@ -944,7 +944,7 @@ pub mod expr {
             Ok(match *self {
                 Data::EArray(el) => {
                     let src = el.get();
-                    let mut items = ExprNodeList::init_capacity(src.items.len())?;
+                    let mut items = ExprNodeList::init_capacity(src.items.len as usize)?;
                     for item in src.items.slice() {
                         items.append(item.deep_clone()?)?;
                     }
@@ -961,7 +961,7 @@ pub mod expr {
                 Data::EObject(el) => {
                     let src = el.get();
                     let mut properties =
-                        G::PropertyList::init_capacity(src.properties.len())?;
+                        G::PropertyList::init_capacity(src.properties.len as usize)?;
                     for prop in src.properties.slice() {
                         properties.append(G::Property {
                             initializer: match prop.initializer {

@@ -265,7 +265,9 @@ pub struct Job {
     pub output: Vec<u8>,
     pub task: WorkPoolTask,
     pub promise: JSPromiseStrong,
-    pub vm: &'static VirtualMachine,
+    // Zig: `vm: *jsc.VirtualMachine` — raw mut pointer; `enqueue_task_concurrent`
+    // requires `&mut self`, so a `&'static` borrow would be too restrictive.
+    pub vm: *mut VirtualMachine,
     pub err: Option<u32>,
     pub any_task: AnyTask,
     pub poll: KeepAlive,

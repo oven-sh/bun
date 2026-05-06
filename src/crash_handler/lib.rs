@@ -26,7 +26,7 @@
 // ──────────────────────────────────────────────────────────────────────────
 #![feature(core_intrinsics)]
 #![allow(internal_features)]
-#![allow(unused, nonstandard_style, static_mut_refs, clippy::all)]
+#![allow(unused, nonstandard_style, static_mut_refs, unexpected_cfgs, clippy::all)]
 
 #[path = "CPUFeatures.rs"]
 pub mod cpu_features;
@@ -1118,7 +1118,7 @@ pub fn reset_on_posix() {
     // Zig: std.posix.Sigaction{ .handler = .{ .sigaction = handleSegfaultPosix }, ... }.
     // SAFETY: zeroed sigaction is valid POD; we overwrite the fields we need.
     let mut act: libc::sigaction = unsafe { core::mem::zeroed() };
-    act.sa_sigaction = handle_segfault_posix as usize;
+    act.sa_sigaction = handle_segfault_posix as *const () as usize;
     act.sa_flags = libc::SA_SIGINFO | libc::SA_RESTART | libc::SA_RESETHAND;
     // SAFETY: sa_mask is a valid out-pointer.
     unsafe { libc::sigemptyset(&mut act.sa_mask); }

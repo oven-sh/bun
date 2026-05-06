@@ -917,7 +917,12 @@ impl MarkedArrayBuffer {
     }
 
     pub fn to_node_buffer(&self, global: &JSGlobalObject) -> JSValue {
-        JSValue::create_buffer(global, self.buffer.byte_slice())
+        // `JSValue::create_buffer` takes `&mut [u8]` (ownership transfers to JSC
+        // via the deallocator). `ArrayBuffer` is `Copy` over a raw pointer, so
+        // copy the descriptor and project a mutable slice — matches Zig
+        // `jsc.JSValue.createBuffer(ctx, this.buffer.byteSlice())`.
+        let mut buf = self.buffer;
+        JSValue::create_buffer(global, buf.byte_slice_mut())
     }
 
     pub fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue> {

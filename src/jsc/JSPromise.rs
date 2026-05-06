@@ -80,9 +80,13 @@ impl<'a, T> Weak<'a, T> {
 
     /// Like `reject`, except it drains microtasks at the end of the current event loop iteration.
     pub fn reject_task(&mut self, global: &JSGlobalObject, val: JSValue) {
-        let loop_ = VirtualMachine::get().event_loop();
-        loop_.enter();
-        let _guard = scopeguard::guard((), |_| loop_.exit());
+        // SAFETY: `VirtualMachine::get()` returns the JS-thread singleton; `event_loop()`
+        // returns a raw `*mut EventLoop` (see VirtualMachine.rs). Per-use reborrow keeps
+        // `&mut EventLoop` lifetimes disjoint between `enter()` and the deferred `exit()`.
+        let loop_: *mut crate::event_loop::EventLoop =
+            unsafe { (*VirtualMachine::get()).event_loop() };
+        unsafe { (*loop_).enter() };
+        let _guard = scopeguard::guard((), move |_| unsafe { (*loop_).exit() });
         // PORT NOTE: `defer loop.exit()` → scopeguard; `exit()` is a side effect, not a free.
         self.reject(global, val);
     }
@@ -93,9 +97,11 @@ impl<'a, T> Weak<'a, T> {
 
     /// Like `resolve`, except it drains microtasks at the end of the current event loop iteration.
     pub fn resolve_task(&mut self, global: &JSGlobalObject, val: JSValue) {
-        let loop_ = VirtualMachine::get().event_loop();
-        loop_.enter();
-        let _guard = scopeguard::guard((), |_| loop_.exit());
+        // SAFETY: see `reject_task`.
+        let loop_: *mut crate::event_loop::EventLoop =
+            unsafe { (*VirtualMachine::get()).event_loop() };
+        unsafe { (*loop_).enter() };
+        let _guard = scopeguard::guard((), move |_| unsafe { (*loop_).exit() });
         self.resolve(global, val);
     }
 
@@ -140,7 +146,9 @@ impl<'a, T> Weak<'a, T> {
         let prom = self.weak.swap().as_promise().unwrap();
         // Zig: `this.weak.deinit()` — drop the underlying weak handle now.
         self.weak = JscWeak::default();
-        prom
+        // SAFETY: `as_promise()` returns a non-null `*mut JSPromise` for a live promise cell;
+        // GC-owned, so the resulting `&mut` is a resolver-style accessor (see `get`).
+        unsafe { &mut *prom }
     }
 }
 
@@ -160,12 +168,14 @@ impl Strong {
     pub fn reject_without_swap(&mut self, global: &JSGlobalObject, val: JsResult<JSValue>) {
         let Some(v) = self.strong.get() else { return };
         let val = val.unwrap_or_else(|_| global.try_take_exception().unwrap());
-        let _ = v.as_promise().unwrap().reject(global, Ok(val));
+        // SAFETY: `as_promise()` returns a non-null `*mut JSPromise` for a live promise cell.
+        let _ = unsafe { &mut *v.as_promise().unwrap() }.reject(global, Ok(val));
     }
 
     pub fn resolve_without_swap(&mut self, global: &JSGlobalObject, val: JSValue) {
         let Some(v) = self.strong.get() else { return };
-        let _ = v.as_promise().unwrap().resolve(global, val);
+        // SAFETY: `as_promise()` returns a non-null `*mut JSPromise` for a live promise cell.
+        let _ = unsafe { &mut *v.as_promise().unwrap() }.resolve(global, val);
     }
 
     pub fn reject(&mut self, global: &JSGlobalObject, val: JsResult<JSValue>) -> Result<(), JsTerminated> {
@@ -192,9 +202,13 @@ impl Strong {
 
     /// Like `reject`, except it drains microtasks at the end of the current event loop iteration.
     pub fn reject_task(&mut self, global: &JSGlobalObject, val: JSValue) -> Result<(), JsTerminated> {
-        let loop_ = VirtualMachine::get().event_loop();
-        loop_.enter();
-        let _guard = scopeguard::guard((), |_| loop_.exit());
+        // SAFETY: `VirtualMachine::get()` returns the JS-thread singleton; `event_loop()`
+        // returns a raw `*mut EventLoop`. Per-use reborrow keeps `&mut EventLoop` lifetimes
+        // disjoint between `enter()` and the deferred `exit()`.
+        let loop_: *mut crate::event_loop::EventLoop =
+            unsafe { (*VirtualMachine::get()).event_loop() };
+        unsafe { (*loop_).enter() };
+        let _guard = scopeguard::guard((), move |_| unsafe { (*loop_).exit() });
         self.reject(global, Ok(val))
     }
 
@@ -209,9 +223,11 @@ impl Strong {
 
     /// Like `resolve`, except it drains microtasks at the end of the current event loop iteration.
     pub fn resolve_task(&mut self, global: &JSGlobalObject, val: JSValue) -> Result<(), JsTerminated> {
-        let loop_ = VirtualMachine::get().event_loop();
-        loop_.enter();
-        let _guard = scopeguard::guard((), |_| loop_.exit());
+        // SAFETY: see `reject_task`.
+        let loop_: *mut crate::event_loop::EventLoop =
+            unsafe { (*VirtualMachine::get()).event_loop() };
+        unsafe { (*loop_).enter() };
+        let _guard = scopeguard::guard((), move |_| unsafe { (*loop_).exit() });
         self.resolve(global, val)
     }
 
@@ -245,7 +261,9 @@ impl Strong {
         let prom = self.strong.swap().as_promise().unwrap();
         // Zig: `this.strong.deinit()` — release the handle slot now.
         self.strong = JscStrong::empty();
-        prom
+        // SAFETY: `as_promise()` returns a non-null `*mut JSPromise` for a live promise cell;
+        // GC-owned, so the resulting `&mut` is a resolver-style accessor (see `get`).
+        unsafe { &mut *prom }
     }
 
     pub fn take(&mut self) -> Self {

@@ -706,15 +706,19 @@ impl VirtualMachine {
     }
 
     pub fn enqueue_task(&mut self, task: bun_event_loop::Task) {
-        self.event_loop().enqueue_task(task);
+        // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
+        // accessed here (no overlapping `&mut EventLoop`).
+        unsafe { (*self.event_loop()).enqueue_task(task) };
     }
 
     pub fn tick(&mut self) {
-        self.event_loop().tick();
+        // SAFETY: see `enqueue_task`.
+        unsafe { (*self.event_loop()).tick() };
     }
 
     pub fn drain_microtasks(&mut self) {
-        let _ = self.event_loop().drain_microtasks();
+        // SAFETY: see `enqueue_task`.
+        let _ = unsafe { (*self.event_loop()).drain_microtasks() };
     }
 
     pub fn assert_on_js_thread(&self) {
@@ -733,7 +737,10 @@ impl VirtualMachine {
     /// Spec VirtualMachine.zig:2629-2631: `this.global.vm().holdAPILock(ctx, callback)`.
     /// Routes `f` through `JSC__VM__holdAPILock` via an `OpaqueWrap`-style C
     /// trampoline so the JSC API lock is held for the full duration of `f()`.
-    pub fn run_with_api_lock<R>(&self, f: impl FnOnce() -> R) -> R {
+    pub fn run_with_api_lock<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
         use core::mem::{ManuallyDrop, MaybeUninit};
 
         // PORT NOTE: Zig's `OpaqueWrap(Context, function)` synthesizes a
@@ -755,7 +762,7 @@ impl VirtualMachine {
             t.result.write(f());
         }
 
-        let mut t = Trampoline::<_, R> {
+        let mut t = Trampoline::<F, R> {
             f: ManuallyDrop::new(f),
             result: MaybeUninit::uninit(),
         };
@@ -763,7 +770,7 @@ impl VirtualMachine {
         // on this stack frame for the duration of the FFI call, which invokes
         // `call` exactly once before returning.
         unsafe {
-            JSC__VM__holdAPILock(self.jsc_vm, (&raw mut t).cast(), call::<_, R>);
+            JSC__VM__holdAPILock(self.jsc_vm, (&raw mut t).cast(), call::<F, R>);
         }
         // SAFETY: `call` wrote `t.result` exactly once above.
         unsafe { t.result.assume_init() }
@@ -898,9 +905,7 @@ impl VirtualMachine {
         loop {
             while self.is_event_loop_alive() {
                 self.tick();
-                // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
-                // accessed here (no live `&mut EventLoop` overlaps).
-                unsafe { (*self.event_loop()).auto_tick_active() };
+                self.auto_tick_active();
                 dispatch = true;
             }
 
@@ -1155,7 +1160,7 @@ impl VirtualMachine {
         // it as raw `MaybeUninit` (UB on first C++ read).
         let mut console_box: Box<core::mem::MaybeUninit<crate::console_object::ConsoleObject>> =
             Box::new(core::mem::MaybeUninit::uninit());
-        crate::console_object::ConsoleObject::init(
+        crate::console_object::ConsoleObject::init_in_place(
             &mut console_box,
             bun_core::Output::raw_error_writer(),
             bun_core::Output::raw_writer(),
@@ -1267,7 +1272,9 @@ impl VirtualMachine {
             if unsafe { JSC__VM__executionForbidden(jsc_vm) } {
                 break;
             }
-            self.event_loop().tick();
+            // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
+            // accessed here (no overlapping `&mut EventLoop`).
+            unsafe { (*self.event_loop()).tick() };
             // Re-check after tick before sleeping in auto_tick.
             // SAFETY: see above.
             let status = match promise {
@@ -1291,8 +1298,24 @@ impl VirtualMachine {
             unsafe { (hooks.auto_tick)(self) };
         } else {
             // No high tier (unit tests) — fall back to a non-blocking tick.
-            self.event_loop().tick();
+            // SAFETY: `event_loop` is a self-pointer into this VM.
+            unsafe { (*self.event_loop()).tick() };
         }
+    }
+
+    /// `eventLoop().autoTickActive()` — like [`auto_tick`](Self::auto_tick)
+    /// but only sleeps in the uSockets loop while it has active handles
+    /// (spec event_loop.zig:456). The real body lives in `event_loop.rs`
+    /// behind `#[cfg(any())]` until the b2-cycle (`Timer::All`) breaks; until
+    /// then route through the same `auto_tick` hook so drain loops in
+    /// `on_before_exit` / `bun_main` still make forward progress.
+    #[inline]
+    pub fn auto_tick_active(&mut self) {
+        // TODO(b2-cycle): dispatch to `EventLoop::auto_tick_active` once it
+        // un-gates (or add a dedicated `RuntimeHooks` slot); the semantic
+        // difference is only whether the loop blocks when no active handles
+        // remain, which `auto_tick` conservatively covers.
+        self.auto_tick();
     }
 
     /// `reloadEntryPoint(entry_path)` — set `main`, generate the synthetic

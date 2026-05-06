@@ -176,18 +176,14 @@ pub fn construct_render(
 
     // Create a Response with Render body
     let mut response = Box::new(Response::init(
-        crate::webcore::ResponseInit {
+        Init {
             status_code: 200,
             headers: 'headers: {
-                let mut headers = FetchHeaders::create_empty();
-                headers.put(
-                    crate::webcore::fetch_headers::HTTPHeaderName::Location,
-                    path_utf8.slice(),
-                    global_this,
-                )?;
-                break 'headers headers;
+                let mut headers = HeadersRef::create_empty();
+                headers.put(HTTPHeaderName::Location, path_utf8.slice(), global_this)?;
+                break 'headers Some(headers);
             },
-            // TODO(port): remaining ResponseInit fields use Zig struct defaults
+            // TODO(port): remaining Init fields use Zig struct defaults
             ..Default::default()
         },
         crate::webcore::Body { value: crate::webcore::BodyValue::Empty },

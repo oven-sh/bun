@@ -416,7 +416,7 @@ impl AnyRoute {
                 if let Some(store_path) = store.get_path() {
                     match sys::exists_at_type(sys::Fd::cwd(), store_path) {
                         Ok(file_type) => {
-                            if file_type == sys::FileType::Directory {
+                            if file_type == sys::ExistsAtType::Directory {
                                 return global.throw_invalid_arguments(
                                     format_args!(
                                         "Bundled file {} cannot be a directory. You may want to configure --asset-naming or `naming` when bundling.",

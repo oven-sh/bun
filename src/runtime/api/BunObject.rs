@@ -2093,11 +2093,11 @@ pub fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> 
 }
 
 pub fn get_valkey_client_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    jsc::api::Valkey::js::get_constructor(global_this)
+    jsc::codegen::js::get_constructor::<crate::api::Valkey>(global_this)
 }
 
 pub fn get_terminal_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    api::Terminal::js::get_constructor(global_this)
+    crate::api::bun_terminal_body::js::get_constructor(global_this)
 }
 
 pub fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {

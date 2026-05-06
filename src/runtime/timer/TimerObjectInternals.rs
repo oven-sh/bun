@@ -580,7 +580,8 @@ impl TimerObjectInternals {
         }
 
         self.this_value.set_strong(this_value, global_object);
-        self.reschedule(this_value, VirtualMachine::get(), global_object);
+        // SAFETY: `VirtualMachine::get()` returns the live per-thread VM; short-lived &mut at use site.
+        self.reschedule(this_value, unsafe { &mut *VirtualMachine::get() }, global_object);
 
         this_value
     }

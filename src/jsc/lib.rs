@@ -2437,6 +2437,11 @@ pub trait JsClass: Sized {
     fn from_js(value: JSValue) -> Option<*mut Self>;
     fn from_js_direct(value: JSValue) -> Option<*mut Self>;
 
+    /// Fetch the JSC constructor object for this class
+    /// (`${TypeName}__getConstructor(global)` — generate-classes.ts:2449/2539).
+    /// The proc-macro wires the per-type extern; manual impls bind it directly.
+    fn get_constructor(global: &JSGlobalObject) -> JSValue;
+
     /// Dynamic heap footprint reported to JSC's GC via
     /// `reportExtraMemoryAllocated` / `reportExtraMemoryVisited`
     /// (generate-classes.ts:1656-1660, 1913-1916). Mirrors the Zig

@@ -13,11 +13,71 @@ fn enable_ansi_colors_stderr() -> bool {
     Output::ENABLE_ANSI_COLORS_STDERR.load(core::sync::atomic::Ordering::Relaxed)
 }
 
-// TODO(b1): bun_core::StringBuilder missing — local opaque stub
-pub struct StringBuilder(());
+/// Two-phase string builder: callers first `count()` every slice they will
+/// append, then `allocate()` once, then `append()` each slice. Returned slices
+/// alias the single backing buffer.
+//
+// PORT NOTE: local copy of `src/string/StringBuilder.zig` (subset). `append`
+// hands out slices that alias the internal buffer with an *unbound* lifetime so
+// `Header::clone` / `Request::clone` can call it repeatedly and stash the raw
+// ptr/len pairs — the Zig original returns aliasing `[]const u8` with no
+// lifetime tracking. The buffer is heap-owned via raw `*mut u8` (Zig `?[*]u8`);
+// callers are responsible for keeping the builder alive while the returned
+// slices are in use.
+#[derive(Default)]
+pub struct StringBuilder {
+    pub len: usize,
+    pub cap: usize,
+    pub ptr: Option<core::ptr::NonNull<u8>>,
+}
+
 impl StringBuilder {
-    pub fn count(&mut self, _: &[u8]) { todo!("B-2: StringBuilder::count") }
-    pub fn append<'a>(&mut self, _: &[u8]) -> &'a [u8] { todo!("B-2: StringBuilder::append") }
+    #[inline]
+    pub fn count(&mut self, slice: &[u8]) {
+        self.cap += slice.len();
+    }
+
+    pub fn allocate(&mut self) {
+        // allocator.alloc(u8, this.cap)
+        let mut buf = vec![0u8; self.cap].into_boxed_slice();
+        self.ptr = core::ptr::NonNull::new(buf.as_mut_ptr());
+        core::mem::forget(buf);
+        self.len = 0;
+    }
+
+    /// Copy `slice` into the reserved buffer and return a borrow of the copied
+    /// bytes. The returned slice aliases `self.ptr` and remains valid until the
+    /// builder is dropped; the unbound `'a` mirrors Zig's untracked `[]const u8`
+    /// return so callers may interleave appends (see PORT NOTE above).
+    pub fn append<'a>(&mut self, slice: &[u8]) -> &'a [u8] {
+        debug_assert!(self.len + slice.len() <= self.cap); // didn't count everything
+        debug_assert!(self.ptr.is_some()); // must call allocate first
+
+        // SAFETY: `ptr` was allocated with `cap` bytes by `allocate()`; the
+        // debug_assert above guarantees `len + slice.len() <= cap`, so
+        // `[len..len+slice.len())` is in-bounds and exclusively owned here.
+        let base = unsafe { self.ptr.unwrap().as_ptr().add(self.len) };
+        unsafe { core::ptr::copy_nonoverlapping(slice.as_ptr(), base, slice.len()) };
+        // SAFETY: `base..base+slice.len()` was just initialized above and lives
+        // for as long as `self.ptr` (heap allocation never moves).
+        let result = unsafe { core::slice::from_raw_parts(base, slice.len()) };
+        self.len += slice.len();
+
+        debug_assert!(self.len <= self.cap);
+
+        result
+    }
+}
+
+impl Drop for StringBuilder {
+    fn drop(&mut self) {
+        if let Some(ptr) = self.ptr {
+            if self.cap != 0 {
+                // SAFETY: reconstitutes the Box<[u8]> forgotten in `allocate()`.
+                drop(unsafe { Box::from_raw(core::slice::from_raw_parts_mut(ptr.as_ptr(), self.cap)) });
+            }
+        }
+    }
 }
 
 // TODO(b1): bun_picohttp_sys crate missing — local FFI stub surface.

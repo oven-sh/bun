@@ -1,13 +1,10 @@
 pub use crate::css_parser as css;
 
 pub mod css_modules {
-    // B-2 round 9: `properties::css_modules` un-gated — the real `Specifier`
-    // (Global / ImportRecordIndex, with parse/to_css/eql/hash/deep_clone) now
-    // lives there. The earlier data-only stub here (Global / File / SourceIndex)
-    // pre-dated the import-record rewrite in the Zig source and diverged in
-    // shape; re-export the real type so `values::ident::DashedIdentReference`
-    // and `properties::custom::ext::dashed_ident_ref_parse` agree on a single
-    // `Specifier`.
+    // Back-compat re-export. Canonical home is `properties::css_modules::Specifier`;
+    // all in-tree callers (`values::ident`, `properties::custom`) now reference
+    // that path directly. Kept so out-of-tree / gated code that still spells
+    // `values::css_modules::Specifier` resolves to the same single type.
     pub use crate::properties::css_modules::Specifier;
 }
 

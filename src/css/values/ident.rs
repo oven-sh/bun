@@ -15,8 +15,9 @@ unsafe fn arena_str(s: &[u8]) -> &'static [u8] {
 }
 
 // ───────────────────────── DashedIdentReference ──────────────────────────
-// blocked_on: properties/css_modules::Specifier::parse + Printer::css_module
-// field shape. Data layout is real; behavior gated.
+// `properties::css_modules::Specifier` is real (parse/to_css/eql/hash); the
+// `from` field below uses it directly. Only `to_css`'s CSS-Modules remapping
+// branch remains gated on `CssModule::reference_dashed`.
 
 /// A CSS [`<dashed-ident>`](https://www.w3.org/TR/css-values-4/#dashed-idents) reference.
 ///
@@ -31,9 +32,7 @@ pub struct DashedIdentReference {
     pub ident: DashedIdent,
     /// CSS modules extension: the filename where the variable is defined.
     /// Only enabled when the CSS modules `dashed_idents` option is turned on.
-    // blocked_on: properties/css_modules::Specifier un-gate (uses crate::values::
-    // css_modules::Specifier here for now — same layout as the gated real type).
-    pub from: Option<crate::values::css_modules::Specifier>,
+    pub from: Option<crate::properties::css_modules::Specifier>,
 }
 
 impl DashedIdentReference {

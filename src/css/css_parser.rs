@@ -1082,6 +1082,7 @@ impl ComposesCtx for NoComposesCtx {
 }
 
 pub struct NestedRuleParser<'a, T: CustomAtRuleParser> {
+    pub allocator: &'a Bump,
     pub options: &'a ParserOptions<'a>,
     pub at_rule_parser: &'a mut T,
     // todo_stuff.think_mem_mgmt
@@ -1200,6 +1201,20 @@ where
 // type structure stays real and `StyleSheet::parse` links.
 mod rule_parsers { use super::*;
 use crate::selectors::parser as selector_parser;
+
+/// Thunk a leaf-module `parse` fn that is still `#[cfg(any())]`-gated in its
+/// own file. The call site stays type-correct (the gated body compiles under
+/// `--cfg any` once the leaf un-gates); the ungated build hits a runtime
+/// `todo()` instead of a compile error so the surrounding rule-parser surface
+/// stays real.
+macro_rules! gated_parse {
+    ($what:literal, $expr:expr) => {{
+        #[cfg(any())]
+        { $expr }
+        #[cfg(not(any()))]
+        { todo(concat!($what, " — leaf parse fn gated")) }
+    }};
+}
 
 // PORT NOTE: Zig threaded `composes_ctx: anytype` (pointer to the
 // `NestedRuleParser`) directly into `parse_declaration`. Rust's borrow checker
@@ -1461,11 +1476,15 @@ impl<'a, T: CustomAtRuleParser> NestedRuleParser<'a, T> {
             // ComposesState is Copy.
             self.composes_state
         };
+        // SAFETY: see `TopLevelRuleParser::nested` — `'static` erasure of the
+        // parser arena.
+        let bump: &'static Bump = unsafe { &*(self.allocator as *const Bump) };
         let mut nested_parser = NestedRuleParser::<T> {
+            allocator: self.allocator,
             options: self.options,
             at_rule_parser: &mut *self.at_rule_parser,
-            declarations: DeclarationList::default(),
-            important_declarations: DeclarationList::default(),
+            declarations: DeclarationList::new_in(bump),
+            important_declarations: DeclarationList::new_in(bump),
             rules: &mut rules,
             is_in_style_rule: self.is_in_style_rule || is_style_rule,
             allow_declarations: self.allow_declarations || self.is_in_style_rule || is_style_rule,

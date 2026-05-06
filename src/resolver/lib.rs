@@ -7504,13 +7504,17 @@ impl<'a> Resolver<'a> {
         let result = _result;
 
         // SAFETY: PORT — RealFS / DirEntry are global ARENA singletons (BSSMap-backed);
-        // Zig held raw pointers here. Re-borrow at each use so `&mut self` calls
-        // (debug_logs / dirname_store / parse_*) don't trip borrowck.
+        // Zig held raw pointers here (resolver.zig:4004 `rfs: *Fs.FileSystem.RealFS`).
+        // Keep ONLY raw pointers and re-borrow at EACH use site so no `&mut RealFS` /
+        // `&mut DirEntry` outlives a `self.fs()` / `get_entries()` / `parse_package_json()`
+        // call — those re-enter the same global RealFS via fresh `&mut`, and a long-lived
+        // `&mut` here would alias under Stacked Borrows (PORTING.md §Forbidden).
         // TODO(port): split RealFS borrow once entries iteration is interior-mutability-backed.
         let rfs_ptr: *mut Fs::file_system::RealFS = &mut self.fs().fs;
         let entries_ptr: *mut Fs::file_system::DirEntry = unsafe { &mut *_entries }.entries_mut();
-        let rfs: &mut Fs::file_system::RealFS = unsafe { &mut *rfs_ptr };
-        let entries: &mut Fs::file_system::DirEntry = unsafe { &mut *entries_ptr };
+        // PORT NOTE: re-borrow per use; see SAFETY note above.
+        macro_rules! rfs { () => { unsafe { &mut *rfs_ptr } } }
+        macro_rules! entries { () => { unsafe { &mut *entries_ptr } } }
 
         if cfg!(debug_assertions) {
             // `path` is stored in the permanent `dir_cache` as `DirInfo.abs_path`. It must not

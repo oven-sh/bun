@@ -1207,12 +1207,14 @@ impl UpgradeCommand {
                         }
                     }
 
-                    Output::err_generic(format_args!(
+                    Output::err_generic(
                         "Failed to move new version of Bun to {} to {}\n\nPlease reinstall Bun manually with the following command:\n   {}\n",
-                        bstr::BStr::new(destination_executable),
-                        err.name(),
-                        Self::MANUAL_UPGRADE_COMMAND
-                    ));
+                        (
+                            bstr::BStr::new(destination_executable),
+                            bstr::BStr::new(err.name()),
+                            Self::MANUAL_UPGRADE_COMMAND,
+                        ),
+                    );
                     Global::exit(1);
                 }
             }

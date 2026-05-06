@@ -398,7 +398,7 @@ impl BlockList {
                     ))
                 }
             };
-            array.put_index(global, i as u32, s.to_js(global)?)?;
+            array.put_index(global, i as u32, s.transfer_to_js(global)?)?;
         }
         Ok(array)
     }

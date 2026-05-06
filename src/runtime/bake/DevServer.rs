@@ -1119,24 +1119,13 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
     if is_map {
         // SAFETY: SourceId is #[repr(transparent)] over u64 (same size as id)
         let source_id: source_map_store::SourceId = unsafe { ::core::mem::transmute(id) };
-        let Some(entry) = dev.source_maps.entries.get_mut(&source_map_store::Key::init(id)) else {
+        if dev.source_maps.entries.get_mut(&source_map_store::Key::init(id)).is_none() {
             return not_found(resp);
-        };
-        // PERF(port): was ArenaAllocator — using global heap
-        let json_bytes = entry
-            .render_json(dev, source_id.kind, bake::Side::Client)
-            .expect("oom");
-        let response = StaticRoute::init_from_any_blob(
-            &crate::webcore::blob::Any::from_owned_slice(json_bytes),
-            StaticRoute::Options {
-                server: dev.server,
-                mime_type: &MimeType::JSON,
-                ..Default::default()
-            },
-        );
-        let _deref = scopeguard::guard((), |_| response.deref_());
-        response.on_request(uws::AnyRequest::H1(req), resp);
-        return;
+        }
+        let _ = (source_id, req, resp);
+        // TODO(port): blocked_on: source_map_store::Entry::render_json +
+        // StaticRoute::init_from_any_blob InitFromBytesOptions shape mismatch.
+        todo!("blocked_on: source_map_store::Entry::render_json")
     }
 
     let route_bundle_index = route_bundle::Index::init(u32::try_from(id & 0xFFFFFFFF).unwrap());
@@ -1618,14 +1607,8 @@ impl DevServer<'_> {
             },
         };
 
-        // SAFETY: HiveArray::get returned a valid slot ptr; .data was initialized above.
-        let deferred_ptr: *mut deferred_request::Node<'_> = match deferred {
-            Some(p) => p,
-            None => todo!("blocked_on: HiveArray::Fallback overflow alloc"),
-        };
-        let deferred_node = unsafe { &mut *deferred_ptr };
-        if matches!(deferred_node.data.handler, Handler::ServerHandler(_)) {
-            deferred_node.data.weak_ref();
+        if matches!(deferred.data.handler, Handler::ServerHandler(_)) {
+            deferred.data.weak_ref();
         }
 
         requests_array.prepend(deferred_ptr);

@@ -887,7 +887,7 @@ pub fn parse_args(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
         None => JSValue::UNDEFINED,
     };
     let args: ArgsSlice = if !config_args.is_undefined_or_null() {
-        validators::validate_array(global, config_args, "args", format_args!(""), None)?;
+        validators::validate_array(global, config_args, "args", None)?;
         ArgsSlice {
             array: config_args,
             start: 0,

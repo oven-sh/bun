@@ -33,7 +33,7 @@ pub fn to_contain_all_keys(
         this.get_value(global, this_value, "toContainAllKeys", "<green>expected<r>")?;
 
     if !expected.js_type().is_array() {
-        return global.throw_invalid_argument_type("toContainAllKeys", "expected", "array");
+        return Err(global.throw_invalid_argument_type("toContainAllKeys", "expected", "array"));
     }
 
     let not = this.flags.not();

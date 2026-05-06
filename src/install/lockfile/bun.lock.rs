@@ -343,7 +343,7 @@ impl Stringifier {
 
                     // intentionally not checking default trusted dependencies
                     if let Some(trusted_dependencies) = &lockfile.trusted_dependencies {
-                        if trusted_dependencies.contains(dep.name_hash as TruncatedPackageNameHash) {
+                        if trusted_dependencies.contains(&(dep.name_hash as TruncatedPackageNameHash)) {
                             found_trusted_dependencies.insert(dep.name_hash, dep.name);
                         }
                     }

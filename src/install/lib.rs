@@ -594,6 +594,37 @@ pub mod bin {
     }
     impl Bin {
         pub fn init() -> Self { Self::default() }
+
+        /// Port of `Bin.toJson` (src/install/bin.zig). Real body lives in
+        /// `bin_real::Bin::to_json`; this stub bridges the type until the
+        /// stub/real `Bin` structs unify (reconciler-6).
+        pub fn to_json<W: core::fmt::Write, const STYLE: crate::bin_real::ToJsonStyle>(
+            &self,
+            _indent: Option<&mut u32>,
+            _buf: &[u8],
+            _extern_strings: &[bun_semver::ExternalString],
+            _writer: &mut W,
+            _write_indent: fn(&mut W, &mut u32) -> core::fmt::Result,
+        ) -> core::fmt::Result {
+            todo!("blocked_on: bin stub/real unify (reconciler-6)")
+        }
+
+        /// Port of `Bin.parseAppend` (src/install/bin.zig).
+        pub fn parse_append(
+            _bin_expr: bun_logger::js_ast::Expr,
+            _buf: &mut bun_semver::semver_string::Buf,
+            _extern_strings: &mut Vec<bun_semver::ExternalString>,
+        ) -> Result<Bin, bun_alloc::AllocError> {
+            todo!("blocked_on: bin stub/real unify (reconciler-6)")
+        }
+
+        /// Port of `Bin.parseAppendFromDirectories` (src/install/bin.zig).
+        pub fn parse_append_from_directories(
+            _bin_expr: bun_logger::js_ast::Expr,
+            _buf: &mut bun_semver::semver_string::Buf,
+        ) -> Result<Bin, bun_alloc::AllocError> {
+            todo!("blocked_on: bin stub/real unify (reconciler-6)")
+        }
     }
     #[derive(Default, Clone, Copy)]
     pub struct Value {
@@ -672,8 +703,18 @@ pub mod lockfile {
         pub meta_hash: MetaHash,
         /// Zig: `Lockfile.package_index`.
         pub package_index: std::collections::HashMap<PackageNameHash, PackageIndexEntry>,
+        /// Zig: `Lockfile.scratch`.
+        pub scratch: crate::lockfile_real::Scratch,
+        /// Zig: `Lockfile.patched_dependencies`.
+        pub patched_dependencies: crate::lockfile_real::PatchedDependenciesMap,
     }
     impl Lockfile {
+        /// Zig: `Lockfile.str(slicable)` — slice into the lockfile string buffer.
+        #[inline]
+        pub fn str<'a, T: bun_semver::Slicable>(&'a self, slicable: &'a T) -> &'a [u8] {
+            slicable.slice(&self.buffers.string_bytes)
+        }
+
         /// Port of `Lockfile.initEmpty` (src/install/lockfile.zig). Resets to a
         /// fresh, empty lockfile.
         pub fn init_empty(&mut self) {
@@ -1653,10 +1694,18 @@ impl RootPackageId {
     pub resolve_tasks: bun_threading::UnboundedQueue<package_manager_task::Task<'static>>,
     /// Zig: `thread_pool: ThreadPool`.
     pub thread_pool: bun_threading::ThreadPool,
+    /// Zig: `preinstall_state: std.ArrayListUnmanaged(PreinstallState)`.
+    pub preinstall_state: Vec<PreinstallState>,
+    /// Zig: `workspace_package_json_cache: WorkspacePackageJSONCache`.
+    pub workspace_package_json_cache: package_manager::WorkspacePackageJSONCache,
+    /// Zig: `postinstall_optimizer: PostinstallOptimizer`.
+    pub postinstall_optimizer: PostinstallOptimizer,
 }
 #[derive(Default)] pub struct PackageManagerOptionsStub {
     pub log_level: package_manager::Options::LogLevel,
     pub enable: PackageManagerEnableStub,
+    /// Zig: `Options.link_workspace_packages: bool = true`.
+    pub link_workspace_packages: bool,
     /// Zig: `Options.dry_run: bool = false`.
     pub dry_run: bool,
     /// Zig: `Options.cache_directory` — bunfig override.

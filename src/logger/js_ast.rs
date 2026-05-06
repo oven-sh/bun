@@ -784,6 +784,33 @@ impl Expr {
         None
     }
 
+    /// Zig: `Expr.asStringHash(allocator, hasher)` — when `data` is `e_string`,
+    /// hash the UTF-8 bytes via the supplied `hasher` and return the digest.
+    /// Returns `Ok(None)` for non-string data; the outer `Result` matches the
+    /// Zig `OOM!?u64` shape (allocator-free here, so always `Ok`).
+    #[inline]
+    pub fn as_string_hash(
+        &self,
+        hasher: impl FnOnce(&[u8]) -> u64,
+    ) -> Result<Option<u64>, AllocError> {
+        Ok(self.as_utf8_string_literal().map(hasher))
+    }
+
+    /// Zig: `Expr.getObject(name)` — `get(name)` but only returns the value if
+    /// it is itself an object literal.
+    pub fn get_object(&self, name: &[u8]) -> Option<Expr> {
+        match self.get(name) {
+            Some(e) if e.is_object() => Some(e),
+            _ => None,
+        }
+    }
+
+    /// Zig: `Expr.asBool()`.
+    #[inline]
+    pub fn as_bool(&self) -> Option<bool> {
+        if let expr::Data::EBoolean(b) = self.data { Some(b.value) } else { None }
+    }
+
     /// Zig: `Expr.asStringCloned(allocator)`.
     #[inline]
     pub fn as_string_cloned<'b>(

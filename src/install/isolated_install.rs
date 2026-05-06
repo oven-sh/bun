@@ -294,7 +294,7 @@ pub fn install_isolated_packages(
                 }
             }
 
-            let mut scratch = DynamicBitSet::init_empty(peer_name_count as usize);
+            let mut scratch = bun_core::handle_oom(DynamicBitSet::init_empty(peer_name_count as usize));
 
             let mut changed = true;
             while changed {

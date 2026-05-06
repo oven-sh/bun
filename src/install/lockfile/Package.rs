@@ -1845,7 +1845,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                                 arr,
                                 source,
                                 dependencies_q.loc,
-                                &mut string_builder,
+                                Some(&mut string_builder),
                             )?;
                         }
                         bun_js_parser::ast::ExprData::EObject(obj) => {
@@ -1880,7 +1880,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                                             packages_query.data.e_array(),
                                             source,
                                             packages_query.loc,
-                                            &mut string_builder,
+                                            Some(&mut string_builder),
                                         )?;
                                 }
 

@@ -13,9 +13,12 @@ use bun_sys::{self as sys, Dir, Fd};
 use bun_install::install::{self as Install, DependencyID, ExtractData, PackageManager};
 use bun_install::integrity::Integrity;
 use bun_install::npm::{self as Npm};
-use bun_install::resolution::Resolution;
+use bun_install::package_manager_real::directories;
+use bun_install::resolution::{Resolution, Tag as ResolutionTag};
+use bun_libarchive::{ArchiveAppender, ExtractOptions};
 // MOVE_DOWN(b0): bun_resolver::fs → bun_sys::fs
 use bun_sys::fs::FileSystem;
+use bun_sys::FdDirExt;
 
 // TODO(port): narrow error set
 type Error = bun_core::Error;

@@ -611,6 +611,7 @@ pub mod entry {
 }
 
 pub use entry::Entry;
+pub use entry::{EntryField, EntryListExt, EntrySliceExt};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Node
@@ -769,7 +770,7 @@ pub mod node {
             }
 
             bun_output::scoped_log!(Store, "  nodes ({}): ", node.nodes.len());
-            for (i, id) in node.nodes.iter().enumerate() {
+            for (i, &id) in node.nodes.iter().enumerate() {
                 bun_output::scoped_log!(Store, "{}", id.get());
                 if i != node.nodes.len() - 1 {
                     bun_output::scoped_log!(Store, ",");
@@ -797,6 +798,7 @@ pub mod node {
 }
 
 pub use node::Node;
+pub use node::{NodeField, NodeListExt, NodeSliceExt};
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

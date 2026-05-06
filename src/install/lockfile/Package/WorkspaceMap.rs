@@ -225,7 +225,7 @@ impl WorkspaceMap {
                         );
                     } else {
                         let mut cwd_buf = vec![0u8; MAX_PATH_BYTES];
-                        let cwd = bun_sys::getcwd(&mut cwd_buf).expect("unreachable");
+                        let cwd_len = bun_sys::getcwd(&mut cwd_buf).expect("unreachable");
                         let _ = log.add_error_fmt(
                             Some(source),
                             item.loc,
@@ -233,7 +233,7 @@ impl WorkspaceMap {
                                 "{} reading package.json for workspace package \"{}\" from \"{}\"",
                                 err.name(),
                                 BStr::new(input_path.as_bytes()),
-                                BStr::new(cwd),
+                                BStr::new(&cwd_buf[..cwd_len]),
                             ),
                         );
                     }
@@ -246,7 +246,7 @@ impl WorkspaceMap {
             }
 
             let rel_input_path = resolve_path::relative_platform::<path::platform::Auto, true>(
-                source.path.name.dir(),
+                source.path.name.dir,
                 strings::without_suffix_comptime(
                     abs_package_json_path.as_bytes(),
                     const_format::concatcp!(SEP_STR, "package.json").as_bytes(),
@@ -333,11 +333,8 @@ impl WorkspaceMap {
                 // walker dropped at end of loop iter (Drop impl handles deinit(false))
                 // TODO(port): GlobWalker::deinit(false) — Drop cannot take params; assume default Drop matches `false`
 
-                let mut iter = GlobWalker::Iterator {
-                    walker: &mut walker,
-                    ..Default::default()
-                };
-                if let Some(e) = iter.init()?.as_err() {
+                let mut iter = glob::walk::Iterator::new(&mut walker);
+                if let Err(e) = iter.init()? {
                     let _ = log.add_error_fmt(
                         Some(source),
                         loc,
@@ -351,10 +348,10 @@ impl WorkspaceMap {
                 }
 
                 'next_match: loop {
-                    let matched_path = match iter.next()? {
-                        bun_sys::Result::Ok(Some(r)) => r,
-                        bun_sys::Result::Ok(None) => break,
-                        bun_sys::Result::Err(e) => {
+                    let matched_path_owned = match iter.next()? {
+                        Ok(Some(r)) => r,
+                        Ok(None) => break,
+                        Err(e) => {
                             let _ = log.add_error_fmt(
                                 Some(source),
                                 loc,
@@ -367,8 +364,9 @@ impl WorkspaceMap {
                             return Err(bun_core::err!("GlobError"));
                         }
                     };
+                    let matched_path: &[u8] = &matched_path_owned;
 
-                    let entry_dir: &[u8] = path::dirname(matched_path, path::Platform::Auto);
+                    let entry_dir: &[u8] = resolve_path::dirname::<path::platform::Auto>(matched_path);
 
                     // skip root package.json
                     if matched_path == b"package.json" {
@@ -463,7 +461,7 @@ impl WorkspaceMap {
                     }
 
                     let workspace_path: &[u8] = resolve_path::relative_platform::<path::platform::Auto, true>(
-                        source.path.name.dir(),
+                        source.path.name.dir,
                         abs_workspace_dir_path,
                     );
                     #[cfg(windows)]
@@ -506,8 +504,7 @@ impl WorkspaceMap {
         // Sort the names for determinism
         // PORT NOTE: reshaped for borrowck — Zig captured `values()` slice in sort ctx;
         // here ArrayHashMap::sort provides values internally to the comparator.
-        // TODO(port): verify ArrayHashMap::sort closure signature matches (a_idx, b_idx) -> bool
-        workspace_names.map.sort_by(|_keys, values, a: usize, b: usize| {
+        workspace_names.map.sort(|_keys, values: &[Entry], a: usize, b: usize| {
             strings::order(&values[a].name, &values[b].name) == core::cmp::Ordering::Less
         });
 

@@ -126,9 +126,9 @@ impl<'a> Installer<'a> {
             let entry_node_ids = entries.items().node_id;
 
             let pkgs = self.lockfile.packages.slice();
-            let pkg_names = pkgs.items().name;
-            let pkg_name_hashes = pkgs.items().name_hash;
-            let pkg_resolutions = pkgs.items().resolution;
+            let pkg_names = pkgs.items_name();
+            let pkg_name_hashes = pkgs.items_name_hash();
+            let pkg_resolutions = pkgs.items_resolution();
 
             for install_ctx in removed.value.as_slice() {
                 let entry_id = install_ctx.isolated_package_install_context;
@@ -240,8 +240,8 @@ impl<'a> Installer<'a> {
         let node_pkg_ids = nodes.items().pkg_id;
 
         let pkgs = self.lockfile.packages.slice();
-        let pkg_names = pkgs.items().name;
-        let pkg_resolutions = pkgs.items().resolution;
+        let pkg_names = pkgs.items_name();
+        let pkg_resolutions = pkgs.items_resolution();
 
         let node_id = entry_node_ids[entry_id.get()];
         let pkg_id = node_pkg_ids[node_id.get()];
@@ -312,19 +312,19 @@ impl<'a> Installer<'a> {
 
         // attempt deleting the package so the next install will install it again
         match pkg_res.tag {
-            Resolution::Tag::Uninitialized
-            | Resolution::Tag::SingleFileModule
-            | Resolution::Tag::Root
-            | Resolution::Tag::Workspace
-            | Resolution::Tag::Symlink => {}
+            ResolutionTag::Uninitialized
+            | ResolutionTag::SingleFileModule
+            | ResolutionTag::Root
+            | ResolutionTag::Workspace
+            | ResolutionTag::Symlink => {}
 
             // to be safe make sure we only delete packages in the store
-            Resolution::Tag::Npm
-            | Resolution::Tag::Git
-            | Resolution::Tag::Github
-            | Resolution::Tag::LocalTarball
-            | Resolution::Tag::RemoteTarball
-            | Resolution::Tag::Folder => {
+            ResolutionTag::Npm
+            | ResolutionTag::Git
+            | ResolutionTag::Github
+            | ResolutionTag::LocalTarball
+            | ResolutionTag::RemoteTarball
+            | ResolutionTag::Folder => {
                 let mut store_path = AutoRelPath::init();
 
                 store_path.append_fmt(format_args!(
@@ -690,13 +690,13 @@ impl Task {
         let installer = unsafe { &*installer_ptr };
 
         let pkgs = installer.lockfile.packages.slice();
-        let pkg_names = pkgs.items().name;
-        let pkg_name_hashes = pkgs.items().name_hash;
-        let pkg_resolutions = pkgs.items().resolution;
-        let pkg_resolutions_lists = pkgs.items().resolutions;
-        let pkg_metas: &[package::Meta] = pkgs.items().meta;
-        let pkg_bins = pkgs.items().bin;
-        let pkg_script_lists = pkgs.items().scripts;
+        let pkg_names = pkgs.items_name();
+        let pkg_name_hashes = pkgs.items_name_hash();
+        let pkg_resolutions = pkgs.items_resolution();
+        let pkg_resolutions_lists = pkgs.items_resolutions();
+        let pkg_metas: &[package::Meta] = pkgs.items_meta();
+        let pkg_bins = pkgs.items_bin();
+        let pkg_script_lists = pkgs.items_scripts();
 
         let entries = installer.store.entries.slice();
         let entry_node_ids = entries.items().node_id;
@@ -728,10 +728,10 @@ impl Task {
                     // Compute pkg_cache_dir_subpath; for .folder/.root the work happens inline and
                     // we `continue` to next step from inside the match.
                     let pkg_cache_dir_subpath_init = match pkg_res.tag {
-                        Resolution::Tag::Folder | Resolution::Tag::Root => {
+                        ResolutionTag::Folder | ResolutionTag::Root => {
                             let path: &[u8] = match pkg_res.tag {
-                                Resolution::Tag::Folder => pkg_res.value.folder.slice(string_buf),
-                                Resolution::Tag::Root => b".",
+                                ResolutionTag::Folder => pkg_res.value.folder.slice(string_buf),
+                                ResolutionTag::Root => b".",
                                 _ => unreachable!(),
                             };
                             // the folder does not exist in the cache. xdev is per folder dependency
@@ -765,7 +765,7 @@ impl Task {
                                         match hardlinker.link()? {
                                             sys::Result::Ok(()) => {}
                                             sys::Result::Err(err) => {
-                                                if err.get_errno() == sys::Errno::XDEV {
+                                                if err.get_errno() == sys::Errno::EXDEV {
                                                     backend = InstallMethod::Copyfile;
                                                     continue 'backend;
                                                 }
@@ -864,24 +864,24 @@ impl Task {
                             // SAFETY: read-only access to `PackageManager`; see top-of-fn note.
                             let manager = unsafe { &*manager_ptr };
                             match tag {
-                                Resolution::Tag::Npm => manager.cached_npm_package_folder_name(
+                                ResolutionTag::Npm => manager.cached_npm_package_folder_name(
                                     pkg_name.slice(string_buf),
                                     pkg_res.value.npm.version,
                                     patch_info.contents_hash(),
                                 ),
-                                Resolution::Tag::Git => manager.cached_git_folder_name(
+                                ResolutionTag::Git => manager.cached_git_folder_name(
                                     &pkg_res.value.git,
                                     patch_info.contents_hash(),
                                 ),
-                                Resolution::Tag::Github => manager.cached_github_folder_name(
+                                ResolutionTag::Github => manager.cached_github_folder_name(
                                     &pkg_res.value.github,
                                     patch_info.contents_hash(),
                                 ),
-                                Resolution::Tag::LocalTarball => manager.cached_tarball_folder_name(
+                                ResolutionTag::LocalTarball => manager.cached_tarball_folder_name(
                                     pkg_res.value.local_tarball,
                                     patch_info.contents_hash(),
                                 ),
-                                Resolution::Tag::RemoteTarball => manager
+                                ResolutionTag::RemoteTarball => manager
                                     .cached_tarball_folder_name(
                                         pkg_res.value.remote_tarball,
                                         patch_info.contents_hash(),
@@ -970,7 +970,7 @@ impl Task {
                                 }
                             };
                             if let Some(e) = remove_err {
-                                if e.get_errno() != sys::Errno::NOENT {
+                                if e.get_errno() != sys::Errno::ENOENT {
                                     // Do NOT proceed: the backend below would
                                     // write *through* the still-live symlink
                                     // into the shared `<cache>/links/` entry.
@@ -1040,7 +1040,7 @@ impl Task {
                                     match cloner.clone() {
                                         sys::Result::Ok(()) => {}
                                         sys::Result::Err(err) => match err.get_errno() {
-                                            sys::Errno::XDEV => {
+                                            sys::Errno::EXDEV => {
                                                 installer.supported_backend.store(InstallMethod::Copyfile as u8, Ordering::Relaxed);
                                                 backend = InstallMethod::Copyfile;
                                                 continue 'backend;
@@ -1096,7 +1096,7 @@ impl Task {
                                 match hardlinker.link()? {
                                     sys::Result::Ok(()) => {}
                                     sys::Result::Err(err) => {
-                                        if err.get_errno() == sys::Errno::XDEV {
+                                        if err.get_errno() == sys::Errno::EXDEV {
                                             installer.supported_backend.store(InstallMethod::Copyfile as u8, Ordering::Relaxed);
                                             backend = InstallMethod::Copyfile;
                                             continue 'backend;
@@ -1249,7 +1249,7 @@ impl Task {
 
                         let link_strategy: symlinker::Strategy = if matches!(
                             pkg_res.tag,
-                            Resolution::Tag::Root | Resolution::Tag::Workspace
+                            ResolutionTag::Root | ResolutionTag::Workspace
                         ) {
                             // root and workspace packages ensure their dependency symlinks
                             // exist unconditionally. To make sure it's fast, first readlink
@@ -1311,18 +1311,18 @@ impl Task {
                     }
 
                     match pkg_res.tag {
-                        Resolution::Tag::Uninitialized
-                        | Resolution::Tag::Root
-                        | Resolution::Tag::Workspace
-                        | Resolution::Tag::Folder
-                        | Resolution::Tag::Symlink
-                        | Resolution::Tag::SingleFileModule => {}
+                        ResolutionTag::Uninitialized
+                        | ResolutionTag::Root
+                        | ResolutionTag::Workspace
+                        | ResolutionTag::Folder
+                        | ResolutionTag::Symlink
+                        | ResolutionTag::SingleFileModule => {}
 
-                        Resolution::Tag::Npm
-                        | Resolution::Tag::Git
-                        | Resolution::Tag::Github
-                        | Resolution::Tag::LocalTarball
-                        | Resolution::Tag::RemoteTarball => {
+                        ResolutionTag::Npm
+                        | ResolutionTag::Git
+                        | ResolutionTag::Github
+                        | ResolutionTag::LocalTarball
+                        | ResolutionTag::RemoteTarball => {
                             if !entry_hoisted[self.entry_id.get()] {
                                 step = self.next_step(current_step);
                                 continue;
@@ -1386,8 +1386,8 @@ impl Task {
                     installer.append_store_path(&mut pkg_cwd, self.entry_id);
 
                     'enqueue_lifecycle_scripts: {
-                        if !(pkg_res.tag != Resolution::Tag::Root
-                            && (pkg_res.tag == Resolution::Tag::Workspace || is_trusted))
+                        if !(pkg_res.tag != ResolutionTag::Root
+                            && (pkg_res.tag == ResolutionTag::Workspace || is_trusted))
                         {
                             break 'enqueue_lifecycle_scripts;
                         }
@@ -1396,9 +1396,9 @@ impl Task {
                         let manager = unsafe { &*manager_ptr };
                         if is_trusted
                             && manager.postinstall_optimizer.should_ignore_lifecycle_scripts(
-                                PostinstallOptimizer::Query {
+                                postinstall_optimizer::PkgInfo {
                                     name_hash: pkg_name_hash,
-                                    version: if pkg_res.tag == Resolution::Tag::Npm {
+                                    version: if pkg_res.tag == ResolutionTag::Npm {
                                         Some(pkg_res.value.npm.version)
                                     } else {
                                         None
@@ -1507,7 +1507,7 @@ impl Task {
                     }
 
                     let bin = pkg_bins[pkg_id];
-                    if bin.tag == Bin::Tag::None {
+                    if bin.tag == bin::Tag::None {
                         match installer.commit_global_store_entry(self.entry_id) {
                             sys::Result::Ok(()) => {}
                             sys::Result::Err(e) => {
@@ -1546,7 +1546,7 @@ impl Task {
                         pkg_name_hashes,
                         pkg_resolutions_lists,
                         installer.lockfile.buffers.resolutions.as_slice(),
-                        installer.lockfile.packages.items().meta,
+                        installer.lockfile.packages.items_meta(),
                         pkg_id,
                     ) {
                         let mut p = DefaultAbsPath::init_top_level_dir();
@@ -1564,7 +1564,7 @@ impl Task {
                         );
                     }
 
-                    let mut bin_linker = Bin::Linker {
+                    let mut bin_linker = bin::Linker {
                         bin,
                         // SAFETY: read-only `PackageManager` access; see top-of-fn note.
                         global_bin_path: unsafe { &*manager_ptr }.options.bin_path,
@@ -1829,7 +1829,7 @@ impl<'a> Installer<'a> {
         write!(&mut version_buf, "{}@", bstr::BStr::new(pkg_name.slice(string_buf)))?;
 
         match pkg_res.tag {
-            Resolution::Tag::Workspace => {
+            ResolutionTag::Workspace => {
                 if let Some(workspace_version) = self.lockfile.workspace_versions.get(&pkg_name_hash)
                 {
                     write!(&mut version_buf, "{}", workspace_version.fmt(string_buf))?;
@@ -1868,7 +1868,7 @@ impl<'a> Installer<'a> {
 
         let node_id = self.store.entries.items().node_id[entry_id.get()];
         let pkg_id = self.store.nodes.items().pkg_id[node_id.get()];
-        let pkg_name = self.lockfile.packages.items().name[pkg_id];
+        let pkg_name = self.lockfile.packages.items_name()[pkg_id];
 
         let mut hidden_hoisted_node_modules = AutoPath::init();
 
@@ -1927,17 +1927,17 @@ impl<'a> Installer<'a> {
         }
         let name_hash = name_hashes[pkg_id];
 
-        if let Some(optimizer) = postinstall_optimizer.get(PostinstallOptimizer::Query {
+        if let Some(optimizer) = postinstall_optimizer.get(postinstall_optimizer::PkgInfo {
             name_hash,
             ..Default::default()
         }) {
             match optimizer {
-                PostinstallOptimizer::Kind::NativeBinlink => {
+                PostinstallOptimizer::NativeBinlink => {
                     let manager = &self.manager;
                     let target_cpu = manager.options.cpu;
                     let target_os = manager.options.os;
                     if let Some(replacement_pkg_id) =
-                        PostinstallOptimizer::get_native_binlink_replacement_package_id(
+                        postinstall_optimizer::PostinstallOptimizer::get_native_binlink_replacement_package_id(
                             pkg_resolutions_lists[pkg_id].get(pkg_resolutions_buffer),
                             pkg_metas,
                             target_cpu,
@@ -1957,7 +1957,7 @@ impl<'a> Installer<'a> {
                         }
                     }
                 }
-                PostinstallOptimizer::Kind::Ignore => {}
+                PostinstallOptimizer::Ignore => {}
             }
         }
 
@@ -1984,11 +1984,11 @@ impl<'a> Installer<'a> {
         let node_dep_ids = nodes.items().dep_id;
 
         let pkgs = lockfile.packages.slice();
-        let pkg_name_hashes = pkgs.items().name_hash;
-        let pkg_metas = pkgs.items().meta;
-        let pkg_resolutions_lists = pkgs.items().resolutions;
+        let pkg_name_hashes = pkgs.items_name_hash();
+        let pkg_metas = pkgs.items_meta();
+        let pkg_resolutions_lists = pkgs.items_resolutions();
         let pkg_resolutions_buffer = lockfile.buffers.resolutions.as_slice();
-        let pkg_bins = pkgs.items().bin;
+        let pkg_bins = pkgs.items_bin();
 
         let link_target_buf = paths::path_buffer_pool::get();
         let link_dest_buf = paths::path_buffer_pool::get();
@@ -2004,7 +2004,7 @@ impl<'a> Installer<'a> {
             let dep_id = node_dep_ids[node_id.get()];
             let pkg_id = node_pkg_ids[node_id.get()];
             let bin = pkg_bins[pkg_id];
-            if bin.tag == Bin::Tag::None {
+            if bin.tag == bin::Tag::None {
                 continue;
             }
             let alias = lockfile.buffers.dependencies[dep_id].name;
@@ -2029,13 +2029,13 @@ impl<'a> Installer<'a> {
 
                 let replacement_node_id = entry_node_ids[replacement_entry_id.get()];
                 let replacement_pkg_id = node_pkg_ids[replacement_node_id.get()];
-                let pkg_names = pkgs.items().name;
+                let pkg_names = pkgs.items_name();
                 target_package_name = strings::StringOrTinyString::init(
                     self.lockfile.str(&pkg_names[replacement_pkg_id]),
                 );
             }
 
-            let mut bin_linker = Bin::Linker {
+            let mut bin_linker = bin::Linker {
                 bin,
                 global_bin_path: self.manager.options.bin_path,
                 package_name,
@@ -2238,12 +2238,12 @@ impl<'a> Installer<'a> {
         match do_symlink(dest.slice_z(), target_abs.slice_z()) {
             sys::Result::Ok(()) => return sys::Result::Ok(()),
             sys::Result::Err(err) => match err.get_errno() {
-                sys::Errno::NOENT => {
+                sys::Errno::ENOENT => {
                     if let Some(parent) = dest.dirname() {
                         let _ = Fd::cwd().make_path::<u8>(parent);
                     }
                 }
-                sys::Errno::EXIST => {
+                sys::Errno::EEXIST => {
                     // Existing entry from a previous install. If it's a
                     // symlink, replace it (stale link from a different
                     // hash). If it's a real directory, that's the
@@ -2303,17 +2303,17 @@ impl<'a> Installer<'a> {
         let node_pkg_ids = nodes.items().pkg_id;
 
         let pkgs = self.lockfile.packages.slice();
-        let pkg_resolutions = pkgs.items().resolution;
+        let pkg_resolutions = pkgs.items_resolution();
 
         let node_id = entry_node_ids[entry_id.get()];
         let pkg_id = node_pkg_ids[node_id.get()];
         let pkg_res = pkg_resolutions[pkg_id];
 
         match pkg_res.tag {
-            Resolution::Tag::Root => {
+            ResolutionTag::Root => {
                 buf.append(b"node_modules");
             }
-            Resolution::Tag::Workspace => {
+            ResolutionTag::Workspace => {
                 buf.append(pkg_res.value.workspace.slice(string_buf));
                 buf.append(b"node_modules");
             }
@@ -2357,7 +2357,7 @@ impl<'a> Installer<'a> {
             let string_buf = self.lockfile.buffers.string_bytes.as_slice();
             let node_id = self.store.entries.items().node_id[entry_id.get()];
             let pkg_id = self.store.nodes.items().pkg_id[node_id.get()];
-            let pkg_name = self.lockfile.packages.items().name[pkg_id];
+            let pkg_name = self.lockfile.packages.items_name()[pkg_id];
             self.append_global_store_entry_path(buf, entry_id, which);
             buf.append(b"node_modules");
             buf.append(pkg_name.slice(string_buf));
@@ -2378,8 +2378,8 @@ impl<'a> Installer<'a> {
         // let node_peers = nodes.items().peers;
 
         let pkgs = self.lockfile.packages.slice();
-        let pkg_names = pkgs.items().name;
-        let pkg_resolutions = pkgs.items().resolution;
+        let pkg_names = pkgs.items_name();
+        let pkg_resolutions = pkgs.items_resolution();
 
         let node_id = entry_node_ids[entry_id.get()];
         // let peers = node_peers[node_id.get()];
@@ -2388,7 +2388,7 @@ impl<'a> Installer<'a> {
         let pkg_res = pkg_resolutions[pkg_id];
 
         match pkg_res.tag {
-            Resolution::Tag::Root => {
+            ResolutionTag::Root => {
                 if dep_id != invalid_dependency_id {
                     let pkg_name = pkg_names[pkg_id];
                     buf.append(
@@ -2410,10 +2410,10 @@ impl<'a> Installer<'a> {
                     // append nothing. buf is already top_level_dir
                 }
             }
-            Resolution::Tag::Workspace => {
+            ResolutionTag::Workspace => {
                 buf.append(pkg_res.value.workspace.slice(string_buf));
             }
-            Resolution::Tag::Symlink => {
+            ResolutionTag::Symlink => {
                 let symlink_dir_path = self.manager.global_link_dir_path();
 
                 buf.clear();
@@ -2451,7 +2451,7 @@ impl<'a> Installer<'a> {
         let string_buf = self.lockfile.buffers.string_bytes.as_slice();
 
         match pkg_res.tag {
-            Resolution::Tag::Root => {
+            ResolutionTag::Root => {
                 if dep_id != invalid_dependency_id {
                     let pkg_name = pkg_names[pkg_id];
                     if pkg_name.is_empty() {
@@ -2463,8 +2463,8 @@ impl<'a> Installer<'a> {
                 }
                 None
             }
-            Resolution::Tag::Workspace => None,
-            Resolution::Tag::Symlink => None,
+            ResolutionTag::Workspace => None,
+            ResolutionTag::Symlink => None,
             _ => Some(pkg_names[pkg_id].slice(string_buf)),
         }
     }
@@ -2483,11 +2483,11 @@ pub enum Which {
 
 fn is_rename_collision(err: &sys::Error) -> bool {
     match err.get_errno() {
-        sys::Errno::EXIST | sys::Errno::NOTEMPTY => true,
+        sys::Errno::EEXIST | sys::Errno::ENOTEMPTY => true,
         // Windows maps a rename onto an in-use directory to
         // ERROR_ACCESS_DENIED; on POSIX PERM/ACCES are real
         // permission failures and must propagate.
-        sys::Errno::PERM | sys::Errno::ACCES => cfg!(windows),
+        sys::Errno::EPERM | sys::Errno::EACCES => cfg!(windows),
         _ => false,
     }
 }

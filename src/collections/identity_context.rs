@@ -54,6 +54,45 @@ impl ArrayIdentityContextU64 {
 // so expose as a free path alias instead. Callers: `identity_context::U64`.
 pub type U64 = ArrayIdentityContextU64;
 
+// ArrayHashMap requires `C: ArrayHashContext<K>`, so wire the inherent impls
+// above into the trait. Kept as separate inherent + trait impls so direct
+// `ArrayIdentityContext::hash(...)` calls (which predate the trait) still
+// resolve without ambiguity.
+impl crate::array_hash_map::ArrayHashContext<u32> for ArrayIdentityContext {
+    #[inline]
+    fn hash(&self, key: &u32) -> u32 {
+        *key
+    }
+    #[inline]
+    fn eql(&self, a: &u32, b: &u32, _b_index: usize) -> bool {
+        a == b
+    }
+}
+
+impl crate::array_hash_map::ArrayHashContext<u64> for ArrayIdentityContextU64 {
+    #[inline]
+    fn hash(&self, key: &u64) -> u32 {
+        *key as u32
+    }
+    #[inline]
+    fn eql(&self, a: &u64, b: &u64, _b_index: usize) -> bool {
+        a == b
+    }
+}
+
+// Some callers use `ArrayIdentityContext` directly with u64 keys (Zig's
+// `ArrayIdentityContext` is generic over the key int). Support both.
+impl crate::array_hash_map::ArrayHashContext<u64> for ArrayIdentityContext {
+    #[inline]
+    fn hash(&self, key: &u64) -> u32 {
+        *key as u32
+    }
+    #[inline]
+    fn eql(&self, a: &u64, b: &u64, _b_index: usize) -> bool {
+        a == b
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/collections/identity_context.zig (37 lines)

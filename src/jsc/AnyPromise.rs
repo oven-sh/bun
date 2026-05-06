@@ -55,9 +55,11 @@ impl<'a> AnyPromise<'a> {
     }
 
     pub fn reject(self, global_this: &JSGlobalObject, value: JSValue) -> Result<(), JsTerminated> {
+        // Zig: `promise.reject(globalThis, value)` — `JSValue` coerces to `JSError!JSValue`
+        // implicitly in Zig; map that with `Ok(value)` here.
         match self {
-            AnyPromise::Normal(promise) => promise.reject(global_this, value),
-            AnyPromise::Internal(promise) => promise.reject(global_this, value),
+            AnyPromise::Normal(promise) => promise.reject(global_this, Ok(value)),
+            AnyPromise::Internal(promise) => promise.reject(global_this, Ok(value)),
         }
     }
 

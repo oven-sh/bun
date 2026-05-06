@@ -308,7 +308,10 @@ impl JSPromise {
             // SAFETY: `this` is `&mut Wrapper<F>` passed below; `g` is a live JSGlobalObject.
             let this = unsafe { &mut *(this as *mut Wrapper<F>) };
             let g = unsafe { &*g };
-            crate::to_js_host_call(g, (this.f.take().unwrap())(g))
+            let f = this.f.take().unwrap();
+            // Zig: `jsc.toJSHostCall(g, @src(), Fn, this.args)` — `@src()` mapped to
+            // `Location::caller()` (resolves to this trampoline's call site).
+            crate::to_js_host_call(g, core::panic::Location::caller(), move || f(g))
         }
 
         // TODO(port): @src() source-location plumbing — provide a `src!()` macro in Phase B.

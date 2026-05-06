@@ -1142,7 +1142,7 @@ impl UDPSocket {
         };
 
         let payload_arg = arguments.ptr[0];
-        let mut payload_str = ZigString::Slice::empty();
+        let mut payload_str = ZigStringSlice::empty();
         let payload: &[u8] = 'brk: {
             if let Some(array_buffer) = payload_arg.as_array_buffer(global_this) {
                 break 'brk array_buffer.slice();

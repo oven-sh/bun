@@ -1305,7 +1305,7 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         let mut temp_log = logger::Log::init();
 
-        let json_expr = match bun_json::parse_utf8(&json_source, &mut temp_log) {
+        let json_expr = match crate::bun_json::parse_utf8(&json_source, &mut temp_log) {
             Ok(e) => e,
             Err(e) => {
                 Output::err_generic(format_args!(

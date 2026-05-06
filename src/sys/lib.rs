@@ -4330,6 +4330,19 @@ pub fn environ() -> &'static [*const c_char] {
     #[cfg(windows)] { &[] }
 }
 
+/// `std.os.environ.ptr` — raw NULL-terminated `**c_char` for FFI envp args
+/// (e.g. `posix_spawn`). Unlike [`environ()`] this returns the raw libc
+/// global pointer (already NULL-terminated) rather than a length-bounded
+/// borrowed slice, so it is suitable to pass directly as `envp`.
+pub fn environ_ptr() -> *const *const c_char {
+    #[cfg(unix)] {
+        unsafe extern "C" { static mut environ: *const *const c_char; }
+        // SAFETY: `environ` is a process-global; we only read the pointer.
+        unsafe { environ }
+    }
+    #[cfg(windows)] { core::ptr::null() }
+}
+
 // ── moveFileZWithHandle (sys.zig:4266) ──
 
 /// `renameat`; on EISDIR removes the dest dir and retries; on EXDEV falls back

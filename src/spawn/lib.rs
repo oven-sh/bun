@@ -21,6 +21,95 @@ use core::ffi::c_char;
 use bun_sys::Fd;
 
 // ──────────────────────────────────────────────────────────────────────────
+// MOVE_DOWN(b0): `bun.jsc.Subprocess` data shapes that mid-tier crates
+// (`bun_install::security_scanner`, `lifecycle_script_runner`) need to name
+// without depending on `bun_runtime`. Only the cross-tier surface lives here;
+// the full reader/writer wiring (libuv pipes, BufferedReader hookup) stays in
+// `bun_runtime::api::bun::subprocess` and is dispatched at runtime.
+// ──────────────────────────────────────────────────────────────────────────
+pub mod subprocess {
+    use bun_sys::Fd;
+
+    pub use super::StdioKind;
+
+    /// Port of `bun.jsc.Subprocess.StdioResult` (subprocess.zig). On POSIX the
+    /// Zig type is `?bun.FD`; on Windows it is a tagged union over `Pipe` /
+    /// `Fd` / unavailable. Unified into a single enum here so callers can
+    /// construct it cross-platform via [`StdioResult::from_fd`].
+    pub enum StdioResult {
+        Fd(Fd),
+        /// Windows-only: parent end of an overlapped `uv_pipe_t`. Stored as a
+        /// type-erased raw pointer so this leaf crate doesn't depend on libuv
+        /// bindings; `bun_runtime` casts it back on consumption.
+        #[cfg(windows)]
+        Buffer(*mut core::ffi::c_void),
+        Unavailable,
+    }
+
+    impl StdioResult {
+        #[inline]
+        pub fn from_fd(fd: Fd) -> Self {
+            Self::Fd(fd)
+        }
+    }
+
+    /// Port of `bun.jsc.Subprocess.Source` — the in-memory payload that a
+    /// `StaticPipeWriter` streams to the child's stdin/extra-fd. Only the
+    /// owned-bytes variant is needed at this tier (security_scanner feeds a
+    /// JSON blob); the `Blob`/`ArrayBuffer` variants live in `bun_runtime`.
+    pub struct Source {
+        bytes: Option<Box<[u8]>>,
+    }
+
+    impl Source {
+        #[inline]
+        pub fn from_owned_bytes(bytes: Box<[u8]>) -> Self {
+            Self { bytes: Some(bytes) }
+        }
+
+        /// Zig: `Source.detach()` — drop the owned payload without writing it.
+        #[inline]
+        pub fn detach(&self) {
+            // TODO(port): blocked_on bun_runtime::api::bun::subprocess::Source —
+            // the real `detach` clears the active variant in-place (interior
+            // mutability via the pipe writer's refcount). Mid-tier callers only
+            // hit this on the error path; payload drops with `self`.
+        }
+
+        #[inline]
+        pub fn slice(&self) -> &[u8] {
+            self.bytes.as_deref().unwrap_or(&[])
+        }
+    }
+
+    /// Port of `jsc.Subprocess.NewStaticPipeWriter(ParentType)` — comptime-
+    /// parameterized async writer that drains `source` into `stdio_result`.
+    /// The body depends on `bun_io::PipeWriter` + the JS event loop and is
+    /// registered by `bun_runtime` at startup; this stub owns only the fields
+    /// the mid-tier callers touch (`.source`, `.start()`).
+    pub struct StaticPipeWriter<P: ?Sized> {
+        pub source: Source,
+        pub stdio_result: StdioResult,
+        _parent: core::marker::PhantomData<*const P>,
+    }
+
+    impl<P: ?Sized> StaticPipeWriter<P> {
+        pub fn create(
+            _event_loop: impl Sized,
+            _parent: *const P,
+            _result: StdioResult,
+            _source: Source,
+        ) -> std::rc::Rc<Self> {
+            todo!("blocked_on: bun_runtime::api::bun::subprocess::StaticPipeWriter dispatch (tier inversion)")
+        }
+
+        pub fn start(&self) -> bun_sys::Maybe<()> {
+            todo!("blocked_on: bun_runtime::api::bun::subprocess::StaticPipeWriter dispatch (tier inversion)")
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // StdioKind — tiny tri-state used only by `Stdio::Dup2`. The Zig original is
 // `bun.jsc.Subprocess.StdioKind`; defined here (not re-exported from
 // `bun_runtime`) to keep this crate leaf.

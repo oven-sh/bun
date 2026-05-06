@@ -5754,10 +5754,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         is_delete_target: bool,
         define_data: &DefineData,
     ) -> Expr {
-        // Active `defines::DefineData.value` is `Option<expr::Data>` (the round-C
-        // stub); Zig's `valueless` flag is encoded as `None`. Callers gate on
-        // `value.is_some()` before reaching here, so unwrap is safe by contract.
-        let value = define_data.value.expect("value_for_define on valueless DefineData");
+        // Callers gate on `!valueless()` before reaching here, so `value` is a
+        // real Expr.Data by contract (Zig: `define_data.value`).
+        let value = define_data.value;
         match value {
             js_ast::ExprData::EIdentifier(id) => {
                 // Spec P.zig:5510: `define_data.original_name().?` — identifier
@@ -5766,12 +5765,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 // rebind runs against the *resolved* scope ref, not the
                 // define-time ref silently passed through with `None`.
                 let original_name: &[u8] = define_data
-                    .original_name
-                    .as_deref()
+                    .original_name()
                     .expect("identifier define must have original_name");
-                // SAFETY: `define_data` borrows `p.define: &'a Define`; the boxed
-                // `original_name` lives for `'a`. Erase the local borrow lifetime
-                // to satisfy `handle_identifier`'s `Option<&'a [u8]>` param.
+                // SAFETY: `define_data` borrows `p.define: &'a Define`; the
+                // backing `original_name` bytes live for `'a`. Erase the local
+                // borrow lifetime to satisfy `handle_identifier`'s
+                // `Option<&'a [u8]>` param.
                 let original_name: &'a [u8] =
                     unsafe { core::mem::transmute::<&[u8], &'a [u8]>(original_name) };
                 return self.handle_identifier(

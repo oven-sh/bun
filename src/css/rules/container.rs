@@ -28,33 +28,26 @@ impl ContainerName {
 }
 
 // ─── ContainerName parse ──────────────────────────────────────────────────
-// Stub so css_parser's now-un-gated `@container` prelude path type-checks.
-// Real body is the `#[cfg(any())]` port below.
-#[cfg(not(any()))]
-impl ContainerName {
-    pub fn parse(_input: &mut css::Parser) -> css::Result<ContainerName> {
-        todo!("port: ContainerName::parse — gated body below")
-    }
-}
-
-// blocked_on: Parser::new_unexpected_token_error.
-#[cfg(any())]
 impl ContainerName {
     pub fn parse(input: &mut css::Parser) -> css::Result<ContainerName> {
         use crate::css_values::ident::CustomIdentFns;
-        use bun_str::strings;
+        use bun_string::strings;
         let ident = match CustomIdentFns::parse(input) {
             Ok(vv) => vv,
             Err(e) => return Err(e),
         };
 
+        // SAFETY: CustomIdent.v points into the parser source/arena; deref
+        // yields an unbounded borrow which coerces to `'static` (Phase A
+        // lifetime erasure — see PORTING.md §AST crates).
+        let v: &'static [u8] = unsafe { &*ident.v };
         // todo_stuff.match_ignore_ascii_case;
-        if strings::eql_case_insensitive_ascii_check_length(b"none", ident.v)
-            || strings::eql_case_insensitive_ascii_check_length(b"and", ident.v)
-            || strings::eql_case_insensitive_ascii_check_length(b"not", ident.v)
-            || strings::eql_case_insensitive_ascii_check_length(b"or", ident.v)
+        if strings::eql_case_insensitive_ascii_check_length(b"none", v)
+            || strings::eql_case_insensitive_ascii_check_length(b"and", v)
+            || strings::eql_case_insensitive_ascii_check_length(b"not", v)
+            || strings::eql_case_insensitive_ascii_check_length(b"or", v)
         {
-            return Err(input.new_unexpected_token_error(css::Token::Ident(ident.v)));
+            return Err(input.new_unexpected_token_error(css::Token::Ident(v)));
         }
 
         Ok(ContainerName { v: ident })

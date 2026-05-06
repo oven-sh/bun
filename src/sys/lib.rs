@@ -1573,9 +1573,14 @@ pub fn pwritev(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize>
     {
         // SAFETY: `PlatformIoVecConst` is layout-compatible with `libc::iovec`
         // (asserted above); `pwritev(2)` only reads through `iov_base`.
+        // sys.zig:2064 — Darwin uses `pwritev$NOCANCEL` (avoid cancellation point).
+        #[cfg(target_os = "macos")]
+        use nocancel::pwritev as pwritev_sym;
+        #[cfg(not(target_os = "macos"))]
+        use libc::pwritev as pwritev_sym;
         loop {
             let rc = unsafe {
-                libc::pwritev(
+                pwritev_sym(
                     fd.native(),
                     vecs.as_ptr().cast::<libc::iovec>(),
                     vecs.len() as core::ffi::c_int,

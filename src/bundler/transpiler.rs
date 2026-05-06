@@ -1257,11 +1257,296 @@ impl<'a> Transpiler<'a> {
                     return None;
                 }
             }
-            // TODO(b2-blocked): JSON/JSONC/TOML/YAML/JSON5/Text/Md branches
-            // build `js_ast::Stmt`/`Part` slabs via `Arena::alloc_slice_*` and
-            // `Stmt::alloc(S::ExportDefault { .. })` — those constructors are
-            // shaped differently in the live `bun_js_parser::ast` surface.
-            // Full body preserved in `__phase_a_draft` below.
+            // TODO: use lazy export AST
+            options::Loader::Toml
+            | options::Loader::Yaml
+            | options::Loader::Json
+            | options::Loader::Jsonc
+            | options::Loader::Json5 => {
+                // PERF(port): was `inline .toml, .yaml, .json, .jsonc, .json5
+                // => |kind|` — comptime monomorphization per loader; profile in
+                // Phase B.
+                //
+                // PORT NOTE: `bun_interchange::*` parse into the T2 value AST
+                // (`bun_logger::js_ast::Expr`); lift into the full T4
+                // `bun_js_parser::Expr` via the deep-convert `From` bridge
+                // (Expr.rs:1265) so the StoreRef-backed accessors below work.
+                let value_expr: logger::js_ast::Expr = match loader {
+                    options::Loader::Jsonc => {
+                        // We allow importing tsconfig.*.json or jsconfig.*.json with comments
+                        // These files implicitly become JSONC files, which aligns with the behavior of text editors.
+                        match bun_interchange::json::parse_ts_config::<false>(source, log, allocator) {
+                            Ok(e) => e,
+                            Err(_) => return None,
+                        }
+                    }
+                    options::Loader::Json => {
+                        match bun_interchange::json::parse::<false>(source, log, allocator) {
+                            Ok(e) => e,
+                            Err(_) => return None,
+                        }
+                    }
+                    options::Loader::Toml => {
+                        match bun_interchange::toml::TOML::parse(source, log, allocator, false) {
+                            Ok(e) => e,
+                            Err(_) => return None,
+                        }
+                    }
+                    options::Loader::Yaml => {
+                        match bun_interchange::yaml::YAML::parse(source, log, allocator) {
+                            Ok(e) => e,
+                            Err(_) => return None,
+                        }
+                    }
+                    options::Loader::Json5 => {
+                        match bun_interchange::json5::JSON5Parser::parse(source, log, allocator) {
+                            Ok(e) => e,
+                            Err(_) => return None,
+                        }
+                    }
+                    // SAFETY: outer match arm guarantees one of the five.
+                    _ => unsafe { core::hint::unreachable_unchecked() },
+                };
+                let mut expr = js_ast::Expr::from(value_expr);
+
+                let mut symbols: Vec<js_ast::Symbol> = Vec::new();
+
+                // PORT NOTE: reshaped — Zig `allocator.alloc(Part, 1)` returned
+                // an arena slice, but `Ast::from_parts` takes `Box<[Part]>`
+                // (BabyList owns its buffer). The single-part array is built on
+                // the global heap; `stmts` stays arena-backed (`*mut [Stmt]`).
+                let parts: Box<[js_ast::Part]> = 'parts: {
+                    if this_parse.keep_json_and_toml_as_one_statement {
+                        let stmt = js_ast::Stmt::allocate(
+                            allocator,
+                            js_ast::S::SExpr { value: expr, ..Default::default() },
+                            logger::Loc { start: 0 },
+                        );
+                        // PERF(port): was `allocator.alloc(Stmt, 1) catch unreachable`.
+                        let stmts = allocator.alloc_slice_copy(&[stmt]) as *mut [js_ast::Stmt];
+                        break 'parts Box::new([js_ast::Part { stmts, ..Default::default() }]);
+                    }
+
+                    if let Some(obj) = expr.data.e_object_mut() {
+                        let properties: &mut [js_ast::G::Property] = obj.properties.slice_mut();
+                        if !properties.is_empty() {
+                            let n = properties.len();
+                            let mut decls: Vec<js_ast::G::Decl> = Vec::with_capacity(n);
+                            // SAFETY: capacity reserved; every read below is
+                            // gated on `< count` or via the `visited` index
+                            // (which only ever stores already-written slots).
+                            // Mirrors Zig `expandToCapacity()`.
+                            unsafe { decls.set_len(n) };
+
+                            symbols.reserve_exact(n);
+                            // SAFETY: as above; `Symbol` has no `Drop`.
+                            unsafe { symbols.set_len(n) };
+                            // PORT NOTE: `S::ExportClause.items: *mut [ClauseItem]`
+                            // is arena-owned; `ClauseItem: Default` so
+                            // `alloc_slice_fill_default` is fine.
+                            let export_clauses =
+                                allocator.alloc_slice_fill_default::<js_ast::ClauseItem>(n);
+                            let mut duplicate_key_checker: bun_collections::StringHashMap<u32> =
+                                bun_collections::StringHashMap::default();
+                            // duplicate_key_checker drops at end of scope (defer .deinit())
+                            let mut count: usize = 0;
+                            // PORT NOTE: reshaped for borrowck — cannot zip 4
+                            // slices with one mutable borrow into `decls` and
+                            // also random-access `decls[prev]`.
+                            for i in 0..n {
+                                let prop = &mut properties[i];
+                                // SAFETY: data-format parsers always emit
+                                // `e_string` keys (Zig `.?.data.e_string`).
+                                let key = prop.key.as_mut().unwrap();
+                                let key_loc = key.loc;
+                                let name: &[u8] =
+                                    key.data.e_string_mut().unwrap().slice(allocator);
+                                // Do not make named exports for "default" exports
+                                if name == b"default" {
+                                    continue;
+                                }
+
+                                let visited = match duplicate_key_checker.get_or_put(name) {
+                                    Ok(v) => v,
+                                    Err(_) => continue,
+                                };
+                                if visited.found_existing {
+                                    decls[*visited.value_ptr as usize].value =
+                                        Some(prop.value.unwrap());
+                                    continue;
+                                }
+                                *visited.value_ptr = i as u32;
+
+                                symbols[i] = js_ast::Symbol {
+                                    original_name: match bun_string::MutableString::ensure_valid_identifier(name) {
+                                        // PORT NOTE: Phase-A `Str` convention —
+                                        // arena/heap slice with erased lifetime
+                                        // (`Symbol.original_name: *const [u8]`).
+                                        Ok(boxed) => Box::into_raw(boxed) as *const [u8],
+                                        Err(_) => return None,
+                                    },
+                                    ..Default::default()
+                                };
+
+                                let ref_ = js_ast::Ref::init(i as u32, 0, false);
+                                decls[i] = js_ast::G::Decl {
+                                    binding: js_ast::Binding::alloc(
+                                        allocator,
+                                        js_ast::ast::b::Identifier { r#ref: ref_ },
+                                        key_loc,
+                                    ),
+                                    value: Some(prop.value.unwrap()),
+                                };
+                                export_clauses[i] = js_ast::ClauseItem {
+                                    name: js_ast::LocRef { ref_: Some(ref_), loc: key_loc },
+                                    alias: name as *const [u8],
+                                    alias_loc: key_loc,
+                                    ..Default::default()
+                                };
+                                let value_loc = prop.value.unwrap().loc;
+                                prop.value =
+                                    Some(js_ast::Expr::init_identifier(ref_, value_loc));
+                                count += 1;
+                            }
+
+                            decls.truncate(count);
+                            let stmt0 = js_ast::Stmt::alloc(
+                                js_ast::S::Local {
+                                    decls: js_ast::G::DeclList::move_from_list(decls),
+                                    kind: js_ast::S::Kind::KVar,
+                                    ..Default::default()
+                                },
+                                logger::Loc { start: 0 },
+                            );
+                            let stmt1 = js_ast::Stmt::alloc(
+                                js_ast::S::ExportClause {
+                                    items: &mut export_clauses[..count] as *mut [js_ast::ClauseItem],
+                                    is_single_line: false,
+                                },
+                                logger::Loc { start: 0 },
+                            );
+                            let stmt2 = js_ast::Stmt::alloc(
+                                js_ast::S::ExportDefault {
+                                    value: js_ast::StmtOrExpr::Expr(expr),
+                                    default_name: js_ast::LocRef {
+                                        loc: logger::Loc::default(),
+                                        ref_: Some(js_ast::Ref::NONE),
+                                    },
+                                },
+                                logger::Loc { start: 0 },
+                            );
+
+                            let stmts = allocator.alloc_slice_copy(&[stmt0, stmt1, stmt2])
+                                as *mut [js_ast::Stmt];
+                            break 'parts Box::new([js_ast::Part { stmts, ..Default::default() }]);
+                        }
+                    }
+
+                    {
+                        let stmt = js_ast::Stmt::alloc(
+                            js_ast::S::ExportDefault {
+                                value: js_ast::StmtOrExpr::Expr(expr),
+                                default_name: js_ast::LocRef {
+                                    loc: logger::Loc::default(),
+                                    ref_: Some(js_ast::Ref::NONE),
+                                },
+                            },
+                            logger::Loc { start: 0 },
+                        );
+
+                        let stmts =
+                            allocator.alloc_slice_copy(&[stmt]) as *mut [js_ast::Stmt];
+                        break 'parts Box::new([js_ast::Part { stmts, ..Default::default() }]);
+                    }
+                };
+                let mut ast = js_ast::Ast::from_parts(parts);
+                ast.symbols =
+                    js_ast::ast::symbol::List::from_owned_slice(symbols.into_boxed_slice());
+
+                return Some(ParseResult {
+                    ast,
+                    source: dup_source(source),
+                    loader,
+                    input_fd,
+                    already_bundled: AlreadyBundled::None,
+                    pending_imports: Default::default(),
+                    runtime_transpiler_cache: None,
+                    empty: false,
+                });
+            }
+            // TODO: use lazy export AST
+            options::Loader::Text => {
+                let expr = js_ast::Expr::init(
+                    js_ast::E::EString::init(source.contents),
+                    logger::Loc::EMPTY,
+                );
+                let stmt = js_ast::Stmt::alloc(
+                    js_ast::S::ExportDefault {
+                        value: js_ast::StmtOrExpr::Expr(expr),
+                        default_name: js_ast::LocRef {
+                            loc: logger::Loc::default(),
+                            ref_: Some(js_ast::Ref::NONE),
+                        },
+                    },
+                    logger::Loc { start: 0 },
+                );
+                // PERF(port): was `allocator.alloc(Stmt, 1) catch unreachable`.
+                let stmts = allocator.alloc_slice_copy(&[stmt]) as *mut [js_ast::Stmt];
+                let parts: Box<[js_ast::Part]> =
+                    Box::new([js_ast::Part { stmts, ..Default::default() }]);
+
+                return Some(ParseResult {
+                    ast: js_ast::Ast::from_parts(parts),
+                    source: dup_source(source),
+                    loader,
+                    input_fd,
+                    already_bundled: AlreadyBundled::None,
+                    pending_imports: Default::default(),
+                    runtime_transpiler_cache: None,
+                    empty: false,
+                });
+            }
+            options::Loader::Md => {
+                let html: &'static [u8] = match bun_md::render_to_html(source.contents) {
+                    // PORT NOTE: Phase-A `Str` convention — `E::String.data:
+                    // &'static [u8]`. The Zig allocator-backed `[]u8` becomes a
+                    // leaked `Box<[u8]>` until Phase B threads `'bump`.
+                    Ok(h) => &*Box::leak(h),
+                    Err(_) => {
+                        let _ = log.add_error_fmt(
+                            None,
+                            logger::Loc::EMPTY,
+                            format_args!("Failed to render markdown to HTML"),
+                        );
+                        return None;
+                    }
+                };
+                let expr = js_ast::Expr::init(js_ast::E::EString::init(html), logger::Loc::EMPTY);
+                let stmt = js_ast::Stmt::alloc(
+                    js_ast::S::ExportDefault {
+                        value: js_ast::StmtOrExpr::Expr(expr),
+                        default_name: js_ast::LocRef {
+                            loc: logger::Loc::default(),
+                            ref_: Some(js_ast::Ref::NONE),
+                        },
+                    },
+                    logger::Loc { start: 0 },
+                );
+                let stmts = allocator.alloc_slice_copy(&[stmt]) as *mut [js_ast::Stmt];
+                let parts: Box<[js_ast::Part]> =
+                    Box::new([js_ast::Part { stmts, ..Default::default() }]);
+
+                return Some(ParseResult {
+                    ast: js_ast::Ast::from_parts(parts),
+                    source: dup_source(source),
+                    loader,
+                    input_fd,
+                    already_bundled: AlreadyBundled::None,
+                    pending_imports: Default::default(),
+                    runtime_transpiler_cache: None,
+                    empty: false,
+                });
+            }
             options::Loader::Wasm => {
                 if self.options.target.is_bun() {
                     if !source.is_web_assembly() {

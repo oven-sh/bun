@@ -64,20 +64,10 @@ impl LayerName {
         true
     }
 
-    // Stub so css_parser's now-un-gated `@layer` prelude path type-checks.
-    // Real body is the `#[cfg(any())]` port below; un-gate when its
-    // blocked_on list clears.
-    #[cfg(not(any()))]
-    pub fn parse(_input: &mut css::css_parser::Parser<'_>) -> css::css_parser::CssResult<LayerName> {
-        todo!("port: LayerName::parse — gated body below")
-    }
-
-    // blocked_on: rule_parsers (only caller) is `#[cfg(any())]`-gated; parse
-    // body re-enables alongside it. Kept here so the port is preserved.
-    #[cfg(any())]
     pub fn parse(input: &mut css::css_parser::Parser<'_>) -> css::css_parser::CssResult<LayerName> {
         let mut parts: SmallList<&'static [u8], 1> = SmallList::default();
-        let ident = input.expect_ident()?;
+        // SAFETY: ident borrows parser source/arena; see `css_parser::src_str`.
+        let ident = unsafe { css::css_parser::src_str(input.expect_ident()?) };
         parts.append(ident);
 
         loop {
@@ -86,13 +76,13 @@ impl LayerName {
                 -> css::css_parser::CssResult<&'static [u8]>
             {
                 let start_location = i.current_source_location();
-                let tok = *i.next_including_whitespace()?;
+                let tok = i.next_including_whitespace()?.clone();
                 if !matches!(tok, css::Token::Delim(c) if c == u32::from(b'.')) {
                     return Err(start_location.new_basic_unexpected_token_error(tok));
                 }
 
                 let start_location = i.current_source_location();
-                let tok = *i.next_including_whitespace()?;
+                let tok = i.next_including_whitespace()?.clone();
                 if let css::Token::Ident(ident) = tok {
                     return Ok(ident);
                 }

@@ -88,10 +88,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
             StmtData::SDebugger(_) => {
                 p.cur_scope().is_after_const_local_prefix = was_after_after_const_local_prefix;
-                // blocked_on: crate::defines::Define (the one P borrows) lacks `drop_debugger`;
-                //   it's on `defines_full_draft::Define` only. Hard-code false until unified.
-                #[allow(clippy::overly_complex_bool_expr)]
-                if false /* p.define.drop_debugger */ {
+                if p.define.drop_debugger {
                     return Ok(());
                 }
                 stmts.push(*stmt);

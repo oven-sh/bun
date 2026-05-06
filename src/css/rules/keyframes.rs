@@ -115,20 +115,9 @@ impl KeyframesName {
 }
 
 // ─── KeyframesName parse ──────────────────────────────────────────────────
-// Stub so css_parser's now-un-gated `@keyframes` prelude path type-checks.
-// Real body is the `#[cfg(any())]` port below.
-#[cfg(not(any()))]
-impl KeyframesName {
-    pub fn parse(_input: &mut css::Parser) -> css::Result<KeyframesName> {
-        todo!("port: KeyframesName::parse — gated body below")
-    }
-}
-
-// blocked_on: Parser::next/Token shape (css_parser.rs).
-#[cfg(any())]
 impl KeyframesName {
     pub fn parse(input: &mut css::Parser) -> css::Result<KeyframesName> {
-        use bun_str::strings;
+        use bun_string::strings;
         let tok = match input.next() {
             Ok(v) => v.clone(),
             Err(e) => return Err(e),
@@ -147,7 +136,7 @@ impl KeyframesName {
                 {
                     Err(input.new_unexpected_token_error(css::Token::Ident(s)))
                 } else {
-                    Ok(KeyframesName::Ident(CustomIdent { v: s }))
+                    Ok(KeyframesName::Ident(CustomIdent { v: s as *const [u8] }))
                 }
             }
             css::Token::QuotedString(s) => Ok(KeyframesName::Custom(s)),

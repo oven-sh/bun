@@ -1160,25 +1160,43 @@ impl Default for Indentation {
 pub type MangledProps = ArrayHashMap<Ref, *const [u8]>;
 
 // ─── from bun_jsc::RuntimeTranspilerCache (src/jsc/RuntimeTranspilerCache.zig) ─
-// Only the surface the parser touches (input_hash / exports_kind / get) lives
-// here. The on-disk encode/decode + Metadata + Entry machinery stay in
-// `bun_jsc` and operate on `*mut RuntimeTranspilerCache` via the vtable below;
-// they need `bun.sys`/`bun.String`/hashing which are tier-6 deps.
+// B-3 UNIFIED: this is the single canonical struct. `bun_bundler::cache`
+// re-exports it and adds disk-I/O / `js_printer` dispatch via an extension
+// trait (those need `bun_js_printer` / `bun_sys` which sit a tier above
+// js_parser). The parser writes `input_hash` / `features_hash` / `exports_kind`
+// and calls `get()` through the vtable; the bundler/jsc tier owns `entry` and
+// the on-disk encode/decode (`Metadata` / `Entry` live in `bun_bundler::cache`
+// and are stored here type-erased as `*mut ()`).
 pub struct RuntimeTranspilerCache {
     pub input_hash: Option<u64>,
     pub input_byte_length: Option<u64>,
     pub features_hash: Option<u64>,
     pub exports_kind: ExportsKind,
-    /// Set by `get()` when a cache hit returns transpiled output. Owned by
-    /// `output_code_allocator` on the jsc side; parser only inspects presence.
-    pub output_code: Option<bun_string::String>,
-    /// Opaque storage for `bun_jsc::RuntimeTranspilerCache::Entry` — the
-    /// concrete type lives in tier-6 and is round-tripped via the vtable.
+    /// Set by `put()` / `get()` when a cache hit returns transpiled output.
+    /// Zig: `?bun.String` — bundler/parser only store/read the bytes; T6 owns
+    /// the `bun.String` wrapper when surfacing to JS.
+    pub output_code: Option<Box<[u8]>>,
+    /// Opaque storage for `bun_bundler::cache::RuntimeTranspilerCacheEntry` —
+    /// the concrete type lives a tier up and is round-tripped via cast.
     pub entry: Option<*mut ()>,
 
     /// Dispatch slot — `bun_jsc` writes `&JSC_TRANSPILER_CACHE_VTABLE` at init.
     /// `None` ⇒ caching disabled (e.g. wasm builds, `--no-transpiler-cache`).
     pub vtable: Option<&'static RuntimeTranspilerCacheVTable>,
+}
+
+impl Default for RuntimeTranspilerCache {
+    fn default() -> Self {
+        Self {
+            input_hash: None,
+            input_byte_length: None,
+            features_hash: None,
+            exports_kind: ExportsKind::None,
+            output_code: None,
+            entry: None,
+            vtable: None,
+        }
+    }
 }
 
 /// Manual vtable per PORTING.md §Dispatch (cold path: at most twice per parse).

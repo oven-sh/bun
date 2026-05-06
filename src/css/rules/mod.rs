@@ -186,15 +186,18 @@ pub(super) mod dc {
     /// Field-walk over both `DeclarationList`s, routing each `Property`
     /// through `dc::property` so the only remaining bottleneck is the
     /// per-variant `Property::deep_clone` body.
+    ///
+    /// PORT NOTE: threads the real `'bump` lifetime instead of fabricating
+    /// `'static` (PORTING.md §Forbidden: `unsafe { &*(p as *const _) }` to
+    /// extend a lifetime). Callers whose storage is still pinned to
+    /// `DeclarationBlock<'static>` must fix that storage type — the lie
+    /// belongs there, not here, and collapses when `CssRule<'bump, R>`
+    /// re-threads the arena lifetime.
     #[inline]
-    pub fn decl_block(
-        this: &crate::DeclarationBlock<'static>,
-        bump: &Arena,
-    ) -> crate::DeclarationBlock<'static> {
-        // 'bump-erasure: `DeclarationBlock` currently lives on `'static`
-        // crate-wide (see declaration.rs `parse` + rules/style.rs `minify`);
-        // collapses when `CssRule<'bump, R>` re-threads the arena lifetime.
-        let bump: &'static Arena = unsafe { &*(bump as *const Arena) };
+    pub fn decl_block<'bump>(
+        this: &crate::DeclarationBlock<'bump>,
+        bump: &'bump Arena,
+    ) -> crate::DeclarationBlock<'bump> {
         crate::DeclarationBlock {
             important_declarations: bun_alloc::ArenaVec::from_iter_in(
                 this.important_declarations.iter().map(|p| property(p, bump)),

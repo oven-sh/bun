@@ -1964,10 +1964,10 @@ unsafe fn get_loader_and_virtual_source<'a>(
         const STDIN: &[u8] = b"[stdin]";
         let is_eval = specifier.len() > EVAL.len()
             && specifier.ends_with(EVAL)
-            && bun_paths::is_sep_any(specifier[specifier.len() - EVAL.len() - 1]);
+            && bun_paths::resolve_path::is_sep_any(specifier[specifier.len() - EVAL.len() - 1]);
         let is_stdin = specifier.len() > STDIN.len()
             && specifier.ends_with(STDIN)
-            && bun_paths::is_sep_any(specifier[specifier.len() - STDIN.len() - 1]);
+            && bun_paths::resolve_path::is_sep_any(specifier[specifier.len() - STDIN.len() - 1]);
         if is_eval || is_stdin {
             // SAFETY: `eval_source` is heap-owned by the VM (`Box<Source>`); it
             // outlives the synchronous transpile this borrow feeds into.
@@ -2009,12 +2009,22 @@ unsafe fn get_loader_and_virtual_source<'a>(
                     // SAFETY: same lifetime erasure as above — `shared_view()`
                     // borrows the blob's backing store (held in the caller's
                     // `blob_to_deinit` slot for the synchronous transpile).
-                    let contents: &'a [u8] = unsafe {
+                    // `bun_logger::Source` stores `&'static [u8]` (Phase A
+                    // shape — see logger/lib.rs §`type Str`), so erase to
+                    // `'static`; sound because the blob outlives the
+                    // synchronous `transpile_source_code_inner` call.
+                    let (contents, path_text): (&'static [u8], &'static [u8]) = unsafe {
                         let v = blob.shared_view();
-                        core::slice::from_raw_parts(v.as_ptr(), v.len())
+                        (
+                            core::slice::from_raw_parts(v.as_ptr(), v.len()),
+                            core::slice::from_raw_parts(path.text.as_ptr(), path.text.len()),
+                        )
                     };
                     *virtual_source_to_use = Some(bun_logger::Source {
-                        path: path.clone(),
+                        // PORT NOTE: `bun_logger::Source::path` is the
+                        // logger-local `fs::Path` (NOT `bun_resolver::fs::Path`
+                        // — see logger/lib.rs:32-). Re-init from `path.text`.
+                        path: bun_logger::fs::Path::init(path_text),
                         contents,
                         ..Default::default()
                     });
@@ -2161,8 +2171,12 @@ unsafe fn transpile_file(
         }
     };
     // Spec :914 — `defer if (blob_to_deinit) |*blob| blob.deinit()`.
-    let _blob_guard = scopeguard::guard((), |_| {
-        if let Some(mut blob) = blob_to_deinit.take() {
+    // PORT NOTE: reshaped for borrowck — capture the `is_some()` flag *before*
+    // moving the option into the scopeguard so the `transpile_async` predicate
+    // (spec :980) can still read it without aliasing the guard's `&mut`.
+    let had_blob = blob_to_deinit.is_some();
+    let _blob_guard = scopeguard::guard(blob_to_deinit, |mut slot| {
+        if let Some(mut blob) = slot.take() {
             blob.deinit();
         }
     });
@@ -2171,7 +2185,7 @@ unsafe fn transpile_file(
     // Spec :915-939.
     if let Some(loader_type) = force_loader_type {
         // PORT NOTE: `@branchHint(.unlikely)` dropped (no stable Rust equiv).
-        bun_core::assert!(!is_commonjs_require);
+        debug_assert!(!is_commonjs_require);
         lr.loader = Some(loader_type);
     } else if is_commonjs_require
         // SAFETY: per fn contract.
@@ -2252,7 +2266,7 @@ unsafe fn transpile_file(
                 (*jsc_vm).plugin_runner.is_none(),
             )
         };
-        if blob_to_deinit.is_none()
+        if !had_blob
             && allow_promise
             && (has_loaded || is_in_preload)
             && concurrent_loader.is_java_script_like()
@@ -2410,7 +2424,7 @@ unsafe fn transpile_file(
         Err(err) => {
             // Spec :1100-1115.
             if err == bun_core::err!("AsyncModule") {
-                bun_core::assert!(!promise.is_null());
+                debug_assert!(!promise.is_null());
                 return promise.cast::<c_void>();
             }
             if err == bun_core::err!("PluginError") {

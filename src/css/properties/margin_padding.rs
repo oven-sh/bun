@@ -1380,48 +1380,61 @@ enum LogicalSidePair {
 // Spec instantiations
 // ──────────────────────────────────────────────────────────────────────────
 //
-// TODO(port): the extract_*/make_*/shorthand_* bodies below are pure
-// `match property { Property::Variant(v) => v, _ => unreachable!() }` /
-// `Property::Variant(v)` boilerplate. They are stubbed with `todo!()` here so
-// the *generic* logic above can be reviewed against the Zig 1:1; Phase B
-// should generate them with a `size_handler_spec!` macro keyed on the same
-// 13-argument table the Zig `NewSizeHandler(...)` calls used.
+// PORT NOTE: un-gated B-2 round 15 — the `extract_*` / `make_*` / `shorthand_*`
+// bodies are pure `@field` / `@unionInit` token-pasting in Zig
+// (`NewSizeHandler`). `size_handler_spec_projections!` expands them from the
+// 11 `Property` variant idents + 3 shorthand value-type idents that the Zig
+// `NewSizeHandler(...)` call sites passed positionally.
 
-macro_rules! stub_spec_projections {
-    () => {
-        fn extract_top(_p: &Property) -> &LengthPercentageOrAuto { todo!("TODO(port): @field projection") }
-        fn extract_bottom(_p: &Property) -> &LengthPercentageOrAuto { todo!("TODO(port): @field projection") }
-        fn extract_left(_p: &Property) -> &LengthPercentageOrAuto { todo!("TODO(port): @field projection") }
-        fn extract_right(_p: &Property) -> &LengthPercentageOrAuto { todo!("TODO(port): @field projection") }
-        fn extract_block_start(_p: &Property) -> &LengthPercentageOrAuto { todo!("TODO(port): @field projection") }
-        fn extract_block_end(_p: &Property) -> &LengthPercentageOrAuto { todo!("TODO(port): @field projection") }
-        fn extract_inline_start(_p: &Property) -> &LengthPercentageOrAuto { todo!("TODO(port): @field projection") }
-        fn extract_inline_end(_p: &Property) -> &LengthPercentageOrAuto { todo!("TODO(port): @field projection") }
-        fn extract_shorthand(_p: &Property) -> &Self::Shorthand { todo!("TODO(port): @field projection") }
-        fn extract_block_shorthand(_p: &Property) -> &Self::BlockShorthand { todo!("TODO(port): @field projection") }
-        fn extract_inline_shorthand(_p: &Property) -> &Self::InlineShorthand { todo!("TODO(port): @field projection") }
-        fn make_top(_v: LengthPercentageOrAuto) -> Property { todo!("TODO(port): @unionInit") }
-        fn make_bottom(_v: LengthPercentageOrAuto) -> Property { todo!("TODO(port): @unionInit") }
-        fn make_left(_v: LengthPercentageOrAuto) -> Property { todo!("TODO(port): @unionInit") }
-        fn make_right(_v: LengthPercentageOrAuto) -> Property { todo!("TODO(port): @unionInit") }
-        fn make_block_start(_v: LengthPercentageOrAuto) -> Property { todo!("TODO(port): @unionInit") }
-        fn make_block_end(_v: LengthPercentageOrAuto) -> Property { todo!("TODO(port): @unionInit") }
-        fn make_inline_start(_v: LengthPercentageOrAuto) -> Property { todo!("TODO(port): @unionInit") }
-        fn make_inline_end(_v: LengthPercentageOrAuto) -> Property { todo!("TODO(port): @unionInit") }
+macro_rules! size_handler_spec_projections {
+    (
+        $Top:ident, $Bottom:ident, $Left:ident, $Right:ident,
+        $BlockStart:ident, $BlockEnd:ident, $InlineStart:ident, $InlineEnd:ident,
+        $Shorthand:ident, $BlockShorthand:ident, $InlineShorthand:ident,
+        $ShorthandTy:ident, $BlockShorthandTy:ident, $InlineShorthandTy:ident
+    ) => {
+        const TOP_ID: PropertyId = PropertyId::$Top;
+        const BOTTOM_ID: PropertyId = PropertyId::$Bottom;
+        const LEFT_ID: PropertyId = PropertyId::$Left;
+        const RIGHT_ID: PropertyId = PropertyId::$Right;
+
+        fn extract_top(p: &Property) -> &LengthPercentageOrAuto { match p { Property::$Top(v) => v, _ => unreachable!() } }
+        fn extract_bottom(p: &Property) -> &LengthPercentageOrAuto { match p { Property::$Bottom(v) => v, _ => unreachable!() } }
+        fn extract_left(p: &Property) -> &LengthPercentageOrAuto { match p { Property::$Left(v) => v, _ => unreachable!() } }
+        fn extract_right(p: &Property) -> &LengthPercentageOrAuto { match p { Property::$Right(v) => v, _ => unreachable!() } }
+        fn extract_block_start(p: &Property) -> &LengthPercentageOrAuto { match p { Property::$BlockStart(v) => v, _ => unreachable!() } }
+        fn extract_block_end(p: &Property) -> &LengthPercentageOrAuto { match p { Property::$BlockEnd(v) => v, _ => unreachable!() } }
+        fn extract_inline_start(p: &Property) -> &LengthPercentageOrAuto { match p { Property::$InlineStart(v) => v, _ => unreachable!() } }
+        fn extract_inline_end(p: &Property) -> &LengthPercentageOrAuto { match p { Property::$InlineEnd(v) => v, _ => unreachable!() } }
+        fn extract_shorthand(p: &Property) -> &Self::Shorthand { match p { Property::$Shorthand(v) => v, _ => unreachable!() } }
+        fn extract_block_shorthand(p: &Property) -> &Self::BlockShorthand { match p { Property::$BlockShorthand(v) => v, _ => unreachable!() } }
+        fn extract_inline_shorthand(p: &Property) -> &Self::InlineShorthand { match p { Property::$InlineShorthand(v) => v, _ => unreachable!() } }
+        fn make_top(v: LengthPercentageOrAuto) -> Property { Property::$Top(v) }
+        fn make_bottom(v: LengthPercentageOrAuto) -> Property { Property::$Bottom(v) }
+        fn make_left(v: LengthPercentageOrAuto) -> Property { Property::$Left(v) }
+        fn make_right(v: LengthPercentageOrAuto) -> Property { Property::$Right(v) }
+        fn make_block_start(v: LengthPercentageOrAuto) -> Property { Property::$BlockStart(v) }
+        fn make_block_end(v: LengthPercentageOrAuto) -> Property { Property::$BlockEnd(v) }
+        fn make_inline_start(v: LengthPercentageOrAuto) -> Property { Property::$InlineStart(v) }
+        fn make_inline_end(v: LengthPercentageOrAuto) -> Property { Property::$InlineEnd(v) }
         fn make_shorthand(
-            _top: LengthPercentageOrAuto, _bottom: LengthPercentageOrAuto,
-            _left: LengthPercentageOrAuto, _right: LengthPercentageOrAuto,
-        ) -> Property { todo!("TODO(port): @unionInit") }
-        fn make_block_shorthand(_s: LengthPercentageOrAuto, _e: LengthPercentageOrAuto) -> Property { todo!("TODO(port): @unionInit") }
-        fn make_inline_shorthand(_s: LengthPercentageOrAuto, _e: LengthPercentageOrAuto) -> Property { todo!("TODO(port): @unionInit") }
-        fn shorthand_top(_v: &Self::Shorthand) -> &LengthPercentageOrAuto { todo!("TODO(port)") }
-        fn shorthand_right(_v: &Self::Shorthand) -> &LengthPercentageOrAuto { todo!("TODO(port)") }
-        fn shorthand_bottom(_v: &Self::Shorthand) -> &LengthPercentageOrAuto { todo!("TODO(port)") }
-        fn shorthand_left(_v: &Self::Shorthand) -> &LengthPercentageOrAuto { todo!("TODO(port)") }
-        fn block_shorthand_start(_v: &Self::BlockShorthand) -> &LengthPercentageOrAuto { todo!("TODO(port)") }
-        fn block_shorthand_end(_v: &Self::BlockShorthand) -> &LengthPercentageOrAuto { todo!("TODO(port)") }
-        fn inline_shorthand_start(_v: &Self::InlineShorthand) -> &LengthPercentageOrAuto { todo!("TODO(port)") }
-        fn inline_shorthand_end(_v: &Self::InlineShorthand) -> &LengthPercentageOrAuto { todo!("TODO(port)") }
+            top: LengthPercentageOrAuto, bottom: LengthPercentageOrAuto,
+            left: LengthPercentageOrAuto, right: LengthPercentageOrAuto,
+        ) -> Property { Property::$Shorthand($ShorthandTy { top, right, bottom, left }) }
+        fn make_block_shorthand(s: LengthPercentageOrAuto, e: LengthPercentageOrAuto) -> Property {
+            Property::$BlockShorthand($BlockShorthandTy { block_start: s, block_end: e })
+        }
+        fn make_inline_shorthand(s: LengthPercentageOrAuto, e: LengthPercentageOrAuto) -> Property {
+            Property::$InlineShorthand($InlineShorthandTy { inline_start: s, inline_end: e })
+        }
+        fn shorthand_top(v: &Self::Shorthand) -> &LengthPercentageOrAuto { &v.top }
+        fn shorthand_right(v: &Self::Shorthand) -> &LengthPercentageOrAuto { &v.right }
+        fn shorthand_bottom(v: &Self::Shorthand) -> &LengthPercentageOrAuto { &v.bottom }
+        fn shorthand_left(v: &Self::Shorthand) -> &LengthPercentageOrAuto { &v.left }
+        fn block_shorthand_start(v: &Self::BlockShorthand) -> &LengthPercentageOrAuto { &v.block_start }
+        fn block_shorthand_end(v: &Self::BlockShorthand) -> &LengthPercentageOrAuto { &v.block_end }
+        fn inline_shorthand_start(v: &Self::InlineShorthand) -> &LengthPercentageOrAuto { &v.inline_start }
+        fn inline_shorthand_end(v: &Self::InlineShorthand) -> &LengthPercentageOrAuto { &v.inline_end }
     };
 }
 
@@ -1444,7 +1457,12 @@ impl SizeHandlerSpec for MarginSpec {
     type Shorthand = Margin;
     type BlockShorthand = MarginBlock;
     type InlineShorthand = MarginInline;
-    stub_spec_projections!();
+    size_handler_spec_projections!(
+        MarginTop, MarginBottom, MarginLeft, MarginRight,
+        MarginBlockStart, MarginBlockEnd, MarginInlineStart, MarginInlineEnd,
+        Margin, MarginBlock, MarginInline,
+        Margin, MarginBlock, MarginInline
+    );
 }
 
 pub struct PaddingSpec;
@@ -1466,7 +1484,12 @@ impl SizeHandlerSpec for PaddingSpec {
     type Shorthand = Padding;
     type BlockShorthand = PaddingBlock;
     type InlineShorthand = PaddingInline;
-    stub_spec_projections!();
+    size_handler_spec_projections!(
+        PaddingTop, PaddingBottom, PaddingLeft, PaddingRight,
+        PaddingBlockStart, PaddingBlockEnd, PaddingInlineStart, PaddingInlineEnd,
+        Padding, PaddingBlock, PaddingInline,
+        Padding, PaddingBlock, PaddingInline
+    );
 }
 
 pub struct ScrollMarginSpec;
@@ -1488,7 +1511,12 @@ impl SizeHandlerSpec for ScrollMarginSpec {
     type Shorthand = ScrollMargin;
     type BlockShorthand = ScrollMarginBlock;
     type InlineShorthand = ScrollMarginInline;
-    stub_spec_projections!();
+    size_handler_spec_projections!(
+        ScrollMarginTop, ScrollMarginBottom, ScrollMarginLeft, ScrollMarginRight,
+        ScrollMarginBlockStart, ScrollMarginBlockEnd, ScrollMarginInlineStart, ScrollMarginInlineEnd,
+        ScrollMargin, ScrollMarginBlock, ScrollMarginInline,
+        ScrollMargin, ScrollMarginBlock, ScrollMarginInline
+    );
 }
 
 pub struct InsetSpec;
@@ -1510,7 +1538,12 @@ impl SizeHandlerSpec for InsetSpec {
     type Shorthand = Inset;
     type BlockShorthand = InsetBlock;
     type InlineShorthand = InsetInline;
-    stub_spec_projections!();
+    size_handler_spec_projections!(
+        Top, Bottom, Left, Right,
+        InsetBlockStart, InsetBlockEnd, InsetInlineStart, InsetInlineEnd,
+        Inset, InsetBlock, InsetInline,
+        Inset, InsetBlock, InsetInline
+    );
 }
 
 // NOTE: Zig also defined `ScrollPadding{,Block,Inline}` value types above but

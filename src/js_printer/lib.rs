@@ -6725,8 +6725,10 @@ impl GenerateSourceMap {
 // `bun_crash_handler::current_action` / `bun_core::perf::trace` /
 // `bun_sourcemap::chunk::Builder: Default` blockers are all real now, so the
 // former `__gated_entry_points` wrapper has been flattened away).
-// `print_ast`'s minify-renamer driver and `print_json` remain individually
-// re-gated on lower-tier surface (see TODO(b2-blocked) markers inline).
+// `print_ast` is live (borrowck reshape: `opts` re-reads routed through
+// `printer.options`, `*mut Symbol` for `must_not_be_renamed`, raw-ptr
+// `Scope.parent` backref). `print_json` remains individually re-gated on
+// lower-tier surface (see TODO(b2-blocked) markers inline).
 // ───────────────────────────────────────────────────────────────────────────
 use self::__gated_printer::{Printer, slice_of};
 use js_ast::Ast;

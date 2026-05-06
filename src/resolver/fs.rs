@@ -1808,13 +1808,18 @@ impl RealFS {
             };
             // TODO(port): ownership — leaking buf to return &[u8] (matches Zig allocator-owned semantics)
             let buf = Box::leak(buf);
-            file_contents = &buf[..read_count + initial_read.len()];
+            file_contents_ptr = buf.as_ptr();
+            file_contents_len = read_count + initial_read.len();
             debug!("read({}, {}) = {}", file.handle(), size, read_count);
 
             // TODO(b2-blocked): `strings::BOM` (gated in `immutable/unicode.rs`) —
             // BOM strip + UTF-16→UTF-8 transcode. Serve bytes verbatim until then.
         }
 
+        // SAFETY: see PORT NOTE above — `file_contents_ptr` borrows `shared_buffer.list` (which
+        // outlives this fn per the caller contract) or a `Box::leak`'d alloc.
+        let file_contents =
+            unsafe { core::slice::from_raw_parts(file_contents_ptr, file_contents_len) };
         Ok(PathContentsPair { path: Path::init(path), contents: file_contents })
     }
 

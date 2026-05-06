@@ -86,17 +86,19 @@ impl TimerHeap {
         if self.root.is_null() {
             self.root = v;
         } else {
-            // PORT NOTE: cannot meld without `IntrusiveField` access on
-            // EventLoopTimer (field type is a private stub in bun_event_loop).
-            // Degenerate to "newest wins" until the field is real; this is
-            // observably wrong for >1 concurrent timer but keeps the type
-            // layout + state-machine real for keystone-C wiring.
+            // PORT NOTE (§Forbidden silent-no-op): the previous "newest-wins"
+            // degenerate path **dropped** whichever node lost the comparison —
+            // the discarded timer never fires and its refcount leaks. We cannot
+            // implement the real meld without `bun_io::heap::IntrusiveField`
+            // pointers on `EventLoopTimer.heap` (orphan-rule blocked; the
+            // lower-tier field is a zero-sized stub). Fail loudly instead of
+            // silently losing timers.
             // TODO(b2-blocked): bun_event_loop::EventLoopTimer::heap field type
-            self.root = if EventLoopTimer::less((), unsafe { &*v }, unsafe { &*self.root }) {
-                v
-            } else {
-                self.root
-            };
+            // — replace with `bun_io::heap::Intrusive::insert` (full meld).
+            todo!(
+                "TimerHeap::insert: pairing-heap meld blocked on \
+                 bun_event_loop::EventLoopTimer re-exporting bun_io::heap::IntrusiveField"
+            );
         }
     }
 
@@ -104,8 +106,16 @@ impl TimerHeap {
     pub unsafe fn remove(&mut self, v: *mut EventLoopTimer) {
         if core::ptr::eq(self.root, v) {
             self.root = core::ptr::null_mut();
+        } else {
+            // PORT NOTE (§Forbidden silent-no-op): removing a non-root node
+            // was previously a silent no-op, leaving `v` reachable from the
+            // heap after the caller assumed it was unlinked. Fail loudly.
+            // TODO(b2-blocked): full intrusive remove — see header note.
+            todo!(
+                "TimerHeap::remove: non-root removal blocked on \
+                 bun_event_loop::EventLoopTimer re-exporting bun_io::heap::IntrusiveField"
+            );
         }
-        // TODO(b2-blocked): full intrusive remove — see header note.
     }
 
     pub fn delete_min(&mut self) -> Option<*mut EventLoopTimer> {

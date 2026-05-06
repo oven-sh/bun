@@ -4746,7 +4746,7 @@ impl<'a> BundleV2<'a> {
             contents: std::borrow::Cow::Borrowed(&b""[..]),
             ..Default::default()
         };
-        let mut js_parser_options = bun_js_parser::ast::ParserOptions::init(self.transpiler_for_target(target).options.jsx.clone(), Loader::Html);
+        let mut js_parser_options = bun_js_parser::ast::ParserOptions::init(self.transpiler_for_target(target).options.jsx.clone().into(), Loader::Html);
         js_parser_options.bundle = true;
 
         let unique_key = self.allocator().alloc_str(&format!(

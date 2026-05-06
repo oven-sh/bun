@@ -4585,22 +4585,22 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         0x5C /* '\\' */ => text.push(Enc::ch(b'\\')),
 
                         0x4E /* 'N' */ => match Enc::KIND {
-                            EncodingKind::Utf8 => text.extend_from_slice(Enc::literal(&[0xC2, 0x85])),
+                            EncodingKind::Utf8 => text.extend_from_slice(&Enc::literal(&[0xC2, 0x85])),
                             EncodingKind::Utf16 => text.push(Enc::unit_from_u16(0x0085)),
                             EncodingKind::Latin1 => return Err(ParseError::UnexpectedCharacter),
                         },
                         0x5F /* '_' */ => match Enc::KIND {
-                            EncodingKind::Utf8 => text.extend_from_slice(Enc::literal(&[0xC2, 0xA0])),
+                            EncodingKind::Utf8 => text.extend_from_slice(&Enc::literal(&[0xC2, 0xA0])),
                             EncodingKind::Utf16 => text.push(Enc::unit_from_u16(0x00A0)),
                             EncodingKind::Latin1 => return Err(ParseError::UnexpectedCharacter),
                         },
                         0x4C /* 'L' */ => match Enc::KIND {
-                            EncodingKind::Utf8 => text.extend_from_slice(Enc::literal(&[0xE2, 0x80, 0xA8])),
+                            EncodingKind::Utf8 => text.extend_from_slice(&Enc::literal(&[0xE2, 0x80, 0xA8])),
                             EncodingKind::Utf16 => text.push(Enc::unit_from_u16(0x2028)),
                             EncodingKind::Latin1 => return Err(ParseError::UnexpectedCharacter),
                         },
                         0x50 /* 'P' */ => match Enc::KIND {
-                            EncodingKind::Utf8 => text.extend_from_slice(Enc::literal(&[0xE2, 0x80, 0xA9])),
+                            EncodingKind::Utf8 => text.extend_from_slice(&Enc::literal(&[0xE2, 0x80, 0xA9])),
                             EncodingKind::Utf16 => text.push(Enc::unit_from_u16(0x2029)),
                             EncodingKind::Latin1 => return Err(ParseError::UnexpectedCharacter),
                         },

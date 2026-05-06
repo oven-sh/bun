@@ -1003,7 +1003,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // Lower class field syntax for browsers that don't support it
             stmts.extend_from_slice(lowered);
         } else {
-            // blocked_on: replace_exports.get_ptr + inject_replacement_export — see _draft.
+            let ref_ = data.class.class_name.unwrap().ref_.unwrap();
+            let name = p.load_name_from_ref(ref_);
+            if let Some(replacement) = p.options.features.replace_exports.get_ptr(name).cloned() {
+                if p.inject_replacement_export(
+                    stmts,
+                    ref_,
+                    data.class.class_name.unwrap().loc,
+                    &replacement,
+                ) {
+                    p.is_control_flow_dead = original_is_dead;
+                }
+            }
         }
 
         // Handle exporting this class from a namespace

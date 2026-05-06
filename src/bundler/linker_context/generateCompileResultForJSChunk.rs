@@ -149,10 +149,15 @@ fn generate_compile_result_for_js_chunk_impl(
 
     // SAFETY: worker.allocator points at worker.heap, initialized in Worker::create.
     let worker_alloc = unsafe { &*worker.allocator };
+    // SAFETY: split borrow of `chunk` — `generate_code_for_file_in_chunk_js` never
+    // touches `chunk.renamer` through its `chunk` parameter (Zig passes the renamer
+    // union by value alongside `*Chunk`); take a raw-ptr view so borrowck doesn't
+    // see two overlapping `&mut chunk` borrows.
+    let renamer_ptr: *mut crate::bun_renamer::ChunkRenamer = core::ptr::addr_of_mut!(chunk.renamer);
     let result = generate_code_for_file_in_chunk_js(
         c,
         &mut buffer_writer,
-        &mut chunk.renamer,
+        unsafe { (*renamer_ptr).as_renamer() },
         chunk,
         part_range,
         to_common_js_ref,

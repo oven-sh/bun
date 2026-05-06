@@ -891,10 +891,12 @@ pub mod command {
                 super::audit_command::AuditCommand::exec(ctx)?;
             }
             Tag::WhyCommand => {
+                // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
                 let ctx = unsafe { &mut *init(Tag::WhyCommand, log)? };
                 return super::why_command::WhyCommand::exec(ctx);
             }
             Tag::BunxCommand => {
+                // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
                 let ctx = unsafe { &mut *init(Tag::BunxCommand, log)? };
                 // SAFETY: IS_BUNX_EXE set during which() before any threads.
                 let start_idx = if unsafe { IS_BUNX_EXE } { 0 } else { 1 };
@@ -902,6 +904,7 @@ pub mod command {
             }
             Tag::ReplCommand => {
                 // PORT NOTE: Zig inits with .RunCommand here (repl reuses run params).
+                // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
                 let ctx = unsafe { &mut *init(Tag::RunCommand, log)? };
                 return super::repl_command::ReplCommand::exec(ctx);
             }

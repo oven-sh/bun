@@ -1,5 +1,3 @@
-#![allow(unexpected_cfgs)] // `ci_assert` feature gate is a Phase-B placeholder (see MimallocArena.rs).
-
 use core::mem::offset_of;
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, Strong};

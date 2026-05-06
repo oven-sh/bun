@@ -1647,7 +1647,7 @@ pub mod js_bundler {
 
         pub value: LoadValue,
         pub js_task: jsc::AnyTask,
-        pub task: jsc::AnyEventLoop::Task,
+        pub task: jsc::AnyTaskWithExtraContext,
         pub parse_task: &'a mut bun_bundler::ParseTask,
         /// Faster path: skip the extra threadpool dispatch when the file is not found
         pub was_file: bool,

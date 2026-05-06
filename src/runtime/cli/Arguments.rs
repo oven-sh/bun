@@ -886,8 +886,8 @@ pub static BUILD_ONLY_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| concat
         clap::parse_param!("--windows-copyright <STR>        When using --compile targeting Windows, set the executable copyright"),
     ],
     maybe_bake_debug_params!(),
-);
-pub static BUILD_PARAMS: &[ParamType] = clap::concat_params!(BUILD_ONLY_PARAMS, TRANSPILER_PARAMS_, BASE_PARAMS_);
+));
+pub static BUILD_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| concat_params!(BUILD_ONLY_PARAMS, TRANSPILER_PARAMS_, BASE_PARAMS_));
 
 // TODO: update test completions
 pub static TEST_ONLY_PARAMS: &[ParamType] = &[

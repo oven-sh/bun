@@ -58,7 +58,6 @@ pub fn convert_stmts_for_chunk(
     let should_strip_exports = c.options.mode != LinkerOptionsMode::Passthrough
         || c.graph.files.items_entry_point_kind()[source_index as usize] != EntryPoint::Kind::None;
 
-    let flags = c.graph.meta.items_flags();
     let output_format = c.options.output_format;
 
     // If this file is a CommonJS entry point, double-write re-exports to the

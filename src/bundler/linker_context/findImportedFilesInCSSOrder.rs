@@ -188,7 +188,7 @@ pub fn find_imported_files_in_css_order<'a>(
             // Iterate over the top-level "@import" rules
             let mut import_record_idx: usize = 0;
             for rule in top_level_rules.v.iter() {
-                if let bun_css::CssRule::Import(import_rule) = rule {
+                if let BundlerCssRule::Import(import_rule) = rule {
                     // `defer import_record_idx += 1;` — increment at end of this arm
                     let record = self.all_import_records[source_index.get() as usize]
                         .at(import_record_idx);

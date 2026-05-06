@@ -179,11 +179,6 @@ impl<'a> BundleV2<'a> {
     }
 
     #[inline]
-    pub fn allocator(&self) -> &bun_alloc::Arena {
-        &self.graph.heap
-    }
-
-    #[inline]
     pub fn dev_server_handle(&self) -> Option<&dispatch::DevServerHandle> {
         self.dev_server.as_ref()
     }

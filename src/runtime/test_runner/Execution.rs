@@ -38,7 +38,7 @@
 use core::ptr::NonNull;
 #[allow(unused_imports)] use crate::test_runner::expect::{JSValueTestExt, JSGlobalObjectTestExt, make_formatter};
 
-use bun_core::Timespec; // TODO(port): confirm crate path for bun.timespec
+use bun_core::{Timespec, TimespecMockMode};
 use bun_jsc::{JSGlobalObject, JsResult};
 // `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -46,10 +46,54 @@ use bun_core::scoped_log;
 
 use super::debug::group as group_log; // bun_test.debug.group
 use super::bun_test::{
-    BunTest, BunTestPtr, EntryData, ExecutionEntry, HandleUncaughtExceptionResult, Order, Phase,
-    RefDataValue, ScopeMode, StepResult,
+    group_begin, AddedInPhase, BunTest, BunTestPtr, EntryData, ExecutionEntry,
+    HandleUncaughtExceptionResult, Order, Phase, RefDataValue, ScopeMode, StepResult,
 };
 use crate::cli::test_command;
+
+// ── local shims for upstream Timespec methods not yet ported ───────────────
+// Zig: `bun.timespec.now(.force_real_time)` etc. — bun_core exposes the
+// generic `now(mode)` form; wrap the convenience names here.
+pub(crate) trait TimespecExt {
+    fn now_force_real_time() -> Timespec;
+    fn ms_from_now_force_real_time(interval: i64) -> Timespec;
+    fn since_now_force_real_time(&self) -> u64;
+    fn min_ignore_epoch(self, other: Timespec) -> Timespec;
+}
+impl TimespecExt for Timespec {
+    #[inline]
+    fn now_force_real_time() -> Timespec {
+        Timespec::now(TimespecMockMode::ForceRealTime)
+    }
+    #[inline]
+    fn ms_from_now_force_real_time(interval: i64) -> Timespec {
+        Timespec::ms_from_now(TimespecMockMode::ForceRealTime, interval)
+    }
+    #[inline]
+    fn since_now_force_real_time(&self) -> u64 {
+        self.since_now(TimespecMockMode::ForceRealTime)
+    }
+    /// Port of `bun.timespec.minIgnoreEpoch` (epoch == "no timeout", treated as +∞).
+    fn min_ignore_epoch(self, other: Timespec) -> Timespec {
+        let order = if self.eql(&other) {
+            core::cmp::Ordering::Equal
+        } else if self.eql(&Timespec::EPOCH) {
+            core::cmp::Ordering::Greater
+        } else if other.eql(&Timespec::EPOCH) {
+            core::cmp::Ordering::Less
+        } else {
+            self.order(&other)
+        };
+        if order == core::cmp::Ordering::Less { self } else { other }
+    }
+}
+
+/// Convert the `Option<*mut ExecutionEntry>` linked-list field shape used by
+/// [`ExecutionEntry`] into the `Option<NonNull<_>>` shape this module uses.
+#[inline]
+fn nn(p: Option<*mut ExecutionEntry>) -> Option<NonNull<ExecutionEntry>> {
+    p.and_then(NonNull::new)
+}
 
 bun_core::declare_scope!(jest, visible);
 

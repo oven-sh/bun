@@ -174,7 +174,7 @@ impl DOMFormData {
             DOMFormData__forEach(
                 self,
                 callback as *mut F as *mut c_void,
-                for_each_wrapper::<F>,
+                for_each_wrapper::<B, F>,
             );
         }
     }

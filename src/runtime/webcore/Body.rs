@@ -1023,7 +1023,9 @@ impl Value {
         &mut self,
         new: &mut Value,
         global: &JSGlobalObject,
-        headers: Option<&FetchHeaders>,
+        // Zig: `?*FetchHeaders` — opaque C++ handle, mutated via FFI. Taking
+        // `NonNull` (not `&`/`&mut`) avoids manufacturing aliased Rust borrows.
+        headers: Option<NonNull<FetchHeaders>>,
     ) -> JsTerminated<()> {
         bun_core::scoped_log!(BodyValue, "resolve");
         if let Value::Locked(locked) = self {

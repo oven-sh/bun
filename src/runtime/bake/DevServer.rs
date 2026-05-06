@@ -95,47 +95,11 @@ impl JsPromiseStrongDeinitExt for jsc::JSPromiseStrong {
         *self = jsc::JSPromiseStrong::empty();
     }
 }
-/// Shim: `bake.Framework` methods that live on the duplicate
-/// `bake_body::Framework` shape — stubbed until the two structs unify.
-trait FrameworkInitTranspilerExt {
-    fn init_transpiler<'a>(
-        &mut self,
-        _arena: &'a Arena,
-        _log: &mut Log,
-        _mode: bake::Mode,
-        _renderer: bake::Graph,
-        _out: &mut ::core::mem::MaybeUninit<Transpiler<'a>>,
-        _opts: &bake::BuildConfigSubset,
-    ) -> Result<(), bun_core::Error>;
-    fn resolve(
-        &self,
-        _server: &mut bun_resolver::Resolver,
-        _client: &mut bun_resolver::Resolver,
-        _arena: &Arena,
-    ) -> Result<bake::Framework, bun_core::Error>;
-}
-impl FrameworkInitTranspilerExt for bake::Framework {
-    fn init_transpiler<'a>(
-        &mut self,
-        _arena: &'a Arena,
-        _log: &mut Log,
-        _mode: bake::Mode,
-        _renderer: bake::Graph,
-        _out: &mut ::core::mem::MaybeUninit<Transpiler<'a>>,
-        _opts: &bake::BuildConfigSubset,
-    ) -> Result<(), bun_core::Error> {
-        todo!("blocked_on: bake::Framework / bake_body::Framework unification (init_transpiler)")
-    }
-    fn resolve(
-        &self,
-        _server: &mut bun_resolver::Resolver,
-        _client: &mut bun_resolver::Resolver,
-        _arena: &Arena,
-    ) -> Result<bake::Framework, bun_core::Error> {
-        todo!("blocked_on: bake::Framework / bake_body::Framework unification (resolve)")
-    }
-}
-/// Shim: `bun_logger::Log::to_js_aggregate_error` (lives in logger_jsc, not yet ported).
+// LAYERING: `bake::Framework::{init_transpiler, resolve}` are now inherent
+// methods on the keystone `bake::Framework` (ported into `bake/mod.rs` from
+// `bake_body::Framework` so this file can call them without the trait shim).
+
+/// Shim: `bun_logger::Log::to_js_aggregate_error` — body lives in `bun_logger_jsc`.
 trait LogToJsAggregateErrorExt {
     fn to_js_aggregate_error(
         &mut self,

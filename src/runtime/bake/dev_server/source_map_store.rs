@@ -519,29 +519,15 @@ impl SourceMapStore {
         unsafe { &mut (*crate::jsc_hooks::runtime_state()).timer }
     }
 
-    fn dev_allocator(&self) -> DevAllocator {
-        // SAFETY: same container_of invariant as `owner`; const-only access.
-        let dev: &DevServer = unsafe {
-            &*(self as *const Self as *const u8)
-                .sub(offset_of!(DevServer, source_maps))
-                .cast::<DevServer>()
-        };
-        dev.dev_allocator()
-    }
-
     pub fn put_or_increment_ref_count(
         &mut self,
         script_id: Key,
         ref_count: u32,
     ) -> Result<PutOrIncrementRefCount<'_>, bun_alloc::AllocError> {
-        // PORT NOTE: reshaped for borrowck — capture dev_allocator before
-        // borrowing `entries` mutably.
-        let dev_allocator = self.dev_allocator();
         let gop = self.entries.get_or_put(script_id)?;
         if !gop.found_existing {
             debug_assert!(ref_count > 0); // invalid state
             *gop.value_ptr = Entry {
-                dev_allocator,
                 ref_count,
                 // Zig left these `undefined`; caller fills them.
                 overlapping_memory_cost: 0,
@@ -699,15 +685,17 @@ impl SourceMapStore {
         // SAFETY: invariant of `owner()` — store is the `source_maps` field of a live DevServer.
         debug_assert!(unsafe { (*store.owner()).magic } == Magic::Valid);
 
-        let now: u64 = now_ts.sec.max(0) as u64;
+        // PORT NOTE: Zig compared `i64 expire <= u64 now` with mathematically-correct
+        // mixed-sign semantics (negative expire ⇒ expired). Keep `now` as i64 (already
+        // clamped ≥0) so the comparison stays sign-correct without u64 wrap.
+        let now: i64 = now_ts.sec.max(0);
 
         // PORT NOTE: Zig `defer store.owner().emitMemoryVisualizerMessageIfNeeded()`
         // inlined at both returns (a scopeguard cannot capture &mut store across
         // the loop body without aliasing).
 
         while let Some(item) = store.weak_refs.read_item() {
-            // PORT NOTE: Zig compared i64 expire <= u64 now (peer-type widened to u64).
-            if (item.expire as u64) <= now {
+            if item.expire <= now {
                 store.unref_count(item.key(), item.count);
             } else {
                 store

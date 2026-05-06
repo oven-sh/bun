@@ -188,10 +188,12 @@ type ForEachFunction = unsafe extern "C" fn(
     is_blob: u8,
 );
 
-pub enum FormDataEntry<'a> {
+/// `B` is the caller's `webcore::Blob` type (lives in `bun_runtime`; see
+/// [`DOMFormData::for_each`]).
+pub enum FormDataEntry<'a, B> {
     String(ZigString),
     File {
-        blob: &'a Blob,
+        blob: &'a B,
         filename: ZigString,
     },
 }

@@ -823,7 +823,7 @@ pub mod js_bundler {
                     let entry_points = this.entry_points.keys();
 
                     // Check if all entry points are in the FileMap - if so, use cwd
-                    if this.files.map.len() > 0 {
+                    if !this.files.map.is_empty() {
                         let mut all_in_filemap = true;
                         for ep in entry_points {
                             if !this.files.contains(ep) {

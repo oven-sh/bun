@@ -4149,11 +4149,11 @@ impl Resolver {
                 // TODO(port): phf custom hasher — Zig used getWithEql with ZigString.eqlComptime
                 match RECORD_TYPE_MAP.get(record_type_str.get_zig_string(global_this).slice()) {
                     Some(r) => *r,
-                    None => return global_this.throw_invalid_argument_property_value(
-                        "record",
-                        "one of: A, AAAA, ANY, CAA, CNAME, MX, NS, PTR, SOA, SRV, TXT",
+                    None => return Err(global_this.throw_invalid_argument_property_value(
+                        b"record",
+                        Some("one of: A, AAAA, ANY, CAA, CNAME, MX, NS, PTR, SOA, SRV, TXT"),
                         record_type_value,
-                    ),
+                    )),
                 }
             }
         };
@@ -4275,10 +4275,10 @@ impl Resolver {
                 Err(err) => {
                     use bun_dns::OptionsFromJsError as E;
                     return match err {
-                        E::InvalidFlags => global_this.throw_invalid_argument_value(
-                            "flags",
+                        E::InvalidFlags => Err(global_this.throw_invalid_argument_value(
+                            b"flags",
                             options_object.get_truthy(global_this, "flags")?.unwrap_or(JSValue::UNDEFINED),
-                        ),
+                        )),
                         E::JSError => Err(jsc::JsError::Thrown),
                         // more information with these errors
                         _ => Err(global_this.throw(format_args!(
@@ -4605,7 +4605,7 @@ impl Resolver {
     ) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
         if arguments.is_empty() {
-            return global_this.throw_not_enough_arguments("setLocalAddress", 1, 0);
+            return Err(global_this.throw_not_enough_arguments("setLocalAddress", 1, 0));
         }
 
         let first_af = Self::set_channel_local_address(channel, global_this, arguments[0])?;
@@ -4674,7 +4674,7 @@ impl Resolver {
 
         let arguments = callframe.arguments();
         if arguments.is_empty() {
-            return global_this.throw_not_enough_arguments("setServers", 1, 0);
+            return Err(global_this.throw_not_enough_arguments("setServers", 1, 0));
         }
 
         let argument = arguments[0];
@@ -4807,7 +4807,7 @@ impl Resolver {
     pub fn global_lookup_service(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<2>();
         if arguments.len < 2 {
-            return global_this.throw_not_enough_arguments("lookupService", 2, arguments.len);
+            return Err(global_this.throw_not_enough_arguments("lookupService", 2, arguments.len));
         }
 
         let addr_value = arguments.ptr[0];
@@ -4836,7 +4836,7 @@ impl Resolver {
             &mut *(&mut sa as *mut _ as *mut libc::sockaddr)
         }) != 0
         {
-            return global_this.throw_invalid_argument_value("address", addr_value);
+            return Err(global_this.throw_invalid_argument_value(b"address", addr_value));
         }
 
         let resolver = global_resolver_mut(global_this);

@@ -132,18 +132,21 @@ pub struct VirtualMachine {
     pub main_hash: u32,
     /// Set if code overrides Bun.main to a custom value.
     pub overridden_main: crate::strong::Optional,
-    // TODO(b2-cycle): `entry_point` is `bun_bundler::entry_points::ServerEntryPoint` (gated in bundler).
-    pub entry_point: (),
+    pub entry_point: bun_bundler::entry_points::ServerEntryPoint,
     pub origin: bun_url::URL<'static>,
     // TODO(b2-cycle): `node_fs` is `Option<Box<bun_runtime::node::fs::NodeFS>>`.
     pub node_fs: Option<*mut c_void>,
-    // TODO(b2-cycle): `timer` is `bun_runtime::api::Timer::All`.
-    pub timer: (),
     /// Opaque per-VM `bun_runtime` state (boxed `timer::All` +
-    /// `ServerEntryPoint` + …). Set by `RuntimeHooks::init_runtime_state` in
-    /// [`init`]; reclaimed by `RuntimeHooks::deinit_runtime_state` in
-    /// [`destroy`]. Null when no high tier is installed (e.g. `bun_jsc` unit
-    /// tests). Aggregates the `()` placeholder fields above until they widen.
+    /// `Body::Value::HiveAllocator` + …). Set by
+    /// `RuntimeHooks::init_runtime_state` in [`init`]; reclaimed by
+    /// `RuntimeHooks::deinit_runtime_state` in [`destroy`]. Null when no high
+    /// tier is installed (e.g. `bun_jsc` unit tests).
+    ///
+    /// PORT NOTE: the Zig `timer: api.Timer.All` and
+    /// `body_value_hive_allocator: webcore.Body.Value.HiveAllocator` value
+    /// fields live inside this box rather than as `()` shadows here — both
+    /// types are owned by `bun_runtime` (forward dep). Access goes through
+    /// [`RuntimeHooks::timer_insert`] / [`RuntimeHooks::body_value_hive_ref`].
     pub runtime_state: *mut c_void,
     pub event_loop_handle: Option<*mut PlatformEventLoop>,
     pub pending_unref_counter: i32,
@@ -179,8 +182,7 @@ pub struct VirtualMachine {
     /// Do not access this field directly! It exists in the VirtualMachine struct so
     /// that we don't accidentally make a stack copy of it; only use it through
     /// `source_mappings`.
-    // TODO(b2): SavedSourceMap::HashTable — gated until SavedSourceMap.rs un-gates.
-    pub saved_source_map_table: (),
+    pub saved_source_map_table: crate::saved_source_map::HashTable,
     pub source_mappings: SavedSourceMap,
 
     // TODO(port): lifetime — `&'a mut Arena`; caller-owned (web_worker).

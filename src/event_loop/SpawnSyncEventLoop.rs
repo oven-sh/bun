@@ -166,6 +166,16 @@ impl SpawnSyncEventLoop {
             (*this.uws_loop.as_ptr()).internal_loop_data.jsc_vm = core::ptr::null();
         }
     }
+
+    /// Erased `*mut bun_jsc::event_loop::EventLoop` (heap-owned via
+    /// `SpawnSyncVTable::create_event_loop`). `bun_event_loop` sits below
+    /// `bun_jsc` so the concrete type is opaque here; callers in higher tiers
+    /// cast back. See `js_bun_spawn_bindings::spawn_maybe_sync` (Zig:
+    /// `&jsc_vm.rareData().spawnSyncEventLoop(jsc_vm).event_loop`).
+    #[inline]
+    pub fn event_loop_ptr(&self) -> *mut () {
+        self.event_loop
+    }
 }
 
 #[cfg(windows)]

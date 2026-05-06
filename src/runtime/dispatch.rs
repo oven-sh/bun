@@ -44,7 +44,6 @@ use bun_jsc::task::report_error_or_terminate;
 use crate::api::archive::{BlobTask as ArchiveBlobTask, ExtractTask as ArchiveExtractTask,
     FilesTask as ArchiveFilesTask, WriteTask as ArchiveWriteTask, AsyncTask as ArchiveAsyncTask};
 
-use crate::shell::interpreter::{Interpreter, ShellTask};
 use crate::shell::builtins::{cp::ShellCpTask, ls::ShellLsTask, mkdir::ShellMkdirTask,
     mv::{ShellMvBatchedTask, ShellMvCheckTargetTask}, rm::ShellRmTask, touch::ShellTouchTask,
     yes::YesTask as ShellYesTask};
@@ -70,7 +69,7 @@ use crate::api::JSTranspiler::AsyncTransformTask;
 use crate::api::native_promise_context::DeferredDerefTask as NativePromiseContextDeferredDerefTask;
 use crate::api::cron::CronJob;
 use crate::api::bun_terminal_body::Poll as TerminalPoll;
-use crate::api::bun_subprocess::{Subprocess, StaticPipeWriter};
+use crate::api::bun_subprocess::Subprocess;
 use crate::api::bun_subprocess::static_pipe_writer::Poll as StaticPipeWriterPoll;
 
 use crate::napi::{napi_async_work, NapiFinalizerTask, ThreadSafeFunction};

@@ -73,11 +73,13 @@ impl PBKDF2 {
     }
 
     // Plain `deinit` (free owned StringOrBuffer fields) is handled by `Drop` on `StringOrBuffer`.
-    // TODO(port): `deinit_and_unprotect` is kept as an explicit method because async callers must
-    // additionally unprotect JS-rooted buffers; revisit whether this should consume `self` in Phase B.
+    // `deinit_and_unprotect` is kept as an explicit method because async callers must additionally
+    // unprotect JS-rooted buffers. The fields are moved out and replaced with empty sentinels so
+    // that the subsequent `Drop` of `PBKDF2` (which still runs after this — e.g. via the
+    // `scopeguard` in `from_js`'s async error path) is a no-op and does not double-free.
     pub fn deinit_and_unprotect(&mut self) {
-        self.password.deinit_and_unprotect();
-        self.salt.deinit_and_unprotect();
+        core::mem::take(&mut self.password).deinit_and_unprotect();
+        core::mem::take(&mut self.salt).deinit_and_unprotect();
     }
 
     pub fn from_js(

@@ -53,13 +53,13 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         Output::flush();
     }
 
-    pub fn exec(_ctx: &mut ContextData<'_>, _bin_dirs_only: bool) -> Result<bool, bun_core::Error> {
+    pub fn exec(_ctx: &mut ContextData, _bin_dirs_only: bool) -> Result<bool, bun_core::Error> {
         // TODO(b2-blocked): bun_jsc + Transpiler + spawn path. ~2.6k-line body
         // preserved in phase_a_draft below.
         todo!("RunCommand::exec — see phase_a_draft")
     }
 
-    pub fn exec_as_if_node(_ctx: &mut ContextData<'_>) -> Result<(), bun_core::Error> {
+    pub fn exec_as_if_node(_ctx: &mut ContextData) -> Result<(), bun_core::Error> {
         todo!("RunCommand::exec_as_if_node — see phase_a_draft")
     }
 }

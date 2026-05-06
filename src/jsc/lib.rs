@@ -353,21 +353,25 @@ impl JSValue {
         self.is_cell() && self.js_type() == JSType::JSDate
     }
     #[inline] pub fn is_symbol(self) -> bool {
-        // SAFETY: pure FFI predicate.
-        self.is_cell() && unsafe { JSC__JSValue__isSymbol(self) }
+        // SAFETY: pure FFI predicate; C++ handles non-cells (JSValue.zig:1067).
+        unsafe { JSC__JSValue__isSymbol(self) }
     }
     #[inline] pub fn is_big_int(self) -> bool {
-        // SAFETY: pure FFI predicate.
-        self.is_cell() && unsafe { JSC__JSValue__isBigInt(self) }
+        // SAFETY: pure FFI predicate; C++ handles non-cells incl. BigInt32
+        // immediates (JSValue.zig:1076 — no `isCell()` guard).
+        unsafe { JSC__JSValue__isBigInt(self) }
     }
     /// `JSValue.isCallable()` (JSValue.zig:1159).
     #[inline] pub fn is_callable(self) -> bool {
-        // SAFETY: pure FFI predicate.
-        self.is_cell() && unsafe { JSC__JSValue__isCallable(self) }
+        // SAFETY: pure FFI predicate; C++ handles non-cells.
+        unsafe { JSC__JSValue__isCallable(self) }
     }
-    /// Alias used throughout the runtime drafts. A "function" in the JS sense
-    /// is any callable cell.
-    #[inline] pub fn is_function(self) -> bool { self.is_callable() }
+    /// `JSValue.isFunction()` (JSValue.zig:1094) — JSType-byte check, NOT
+    /// `isCallable()`. Callable proxies return `false` here but `true` from
+    /// `is_callable()`.
+    #[inline] pub fn is_function(self) -> bool {
+        self.is_cell() && self.js_type().is_function()
+    }
 
     /// `jsType()` — only valid when `is_cell()`. Reads the JSCell type byte.
     #[inline] pub fn js_type(self) -> JSType {
@@ -723,14 +727,33 @@ impl JSValue {
         global: &JSGlobalObject,
         property: &[u8],
     ) -> JsResult<Option<bun_string::String>> {
-        let _ = (global, property);
-        // TODO(b2): full impl — gated.
-        todo!("JSValue::get_stringish")
+        // JSValue.zig:1682 `getStringish` — `get(prop)`, filter null/false → None,
+        // reject symbols, otherwise coerce via `toBunString` and filter "" → None.
+        let Some(prop) = self.get(global, property)? else { return Ok(None) };
+        if prop.is_null() || prop == JSValue::FALSE { return Ok(None); }
+        if prop.is_symbol() {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Expected \"{}\" to be a string",
+                alloc::string::String::from_utf8_lossy(property),
+            )));
+        }
+        let s = prop.to_bun_string(global)?;
+        if s.is_empty() { Ok(None) } else { Ok(Some(s)) }
     }
     pub fn get_array(self, global: &JSGlobalObject, property: &[u8]) -> JsResult<Option<JSValue>> {
-        let _ = (global, property);
-        // TODO(b2): full impl (jsTypeLoose().isArray() filter) — gated.
-        todo!("JSValue::get_array")
+        // JSValue.zig:1784 `getArray` → `coerceToArray`: `get(prop)`, require
+        // `jsTypeLoose().isArray()` (numbers map to NumberObject — never an
+        // array — so the cell guard is sufficient), then filter empty arrays.
+        let Some(prop) = self.get(global, property)? else { return Ok(None) };
+        if prop.is_undefined_or_null() { return Ok(None); }
+        if !prop.is_cell() || !prop.js_type().is_array() {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Expected \"{}\" to be an array",
+                alloc::string::String::from_utf8_lossy(property),
+            )));
+        }
+        if prop.get_length(global)? == 0 { return Ok(None); }
+        Ok(Some(prop))
     }
     pub fn get_own_by_value(self, global: &JSGlobalObject, property_value: JSValue) -> Option<JSValue> {
         // SAFETY: `global` is live; FFI returns ZERO for not-found.
@@ -1904,7 +1927,7 @@ unsafe extern "C" {
     fn JSC__VM__releaseWeakRefs(vm: *mut VM);
     fn JSC__VM__collectAsync(vm: *mut VM);
     fn JSC__VM__heapSize(vm: *mut VM) -> usize;
-    fn Bun__JSC_GlobalObject__handleRejectedPromises(global: *mut JSGlobalObject);
+    fn JSC__JSGlobalObject__handleRejectedPromises(global: *mut JSGlobalObject);
 }
 impl VM {
     pub fn throw_error(&self, global: &JSGlobalObject, value: JSValue) -> JsError {
@@ -1938,18 +1961,22 @@ impl VM {
 }
 
 impl JSGlobalObject {
-    /// `JSGlobalObject.handleRejectedPromises()` (JSGlobalObject.zig:648).
+    /// `JSGlobalObject.handleRejectedPromises()` (JSGlobalObject.zig:659) —
+    /// catches and reports its own exceptions; only TerminationException escapes.
     #[inline]
     pub fn handle_rejected_promises(&self) {
         // SAFETY: `self` is a live JSGlobalObject.
-        unsafe { Bun__JSC_GlobalObject__handleRejectedPromises(self.as_ptr()) }
+        unsafe { JSC__JSGlobalObject__handleRejectedPromises(self.as_ptr()) }
+        // Swallow any termination/exception per Zig (`catch return`).
     }
-    /// `JSGlobalObject.reportActiveExceptionAsUnhandled(err)` — takes the pending
-    /// exception (proven by `err`) and routes it through `bunVM().uncaughtException()`.
+    /// `JSGlobalObject.reportActiveExceptionAsUnhandled(err)` (JSGlobalObject.zig:601)
+    /// — takes the pending exception (proven by `err`) and routes it through
+    /// `bunVM().uncaughtException()`.
     pub fn report_active_exception_as_unhandled(&self, err: JsError) {
-        let _ = self.take_exception(err);
-        // TODO(b2-cycle): bunVM().uncaught_exception(self, value, false) — body
-        // gated until VirtualMachine::uncaught_exception un-gates.
+        let exception = self.take_exception(err);
+        if !exception.is_termination_exception() {
+            let _ = self.bun_vm().uncaught_exception(self, exception, false);
+        }
     }
 }
 

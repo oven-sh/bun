@@ -107,20 +107,13 @@ pub use bunfig::Bunfig;
 #[path = "run_command.rs"]
 pub mod run_command;
 
-// ─── crate-local shims for bun_clap macros that don't exist yet ──────────────
-// `bun_clap::parse_param` exists as a *runtime* fn but the Phase-A drafts call
-// it as a `macro!` in `static` position. Until `bun_clap` grows a const/proc-
-// macro form, these shims let the param-table declarations compile by deferring
-// to runtime construction inside `LazyLock`.
-//
-// TODO(b2-blocked): bun_clap::parse_param! / concat_params! proc-macros.
-#[macro_export]
-#[doc(hidden)]
-macro_rules! __cli_parse_param {
-    ($lit:expr) => {
-        ::bun_clap::parse_param($lit.as_bytes()).expect("clap param parse")
-    };
-}
+// ─── crate-local helper for param-table concatenation ────────────────────────
+// `bun_clap::parse_param!` is now a real proc-macro (const `Param<Help>`
+// literal), so leaf param tables in `Arguments.rs` are `&'static [ParamType]`.
+// Zig concatenated them at comptime with `++`; Rust has no const slice concat,
+// so the *combined* tables (`AUTO_PARAMS`, `RUN_PARAMS`, …) stay
+// `LazyLock<Vec<_>>` built via this runtime concat. `Param<Help>` is `Copy`,
+// so this is a cheap memcpy on first access.
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __cli_concat_params {
@@ -131,7 +124,6 @@ macro_rules! __cli_concat_params {
         __v
     }};
 }
-pub use crate::__cli_parse_param as parse_param;
 pub use crate::__cli_concat_params as concat_params;
 
 // ─── process-lifetime globals ────────────────────────────────────────────────
@@ -401,8 +393,26 @@ pub mod command {
         ALWAYS_LOADS_CONFIG, LOADS_CONFIG, USES_GLOBAL_OPTIONS,
     };
     pub use bun_options_types::Context::{
-        Context, ContextData, DebugOptions, RuntimeOptions, TestOptions,
+        Context, ContextData, DebugOptions, HotReload, RuntimeOptions, TestOptions,
     };
+
+    // Zig: `var global_cli_ctx: Context = undefined;` + `var context_data: ContextData = undefined;`
+    // Process-lifetime singletons; written exactly once in `create_context_data`
+    // during single-threaded startup, read everywhere thereafter.
+    static mut GLOBAL_CLI_CTX: *mut ContextData = core::ptr::null_mut();
+    static mut CONTEXT_DATA: core::mem::MaybeUninit<ContextData> =
+        core::mem::MaybeUninit::uninit();
+
+    /// Process-global CLI context. Only valid after `create_context_data` has run.
+    ///
+    /// # Safety
+    /// Caller must guarantee `create_context_data` has been called and no other
+    /// `&mut ContextData` is live (single-threaded CLI dispatch).
+    #[inline]
+    pub unsafe fn global_ctx() -> *mut ContextData {
+        // SAFETY: read of a process-lifetime static; see invariant above.
+        unsafe { GLOBAL_CLI_CTX }
+    }
 
     pub fn is_bun_x(argv0: &[u8]) -> bool {
         #[cfg(windows)]
@@ -424,17 +434,21 @@ pub mod command {
         let Some(argv0) = iter.next() else { return Tag::HelpCommand };
 
         if is_bun_x(argv0) {
-            // SAFETY: single-threaded startup
-            unsafe { IS_BUNX_EXE = true };
             if let Some(next) = argv.get(1) {
                 let next_bytes = next.as_bytes();
-                if next_bytes == b"add" || next_bytes == b"a" {
+                if next_bytes == b"add"
+                    && bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL.get() == Some(true)
+                {
                     return Tag::AddCommand;
                 }
-                if next_bytes == b"exec" {
+                if next_bytes == b"exec"
+                    && bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL.get() == Some(true)
+                {
                     return Tag::ExecCommand;
                 }
             }
+            // SAFETY: single-threaded startup
+            unsafe { IS_BUNX_EXE = true };
             return Tag::BunxCommand;
         }
 
@@ -445,7 +459,10 @@ pub mod command {
         }
 
         let Some(mut first_arg_name) = iter.next() else { return Tag::AutoCommand };
-        while first_arg_name.is_empty() {
+        while !first_arg_name.is_empty()
+            && first_arg_name[0] == b'-'
+            && !(first_arg_name.len() > 1 && first_arg_name[1] == b'e')
+        {
             match iter.next() {
                 Some(n) => first_arg_name = n,
                 None => return Tag::AutoCommand,
@@ -470,9 +487,8 @@ pub mod command {
         if x == RootCommandMatcher::case(b"x") { return Tag::BunxCommand; }
         if x == RootCommandMatcher::case(b"repl") { return Tag::ReplCommand; }
         if x == RootCommandMatcher::case(b"i") || x == RootCommandMatcher::case(b"install") {
-            // bun install <package>? -> auto-detect AddCommand
-            if let Some(next) = iter.next() {
-                if !next.is_empty() && next[0] != b'-' {
+            for arg in argv.iter() {
+                if arg == b"-g" || arg == b"--global" {
                     return Tag::AddCommand;
                 }
             }
@@ -529,15 +545,60 @@ pub mod command {
     }
 
     /// `ContextData.create` — populates the global ctx and runs `Arguments::parse`.
+    ///
+    /// PORT NOTE: Zig had `comptime command: Tag` → const generic. `Tag` lacks
+    /// `ConstParamTy` (lower-tier crate), so demoted to a runtime arg; the only
+    /// comptime-dependent bit was `Tag.uses_global_options.get(command)`, which
+    /// the runtime `USES_GLOBAL_OPTIONS` set covers.
     pub fn create_context_data(
         cmd: Tag,
-        _log: &mut logger::Log,
-    ) -> Result<*mut ContextData<'static>, bun_core::Error> {
-        // SAFETY: single-threaded CLI startup
+        log: &mut logger::Log,
+    ) -> Result<*mut ContextData, bun_core::Error> {
+        // SAFETY: single-threaded CLI startup; `CMD` is read by crash-reporter
+        // and debug logging only.
         unsafe { CMD = Some(cmd) };
-        // TODO(b2-blocked): ContextData has no Default and api::TransformOptions
-        // shape is incomplete (options_types::schema). Full body in cli_body.rs.
-        todo!("Command::create_context_data — blocked on options_types::Context::Default + Arguments::parse")
+
+        // SAFETY: single-threaded CLI startup; first and only write to
+        // `CONTEXT_DATA` for the process lifetime. `log` is the `&'static mut`
+        // borrow of `Cli::LOG_` taken in `Cli::start()`, so storing its raw
+        // address is sound for the process lifetime.
+        unsafe {
+            (*(&raw mut CONTEXT_DATA)).write(ContextData {
+                args: bun_options_types::schema::api::TransformOptions::default(),
+                log: log as *mut logger::Log,
+                start_time: START_TIME,
+                ..Default::default()
+            });
+            GLOBAL_CLI_CTX = (*(&raw mut CONTEXT_DATA)).assume_init_mut();
+        }
+
+        if USES_GLOBAL_OPTIONS[cmd] {
+            // SAFETY: just initialized above; single-threaded.
+            let ctx = unsafe { &mut *GLOBAL_CLI_CTX };
+            ctx.args = arguments::parse(cmd, ctx)?;
+        }
+
+        #[cfg(windows)]
+        {
+            // SAFETY: just initialized above; single-threaded.
+            let ctx = unsafe { &mut *GLOBAL_CLI_CTX };
+            if ctx.debug.hot_reload == HotReload::Watch {
+                // TODO(b2-blocked): bun_sys::windows::is_watcher_child /
+                // become_watcher_manager — Windows watcher hand-off path.
+                #[cfg(any())]
+                {
+                    if !bun_sys::windows::is_watcher_child() {
+                        bun_sys::windows::become_watcher_manager();
+                    } else {
+                        // SAFETY: single-threaded startup
+                        unsafe { bun_core::AUTO_RELOAD_ON_CRASH = true };
+                    }
+                }
+            }
+        }
+
+        // SAFETY: just initialized above.
+        Ok(unsafe { GLOBAL_CLI_CTX })
     }
     pub use create_context_data as init;
 
@@ -650,7 +711,7 @@ pub mod command {
             Tag::BuildCommand => arguments::BUILD_PARAMS.as_slice(),
             Tag::TestCommand => arguments::TEST_PARAMS.as_slice(),
             Tag::BunxCommand => arguments::RUN_PARAMS.as_slice(),
-            _ => arguments::BASE_PARAMS_.as_slice(),
+            _ => arguments::BASE_PARAMS_,
         }
     }
 

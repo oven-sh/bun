@@ -466,17 +466,14 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 }
 
                 directories.push(NodeModulesFolder {
-                    // SAFETY: path[path_len] == 0 written above
-                    relative_path: unsafe { ZStr::from_raw(path.as_ptr(), path_len) }.to_owned_box(),
+                    // Move the NUL-terminated buffer into the struct (single allocation,
+                    // no `mem::forget` — see PORTING.md §Forbidden patterns).
+                    relative_path: bun_core::ZBox::from_vec_with_nul(path),
                     // TODO(port): NodeModulesFolder.relative_path is [:0]u8 in Zig; verify owned vs borrowed in Rust struct
                     dependencies,
                     tree_id: node_modules.tree_id,
                     depth: node_modules.depth,
                 });
-                // PERF(port): Zig leaked `path` into the struct; ownership now via Box — profile in Phase B
-                core::mem::forget(path);
-                // TODO(port): the `forget` above keeps the backing alloc alive for the ZStr borrow;
-                // revisit once NodeModulesFolder owns its relative_path properly.
             }
 
             if directories.is_empty() {

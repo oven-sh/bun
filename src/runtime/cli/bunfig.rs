@@ -23,7 +23,7 @@ impl Bunfig {
     pub fn parse(
         _cmd: CommandTag,
         _source: &logger::Source,
-        _ctx: &mut ContextData<'_>,
+        _ctx: &mut ContextData,
     ) -> Result<(), bun_core::Error> {
         // TODO(b2-blocked): bun_js_parser::Expr/E + bun_interchange::toml::TOML
         // + bun_install::PackageManager. Full body in phase_a_draft below.

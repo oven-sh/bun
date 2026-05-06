@@ -27,9 +27,9 @@ pub struct NapiEnv {
 #[allow(non_camel_case_types)]
 pub type napi_env = *mut NapiEnv;
 #[allow(non_camel_case_types)]
-pub type napi_status = i32;
+pub type napi_status = core::ffi::c_uint;
 
-#[repr(i32)]
+#[repr(u32)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 #[allow(non_camel_case_types)]
 pub enum NapiStatus {
@@ -55,8 +55,6 @@ pub enum NapiStatus {
     arraybuffer_expected = 19,
     detachable_arraybuffer_expected = 20,
     would_deadlock = 21,
-    no_external_buffers_allowed = 22,
-    cannot_run_js = 23,
 }
 
 // ─── opaque type surface ─────────────────────────────────────────────────────

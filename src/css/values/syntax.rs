@@ -498,20 +498,38 @@ impl ParsedComponent {
                 }
                 Ok(())
             }
-            ParsedComponent::TokenList(_t) => {
-                // blocked_on: properties::custom::TokenList::to_css un-gate.
-                // Body once un-gated: `t.to_css(dest, false)`
-                todo!("blocked_on: properties::custom::TokenList::to_css un-gate")
-            }
+            ParsedComponent::TokenList(t) => t.to_css(dest, false),
         }
     }
 
-    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-        // TODO(port): css.implementDeepClone is comptime field reflection — replace with
-        // a `DeepClone` trait/derive in Phase B. Several payloads (Image/TokenList/
-        // TransformList stub) lack `Clone`, so cannot defer to `Clone` like the
-        // sibling types above.
-        todo!("blocked_on: ParsedComponent payload deep_clone (Image/TokenList/Transform lack Clone)")
+    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+        // PORT NOTE: hand-expanded `css.implementDeepClone` (variant-wise reflection).
+        // Payload signatures aren't yet uniform across the crate (some `deep_clone()`
+        // take no arena, some take `&Arena`, some are `Copy`), so the `#[derive(DeepClone)]`
+        // macro can't cover this enum until Phase B unifies them. Match-arm dispatch
+        // mirrors the Zig comptime switch exactly.
+        match self {
+            ParsedComponent::Length(v) => ParsedComponent::Length(v.deep_clone()),
+            ParsedComponent::Number(v) => ParsedComponent::Number(*v),
+            ParsedComponent::Percentage(v) => ParsedComponent::Percentage(*v),
+            ParsedComponent::LengthPercentage(v) => ParsedComponent::LengthPercentage(v.deep_clone()),
+            ParsedComponent::Color(v) => ParsedComponent::Color(v.deep_clone(bump)),
+            ParsedComponent::Image(v) => ParsedComponent::Image(v.deep_clone(bump)),
+            ParsedComponent::Url(v) => ParsedComponent::Url(v.deep_clone(bump)),
+            ParsedComponent::Integer(v) => ParsedComponent::Integer(*v),
+            ParsedComponent::Angle(v) => ParsedComponent::Angle(*v),
+            ParsedComponent::Time(v) => ParsedComponent::Time(*v),
+            ParsedComponent::Resolution(v) => ParsedComponent::Resolution(*v),
+            ParsedComponent::TransformFunction(v) => ParsedComponent::TransformFunction(v.deep_clone(bump)),
+            ParsedComponent::TransformList(v) => ParsedComponent::TransformList(v.deep_clone(bump)),
+            ParsedComponent::CustomIdent(v) => ParsedComponent::CustomIdent(*v),
+            ParsedComponent::Literal(v) => ParsedComponent::Literal(*v),
+            ParsedComponent::Repeated(r) => ParsedComponent::Repeated(r.deep_clone(bump)),
+            ParsedComponent::TokenList(t) => {
+                use crate::generics::DeepClone as _;
+                ParsedComponent::TokenList(t.deep_clone(bump))
+            }
+        }
     }
 }
 

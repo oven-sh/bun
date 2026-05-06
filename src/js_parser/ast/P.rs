@@ -74,6 +74,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> ParserLike<'a> for P<'a, TS,
     #[inline] fn lexer(&mut self) -> &mut js_lexer::Lexer<'a> { &mut self.lexer }
     #[inline] fn log(&mut self) -> &mut logger::Log { self.log }
     #[inline] fn bump(&self) -> &'a Bump { self.allocator }
+    #[inline] fn source(&self) -> &'a logger::Source { self.source }
     #[inline] fn new_expr<T: js_ast::expr::IntoExprData>(&mut self, t: T, loc: logger::Loc) -> Expr {
         P::new_expr(self, t, loc)
     }

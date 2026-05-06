@@ -420,8 +420,7 @@ pub mod ast {
             match self {
                 PipelineItem::Cmd(cmd) => cost += cmd.memory_cost(),
                 PipelineItem::Assigns(assigns) => {
-                    // SAFETY: arena slice is live for 'arena
-                    for assign in unsafe { &**assigns }.iter() {
+                    for assign in assigns.iter() {
                         cost += assign.memory_cost();
                     }
                 }

@@ -827,23 +827,45 @@ pub fn install_with_manager(
         root_scripts.append_to_lockfile(&mut manager.lockfile);
     }
     {
-        // TODO(port): Zig iterates `packages.items(.{ .resolution, .meta, .scripts })`, and for
-        // each workspace package with `meta.hasInstallScript()` calls
-        // `scripts.getScriptEntries(lockfile, string_buf, .workspace, add_node_gyp)` then
-        // pushes each non-null entry into `lockfile.scripts.@field(name)`. The stub
-        // `lockfile::package::scripts::Scripts` lacks `get_script_entries` / `has_any`, and
-        // `lockfile_real::Scripts` lacks an indexed `list_mut(i)` accessor — both land with
-        // the lockfile_real un-gate (reconciler-6). The body below preserves the iteration
-        // shape for borrowck so the surrounding control flow stays exercised.
-        let packages = manager.lockfile.packages.slice();
-        let resolutions = packages.items_resolution();
-        let metas = packages.items_meta();
-        let scripts_slice = packages.items_scripts();
-        debug_assert_eq!(resolutions.len(), metas.len());
-        debug_assert_eq!(resolutions.len(), scripts_slice.len());
-        for ((resolution, _meta), _scripts) in resolutions.iter().zip(metas).zip(scripts_slice) {
-            if resolution.tag == ResolutionTag::Workspace {
-                todo!("blocked_on: lockfile::package::scripts::Scripts::get_script_entries / lockfile_real::Scripts::list_mut (reconciler-6)");
+        // PORT NOTE: reshaped for borrowck — Zig holds shared slices into
+        // `packages.items(.resolution/.meta/.scripts)` while pushing into
+        // `manager.lockfile.scripts`. Iterate by index and copy each row to
+        // the stack so the `&mut manager.lockfile.scripts` write doesn't
+        // overlap a live `&manager.lockfile.packages` borrow.
+        let packages_len = manager.lockfile.packages.len();
+        for pkg_i in 0..packages_len {
+            let resolution = manager.lockfile.packages.items_resolution()[pkg_i];
+            if resolution.tag != ResolutionTag::Workspace {
+                continue;
+            }
+            let meta = manager.lockfile.packages.items_meta()[pkg_i];
+            if !meta.has_install_script() {
+                continue;
+            }
+            let scripts = manager.lockfile.packages.items_scripts()[pkg_i];
+            let add_node_gyp = !scripts.has_any();
+            let (first_index, _, entries) = scripts.get_script_entries(
+                &manager.lockfile,
+                &manager.lockfile.buffers.string_bytes,
+                ResolutionTag::Workspace,
+                add_node_gyp,
+            );
+
+            if cfg!(debug_assertions) {
+                debug_assert!(first_index != -1);
+            }
+
+            // Zig's two arms differ only in whether the `first_index != -1`
+            // guard wraps the inner loop; in the `add_node_gyp` arm the
+            // assert already guarantees it, so a single guarded loop matches
+            // both paths exactly.
+            if first_index != -1 {
+                // PERF(port): was `inline for` over comptime entries — profile in Phase B
+                for (i, maybe_entry) in entries.into_iter().enumerate() {
+                    if let Some(entry) = maybe_entry {
+                        manager.lockfile.scripts.hook_mut(i).push(entry);
+                    }
+                }
             }
         }
     }

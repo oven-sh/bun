@@ -694,6 +694,99 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     unsafe { (*(*vm).global).handle_rejected_promises() };
 }
 
+/// `eventLoop().autoTickActive()` — spec event_loop.zig:455-493. Same shape as
+/// [`auto_tick`] but: no `runImminentGCTimer`, no `handleRejectedPromises` at
+/// the tail, and no debug sleep-timer logging. Used by `bun_main` /
+/// `on_before_exit` drain loops where blocking when the loop is idle would
+/// hang shutdown.
+///
+/// # Safety
+/// `vm` is the live per-thread VM.
+unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
+    // PORT NOTE: reshaped for borrowck — see `auto_tick` above.
+    // SAFETY: per fn contract — `vm` is the live per-thread VM.
+    let el: *mut bun_jsc::event_loop::EventLoop = unsafe { (*vm).event_loop };
+    let loop_ = unsafe { (*el).usockets_loop() };
+
+    // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
+    unsafe { (*el).tick_immediate_tasks(vm) };
+    #[cfg(windows)]
+    if !unsafe { &*el }.immediate_tasks.is_empty() {
+        // SAFETY: `el` is the live per-thread event loop.
+        unsafe { (*el).wakeup() };
+    }
+
+    #[cfg(unix)]
+    {
+        // SAFETY: per fn contract.
+        let pending_unref = unsafe { (*vm).pending_unref_counter };
+        if pending_unref > 0 {
+            unsafe { (*vm).pending_unref_counter = 0 };
+            // SAFETY: `loop_` is the live per-thread uws loop.
+            unsafe { (*loop_).unref_count(pending_unref) };
+        }
+    }
+
+    // TODO(b2-cycle): `timer::All::update_date_header_timer_if_necessary` —
+    // not yet on the B-2 `All` surface (see `auto_tick` above).
+
+    let state = runtime_state();
+    if state.is_null() {
+        // SAFETY: `loop_` is the live per-thread uws loop.
+        unsafe { (*loop_).tick_without_idle() };
+        // SAFETY: per fn contract.
+        unsafe { (*vm).on_after_event_loop() };
+        return;
+    }
+
+    {
+        // SAFETY: `el` is the live per-thread event loop.
+        let has_pending_immediate = !unsafe { &*el }.immediate_tasks.is_empty();
+        // SAFETY: `loop_` is the live per-thread uws loop.
+        let quic_next_tick_us = unsafe {
+            let ild = &(*loop_).internal_loop_data;
+            if ild.quic_head.is_null() { None } else { Some(ild.quic_next_tick_us) }
+        };
+        let mut timespec = bun_core::Timespec { sec: 0, nsec: 0 };
+        // SAFETY: `loop_` is the live per-thread uws loop.
+        if unsafe { (*loop_).is_active() } {
+            // SAFETY: `el` is the live per-thread event loop.
+            unsafe { (*el).process_gc_timer() };
+            // SAFETY: `state` is the live per-thread `RuntimeState`; see
+            // PORT NOTE on `auto_tick` re: aliased-&mut across `fire()`.
+            let have_timeout = unsafe {
+                timer::All::get_timeout(
+                    &mut (*state).timer,
+                    &mut timespec,
+                    has_pending_immediate,
+                    quic_next_tick_us,
+                    vm.cast(),
+                )
+            };
+            let uws_ts = bun_uws::Timespec { sec: timespec.sec, nsec: timespec.nsec };
+            // SAFETY: `loop_` is the live per-thread uws loop.
+            unsafe {
+                (*loop_).tick_with_timeout(if have_timeout { Some(&uws_ts) } else { None })
+            };
+        } else {
+            // SAFETY: `loop_` is the live per-thread uws loop.
+            unsafe { (*loop_).tick_without_idle() };
+        }
+    }
+
+    #[cfg(unix)]
+    {
+        // SAFETY: `state` is the live per-thread `RuntimeState`; see PORT NOTE
+        // on `auto_tick` re: aliased-&mut across `fire()`.
+        unsafe { timer::All::drain_timers(&mut (*state).timer, vm.cast()) };
+    }
+    #[cfg(not(unix))]
+    let _ = state;
+
+    // SAFETY: per fn contract.
+    unsafe { (*vm).on_after_event_loop() };
+}
+
 /// `printException` / `printErrorlikeObject` — formats `value` to stderr via
 /// `ConsoleObject::Formatter`. Spec `runErrorHandler` body
 /// (VirtualMachine.zig:2164-2188). Dispatched here so the high tier owns the
@@ -720,6 +813,7 @@ pub static RUNTIME_HOOKS_INSTANCE: RuntimeHooks = RuntimeHooks {
     load_preloads,
     ensure_debugger,
     auto_tick,
+    auto_tick_active,
     print_exception,
 };
 

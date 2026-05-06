@@ -134,6 +134,12 @@ pub use io_writer as IOWriter;
 /// owning modules are still gated. See `dispatch_tasks.rs` header.
 pub mod dispatch_tasks;
 
+/// `bun.shell.subproc` — `ShellSubprocess` + its `StaticPipeWriter`. Exposed so
+/// `runtime::dispatch::run_file_poll` can name `StaticPipeWriter<ShellSubprocess>`
+/// for the `SHELL_STATIC_PIPE_WRITER` poll arm.
+#[path = "subproc.rs"]
+pub mod subproc;
+
 pub const SUBSHELL_TODO_ERROR: &str =
     "Subshells are not implemented, please open GitHub issue!";
 

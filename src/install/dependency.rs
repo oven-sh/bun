@@ -1767,7 +1767,7 @@ pub fn parse_with_tag(
 
 bitflags::bitflags! {
     #[repr(transparent)]
-    #[derive(Clone, Copy, Default, PartialEq, Eq)]
+    #[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
     pub struct Behavior: u8 {
         // bit 0: _unused_1
         const PROD      = 1 << 1;

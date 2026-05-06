@@ -100,32 +100,6 @@ impl JSGlobalObjectDnsExt for JSGlobalObject {
     }
 }
 
-/// `JSValue::to_port_number` — local trait extension (the inherent method
-/// has not yet landed on `bun_jsc::JSValue`; ported here from
-/// `JSValue.zig::toPortNumber`).
-pub(crate) trait JSValueDnsExt {
-    fn to_port_number(self, global: &JSGlobalObject) -> JsResult<u16>;
-}
-impl JSValueDnsExt for JSValue {
-    fn to_port_number(self, global: &JSGlobalObject) -> JsResult<u16> {
-        if self.is_number() {
-            let double = self.to_number(global)?;
-            if double.is_nan() {
-                return Err(jsc::ErrorCode::SOCKET_BAD_PORT
-                    .throw(global, format_args!("Invalid port number")));
-            }
-            let port = self.to_int64();
-            if (0..=65535).contains(&port) {
-                return Ok(port.max(0) as u16);
-            }
-            return Err(jsc::ErrorCode::SOCKET_BAD_PORT
-                .throw(global, format_args!("Port number out of range: {port}")));
-        }
-        Err(jsc::ErrorCode::SOCKET_BAD_PORT
-            .throw(global, format_args!("Invalid port number")))
-    }
-}
-
 /// Helper: fetch the per-VM global DNS resolver (port of
 /// `RareData::globalDNSResolver`). The slot itself lives in `bun_jsc::RareData`
 /// as a type-erased `Option<NonNull<c_void>>` to break the

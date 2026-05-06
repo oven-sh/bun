@@ -1164,6 +1164,23 @@ pub struct RuntimeHooks {
     /// `vm.timer.remove(&mut event_loop_timer)` — see `timer_insert`.
     pub timer_remove:
         unsafe fn(vm: *mut VirtualMachine, timer: *mut bun_event_loop::EventLoopTimer::EventLoopTimer),
+    /// `Node.fs.NodeFS{ .vm = … }` lazy creation (spec VirtualMachine.zig:827).
+    /// `NodeFS` lives in `bun_runtime`; the high tier boxes one and returns
+    /// the type-erased pointer. Stored back into `vm.node_fs`.
+    pub create_node_fs: unsafe fn(vm: *mut VirtualMachine) -> *mut c_void,
+    /// `Body.Value.HiveRef.init(body, &vm.body_value_hive_allocator)` — spec
+    /// VirtualMachine.zig:255. The hive allocator lives inside `runtime_state`
+    /// (high tier); `body` and the returned `*mut Body.Value.HiveRef` are
+    /// erased here and cast back on the `bun_runtime` side.
+    pub init_request_body_value:
+        unsafe fn(vm: *mut VirtualMachine, body: *mut c_void) -> *mut c_void,
+    /// `WebCore.ObjectURLRegistry.singleton().has(specifier["blob:".len..])` —
+    /// spec VirtualMachine.zig:1760. Registry lives in `bun_runtime::webcore`.
+    pub has_blob_url: unsafe fn(blob_id: &[u8]) -> bool,
+    /// The static `VmLoaderVTable` instance for [`fetch_without_on_load_plugins`]
+    /// — its function pointers reach into `Blob`/`ObjectURLRegistry`
+    /// (`bun_runtime::webcore`), so the high tier supplies the table.
+    pub vm_loader_vtable: &'static bun_bundler::options::VmLoaderVTable,
 }
 
 impl VirtualMachine {

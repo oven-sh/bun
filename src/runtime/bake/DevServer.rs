@@ -543,8 +543,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     // exactly once before `assume_init()` below.
     unsafe {
         w!(magic, Magic::Valid);
-        // PORT NOTE: `bun_alloc::AllocationScope` is a unit struct stub.
-        w!(allocation_scope, bun_alloc::AllocationScope);
+        w!(allocation_scope, AllocationScope::init_default());
         w!(root, Box::from(options.root.as_bytes()));
         w!(vm, options.vm);
         w!(server, None);
@@ -1108,19 +1107,21 @@ impl Drop for DevServer<'_> {
     }
 }
 
-// TODO(port): AllocationScope = bun.allocators.AllocationScopeIn(bun.DefaultAllocator)
-pub type AllocationScope = bun_alloc::AllocationScope;
-// TODO(port): `AllocationScopeBorrowed` not yet in bun_alloc; alias to the
-// scope itself until the borrow-handle type lands.
-pub type DevAllocator = bun_alloc::AllocationScope;
+// LAYERING: `bun_alloc::AllocationScope` is a CYCLEBREAK unit-stub; the real
+// tracker lives in `crate::allocators::allocation_scope` (moved to T6 because
+// it pulls in `bun_core`/`bun_collections`). Use the runtime-local type.
+pub type AllocationScope = crate::allocators::allocation_scope::AllocationScope;
+/// Zig: `pub const DevAllocator = AllocationScope.Borrowed;`
+pub type DevAllocator<'a> =
+    crate::allocators::allocation_scope::Borrowed<'a, bun_alloc::StdAllocator>;
 
 impl DevServer<'_> {
-    pub fn allocator(&self) -> &dyn bun_alloc::Allocator {
-        todo!("blocked_on: bun_alloc::AllocationScope::allocator()")
+    pub fn allocator(&self) -> bun_alloc::StdAllocator {
+        self.allocation_scope.allocator()
     }
 
-    pub fn dev_allocator(&self) -> DevAllocator {
-        todo!("blocked_on: bun_alloc::AllocationScope::borrow()")
+    pub fn dev_allocator(&self) -> DevAllocator<'_> {
+        self.allocation_scope.borrow()
     }
 }
 

@@ -226,10 +226,9 @@ impl SupportsCondition {
         let mut first = true;
         // PORT NOTE: `inline for (css.VendorPrefix.FIELDS) |field| { if @field(prefix, field) ... }`
         // iterates the packed-struct bool fields at comptime. VendorPrefix ports to
-        // bitflags!; iterate the ordered string table and map back via `from_name_str`
-        // (same pattern as rules/style.rs).
-        for &field in css::VendorPrefix::FIELDS {
-            let flag = css::VendorPrefix::from_name_str(field);
+        // bitflags!; iterate the ordered single-bit table directly (same pattern as
+        // rules/style.rs).
+        for &flag in css::VendorPrefix::FIELDS {
             if prefix.contains(flag) {
                 if first {
                     first = false;

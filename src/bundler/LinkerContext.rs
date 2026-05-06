@@ -2485,9 +2485,9 @@ impl<'a> LinkerContext<'a> {
                     Part {
                         symbol_uses,
                         declared_symbols: DeclaredSymbolList::from_slice(&[
-                            DeclaredSymbol { r#ref: exports_ref, is_top_level: true },
-                            DeclaredSymbol { r#ref: module_ref, is_top_level: true },
-                            DeclaredSymbol { r#ref: wrap_ref, is_top_level: true },
+                            DeclaredSymbol { ref_: exports_ref, is_top_level: true },
+                            DeclaredSymbol { ref_: module_ref, is_top_level: true },
+                            DeclaredSymbol { ref_: wrap_ref, is_top_level: true },
                         ]).expect("unreachable"),
                         dependencies,
                         ..Default::default()
@@ -2503,7 +2503,7 @@ impl<'a> LinkerContext<'a> {
                         part_index,
                         self.cjs_runtime_ref,
                         1,
-                        Index::RUNTIME,
+                        crate::Index::RUNTIME,
                     ).expect("unreachable");
                 }
             }
@@ -2571,7 +2571,7 @@ impl<'a> LinkerContext<'a> {
                     Part {
                         symbol_uses,
                         declared_symbols: DeclaredSymbolList::from_slice(&[
-                            DeclaredSymbol { r#ref: wrapper_ref, is_top_level: true },
+                            DeclaredSymbol { ref_: wrapper_ref, is_top_level: true },
                         ]).expect("unreachable"),
                         dependencies,
                         ..Default::default()
@@ -2585,7 +2585,7 @@ impl<'a> LinkerContext<'a> {
                         part_index,
                         self.esm_runtime_ref,
                         1,
-                        Index::RUNTIME,
+                        crate::Index::RUNTIME,
                     ).expect("OOM");
 
                     // Only mark __promiseAll as used if we have multiple async dependencies
@@ -2595,7 +2595,7 @@ impl<'a> LinkerContext<'a> {
                             part_index,
                             self.promise_all_runtime_ref,
                             1,
-                            Index::RUNTIME,
+                            crate::Index::RUNTIME,
                         ).expect("OOM");
                     }
                 }
@@ -2610,8 +2610,8 @@ impl<'a> LinkerContext<'a> {
         // PORT NOTE: reshaped for borrowck — Zig held `&mut named_imports[id]`
         // and `&import_records[id]` simultaneously; here we read `named_import`
         // out first, then borrow the rest.
-        let named_import: NamedImport = match self.graph.ast.items_named_imports()[id as usize].get(&tracker.import_ref) {
-            Some(ni) => ni.clone(),
+        let named_import: &NamedImport = match self.graph.ast.items_named_imports()[id as usize].get(&tracker.import_ref) {
+            Some(ni) => ni,
             None => {
                 // TODO: investigate if this is a bug
                 // It implies there are imports being added without being resolved
@@ -2676,7 +2676,7 @@ impl<'a> LinkerContext<'a> {
             // Just warn about it and replace the import with "undefined"
             return ImportTrackerIterator {
                 value: ImportTracker {
-                    source_index: Index::source(other_source_index),
+                    source_index: crate::Index::init(other_source_index),
                     import_ref: Ref::NONE,
                     ..Default::default()
                 },
@@ -2689,7 +2689,7 @@ impl<'a> LinkerContext<'a> {
         if other_kind == ExportsKind::Cjs {
             return ImportTrackerIterator {
                 value: ImportTracker {
-                    source_index: Index::source(other_source_index),
+                    source_index: crate::Index::init(other_source_index),
                     import_ref: Ref::NONE,
                     ..Default::default()
                 },
@@ -2743,7 +2743,7 @@ impl<'a> LinkerContext<'a> {
         if other_kind.is_esm_with_dynamic_fallback() || is_commonjs_to_esm {
             return ImportTrackerIterator {
                 value: ImportTracker {
-                    source_index: Index::source(other_source_index),
+                    source_index: crate::Index::init(other_source_index),
                     import_ref: self.graph.ast.items_exports_ref()[other_id as usize],
                     ..Default::default()
                 },
@@ -2769,7 +2769,7 @@ impl<'a> LinkerContext<'a> {
 
         ImportTrackerIterator {
             value: ImportTracker {
-                source_index: Index::source(other_source_index),
+                source_index: crate::Index::init(other_source_index),
                 ..Default::default()
             },
             status: ImportTrackerStatus::NoMatch,

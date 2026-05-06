@@ -6379,9 +6379,8 @@ impl<'a> Resolver<'a> {
 
         bufs!(dir_entry_paths_to_resolve)[0].write(DirEntryResolveQueueItem {
             result: top_result,
-            // SAFETY: extending lifetime to 'static for threadlocal buf storage; consumed before fn returns
-            unsafe_path: unsafe { &*(path as *const [u8]) },
-            safe_path: b"",
+            unsafe_path: path as *const [u8],
+            safe_path: b"" as *const [u8],
             fd: FD::INVALID,
         });
         let mut top = Dirname::dirname(path);
@@ -6428,10 +6427,9 @@ impl<'a> Resolver<'a> {
                 return Ok(None);
             }
             bufs!(dir_entry_paths_to_resolve)[usize::try_from(i).unwrap()].write(DirEntryResolveQueueItem {
-                // SAFETY: extending lifetime to 'static for threadlocal buf storage; consumed before fn returns.
-                unsafe_path: unsafe { &*(top as *const [u8]) },
+                unsafe_path: top as *const [u8],
                 result,
-                safe_path: b"",
+                safe_path: b"" as *const [u8],
                 fd: FD::INVALID,
             });
 
@@ -6441,7 +6439,7 @@ impl<'a> Resolver<'a> {
                     Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
                         // SAFETY: slot was written immediately above.
                         let slot = unsafe { bufs!(dir_entry_paths_to_resolve)[usize::try_from(i).unwrap()].assume_init_mut() };
-                        slot.safe_path = entries.dir;
+                        slot.safe_path = entries.dir as *const [u8];
                         slot.fd = entries.fd;
                     }
                     Fs::file_system::real_fs::EntriesOption::Err(err) => {

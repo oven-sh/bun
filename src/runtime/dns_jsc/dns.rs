@@ -699,39 +699,43 @@ impl CAresNameInfo {
         }))
     }
 
-    pub fn process_resolve(
-        &mut self,
+    /// SAFETY: `this` must be a live node — either the inline head of a `*Request`
+    /// (allocated == false; owner drops it) or a Boxed tail node (allocated == true;
+    /// freed via `Self::destroy`). No `&mut` may alias `*this` across this call.
+    pub unsafe fn process_resolve(
+        this: *mut Self,
         err_: Option<c_ares::Error>,
         _timeout: i32,
         result: Option<c_ares::struct_nameinfo>,
     ) {
+        // SAFETY: JSGlobalObject outlives the request.
+        let global_this = &*(*this).global_this;
         if let Some(err) = err_ {
-            err.to_deferred("getnameinfo", Some(&self.name), &mut self.promise)
-                .reject_later(self.global_this);
-            // SAFETY: self is either the inline head (drop_in_place) or a Boxed tail node.
-            unsafe { Self::destroy(self as *mut Self) };
+            err.to_deferred("getnameinfo", Some(&(*this).name), &mut (*this).promise)
+                .reject_later(global_this);
+            Self::destroy(this);
             return;
         }
         let Some(mut name_info) = result else {
             c_ares::Error::ENOTFOUND
-                .to_deferred("getnameinfo", Some(&self.name), &mut self.promise)
-                .reject_later(self.global_this);
-            // SAFETY: self is either the inline head (drop_in_place) or a Boxed tail node.
-            unsafe { Self::destroy(self as *mut Self) };
+                .to_deferred("getnameinfo", Some(&(*this).name), &mut (*this).promise)
+                .reject_later(global_this);
+            Self::destroy(this);
             return;
         };
         let array = name_info
-            .to_js_response(self.global_this)
+            .to_js_response(global_this)
             .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
-        self.on_complete(array);
+        Self::on_complete(this, array);
     }
 
-    pub fn on_complete(&mut self, result: JSValue) {
-        let promise = core::mem::take(&mut self.promise);
-        let global_this = self.global_this;
+    /// SAFETY: see `process_resolve`.
+    pub unsafe fn on_complete(this: *mut Self, result: JSValue) {
+        let promise = core::mem::take(&mut (*this).promise);
+        // SAFETY: JSGlobalObject outlives the request.
+        let global_this = &*(*this).global_this;
         let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
-        // SAFETY: self is either the inline head (drop_in_place) or a Boxed tail node.
-        unsafe { Self::destroy(self as *mut Self) };
+        Self::destroy(this);
     }
 
     /// Conditionally free a heap-allocated tail node. Head nodes (`allocated == false`)
@@ -1276,43 +1280,47 @@ impl CAresReverse {
         }))
     }
 
-    pub fn process_resolve(
-        &mut self,
+    /// SAFETY: `this` must be a live node — either the inline head of a `*Request`
+    /// (allocated == false; owner drops it) or a Boxed tail node (allocated == true;
+    /// freed via `Self::destroy`). No `&mut` may alias `*this` across this call.
+    pub unsafe fn process_resolve(
+        this: *mut Self,
         err_: Option<c_ares::Error>,
         _timeout: i32,
         result: Option<*mut c_ares::struct_hostent>,
     ) {
+        // SAFETY: JSGlobalObject outlives the request.
+        let global_this = &*(*this).global_this;
         if let Some(err) = err_ {
-            err.to_deferred("getHostByAddr", Some(&self.name), &mut self.promise)
-                .reject_later(self.global_this);
-            // SAFETY: self is either the inline head (drop_in_place) or a Boxed tail node.
-            unsafe { Self::destroy(self as *mut Self) };
+            err.to_deferred("getHostByAddr", Some(&(*this).name), &mut (*this).promise)
+                .reject_later(global_this);
+            Self::destroy(this);
             return;
         }
         let Some(node) = result else {
             c_ares::Error::ENOTFOUND
-                .to_deferred("getHostByAddr", Some(&self.name), &mut self.promise)
-                .reject_later(self.global_this);
-            // SAFETY: self is either the inline head (drop_in_place) or a Boxed tail node.
-            unsafe { Self::destroy(self as *mut Self) };
+                .to_deferred("getHostByAddr", Some(&(*this).name), &mut (*this).promise)
+                .reject_later(global_this);
+            Self::destroy(this);
             return;
         };
         // SAFETY: node is a valid c-ares hostent for the callback's duration
-        let array = unsafe { (*node).to_js_response(self.global_this, "") }
+        let array = (*node).to_js_response(global_this, "")
             .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
-        self.on_complete(array);
+        Self::on_complete(this, array);
     }
 
-    pub fn on_complete(&mut self, result: JSValue) {
-        let promise = core::mem::take(&mut self.promise);
-        let global_this = self.global_this;
+    /// SAFETY: see `process_resolve`.
+    pub unsafe fn on_complete(this: *mut Self, result: JSValue) {
+        let promise = core::mem::take(&mut (*this).promise);
+        // SAFETY: JSGlobalObject outlives the request.
+        let global_this = &*(*this).global_this;
         let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
-        if let Some(resolver) = self.resolver.as_ref() {
+        if let Some(resolver) = (*this).resolver.as_ref() {
             // SAFETY: IntrusiveRc holds a live ref; request_completed mutates pending_requests counter only.
-            unsafe { (*resolver.as_ptr()).request_completed() };
+            (*resolver.as_ptr()).request_completed();
         }
-        // SAFETY: self is either the inline head (drop_in_place) or a Boxed tail node.
-        unsafe { Self::destroy(self as *mut Self) };
+        Self::destroy(this);
     }
 
     /// SAFETY: `this` must point at a live node; if `(*this).allocated`, it must be the

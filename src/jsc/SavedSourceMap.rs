@@ -11,6 +11,7 @@ use bun_sourcemap::{
     self as SourceMap, BakeSourceProvider, DevServerSourceProvider, InternalSourceMap,
     ParsedSourceMap, SourceProviderMap,
 };
+use bun_sourcemap::internal_source_map::FindCache;
 use bun_string::MutableString;
 use bun_threading::Mutex;
 use bun_wyhash::hash;
@@ -23,10 +24,7 @@ pub struct SavedSourceMap {
     /// Warm cache for `remapStackFramePositions`: the last decoded sync window and
     /// the last (path_hash -> ISM) resolution. Guarded by `mutex`. Invalidated on
     /// any `putValue` since that may free the cached blob.
-    // TODO(b2-blocked): bun_sourcemap::internal_source_map::FindCache — type not yet exported.
-    // Stored as `()` placeholder until the FindCache aggregate (multi-slot wrapper around
-    // FindCacheSlot) is exposed from bun_sourcemap.
-    pub find_cache: (),
+    pub find_cache: FindCache,
     pub last_path_hash: u64,
     pub last_ism: Option<InternalSourceMap>,
 }

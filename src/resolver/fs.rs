@@ -1246,8 +1246,16 @@ impl RealFS {
 
     /// Returns `true` if an entry was removed
     pub fn bust_entries_cache(&mut self, file_path: &[u8]) -> bool {
-        // SAFETY: `&mut self` ensures no aliased `EntriesMap` access.
-        unsafe { self.entries.remove(file_path) }
+        // PORT NOTE: Zig fs.zig:778 does not lock here; in Rust we must, because
+        // `EntriesMap::remove` auto-refs the global `BSSMapInner` to `&mut self`, and a
+        // concurrent `read_directory_with_iterator` (which *does* lock) would otherwise
+        // alias that `&mut` — UB. `&mut self` alone proves nothing cross-thread since
+        // `EntriesMap` is a ZST handle over a process-global singleton.
+        self.entries_mutex.lock();
+        // SAFETY: `entries_mutex` held — sole `&mut BSSMapInner` access.
+        let removed = unsafe { self.entries.remove(file_path) };
+        self.entries_mutex.unlock();
+        removed
     }
 
     // Always try to max out how many files we can keep open
@@ -1661,9 +1669,9 @@ impl RealFS {
         &mut self,
         dir: &[u8],
         err: bun_core::Error,
-    ) -> Result<&'static mut EntriesOption, AllocError> {
+    ) -> Result<*mut EntriesOption, AllocError> {
         if FeatureFlags::ENABLE_ENTRY_CACHE {
-            // SAFETY: `&mut self` ensures no aliased map access in this scope.
+            // SAFETY: caller holds `entries_mutex` — sole access to the singleton map.
             let mut get_or_put_result = unsafe { self.entries.get_or_put(dir) }?;
             if err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound") {
                 // SAFETY: see above.
@@ -1673,11 +1681,12 @@ impl RealFS {
                         original_err: err,
                         canonical_error: err,
                     }));
-                    // SAFETY: just wrote; threadlocal storage outlives caller (matches Zig)
-                    unsafe { &mut *slot.as_mut_ptr() }
+                    // PORT NOTE: threadlocal storage outlives caller (matches Zig);
+                    // return raw `*mut` — caller forms a short-lived `&mut` at use site.
+                    slot.as_mut_ptr()
                 }));
             } else {
-                // SAFETY: see above — sole `&mut` to the slot.
+                // SAFETY: see above — sole access to the slot.
                 let opt = unsafe {
                     self.entries.put(
                         &mut get_or_put_result,
@@ -1696,8 +1705,9 @@ impl RealFS {
                 original_err: err,
                 canonical_error: err,
             }));
-            // SAFETY: just wrote; threadlocal storage outlives caller (matches Zig)
-            unsafe { &mut *slot.as_mut_ptr() }
+            // PORT NOTE: threadlocal storage outlives caller (matches Zig);
+            // return raw `*mut` — caller forms a short-lived `&mut` at use site.
+            slot.as_mut_ptr()
         }))
     }
 
@@ -1707,7 +1717,7 @@ impl RealFS {
         handle_: Option<bun_sys::Dir>,
         generation: Generation,
         store_fd: bool,
-    ) -> Result<&'static mut EntriesOption, bun_core::Error> {
+    ) -> Result<*mut EntriesOption, bun_core::Error> {
         self.read_directory_with_iterator(dir_, handle_, generation, store_fd, ())
     }
 

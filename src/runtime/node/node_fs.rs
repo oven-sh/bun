@@ -6934,7 +6934,7 @@ impl ReaddirEntry for Dirent {
     fn into_readdir(v: Vec<Self>) -> ret::Readdir { ret::Readdir::WithFileTypes(v.into_boxed_slice()) }
     fn append_entry(entries: &mut Vec<Self>, utf8_name: &[u8], dirent_path: &BunString, kind: sys::FileKind, encoding: Encoding) {
         entries.push(Dirent {
-            name: webcore::encoding::to_bun_string(utf8_name, encoding.into()),
+            name: webcore::encoding::to_bun_string(utf8_name, encoding),
             path: dirent_path.dupe_ref(),
             kind,
         });
@@ -6942,7 +6942,7 @@ impl ReaddirEntry for Dirent {
     fn append_entry_recursive(entries: &mut Vec<Self>, utf8_name: &[u8], _name_to_copy: &[u8], dirent_path: &BunString, kind: sys::FileKind, encoding: Encoding, apply_encoding: bool) {
         entries.push(Dirent {
             name: if apply_encoding {
-                webcore::encoding::to_bun_string(utf8_name, encoding.into())
+                webcore::encoding::to_bun_string(utf8_name, encoding)
             } else {
                 BunString::clone_utf8(utf8_name)
             },

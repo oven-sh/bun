@@ -165,7 +165,7 @@ pub fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
             break 'blk 0;
         }
         if !value.is_number() {
-            return Err(global_this.throw_invalid_argument_type_value(b"value", b"number", value));
+            return Err(global_this.throw_invalid_argument_type_value("value", "number", value));
         }
         let valuef = value.as_number();
         let min: u32 = 0;

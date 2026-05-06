@@ -1701,13 +1701,16 @@ pub mod js_bundler {
 
         fn run_on_js_thread(&mut self) {
             let kind = self.import_record.kind;
+            // PORT NOTE: reshaped for borrowck — capture the erased self pointer
+            // before borrowing fields immutably for the FFI call.
+            let self_ptr = self as *mut Self as *mut c_void;
             // SAFETY: bv2 is a valid backref; plugins is Some when this runs
             unsafe {
                 (*bv2_plugin(self.bv2)).match_on_resolve(
                     &self.import_record.specifier,
                     &self.import_record.namespace,
                     &self.import_record.source_file,
-                    self as *mut _ as *mut c_void,
+                    self_ptr,
                     kind,
                 );
             }

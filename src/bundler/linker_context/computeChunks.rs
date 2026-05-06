@@ -9,6 +9,7 @@ use bun_string::strings;
 use bun_wyhash::{self, Wyhash};
 
 use crate::bun_css;
+use crate::bun_fs;
 use crate::options::{PathTemplate, PlaceholderField};
 use crate::{BundleV2, Chunk, Index, IndexInt, LinkerContext};
 
@@ -51,7 +52,7 @@ pub fn compute_chunks(
 
     // TODO(port): StringArrayHashMap keyed by arena-allocated &[u8]; using ArrayHashMap<&[u8], Chunk> here.
     let mut js_chunks: ArrayHashMap<&[u8], Chunk> = ArrayHashMap::new();
-    js_chunks.reserve(this.graph.entry_points.len);
+    js_chunks.reserve(this.graph.entry_points.len());
 
     // Key is the hash of the CSS order. This deduplicates identical CSS files.
     let mut css_chunks: ArrayHashMap<u64, Chunk> = ArrayHashMap::new();
@@ -60,7 +61,7 @@ pub fn compute_chunks(
     // Maps entry point IDs to their index in js_chunks.values().
     // CSS-only entry points that skip JS chunk creation get maxInt as sentinel.
     let entry_point_to_js_chunk_idx: &mut [u32] =
-        temp.alloc_slice_fill_copy(this.graph.entry_points.len, u32::MAX);
+        temp.alloc_slice_fill_copy(this.graph.entry_points.len(), u32::MAX);
 
     // SAFETY: `parse_graph` is a backref into `BundleV2.graph`, valid for the link step.
     let parse_graph = unsafe { &*this.parse_graph };
@@ -73,9 +74,9 @@ pub fn compute_chunks(
 
     let code_splitting = this.graph.code_splitting;
     let could_be_browser_target_from_server_build = this.options.target.is_server_side()
-        && parse_graph.html_imports.html_source_indices.len() > 0;
+        && parse_graph.html_imports.html_source_indices.len > 0;
     let has_server_html_imports =
-        parse_graph.html_imports.server_source_indices.len() > 0;
+        parse_graph.html_imports.server_source_indices.len > 0;
 
     // Create chunks for entry points
     for (entry_id_, &source_index) in entry_source_indices.iter().enumerate() {

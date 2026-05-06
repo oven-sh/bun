@@ -31,9 +31,9 @@ pub fn gc_aggression_level(
 
     if !value.is_empty_or_undefined_or_null() {
         match value.coerce::<i32>(global)? {
-            1 => global.bun_vm().aggressive_garbage_collection = GCAggressionLevel::Mild,
-            2 => global.bun_vm().aggressive_garbage_collection = GCAggressionLevel::Aggressive,
-            0 => global.bun_vm().aggressive_garbage_collection = GCAggressionLevel::None,
+            1 => global.bun_vm().aggressive_garbage_collection = GCLevel::Mild,
+            2 => global.bun_vm().aggressive_garbage_collection = GCLevel::Aggressive,
+            0 => global.bun_vm().aggressive_garbage_collection = GCLevel::None,
             _ => {}
         }
     }

@@ -1357,19 +1357,20 @@ impl From<CompressError> for WriteError {
     }
 }
 
-// TODO(b2-blocked): `bun_libdeflate_sys` is not a `bun_runtime` dep yet — body
-// gated until Cargo.toml gains the dep. Signature kept so callers type-check.
-
 fn compress_gzip(data: &[u8], level: u8) -> Result<Vec<u8>, CompressError> {
-    use bun_libdeflate_sys as libdeflate;
+    use bun_libdeflate_sys::libdeflate;
     libdeflate::load();
 
-    let Some(compressor) = libdeflate::Compressor::alloc(i32::from(level)) else {
+    let compressor_ptr = libdeflate::Compressor::alloc(i32::from(level));
+    if compressor_ptr.is_null() {
         return Err(CompressError::GzipInitFailed);
-    };
-    // Drop on Compressor calls deinit()
-    let _guard = scopeguard::guard((), |_| compressor.deinit());
-    // TODO(port): if libdeflate::Compressor implements Drop, remove the scopeguard.
+    }
+    // defer compressor.deinit();
+    let _guard = scopeguard::guard(compressor_ptr, |p| unsafe {
+        libdeflate::Compressor::destroy(p)
+    });
+    // SAFETY: alloc returned non-null; freed by `_guard` on scope exit.
+    let compressor: &mut libdeflate::Compressor = unsafe { &mut *compressor_ptr };
 
     let max_size = compressor.max_bytes_needed(data, libdeflate::Encoding::Gzip);
 

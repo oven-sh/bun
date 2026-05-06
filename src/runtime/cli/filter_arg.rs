@@ -4,7 +4,7 @@ use bun_core::Global;
 use bun_glob as glob;
 use bun_interchange::json;
 use bun_logger::Log;
-use bun_paths::{self, PathBuffer};
+use bun_paths::{self, platform, resolve_path, PathBuffer};
 use bun_str::{strings, ZStr};
 use bun_sys;
 
@@ -63,11 +63,10 @@ pub fn get_candidate_package_patterns<'a>(
     'walk: loop {
         'body: {
             let mut name_buf = PathBuffer::uninit();
-            let json_path: &ZStr = bun_paths::join_abs_string_buf_z(
+            let json_path: &ZStr = resolve_path::join_abs_string_buf_z::<platform::Auto>(
                 workdir,
                 name_buf.as_mut_slice(),
                 &[b"package.json".as_slice()],
-                bun_paths::Style::Auto,
             );
 
             log.msgs.clear();
@@ -133,7 +132,7 @@ pub fn get_candidate_package_patterns<'a>(
         }
 
         // continue-expression of the Zig `while`
-        workdir = match bun_paths::dirname(workdir) {
+        workdir = match bun_core::dirname(workdir) {
             Some(d) => d,
             None => break 'walk,
         };
@@ -212,7 +211,7 @@ impl FilterSet {
             if is_path {
                 let parts: [&[u8]; 1] = [filter_utf8];
                 let joined =
-                    bun_paths::join_abs_string_buf(cwd, buf.as_mut_slice(), &parts, bun_paths::Style::Loose);
+                    resolve_path::join_abs_string_buf::<platform::Loose>(cwd, buf.as_mut_slice(), &parts);
                 let mut filter_utf8_temp = Box::<[u8]>::from(joined);
                 for b in filter_utf8_temp.iter_mut() {
                     if *b == b'\\' {

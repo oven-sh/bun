@@ -1352,7 +1352,9 @@ impl String {
         }
 
         if self.is_utf8() {
-            todo!("encode_into from UTF-8");
+            // Zig: `@panic("TODO")` (string.zig:636) — the UTF-8 source path was
+            // never implemented upstream. Faithfully port the panic.
+            panic!("String.encodeInto: UTF-8 source path is unimplemented in Zig");
         }
 
         webcore_encoding::encode_into_from8::<ENC>(self.latin1(), out)

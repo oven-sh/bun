@@ -6,7 +6,7 @@ use bun_install::Bin;
 use bun_install::Features;
 use bun_install::Lockfile;
 use bun_install::PackageManager;
-use bun_install::package_manager_real::package_manager_options as Options;
+use bun_install::package_manager::Options;
 use bun_paths as path;
 use bun_paths::{AbsPath, PathBuffer};
 use bun_str::strings;
@@ -104,10 +104,9 @@ fn unlink(ctx: Command::Context) -> Result<(), bun_core::Error> {
             }
         }
 
-        match syscall::lstat(path::join_abs_string_z(
+        match syscall::lstat(path::resolve_path::join_abs_string_z::<path::platform::Auto>(
             manager.global_link_dir_path(),
             &[name],
-            path::Platform::Auto,
         )) {
             Ok(stat) => {
                 if !bun_sys::S::ISLNK(u32::try_from(stat.mode).unwrap()) {

@@ -737,14 +737,13 @@ impl UpdateInteractiveCommand {
                                 _ => unreachable!(),
                             };
 
-                            let abs_res_path = path::join_abs_string_buf(
+                            let abs_res_path = path::resolve_path::join_abs_string_buf::<path::platform::Posix>(
                                 FileSystem::instance().top_level_dir,
                                 &mut path_buf,
                                 &[res_path],
-                                path::Style::Posix,
                             );
 
-                            if !glob::match_(pattern, strings::without_trailing_slash(abs_res_path))
+                            if !glob::r#match(pattern, strings::without_trailing_slash(abs_res_path))
                                 .matches()
                             {
                                 break 'matched false;
@@ -753,7 +752,7 @@ impl UpdateInteractiveCommand {
                         WorkspaceFilter::Name(pattern) => {
                             let name = pkg_names[workspace_pkg_id as usize].slice(string_buf);
 
-                            if !glob::match_(pattern, name).matches() {
+                            if !glob::r#match(pattern, name).matches() {
                                 break 'matched false;
                             }
                         }
@@ -1130,13 +1129,13 @@ impl UpdateInteractiveCommand {
         {
             // TODO(port): replace std.posix.system.ioctl with bun_sys
             // SAFETY: all-zero is a valid Winsize (#[repr(C)] POD, no NonNull/NonZero fields).
-            let mut size: bun_sys::posix::Winsize = unsafe { core::mem::zeroed() };
+            let mut size: bun_core::Winsize = unsafe { core::mem::zeroed() };
             // SAFETY: ioctl with TIOCGWINSZ on stdout fd; size is a valid out-ptr.
             if unsafe {
-                bun_sys::posix::ioctl(
-                    bun_sys::posix::STDOUT_FILENO,
-                    bun_sys::posix::TIOCGWINSZ,
-                    &mut size as *mut _ as usize,
+                libc::ioctl(
+                    libc::STDOUT_FILENO,
+                    libc::TIOCGWINSZ,
+                    &mut size as *mut _ as *mut libc::c_void,
                 )
             } == 0
             {
@@ -1531,7 +1530,7 @@ impl UpdateInteractiveCommand {
                         // Calculate actual displayed text length including count if present
                         let dep_type_text_len: usize = if selected_count > 0 {
                             // TODO(port): std.fmt.count("{d}") — count decimal digits
-                            pkg.dependency_type.len() + 1 + bun_core::fmt::count_digits(selected_count) // +1 for space
+                            pkg.dependency_type.len() + 1 + (bun_core::fmt::fast_digit_count(selected_count as u64) as usize) // +1 for space
                         } else {
                             pkg.dependency_type.len()
                         };
@@ -1644,8 +1643,8 @@ impl UpdateInteractiveCommand {
                         );
                         if let Some(d) = diff {
                             match d {
-                                semver::VersionDiff::Major => checkbox_color = "red",
-                                semver::VersionDiff::Minor => {
+                                semver::version::ChangedVersion::Major => checkbox_color = "red",
+                                semver::version::ChangedVersion::Minor => {
                                     if current_full.major == 0 {
                                         checkbox_color = "red"; // 0.x.y minor changes are breaking
                                     } else {

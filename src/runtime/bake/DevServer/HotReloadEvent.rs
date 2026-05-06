@@ -5,12 +5,11 @@ use core::sync::atomic::{AtomicU32, Ordering};
 
 use bun_collections::StringArrayHashMap;
 use bun_core::Output;
-use bun_jsc::ConcurrentTask;
+use bun_jsc::ConcurrentTask::ConcurrentTask;
 use bun_paths::Platform;
 use bun_str::strings;
 
-use crate::bake::dev_server::directory_watch_store::{self, DirectoryWatchStore};
-use crate::bake::dev_server::{DevServer, EntryPointList, MessageId};
+use crate::bake::dev_server::{DevServer, EntryPointList, FileKind, MessageId};
 
 /// This task informs the DevServer's thread about new files to be bundled.
 ///
@@ -118,7 +117,7 @@ impl HotReloadEvent {
         if dev.directory_watchers.watches.count() > 0 {
             for changed_dir_with_slash in self.dirs.keys() {
                 let changed_dir =
-                    strings::without_trailing_slash_windows_path(changed_dir_with_slash);
+                    strings::paths::without_trailing_slash_windows_path(changed_dir_with_slash);
 
                 // Bust resolution cache, but since Bun does not watch all
                 // directories in a codebase, this only targets the following resolutions

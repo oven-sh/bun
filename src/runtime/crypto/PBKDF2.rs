@@ -1,12 +1,17 @@
-use core::ffi::c_int;
+use core::ffi::{c_int, c_void};
 use core::mem::offset_of;
+use core::ptr::NonNull;
 
 use bun_aio::KeepAlive;
 use bun_boringssl_sys as boringssl;
 use bun_jsc::{
-    AnyTask, CallFrame, ConcurrentTask, JSGlobalObject, JSPromiseStrong, JSValue, JsResult,
-    VirtualMachine, WorkPool, WorkPoolTask, ZigStringSlice,
+    CallFrame, JSGlobalObject, JSPromiseStrong, JSValue, JsResult, WorkPool, WorkPoolTask,
+    ZigStringSlice,
 };
+// `bun_jsc::{VirtualMachine, AnyTask, ConcurrentTask}` are *modules*; import the structs.
+use bun_jsc::AnyTask::AnyTask;
+use bun_jsc::ConcurrentTask::ConcurrentTask;
+use bun_jsc::virtual_machine::VirtualMachine;
 
 use crate::node::StringOrBuffer;
 

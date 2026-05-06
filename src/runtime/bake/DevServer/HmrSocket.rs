@@ -97,8 +97,8 @@ impl HmrSocket {
                     return ws.close();
                 }
                 let mut generation_bytes = [0u8; 4];
-                // TODO(port): std.fmt.hexToBytes — provide bun_str::hex_to_bytes
-                if bun_str::hex_to_bytes(&mut generation_bytes, &msg[1..]).is_err() {
+                // std.fmt.hexToBytes → bun_str::strings::decode_hex_to_bytes
+                if strings::decode_hex_to_bytes(&mut generation_bytes, &msg[1..]).is_err() {
                     return ws.close();
                 }
                 let generation = u32::from_ne_bytes(generation_bytes);
@@ -147,12 +147,12 @@ impl HmrSocket {
                                     if dev.emit_memory_visualizer_events == 1 {
                                         debug_assert!(
                                             dev.memory_visualizer_timer.state
-                                                != bun_aio::TimerState::Active
+                                                != EventLoopTimerState::ACTIVE
                                         );
                                         dev.vm.timer.update(
                                             &mut dev.memory_visualizer_timer,
                                             &bun_core::Timespec::ms_from_now(
-                                                bun_core::TimespecMode::AllowMockedTime,
+                                                bun_core::TimespecMockMode::AllowMockedTime,
                                                 1000,
                                             ),
                                         );

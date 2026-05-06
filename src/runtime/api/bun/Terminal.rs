@@ -513,7 +513,9 @@ impl Terminal {
 
     /// Constructor for Terminal - called from JavaScript
     /// With constructNeedsThis: true, we receive the JSValue wrapper directly
-    #[bun_jsc::host_fn]
+    // TODO(b2-blocked): #[bun_jsc::host_fn] — macro shim emits `constructor(__g, __f)`
+    // (free-fn, 2 args) but `constructNeedsThis` requires a 3rd `this_value` arg;
+    // the C++ shim is hand-declared in `mod js` above.
     pub fn constructor(
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -737,7 +739,7 @@ mod lib_util {
             // Try libutil.so first (most common), then libutil.so.1
             const LIB_NAMES: [&CStr; 3] = [c"libutil.so", c"libutil.so.1", c"libc.so.6"];
             for lib_name in LIB_NAMES {
-                HANDLE = sys::dlopen(lib_name, sys::DlopenFlags::LAZY);
+                HANDLE = sys::dlopen(lib_name, sys::RTLD::LAZY);
                 if HANDLE.is_some() {
                     return HANDLE;
                 }
@@ -747,7 +749,7 @@ mod lib_util {
     }
 
     pub fn get_open_pty() -> Option<OpenPtyFn> {
-        sys::dlsym_with_handle::<OpenPtyFn>(c"openpty", get_handle)
+        sys::dlsym_with_handle!(OpenPtyFn, "openpty", get_handle())
     }
 }
 

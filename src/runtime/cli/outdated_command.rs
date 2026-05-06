@@ -223,11 +223,10 @@ impl OutdatedCommand {
                                 _ => unreachable!(),
                             };
 
-                            let abs_res_path = path::join_abs_string_buf(
+                            let abs_res_path = path::resolve_path::join_abs_string_buf::<path::platform::Posix>(
                                 FileSystem::instance().top_level_dir,
                                 &mut path_buf,
                                 &[res_path],
-                                path::Platform::Posix,
                             );
 
                             if !glob::r#match(pattern, strings::without_trailing_slash(abs_res_path))
@@ -874,5 +873,5 @@ struct GroupedOutdatedInfo {
 //   source:     src/cli/outdated_command.zig (714 lines)
 //   confidence: medium
 //   todos:      3
-//   notes:      Table comptime-str generic + bun_install cross-crate type names (LoadResult, ResolutionTag, DependencyVersionTag, ManifestLoad) are guesses; Output::pretty assumed to take format_args; borrowck reshaping likely needed around manager.lockfile self-borrows
+//   notes:      Table comptime-str generic; package_manager::{WorkspaceFilter, Options, populate_manifest_cache} blocked on stub un-gate (reconciler-6); Output::pretty assumed to take format_args; borrowck reshaping likely needed around manager.lockfile self-borrows
 // ──────────────────────────────────────────────────────────────────────────

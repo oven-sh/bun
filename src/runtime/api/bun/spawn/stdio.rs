@@ -7,6 +7,12 @@ use bun_sys::{self as sys, Fd, FdExt as _};
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 
+// `bun.jsc.WebCore` lives in this crate (not `bun_jsc`); alias so the body can
+// say `webcore::ReadableStream` / `webcore::body::Value` per the .zig spec.
+use crate::webcore;
+use crate::webcore::blob::store::Data as StoreData;
+use crate::webcore::node_types::{PathLike, PathOrFileDescriptor};
+
 // `bun.jsc.Subprocess.StdioKind` is owned by `process.rs` (defined there to
 // keep `process` leaf; `subprocess` re-exports it).
 use crate::api::bun_process::{self as process, StdioKind, Dup2 as ProcessDup2};
@@ -51,13 +57,13 @@ pub enum Stdio {
     Ignore,
     Fd(Fd),
     Dup2(Dup2),
-    Path(jsc::node::PathLike),
-    Blob(jsc::webcore::blob::Any),
-    ArrayBuffer(jsc::array_buffer::Strong),
+    Path(PathLike),
+    Blob(webcore::blob::Any),
+    ArrayBuffer(jsc::array_buffer::ArrayBufferStrong),
     Memfd(Fd),
     Pipe,
     Ipc,
-    ReadableStream(jsc::webcore::ReadableStream),
+    ReadableStream(webcore::ReadableStream),
 }
 
 // In Zig these are `Stdio.Result` / `Stdio.ResultT` / `Stdio.ToSpawnOptsError`.

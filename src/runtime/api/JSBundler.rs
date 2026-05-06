@@ -148,7 +148,7 @@ pub mod js_bundler {
                             primary: Fs::Path::init_with_namespace(key, b"file"),
                             ..Default::default()
                         },
-                        module_type: resolver::ModuleType::Unknown,
+                        module_type: options::ModuleType::Unknown,
                         ..Default::default()
                     });
                 }
@@ -164,7 +164,7 @@ pub mod js_bundler {
                             primary: Fs::Path::init_with_namespace(key, b"file"),
                             ..Default::default()
                         },
-                        module_type: resolver::ModuleType::Unknown,
+                        module_type: options::ModuleType::Unknown,
                         ..Default::default()
                     });
                 }
@@ -180,7 +180,7 @@ pub mod js_bundler {
             {
                 // First, ensure source_file is absolute. It may be relative (e.g., "../../Windows/Temp/...")
                 // on Windows when the bundler stores paths relative to cwd.
-                let mut abs_source_buf = bun_paths::path_buffer_pool().get();
+                let mut abs_source_buf = bun_paths::path_buffer_pool::get();
                 let abs_source_file = if Self::is_absolute_path(source_file) {
                     source_file
                 } else {
@@ -190,15 +190,15 @@ pub mod js_bundler {
                 // Normalize source_file to use forward slashes (for Windows compatibility)
                 // On Windows, source_file may have backslashes from the real filesystem
                 // Use pathToPosixBuf which always converts \ to / regardless of platform
-                let mut source_file_buf = bun_paths::path_buffer_pool().get();
+                let mut source_file_buf = bun_paths::path_buffer_pool::get();
                 let normalized_source_file =
-                    bun_paths::path_to_posix_buf::<u8>(abs_source_file, &mut source_file_buf);
+                    bun_paths::resolve_path::path_to_posix_buf::<u8>(abs_source_file, &mut *source_file_buf);
 
                 // Extract directory from source_file using posix path handling
                 // For "/entry.js", we want "/"; for "/src/index.js", we want "/src/"
                 // For "C:/foo/bar.js", we want "C:/foo"
-                let mut buf = bun_paths::path_buffer_pool().get();
-                let source_dir = bun_paths::dirname(normalized_source_file, bun_paths::Platform::Posix);
+                let mut buf = bun_paths::path_buffer_pool::get();
+                let source_dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Posix>(normalized_source_file);
                 // If dirname returns empty but path starts with drive letter, extract the drive + root
                 let effective_source_dir: &[u8] = if source_dir.is_empty() {
                     if normalized_source_file.len() >= 3
@@ -215,15 +215,14 @@ pub mod js_bundler {
                     source_dir
                 };
                 // Use .loose to preserve Windows drive letters, then normalize in-place on Windows
-                let joined_len = bun_paths::join_abs_string_buf(
+                let joined_len = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Loose>(
                     effective_source_dir,
-                    &mut buf,
+                    &mut *buf,
                     &[specifier],
-                    bun_paths::Platform::Loose,
                 )
                 .len();
                 if cfg!(windows) {
-                    bun_paths::platform_to_posix_in_place::<u8>(&mut buf[0..joined_len]);
+                    bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut buf[0..joined_len]);
                 }
                 let joined = &buf[0..joined_len];
                 // Must use getKey to return the map's owned key, not the temporary buffer
@@ -233,7 +232,7 @@ pub mod js_bundler {
                             primary: Fs::Path::init_with_namespace(key, b"file"),
                             ..Default::default()
                         },
-                        module_type: resolver::ModuleType::Unknown,
+                        module_type: options::ModuleType::Unknown,
                         ..Default::default()
                     });
                 }
@@ -733,7 +732,7 @@ pub mod js_bundler {
                         if let Some(promise) = plugin_result.as_any_promise() {
                             promise.set_handled(global_this.vm());
                             global_this.bun_vm().wait_for_promise(promise);
-                            match promise.unwrap(global_this.vm(), jsc::PromiseUnwrap::MarkHandled) {
+                            match promise.unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled) {
                                 jsc::PromiseResult::Pending => unreachable!(),
                                 jsc::PromiseResult::Fulfilled(val) => {
                                     plugin_result = val;

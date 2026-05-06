@@ -111,7 +111,7 @@ pub fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         return Ok(JSValue::FALSE);
     }
 
-    Ok(if good == .success {
+    Ok(if good == SerializeAndSendResult::Success {
         JSValue::TRUE
     } else {
         JSValue::FALSE
@@ -285,9 +285,8 @@ pub fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
     }
 
     let _ = handle;
-    let success = ipc_data.serialize_and_send(global, message, .internal, JSValue::NULL, None);
-    // TODO(port): `.internal` / `.success` enum literals — see note in send_helper_child.
-    Ok(if success == .success {
+    let success = ipc_data.serialize_and_send(global, message, IsInternal::Internal, JSValue::NULL, None);
+    Ok(if success == SerializeAndSendResult::Success {
         JSValue::TRUE
     } else {
         JSValue::FALSE
@@ -421,5 +420,5 @@ pub extern "C" fn Bun__shouldIgnoreOneDisconnectEventListener(global: *mut JSGlo
 //   source:     src/runtime/node/node_cluster_binding.zig (304 lines)
 //   confidence: medium
 //   todos:      7
-//   notes:      static mut CHILD_SINGLETON needs JS-thread cell; serialize_and_send result/kind enum literals (.internal/.success/.failure) need concrete types from IPC port
+//   notes:      static mut CHILD_SINGLETON needs JS-thread cell
 // ──────────────────────────────────────────────────────────────────────────

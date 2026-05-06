@@ -435,7 +435,7 @@ pub mod command {
 
         if Tag::USES_GLOBAL_OPTIONS.get(COMMAND) {
             // SAFETY: just initialized
-            unsafe { (*GLOBAL_CLI_CTX).args = arguments::parse::<COMMAND>(GLOBAL_CLI_CTX)? };
+            unsafe { (*GLOBAL_CLI_CTX).args = arguments::parse::<COMMAND>(&mut *GLOBAL_CLI_CTX)? };
         }
 
         #[cfg(windows)]
@@ -454,7 +454,7 @@ pub mod command {
         }
 
         // SAFETY: just initialized
-        Ok(unsafe { GLOBAL_CLI_CTX })
+        Ok(unsafe { &mut *GLOBAL_CLI_CTX })
     }
 
     // std.process.args allocates!

@@ -2653,6 +2653,29 @@ impl Display for FormatDouble {
 /// convention rather than the `Format*` struct convention used here).
 pub type DoubleFormatter = FormatDouble;
 
+/// Port of `std.fmt.printInt(buf, value, 10, .lower, .{})`: format `value`
+/// into `buf` as base-10 ASCII and return the number of bytes written.
+/// Panics (debug) if `buf` is too small — callers size the buffer by the
+/// type's max digit count.
+#[inline]
+pub fn print_int<T: core::fmt::Display>(buf: &mut [u8], value: T) -> usize {
+    struct SliceWriter<'a> { buf: &'a mut [u8], at: usize }
+    impl core::fmt::Write for SliceWriter<'_> {
+        #[inline]
+        fn write_str(&mut self, s: &str) -> core::fmt::Result {
+            let bytes = s.as_bytes();
+            let end = self.at + bytes.len();
+            if end > self.buf.len() { return Err(core::fmt::Error); }
+            self.buf[self.at..end].copy_from_slice(bytes);
+            self.at = end;
+            Ok(())
+        }
+    }
+    let mut w = SliceWriter { buf, at: 0 };
+    let _ = core::fmt::Write::write_fmt(&mut w, format_args!("{value}"));
+    w.at
+}
+
 /// Decimal digit count of a signed integer, including the leading `-` for
 /// negatives. Complements `fast_digit_count` (which is unsigned-only and
 /// limited to the 32-bit Lemire table). Used by ConsoleObject width tracking.

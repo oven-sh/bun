@@ -1508,7 +1508,7 @@ impl CronJob {
         // The cron_jobs list exists so --hot reload and worker teardown can
         // stop/release jobs. Main-thread VMs without --hot never enumerate it,
         // so skip the list ref + append entirely.
-        if vm.hot_reload == jsc::HotReload::Hot || vm.worker.is_some() {
+        if vm.hot_reload == HOT_RELOAD_HOT || vm.worker.is_some() {
             job_ref.ref_(); // owned by cron_jobs entry
             vm.rare_data().cron_jobs.push(job);
         }

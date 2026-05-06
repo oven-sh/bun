@@ -1013,13 +1013,13 @@ pub mod get_addr_info_request {
                     &mut addrinfo,
                 )
             };
-            sys::syslog(format_args!(
+            sys::syslog!(
                 "getaddrinfo({}, {}) = {} ({})",
                 bstr::BStr::new(&query_name),
                 bstr::BStr::new(port_z.as_bytes()),
                 err,
                 debug_timer,
-            ));
+            );
             if err != 0 || addrinfo.is_null() {
                 *self = LibcBackend::Err(err);
                 return;

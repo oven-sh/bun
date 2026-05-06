@@ -12,6 +12,7 @@
 //! Spec: `src/shell/interpreter.zig` + per-builtin `src/shell/interpreter/*.zig`.
 
 use crate::shell::interpreter::{Interpreter, NodeId, ShellTask};
+use bun_jsc::ConcurrentTask::ConcurrentTask;
 
 /// Task payload for [`ShellAsync`](crate::shell::states::r#async::Async)'s
 /// bounce back to the main thread. In Zig the `Async` state struct *is* the
@@ -21,7 +22,7 @@ use crate::shell::interpreter::{Interpreter, NodeId, ShellTask};
 pub struct ShellAsyncTask {
     pub interp: *mut Interpreter,
     pub node: NodeId,
-    pub concurrent_task: bun_jsc::ConcurrentTask,
+    pub concurrent_task: ConcurrentTask,
 }
 
 /// Spec: `Interpreter.Cmd.ShellAsyncSubprocessDone`. Posted from the
@@ -31,7 +32,7 @@ pub struct ShellAsyncSubprocessDone {
     pub interp: *mut Interpreter,
     pub cmd: NodeId,
     pub exit_code: crate::shell::ExitCode,
-    pub concurrent_task: bun_jsc::ConcurrentTask,
+    pub concurrent_task: ConcurrentTask,
 }
 
 impl ShellAsyncSubprocessDone {
@@ -55,7 +56,7 @@ impl ShellAsyncSubprocessDone {
 #[repr(C)]
 pub struct AsyncDeinitWriter {
     pub writer: *mut crate::shell::io_writer::IOWriter,
-    pub concurrent_task: bun_jsc::ConcurrentTask,
+    pub concurrent_task: ConcurrentTask,
 }
 
 impl AsyncDeinitWriter {
@@ -73,7 +74,7 @@ impl AsyncDeinitWriter {
 #[repr(C)]
 pub struct AsyncDeinitReader {
     pub reader: *mut crate::shell::io_reader::IOReader,
-    pub concurrent_task: bun_jsc::ConcurrentTask,
+    pub concurrent_task: ConcurrentTask,
 }
 
 impl AsyncDeinitReader {

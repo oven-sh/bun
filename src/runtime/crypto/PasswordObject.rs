@@ -545,13 +545,18 @@ impl HashJob {
         // SAFETY: `result` was just returned from Box::into_raw in `HashResult::new`;
         // not yet shared (enqueue happens after this write).
         unsafe {
-            (*result).task = AnyTask::new::<HashResult>(result, HashResult::run_from_js);
+            // Zig: `AnyTask.New(HashResult, run_from_js).init(result)` — construct directly
+            // since Rust `New<T>` cannot carry a comptime callback param.
+            (*result).task = AnyTask {
+                ctx: Some(core::ptr::NonNull::new_unchecked(result).cast()),
+                callback: HashResult::run_from_js_erased,
+            };
         }
         // this.ref = .{} — handled by mem::take above
         this_ref.event_loop.enqueue_task_concurrent(
             // SAFETY: `result` is a valid Box::into_raw allocation; ownership transfers to
             // the event loop here. `task` is an intrusive field at a stable address.
-            ConcurrentTask::create_from(unsafe { &mut (*result).task }),
+            ConcurrentTask::create_from(unsafe { core::ptr::addr_of_mut!((*result).task) }),
         );
         // SAFETY: `this` came from Box::into_raw in `HashJob::new`; `this_ref` is no longer
         // used after this point. Drop runs secure_zero on the password.
@@ -571,6 +576,12 @@ struct HashResult {
 impl HashResult {
     pub fn new(init: HashResult) -> *mut HashResult {
         Box::into_raw(Box::new(init))
+    }
+
+    /// Type-erased shim matching `AnyTask.callback`'s ABI; recovers `*mut Self`
+    /// and forwards to `run_from_js`.
+    fn run_from_js_erased(p: *mut core::ffi::c_void) -> AnyTaskJsResult<()> {
+        Self::run_from_js(p.cast::<HashResult>()).map_err(|_| core::ptr::null_mut())
     }
 
     // TODO(port): bun.JSTerminated!void — confirm error type name in bun_jsc.
@@ -836,9 +847,10 @@ struct VerifyJob {
 impl Drop for VerifyJob {
     fn drop(&mut self) {
         // promise: Drop on JSPromiseStrong handles deinit.
-        // TODO(port): bun.freeSensitive — zero the buffers before the Box<[u8]> fields drop.
-        bun_core::secure_zero(&mut self.password);
-        bun_core::secure_zero(&mut self.prev_hash);
+        // bun.freeSensitive — volatile-zero the buffers then free; take the Boxes so the
+        // fields' own Drop sees empty slices afterwards.
+        bun_alloc::free_sensitive(core::mem::take(&mut self.password));
+        bun_alloc::free_sensitive(core::mem::take(&mut self.prev_hash));
     }
 }
 

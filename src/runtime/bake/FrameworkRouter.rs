@@ -5,7 +5,7 @@
 use core::fmt;
 use core::mem::size_of;
 
-use bun_alloc::{AllocError, Arena};
+use bun_alloc::{AllocError, Arena, ArenaVec};
 use bun_collections::{ArrayHashMap, BoundedArray, StringArrayHashMap};
 use bun_core::Output;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, Strong};
@@ -248,7 +248,7 @@ impl FrameworkRouter {
         // errdefer: Vec drops on error path automatically
 
         for (type_index, ty) in types.iter_mut().enumerate() {
-            ty.abs_root = strings::without_trailing_slash_windows_path(&ty.abs_root).into();
+            ty.abs_root = strings::paths::without_trailing_slash_windows_path(&ty.abs_root).into();
             debug_assert!(strings::has_prefix(&ty.abs_root, root));
 
             // PERF(port): was appendAssumeCapacity
@@ -266,7 +266,7 @@ impl FrameworkRouter {
             });
         }
         Ok(FrameworkRouter {
-            root: strings::without_trailing_slash_windows_path(root).into(),
+            root: strings::paths::without_trailing_slash_windows_path(root).into(),
             types,
             routes,
             dynamic_routes: DynamicRouteMap::default(),
@@ -845,7 +845,7 @@ impl Style {
             return Ok(None);
         }
 
-        let dirname = paths::dirname(without_ext, paths::Platform::Posix);
+        let dirname = paths::resolve_path::dirname::<paths::platform::Posix>(without_ext);
         if dirname.len() <= 1 {
             return Ok(Some(ParsedPattern { kind, parts: &[] }));
         }
@@ -865,13 +865,12 @@ impl Style {
         arena: &'bump Arena,
     ) -> Result<&'bump [Part<'bump>], bun_core::Error> {
         let mut i: usize = 1;
-        let mut parts: bumpalo::collections::Vec<'bump, Part<'bump>> =
-            bumpalo::collections::Vec::new_in(arena);
+        let mut parts: ArenaVec<'bump, Part<'bump>> = ArenaVec::new_in(arena);
         let stop_chars: &[u8] = match CONVENTIONS {
             NextRoutingConvention::Pages => b"[",
             NextRoutingConvention::App => b"[(@",
         };
-        while let Some(start) = strings::index_of_any_pos(route_segment, stop_chars, i) {
+        while let Some(start) = strings::index_of_any_pos_comptime(route_segment, stop_chars, i) {
             if matches!(CONVENTIONS, NextRoutingConvention::Pages) || route_segment[start] == b'[' {
                 let mut end = match strings::index_of_char_pos(route_segment, b']', start + 1) {
                     Some(e) => e,
@@ -1506,7 +1505,7 @@ impl FrameworkRouter {
                 let base = file.base();
                 // PORT NOTE: reshaped for borrowck — fetch type fields fresh each iteration.
                 match file.kind(fs.fs(), false) {
-                    bun_fs::EntryKind::Dir => {
+                    bun_resolver::fs::EntryKind::Dir => {
                         let t = &self.types[t_index.get() as usize];
                         if t.ignore_underscores && base.starts_with(b"_") {
                             continue 'outer;

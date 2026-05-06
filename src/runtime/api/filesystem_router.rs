@@ -86,7 +86,9 @@ impl FileSystemRouter {
     // PORT NOTE: `pub const js = jsc.Codegen.JSFileSystemRouter; toJS/fromJS/fromJSDirect`
     // are wired by `#[bun_jsc::JsClass]` codegen — deleted per PORTING.md.
 
-    #[bun_jsc::host_fn]
+    // PORT NOTE: no `#[bun_jsc::host_fn]` here — the `Free` shim it emits calls
+    // a bare `constructor(...)` which cannot resolve inside an `impl`. The
+    // `#[bun_jsc::JsClass]` macro already emits the `<Self>::constructor` shim.
     pub fn constructor(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,

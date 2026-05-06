@@ -573,9 +573,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }));
 
         if SSL {
-            bun_analytics::Features::https_server.fetch_add(1, Ordering::Relaxed);
+            bun_analytics::features::https_server.fetch_add(1, Ordering::Relaxed);
         } else {
-            bun_analytics::Features::http_server.fetch_add(1, Ordering::Relaxed);
+            bun_analytics::features::http_server.fetch_add(1, Ordering::Relaxed);
         }
 
         Ok(server)

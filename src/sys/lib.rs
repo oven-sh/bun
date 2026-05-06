@@ -5438,7 +5438,8 @@ pub mod fs {
                 let dir_fd = super::Fd::cwd();
                 self.dir_fd = dir_fd;
                 let flags = super::O::CREAT | super::O::RDWR | super::O::CLOEXEC;
-                self.fd = super::openat(dir_fd, name, flags, super::S::IRWXU as super::Mode)?;
+                // S_IRWXU == 0o700
+                self.fd = super::openat(dir_fd, name, flags, 0o700)?;
                 Ok(())
             }
             #[cfg(windows)]

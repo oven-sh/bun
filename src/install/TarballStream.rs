@@ -580,7 +580,7 @@ impl TarballStream {
             bun_core::fast_random(),
         )?;
         // allocator.dupeZ → owned NUL-terminated copy.
-        self.tmpname = ZBox::from_bytes(tmpname);
+        self.tmpname = ZBox::from_bytes(tmpname.as_bytes());
 
         self.dest = Some(Fd::from_std_dir(
             &bun_sys::make_path::make_open_path(
@@ -629,14 +629,16 @@ impl TarballStream {
             #[cfg(windows)]
             {
                 let result = strings::to_utf8_list_with_type(Vec::new(), root)?;
-                self.resolved_github_dirname = FileSystem::DirnameStore::instance()
+                self.resolved_github_dirname = FileSystem::instance()
+                    .dirname_store()
                     .append(&result)
                     .expect("unreachable");
             }
             #[cfg(not(windows))]
             {
-                // TODO(port): bun.asByteSlice(root) — on posix OSPathChar==u8, so this is a no-op cast.
-                self.resolved_github_dirname = FileSystem::DirnameStore::instance()
+                // bun.asByteSlice(root) — on posix OSPathChar==u8, so this is a no-op cast.
+                self.resolved_github_dirname = FileSystem::instance()
+                    .dirname_store()
                     .append(root)
                     .expect("unreachable");
             }
@@ -1050,7 +1052,7 @@ impl Drop for TarballStream {
     }
 }
 
-fn drain_callback(task: *mut thread_pool::Task) {
+unsafe fn drain_callback(task: *mut thread_pool::Task) {
     // SAFETY: `task` points to `TarballStream.drain_task`; recover the parent
     // via offset_of (Zig: @fieldParentPtr("drain_task", task)).
     let this: *mut TarballStream = unsafe {

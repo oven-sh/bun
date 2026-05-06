@@ -141,6 +141,10 @@ pub use feature_flags as FeatureFlags;
 pub mod time {
     pub const NS_PER_MS: u64 = 1_000_000;
 
+    // `std.time.{nanoTimestamp,milliTimestamp,timestamp}` — full impls live in
+    // `util::time`; re-export here so `bun_core::time::*` resolves uniformly.
+    pub use crate::util::time::{nano_timestamp, milli_timestamp, timestamp};
+
     #[derive(Clone, Copy)]
     pub struct Timer { started: std::time::Instant }
     impl Timer {

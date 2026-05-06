@@ -664,6 +664,7 @@ unsafe extern "C" {
     // ── ERR ──────────────────────────────────────────────────────────────
     pub fn ERR_clear_error();
     pub fn ERR_get_error() -> u32;
+    pub fn ERR_peek_last_error() -> u32;
     pub fn ERR_error_string(packed_error: u32, buf: *mut c_char) -> *mut c_char;
     pub fn ERR_load_ERR_strings();
     pub fn ERR_load_crypto_strings();

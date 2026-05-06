@@ -49,7 +49,7 @@ impl ArrayHashContext<EnvStr> for EnvMapContext {
 
 impl EnvMap {
     pub fn init() -> EnvMap {
-        EnvMap { map: MapType::new() }
+        EnvMap { map: EnvMapInner::new() }
     }
 
     pub fn memory_cost(&self) -> usize {

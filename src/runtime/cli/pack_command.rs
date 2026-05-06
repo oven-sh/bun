@@ -2170,7 +2170,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
     };
 
     let normalized_pkg_info: Option<Box<[u8]>> = if FOR_PUBLISH {
-        Some(Publish::normalized_package(
+        Some(Publish::PublishCommand::normalized_package(
             manager,
             &package_name,
             &package_version,

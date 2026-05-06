@@ -241,8 +241,7 @@ impl Scripts {
                 first_index: u8::try_from(first_index).unwrap(),
                 total,
                 // Zig `allocator.dupeZ(u8, cwd)` — owned NUL-terminated copy.
-                // TODO(port): verify owned-ZStr constructor name in bun_str (ZString::from_bytes)
-                cwd: ZString::from_bytes(cwd),
+                cwd: ZBox::from_bytes(cwd),
                 package_name: Box::<[u8]>::from(package_name),
             });
         }
@@ -411,8 +410,7 @@ pub struct List {
     pub total: u8,
     // Zig `stringZ` ([:0]const u8) owned via `allocator.dupeZ`; (commented-out)
     // deinit frees it → owned NUL-terminated heap string, not a borrow.
-    // TODO(port): verify exact bun_str owned-ZStr type name (ZString) in Phase B.
-    pub cwd: ZString,
+    pub cwd: ZBox,
     pub package_name: Box<[u8]>,
 }
 

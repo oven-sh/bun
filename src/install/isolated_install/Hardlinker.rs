@@ -261,8 +261,7 @@ impl Hardlinker {
     }
 }
 
-// TODO(port): Walker entry kind enum — exact path/name TBD in bun_sys::walker_skippable.
-use bun_sys::walker_skippable::EntryKind;
+use bun_sys::EntryKind;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

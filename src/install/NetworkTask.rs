@@ -17,8 +17,8 @@ use crate::{ExtractTarball, PackageManager, PatchTask, TarballStream, Task};
 
 pub struct NetworkTask {
     pub unsafe_http_client: AsyncHTTP,
-    pub response: HTTPClientResult,
-    pub task_id: crate::task::Id,
+    pub response: HTTPClientResult<'static>,
+    pub task_id: crate::package_manager_task::Id,
     // TODO(port): owned in `for_manifest` (toOwnedSlice) but borrowed from
     // `tarball.url` in `for_tarball`; Zig leaks/aliases — verify ownership in Phase B.
     pub url_buf: Box<[u8]>,
@@ -76,7 +76,7 @@ pub struct DedupeMapEntry {
 // TODO(port): IdentityContext (hash = value bits) + 80% load factor — verify
 // `bun_collections::HashMap` exposes an identity hasher, or newtype `task::Id`
 // with a pass-through `Hash` impl.
-pub type DedupeMap = HashMap<crate::task::Id, DedupeMapEntry>;
+pub type DedupeMap = HashMap<crate::package_manager_task::Id, DedupeMapEntry>;
 
 impl NetworkTask {
     pub fn notify(&mut self, async_http: &mut AsyncHTTP, result: HTTPClientResult) {
@@ -301,8 +301,8 @@ impl NetworkTask {
                         logger::Loc::EMPTY,
                         format_args!(
                             "Failed to join registry {} and package {} URLs",
-                            QuotedFormatter(&scope.url.href),
-                            QuotedFormatter(name),
+                            quote(&scope.url.href),
+                            quote(name),
                         ),
                     );
                 } else {
@@ -311,8 +311,8 @@ impl NetworkTask {
                         logger::Loc::EMPTY,
                         format_args!(
                             "Failed to join registry {} and package {} URLs",
-                            QuotedFormatter(&scope.url.href),
-                            QuotedFormatter(name),
+                            quote(&scope.url.href),
+                            quote(name),
                         ),
                     );
                 }

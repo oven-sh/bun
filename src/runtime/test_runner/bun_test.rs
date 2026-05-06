@@ -15,7 +15,14 @@ use crate::cli::test_command::{self, CommandLineReporter};
 bun_core::declare_scope!(bun_test_group, hidden);
 // `group` in the Zig is `debug.group` (an Output.scoped). The macro form differs;
 // callers use `group_log!` / `group_begin!` / `group_end!` below.
-// TODO(port): wire to debug::group exactly once debug.rs is ported.
+/// Thin macro over `debug::group::begin(file, line, col, fn_name)` so call
+/// sites stay `group_begin!()` (Zig: `group.begin(@src())`).
+macro_rules! group_begin {
+    () => {
+        $crate::test_runner::debug::group::begin(file!(), line!(), column!(), "")
+    };
+}
+pub(crate) use group_begin;
 
 pub fn clone_active_strong() -> Option<BunTestPtr> {
     let runner = Jest::runner()?;
@@ -58,7 +65,8 @@ pub mod js_fns {
         };
         let bun_test_root = &mut runner.bun_test_root;
         let vm = global_this.bun_vm();
-        if vm.is_in_preload && !cfg.allow_in_preload {
+        // SAFETY: bun_vm() returns the live per-thread VM; deref for a single field read.
+        if unsafe { (*vm).is_in_preload } && !cfg.allow_in_preload {
             return Err(global_this.throw(format_args!(
                 "Cannot use {} during preload.",
                 cfg.signature
@@ -131,7 +139,7 @@ pub mod js_fns {
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
         {
-            debug::group::begin();
+            group_begin!();
             let _g = scopeguard::guard((), |_| debug::group::end());
             // errdefer group.log("ended in error", .{}) — handled by ? paths implicitly logging
             // TODO(port): errdefer side-effect log on error path
@@ -371,7 +379,7 @@ impl BunTestRoot {
         default_concurrent: bool,
         first_last: FirstLast,
     ) {
-        debug::group::begin();
+        group_begin!();
         let _g = scopeguard::guard((), |_| debug::group::end());
 
         debug_assert!(self.active_file.is_none());
@@ -390,7 +398,7 @@ impl BunTestRoot {
     }
 
     pub fn exit_file(&mut self) {
-        debug::group::begin();
+        group_begin!();
         let _g = scopeguard::guard((), |_| debug::group::end());
 
         debug_assert!(self.active_file.is_some());
@@ -405,8 +413,9 @@ impl BunTestRoot {
         self.active_file = None; // drops the Rc (deinit)
     }
 
-    pub fn get_active_file_unless_in_preload(&mut self, vm: &VirtualMachine) -> Option<&mut BunTest> {
-        if vm.is_in_preload {
+    pub fn get_active_file_unless_in_preload(&mut self, vm: *mut VirtualMachine) -> Option<&mut BunTest<'static>> {
+        // SAFETY: vm is the live per-thread VM (from `JSGlobalObject::bun_vm()`).
+        if unsafe { (*vm).is_in_preload } {
             return None;
         }
         // TODO(port): interior mutability — see BunTestPtr note
@@ -492,7 +501,7 @@ impl<'a> BunTest<'a> {
         default_concurrent: bool,
         first_last: FirstLast,
     ) -> Self {
-        debug::group::begin();
+        group_begin!();
         let _g = scopeguard::guard((), |_| debug::group::end());
 
         // Zig sets up allocation_scope/gpa/arena first then re-assigns *this.
@@ -559,7 +568,7 @@ impl<'a> BunTest<'a> {
     }
 
     pub fn ref_(this_strong: &BunTestPtr, phase: RefDataValue) -> RefDataPtr {
-        debug::group::begin();
+        group_begin!();
         let _g = scopeguard::guard((), |_| debug::group::end());
         bun_core::scoped_log!(bun_test_group, "ref: {}", phase);
 
@@ -575,7 +584,7 @@ impl<'a> BunTest<'a> {
         callframe: &CallFrame,
         is_catch: bool,
     ) -> JsResult<()> {
-        debug::group::begin();
+        group_begin!();
         let _g = scopeguard::guard((), |_| debug::group::end());
         // TODO(port): errdefer group.log("ended in error")
 
@@ -627,7 +636,7 @@ impl<'a> BunTest<'a> {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        debug::group::begin();
+        group_begin!();
         let _g = scopeguard::guard((), |_| debug::group::end());
 
         let Some(this) = DoneCallback::from_js(callframe.this()) else {
@@ -680,7 +689,7 @@ impl<'a> BunTest<'a> {
         _ts: &Timespec,
         vm: &VirtualMachine,
     ) {
-        debug::group::begin();
+        group_begin!();
         let _g = scopeguard::guard((), |_| debug::group::end());
         // SAFETY: see BunTestPtr TODO
         let this = unsafe { &mut *(Rc::as_ptr(&this_strong) as *mut BunTest) };
@@ -729,7 +738,7 @@ impl<'a> BunTest<'a> {
     }
 
     pub fn run(this_strong: BunTestPtr, global_this: &JSGlobalObject) -> JsResult<()> {
-        debug::group::begin();
+        group_begin!();
         let _g = scopeguard::guard((), |_| debug::group::end());
         // SAFETY: see BunTestPtr TODO
         let this = unsafe { &mut *(Rc::as_ptr(&this_strong) as *mut BunTest) };
@@ -768,7 +777,7 @@ impl<'a> BunTest<'a> {
     }
 
     fn update_min_timeout(&mut self, global_this: &JSGlobalObject, min_timeout: &Timespec) {
-        debug::group::begin();
+        group_begin!();
         let _g = scopeguard::guard((), |_| debug::group::end());
         // only set the timer if the new timeout is sooner than the current timeout. this unfortunately means that we can't unset an unnecessary timer.
         bun_core::scoped_log!(
@@ -798,7 +807,7 @@ impl<'a> BunTest<'a> {
     }
 
     fn _advance(&mut self, _global_this: &JSGlobalObject) -> JsResult<Advance> {
-        debug::group::begin();
+        group_begin!();
         let _g = scopeguard::guard((), |_| debug::group::end());
         bun_core::scoped_log!(bun_test_group, "advance from {}", <&'static str>::from(self.phase));
         let _g2 = scopeguard::guard((), |_| {
@@ -881,7 +890,7 @@ impl<'a> BunTest<'a> {
         cfg_data: RefDataValue,
         timeout: &Timespec,
     ) -> Option<RefDataValue> {
-        debug::group::begin();
+        group_begin!();
         let _g = scopeguard::guard((), |_| debug::group::end());
         // SAFETY: see BunTestPtr TODO
         let this = unsafe { &mut *(Rc::as_ptr(&this_strong) as *mut BunTest) };
@@ -1009,7 +1018,7 @@ impl<'a> BunTest<'a> {
         is_rejection: bool,
         user_data: RefDataValue,
     ) {
-        debug::group::begin();
+        group_begin!();
         let _g = scopeguard::guard((), |_| debug::group::end());
 
         let _ = is_rejection;
@@ -1061,7 +1070,7 @@ impl<'a> BunTest<'a> {
 
 impl<'a> Drop for BunTest<'a> {
     fn drop(&mut self) {
-        debug::group::begin();
+        group_begin!();
         debug::group::end();
 
         if self.timer.state == EventLoopTimer::State::Active {
@@ -1187,7 +1196,7 @@ impl bun_ptr::RefCounted for RefData {
         unsafe { core::ptr::addr_of_mut!((*this).ref_count) }
     }
     unsafe fn destructor(this: *mut Self, _ctx: ()) {
-        debug::group::begin();
+        group_begin!();
         let _g = scopeguard::guard((), |_| debug::group::end());
         // SAFETY: refcount hit zero; we own the allocation (boxed by RefPtr::new)
         unsafe {
@@ -1626,10 +1635,14 @@ impl Default for RunOneResult {
 }
 
 pub use super::timers::fake_timers::FakeTimers;
-pub use super::execution::Execution;
+// PORT NOTE: Zig nested types (`Execution.ConcurrentGroup`, `Order.Cfg`, …) are
+// top-level items in the sibling Rust modules. Alias the *modules* under the
+// Zig struct names so `Execution::ConcurrentGroup` / `Order::AllOrderResult`
+// resolve as module paths without per-reference rewrites.
+pub use super::execution as Execution;
 pub use super::debug;
-pub use super::scope_functions::ScopeFunctions;
-pub use super::order::Order;
+pub use super::scope_functions as ScopeFunctions;
+pub use super::order as Order;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

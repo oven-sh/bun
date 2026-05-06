@@ -419,7 +419,7 @@ impl WebWorker {
         preload_modules_ptr: *const BunString,
         preload_modules_len: usize,
     ) -> *mut WebWorker {
-        jsc::mark_binding(core::panic::Location::caller());
+        jsc::mark_binding();
         log!("[{}] create", this_context_id);
         let _ = (
             cpp_worker,
@@ -568,9 +568,10 @@ impl WebWorker {
 
 // ──────────────────────────────────────────────────────────────────────────
 // Phase-A draft body (forward-dep heavy). Preserved for B-2 so the port
-// history isn't lost; never compiled (``).
+// history isn't lost; never compiled (`#[cfg(any())]`).
 // ──────────────────────────────────────────────────────────────────────────
 
+#[cfg(any())] // gated: high-tier bodies — forward-dep on bun_runtime/bun_webcore/bun_standalone
 mod __phase_a_body {
     use super::*;
     use bun_logger as logger;

@@ -4159,6 +4159,13 @@ pub fn clonefile(from: &ZStr, to: &ZStr) -> Maybe<()> {
     Err(Error::from_code_int(libc::ENOTSUP, Tag::clonefile).with_path_dest(from.as_bytes(), to.as_bytes()))
 }
 
+/// `clonefileat` — macOS-only CoW copy relative to directory fds. On
+/// non-Darwin returns ENOTSUP so callers can fall back to a manual copy.
+#[cfg(not(target_os = "macos"))]
+pub fn clonefileat(_from_dir: Fd, from: &ZStr, _to_dir: Fd, to: &ZStr) -> Maybe<()> {
+    Err(Error::from_code_int(libc::ENOTSUP, Tag::clonefileat).with_path_dest(from.as_bytes(), to.as_bytes()))
+}
+
 // ── getFdPath ──
 
 /// sys.zig:632 `LinuxKernel.get()` — cached probe of `/proc/version` for

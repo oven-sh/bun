@@ -5,7 +5,7 @@ use crate::test_runner::bun_test::{group_begin, BunTest, RefDataPtr};
 use crate::test_runner::debug;
 use crate::test_runner::expect::JSValueTestExt as _;
 
-#[bun_jsc::JsClass(no_construct)] // codegen wires to_js / from_js (Zig: jsc.Codegen.JSDoneCallback)
+#[bun_jsc::JsClass(no_construct, no_constructor)] // codegen wires to_js / from_js (Zig: jsc.Codegen.JSDoneCallback)
 pub struct DoneCallback {
     /// Some = not called yet. None = done already called, no-op.
     pub r#ref: Option<RefDataPtr>,

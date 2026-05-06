@@ -2939,7 +2939,7 @@ type PollType = FilePoll;
 
 type PollsMap = ArrayHashMap<c_ares::ares_socket_t, *mut PollType>;
 
-#[bun_jsc::JsClass]
+#[bun_jsc::JsClass(name = "DNSResolver")]
 pub struct Resolver {
     pub ref_count: bun_ptr::RefCount<Resolver>, // bun.ptr.RefCount(@This(), "ref_count", deinit, .{})
     pub channel: Option<*mut c_ares::Channel>, // FFI

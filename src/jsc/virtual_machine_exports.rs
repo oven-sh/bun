@@ -319,6 +319,135 @@ pub extern "C" fn Bun__addSourceProviderSourceMap(
         .put_zig_source_provider(opaque_source_provider, slice.as_bytes());
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// Cycle-break shims for `bun_sql_jsc` (and other low-tier crates that can't
+// depend on `bun_jsc` directly). These export the VirtualMachine / EventLoop /
+// RareData / Timer / SSL accessors as plain `extern "C"` symbols so the
+// low-tier crate's `unsafe extern "C"` block has something to link against.
+// Signatures MUST match `src/sql_jsc/jsc.rs:1100-1156`.
+//
+// TODO(port): bodies are stubbed where the underlying Rust method has not yet
+// landed; replace `todo!` with the real forward once VirtualMachine/RareData
+// expose the accessor.
+// ──────────────────────────────────────────────────────────────────────────
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__VM__rareData(_vm: *mut c_void) -> *mut c_void {
+    todo!("blocked_on: VirtualMachine.rare_data accessor")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__VM__global(_vm: *mut c_void) -> *mut JSGlobalObject {
+    todo!("blocked_on: VirtualMachine.global *mut accessor")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__VM__eventLoop(_vm: *mut c_void) -> *mut c_void {
+    todo!("blocked_on: VirtualMachine.event_loop *mut accessor")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__VM__timer(_vm: *mut c_void) -> *mut c_void {
+    todo!("blocked_on: VirtualMachine.timer (timer::All) accessor")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__VM__loopRef(_vm: *mut c_void) {
+    todo!("blocked_on: VirtualMachine event-loop ref")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__VM__loopUnref(_vm: *mut c_void) {
+    todo!("blocked_on: VirtualMachine event-loop unref")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__VM__postDeferredTask(
+    _vm: *mut c_void,
+    _ctx: *mut c_void,
+    _cb: Option<unsafe extern "C" fn(*mut c_void) -> bool>,
+) {
+    todo!("blocked_on: VirtualMachine deferred-task queue")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__VM__unregisterDeferredTask(_vm: *mut c_void, _ctx: *mut c_void) -> bool {
+    todo!("blocked_on: VirtualMachine deferred-task queue")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__EventLoop__enterLoop(_loop: *mut c_void) {
+    todo!("blocked_on: EventLoop.enter")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__EventLoop__exitLoop(_loop: *mut c_void) {
+    todo!("blocked_on: EventLoop.exit")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__Timer__All__insert(_this: *mut c_void, _timer: *mut c_void) {
+    todo!("blocked_on: timer::All.insert")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__Timer__All__remove(_this: *mut c_void, _timer: *mut c_void) {
+    todo!("blocked_on: timer::All.remove")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__RareData__postgresGroup(_vm: *mut c_void, _ssl: bool) -> *mut c_void {
+    todo!("blocked_on: RareData.postgres_group")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__RareData__mysqlGroup(_vm: *mut c_void, _ssl: bool) -> *mut c_void {
+    todo!("blocked_on: RareData.mysql_group")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__RareData__sslCtxCache(_vm: *mut c_void) -> *mut c_void {
+    todo!("blocked_on: RareData.ssl_ctx_cache")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__SSLContextCache__getOrCreateOpts(
+    _this: *mut c_void,
+    _opts: *const c_void,
+    _err: *mut core::ffi::c_int,
+) -> *mut c_void {
+    todo!("blocked_on: SSLContextCache.get_or_create_opts")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__SSLConfig__fromJS(
+    _global: *mut JSGlobalObject,
+    _value: JSValue,
+    _out: *mut c_void,
+) -> bool {
+    todo!("blocked_on: SSLConfig.from_js")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__SSLConfig__asUSocketsClient(_this: *const c_void, _out: *mut c_void) {
+    todo!("blocked_on: SSLConfig.as_usockets_client")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__Blob__needsToReadFile(_this: *const c_void) -> bool {
+    todo!("blocked_on: webcore::Blob.needs_to_read_file")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__LifecycleAgentPreventExit(_agent: *mut c_void) {
+    todo!("blocked_on: InspectorLifecycleAgent.prevent_exit")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__LifecycleAgentStopPreventingExit(_agent: *mut c_void) {
+    todo!("blocked_on: InspectorLifecycleAgent.stop_preventing_exit")
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__removeSourceProviderSourceMap(
     vm: &mut VirtualMachine,

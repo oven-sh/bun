@@ -90,7 +90,7 @@ pub mod js {
     }
 }
 
-#[bun_jsc::JsClass]
+#[bun_jsc::JsClass(name = "Timeout")]
 pub struct TimeoutObject {
     pub ref_count: Cell<u32>,
     pub event_loop_timer: EventLoopTimer,

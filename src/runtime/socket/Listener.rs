@@ -56,7 +56,7 @@ fn vm_event_loop_ctx() -> bun_aio::EventLoopCtx {
     bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js)
 }
 
-#[bun_jsc::JsClass]
+#[bun_jsc::JsClass(no_constructor)]
 pub struct Listener {
     pub handlers: Handlers,
     pub listener: ListenerType,

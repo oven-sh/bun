@@ -58,7 +58,7 @@ use bun_collections::ArrayHashMapExt;
 // TODO(port): `pub const js = jsc.Codegen.JSTranspiler;` and the toJS/fromJS/fromJSDirect
 // aliases are wired by `#[bun_jsc::JsClass]` codegen — see PORTING.md §JSC types.
 
-#[bun_jsc::JsClass]
+#[bun_jsc::JsClass(name = "Transpiler")]
 pub struct JSTranspiler {
     pub transpiler: Transpiler::Transpiler<'static>,
     pub config: Config,

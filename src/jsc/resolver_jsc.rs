@@ -3,17 +3,18 @@
 
 use bstr::BStr;
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_paths::{self, Platform, SEP, SEP_STR};
-use bun_str as strings;
+use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_paths::resolve_path;
+use bun_paths::{Platform, SEP, SEP_STR};
+use bun_string::String as BunString;
 
-#[bun_jsc::host_fn(export_name = "Resolver__nodeModulePathsForJS")]
+#[crate::host_fn(export = "Resolver__nodeModulePathsForJS")]
 pub fn node_module_paths_for_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    bun_jsc::mark_binding!();
+    crate::mark_binding!();
     let argument: JSValue = frame.argument(0);
 
     if argument.is_empty() || !argument.is_string() {
-        return global.throw_invalid_argument_type("nodeModulePaths", "path", "string");
+        return Err(global.throw_invalid_argument_type("nodeModulePaths", "path", "string"));
     }
 
     let in_str = argument.to_bun_string(global)?;
@@ -22,41 +23,40 @@ pub fn node_module_paths_for_js(global: &JSGlobalObject, frame: &CallFrame) -> J
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Resolver__propForRequireMainPaths(global: &JSGlobalObject) -> JSValue {
-    bun_jsc::mark_binding!();
+    crate::mark_binding!();
 
-    let in_str = bun_str::String::init(b".");
+    let in_str = BunString::static_(b".");
     node_module_paths_js_value(in_str, global, false)
 }
 
 // TODO(port): C++ callers pass `in_str` by value without transferring a ref; verify
-// `bun_str::String` Drop semantics match (Zig callee did not `deref`).
+// `bun_string::String` Drop semantics match (Zig callee did not `deref`).
 #[unsafe(export_name = "Resolver__nodeModulePathsJSValue")]
 pub extern "C" fn node_module_paths_js_value(
-    in_str: bun_str::String,
+    in_str: BunString,
     global: &JSGlobalObject,
     use_dirname: bool,
 ) -> JSValue {
     // PERF(port): was ArenaAllocator + stackFallback(1024) bulk-free — profile in Phase B
-    let mut list: Vec<bun_str::String> = Vec::new();
+    let mut list: Vec<BunString> = Vec::new();
 
     let sliced = in_str.to_utf8();
     let base_path: &[u8] = if use_dirname {
-        bun_paths::dirname(sliced.slice(), Platform::Auto).unwrap_or(sliced.slice())
+        resolve_path::dirname::<bun_paths::platform::Auto>(sliced.slice())
     } else {
         sliced.slice()
     };
-    let mut buf = bun_paths::path_buffer_pool().get();
+    let mut buf = bun_paths::path_buffer_pool::get();
 
-    let full_path: &[u8] = bun_paths::join_abs_string_buf(
-        bun_fs::FileSystem::instance().top_level_dir,
-        &mut *buf,
+    let full_path: &[u8] = resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+        bun_paths::fs::FileSystem::instance().top_level_dir(),
+        &mut **buf,
         &[base_path],
-        Platform::Auto,
     );
     let root_index: usize = {
         #[cfg(windows)]
         {
-            bun_paths::windows_filesystem_root(full_path).len()
+            resolve_path::windows_filesystem_root(full_path).len()
         }
         #[cfg(not(windows))]
         {
@@ -92,7 +92,7 @@ pub extern "C" fn node_module_paths_js_value(
                 None => 0,
             } + part.len();
 
-            list.push(bun_str::String::create_format(format_args!(
+            list.push(BunString::create_format(format_args!(
                 "{}{}{}node_modules",
                 BStr::new(root_path),
                 BStr::new(&suffix[..prefix_len]),
@@ -101,18 +101,41 @@ pub extern "C" fn node_module_paths_js_value(
         }
     }
 
-    while !root_path.is_empty() && Platform::Auto.is_separator(root_path[root_path.len() - 1]) {
+    while !root_path.is_empty()
+        && Platform::Auto.is_separator(root_path[root_path.len() - 1])
+    {
         root_path = &root_path[..root_path.len() - 1];
     }
 
-    list.push(bun_str::String::create_format(format_args!(
+    list.push(BunString::create_format(format_args!(
         "{}{}node_modules",
         BStr::new(root_path),
         SEP_STR,
     )));
 
-    // TODO(port): `to_js_array` lives on the `StringJsc` extension trait in this crate.
-    bun_str::String::to_js_array(global, list.as_slice()).unwrap_or(JSValue::ZERO)
+    list.as_slice()
+        .to_js_array(global)
+        .unwrap_or(JSValue::ZERO)
+}
+
+/// `[bun.String]::to_js_array` lives on the `StringArrayJsc` ext trait below
+/// (mirrors `bun_string_jsc.zig`'s `BunString__createArray`).
+trait StringArrayJsc {
+    fn to_js_array(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
+}
+impl StringArrayJsc for [BunString] {
+    fn to_js_array(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        unsafe extern "C" {
+            fn BunString__createArray(
+                global: *mut JSGlobalObject,
+                ptr: *const BunString,
+                len: usize,
+            ) -> JSValue;
+        }
+        crate::host_fn::from_js_host_call(global, || unsafe {
+            BunString__createArray(global.as_ptr(), self.as_ptr(), self.len())
+        })
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -120,5 +143,5 @@ pub extern "C" fn node_module_paths_js_value(
 //   source:     src/jsc/resolver_jsc.zig (88 lines)
 //   confidence: medium
 //   todos:      2
-//   notes:      splitBackwardsScalar hand-rolled; verify bun_str::String FFI ownership & create_format/to_js_array signatures
+//   notes:      splitBackwardsScalar hand-rolled; verify bun_string::String FFI ownership & create_format/to_js_array signatures
 // ──────────────────────────────────────────────────────────────────────────

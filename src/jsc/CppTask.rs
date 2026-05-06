@@ -1,7 +1,7 @@
 use core::marker::{PhantomData, PhantomPinned};
 
-use bun_jsc::{JSGlobalObject, JsResult, VirtualMachine};
-use bun_threading::{WorkPool, WorkPoolTask};
+use crate::{JSGlobalObject, JsResult, VirtualMachineRef as VirtualMachine};
+use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
 // TODO(port): move to jsc_sys
 unsafe extern "C" {
@@ -23,7 +23,7 @@ pub struct CppTask {
 
 impl CppTask {
     pub fn run(&mut self, global: &JSGlobalObject) -> JsResult<()> {
-        bun_jsc::mark_binding!();
+        crate::mark_binding!();
         // SAFETY: self is a valid C++ EventLoopTask; global outlives the call.
         // `JSGlobalObject` wraps `UnsafeCell`, so `as_mut_ptr()` yields a write-
         // provenance `*mut` from `&self` without laundering a read-only pointer.
@@ -73,11 +73,12 @@ impl ConcurrentCppTask {
             cpp_task,
             workpool_task: WorkPoolTask {
                 callback: Self::run_from_workpool,
+                ..Default::default()
             },
         }))
     }
 
-    pub fn run_from_workpool(task: *mut WorkPoolTask) {
+    pub unsafe fn run_from_workpool(task: *mut WorkPoolTask) {
         // SAFETY: task points to ConcurrentCppTask.workpool_task; recover the parent.
         let this: *mut ConcurrentCppTask = unsafe {
             (task as *mut u8)
@@ -94,21 +95,23 @@ impl ConcurrentCppTask {
         drop(this);
         EventLoopTaskNoContext::run(cpp_task);
         if let Some(vm) = maybe_vm {
-            vm.event_loop.unref_concurrently();
+            // SAFETY: `event_loop()` returns the VM-owned EventLoop; live for VM lifetime.
+            unsafe { (*vm.event_loop()).unref_concurrently() };
         }
     }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn ConcurrentCppTask__createAndRun(cpp_task: *mut EventLoopTaskNoContext) {
-    bun_jsc::mark_binding!();
+    crate::mark_binding!();
     // SAFETY: cpp_task is a valid C++ EventLoopTaskNoContext freshly handed over from C++.
     if let Some(vm) = unsafe { (*cpp_task).get_vm() } {
-        vm.event_loop.ref_concurrently();
+        // SAFETY: `event_loop()` returns the VM-owned EventLoop; live for VM lifetime.
+        unsafe { (*vm.event_loop()).ref_concurrently() };
     }
     let cpp = ConcurrentCppTask::new(cpp_task);
     // SAFETY: `cpp` is a freshly boxed ConcurrentCppTask; workpool_task is a valid field ptr.
-    WorkPool::schedule(unsafe { &mut (*cpp).workpool_task });
+    WorkPool::schedule(unsafe { &raw mut (*cpp).workpool_task });
 }
 
 // ──────────────────────────────────────────────────────────────────────────

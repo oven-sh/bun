@@ -52,8 +52,6 @@ const _: () = {
         fn __from_js_direct(value: JSValue) -> *mut HTMLBundle;
         #[link_name = "HTMLBundle__create"]
         fn __create(global: *mut JSGlobalObject, ptr: *mut HTMLBundle) -> JSValue;
-        #[link_name = "HTMLBundle__getConstructor"]
-        fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
     }
     #[allow(improper_ctypes)]
     #[cfg(not(all(windows, target_arch = "x86_64")))]
@@ -64,8 +62,6 @@ const _: () = {
         fn __from_js_direct(value: JSValue) -> *mut HTMLBundle;
         #[link_name = "HTMLBundle__create"]
         fn __create(global: *mut JSGlobalObject, ptr: *mut HTMLBundle) -> JSValue;
-        #[link_name = "HTMLBundle__getConstructor"]
-        fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
     }
 
     impl bun_jsc::JsClass for HTMLBundle {
@@ -85,10 +81,7 @@ const _: () = {
             // C++ wrapper (deref'd via `HTMLBundleClass__finalize` → `finalize()`).
             unsafe { __create(global.as_ptr(), ptr) }
         }
-        fn get_constructor(global: &JSGlobalObject) -> JSValue {
-            // SAFETY: `global` is live; codegen extern returns the cached ctor.
-            unsafe { __get_constructor(global.as_ptr()) }
-        }
+        // `noConstructor: true` — no `HTMLBundle__getConstructor` export; trait default applies.
     }
 };
 

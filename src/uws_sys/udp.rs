@@ -70,11 +70,6 @@ impl Socket {
         unsafe { us_udp_socket_user(self) }
     }
 
-    pub fn bind(&mut self, hostname: *const c_char, port: c_uint) -> c_int {
-        // SAFETY: thin FFI passthrough; hostname must be NUL-terminated per uSockets.
-        unsafe { us_udp_socket_bind(self, hostname, port) }
-    }
-
     /// Get the bound port in host byte order
     pub fn bound_port(&mut self) -> c_int {
         // SAFETY: self is a live us_udp_socket_t.
@@ -197,7 +192,6 @@ unsafe extern "C" {
         num: c_int,
     ) -> c_int;
     fn us_udp_socket_user(socket: *mut Socket) -> *mut c_void;
-    fn us_udp_socket_bind(socket: *mut Socket, hostname: *const c_char, port: c_uint) -> c_int;
     fn us_udp_socket_bound_port(socket: *mut Socket) -> c_int;
     fn us_udp_socket_bound_ip(socket: *mut Socket, buf: *mut u8, length: *mut i32);
     fn us_udp_socket_remote_ip(socket: *mut Socket, buf: *mut u8, length: *mut i32);

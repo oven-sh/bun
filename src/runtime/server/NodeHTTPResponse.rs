@@ -325,7 +325,6 @@ unsafe extern "C" {
     fn NodeHTTPResponse__fromJS(value: JSValue) -> Option<core::ptr::NonNull<NodeHTTPResponse>>;
     fn NodeHTTPResponse__fromJSDirect(value: JSValue) -> Option<core::ptr::NonNull<NodeHTTPResponse>>;
     fn NodeHTTPResponse__create(ptr: *mut NodeHTTPResponse, global: *mut JSGlobalObject) -> JSValue;
-    fn NodeHTTPResponse__getConstructor(global: *mut JSGlobalObject) -> JSValue;
 }
 impl jsc::JsClass for NodeHTTPResponse {
     fn from_js(value: JSValue) -> Option<*mut Self> {
@@ -340,10 +339,7 @@ impl jsc::JsClass for NodeHTTPResponse {
         // Never called by-value; callers go through `to_js_ptr` below.
         unreachable!("NodeHTTPResponse::to_js by-value")
     }
-    fn get_constructor(global: &JSGlobalObject) -> JSValue {
-        // SAFETY: codegen extern.
-        unsafe { NodeHTTPResponse__getConstructor(global as *const _ as *mut _) }
-    }
+    // `noConstructor: true` — no `NodeHTTPResponse__getConstructor` export; trait default applies.
 }
 impl NodeHTTPResponse {
     #[inline]

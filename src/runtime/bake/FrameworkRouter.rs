@@ -1815,7 +1815,7 @@ impl FrameworkRouter {
 /// This binding is currently only intended for testing FrameworkRouter, and not
 /// production usage. It uses a slower but easier to use pattern for object
 /// creation. A production-grade JS api would be able to re-use objects.
-#[bun_jsc::JsClass]
+#[bun_jsc::JsClass(name = "FrameworkFileSystemRouter")]
 pub struct JSFrameworkRouter {
     pub files: Vec<bun_str::String>,
     pub router: FrameworkRouter,

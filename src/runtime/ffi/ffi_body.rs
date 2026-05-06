@@ -335,7 +335,7 @@ impl Offsets {
     }
 }
 
-#[bun_jsc::JsClass]
+#[bun_jsc::JsClass(no_constructor)]
 pub struct FFI {
     pub dylib: Option<bun_sys::DynLib>, // TODO(port): std.DynLib equivalent
     pub functions: StringArrayHashMap<Function>,

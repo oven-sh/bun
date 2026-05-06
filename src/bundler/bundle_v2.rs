@@ -635,7 +635,7 @@ pub mod api {
         // so the layout warning is benign here.
         #[allow(improper_ctypes)]
         unsafe extern "C" {
-            #[link_name = "JSBundlerPlugin__anyMatchesCrossingBoundaries"]
+            #[link_name = "JSBundlerPlugin__anyMatches"]
             fn JSBundlerPlugin__anyMatches(this: *const Plugin, path: *const crate::ungate_support::bun_fs::Path, is_on_load: bool) -> bool;
         }
         impl Plugin {

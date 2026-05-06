@@ -455,7 +455,7 @@ pub mod codegen_stub {
     }
 }
 
-#[bun_jsc::JsClass(no_construct)]
+#[bun_jsc::JsClass(no_construct, no_constructor)]
 pub struct UDPSocket {
     pub config: UDPSocketConfig,
 

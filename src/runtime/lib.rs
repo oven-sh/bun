@@ -34,8 +34,6 @@ pub mod api;
 pub mod timer;
 pub mod dispatch;
 pub mod jsc_hooks;
-pub mod link_stubs; // AUTO-GENERATED: scripts/gen-link-stubs.sh
-pub mod hw_exports; // handwritten `@export` syms not covered by codegen
 
 // ─── un-gated in B-2 round 3 (each subdir owns a real `mod.rs`; heavy bodies
 //     re-gated *inside* those files) ────────────────────────────────────────

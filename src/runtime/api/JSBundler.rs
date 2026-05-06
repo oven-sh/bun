@@ -2261,7 +2261,7 @@ pub mod js_bundler {
 
 pub use js_bundler as JSBundler;
 
-#[bun_jsc::JsClass]
+#[bun_jsc::JsClass(no_constructor)]
 pub struct BuildArtifact {
     pub blob: Blob,
     pub loader: options::Loader,

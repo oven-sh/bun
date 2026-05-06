@@ -3092,8 +3092,6 @@ macro_rules! impl_socket_js_class {
                 fn __from_js_direct(value: JSValue) -> *mut c_void;
                 #[link_name = concat!(stringify!($name), "__create")]
                 fn __create(global: *mut JSGlobalObject, ptr: *mut c_void) -> JSValue;
-                #[link_name = concat!(stringify!($name), "__getConstructor")]
-                fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
             }
             impl bun_jsc::JsClass for $ty {
                 fn from_js(value: JSValue) -> Option<*mut Self> {
@@ -3112,10 +3110,7 @@ macro_rules! impl_socket_js_class {
                     // (freed via `${typeName}Class__finalize`).
                     unsafe { __create(global.as_ptr(), ptr) }
                 }
-                fn get_constructor(global: &JSGlobalObject) -> JSValue {
-                    // SAFETY: codegen extern returns the cached ctor.
-                    unsafe { __get_constructor(global.as_ptr()) }
-                }
+                // `noConstructor: true` — no `${name}__getConstructor` export; trait default applies.
             }
         };
     };

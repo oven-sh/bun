@@ -569,7 +569,7 @@ impl FileSystemRouter {
     }
 }
 
-#[bun_jsc::JsClass(no_construct)]
+#[bun_jsc::JsClass(no_construct, no_constructor)]
 pub struct MatchedRoute {
     /// Self-referential: always points at `self.route_holder`. See `init`.
     // PORT NOTE: `Match<'a>` borrows arena/request bytes that outlive this object via

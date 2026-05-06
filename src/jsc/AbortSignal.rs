@@ -3,11 +3,8 @@ use core::ffi::c_void;
 use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 
-use bun_jsc::{JSGlobalObject, JSValue, VirtualMachine};
-use bun_jsc::api::timer::{EventLoopTimer, EventLoopTimerState, timer_object_internals};
-use bun_runtime::webcore::body;
+use crate::{JSGlobalObject, JSValue, VirtualMachineRef as VirtualMachine};
 use bun_core::Timespec;
-use bun_analytics;
 
 use crate::CommonAbortReason;
 
@@ -91,7 +88,6 @@ impl AbortSignal {
 
     pub fn signal(&self, global_object: &JSGlobalObject, reason: CommonAbortReason) {
         // TODO(port): analytics counter — Zig: `bun.analytics.Features.abort_signal += 1`
-        bun_analytics::features::abort_signal_inc();
         // SAFETY: thin FFI forward.
         unsafe { WebCore__AbortSignal__signal(self.as_mut_ptr(), global_object.as_ptr(), reason) }
     }
@@ -213,30 +209,31 @@ pub enum AbortReason {
 }
 
 impl AbortReason {
-    pub fn to_body_value_error(
-        self,
-        global_object: &JSGlobalObject,
-    ) -> body::value::ValueError {
-        // TODO(port): exact path of `jsc.WebCore.Body.Value.ValueError` in bun_runtime
-        match self {
-            AbortReason::Common(reason) => body::value::ValueError::AbortReason(reason),
-            AbortReason::Js(value) => {
-                body::value::ValueError::JSValue(bun_jsc::Strong::create(value, global_object))
-            }
-        }
-    }
-
     pub fn to_js(self, global: &JSGlobalObject) -> JSValue {
         match self {
             AbortReason::Common(reason) => reason.to_js(global),
             AbortReason::Js(value) => value,
         }
     }
+
+    // PORT NOTE (phase-d): `to_body_value_error` reaches into
+    // `bun_runtime::webcore::body::value::ValueError` (forward dep on
+    // `bun_runtime`). The conversion is trivial and is reconstructed at the
+    // call-site in `bun_runtime` once that tier un-gates.
 }
 
-pub struct Timeout {
-    pub event_loop_timer: EventLoopTimer,
+// ──────────────────────────────────────────────────────────────────────────
+// `AbortSignal.Timeout` — port of `src/jsc/AbortSignal.zig:Timeout`.
+//
+// PORT NOTE (phase-d): the full struct embeds an `EventLoopTimer` and
+// `timer_object_internals::Flags` from `bun_jsc::api::timer`, which is
+// `bun_runtime`-tier (forward dep). The C++ side only treats `*mut Timeout` as
+// an opaque token round-tripped through `create`/`run`/`deinit`, so this
+// struct's layout is private to Rust — we keep the state we can express now
+// and `todo!()` the timer insert/remove until `Timer::All` is reachable.
+// ──────────────────────────────────────────────────────────────────────────
 
+pub struct Timeout {
     // The `Timeout`'s lifetime is owned by the AbortSignal.
     // But this does have a ref count increment.
     // TODO(port): LIFETIMES.tsv classifies this SHARED, but AbortSignal is an
@@ -247,12 +244,13 @@ pub struct Timeout {
     // WebCore__AbortSignal__unref.
     pub signal: *mut AbortSignal,
 
-    /// "epoch" is reused.
-    pub flags: timer_object_internals::Flags,
-
     /// See `swapGlobalForTestIsolation`: timers from a prior isolated test
     /// file must not fire abort handlers in the new global.
     pub generation: u32,
+
+    /// Deadline computed at `init`; held until `vm.timer` (`Timer::All`) is
+    /// reachable from this tier and the intrusive `EventLoopTimer` node lands.
+    pub deadline: Timespec,
 }
 
 impl Timeout {
@@ -262,14 +260,8 @@ impl Timeout {
             // Phase B IntrusiveArc.
             signal: signal_,
             generation: vm.test_isolation_generation,
-            event_loop_timer: EventLoopTimer {
-                next: Timespec::now(bun_core::timespec::NowMode::AllowMockedTime)
-                    .add_ms(i64::try_from(milliseconds).unwrap()),
-                tag: bun_jsc::api::timer::EventLoopTimerTag::AbortSignalTimeout,
-                state: EventLoopTimerState::Cancelled,
-                ..Default::default()
-            },
-            flags: timer_object_internals::Flags::default(),
+            deadline: Timespec::now_allow_mocked_time()
+                .add_ms(i64::try_from(milliseconds).unwrap()),
         }));
 
         #[cfg(feature = "ci_assert")]
@@ -281,24 +273,20 @@ impl Timeout {
         }
 
         // We default to not keeping the event loop alive with this timeout.
-        // SAFETY: `this` was just Box-allocated above; event_loop_timer is the
-        // intrusive node and stays at a stable address until Box::from_raw in deinit.
-        vm.timer.insert(unsafe { &mut (*this).event_loop_timer });
-
-        this
+        // TODO(port): `vm.timer.insert(&mut (*this).event_loop_timer)` —
+        // `vm.timer` is `()` until `Timer::All` lands (cycle-break).
+        let _ = (vm, this);
+        todo!("phase-d: AbortSignal.Timeout.init — vm.timer.insert (Timer::All gated)");
     }
 
-    fn cancel(&mut self, vm: &VirtualMachine) {
-        if self.event_loop_timer.state == EventLoopTimerState::Active {
-            vm.timer.remove(&mut self.event_loop_timer);
-        }
+    fn cancel(&mut self, _vm: &VirtualMachine) {
+        // TODO(port): if event_loop_timer.state == Active { vm.timer.remove(...) }
     }
 
     pub fn run(this: *mut Timeout, vm: &VirtualMachine) {
         // SAFETY: caller passes a live Timeout; we stop touching `this` before
         // `dispatch`, which may free it.
         unsafe {
-            (*this).event_loop_timer.state = EventLoopTimerState::Fired;
             (*this).cancel(vm);
 
             // The signal and its handlers belong to a previous isolated test
@@ -317,13 +305,15 @@ impl Timeout {
     }
 
     fn dispatch(vm: &VirtualMachine, signal_ptr: *mut AbortSignal) {
-        let event_loop = vm.event_loop();
+        // SAFETY: `event_loop()` returns the VM-owned EventLoop; live for VM lifetime.
+        let event_loop = unsafe { &mut *vm.event_loop() };
         event_loop.enter();
         let _guard = scopeguard::guard((), |_| event_loop.exit());
         // signalAbort() releases the extra ref from timeout() after all
         // abort work completes, so we must not unref here.
-        // SAFETY: signal_ptr is held alive by the extra ref documented above.
-        unsafe { (*signal_ptr).signal(vm.global, CommonAbortReason::Timeout) };
+        // SAFETY: signal_ptr is held alive by the extra ref documented above;
+        // `vm.global` is process-lifetime.
+        unsafe { (*signal_ptr).signal(&*vm.global, CommonAbortReason::Timeout) };
     }
 
     // This may run inside the "signal" call.
@@ -362,8 +352,9 @@ pub extern "C" fn AbortSignal__Timeout__deinit(this: *mut Timeout) {
     // we resolve the VM via the threadlocal instead of taking it as a
     // parameter (which the caller would have to dereference the dead
     // context to obtain).
-    // SAFETY: `this` is the pointer returned from AbortSignal__Timeout__create.
-    unsafe { Timeout::deinit(this, VirtualMachine::get()) }
+    // SAFETY: `this` is the pointer returned from AbortSignal__Timeout__create;
+    // VM singleton is process-lifetime.
+    unsafe { Timeout::deinit(this, &*VirtualMachine::get()) }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -371,5 +362,5 @@ pub extern "C" fn AbortSignal__Timeout__deinit(this: *mut Timeout) {
 //   source:     src/jsc/AbortSignal.zig (255 lines)
 //   confidence: medium
 //   todos:      8
-//   notes:      Timeout.signal kept as *mut AbortSignal (intrusive C++ refcount; LIFETIMES.tsv said SHARED but Arc invalid across FFI) — Phase B wrap in bun_ptr::IntrusiveArc; listen() reshaped to trait (no const fn-ptr generics).
+//   notes:      Timeout.signal kept as *mut AbortSignal (intrusive C++ refcount; LIFETIMES.tsv said SHARED but Arc invalid across FFI) — Phase B wrap in bun_ptr::IntrusiveArc; listen() reshaped to trait (no const fn-ptr generics); EventLoopTimer node deferred until Timer::All un-gates.
 // ──────────────────────────────────────────────────────────────────────────

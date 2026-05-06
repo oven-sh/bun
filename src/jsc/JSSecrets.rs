@@ -1,11 +1,13 @@
 use core::mem::offset_of;
 
 use bun_aio::KeepAlive;
-use bun_jsc::{AnyTask, ConcurrentTask, JSGlobalObject, JSValue, Strong, VirtualMachine};
-use bun_threading::{WorkPool, WorkPoolTask};
+use bun_event_loop::AnyTask::AnyTask;
+use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
+use crate::event_loop::ConcurrentTask;
+use crate::{JSGlobalObject, JSValue, Strong, VirtualMachineRef as VirtualMachine};
 
 pub struct SecretsJob {
-    vm: &'static VirtualMachine,
+    vm: *mut VirtualMachine,
     task: WorkPoolTask,
     any_task: AnyTask,
     poll: KeepAlive,
@@ -43,6 +45,7 @@ impl SecretsJob {
             vm,
             task: WorkPoolTask {
                 callback: Self::run_task,
+                ..Default::default()
             },
             // SAFETY: any_task is overwritten immediately below before any use.
             any_task: unsafe { core::mem::zeroed() },
@@ -50,16 +53,18 @@ impl SecretsJob {
             ctx,
             promise: Strong::create(promise, global),
         }));
-        // TODO(port): AnyTask::New(T, &cb).init(ptr) is a comptime type-generator in Zig;
-        // assumed Rust shape is AnyTask::new::<T>(cb, ptr).
+        // TODO(port): AnyTask::New(T, &cb).init(ptr) is a comptime type-generator in Zig.
         // SAFETY: job was just allocated above and is non-null.
         unsafe {
-            (*job).any_task = AnyTask::new::<SecretsJob>(Self::run_from_js, job);
+            (*job).any_task = AnyTask {
+                ctx: job.cast(),
+                callback: Some(Self::run_from_js_erased),
+            };
         }
         job
     }
 
-    pub fn run_task(task: *mut WorkPoolTask) {
+    pub unsafe fn run_task(task: *mut WorkPoolTask) {
         // SAFETY: task points to SecretsJob.task; SecretsJob was allocated via
         // Box::into_raw in `create` and is alive until run_from_js drops it.
         let job: &mut SecretsJob = unsafe {
@@ -73,9 +78,13 @@ impl SecretsJob {
         // SAFETY: ctx is a valid C++ SecretsJobOptions* held alive until Drop.
         // vm.global is already *mut JSGlobalObject (Zig `*JSGlobalObject` freely aliases).
         unsafe {
-            Bun__SecretsJobOptions__runTask(job.ctx, vm.global);
+            Bun__SecretsJobOptions__runTask(job.ctx, (*vm).global);
+            (*(*vm).event_loop()).enqueue_task_concurrent(ConcurrentTask::create(job.any_task.task()));
         }
-        vm.enqueue_task_concurrent(ConcurrentTask::create(job.any_task.task()));
+    }
+
+    unsafe extern "C" fn run_from_js_erased(this: *mut core::ffi::c_void) {
+        Self::run_from_js(this.cast::<SecretsJob>())
     }
 
     pub fn run_from_js(this: *mut SecretsJob) {
@@ -84,7 +93,8 @@ impl SecretsJob {
         let this = unsafe { Box::from_raw(this) };
         let vm = this.vm;
 
-        if vm.is_shutting_down() {
+        // SAFETY: `vm` is process-lifetime.
+        if unsafe { (*vm).is_shutting_down() } {
             return;
         }
 
@@ -96,12 +106,15 @@ impl SecretsJob {
         // SAFETY: ctx is a valid C++ SecretsJobOptions* held alive until Drop.
         // vm.global is already *mut JSGlobalObject (Zig `*JSGlobalObject` freely aliases).
         unsafe {
-            Bun__SecretsJobOptions__runFromJS(this.ctx, vm.global, promise);
+            Bun__SecretsJobOptions__runFromJS(this.ctx, (*vm).global, promise);
         }
     }
 
     pub fn schedule(&mut self) {
-        self.poll.ref_(self.vm);
+        // TODO(port): KeepAlive::ref_ takes an `EventLoopCtx` vtable, not `*mut VM`.
+        // Phase-D: route through `bun_aio::get_vm_ctx` once the JSC vtable is wired.
+        // self.poll.ref_(self.vm);
+        let _ = &mut self.poll;
         WorkPool::schedule(&mut self.task);
     }
 }
@@ -112,7 +125,7 @@ impl Drop for SecretsJob {
         unsafe {
             Bun__SecretsJobOptions__deinit(self.ctx);
         }
-        self.poll.unref(self.vm);
+        // TODO(port): self.poll.unref(self.vm) — see schedule() note.
         // self.promise: Strong drops automatically.
         // bun.destroy(this): handled by Box drop in run_from_js.
     }
@@ -139,6 +152,6 @@ pub extern "C" fn Bun__Secrets__scheduleJob(
 // PORT STATUS
 //   source:     src/jsc/JSSecrets.zig (86 lines)
 //   confidence: medium
-//   todos:      2
-//   notes:      intrusive WorkPoolTask via offset_of!; AnyTask::new<T> shape assumed; vm.global field access assumed
+//   todos:      3
+//   notes:      intrusive WorkPoolTask via offset_of!; AnyTask shape hand-filled; KeepAlive ref/unref deferred until EventLoopCtx vtable for JSC VM is wired
 // ──────────────────────────────────────────────────────────────────────────

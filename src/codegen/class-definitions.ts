@@ -92,6 +92,16 @@ export class ClassDefinition {
    */
   name: string;
   /**
+   * Which language implements the native side of this class.
+   *
+   * The C++ wrapper output (`ZigGeneratedClasses.{h,cpp}`) is byte-identical
+   * regardless of this flag — it only selects whether the implementer thunks
+   * land in `ZigGeneratedClasses.zig` or `generated_classes.rs`.
+   *
+   * @default "zig"
+   */
+  lang?: "zig" | "rust";
+  /**
    * Class constructor is newable. Called before the JSValue corresponding to
    * the object is created. Throwing an exception prevents the object from being
    * created.

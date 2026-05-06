@@ -24,7 +24,6 @@ use bun_string::{strings, String as BunString, ZStr};
 unsafe extern "C" {
     fn ZigString__toValueGC(arg0: *const ZigString, arg1: *const JSGlobalObject) -> JSValue;
     fn ZigString__toJSONObject(this: *const ZigString, global: *const JSGlobalObject) -> JSValue;
-    fn BunString__toURL(this: *const ZigString, global: *const JSGlobalObject) -> JSValue;
     fn ZigString__toAtomicValue(this: *const ZigString, global: *const JSGlobalObject) -> JSValue;
     fn ZigString__toExternalU16(ptr: *const u16, len: usize, global: *const JSGlobalObject) -> JSValue;
     fn ZigString__toExternalValue(this: *const ZigString, global: *const JSGlobalObject) -> JSValue;
@@ -57,7 +56,6 @@ pub struct OpaqueJSString {
 pub type JSStringRef = *mut OpaqueJSString;
 unsafe extern "C" {
     fn JSStringCreateWithCharactersNoCopy(string: *const u16, num_chars: usize) -> JSStringRef;
-    fn JSStringCreateStatic(string: *const u8, length: usize) -> JSStringRef;
 }
 
 /// Prefer using `bun_string::String` instead of `ZigString` in new code.
@@ -311,8 +309,11 @@ impl ZigString {
 
     pub fn to_url(&self, global_this: &JSGlobalObject) -> JSValue {
         crate::mark_binding!();
-        // SAFETY: self points to valid #[repr(C)] data; global_this is a live borrow.
-        unsafe { BunString__toURL(self, global_this) }
+        // TODO(port): `BunString__toURL` does not exist on the C++ side. Route
+        // through `bun_jsc::DOMURL` once that binding lands; until then this
+        // path is unreachable from any live caller.
+        let _ = global_this;
+        todo!("blocked_on: ZigString.to_url — no C++ BunString__toURL export")
     }
 
     pub fn has_prefix_char(&self, char: u8) -> bool {
@@ -860,8 +861,11 @@ impl ZigString {
                 )
             }
         } else {
-            // SAFETY: untagged ptr is valid latin1 for self.len bytes.
-            unsafe { JSStringCreateStatic(Self::untagged(self._unsafe_ptr_do_not_use), self.len) }
+            // TODO(port): `JSStringCreateStatic` is not part of the public
+            // JavaScriptCore C API; the Zig path used a private export that
+            // isn't visible to the Rust link. No live caller hits the latin1
+            // arm — stub until the c_api module grows a real binding.
+            todo!("blocked_on: c_api JSStringCreateStatic (latin1 → JSStringRef)")
         }
     }
 

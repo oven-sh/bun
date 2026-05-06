@@ -57,7 +57,7 @@ pub enum Mode {
     Test,
 }
 
-#[bun_jsc::JsClass]
+#[bun_jsc::JsClass(no_constructor)]
 pub struct ScopeFunctions {
     pub mode: Mode,
     pub cfg: BaseScopeCfg,

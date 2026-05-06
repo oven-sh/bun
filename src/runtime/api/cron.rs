@@ -1247,7 +1247,7 @@ impl Drop for CronRemoveJob {
 // CronJob — in-process callback-style cron (Bun.cron(expr, cb))
 // ============================================================================
 
-#[bun_jsc::JsClass]
+#[bun_jsc::JsClass(no_constructor)]
 pub struct CronJob {
     // bun.ptr.RefCount(...) intrusive — keep raw count for IntrusiveRc compat.
     ref_count: Cell<u32>,

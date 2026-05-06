@@ -16,7 +16,7 @@ pub type ImmediateObjectRc = bun_ptr::IntrusiveRc<ImmediateObject>;
 
 // jsc.Codegen.JSImmediate — the C++ JSCell wrapper stays generated; this struct is the
 // `m_ctx` payload. `#[bun_jsc::JsClass]` wires toJS/fromJS/fromJSDirect.
-#[bun_jsc::JsClass]
+#[bun_jsc::JsClass(name = "Immediate")]
 pub struct ImmediateObject {
     ref_count: Cell<u32>,
     pub event_loop_timer: EventLoopTimer,

@@ -1,8 +1,10 @@
+use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU8, AtomicU16, Ordering};
 
-use bun_jsc::{EventLoop, JSGlobalObject, Task, VirtualMachine};
+use crate::event_loop::EventLoop;
+use crate::{JSGlobalObject, Task, VirtualMachineRef as VirtualMachine};
 
-bun_output::declare_scope!(PosixSignalHandle, hidden);
+bun_core::declare_scope!(PosixSignalHandle, hidden);
 
 const BUFFER_SIZE: u16 = 8192;
 
@@ -47,7 +49,7 @@ impl PosixSignalHandle {
             // The ring buffer is full.
             // We cannot block or wait here (since we're in a signal handler).
             // So we just drop the signal or log if desired.
-            bun_output::scoped_log!(PosixSignalHandle, "signal queue is full; dropping");
+            bun_core::scoped_log!(PosixSignalHandle, "signal queue is full; dropping");
             return false;
         }
 
@@ -57,10 +59,10 @@ impl PosixSignalHandle {
         // Publish the new tail (Release so that the consumer sees the updated tail).
         self.tail.store(old_tail.wrapping_add(1), Ordering::Release);
 
-        VirtualMachine::get_main_thread_vm()
-            .unwrap()
-            .event_loop()
-            .wakeup();
+        if let Some(vm) = VirtualMachine::get_main_thread_vm() {
+            // SAFETY: `event_loop()` returns the VM-owned EventLoop; live for VM lifetime.
+            unsafe { (*(*vm).event_loop()).wakeup() };
+        }
 
         true
     }
@@ -91,14 +93,11 @@ impl PosixSignalHandle {
     /// Called by the main thread.
     pub fn drain(&self, event_loop: &mut EventLoop) {
         while let Some(signal) = self.dequeue() {
-            // Example: wrap the signal into a Task structure
             // TODO(port): Zig uses an uninitialized stack PosixSignalTask solely to mint the
             // Task tag, then overwrites the pointer payload with the signal via setUintptr.
             // Phase B should expose Task::from_tag_uintptr(PosixSignalTask, signal) instead.
-            let mut posix_signal_task = core::mem::MaybeUninit::<PosixSignalTask>::uninit();
-            let mut task = Task::init(posix_signal_task.as_mut_ptr());
-            task.set_uintptr(signal as usize);
-            event_loop.enqueue_task(task);
+            let _ = (signal, event_loop as *mut _);
+            todo!("phase-d: PosixSignalHandle::drain — Task::set_uintptr / PosixSignalTask tag");
         }
     }
 }
@@ -109,14 +108,18 @@ impl PosixSignalHandle {
 pub extern "C" fn Bun__onPosixSignal(number: i32) {
     #[cfg(unix)]
     {
-        let vm = VirtualMachine::get_main_thread_vm().unwrap();
-        let _ = vm
-            .event_loop()
-            .signal_handler
-            .as_ref()
-            .unwrap()
-            .enqueue(u8::try_from(number).unwrap());
+        let Some(vm) = VirtualMachine::get_main_thread_vm() else { return };
+        // SAFETY: `vm` and its event loop are process-lifetime; signal_handler is the
+        // boxed ring buffer installed by `Bun__ensureSignalHandler` below.
+        unsafe {
+            if let Some(handler) = (*(*vm).event_loop()).signal_handler {
+                let _ = (*handler.as_ptr().cast::<PosixSignalHandle>())
+                    .enqueue(u8::try_from(number).unwrap());
+            }
+        }
     }
+    #[cfg(not(unix))]
+    let _ = number;
 }
 
 pub struct PosixSignalTask {
@@ -149,14 +152,15 @@ pub extern "C" fn Bun__ensureSignalHandler() {
     #[cfg(unix)]
     {
         if let Some(vm) = VirtualMachine::get_main_thread_vm() {
-            let this = vm.event_loop();
+            // SAFETY: `vm` and its event loop are process-lifetime.
+            let this = unsafe { &mut *(*vm).event_loop() };
             if this.signal_handler.is_none() {
-                this.signal_handler = Some(PosixSignalHandle::new(PosixSignalHandle::default()));
-                // Zig: @memset(&this.signal_handler.?.signals, 0);
-                // Already zeroed by Default; kept for parity.
-                for slot in this.signal_handler.as_ref().unwrap().signals.iter() {
-                    slot.store(0, Ordering::Relaxed);
-                }
+                // PORT NOTE: `EventLoop.signal_handler` is `Option<NonNull<c_void>>` in
+                // the Phase-B layout (gated sibling). Box the ring buffer and store the
+                // erased pointer; `Bun__onPosixSignal` casts it back.
+                let boxed = PosixSignalHandle::new(PosixSignalHandle::default());
+                this.signal_handler =
+                    NonNull::new(Box::into_raw(boxed).cast::<core::ffi::c_void>());
             }
         }
     }
@@ -167,5 +171,5 @@ pub extern "C" fn Bun__ensureSignalHandler() {
 //   source:     src/jsc/PosixSignalHandle.zig (124 lines)
 //   confidence: medium
 //   todos:      2
-//   notes:      drain() relies on Task::init/set_uintptr tag-pointer hack; EventLoop.signal_handler field access needs &mut shaping in Phase B
+//   notes:      drain() relies on Task::init/set_uintptr tag-pointer hack; EventLoop.signal_handler stored as erased *mut c_void until field is typed
 // ──────────────────────────────────────────────────────────────────────────

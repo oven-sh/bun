@@ -258,6 +258,23 @@ pub use self::zig_stack_frame_position::ZigStackFramePosition;
 #[path = "GarbageCollectionController.rs"]
 pub mod garbage_collection_controller;
 
+// ──────────────────────────────────────────────────────────────────────────
+// Phase-D un-gated `#[no_mangle]` export modules. These were B-1 gated; now
+// compiled so the C++ side links against the real symbols (43 exports per
+// /tmp/hw_defined_but_unlinked.txt). Remaining drafts stay in `_gated` below.
+// ──────────────────────────────────────────────────────────────────────────
+#[path = "AbortSignal.rs"] pub mod abort_signal;
+#[path = "CppTask.rs"] pub mod cpp_task;
+#[path = "HTTPServerAgent.rs"] pub mod http_server_agent;
+#[path = "JSSecrets.rs"] pub mod js_secrets;
+#[path = "NodeModuleModule.rs"] pub mod node_module_module;
+#[path = "PosixSignalHandle.rs"] pub mod posix_signal_handle;
+#[path = "btjs.rs"] pub mod btjs;
+#[path = "fmt_jsc.rs"] pub mod fmt_jsc;
+#[path = "resolve_path_jsc.rs"] pub mod resolve_path_jsc;
+#[path = "resolver_jsc.rs"] pub mod resolver_jsc;
+#[path = "virtual_machine_exports.rs"] pub mod virtual_machine_exports;
+
 #[rustfmt::skip]
 mod _gated {
     #![cfg(any())]
@@ -279,33 +296,22 @@ mod _gated {
     #[path = "javascript_core_c_api.rs"] pub mod c_api;
     #[path = "sizes.rs"] pub mod sizes;
     #[path = "generated_classes_list.rs"] pub mod generated_classes_list;
-    #[path = "AbortSignal.rs"] pub mod abort_signal;
     #[path = "AsyncModule.rs"] pub mod async_module;
     #[path = "BunCPUProfiler.rs"] pub mod bun_cpu_profiler;
     #[path = "BunHeapProfiler.rs"] pub mod bun_heap_profiler;
     #[path = "ConcurrentPromiseTask.rs"] pub mod concurrent_promise_task;
-    #[path = "CppTask.rs"] pub mod cpp_task;
     #[path = "EventLoopHandle.rs"] pub mod event_loop_handle;
     #[path = "FFI.rs"] pub mod ffi;
-    #[path = "HTTPServerAgent.rs"] pub mod http_server_agent;
     #[path = "JSCScheduler.rs"] pub mod jsc_scheduler;
     #[path = "JSONLineBuffer.rs"] pub mod json_line_buffer;
-    #[path = "JSSecrets.rs"] pub mod js_secrets;
-    #[path = "NodeModuleModule.rs"] pub mod node_module_module;
-    #[path = "PosixSignalHandle.rs"] pub mod posix_signal_handle;
     #[path = "ProcessAutoKiller.rs"] pub mod process_auto_killer;
     #[path = "WorkTask.rs"] pub mod work_task;
     #[path = "bindgen.rs"] pub mod bindgen;
     #[path = "bindgen_test.rs"] pub mod bindgen_test;
-    #[path = "btjs.rs"] pub mod btjs;
     #[path = "bun_string_jsc.rs"] pub mod bun_string_jsc;
     #[path = "codegen.rs"] pub mod codegen_mod;
     #[path = "comptime_string_map_jsc.rs"] pub mod comptime_string_map_jsc;
     #[path = "config.rs"] pub mod config;
-    #[path = "fmt_jsc.rs"] pub mod fmt_jsc;
-    #[path = "resolve_path_jsc.rs"] pub mod resolve_path_jsc;
-    #[path = "resolver_jsc.rs"] pub mod resolver_jsc;
-    #[path = "virtual_machine_exports.rs"] pub mod virtual_machine_exports;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2447,7 +2453,6 @@ pub mod bun_string_jsc {
         fn BunString__transferToJS(this: *mut bun_string::String, global: *mut JSGlobalObject) -> JSValue;
         fn BunString__toJSON(this: *mut bun_string::String, global: *mut JSGlobalObject) -> JSValue;
         fn BunString__toErrorInstance(this: *const bun_string::String, global: *mut JSGlobalObject) -> JSValue;
-        fn BunString__toTypeErrorInstance(this: *const bun_string::String, global: *mut JSGlobalObject) -> JSValue;
         fn Bun__parseDate(global_object: *mut JSGlobalObject, this: *mut bun_string::String) -> f64;
     }
     pub fn parse_date(this: &mut bun_string::String, global: &JSGlobalObject) -> JsResult<f64> {
@@ -2484,8 +2489,10 @@ pub mod bun_string_jsc {
         unsafe { BunString__toErrorInstance(this, global.as_ptr()) }
     }
     pub fn to_type_error_instance(this: &bun_string::String, global: &JSGlobalObject) -> JSValue {
-        // SAFETY: `this` borrowed; `global` is live.
-        unsafe { BunString__toTypeErrorInstance(this, global.as_ptr()) }
+        // C++ exposes only `ZigString__toTypeErrorInstance` (bindings.cpp); go
+        // through the ref'd ZigString view rather than a non-existent
+        // `BunString__toTypeErrorInstance` symbol.
+        this.to_zig_string().to_type_error_instance(global)
     }
 }
 
@@ -2771,7 +2778,15 @@ pub trait JsClass: Sized {
     /// Fetch the JSC constructor object for this class
     /// (`${TypeName}__getConstructor(global)` — generate-classes.ts:2449/2539).
     /// The proc-macro wires the per-type extern; manual impls bind it directly.
-    fn get_constructor(global: &JSGlobalObject) -> JSValue;
+    ///
+    /// Classes declared `noConstructor: true` in `.classes.ts` get NO C++-side
+    /// `${T}__getConstructor` export, so the default body returns `undefined`
+    /// instead of forcing every `#[JsClass(no_constructor)]` site to declare a
+    /// dangling extern.
+    fn get_constructor(global: &JSGlobalObject) -> JSValue {
+        let _ = global;
+        JSValue::UNDEFINED
+    }
 
     /// Dynamic heap footprint reported to JSC's GC via
     /// `reportExtraMemoryAllocated` / `reportExtraMemoryVisited`

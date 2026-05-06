@@ -5,45 +5,48 @@
 use core::fmt::Write as _;
 
 use bun_core::fmt;
-use bun_jsc::{JSGlobalObject, JsResult};
-use bun_str::{MutableString, String};
+use crate::{JSGlobalObject, JsResult};
+use bun_string::{MutableString, String};
 
 pub mod js_bindings {
     use super::*;
 
-    // TODO(port): `bun.gen.fmt_jsc` is bindgen output; confirm crate path in Phase B.
-    use bun_gen::fmt_jsc as gen;
+    /// `bun.gen.fmt_jsc.Formatter` — bindgen-emitted enum from `fmt_jsc.bind.ts`.
+    /// Mirrored locally until `bun_gen` is reachable from this tier.
+    #[repr(u8)]
+    #[derive(Copy, Clone, Eq, PartialEq)]
+    pub enum Formatter {
+        HighlightJavascript = 0,
+        EscapePowershell = 1,
+    }
 
     /// Internal function for testing in highlighter.test.ts
     pub fn fmt_string(
         global: &JSGlobalObject,
         code: &[u8],
-        formatter_id: gen::Formatter,
+        formatter_id: Formatter,
     ) -> JsResult<String> {
         let mut buffer = MutableString::init_empty();
-        let mut writer = buffer.buffered_writer();
+        let writer = buffer.writer();
 
         match formatter_id {
-            gen::Formatter::HighlightJavascript => {
+            Formatter::HighlightJavascript => {
                 let formatter = fmt::fmt_javascript(
                     code,
-                    fmt::FmtJavaScriptOptions {
+                    fmt::HighlighterOptions {
                         enable_colors: true,
                         check_for_unhighlighted_write: false,
+                        ..Default::default()
                     },
                 );
-                write!(writer.writer(), "{}", formatter)
-                    .map_err(|err| global.throw_error(err, b"while formatting"))?;
+                write!(writer, "{}", formatter)
+                    .map_err(|_| global.throw_out_of_memory())?;
             }
-            gen::Formatter::EscapePowershell => {
-                write!(writer.writer(), "{}", fmt::escape_powershell(code))
-                    .map_err(|err| global.throw_error(err, b"while formatting"))?;
+            Formatter::EscapePowershell => {
+                write!(writer, "{}", fmt::escape_powershell(code))
+                    .map_err(|_| global.throw_out_of_memory())?;
             }
         }
-
-        writer
-            .flush()
-            .map_err(|err| global.throw_error(err, b"while formatting"))?;
 
         Ok(String::clone_utf8(buffer.list.as_slice()))
     }
@@ -54,5 +57,5 @@ pub mod js_bindings {
 //   source:     src/jsc/fmt_jsc.zig (39 lines)
 //   confidence: medium
 //   todos:      1
-//   notes:      bun_gen::fmt_jsc::Formatter is bindgen-emitted; MutableString/buffered_writer API surface assumed from Zig shape.
+//   notes:      bun_gen::fmt_jsc::Formatter mirrored locally; MutableString writer used directly (BufferedWriter elided)
 // ──────────────────────────────────────────────────────────────────────────

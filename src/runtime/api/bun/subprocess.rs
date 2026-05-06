@@ -242,8 +242,6 @@ const _: () = {
         fn __from_js_direct(value: JSValue) -> *mut c_void;
         #[link_name = "Subprocess__create"]
         fn __create(global: *mut JSGlobalObject, ptr: *mut c_void) -> JSValue;
-        #[link_name = "Subprocess__getConstructor"]
-        fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
     }
 
     impl<'a> bun_jsc::JsClass for Subprocess<'a> {
@@ -263,10 +261,7 @@ const _: () = {
             let p = unsafe { __from_js_direct(value) };
             if p.is_null() { None } else { Some(p.cast()) }
         }
-        fn get_constructor(global: &JSGlobalObject) -> JSValue {
-            // SAFETY: `global` is live; lazy ctor cache may mutate global.
-            unsafe { __get_constructor(global.as_mut_ptr()) }
-        }
+        // `noConstructor: true` — no `Subprocess__getConstructor` export; trait default applies.
     }
 
     #[unsafe(export_name = "SubprocessClass__finalize")]

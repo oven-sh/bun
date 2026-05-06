@@ -400,6 +400,10 @@ struct JsClassArgs {
     no_finalize: bool,
     /// `construct: false` → skip the construct hook.
     no_construct: bool,
+    /// `noConstructor: true` in `.classes.ts` → C++ side does NOT emit
+    /// `${T}__getConstructor` (generate-classes.ts:2449/2539). Skip the
+    /// import-side extern so the linker doesn't see a dangling reference.
+    no_constructor: bool,
     /// `estimatedSize: true` in `.classes.ts` → emit `${T}__estimatedSize`
     /// (generate-classes.ts:2170-2175). Off by default — the C++ side only
     /// links against this symbol when the class definition opts in.
@@ -418,6 +422,7 @@ impl Parse for JsClassArgs {
                 }
                 "no_finalize" => out.no_finalize = true,
                 "no_construct" => out.no_construct = true,
+                "no_constructor" => out.no_constructor = true,
                 "estimated_size" => out.estimated_size = true,
                 other => {
                     return Err(syn::Error::new(
@@ -579,6 +584,30 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
     let create_lit = LitStr::new(&create_sym, Span::call_site());
     let get_ctor_lit = LitStr::new(&get_ctor_sym, Span::call_site());
 
+    // `noConstructor: true` classes have no C++-side `${T}__getConstructor`
+    // export — emitting an `extern` for it produces a link-time undefined
+    // symbol. Gate the decl + trait override; the `JsClass` trait supplies a
+    // default `get_constructor` body so the impl stays well-formed.
+    let (get_ctor_extern, get_ctor_impl) = if args.no_constructor {
+        (quote! {}, quote! {})
+    } else {
+        (
+            quote! {
+                #[link_name = #get_ctor_lit]
+                fn __get_constructor(global: *mut ::bun_jsc::JSGlobalObject) -> ::bun_jsc::JSValue;
+            },
+            quote! {
+                fn get_constructor(global: &::bun_jsc::JSGlobalObject) -> ::bun_jsc::JSValue {
+                    // SAFETY: `global` is live; C++ side returns the cached
+                    // constructor (`WebCore::clientSubspaceFor*`-registered).
+                    // `as_mut_ptr` derives `*mut` via `UnsafeCell` — the lazy
+                    // init may mutate the global's constructor cache.
+                    unsafe { __get_constructor(global.as_mut_ptr()) }
+                }
+            },
+        )
+    };
+
     let trait_impl = quote! {
         const _: () = {
             #[cfg(all(windows, target_arch = "x86_64"))]
@@ -592,8 +621,7 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
                     global: *mut ::bun_jsc::JSGlobalObject,
                     ptr: *mut #rust_ty,
                 ) -> ::bun_jsc::JSValue;
-                #[link_name = #get_ctor_lit]
-                fn __get_constructor(global: *mut ::bun_jsc::JSGlobalObject) -> ::bun_jsc::JSValue;
+                #get_ctor_extern
             }
             #[cfg(not(all(windows, target_arch = "x86_64")))]
             unsafe extern "C" {
@@ -606,8 +634,7 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
                     global: *mut ::bun_jsc::JSGlobalObject,
                     ptr: *mut #rust_ty,
                 ) -> ::bun_jsc::JSValue;
-                #[link_name = #get_ctor_lit]
-                fn __get_constructor(global: *mut ::bun_jsc::JSGlobalObject) -> ::bun_jsc::JSValue;
+                #get_ctor_extern
             }
 
             impl ::bun_jsc::JsClass for #rust_ty {
@@ -630,13 +657,7 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
                     let p = unsafe { __from_js_direct(value) };
                     if p.is_null() { None } else { Some(p) }
                 }
-                fn get_constructor(global: &::bun_jsc::JSGlobalObject) -> ::bun_jsc::JSValue {
-                    // SAFETY: `global` is live; C++ side returns the cached
-                    // constructor (`WebCore::clientSubspaceFor*`-registered).
-                    // `as_mut_ptr` derives `*mut` via `UnsafeCell` — the lazy
-                    // init may mutate the global's constructor cache.
-                    unsafe { __get_constructor(global.as_mut_ptr()) }
-                }
+                #get_ctor_impl
             }
         };
     };

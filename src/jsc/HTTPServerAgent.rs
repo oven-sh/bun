@@ -2,7 +2,8 @@ use core::ffi::c_void;
 use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 
-use bun_str::String as BunString;
+use bun_string::String as BunString;
+use crate::VirtualMachineRef as VirtualMachine;
 
 pub struct HTTPServerAgent {
     /// Underlying C++ agent. Set to null when not enabled.
@@ -28,112 +29,15 @@ impl HTTPServerAgent {
     }
 
     // #region Events
-
-    pub fn notify_server_started(&mut self, instance: bun_jsc::api::AnyServer) {
-        if let Some(agent) = self.agent {
-            self.next_server_id = ServerId::new(self.next_server_id.get() + 1);
-            instance.set_inspector_server_id(self.next_server_id);
-            let url = instance.get_url_as_string();
-            // `defer url.deref()` — handled by bun_str::String Drop
-
-            // SAFETY: agent is non-null (checked above) and points to a live C++ InspectorHTTPServerAgent
-            unsafe {
-                InspectorHTTPServerAgent::notify_server_started(
-                    agent.as_ptr(),
-                    self.next_server_id,
-                    i32::try_from(instance.vm().hot_reload_counter).unwrap(),
-                    &url,
-                    bun_core::Timespec::now_allow_mocked_time().ms() as f64,
-                    instance.ptr.ptr() as *mut c_void,
-                );
-            }
-        }
-    }
-
-    pub fn notify_server_stopped(&self, server: bun_jsc::api::AnyServer) {
-        if let Some(agent) = self.agent {
-            // SAFETY: agent is non-null and points to a live C++ InspectorHTTPServerAgent
-            unsafe {
-                InspectorHTTPServerAgent::notify_server_stopped(
-                    agent.as_ptr(),
-                    server.inspector_server_id(),
-                    // TODO(port): std.time.milliTimestamp() equivalent
-                    bun_core::time::milli_timestamp() as f64,
-                );
-            }
-        }
-    }
-
-    pub fn notify_server_routes_updated(
-        &self,
-        server: bun_jsc::api::AnyServer,
-    ) -> Result<(), bun_alloc::AllocError> {
-        // TODO(port): narrow error set — only alloc errors possible; Vec::push aborts on OOM in Rust
-        if let Some(agent) = self.agent {
-            let config = server.config();
-            let mut routes: Vec<Route> = Vec::new();
-            // `defer { for routes |*r| r.deinit(); routes.deinit() }` — handled by Vec<Route> Drop + Route Drop
-
-            let mut max_id: u32 = 0;
-
-            // TODO(port): Zig used `switch (server.userRoutes()) { inline else => |user_routes| ... }`
-            // to monomorphize over SSL/non-SSL variants. In Rust, expose `user_routes()` returning
-            // a uniform slice (or a trait providing iteration) and iterate once.
-            for user_route in server.user_routes() {
-                let decl: &bun_jsc::api::ServerConfig::RouteDeclaration = &user_route.route;
-                max_id = max_id.max(user_route.id);
-                routes.push(Route {
-                    route_id: i32::try_from(user_route.id).unwrap(),
-                    path: BunString::init(&decl.path),
-                    r#type: RouteType::Api,
-                    // TODO:
-                    param_names: core::ptr::null_mut(),
-                    param_names_len: 0,
-                    script_line: -1,
-                    file_path: BunString::empty(),
-                    script_id: BunString::empty(),
-                    script_url: BunString::empty(),
-                });
-            }
-
-            for route in config.static_routes.iter() {
-                routes.push(Route {
-                    route_id: i32::try_from(max_id + 1).unwrap(),
-                    path: BunString::init(&route.path),
-                    r#type: match &route.route {
-                        // TODO(port): exact variant names of ServerConfig static route union
-                        bun_jsc::api::ServerConfig::StaticRouteKind::Html(_) => RouteType::Html,
-                        bun_jsc::api::ServerConfig::StaticRouteKind::Static(_) => RouteType::Static,
-                        _ => RouteType::Default,
-                    },
-                    script_line: -1,
-                    // TODO:
-                    param_names: core::ptr::null_mut(),
-                    param_names_len: 0,
-                    file_path: match &route.route {
-                        bun_jsc::api::ServerConfig::StaticRouteKind::Html(html) => {
-                            BunString::init(&html.data.bundle.data.path)
-                        }
-                        _ => BunString::empty(),
-                    },
-                    script_id: BunString::empty(),
-                    script_url: BunString::empty(),
-                });
-                max_id += 1;
-            }
-
-            // SAFETY: agent is non-null and points to a live C++ InspectorHTTPServerAgent
-            unsafe {
-                InspectorHTTPServerAgent::notify_server_routes_updated(
-                    agent.as_ptr(),
-                    server.inspector_server_id(),
-                    i32::try_from(bun_jsc::VirtualMachine::get().hot_reload_counter).unwrap(),
-                    &mut routes,
-                );
-            }
-        }
-        Ok(())
-    }
+    //
+    // PORT NOTE (phase-d): `notify_server_started` / `notify_server_stopped` /
+    // `notify_server_routes_updated` reach into `bun_jsc::api::AnyServer` and
+    // `ServerConfig::RouteDeclaration`, which live in `bun_runtime` (forward
+    // dep). The C++ side only needs `Bun__HTTPServerAgent__setEnabled` for
+    // linkage; the per-event notifiers are called from Rust → C++ (FFI decls
+    // below) and are wired from `bun_runtime` once that tier un-gates. The
+    // event-body Zig ports are preserved in HTTPServerAgent.zig and will land
+    // when `AnyServer` is reachable.
 
     // #endregion
 }
@@ -166,14 +70,14 @@ impl Default for Route {
     fn default() -> Self {
         Self {
             route_id: 0,
-            path: BunString::empty(),
+            path: BunString::EMPTY,
             r#type: RouteType::Default,
             script_line: -1,
             param_names: core::ptr::null_mut(),
             param_names_len: 0,
-            file_path: BunString::empty(),
-            script_id: BunString::empty(),
-            script_url: BunString::empty(),
+            file_path: BunString::EMPTY,
+            script_id: BunString::EMPTY,
+            script_url: BunString::EMPTY,
         }
     }
 }
@@ -200,7 +104,7 @@ impl Drop for Route {
             self.param_names_len = 0;
         }
         // path, file_path, script_id, script_url are dropped (deref'd) automatically via
-        // bun_str::String's Drop impl.
+        // bun_string::String's Drop impl.
     }
 }
 
@@ -346,15 +250,20 @@ impl InspectorHTTPServerAgent {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__HTTPServerAgent__setEnabled(agent: *mut InspectorHTTPServerAgent) {
-    if let Some(debugger) = &mut bun_jsc::VirtualMachine::get().debugger {
-        debugger.http_server_agent.agent = NonNull::new(agent);
+    // SAFETY: VM singleton is process-lifetime.
+    let vm = unsafe { &mut *VirtualMachine::get() };
+    if let Some(debugger) = &mut vm.debugger {
+        // PORT NOTE: `Debugger.http_server_agent` is the layout-stable opaque
+        // `{ handle: *mut c_void }` until this module re-exports replace the
+        // sibling stub. Same storage, same size.
+        debugger.http_server_agent.handle = agent.cast::<c_void>();
     }
 }
 
 // #endregion
 
 // Typedefs from HTTPServer.json
-pub type ServerId = bun_jsc::debugger::DebuggerId;
+pub type ServerId = crate::debugger::DebuggerId;
 pub type RequestId = i32;
 pub type RouteId = i32;
 pub type HotReloadId = i32;
@@ -365,5 +274,5 @@ pub type HTTPMethod = bun_http::Method;
 //   source:     src/jsc/HTTPServerAgent.zig (179 lines)
 //   confidence: medium
 //   todos:      5
-//   notes:      `inline else` over server.userRoutes() variants flattened to single iter; AnyServer/ServerConfig paths guessed; std.time.milliTimestamp needs bun_core equiv
+//   notes:      `inline else` over server.userRoutes() variants flattened to single iter; AnyServer/ServerConfig event bodies deferred to bun_runtime tier; only setEnabled is C++-called
 // ──────────────────────────────────────────────────────────────────────────

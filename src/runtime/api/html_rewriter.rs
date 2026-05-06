@@ -1479,7 +1479,7 @@ fn html_string_value(input: lolhtml::HTMLString, global_object: &JSGlobalObject)
 
 // ─────────────────────────── TextChunk ───────────────────────────────────
 
-#[bun_jsc::JsClass(no_construct, no_finalize)]
+#[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
 pub struct TextChunk {
     // TODO(port): replace hand-rolled ref_/deref with bun_ptr::IntrusiveRc<Self>
     // per PORTING.md (intrusive RefCount; *Self is the JS wrapper m_ctx).
@@ -1625,7 +1625,7 @@ impl WrapperLike for TextChunk {
 
 // ──────────────────────────── DocType ────────────────────────────────────
 
-#[bun_jsc::JsClass(no_construct, no_finalize)]
+#[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
 pub struct DocType {
     // TODO(port): replace hand-rolled ref_/deref with bun_ptr::IntrusiveRc<Self>
     // per PORTING.md (intrusive RefCount; *Self is the JS wrapper m_ctx).
@@ -1736,7 +1736,7 @@ impl WrapperLike for DocType {
 
 // ──────────────────────────── DocEnd ─────────────────────────────────────
 
-#[bun_jsc::JsClass(no_construct, no_finalize)]
+#[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
 pub struct DocEnd {
     // TODO(port): replace hand-rolled ref_/deref with bun_ptr::IntrusiveRc<Self>
     // per PORTING.md (intrusive RefCount; *Self is the JS wrapper m_ctx).
@@ -1820,7 +1820,7 @@ impl WrapperLike for DocEnd {
 
 // ──────────────────────────── Comment ────────────────────────────────────
 
-#[bun_jsc::JsClass(no_construct, no_finalize)]
+#[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
 pub struct Comment {
     // TODO(port): replace hand-rolled ref_/deref with bun_ptr::IntrusiveRc<Self>
     // per PORTING.md (intrusive RefCount; *Self is the JS wrapper m_ctx).
@@ -1969,7 +1969,7 @@ impl WrapperLike for Comment {
 
 // ──────────────────────────── EndTag ─────────────────────────────────────
 
-#[bun_jsc::JsClass(no_construct, no_finalize)]
+#[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
 pub struct EndTag {
     // TODO(port): replace hand-rolled ref_/deref with bun_ptr::IntrusiveRc<Self>
     // per PORTING.md (intrusive RefCount; *Self is the JS wrapper m_ctx).
@@ -2141,7 +2141,7 @@ impl WrapperLike for EndTag {
 
 // ───────────────────────── AttributeIterator ─────────────────────────────
 
-#[bun_jsc::JsClass(no_construct, no_finalize)]
+#[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
 pub struct AttributeIterator {
     // TODO(port): replace hand-rolled ref_/deref with bun_ptr::IntrusiveRc<Self>
     // per PORTING.md (intrusive RefCount; *Self is the JS wrapper m_ctx).
@@ -2239,7 +2239,7 @@ impl AttributeIterator {
 
 // ──────────────────────────── Element ────────────────────────────────────
 
-#[bun_jsc::JsClass(no_construct, no_finalize)]
+#[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
 pub struct Element {
     // TODO(port): replace hand-rolled ref_/deref with bun_ptr::IntrusiveRc<Self>
     // per PORTING.md (intrusive RefCount; *Self is the JS wrapper m_ctx).

@@ -107,7 +107,7 @@ impl RusageFields for Rusage {
     #[inline] fn nivcsw_(&self) -> f64 { 0.0 }
 }
 
-#[bun_jsc::JsClass(no_construct)]
+#[bun_jsc::JsClass(no_construct, no_constructor)]
 pub struct ResourceUsage {
     pub rusage: Rusage,
 }

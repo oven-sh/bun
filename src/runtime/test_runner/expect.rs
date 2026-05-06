@@ -1797,7 +1797,7 @@ impl fmt::Display for CustomMatcherParamsFormatter<'_> {
 
 /// Static instance of expect, holding a set of flags.
 /// Returned for example when executing `expect.not`
-#[bun_jsc::JsClass(no_construct)]
+#[bun_jsc::JsClass(no_construct, no_constructor)]
 pub struct ExpectStatic {
     pub flags: Flags,
 }
@@ -1971,7 +1971,7 @@ pub mod expect_custom_asymmetric_matcher_js {
     bun_jsc::codegen_cached_accessors!("ExpectCustomAsymmetricMatcher"; matcherFn, capturedArgs);
 }
 
-#[bun_jsc::JsClass(no_construct)]
+#[bun_jsc::JsClass(no_construct, no_constructor)]
 pub struct ExpectAnything {
     pub flags: Flags,
 }
@@ -1995,7 +1995,7 @@ impl ExpectAnything {
     }
 }
 
-#[bun_jsc::JsClass(no_construct)]
+#[bun_jsc::JsClass(no_construct, no_constructor)]
 pub struct ExpectStringMatching {
     pub flags: Flags,
 }
@@ -2027,7 +2027,7 @@ impl ExpectStringMatching {
     }
 }
 
-#[bun_jsc::JsClass(no_construct)]
+#[bun_jsc::JsClass(no_construct, no_constructor)]
 pub struct ExpectCloseTo {
     pub flags: Flags,
 }
@@ -2075,7 +2075,7 @@ impl ExpectCloseTo {
     }
 }
 
-#[bun_jsc::JsClass(no_construct)]
+#[bun_jsc::JsClass(no_construct, no_constructor)]
 pub struct ExpectObjectContaining {
     pub flags: Flags,
 }
@@ -2108,7 +2108,7 @@ impl ExpectObjectContaining {
     }
 }
 
-#[bun_jsc::JsClass(no_construct)]
+#[bun_jsc::JsClass(no_construct, no_constructor)]
 pub struct ExpectStringContaining {
     pub flags: Flags,
 }
@@ -2141,7 +2141,7 @@ impl ExpectStringContaining {
     }
 }
 
-#[bun_jsc::JsClass(no_construct)]
+#[bun_jsc::JsClass(no_construct, no_constructor)]
 pub struct ExpectAny {
     pub flags: Flags,
 }
@@ -2194,7 +2194,7 @@ impl ExpectAny {
     }
 }
 
-#[bun_jsc::JsClass(no_construct)]
+#[bun_jsc::JsClass(no_construct, no_constructor)]
 pub struct ExpectArrayContaining {
     pub flags: Flags,
 }
@@ -2231,7 +2231,7 @@ impl ExpectArrayContaining {
 ///
 /// Reference: `AsymmetricMatcher` in https://github.com/jestjs/jest/blob/main/packages/expect/src/types.ts
 /// (but only created for *custom* matchers, as built-ins have their own classes)
-#[bun_jsc::JsClass(no_construct)]
+#[bun_jsc::JsClass(no_construct, no_constructor)]
 pub struct ExpectCustomAsymmetricMatcher {
     pub flags: Flags,
 }
@@ -2427,7 +2427,7 @@ impl ExpectCustomAsymmetricMatcher {
 }
 
 /// Reference: `MatcherContext` in https://github.com/jestjs/jest/blob/main/packages/expect/src/types.ts
-#[bun_jsc::JsClass(no_construct)]
+#[bun_jsc::JsClass(no_construct, no_constructor)]
 pub struct ExpectMatcherContext {
     pub flags: Flags,
 }
@@ -2479,7 +2479,7 @@ impl ExpectMatcherContext {
 }
 
 /// Reference: `MatcherUtils` in https://github.com/jestjs/jest/blob/main/packages/expect/src/types.ts
-#[bun_jsc::JsClass(no_construct)]
+#[bun_jsc::JsClass(no_construct, no_constructor)]
 pub struct ExpectMatcherUtils {}
 
 impl ExpectMatcherUtils {

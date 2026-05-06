@@ -125,16 +125,17 @@ fn concat_parts(
     bump: &Arena,
     a: &[e::TemplatePart],
     b: &[e::TemplatePart],
-) -> &'static [e::TemplatePart] {
+) -> *mut [e::TemplatePart] {
     let len = a.len() + b.len();
     let layout = core::alloc::Layout::array::<e::TemplatePart>(len).expect("OOM");
-    // SAFETY: arena alloc + bitwise copy of POD-like elements; lifetime erased
-    // to `'static` per Phase-A `&'static [T]` arena-slice convention.
+    // SAFETY: arena alloc + bitwise copy of POD-like elements. `alloc_layout`
+    // returns a fresh `NonNull<u8>` with mutable provenance; build the fat
+    // `*mut [T]` directly so writers downstream retain that provenance.
     unsafe {
         let ptr = bump.alloc_layout(layout).as_ptr().cast::<e::TemplatePart>();
         core::ptr::copy_nonoverlapping(a.as_ptr(), ptr, a.len());
         core::ptr::copy_nonoverlapping(b.as_ptr(), ptr.add(a.len()), b.len());
-        core::slice::from_raw_parts(ptr, len)
+        core::ptr::slice_from_raw_parts_mut(ptr, len)
     }
 }
 
@@ -248,22 +249,19 @@ pub fn fold_string_addition(
                             // be treated by enums as strings, but will not be
                             // inlined unless they could be converted into
                             // .e_string.
-                            // PORT NOTE: `parts` is `&'static [T]` (Phase-A arena
-                            // erasure); element mutation goes through a raw cast.
-                            if !left.parts.is_empty() {
-                                let i = left.parts.len() - 1;
-                                let last_tail = &left.parts[i].tail;
+                            // `parts` is `*mut [T]` (arena-owned, mutable
+                            // provenance) — write through `parts_mut()`.
+                            if !left.parts().is_empty() {
+                                let i = left.parts().len() - 1;
+                                let last_tail = &left.parts()[i].tail;
                                 if last_tail.is_utf8() {
                                     let new_tail = e::TemplateContents::Cooked(join_strings(
                                         last_tail.cooked(),
                                         right.get(),
                                         matches!(r.data, Data::EInlinedEnum(_)),
                                     ));
-                                    // SAFETY: arena-owned slice; Zig wrote `left.parts[i].tail = ...` in place.
-                                    unsafe {
-                                        (*(left.parts.as_ptr() as *mut e::TemplatePart).add(i))
-                                            .tail = new_tail;
-                                    }
+                                    // Zig wrote `left.parts[i].tail = ...` in place.
+                                    left.parts_mut()[i].tail = new_tail;
                                     return Some(lhs);
                                 }
                             } else if left.head.is_utf8() {
@@ -280,26 +278,22 @@ pub fn fold_string_addition(
                     // `foo${bar}` + `a${hi}b` => `foo${bar}a${hi}b`
                     Data::ETemplate(right) => {
                         if right.tag.is_none() && right.head.is_utf8() {
-                            if !left.parts.is_empty() {
-                                let i = left.parts.len() - 1;
-                                let last_tail = &left.parts[i].tail;
+                            if !left.parts().is_empty() {
+                                let i = left.parts().len() - 1;
+                                let last_tail = &left.parts()[i].tail;
                                 if last_tail.is_utf8() && right.head.is_utf8() {
                                     let new_tail = e::TemplateContents::Cooked(join_strings(
                                         last_tail.cooked(),
                                         right.head.cooked(),
                                         matches!(r.data, Data::EInlinedEnum(_)),
                                     ));
-                                    // SAFETY: arena-owned slice; see note above.
-                                    unsafe {
-                                        (*(left.parts.as_ptr() as *mut e::TemplatePart).add(i))
-                                            .tail = new_tail;
-                                    }
+                                    left.parts_mut()[i].tail = new_tail;
 
-                                    let new_parts = if right.parts.is_empty() {
+                                    let new_parts = if right.parts().is_empty() {
                                         left.parts
                                     } else {
                                         // std.mem.concat → bump-allocated concat
-                                        concat_parts(bump, left.parts, right.parts)
+                                        concat_parts(bump, left.parts(), right.parts())
                                     };
                                     left.parts = new_parts;
                                     return Some(lhs);

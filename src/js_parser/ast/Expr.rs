@@ -2647,7 +2647,7 @@ impl Data {
             | Data::EInlinedEnum(_)
             | Data::EImportMeta(_) => true,
 
-            Data::ETemplate(template) => template.tag.is_none() && template.parts.len() == 0,
+            Data::ETemplate(template) => template.tag.is_none() && template.parts().len() == 0,
 
             Data::EArray(array) => array.was_originally_macro,
             Data::EObject(object) => object.was_originally_macro,

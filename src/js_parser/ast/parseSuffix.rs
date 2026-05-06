@@ -332,9 +332,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             core::mem::transmute::<&[u8], &'static [u8]>(p.lexer.raw_template_contents())
         };
         let (parts, _tail_loc) = p.parse_template_parts(true)?;
-        // SAFETY/TODO(port): `Template::parts` is `&'static [TemplatePart]` (arena slice
-        // placeholder); erase the `'a` lifetime until Phase B threads it.
-        let parts: &'static [E::TemplatePart] = unsafe { core::mem::transmute(parts) };
         let tag = *left;
         let loc = left.loc;
         *left = p.new_expr(

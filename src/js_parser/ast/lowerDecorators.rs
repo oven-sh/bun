@@ -403,14 +403,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 if let Some(t) = &mut e.tag {
                     self.rewrite_expr(t, kind);
                 }
-                // SAFETY: parts is an arena-owned slice typed `&'static [TemplatePart]`
-                // as a Phase-A stand-in for `&'bump mut [TemplatePart]`.
-                let parts = unsafe {
-                    core::slice::from_raw_parts_mut(
-                        e.parts.as_ptr() as *mut E::TemplatePart,
-                        e.parts.len(),
-                    )
-                };
+                // SAFETY: arena-owned `*mut [TemplatePart]`; unique access via `&mut e`.
+                let parts = unsafe { &mut *e.parts };
                 for part in parts.iter_mut() {
                     self.rewrite_expr(&mut part.value, kind);
                 }
@@ -751,12 +745,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     self.rewrite_private_accesses_in_expr(t, map);
                 }
                 // SAFETY: see `rewrite_expr` ETemplate.
-                let parts = unsafe {
-                    core::slice::from_raw_parts_mut(
-                        e.parts.as_ptr() as *mut E::TemplatePart,
-                        e.parts.len(),
-                    )
-                };
+                let parts = unsafe { &mut *e.parts };
                 for part in parts.iter_mut() {
                     self.rewrite_private_accesses_in_expr(&mut part.value, map);
                 }

@@ -1011,9 +1011,12 @@ impl JSGlobalObject {
         unsafe { ZigGlobalObject__readableStreamToFormData(self, value, content_type) }
     }
 
-    pub fn make_napi_env_for_ffi(&self) -> &mut NapiEnv {
+    /// Returns the raw `*mut NapiEnv` (mirrors Zig `*napi.NapiEnv`).
+    /// Conjuring a `&mut` here would permit aliased exclusive references
+    /// across two calls (resolver-style audit). Callers deref locally.
+    pub fn make_napi_env_for_ffi(&self) -> *mut NapiEnv {
         // SAFETY: C++ returns a non-null, freshly-created NapiEnv owned by the global.
-        unsafe { &mut *ZigGlobalObject__makeNapiEnvForFFI(self) }
+        unsafe { ZigGlobalObject__makeNapiEnvForFFI(self) }
     }
 
     #[inline]

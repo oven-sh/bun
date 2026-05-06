@@ -763,7 +763,6 @@ impl JavaScript {
             }
         };
 
-        drop(parser);
         let _ = temp_log.append_to_maybe_recycled(log, source);
         Ok(Some(result))
     }

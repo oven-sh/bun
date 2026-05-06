@@ -2030,7 +2030,11 @@ impl<'a> LinkerContext<'a> {
                 "markFileLiveForTreeShaking({}, {} {}) = {}",
                 source_index,
                 bstr::BStr::new(&parse_graph.input_files.get(source_index as usize).source.path.pretty),
-                <&'static str>::from(parse_graph.ast.items_target()[source_index as usize].bake_graph()),
+                // PORT NOTE: Zig printed `target.bakeGraph()` (a `bake.Graph` tag);
+                // `bake_graph()` lives in `bun_bake` (tier-6 — would back-edge).
+                // The debug log only needs a stable label, so print the `Target`
+                // tag directly via its `IntoStaticStr` derive.
+                <&'static str>::from(parse_graph.ast.items_target()[source_index as usize]),
                 if self.graph.files_live.is_set(source_index as usize) { "already seen" } else { "first seen" },
             );
         }

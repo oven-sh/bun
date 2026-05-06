@@ -327,7 +327,9 @@ impl EventLoop {
         self.vm()
     }
 
-    pub fn pipe_read_buffer(&self) -> &mut [u8] {
+    /// SAFETY: returns `&mut` into VM-owned scratch; two calls alias the same
+    /// buffer. Caller must not hold another live `&mut` to it.
+    pub unsafe fn pipe_read_buffer(&self) -> &mut [u8] {
         // TODO(b2-cycle): RareData::pipe_read_buffer — gated until rare_data.rs un-gates.
         todo!("EventLoop::pipe_read_buffer")
     }

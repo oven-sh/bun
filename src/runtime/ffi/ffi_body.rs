@@ -3014,7 +3014,8 @@ fn make_napi_env_if_needed<'a>(
     for function in functions {
         if function.needs_napi_env() {
             // TODO(port): lifetime — makeNapiEnvForFFI returns a heap-allocated env owned by VM
-            return Some(global_this.make_napi_env_for_ffi());
+            // SAFETY: C++ returns a non-null fresh NapiEnv; we hand back a shared `&` only.
+            return Some(unsafe { &*global_this.make_napi_env_for_ffi() });
         }
     }
     None

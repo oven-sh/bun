@@ -2191,8 +2191,8 @@ impl<'a> BundleOptions<'a> {
                 &transform
                     .conditions
                     .iter()
-                    .map(|s| s.as_bytes())
-                    .collect::<Vec<_>>(),
+                    .map(|s| &**s)
+                    .collect::<Vec<&[u8]>>(),
             )?;
         }
 

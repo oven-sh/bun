@@ -779,7 +779,7 @@ impl<'a> Transpiler<'a> {
         const USE_SHARED_BUFFER: bool,
     >(
         &mut self,
-        this_parse: ParseOptions<'_>,
+        mut this_parse: ParseOptions<'_>,
         // TODO(port): Zig `anytype` + `@hasField(.., "source")` — only ever
         // called with `?*EntryPoints.ClientEntryPoint` in this file. If other
         // callers pass a different type, introduce a `ClientEntryPointLike`

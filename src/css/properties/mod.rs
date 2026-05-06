@@ -84,9 +84,12 @@ macro_rules! prop_value_stub {
             #[inline] pub fn deep_clone(&self, _bump: &::bun_alloc::Arena) -> Self { Self }
             // Serialization surface so un-gated `TokenList::to_css` /
             // `Property::value_to_css` arms that name a still-stubbed payload
-            // type-check. Unit struct → no output (matches Zig zero-value
-            // round-trip until the real leaf un-gates).
-            #[inline] pub fn to_css(&self, _dest: &mut $crate::Printer) -> ::core::result::Result<(), $crate::PrintErr> { Ok(()) }
+            // type-check. PORTING.md §Forbidden bans silent no-ops here — the
+            // Zig spec has real serialization logic, so fail loudly until the
+            // real leaf un-gates rather than emitting empty output.
+            #[inline] pub fn to_css(&self, _dest: &mut $crate::Printer) -> ::core::result::Result<(), $crate::PrintErr> {
+                todo!(concat!("blocked_on: ", stringify!($T), "::to_css — leaf module still #[cfg(any())]-gated"))
+            }
         }
     )+};
 }
@@ -275,7 +278,6 @@ mod generic_registrations {
         border_image::BorderImageSlice,
         border_image::BorderImageSideWidth,
         border_radius::BorderRadius,
-        box_shadow::BoxShadow,
         display::Display,
         flex::Flex,
         flex::FlexFlow,

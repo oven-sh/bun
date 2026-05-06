@@ -246,7 +246,9 @@ impl MarkedArgumentBuffer {
 }
 
 impl JSGlobalObject {
-    pub fn bun_vm(&self) -> &mut VirtualMachine {
+    /// SAFETY: returns `&mut VirtualMachine` derived from `&self`; two calls
+    /// alias the same VM. Caller must not hold another live `&mut` to it.
+    pub unsafe fn bun_vm(&self) -> &mut VirtualMachine {
         unimplemented!("b2-blocked: bun_jsc::JSGlobalObject::bun_vm")
     }
 }

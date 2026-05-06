@@ -64,7 +64,7 @@ pub mod ast {
     use super::*;
 
     pub struct Script<'arena> {
-        pub stmts: &'arena mut [Stmt<'arena>],
+        pub stmts: &'arena [Stmt<'arena>],
     }
 
     impl<'arena> Script<'arena> {
@@ -78,7 +78,7 @@ pub mod ast {
     }
 
     pub struct Stmt<'arena> {
-        pub exprs: &'arena mut [Expr<'arena>],
+        pub exprs: &'arena [Expr<'arena>],
     }
 
     impl<'arena> Stmt<'arena> {
@@ -93,7 +93,7 @@ pub mod ast {
 
     #[derive(strum::IntoStaticStr)]
     pub enum Expr<'arena> {
-        Assign(&'arena mut [Assign<'arena>]),
+        Assign(&'arena [Assign<'arena>]),
         Binary(&'arena Binary<'arena>),
         Pipeline(&'arena Pipeline<'arena>),
         Cmd(&'arena Cmd<'arena>),
@@ -389,7 +389,7 @@ pub mod ast {
     }
 
     pub struct Pipeline<'arena> {
-        pub items: &'arena mut [PipelineItem<'arena>],
+        pub items: &'arena [PipelineItem<'arena>],
     }
 
     impl<'arena> Pipeline<'arena> {
@@ -404,7 +404,7 @@ pub mod ast {
 
     pub enum PipelineItem<'arena> {
         Cmd(&'arena Cmd<'arena>),
-        Assigns(*mut [Assign<'arena>]), // TODO(port): lifetime — arena slice shared with Expr::Assign
+        Assigns(&'arena [Assign<'arena>]),
         Subshell(&'arena Subshell<'arena>),
         If(&'arena If<'arena>),
         CondExpr(&'arena CondExpr<'arena>),
@@ -431,7 +431,7 @@ pub mod ast {
 
     pub enum CmdOrAssigns<'arena> {
         Cmd(Cmd<'arena>),
-        Assigns(&'arena mut [Assign<'arena>]),
+        Assigns(&'arena [Assign<'arena>]),
     }
 
     #[derive(Clone, Copy)]
@@ -501,8 +501,8 @@ pub mod ast {
     }
 
     pub struct Cmd<'arena> {
-        pub assigns: &'arena mut [Assign<'arena>],
-        pub name_and_args: &'arena mut [Atom<'arena>],
+        pub assigns: &'arena [Assign<'arena>],
+        pub name_and_args: &'arena [Atom<'arena>],
         pub redirect: RedirectFlags,
         pub redirect_file: Option<Redirect<'arena>>,
     }
@@ -566,8 +566,10 @@ pub mod ast {
         #[inline]
         pub fn duplicate_out(self) -> bool { self.contains(Self::DUPLICATE_OUT) }
 
+        // PORT NOTE: shell.zig RedirectFlags.isEmpty() — bitflags already
+        // generates `is_empty()`; expose under the Zig spelling for parity.
         #[inline]
-        pub fn is_empty(self) -> bool {
+        pub fn isEmpty(self) -> bool {
             self.bits() == 0
         }
 
@@ -805,7 +807,7 @@ pub mod ast {
     }
 
     pub struct CompoundAtom<'arena> {
-        pub atoms: &'arena mut [SimpleAtom<'arena>],
+        pub atoms: &'arena [SimpleAtom<'arena>],
         pub brace_expansion_hint: bool,
         pub glob_hint: bool,
     }
@@ -2182,7 +2184,7 @@ pub type LexerAscii<'bump> = Lexer<'bump, { StringEncoding::Ascii }>;
 pub type LexerUnicode<'bump> = Lexer<'bump, { StringEncoding::Wtf8 }>;
 
 pub struct LexResult<'bump> {
-    pub errors: &'bump mut [LexError],
+    pub errors: &'bump [LexError],
     pub tokens: &'bump [Token],
     pub strpool: &'bump [u8],
 }
@@ -2938,12 +2940,10 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
 
     #[cold]
     fn append_unicode_char_to_str_pool(&mut self, char: u32) -> Result<(), LexerError> {
-        let ichar: i32 = i32::try_from(char).unwrap();
         let mut bytes = [0u8; 4];
-        // Zig encodeWTF8Rune returns u3; Rust port returns a small uint — widen with From.
-        let n = strings::encode_wtf8_rune(&mut bytes, ichar);
-        self.j += u32::from(n);
-        self.strpool.extend_from_slice(&bytes[..usize::from(n)]);
+        let n = strings::encode_wtf8_rune(&mut bytes, char);
+        self.j += n as u32;
+        self.strpool.extend_from_slice(&bytes[..n]);
         Ok(())
     }
 
@@ -3693,7 +3693,7 @@ impl<'a> SrcAscii<'a> {
     }
 }
 
-pub type CodepointIterator = strings::UnsignedCodepointIterator;
+pub type CodepointIterator<'a> = strings::UnsignedCodepointIterator<'a>;
 
 #[derive(Clone, Copy)]
 pub struct SrcUnicode<'a> {

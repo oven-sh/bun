@@ -18,7 +18,8 @@ impl PostgresSQLContext {
     // `export = "..."` arg gives it the #[unsafe(no_mangle)] symbol name.
     // TODO(b2-blocked): bun_jsc::host_fn proc-macro (#[bun_jsc::host_fn(export = "PostgresSQLContext__init")])
     pub fn init(global: &JSGlobalObject, frame: &CallFrame) -> JSValue {
-        let ctx = &mut global.bun_vm().rare_data().postgresql_context;
+        // SAFETY: JS-thread only; sole `&mut VirtualMachine` borrow in this scope.
+        let ctx = &mut unsafe { global.bun_vm() }.rare_data().postgresql_context;
         ctx.on_query_resolve_fn.set(global, frame.argument(0));
         ctx.on_query_reject_fn.set(global, frame.argument(1));
         JSValue::UNDEFINED

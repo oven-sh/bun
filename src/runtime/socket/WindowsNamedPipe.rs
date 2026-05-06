@@ -704,7 +704,10 @@ impl WindowsNamedPipe {
         self.flags.is_ssl()
     }
 
-    pub fn loop_(&self) -> &mut AsyncLoop {
+    /// SAFETY: `vm.uv_loop()` hands back the process-wide libuv loop; two calls
+    /// alias the same `&mut AsyncLoop`. Caller must not hold another live
+    /// `&mut` to it.
+    pub unsafe fn loop_(&self) -> &mut AsyncLoop {
         self.vm.uv_loop()
     }
 

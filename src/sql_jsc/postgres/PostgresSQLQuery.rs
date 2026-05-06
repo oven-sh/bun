@@ -271,7 +271,8 @@ impl PostgresSQLQuery {
     #[bun_jsc::host_fn(export = "PostgresSQLQuery__createInstance")]
     pub fn call(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global_this.bun_vm(), arguments);
+        // SAFETY: JS-thread only; sole `&mut VirtualMachine` borrow in this scope.
+        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(unsafe { global_this.bun_vm() }, arguments);
         // ArgumentsSlice has Drop.
         let Some(query) = args.next_eat() else {
             return global_this.throw("query must be a string", &[]);

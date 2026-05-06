@@ -4786,7 +4786,7 @@ impl Dir {
     /// `std.fs.Dir.deleteFileZ` — `unlinkat(self.fd, sub_path, 0)`.
     #[inline]
     pub fn delete_file_z(&self, sub_path: &ZStr) -> core::result::Result<(), bun_core::Error> {
-        unlinkat(self.fd, sub_path).unwrap().map_err(Into::into)
+        unlinkat(self.fd, sub_path).map_err(Into::into)
     }
 }
 
@@ -5490,7 +5490,6 @@ pub mod fs {
                 // MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH
                 // (fs.zig TmpfileWindows.promoteToCWD). Route via renameat for now.
                 super::renameat_z(self.dir_fd, from_name, super::Fd::cwd(), name)
-                    .unwrap()
                     .map_err(Into::into)
             }
         }

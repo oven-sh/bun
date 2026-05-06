@@ -335,7 +335,7 @@ impl FileSystemRouter {
                         let _ = vm
                             .transpiler
                             .resolver
-                            .bust_dir_cache(strings::without_trailing_slash_windows_path(full_path));
+                            .bust_dir_cache(strings::paths::without_trailing_slash_windows_path(full_path));
                         self.bust_dir_cache_recursive(global_this, full_path);
                     }
                 }
@@ -346,7 +346,7 @@ impl FileSystemRouter {
     }
 
     pub fn bust_dir_cache(&mut self, global_this: &JSGlobalObject) {
-        let dir = strings::without_trailing_slash_windows_path(self.router.config.dir);
+        let dir = strings::paths::without_trailing_slash_windows_path(self.router.config.dir);
         self.bust_dir_cache_recursive(global_this, dir);
     }
 

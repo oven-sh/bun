@@ -309,10 +309,10 @@ Join our Discord community:      <blue>https://bun.com/discord<r>
                     Output::pretty("\n<b>Flags:<r>", format_args!(""));
 
                     // TODO(port): comptime concat of param arrays — Phase B may expose a const slice from Arguments
-                    let flags = arguments::runtime_params_()
+                    let flags = arguments::RUNTIME_PARAMS_
                         .iter()
-                        .chain(arguments::auto_only_params().iter())
-                        .chain(arguments::base_params_().iter());
+                        .chain(arguments::AUTO_ONLY_PARAMS.iter())
+                        .chain(arguments::BASE_PARAMS_.iter());
                     clap::simple_help_bun_top_level(flags);
                     Output::pretty(
                         "\n\n(more flags in <b>bun install --help<r>, <b>bun test --help<r>, and <b>bun build --help<r>)\n",

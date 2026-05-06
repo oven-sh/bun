@@ -50,16 +50,22 @@ where
     if !bucket_name.is_empty() {
         write!(
             writer,
-            // TODO(port): comptime Output.prettyFmt — needs const-format macro accepting ENABLE_ANSI_COLORS
-            Output::pretty_fmt!(" (<green>\"{}/{}\"<r>)<r> {{", ENABLE_ANSI_COLORS),
-            bstr::BStr::new(bucket_name),
-            bstr::BStr::new(s3.path()),
+            "{}",
+            output::pretty_fmt_args(
+                " (<green>\"{}/{}\"<r>)<r> {{",
+                ENABLE_ANSI_COLORS,
+                (bstr::BStr::new(bucket_name), bstr::BStr::new(s3.path())),
+            ),
         )?;
     } else {
         write!(
             writer,
-            Output::pretty_fmt!(" (<green>\"{}\"<r>)<r> {{", ENABLE_ANSI_COLORS),
-            bstr::BStr::new(s3.path()),
+            "{}",
+            output::pretty_fmt_args(
+                " (<green>\"{}\"<r>)<r> {{",
+                ENABLE_ANSI_COLORS,
+                (bstr::BStr::new(s3.path()),),
+            ),
         )?;
     }
 
@@ -71,8 +77,12 @@ where
         formatter.write_indent(writer)?;
         write!(
             writer,
-            Output::pretty_fmt!("type<d>:<r> <green>\"{}\"<r>", ENABLE_ANSI_COLORS),
-            bstr::BStr::new(content_type),
+            "{}",
+            output::pretty_fmt_args(
+                "type<d>:<r> <green>\"{}\"<r>",
+                ENABLE_ANSI_COLORS,
+                (bstr::BStr::new(content_type),),
+            ),
         )?;
 
         formatter.print_comma(writer, ENABLE_ANSI_COLORS)?;
@@ -90,8 +100,8 @@ where
 
         write!(
             writer,
-            Output::pretty_fmt!("offset<d>:<r> <yellow>{}<r>", ENABLE_ANSI_COLORS),
-            offset,
+            "{}",
+            output::pretty_fmt_args("offset<d>:<r> <yellow>{}<r>", ENABLE_ANSI_COLORS, (offset,)),
         )?;
 
         formatter.print_comma(writer, ENABLE_ANSI_COLORS)?;

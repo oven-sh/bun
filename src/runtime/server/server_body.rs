@@ -2369,7 +2369,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             output_buf[0] = 0;
             let mut written: usize = 0;
             // SAFETY: FFI call into BoringSSL; no preconditions
-            let mut ssl_error = unsafe { boringssl::ERR_get_error() };
+            let mut ssl_error = unsafe { boringssl::c::ERR_get_error() };
             while ssl_error != 0 && written < output_buf.len() {
                 if written > 0 {
                     output_buf[written] = b'\n';
@@ -2377,7 +2377,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
 
                 // SAFETY: FFI call into BoringSSL; ssl_error is a valid packed error code
-                if let Some(reason_ptr) = unsafe { boringssl::ERR_reason_error_string(ssl_error) } {
+                let reason_ptr = unsafe { ERR_reason_error_string(ssl_error) };
+                if !reason_ptr.is_null() {
                     // SAFETY: BoringSSL returns a NUL-terminated static string
                     let reason = unsafe { core::ffi::CStr::from_ptr(reason_ptr) }.to_bytes();
                     if reason.is_empty() {
@@ -2388,7 +2389,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
 
                 // SAFETY: FFI call into BoringSSL; ssl_error is a valid packed error code
-                if let Some(reason_ptr) = unsafe { boringssl::ERR_func_error_string(ssl_error) } {
+                let reason_ptr = unsafe { ERR_func_error_string(ssl_error) };
+                if !reason_ptr.is_null() {
                     // SAFETY: BoringSSL returns a NUL-terminated static string
                     let reason = unsafe { core::ffi::CStr::from_ptr(reason_ptr) }.to_bytes();
                     if !reason.is_empty() {
@@ -2400,7 +2402,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
 
                 // SAFETY: FFI call into BoringSSL; ssl_error is a valid packed error code
-                if let Some(reason_ptr) = unsafe { boringssl::ERR_lib_error_string(ssl_error) } {
+                let reason_ptr = unsafe { ERR_lib_error_string(ssl_error) };
+                if !reason_ptr.is_null() {
                     // SAFETY: BoringSSL returns a NUL-terminated static string
                     let reason = unsafe { core::ffi::CStr::from_ptr(reason_ptr) }.to_bytes();
                     if !reason.is_empty() {
@@ -2412,14 +2415,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
 
                 // SAFETY: FFI call into BoringSSL; no preconditions
-                ssl_error = unsafe { boringssl::ERR_get_error() };
+                ssl_error = unsafe { boringssl::c::ERR_get_error() };
             }
 
             if written > 0 {
                 let message = &output_buf[0..written];
                 error_instance = global.create_error_instance(format_args!("OpenSSL {}", BStr::new(message)));
                 // SAFETY: FFI call into BoringSSL; no preconditions
-                unsafe { boringssl::ERR_clear_error() };
+                unsafe { boringssl::c::ERR_clear_error() };
             }
         }
 

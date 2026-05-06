@@ -1124,7 +1124,7 @@ pub type DestructorPtr = TaggedPtrUnion<(Detached, Detached)>;
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__onSinkDestroyed(ptr_value: *mut c_void, sink_ptr: *mut c_void) {
     let _ = sink_ptr; // autofix
-    let ptr = DestructorPtr::from(ptr_value);
+    let ptr = DestructorPtr::from(Some(ptr_value));
 
     if ptr.is_null() {
         return;
@@ -1133,10 +1133,16 @@ pub extern "C" fn Bun__onSinkDestroyed(ptr_value: *mut c_void, sink_ptr: *mut c_
     // TODO(port): TaggedPtrUnion tag matching — Zig uses `@typeName(Detached)` /
     // `@typeName(Subprocess)` as tag values via `@field(DestructorPtr.Tag, ...)`.
     // bun_collections::TaggedPtrUnion should expose typed `as::<T>() -> Option<&mut T>`.
-    if let Some(_detached) = ptr.as_ref::<Detached>() {
+    if ptr.is::<Detached>() {
         return;
     }
-    if let Some(subprocess) = ptr.as_mut::<Subprocess>() {
+    if ptr.is_valid() {
+        // TODO(b2-blocked): `Subprocess<'_>` cannot implement `UnionMember` (lifetime
+        // param), so it isn't part of `DestructorPtr`'s type list yet — cast the raw
+        // pointer directly until the second variant is restored.
+        // SAFETY: caller (C++) guarantees a valid non-Detached tag points at a live
+        // Subprocess.
+        let subprocess: &mut Subprocess<'_> = unsafe { &mut *(ptr.ptr() as *mut Subprocess<'_>) };
         subprocess.on_stdin_destroyed();
         return;
     }

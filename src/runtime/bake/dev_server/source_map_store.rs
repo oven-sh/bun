@@ -8,6 +8,9 @@ use bun_collections::{linear_fifo::StaticBuffer, ArrayHashMap, LinearFifo, Multi
 
 use super::{packed_map, ChunkKind, EventLoopTimer, TimerTag};
 
+// Re-export body types so `DevServer.rs` can name them via `source_map_store::*`.
+pub use super::source_map_store_body::PutOrIncrementRefCount;
+
 /// See `SourceId` for the bit layout.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]

@@ -218,6 +218,7 @@ pub enum ShellError {
 }
 
 
+#[cfg(any())] // Phase-A draft preserved; canonical defs in bun_shell_parser::parse (re-exported above).
 mod __phase_a_draft_parse_error {
     // Phase-A draft preserved; canonical defs now in bun_shell_parser::parse.
     use super::*;
@@ -435,6 +436,7 @@ impl<'a> GlobalMini<'a> {
 }
 
 
+#[cfg(any())] // Phase-A draft preserved; canonical defs in bun_shell_parser::parse (re-exported above).
 mod __phase_a_draft_lex_parse {
     // Phase-A draft preserved; canonical defs now in bun_shell_parser::parse.
     use super::*;
@@ -4893,6 +4895,7 @@ impl<'a> ShellSrcBuilder<'a> {
 }
 
 
+#[cfg(any())] // Phase-A draft preserved; canonical defs in bun_shell_parser::parse (re-exported above).
 mod __phase_a_draft_escaping {
     // Phase-A draft preserved; canonical defs now in bun_shell_parser::parse.
     use super::*;
@@ -5042,6 +5045,7 @@ pub fn needs_escape_utf8_ascii_latin1(str: &[u8]) -> bool {
 } // mod __phase_a_draft_escaping
 
 
+#[cfg(any())] // Phase-A draft preserved; canonical defs in bun_shell_parser::parse (re-exported above).
 mod __phase_a_draft_smollist {
     // Phase-A draft preserved; canonical defs now in bun_shell_parser::parse.
     use super::*;

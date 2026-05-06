@@ -17,7 +17,9 @@ impl TextEncoderStreamEncoder {
         drop(unsafe { Box::from_raw(this) });
     }
 
-    #[bun_jsc::host_fn]
+    // PORT NOTE: no `#[bun_jsc::host_fn]` here — that macro's free-fn arm emits
+    // a bare `constructor(...)` which cannot resolve inside an `impl`. The
+    // `#[bun_jsc::JsClass]` derive already emits the `<Self>::constructor` shim.
     pub fn constructor(
         _global: &JSGlobalObject,
         _frame: &CallFrame,
@@ -126,7 +128,7 @@ impl TextEncoderStreamEncoder {
             // wrap in comptime if so simdutf isn't called in a release build here.
             debug_assert!(
                 buffer.len()
-                    == (bun_simdutf::length::utf8_from_latin1(input) + prepend_replacement_len)
+                    == (simdutf::length::utf8::from::latin1(input) + prepend_replacement_len)
             );
         }
 
@@ -194,7 +196,7 @@ impl TextEncoderStreamEncoder {
             break 'prepend None;
         };
 
-        let length = bun_simdutf::length::utf8_from_utf16_le(remain);
+        let length = simdutf::length::utf8::from::utf16::le(remain);
 
         // TODO(port): Zig threw a JS OOM exception on alloc failure; Rust Vec aborts on OOM.
         let mut buf: Vec<u8> = Vec::with_capacity(

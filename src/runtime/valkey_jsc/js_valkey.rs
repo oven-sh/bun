@@ -690,10 +690,18 @@ impl JSValkeyClient {
         // within the connection_strings buffer.
         let base_ptr = self.client.connection_strings.as_ptr();
         let new_base = connection_strings_copy.as_ptr();
-        let username = bun_core::memory::rebase_slice(self.client.username, base_ptr, new_base);
-        let password = bun_core::memory::rebase_slice(self.client.password, base_ptr, new_base);
+        // SAFETY: username/password/hostname are slices into `connection_strings`;
+        // `connection_strings_copy` is a byte-identical copy with the same length.
+        let username: Box<[u8]> = Box::from(unsafe {
+            bun_alloc::memory::rebase_slice(&self.client.username, base_ptr, new_base)
+        });
+        let password: Box<[u8]> = Box::from(unsafe {
+            bun_alloc::memory::rebase_slice(&self.client.password, base_ptr, new_base)
+        });
         let orig_hostname = self.client.address.hostname();
-        let hostname = bun_core::memory::rebase_slice(orig_hostname, base_ptr, new_base);
+        let hostname: Box<[u8]> = Box::from(unsafe {
+            bun_alloc::memory::rebase_slice(orig_hostname, base_ptr, new_base)
+        });
         // TODO: we could ref count it instead of cloning it
         let tls: valkey::TLS = self.client.tls.clone();
 
@@ -709,10 +717,13 @@ impl JSValkeyClient {
                     valkey::Protocol::StandaloneUnix | valkey::Protocol::StandaloneTlsUnix => {
                         valkey::Address::Unix(hostname)
                     }
-                    _ => valkey::Address::Host(valkey::HostAddress {
+                    _ => valkey::Address::Host {
                         host: hostname,
-                        port: self.client.address.host().port,
-                    }),
+                        port: match &self.client.address {
+                            valkey::Address::Host { port, .. } => *port,
+                            valkey::Address::Unix(_) => unreachable!(),
+                        },
+                    },
                 },
                 protocol: self.client.protocol,
                 username,

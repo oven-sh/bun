@@ -12,6 +12,13 @@ use bun_collections::{bit_set::DynamicBitSetUnmanaged, MultiArrayList, StringArr
 use super::{packed_map, route_bundle, FileKind};
 use crate::bake;
 
+// Re-export body types so `DevServer.rs` (in `crate::bake::dev_server_body`) can
+// name them via `incremental_graph::*` without seeing the private `_body` mod.
+pub use super::incremental_graph_body::{
+    ProcessMode, ReceiveChunkContent, ReceiveChunkSourceMap, TakeJSBundleOptionsClient,
+    TakeJSBundleOptionsServer, TraceDependencyGoal,
+};
+
 /// `bun.GenericIndex(u32, File)` — file index into `bundled_files`.
 ///
 /// Const-generic over `bake::Side` so that `IncrementalGraph(.server).FileIndex`

@@ -1303,8 +1303,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     pub fn start(&mut self, stream_start: Start) -> bun_sys::Result<()> {
         if self.aborted
             || self.res.is_none()
-            // SAFETY: res checked non-null above
-            || unsafe { &*(self.res.unwrap() as *mut uws::Response) }.has_responded()
+            || self.any_res().unwrap().has_responded()
         {
             self.mark_done();
             self.signal.close(None);
@@ -1435,8 +1434,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         }
 
         if self.res.is_none()
-            // SAFETY: res checked non-null
-            || unsafe { &*(self.res.unwrap() as *mut uws::Response) }.has_responded()
+            || self.any_res().unwrap().has_responded()
         {
             self.mark_done();
             self.signal.close(None);
@@ -1500,8 +1498,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         }
 
         if self.res.is_none()
-            // SAFETY: res checked non-null
-            || unsafe { &*(self.res.unwrap() as *mut uws::Response) }.has_responded()
+            || self.any_res().unwrap().has_responded()
         {
             self.signal.close(None);
             self.mark_done();
@@ -1571,8 +1568,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         }
 
         if self.res.is_none()
-            // SAFETY: res checked non-null
-            || unsafe { &*(self.res.unwrap() as *mut uws::Response) }.has_responded()
+            || self.any_res().unwrap().has_responded()
         {
             self.signal.close(None);
             self.mark_done();
@@ -1626,8 +1622,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
         if self.done
             || self.res.is_none()
-            // SAFETY: res checked non-null
-            || unsafe { &*(self.res.unwrap() as *mut uws::Response) }.has_responded()
+            || self.any_res().unwrap().has_responded()
         {
             self.signal.close(err);
             self.mark_done();
@@ -1659,8 +1654,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
         if self.done
             || self.res.is_none()
-            // SAFETY: res checked non-null
-            || unsafe { &*(self.res.unwrap() as *mut uws::Response) }.has_responded()
+            || self.any_res().unwrap().has_responded()
         {
             self.requested_end = true;
             self.signal.close(None);
@@ -1687,9 +1681,8 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
                 return bun_sys::Result::Ok(value);
             }
         } else {
-            if let Some(res) = self.res {
-                // SAFETY: res is live uWS handle
-                unsafe { &mut *(res as *mut uws::Response) }.end(b"", false);
+            if let Some(res) = self.any_res() {
+                res.end(b"", false);
             }
         }
 

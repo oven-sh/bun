@@ -387,6 +387,39 @@ struct ConnectInfo {
     port: u16,
 }
 
+// TODO(port): placeholder for `bun_jsc::codegen::JSUDPSocket` (.classes.ts output).
+// Shape mirrors what `UDPSocket::js()` callers need: `gc.on_{data,drain,error}.{get,set}`
+// and `{address,remote_address}_set_cached`. Replace with the generated type in Phase B.
+pub mod codegen_stub {
+    use super::{JSGlobalObject, JSValue};
+
+    pub struct JSUDPSocket {
+        pub gc: Gc,
+    }
+    pub struct Gc {
+        pub on_data: GcField,
+        pub on_drain: GcField,
+        pub on_error: GcField,
+    }
+    pub struct GcField(());
+    impl GcField {
+        pub fn get(&self, _this: JSValue) -> Option<JSValue> {
+            todo!("blocked_on: bun_jsc::codegen::JSUDPSocket")
+        }
+        pub fn set(&self, _this: JSValue, _global: &JSGlobalObject, _value: JSValue) {
+            todo!("blocked_on: bun_jsc::codegen::JSUDPSocket")
+        }
+    }
+    impl JSUDPSocket {
+        pub fn address_set_cached(&self, _this: JSValue, _global: &JSGlobalObject, _value: JSValue) {
+            todo!("blocked_on: bun_jsc::codegen::JSUDPSocket")
+        }
+        pub fn remote_address_set_cached(&self, _this: JSValue, _global: &JSGlobalObject, _value: JSValue) {
+            todo!("blocked_on: bun_jsc::codegen::JSUDPSocket")
+        }
+    }
+}
+
 #[bun_jsc::JsClass]
 pub struct UDPSocket {
     pub config: UDPSocketConfig,

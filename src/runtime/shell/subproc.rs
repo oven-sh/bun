@@ -356,7 +356,7 @@ impl ShellSubprocess {
         // to initialize the object.
         out: &mut *mut Self,
         notify_caller_process_already_exited: &mut bool,
-    ) -> sh::Result<()> {
+    ) -> ShResult<()> {
         let mut spawn_args = spawn_args_;
 
         match Self::spawn_maybe_sync_impl(
@@ -366,8 +366,8 @@ impl ShellSubprocess {
             out,
             notify_caller_process_already_exited,
         ) {
-            sh::Result::Ok(()) => sh::Result::success(),
-            sh::Result::Err(err) => sh::Result::Err(err),
+            Ok(()) => Ok(()),
+            Err(err) => Err(err),
         }
     }
 
@@ -380,7 +380,7 @@ impl ShellSubprocess {
         // to initialize the object.
         out_subproc: &mut *mut Self,
         notify_caller_process_already_exited: &mut bool,
-    ) -> sh::Result<()> {
+    ) -> ShResult<()> {
         const IS_SYNC: bool = false;
 
         if !spawn_args.override_env && spawn_args.env_array.is_empty() {

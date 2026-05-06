@@ -638,7 +638,7 @@ pub fn get_ephemeral_key_info(this: &mut This, global: &JSGlobalObject, _frame: 
                 // SAFETY: raw_key is a non-null EVP_PKEY of type EVP_PKEY_EC (checked just above).
                 let ec = unsafe { ffi::EVP_PKEY_get1_EC_KEY(raw_key) };
                 // SAFETY: ec is the EC_KEY returned for an EC pkey; EC_KEY_get0_group on it is valid.
-                let nid = unsafe { ffi::EC_GROUP_get_curve_name(boringssl::EC_KEY_get0_group(ec)) };
+                let nid = unsafe { ffi::EC_GROUP_get_curve_name(ffi::EC_KEY_get0_group(ec)) };
                 // SAFETY: OBJ_nid2sn is safe to call with any nid; returns null if unknown.
                 let nid_str = unsafe { ffi::OBJ_nid2sn(nid) };
                 if !nid_str.is_null() {
@@ -673,7 +673,7 @@ pub fn get_alpn_protocol(this: &This, global: &JSGlobalObject) -> JsResult<JSVal
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::FALSE) };
 
     // SAFETY: ssl_ptr is a live *mut SSL; out-params are valid stack locals.
-    unsafe { boringssl::SSL_get0_alpn_selected(ssl_ptr, &mut alpn_proto, &mut alpn_proto_len) };
+    unsafe { ffi::SSL_get0_alpn_selected(ssl_ptr, &mut alpn_proto, &mut alpn_proto_len) };
     if alpn_proto.is_null() || alpn_proto_len == 0 {
         return Ok(JSValue::FALSE);
     }
@@ -692,7 +692,7 @@ pub fn get_alpn_protocol(this: &This, global: &JSGlobalObject) -> JsResult<JSVal
 pub fn get_session(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::UNDEFINED) };
     // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
-    let Some(session) = (unsafe { boringssl::SSL_get_session(ssl_ptr) }) else {
+    let Some(session) = (unsafe { ffi::SSL_get_session(ssl_ptr) }) else {
         return Ok(JSValue::UNDEFINED);
     };
     // SAFETY: session is a non-null *mut SSL_SESSION; null out-param requests only the encoded size.
@@ -752,7 +752,7 @@ pub fn set_session(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) 
 pub fn get_tls_ticket(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::UNDEFINED) };
     // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
-    let Some(session) = (unsafe { boringssl::SSL_get_session(ssl_ptr) }) else {
+    let Some(session) = (unsafe { ffi::SSL_get_session(ssl_ptr) }) else {
         return Ok(JSValue::UNDEFINED);
     };
     let mut ticket: *const u8 = core::ptr::null();

@@ -15,7 +15,9 @@ use bun_http as http;
 use bun_http::AsyncHTTP;
 use bun_ini as ini;
 // MOVE_DOWN(b0): bun_jsc::{AnyEventLoop, MiniEventLoop, EventLoopHandle} → bun_event_loop
-use bun_event_loop::{self, AnyEventLoop, EventLoopHandle, MiniEventLoop};
+use bun_event_loop::{self, AnyEventLoop, EventLoopHandle};
+use bun_event_loop::MiniEventLoop as mini_event_loop;
+use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_logger as logger;
 use bun_paths::{self as path, PathBuffer, DELIMITER, SEP, SEP_STR};
 use bun_paths::resolve_path::{self, platform, PosixToWinNormalizer};
@@ -1827,8 +1829,8 @@ pub fn init(
         let evl = unsafe { &mut (*manager_ptr).event_loop };
         if let AnyEventLoop::Mini(mini) = evl {
             let mini_ptr: *mut MiniEventLoop<'static> = mini;
-            bun_event_loop::MiniEventLoop::GLOBAL.with(|g| g.set(mini_ptr));
-            bun_event_loop::MiniEventLoop::GLOBAL_INITIALIZED.with(|g| g.set(true));
+            mini_event_loop::GLOBAL.with(|g| g.set(mini_ptr));
+            mini_event_loop::GLOBAL_INITIALIZED.with(|g| g.set(true));
         }
     }
     {

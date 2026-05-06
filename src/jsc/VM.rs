@@ -53,7 +53,7 @@ unsafe extern "C" {
 /// Opaque handle to a `JSC::VM`.
 #[repr(C)]
 pub struct VM {
-    _p: [u8; 0],
+    _p: UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
@@ -195,13 +195,10 @@ impl VM {
     }
 
     pub fn is_termination_exception(&self, exception: &Exception) -> bool {
-        // SAFETY: self and exception are valid live JSC objects.
-        unsafe {
-            JSC__VM__isTerminationException(
-                self.as_mut_ptr(),
-                exception as *const Exception as *mut Exception,
-            )
-        }
+        // SAFETY: self and exception are valid live JSC objects. The C++ impl
+        // (`JSC::VM::isTerminationException`) only reads `exception`, so passing
+        // a `*const` derived from `&Exception` is sound.
+        unsafe { JSC__VM__isTerminationException(self.as_mut_ptr(), exception) }
     }
 
     pub fn has_termination_request(&self) -> bool {

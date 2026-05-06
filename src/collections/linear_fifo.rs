@@ -125,7 +125,10 @@ impl<T> LinearFifoBuffer<T> for DynamicBuffer<T> {
     }
     #[inline]
     fn as_mut_slice(&mut self) -> &mut [T] {
-        // SAFETY: see StaticBuffer note.
+        // SAFETY: `&mut self` uniquely borrows the boxed slice; the temporary
+        // `&mut [MaybeUninit<T>]` is consumed by the raw-pointer cast so the
+        // returned `&mut [T]` is the sole live reference into the allocation.
+        // Layout matches; validity invariant is the same as `as_slice` (see StaticBuffer note).
         unsafe { &mut *(&mut *self.0 as *mut [MaybeUninit<T>] as *mut [T]) }
     }
 

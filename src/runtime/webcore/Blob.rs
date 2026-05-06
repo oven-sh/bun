@@ -110,7 +110,51 @@ pub enum ClosingState {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub use jsc::codegen::JSBlob as js;
-// TODO(port): from_js / from_js_direct are provided by the codegen via #[JsClass].
+
+// Hand-written `JsClass` impl — what `#[bun_jsc::JsClass]` would emit. Kept
+// explicit because Blob owns custom `finalize`/`to_js` paths (S3File dispatch,
+// ref-counted heap promotion via `Blob::new`) that the derive cannot express.
+const _: () = {
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    unsafe extern "sysv64" {
+        #[link_name = "Blob__fromJS"]
+        fn __from_js(value: bun_jsc::JSValue) -> *mut Blob;
+        #[link_name = "Blob__fromJSDirect"]
+        fn __from_js_direct(value: bun_jsc::JSValue) -> *mut Blob;
+        #[link_name = "Blob__create"]
+        fn __create(global: *mut bun_jsc::JSGlobalObject, ptr: *mut Blob) -> bun_jsc::JSValue;
+    }
+    #[cfg(not(all(windows, target_arch = "x86_64")))]
+    unsafe extern "C" {
+        #[link_name = "Blob__fromJS"]
+        fn __from_js(value: bun_jsc::JSValue) -> *mut Blob;
+        #[link_name = "Blob__fromJSDirect"]
+        fn __from_js_direct(value: bun_jsc::JSValue) -> *mut Blob;
+        #[link_name = "Blob__create"]
+        fn __create(global: *mut bun_jsc::JSGlobalObject, ptr: *mut Blob) -> bun_jsc::JSValue;
+    }
+
+    impl bun_jsc::JsClass for Blob {
+        fn from_js(value: bun_jsc::JSValue) -> Option<*mut Self> {
+            // SAFETY: pure FFI downcast; returns null on type mismatch.
+            let p = unsafe { __from_js(value) };
+            if p.is_null() { None } else { Some(p) }
+        }
+        fn from_js_direct(value: bun_jsc::JSValue) -> Option<*mut Self> {
+            // SAFETY: pure FFI downcast (exact-structure check); null on miss.
+            let p = unsafe { __from_js_direct(value) };
+            if p.is_null() { None } else { Some(p) }
+        }
+        fn to_js(self, global: &bun_jsc::JSGlobalObject) -> bun_jsc::JSValue {
+            // Heap-promote via `Blob::new` (initialises ref_count) rather than
+            // a bare `Box::into_raw`, then hand to the C++ wrapper.
+            let ptr = Blob::new(self);
+            // SAFETY: `global` is live; ownership of `ptr` transfers to the
+            // C++ wrapper (freed via `BlobClass__finalize`).
+            unsafe { __create(global as *const _ as *mut _, ptr) }
+        }
+    }
+};
 
 // ──────────────────────────────────────────────────────────────────────────
 // new() — heap promote

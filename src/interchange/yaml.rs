@@ -67,12 +67,6 @@ impl YAML {
                 Ok(Expr::init(E::Array { items, ..Default::default() }, Loc::EMPTY))
             }
         }
-        } // cfg(any())
-        #[allow(unreachable_code)]
-        {
-            let _ = (log, &mut parser);
-            todo!("b2-blocked: bun_logger::js_ast::E (YAML::parse)")
-        }
     }
 }
 

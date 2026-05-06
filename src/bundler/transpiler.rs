@@ -2704,14 +2704,13 @@ impl<'a> Transpiler<'a> {
                 // `LinkerContext` for the bundling path. For the legacy
                 // single-file `--no-bundle` mode, fall through to the file
                 // copy behaviour until the css feature is wired here.
-                let hashed_name = self.linker.get_hashed_filename(
-                    &logger::fs::Path::init(file_path.text),
-                    None,
-                )?;
+                let hashed_name = self
+                    .linker
+                    .get_hashed_filename(&file_path, None)?;
                 let mut pathname =
-                    Vec::with_capacity(hashed_name.len() + file_path.name.ext.len());
+                    Vec::with_capacity(hashed_name.len() + file_path_ext.len());
                 pathname.extend_from_slice(&hashed_name);
-                pathname.extend_from_slice(file_path.name.ext);
+                pathname.extend_from_slice(file_path_ext);
 
                 output_file.value =
                     crate::output_file::Value::Copy(crate::output_file::FileOperation {
@@ -2719,8 +2718,6 @@ impl<'a> Transpiler<'a> {
                         dir: self
                             .options
                             .output_dir_handle
-                            .as_ref()
-                            .map(|d| d.fd)
                             .unwrap_or(bun_sys::Fd::INVALID),
                         is_outdir: true,
                         ..Default::default()

@@ -875,13 +875,19 @@ impl<const SSL: bool> Drop for HTTPContext<SSL> {
         // PORT NOTE: Box<PendingConnect> Drop subsumes `pc.deinit()`; Vec drop
         // subsumes `pending_h2_connects.deinit()`.
 
-        // Force-close any remaining sockets before unlinking the group so
-        // the loop never dereferences a freed `*Context` via `group->ext`.
-        self.group.close_all();
-        // PORT NOTE: SocketGroup deinit must run before the embedding struct
-        // is freed (it unlinks from the loop's group list).
-        // SAFETY: group was init()'d in `init`/`init_with_opts`; HTTP-thread-only.
-        unsafe { uws::SocketGroup::destroy(&mut self.group as *mut _) };
+        // `init_with_opts` can fail before `group.init()` runs (HTTPThread
+        // cache-miss error path frees the half-init context). Spec
+        // HTTPThread.zig:277 raw-frees without `deinit`; tolerate that here
+        // by skipping group teardown when it was never linked into the loop.
+        if !self.group.loop_.is_null() {
+            // Force-close any remaining sockets before unlinking the group so
+            // the loop never dereferences a freed `*Context` via `group->ext`.
+            self.group.close_all();
+            // PORT NOTE: SocketGroup deinit must run before the embedding struct
+            // is freed (it unlinks from the loop's group list).
+            // SAFETY: group was init()'d in `init`/`init_with_opts`; HTTP-thread-only.
+            unsafe { uws::SocketGroup::destroy(&mut self.group as *mut _) };
+        }
         if SSL {
             if let Some(c) = self.secure {
                 // SAFETY: we own one ref on the SSL_CTX.
@@ -1193,7 +1199,6 @@ unsafe extern "C" {
     fn CRYPTO_BUFFER_POOL_new() -> *mut c_void;
     fn SSL_CTX_set0_buffer_pool(ctx: *mut SSL_CTX, pool: *mut c_void);
     fn SSL_CTX_set_cipher_list(ctx: *mut SSL_CTX, str_: *const c_char) -> c_int;
-    fn X509_verify_cert_error_string(n: core::ffi::c_long) -> *const c_char;
 }
 
 // PORT NOTE: BoringSSL's `SSL_DEFAULT_CIPHER_LIST` macro — copied verbatim

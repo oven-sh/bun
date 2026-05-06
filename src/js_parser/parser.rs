@@ -551,7 +551,7 @@ pub type ScopeOrderList<'bump> = bumpalo::collections::Vec<'bump, Option<ScopeOr
 pub const EXPORTS_STRING_NAME: &[u8] = b"exports";
 
 #[derive(Clone, Copy)]
-struct MacroRefData<'a> {
+pub struct MacroRefData<'a> {
     pub import_record_id: u32,
     /// if name is None the macro is imported as a namespace import
     /// import * as macros from "./macros.js" with {type: "macro"};

@@ -64,15 +64,99 @@ pub struct StaticPipeWriter<P: StaticPipeWriterProcess> {
 /// The Zig callback-struct (`onWritable = null`, `getBuffer`, `onClose`, `onError`,
 /// `onWrite`) maps to a handler trait that `StaticPipeWriter<P>` implements; the
 /// inherent methods below are the callback bodies.
-// TODO(port): wire `bun_io::BufferedWriterHandler` impl forwarding to the inherent
-// `get_buffer`/`on_close`/`on_error`/`on_write` below, with `ON_WRITABLE = None`.
 pub type IOWriter<P> = BufferedWriter<StaticPipeWriter<P>>;
 /// Zig: `pub const Poll = IOWriter;`
 pub type Poll<P> = IOWriter<P>;
 
-impl<P> StaticPipeWriter<P> {
+// ──────────────────────────────────────────────────────────────────────────
+// BufferedWriter parent vtable — wires bun_io callbacks to inherent methods
+// ──────────────────────────────────────────────────────────────────────────
+
+#[cfg(not(windows))]
+impl<P: StaticPipeWriterProcess> bun_io::pipe_writer::PosixBufferedWriterParent
+    for StaticPipeWriter<P>
+{
+    unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
+        // SAFETY: `this` is the BACKREF set via set_parent; the BufferedWriter
+        // never materializes `&mut StaticPipeWriter`, so this is the unique
+        // access path for the callback's duration.
+        unsafe { (*this).on_write(amount, status) };
+    }
+    unsafe fn on_error(this: *mut Self, err: bun_sys::Error) {
+        // SAFETY: see on_write.
+        unsafe { (*this).on_error(err) };
+    }
+    const HAS_ON_CLOSE: bool = true;
+    unsafe fn on_close(this: *mut Self) {
+        // SAFETY: see on_write.
+        unsafe { (*this).on_close() };
+    }
+    unsafe fn get_buffer<'a>(this: *mut Self) -> &'a [u8] {
+        // SAFETY: see on_write. Shared-only borrow of `self.source`'s storage.
+        unsafe { (*this).get_buffer() }
+    }
+    const HAS_ON_WRITABLE: bool = false;
+    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
+        // SAFETY: see on_write. Shared-only read of event_loop.
+        unsafe { (*this).io_evtloop() }
+    }
+}
+
+#[cfg(windows)]
+impl<P: StaticPipeWriterProcess> bun_io::pipe_writer::WindowsWriterParent for StaticPipeWriter<P> {
+    unsafe fn loop_(this: *mut Self) -> *mut bun_windows::libuv::Loop {
+        // SAFETY: BACKREF set via set_parent; shared-only read of event_loop.
+        unsafe { (*this).loop_() }
+    }
+    unsafe fn ref_(this: *mut Self) {
+        // SAFETY: see loop_. Intrusive refcount bump.
+        unsafe { bun_ptr::intrusive_ref(&*this) };
+    }
+    unsafe fn deref(this: *mut Self) {
+        // SAFETY: see loop_. Intrusive refcount drop; may free `this`.
+        unsafe { bun_ptr::intrusive_deref(&*this) };
+    }
+}
+
+#[cfg(windows)]
+impl<P: StaticPipeWriterProcess> bun_io::pipe_writer::WindowsBufferedWriterParent
+    for StaticPipeWriter<P>
+{
+    unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
+        // SAFETY: BACKREF set via set_parent; unique access for callback duration.
+        unsafe { (*this).on_write(amount, status) };
+    }
+    unsafe fn on_error(this: *mut Self, err: bun_sys::Error) {
+        // SAFETY: see on_write.
+        unsafe { (*this).on_error(err) };
+    }
+    const HAS_ON_CLOSE: bool = true;
+    unsafe fn on_close(this: *mut Self) {
+        // SAFETY: see on_write.
+        unsafe { (*this).on_close() };
+    }
+    unsafe fn get_buffer<'a>(this: *mut Self) -> &'a [u8] {
+        // SAFETY: see on_write. Shared-only borrow of `self.source`'s storage.
+        unsafe { (*this).get_buffer() }
+    }
+    const HAS_ON_WRITABLE: bool = false;
+}
+
+impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
+    /// CYCLEBREAK: `bun_io::EventLoopHandle` is an opaque `*mut c_void` that the
+    /// io-layer `FilePollVTable` round-trips back to the runtime. We pass the
+    /// address of the stored `bun_jsc::EventLoopHandle` so the (runtime-registered)
+    /// vtable can recover it.
+    #[inline]
+    fn io_evtloop(&self) -> bun_io::EventLoopHandle {
+        // SAFETY: `bun_io::EventLoopHandle` stores `*mut c_void` purely for
+        // type-erasure; vtable consumers treat the pointee as read-only
+        // (`*const bun_jsc::EventLoopHandle`) and never write through it.
+        bun_io::EventLoopHandle(&self.event_loop as *const _ as *mut c_void)
+    }
+
     pub fn update_ref(&mut self, add: bool) {
-        self.writer.update_ref(self.event_loop, add);
+        self.writer.update_ref(self.io_evtloop(), add);
     }
 
     pub fn get_buffer(&self) -> &[u8] {

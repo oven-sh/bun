@@ -444,14 +444,14 @@ impl ByteStream {
         ByteList::default()
     }
 
-    pub fn to_any_blob(&mut self) -> Option<Blob::Any> {
+    pub fn to_any_blob(&mut self) -> Option<blob::Any> {
         if self.has_received_last_chunk {
             let buffer = core::mem::take(&mut self.buffer);
             self.done = true;
             self.pending.result.deinit();
             self.pending.result = streams::Result::Done;
             self.parent().is_closed = true;
-            return Some(Blob::Any::InternalBlob(Blob::InternalBlob {
+            return Some(blob::Any::InternalBlob(blob::Internal {
                 bytes: buffer,
                 was_string: false,
             }));

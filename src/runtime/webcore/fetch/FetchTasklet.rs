@@ -16,7 +16,7 @@ use bun_url::URL as ZigURL;
 
 use crate::api::bun::x509 as X509;
 use crate::api::server::ServerConfig::SSLConfig;
-use crate::webcore::blob::{AnyBlob, Blob, BlobSizeType, BlobStore};
+use crate::webcore::blob::{Any as AnyBlob, Blob, SizeType as BlobSizeType, Store as BlobStore};
 use crate::webcore::body::{self, Body, BodyValue, BodyValueError};
 use crate::webcore::readable_stream::{self, ReadableStream, ReadableStreamStrong};
 use crate::webcore::{AbortSignal, DrainResult, FetchHeaders, Response, ResumableFetchSink, ResumableSinkBackpressure};

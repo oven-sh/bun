@@ -3,7 +3,7 @@ use core::ffi::c_int;
 use bun_core::{zstr, Environment, Global, Output};
 use bun_sys::{self as sys, Fd, FdExt, O};
 
-use super::run_command::Run;
+use super::run_command::RunCommand;
 use crate::Command;
 
 pub struct FuzzilliCommand;
@@ -94,7 +94,10 @@ impl FuzzilliCommand {
 
             // Run the temp file
             let temp_path: &[u8] = b"/tmp/bun-fuzzilli-reprl.js";
-            let result = Run::boot(ctx, temp_path.to_vec().into_boxed_slice(), None);
+            // PORT NOTE: Zig calls `Run.boot` (src/bun_js.zig); the Rust port
+            // hosts that entry point on `RunCommand` to avoid the higher-tier
+            // crate cycle (see run_command.rs §`Run`).
+            let result = RunCommand::boot(ctx, temp_path.to_vec().into_boxed_slice(), None);
 
             // `defer fd.close()` — Fd is Copy and has no Drop; close explicitly.
             temp_file_fd.close();

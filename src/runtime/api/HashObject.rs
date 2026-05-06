@@ -3,6 +3,46 @@ use bun_str::ZigStringSlice;
 use crate::webcore::Blob;
 
 // ──────────────────────────────────────────────────────────────────────────
+// Local JSValue extension shims for `bun_jsc` surface not yet exported
+// (`jsTypeLoose` / `fromUInt64NoTruncate` / `toUInt64NoTruncate`). The C++
+// symbols exist (src/jsc/bindings/bindings.cpp); bind them here until
+// `bun_jsc::JSValue` re-exports them.
+// ──────────────────────────────────────────────────────────────────────────
+
+extern "C" {
+    fn JSC__JSValue__fromUInt64NoTruncate(global: *const JSGlobalObject, i: u64) -> JSValue;
+    fn JSC__JSValue__toUInt64NoTruncate(this: JSValue) -> u64;
+}
+
+trait JSValueHashExt: Copy {
+    fn js_type_loose(self) -> jsc::JSType;
+    fn to_uint64_no_truncate(self) -> u64;
+    fn from_uint64_no_truncate(global: &JSGlobalObject, i: u64) -> JSValue;
+}
+
+impl JSValueHashExt for JSValue {
+    #[inline]
+    fn js_type_loose(self) -> jsc::JSType {
+        // Spec (JSValue.zig:291): numbers map to NumberObject; everything
+        // else reads the cell's JSType byte.
+        if self.is_number() {
+            return jsc::JSType::NumberObject;
+        }
+        self.js_type()
+    }
+    #[inline]
+    fn to_uint64_no_truncate(self) -> u64 {
+        // SAFETY: FFI — `self` is a valid encoded JSValue.
+        unsafe { JSC__JSValue__toUInt64NoTruncate(self) }
+    }
+    #[inline]
+    fn from_uint64_no_truncate(global: &JSGlobalObject, i: u64) -> JSValue {
+        // SAFETY: FFI — `global` is live for the call.
+        unsafe { JSC__JSValue__fromUInt64NoTruncate(global, i) }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // Hash algorithm abstraction
 //
 // Zig's `hashWrap` uses `@hasDecl` / `std.meta.ArgsTuple` / `@TypeOf` to
@@ -20,7 +60,7 @@ pub trait HashOutput: Copy {
 impl HashOutput for u32 {
     #[inline]
     fn to_js(self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(self)
+        JSValue::js_number(f64::from(self))
     }
 }
 

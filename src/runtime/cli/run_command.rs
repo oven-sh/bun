@@ -426,6 +426,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 Some(unsafe { &mut *(env as *mut _) }),
                 Some(cwd),
             );
+            // SAFETY: `init_global` returns the thread-local singleton as a raw
+            // pointer (Zig `*MiniEventLoop`); reborrow `&'static mut` for the
+            // duration of `init_and_run_from_source` — single-threaded mini loop,
+            // no aliasing `&mut` exists across this call.
+            let mini = unsafe { &mut *mini };
             let code = match crate::shell::Interpreter::init_and_run_from_source(
                 ctx, mini, name, &copy_script, Some(cwd),
             ) {
@@ -451,7 +456,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     );
                     Output::flush();
                 }
-                Global::exit(code);
+                Global::exit(code as u32);
             }
             return Ok(());
         }
@@ -540,7 +545,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                         );
                         Output::flush();
 
-                        if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get() {
+                        if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get() == Some(true) {
                             bun_crash_handler::suppress_reporting();
                         }
 
@@ -574,7 +579,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                         Output::flush();
                     }
 
-                    if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get() {
+                    if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get() == Some(true) {
                         bun_crash_handler::suppress_reporting();
                     }
 
@@ -2374,7 +2379,7 @@ impl RunCommand {
                         );
                         Output::flush();
 
-                        if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get() {
+                        if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get() == Some(true) {
                             bun_crash_handler::suppress_reporting();
                         }
 
@@ -2409,7 +2414,7 @@ impl RunCommand {
                         Output::flush();
                     }
 
-                    if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get() {
+                    if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get() == Some(true) {
                         bun_crash_handler::suppress_reporting();
                     }
 
@@ -2635,7 +2640,7 @@ impl RunCommand {
                             );
                         }
 
-                        if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get() {
+                        if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get() == Some(true) {
                             bun_crash_handler::suppress_reporting();
                         }
 
@@ -2659,7 +2664,7 @@ impl RunCommand {
                                 );
                             }
 
-                            if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get() {
+                            if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get() == Some(true) {
                                 bun_crash_handler::suppress_reporting();
                             }
 

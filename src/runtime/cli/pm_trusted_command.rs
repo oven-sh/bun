@@ -3,12 +3,12 @@ use core::sync::atomic::Ordering;
 use bun_collections::ArrayHashMap;
 use bun_core::{Global, Output, Progress};
 use bun_install::{
-    self as install, lockfile, DependencyID, LifecycleScriptSubprocess, Lockfile, PackageID,
-    PackageManager, Resolution,
+    self as install, lockfile, lockfile_real, DependencyID, LifecycleScriptSubprocess, Lockfile,
+    PackageID, PackageManager, Resolution,
 };
 use bun_logger as logger;
 use bun_semver::String as SemverString;
-use bun_str::{strings, ZStr};
+use bun_str::strings;
 
 use crate::cli::Command;
 use crate::package_manager_command::PackageManagerCommand;
@@ -21,9 +21,9 @@ impl DefaultTrustedCommand {
     pub fn exec() -> Result<(), bun_core::Error> {
         Output::print(format_args!(
             "Default trusted dependencies ({}):\n",
-            Lockfile::default_trusted_dependencies_list().len()
+            lockfile_real::DEFAULT_TRUSTED_DEPENDENCIES_LIST.len()
         ));
-        for name in Lockfile::default_trusted_dependencies_list() {
+        for name in lockfile_real::DEFAULT_TRUSTED_DEPENDENCIES_LIST {
             Output::pretty(format_args!(" <d>-<r> {}\n", bstr::BStr::new(name)));
         }
 
@@ -37,7 +37,7 @@ impl UntrustedCommand {
     pub fn exec(
         ctx: &Command::Context,
         pm: &mut PackageManager,
-        args: &[&ZStr],
+        args: &[&[u8]],
     ) -> Result<(), bun_core::Error> {
         let _ = args;
         Output::pretty_error(format_args!(
@@ -46,13 +46,14 @@ impl UntrustedCommand {
         ));
         Output::flush();
 
+        let _ = (ctx, pm);
+        todo!("blocked_on: bun_install::PackageManager::lockfile / update_lockfile_if_needed (stub struct missing field; reconciler-6 lockfile_real un-gate) — package::scripts::{{Scripts,List,PrintFormat}} / tree::{{Iterator,IteratorPathStyle}}");
+        #[cfg(any())]
+        {
         let load_lockfile = pm.lockfile.load_from_cwd(pm, ctx.log, true);
         PackageManagerCommand::handle_load_lockfile_errors(&load_lockfile, pm);
         pm.update_lockfile_if_needed(&load_lockfile)?;
 
-        todo!("blocked_on: bun_install::lockfile_real un-gate (reconciler-6) — package::scripts::{{Scripts,List,PrintFormat}} / tree::{{Iterator,IteratorPathStyle}}");
-        #[cfg(any())]
-        {
         let packages = pm.lockfile.packages.slice();
         let scripts: &[lockfile::package::scripts::Scripts] = packages.items_scripts();
         let resolutions: &[Resolution] = packages.items_resolution();
@@ -192,20 +193,22 @@ impl TrustCommandSorter {
 
 impl TrustCommand {
     fn error_expected_args() -> ! {
-        Output::err_generic(format_args!("expected package names(s) or --all"));
+        Output::err_generic("expected package names(s) or --all", format_args!(""));
         Global::crash();
     }
 
     fn print_error_zero_untrusted_dependencies_found(trust_all: bool, packages_to_trust: &[&[u8]]) {
         Output::print(format_args!("\n"));
         if trust_all {
-            Output::err_generic(format_args!(
-                "0 scripts ran. This means all dependencies are already trusted or none have scripts."
-            ));
+            Output::err_generic(
+                "0 scripts ran. This means all dependencies are already trusted or none have scripts.",
+                format_args!(""),
+            );
         } else {
-            Output::err_generic(format_args!(
-                "0 scripts ran. The following packages are already trusted, don't have scripts to run, or don't exist:\n\n"
-            ));
+            Output::err_generic(
+                "0 scripts ran. The following packages are already trusted, don't have scripts to run, or don't exist:\n\n",
+                format_args!(""),
+            );
             for arg in packages_to_trust {
                 Output::pretty_error(format_args!(" <d>-<r> {}\n", bstr::BStr::new(arg)));
             }
@@ -215,7 +218,7 @@ impl TrustCommand {
     pub fn exec(
         ctx: &Command::Context,
         pm: &mut PackageManager,
-        args: &[&ZStr],
+        args: &[&[u8]],
     ) -> Result<(), bun_core::Error> {
         Output::pretty_error(format_args!(
             "<r><b>bun pm trust <r><d>v{}<r>\n",
@@ -227,21 +230,16 @@ impl TrustCommand {
             Self::error_expected_args();
         }
 
-        let load_lockfile = pm.lockfile.load_from_cwd(pm, ctx.log, true);
-        PackageManagerCommand::handle_load_lockfile_errors(&load_lockfile, pm);
-        pm.update_lockfile_if_needed(&load_lockfile)?;
-
         let mut packages_to_trust: Vec<&[u8]> = Vec::new();
         packages_to_trust.reserve(args[2..].len());
         for arg in &args[2..] {
-            let arg = arg.as_bytes();
+            let arg: &[u8] = arg;
             if !arg.is_empty() && arg[0] != b'-' {
                 packages_to_trust.push(arg);
                 // PERF(port): was appendAssumeCapacity — profile in Phase B
             }
         }
         let trust_all = strings::left_has_any_in_right(
-            // TODO(port): args is &[&ZStr]; left_has_any_in_right expects &[&[u8]]
             args,
             &[b"-a".as_slice(), b"--all".as_slice()],
         );
@@ -250,9 +248,14 @@ impl TrustCommand {
             Self::error_expected_args();
         }
 
-        todo!("blocked_on: bun_install::lockfile_real un-gate (reconciler-6) — package::scripts::{{Scripts,List,PrintFormat}} / tree::{{Iterator,IteratorPathStyle}}");
+        let _ = (ctx, pm, &packages_to_trust, trust_all);
+        todo!("blocked_on: bun_install::PackageManager::lockfile / update_lockfile_if_needed (stub struct missing field; reconciler-6 lockfile_real un-gate) — package::scripts::{{Scripts,List,PrintFormat}} / tree::{{Iterator,IteratorPathStyle}}");
         #[cfg(any())]
         {
+        let load_lockfile = pm.lockfile.load_from_cwd(pm, ctx.log, true);
+        PackageManagerCommand::handle_load_lockfile_errors(&load_lockfile, pm);
+        pm.update_lockfile_if_needed(&load_lockfile)?;
+
         let buf = pm.lockfile.buffers.string_bytes.as_slice();
         let packages = pm.lockfile.packages.slice();
         let resolutions: &[Resolution] = packages.items_resolution();

@@ -3,7 +3,9 @@ use core::ptr::NonNull;
 
 use bun_core::output;
 use bun_jsc::{self as jsc, event_loop::EventLoop, JSGlobalObject, JSValue, JsResult};
-use bun_sys::{self, Fd};
+use bun_sys::{self, Fd, FdExt as _};
+
+use crate::node::types::FdJsc as _;
 
 use bun_io::max_buf::MaxBuf;
 use bun_ptr::IntrusiveRc;
@@ -266,7 +268,10 @@ impl Readable {
                     Err(_) => return Err(global.throw_out_of_memory()),
                 };
 
-                Ok(jsc::MarkedArrayBuffer::from_bytes(own, jsc::TypedArrayType::Uint8Array)
+                // PORT NOTE: `from_bytes` takes `&mut [u8]` and assumes ownership of the
+                // mimalloc-backed buffer (freed via MarkedArrayBuffer_deallocator). Leak the
+                // Box so the JS side controls the lifetime — matches Zig `fromBytes(own, .Uint8Array)`.
+                Ok(jsc::MarkedArrayBuffer::from_bytes(Box::leak(own), jsc::JSType::Uint8Array)
                     .to_node_buffer(global))
             }
             _ => Ok(JSValue::UNDEFINED),

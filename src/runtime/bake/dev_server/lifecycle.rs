@@ -54,15 +54,7 @@ impl bun_watcher::WatcherContext for DevServer {
 impl WatcherAtomics {
     /// DevServer.zig `WatcherAtomics.init`.
     pub(super) fn init(owner: *const DevServer) -> Self {
-        let mk_event = || HotReloadEvent {
-            owner,
-            concurrent_task: Default::default(),
-            files: Default::default(),
-            dirs: Default::default(),
-            extra_files: Vec::new(),
-            timer: std::time::Instant::now(),
-            contention_indicator: core::sync::atomic::AtomicU32::new(0),
-        };
+        let mk_event = || HotReloadEvent::init_empty(owner);
         WatcherAtomics {
             events: [mk_event(), mk_event(), mk_event()],
             next_event: core::sync::atomic::AtomicU8::new(0),

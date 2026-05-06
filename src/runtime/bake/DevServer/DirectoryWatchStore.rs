@@ -17,8 +17,8 @@ use bun_collections::ArrayHashMap;
 use bun_core::fmt as bun_fmt;
 use bun_paths::{self as path, path_buffer_pool};
 use bun_str::strings;
-use bun_sys::{self, Fd, O};
-use bun_watcher::Watcher;
+use bun_sys::{self, Fd, FdExt, O};
+use bun_watcher::{self, Watcher};
 
 // Re-use the parent module's `DevServer` ScopedLogger (Zig: `const debug = DevServer.debug`).
 // The `use crate::bake::dev_server::DevServer` import above brings in both the

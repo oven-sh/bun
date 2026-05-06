@@ -36,6 +36,14 @@ impl<const SIDE: bake::Side> FileIndex<SIDE> {
 pub type ServerFileIndex = FileIndex<{ bake::Side::Server }>;
 pub type ClientFileIndex = FileIndex<{ bake::Side::Client }>;
 
+/// Return shape for `IncrementalGraph::insert_empty`.
+pub struct InsertEmptyResult<const SIDE: bake::Side = { bake::Side::Server }> {
+    pub index: FileIndex<SIDE>,
+    /// Borrow of the interned key in `bundled_files` (raw fat ptr to avoid a
+    /// lifetime parameter; callers compare it by pointer identity).
+    pub key: *const [u8],
+}
+
 /// `bun.GenericIndex(u32, Edge)`.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
@@ -168,6 +176,42 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             self.stale_files.set(idx);
         }
         Ok(FileIndex(idx as u32))
+    }
+
+    /// `IncrementalGraph(side).insertEmpty(abs_path, kind)` — adds a file to
+    /// the graph with no content/stale-bit set, returning its index and a
+    /// pointer to the interned key slice (for callers like
+    /// `DirectoryWatchStore` that need to share the key allocation).
+    pub fn insert_empty(
+        &mut self,
+        abs_path: &[u8],
+        kind: FileKind,
+    ) -> Result<InsertEmptyResult<SIDE>, bun_alloc::AllocError> {
+        let gop = self.bundled_files.get_or_put(abs_path)?;
+        let idx = gop.index;
+        if !gop.found_existing {
+            *gop.key_ptr = Box::<[u8]>::from(abs_path);
+            *gop.value_ptr = File {
+                kind,
+                failed: false,
+                is_rsc: false,
+                is_ssr: false,
+                is_client_component_boundary: false,
+                is_route: false,
+                is_hmr_root: false,
+                is_special_framework_file: false,
+                html_route_bundle_index: None,
+                source_map: Default::default(),
+                content: Content::Unknown,
+            };
+            self.first_import.push(None);
+            self.first_dependency.push(None);
+            self.ensure_stale_bit_capacity(true)?;
+        }
+        Ok(InsertEmptyResult {
+            index: FileIndex(idx as u32),
+            key: &**gop.key_ptr as *const [u8],
+        })
     }
 
     /// `IncrementalGraph(side).ensureStaleBitCapacity` — DevServer.zig:1573.

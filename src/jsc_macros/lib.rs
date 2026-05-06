@@ -13,7 +13,7 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote};
 use syn::{
     parse::{Parse, ParseStream},
-    parse_macro_input, spanned::Spanned, FnArg, Ident, ItemFn, ItemStruct, LitStr, Token,
+    parse_macro_input, spanned::Spanned, FnArg, Ident, ItemEnum, ItemFn, ItemStruct, LitStr, Token,
 };
 
 // ──────────────────────────────────────────────────────────────────────────

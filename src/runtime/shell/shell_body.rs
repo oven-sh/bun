@@ -20,9 +20,9 @@ use bun_sys::{self as sys, Fd};
 
 // ───────────────────────────── re-exports ─────────────────────────────
 
-pub mod interpret; // ./interpreter.zig → crate::shell::interpret
+pub use super::interpreter as interpret; // ./interpreter.zig → crate::shell::interpret
 pub mod subproc; // ./subproc.zig → crate::shell::subproc
-pub mod alloc_scope; // ./AllocScope.zig
+pub use super::alloc_scope; // ./AllocScope.zig
 pub use alloc_scope as AllocScope;
 
 pub use interpret::{EnvMap, EnvStr, ExitCode, Interpreter, ParsedShellScript, unreachable_state};
@@ -30,7 +30,7 @@ pub use subproc::ShellSubprocess as Subprocess;
 pub type IOWriter = interpret::Interpreter::IOWriter; // TODO(port): associated-type path
 pub type IOReader = interpret::Interpreter::IOReader; // TODO(port): associated-type path
 
-pub mod yield_; // ./Yield.zig
+pub use super::yield_; // ./Yield.zig
 pub use yield_::Yield;
 
 // ─── lexer / parser / AST (moved down to bun_shell_parser) ──────────────────

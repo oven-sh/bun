@@ -1521,7 +1521,7 @@ impl PackageManager {
     /// `package_manager_real`.
     pub fn update_lockfile_if_needed(
         &mut self,
-        _load_result: &lockfile::LoadResult,
+        _load_result: &lockfile::LoadResult<'_>,
     ) -> Result<(), bun_core::Error> {
         todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) — LoadResult::Ok / PackageList::items_meta_mut")
     }

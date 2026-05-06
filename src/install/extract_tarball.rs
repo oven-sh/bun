@@ -173,7 +173,7 @@ thread_local! {
 }
 
 pub fn uses_streaming_extraction() -> bool {
-    !bun_core::feature_flag::BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL.get()
+    !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL.get()
 }
 
 impl ExtractTarball {
@@ -188,7 +188,7 @@ impl ExtractTarball {
             // Not sure where this case hits yet.
             // BUN-2WQ
             Output::warn(&format_args!("Extracting nameless packages is not supported yet. Please open an issue on GitHub with reproduction steps.", ));
-            bun_core::debug_assert!(false);
+            debug_assert!(false);
             b"unnamed-package"
         };
         let basename: &[u8] = 'brk: {

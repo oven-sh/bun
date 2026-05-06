@@ -1563,16 +1563,27 @@ pub fn init(
     };
 
     bun_sys::chdir(fs.top_level_dir, fs.top_level_dir).unwrap()?;
-    BunArguments::load_config(cli.config, ctx, BunArguments::ConfigKind::InstallCommand)?;
+    // Zig: `try bun.cli.Arguments.loadConfig(ctx.allocator, cli.config, ctx, .InstallCommand);`
+    // The bunfig loader lives in tier-6 (`bun_runtime::cli::Arguments`); install
+    // can't name it without a cycle. Route through the same hook pattern as
+    // `Command::get` — bun_cli registers the loader at startup.
+    if let Some(load_config) = LOAD_CONFIG_HOOK.get() {
+        load_config(cli.config.as_deref(), ctx)?;
+    }
     // SAFETY: main-thread global
     unsafe {
         CWD_BUF[..fs.top_level_dir.len()].copy_from_slice(fs.top_level_dir);
         CWD_BUF[fs.top_level_dir.len()] = 0;
         fs.top_level_dir = ZStr::from_raw(CWD_BUF.as_ptr(), fs.top_level_dir.len());
-        ROOT_PACKAGE_JSON_PATH = bun_sys::get_fd_path_z(
+        // Zig: `bun.getFdPathZ(file, &buf)` — bun_sys exposes the non-Z form;
+        // append the NUL ourselves so the static `&ZStr` invariant holds.
+        let p = bun_sys::get_fd_path(
             Fd::from_std_file(&root_package_json_file),
             &mut ROOT_PACKAGE_JSON_PATH_BUF,
         )?;
+        let plen = p.len();
+        ROOT_PACKAGE_JSON_PATH_BUF[plen] = 0;
+        ROOT_PACKAGE_JSON_PATH = ZStr::from_raw(ROOT_PACKAGE_JSON_PATH_BUF.as_ptr(), plen);
     }
 
     let entries_option = fs.fs.read_directory(fs.top_level_dir, None, 0, true)?;
@@ -1619,7 +1630,7 @@ pub fn init(
             env,
             true,
             &[
-                path::join_abs_string_buf_z(data_dir, &mut buf, &parts, path::Style::Auto),
+                resolve_path::join_abs_string_buf_z::<platform::Auto>(data_dir, &mut buf, &parts),
                 ZStr::from_bytes(b".npmrc"),
             ],
         );

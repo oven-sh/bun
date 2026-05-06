@@ -386,7 +386,7 @@ impl<'a> PackageInstaller<'a> {
         &mut self,
         // PORT NOTE: zig passes `tree: *TreeContext` + `tree_id`; reshaped to take only
         // `tree_id` and re-borrow `&mut self.trees[tree_id]` to satisfy borrowck.
-        tree_id: TreeContext::Id,
+        tree_id: TreeContextId,
         link_target_buf: &mut [u8],
         link_dest_buf: &mut [u8],
         link_rel_buf: &mut [u8],
@@ -1382,7 +1382,8 @@ impl<'a> PackageInstaller<'a> {
                         if cfg!(debug_assertions) {
                             panic!("unreachable, handled above");
                         }
-                        self.increment_tree_install_count::<{ !IS_PENDING_PACKAGE_INSTALL }>(
+                        self.increment_tree_install_count(
+                            !IS_PENDING_PACKAGE_INSTALL,
                             self.current_tree_id,
                             log_level,
                         );
@@ -1451,7 +1452,8 @@ impl<'a> PackageInstaller<'a> {
                             );
                         }
                         self.summary.fail += 1;
-                        self.increment_tree_install_count::<{ !IS_PENDING_PACKAGE_INSTALL }>(
+                        self.increment_tree_install_count(
+                            !IS_PENDING_PACKAGE_INSTALL,
                             self.current_tree_id,
                             log_level,
                         );
@@ -1690,7 +1692,8 @@ impl<'a> PackageInstaller<'a> {
                         }
                     }
 
-                    self.increment_tree_install_count::<{ !IS_PENDING_PACKAGE_INSTALL }>(
+                    self.increment_tree_install_count(
+                        !IS_PENDING_PACKAGE_INSTALL,
                         self.current_tree_id,
                         log_level,
                     );
@@ -1706,7 +1709,8 @@ impl<'a> PackageInstaller<'a> {
 
                     // even if the package failed to install, we still need to increment the install
                     // counter for this tree
-                    self.increment_tree_install_count::<{ !IS_PENDING_PACKAGE_INSTALL }>(
+                    self.increment_tree_install_count(
+                        !IS_PENDING_PACKAGE_INSTALL,
                         self.current_tree_id,
                         log_level,
                     );
@@ -1947,7 +1951,8 @@ impl<'a> PackageInstaller<'a> {
             // — `destination_dir` is never read in this else-branch (`get_dir()` is
             // only used in the `needs_install` branch's EACCES handler).
             destination_dir.close();
-            self.increment_tree_install_count::<{ !IS_PENDING_PACKAGE_INSTALL }>(
+            self.increment_tree_install_count(
+                !IS_PENDING_PACKAGE_INSTALL,
                 self.current_tree_id,
                 log_level,
             );
@@ -1959,7 +1964,8 @@ impl<'a> PackageInstaller<'a> {
         log_level: Options::LogLevel,
     ) {
         self.summary.fail += 1;
-        self.increment_tree_install_count::<{ !IS_PENDING_PACKAGE_INSTALL }>(
+        self.increment_tree_install_count(
+            !IS_PENDING_PACKAGE_INSTALL,
             self.current_tree_id,
             log_level,
         );

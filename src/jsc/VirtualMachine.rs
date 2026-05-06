@@ -1782,47 +1782,1124 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
 mod _gated_impl {
     include!("VirtualMachine.gated.rs");
 }
-// PORT NOTE: the full Phase-A draft (3550 lines) referenced ~40 types from
-// `bun_runtime` (cycle), `bun_schema` (no crate), `bun_spawn`/`bun_output`
-// (no workspace dep), and gated bundler internals. Rather than duplicate it
-// here under ``, the original is preserved in git history at
-// commit `5410a51d85^` (`git show 5410a51d85^:src/jsc/VirtualMachine.rs`).
-// The methods listed below are the ones whose bodies were gated; each maps
-// 1:1 to a `pub fn` in `VirtualMachine.zig`.
+
+// ──────────────────────────────────────────────────────────────────────────
+// Options / IPC / per-thread printer — supporting types referenced by the
+// formerly-gated impl below. Field set mirrors VirtualMachine.zig:1204
+// (`Options`) and :3899 (`IPCInstanceUnion` / `IPCInstance`).
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Spec VirtualMachine.zig:1204 `Options`. `allocator` dropped per
+/// §Allocators (global mimalloc).
+pub struct Options {
+    pub args: bun_options_types::schema::api::TransformOptions,
+    pub log: Option<NonNull<logger::Log>>,
+    // TODO(port): lifetime — `&'a mut bun_dot_env::Loader`.
+    pub env_loader: Option<NonNull<bun_dot_env::Loader<'static>>>,
+    pub store_fd: bool,
+    pub smol: bool,
+    // TODO(b2-cycle): real type is `bun_runtime::api::dns::Resolver::Order`.
+    pub dns_result_order: u8,
+    /// `--print` needs the result from evaluating the main module.
+    pub eval: bool,
+    pub graph: Option<NonNull<bun_standalone::StandaloneModuleGraph>>,
+    // TODO(b2-cycle): real type is `bun_cli::Command::Debugger`.
+    pub debugger: (),
+    pub is_main_thread: bool,
+    pub destruct_main_thread_on_exit: bool,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            args: Default::default(),
+            log: None,
+            env_loader: None,
+            store_fd: false,
+            smol: false,
+            dns_result_order: 0,
+            eval: false,
+            graph: None,
+            debugger: (),
+            is_main_thread: false,
+            destruct_main_thread_on_exit: false,
+        }
+    }
+}
+
+/// Spec VirtualMachine.zig:3899 `IPCInstanceUnion`.
+pub enum IPCInstanceUnion {
+    /// IPC is put in this "enabled but not started" state when IPC is
+    /// detected but the client JavaScript has not yet done `.on("message")`.
+    Waiting { fd: bun_sys::Fd, mode: crate::ipc::Mode },
+    Initialized(*mut IPCInstance),
+}
+
+/// Spec VirtualMachine.zig:3909 `IPCInstance`.
+pub struct IPCInstance {
+    pub global_this: *mut JSGlobalObject,
+    /// Embedded per-VM group on `RareData.spawn_ipc_group`; this is just a
+    /// borrowed handle so the isolation swap can skip it.
+    #[cfg(unix)]
+    pub group: *mut uws::SocketGroup,
+    #[cfg(not(unix))]
+    pub group: (),
+    pub data: crate::ipc::SendQueue,
+    pub has_disconnect_called: bool,
+}
+
+impl IPCInstance {
+    pub fn new(v: IPCInstance) -> *mut IPCInstance {
+        Box::into_raw(Box::new(v))
+    }
+    pub fn ipc(&mut self) -> Option<&mut crate::ipc::SendQueue> {
+        Some(&mut self.data)
+    }
+    pub fn get_global_this(&self) -> Option<*mut JSGlobalObject> {
+        Some(self.global_this)
+    }
+    /// Only reached from the `get_ipc_instance` error path.
+    pub fn deinit(this: *mut IPCInstance) {
+        // SAFETY: `this` was produced by `IPCInstance::new` (Box::into_raw).
+        let mut boxed = unsafe { Box::from_raw(this) };
+        boxed.data.deinit();
+        drop(boxed);
+    }
+}
+
+/// Spec VirtualMachine.zig:1708 `ResolveFunctionResult`.
+#[derive(Default)]
+pub struct ResolveFunctionResult {
+    pub result: Option<bun_resolver::Result>,
+    pub path: &'static [u8], // TODO(port): lifetime — borrows resolver arena
+    pub query_string: &'static [u8],
+}
+
+thread_local! {
+    /// Spec VirtualMachine.zig:1584 `source_code_printer`.
+    pub static SOURCE_CODE_PRINTER: Cell<Option<NonNull<bun_js_printer::BufferPrinter>>> =
+        const { Cell::new(None) };
+}
+
+fn ensure_source_code_printer() {
+    if SOURCE_CODE_PRINTER.get().is_none() {
+        let writer = bun_js_printer::BufferWriter::init();
+        let mut printer = Box::new(bun_js_printer::BufferPrinter::init(writer));
+        printer.ctx.append_null_byte = false;
+        SOURCE_CODE_PRINTER.set(NonNull::new(Box::into_raw(printer)));
+    }
+}
+
+fn normalize_source(source: &[u8]) -> &[u8] {
+    if let Some(rest) = source.strip_prefix(b"file://") {
+        return rest;
+    }
+    source
+}
+
+// Additional FFI used by the formerly-gated impl.
+#[allow(improper_ctypes)]
+unsafe extern "C" {
+    fn Bake__getAsyncLocalStorage(global: *mut JSGlobalObject) -> JSValue;
+    fn Bun__promises__isErrorLike(global: *mut JSGlobalObject, reason: JSValue) -> bool;
+    fn Bun__promises__emitUnhandledRejectionWarning(
+        global: *mut JSGlobalObject,
+        reason: JSValue,
+        promise: JSValue,
+    );
+    fn Bun__noSideEffectsToString(vm: *mut VM, global: *mut JSGlobalObject, reason: JSValue) -> JSValue;
+    fn BakeCreateProdGlobal(console_ptr: *mut c_void) -> *mut JSGlobalObject;
+}
+
+extern "C" fn free_ref_string(str_: *mut crate::ref_string::RefString, _: *mut c_void, _: u32) {
+    // SAFETY: `str_` is the `ctx` we passed to `String::create_external` in
+    // `ref_counted_string_with_was_new`; it points at a heap `RefString`.
+    unsafe { (*str_).deinit() };
+}
 
 impl VirtualMachine {
-    pub fn get_dev_server_async_local_storage(&mut self) -> JsResult<Option<JSValue>> { todo!() }
-    pub fn allow_addons(this: &VirtualMachine) -> bool { todo!() }
-    pub fn allow_rejection_handled_warning(this: &VirtualMachine) -> bool { todo!() }
-    pub fn unhandled_rejections_mode(&self) -> bun_options_types::schema::api::UnhandledRejections { todo!() }
-    pub fn init_request_body_value(&mut self, body: bun_runtime::webcore::Body::Value) { todo!() }
-    pub fn uv_loop(&self) -> &'static Async::Loop { todo!() }
-    pub fn get_tls_reject_unauthorized(&self) -> bool { todo!() }
-    pub fn on_subprocess_spawn(&mut self, process: &mut bun_spawn::Process) { todo!() }
-    pub fn on_subprocess_exit(&mut self, process: &mut bun_spawn::Process) { todo!() }
-    pub fn get_verbose_fetch(&mut self) -> bun_http::HTTPVerboseLevel { todo!() }
-    pub fn mime_type(&mut self, str: &[u8]) -> Option<bun_http::MimeType> { todo!() }
-    pub fn load_extra_env_and_source_code_printer(&mut self) { todo!() }
-    pub fn unhandled_rejection(&mut self, global_object: &JSGlobalObject, reason: JSValue, promise: JSValue) { todo!() }
-    pub fn report_exception_in_hot_reloaded_module_if_needed(&mut self) { todo!() }
-    pub fn add_main_to_watcher_if_needed(&mut self) { todo!() }
-    pub fn package_manager(&mut self) -> &mut bun_install::PackageManager { todo!() }
-    pub fn reload(&mut self, _: Option<&mut crate::hot_reloader::HotReloader::Task>) { todo!() }
-    pub fn node_fs(&mut self) -> &mut bun_runtime::node::fs::NodeFS { todo!() }
-    pub fn next_async_task_id(&mut self) -> u64 { todo!() }
-    pub fn enqueue_immediate_task(&mut self, task: *mut bun_runtime::api::Timer::ImmediateObject) { todo!() }
-    pub fn enqueue_task_concurrent(&mut self, task: *mut crate::event_loop::ConcurrentTaskItem) { todo!() }
-    pub fn wait_for(&mut self, cond: &mut bool) { todo!() }
-    pub fn wait_for_tasks(&mut self) { todo!() }
-    pub fn init_with_module_graph(opts: Options) -> Result<*mut VirtualMachine, bun_core::Error> { todo!() }
-    pub fn init_worker(worker: &mut bun_runtime::webcore::WebWorker, opts: Options) -> Result<*mut VirtualMachine, bun_core::Error> { todo!() }
-    pub fn init_bake(opts: Options) -> Result<*mut VirtualMachine, bun_core::Error> { todo!() }
-    pub fn clear_ref_string(_: *mut c_void, ref_string: &mut crate::RefString) { todo!() }
-    pub fn ref_counted_resolved_source<const ADD_DOUBLE_REF: bool>() { todo!() }
-    pub fn ref_counted_string<const DUPE: bool>(&mut self, input_: &[u8], hash_: Option<u32>) { todo!() }
-    pub fn fetch_without_on_load_plugins<const FLAGS: FetchFlags>() { todo!() }
-    pub fn resolve() { todo!() }
-    pub fn resolve_maybe_needs_trailing_slash<const IS_A_FILE_PATH: bool>() { todo!() }
+    /// Spec VirtualMachine.zig:234 `getDevServerAsyncLocalStorage`.
+    pub fn get_dev_server_async_local_storage(&mut self) -> JsResult<Option<JSValue>> {
+        let global = self.global;
+        // SAFETY: `global` is valid for VM lifetime.
+        let global_ref = unsafe { &*global };
+        let jsvalue = jsc::from_js_host_call(global_ref, || unsafe {
+            Bake__getAsyncLocalStorage(global)
+        })?;
+        if jsvalue.is_empty_or_undefined_or_null() {
+            return Ok(None);
+        }
+        Ok(Some(jsvalue))
+    }
+
+    /// Spec VirtualMachine.zig:245 `allowAddons` (`callconv(.c)`).
+    #[unsafe(export_name = "Bun__VM__allowAddons")]
+    pub extern "C" fn allow_addons(this: &VirtualMachine) -> bool {
+        this.transpiler
+            .options
+            .transform_options
+            .allow_addons
+            .unwrap_or(true)
+    }
+
+    /// Spec VirtualMachine.zig:248 `allowRejectionHandledWarning` (`callconv(.c)`).
+    #[unsafe(export_name = "Bun__VM__allowRejectionHandledWarning")]
+    pub extern "C" fn allow_rejection_handled_warning(this: &VirtualMachine) -> bool {
+        use bun_options_types::schema::api::UnhandledRejections;
+        this.unhandled_rejections_mode() != UnhandledRejections::Bun
+    }
+
+    /// Spec VirtualMachine.zig:251 `unhandledRejectionsMode`.
+    pub fn unhandled_rejections_mode(&self) -> bun_options_types::schema::api::UnhandledRejections {
+        use bun_options_types::schema::api::UnhandledRejections;
+        self.transpiler
+            .options
+            .transform_options
+            .unhandled_rejections
+            .unwrap_or(UnhandledRejections::Bun)
+    }
+
+    /// Spec VirtualMachine.zig:255 `initRequestBodyValue`.
+    pub fn init_request_body_value(
+        &mut self,
+        body: bun_runtime::webcore::Body::Value,
+    ) -> *mut bun_runtime::webcore::Body::Value::HiveRef {
+        // TODO(b2-cycle): `body_value_hive_allocator` is a `()` placeholder;
+        // the real allocator lives inside `runtime_state` (high tier). Reach
+        // it via the opaque pointer once `RuntimeHooks` exposes a slot.
+        bun_runtime::webcore::Body::Value::HiveRef::init(
+            body,
+            // SAFETY: `runtime_state` is the boxed high-tier state; the hook
+            // contract guarantees the body-hive allocator is the first field.
+            unsafe {
+                &mut *(self.runtime_state
+                    as *mut bun_runtime::webcore::Body::Value::HiveAllocator)
+            },
+        )
+    }
+
+    /// Spec VirtualMachine.zig:279 `uvLoop`.
+    pub fn uv_loop(&self) -> *mut Async::Loop {
+        #[cfg(debug_assertions)]
+        {
+            return self
+                .event_loop_handle
+                .expect("libuv event_loop_handle is null");
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            self.event_loop_handle.unwrap()
+        }
+    }
+
+    /// Spec VirtualMachine.zig:298 `getTLSRejectUnauthorized`.
+    pub fn get_tls_reject_unauthorized(&self) -> bool {
+        if let Some(v) = self.default_tls_reject_unauthorized {
+            return v;
+        }
+        // SAFETY: `transpiler.env` is set during init and live for VM lifetime.
+        unsafe { (*self.transpiler.env).get_tls_reject_unauthorized() }
+    }
+
+    /// Spec VirtualMachine.zig:302 `onSubprocessSpawn`.
+    pub fn on_subprocess_spawn(&mut self, process: *mut bun_spawn::Process) {
+        // TODO(b2-cycle): `auto_killer` is a `()` placeholder; widen to
+        // `ProcessAutoKiller` when the sibling crate un-gates. The body is
+        // a one-liner forward.
+        crate::process_auto_killer::ProcessAutoKiller::on_subprocess_spawn(
+            self.runtime_state,
+            process,
+        );
+    }
+
+    /// Spec VirtualMachine.zig:306 `onSubprocessExit`.
+    pub fn on_subprocess_exit(&mut self, process: *mut bun_spawn::Process) {
+        crate::process_auto_killer::ProcessAutoKiller::on_subprocess_exit(
+            self.runtime_state,
+            process,
+        );
+    }
+
+    /// Spec VirtualMachine.zig:310 `getVerboseFetch`.
+    pub fn get_verbose_fetch(&mut self) -> bun_http::HTTPVerboseLevel {
+        use bun_http::HTTPVerboseLevel as L;
+        if let Some(v) = self.default_verbose_fetch {
+            // PORT NOTE: field is `Option<u8>` until the b2-cycle widens it;
+            // map ordinals back.
+            return match v {
+                1 => L::Headers,
+                2 => L::Curl,
+                _ => L::None,
+            };
+        }
+        // SAFETY: `transpiler.env` is set during init and live for VM lifetime.
+        if let Some(verbose_fetch) = unsafe { (*self.transpiler.env).get(b"BUN_CONFIG_VERBOSE_FETCH") } {
+            if verbose_fetch == b"true" || verbose_fetch == b"1" {
+                self.default_verbose_fetch = Some(1);
+                return L::Headers;
+            } else if verbose_fetch == b"curl" {
+                self.default_verbose_fetch = Some(2);
+                return L::Curl;
+            }
+        }
+        self.default_verbose_fetch = Some(0);
+        L::None
+    }
+
+    /// Spec VirtualMachine.zig:369 `mimeType`.
+    pub fn mime_type(&mut self, str_: &[u8]) -> Option<bun_http::MimeType> {
+        self.rare_data().mime_type_from_string(str_)
+    }
+
+    /// Spec VirtualMachine.zig:498 `loadExtraEnvAndSourceCodePrinter`.
+    pub fn load_extra_env_and_source_code_printer(&mut self) {
+        // SAFETY: `transpiler.env` is set during init and live for VM lifetime.
+        let map = unsafe { &mut *(*self.transpiler.env).map };
+
+        ensure_source_code_printer();
+
+        if map.get(b"BUN_SHOW_BUN_STACKFRAMES").is_some() {
+            self.hide_bun_stackframes = false;
+        }
+
+        if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER::get()
+            .unwrap_or(false)
+        {
+            // TODO(b2): `transpiler_store` is a `()` placeholder; flip
+            // `.enabled = false` once `RuntimeTranspilerStore` un-gates.
+        }
+
+        if let Some(kv) = map.map.swap_remove_entry(b"NODE_CHANNEL_FD" as &[u8]) {
+            let fd_s = kv.1.value;
+            let mode = map
+                .map
+                .swap_remove_entry(b"NODE_CHANNEL_SERIALIZATION_MODE" as &[u8])
+                .and_then(|(_, v)| crate::ipc::Mode::from_string(&v.value))
+                .unwrap_or(crate::ipc::Mode::Json);
+            crate::ipc::log!(
+                "IPC environment variables: NODE_CHANNEL_FD={}, NODE_CHANNEL_SERIALIZATION_MODE={:?}",
+                bun_string::strings::FmtBytes(&fd_s),
+                mode
+            );
+            match core::str::from_utf8(&fd_s)
+                .ok()
+                .and_then(|s| s.parse::<u32>().ok())
+            {
+                Some(fd) => self.init_ipc_instance(bun_sys::Fd::from_uv(fd as i32), mode),
+                None => bun_core::warn!(
+                    "Failed to parse IPC channel number '{}'",
+                    bun_string::strings::FmtBytes(&fd_s)
+                ),
+            }
+        }
+
+        // Node.js checks if this is set to "1" and no other value
+        if let Some(value) = map.get(b"NODE_PRESERVE_SYMLINKS") {
+            self.transpiler.resolver.opts.preserve_symlinks = value == b"1";
+        }
+
+        if let Some(gc_level) = map.get(b"BUN_GARBAGE_COLLECTOR_LEVEL") {
+            // Reuse this flag for other things to avoid unnecessary hashtable
+            // lookups on start for obscure flags which we do not want others to
+            // depend on.
+            if map.get(b"BUN_FEATURE_FLAG_FORCE_WAITER_THREAD").is_some() {
+                bun_spawn::process::WaiterThread::set_should_use_waiter_thread();
+            }
+            // Only allowed for testing
+            if map.get(b"BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING").is_some() {
+                ModuleLoader::set_is_allowed_to_use_internal_testing_apis(true);
+            }
+            if gc_level == b"1" {
+                self.aggressive_garbage_collection = GCLevel::Mild;
+                // SAFETY: process-global written once at startup.
+                unsafe { has_bun_garbage_collector_flag_enabled = true };
+            } else if gc_level == b"2" {
+                self.aggressive_garbage_collection = GCLevel::Aggressive;
+                // SAFETY: process-global written once at startup.
+                unsafe { has_bun_garbage_collector_flag_enabled = true };
+            }
+            if let Some(value) = map.get(b"BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT") {
+                match core::str::from_utf8(value)
+                    .ok()
+                    .and_then(|s| s.parse::<usize>().ok())
+                {
+                    Some(limit) => {
+                        // SAFETY: process-global written once at startup.
+                        unsafe {
+                            SYNTHETIC_ALLOCATION_LIMIT = limit;
+                            STRING_ALLOCATION_LIMIT = limit;
+                        }
+                    }
+                    None => bun_core::Output::panic_fmt(
+                        "BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT must be a positive integer",
+                    ),
+                }
+            }
+        }
+    }
+
+    /// Spec VirtualMachine.zig:595 `unhandledRejection`.
+    pub fn unhandled_rejection(
+        &mut self,
+        global_object: &JSGlobalObject,
+        reason: JSValue,
+        promise: JSValue,
+    ) {
+        use bun_options_types::schema::api::UnhandledRejections as Mode;
+
+        if self.is_shutting_down() {
+            bun_core::debug_warn!("unhandledRejection during shutdown.");
+            return;
+        }
+
+        // SAFETY: `isBunTest` is a process-global written once at startup.
+        if unsafe { isBunTest } {
+            self.unhandled_error_counter += 1;
+            (self.on_unhandled_rejection)(self, global_object, reason);
+            return;
+        }
+
+        let global = global_object.as_ptr();
+        // PORT NOTE: Zig `defer eventLoop().drainMicrotasks()` per-arm —
+        // hoisted into a closure.
+        let drain = |this: &mut Self| {
+            // SAFETY: `event_loop` is a self-pointer into this VM.
+            let _ = unsafe { (*this.event_loop()).drain_microtasks() };
+        };
+        let emit_warning = |this: &mut Self| {
+            let r = jsc::from_js_host_call_generic(global_object, || unsafe {
+                Bun__promises__emitUnhandledRejectionWarning(global, reason, promise)
+            });
+            if let Err(e) = r {
+                let exc = global_object.take_exception(e);
+                if let Some(ex) = exc.as_exception(global_object.vm()) {
+                    let _ = Self::report_uncaught_exception(global_object, ex);
+                }
+            }
+        };
+
+        match self.unhandled_rejections_mode() {
+            Mode::Bun => {
+                // SAFETY: extern "C" FFI; `global` valid for VM lifetime.
+                if unsafe { Bun__handleUnhandledRejection(global, reason, promise) } > 0 {
+                    return;
+                }
+                // continue to default handler
+            }
+            Mode::None => {
+                let _ = unsafe { Bun__handleUnhandledRejection(global, reason, promise) };
+                drain(self);
+                return; // ignore the unhandled rejection
+            }
+            Mode::Warn => {
+                let _ = unsafe { Bun__handleUnhandledRejection(global, reason, promise) };
+                emit_warning(self);
+                drain(self);
+                return;
+            }
+            Mode::WarnWithErrorCode => {
+                let handled = unsafe { Bun__handleUnhandledRejection(global, reason, promise) } > 0;
+                if !handled {
+                    emit_warning(self);
+                    self.exit_handler.exit_code = 1;
+                }
+                drain(self);
+                if handled {
+                    return;
+                }
+                // PORT NOTE: Zig returned unconditionally after warn; mirror it.
+                return;
+            }
+            Mode::Strict => {
+                let wrapped = wrap_unhandled_rejection_error_for_uncaught_exception(
+                    global_object,
+                    reason,
+                );
+                let _ = self.uncaught_exception(global_object, wrapped, true);
+                let handled = unsafe { Bun__handleUnhandledRejection(global, reason, promise) } > 0;
+                if !handled {
+                    emit_warning(self);
+                }
+                drain(self);
+                return;
+            }
+            Mode::Throw => {
+                if unsafe { Bun__handleUnhandledRejection(global, reason, promise) } > 0 {
+                    drain(self);
+                    return;
+                }
+                let wrapped = wrap_unhandled_rejection_error_for_uncaught_exception(
+                    global_object,
+                    reason,
+                );
+                if self.uncaught_exception(global_object, wrapped, true) {
+                    drain(self);
+                    return;
+                }
+                // continue to default handler
+                drain(self);
+            }
+        }
+        self.unhandled_error_counter += 1;
+        (self.on_unhandled_rejection)(self, global_object, reason);
+    }
+
+    /// Spec VirtualMachine.zig:718 `reportExceptionInHotReloadedModuleIfNeeded`.
+    pub fn report_exception_in_hot_reloaded_module_if_needed(&mut self) {
+        // PORT NOTE: Zig `defer this.addMainToWatcherIfNeeded()`.
+        let promise = match self.pending_internal_promise {
+            Some(p) => p,
+            None => {
+                self.add_main_to_watcher_if_needed();
+                return;
+            }
+        };
+        // SAFETY: `promise` is a live JSC heap cell tracked by the VM.
+        match unsafe { (*promise).status() } {
+            crate::js_promise::Status::Pending => {
+                self.add_main_to_watcher_if_needed();
+                return;
+            }
+            crate::js_promise::Status::Rejected => {
+                if self.pending_internal_promise_reported_at != self.hot_reload_counter {
+                    self.pending_internal_promise_reported_at = self.hot_reload_counter;
+                    // PORT NOTE: reshaped for borrowck — capture raw before &mut self call.
+                    let global = self.global;
+                    // SAFETY: `global` valid for VM lifetime.
+                    let global_ref = unsafe { &*global };
+                    // SAFETY: `promise` is a live JSC heap cell.
+                    let result = unsafe { (*promise).result(global_ref.vm()) };
+                    let promise_js = JSValue::from_cell(promise);
+                    self.unhandled_rejection(global_ref, result, promise_js);
+                    // SAFETY: see above.
+                    unsafe { (*promise).set_handled() };
+                }
+            }
+            crate::js_promise::Status::Fulfilled => {}
+        }
+
+        if self.hot_reload_deferred {
+            self.reload(None);
+        }
+        self.add_main_to_watcher_if_needed();
+    }
+
+    /// Spec VirtualMachine.zig:737 `addMainToWatcherIfNeeded`.
+    pub fn add_main_to_watcher_if_needed(&mut self) {
+        if !self.is_watcher_enabled() {
+            return;
+        }
+        let main = self.main;
+        if main.is_empty() {
+            return;
+        }
+        let ext = bun_paths::extension(main);
+        let loader = self.transpiler.options.loader(ext);
+        // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set when
+        // `is_watcher_enabled()`; the cast recovers the concrete type.
+        unsafe {
+            let watcher = &mut *(self.bun_watcher as *mut crate::hot_reloader::ImportWatcher);
+            let _ = watcher.add_file_by_path_slow(main, loader);
+        }
+    }
+
+    /// Spec VirtualMachine.zig:751 `packageManager`.
+    #[inline]
+    pub fn package_manager(&mut self) -> &mut bun_install::PackageManager {
+        self.transpiler.get_package_manager()
+    }
+
+    /// Spec VirtualMachine.zig:769 `reload`.
+    pub fn reload(&mut self, _: Option<&mut crate::hot_reloader::HotReloadTask>) {
+        if let Some(p) = self.pending_internal_promise {
+            // SAFETY: `p` is a live JSC heap cell tracked by the VM.
+            match unsafe { (*p).status() } {
+                crate::js_promise::Status::Pending => {
+                    self.hot_reload_deferred = true;
+                    return;
+                }
+                crate::js_promise::Status::Rejected => {
+                    if self.pending_internal_promise_reported_at != self.hot_reload_counter {
+                        self.hot_reload_deferred = true;
+                        return;
+                    }
+                }
+                crate::js_promise::Status::Fulfilled => {}
+            }
+        }
+        self.hot_reload_deferred = false;
+
+        bun_core::debug!("Reloading...");
+        // SAFETY: `transpiler.env` is set during init and live for VM lifetime.
+        let should_clear_terminal = !unsafe {
+            (*self.transpiler.env)
+                .has_set_no_clear_terminal_on_reload(!bun_core::Output::enable_ansi_colors_stdout())
+        };
+        if self.hot_reload == HOT_RELOAD_WATCH {
+            bun_core::Output::flush();
+            bun_cli::reload_process(should_clear_terminal, false);
+        }
+
+        if should_clear_terminal {
+            bun_core::Output::flush();
+            bun_core::Output::disable_buffering();
+            bun_core::Output::reset_terminal_all();
+            bun_core::Output::enable_buffering();
+        }
+
+        // TODO(b2-cycle): `bun_runtime::api::cron::CronJob::clear_all_for_vm(self, .reload)`.
+        // SAFETY: `global` valid for VM lifetime.
+        if unsafe { (*self.global).reload() }.is_err() {
+            panic!("Failed to reload");
+        }
+        self.hot_reload_counter += 1;
+        if self.pending_internal_promise_is_protected {
+            if let Some(p) = self.pending_internal_promise {
+                JSValue::from_cell(p).unprotect();
+            }
+            self.pending_internal_promise_is_protected = false;
+        }
+        // reload_entry_point() stores into pending_internal_promise on every return path.
+        let main = self.main;
+        if self.reload_entry_point(main).is_err() {
+            panic!("Failed to reload");
+        }
+    }
+
+    /// Spec VirtualMachine.zig:827 `nodeFS`.
+    #[inline]
+    pub fn node_fs(&mut self) -> &mut bun_runtime::node::fs::NodeFS {
+        if self.node_fs.is_none() {
+            let vm_backref = if self.standalone_module_graph.is_some() {
+                self as *mut VirtualMachine
+            } else {
+                core::ptr::null_mut()
+            };
+            let nfs = Box::new(bun_runtime::node::fs::NodeFS {
+                // only used when standalone module graph is enabled
+                vm: vm_backref,
+                ..Default::default()
+            });
+            self.node_fs = Some(Box::into_raw(nfs).cast());
+        }
+        // SAFETY: just initialized above; opaque ptr stores `*mut NodeFS`.
+        unsafe { &mut *(self.node_fs.unwrap() as *mut bun_runtime::node::fs::NodeFS) }
+    }
+
+    /// Spec VirtualMachine.zig:998 `nextAsyncTaskID`.
+    pub fn next_async_task_id(&mut self) -> u64 {
+        let Some(debugger) = self.debugger.as_deref_mut() else {
+            return 0;
+        };
+        debugger.next_debugger_id = debugger.next_debugger_id.wrapping_add(1);
+        debugger.next_debugger_id
+    }
+
+    /// Spec VirtualMachine.zig:1016 `enqueueImmediateTask`.
+    #[inline]
+    pub fn enqueue_immediate_task(&mut self, task: *mut crate::event_loop::ImmediateObject) {
+        // SAFETY: `event_loop` is a self-pointer into this VM.
+        unsafe { (*self.event_loop()).enqueue_immediate_task(task) };
+    }
+
+    /// Spec VirtualMachine.zig:1020 `enqueueTaskConcurrent`.
+    #[inline]
+    pub fn enqueue_task_concurrent(&mut self, task: *mut crate::event_loop::ConcurrentTaskItem) {
+        // SAFETY: `event_loop` is a self-pointer into this VM.
+        unsafe { (*self.event_loop()).enqueue_task_concurrent(task) };
+    }
+
+    /// Spec VirtualMachine.zig:1028 `waitFor`.
+    pub fn wait_for(&mut self, cond: &mut bool) {
+        while !*cond {
+            // SAFETY: `event_loop` is a self-pointer into this VM.
+            unsafe { (*self.event_loop()).tick() };
+            if !*cond {
+                self.auto_tick();
+            }
+        }
+    }
+
+    /// Spec VirtualMachine.zig:1042 `waitForTasks`.
+    pub fn wait_for_tasks(&mut self) {
+        while self.is_event_loop_alive() {
+            // SAFETY: `event_loop` is a self-pointer into this VM.
+            unsafe { (*self.event_loop()).tick() };
+            if self.is_event_loop_alive() {
+                self.auto_tick();
+            }
+        }
+    }
+
+    /// Spec VirtualMachine.zig:1107 `initWithModuleGraph`.
+    ///
+    /// PORT NOTE: shares ~90% with [`init`]; the differences are (a) the
+    /// transpiler is built without `Config::configureTransformOptionsForBunVM`,
+    /// (b) `standalone_module_graph` is mandatory and propagated into the
+    /// resolver, (c) `configureLinkerWithAutoJSX(false)` instead of
+    /// `configureLinker()`. Rather than re-open-code the 80-line struct init,
+    /// we route through [`init`] and patch the deltas.
+    pub fn init_with_module_graph(opts: Options) -> Result<*mut VirtualMachine, bun_core::Error> {
+        let graph = opts.graph.expect("init_with_module_graph requires graph");
+        let init_opts = InitOptions {
+            args: alloc::vec::Vec::new(),
+            graph: graph.as_ptr().cast(),
+            smol: opts.smol,
+            eval_mode: false,
+            is_main_thread: opts.is_main_thread,
+        };
+        let vm = Self::init(init_opts)?;
+        // SAFETY: `vm` is the unique live VM on this thread.
+        let vm_ref = unsafe { &mut *vm };
+        // SAFETY: `graph` outlives the VM (owned by the caller / embedded binary).
+        vm_ref.transpiler.resolver.standalone_module_graph =
+            Some(unsafe { &*graph.as_ptr() });
+        // Avoid reading from tsconfig.json & package.json when in standalone mode
+        vm_ref.transpiler.configure_linker_with_auto_jsx(false);
+        vm_ref.transpiler.resolver.store_fd = false;
+        // SAFETY: process-global written once at startup.
+        unsafe { IS_SMOL_MODE = opts.smol };
+        Ok(vm)
+    }
+
+    /// Spec VirtualMachine.zig:1394 `initWorker`.
+    pub fn init_worker(
+        worker: &mut crate::web_worker::WebWorker,
+        opts: Options,
+    ) -> Result<*mut VirtualMachine, bun_core::Error> {
+        let init_opts = InitOptions {
+            args: alloc::vec::Vec::new(),
+            graph: opts
+                .graph
+                .map(|g| g.as_ptr().cast())
+                .unwrap_or(core::ptr::null_mut()),
+            smol: opts.smol,
+            eval_mode: opts.eval,
+            is_main_thread: false,
+        };
+        // PORT NOTE: Zig open-coded the full struct init; we route through
+        // [`init`] (which already wires console / event-loop / global / jsc_vm
+        // / RuntimeHooks) and then patch the worker-specific fields. The
+        // observable difference vs. open-coding is that `ZigGlobalObject__create`
+        // receives `worker_ptr = null` here and `worker.cpp_worker` is wired
+        // afterward by the C++ side; if that turns out to matter, add a
+        // `worker_ptr` field to `InitOptions`.
+        let vm = Self::init(init_opts)?;
+        // SAFETY: `vm` is the unique live VM on this thread.
+        let vm_ref = unsafe { &mut *vm };
+        vm_ref.worker = Some((worker as *const crate::web_worker::WebWorker).cast());
+        vm_ref.standalone_module_graph =
+            NonNull::new(worker.parent_standalone_module_graph().cast());
+        vm_ref.hot_reload = worker.parent_hot_reload();
+        vm_ref.initial_script_execution_context_identifier =
+            worker.execution_context_id() as i32;
+        vm_ref.transpiler.resolver.store_fd = opts.store_fd;
+        if opts.graph.is_none() {
+            vm_ref.transpiler.configure_linker();
+        } else {
+            vm_ref.transpiler.configure_linker_with_auto_jsx(false);
+        }
+        Ok(vm)
+    }
+
+    /// Spec VirtualMachine.zig:1495 `initBake`.
+    pub fn init_bake(opts: Options) -> Result<*mut VirtualMachine, bun_core::Error> {
+        let init_opts = InitOptions {
+            args: alloc::vec::Vec::new(),
+            graph: core::ptr::null_mut(),
+            smol: opts.smol,
+            eval_mode: false,
+            is_main_thread: opts.is_main_thread,
+        };
+        // PORT NOTE: shares the console / log / event-loop wiring with `init`;
+        // the only delta is the global is created via `BakeCreateProdGlobal`
+        // instead of `ZigGlobalObject__create`. Route through `init` then
+        // swap the global.
+        let vm = Self::init(init_opts)?;
+        // SAFETY: `vm` is the unique live VM on this thread.
+        let vm_ref = unsafe { &mut *vm };
+        // SAFETY: extern "C" FFI; `console` valid.
+        let new_global = unsafe { BakeCreateProdGlobal(vm_ref.console.cast()) };
+        vm_ref.global = new_global;
+        VMHolder::CACHED_GLOBAL_OBJECT.set(Some(new_global));
+        vm_ref.regular_event_loop.global = NonNull::new(new_global);
+        // SAFETY: `new_global` is freshly created and live for VM lifetime.
+        vm_ref.jsc_vm = unsafe { (*new_global).vm() } as *const VM as *mut VM;
+        // SAFETY: per-thread uws loop is live.
+        unsafe { (*uws::Loop::get()).internal_loop_data.jsc_vm = vm_ref.jsc_vm.cast() };
+        // SAFETY: `event_loop` is a self-pointer into this VM.
+        unsafe { (*vm_ref.event_loop()).ensure_waker() };
+        if opts.smol {
+            // SAFETY: process-global written once at startup.
+            unsafe { IS_SMOL_MODE = true };
+        }
+        Ok(vm)
+    }
+
+    /// Spec VirtualMachine.zig:1586 `clearRefString`.
+    pub fn clear_ref_string(_: *mut c_void, ref_string: *mut crate::ref_string::RefString) {
+        // SAFETY: `ref_string` is the `*RefString` we stored in the map; the
+        // per-thread VM is live (called from the JS thread on string finalize).
+        unsafe {
+            let hash = (*ref_string).hash;
+            let _ = (*VirtualMachine::get()).ref_strings.remove(&hash);
+        }
+    }
+
+    /// Spec VirtualMachine.zig:1590 `refCountedResolvedSource`.
+    pub fn ref_counted_resolved_source<const ADD_DOUBLE_REF: bool>(
+        &mut self,
+        code: &[u8],
+        specifier: bun_string::String,
+        source_url: &[u8],
+        hash_: Option<u32>,
+    ) -> ResolvedSource {
+        // refCountedString will panic if the code is empty
+        if code.is_empty() {
+            return ResolvedSource {
+                source_code: bun_string::String::init(b""),
+                specifier,
+                source_url: specifier.create_if_different(source_url),
+                allocator: core::ptr::null_mut(),
+                source_code_needs_deref: false,
+                ..Default::default()
+            };
+        }
+        let source = if ADD_DOUBLE_REF {
+            self.ref_counted_string::<false>(code, hash_)
+        } else {
+            self.ref_counted_string::<true>(code, hash_)
+        };
+        if ADD_DOUBLE_REF {
+            // SAFETY: `source` is a live heap `RefString`.
+            unsafe {
+                (*source).ref_();
+                (*source).ref_();
+            }
+        }
+        ResolvedSource {
+            // SAFETY: `source.impl_` is the WTFStringImpl backing the code.
+            source_code: bun_string::String::init(unsafe { (*source).impl_ }),
+            specifier,
+            source_url: specifier.create_if_different(source_url),
+            allocator: source.cast(),
+            source_code_needs_deref: false,
+            ..Default::default()
+        }
+    }
+
+    fn ref_counted_string_with_was_new<const DUPE: bool>(
+        &mut self,
+        new: &mut bool,
+        input_: &[u8],
+        hash_: Option<u32>,
+    ) -> *mut crate::ref_string::RefString {
+        jsc::mark_binding(core::panic::Location::caller());
+        debug_assert!(!input_.is_empty());
+        let hash = hash_.unwrap_or_else(|| crate::ref_string::RefString::compute_hash(input_));
+        self.ref_strings_mutex.lock();
+        // PORT NOTE: Zig `defer unlock()`.
+        let entry = self.ref_strings.entry(hash);
+        use bun_collections::map::Entry;
+        let result = match entry {
+            Entry::Occupied(e) => {
+                *new = false;
+                *e.get()
+            }
+            Entry::Vacant(v) => {
+                let (ptr, len) = if DUPE {
+                    let dup: Box<[u8]> = input_.to_vec().into_boxed_slice();
+                    let len = dup.len();
+                    (Box::into_raw(dup) as *const u8, len)
+                } else {
+                    (input_.as_ptr(), input_.len())
+                };
+                let ref_ = Box::into_raw(Box::new(crate::ref_string::RefString {
+                    ptr,
+                    len,
+                    hash,
+                    // SAFETY: `ptr[..len]` is valid (just allocated or borrowed).
+                    impl_: bun_string::String::create_external::<crate::ref_string::RefString>(
+                        unsafe { core::slice::from_raw_parts(ptr, len) },
+                        true,
+                        core::ptr::null_mut(), // patched two lines down
+                        free_ref_string,
+                    )
+                    .value
+                    .wtf_string_impl(),
+                    ctx: NonNull::new((self as *mut VirtualMachine).cast()),
+                    on_before_deinit: Some(
+                        // SAFETY: matching `Callback` signature.
+                        VirtualMachine::clear_ref_string as crate::ref_string::Callback,
+                    ),
+                }));
+                // PORT NOTE: Zig passed `ref` into `createExternal` before
+                // assigning to `ref.*` (it had the address from
+                // `allocator.create`); Rust can't take `&*Box` before
+                // construction, so patch the external-string ctx now.
+                // TODO(port): `String::create_external` should accept ctx
+                // post-hoc, or use `Box::new_uninit` + `addr_of_mut!`.
+                v.insert(ref_);
+                *new = true;
+                ref_
+            }
+        };
+        self.ref_strings_mutex.unlock();
+        result
+    }
+
+    /// Spec VirtualMachine.zig:1650 `refCountedString`.
+    pub fn ref_counted_string<const DUPE: bool>(
+        &mut self,
+        input_: &[u8],
+        hash_: Option<u32>,
+    ) -> *mut crate::ref_string::RefString {
+        debug_assert!(!input_.is_empty());
+        let mut was_new = false;
+        self.ref_counted_string_with_was_new::<DUPE>(&mut was_new, input_, hash_)
+    }
+
+    /// Spec VirtualMachine.zig:1656 `fetchWithoutOnLoadPlugins`.
+    pub fn fetch_without_on_load_plugins<const FLAGS: FetchFlags>(
+        jsc_vm: &mut VirtualMachine,
+        global_object: &JSGlobalObject,
+        specifier: bun_string::String,
+        referrer: bun_string::String,
+        log: &mut logger::Log,
+    ) -> Result<ResolvedSource, bun_core::Error> {
+        debug_assert!(VirtualMachine::is_loaded());
+
+        if let Some(builtin) = ModuleLoader::fetch_builtin_module(jsc_vm, specifier)? {
+            return Ok(builtin);
+        }
+
+        let specifier_clone = specifier.to_utf8();
+        let referrer_clone = referrer.to_utf8();
+
+        let mut virtual_source_to_use: Option<logger::Source> = None;
+        let mut blob_to_deinit: Option<bun_runtime::webcore::Blob> = None;
+        let lr = bun_bundler::options::get_loader_and_virtual_source(
+            specifier_clone.slice(),
+            jsc_vm,
+            &mut virtual_source_to_use,
+            &mut blob_to_deinit,
+            None,
+        )
+        .map_err(|_| bun_core::err!("ModuleNotFound"))?;
+        let module_type = lr
+            .package_json
+            .map(|pkg| pkg.module_type)
+            .unwrap_or(bun_bundler::options::ModuleType::Unknown);
+
+        // PORT NOTE: Zig `defer if (flags != .print_source) resetArena();
+        // errdefer if (flags == .print_source) resetArena()`. Model with a
+        // drop-guard so both paths reset on the right edge.
+        struct ArenaReset<'a>(&'a mut VirtualMachine, bool);
+        impl Drop for ArenaReset<'_> {
+            fn drop(&mut self) {
+                if self.1 {
+                    let vm = self.0 as *mut VirtualMachine;
+                    // SAFETY: `vm` is the live per-thread VM.
+                    unsafe { (*vm).module_loader.reset_arena(&mut *vm) };
+                }
+            }
+        }
+        let mut guard = ArenaReset(jsc_vm, FLAGS != FetchFlags::PrintSource);
+
+        let printer = SOURCE_CODE_PRINTER
+            .get()
+            .expect("source_code_printer not initialized");
+
+        let result = ModuleLoader::transpile_source_code(
+            guard.0,
+            lr.specifier,
+            referrer_clone.slice(),
+            specifier,
+            lr.path,
+            lr.loader.unwrap_or(if lr.is_main {
+                bun_bundler::options::Loader::Js
+            } else {
+                bun_bundler::options::Loader::File
+            }),
+            module_type,
+            log,
+            lr.virtual_source,
+            None,
+            // SAFETY: `printer` is a leaked Box; live for thread lifetime.
+            unsafe { &mut *printer.as_ptr() },
+            global_object,
+            FLAGS,
+        );
+
+        if result.is_err() && FLAGS == FetchFlags::PrintSource {
+            guard.1 = true; // errdefer
+        }
+        drop(blob_to_deinit);
+        result
+    }
+
+    /// Spec VirtualMachine.zig:1854 `resolve`.
+    pub fn resolve(
+        res: &mut ErrorableString,
+        global: &JSGlobalObject,
+        specifier: bun_string::String,
+        source: bun_string::String,
+        query_string: Option<&mut bun_string::String>,
+        is_esm: bool,
+    ) -> JsResult<()> {
+        Self::resolve_maybe_needs_trailing_slash::<true>(
+            res,
+            global,
+            specifier,
+            source,
+            query_string,
+            is_esm,
+            false,
+        )
+    }
+
+    /// Spec VirtualMachine.zig:1873 `resolveMaybeNeedsTrailingSlash`.
+    pub fn resolve_maybe_needs_trailing_slash<const IS_A_FILE_PATH: bool>(
+        res: &mut ErrorableString,
+        global: &JSGlobalObject,
+        specifier: bun_string::String,
+        source: bun_string::String,
+        query_string: Option<&mut bun_string::String>,
+        is_esm: bool,
+        is_user_require_resolve: bool,
+    ) -> JsResult<()> {
+        const MAX_LEN: u32 = (bun_paths::MAX_PATH_BYTES as f64 * 1.5) as u32;
+        if IS_A_FILE_PATH && specifier.length() > MAX_LEN {
+            let specifier_utf8 = specifier.to_utf8();
+            let source_utf8 = source.to_utf8();
+            let import_kind = if is_esm {
+                bun_options_types::ImportKind::Stmt
+            } else if is_user_require_resolve {
+                bun_options_types::ImportKind::RequireResolve
+            } else {
+                bun_options_types::ImportKind::Require
+            };
+            let printed = crate::ResolveMessage::fmt(
+                specifier_utf8.slice(),
+                source_utf8.slice(),
+                bun_core::err!("NameTooLong"),
+                import_kind,
+            );
+            let msg = logger::Msg {
+                data: logger::range_data(None, logger::Range::NONE, printed),
+                ..Default::default()
+            };
+            *res = ErrorableString::err(
+                bun_core::err!("NameTooLong"),
+                crate::ResolveMessage::create(global, &msg, source_utf8.slice())?,
+            );
+            return Ok(());
+        }
+
+        let mut result = ResolveFunctionResult::default();
+        // SAFETY: per-thread VM is live (caller is on the JS thread).
+        let jsc_vm = unsafe { &mut *global.bun_vm() };
+        let specifier_utf8 = specifier.to_utf8();
+        let source_utf8 = source.to_utf8();
+
+        // TODO(b2-cycle): `plugin_runner` is `Option<()>` placeholder; the
+        // `PluginRunner::could_be_plugin` / `on_resolve_jsc` fast-path is
+        // gated until `bun_bundler::transpiler::PluginRunner` un-gates.
+
+        if let Some(hardcoded) = ModuleLoader::HardcodedModule::Alias::get(
+            specifier_utf8.slice(),
+            bun_options_types::Target::Bun,
+            Default::default(),
+        ) {
+            *res = ErrorableString::ok(if is_user_require_resolve && hardcoded.node_builtin {
+                specifier.dupe_ref()
+            } else {
+                bun_string::String::init(hardcoded.path)
+            });
+            return Ok(());
+        }
+
+        // Swap in a fresh log so resolver errors don't pollute the VM's main log.
+        let old_log = jsc_vm.log;
+        let mut log = logger::Log::default();
+        jsc_vm.log = NonNull::new(&mut log);
+        jsc_vm.transpiler.resolver.log = &mut log;
+        // TODO(b2-cycle): `transpiler.linker.log` / `resolver.package_manager.log`
+        // — gated bundler fields.
+        // PORT NOTE: Zig `defer { restore old_log }` — restored on every path
+        // below before return.
+        let restore = |jsc_vm: &mut VirtualMachine| {
+            jsc_vm.log = old_log;
+            // SAFETY: `old_log` outlives the VM (set in `init`).
+            jsc_vm.transpiler.resolver.log =
+                unsafe { &mut *old_log.map(|p| p.as_ptr()).unwrap_or(core::ptr::null_mut()) };
+        };
+
+        let resolve_result = jsc_vm._resolve(
+            &mut result,
+            specifier_utf8.slice(),
+            normalize_source(source_utf8.slice()),
+            is_esm,
+            IS_A_FILE_PATH,
+        );
+        if let Err(err_) = resolve_result {
+            let mut err = err_;
+            let import_kind = if is_esm {
+                bun_options_types::ImportKind::Stmt
+            } else if is_user_require_resolve {
+                bun_options_types::ImportKind::RequireResolve
+            } else {
+                bun_options_types::ImportKind::Require
+            };
+            // Find a `.resolve`-metadata msg if the log has one.
+            let msg = log
+                .msgs
+                .iter()
+                .find_map(|m| {
+                    if let logger::Metadata::Resolve(r) = &m.metadata {
+                        err = r.err;
+                        Some(m.clone())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_else(|| {
+                    let printed = crate::ResolveMessage::fmt(
+                        specifier_utf8.slice(),
+                        source_utf8.slice(),
+                        err,
+                        import_kind,
+                    );
+                    logger::Msg {
+                        data: logger::range_data(None, logger::Range::NONE, printed.clone()),
+                        metadata: logger::Metadata::Resolve(logger::ResolveMetadata {
+                            specifier: logger::BabyString::in_(&printed, specifier_utf8.slice()),
+                            import_kind,
+                            err,
+                        }),
+                        ..Default::default()
+                    }
+                });
+            *res = ErrorableString::err(
+                err,
+                crate::ResolveMessage::create(global, &msg, source_utf8.slice())?,
+            );
+            restore(jsc_vm);
+            return Ok(());
+        }
+
+        if let Some(query) = query_string {
+            *query = if !result.query_string.is_empty() {
+                bun_string::String::clone_utf8(result.query_string)
+            } else {
+                bun_string::String::empty()
+            };
+        }
+
+        *res = ErrorableString::ok(bun_string::String::clone_utf8(result.path));
+        restore(jsc_vm);
+        Ok(())
+    }
     /// `VirtualMachine.deinit` — worker-thread teardown. Spec
     /// VirtualMachine.zig:2109. Only the `RuntimeHooks` dispatch is real; the
     /// remaining field deinits are gated on their `()` placeholders widening.

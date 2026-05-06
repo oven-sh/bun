@@ -1245,34 +1245,6 @@ pub mod package_manifest {
             "extern_strings_bin_entries",
             "bundled_deps_buf",
         ];
-
-        /// Zig: `Serializer.loadByFileID(allocator, scope, cache_dir, file_id)`.
-        /// Stub kept for `PackageManifestMap`; body lives in gated impl below.
-        pub fn load_by_file_id(
-            _scope: &registry::Scope,
-            _cache_dir: bun_sys::Fd,
-            _file_id: u64,
-        ) -> Result<Option<PackageManifest>, bun_core::Error> {
-            // Real body lives in the ``-gated impl below. Blocked on
-            // bun_io::FixedBufferStream — fail loudly instead of silently treating
-            // every on-disk manifest as a cache miss (PORTING.md §Forbidden: silent no-op).
-            todo!("npm::PackageManifest::Serializer::load_by_file_id — blocked on bun_io::FixedBufferStream")
-        }
-
-        /// Zig: `Serializer.save_async(this, scope, tmpdir_fd, cache_dir)`.
-        /// Stub kept so `registry::get_package_metadata` compiles; real body
-        /// lives in the gated impl below (blocked on bun_io / renameat2).
-        pub fn save_async(
-            _this: &PackageManifest,
-            _scope: &registry::Scope,
-            _tmpdir_fd: bun_sys::Fd,
-            _cache_dir: bun_sys::Fd,
-        ) {
-            // Real body lives in the ``-gated impl below. Blocked on
-            // bun_sys::renameat2 / bun_io::FixedBufferStream — fail loudly instead of
-            // silently dropping the cache write (PORTING.md §Forbidden: silent no-op).
-            todo!("npm::PackageManifest::Serializer::save_async — blocked on bun_sys::renameat2")
-        }
     }
 
     const _: () = assert!(
@@ -1280,10 +1252,6 @@ pub mod package_manifest {
         "header bytes must be exactly 49 bytes long, length is not serialized"
     );
 
-    // TODO(b2): bodies gated — bun_io::FixedBufferStream / bun_sys::renameat2 /
-    // bun_core::{perf,mem} / bun_str::buf_print_z surface drift. Keep types
-    // visible above; un-gate once those land.
-    
     impl Serializer {
         pub fn write_array<W: bun_io::Write, T: Copy>(
             writer: &mut W,

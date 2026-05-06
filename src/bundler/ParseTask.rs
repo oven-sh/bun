@@ -211,7 +211,10 @@ impl ParseTask {
     pub fn init(
         resolve_result: &_resolver::Result,
         source_index: Index,
-        ctx: &BundleV2,
+        // Zig `ctx: *BundleV2` — take `*mut` so the stored BACKREF retains
+        // write provenance for `on_complete` (a `&BundleV2` param would shrink
+        // provenance to read-only, making the later `&mut *ctx` UB).
+        ctx: *mut BundleV2<'_>,
     ) -> ParseTask {
         // SAFETY: `package_json` is `Option<*const PackageJSON>`; the resolver
         // arena outlives the bundle pass, so deref'ing the raw pointer here to

@@ -1,11 +1,12 @@
-use bun_jsc::{self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult, ZigString};
-use bun_str::ZigString as _; // TODO(port): ZigString lives in bun_str per crate map; bun_jsc re-exports it
+use bun_jsc::{self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::virtual_machine::GCLevel;
+use bun_string::ZigString;
 
 pub fn create(global: &JSGlobalObject) -> JSValue {
     let object = JSValue::create_empty_object(global, 3);
     // Zig used a comptime anonymous struct + std.meta.fieldNames to iterate (name, fn) pairs.
     // In Rust the elements share a type, so a const array + plain `for` is the direct mapping.
-    const FIELDS: &[(&str, jsc::HostFnZig)] = &[
+    const FIELDS: &[(&str, jsc::JSHostFnZig)] = &[
         ("gcAggressionLevel", gc_aggression_level),
         ("arrayBufferToString", array_buffer_to_string),
         ("mimallocDump", dump_mimalloc),

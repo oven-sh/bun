@@ -436,7 +436,10 @@ pub fn write_encrypted(ctx: *mut HTTPClient, encoded_data: &[u8]) {
 }
 
 fn on_close(ctx: *mut HTTPClient) {
-    // SAFETY: see on_open.
+    // SAFETY: see on_open. on_close is fired from inside SSLWrapper::shutdown
+    // (via close_raw) whose caller may itself be a callback that already held
+    // `&mut *ctx`; that outer borrow is required to be NLL-dead before close_raw
+    // is invoked (see on_data/on_handshake), so this fresh `&mut` is sole.
     let this = unsafe { &mut *ctx };
     scoped_log!(
         http_proxy_tunnel,
@@ -444,9 +447,10 @@ fn on_close(ctx: *mut HTTPClient) {
         if this.proxy_tunnel.is_none() { "tunnel is detached" } else { "tunnel exists" }
     );
     let Some(proxy_nn) = this.proxy_tunnel else { return };
-    // SAFETY: live intrusive-refcounted tunnel.
-    let proxy = unsafe { &mut *proxy_nn.as_ptr() };
-    proxy.ref_();
+    let proxy_ptr = proxy_nn.as_ptr();
+    // SAFETY: live intrusive-refcounted tunnel; raw field projection only —
+    // close_raw still holds `&mut SSLWrapper` on `(*proxy_ptr).wrapper`.
+    unsafe { ref_raw(proxy_ptr) };
 
     // If a response is in progress, mirror HTTPClient.onClose semantics:
     // treat connection close as end-of-body for identity transfer when no content-length.
@@ -460,9 +464,10 @@ fn on_close(ctx: *mut HTTPClient) {
             match this.state.chunked_decoder._state {
                 4 | 5 => {
                     this.state.flags.received_last_chunk = true;
-                    progress_update_for_proxy_socket(this, proxy);
+                    // SAFETY: `this` dead (NLL); reborrow via raw ptrs.
+                    unsafe { progress_update_for_proxy_socket(ctx, proxy_ptr) };
                     // Drop our temporary ref asynchronously to avoid freeing within callback
-                    crate::http_thread().schedule_proxy_deref(proxy_nn.as_ptr());
+                    crate::http_thread().schedule_proxy_deref(proxy_ptr);
                     return;
                 }
                 _ => {}
@@ -471,38 +476,48 @@ fn on_close(ctx: *mut HTTPClient) {
             && this.state.response_stage == HTTPStage::Body
         {
             this.state.flags.received_last_chunk = true;
-            progress_update_for_proxy_socket(this, proxy);
+            // SAFETY: `this` dead (NLL); reborrow via raw ptrs.
+            unsafe { progress_update_for_proxy_socket(ctx, proxy_ptr) };
             // Balance the ref we took asynchronously
-            crate::http_thread().schedule_proxy_deref(proxy_nn.as_ptr());
+            crate::http_thread().schedule_proxy_deref(proxy_ptr);
             return;
         }
     }
 
     // Otherwise, treat as failure.
-    let err = proxy.shutdown_err;
-    match proxy.socket {
-        Socket::Ssl(socket) => {
+    // SAFETY: read Copy field via raw place; disjoint from `wrapper`.
+    let err = unsafe { *addr_of!((*proxy_ptr).shutdown_err) };
+    // SAFETY: shared borrow of `socket` only — disjoint from `wrapper`.
+    match unsafe { &*addr_of!((*proxy_ptr).socket) } {
+        &Socket::Ssl(socket) => {
             this.close_and_fail::<true>(err, socket);
         }
-        Socket::Tcp(socket) => {
+        &Socket::Tcp(socket) => {
             this.close_and_fail::<false>(err, socket);
         }
         Socket::None => {}
     }
-    proxy.detach_socket();
+    // SAFETY: write to `socket` only — disjoint from `wrapper`.
+    unsafe { *addr_of_mut!((*proxy_ptr).socket) = Socket::None };
     // Deref after returning to the event loop to avoid lifetime hazards.
-    crate::http_thread().schedule_proxy_deref(proxy_nn.as_ptr());
+    crate::http_thread().schedule_proxy_deref(proxy_ptr);
 }
 
-fn progress_update_for_proxy_socket(this: &mut HTTPClient, proxy: &mut ProxyTunnel) {
-    match proxy.socket {
-        Socket::Ssl(socket) => {
-            let ctx = (&mut crate::http_thread().https_context) as *mut GenHttpContext<true>;
-            this.progress_update::<true>(ctx, socket);
+/// # Safety
+/// `ctx` and `proxy` must be live. Caller must not hold `&mut HTTPClient` or
+/// `&mut ProxyTunnel` across this call (they are reborrowed inside).
+unsafe fn progress_update_for_proxy_socket(ctx: *mut HTTPClient, proxy: *mut ProxyTunnel) {
+    // SAFETY: shared borrow of `socket` only — disjoint from `wrapper`.
+    match unsafe { &*addr_of!((*proxy).socket) } {
+        &Socket::Ssl(socket) => {
+            let hctx = (&mut crate::http_thread().https_context) as *mut GenHttpContext<true>;
+            // SAFETY: caller contract — no live `&mut *ctx`.
+            unsafe { (*ctx).progress_update::<true>(hctx, socket) };
         }
-        Socket::Tcp(socket) => {
-            let ctx = (&mut crate::http_thread().http_context) as *mut GenHttpContext<false>;
-            this.progress_update::<false>(ctx, socket);
+        &Socket::Tcp(socket) => {
+            let hctx = (&mut crate::http_thread().http_context) as *mut GenHttpContext<false>;
+            // SAFETY: caller contract — no live `&mut *ctx`.
+            unsafe { (*ctx).progress_update::<false>(hctx, socket) };
         }
         Socket::None => {}
     }

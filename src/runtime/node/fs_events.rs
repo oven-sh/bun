@@ -829,7 +829,7 @@ pub type UpdateEndCallback = fn(ctx: *mut ());
 
 impl FSEventsWatcher {
     pub fn init(
-        loop_: &'static mut FSEventsLoop,
+        loop_: *mut FSEventsLoop,
         path: &'static [u8],
         recursive: bool,
         callback: Callback,
@@ -840,13 +840,15 @@ impl FSEventsWatcher {
             path,
             callback,
             flush_callback: update_end,
-            // SAFETY: loop_ is the global default loop and lives for 'static
-            loop_: Some(unsafe { &*(loop_ as *const FSEventsLoop) }),
+            loop_: NonNull::new(loop_),
             recursive,
             ctx,
         });
 
-        loop_.register_watcher(&mut *this as *mut _);
+        // SAFETY: `loop_` is the heap-allocated global default loop (Box::into_raw
+        // in FSEventsLoop::init); valid for the program lifetime. Mutable access
+        // to its watcher list is serialized by `self.mutex` inside register_watcher.
+        unsafe { (*loop_).register_watcher(&mut *this as *mut _) };
         this
     }
 

@@ -83,9 +83,14 @@ impl PipeReader {
         self.reader.has_pending_activity()
     }
 
-    pub fn detach(&mut self) {
-        self.process = None;
-        self.deref();
+    /// Clear the `process` backref and drop the ref it represented.
+    ///
+    /// # Safety
+    /// `this` must point to a live `PipeReader`; may be freed on return (see `deref`).
+    pub unsafe fn detach(this: *mut Self) {
+        // SAFETY: `this` is live; raw-ptr field write avoids holding a `&mut` across deref.
+        unsafe { (*this).process = None };
+        unsafe { PipeReader::deref(this) };
     }
 
     pub fn create(
@@ -143,10 +148,11 @@ impl PipeReader {
             // just took above. Hold one more ref so `this` survives long enough to
             // check state after start() returns.
             self.r#ref();
-            let guard = scopeguard::guard((), |_| {
-                // SAFETY: `self` outlives this scope because of the extra ref taken above.
-                // TODO(port): self-deref pattern — verify borrowck permits this; may need raw ptr.
-                self.deref();
+            let this_ptr: *mut PipeReader = self;
+            let guard = scopeguard::guard((), move |_| {
+                // SAFETY: the extra ref taken above keeps `*this_ptr` alive until this
+                // guard fires; deref may free it, but no borrow of `self` outlives the guard.
+                unsafe { PipeReader::deref(this_ptr) };
             });
 
             // TODO(port): on POSIX `StdioResult` is `Option<Fd>`; `.unwrap()` mirrors Zig `.?`.

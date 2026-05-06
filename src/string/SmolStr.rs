@@ -338,7 +338,11 @@ impl Inlined {
     }
 
     pub fn all_chars(&mut self) -> &mut [u8; Self::MAX_LEN] {
-        // SAFETY: the first 15 bytes of the u128 backing storage are the `data` field.
+        // SAFETY: the first 15 bytes of the u128 backing storage are the `data` field
+        // (little-endian, asserted at module top). `ptr()` derives a `*mut u8` from
+        // `&mut self.0`, so the resulting reference has provenance over the full u128 and
+        // is uniquely borrowed for the lifetime of `&mut self` — no other reference to
+        // `self.0` can exist while the returned `&mut [u8; 15]` is live.
         unsafe { &mut *(self.ptr() as *mut [u8; Self::MAX_LEN]) }
     }
 

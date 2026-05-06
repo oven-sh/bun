@@ -1,12 +1,74 @@
-#![cfg(any())] // CYCLEBREAK draft — re-gated per MASS-UNGATE (bun_alloc → bun_core/sys/runtime back-edge); MOVE_DOWN pending
 use core::ffi::c_void;
 
-// TODO(port): `std.heap.c_allocator` is a `std.mem.Allocator` value backed by libc
-// malloc/free. Expose a `CAllocator` implementing `bun_alloc::Allocator` here in Phase B
-// (or drop entirely if every caller migrated to the global mimalloc allocator).
-// pub static C_ALLOCATOR: &dyn crate::Allocator = &crate::CAllocator;
+use crate::Alignment;
 
-pub use crate::fallback::z::allocator as z_allocator;
+pub mod z;
+
+/// `std.heap.c_allocator` — a `std.mem.Allocator` value backed by libc
+/// malloc/free. Exposed as a ZST with inherent `raw_*` methods mirroring the
+/// Zig vtable so the zeroing wrapper in `z.rs` can layer on top.
+#[derive(Clone, Copy, Default)]
+pub struct CAllocator;
+
+pub static C_ALLOCATOR: CAllocator = CAllocator;
+
+impl CAllocator {
+    #[inline]
+    pub fn raw_alloc(&self, len: usize, alignment: Alignment, _ret_addr: usize) -> Option<*mut u8> {
+        // libc malloc guarantees alignment to `max_align_t`; for larger
+        // alignments use the aligned variant (Zig's `CAllocator` does the same).
+        let align = alignment.to_byte_units();
+        // SAFETY: libc malloc/aligned_alloc are sound for any nonzero size.
+        let ptr = unsafe {
+            if align <= core::mem::align_of::<libc::max_align_t>() {
+                libc::malloc(len)
+            } else {
+                libc::aligned_alloc(align, len)
+            }
+        };
+        if ptr.is_null() { None } else { Some(ptr.cast()) }
+    }
+
+    #[inline]
+    pub fn raw_resize(
+        &self,
+        buf: &mut [u8],
+        _alignment: Alignment,
+        new_len: usize,
+        _ret_addr: usize,
+    ) -> bool {
+        // Zig `CAllocator.resize`: in-place only — succeed on shrink or if the
+        // backing allocation already has enough usable size; never relocate.
+        if new_len <= buf.len() {
+            return true;
+        }
+        #[cfg(target_os = "macos")]
+        {
+            // SAFETY: `buf` was allocated by libc malloc on this platform.
+            let usable = unsafe { libc::malloc_size(buf.as_ptr().cast()) };
+            return new_len <= usable;
+        }
+        #[cfg(target_os = "linux")]
+        {
+            // SAFETY: `buf` was allocated by libc malloc on this platform.
+            let usable = unsafe { libc::malloc_usable_size(buf.as_mut_ptr().cast()) };
+            return new_len <= usable;
+        }
+        #[allow(unreachable_code)]
+        false
+    }
+
+    #[inline]
+    pub fn raw_free(&self, buf: &mut [u8], _alignment: Alignment, _ret_addr: usize) {
+        // SAFETY: `buf` was allocated by `raw_alloc` (libc malloc/aligned_alloc),
+        // both of which are freed via `free`.
+        unsafe { libc::free(buf.as_mut_ptr().cast()) }
+    }
+}
+
+impl crate::Allocator for CAllocator {}
+
+pub use z::ALLOCATOR as z_allocator;
 
 /// libc can free allocations without being given their size.
 pub fn free_without_size(ptr: *mut c_void) {
@@ -19,6 +81,6 @@ pub fn free_without_size(ptr: *mut c_void) {
 // PORT STATUS
 //   source:     src/bun_alloc/fallback.zig (9 lines)
 //   confidence: medium
-//   todos:      1
-//   notes:      c_allocator const left as TODO — std.mem.Allocator value has no 1:1 Rust shape; z_allocator kept as thin re-export
+//   notes:      c_allocator → `CAllocator` ZST with inherent raw_* methods
+//               (Zig std.heap.c_allocator vtable). z_allocator re-exported.
 // ──────────────────────────────────────────────────────────────────────────

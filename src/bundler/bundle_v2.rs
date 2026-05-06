@@ -608,7 +608,7 @@ use bun_logger as Logger;
 use bun_js_parser::{self as js_ast, Ref, Symbol, Stmt, Expr, E, S, G, B, Binding, Scope, Part, Dependency};
 use crate::Index;
 use crate::ungate_support::JSAst;
-use bun_js_parser::{UseDirective, ServerComponentBoundary};
+use bun_js_parser::ServerComponentBoundary;
 use bun_js_parser::ast::server_component_boundary;
 use bun_options_types::{ImportRecord, ImportKind};
 use crate::ungate_support::bun_fs as Fs;
@@ -1156,7 +1156,7 @@ use crate::chunk::{self, Chunk, ChunkImport};
 use crate::cache::Entry as CacheEntry;
 use crate::PathToSourceIndexMap::PathToSourceIndexMap;
 use crate::barrel_imports;
-use crate::ungate_support::{JSMeta, ImportData, ExportData, RefImportData, entry_point};
+use crate::ungate_support::entry_point;
 
 pub use crate::BundleThread::BundleThread;
 

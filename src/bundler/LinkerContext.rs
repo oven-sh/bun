@@ -1792,8 +1792,10 @@ impl<'a> LinkerContext<'a> {
 
         for (source_index, maybe_css_ast) in all_css_asts.iter().enumerate() {
             if let Some(css_ast_ptr) = maybe_css_ast {
-                // SAFETY: css_ast pointer owned by graph arena
-                let css_ast = unsafe { &**css_ast_ptr };
+                // SAFETY: the SoA `css` column stores type-erased
+                // `*mut BundlerStyleSheet` (see `BundledAst.rs:58`); cast back
+                // to the concrete type. Pointer owned by the graph arena.
+                let css_ast = unsafe { &*(*css_ast_ptr as *mut css::BundlerStyleSheet) };
                 if css_ast.local_scope.count() == 0 {
                     continue;
                 }
@@ -1802,15 +1804,17 @@ impl<'a> LinkerContext<'a> {
                     let mut symbol = symbol_;
                     if symbol.kind == js_ast::ast::symbol::Kind::LocalCss {
                         let r#ref = 'follow: {
-                            let mut r#ref = Ref::init(
+                            // PORT NOTE: Zig set `.tag = .symbol` after `init`;
+                            // `Ref` is packed in Rust — construct via `new`.
+                            let mut r#ref = Ref::new(
                                 u32::try_from(inner_index).unwrap(),
                                 u32::try_from(source_index).unwrap(),
-                                false,
+                                js_ast::RefTag::Symbol,
                             );
-                            r#ref.tag = Ref::Tag::Symbol;
                             while symbol.has_link() {
                                 r#ref = symbol.link;
-                                symbol = all_symbols[r#ref.source_index as usize].at(r#ref.inner_index);
+                                symbol = all_symbols[r#ref.source_index() as usize]
+                                    .at(r#ref.inner_index() as usize);
                             }
                             break 'follow r#ref;
                         };
@@ -1820,21 +1824,20 @@ impl<'a> LinkerContext<'a> {
                             continue;
                         }
 
-                        let source = &all_sources[r#ref.source_index as usize];
+                        let source = &all_sources[r#ref.source_index() as usize];
 
                         let original_name = &symbol.original_name;
-                        let path_hash = css::css_modules::hash(
-                            self.allocator(),
-                            // use path relative to cwd for determinism
-                            format_args!("{}", bstr::BStr::new(&source.path.pretty)),
-                            false,
-                        );
+                        // CYCLEBREAK FORWARD_DECL: `bun_css::css_modules::hash`
+                        // is feature-gated; route through the local shim until
+                        // the `css` feature is the default. The shim mirrors the
+                        // real signature (path → fixed-width base62 hash).
+                        let path_hash = css_modules_hash_shim(&source.path.pretty);
 
-                        let mut final_generated_name = Vec::new();
+                        let mut final_generated_name = Vec::<u8>::new();
                         use std::io::Write;
                         write!(&mut final_generated_name, "{}_{}", bstr::BStr::new(original_name), bstr::BStr::new(&path_hash)).unwrap();
                         // TODO(port): allocator() is arena; mangled_props key/value lifetime
-                        self.mangled_props.put(self.allocator(), r#ref, final_generated_name.into_boxed_slice()).expect("OOM");
+                        self.mangled_props.put(r#ref, final_generated_name.into_boxed_slice()).expect("OOM");
                     }
                 }
             }
@@ -1878,7 +1881,7 @@ impl<'a> LinkerContext<'a> {
         // PORT NOTE: reshaped for borrowck — collect piece queries first
         let piece_queries: Vec<(crate::chunk::QueryKind, u32)> =
             if let crate::chunk::IntermediateOutput::Pieces(pieces) = &chunk.intermediate_output {
-                pieces.slice().iter().map(|p| (p.query.kind, p.query.index)).collect()
+                pieces.slice().iter().map(|p| (p.query.kind(), p.query.index())).collect()
             } else {
                 Vec::new()
             };
@@ -1923,8 +1926,8 @@ impl<'a> LinkerContext<'a> {
 
         // Mix in the hash for this chunk
         let chunk = &chunks[index as usize];
-        hash.write(bytemuck::bytes_of(&chunk.isolated_hash));
-        // TODO(port): std.mem.asBytes — using bytemuck; verify endianness invariant
+        // PORT NOTE: Zig `std.mem.asBytes(&u64)` → native-endian byte view.
+        hash.write(&chunk.isolated_hash.to_ne_bytes());
     }
 
     // Sort cross-chunk exports by chunk name for determinism

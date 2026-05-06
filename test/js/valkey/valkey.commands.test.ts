@@ -126,14 +126,17 @@ describe.skipIf(!hasLocalRedis)("RedisClient commands (functional)", () => {
       }).toThrow(/string or buffer/);
     });
 
-    // flushdb on an isolated database
+    // flushdb on an isolated database. This may be a developer's local Redis,
+    // so refuse to flush if the db already has data we didn't put there.
     const r = new RedisClient(url + "/10");
     await r.connect();
     try {
-      await r.set(key("opt-flush"), "x");
-      const mode: "SYNC" | undefined = undefined;
-      expect(await r.flushdb(mode)).toBe("OK");
-      expect(await r.get(key("opt-flush"))).toBeNull();
+      if ((await r.dbsize()) === 0) {
+        await r.set(key("opt-flush"), "x");
+        const mode: "SYNC" | undefined = undefined;
+        expect(await r.flushdb(mode)).toBe("OK");
+        expect(await r.get(key("opt-flush"))).toBeNull();
+      }
     } finally {
       r.close();
     }
@@ -263,10 +266,19 @@ describe.skipIf(!hasLocalRedis)("RedisClient commands (functional)", () => {
   });
 
   test("FLUSHDB", async () => {
-    // Use a dedicated database so we don't wipe anything another test put in db 0.
+    // Use a dedicated database. This file runs against whatever Redis is on
+    // localhost:6379 (possibly a developer's own instance), so refuse to flush
+    // if the db already has data we didn't put there. CI coverage for FLUSHDB
+    // lives in the docker-based valkey.test.ts suite.
     const r = new RedisClient(url + "/9");
     await r.connect();
     try {
+      if ((await r.dbsize()) !== 0) {
+        // Pre-existing data — don't risk wiping it. Just verify the method
+        // exists and is callable without actually flushing.
+        expect(typeof r.flushdb).toBe("function");
+        return;
+      }
       await r.set(key("flush"), "x");
       expect(await r.flushdb("SYNC")).toBe("OK");
       expect(await r.get(key("flush"))).toBeNull();

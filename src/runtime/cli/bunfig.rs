@@ -1513,26 +1513,18 @@ mod phase_a_draft {
             }
 
             if let Some(public_hoist_pattern_expr) = expr_get(install_obj, b"publicHoistPattern") {
-                install.public_hoist_pattern = match PnpmMatcher::from_expr(
-                    &public_hoist_pattern_expr,
-                    self.log,
-                    self.source,
-                ) {
-                    Ok(v) => Some(v),
-                    Err(e) if e == err!("OutOfMemory") => return Err(e),
-                    Err(_) => return Err(err!("Invalid Bunfig")),
-                };
+                let _ = (&public_hoist_pattern_expr, self.log, self.source);
+                // `bun_install::PnpmMatcher::from_expr` consumes a
+                // `bun_js_parser::Expr` and produces `bun_install::PnpmMatcher`,
+                // but `install.public_hoist_pattern` holds the CYCLEBREAK
+                // `bun_options_types::schema::api::PnpmMatcher` mirror.
+                install.public_hoist_pattern =
+                    todo!("blocked_on: bun_install::PnpmMatcher::from_expr / api::PnpmMatcher bridge");
             }
             if let Some(hoist_pattern_expr) = expr_get(install_obj, b"hoistPattern") {
-                install.hoist_pattern = match PnpmMatcher::from_expr(
-                    &hoist_pattern_expr,
-                    self.log,
-                    self.source,
-                ) {
-                    Ok(v) => Some(v),
-                    Err(e) if e == err!("OutOfMemory") => return Err(e),
-                    Err(_) => return Err(err!("Invalid Bunfig")),
-                };
+                let _ = (&hoist_pattern_expr, self.log, self.source);
+                install.hoist_pattern =
+                    todo!("blocked_on: bun_install::PnpmMatcher::from_expr / api::PnpmMatcher bridge");
             }
 
             Ok(())

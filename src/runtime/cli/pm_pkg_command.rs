@@ -313,17 +313,17 @@ impl PmPkgCommand {
 
         let mut root = pkg.root;
         if !matches!(root.data, ExprData::EObject(_)) {
-            Output::err_generic(format_args!("package.json root must be an object"));
+            Output::err_generic("package.json root must be an object", ());
             Global::exit(1);
         }
 
         let mut modified = false;
         for &arg in args {
             let Some(eq_pos) = strings::index_of(arg, b"=") else {
-                Output::err_generic(format_args!(
-                    "Invalid argument: {} (expected key=value)",
-                    bstr::BStr::new(arg)
-                ));
+                Output::err_generic(
+                    "Invalid argument: {s} (expected key=value)",
+                    (bstr::BStr::new(arg),),
+                );
                 Global::exit(1);
             };
 
@@ -331,18 +331,12 @@ impl PmPkgCommand {
             let value = &arg[eq_pos + 1..];
 
             if key.is_empty() {
-                Output::err_generic(format_args!(
-                    "Empty key in argument: {}",
-                    bstr::BStr::new(arg)
-                ));
+                Output::err_generic("Empty key in argument: {s}", (bstr::BStr::new(arg),));
                 Global::exit(1);
             }
 
             if value.is_empty() {
-                Output::err_generic(format_args!(
-                    "Empty value in argument: {}",
-                    bstr::BStr::new(arg)
-                ));
+                Output::err_generic("Empty value in argument: {s}", (bstr::BStr::new(arg),));
                 Global::exit(1);
             }
 

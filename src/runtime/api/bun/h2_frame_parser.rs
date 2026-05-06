@@ -117,6 +117,37 @@ unsafe extern "C" {
     fn Bun__wrapAbortError(global_object: *const JSGlobalObject, cause: JSValue) -> JSValue;
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// Local shim for `globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE*, fmt, .{}).throw()`
+// (Zig codegen surfaces these as per-code helper methods on JSGlobalObject; the
+// Rust ErrorCode table exposes them via `JscErrorCode::*` instead.)
+// ──────────────────────────────────────────────────────────────────────────
+pub(crate) struct H2ErrBuilder<'a> {
+    global: &'a JSGlobalObject,
+    code: JscErrorCode,
+    msg: &'static str,
+}
+impl<'a> H2ErrBuilder<'a> {
+    #[inline]
+    pub(crate) fn throw<T>(self) -> JsResult<T> {
+        Err(self.code.throw(self.global, format_args!("{}", self.msg)))
+    }
+}
+pub(crate) trait H2GlobalErrExt {
+    fn err_http2_invalid_setting_value_range_error(&self, msg: &'static str) -> H2ErrBuilder<'_>;
+    fn err_http2_invalid_setting_value(&self, msg: &'static str) -> H2ErrBuilder<'_>;
+}
+impl H2GlobalErrExt for JSGlobalObject {
+    #[inline]
+    fn err_http2_invalid_setting_value_range_error(&self, msg: &'static str) -> H2ErrBuilder<'_> {
+        H2ErrBuilder { global: self, code: JscErrorCode::HTTP2_INVALID_SETTING_VALUE_RangeError, msg }
+    }
+    #[inline]
+    fn err_http2_invalid_setting_value(&self, msg: &'static str) -> H2ErrBuilder<'_> {
+        H2ErrBuilder { global: self, code: JscErrorCode::HTTP2_INVALID_SETTING_VALUE, msg }
+    }
+}
+
 pub fn get_http2_common_string(global_object: &JSGlobalObject, hpack_index: u32) -> Option<JSValue> {
     if hpack_index == 255 {
         return None;

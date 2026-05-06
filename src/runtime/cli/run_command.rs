@@ -1863,14 +1863,12 @@ impl RunCommand {
             // `Output::error_writer()` is `*mut io::Writer`. Route through a
             // shim once io::Writer implements fmt::Write.
             
-            let _ = unsafe { ctx.log() }.print(Output::error_writer());
+            let _ = unsafe { ctx.log() }.print(Output::error_writer() as *mut bun_core::io::Writer);
 
             Output::err(
                 err,
-                format_args!(
-                    "Failed to run script \"<b>{}<r>\"",
-                    bstr::BStr::new(&basename),
-                ),
+                "Failed to run script \"<b>{}<r>\"",
+                (bstr::BStr::new(&basename),),
             );
             Global::exit(1);
         }

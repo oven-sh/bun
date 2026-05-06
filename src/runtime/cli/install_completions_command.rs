@@ -544,7 +544,7 @@ impl InstallCompletionsCommand {
         if shell == Shell::Zsh {
             let mut completions_absolute_path_buf = PathBuffer::uninit();
             let completions_path = bun_sys::get_fd_path(
-                bun_sys::Fd::from_file(&output_file),
+                output_file.handle,
                 &mut completions_absolute_path_buf,
             )
             .expect("unreachable");

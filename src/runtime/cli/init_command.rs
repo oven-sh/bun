@@ -159,17 +159,17 @@ impl InitCommand {
             for (i, option) in choices.iter().enumerate() {
                 if i == selected.to_index() {
                     if colors {
-                        Output::pretty("<r><cyan>❯<r>   ", format_args!(""));
+                        Output::pretty(format_args!("<r><cyan>❯<r>   "));
                     } else {
-                        Output::pretty("<r><cyan>><r>   ", format_args!(""));
+                        Output::pretty(format_args!("<r><cyan>><r>   "));
                     }
                     if colors {
-                        Output::print("\x1B[4m{s}\x1B[24m\x1B[0K\n", format_args!("{}", option));
+                        Output::print(format_args!("\x1B[4m{}\x1B[24m\x1B[0K\n", option));
                     } else {
-                        Output::print("    {s}\x1B[0K\n", format_args!("{}", option));
+                        Output::print(format_args!("    {}\x1B[0K\n", option));
                     }
                 } else {
-                    Output::print("    {s}\x1B[0K\n", format_args!("{}", option));
+                    Output::print(format_args!("    {}\x1B[0K\n", option));
                 }
             }
             Output::clear_to_end();

@@ -69,6 +69,35 @@ pub enum Data {
     Html(Html),
 }
 
+impl Data {
+    /// Zig: `data.framework` payload accessor (asserts active tag).
+    pub fn framework(&self) -> &Framework {
+        match self {
+            Data::Framework(f) => f,
+            Data::Html(_) => unreachable!("expected .framework"),
+        }
+    }
+    pub fn framework_mut(&mut self) -> &mut Framework {
+        match self {
+            Data::Framework(f) => f,
+            Data::Html(_) => unreachable!("expected .framework"),
+        }
+    }
+    /// Zig: `data.html` payload accessor (asserts active tag).
+    pub fn html(&self) -> &Html {
+        match self {
+            Data::Html(h) => h,
+            Data::Framework(_) => unreachable!("expected .html"),
+        }
+    }
+    pub fn html_mut(&mut self) -> &mut Html {
+        match self {
+            Data::Html(h) => h,
+            Data::Framework(_) => unreachable!("expected .html"),
+        }
+    }
+}
+
 pub enum UnresolvedIndex<'a> {
     Framework(framework_router::RouteIndex),
     /// BORROW_PARAM (LIFETIMES.tsv): `.initRef(html)` takes own ref when stored.

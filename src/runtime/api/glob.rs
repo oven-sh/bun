@@ -119,10 +119,10 @@ impl ScanOpts {
                 }
                 return Ok(Some(out));
             }
-            return global_this.throw(format_args!(
+            return Err(global_this.throw(format_args!(
                 "{}: expected first argument to be an object",
                 fn_name
-            ));
+            )));
         }
 
         if let Some(only_files) = opts_obj.get_truthy(global_this, "onlyFiles")? {

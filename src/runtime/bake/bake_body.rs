@@ -387,7 +387,9 @@ impl SplitBundlerOptions {
                 promise.set_handled(global.vm());
                 // TODO: remove this call, replace with a promise list that must
                 // be resolved before the first bundle task can begin.
-                global.bun_vm().wait_for_promise(promise);
+                // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachineRef`
+                // live for the lifetime of the global object.
+                unsafe { &mut *global.bun_vm() }.wait_for_promise(promise);
                 match promise.unwrap(global.vm(), bun_jsc::PromiseUnwrapMode::MarkHandled) {
                     bun_jsc::PromiseResult::Pending => unreachable!(),
                     bun_jsc::PromiseResult::Fulfilled(_val) => {}

@@ -1653,11 +1653,11 @@ impl PublishCommand {
             headers.append(b"accept-encoding", b"gzip,deflate");
 
             if !registry.token.is_empty() {
-                write!(print_buf, "Bearer {}", bstr::BStr::new(&registry.token))?;
+                write!(print_buf, "Bearer {}", bstr::BStr::new(&registry.token)).ok();
                 headers.append(b"authorization", print_buf);
                 print_buf.clear();
             } else if !registry.auth.is_empty() {
-                write!(print_buf, "Basic {}", bstr::BStr::new(&registry.auth))?;
+                write!(print_buf, "Basic {}", bstr::BStr::new(&registry.auth)).ok();
                 headers.append(b"authorization", print_buf);
                 print_buf.clear();
             }
@@ -1681,8 +1681,8 @@ impl PublishCommand {
                 Global::arch_name,
                 uses_workspaces,
                 if ci_name.is_some() { " ci/" } else { "" },
-                ci_name.unwrap_or(""),
-            )?;
+                bstr::BStr::new(ci_name.unwrap_or(b"")),
+            ).ok();
             // headers.append("user-agent", "npm/10.8.3 node/v24.3.0 darwin arm64 workspaces/false");
             headers.append(b"user-agent", print_buf);
             print_buf.clear();

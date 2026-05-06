@@ -81,6 +81,31 @@ fn arena_lowercase(bump: &Bump, name: &[u8]) -> *const [u8] {
     buf as *const [u8]
 }
 
+// ─── selector-slice protocol helpers ─────────────────────────────────────────
+// `Box<[GenericSelector<Impl>]>` appears in `Component::{Negation,Where,Is,
+// Any,Has}`, `NthOfSelectorData`, and (via `SelectorList.v`) at the top level.
+// Hoisted as free fns so the hand-written `eql`/`hash`/`deep_clone` bodies
+// below stay small.
+#[inline]
+fn eql_selector_slice<Impl: BunSelectorImpl>(
+    a: &[GenericSelector<Impl>],
+    b: &[GenericSelector<Impl>],
+) -> bool {
+    a.len() == b.len() && a.iter().zip(b).all(|(l, r)| l.eql(r))
+}
+#[inline]
+fn hash_selector_slice<Impl: BunSelectorImpl>(s: &[GenericSelector<Impl>], hasher: &mut Wyhash) {
+    for sel in s {
+        sel.hash(hasher);
+    }
+}
+#[inline]
+fn deep_clone_selector_slice<Impl: BunSelectorImpl>(
+    s: &[GenericSelector<Impl>],
+) -> Box<[GenericSelector<Impl>]> {
+    s.iter().map(|sel| sel.deep_clone()).collect()
+}
+
 /// Instantiation of generic selector structs using our implementation of the `SelectorImpl` trait.
 pub type Component = GenericComponent<impl_::Selectors>;
 pub type Selector = GenericSelector<impl_::Selectors>;
@@ -845,6 +870,9 @@ impl Direction {
     pub fn eql(&self, rhs: &Self) -> bool {
         *self == *rhs
     }
+    pub fn hash(&self, hasher: &mut Wyhash) {
+        hasher.update(&(*self as u32).to_ne_bytes());
+    }
     pub fn as_str(&self) -> &'static str {
         css::enum_property_util::as_str(self)
     }
@@ -1103,7 +1131,7 @@ impl PseudoClass {
 }
 
 /// A [webkit scrollbar](https://webkit.org/blog/363/styling-scrollbars/) pseudo class.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, CssEql, CssHash, css::generics::DeepClone)]
 pub enum WebKitScrollbarPseudoClass {
     /// :horizontal
     Horizontal,
@@ -1152,6 +1180,10 @@ impl WebKitScrollbarPseudoElement {
     #[inline]
     pub fn eql(&self, rhs: &Self) -> bool {
         *self == *rhs
+    }
+    #[inline]
+    pub fn hash(&self, hasher: &mut Wyhash) {
+        hasher.update(&(*self as u32).to_ne_bytes());
     }
 }
 
@@ -2488,6 +2520,10 @@ pub enum Combinator {
 impl Combinator {
     pub fn eql(&self, rhs: &Self) -> bool {
         *self == *rhs
+    }
+    #[inline]
+    pub fn hash(&self, hasher: &mut Wyhash) {
+        hasher.update(&(*self as u32).to_ne_bytes());
     }
 
     /// Do not call this! Use `serializer::serialize_combinator()` or

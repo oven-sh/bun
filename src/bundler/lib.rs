@@ -58,7 +58,7 @@ pub mod bundle_v2;
 /// `LinkerGraph` SoA accessors land. Declared inline (no `mod.rs`) so paths
 /// stay 1:1 with the Zig directory.
 pub mod linker_context {
-    #[path = "linker_context/scanImportsAndExports.rs"]
+    #[path = "scanImportsAndExports.rs"]
     pub mod scan_imports_and_exports;
 
     // ── Gated drafts (B-1). Each maps 1:1 to a `.zig` of the same basename.
@@ -67,73 +67,73 @@ pub mod linker_context {
     //    Re-exports from these into `linker_context::*` stay blocked until
     //    un-gate; downstream callers go through `LinkerContext` methods.
     #[cfg(any())]
-    #[path = "linker_context/computeChunks.rs"]
+    #[path = "computeChunks.rs"]
     pub mod compute_chunks;
     #[cfg(any())]
-    #[path = "linker_context/computeCrossChunkDependencies.rs"]
+    #[path = "computeCrossChunkDependencies.rs"]
     pub mod compute_cross_chunk_dependencies;
     #[cfg(any())]
-    #[path = "linker_context/convertStmtsForChunk.rs"]
+    #[path = "convertStmtsForChunk.rs"]
     pub mod convert_stmts_for_chunk;
     #[cfg(any())]
-    #[path = "linker_context/convertStmtsForChunkForDevServer.rs"]
+    #[path = "convertStmtsForChunkForDevServer.rs"]
     pub mod convert_stmts_for_chunk_for_dev_server;
     #[cfg(any())]
-    #[path = "linker_context/doStep5.rs"]
+    #[path = "doStep5.rs"]
     pub mod do_step5;
     #[cfg(any())]
-    #[path = "linker_context/findAllImportedPartsInJSOrder.rs"]
+    #[path = "findAllImportedPartsInJSOrder.rs"]
     pub mod find_all_imported_parts_in_js_order;
     #[cfg(any())]
-    #[path = "linker_context/findImportedCSSFilesInJSOrder.rs"]
+    #[path = "findImportedCSSFilesInJSOrder.rs"]
     pub mod find_imported_css_files_in_js_order;
     #[cfg(any())]
-    #[path = "linker_context/findImportedFilesInCSSOrder.rs"]
+    #[path = "findImportedFilesInCSSOrder.rs"]
     pub mod find_imported_files_in_css_order;
     #[cfg(any())]
-    #[path = "linker_context/generateChunksInParallel.rs"]
+    #[path = "generateChunksInParallel.rs"]
     pub mod generate_chunks_in_parallel;
     #[cfg(any())]
-    #[path = "linker_context/generateCodeForFileInChunkJS.rs"]
+    #[path = "generateCodeForFileInChunkJS.rs"]
     pub mod generate_code_for_file_in_chunk_js;
     #[cfg(any())]
-    #[path = "linker_context/generateCodeForLazyExport.rs"]
+    #[path = "generateCodeForLazyExport.rs"]
     pub mod generate_code_for_lazy_export;
     #[cfg(any())]
-    #[path = "linker_context/generateCompileResultForCssChunk.rs"]
+    #[path = "generateCompileResultForCssChunk.rs"]
     pub mod generate_compile_result_for_css_chunk;
     #[cfg(any())]
-    #[path = "linker_context/generateCompileResultForHtmlChunk.rs"]
+    #[path = "generateCompileResultForHtmlChunk.rs"]
     pub mod generate_compile_result_for_html_chunk;
     #[cfg(any())]
-    #[path = "linker_context/generateCompileResultForJSChunk.rs"]
+    #[path = "generateCompileResultForJSChunk.rs"]
     pub mod generate_compile_result_for_js_chunk;
     #[cfg(any())]
-    #[path = "linker_context/postProcessCSSChunk.rs"]
+    #[path = "postProcessCSSChunk.rs"]
     pub mod post_process_css_chunk;
     #[cfg(any())]
-    #[path = "linker_context/postProcessHTMLChunk.rs"]
+    #[path = "postProcessHTMLChunk.rs"]
     pub mod post_process_html_chunk;
     #[cfg(any())]
-    #[path = "linker_context/postProcessJSChunk.rs"]
+    #[path = "postProcessJSChunk.rs"]
     pub mod post_process_js_chunk;
     #[cfg(any())]
-    #[path = "linker_context/prepareCssAstsForChunk.rs"]
+    #[path = "prepareCssAstsForChunk.rs"]
     pub mod prepare_css_asts_for_chunk;
     #[cfg(any())]
-    #[path = "linker_context/renameSymbolsInChunk.rs"]
+    #[path = "renameSymbolsInChunk.rs"]
     pub mod rename_symbols_in_chunk;
     #[cfg(any())]
-    #[path = "linker_context/writeOutputFilesToDisk.rs"]
+    #[path = "writeOutputFilesToDisk.rs"]
     pub mod write_output_files_to_disk;
     #[cfg(any())]
-    #[path = "linker_context/MetafileBuilder.rs"]
+    #[path = "MetafileBuilder.rs"]
     pub mod metafile_builder;
     #[cfg(any())]
-    #[path = "linker_context/OutputFileListBuilder.rs"]
+    #[path = "OutputFileListBuilder.rs"]
     pub mod output_file_list_builder;
     #[cfg(any())]
-    #[path = "linker_context/StaticRouteVisitor.rs"]
+    #[path = "StaticRouteVisitor.rs"]
     pub mod static_route_visitor;
 }
 

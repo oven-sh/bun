@@ -1140,36 +1140,87 @@ impl<P: OutputTaskVTable> OutputTask<P> {
 /// interpreter.zig `ShellTask(Ctx, runFromThreadPool, runFromMainThread, log)`.
 ///
 /// The Zig version is a type-generator over the parent ctx + two fn pointers;
-/// here it's a trait the per-builtin task struct implements.
-///
-/// TODO(b2-blocked): WorkPool::schedule + EventLoopTask are opaque until
-/// `bun_threading` / `bun_jsc` compile. The state structs hold a `ShellTask`
-/// by value so the layout is real; `schedule()` is a no-op stub.
+/// here it's a trait the per-builtin task struct implements. The Zig
+/// `@fieldParentPtr("task", task)` chain (WorkPoolTask → InnerShellTask → Ctx)
+/// is reproduced via `core::mem::offset_of!` in [`ShellTaskCtx::TASK_OFFSET`]
+/// + the `#[repr(C)]` first-field guarantee on [`ShellTask::task`].
 pub trait ShellTaskCtx: Sized {
+    /// Byte offset of the embedded `task: ShellTask` field within `Self`.
+    /// Implementors define this as `core::mem::offset_of!(Self, task)`.
+    const TASK_OFFSET: usize;
     fn run_from_thread_pool(this: *mut Self);
     fn run_from_main_thread(this: *mut Self, interp: &mut Interpreter);
 }
 
-#[derive(Default)]
+pub type WorkPoolTask = bun_threading::work_pool::Task;
+
+#[repr(C)]
 pub struct ShellTask {
+    /// Intrusive thread-pool node. MUST be the first field so the
+    /// `*mut WorkPoolTask` → `*mut ShellTask` cast in the trampoline is a
+    /// no-op (Zig: `@fieldParentPtr("task", task)`).
+    pub task: WorkPoolTask,
     pub event_loop: EventLoopHandle,
     pub keep_alive: bun_aio::KeepAlive,
-    // TODO(b2-blocked): bun_threading::WorkPoolTask + bun_jsc::EventLoopTask.
+    // TODO(b2-blocked): bun_jsc::EventLoopTask (concurrent_task).
 }
 
 impl ShellTask {
     pub fn new(event_loop: EventLoopHandle) -> Self {
-        ShellTask { event_loop, keep_alive: Default::default() }
+        ShellTask {
+            task: WorkPoolTask {
+                node: Default::default(),
+                // Real callback is installed by `schedule::<C>()`; this only
+                // fires if a caller forgets the `<C>` (debug-asserted there).
+                callback: shell_task_unset_callback,
+            },
+            event_loop,
+            keep_alive: Default::default(),
+        }
     }
 
-    pub fn schedule(&mut self) {
-        // TODO(b2-blocked): self.keep_alive.ref_(self.event_loop);
-        //                   WorkPool::schedule(&mut self.task);
+    /// Spec: interpreter.zig `InnerShellTask.schedule`. Installs the per-`C`
+    /// trampoline and hands the intrusive task to the global [`WorkPool`].
+    ///
+    /// SAFETY: `ctx` must be a live heap allocation that embeds this
+    /// `ShellTask` at `C::TASK_OFFSET` and outlives the worker-thread call.
+    pub unsafe fn schedule<C: ShellTaskCtx>(ctx: *mut C) {
+        use bun_threading::work_pool::WorkPool;
+        // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
+        let this = unsafe { &mut *((ctx as *mut u8).add(C::TASK_OFFSET) as *mut ShellTask) };
+        log!("ShellTask schedule");
+        this.task.callback = shell_task_trampoline::<C>;
+        // TODO(b2-blocked): this.keep_alive.ref_(this.event_loop) — needs the
+        // real `bun_jsc::EventLoopHandle`, not the local `usize` shim.
+        WorkPool::schedule(&raw mut this.task);
     }
 
     pub fn on_finish(&mut self) {
-        // TODO(b2-blocked): event_loop.enqueueTaskConcurrent(ctx).
+        log!("ShellTask onFinish");
+        // TODO(b2-blocked): event_loop.enqueueTaskConcurrent(concurrent_task.from(ctx))
+        // — needs bun_jsc::EventLoopTask. Until then the bounce back to the
+        // main thread (and thus `run_from_main_thread`) is not wired; builtin
+        // state machines that depend on it remain suspended (matching the
+        // pre-WorkPool stub behaviour).
     }
+}
+
+/// Spec: interpreter.zig `runFromThreadPool` — recover `*Ctx` from the
+/// intrusive `*WorkPoolTask`, run the user body, then post back to main.
+unsafe fn shell_task_trampoline<C: ShellTaskCtx>(task: *mut WorkPoolTask) {
+    // SAFETY: `task` is the first `#[repr(C)]` field of `ShellTask`.
+    let shell_task = task as *mut ShellTask;
+    // SAFETY: `ShellTask` is embedded in `C` at `TASK_OFFSET` (Zig:
+    // `@fieldParentPtr("task", this)` for the outer hop).
+    let ctx = unsafe { (shell_task as *mut u8).sub(C::TASK_OFFSET) as *mut C };
+    C::run_from_thread_pool(ctx);
+    // SAFETY: `shell_task` is still live (owned by `ctx`).
+    unsafe { (*shell_task).on_finish() };
+}
+
+#[cold]
+unsafe fn shell_task_unset_callback(_: *mut WorkPoolTask) {
+    debug_assert!(false, "ShellTask scheduled without schedule::<C>()");
 }
 
 #[cold]

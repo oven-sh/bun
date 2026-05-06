@@ -1451,6 +1451,10 @@ pub fn process_fetch_log(
         r.unwrap_or_else(|e| global_this.take_exception(e))
     };
 
+    // Spec: `referrer.toUTF8(bun.default_allocator)` — `ResolveMessage::create`
+    // takes raw `&[u8]` and stores them verbatim, so we must convert here.
+    let referrer_utf8 = referrer.to_utf8();
+
     match log.msgs.len() {
         0 => {
             let msg = if err == bun_core::err!("UnexpectedPendingResolution") {
@@ -1495,10 +1499,7 @@ pub fn process_fetch_log(
             let value = match msg.metadata {
                 logger::Metadata::Build => take(BuildMessage::create(global_this, msg)),
                 logger::Metadata::Resolve(_) => {
-                    // Zig converted `referrer` to UTF-8 and passed the slice;
-                    // `crate::ResolveMessage::create` takes `bun_string::String`
-                    // directly (it does its own to_utf8), so forward as-is.
-                    take(ResolveMessage::create(global_this, msg, referrer))
+                    take(ResolveMessage::create(global_this, &msg, referrer_utf8.slice()))
                 }
             };
             *ret = ErrorableResolvedSource::err(err, value);
@@ -1515,7 +1516,7 @@ pub fn process_fetch_log(
                 let v = match msg.metadata {
                     logger::Metadata::Build => take(BuildMessage::create(global_this, msg)),
                     logger::Metadata::Resolve(_) => {
-                        take(ResolveMessage::create(global_this, msg, referrer))
+                        take(ResolveMessage::create(global_this, &msg, referrer_utf8.slice()))
                     }
                 };
                 errors.push(v);

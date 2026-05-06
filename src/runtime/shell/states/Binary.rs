@@ -62,13 +62,13 @@ impl Binary {
             }
             let io = interp.as_binary(this).io.clone();
             let (child, y) = interp.spawn_expr(shell, &n.right, this, io);
-            interp.as_binary_mut(this).currently_executing = Some(child);
+            interp.as_binary_mut(this).currently_executing = child;
             return y;
         }
 
         let io = interp.as_binary(this).io.clone();
         let (child, y) = interp.spawn_expr(shell, &n.left, this, io);
-        interp.as_binary_mut(this).currently_executing = Some(child);
+        interp.as_binary_mut(this).currently_executing = child;
         y
     }
 

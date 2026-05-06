@@ -259,6 +259,10 @@ impl Default for BorderSideWidth {
     }
 }
 
+/// No-op until `impl_fallbacks!` real body un-gates (see ImplFallbacks below).
+/// Hoisted here because `macro_rules!` is order-sensitive.
+macro_rules! impl_fallbacks { ($T:ty; $($field:ident),+) => {}; }
+
 // ──────────────────────────────────────────────────────────────────────────
 // Rect shorthand structs (top/right/bottom/left)
 // ──────────────────────────────────────────────────────────────────────────
@@ -274,9 +278,9 @@ macro_rules! define_rect_shorthand {
         $(, fallbacks)?
     ) => {
         $(#[$meta])*
-        #[derive(Clone)]
-        #[derive(css::DefineRectShorthand)] // TODO(port): provides to_css/parse over $inner
-        #[rect_shorthand(inner = $inner)]
+        #[derive(Clone, PartialEq)]
+        // TODO(port): #[derive(css::DefineRectShorthand)] — provides parse/to_css over `$inner`.
+        // Gated until the proc-macro derive lands; data shape is real.
         pub struct $name {
             pub top: $inner,
             pub right: $inner,
@@ -295,12 +299,12 @@ macro_rules! define_rect_shorthand {
                 ("left", PropertyIdTag::$left_id),
             ];
 
-            pub fn deep_clone(&self, allocator: &Bump) -> Self {
-                css::implement_deep_clone(self, allocator)
+            pub fn deep_clone(&self, _allocator: &Bump) -> Self {
+                self.clone()
             }
 
             pub fn eql(&self, rhs: &Self) -> bool {
-                css::implement_eql(self, rhs)
+                self == rhs
             }
         }
     };
@@ -347,9 +351,9 @@ macro_rules! define_size_shorthand {
         end: $end_id:ident
     ) => {
         $(#[$meta])*
-        #[derive(Clone)]
-        #[derive(css::DefineSizeShorthand)] // TODO(port): provides to_css/parse over $inner
-        #[size_shorthand(inner = $inner)]
+        #[derive(Clone, PartialEq)]
+        // TODO(port): #[derive(css::DefineSizeShorthand)] — provides parse/to_css over `$inner`.
+        // Gated until the proc-macro derive lands; data shape is real.
         pub struct $name {
             /// The start value.
             pub start: $inner,
@@ -366,12 +370,12 @@ macro_rules! define_size_shorthand {
                 ("end", PropertyIdTag::$end_id),
             ];
 
-            pub fn deep_clone(&self, allocator: &Bump) -> Self {
-                css::implement_deep_clone(self, allocator)
+            pub fn deep_clone(&self, _allocator: &Bump) -> Self {
+                self.clone()
             }
 
             pub fn eql(&self, rhs: &Self) -> bool {
-                css::implement_eql(self, rhs)
+                self == rhs
             }
         }
     };
@@ -429,9 +433,7 @@ define_size_shorthand! {
 
 // TODO(port): Zig used `inline for (std.meta.fields(T))` reflection. We expand
 // the field list at macro invocation. All fields are `CssColor`.
-// TODO(port): macro ordering — hoist above first use (BorderColor at ~line 313) in Phase B;
-// macro_rules! is order-sensitive and #[macro_export] does not fix intra-module forward refs.
-#[macro_export]
+#[cfg(any())] // blocked_on: macro ordering (must hoist above first use) + CssColor::{get_necessary_fallbacks,get_fallback} + SmallList::append
 macro_rules! impl_fallbacks {
     ($T:ty; $($field:ident),+) => {
         impl $T {
@@ -473,8 +475,6 @@ macro_rules! impl_fallbacks {
         }
     };
 }
-pub(crate) use impl_fallbacks;
-
 // ──────────────────────────────────────────────────────────────────────────
 // BorderShorthand (private)
 // ──────────────────────────────────────────────────────────────────────────
@@ -486,6 +486,7 @@ struct BorderShorthand {
     color: Option<CssColor>,
 }
 
+#[cfg(any())] // blocked_on: css::implement_eql blanket + GenericBorder method bodies + DeepClone trait bound
 impl BorderShorthand {
     pub fn eql(&self, rhs: &Self) -> bool {
         css::implement_eql(self, rhs)
@@ -606,6 +607,7 @@ bitflags::bitflags! {
     }
 }
 
+#[cfg(any())] // blocked_on: PropertyIdTag variant name verification (PascalCase mapping)
 impl BorderProperty {
     pub fn try_from_property_id(property_id: PropertyIdTag) -> Option<Self> {
         // TODO(port): Zig used `inline for` over PropertyIdTag fields + @hasDecl.
@@ -683,6 +685,29 @@ pub struct BorderHandler {
     has_any: bool,
 }
 
+impl BorderHandler {
+    // No-op stubs so `DeclarationHandler` compiles; real bodies are gated below.
+    #[inline]
+    pub fn handle_property(
+        &mut self,
+        _property: &Property,
+        _dest: &mut DeclarationList<'_>,
+        _context: &mut PropertyHandlerContext<'_>,
+    ) -> bool {
+        false
+    }
+    #[inline]
+    pub fn finalize(
+        &mut self,
+        _dest: &mut DeclarationList<'_>,
+        _context: &mut PropertyHandlerContext<'_>,
+    ) {
+    }
+}
+
+#[cfg(any())] // blocked_on: Property variant payloads + BorderShorthand methods + flush_category!/fc_prop! macro web
+mod border_handler_body {
+use super::*;
 impl BorderHandler {
     pub fn handle_property(
         &mut self,
@@ -1530,3 +1555,5 @@ fn is_border_property(property_id: PropertyIdTag) -> bool {
 //   todos:      11
 //   notes:      Heavy comptime-string @field/@unionInit dispatch ported to macro_rules! (fc_prop!/flush_category!). FlushContext.self narrowed to &mut flushed_properties for borrowck. fc_push!/fc_fallbacks!/prop! derive the BorderProperty bitflag via try_from_property_id(PropertyIdTag::$p) so a single PascalCase ident keys both Property and the flag set. flush_unparsed `prop` arm preserves Zig behavior of NOT pushing to dest (likely upstream bug). macro_rules! ordering (impl_fallbacks!, flush_category!) flagged for Phase B hoist.
 // ──────────────────────────────────────────────────────────────────────────
+
+} // mod border_handler_body

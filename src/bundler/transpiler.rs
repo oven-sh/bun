@@ -72,11 +72,12 @@ pub struct Transpiler<'a> {
     pub router: Option<Router<'a>>,
     pub source_map: options::SourceMapOption,
 
-    // TODO(b2-blocked): crate::linker::Linker — `linker` module is still gated
-    // (depends on bun_css / runtime printer surface). Field kept as the opaque
-    // unit stub `crate::Linker(())`; `set_log`/`set_allocator` skip the
-    // `linker.log`/`linker.allocator` write until the real type lands.
-    pub linker: crate::Linker,
+    // B-2 un-gated: real `crate::linker::Linker` so
+    // `ModuleLoader::transpile_source_code` (jsc_hooks.rs) can call
+    // `transpiler.linker.link()` / read `import_counter`. `set_log`/
+    // `set_allocator` still skip the `linker.log`/`linker.allocator` write
+    // until `configure_linker` wires the back-pointers.
+    pub linker: crate::linker::Linker,
     pub timer: SystemTimer,
     // TODO(port): lifetime — Zig stored `&DotEnv.Loader` (global singleton).
     pub env: *mut dot_env::Loader<'a>,
@@ -407,7 +408,7 @@ impl<'a> Transpiler<'a> {
                 // .thread_pool = pool,
                 // TODO(port): Zig used `undefined`; configureLinker assigns later.
                 // `crate::Linker` is the unit stub `struct Linker(())` in lib.rs.
-                linker: unsafe { core::mem::zeroed::<crate::Linker>() },
+                linker: unsafe { core::mem::zeroed::<crate::linker::Linker>() },
                 result: options::TransformResult {
                     outbase: bundle_options.output_dir,
                     ..Default::default()
@@ -709,6 +710,23 @@ impl<'a> Transpiler<'a> {
                         },
                     });
                 }
+                #[cfg(not(any()))]
+                {
+                    // PORTING.md §Forbidden: silent no-op. Spec
+                    // transpiler.zig:866-991 returns a populated `ParseResult`
+                    // (or logs a parse error); falling through to `None` with
+                    // no diagnostic is indistinguishable from a real parse
+                    // failure that already logged.
+                    let _ = log.add_error_fmt(
+                        None,
+                        logger::Loc::EMPTY,
+                        format_args!(
+                            "parsing \"{}\" (b2-blocked: js_parser::ParserOptions::init / cache::JavaScript::parse)",
+                            bstr::BStr::new(path.text)
+                        ),
+                    );
+                    return None;
+                }
             }
             // TODO(b2-blocked): JSON/JSONC/TOML/YAML/JSON5/Text/Md branches
             // build `js_ast::Stmt`/`Part` slabs via `Arena::alloc_slice_*` and
@@ -754,6 +772,19 @@ impl<'a> Transpiler<'a> {
                 // `Stmt::alloc(S::ExportDefault { .. })` — those constructors
                 // are shaped differently in the live `bun_js_parser::ast`
                 // surface. Full body preserved in `__phase_a_draft` below.
+                // PORTING.md §Forbidden: silent no-op — log instead of falling
+                // through to `None` with no diagnostic (spec
+                // transpiler.zig:993-1193 returns a real `ParseResult`).
+                let _ = log.add_error_fmt(
+                    None,
+                    logger::Loc::EMPTY,
+                    format_args!(
+                        "parsing \"{}\" (b2-blocked: data-format loader {:?})",
+                        bstr::BStr::new(path.text),
+                        loader,
+                    ),
+                );
+                return None;
             }
             options::Loader::File
             | options::Loader::Napi

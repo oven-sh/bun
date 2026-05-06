@@ -589,6 +589,17 @@ impl Worker {
         // SAFETY: written on the line above.
         let t = unsafe { transpiler.assume_init_mut() };
         t.set_log(log);
+        // PORT NOTE: reseat `resolver.fs` from the raw `t.fs` so each per-worker
+        // clone holds its own `&mut FileSystem` borrow — the bitwise
+        // `clone_for_worker` above duplicated the parent's live `&mut` (aliased
+        // unique reference, UB under Stacked Borrows). `set_log` already does
+        // this for `resolver.log`; this mirrors it for `fs`.
+        // TODO(port): proper fix is `Resolver.{fs,log}: *mut _` (matching
+        // `Transpiler.{fs,log}` which are already raw for exactly this reason
+        // — see transpiler.rs:54-66). Out of scope here (resolver/lib.rs).
+        // SAFETY: `t.fs` points at the process-lifetime `Fs::FileSystem`
+        // singleton (transpiler.rs `Transpiler::init`); outlives every worker.
+        t.resolver.fs = unsafe { &mut *t.fs };
         // SAFETY: `allocator` points at `Worker.heap` (initialized in `create`)
         // which outlives `WorkerData`; lifetime erased to `'static` to match the
         // slot's erased `Transpiler<'static>`.

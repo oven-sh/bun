@@ -55,7 +55,7 @@ impl Stmt {
         let expr: ast::Expr = unsafe { (*(*interp.as_stmt(this).node).exprs)[idx] };
         let io = interp.as_stmt(this).io.clone();
         let (child, y) = interp.spawn_expr(shell, &expr, this, io);
-        interp.as_stmt_mut(this).currently_executing = Some(child);
+        interp.as_stmt_mut(this).currently_executing = child;
         y
     }
 

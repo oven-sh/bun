@@ -352,7 +352,10 @@ impl SyntaxComponentKind {
             // A literal.
             let mut end_idx: usize = 0;
             while end_idx < input.len() && is_name_code_point(input[end_idx]) {
-                end_idx += strings::utf8_byte_sequence_length(input[end_idx]) as usize;
+                // Spec uses utf8ByteSequenceLengthUnsafe (unreachable for invalid lead bytes);
+                // clamp to >=1 so a stray 0x80..=0xBF / 0xF8..=0xFF byte advances instead of
+                // returning 0 and spinning forever.
+                end_idx += (strings::utf8_byte_sequence_length(input[end_idx]).max(1)) as usize;
             }
             let literal: Box<[u8]> = Box::from(&input[0..end_idx]);
             *input = &input[end_idx..];

@@ -30,7 +30,7 @@ use crate::api::bun::Terminal;
 use crate::api::js_bun_spawn_bindings;
 use crate::jsc::ipc as IPC;
 use crate::node::node_cluster_binding;
-use crate::timer::EventLoopTimer;
+use crate::timer::{EventLoopTimer, EventLoopTimerState};
 use crate::webcore::{self, AbortSignal, Blob, FileSink};
 
 pub mod resource_usage;
@@ -511,14 +511,14 @@ impl Subprocess<'_> {
 
     pub fn timeout_callback(&mut self) {
         self.set_event_loop_timer_refd(false);
-        if self.event_loop_timer.state == EventLoopTimer::State::CANCELLED {
+        if self.event_loop_timer.state == EventLoopTimerState::CANCELLED {
             return;
         }
         if self.has_exited() {
-            self.event_loop_timer.state = EventLoopTimer::State::CANCELLED;
+            self.event_loop_timer.state = EventLoopTimerState::CANCELLED;
             return;
         }
-        self.event_loop_timer.state = EventLoopTimer::State::FIRED;
+        self.event_loop_timer.state = EventLoopTimerState::FIRED;
         let _ = self.try_kill(self.kill_signal);
     }
 
@@ -762,7 +762,7 @@ impl Subprocess<'_> {
         // &mut self which conflicts with the body. Reshaped: explicit calls at every return point.
         // For now we run them at the end and at early-return sites manually.
 
-        if self.event_loop_timer.state == EventLoopTimer::State::ACTIVE {
+        if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {
             jsc_vm.timer.remove(&mut self.event_loop_timer);
         }
         self.set_event_loop_timer_refd(false);
@@ -1093,7 +1093,7 @@ impl Subprocess<'_> {
         // SAFETY: finalize() runs exactly once; no code path reads `this.process` after this.
         unsafe { ManuallyDrop::drop(&mut this.process) };
 
-        if this.event_loop_timer.state == EventLoopTimer::State::ACTIVE {
+        if this.event_loop_timer.state == EventLoopTimerState::ACTIVE {
             this.global_this
                 .bun_vm()
                 .timer

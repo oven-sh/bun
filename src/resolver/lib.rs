@@ -3675,7 +3675,7 @@ impl<'a> Resolver<'a> {
 
             // Try looking up the path relative to the base URL
             if tsconfig.has_base_url() {
-                let base = tsconfig.base_url;
+                let base: &[u8] = &tsconfig.base_url;
                 if let Some(abs) = self.fs.abs_buf_checked(&[base, import_path], bufs!(load_as_file_or_directory_via_tsconfig_base_path)) {
                     if let Some(res) = self.load_as_file_or_directory(abs, kind) {
                         if let Some(d) = self.debug_logs.as_mut() { d.decrease_indent(); }

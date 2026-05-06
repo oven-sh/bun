@@ -3519,10 +3519,15 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         // route ALL parser access through it; never touch `self` directly again
         // (Stacked Borrows: reborrowing `self` would invalidate `parser`).
         macro_rules! parser { () => { unsafe { &mut *parser } }; }
-        // SAFETY: ctx outlived by &mut self in scan_plain_scalar; no other
-        // borrow of *self exists across these unsafe derefs.
+        // SAFETY: ctx outlived by the &mut self this fn was entered with. Both
+        // `ctx.parser` and `ctx.str_builder.parser` are copies of the SAME raw
+        // pointer (`parser` above) so all derived `&mut Parser` share one
+        // provenance chain.
         let mut ctx = ScalarResolverCtx::<Enc> {
-            str_builder: unsafe { (*parser).string_builder_raw() },
+            str_builder: StringBuilder {
+                parser,
+                str: YamlString::Range(StringRange { off: Pos::ZERO, end: Pos::ZERO }),
+            },
             resolved: false,
             scalar: None,
             tag: opts.tag,
@@ -4561,6 +4566,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }
             EncodingKind::Utf16 => {
                 // Zig: std.unicode.utf16CodepointSequenceLength + manual surrogate split.
+                // utf16CodepointSequenceLength rejects surrogate code points; mirror that.
+                if (0xD800..=0xDFFF).contains(&cp) {
+                    return Err(ParseError::UnexpectedCharacter);
+                }
                 let len: u8 = if cp < 0x10000 { 1 } else { 2 };
                 match len {
                     1 => {

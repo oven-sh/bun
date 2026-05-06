@@ -129,8 +129,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         // PORT NOTE: `vm.preload`/`vm.argv` are `Vec<Box<[u8]>>` on both sides;
         // hand the CLI's vectors over wholesale (process-lifetime, never freed).
-        vm.preload = core::mem::take(&mut ctx.preloads);
-        vm.argv = core::mem::take(&mut ctx.passthrough);
+        vm.preload = std::mem::take(&mut ctx.preloads);
+        vm.argv = std::mem::take(&mut ctx.passthrough);
         vm.is_main_thread = true;
         vm.main = entry_path;
 

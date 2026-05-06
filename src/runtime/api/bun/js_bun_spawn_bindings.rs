@@ -6,16 +6,22 @@ use bun_core::{fmt as bun_fmt, Output, SignalCode, StackCheck};
 use bun_io::MaxBuf;
 use bun_jsc::{
     self as jsc, CallFrame, EventLoop, EventLoopHandle, JSGlobalObject, JSObject,
-    JSPropertyIterator, JSValue, JsError, JsResult, Subprocess, SystemError, WebCore, ZigString,
+    JSPropertyIterator, JSValue, JsError, JsResult, SystemError, ZigString,
 };
 use bun_jsc::ipc as IPC;
-use bun_jsc::Subprocess::{Readable, Writable};
 use bun_paths::PathBuffer;
-use bun_spawn::{self as spawn, Process, Rusage, SpawnOptions, Stdio};
 use bun_str::{self as strings_mod, strings, String as BunString, ZStr};
 use bun_sys::{self as sys, Fd};
 
+// Process / spawn machinery is local to this crate (api/bun/process.rs).
+use crate::api::bun_process::{
+    self as spawn, ExtraPipe, Process, Rusage, SpawnOptions, SpawnProcessResult,
+};
+// User-facing JS `Stdio` enum (extract/as_spawn_option/is_piped).
+use crate::api::bun_spawn::stdio::{self, Stdio};
+use crate::api::bun_subprocess::{self as Subprocess, Readable, Subprocess as SubprocessT, Writable};
 use crate::api::bun::terminal::Terminal;
+use crate::webcore as WebCore;
 
 bun_output::declare_scope!(Subprocess, hidden);
 

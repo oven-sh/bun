@@ -2431,14 +2431,15 @@ pub mod internal {
         let port: u16 = 'brk: {
             if arguments.len() > 1 && !arguments[1].is_undefined_or_null() {
                 break 'brk global_this.validate_integer_range::<u16>(
-                    arguments[1], 443, jsc::ValidateIntegerRangeOptions { field_name: "port", always_allow_zero: true },
+                    arguments[1], 443, jsc::IntegerRangeOptions { field_name: "port", always_allow_zero: true, ..Default::default() },
                 )?;
             } else {
                 break 'brk 443;
             }
         };
 
-        prefetch(VirtualMachine::get().uws_loop(), Some(&hostname_z), port);
+        // SAFETY: `VirtualMachine::get()` returns the live thread-local VM (panics if absent).
+        prefetch(unsafe { (*VirtualMachine::get()).uws_loop() }, Some(&hostname_z), port);
         Ok(JSValue::UNDEFINED)
     }
 

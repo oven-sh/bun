@@ -27,6 +27,15 @@ pub struct Entry {
     blob: Blob,
 }
 
+// SAFETY: `Entry` is only ever accessed while holding `ObjectURLRegistry.map`'s
+// mutex (see `Guarded` below), mirroring the Zig `bun.Mutex` + `*Entry` pattern
+// where the registry is a process-wide singleton shared across threads. `Blob`
+// contains raw pointers (`*const [u8]`, `*const JSGlobalObject`) which are
+// `!Send` by default but are safe to move across threads under the lock — the
+// underlying data is heap-owned/refcounted and the Zig original relies on the
+// same invariant.
+unsafe impl Send for Entry {}
+
 impl Entry {
     pub fn init(blob: &Blob) -> Box<Entry> {
         Box::new(Entry {

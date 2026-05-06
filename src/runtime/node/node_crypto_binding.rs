@@ -411,6 +411,8 @@ pub mod random {
     mod _hostfns {
     use super::*;
     use crate::node::util::validators;
+    use bun_jsc::UUID;
+    use bun_str::String as BunString;
 
     #[bun_jsc::host_fn]
     pub fn random_int(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {

@@ -1055,6 +1055,8 @@ pub fn is_absolute_windows_t<T: PathChar>(path: &[T]) -> bool {
 
 mod _rest {
 use super::*;
+use crate::jsc::bun_string_jsc as BunString;
+use crate::node::validators::{validate_object, validate_string};
 pub fn extname_posix_js_t<T: PathChar>(
     global_object: &JSGlobalObject,
     path: &[T],

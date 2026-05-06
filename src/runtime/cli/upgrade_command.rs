@@ -980,7 +980,7 @@ impl UpgradeCommand {
                     target_filename_.len(),
                 )
             };
-            let target_dir_ = bun_paths::dirname(destination_executable)
+            let target_dir_ = bun_core::dirname(destination_executable)
                 .ok_or(bun_core::err!("UpgradeFailedBecauseOfMissingExecutableDir"))?;
             // safe because the slash will no longer be in use
             let target_dir_len = target_dir_.len();
@@ -988,8 +988,8 @@ impl UpgradeCommand {
             // SAFETY: buf[target_dir_len] == 0 written above
             let target_dirname =
                 unsafe { ZStr::from_raw(current_executable_buf.as_ptr(), target_dir_len) };
-            let target_dir_it = match sys::open_dir_absolute_z(target_dirname, Default::default()) {
-                Ok(d) => d,
+            let target_dir_it = match sys::open_dir_absolute(target_dirname.as_bytes()) {
+                Ok(d) => sys::Dir::from_fd(d),
                 Err(err) => {
                     let _ = save_dir_.delete_tree(&version_name);
                     Output::pretty_errorln(format_args!(

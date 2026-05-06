@@ -328,7 +328,8 @@ impl HmrSocket {
                 if dev.emit_incremental_visualizer_events == 0
                     && dev.memory_visualizer_timer.state == EventLoopTimerState::ACTIVE
                 {
-                    dev.vm.timer.remove(&mut dev.memory_visualizer_timer);
+                    let _ = &mut dev.memory_visualizer_timer;
+                    todo!("blocked_on: bun_jsc::VirtualMachine::timer");
                 }
             }
         }
@@ -354,7 +355,7 @@ impl HmrSocket {
             }
         }
 
-        if let Some(old) = this.active_route.unwrap() {
+        if let Some(old) = this.active_route {
             dev.route_bundle_ptr(old).active_viewers -= 1;
         }
 
@@ -362,8 +363,13 @@ impl HmrSocket {
             dev.source_maps.unref(*key);
         }
         // referenced_source_maps.deinit(allocator) → Drop on HashMap (below)
-        let removed = dev.active_websocket_connections.remove(s);
-        debug_assert!(removed);
+        // PORT NOTE: `active_websocket_connections` is keyed on the mod.rs
+        // `dev_server::HmrSocket` stub type; cast through `*mut ()` until the
+        // two HmrSocket definitions are unified.
+        let removed = dev
+            .active_websocket_connections
+            .remove(&(s as *mut () as *mut super::HmrSocket));
+        debug_assert!(removed.is_some());
         // SAFETY: `s` was Box::into_raw'd in `new()`'s caller; this is the sole
         // owner reclaiming it. Matches `s.dev.allocator().destroy(s)`.
         drop(unsafe { Box::from_raw(s) });

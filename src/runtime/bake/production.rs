@@ -445,10 +445,9 @@ pub fn build_with_vm(
     framework.init_transpiler_with_options(
         &options.arena,
         vm_log,
-        bake::Mode::ProductionStatic,
-        bake::Graph::Server,
-        // SAFETY: out-param; init_transpiler_with_options writes the full struct.
-        unsafe { &mut *server_transpiler.as_mut_ptr() },
+        bake_body::Mode::ProductionStatic,
+        bake_body::Graph::Server,
+        &mut server_transpiler,
         &options.bundler_options.server,
         SourceMapOption::from_api(Some(options.bundler_options.server.source_map)),
         options.bundler_options.server.minify_whitespace,
@@ -458,10 +457,9 @@ pub fn build_with_vm(
     framework.init_transpiler_with_options(
         &options.arena,
         vm_log,
-        bake::Mode::ProductionStatic,
-        bake::Graph::Client,
-        // SAFETY: out-param; init_transpiler_with_options writes the full struct.
-        unsafe { &mut *client_transpiler.as_mut_ptr() },
+        bake_body::Mode::ProductionStatic,
+        bake_body::Graph::Client,
+        &mut client_transpiler,
         &options.bundler_options.client,
         SourceMapOption::from_api(Some(options.bundler_options.client.source_map)),
         options.bundler_options.client.minify_whitespace,
@@ -472,10 +470,9 @@ pub fn build_with_vm(
         framework.init_transpiler_with_options(
             &options.arena,
             vm_log,
-            bake::Mode::ProductionStatic,
-            bake::Graph::Ssr,
-            // SAFETY: out-param; init_transpiler_with_options writes the full struct.
-            unsafe { &mut *ssr_transpiler.as_mut_ptr() },
+            bake_body::Mode::ProductionStatic,
+            bake_body::Graph::Ssr,
+            &mut ssr_transpiler,
             &options.bundler_options.ssr,
             SourceMapOption::from_api(Some(options.bundler_options.ssr.source_map)),
             options.bundler_options.ssr.minify_whitespace,

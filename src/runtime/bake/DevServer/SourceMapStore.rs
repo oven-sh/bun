@@ -246,10 +246,12 @@ impl Entry {
                 source_map_strings.extend_from_slice(b"\"bun://");
                 match bun_str::strings::percent_encode_write(path, &mut source_map_strings) {
                     Ok(()) => {}
-                    Err(e) if e == bun_core::err!("IncompleteUTF8") => {
+                    Err(bun_str::strings::PercentEncodeError::IncompleteUTF8) => {
                         panic!("Unexpected: asset with incomplete UTF-8 as file path")
                     }
-                    Err(e) => return Err(e),
+                    Err(bun_str::strings::PercentEncodeError::OutOfMemory) => {
+                        return Err(bun_core::err!("OutOfMemory"))
+                    }
                 }
                 source_map_strings.extend_from_slice(b"\"");
             }

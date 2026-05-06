@@ -153,13 +153,25 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
     /// `IncrementalGraph(side).insertStale(abs_path, is_ssr)` — adds a file
     /// to the graph in the stale state without bundled content. Returns its
-    /// `FileIndex`. Full body (with `is_route` / `is_special_framework_file`
-    /// flag handling and edge initialization) is in the gated draft; this
-    /// implements only what `init()` needs (file identity + stale bit).
+    /// `FileIndex`. Thin forwarder to `insert_stale_extra` (spec :1295).
     pub fn insert_stale(
         &mut self,
         abs_path: &[u8],
         is_ssr: bool,
+    ) -> Result<FileIndex<SIDE>, bun_alloc::AllocError> {
+        self.insert_stale_extra(abs_path, is_ssr, false)
+    }
+
+    /// `IncrementalGraph(side).insertStaleExtra(abs_path, is_ssr, is_route)` —
+    /// spec IncrementalGraph.zig:1300. Full body (with client-side
+    /// `freeFileContent` + `is_special_framework_file` handling) is in the
+    /// gated draft; this implements file identity + stale bit + the
+    /// server-side `is_route` / `is_rsc` / `is_ssr` flag merge.
+    pub fn insert_stale_extra(
+        &mut self,
+        abs_path: &[u8],
+        is_ssr: bool,
+        is_route: bool,
     ) -> Result<FileIndex<SIDE>, bun_alloc::AllocError> {
         let gop = self.bundled_files.get_or_put(abs_path)?;
         let idx = gop.index;
@@ -172,7 +184,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 is_rsc: !is_ssr,
                 is_ssr,
                 is_client_component_boundary: false,
-                is_route: false,
+                is_route,
                 is_hmr_root: false,
                 is_special_framework_file: false,
                 html_route_bundle_index: None,
@@ -183,6 +195,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             self.first_dependency.push(None);
         } else {
             // On hit, OR in the appropriate flag (spec :1340-1346).
+            if is_route {
+                gop.value_ptr.is_route = true;
+            }
             if is_ssr {
                 gop.value_ptr.is_ssr = true;
             } else {
@@ -196,6 +211,46 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             self.stale_files.set(idx);
         }
         Ok(FileIndex(idx as u32))
+    }
+
+    /// `IncrementalGraph(side).insertFailure(mode, key, log, is_ssr)` —
+    /// spec IncrementalGraph.zig:1419. Marks a file as failed + stale and
+    /// records its `SerializedFailure`. Full body (which threads the
+    /// `SerializedFailure` into `dev.bundling_failures` via `owner()`) lives
+    /// in the gated draft; this un-gated stub keeps the graph storage
+    /// consistent so `handle_parse_task_failure` compiles.
+    pub fn insert_failure(
+        &mut self,
+        key: InsertFailureKey<'_>,
+        _log: &bun_logger::Log,
+        is_ssr: bool,
+    ) -> Result<(), bun_alloc::AllocError> {
+        let (idx, found_existing) = match key {
+            InsertFailureKey::AbsPath(abs_path) => {
+                let gop = self.bundled_files.get_or_put(abs_path)?;
+                if !gop.found_existing {
+                    self.first_import.push(None);
+                    self.first_dependency.push(None);
+                }
+                (gop.index, gop.found_existing)
+            }
+            InsertFailureKey::Index(i) => (i.get() as usize, true),
+        };
+        self.ensure_stale_bit_capacity(true)?;
+        self.stale_files.set(idx);
+        let file = &mut self.bundled_files.values_mut()[idx];
+        if !found_existing {
+            file.is_rsc = !is_ssr;
+            file.is_ssr = is_ssr;
+        } else if is_ssr {
+            file.is_ssr = true;
+        } else {
+            file.is_rsc = true;
+        }
+        file.failed = true;
+        // TODO(b2): port `SerializedFailure` insertion into
+        // `dev.bundling_failures` once `owner()` is un-gated here.
+        Ok(())
     }
 
     /// `IncrementalGraph(side).insertEmpty(abs_path, kind)` — adds a file to

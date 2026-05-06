@@ -2418,9 +2418,9 @@ impl RunCommand {
 
                 if exit_code.code != 0 {
                     if exit_code.code != 2 && !silent {
-                        Output::pretty_errorln(
+                        pretty_errorln!(
                             "<r><red>error<r><d>:<r> script <b>\"{}\"<r> exited with code {}<r>",
-                            (bstr::BStr::new(name), exit_code.code),
+                            bstr::BStr::new(name), exit_code.code,
                         );
                         Output::flush();
                     }

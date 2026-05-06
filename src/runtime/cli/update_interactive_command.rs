@@ -98,9 +98,9 @@ struct ColumnWidths {
     show_workspace: bool,
 }
 
-struct MultiSelectState<'a> {
-    packages: &'a mut [OutdatedPackage<'a>],
-    selected: &'a mut [bool],
+struct MultiSelectState<'a, 's> {
+    packages: &'s mut [OutdatedPackage<'a>],
+    selected: &'s mut [bool],
     cursor: usize,
     viewport_start: usize,
     viewport_height: usize, // Default viewport height
@@ -123,7 +123,7 @@ impl UpdateInteractiveCommand {
     // Common utility functions to reduce duplication
 
     fn build_package_json_path<'b>(
-        root_dir: &[u8],
+        root_dir: &'b [u8],
         workspace_path: &[u8],
         path_buf: &'b mut PathBuffer,
     ) -> &'b [u8] {

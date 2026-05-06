@@ -1625,7 +1625,7 @@ pub extern "C" fn Bun__resolveSync(
 
     if specifier_str.length() == 0 {
         let _ = global
-            .err(jsc::ErrCode::INVALID_ARG_VALUE, "The argument 'id' must be a non-empty string. Received ''", format_args!(""))
+            .err(jsc::ErrCode::INVALID_ARG_VALUE, format_args!("The argument 'id' must be a non-empty string. Received ''"))
             .throw();
         return JSValue::ZERO;
     }
@@ -1665,7 +1665,7 @@ pub extern "C" fn Bun__resolveSyncWithPaths(
 
     if specifier_str.length() == 0 {
         let _ = global
-            .err(jsc::ErrCode::INVALID_ARG_VALUE, "The argument 'id' must be a non-empty string. Received ''", format_args!(""))
+            .err(jsc::ErrCode::INVALID_ARG_VALUE, format_args!("The argument 'id' must be a non-empty string. Received ''"))
             .throw();
         return JSValue::ZERO;
     }
@@ -1725,7 +1725,7 @@ pub extern "C" fn Bun__resolveSyncWithSource(
     };
     if specifier_str.length() == 0 {
         let _ = global
-            .err(jsc::ErrCode::INVALID_ARG_VALUE, "The argument 'id' must be a non-empty string. Received ''", format_args!(""))
+            .err(jsc::ErrCode::INVALID_ARG_VALUE, format_args!("The argument 'id' must be a non-empty string. Received ''"))
             .throw();
         return JSValue::ZERO;
     }

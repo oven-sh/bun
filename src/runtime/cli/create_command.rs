@@ -342,7 +342,7 @@ impl CreateCommand {
 
         // alacritty is fast
         if env_loader.map.get(b"ALACRITTY_LOG").is_some() {
-            progress.refresh_rate_ns = bun_core::time::NS_PER_MS * 8;
+            progress.refresh_rate_ns = (bun_core::time::NS_PER_MS * 8) as u64;
         }
 
         let _refresh_on_exit = scopeguard::guard((), |_| progress.refresh());

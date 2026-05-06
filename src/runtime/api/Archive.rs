@@ -219,15 +219,14 @@ impl Archive {
         W: core::fmt::Write,
     {
         let data = self.store.shared_view();
+        let fmt_err = |_: core::fmt::Error| bun_core::err!("FormatError");
 
         write!(
             writer,
-            "{}",
-            Output::pretty_fmt_args::<ENABLE_ANSI_COLORS>(format_args!(
-                "Archive ({}) {{\n",
-                bun_core::fmt::size(data.len(), bun_core::fmt::SizeFormatterOptions::default()),
-            )),
-        )?;
+            "Archive ({}) {{\n",
+            bun_core::fmt::size(data.len(), bun_core::fmt::SizeFormatterOptions::default()),
+        )
+        .map_err(fmt_err)?;
 
         {
             formatter.indent_inc();
@@ -236,8 +235,13 @@ impl Archive {
             // `formatter` while it is also borrowed for the body; decrement
             // after the block instead.
 
-            formatter.write_indent(writer)?;
-            writer.write_str(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>files<d>:<r> "))?;
+            formatter.write_indent(writer).map_err(fmt_err)?;
+            write!(
+                writer,
+                "{}",
+                Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>files<d>:<r> "),
+            )
+            .map_err(fmt_err)?;
             formatter
                 .print_as::<W, ENABLE_ANSI_COLORS>(
                     jsc::FormatTag::Double,
@@ -249,9 +253,9 @@ impl Archive {
 
             formatter.indent_dec();
         }
-        writer.write_str("\n")?;
-        formatter.write_indent(writer)?;
-        writer.write_str("}")?;
+        writer.write_str("\n").map_err(fmt_err)?;
+        formatter.write_indent(writer).map_err(fmt_err)?;
+        writer.write_str("}").map_err(fmt_err)?;
         formatter.reset_line();
         Ok(())
     }

@@ -181,8 +181,8 @@ pub struct CronRegisterJob {
     parsed_cron: CronExpression,
 
     state: RegisterState,
-    // LIFETIMES.tsv: SHARED → Option<Arc<Process>>
-    process: Option<Arc<Process>>,
+    // LIFETIMES.tsv: SHARED — `Process` is intrusively refcounted (`*mut`).
+    process: Option<*mut Process>,
     stdout_reader: OutputReader,
     stderr_reader: OutputReader,
     remaining_fds: i8,
@@ -202,6 +202,24 @@ enum RegisterState {
     Bootstrapping,
     Done,
     Failed,
+}
+
+impl BufferedReaderParent for CronRegisterJob {
+    const HAS_ON_READ_CHUNK: bool = false;
+    unsafe fn on_reader_done(this: *mut Self) {
+        // SAFETY: `this` is the `set_parent` ctx; single JS thread.
+        unsafe { &mut *this }.on_reader_done()
+    }
+    unsafe fn on_reader_error(this: *mut Self, err: sys::Error) {
+        unsafe { &mut *this }.on_reader_error(err)
+    }
+    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
+        <Self as CronJobBase>::loop_(unsafe { &*this }).cast()
+    }
+    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
+        let _ = this;
+        todo!("blocked_on: bun_io::EventLoopHandle from jsc::EventLoopHandle")
+    }
 }
 
 impl CronJobBase for CronRegisterJob {

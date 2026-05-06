@@ -1030,7 +1030,7 @@ impl IncrementalGraph<Client> {
         };
 
         let new_file = ClientFile {
-            content: match &content {
+            content: match &mut content {
                 // non-root CSS files never get registered in this function
                 ReceiveChunkContent::Css(css) => Content::CssRoot(*css),
                 ReceiveChunkContent::Js { code, .. } => {

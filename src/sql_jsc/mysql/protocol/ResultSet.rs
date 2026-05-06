@@ -41,8 +41,7 @@ impl<'a> Row<'a> {
         result_mode: SQLQueryResultMode,
         // PORT NOTE: Zig `?CachedStructure` is by-value; passed by ref here because CachedStructure is non-Copy (owns Strong + Box).
         cached_structure: Option<&CachedStructure>,
-    ) -> Result<JSValue, bun_core::Error> {
-        // TODO(port): narrow error set — Zig `!JSValue` had no `try` sites; depends on construct_object_from_data_cell.
+    ) -> crate::jsc::JsResult<JSValue> {
         let mut names: *mut ExternColumnIdentifier = ptr::null_mut();
         let mut names_count: u32 = 0;
         if let Some(c) = cached_structure {
@@ -60,7 +59,7 @@ impl<'a> Row<'a> {
             self.values.len() as u32,
             flags,
             result_mode as u8,
-            Some(names),
+            names,
             names_count,
         )
     }
@@ -176,10 +175,10 @@ impl<'a> Row<'a> {
                 };
             }
             MYSQL_TYPE_DATE | MYSQL_TYPE_DATETIME | MYSQL_TYPE_TIMESTAMP => {
-                let str = BunString::init(value.slice());
+                let mut str = BunString::init(value.slice());
                 // `str` derefs on Drop.
                 let date = 'brk: {
-                    match str.parse_date(self.global_object) {
+                    match crate::jsc::bun_string_jsc::parse_date(&mut str, self.global_object) {
                         Ok(d) => break 'brk d,
                         Err(err) => {
                             let _ = self.global_object.take_exception(err);

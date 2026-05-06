@@ -57,6 +57,24 @@ pub mod js {
 }
 pub use js::{from_js, from_js_direct, to_js};
 
+impl jsc::JsClass for PostgresSQLConnection {
+    fn from_js(value: JSValue) -> Option<*mut Self> {
+        js::from_js(value)
+    }
+}
+
+/// Local stand-in for `uws_jsc::verify_error_to_js` (lives in `bun_runtime`,
+/// which is gated out of this crate's deps for now).
+// TODO(port): blocked_on bun_runtime::socket::uws_jsc::verify_error_to_js — once
+// `bun_runtime` is re-enabled in Cargo.toml, replace this stub with a call to it
+// (or the `VerifyErrorJsc` extension trait).
+fn verify_error_to_js(
+    _err: &uws::us_bun_verify_error_t,
+    _global: &JSGlobalObject,
+) -> JsResult<JSValue> {
+    todo!("blocked_on: bun_runtime::socket::uws_jsc::verify_error_to_js")
+}
+
 // TODO(b2-blocked): #[crate::jsc::JsClass] proc-macro attr
 pub struct PostgresSQLConnection {
     // TODO(port): bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — intrusive refcount;

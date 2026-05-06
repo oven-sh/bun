@@ -879,6 +879,9 @@ bun_core::declare_scope!(ReachableFiles, visible);
 bun_core::declare_scope!(TreeShake, hidden);
 bun_core::declare_scope!(PartRanges, hidden);
 bun_core::declare_scope!(ContentHasher, hidden);
+// Zig: `bun.Output.scoped(.watcher, .visible)` — lowercase to avoid colliding
+// with the `Watcher` type alias (hot-reloader handle) in this module.
+bun_core::declare_scope!(watcher, visible);
 
 pub type MangledProps = ArrayHashMap<Ref, Box<[u8]>>;
 
@@ -4262,7 +4265,7 @@ impl<'a> BundleV2<'a> {
                                 self.graph.kit_referenced_client_data = true;
                             }
                             import_record.path.namespace = b"bun";
-                            import_record.source_index = src.index;
+                            import_record.source_index = Index::source(src.index.0);
                         }
                         continue;
                     }
@@ -4411,7 +4414,7 @@ impl<'a> BundleV2<'a> {
                         if err == bun_core::err!("ModuleNotFound") {
                             if self.bun_watcher.is_some() {
                                 if !had_busted_dir_cache {
-                                    bun_core::scoped_log!(Watcher, "busting dir cache {} -> {}",
+                                    bun_core::scoped_log!(watcher, "busting dir cache {} -> {}",
                                         bstr::BStr::new(&source.path.text), bstr::BStr::new(&import_record.path.text));
                                     // Only re-query if we previously had something cached.
                                     if transpiler.resolver.bust_dir_cache_from_specifier(
@@ -4694,19 +4697,31 @@ impl<'a> BundleV2<'a> {
     /// Returns the number of newly scheduled tasks (for pending_items accounting).
     pub fn process_resolve_queue(&mut self, resolve_queue: ResolveQueue, target: options::Target, importer_source_index: IndexInt) -> i32 {
         let mut diff: i32 = 0;
-        let graph = &mut self.graph;
-        let path_to_source_index_map = self.path_to_source_index_map(target);
-        // PORT NOTE: reshaped for borrowck — iterate by drain since we own resolve_queue
+        // PORT NOTE: reshaped for borrowck — Zig freely aliased `graph` and the
+        // path map across the loop body. Here we (a) capture a raw self ptr for
+        // ParseTask.ctx, (b) hoist dev_server check, and (c) scope the map
+        // borrow to the get_or_put so later `self.graph.*` writes don't overlap.
+        let self_ptr: *mut BundleV2<'static> = self as *mut Self as *mut BundleV2<'static>;
+        let dev_server_is_none = self.dev_server.is_none();
         for (key, value) in resolve_queue.iter() {
             let value: *mut ParseTask = *value;
             // SAFETY: ParseTask was Box::leak'd in resolve_import_records
             let value = unsafe { &mut *value };
             let loader = value.loader.unwrap_or_else(|| value.path.loader(&self.transpiler.options.loaders).unwrap_or(Loader::File));
-            let is_html_entrypoint = loader == Loader::Html && target.is_server_side() && self.dev_server.is_none();
-            let map: &mut PathToSourceIndexMap = if is_html_entrypoint { self.path_to_source_index_map(Target::Browser) } else { path_to_source_index_map };
-            let existing = map.get_or_put(&key).expect("oom");
+            let is_html_entrypoint = loader == Loader::Html && target.is_server_side() && dev_server_is_none;
+            // Select map and perform get_or_put, capturing the slot as a raw ptr
+            // so the &mut on self.graph is released before we touch other fields.
+            let (found_existing, value_ptr): (bool, *mut IndexInt) = {
+                let map: &mut PathToSourceIndexMap = if is_html_entrypoint {
+                    self.graph.path_to_source_index_map(Target::Browser)
+                } else {
+                    self.graph.path_to_source_index_map(target)
+                };
+                let existing = map.get_or_put(&key).expect("oom");
+                (existing.found_existing, existing.value_ptr as *mut IndexInt)
+            };
 
-            if !existing.found_existing {
+            if !found_existing {
                 let new_task: &mut ParseTask = value;
                 let mut new_input_file = crate::Graph::InputFile {
                     source: Logger::Source::init_empty_file(&new_task.path.text),
@@ -4719,23 +4734,26 @@ impl<'a> BundleV2<'a> {
                     ..Default::default()
                 };
 
-                graph.has_any_secondary_paths = graph.has_any_secondary_paths || !new_input_file.secondary_path.is_empty();
+                self.graph.has_any_secondary_paths = self.graph.has_any_secondary_paths || !new_input_file.secondary_path.is_empty();
 
-                new_input_file.source.index = bun_logger::Index(graph.input_files.len() as u32);
+                new_input_file.source.index = bun_logger::Index(self.graph.input_files.len() as u32);
                 new_input_file.source.path = logger_path_from_fs(&new_task.path);
                 new_input_file.loader = loader;
-                new_task.source_index = js_ast::Index { value: new_input_file.source.index.0 };
-                new_task.ctx = self;
-                *existing.value_ptr = new_task.source_index.get();
+                let new_source_index: u32 = new_input_file.source.index.0;
+                new_task.source_index = js_ast::Index { value: new_source_index };
+                new_task.ctx = self_ptr;
+                // SAFETY: value_ptr points into PathToSourceIndexMap storage; no
+                // intervening insert into that map has occurred since get_or_put.
+                unsafe { *value_ptr = new_task.source_index.get(); }
 
                 diff += 1;
 
-                graph.input_files.append(new_input_file).expect("unreachable");
-                graph.ast.append(JSAst::empty());
+                self.graph.input_files.append(new_input_file).expect("unreachable");
+                self.graph.ast.append(JSAst::empty());
 
                 if is_html_entrypoint {
                     self.ensure_client_transpiler();
-                    self.graph.entry_points.push(js_ast::Index { value: new_input_file.source.index.0 });
+                    self.graph.entry_points.push(js_ast::Index { value: new_source_index });
                 }
 
                 if self.enqueue_on_load_plugin_if_needed(new_task) {
@@ -4743,18 +4761,20 @@ impl<'a> BundleV2<'a> {
                 }
 
                 if loader.should_copy_for_bundling() {
-                    let additional_files: &mut BabyList<crate::AdditionalFile> = &mut graph.input_files.items_additional_files_mut()[importer_source_index as usize];
+                    let additional_files: &mut BabyList<crate::AdditionalFile> = &mut self.graph.input_files.items_additional_files_mut()[importer_source_index as usize];
                     additional_files.append(crate::AdditionalFile::SourceIndex(new_task.source_index.get())).expect("oom");
-                    graph.input_files.items_side_effects_mut()[new_task.source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsPureData;
-                    graph.estimated_file_loader_count += 1;
+                    self.graph.input_files.items_side_effects_mut()[new_task.source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsPureData;
+                    self.graph.estimated_file_loader_count += 1;
                 }
 
-                unsafe { graph.pool.as_mut() }.schedule(new_task);
+                unsafe { self.graph.pool.as_mut() }.schedule(new_task);
             } else {
                 if loader.should_copy_for_bundling() {
-                    let additional_files: &mut BabyList<crate::AdditionalFile> = &mut graph.input_files.items_additional_files_mut()[importer_source_index as usize];
-                    additional_files.append(crate::AdditionalFile::SourceIndex(*existing.value_ptr)).expect("oom");
-                    graph.estimated_file_loader_count += 1;
+                    // SAFETY: value_ptr is valid (see above).
+                    let existing_idx = unsafe { *value_ptr };
+                    let additional_files: &mut BabyList<crate::AdditionalFile> = &mut self.graph.input_files.items_additional_files_mut()[importer_source_index as usize];
+                    additional_files.append(crate::AdditionalFile::SourceIndex(existing_idx)).expect("oom");
+                    self.graph.estimated_file_loader_count += 1;
                 }
 
                 // SAFETY: ParseTask was Box::leak'd; reconstitute and drop

@@ -1961,7 +1961,14 @@ impl<'a> BundleV2<'a> {
 
         let loader = path.loader(&self.transpiler.options.loaders).unwrap_or(Loader::File);
 
-        path = self.path_with_pretty_initialized(path, target)?;
+        // SAFETY: `path_with_pretty_initialized` allocates into `self.graph.heap`, which
+        // outlives the bundle pass; erase the arena lifetime back to the resolver's
+        // `Path<'static>` alias so `path` doesn't keep `self` borrowed.
+        path = unsafe {
+            core::mem::transmute::<Fs::Path<'_>, Fs::Path<'static>>(
+                self.path_with_pretty_initialized(path, target)?,
+            )
+        };
         path.assert_pretty_is_valid();
         self.path_to_source_index_map(target).put(&path.text, source_index.get()).expect("oom");
         self.graph.ast.append(JSAst::empty());
@@ -2234,16 +2241,20 @@ impl<'a> BundleV2<'a> {
         debug_assert_eq!(files.set.keys().len(), files.set.values().len());
         for (abs_path, flags) in files.set.keys().iter().zip(files.set.values().iter()) {
             // Ensure we have the proper conditions set for client-side entrypoints.
-            let transpiler = if flags.client() && !flags.server() && !flags.ssr() {
-                self.transpiler_for_target(Target::Browser)
+            // SAFETY: Zig stores `transpiler` as a raw `*Transpiler` across the loop body;
+            // mirror with `*mut` so it doesn't keep `self` borrowed through the plugin
+            // dispatch / dev_server calls below.
+            let transpiler: *mut Transpiler<'a> = if flags.client() && !flags.server() && !flags.ssr() {
+                self.transpiler_for_target(Target::Browser) as *mut _
             } else {
-                &mut *self.transpiler
+                &mut *self.transpiler as *mut _
             };
+            let server_target = self.transpiler.options.target;
 
             struct TargetCheck { should_dispatch: bool, target: options::Target }
             let targets_to_check = [
                 TargetCheck { should_dispatch: flags.client(), target: Target::Browser },
-                TargetCheck { should_dispatch: flags.server(), target: self.transpiler.options.target },
+                TargetCheck { should_dispatch: flags.server(), target: server_target },
                 TargetCheck { should_dispatch: flags.ssr(), target: Target::BakeServerComponentsSsr },
             ];
 
@@ -2261,7 +2272,8 @@ impl<'a> BundleV2<'a> {
             }
 
             // Fall back to normal resolution if no plugins matched
-            let mut resolved = match transpiler.resolve_entry_point(abs_path) {
+            // SAFETY: `transpiler` points at one of self's transpilers, live for `'a`.
+            let mut resolved = match unsafe { &mut *transpiler }.resolve_entry_point(abs_path) {
                 Ok(r) => r,
                 Err(err) => {
                     let dev = self.dev_server.expect("unreachable");
@@ -2269,10 +2281,10 @@ impl<'a> BundleV2<'a> {
                         err,
                         if flags.client() { bake::Graph::Client } else { bake::Graph::Server },
                         abs_path,
-                        transpiler.log as *const _,
+                        unsafe { (*transpiler).log } as *const _,
                         self as *mut _,
                     ).expect("oom");
-                    unsafe { (*transpiler.log).reset() };
+                    unsafe { (*(*transpiler).log).reset() };
                     continue;
                 }
             };
@@ -2339,10 +2351,16 @@ impl<'a> BundleV2<'a> {
         // try this.graph.entry_points.append(allocator, Index.runtime);
         self.graph.ast.append(JSAst::empty());
         self.path_to_source_index_map(self.transpiler.options.target).put(&b"bun:wrap"[..], Index::RUNTIME.get()).expect("oom");
-        let runtime_parse_task = self.allocator().alloc(rt.parse_task);
-        runtime_parse_task.ctx = self;
-        runtime_parse_task.tree_shaking = true;
-        runtime_parse_task.loader = Some(Loader::Js);
+        // SAFETY: arena (`self.graph.heap`) outlives the bundle pass; coerce the
+        // `&mut ParseTask` to `*mut` immediately so the `&self` borrow from
+        // `allocator()` ends before we take `&mut self` below.
+        let runtime_parse_task: *mut ParseTask = self.allocator().alloc(rt.parse_task);
+        unsafe {
+            // BACKREF — lifetime erased per ParseTask::ctx convention.
+            (*runtime_parse_task).ctx = self as *mut _ as *mut BundleV2<'static>;
+            (*runtime_parse_task).tree_shaking = true;
+            (*runtime_parse_task).loader = Some(Loader::Js);
+        }
         self.increment_scan_counter();
         unsafe { self.graph.pool.as_mut() }.schedule(runtime_parse_task);
         Ok(())

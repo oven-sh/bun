@@ -24,6 +24,7 @@ pub(crate) mod bake_body;
 
 #[path = "DevServer.rs"]
 mod dev_server_body;
+pub(crate) use dev_server_body::get_deinit_count_for_testing;
 
 #[path = "FrameworkRouter.rs"]
 pub(crate) mod framework_router_body;

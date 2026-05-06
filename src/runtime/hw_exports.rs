@@ -427,6 +427,42 @@ pub extern "C" fn bindgen_BunObject_dispatchGc1(
     true
 }
 
+/// `fmt_jsc.js_bindings.fmtString(code, formatter) -> bun.String`
+/// (highlighter.test.ts internal — see `src/jsc/fmt_jsc.zig`).
+#[unsafe(no_mangle)]
+pub extern "C" fn bindgen_Fmt_jsc_dispatchFmtString1(
+    global: *mut JSGlobalObject,
+    arg_code: *const bun_string::String,
+    arg_formatter: *const bun_jsc::fmt_jsc::js_bindings::Formatter,
+    out: *mut bun_string::String,
+) -> bool {
+    // SAFETY: `global` is the live per-thread global; `arg_code`/`arg_formatter`
+    // /`out` are valid C++ stack locals (see GeneratedBindings.cpp call site).
+    let global = unsafe { &*global };
+    let code = unsafe { (*arg_code).to_utf8() };
+    let formatter = unsafe { *arg_formatter };
+    match bun_jsc::fmt_jsc::js_bindings::fmt_string(global, code.slice(), formatter) {
+        Ok(s) => {
+            unsafe { *out = s };
+            true
+        }
+        // `JsError` already set the pending exception on `global`; the bindgen
+        // ABI signals "exception pending" via `false`.
+        Err(_) => false,
+    }
+}
+
+/// `DevServer.getDeinitCountForTesting() -> usize`.
+#[unsafe(no_mangle)]
+pub extern "C" fn bindgen_DevServer_dispatchGetDeinitCountForTesting1(
+    _global: *mut JSGlobalObject,
+    out: *mut usize,
+) -> bool {
+    // SAFETY: `out` is a valid C++ stack local out-param.
+    unsafe { *out = crate::bake::get_deinit_count_for_testing() };
+    true
+}
+
 // ─── js2native bindgen create-callback exports (GeneratedJS2Native.zig) ──────
 //
 // `js2native_bindgen_<ns>_<fn>` returns a freshly-minted `JSFunction` wrapping

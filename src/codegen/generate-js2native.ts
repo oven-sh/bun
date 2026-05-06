@@ -275,6 +275,15 @@ export function getJS2NativeRust() {
       .replace(/^_+/, "")
       .replace(/[^A-Za-z0-9_]/g, "_");
 
+  // Symbols already hand-exported in src/ (via `export_host_fn!` or
+  // `#[unsafe(export_name = "JS2Zig__…")]`) — skip emitting a thunk for these
+  // so the linker doesn't see two definitions. The trait default still lands
+  // (harmless dead code) so the method id stays reserved.
+  const handExported = new Set<string>([
+    "JS2Zig___src_runtime_dns_jsc_dns_zig__Resolver_getRuntimeDefaultResultOrderOption",
+    "JS2Zig___src_runtime_dns_jsc_dns_zig__Resolver_newResolver",
+  ]);
+
   const traitDecls: string[] = [];
   const thunks: string[] = [];
   const seen = new Set<string>();
@@ -307,6 +316,10 @@ export function getJS2NativeRust() {
       `    fn ${id}(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> { ` +
         `let _ = (global, callframe); unimplemented!(${JSON.stringify(`$zig(${path.basename(x.filename)}, ${x.symbol_target}) not yet ported to Rust`)}) }`,
     );
+    if (handExported.has(sym)) {
+      thunks.push(`// ${sym}: hand-exported in src/ — thunk omitted to avoid duplicate symbol`, ``);
+      continue;
+    }
     thunks.push(
       `#[unsafe(no_mangle)]`,
       `pub unsafe extern "C" fn ${sym}(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {`,

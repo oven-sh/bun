@@ -3053,17 +3053,25 @@ unsafe fn launder_static(s: &[u8]) -> &'static [u8] {
 
 static SYS_FS_VTABLE: bun_sys::fs::FsVTable = bun_sys::fs::FsVTable {
     instance: || FileSystem::instance() as *const bun_sys::fs::FileSystem,
+    top_level_dir: |p| {
+        // SAFETY: `p` is the erased process-static `bun_resolver::fs::FileSystem`.
+        unsafe { &*(p as *const FileSystem) }.top_level_dir
+    },
+    set_max_fd: |fd| FileSystem::set_max_fd(fd),
     entry_base: |p| {
         // SAFETY: `p` is an erased `&bun_resolver::fs::Entry` (EntryStore-owned).
+        // For tiny strings (≤31 bytes) the slice points INTO `*p` (inline
+        // `remainder_buf`, immutable.zig:548); return raw (ptr,len) so the
+        // sys-side wrapper ties the borrow to `&self` instead of `'static`.
         let e = unsafe { &*(p as *const Entry) };
-        // SAFETY: `base_` is interned in `FilenameStore` (process-static).
-        unsafe { launder_static(e.base_.slice()) }
+        let s = e.base_.slice();
+        (s.as_ptr(), s.len())
     },
     entry_base_lowercase: |p| {
         // SAFETY: see `entry_base`.
         let e = unsafe { &*(p as *const Entry) };
-        // SAFETY: `base_lowercase_` is interned in `FilenameStore`.
-        unsafe { launder_static(e.base_lowercase_.slice()) }
+        let s = e.base_lowercase_.slice();
+        (s.as_ptr(), s.len())
     },
     entry_dir: |p| {
         // SAFETY: see `entry_base`.
@@ -3080,14 +3088,12 @@ static SYS_FS_VTABLE: bun_sys::fs::FsVTable = bun_sys::fs::FsVTable {
     entry_cache: |p| {
         // SAFETY: see `entry_base`.
         let c = unsafe { &*(p as *const Entry) }.cache;
-        // PORT NOTE: map `EntryKind::{Dir,File}` onto the wide `FileKind` the
-        // sys-side mirror uses; router matches on `FileKind::Directory`.
         bun_sys::fs::EntryCache {
             symlink: c.symlink,
             fd: c.fd,
             kind: match c.kind {
-                EntryKind::Dir => bun_sys::FileKind::Directory,
-                EntryKind::File => bun_sys::FileKind::File,
+                EntryKind::Dir => bun_sys::fs::FsEntryKind::Dir,
+                EntryKind::File => bun_sys::fs::FsEntryKind::File,
             },
         }
     },
@@ -3097,8 +3103,8 @@ static SYS_FS_VTABLE: bun_sys::fs::FsVTable = bun_sys::fs::FsVTable {
         let e = unsafe { &mut *(p as *mut Entry) };
         let fs = unsafe { &mut *(fs as *mut Implementation) };
         match e.kind(fs, store_fd) {
-            EntryKind::Dir => bun_sys::FileKind::Directory,
-            EntryKind::File => bun_sys::FileKind::File,
+            EntryKind::Dir => bun_sys::fs::FsEntryKind::Dir,
+            EntryKind::File => bun_sys::fs::FsEntryKind::File,
         }
     },
     dir_entry_has_comptime_query: |p, q| {
@@ -3120,11 +3126,21 @@ static SYS_FS_VTABLE: bun_sys::fs::FsVTable = bun_sys::fs::FsVTable {
             out.push(v as *mut bun_sys::fs::Entry);
         }
     },
-    dirname_store_append: |v| DirnameStore::instance().append(v),
-    dirname_store_append_lower_case: |v| {
+    dirname_store: |_p| {
+        // Process-static singleton (fs.zig:76); receiver ignored because Zig's
+        // `dirname_store: *DirnameStore` is global, but threading it keeps the
+        // seam type-correct for any future per-FileSystem store.
+        DirnameStore::instance() as *const DirnameStore as *const bun_sys::fs::DirnameStore
+    },
+    dirname_store_append: |s, v| {
+        // SAFETY: `s` is an erased `&DirnameStore` (process-static singleton).
+        unsafe { &*(s as *const DirnameStore) }.append(v)
+    },
+    dirname_store_append_lower_case: |s, v| {
         use strings::Appender as _;
-        let mut s: &'static DirnameStore = DirnameStore::instance();
-        let r = s.append_lower_case(v)?;
+        // SAFETY: see `dirname_store_append`.
+        let store = unsafe { &*(s as *const DirnameStore) };
+        let r = store.append_lower_case(v)?;
         // SAFETY: re-erase to `'static`; storage owned by the process-lifetime
         // `DirnameStore` singleton (see `string_store_impl!` PORT NOTE).
         Ok(unsafe { launder_static(r) })

@@ -2013,7 +2013,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
 
             let _close_fd = scopeguard::guard((), |_| fd.close());
 
-            let stat = match bun_sys::fstat(fd).unwrap() {
+            let stat = match bun_sys::fstat(fd) {
                 Ok(s) => s,
                 Err(err) => {
                     Output::err(err, "failed to stat file: \"{}\"", format_args!("{}", bstr::BStr::new(item.path.as_bytes())));

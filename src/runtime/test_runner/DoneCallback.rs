@@ -56,5 +56,5 @@ impl DoneCallback {
 //   source:     src/test_runner/DoneCallback.zig (46 lines)
 //   confidence: medium
 //   todos:      2
-//   notes:      LIFETIMES.tsv says Rc<RefData> but RefData uses intrusive bun.ptr.RefCount — Phase B may need IntrusiveRc; group_log begin/end mapped to RAII .enter() guard
+//   notes:      LIFETIMES.tsv says Rc<RefData> but RefData uses intrusive bun.ptr.RefCount — Phase B may need IntrusiveRc; groupLog begin/end mapped to group_begin!() + scopeguard end()
 // ──────────────────────────────────────────────────────────────────────────

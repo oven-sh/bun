@@ -337,6 +337,17 @@ pub mod unicode {
         out
     }
 }
+/// Strip a leading UTF-8 BOM (`EF BB BF`) if present. Mirrors
+/// `bun.strings.withoutUTF8BOM` (immutable.zig:2332 → unicode.withoutUTF8BOM).
+#[inline]
+pub fn without_utf8_bom(bytes: &[u8]) -> &[u8] {
+    if bytes.len() >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF {
+        &bytes[3..]
+    } else {
+        bytes
+    }
+}
+
 // Transcoding suite re-exported from bun_core (T0).
 pub use self::unicode::to_utf16_literal;
 /// `bun.strings.w` — comptime UTF-8→UTF-16 literal. In Rust this **must** be a

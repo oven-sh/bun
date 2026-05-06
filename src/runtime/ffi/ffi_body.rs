@@ -1276,7 +1276,7 @@ impl FFI {
         // PORT NOTE: reshaped for borrowck — Zig nulled tcc_state and symbols after move
 
         let js_object = lib.to_js(global_this);
-        jsc::codegen::JSFFI::symbols_value_set_cached(js_object, global_this, obj);
+        symbols_value_set_cached(js_object, global_this, obj);
         Ok(js_object)
     }
 
@@ -1473,7 +1473,7 @@ impl FFI {
             return JSValue::ZERO;
         }
         jsc::mark_binding();
-        let vm = VirtualMachine::get();
+        let vm = jsc::VirtualMachineRef::get();
         let name_slice = name_str.to_slice();
 
         if object_value.is_empty_or_undefined_or_null() {

@@ -1,7 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 #[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter as ConsoleFormatter;
-use bun_core::Output;
+#[allow(unused_imports)] use bun_core::Output;
 
 use super::DiffFormatter;
 use super::mock;

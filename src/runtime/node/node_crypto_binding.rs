@@ -755,8 +755,7 @@ pub type ScryptJob = CryptoJob<Scrypt>;
 
 mod _impl {
 use super::*;
-use bun_core::UUID;
-use bun_jsc::{ConcurrentTask, JSFunction, Strong};
+use bun_jsc::{JSFunction, Strong, UUID};
 use bun_str::String as BunString;
 use crate::node::util::validators;
 

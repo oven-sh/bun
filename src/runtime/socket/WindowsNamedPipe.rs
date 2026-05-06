@@ -29,7 +29,6 @@ use bun_jsc::virtual_machine::VirtualMachine;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 use bun_sys::{self, Fd};
-use bun_uws::UpgradedDuplex;
 use bun_uws_sys::us_bun_verify_error_t;
 
 use crate::timer::EventLoopTimer;

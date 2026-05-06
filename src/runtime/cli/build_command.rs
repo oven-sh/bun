@@ -132,6 +132,17 @@ impl BuildCommand {
             this_transpiler.options.ignore_module_resolution_errors = true;
         }
 
+        // PORT NOTE: clone the first entry point so `outfile` can borrow owned
+        // storage instead of `this_transpiler.options.entry_points[0]`, which
+        // would otherwise hold an immutable borrow of `this_transpiler` across
+        // later `&mut self` calls (`configure_defines`, `generate_from_cli`).
+        let first_entry_point: Box<[u8]> = this_transpiler
+            .options
+            .entry_points
+            .first()
+            .cloned()
+            .unwrap_or_default();
+
         this_transpiler.options.source_map =
             options::SourceMapOption::from_api(ctx.args.source_map);
 
@@ -239,7 +250,7 @@ impl BuildCommand {
                 ctx.bundler_options.compile = false;
 
                 if ctx.bundler_options.outdir.is_empty() && outfile.is_empty() {
-                    outfile = bun_paths::basename(&this_transpiler.options.entry_points[0]);
+                    outfile = bun_paths::basename(&first_entry_point);
                 }
 
                 this_transpiler.options.supports_multiple_outputs =
@@ -258,7 +269,7 @@ impl BuildCommand {
                 this_transpiler.options.public_path = base_public_path.into();
 
                 if outfile.is_empty() {
-                    outfile = bun_paths::basename(&this_transpiler.options.entry_points[0]);
+                    outfile = bun_paths::basename(&first_entry_point);
                     let ext = bun_paths::extension(outfile);
                     if !ext.is_empty() {
                         outfile = &outfile[0..outfile.len() - ext.len()];
@@ -266,16 +277,14 @@ impl BuildCommand {
 
                     if outfile == b"index" {
                         outfile = bun_paths::basename(
-                            bun_core::dirname(&this_transpiler.options.entry_points[0])
-                                .unwrap_or(b"index"),
+                            bun_core::dirname(&first_entry_point).unwrap_or(b"index"),
                         );
                         was_renamed_from_index = outfile != b"index";
                     }
 
                     if outfile == b"bun" {
                         outfile = bun_paths::basename(
-                            bun_core::dirname(&this_transpiler.options.entry_points[0])
-                                .unwrap_or(b"bun"),
+                            bun_core::dirname(&first_entry_point).unwrap_or(b"bun"),
                         );
                     }
                 }
@@ -470,6 +479,20 @@ impl BuildCommand {
         let mut minify_duration: u64 = 0;
         let mut input_code_length: u64 = 0;
 
+        // PORT NOTE: `BundleV2::generate_from_cli` takes `&'a mut Transpiler<'a>`,
+        // which (with `'a = 'static` from the leaked arena) borrows
+        // `this_transpiler` for the rest of its life. Snapshot every options
+        // field read after that point so the borrow checker is satisfied.
+        let opt_output_dir: Box<[u8]> = this_transpiler.options.output_dir.clone();
+        let opt_minify_identifiers = this_transpiler.options.minify_identifiers;
+        let opt_minify_whitespace = this_transpiler.options.minify_whitespace;
+        let opt_minify_syntax = this_transpiler.options.minify_syntax;
+        let opt_public_path: Box<[u8]> = this_transpiler.options.public_path.clone();
+        let opt_output_format = this_transpiler.options.output_format;
+        let opt_source_map = this_transpiler.options.source_map;
+        let opt_transform_only = this_transpiler.options.transform_only;
+        let env_ptr = this_transpiler.env;
+
         let mut output_files: Vec<options::OutputFile> = 'brk: {
             if ctx.bundler_options.transform_only {
                 this_transpiler.options.import_path_format =
@@ -620,7 +643,7 @@ impl BuildCommand {
         'dump: {
             // Output::flush() runs at end of this block (defer in Zig); see explicit calls below
             let writer = Output::writer_buffered();
-            let mut output_dir: &[u8] = &this_transpiler.options.output_dir;
+            let mut output_dir: &[u8] = &opt_output_dir;
 
             let will_be_one_file =
                 // --outdir is not supported with --compile
@@ -711,9 +734,7 @@ impl BuildCommand {
                 print_summary(
                     bundled_end,
                     minify_duration,
-                    this_transpiler.options.minify_identifiers
-                        || this_transpiler.options.minify_whitespace
-                        || this_transpiler.options.minify_syntax,
+                    opt_minify_identifiers || opt_minify_whitespace || opt_minify_syntax,
                     input_code_length as usize,
                     reachable_file_count,
                     output_files,
@@ -759,12 +780,12 @@ impl BuildCommand {
                         compile_target,
                         output_files,
                         root_dir.fd,
-                        &this_transpiler.options.public_path,
+                        &opt_public_path,
                         outfile,
                         // SAFETY: `env` is a process-lifetime singleton.
-                        unsafe { &mut *this_transpiler.env },
-                        this_transpiler.options.output_format,
-                        ctx.bundler_options.windows,
+                        unsafe { &mut *env_ptr },
+                        opt_output_format,
+                        std::mem::take(&mut ctx.bundler_options.windows),
                         ctx.bundler_options.compile_exec_argv.as_deref().unwrap_or(b""),
                         ctx.bundler_options.compile_executable_path.as_deref(),
                         {
@@ -808,7 +829,7 @@ impl BuildCommand {
 
                 // Write external sourcemap files next to the compiled executable.
                 // With --splitting, there can be multiple .map files (one per chunk).
-                if this_transpiler.options.source_map == options::SourceMapOption::External {
+                if opt_source_map == options::SourceMapOption::External {
                     for f in output_files.iter() {
                         if f.output_kind == options::OutputKind::Sourcemap
                             && matches!(f.value, options::OutputFileValue::Buffer { .. })
@@ -921,7 +942,7 @@ impl BuildCommand {
             }
 
             if log_ref.errors == 0 {
-                if this_transpiler.options.transform_only {
+                if opt_transform_only {
                     Output::prettyln(format_args!(
                         "<green>Transpiled file in {}ms<r>",
                         (bun_core::time::nano_timestamp() - cli_start_time())

@@ -9,6 +9,7 @@ use bun_collections::StringHashMap;
 use bun_core::{self as bun, Global, Output, Progress, fmt as bun_fmt};
 use bun_glob as glob;
 use bun_install::{Dependency, Lockfile, PackageManager};
+use bun_install::bun_json::ExprAccessors as _;
 use bun_install::package_manager::LogLevel;
 use bun_install::package_manager::workspace_package_json_cache as WorkspacePackageJSONCache;
 use bun_interchange::json as JSON;
@@ -901,7 +902,9 @@ fn add_bundled_dep(
                                     continue;
                                 }
 
-                                let Some(dep_name) = dep.key.as_ref().unwrap().as_string(pack_bump()) else { continue };
+                                // ExprAccessors::as_string takes no allocator in the Rust port —
+                                // JSON parse always yields UTF-8 EString slices.
+                                let Some(dep_name) = dep.key.as_ref().unwrap().as_string() else { continue };
 
                                 // allocPrintSentinel(.., "{s}/node_modules/{s}", ..)
                                 let mut dep_subpath_buf: Vec<u8> = Vec::with_capacity(
@@ -3231,7 +3234,8 @@ pub mod bindings {
 
     #[bun_jsc::host_fn]
     pub fn js_read_tarball(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let args = call_frame.arguments_old::<1>().slice();
+        let arguments = call_frame.arguments_old::<1>();
+        let args = arguments.slice();
         if args.len() < 1 || !args[0].is_string() {
             return Err(global.throw("expected tarball path string argument"));
         }

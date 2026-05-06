@@ -90,7 +90,7 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
 
 \`grep -rn 'todo!(\\|unimplemented!(' src/ --include='*.rs'\` → for each match, capture file:line + the message string (if any). Find the enclosing fn name (look upward for \`fn <name>\` / \`pub fn <name>\`).
 
-**SHARD FILTER:** Only include files whose path matches regex \`^(${PREFIX || ".*"})\`. ${PREFIX ? `This shard owns: \`${PREFIX}\`.` : "(no shard filter — full sweep)"}
+**SHARD FILTER:** Only include files whose path matches regex \`^(${PREFIX_RE || ".*"}
 
 Group by file. Return {files:[{file, n, sites:[{line, msg, fn}]}], total}. Skip src/bun_bin/phase_c_exports.rs.`,
     { label: `survey-r${round}`, phase: "Survey", schema: SURVEY_S },

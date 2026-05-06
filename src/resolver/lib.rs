@@ -7858,7 +7858,9 @@ impl<'a> Resolver<'a> {
                             // SAFETY: `entries_mutex` held by caller; sole writer.
                             unsafe { unsafe { &mut *lookup.entry }.cache_mut() }.fd = entries_fd;
                         }
-                        let entry = &lookup.entry;
+                        // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
+                // dies (NLL) before any later `&mut` to this slot.
+                let entry = unsafe { &*lookup.entry };
 
                         let mut symlink = entry.symlink(rfs!(), self.store_fd);
                         if !symlink.is_empty() {
@@ -7897,7 +7899,9 @@ impl<'a> Resolver<'a> {
         // Record if this directory has a package.json file
         if self.opts.load_package_json {
             if let Some(lookup) = entries!().get_comptime_query(b"package.json") {
-                let entry = &lookup.entry;
+                // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
+                // dies (NLL) before any later `&mut` to this slot.
+                let entry = unsafe { &*lookup.entry };
                 if entry.kind(rfs!(), self.store_fd) == Fs::file_system::EntryKind::File {
                     info.package_json = if self.use_package_manager() && !info.has_node_modules() && !info.is_node_modules() {
                         self.parse_package_json::<true>(path, if FeatureFlags::STORE_FILE_DESCRIPTORS { fd } else { FD::INVALID }, package_id).ok().flatten()
@@ -7932,7 +7936,9 @@ impl<'a> Resolver<'a> {
             let mut tsconfig_path: Option<&[u8]> = None;
             if self.opts.tsconfig_override.is_none() {
                 if let Some(lookup) = entries!().get_comptime_query(b"tsconfig.json") {
-                    let entry = &lookup.entry;
+                    // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
+                // dies (NLL) before any later `&mut` to this slot.
+                let entry = unsafe { &*lookup.entry };
                     if entry.kind(rfs!(), self.store_fd) == Fs::file_system::EntryKind::File {
                         let parts = [path, b"tsconfig.json".as_slice()];
                         tsconfig_path = Some(unsafe { self.fs() }.abs_buf(&parts, bufs!(dir_info_uncached_filename)));
@@ -7940,7 +7946,9 @@ impl<'a> Resolver<'a> {
                 }
                 if tsconfig_path.is_none() {
                     if let Some(lookup) = entries!().get_comptime_query(b"jsconfig.json") {
-                        let entry = &lookup.entry;
+                        // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
+                // dies (NLL) before any later `&mut` to this slot.
+                let entry = unsafe { &*lookup.entry };
                         if entry.kind(rfs!(), self.store_fd) == Fs::file_system::EntryKind::File {
                             let parts = [path, b"jsconfig.json".as_slice()];
                             tsconfig_path = Some(unsafe { self.fs() }.abs_buf(&parts, bufs!(dir_info_uncached_filename)));

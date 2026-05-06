@@ -220,7 +220,12 @@ impl PageRule {
         loc: Location,
         options: &css::ParserOptions,
     ) -> css::Result<PageRule> {
-        let mut declarations = DeclarationBlock::default();
+        // SAFETY: `Tokenizer<'a>` owns `allocator: &'a Bump`; the arena outlives
+        // every `DeclarationBlock` produced from this parser. `'static` here is
+        // the crate-wide erasure (see declaration.rs `DeclarationBlock::parse`).
+        let bump: &'static bun_alloc::Arena =
+            unsafe { &*(input.allocator() as *const bun_alloc::Arena) };
+        let mut declarations = DeclarationBlock::new_in(bump);
         let mut rules: ArrayList<PageMarginRule> = ArrayList::new();
         let mut rule_parser = PageRuleParser {
             declarations: &mut declarations,

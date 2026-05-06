@@ -452,7 +452,7 @@ impl PostgresSQLQuery {
                     this.statement = None;
                     drop(stmt);
                     // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                unsafe { Self::deref_(this) };
+                    unsafe { Self::deref_(this) };
 
                     if !global_object.has_exception() {
                         return global_object.throw_value(postgres_error_to_js(global_object, Some("failed to execute query"), err));

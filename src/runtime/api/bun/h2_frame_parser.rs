@@ -988,12 +988,14 @@ impl H2FrameParser {
     pub fn ref_(&self) {
         self.ref_count.set(self.ref_count.get() + 1);
     }
-    pub fn deref(&self) {
+    pub fn deref(&mut self) {
         let n = self.ref_count.get() - 1;
         self.ref_count.set(n);
         if n == 0 {
-            // SAFETY: ref_count hit zero; mirrors Zig RefCount.deinit dispatch
-            unsafe { (*(self as *const Self as *mut Self)).deinit() };
+            // ref_count hit zero; mirrors Zig RefCount.deinit dispatch. We hold the
+            // sole remaining reference via `&mut self`, so deinit (which frees self)
+            // is the last use of this borrow.
+            self.deinit();
         }
     }
 }

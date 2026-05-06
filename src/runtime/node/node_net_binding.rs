@@ -4,7 +4,12 @@
 use core::cell::Cell;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-// ─── type defs (real) ─────────────────────────────────────────────────────
+use bun_aio::KeepAlive;
+use bun_jsc::{self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
+use bun_uws as uws;
+
+use crate::node::util::validators;
+use crate::socket::{Listener, NativeCallbacks, NewSocket, SocketFlags, TCPSocket, TLSSocket};
 
 // Zig: `pub var autoSelectFamilyDefault: bool = true;`
 // PORT NOTE: reshaped for borrowck — Rust forbids safe `static mut`; use AtomicBool.
@@ -20,19 +25,6 @@ pub static AUTO_SELECT_FAMILY_DEFAULT: AtomicBool = AtomicBool::new(true);
 thread_local! {
     pub static AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_DEFAULT: Cell<u32> = const { Cell::new(250) };
 }
-
-// ─── gated: JSC binding fns ───────────────────────────────────────────────
-// All bodies build `JSFunction`/`JSValue` and reach `crate::api::{Listener,
-// TCPSocket, TLSSocket}` whose struct shapes / `bun_jsc::codegen` re-exports
-// are not yet stable. The two statics above are the only JSC-free state.
-// TODO(b2-blocked): un-gate once bun_jsc JSFunction/codegen + crate::api socket types land.
-
-mod _impl {
-use super::*;
-
-use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
-
-use crate::node::util::validators;
 
 pub fn get_default_auto_select_family(global: &JSGlobalObject) -> JSValue {
     #[bun_jsc::host_fn(export = "Bun__NodeNet__getDefaultAutoSelectFamily")]
@@ -128,42 +120,49 @@ pub fn BlockList(global: &JSGlobalObject) -> JSValue {
 }
 
 #[bun_jsc::host_fn]
-pub fn new_detached_socket(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub fn new_detached_socket(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let args = frame.arguments_as_array::<1>();
-    let _is_ssl = args[0].to_boolean();
+    let is_ssl = args[0].to_boolean();
 
-    // Zig:
-    //   const socket = bun.api.{TCP,TLS}Socket.new(.{
-    //       .socket = .detached, .ref_count = .init(),
-    //       .protos = null, .handlers = null,
-    //   });
-    //   return socket.getThisValue(globalThis);
-    //
-    // The Rust `crate::socket::NewSocket<SSL>` struct shape currently lacks
-    // `new()`/`get_this_value()` and the `JsClass` codegen impl (the per-
-    // monomorphisation `JS{TCP,TLS}Socket` codegen externs are not yet wired —
-    // see socket_body.rs `to_js`).
-    todo!("blocked_on: crate::socket::NewSocket<SSL>::{{new,get_this_value}} + jsc.Codegen.JS{{TCP,TLS}}Socket")
+    // Zig field-default initializer: only `socket`, `ref_count`, `protos`, `handlers` are
+    // specified; the rest take their struct defaults (see `NewSocket` field decls in socket.zig).
+    fn make<const SSL: bool>(global: &JSGlobalObject) -> JSValue {
+        let socket = NewSocket::<SSL>::new(NewSocket::<SSL> {
+            socket: uws::NewSocketHandler::<SSL>::DETACHED,
+            ref_count: bun_ptr::RefCount::init(),
+            protos: None,
+            handlers: None,
+            // — defaults —
+            owned_ssl_ctx: None,
+            flags: SocketFlags::default(),
+            this_value: jsc::JsRef::empty(),
+            poll_ref: KeepAlive::init(),
+            ref_pollref_on_connect: true,
+            connection: None,
+            server_name: None,
+            buffered_data_for_node_net: Default::default(),
+            bytes_written: 0,
+            native_callback: NativeCallbacks::None,
+            twin: None,
+        });
+        // SAFETY: `NewSocket::new` returns a live heap pointer (`Box::into_raw`).
+        unsafe { (*socket).get_this_value(global) }
+    }
+
+    Ok(if !is_ssl { make::<false>(global) } else { make::<true>(global) })
 }
 
 #[bun_jsc::host_fn]
 pub fn do_connect(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let [_prev, opts] = frame.arguments_as_array::<2>();
-    // Zig: `prev.as(bun.api.{TCP,TLS}Socket)` — requires `JsClass` impl on
-    // `NewSocket<SSL>`, which the `#[bun_jsc::JsClass]` derive cannot emit for
-    // a const-generic type (two distinct codegen classes). Until those externs
-    // land, fall back to the no-prev-socket path so `Bun.connect()` (which
-    // passes `null` here) still works.
-    // TODO(port): wire `prev.as_::<TCPSocket>()` / `prev.as_::<TLSSocket>()` once
-    // `impl JsClass for NewSocket<{false,true}>` exists.
-    crate::socket::listener::Listener::connect_inner(global, None, None, opts)
+    let [prev, opts] = frame.arguments_as_array::<2>();
+    let maybe_tcp = prev.as_::<TCPSocket>();
+    let maybe_tls = prev.as_::<TLSSocket>();
+    Listener::connect_inner(global, maybe_tcp, maybe_tls, opts)
 }
-} // mod _impl
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/node/node_net_binding.zig (106 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      JSFunction::create signature, TCPSocket/TLSSocket init shape, and codegen re-exports need Phase B verification
+//   confidence: high
+//   todos:      0
 // ──────────────────────────────────────────────────────────────────────────

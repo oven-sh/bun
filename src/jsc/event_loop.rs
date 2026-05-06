@@ -486,8 +486,16 @@ impl EventLoop {
 
         #[cfg(unix)]
         {
-            if let Some(_signal_handler) = self.signal_handler {
-                // TODO(b2-cycle): PosixSignalHandle::drain — gated sibling.
+            if let Some(signal_handler) = self.signal_handler {
+                // SAFETY: `signal_handler` is the boxed `PosixSignalHandle` installed by
+                // `Bun__ensureSignalHandler`; it lives for the process lifetime and is
+                // disjoint from `*self`, so passing `&mut *self` alongside is sound.
+                unsafe {
+                    (*signal_handler
+                        .cast::<crate::posix_signal_handle::PosixSignalHandle>()
+                        .as_ptr())
+                    .drain(self)
+                };
             }
         }
 

@@ -208,13 +208,17 @@ impl FilePoll {
         owner: Owner,
     ) -> *mut FilePoll {
         let poll = vm.file_polls().get();
-        // SAFETY: `get()` returns a valid uninitialized slot from the HiveArray pool.
-        let poll = unsafe { &mut *poll };
-        poll.fd = fd;
-        poll.flags = FlagsSet::init(flags);
-        poll.owner = owner;
-        poll.next_to_free = ptr::null_mut();
-
+        // SAFETY: `get()` returns a valid, uniquely-owned, *uninitialized* slot from the
+        // HiveArray pool. We must not materialize `&mut FilePoll` (validity invariant
+        // requires initialized memory); write the whole value through the raw pointer.
+        unsafe {
+            poll.write(FilePoll {
+                fd,
+                flags: FlagsSet::init(flags),
+                owner,
+                next_to_free: ptr::null_mut(),
+            });
+        }
         poll
     }
 
@@ -411,15 +415,18 @@ impl Store {
             return;
         }
 
-        // SAFETY: caller passes a valid HiveArray slot pointer.
-        let poll_ref = unsafe { &mut *poll };
-        debug_assert!(poll_ref.next_to_free.is_null());
+        // SAFETY: `poll` is a valid HiveArray slot pointer. It may live inside
+        // `self.hive.buffer`, so we access it via raw pointer only (no `&mut FilePoll`
+        // materialized) to avoid aliasing `&mut self` — Zig's `*FilePoll` freely aliases.
+        debug_assert!(unsafe { (*poll).next_to_free }.is_null());
 
-        // SAFETY: tail is a valid slot in the intrusive deferred-free list.
-        if let Some(tail) = unsafe { self.pending_free_tail.as_mut() } {
+        let tail = self.pending_free_tail;
+        if !tail.is_null() {
             debug_assert!(!self.pending_free_head.is_null());
-            debug_assert!(tail.next_to_free.is_null());
-            tail.next_to_free = poll;
+            // SAFETY: `tail` is a valid slot in the intrusive deferred-free list;
+            // raw-ptr access avoids a second `&mut FilePoll` overlapping `poll`/`self`.
+            debug_assert!(unsafe { (*tail).next_to_free }.is_null());
+            unsafe { (*tail).next_to_free = poll };
         }
 
         if self.pending_free_head.is_null() {
@@ -427,7 +434,8 @@ impl Store {
             debug_assert!(self.pending_free_tail.is_null());
         }
 
-        poll_ref.flags.insert(Flags::IgnoreUpdates);
+        // SAFETY: see above — short-lived field borrow through raw `poll`, no overlap held.
+        unsafe { (*poll).flags.insert(Flags::IgnoreUpdates) };
         self.pending_free_tail = poll;
 
         let callback: OpaqueCallback = Self::process_deferred_frees_thunk;

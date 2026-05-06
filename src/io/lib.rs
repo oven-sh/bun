@@ -1369,19 +1369,19 @@ pub mod waker {
         }
 
         pub fn wait(&self) {
-            let mut bytes: usize = 0;
-            // SAFETY: usize is 8 bytes on supported targets; reinterpret as [u8; 8].
-            let buf = unsafe { &mut *(&mut bytes as *mut usize as *mut [u8; 8]) };
-            // SAFETY: valid fd + 8-byte buffer; result intentionally discarded.
-            let _ = unsafe { libc::read(self.fd.native(), buf.as_mut_ptr().cast(), 8) };
+            // eventfd reads are always exactly 8 bytes (u64 counter). Use a u64
+            // directly instead of type-punning through usize, which would be UB
+            // on any 32-bit target and needs no `&mut *raw` reborrow here.
+            let mut bytes: u64 = 0;
+            // SAFETY: valid fd; `bytes` is an 8-byte buffer; result intentionally discarded.
+            let _ = unsafe { libc::read(self.fd.native(), (&raw mut bytes).cast(), 8) };
         }
 
         pub fn wake(&self) {
-            let bytes: usize = 1;
-            // SAFETY: usize is 8 bytes; reinterpret as [u8; 8].
-            let buf = unsafe { &*(&bytes as *const usize as *const [u8; 8]) };
-            // SAFETY: valid fd + 8-byte buffer; result intentionally discarded.
-            let _ = unsafe { libc::write(self.fd.native(), buf.as_ptr().cast(), 8) };
+            // eventfd writes are always exactly 8 bytes (u64 increment).
+            let bytes: u64 = 1;
+            // SAFETY: valid fd; `bytes` is an 8-byte buffer; result intentionally discarded.
+            let _ = unsafe { libc::write(self.fd.native(), (&raw const bytes).cast(), 8) };
         }
     }
 

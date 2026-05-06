@@ -712,6 +712,9 @@ pub fn update_package_json_and_install_catch_error(
             if !hook.is_null() {
                 // SAFETY: CLI_LOG_HOOK is set once at startup to fn() -> *mut Log.
                 let f: unsafe fn() -> *mut bun_logger::Log = unsafe { core::mem::transmute(hook) };
+                // SAFETY: hook returns the address of the process-global `bun.cli.Cli.log_` (see
+                // .zig L498). We are on the single CLI thread in the install error path; no other
+                // `&mut Log` to that static is live for the duration of this `print` call.
                 let log = unsafe { &mut *f() };
                 let _ = log.print(Output::error_writer());
             }
@@ -968,13 +971,20 @@ pub fn update_package_json_and_install(
     //    typing in the dependency names
     // 3. Run the install command
     if cli.analyze {
+        // Zig stores `*PackageManager.CommandLineArguments` (freely-aliasing ptr) in the Analyzer
+        // while `fetcher.entry_points` simultaneously borrows `cli.positionals[1..]`. Mirroring
+        // that with `&mut cli` here would assert exclusive access to `cli` and make the later
+        // `&mut *(ctx as *mut Analyzer)` deref UB under Stacked Borrows, so keep `cli` as a raw
+        // ptr end-to-end and only materialize `&mut` inside the callback once `entry_points` is
+        // no longer read (the callback never returns — it exits the process).
+        let cli_ptr: *mut CommandLineArguments = core::ptr::addr_of_mut!(cli);
         let mut analyzer = Analyzer {
             ctx,
-            cli: &mut cli,
+            cli: cli_ptr,
             subcommand,
         };
         let mut fetcher = bun_bundler::bundle_v2::BundleV2::DependenciesScanner {
-            ctx: &mut analyzer as *mut Analyzer as *mut core::ffi::c_void,
+            ctx: core::ptr::addr_of_mut!(analyzer) as *mut core::ffi::c_void,
             entry_points: &cli.positionals[1..],
             // TODO(port): Zig used `@ptrCast(&Analyzer.onAnalyze)` to erase the `*@This()` param to
             // `*anyopaque`. Provide an `extern "C"` thunk or match `DependenciesScanner.onFetch`'s

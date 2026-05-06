@@ -92,26 +92,37 @@ impl MySQLRequestQueue {
         }
     }
 
-    /// PORT NOTE: takes `*mut MySQLConnection` (not `&mut`) so that `&mut self`
-    /// (the queue, embedded inside `MySQLConnection`) does not alias a live
-    /// `&mut MySQLConnection` for the whole body. The raw pointer is
-    /// dereferenced only at the disjoint-field call sites below.
+    /// PORT NOTE: takes both `this` (the queue) and `connection` (the
+    /// embedding `JSMySQLConnection`) as **raw pointers**. The queue is a
+    /// field of `*connection`, so a long-lived `&mut self` receiver would
+    /// alias any `&mut *connection` materialized for `run()`/`on_error()`
+    /// below (Stacked Borrows UB). With raw-ptr receivers, each
+    /// `(*this).…` / `(*connection).…` access forms a fresh short-lived
+    /// borrow that ends before the next one begins — mirroring Zig's freely-
+    /// aliasing `*T` semantics.
     ///
     /// # Safety
-    /// `connection` must point to the live `JSMySQLConnection` that embeds
-    /// `self` as its `connection.queue` field.
-    pub unsafe fn advance(&mut self, connection: *mut MySQLConnection) {
+    /// - `this` must point to the live queue embedded as
+    ///   `(*connection).connection.queue`.
+    /// - `connection` must be live for the duration of the call.
+    /// - `run()`/`on_error()`/`reset_connection_timeout()`/`is_able_to_write()`
+    ///   on `*connection` must not access the queue's backing storage.
+    pub unsafe fn advance(this: *mut Self, connection: *mut MySQLConnection) {
         // PORT NOTE: reshaped for borrowck — Zig `defer { while ... }` cleanup
         // became a post-block pass; early `return`s in the Zig loop become
         // `break 'advance` so cleanup always runs at function exit.
         'advance: {
             let mut offset: usize = 0;
 
-            // SAFETY: caller contract; `is_able_to_write` reads disjoint
-            // connection-state fields, never the queue.
-            while self.requests.readable_length() > offset && unsafe { (*connection).is_able_to_write() } {
-                let request: *mut JSMySQLQuery = self.requests.peek_item(offset);
+            // SAFETY: caller contract; each `(*this)` / `(*connection)` deref
+            // forms a fresh short-lived borrow — no two `&mut` overlap.
+            while unsafe { (*this).requests.readable_length() } > offset
+                && unsafe { (*connection).is_able_to_write() }
+            {
+                let request: *mut JSMySQLQuery = unsafe { (*this).requests.peek_item(offset) };
                 // SAFETY: queue holds a ref on every request; pointer is live.
+                // `JSMySQLQuery` is a separate heap allocation — never aliases
+                // `*this` or `*connection`.
                 let req = unsafe { &mut *request };
 
                 if req.is_completed() {
@@ -121,21 +132,22 @@ impl MySQLRequestQueue {
                         continue;
                     }
                     debug!("isCompleted");
-                    self.requests.discard(1);
+                    unsafe { (*this).requests.discard(1) };
                     req.deref();
                     continue;
                 }
 
                 if req.is_being_prepared() {
                     debug!("isBeingPrepared");
-                    self.waiting_to_prepare = true;
+                    unsafe { (*this).waiting_to_prepare = true };
                     // cannot continue the queue until the current request is marked as prepared
                     break 'advance;
                 }
                 if req.is_running() {
                     debug!("isRunning");
-                    let total_requests_running =
-                        (self.pipelined_requests + self.nonpipelinable_requests) as usize;
+                    let total_requests_running = unsafe {
+                        ((*this).pipelined_requests + (*this).nonpipelinable_requests) as usize
+                    };
                     if offset < total_requests_running {
                         offset += total_requests_running;
                     } else {
@@ -144,13 +156,15 @@ impl MySQLRequestQueue {
                     continue;
                 }
 
-                // SAFETY: caller contract; `run`/`on_error` touch connection
-                // state disjoint from `self.requests`' backing storage.
+                // SAFETY: no `&mut *this` is live here (only the raw `this`
+                // and `req`, a disjoint heap alloc), so `&mut *connection`
+                // (which spans the queue bytes) does not alias a live unique
+                // borrow. `run()`/`on_error()` never touch the queue.
                 if let Err(err) = req.run(unsafe { &mut *connection }) {
                     debug!("run failed");
                     unsafe { (*connection).on_error(Some(req), err) };
                     if offset == 0 {
-                        self.requests.discard(1);
+                        unsafe { (*this).requests.discard(1) };
                         req.deref();
                     }
                     offset += 1;
@@ -160,19 +174,22 @@ impl MySQLRequestQueue {
                     debug!("isBeingPrepared");
                     // SAFETY: caller contract; touches timer state, not the queue.
                     unsafe { (*connection).reset_connection_timeout() };
-                    self.is_ready_for_query = false;
-                    self.waiting_to_prepare = true;
+                    unsafe {
+                        (*this).is_ready_for_query = false;
+                        (*this).waiting_to_prepare = true;
+                    }
                     break 'advance;
                 } else if req.is_running() {
                     // SAFETY: caller contract; touches timer state, not the queue.
                     unsafe { (*connection).reset_connection_timeout() };
                     debug!("isRunning after run");
-                    self.is_ready_for_query = false;
+                    unsafe { (*this).is_ready_for_query = false };
 
                     if req.is_pipelined() {
-                        self.pipelined_requests += 1;
-                        // SAFETY: caller contract; read-only over disjoint fields.
-                        if self.can_pipeline(unsafe { &*connection }) {
+                        unsafe { (*this).pipelined_requests += 1 };
+                        // SAFETY: `can_pipeline` takes `&self` + `&MySQLConnection`;
+                        // two overlapping shared borrows are sound.
+                        if unsafe { (*this).can_pipeline(&*connection) } {
                             debug!("pipelined requests");
                             offset += 1;
                             continue;
@@ -180,22 +197,24 @@ impl MySQLRequestQueue {
                         break 'advance;
                     }
                     debug!("nonpipelinable requests");
-                    self.nonpipelinable_requests += 1;
+                    unsafe { (*this).nonpipelinable_requests += 1 };
                 }
                 break 'advance;
             }
         }
 
         // Zig: defer { while ... } — runs at function exit.
-        while self.requests.readable_length() > 0 {
-            let request: *mut JSMySQLQuery = self.requests.peek_item(0);
+        // SAFETY: caller contract; fresh short-lived `(*this)` borrow per access.
+        while unsafe { (*this).requests.readable_length() } > 0 {
+            let request: *mut JSMySQLQuery = unsafe { (*this).requests.peek_item(0) };
             // SAFETY: queue holds a ref on every request; pointer is live.
+            // Separate heap allocation — never aliases `*this`.
             let req = unsafe { &mut *request };
             // An item may be in the success or failed state and still be inside the queue (see deinit later comments)
             // so we do the cleanup her
             if req.is_completed() {
                 debug!("isCompleted discard after advance");
-                self.requests.discard(1);
+                unsafe { (*this).requests.discard(1) };
                 req.deref();
                 continue;
             }

@@ -1814,11 +1814,7 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                 this.rules.v.push(CssRule::FontFace(
                     css_rules::font_face::FontFaceRule { properties, loc },
                 ));
-                return Ok(());
-                }
-                #[cfg(any())] {
-                let _ = (input, loc);
-                todo("@font-face block — FontFaceDeclarationParser trait impls gated");
+                Ok(())
                 }
             }
             AtRulePrelude::FontPaletteValues(name) => {
@@ -1903,11 +1899,7 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                     vendor_prefix: prefix,
                     loc,
                 }));
-                return Ok(());
-                }
-                #[cfg(any())] {
-                let _ = (name, prefix, input, loc);
-                todo("@keyframes block — KeyframesListParser trait impls gated");
+                Ok(())
                 }
             }
             AtRulePrelude::Page(selectors) => {

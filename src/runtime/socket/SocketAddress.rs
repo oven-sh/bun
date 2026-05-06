@@ -90,7 +90,8 @@ impl Options {
 
         // required. Validated by `validatePort`.
         let _port: u16 = if let Some(p) = obj.get(global, "port")? {
-            if !p.is_finite() {
+            // PORT NOTE: Zig `JSValue.isFinite()`; Rust shim until landed in bun_jsc.
+            if !(p.is_number() && p.as_number().is_finite()) {
                 return Err(Self::throw_bad_port(global, p));
             }
             let port32 = p.to_int32();

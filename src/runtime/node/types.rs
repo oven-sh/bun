@@ -29,6 +29,18 @@ impl SliceWithUnderlyingString {
     pub fn slice(&self) -> &[u8] { self.utf8.slice() }
     pub fn deinit(&self) {}
     pub fn to_thread_safe(&mut self) {}
+    /// `SliceWithUnderlyingString.reportExtraMemory` — tell JSC about the
+    /// owned-bytes allocation so the GC heuristic can account for it.
+    #[inline]
+    pub fn report_extra_memory(&self, _vm: &jsc::VM) {
+        // TODO(b2-blocked): bun_jsc::VM::deprecated_report_extra_memory.
+    }
+    /// `SliceWithUnderlyingString.isWTFAllocated` — true when the utf8 slice
+    /// borrows directly from a WTF::StringImpl.
+    #[inline]
+    pub fn is_wtf_allocated(&self) -> bool {
+        matches!(self.utf8, ZigStringSlice::WTF { .. })
+    }
 
     /// `string_jsc.sliceWithUnderlyingStringTransferToJS` — hand this slice to
     /// JS, consuming both the utf8 buffer and the underlying `bun.String` ref.

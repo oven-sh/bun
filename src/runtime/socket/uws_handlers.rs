@@ -200,8 +200,8 @@ where
 // the per-driver ports — the empty impls here just satisfy `vtable::make`'s
 // `Handler` bound so dispatch tables compile.
 // TODO(port): replace default no-ops with the real event bodies once consumer
-// crates are ported (socket_body.rs, websocket_client, sql drivers).
-impl<const SSL: bool> SocketEvents<SSL> for api::NewSocket<SSL> {}
+// crates are ported (websocket_client, sql drivers). `api::NewSocket`'s real
+// impl lives in `socket/mod.rs` (bridges to inherent methods).
 impl<const SSL: bool> SocketEvents<SSL> for websocket_upgrade_client::NewHttpUpgradeClient<SSL> {}
 impl<const SSL: bool> SocketEvents<SSL> for websocket_client::WebSocket<SSL> {}
 impl<const SSL: bool> NsSocketEvents<postgres::PostgresSQLConnection, SSL>

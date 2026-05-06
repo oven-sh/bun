@@ -1173,12 +1173,13 @@ impl NodeHTTPResponse {
             chunk.len(),
             last
         );
-        self.buffered_request_body_data_during_pause
+        let _ = self
+            .buffered_request_body_data_during_pause
             .append_slice(chunk);
         if last {
             self.flags.insert(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST);
-            if self.body_read_ref.has() {
-                self.body_read_ref.unref(VirtualMachine::get());
+            if self.body_read_ref.has {
+                self.body_read_ref.unref(vm_get());
                 self.mark_request_as_done_if_necessary();
             }
         }

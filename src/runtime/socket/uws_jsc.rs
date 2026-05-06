@@ -62,12 +62,17 @@ pub fn verify_error_to_js(
     };
 
     let fallback = SystemError {
+        errno: 0,
         code: BunString::clone_utf8(code),
         message: BunString::clone_utf8(reason),
-        ..SystemError::default()
+        path: BunString::empty(),
+        syscall: BunString::empty(),
+        hostname: BunString::empty(),
+        fd: core::ffi::c_int::MIN,
+        dest: BunString::empty(),
     };
 
-    fallback.to_error_instance(global_object)
+    Ok(fallback.to_error_instance(global_object))
 }
 
 // ── AnyWebSocket.getTopicsAsJSArray ────────────────────────────────────────

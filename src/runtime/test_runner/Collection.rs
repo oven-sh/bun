@@ -32,7 +32,7 @@ pub struct Collection {
 }
 
 pub struct QueuedDescribe<'a> {
-    callback: Strong, // jsc.Strong.Deprecated
+    callback: DeprecatedStrong, // jsc.Strong.Deprecated
     active_scope: &'a DescribeScope,
     new_scope: &'a DescribeScope,
 }

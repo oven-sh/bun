@@ -18,7 +18,6 @@ use bun_uws_sys::socket_group::VTable;
 use bun_uws_sys::{us_bun_verify_error_t, us_socket_t, vtable, ConnectingSocket, SocketKind};
 
 use super::uws_handlers as handlers;
-use handlers::SocketEvents;
 
 // (Zig had a `comptime { _ = us_dispatch_*; }` force-reference block here to
 // keep the exports in the link even if nothing in Zig calls them. Rust links

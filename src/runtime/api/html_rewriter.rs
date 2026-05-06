@@ -2569,8 +2569,10 @@ impl WrapperLike for Element {
     fn init(v: *mut Self::Raw) -> *mut Self { Self::init(v) }
     fn ref_(&self) { self.ref_() }
     fn deref(this: *mut Self) { Self::deref(this) }
-    fn to_js(&self, g: &JSGlobalObject) -> JSValue { self.to_js(g) }
-    fn invalidate(&mut self) { self.invalidate() }
+    fn to_js(&self, _g: &JSGlobalObject) -> JSValue {
+        todo!("blocked_on: bun_jsc::JsClass to_js for *mut Self (intrusive-rc wrapper)")
+    }
+    fn invalidate(&mut self) { Element::invalidate(self) }
     const HAS_INVALIDATE: bool = true;
 }
 

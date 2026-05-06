@@ -122,20 +122,18 @@ pub mod ffi {
         pub fn ERR_lib_error_string(e: u32) -> *const c_char;
     }
 }
-// Shadow `boringssl::*` references in the host-fn bodies below with the local
-// FFI surface where the sys crate doesn't yet export the symbol.
-use ffi::*;
+use crate::node::StringOrBuffer;
 
 // In Zig this file is a mixin of free functions over `jsc.API.TLSSocket`.
-// TODO(port): these may need to move into `impl TLSSocket` once the class is ported.
+// The `#[bun_jsc::host_fn]` shims live on `NewSocket<SSL>` in `socket_body.rs`
+// and forward into these free helpers — keep them as plain `fn`s.
 type This = crate::api::TLSSocket;
 
-#[bun_jsc::host_fn(method)]
 pub fn get_servername(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::UNDEFINED) };
 
     // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
-    let servername = unsafe { boringssl::SSL_get_servername(ssl_ptr, boringssl::TLSEXT_NAMETYPE_host_name) };
+    let servername = unsafe { boringssl::SSL_get_servername(ssl_ptr, ffi::TLSEXT_NAMETYPE_host_name) };
     if servername.is_null() {
         return Ok(JSValue::UNDEFINED);
     }
@@ -144,8 +142,7 @@ pub fn get_servername(this: &mut This, global: &JSGlobalObject, _frame: &CallFra
     Ok(ZigString::from_utf8(slice).to_js(global))
 }
 
-#[bun_jsc::host_fn(method)]
-pub fn set_servername(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub fnset_servername(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     if this.is_server() {
         return global.throw("Cannot issue SNI from a TLS server-side socket");
     }
@@ -179,8 +176,7 @@ pub fn set_servername(this: &mut This, global: &JSGlobalObject, frame: &CallFram
     Ok(JSValue::UNDEFINED)
 }
 
-#[bun_jsc::host_fn(method)]
-pub fn get_peer_x509_certificate(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub fnget_peer_x509_certificate(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::UNDEFINED) };
     // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
     let cert = unsafe { boringssl::SSL_get_peer_certificate(ssl_ptr) };
@@ -190,8 +186,7 @@ pub fn get_peer_x509_certificate(this: &mut This, global: &JSGlobalObject, _fram
     Ok(JSValue::UNDEFINED)
 }
 
-#[bun_jsc::host_fn(method)]
-pub fn get_x509_certificate(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub fnget_x509_certificate(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::UNDEFINED) };
     // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
     let cert = unsafe { boringssl::SSL_get_certificate(ssl_ptr) };
@@ -201,8 +196,7 @@ pub fn get_x509_certificate(this: &mut This, global: &JSGlobalObject, _frame: &C
     Ok(JSValue::UNDEFINED)
 }
 
-#[bun_jsc::host_fn(method)]
-pub fn get_tls_version(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub fnget_tls_version(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     jsc::mark_binding(core::panic::Location::caller());
 
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::NULL) };
@@ -219,8 +213,7 @@ pub fn get_tls_version(this: &mut This, global: &JSGlobalObject, _frame: &CallFr
     Ok(ZigString::from_utf8(slice).to_js(global))
 }
 
-#[bun_jsc::host_fn(method)]
-pub fn set_max_send_fragment(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub fnset_max_send_fragment(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     jsc::mark_binding(core::panic::Location::caller());
 
     let args = frame.arguments_old(1);
@@ -248,8 +241,7 @@ pub fn set_max_send_fragment(this: &mut This, global: &JSGlobalObject, frame: &C
     ))
 }
 
-#[bun_jsc::host_fn(method)]
-pub fn get_peer_certificate(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub fnget_peer_certificate(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     jsc::mark_binding(core::panic::Location::caller());
 
     let args = frame.arguments_old(1);
@@ -318,8 +310,7 @@ pub fn get_peer_certificate(this: &mut This, global: &JSGlobalObject, frame: &Ca
     Ok(JSValue::UNDEFINED)
 }
 
-#[bun_jsc::host_fn(method)]
-pub fn get_certificate(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub fnget_certificate(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::UNDEFINED) };
     // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
     let cert = unsafe { boringssl::SSL_get_certificate(ssl_ptr) };
@@ -330,8 +321,7 @@ pub fn get_certificate(this: &mut This, global: &JSGlobalObject, _frame: &CallFr
     Ok(JSValue::UNDEFINED)
 }
 
-#[bun_jsc::host_fn(method)]
-pub fn get_tls_finished_message(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub fnget_tls_finished_message(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::UNDEFINED) };
     // We cannot just pass nullptr to SSL_get_finished()
     // because it would further be propagated to memcpy(),
@@ -357,8 +347,7 @@ pub fn get_tls_finished_message(this: &mut This, global: &JSGlobalObject, _frame
     Ok(buffer)
 }
 
-#[bun_jsc::host_fn(method)]
-pub fn get_shared_sigalgs(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub fnget_shared_sigalgs(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     jsc::mark_binding(core::panic::Location::caller());
 
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::NULL) };
@@ -455,8 +444,7 @@ pub fn get_shared_sigalgs(this: &mut This, global: &JSGlobalObject, _frame: &Cal
     Ok(array)
 }
 
-#[bun_jsc::host_fn(method)]
-pub fn get_cipher(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub fnget_cipher(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::UNDEFINED) };
     // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
     let cipher = unsafe { boringssl::SSL_get_current_cipher(ssl_ptr) };
@@ -502,8 +490,7 @@ pub fn get_cipher(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) 
     Ok(result)
 }
 
-#[bun_jsc::host_fn(method)]
-pub fn get_tls_peer_finished_message(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub fnget_tls_peer_finished_message(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::UNDEFINED) };
     // We cannot just pass nullptr to SSL_get_peer_finished()
     // because it would further be propagated to memcpy(),
@@ -529,8 +516,7 @@ pub fn get_tls_peer_finished_message(this: &mut This, global: &JSGlobalObject, _
     Ok(buffer)
 }
 
-#[bun_jsc::host_fn(method)]
-pub fn export_keying_material(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub fnexport_keying_material(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     if this.socket.is_detached() {
         return Ok(JSValue::UNDEFINED);
     }
@@ -614,8 +600,7 @@ pub fn export_keying_material(this: &mut This, global: &JSGlobalObject, frame: &
     }
 }
 
-#[bun_jsc::host_fn(method)]
-pub fn get_ephemeral_key_info(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub fnget_ephemeral_key_info(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     // only available for clients
     if this.is_server() {
         return Ok(JSValue::NULL);
@@ -705,8 +690,7 @@ pub fn get_alpn_protocol(this: &This, global: &JSGlobalObject) -> JsResult<JSVal
     Ok(ZigString::from_utf8(slice).to_js(global))
 }
 
-#[bun_jsc::host_fn(method)]
-pub fn get_session(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub fnget_session(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::UNDEFINED) };
     // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
     let Some(session) = (unsafe { boringssl::SSL_get_session(ssl_ptr) }) else {
@@ -728,8 +712,7 @@ pub fn get_session(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame)
     Ok(buffer)
 }
 
-#[bun_jsc::host_fn(method)]
-pub fn set_session(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub fnset_session(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     if this.socket.is_detached() {
         return Ok(JSValue::UNDEFINED);
     }
@@ -767,8 +750,7 @@ pub fn set_session(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) 
     }
 }
 
-#[bun_jsc::host_fn(method)]
-pub fn get_tls_ticket(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub fnget_tls_ticket(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::UNDEFINED) };
     // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
     let Some(session) = (unsafe { boringssl::SSL_get_session(ssl_ptr) }) else {
@@ -789,8 +771,7 @@ pub fn get_tls_ticket(this: &mut This, global: &JSGlobalObject, _frame: &CallFra
     jsc::ArrayBuffer::create_buffer(global, slice)
 }
 
-#[bun_jsc::host_fn(method)]
-pub fn renegotiate(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub fnrenegotiate(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::UNDEFINED) };
     // SAFETY: ERR_clear_error has no preconditions; clears the calling thread's BoringSSL error queue.
     unsafe { boringssl::ERR_clear_error() };
@@ -805,23 +786,20 @@ pub fn renegotiate(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame)
 // must live inside an inherent impl block even though the Zig source defines
 // them as free mixin functions.
 impl This {
-#[bun_jsc::host_fn(method)]
-pub fn disable_renegotiation(this: &mut This, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub fndisable_renegotiation(this: &mut This, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::UNDEFINED) };
     // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
     unsafe { boringssl::SSL_set_renegotiate_mode(ssl_ptr, boringssl::ssl_renegotiate_never) };
     Ok(JSValue::UNDEFINED)
 }
 
-#[bun_jsc::host_fn(method)]
-pub fn is_session_reused(this: &mut This, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub fnis_session_reused(this: &mut This, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::FALSE) };
     // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
     Ok(JSValue::from(unsafe { ffi::SSL_session_reused(ssl_ptr) } == 1))
 }
 
-#[bun_jsc::host_fn(method)]
-pub fn set_verify_mode(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub fnset_verify_mode(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     if this.socket.is_detached() {
         return Ok(JSValue::UNDEFINED);
     }

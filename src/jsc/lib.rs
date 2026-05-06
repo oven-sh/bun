@@ -726,6 +726,32 @@ pub struct JSGlobalObject {
     _opaque: core::cell::UnsafeCell<[u8; 0]>,
     _marker: PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
+
+/// Options for `JSGlobalObject::validate_integer_range` / `validate_bigint_range`.
+/// Mirrors Zig's `IntegerRange` (comptime min/max collapsed to i128 so every
+/// signed/unsigned primitive's bounds + MIN/MAX_SAFE_INTEGER fit without
+/// narrowing). Defined here because `JSGlobalObject.rs` is still cfg-gated and
+/// callers across `bun_runtime` need a stable name.
+#[derive(Clone, Copy)]
+pub struct IntegerRange {
+    pub min: i128,
+    pub max: i128,
+    pub field_name: &'static [u8],
+    pub always_allow_zero: bool,
+}
+impl Default for IntegerRange {
+    fn default() -> Self {
+        Self {
+            min: i128::from(MIN_SAFE_INTEGER),
+            max: i128::from(MAX_SAFE_INTEGER),
+            field_name: b"",
+            always_allow_zero: false,
+        }
+    }
+}
+/// Back-compat alias — earlier ports spelled this `IntegerRangeOptions`.
+pub type IntegerRangeOptions = IntegerRange;
+
 impl VM {
     /// Raw `*mut VM` for FFI. Sound for callees that mutate: `VM` contains
     /// `UnsafeCell`, so `&VM` carries interior-mutable provenance and the

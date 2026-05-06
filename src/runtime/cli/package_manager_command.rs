@@ -538,14 +538,11 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 let root_deps = slice.items_dependencies()[0];
                 // TODO(port): MultiArrayList .items(.field) accessor naming — verify in bun_collections
 
-                Output::println(
-                    "{s} node_modules ({d})",
-                    format_args!(
-                        "{} {}",
-                        bstr::BStr::new(path),
-                        lockfile.buffers.hoisted_dependencies.len()
-                    ),
-                );
+                Output::println(format_args!(
+                    "{} node_modules ({})",
+                    bstr::BStr::new(path),
+                    lockfile.buffers.hoisted_dependencies.len()
+                ));
                 let string_bytes = lockfile.buffers.string_bytes.as_slice();
                 let mut sorted_dependencies: Vec<DependencyID> =
                     Vec::with_capacity(root_deps.len as usize);

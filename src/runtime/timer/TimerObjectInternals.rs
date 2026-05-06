@@ -1,10 +1,13 @@
 use core::mem::offset_of;
 
-use bun_jsc::{Debugger, JSGlobalObject, JSValue, JsRef, JsResult, VirtualMachine};
+use bun_jsc::{Debugger, JSGlobalObject, JSValue, JsRef, JsResult};
+// `bun_jsc::VirtualMachine` is a module re-export (`pub use self::virtual_machine as VirtualMachine`);
+// the struct lives at `bun_jsc::virtual_machine::VirtualMachine`.
+use bun_jsc::virtual_machine::VirtualMachine;
 // `bun.timespec` is `bun_core::Timespec` (lowercase `timespec` is a type alias, not a module)
 use bun_core::{Timespec, TimespecMockMode};
 
-use super::{EventLoopTimer, ImmediateObject, Kind, TimeoutMap, TimeoutObject, ID};
+use super::{EventLoopTimer, ImmediateObject, Kind, TimeoutObject, ID};
 
 /// Data that TimerObject and ImmediateObject have in common
 #[repr(C)]
@@ -558,7 +561,8 @@ impl TimerObjectInternals {
         // has `has_cleared_timer == false` but is still destroyed. Calling `.unref(); .ref()`
         // on such a timer would otherwise leak an event-loop ref and hang the process.
         if !did_have_js_ref && !self.get_destroyed() {
-            self.set_enable_keeping_event_loop_alive(VirtualMachine::get(), true);
+            // SAFETY: `VirtualMachine::get()` returns the live per-thread VM; short-lived &mut at use site.
+            self.set_enable_keeping_event_loop_alive(unsafe { &mut *VirtualMachine::get() }, true);
         }
 
         this_value

@@ -1081,7 +1081,7 @@ impl PathLike {
 
     #[inline]
     pub fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> &'a WStr {
-        strings::to_w_path(buf, self.slice())
+        strings::paths::to_w_path(buf, self.slice())
     }
 
     #[inline]
@@ -1395,7 +1395,7 @@ impl VectorArrayBuffer {
 
 pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mode>> {
     let mode_int: u32 = if value.is_number() {
-        validators::validate_uint32(ctx, value, "mode", format_args!(""), false)?
+        validators::validate_uint32(ctx, value, format_args!("mode"), false)?
     } else {
         if value.is_undefined_or_null() {
             return Ok(None);

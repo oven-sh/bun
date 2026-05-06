@@ -35,7 +35,7 @@ pub mod js_fns {
     use super::*;
 
     pub enum Signature<'a> {
-        ScopeFunctions(&'a ScopeFunctions),
+        ScopeFunctions(&'a ScopeFunctions::ScopeFunctions),
         Str(&'static [u8]),
     }
     impl<'a> fmt::Display for Signature<'a> {
@@ -151,7 +151,7 @@ pub mod js_fns {
                 global_this,
                 call_frame,
                 Signature::Str(sig_bytes),
-                ScopeFunctions::ParseArgsCfg { callback: ScopeFunctions::CallbackReq::Require, kind: ScopeFunctions::Kind::Hook },
+                ScopeFunctions::ParseArgumentsCfg { callback: ScopeFunctions::CallbackMode::Require, kind: ScopeFunctions::FunctionKind::Hook },
             )?;
             // defer args.deinit() → Drop
 
@@ -580,7 +580,7 @@ pub struct BunTest<'a> {
 
     pub phase: Phase,
     pub collection: Collection,
-    pub execution: Execution,
+    pub execution: Execution::Execution,
 }
 
 impl<'a> BunTest<'a> {
@@ -605,7 +605,7 @@ impl<'a> BunTest<'a> {
             phase: Phase::Collection,
             file_id,
             collection: Collection::init(bun_test_root),
-            execution: Execution::init(),
+            execution: Execution::Execution::init(),
             reporter,
             result_queue: ResultQueue::new(),
             default_concurrent,
@@ -879,7 +879,7 @@ impl<'a> BunTest<'a> {
             global_this.clear_termination_exception();
             let step_result: StepResult = match unsafe { (*this).phase } {
                 Phase::Collection => Collection::step(this_strong.clone(), global_this, result)?,
-                Phase::Execution => Execution::step(this_strong.clone(), global_this, result)?,
+                Phase::Execution => Execution::Execution::step(this_strong.clone(), global_this, result)?,
                 Phase::Done => StepResult::Complete,
             };
             match step_result {
@@ -971,7 +971,7 @@ impl<'a> BunTest<'a> {
                 let should_randomize = per_file_prng.as_mut().map(|p| p.random());
                 // TODO(port): std.Random / DefaultPrng mapping — confirm bun_core::random API
 
-                let mut order = Order::init(Order::Cfg {
+                let mut order = Order::Order::init(Order::Config {
                     always_use_hooks: self.collection.root_scope.base.only == Only::No && !has_filter,
                     randomize: should_randomize,
                 });
@@ -1732,14 +1732,14 @@ impl ExecutionEntry {
                 .map_or(false, |p| core::ptr::eq(p.as_ptr().cast_const(), self));
             sequence.result = if is_test_entry {
                 if self.has_done_parameter {
-                    Execution::SequenceResult::FailBecauseTimeoutWithDoneCallback
+                    Execution::Result::FailBecauseTimeoutWithDoneCallback
                 } else {
-                    Execution::SequenceResult::FailBecauseTimeout
+                    Execution::Result::FailBecauseTimeout
                 }
             } else if self.has_done_parameter {
-                Execution::SequenceResult::FailBecauseHookTimeoutWithDoneCallback
+                Execution::Result::FailBecauseHookTimeoutWithDoneCallback
             } else {
-                Execution::SequenceResult::FailBecauseHookTimeout
+                Execution::Result::FailBecauseHookTimeout
             };
             sequence.maybe_skip = true;
             return true;

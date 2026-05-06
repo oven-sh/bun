@@ -5209,8 +5209,8 @@ impl<'a> HTMLRouter<'a> {
 impl DevServer<'_> {
     pub fn put_or_overwrite_asset(
         &mut self,
-        path: &bun_fs::Path,
-        contents: &Blob::Any,
+        path: &bun_bundler::bun_fs::Path,
+        contents: &crate::webcore::blob::Any,
         content_hash: u64,
     ) -> Result<(), bun_core::Error> {
         self.graph_safety_lock.lock();
@@ -5226,7 +5226,7 @@ impl DevServer<'_> {
 
     pub fn on_plugins_resolved(
         &mut self,
-        plugins: Option<*mut JSBundler::Plugin>,
+        plugins: Option<*mut crate::api::js_bundler::Plugin>,
     ) -> Result<(), bun_core::Error> {
         self.bundler_options.plugin = plugins;
         self.plugin_state = PluginState::Loaded;

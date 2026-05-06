@@ -317,7 +317,9 @@ impl AnyRoute {
         //
         let path_slice = path.path().slice();
         let cwd: &[u8] = if StandaloneModuleGraph::is_bun_standalone_file_path(path_slice) {
-            StandaloneModuleGraph::target_base_public_path(bun_core::Environment::OS, b"root/")
+            // Zig: targetBasePublicPath(Environment.os, "root/") — comptime concat,
+            // exposed as a const on the Rust side.
+            bun_standalone_graph::BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes()
         } else {
             FileSystem::instance().top_level_dir
         };
@@ -354,7 +356,7 @@ impl AnyRoute {
             return Ok(Some(route));
         }
 
-        let mut methods = Option<http::Method> { method: http::Method::Set::init_empty() };
+        let mut methods = bun_http_types::Method::Optional::Method(bun_http_types::Method::Set::empty());
         methods.insert(Method::GET);
         methods.insert(Method::HEAD);
 

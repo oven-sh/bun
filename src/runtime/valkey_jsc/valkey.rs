@@ -355,7 +355,7 @@ impl ValkeyClient {
             core::mem::replace(&mut self.queue, command::entry::Queue::default());
 
         if let Some(global_this) = global_object_or_finalizing {
-            let object = protocol::valkey_error_to_js(
+            let object = valkey_error_to_js(
                 global_this,
                 b"Connection closed",
                 RedisError::ConnectionClosed,
@@ -597,7 +597,7 @@ impl ValkeyClient {
         let global_this = self.global_object();
         self.fail_with_js_value(
             global_this,
-            protocol::valkey_error_to_js(global_this, message, err),
+            valkey_error_to_js(global_this, message, err),
         )
     }
 

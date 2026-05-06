@@ -1,7 +1,8 @@
 use core::ffi::{c_int, c_void};
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
-use crate::webcore::{FetchHeaders, Response};
+use bun_jsc::{CallFrame, HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsResult};
+use crate::webcore::Response;
+use crate::webcore::response::{HeadersRef, Init};
 use bun_str::String as BunString;
 
 pub fn fix_dead_code_elimination() {

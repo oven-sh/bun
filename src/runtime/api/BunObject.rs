@@ -2010,10 +2010,12 @@ pub fn get_hash_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
 }
 
 pub fn get_jsonc_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    JSONCObject::create(global_this)
+    let _ = global_this;
+    todo!("blocked_on: crate::api::jsonc_object::create (gated in _jsc_gated)")
 }
 pub fn get_markdown_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    MarkdownObject::create(global_this)
+    let _ = global_this;
+    todo!("blocked_on: crate::api::markdown_object::create (gated in _jsc_gated)")
 }
 pub fn get_toml_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     TOMLObject::create(global_this)
@@ -2028,19 +2030,21 @@ pub fn get_yaml_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
 }
 
 pub fn get_archive_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    jsc::api::Archive::js::get_constructor(global_this)
+    jsc::codegen::js::get_constructor::<crate::api::archive::Archive>(global_this)
 }
 
 pub fn get_glob_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    jsc::api::Glob::js::get_constructor(global_this)
+    jsc::codegen::js::get_constructor::<crate::api::glob::Glob>(global_this)
 }
 
 pub fn get_image_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    jsc::api::Image::js::get_constructor(global_this)
+    let _ = global_this;
+    // `crate::image` (mod.rs) keeps the `Image` body in a private `image_body` mod.
+    todo!("blocked_on: crate::image::Image (image_body mod is private)")
 }
 
 pub fn get_s3_client_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    WebCore::S3Client::js::get_constructor(global_this)
+    jsc::codegen::js::get_constructor::<crate::webcore::s3_client::S3Client>(global_this)
 }
 
 pub fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
@@ -2061,7 +2065,7 @@ pub fn set_tls_default_ciphers(
 }
 
 pub fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    let valkey = match jsc::api::Valkey::create_no_js_no_pubsub(global_this, &[JSValue::UNDEFINED])
+    let valkey = match crate::api::Valkey::create_no_js_no_pubsub(global_this, &[JSValue::UNDEFINED])
     {
         Ok(v) => v,
         Err(err) => {

@@ -293,7 +293,7 @@ impl ServerWebSocket {
 
         if let Some(promise) = result.as_any_promise() {
             match promise.status() {
-                jsc::PromiseStatus::Rejected => {
+                jsc::js_promise::Status::Rejected => {
                     let _ = promise.result(global_object.vm());
                     return;
                 }
@@ -448,7 +448,7 @@ impl ServerWebSocket {
 
             if let Some(sig) = &signal {
                 if !sig.aborted() {
-                    sig.signal(handler.global_object, jsc::AbortReason::ConnectionClosed);
+                    sig.signal(handler.global_object, jsc::CommonAbortReason::ConnectionClosed);
                 }
             }
 
@@ -491,16 +491,22 @@ impl ServerWebSocket {
             let _exit = scopeguard::guard((), |_| loop_.exit());
 
             if !sig.aborted() {
-                sig.signal(handler.global_object, jsc::AbortReason::ConnectionClosed);
+                sig.signal(handler.global_object, jsc::CommonAbortReason::ConnectionClosed);
             }
         }
     }
 
-    pub fn behavior<ServerType, const SSL: bool>(opts: WebSocketBehavior) -> WebSocketBehavior {
-        uws::WebSocketBehaviorWrap::<ServerType, Self, SSL>::apply(opts)
+    pub fn behavior<ServerType, const SSL: bool>(opts: WebSocketBehavior) -> WebSocketBehavior
+    where
+        ServerType: bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL>,
+    {
+        bun_uws_sys::web_socket::Wrap::<ServerType, Self, SSL>::apply(opts)
     }
 
-    #[bun_jsc::host_fn]
+    // PORT NOTE: no `#[bun_jsc::host_fn]` here — the constructor extern shim is
+    // emitted by `#[bun_jsc::JsClass]` codegen, which calls `<Self>::constructor`
+    // directly. The bare `host_fn` expansion generates a free-function call that
+    // doesn't resolve inside an `impl` block.
     pub fn constructor(
         global_object: &JSGlobalObject,
         _frame: &CallFrame,

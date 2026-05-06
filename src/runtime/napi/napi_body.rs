@@ -1394,12 +1394,9 @@ pub extern "C" fn napi_create_date(env_: napi_env, time: f64, result_: *mut napi
     let mut args = [JSValue::js_number(time).as_object_ref()];
     result.set(
         env,
-        JSValue::c(jsc::c_api::JSObjectMakeDate(
-            env.to_js().ref_(),
-            1,
-            args.as_mut_ptr(),
-            TODO_EXCEPTION,
-        )),
+        JSValue::c(unsafe {
+            JSObjectMakeDate(env.to_js().as_ptr(), 1, args.as_mut_ptr(), TODO_EXCEPTION)
+        }),
     );
     env.ok()
 }
@@ -1525,7 +1522,7 @@ impl napi_async_work {
         ) {
             if state == AsyncWorkStatus::Cancelled as u32 {
                 self.event_loop
-                    .enqueue_task_concurrent(self.concurrent_task.from(self, jsc::ManualDeinit));
+                    .enqueue_task_concurrent(self.concurrent_task.from(self, AutoDeinit::ManualDeinit));
                 return;
             }
         }
@@ -1534,7 +1531,7 @@ impl napi_async_work {
             .store(AsyncWorkStatus::Completed as u32, Ordering::SeqCst);
 
         self.event_loop
-            .enqueue_task_concurrent(self.concurrent_task.from(self, jsc::ManualDeinit));
+            .enqueue_task_concurrent(self.concurrent_task.from(self, AutoDeinit::ManualDeinit));
     }
 
     pub fn cancel(&mut self) -> bool {
@@ -1614,12 +1611,32 @@ pub struct napi_node_version {
 // SAFETY: napi_node_version is POD; the *const c_char points at a static literal.
 unsafe impl Sync for napi_node_version {}
 
-// TODO(port): std.SemanticVersion.parse(bun.Environment.reported_nodejs_version) at comptime.
-// Phase B should generate these constants from `reported_nodejs_version`.
+// Port of `std.SemanticVersion.parse(bun.Environment.reported_nodejs_version)` at comptime.
+// Splits "MAJOR.MINOR.PATCH" into u32 components at compile time.
+const fn parse_semver_component(s: &str, idx: usize) -> u32 {
+    let bytes = s.as_bytes();
+    let mut i = 0usize;
+    let mut field = 0usize;
+    // advance to the requested dot-separated field
+    while field < idx {
+        while i < bytes.len() && bytes[i] != b'.' {
+            i += 1;
+        }
+        i += 1; // skip '.'
+        field += 1;
+    }
+    let mut n: u32 = 0;
+    while i < bytes.len() && bytes[i] != b'.' {
+        n = n * 10 + (bytes[i] - b'0') as u32;
+        i += 1;
+    }
+    n
+}
+
 pub static NAPI_NODE_VERSION_GLOBAL: napi_node_version = napi_node_version {
-    major: bun_core::Environment::REPORTED_NODEJS_VERSION_MAJOR,
-    minor: bun_core::Environment::REPORTED_NODEJS_VERSION_MINOR,
-    patch: bun_core::Environment::REPORTED_NODEJS_VERSION_PATCH,
+    major: parse_semver_component(bun_core::Environment::REPORTED_NODEJS_VERSION, 0),
+    minor: parse_semver_component(bun_core::Environment::REPORTED_NODEJS_VERSION, 1),
+    patch: parse_semver_component(bun_core::Environment::REPORTED_NODEJS_VERSION, 2),
     release: b"node\0".as_ptr() as *const c_char,
 };
 

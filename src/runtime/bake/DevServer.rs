@@ -4019,11 +4019,13 @@ pub fn finalize_bundle(
 
     // Release the lock because the underlying handler may acquire one.
     dev.graph_safety_lock.unlock();
-    let _relock = scopeguard::guard((), |_| dev.graph_safety_lock.lock());
+    // SAFETY: `dev_ptr` is live for the entire fn body; runs before `_lock` (LIFO),
+    // so the outer unlock guard sees a locked state again.
+    let _relock = scopeguard::guard((), move |_| unsafe { (*dev_ptr).graph_safety_lock.lock() });
 
     // Set all the deferred routes to the .loaded state up front
     {
-        let mut node = current_bundle.requests.first;
+        let mut node = current_bundle!().requests.first;
         while !node.is_null() {
             // SAFETY: node is an intrusive list node valid while current_bundle.requests holds it;
             // `data` was initialized by `defer_request`.
@@ -4034,18 +4036,19 @@ pub fn finalize_bundle(
         }
     }
 
-    if current_bundle.promise.strong.has_value() {
-        let _deinit = scopeguard::guard((), |_| current_bundle.promise.deinit_idempotently());
-        current_bundle.promise.set_route_bundle_state(dev, route_bundle::State::Loaded);
+    if current_bundle!().promise.strong.has_value() {
+        // SAFETY: see `current_bundle!` SAFETY; guard runs before `_outer_defer`.
+        let _deinit = scopeguard::guard((), move |_| unsafe { (*current_bundle_ptr).promise.deinit_idempotently() });
+        current_bundle!().promise.set_route_bundle_state(dev, route_bundle::State::Loaded);
         // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
         let vm = unsafe { &*dev.vm };
         // SAFETY: vm.event_loop() returns a valid `*mut EventLoop` for the VM lifetime.
         unsafe { &mut *vm.event_loop() }.enter();
         let _exit = scopeguard::guard((), |_| unsafe { &mut *vm.event_loop() }.exit());
-        current_bundle.promise.strong.resolve(unsafe { &*vm.global }, JSValue::TRUE)?;
+        current_bundle!().promise.strong.resolve(unsafe { &*vm.global }, JSValue::TRUE)?;
     }
 
-    while let Some(node) = current_bundle.requests.pop_first() {
+    while let Some(node) = current_bundle!().requests.pop_first() {
         // SAFETY: `pop_first` hands back ownership of the intrusive node;
         // `data` was initialized by `defer_request`.
         let req = unsafe { (*node).data.assume_init_mut() };

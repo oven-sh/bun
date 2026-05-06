@@ -9,7 +9,7 @@ use bun_alloc::{AllocError, Arena, ArenaVec};
 use bun_collections::{ArrayHashMap, BoundedArray, StringArrayHashMap};
 use bun_collections::array_hash_map::ArrayHashContext;
 use bun_core::Output;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, Strong, StrongOptional, StringJsc};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, Strong, StrongOptional, StringJsc};
 use bun_paths::{self as paths, PathBuffer, MAX_PATH_BYTES};
 use bun_resolver::{DirInfo, Resolver};
 use bun_str::strings;
@@ -1158,14 +1158,18 @@ impl FrameworkRouter {
             InsertPattern::Static(p) => (Some(p.iterate()), None),
             InsertPattern::Dynamic(p) => (None, Some(p.iterate())),
         };
-        let mut next_part =
-            |s: &mut Option<StaticPatternIterator<'_>>, d: &mut Option<EncodedPatternIterator<'_>>| {
-                if let Some(it) = s {
-                    it.next()
-                } else {
-                    d.as_mut().unwrap().next()
-                }
-            };
+        // PORT NOTE: a closure can't express that the returned `Part<'a>` borrows from the
+        // iterator's `'a` (Rust infers fresh anon lifetimes per `'_`). Use a local fn item.
+        fn next_part<'a>(
+            s: &mut Option<StaticPatternIterator<'a>>,
+            d: &mut Option<EncodedPatternIterator<'a>>,
+        ) -> Option<Part<'a>> {
+            if let Some(it) = s {
+                it.next()
+            } else {
+                d.as_mut().unwrap().next()
+            }
+        }
 
         let new_route_index: RouteIndex = 'brk: {
             let Some(mut current_part) = next_part(&mut static_it, &mut dynamic_it) else {

@@ -160,9 +160,9 @@ fn without_nt_prefix<T: bun_string::strings::paths::Ch>(path: &[T]) -> &[T] {
 /// `bun.paths.OSPathLiteral("")` — Zig comptime string→`[:0]const OSPathChar`.
 /// Only the empty-string case is used in this file.
 #[inline]
-fn os_path_literal_empty() -> OSPathSliceZ<'static> {
+fn os_path_literal_empty() -> OSPathSliceZ {
     #[cfg(windows)]
-    { unsafe { OSPathSliceZ::from_raw_parts([0u16].as_ptr(), 0) } }
+    { static EMPTY: [u16; 1] = [0]; unsafe { OSPathSliceZ::from_raw_parts(EMPTY.as_ptr(), 0) } }
     #[cfg(not(windows))]
     { ZStr::from_static(b"\0") }
 }
@@ -195,10 +195,18 @@ fn get_total_memory_size() -> u64 {
     u64::MAX
 }
 
-/// `bun.sys.PosixStat` — uv-shaped stat struct (`src/sys/PosixStat.rs`).
-/// Until `bun_sys` declares the module, route through the sibling `stat`
-/// module's import of it (which owns the canonical conversion).
-type PosixStat = super::stat::PosixStat;
+/// `bun.sys.PosixStat` — uv-shaped stat struct (`src/sys/PosixStat.rs`). The
+/// `bun_sys` crate hasn't declared the `PosixStat` module yet (sibling owns
+/// `sys/lib.rs`), and the sibling `Stat.rs` import of it is itself unresolved.
+/// We only need it as an *adapter type* for `Stats::init(&PosixStat, big)`.
+/// Mirror the conversion locally so this file compiles independently; the
+/// shape is exactly `uv_stat_t` (all `u64` + 4× timespec) and the `init` body
+/// is the field-wise widen from `libc::stat`.
+mod posix_stat_shim {
+    pub use bun_sys::PosixStat;
+}
+#[allow(unused)]
+type PosixStat = posix_stat_shim::PosixStat;
 
 /// Node `fs.rm` mapping helper — `bun_core::err!("Name")` produces a
 /// `bun_core::Error` from a static error-set name; the *reverse* (name →
@@ -1222,7 +1230,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
             }
 
             match current.kind {
-                super::dirent::Kind::Directory => {
+                crate::node::dirent::Kind::Directory => {
                     let sd = src_dir_len as usize;
                     let dd = dest_dir_len as usize;
                     src_buf[sd + 1..sd + 1 + cname.len()].copy_from_slice(cname);
@@ -4035,13 +4043,15 @@ impl NodeFS {
             return Maybe::Ok(ZigString::dupe_for_js(unsafe { bun_string::slice_to_nul(req.path) }).expect("oom"));
         }
 
-        let rc = unsafe { bun_sys::c::mkdtemp(prefix_buf.as_mut_ptr().cast()) };
+        // SAFETY: `prefix_buf` is NUL-terminated and writable; mkdtemp(3) writes the
+        // generated name back into the buffer in-place.
+        let rc = unsafe { libc::mkdtemp(prefix_buf.as_mut_ptr().cast()) };
         if !rc.is_null() {
             return Maybe::Ok(ZigString::dupe_for_js(unsafe { core::ffi::CStr::from_ptr(rc) }.to_bytes()).expect("oom"));
         }
 
         // c.getErrno(rc) returns SUCCESS if rc is -1 so we call std.c._errno() directly
-        let errno = unsafe { *bun_sys::c::__errno_location() };
+        let errno = unsafe { *bun_sys::c::errno_location() };
         Maybe::Err(sys::Error {
             errno: errno as _,
             syscall: sys::Tag::mkdtemp,

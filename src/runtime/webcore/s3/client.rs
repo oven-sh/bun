@@ -860,6 +860,12 @@ pub fn download_stream(
 
     task.signals = task.signal_store.to();
 
+    // SAFETY: `VirtualMachine::get()` returns the live per-thread VM singleton; the
+    // `&mut` borrow is scoped to the two getter calls below.
+    let vm_mut = unsafe { &mut *VirtualMachine::get() };
+    let verbose = vm_mut.get_verbose_fetch();
+    let reject_unauthorized = vm_mut.get_tls_reject_unauthorized();
+
     task.http = bun_http::AsyncHTTP::init(
         bun_http::Method::GET,
         url,

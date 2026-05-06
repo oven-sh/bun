@@ -2419,7 +2419,7 @@ pub fn construct_bun_file(
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
     // SAFETY: bun_vm() never returns null for a Bun-owned global.
-    let vm = unsafe { &mut *global_object.bun_vm() };
+    let vm = unsafe { &*global_object.bun_vm() };
     let arguments = callframe.arguments_old::<2>();
     let arguments_slice = arguments.slice();
     let mut args = jsc::ArgumentsSlice::init(vm, arguments_slice);
@@ -2436,7 +2436,8 @@ pub fn construct_bun_file(
             todo!("blocked_on: webcore::node_types::PathLike vs crate::node::PathLike (S3File::construct_internal_js)");
         }
     }
-    let _path_cleanup = scopeguard::guard((), |()| path.deinit_and_unprotect());
+    // PORT NOTE: Zig `defer path.deinitAndUnprotect()` — stub PathOrFileDescriptor
+    // owns its data and `deinit_and_unprotect` is a no-op; drop handles it.
 
     let mut blob = Blob::find_or_create_file_from_path(&mut path, global_object, false);
 

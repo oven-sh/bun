@@ -2391,17 +2391,17 @@ impl<'a> Formatter<'a> {
                                     if
                                     // count_without_children is necessary to prevent printing an extra newline
                                     // if there are children and one prop and the child prop is the last prop
-                                    props_iter.i + 1 < count_without_children
+                                    iter_i + 1 < count_without_children
                                         // 3 is arbitrary but basically
                                         //  <input type="text" value="foo" />
                                         //  ^ should be one line
                                         // <input type="text" value="foo" bar="true" baz={false} />
                                         //  ^ should be multiple lines
-                                        && props_iter.i > 3
+                                        && iter_i > 3
                                     {
                                         writer.write_all(b"\n");
                                         self.write_indent(writer.ctx).expect("unreachable");
-                                    } else if props_iter.i + 1 < count_without_children {
+                                    } else if iter_i + 1 < count_without_children {
                                         writer.write_all(b" ");
                                     }
                                 }
@@ -3000,19 +3000,21 @@ impl JestPrettyFormat {
             )?;
             this.quote_strings = original_quote_strings;
         } else if let Some(instance) = value.as_::<expect::ExpectCustomAsymmetricMatcher>() {
-            let printed = instance
+            // SAFETY: `as_` returns the live m_ctx payload owned by `value`.
+            let printed = unsafe { &*instance }
                 .custom_print(value, this.global_this, writer.ctx, true)
                 .expect("unreachable");
             if !printed {
                 // default print (non-overridden by user)
-                let flags = instance.flags;
+                // SAFETY: see above.
+                let flags = unsafe { (*instance).flags };
                 let Some(args_value) =
-                    expect::ExpectCustomAsymmetricMatcher::js::captured_args_get_cached(value)
+                    expect_js::custom::captured_args_get_cached(value)
                 else {
                     return Ok(true);
                 };
                 let Some(matcher_fn) =
-                    expect::ExpectCustomAsymmetricMatcher::js::matcher_fn_get_cached(value)
+                    expect_js::custom::matcher_fn_get_cached(value)
                 else {
                     return Ok(true);
                 };

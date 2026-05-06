@@ -1806,7 +1806,7 @@ impl ExpectStatic {
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
         //const this: *ExpectStatic = ExpectStatic.fromJS(callFrame.this());
-        let instance_jsvalue = T::call(global_this, call_frame)?;
+        let instance_jsvalue = T::invoke(global_this, call_frame)?;
         if !instance_jsvalue.is_empty() && !instance_jsvalue.is_any_error() {
             let Some(instance) = T::from_js_ptr(instance_jsvalue) else {
                 return Err(global_this.throw_out_of_memory());

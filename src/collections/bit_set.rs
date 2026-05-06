@@ -1411,7 +1411,7 @@ unsafe fn dyn_free(base: *mut usize, len: usize) {
     let layout =
         core::alloc::Layout::array::<usize>(len).expect("unreachable");
     // SAFETY: caller guarantees `base` was allocated with this layout.
-    std::alloc::dealloc(base.cast(), layout);
+    unsafe { std::alloc::dealloc(base.cast(), layout) };
 }
 
 unsafe fn dyn_realloc(
@@ -1424,7 +1424,7 @@ unsafe fn dyn_realloc(
     if old_len == 0 {
         // SAFETY: new_layout is nonzero size (caller never passes new_len==0
         // through this path).
-        let p = std::alloc::alloc(new_layout);
+        let p = unsafe { std::alloc::alloc(new_layout) };
         if p.is_null() {
             return Err(AllocError);
         }
@@ -1433,7 +1433,7 @@ unsafe fn dyn_realloc(
     let old_layout =
         core::alloc::Layout::array::<usize>(old_len).expect("unreachable");
     // SAFETY: caller guarantees `base` was allocated with `old_layout`.
-    let p = std::alloc::realloc(base.cast(), old_layout, new_layout.size());
+    let p = unsafe { std::alloc::realloc(base.cast(), old_layout, new_layout.size()) };
     if p.is_null() {
         return Err(AllocError);
     }

@@ -1312,7 +1312,7 @@ impl ShellExecEnv {
         };
         if required_len >= buf.len() {
             return Err(bun_sys::Error::from_code_int(
-                bun_sys::E::NAMETOOLONG as _,
+                bun_sys::E::ENAMETOOLONG as _,
                 bun_sys::Tag::chdir,
             ));
         }

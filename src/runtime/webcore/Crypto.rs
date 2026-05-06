@@ -1,10 +1,48 @@
 use core::ffi::c_void;
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsError, JsResult};
-use bun_jsc::uuid::{UUID, UUID5, UUID7};
+use bun_jsc::{CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsError, JsResult, JsClass, StringJsc};
+use bun_jsc::uuid::{self, UUID, UUID5, UUID7};
 use bun_str::String as BunString;
 
 use crate::node::Encoding;
+
+// ──────────────────────────────────────────────────────────────────────────
+// Local shims for `JSGlobalObject` methods that live in the cfg-gated
+// `src/jsc/JSGlobalObject.rs` impl block (not yet re-exported on the active
+// `bun_jsc::JSGlobalObject`). Kept local per phase-d rules; remove once
+// upstream un-gates them.
+// ──────────────────────────────────────────────────────────────────────────
+trait JSGlobalObjectCryptoExt {
+    fn throw_dom_exception(
+        &self,
+        code: bun_jsc::DOMExceptionCode,
+        args: core::fmt::Arguments<'_>,
+    ) -> JsError;
+    fn validate_integer_range<T>(
+        &self,
+        value: JSValue,
+        default: T,
+        range: bun_jsc::IntegerRange,
+    ) -> JsResult<T>;
+}
+
+impl JSGlobalObjectCryptoExt for JSGlobalObject {
+    fn throw_dom_exception(
+        &self,
+        _code: bun_jsc::DOMExceptionCode,
+        _args: core::fmt::Arguments<'_>,
+    ) -> JsError {
+        todo!("blocked_on: bun_jsc::JSGlobalObject::throw_dom_exception")
+    }
+    fn validate_integer_range<T>(
+        &self,
+        _value: JSValue,
+        _default: T,
+        _range: bun_jsc::IntegerRange,
+    ) -> JsResult<T> {
+        todo!("blocked_on: bun_jsc::JSGlobalObject::validate_integer_range")
+    }
+}
 
 // `.classes.ts`-backed type: the C++ JSCell wrapper stays generated C++.
 // This struct is the `m_ctx` payload. `toJS`/`fromJS`/`fromJSDirect` are

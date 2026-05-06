@@ -758,66 +758,59 @@ impl FormDataContext {
         joiner.push_static(b"\r\n");
 
         joiner.push_static(b"Content-Disposition: form-data; name=\"");
-        let name_slice = name.to_slice();
-        joiner.push(name_slice.slice(), name_slice.allocator_get());
+        // PORT NOTE: Zig `joiner.push(slice, allocator?)` encoded ownership in
+        // the optional allocator. `StringJoiner::push_owned` is the Rust
+        // equivalent; `ZigStringSlice::into_vec` moves out the buffer if owned
+        // or copies if borrowed (matching Zig's `null`-allocator borrow case).
+        joiner.push_owned(name.to_slice().into_vec().into_boxed_slice());
 
         match entry {
             FormDataEntry::String(value) => {
-                joiner.push_static(b"\"\r\n\r\n");
-                let value_slice = value.to_slice();
-                joiner.push(value_slice.slice(), value_slice.allocator_get());
+                joiner.push_static(b"\"
+
+");
+                joiner.push_owned(value.to_slice().into_vec().into_boxed_slice());
             }
             FormDataEntry::File { blob, filename } => {
                 joiner.push_static(b"\"; filename=\"");
-                let filename_slice = value.filename.to_slice();
-                joiner.push(filename_slice.slice(), filename_slice.allocator_get());
-                joiner.push_static(b"\"\r\n");
+                joiner.push_owned(filename.to_slice().into_vec().into_boxed_slice());
+                joiner.push_static(b"\"
+");
 
-                let blob = value.blob;
                 let content_type = if !blob.content_type_slice().is_empty() {
                     blob.content_type_slice()
                 } else {
                     b"application/octet-stream"
                 };
                 joiner.push_static(b"Content-Type: ");
-                joiner.push_static(content_type);
-                joiner.push_static(b"\r\n\r\n");
+                joiner.push_cloned(content_type);
+                joiner.push_static(b"
 
-                if let Some(store) = &blob.store {
+");
+
+                if blob.store.is_some() {
                     if blob.size == MAX_SIZE {
                         blob.resolve_size();
                     }
+                    let store = blob.store.as_deref().unwrap();
                     match &store.data {
-                        Store::Data::S3(_) => {
+                        store::Data::S3(_) => {
                             // TODO: s3
                             // we need to make this async and use download/downloadSlice
                         }
-                        Store::Data::File(file) => {
+                        store::Data::File(_file) => {
                             // TODO: make this async + lazy
-                            let res = node::fs::NodeFS::read_file(
-                                global_this.bun_vm().node_fs(),
-                                node::fs::args::ReadFile {
-                                    encoding: node::Encoding::Buffer,
-                                    path: file.pathlike.clone(),
-                                    offset: blob.offset,
-                                    max_size: blob.size,
-                                    ..Default::default()
-                                },
-                                node::fs::Flavor::Sync,
-                            );
-                            match res {
-                                bun_sys::Result::Err(err) => {
-                                    self.failed = true;
-                                    let Ok(js_err) = err.to_js(global_this) else { return };
-                                    let _ = global_this.throw_value(js_err);
-                                }
-                                bun_sys::Result::Ok(result) => {
-                                    joiner.push(result.slice(), result.buffer.allocator);
-                                }
-                            }
+                            // PORT NOTE (phase-d): `bun_jsc::DOMFormData` is a
+                            // `stub_ty!` (no `for_each`), so this callback is
+                            // currently unreachable. The NodeFS sync-read path
+                            // additionally needs `VirtualMachine::node_fs()` to
+                            // return `*mut NodeFS` (currently `*mut c_void`).
+                            let _ = global_this;
+                            self.failed = true;
+                            todo!("blocked_on: bun_jsc::dom_form_data + VirtualMachine::node_fs typed return");
                         }
-                        Store::Data::Bytes(_) => {
-                            joiner.push_static(blob.shared_view());
+                        store::Data::Bytes(_) => {
+                            joiner.push_cloned(blob.shared_view());
                         }
                     }
                 }

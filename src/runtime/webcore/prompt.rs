@@ -327,9 +327,11 @@ pub mod prompt {
         });
 
         // 7. Pause while waiting for the user's response.
-        // TODO(port): `bun.Output.buffered_stdin.reader()` — map to bun_core's
-        // buffered stdin reader implementing `ReadByte`.
-        let mut reader = Output::buffered_stdin_reader();
+        // `bun.Output.buffered_stdin.reader()` — process-global 4 KiB buffered stdin.
+        // SAFETY: process-global static; prompt() runs single-threaded on the JS
+        // main thread, so the exclusive borrow is sound for this scope.
+        let reader: &mut bun_core::output::BufferedStdin =
+            unsafe { &mut *Output::buffered_stdin_reader() };
         let mut second_byte: Option<u8> = None;
         let Ok(first_byte) = reader.read_byte() else {
             // 8. Let result be null if the user aborts, or otherwise the string

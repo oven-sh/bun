@@ -778,7 +778,9 @@ impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
 
                         let affected_len: usize = 'brk: {
                             if IS_KQUEUE {
-                                if let Some(existing) = rfs.entries.get(file_path) {
+                                // SAFETY: hot-reload runs single-threaded on the JS thread;
+                                // no other live `&mut EntriesOption` for this key here.
+                                if let Some(existing) = unsafe { rfs.entries.get(file_path) } {
                                     self.put_tombstone(file_path, existing);
                                     entries_option = Some(existing);
                                 } else if let Some(existing) = self.get_tombstone(file_path) {
@@ -848,7 +850,8 @@ impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
                         };
 
                         if affected_len > 0 && !IS_KQUEUE {
-                            if let Some(existing) = rfs.entries.get(file_path) {
+                            // SAFETY: see kqueue arm above — single-threaded JS thread.
+                            if let Some(existing) = unsafe { rfs.entries.get(file_path) } {
                                 self.put_tombstone(file_path, existing);
                                 entries_option = Some(existing);
                             } else if let Some(existing) = self.get_tombstone(file_path) {

@@ -129,7 +129,9 @@ impl DirInfo {
     }
 
     pub fn get_entries_const(&self) -> Option<&fs::DirEntry> {
-        let entries_ptr = fs::FileSystem::instance().fs.entries.at_index(self.entries)?;
+        // SAFETY: read-only path; no other live `&mut EntriesOption` for this index
+        // exists in this scope (resolver invariant).
+        let entries_ptr = unsafe { fs::FileSystem::instance().fs.entries.at_index(self.entries) }?;
         match entries_ptr {
             fs::EntriesOption::Entries(entries) => Some(&**entries),
             fs::EntriesOption::Err(_) => None,

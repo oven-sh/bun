@@ -746,14 +746,18 @@ impl JavaScript {
         let result = match parser.parse() {
             Ok(r) => r,
             Err(err) => {
-                // PORT NOTE: reshaped for borrowck — `parser` holds `&'a mut temp_log`
-                // (inside the lexer); reading `temp_log.errors` while that borrow is
-                // live is rejected. Read through the parser's own handle instead.
-                if parser.log_mut().errors == 0 {
-                    log.add_range_error(Some(source), parser.lexer.range(), err.name().as_bytes())
+                // PORT NOTE: `Parser::parse` consumes `self` (Zig took `*Parser`
+                // — by-ref — but the Rust port owns the inner `P` by value), so
+                // `parser` is gone in this arm. The `&'a mut temp_log` it held
+                // is released, so read `temp_log.errors` directly. The lexer
+                // range is lost; fall back to `Range::None` (Zig used
+                // `parser.lexer.range()`).
+                // TODO(port): thread the failing token range through the
+                // `Err` payload once `_parse` returns a `(Error, Range)` pair.
+                if temp_log.errors == 0 {
+                    log.add_range_error(Some(source), logger::Range::None, err.name().as_bytes())
                         .expect("unreachable");
                 }
-                drop(parser);
                 let _ = temp_log.append_to_maybe_recycled(log, source);
                 return Ok(None);
             }

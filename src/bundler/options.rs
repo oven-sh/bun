@@ -2191,7 +2191,7 @@ impl<'a> BundleOptions<'a> {
                 &transform
                     .conditions
                     .iter()
-                    .map(|s| s.as_ref())
+                    .map(|s| s.as_bytes())
                     .collect::<Vec<_>>(),
             )?;
         }

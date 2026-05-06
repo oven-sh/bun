@@ -336,7 +336,7 @@ impl Linker {
                     if !IGNORE_RUNTIME {
                         if import_record.path.namespace == b"runtime" {
                             if import_path_format == ImportPathFormat::AbsoluteUrl {
-                                import_record.path = PPFs::Path::init_with_namespace(
+                                import_record.path = PFs::Path::init_with_namespace(
                                     intern_box(
                                         origin.join_alloc(b"", b"", b"bun:wrap", b"", b"")?,
                                     ),
@@ -552,7 +552,7 @@ impl Linker {
         match import_path_format {
             ImportPathFormat::AbsolutePath => {
                 if namespace == b"node" {
-                    return Ok(PPFs::Path::init_with_namespace(source_path, b"node"));
+                    return Ok(PFs::Path::init_with_namespace(source_path, b"node"));
                 }
 
                 if namespace == b"bun" || namespace == b"file" || namespace.is_empty() {
@@ -565,7 +565,7 @@ impl Linker {
                         dupe(bun_paths::resolve_path::relative(source_dir, source_path));
                     Ok(PFs::Path::init_with_pretty(source_path, relative_name))
                 } else {
-                    Ok(PPFs::Path::init_with_namespace(source_path, namespace))
+                    Ok(PFs::Path::init_with_namespace(source_path, namespace))
                 }
             }
             ImportPathFormat::Relative => {

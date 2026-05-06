@@ -31,7 +31,6 @@ pub struct Transition {
     pub timing_function: EasingFunction,
 }
 
-#[cfg(any())] // blocked_on: PropertyId/Time/EasingFunction::{parse,to_css,deep_clone} surface
 impl Transition {
     // TODO(port): PropertyFieldMap was a Zig comptime anonymous struct mapping
     // field names → PropertyIdTag, consumed by reflection-based shorthand helpers.
@@ -48,14 +47,11 @@ impl Transition {
         self == rhs
     }
 
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // Zig: css.implementDeepClone(@This(), this, allocator) — field-by-field reflection.
-        Self {
-            property: self.property.deep_clone(bump),
-            duration: self.duration.deep_clone(bump),
-            delay: self.delay.deep_clone(bump),
-            timing_function: self.timing_function.deep_clone(bump),
-        }
+    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+        // Zig: css.implementDeepClone(@This(), this, allocator) — field-by-field
+        // reflection. All four fields are POD/Copy or `Clone`-via-derive with no
+        // arena indirections; #[derive(Clone)] is exact.
+        self.clone()
     }
 
     pub fn parse(parser: &mut Parser) -> CssResult<Self> {
@@ -66,28 +62,28 @@ impl Transition {
 
         loop {
             if duration.is_none() {
-                if let Some(value) = parser.try_parse(Time::parse, ()).as_value() {
+                if let Ok(value) = parser.try_parse(Time::parse) {
                     duration = Some(value);
                     continue;
                 }
             }
 
             if timing_function.is_none() {
-                if let Some(value) = parser.try_parse(EasingFunction::parse, ()).as_value() {
+                if let Ok(value) = parser.try_parse(EasingFunction::parse) {
                     timing_function = Some(value);
                     continue;
                 }
             }
 
             if delay.is_none() {
-                if let Some(value) = parser.try_parse(Time::parse, ()).as_value() {
+                if let Ok(value) = parser.try_parse(Time::parse) {
                     delay = Some(value);
                     continue;
                 }
             }
 
             if property.is_none() {
-                if let Some(value) = parser.try_parse(PropertyId::parse, ()).as_value() {
+                if let Ok(value) = parser.try_parse(PropertyId::parse) {
                     property = Some(value);
                     continue;
                 }
@@ -96,7 +92,7 @@ impl Transition {
             break;
         }
 
-        CssResult::result(Self {
+        Ok(Self {
             property: property.unwrap_or(PropertyId::All),
             duration: duration.unwrap_or(Time::Seconds(0.0)),
             delay: delay.unwrap_or(Time::Seconds(0.0)),

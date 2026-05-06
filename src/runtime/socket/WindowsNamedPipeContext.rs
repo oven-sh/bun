@@ -107,11 +107,11 @@ impl WindowsNamedPipeContext {
         self.is_open = true;
         match &self.socket {
             SocketType::Tls(tls) => {
-                let socket = <TLSSocket as jsc::api::SocketWrapper>::Socket::from_named_pipe(&mut self.named_pipe);
+                let socket = socket_from_named_pipe::<true>(&mut self.named_pipe);
                 tls.on_open(socket);
             }
             SocketType::Tcp(tcp) => {
-                let socket = <TCPSocket as jsc::api::SocketWrapper>::Socket::from_named_pipe(&mut self.named_pipe);
+                let socket = socket_from_named_pipe::<false>(&mut self.named_pipe);
                 tcp.on_open(socket);
             }
             SocketType::None => {}
@@ -121,7 +121,7 @@ impl WindowsNamedPipeContext {
     fn on_data(&mut self, decoded_data: &[u8]) {
         match &self.socket {
             SocketType::Tls(tls) => {
-                let socket = TLSSocket::Socket::from_named_pipe(&mut self.named_pipe);
+                let socket = socket_from_named_pipe::<true>(&mut self.named_pipe);
                 tls.on_data(socket, decoded_data);
             }
             SocketType::Tcp(tcp) => {
@@ -135,7 +135,7 @@ impl WindowsNamedPipeContext {
     fn on_handshake(&mut self, success: bool, ssl_error: us_bun_verify_error_t) {
         match &self.socket {
             SocketType::Tls(tls) => {
-                let socket = TLSSocket::Socket::from_named_pipe(&mut self.named_pipe);
+                let socket = socket_from_named_pipe::<true>(&mut self.named_pipe);
                 let _ = tls.on_handshake(socket, success as i32, ssl_error);
             }
             SocketType::Tcp(tcp) => {
@@ -149,7 +149,7 @@ impl WindowsNamedPipeContext {
     fn on_end(&mut self) {
         match &self.socket {
             SocketType::Tls(tls) => {
-                let socket = TLSSocket::Socket::from_named_pipe(&mut self.named_pipe);
+                let socket = socket_from_named_pipe::<true>(&mut self.named_pipe);
                 tls.on_end(socket);
             }
             SocketType::Tcp(tcp) => {
@@ -163,7 +163,7 @@ impl WindowsNamedPipeContext {
     fn on_writable(&mut self) {
         match &self.socket {
             SocketType::Tls(tls) => {
-                let socket = TLSSocket::Socket::from_named_pipe(&mut self.named_pipe);
+                let socket = socket_from_named_pipe::<true>(&mut self.named_pipe);
                 tls.on_writable(socket);
             }
             SocketType::Tcp(tcp) => {
@@ -203,7 +203,7 @@ impl WindowsNamedPipeContext {
     fn on_timeout(&mut self) {
         match &self.socket {
             SocketType::Tls(tls) => {
-                let socket = TLSSocket::Socket::from_named_pipe(&mut self.named_pipe);
+                let socket = socket_from_named_pipe::<true>(&mut self.named_pipe);
                 tls.on_timeout(socket);
             }
             SocketType::Tcp(tcp) => {

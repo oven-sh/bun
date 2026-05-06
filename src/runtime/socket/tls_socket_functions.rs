@@ -617,7 +617,7 @@ pub fn get_ephemeral_key_info(this: &mut This, global: &JSGlobalObject, _frame: 
     //     return Ok(result);
     // }
     // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
-    let raw_key: *mut boringssl::EVP_PKEY = unsafe { boringssl::SSL_get_privatekey(ssl_ptr) };
+    let raw_key: *mut ffi::EVP_PKEY = unsafe { ffi::SSL_get_privatekey(ssl_ptr) };
     if raw_key.is_null() {
         return Ok(result);
     }

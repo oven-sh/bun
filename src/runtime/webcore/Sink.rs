@@ -129,21 +129,15 @@ impl UTF8Fallback {
             buf[..str_.len()].copy_from_slice(str_);
 
             strings::replace_latin1_with_utf8(&mut buf[..str_.len()]);
+            // SAFETY: borrowed view is consumed by `write_fn` before `buf` drops.
+            let borrowed = ManuallyDrop::into_inner(unsafe {
+                ByteList::from_borrowed_slice_dangerous(&buf[..str_.len()])
+            });
             if input.is_done() {
-                let result = write_fn(
-                    ctx,
-                    streams::Result::TemporaryAndDone(ByteList::from_borrowed_slice_dangerous(
-                        &buf[..str_.len()],
-                    )),
-                );
+                let result = write_fn(ctx, streams::Result::TemporaryAndDone(borrowed));
                 return result;
             } else {
-                let result = write_fn(
-                    ctx,
-                    streams::Result::Temporary(ByteList::from_borrowed_slice_dangerous(
-                        &buf[..str_.len()],
-                    )),
-                );
+                let result = write_fn(ctx, streams::Result::Temporary(borrowed));
                 return result;
             }
         }

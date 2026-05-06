@@ -470,7 +470,10 @@ pub mod GlobalRegistry {
         // TODO(port): wire to ArrayHashMap once content-hash context is available.
     }
 
-    
+    // Re-export so `GlobalRegistry::intern` is reachable from sibling modules
+    // (e.g. `SecureContext`) while the implementation stays gated below.
+    pub use _gated_intern::intern;
+
     mod _gated_intern {
         use super::*;
         use bun_collections::ArrayHashMap;

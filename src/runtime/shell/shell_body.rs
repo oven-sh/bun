@@ -8,14 +8,19 @@ use core::fmt;
 use core::mem::size_of;
 use std::io::Write as _;
 
-use bun_alloc::Arena as Bump;
+use bun_alloc::{Arena as Bump, ArenaVec};
 use bun_collections::{BabyList, IntegerBitSet};
 use bun_core::{self, Output};
 use bun_jsc::{
     self as jsc, CallFrame, JSArrayIterator, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer,
-    MiniEventLoop, PlatformEventLoop, SystemError, VirtualMachine,
+    PlatformEventLoop, SystemError,
 };
-use bun_str::{self as strings, String as BunString, ZStr};
+// `VirtualMachine`/`MiniEventLoop` are re-exported as *modules* by bun_jsc; pull the inner types.
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::MiniEventLoop::MiniEventLoop;
+use bun_simdutf_sys::simdutf;
+use bun_str::{self, String as BunString, ZStr};
+use bun_core::strings;
 use bun_sys::{self as sys, Fd};
 
 // ───────────────────────────── re-exports ─────────────────────────────

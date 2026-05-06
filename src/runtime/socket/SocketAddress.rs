@@ -776,8 +776,8 @@ impl sockaddr {
     pub fn family(&self) -> AF {
         // SAFETY: family field is at the same offset in both variants
         match unsafe { self.sin.family } {
-            v if v == bun_sys::posix::AF_INET => AF::INET,
-            v if v == bun_sys::posix::AF_INET6 => AF::INET6,
+            v if v == inet::AF_INET as inet::sa_family_t => AF::INET,
+            v if v == inet::AF_INET6 as inet::sa_family_t => AF::INET6,
             _ => unreachable!(),
         }
     }
@@ -843,18 +843,20 @@ mod WellKnownAddress {
     use super::*;
     // TODO(port): move to <area>_sys
     unsafe extern "C" {
-        static INET_LOOPBACK: bun_str::StaticStringImpl;
-        static INET6_ANY: bun_str::StaticStringImpl;
+        static INET_LOOPBACK: bun_str::WTFStringImpl;
+        static INET6_ANY: bun_str::WTFStringImpl;
     }
     #[inline]
     pub fn loopback_v4() -> BunString {
         // SAFETY: INET_LOOPBACK is a static StringImpl initialized at load time
-        BunString::from_wtf_string_impl(unsafe { INET_LOOPBACK })
+        let _ = unsafe { INET_LOOPBACK };
+        todo!("blocked_on: bun_str::String::from_wtf_string_impl")
     }
     #[inline]
     pub fn any_v6() -> BunString {
         // SAFETY: INET6_ANY is a static StringImpl initialized at load time
-        BunString::from_wtf_string_impl(unsafe { INET6_ANY })
+        let _ = unsafe { INET6_ANY };
+        todo!("blocked_on: bun_str::String::from_wtf_string_impl")
     }
 }
 

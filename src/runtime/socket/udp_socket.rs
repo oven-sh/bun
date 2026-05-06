@@ -1234,7 +1234,7 @@ impl UDPSocket {
                         {
                             // SAFETY: address_slice is NUL-terminated; offset is in-bounds.
                             let index = unsafe {
-                                bun_sys::c::if_nametoindex(
+                                if_nametoindex(
                                     address_slice.as_ptr().add(percent + 1) as *const c_char
                                 )
                             };
@@ -1257,7 +1257,7 @@ impl UDPSocket {
             // SAFETY: libc addr-format fn; src is NUL-terminated, dst points to in6_addr-sized storage.
             if unsafe {
                 inet_pton(
-                    posix::AF_INET6 as c_int,
+                    inet::AF_INET6 as c_int,
                     address_slice.as_ptr() as *const c_char,
                     &mut addr6.addr as *mut _ as *mut c_void,
                 )
@@ -1265,7 +1265,7 @@ impl UDPSocket {
             {
                 // SAFETY: libc byte-order fn; pure on u16.
                 addr6.port = unsafe { htons(port) };
-                addr6.family = posix::AF_INET6;
+                addr6.family = inet::AF_INET6 as inet::sa_family_t;
             } else {
                 return Ok(false);
             }

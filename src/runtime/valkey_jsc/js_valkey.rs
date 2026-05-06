@@ -43,7 +43,53 @@ pub struct SubscriptionCtx {
 }
 
 // Shorthand alias matching Zig's `const ParentJS = JSValkeyClient.js;`
-type ParentJS = jsc::codegen::JSRedisClient;
+type ParentJS = codegen_stub::JSRedisClient;
+
+// TODO(b2-blocked): `bun_jsc::codegen::JSRedisClient` cached-slot accessors are
+// emitted by generate-classes.ts (.rs output not yet wired). Stub the surface
+// so this file compiles; bodies panic if reached at runtime.
+mod codegen_stub {
+    use super::{JSGlobalObject, JSValue};
+    pub struct JSRedisClient;
+    #[allow(non_upper_case_globals, dead_code)]
+    impl JSRedisClient {
+        pub const SubscriptionCallbackMap: u32 = 0;
+        pub fn gc_set(_slot: u32, _this: JSValue, _global: &JSGlobalObject, _val: JSValue) {
+            todo!("blocked_on: jsc::codegen::JSRedisClient")
+        }
+        pub fn gc_get(_slot: u32, _this: JSValue) -> Option<JSValue> {
+            todo!("blocked_on: jsc::codegen::JSRedisClient")
+        }
+        pub fn hello_get_cached(_this: JSValue) -> Option<JSValue> {
+            todo!("blocked_on: jsc::codegen::JSRedisClient")
+        }
+        pub fn hello_set_cached(_this: JSValue, _global: &JSGlobalObject, _val: JSValue) {
+            todo!("blocked_on: jsc::codegen::JSRedisClient")
+        }
+        pub fn connection_promise_get_cached(_this: JSValue) -> Option<JSValue> {
+            todo!("blocked_on: jsc::codegen::JSRedisClient")
+        }
+        pub fn connection_promise_set_cached(
+            _this: JSValue,
+            _global: &JSGlobalObject,
+            _val: JSValue,
+        ) {
+            todo!("blocked_on: jsc::codegen::JSRedisClient")
+        }
+        pub fn onconnect_get_cached(_this: JSValue) -> Option<JSValue> {
+            todo!("blocked_on: jsc::codegen::JSRedisClient")
+        }
+        pub fn onconnect_set_cached(_this: JSValue, _global: &JSGlobalObject, _val: JSValue) {
+            todo!("blocked_on: jsc::codegen::JSRedisClient")
+        }
+        pub fn onclose_get_cached(_this: JSValue) -> Option<JSValue> {
+            todo!("blocked_on: jsc::codegen::JSRedisClient")
+        }
+        pub fn onclose_set_cached(_this: JSValue, _global: &JSGlobalObject, _val: JSValue) {
+            todo!("blocked_on: jsc::codegen::JSRedisClient")
+        }
+    }
+}
 
 impl SubscriptionCtx {
     pub fn init(valkey_parent: &mut JSValkeyClient) -> JsResult<Self> {

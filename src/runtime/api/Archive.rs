@@ -1558,7 +1558,8 @@ fn extract_to_disk_filtered(
     while archive_ref.read_next_header(&mut entry) == lib::Result::Ok {
         // SAFETY: read_next_header returned Ok; entry valid until next call.
         let entry_ref = unsafe { &*entry };
-        let pathname = entry_ref.pathname_utf8().as_bytes();
+        let pathname_z = entry_ref.pathname_utf8();
+        let pathname = pathname_z.as_bytes();
 
         // Validate path safety (reject absolute paths, path traversal)
         if !is_safe_path(pathname) {
@@ -1613,12 +1614,10 @@ fn extract_to_disk_filtered(
                 // Create and write the file using bun.sys
                 let file_fd: Fd = match bun_sys::openat(
                     dir_fd,
-                    pathname,
+                    pathname_z,
                     bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
                     mode,
-                )
-                .unwrap_result()
-                {
+                ) {
                     Ok(fd) => fd,
                     Err(_) => continue,
                 };
@@ -1639,7 +1638,7 @@ fn extract_to_disk_filtered(
                         // Write all bytes, handling partial writes
                         let mut written: usize = 0;
                         while written < bytes_read {
-                            let w = match file_fd.write(&buf[written..bytes_read]).unwrap_result() {
+                            let w = match bun_sys::write(file_fd, &buf[written..bytes_read]) {
                                 Ok(w) => w,
                                 Err(_) => {
                                     write_success = false;
@@ -1664,29 +1663,26 @@ fn extract_to_disk_filtered(
                     count += 1;
                 } else {
                     // Remove partial file on failure
-                    let _ = dir_fd.unlinkat(pathname);
+                    let _ = bun_sys::unlinkat(dir_fd, pathname_z);
                 }
             }
             bun_sys::FileKind::SymLink => {
-                let link_target = entry_ref.symlink().as_bytes();
+                let link_target_z = entry_ref.symlink();
                 // Validate symlink target is also safe
-                if !is_safe_path(link_target) {
+                if !is_safe_path(link_target_z.as_bytes()) {
                     continue;
                 }
                 // Symlinks are only extracted on POSIX systems (Linux/macOS).
                 // On Windows, symlinks are skipped since they require elevated privileges.
                 #[cfg(unix)]
                 {
-                    match bun_sys::symlinkat(link_target, dir_fd, pathname).unwrap_result() {
+                    match bun_sys::symlinkat(link_target_z, dir_fd, pathname_z) {
                         Err(err) => {
                             if err == bun_core::err!("EPERM") || err == bun_core::err!("ENOENT") {
                                 if let Some(parent) = bun_core::dirname(pathname) {
                                     let _ = dir_fd.make_path(parent);
                                 }
-                                if bun_sys::symlinkat(link_target, dir_fd, pathname)
-                                    .unwrap_result()
-                                    .is_err()
-                                {
+                                if bun_sys::symlinkat(link_target_z, dir_fd, pathname_z).is_err() {
                                     continue;
                                 }
                             } else {

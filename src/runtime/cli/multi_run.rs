@@ -145,35 +145,40 @@ impl<'a> ProcessHandle<'a> {
 
         self.start_time = Instant::now().into();
         // TODO(port): narrow error set
-        let spawned: SpawnProcessResult = 'brk: {
-            // PERF(port): was arena bulk-free — envp built into a temporary arena freed at scope
-            // end. Phase A uses heap; profile in Phase B.
-            let original_path: Box<[u8]> = state
-                .env
-                .map
-                .get(b"PATH")
-                .map(Box::from)
-                .unwrap_or_default();
-            state.env.map.put(b"PATH", &self.config.path);
-            let _restore = scopeguard::guard((), |_| {
+        // PERF(port): was arena bulk-free — envp built into a temporary arena freed at scope
+        // end. Phase A uses heap; profile in Phase B.
+        let envp;
+        let spawned: SpawnProcessResult = {
+            // SAFETY: state.env points at the process-lifetime DotEnv loader.
+            let env = unsafe { &mut *state.env };
+            let original_path: Box<[u8]> = env.map.get(b"PATH").map(Box::from).unwrap_or_default();
+            let _ = env.map.put(b"PATH", &self.config.path);
+            let _restore = scopeguard::guard(original_path, |original_path| {
                 // SAFETY: backref; see above
                 let state = unsafe { &mut *(self.state as *mut State) };
-                state.env.map.put(b"PATH", &original_path);
+                let _ = unsafe { (*state.env).map.put(b"PATH", &original_path) };
             });
-            // TODO(port): createNullDelimitedEnvMap signature/ownership
-            let envp = state.env.map.create_null_delimited_env_map()?;
-            break 'brk spawn::spawn_process(&mut self.options, &mut argv[..], envp)?.unwrap()?;
+            envp = env.map.create_null_delimited_env_map()?;
+            spawn::spawn_process(
+                &self.options,
+                argv.as_ptr(),
+                envp.as_ptr() as *const *const c_char,
+            )?
+            .map_err(|e| Error::from(e))?
         };
-        let process = spawned.to_process(state.event_loop, false);
+        let stdout_fd = spawned.stdout;
+        let stderr_fd = spawned.stderr;
+        let process =
+            spawned.to_process(EventLoopHandle::init_mini(state.event_loop), false);
 
         self.stdout_reader.handle = self as *const _;
         self.stderr_reader.handle = self as *const _;
         self.stdout_reader
             .reader
-            .set_parent(&mut self.stdout_reader as *mut _);
+            .set_parent(&mut self.stdout_reader as *mut PipeReader as *mut c_void);
         self.stderr_reader
             .reader
-            .set_parent(&mut self.stderr_reader as *mut _);
+            .set_parent(&mut self.stderr_reader as *mut PipeReader as *mut c_void);
 
         #[cfg(windows)]
         {

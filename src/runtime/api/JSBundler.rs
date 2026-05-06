@@ -988,13 +988,13 @@ pub mod js_bundler {
                     get_optional_slice(jsx_value, global_this, b"runtime")?
                 {
                     let mut str_lower = [0u8; 128];
-                    let len = (slice.len() as usize).min(str_lower.len());
+                    let len = slice.slice().len().min(str_lower.len());
                     let _ = bun_str::strings::copy_lowercase(
                         &slice.slice()[0..len],
                         &mut str_lower[0..len],
                     );
                     if let Some(runtime) = options::JSX::RUNTIME_MAP.get(&str_lower[0..len]) {
-                        this.jsx.runtime = runtime.runtime;
+                        this.jsx.runtime = jsx_runtime_to_api(runtime.runtime);
                         if let Some(dev) = runtime.development {
                             this.jsx.development = dev;
                         }

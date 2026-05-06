@@ -369,29 +369,28 @@ fn parse_vulnerability(
         package_name: Box::<[u8]>::from(package_name),
     };
 
-    // TODO(port): `Expr.data` tagged-union access; assumes Rust enum `ExprData`.
-    if let bun_js_parser::ExprData::EObject(obj) = &vuln.data {
+    if let ExprData::EObject(obj) = &vuln.data {
         let props = obj.properties.slice();
         for prop in props {
             if let Some(key) = &prop.key {
-                if let bun_js_parser::ExprData::EString(key_str) = &key.data {
-                    let field_name = &key_str.data;
+                if let ExprData::EString(key_str) = &key.data {
+                    let field_name: &[u8] = key_str.data;
                     if let Some(value) = &prop.value {
-                        if let bun_js_parser::ExprData::EString(val_str) = &value.data {
-                            let field_value: &[u8] = &val_str.data;
-                            if field_name.as_ref() == b"severity" {
+                        if let ExprData::EString(val_str) = &value.data {
+                            let field_value: &[u8] = val_str.data;
+                            if field_name == b"severity" {
                                 vulnerability.severity = Box::<[u8]>::from(field_value);
-                            } else if field_name.as_ref() == b"title" {
+                            } else if field_name == b"title" {
                                 vulnerability.title = Box::<[u8]>::from(field_value);
-                            } else if field_name.as_ref() == b"url" {
+                            } else if field_name == b"url" {
                                 vulnerability.url = Box::<[u8]>::from(field_value);
-                            } else if field_name.as_ref() == b"vulnerable_versions" {
+                            } else if field_name == b"vulnerable_versions" {
                                 vulnerability.vulnerable_versions = Box::<[u8]>::from(field_value);
-                            } else if field_name.as_ref() == b"id" {
+                            } else if field_name == b"id" {
                                 vulnerability.id = Box::<[u8]>::from(field_value);
                             }
-                        } else if let bun_js_parser::ExprData::ENumber(num) = &value.data {
-                            if field_name.as_ref() == b"id" {
+                        } else if let ExprData::ENumber(num) = &value.data {
+                            if field_name == b"id" {
                                 let mut s: Vec<u8> = Vec::new();
                                 write!(&mut s, "{}", num.value as u64).expect("unreachable");
                                 vulnerability.id = s.into_boxed_slice();

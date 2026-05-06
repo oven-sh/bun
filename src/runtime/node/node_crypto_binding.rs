@@ -955,7 +955,7 @@ impl Scrypt {
         });
 
         if IS_ASYNC {
-            let _ = validators::validate_function(global, "callback", callback)?;
+            let _ = validators::validate_function(global, b"callback", callback)?;
         }
 
         ctx.check_scrypt_params(global)?;

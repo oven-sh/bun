@@ -493,6 +493,18 @@ pub struct HmrSocket {
     pub underlying: Option<bun_uws::AnyWebSocket>,
     pub current_route: route_bundle::IndexOptional,
     pub subscriptions: u8, // packed bitset of HmrTopic
+    /// Source-map keys this socket has been sent; used to ref-count entries
+    /// in `SourceMapStore` so they survive until the socket disconnects.
+    pub referenced_source_maps: ArrayHashMap<source_map_store::Key, ()>,
+}
+
+impl HmrSocket {
+    /// `subscriptions` is a packed bitset of `HmrTopic` discriminants;
+    /// test the bit for a given topic.
+    #[inline]
+    pub fn is_subscribed(&self, topic: HmrTopic) -> bool {
+        (self.subscriptions & (1u8 << (topic as u8))) != 0
+    }
 }
 
 /// `DevServer.HotReloadEvent` — produced by the watcher thread.

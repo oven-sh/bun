@@ -1299,6 +1299,14 @@ pub enum ClearMode {
 }
 
 impl CronJob {
+    /// `#[JsClass]` requires a `constructor`; the JS class is not directly
+    /// constructible (`noConstructor` in .classes.ts) so this always throws.
+    pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<Box<CronJob>> {
+        Err(global.throw_invalid_arguments(format_args!(
+            "CronJob cannot be constructed directly; use Bun.cron(schedule, handler)"
+        )))
+    }
+
     // Intrusive refcount (bun.ptr.RefCount).
     pub fn ref_(&self) {
         self.ref_count.set(self.ref_count.get() + 1);

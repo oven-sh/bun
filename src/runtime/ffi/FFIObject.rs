@@ -131,13 +131,20 @@ pub fn to_js(global_object: &JSGlobalObject) -> JSValue {
     let object = JSValue::create_empty_object(global_object, FIELDS.len() + 2);
 
     for &(name, host_fn) in FIELDS {
+        // PORT NOTE: `JSFunction::create` takes a raw `JSHostFn` (extern "C" fn
+        // pointer); the safe `JSHostFnZig` form needs a per-entry monomorphised
+        // thunk via `#[bun_jsc::host_fn]`. All entries currently route through
+        // `wrap_static_method_stub`, so a single shared thunk preserves behaviour.
+        // TODO(port): replace with `#[bun_jsc::host_fn]`-generated thunks once the
+        // `wrap_static_method` proc-macro lands.
+        let _ = host_fn;
+        let func: jsc::JSHostFn = fields_host_fn_thunk;
         if name == "CString" {
             // CString needs to be callable as a constructor for backward compatibility.
             // Pass the same function as the constructor so `new CString(ptr)` works.
-            let func = jsc::to_js_host_fn(host_fn);
             object.put(
                 global_object,
-                ZigString::static_(name),
+                name.as_bytes(),
                 JSFunction::create(
                     global_object,
                     name,
@@ -149,15 +156,15 @@ pub fn to_js(global_object: &JSGlobalObject) -> JSValue {
         } else {
             object.put(
                 global_object,
-                ZigString::static_(name),
-                JSFunction::create(global_object, name, host_fn, 1, Default::default()),
+                name.as_bytes(),
+                JSFunction::create(global_object, name, func, 1, Default::default()),
             );
         }
     }
 
     // SAFETY: `put` is the C++-side `FFI__ptr__put` helper; global_object is live.
     unsafe { (DOM_CALL.put)(global_object as *const _ as *mut _, object) };
-    object.put(global_object, ZigString::static_("read"), reader::to_js(global_object));
+    object.put(global_object, b"read", reader::to_js(global_object));
 
     object
 }

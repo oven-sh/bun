@@ -890,7 +890,7 @@ impl Subprocess<'_> {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_stdio(this: &mut Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub fn get_stdio(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let array = JSValue::create_empty_array(global, 0)?;
         array.push(global, JSValue::NULL)?;
         array.push(global, JSValue::NULL)?; // TODO: align this with options
@@ -901,7 +901,7 @@ impl Subprocess<'_> {
             {
                 if let StdioResult::Buffer(buffer) = item {
                     let fdno: usize = buffer.fd().cast() as usize;
-                    array.push(global, JSValue::js_number(fdno))?;
+                    array.push(global, JSValue::js_number(fdno as f64))?;
                 } else {
                     array.push(global, JSValue::NULL)?;
                 }
@@ -910,7 +910,7 @@ impl Subprocess<'_> {
             {
                 match item {
                     ExtraPipe::OwnedFd(fd) | ExtraPipe::UnownedFd(fd) => {
-                        array.push(global, JSValue::js_number(fd.cast()))?;
+                        array.push(global, JSValue::js_number(fd.native() as f64))?;
                     }
                     ExtraPipe::Unavailable => {
                         array.push(global, JSValue::NULL)?;

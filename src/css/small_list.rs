@@ -3,7 +3,7 @@ use core::ptr;
 
 use bun_collections::BabyList;
 use crate::generics as generic;
-use crate::css_parser::{CssResult, Delimiters, Parser, void_wrap};
+use crate::css_parser::{CssResult, Delimiters, Parser};
 
 // PORT NOTE on `mem::forget` below: every `forget` is paired with a later
 // `Vec::from_raw_parts` reconstruction in `Drop` / `to_owned_slice` /

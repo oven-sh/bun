@@ -3025,7 +3025,7 @@ impl StyleSheet<BundlerAtRule> {
     pub fn parse_bundler(
         allocator: &'static Bump,
         code: &[u8],
-        options: ParserOptions,
+        options: ParserOptions<'static>,
         import_records: &mut BabyList<ImportRecord>,
         source_index: SrcIndex,
     ) -> Maybe<(Self, StylesheetExtra), Err<ParserError>> {

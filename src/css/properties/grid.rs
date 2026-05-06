@@ -38,22 +38,22 @@ impl TrackList {
                 .try_parse(parse_line_names)
                 .ok()
                 .unwrap_or_else(CustomIdentList::default);
-            line_names.push(input.allocator(), line_name);
+            line_names.append(line_name).unwrap();
 
             if let Some(track_size) = input.try_parse(TrackSize::parse).ok() {
                 // TODO: error handling
                 // TODO(port): Zig original omits allocator arg here (`items.append(.{...})`); mirroring with input.allocator()
-                items.push(input.allocator(), TrackListItem::TrackSize(track_size));
+                items.append(TrackListItem::TrackSize(track_size)).unwrap();
             } else if let Some(repeat) = input.try_parse(TrackRepeat::parse).ok() {
                 // TODO: error handling
-                items.push(input.allocator(), TrackListItem::TrackRepeat(repeat));
+                items.append(TrackListItem::TrackRepeat(repeat)).unwrap();
             } else {
                 break;
             }
         }
 
-        if items.len() == 0 {
-            return Err(input.new_custom_error(css::ParserError::InvalidDeclaration));
+        if items.len == 0 {
+            return Err(input.new_custom_error(css::ParserError::invalid_declaration));
         }
 
         Ok(TrackList { line_names, items })
@@ -68,7 +68,7 @@ impl TrackList {
                 serialize_line_names(names, dest)?;
             }
 
-            if items_index < self.items.len() {
+            if items_index < self.items.len {
                 let item = self.items.at(items_index);
                 items_index += 1;
 
@@ -76,7 +76,7 @@ impl TrackList {
                 if !names.is_empty() {
                     dest.whitespace()?;
                 } else if !first {
-                    dest.write_char(' ')?;
+                    dest.write_char(b' ')?;
                 }
 
                 match item {
@@ -137,7 +137,7 @@ impl TrackSize {
         }
 
         if input
-            .try_parse(|i| i.expect_function_matching("minmax"))
+            .try_parse(|i| i.expect_function_matching(b"minmax"))
             .is_ok()
         {
             return input.parse_nested_block(|i: &mut Parser| -> css::Result<TrackSize> {
@@ -148,7 +148,7 @@ impl TrackSize {
             });
         }
 
-        input.expect_function_matching("fit-content")?;
+        input.expect_function_matching(b"fit-content")?;
 
         // TODO(port): css.voidWrap(LengthPercentage, LengthPercentage.parse) — wraps a parse fn for parseNestedBlock; using a closure directly
         let len = input.parse_nested_block(|i: &mut Parser| LengthPercentage::parse(i))?;
@@ -162,14 +162,14 @@ impl TrackSize {
             TrackSize::MinMax { min, max } => {
                 dest.write_str("minmax(")?;
                 min.to_css(dest)?;
-                dest.delim(',', false)?;
+                dest.delim(b',', false)?;
                 max.to_css(dest)?;
-                dest.write_char(')')
+                dest.write_char(b')')
             }
             TrackSize::FitContent(len) => {
                 dest.write_str("fit-content(")?;
                 len.to_css(dest)?;
-                dest.write_char(')')
+                dest.write_char(b')')
             }
         }
     }
@@ -184,11 +184,11 @@ impl TrackSizeList {
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
         let mut res = SmallList::<TrackSize, 1>::default();
         while let Some(size) = input.try_parse(TrackSize::parse).ok() {
-            res.push(input.allocator(), size);
+            res.append(size);
         }
 
         if res.len() == 1 && res.at(0).eql(&TrackSize::default()) {
-            res.clear();
+            res.clear_retaining_capacity();
         }
 
         Ok(TrackSizeList { v: res })
@@ -205,7 +205,7 @@ impl TrackSizeList {
             if first {
                 first = false;
             } else {
-                dest.write_char(' ')?;
+                dest.write_char(b' ')?;
             }
             item.to_css(dest)?;
         }
@@ -264,13 +264,13 @@ impl TrackBreadth {
         let location = input.current_source_location();
         let token = input.next()?;
 
-        if let css::Token::Dimension { unit, value, .. } = &token {
-            if strings::eql_case_insensitive_ascii_check_length(unit, b"fr") && *value >= 0.0 {
-                return Ok(*value);
+        if let css::Token::Dimension(d) = &token {
+            if strings::eql_case_insensitive_ascii(d.unit, b"fr", true) && d.num.value >= 0.0 {
+                return Ok(d.num.value);
             }
         }
 
-        Err(location.new_unexpected_token_error(token))
+        Err(location.new_unexpected_token_error(token.clone()))
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -299,7 +299,7 @@ pub struct TrackRepeat {
 
 impl TrackRepeat {
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
-        input.expect_function_matching("repeat")?;
+        input.expect_function_matching(b"repeat")?;
 
         input.parse_nested_block(|i: &mut Parser| -> css::Result<TrackRepeat> {
             // TODO(port): Zig uses `@call(.auto, @field(RepeatCount, "parse"), .{i})` — direct call here
@@ -338,7 +338,7 @@ impl TrackRepeat {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         dest.write_str("repeat(")?;
         self.count.to_css(dest)?;
-        dest.delim(',', false)?;
+        dest.delim(b',', false)?;
 
         let mut track_sizes_index = 0;
         let mut first = true;
@@ -354,7 +354,7 @@ impl TrackRepeat {
                 if !names.is_empty() {
                     dest.whitespace()?;
                 } else if !first {
-                    dest.write_char(' ')?;
+                    dest.write_char(b' ')?;
                 }
                 size.to_css(dest)?;
             }
@@ -362,22 +362,22 @@ impl TrackRepeat {
             first = false;
         }
 
-        dest.write_char(')')
+        dest.write_char(b')')
     }
 }
 
 fn serialize_line_names(names: &[CustomIdent], dest: &mut Printer) -> Result<(), PrintErr> {
-    dest.write_char('[')?;
+    dest.write_char(b'[')?;
     let mut first = true;
     for name in names {
         if first {
             first = false;
         } else {
-            dest.write_char(' ')?;
+            dest.write_char(b' ')?;
         }
         write_ident(&name.value, dest)?;
     }
-    dest.write_char(']')
+    dest.write_char(b']')
 }
 
 fn write_ident(name: &[u8], dest: &mut Printer) -> Result<(), PrintErr> {
@@ -455,7 +455,7 @@ pub enum GridTemplateAreas {
 impl GridTemplateAreas {
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
         if input
-            .try_parse(|i: &mut Parser| i.expect_ident_matching("none"))
+            .try_parse(|i: &mut Parser| i.expect_ident_matching(b"none"))
             .is_ok()
         {
             return Ok(GridTemplateAreas::None);
@@ -477,7 +477,7 @@ impl GridTemplateAreas {
             if row == 0 {
                 columns = parsed_columns;
             } else if parsed_columns != columns {
-                return Err(input.new_custom_error(css::ParserError::InvalidDeclaration));
+                return Err(input.new_custom_error(css::ParserError::invalid_declaration));
             }
 
             row += 1;

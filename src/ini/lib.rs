@@ -1269,9 +1269,9 @@ impl<'a> ScopeIterator<'a> {
 // loadNpmrcConfig / loadNpmrc
 // ──────────────────────────────────────────────────────────────────────────
 
-pub fn load_npmrc_config<'a>(
+pub fn load_npmrc_config(
     install: &mut BunInstall,
-    env: &'a mut DotEnvLoader<'a>,
+    env: &mut DotEnvLoader<'_>,
     auto_loaded: bool,
     npmrc_paths: &[&ZStr],
 ) {
@@ -1325,19 +1325,24 @@ pub fn load_npmrc_config<'a>(
 }
 
 
-pub fn load_npmrc<'a>(
+pub fn load_npmrc(
     install: &mut BunInstall,
-    env: &'a mut DotEnvLoader<'a>,
+    env: &mut DotEnvLoader<'_>,
     npmrc_path: &ZStr,
     log: &mut Log,
     source: &Source,
     configs: &mut Vec<ConfigItem>,
 ) -> OOM<()> {
-    // TODO(port): lifetime — `Parser<'a>` ties `src`/`env` to one `'a`; `source`
-    // outlives the local `parser` so erase to `'static` (matches `Parser::init`'s
-    // own transmutes for `path`/`src`).
+    // TODO(port): lifetime — `Parser<'a>` ties `src` and `env: &'a mut DotEnvLoader<'a>`
+    // to a single invariant `'a`; threading that through this fn signature poisons
+    // the `load_npmrc_config` loop (env borrowed-for-'a across iterations). The
+    // local `parser` is dropped before this fn returns, so erase both to a fresh
+    // `'p` (matches `Parser::init`'s own transmutes for `path`/`src`).
+    // SAFETY: `parser` does not outlive `env`/`source.contents`.
     let contents: &'static [u8] =
         unsafe { core::mem::transmute::<&[u8], &'static [u8]>(&source.contents) };
+    let env: &'static mut DotEnvLoader<'static> =
+        unsafe { core::mem::transmute::<&mut DotEnvLoader<'_>, &'static mut DotEnvLoader<'static>>(env) };
     let mut parser = Parser::init(npmrc_path.as_bytes(), contents, env);
     // TODO(port): borrowck — `parser.arena` is borrowed while `parser` is `&mut`.
     // SAFETY: arena outlives all bump-allocated slices used below; Phase B should
@@ -1595,11 +1600,17 @@ pub fn load_npmrc<'a>(
             break 'out;
         }
 
-        let default_registry_url: URL = 'brk: {
+        // PORT NOTE: `URL<'a>` borrows its input. The Zig `default_registry_url`
+        // points into `install.default_registry.url` while the loop below
+        // mutates that same field; copy the two fields we compare against so
+        // the borrow ends before the `install.default_registry` mutation.
+        let (default_registry_host, default_registry_pathname): (Box<[u8]>, Box<[u8]>) = 'brk: {
             if let Some(dr) = &install.default_registry {
-                break 'brk URL::parse(&dr.url);
+                let u = URL::parse(&dr.url);
+                break 'brk (Box::from(u.host), Box::from(u.pathname));
             }
-            URL::parse(bun_install_types::NodeLinker::npm::Registry::DEFAULT_URL)
+            let u = URL::parse(bun_install_types::NodeLinker::npm::Registry::DEFAULT_URL);
+            (Box::from(u.host), Box::from(u.pathname))
         };
 
         // I don't like having to do this but we'll need a mapping of scope -> bun.URL
@@ -1617,8 +1628,11 @@ pub fn load_npmrc<'a>(
         // The line that sets the auth token should only apply to the @myorg scope
         // The line that sets the username would apply to both @myorg and @another
         let mut url_map = {
-            // PERF(port): was StringArrayHashMap on parser.arena
-            let mut url_map: ArrayHashMap<Box<[u8]>, URL> =
+            // PERF(port): was StringArrayHashMap<URL> on parser.arena. `URL<'a>`
+            // borrows `v.url` (inside `registry_map.scopes`), which would alias the
+            // `values_mut()` iteration below. Store the owned URL bytes instead and
+            // re-parse per lookup (URL::parse is a cheap slice scan).
+            let mut url_map: ArrayHashMap<Box<[u8]>, Box<[u8]>> =
                 ArrayHashMap::with_capacity(registry_map.scopes.keys().len());
 
             for (k, v) in registry_map
@@ -1627,8 +1641,7 @@ pub fn load_npmrc<'a>(
                 .iter()
                 .zip(registry_map.scopes.values())
             {
-                let url = URL::parse(&v.url);
-                url_map.put(Box::<[u8]>::from(&**k), url)?;
+                url_map.put(Box::<[u8]>::from(&**k), Box::<[u8]>::from(&*v.url))?;
             }
 
             url_map
@@ -1675,9 +1688,9 @@ pub fn load_npmrc<'a>(
         for conf_item in configs.iter() {
             let conf_item_url = URL::parse(&conf_item.registry_url);
 
-            if strings::without_trailing_slash(default_registry_url.host)
+            if strings::without_trailing_slash(&default_registry_host)
                 == strings::without_trailing_slash(conf_item_url.host)
-                && strings::without_trailing_slash(default_registry_url.pathname)
+                && strings::without_trailing_slash(&default_registry_pathname)
                     == strings::without_trailing_slash(conf_item_url.pathname)
             {
                 // Apply config to default registry
@@ -1725,13 +1738,16 @@ pub fn load_npmrc<'a>(
                 }
             }
 
-            for (k, v) in registry_map
-                .scopes
-                .keys()
+            // PORT NOTE: Zig iterated `registry_map.scopes` and looked up `url_map[k]`
+            // by key. In Rust `keys()`/`values_mut()` on the same map alias; since
+            // `url_map` was filled in lockstep with `registry_map.scopes` (same
+            // ArrayHashMap insertion order), zip its values directly instead.
+            for (url_bytes, v) in url_map
+                .values()
                 .iter()
                 .zip(registry_map.scopes.values_mut())
             {
-                let url = url_map.get(k).expect("unreachable");
+                let url = URL::parse(url_bytes);
 
                 if strings::without_trailing_slash(url.host)
                     == strings::without_trailing_slash(conf_item_url.host)

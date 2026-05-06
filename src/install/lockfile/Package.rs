@@ -2052,7 +2052,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                                     ) {
                                         let _ = log.add_error_fmt(
                                             source,
-                                            packages_query.loc,
+                                            packages_expr.loc,
                                             // TODO: what if we could comptime call the syntax highlighter
                                             format_args!(
                                                 "\"workspaces.packages\" expects an array of strings, e.g.\n  \"workspaces\": {{\n    \"packages\": [\n      \"path/to/package\"\n    ]\n  }}"
@@ -2060,13 +2060,18 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                                         );
                                         return Err(bun_core::err!("InvalidPackageJSON"));
                                     }
+                                    let bun_js_parser::ast::ExprData::EArray(packages_arr) =
+                                        &packages_expr.data
+                                    else {
+                                        unreachable!()
+                                    };
                                     total_dependencies_count += workspace_names
                                         .process_names_array(
                                             &mut pm.workspace_package_json_cache,
                                             log,
-                                            packages_query.data.e_array(),
+                                            packages_arr,
                                             source,
-                                            packages_query.loc,
+                                            packages_expr.loc,
                                             Some(&mut string_builder),
                                         )?;
                                 }

@@ -158,7 +158,7 @@ impl<'a> Installer<'a> {
                     if log.has_errors() {
                         // monotonic is okay because we haven't started the task yet (it isn't running
                         // on another thread)
-                        entry_steps[entry_id.get() as usize].store(Step::Done, Ordering::Relaxed);
+                        entry_steps[entry_id.get() as usize].store(Step::Done as u32, Ordering::Relaxed);
                         self.on_task_fail(entry_id, TaskError::Patching(log));
                         continue;
                     }
@@ -187,7 +187,7 @@ impl<'a> Installer<'a> {
             let entry_steps = self.store.entries.items_step();
             for install_ctx in callbacks.as_slice() {
                 let entry_id = install_ctx.isolated_package_install_context;
-                entry_steps[entry_id.get() as usize].store(Step::Done, Ordering::Relaxed);
+                entry_steps[entry_id.get() as usize].store(Step::Done as u32, Ordering::Relaxed);
                 self.on_task_fail(
                     entry_id,
                     TaskError::Download(DownloadError { err, url: url.into() }),
@@ -383,13 +383,13 @@ impl<'a> Installer<'a> {
         if !self.is_task_blocked(entry_id, &mut parent_dedupe) {
             // .monotonic is okay because the task isn't running right now.
             self.store.entries.items_step()[entry_id.get() as usize]
-                .store(Step::SymlinkDependencyBinaries, Ordering::Relaxed);
+                .store(Step::SymlinkDependencyBinaries as u32, Ordering::Relaxed);
             self.start_task(entry_id);
             return;
         }
 
         // .monotonic is okay because the task isn't running right now.
-        self.store.entries.items_step()[entry_id.get() as usize].store(Step::Blocked, Ordering::Relaxed);
+        self.store.entries.items_step()[entry_id.get() as usize].store(Step::Blocked as u32, Ordering::Relaxed);
     }
 
     /// Called from both the main thread (via `onTaskBlocked` and `resumeUnblockedTasks`) and the
@@ -405,7 +405,7 @@ impl<'a> Installer<'a> {
 
         let deps = &entry_deps[entry_id.get() as usize];
         for dep in deps.slice() {
-            if entry_steps[dep.entry_id.get() as usize].load(Ordering::Acquire) != Step::Done {
+            if entry_steps[dep.entry_id.get() as usize].load(Ordering::Acquire) != Step::Done as u32 {
                 parent_dedupe.clear_retaining_capacity();
                 if self.store.is_cycle(entry_id, dep.entry_id, parent_dedupe) {
                     continue;
@@ -498,7 +498,7 @@ impl<'a> Installer<'a> {
 
             // .monotonic is okay because only the main thread sets this to `.blocked`.
             let entry_step = entry_steps[entry_id.get() as usize].load(Ordering::Relaxed);
-            if entry_step != Step::Blocked {
+            if entry_step != Step::Blocked as u32 {
                 continue;
             }
 
@@ -507,7 +507,7 @@ impl<'a> Installer<'a> {
             }
 
             // .monotonic is okay because the task isn't running right now.
-            entry_steps[entry_id.get() as usize].store(Step::SymlinkDependencyBinaries, Ordering::Relaxed);
+            entry_steps[entry_id.get() as usize].store(Step::SymlinkDependencyBinaries as u32, Ordering::Relaxed);
             self.start_task(entry_id);
         }
     }
@@ -1790,7 +1790,7 @@ impl Task {
                     );
                 }
                 installer.store.entries.items_step()[this.entry_id.get() as usize]
-                    .store(Step::Done, Ordering::Release);
+                    .store(Step::Done as u32, Ordering::Release);
                 this.result = Result::Err(err);
                 installer.task_queue.push(this);
                 unsafe { PackageManager::wake_raw(manager_ptr) };

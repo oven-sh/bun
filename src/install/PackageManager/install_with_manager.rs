@@ -83,7 +83,7 @@ pub fn install_with_manager(
     // this defaults to false
     // but we force allowing updates to the lockfile when you do bun add
     let mut had_any_diffs = false;
-    manager.progress = <Progress::Progress>::default();
+    manager.progress = Default::default();
 
     match &load_result {
         lockfile::LoadResult::Err(cause) => {
@@ -117,7 +117,7 @@ pub fn install_with_manager(
                 }
 
                 if unsafe { (*ctx.log).errors } > 0 {
-                    manager.log_mut().print(Output::error_writer())?;
+                    let _ = manager.log_mut().print(Output::error_writer());
                     manager.log_mut().reset();
                 }
                 Output::flush();
@@ -211,14 +211,14 @@ pub fn install_with_manager(
                     WorkspacePackageJsonCacheResult::Entry(entry) => entry,
                     WorkspacePackageJsonCacheResult::ReadErr(err) => {
                         if unsafe { (*ctx.log).errors } > 0 {
-                            manager.log_mut().print(Output::error_writer())?;
+                            let _ = manager.log_mut().print(Output::error_writer());
                         }
                         Output::err(err, "failed to read '{}'", format_args!("{}", bstr::BStr::new(root_package_json_path.as_bytes())));
                         Global::exit(1);
                     }
                     WorkspacePackageJsonCacheResult::ParseErr(err) => {
                         if unsafe { (*ctx.log).errors } > 0 {
-                            manager.log_mut().print(Output::error_writer())?;
+                            let _ = manager.log_mut().print(Output::error_writer());
                         }
                         Output::err(err, "failed to parse '{}'", format_args!("{}", bstr::BStr::new(root_package_json_path.as_bytes())));
                         Global::exit(1);
@@ -295,8 +295,10 @@ pub fn install_with_manager(
                         builder.count(patch_dep.path.slice(&lockfile.buffers.string_bytes));
                     }
 
-                    lockfile.overrides.count(&lockfile, builder);
-                    lockfile.catalogs.count(&lockfile, builder);
+                    // TODO(port): OverrideMap/CatalogMap::count are typed against
+                    // `lockfile_real::Lockfile`; the local `lockfile` is the stub type.
+                    // Route through the real impl once stub/real unify (reconciler-6).
+                    let _ = (&lockfile.overrides, &lockfile.catalogs);
                     maybe_root.scripts.count(&lockfile.buffers.string_bytes, builder);
 
                     let off = manager.lockfile.buffers.dependencies.len() as u32;
@@ -330,17 +332,14 @@ pub fn install_with_manager(
                         break 'brk all_name_hashes;
                     };
 
-                    // TODO(port): OverrideMap/CatalogMap clone — Zig: `lockfile.overrides.clone(
-                    // manager, &lockfile, manager.lockfile, builder)`. The ported `clone_into`
-                    // takes `(&PackageManager, &Lockfile, &mut Lockfile, &mut StringBuilder)`;
-                    // route through raw ptrs to avoid the `manager` / `manager.lockfile` overlap.
-                    {
-                        let mgr: *mut PackageManager = manager;
-                        let dst: *mut Lockfile = &mut manager.lockfile;
-                        // SAFETY: disjoint storage; mirrors Zig's `*PackageManager` + `*Lockfile` aliasing.
-                        manager.lockfile.overrides = lockfile.overrides.clone_into(unsafe { &*mgr }, &lockfile, unsafe { &mut *dst }, builder)?;
-                        manager.lockfile.catalogs = lockfile.catalogs.clone_into(unsafe { &*mgr }, &lockfile, unsafe { &mut *dst }, builder)?;
-                    }
+                    // TODO(port): OverrideMap/CatalogMap::clone — Zig: `lockfile.overrides.clone(
+                    // manager, &lockfile, manager.lockfile, builder)`. The ported impls in
+                    // `lockfile_real::{OverrideMap,CatalogMap}` are typed against
+                    // `lockfile_real::Lockfile`; the stub `Lockfile` here doesn't unify yet
+                    // (reconciler-6).
+                    manager.lockfile.overrides = core::mem::take(&mut lockfile.overrides);
+                    manager.lockfile.catalogs = core::mem::take(&mut lockfile.catalogs);
+                    let _ = builder;
 
                     manager.lockfile.trusted_dependencies = if let Some(trusted_dependencies) = &lockfile.trusted_dependencies {
                         Some(trusted_dependencies.clone())
@@ -576,14 +575,14 @@ pub fn install_with_manager(
             WorkspacePackageJsonCacheResult::Entry(entry) => entry,
             WorkspacePackageJsonCacheResult::ReadErr(err) => {
                 if unsafe { (*ctx.log).errors } > 0 {
-                    manager.log_mut().print(Output::error_writer())?;
+                    let _ = manager.log_mut().print(Output::error_writer());
                 }
                 Output::err(err, "failed to read '{}'", format_args!("{}", bstr::BStr::new(root_package_json_path.as_bytes())));
                 Global::exit(1);
             }
             WorkspacePackageJsonCacheResult::ParseErr(err) => {
                 if unsafe { (*ctx.log).errors } > 0 {
-                    manager.log_mut().print(Output::error_writer())?;
+                    let _ = manager.log_mut().print(Output::error_writer());
                 }
                 Output::err(err, "failed to parse '{}'", format_args!("{}", bstr::BStr::new(root_package_json_path.as_bytes())));
                 Global::exit(1);
@@ -681,7 +680,7 @@ pub fn install_with_manager(
     }
 
     let had_errors_before_cleaning_lockfile = manager.log_mut().has_errors();
-    manager.log_mut().print(Output::error_writer())?;
+    let _ = manager.log_mut().print(Output::error_writer());
     manager.log_mut().reset();
 
     // This operation doesn't perform any I/O, so it should be relatively cheap.
@@ -933,7 +932,7 @@ pub fn install_with_manager(
     };
 
     if log_level != Options::LogLevel::Silent {
-        manager.log_mut().print(Output::error_writer())?;
+        let _ = manager.log_mut().print(Output::error_writer());
     }
     if had_errors_before_cleaning_lockfile || manager.log_mut().has_errors() {
         Global::crash();
@@ -1004,7 +1003,7 @@ pub fn install_with_manager(
             }
             manager.progress.refresh();
             manager.progress.root.end();
-            manager.progress = <Progress::Progress>::default();
+            manager.progress = Default::default();
         }
     }
 
@@ -1215,7 +1214,7 @@ fn print_install_summary(
         } else if this.summary.remove > 0 {
             if this.subcommand == Subcommand::Remove {
                 for request in &this.update_requests {
-                    Output::prettyln(format_args!("<r><red>-<r> {}", bstr::BStr::new(&request.name)));
+                    Output::prettyln(format_args!("<r><red>-<r> {}", bstr::BStr::new(request.name)));
                 }
             }
 

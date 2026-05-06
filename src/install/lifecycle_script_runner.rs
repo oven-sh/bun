@@ -662,30 +662,41 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
     pub fn print_output(&mut self) {
         if !self.manager().options.log_level.is_verbose() {
-            let stdout = self.stdout.final_buffer();
-
             // Reuse the memory
-            if stdout.is_empty() && stdout.capacity() > 0 && self.stderr.buffer().capacity() == 0 {
-                *self.stderr.buffer() = core::mem::take(stdout);
+            // PORT NOTE: reshaped for borrowck — Zig held two `*ArrayList(u8)`
+            // simultaneously; here we scope the `stdout`/`stderr` borrows.
+            {
+                let stdout = self.stdout.final_buffer();
+                let take = stdout.is_empty() && stdout.capacity() > 0;
+                if take {
+                    let buf = core::mem::take(stdout);
+                    let stderr = self.stderr.buffer();
+                    if stderr.capacity() == 0 {
+                        *stderr = buf;
+                    }
+                }
             }
 
-            let stderr = self.stderr.final_buffer();
+            let stdout_len = self.stdout.final_buffer().len();
+            let stderr_len = self.stderr.final_buffer().len();
 
-            if stdout.len().saturating_add(stderr.len()) == 0 {
+            if stdout_len.saturating_add(stderr_len) == 0 {
                 return;
             }
 
             Output::disable_buffering();
             Output::flush();
 
-            if !stdout.is_empty() {
+            if stdout_len > 0 {
+                let stdout = self.stdout.final_buffer();
                 let _ = Output::error_writer()
                     .write_fmt(format_args!("{}\n", bstr::BStr::new(stdout.as_slice())));
                 stdout.clear();
                 stdout.shrink_to_fit();
             }
 
-            if !stderr.is_empty() {
+            if stderr_len > 0 {
+                let stderr = self.stderr.final_buffer();
                 let _ = Output::error_writer()
                     .write_fmt(format_args!("{}\n", bstr::BStr::new(stderr.as_slice())));
                 stderr.clear();

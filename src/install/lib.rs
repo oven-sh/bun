@@ -2771,29 +2771,6 @@ impl PackageManager {
         // writes into self.progress_name_buf and sets node.name.
     }
 
-    /// Port of `PackageManager.sleepUntil` (src/install/PackageManager.zig).
-    /// Spins the event loop, calling `is_done_fn(closure)` between ticks until
-    /// it returns `true`. Associated fn over `*mut Self` so the callback can
-    /// reborrow `&mut PackageManager` without aliasing the receiver (Zig's
-    /// `*PackageManager` carries no exclusivity contract).
-    ///
-    /// SAFETY: `this` must be valid for `&mut` access between callback
-    /// invocations; while `is_done_fn` runs the callback owns the unique
-    /// `&mut PackageManager` and `sleep_until` holds no borrow.
-    pub unsafe fn sleep_until<C>(
-        _this: *mut PackageManager,
-        closure: &mut C,
-        is_done_fn: fn(&mut C) -> bool,
-    ) {
-        bun_core::Output::flush();
-        // TODO(port): blocked_on bun_install::package_manager_real un-gate
-        // (reconciler-6) — `AnyEventLoop::tick_raw` plumbing. The stub spins
-        // `is_done_fn` once so callers can compile; the real body lives in
-        // `package_manager_real::PackageManager::sleep_until`.
-        let _ = is_done_fn(closure);
-        todo!("blocked_on: bun_install::package_manager_real::sleep_until (reconciler-6)")
-    }
-
     /// Zig: field access `manager.env` (src/install/PackageManager.zig:11).
     /// SAFETY: `env` is populated by `init()` before any caller reaches this;
     /// mirrors Zig's non-optional `*DotEnv.Loader`.

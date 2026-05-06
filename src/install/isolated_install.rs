@@ -442,7 +442,7 @@ pub fn install_isolated_packages(
                         if curr_dep.name_hash == entry_dep.name_hash &&
                             // also ensure workspace self deps are not skipped.
                             // implicit workspace dep != explicit workspace dep
-                            curr_dep.behavior.workspace == entry_dep.behavior.workspace
+                            curr_dep.behavior.is_workspace() == entry_dep.behavior.is_workspace()
                         {
                             node_nodes[entry.parent_id.get()].push(curr_id);
                             // PERF(port): was appendAssumeCapacity — profile in Phase B
@@ -477,11 +477,23 @@ pub fn install_isolated_packages(
 
                 'dont_dedupe: {
                     let nodes_slice = nodes.slice();
-                    let node_nodes = nodes_slice.items_mut().nodes;
-                    let node_dep_ids = nodes_slice.items().dep_id;
-                    let node_parent_ids = nodes_slice.items().parent_id;
-                    let node_dependencies = nodes_slice.items().dependencies;
-                    let node_peers = nodes_slice.items_mut().peers;
+                    // PORT NOTE: disjoint-column raw views (see above).
+                    let nodes_len = nodes_slice.len();
+                    let node_nodes: &mut [Vec<store::node::Id>] = unsafe {
+                        core::slice::from_raw_parts_mut(
+                            nodes_slice.items_raw::<Vec<store::node::Id>>(store::NodeField::nodes),
+                            nodes_len,
+                        )
+                    };
+                    let node_dep_ids = nodes_slice.dep_id();
+                    let node_parent_ids = nodes_slice.parent_id();
+                    let node_dependencies = nodes_slice.dependencies();
+                    let node_peers: &mut [store::node::Peers] = unsafe {
+                        core::slice::from_raw_parts_mut(
+                            nodes_slice.items_raw::<store::node::Peers>(store::NodeField::peers),
+                            nodes_len,
+                        )
+                    };
 
                     let ctx_hash: u64 = if entry_dep.version.tag == VersionTag::Workspace || peer_name_count == 0 {
                         0

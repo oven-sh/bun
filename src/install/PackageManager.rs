@@ -329,7 +329,7 @@ pub use self::populate_manifest_cache::populate_manifest_cache;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub type TaskCallbackList = Vec<TaskCallbackContext>;
-type TaskDependencyQueue = HashMap<Task::Id, TaskCallbackList /* , IdentityContext<Task::Id>, 80 */>;
+pub type TaskDependencyQueue = HashMap<Task::Id, TaskCallbackList /* , IdentityContext<Task::Id>, 80 */>;
 
 type PreallocatedTaskStore = HiveArray<Task::Task<'static>, 64 /* .Fallback */>;
 type PreallocatedNetworkTasks = HiveArray<NetworkTask, 128 /* .Fallback */>;
@@ -474,7 +474,7 @@ pub struct PackageManager {
     // When adding a `file:` dependency in a workspace package, we want to install it
     // relative to the workspace root, but the path provided is relative to the
     // workspace package. We keep track of the original here.
-    pub original_package_json_path: Box<ZStr>, // TODO(port): owned [:0]const u8
+    pub original_package_json_path: ZBox, // TODO(port): owned [:0]const u8
 
     // null means root. Used during `cleanWithLogger` to identifier which
     // workspace is adding/removing packages

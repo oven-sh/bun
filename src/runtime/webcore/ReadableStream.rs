@@ -783,7 +783,7 @@ impl<C: SourceContext> NewSource<C> {
             return;
         }
         if let Some(close) = self.close_handler.take() {
-            if close as usize == Self::on_js_close as usize {
+            if close as usize == Self::on_js_close as *const () as usize {
                 Self::on_js_close(Some(self as *mut _ as *mut c_void));
             } else {
                 close(self.close_ctx.map(|p| p.as_ptr()));

@@ -2653,16 +2653,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             owned_ssl_ctx: owned_ctx_taken,
             connection: this.connection.as_ref().map(|c| c.clone()),
             protos: cfg.and_then(|c| {
-                c.protos.map(|p| {
-                    // SAFETY: protos is NUL-terminated C string from SSLConfig.
-                    Box::<[u8]>::from(unsafe { core::ffi::CStr::from_ptr(p) }.to_bytes())
-                })
+                c.protos.as_ref().map(|p| Box::<[u8]>::from(p.as_bytes()))
             }),
             server_name: cfg.and_then(|c| {
-                c.server_name.map(|sn| {
-                    // SAFETY: server_name is NUL-terminated C string from SSLConfig.
-                    Box::<[u8]>::from(unsafe { core::ffi::CStr::from_ptr(sn) }.to_bytes())
-                })
+                c.server_name.as_ref().map(|sn| Box::<[u8]>::from(sn.as_bytes()))
             }),
             flags: Flags::default(),
             this_value: JsRef::empty(),

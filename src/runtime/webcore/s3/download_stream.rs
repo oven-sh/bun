@@ -17,7 +17,9 @@ bun_core::declare_scope!(S3, hidden);
 
 pub struct S3HttpDownloadStreamingTask {
     pub http: AsyncHTTP,
-    pub vm: &'static VirtualMachine,
+    // PORT NOTE: `*mut` (not `&'static`) to match `VirtualMachine::get()`'s return type and to
+    // permit a null-but-never-read placeholder in `Default` (Zig has no field default for `vm`).
+    pub vm: *mut VirtualMachine,
     pub sign_result: SignResult,
     pub headers: Headers,
     pub callback_context: NonNull<()>,

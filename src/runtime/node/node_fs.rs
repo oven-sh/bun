@@ -4511,7 +4511,7 @@ impl NodeFS {
     }
 
     pub fn open_dir(&mut self, _: &args::OpenDir, _: Flavor) -> Maybe<()> {
-        Maybe::todo()
+        Maybe::<()>::todo()
     }
 
     fn read_inner(&mut self, args: &args::Read) -> Maybe<ret::Read> {

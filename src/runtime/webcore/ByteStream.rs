@@ -55,6 +55,34 @@ pub type Source = readable_stream::NewSource<ByteStream>;
 
 pub const TAG: readable_stream::Tag = readable_stream::Tag::Bytes;
 
+impl readable_stream::SourceContext for ByteStream {
+    const NAME: &'static str = "Bytes";
+    // setRefUnrefFn = null
+    const SUPPORTS_REF: bool = false;
+    crate::source_context_codegen!(
+        BytesInternalReadableStreamSource__create,
+        BytesInternalReadableStreamSourcePrototype__pendingPromiseSetCachedValue,
+        BytesInternalReadableStreamSourcePrototype__onDrainCallbackSetCachedValue,
+        BytesInternalReadableStreamSourcePrototype__onDrainCallbackGetCachedValue
+    );
+
+    fn on_start(&mut self) -> streams::Start { Self::on_start(self) }
+    fn on_pull(&mut self, buf: &mut [u8], view: JSValue) -> streams::Result {
+        Self::on_pull(self, buf, view)
+    }
+    fn on_cancel(&mut self) { Self::on_cancel(self) }
+    fn deinit_fn(&mut self) { Self::finalize(self) }
+    fn drain_internal_buffer(&mut self) -> bun_collections::ByteList { Self::drain(self) }
+    fn memory_cost_fn(&self) -> usize { Self::memory_cost(self) }
+    fn to_buffered_value(
+        &mut self,
+        global: &JSGlobalObject,
+        action: streams::BufferActionTag,
+    ) -> Option<bun_jsc::JsResult<JSValue>> {
+        Some(Self::to_buffered_value(self, global, action))
+    }
+}
+
 impl ByteStream {
     #[inline]
     fn empty_pending_buffer() -> *mut [u8] {

@@ -106,9 +106,13 @@ pub mod s3_stub {
     )*};}
     opaque!(
         S3Credentials, S3CredentialsWithOptions, S3DeleteResult,
-        S3ListObjectsOptions, S3ListObjectsResult, ACL, StorageClass,
+        S3ListObjectsResult, ACL, StorageClass,
         S3SimpleRequestResult, S3DownloadStreamWrapper, S3HttpSimpleTask,
     );
+    // Real type now exists in webcore/s3/list_objects.rs — forward it so
+    // `s3_stub::S3ListObjectsOptions` and `s3::list_objects::S3ListObjectsOptions`
+    // are the same type (Store.rs imports via this path).
+    pub use crate::webcore::__s3_list_objects::S3ListObjectsOptions;
     pub use crate::webcore::s3::MultiPartUploadOptions;
     impl S3Credentials {
         pub fn estimated_size(&self) -> usize { 0 }

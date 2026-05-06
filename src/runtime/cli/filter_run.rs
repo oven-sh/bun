@@ -681,14 +681,17 @@ fn windows_is_terminal() -> bool {
 
 pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::Infallible, bun_core::Error> {
     // TODO(port): Zig return type is `!noreturn`; using Result<Infallible, _> for `?` support.
-    let script_name: &[u8] = if ctx.positionals.len() > 1 {
-        &ctx.positionals[1]
+    // PORT NOTE: own the slice — `ctx` is reborrowed `&mut` for
+    // `configure_env_for_run` below while `script_name` is still live.
+    let script_name_owned: Box<[u8]> = if ctx.positionals.len() > 1 {
+        ctx.positionals[1].clone()
     } else if ctx.positionals.len() > 0 {
-        &ctx.positionals[0]
+        ctx.positionals[0].clone()
     } else {
         Output::pretty_errorln("<r><red>error<r>: No script name provided");
         Global::exit(1);
     };
+    let script_name: &[u8] = &script_name_owned;
     let mut pre_script_name = vec![0u8; script_name.len() + 3].into_boxed_slice();
     pre_script_name[0..3].copy_from_slice(b"pre");
     pre_script_name[3..].copy_from_slice(script_name);

@@ -300,5 +300,34 @@ pub mod js_valkey {
 
     /// `SocketHandler<SSL>` — uws dispatch vtable target. Methods gated.
     pub struct SocketHandler<const SSL: bool>;
+
+    // ── JsClass wiring (codegen name = "RedisClient", see valkey.classes.ts) ──
+    // Hand-roll the externs the `.classes.ts` generator emits so
+    // `jsc::codegen::js::get_constructor::<JSValkeyClient>()` resolves.
+    unsafe extern "C" {
+        fn RedisClient__fromJS(value: JSValue) -> Option<core::ptr::NonNull<JSValkeyClient>>;
+        fn RedisClient__fromJSDirect(value: JSValue) -> Option<core::ptr::NonNull<JSValkeyClient>>;
+        fn RedisClient__create(global: *mut JSGlobalObject, ptr: *mut JSValkeyClient) -> JSValue;
+        fn RedisClient__getConstructor(global: *mut JSGlobalObject) -> JSValue;
+    }
+    impl crate::jsc::JsClass for JSValkeyClient {
+        fn from_js(value: JSValue) -> Option<*mut Self> {
+            // SAFETY: codegen extern; null on type mismatch.
+            unsafe { RedisClient__fromJS(value) }.map(|p| p.as_ptr())
+        }
+        fn from_js_direct(value: JSValue) -> Option<*mut Self> {
+            // SAFETY: codegen extern; null on structure mismatch.
+            unsafe { RedisClient__fromJSDirect(value) }.map(|p| p.as_ptr())
+        }
+        fn to_js(self, global: &JSGlobalObject) -> JSValue {
+            let ptr = Box::into_raw(Box::new(self));
+            // SAFETY: ownership transfers to the C++ wrapper (freed via finalize).
+            unsafe { RedisClient__create(global.as_ptr(), ptr) }
+        }
+        fn get_constructor(global: &JSGlobalObject) -> JSValue {
+            // SAFETY: `global` is live; codegen extern returns the cached ctor.
+            unsafe { RedisClient__getConstructor(global.as_ptr()) }
+        }
+    }
 }
 pub use js_valkey::JSValkeyClient;

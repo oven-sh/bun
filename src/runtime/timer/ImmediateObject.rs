@@ -47,11 +47,9 @@ impl ImmediateObject {
         // internals are initialized by init()
         let immediate = Box::into_raw(Box::new(Self {
             ref_count: Cell::new(1),
-            event_loop_timer: EventLoopTimer {
-                next: ElTimespec::EPOCH,
-                tag: EventLoopTimerTag::ImmediateObject,
-                ..Default::default()
-            },
+            // Zig: `.{ .next = .epoch, .tag = .ImmediateObject }` — `init_paused`
+            // sets `next = epoch`, `state = PENDING`, `heap`/`in_heap` defaults.
+            event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::ImmediateObject),
             // Zig wrote `internals = undefined`; every field is overwritten by
             // `internals.init()` below before any read.
             internals: MaybeUninit::uninit(),
@@ -75,11 +73,12 @@ impl ImmediateObject {
             arguments,
         );
 
-        if global_this.bun_vm().is_inspector_enabled() {
+        // SAFETY: `bun_vm()` returns the live per-thread VM pointer; field read only.
+        if unsafe { (*global_this.bun_vm()).is_inspector_enabled() } {
             Debugger::did_schedule_async_call(
                 global_this,
                 Debugger::AsyncCallType::DOMTimer,
-                ID::async_id(&ID { id, kind: super::Kind::SetImmediate }),
+                ID { id, kind: KindBig::SetImmediate }.async_id(),
                 true,
             );
         }
@@ -100,7 +99,7 @@ impl ImmediateObject {
     // No `#[bun_jsc::host_fn]` here — `#[bun_jsc::JsClass]` already emits the
     // extern constructor shim that calls `<Self>::constructor(__g, __f)`.
     pub fn constructor(global_object: &JSGlobalObject, _call_frame: &CallFrame) -> JsResult<*mut Self> {
-        Err(global_object.throw("Immediate is not constructible", format_args!("")))
+        Err(global_object.throw("Immediate is not constructible"))
     }
 
     /// returns true if an exception was thrown

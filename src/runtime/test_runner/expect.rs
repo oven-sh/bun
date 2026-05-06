@@ -2006,19 +2006,17 @@ impl ExpectObjectContaining {
 
         let object_value = args[0];
 
-        let instance = Box::into_raw(Box::new(ExpectObjectContaining { flags: Flags::default() }));
-
-        // SAFETY: freshly leaked Box; wrapper takes ownership, freed in finalize
-        let instance_jsvalue = unsafe { (*instance).to_js(global_this) };
-        Self::js::object_value_set_cached(instance_jsvalue, global_this, object_value);
+        let instance_jsvalue = ExpectObjectContaining { flags: Flags::default() }.to_js(global_this);
+        expect_object_containing_js::object_value_set_cached(instance_jsvalue, global_this, object_value);
 
         let vm = global_this.bun_vm();
-        vm.auto_garbage_collect();
+        // SAFETY: bun_vm() returns the live VM pointer for this global.
+        unsafe { (*vm).auto_garbage_collect() };
         Ok(instance_jsvalue)
     }
 }
 
-#[bun_jsc::JsClass]
+#[bun_jsc::JsClass(no_construct)]
 pub struct ExpectStringContaining {
     pub flags: Flags,
 }
@@ -2040,19 +2038,17 @@ impl ExpectStringContaining {
 
         let string_value = args[0];
 
-        let string_containing = Box::into_raw(Box::new(ExpectStringContaining { flags: Flags::default() }));
-
-        // SAFETY: freshly leaked Box; wrapper takes ownership, freed in finalize
-        let string_containing_js_value = unsafe { (*string_containing).to_js(global_this) };
-        Self::js::string_value_set_cached(string_containing_js_value, global_this, string_value);
+        let string_containing_js_value = ExpectStringContaining { flags: Flags::default() }.to_js(global_this);
+        expect_string_containing_js::string_value_set_cached(string_containing_js_value, global_this, string_value);
 
         let vm = global_this.bun_vm();
-        vm.auto_garbage_collect();
+        // SAFETY: bun_vm() returns the live VM pointer for this global.
+        unsafe { (*vm).auto_garbage_collect() };
         Ok(string_containing_js_value)
     }
 }
 
-#[bun_jsc::JsClass]
+#[bun_jsc::JsClass(no_construct)]
 pub struct ExpectAny {
     pub flags: Flags,
 }

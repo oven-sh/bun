@@ -487,6 +487,7 @@ use super::read_file;
 use crate::node as node;
 use crate::image::Image;
 use bun_str::string_joiner::StringJoiner;
+use bun_jsc::SysErrorJsc as _;
 // `crate::webcore::jsc` glob-reexports `bun_jsc::*` but the double-glob loses
 // `JsTerminatedResult`; alias it locally (same shape as bun_jsc::event_loop).
 type JsTerminatedResult<T> = Result<T, bun_jsc::JsTerminated>;

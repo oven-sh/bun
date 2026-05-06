@@ -1,4 +1,7 @@
 #![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
+// Allow `use bun_css as css;` from inside the crate — the ported submodules
+// were translated against the crate's public surface and refer to it by name.
+extern crate self as bun_css;
 // AUTOGEN: mod declarations only — real exports added in B-1.
 //
 // B-2 un-gating in progress: leaf modules compile for real; the heavily
@@ -47,13 +50,43 @@ pub mod css_modules;
 pub mod small_list;
 pub use small_list::SmallList;
 
+// ─── B-2 round 3: rule-tree hubs un-gated ─────────────────────────────────
+// `properties/`, `rules/`, `selectors/`, `media_query` now compile for real
+// at the hub level. Each hub's mod.rs internally gates its heavy leaf
+// submodules (which depend on the still-gated `values/` calc lattice +
+// `declaration`/`context`) and exposes data-only stubs for the cross-module
+// surface (`CssRule`, `CssRuleList`, `SelectorList`, `MediaList`,
+// `PropertyId`, ...) so `css_parser::AtRulePrelude` / `TopLevelRuleParser`
+// can flip to the real paths in a follow-up round.
+#[path = "properties/mod.rs"]
+pub mod properties;
+#[path = "rules/mod.rs"]
+pub mod rules;
+#[path = "selectors/mod.rs"]
+pub mod selectors;
+#[path = "media_query.rs"]
+pub mod media_query;
+
 // ─── still gated (heavy cross-module deps) ────────────────────────────────
-gated_mod!(properties, "properties/mod.rs");
-gated_mod!(rules, "rules/mod.rs");
-gated_mod!(selectors, "selectors/selector.rs");
 gated_mod!(context, "context.rs");
 gated_mod!(declaration, "declaration.rs");
-gated_mod!(media_query, "media_query.rs");
+
+// Path aliases the ported submodules expect at crate root (Zig's `css.*`
+// namespace was flat; the Rust port re-nests under `values/`/`properties/`
+// but most callers still spell `bun_css::css_values::...`).
+pub use values as css_values;
+pub use properties as css_properties;
+pub use rules as css_rules;
+pub use selectors::selector;
+
+// Crate-root re-exports of parser-core helpers referenced by the rule/
+// selector/property/media_query bodies via `css::*`.
+pub use css_parser::{
+    enum_property_util, parse_utility, signfns, void_wrap, CssResult as Result,
+    Delimiters, EnumProperty, Maybe, ParserState,
+};
+pub use compat::Feature;
+pub use error::ParserErrorKind as ErrorKind;
 
 // generics: un-gated (B-2). Core protocol traits (DeepClone/CssEql/CssHash/
 // IsCompatible/ListContainer) compile; Parse/ToCss/Angle impls remain

@@ -93,9 +93,8 @@ impl Packed {
     pub fn decode(self) -> Owner {
         match self.kind() {
             PackedKind::None => Owner::None,
-            // TODO(port): confirm FileIndex::init / RouteBundle.Index::init signatures
-            PackedKind::Client => Owner::Client(IncrementalGraph::<{ Side::Client }>::FileIndex::init(self.data())),
-            PackedKind::Server => Owner::Server(IncrementalGraph::<{ Side::Server }>::FileIndex::init(self.data())),
+            PackedKind::Client => Owner::Client(ClientFileIndex::init(self.data())),
+            PackedKind::Server => Owner::Server(ServerFileIndex::init(self.data())),
             PackedKind::Route => Owner::Route(super::route_bundle::Index::init(self.data())),
         }
     }

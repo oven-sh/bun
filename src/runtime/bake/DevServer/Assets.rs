@@ -97,12 +97,12 @@ impl Assets {
     /// The old URL is immediately revoked.
     pub fn replace_path(
         &mut self,
-        /// not allocated
+        // not allocated
         abs_path: &[u8],
-        /// Ownership is transferred to this function
+        // Ownership is transferred to this function
         contents: &AnyBlob,
         mime_type: &MimeType,
-        /// content hash of the asset
+        // content hash of the asset
         content_hash: u64,
     ) -> Result<EntryIndex, bun_core::Error> {
         // TODO(port): narrow error set (only alloc + client_graph.insert_empty can fail)

@@ -5,11 +5,8 @@ use bun_core::output;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
 use bun_sys::{self, Fd};
 
-// TODO(port): verify path for bun.ptr.CowString — mapped to bun_collections per §Pointers,
-// but CowString has takeSlice/length/deinit semantics not covered by std Cow.
-use bun_collections::CowString;
-// TODO(port): verify path for bun.spawn.Stdio
-use crate::spawn::Stdio;
+use bun_ptr::CowString;
+use bun_spawn::Stdio;
 use crate::webcore::blob::SizeType as BlobSizeType;
 use crate::webcore::ReadableStream;
 

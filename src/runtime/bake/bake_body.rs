@@ -2,13 +2,14 @@
 //! combines `Bun.build` and `Bun.serve`, providing a hot-reloading development
 //! server, server components, and other integrations. Instead of taking the
 //! role as a framework, Bake is tool for frameworks to build on top of.
+#![allow(unexpected_cfgs)] // `feature = "codegen_embed"` is wired by build.rs in Phase C; not yet a declared cargo feature.
 
 use core::ptr::NonNull;
 
 use bun_alloc::Arena; // = bumpalo::Bump
 use bun_collections::ArrayHashMap;
 use bun_core::Output;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult, ZigString, ZigStringSlice};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult, ZigStringSlice};
 use bun_logger as logger;
 // peechy batch 2 landed: `bun_options_types::schema::api` now provides
 // {StringMap, LoaderMap, DotEnvBehavior, SourceMapMode, TransformOptions}.

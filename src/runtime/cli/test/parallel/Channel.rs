@@ -42,7 +42,12 @@ pub trait ChannelOwner: Sized {
     fn on_channel_done(&mut self);
 }
 
-pub struct Channel<Owner: ChannelOwner> {
+// PORT NOTE: the struct itself carries no `ChannelOwner` bound so that owners
+// (Worker, WorkerCommands) can embed `Channel<Self>` as a field before their
+// `impl ChannelOwner` is in scope. Method impls that recover the owner via
+// `CHANNEL_OFFSET` keep the bound. (Rust also forbids a stricter bound on
+// `Drop` than on the struct, so Drop/Default below are unbounded too.)
+pub struct Channel<Owner> {
     /// Incoming bytes that don't yet form a complete frame.
     // PORT NOTE: Zig field name is `in`, a Rust keyword — kept via raw ident
     // so the .zig ↔ .rs diff stays aligned.
@@ -61,7 +66,7 @@ pub type Backend = WindowsBackend;
 #[cfg(not(windows))]
 pub type Backend = PosixBackend;
 
-impl<Owner: ChannelOwner> Default for Channel<Owner> {
+impl<Owner> Default for Channel<Owner> {
     fn default() -> Self {
         Self {
             r#in: Vec::new(),

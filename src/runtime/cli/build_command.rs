@@ -7,7 +7,8 @@ use bun_bundler::transpiler;
 use crate::cli::Command;
 use bun_core::{fmt as bun_fmt, Global, Output};
 use bun_js_parser::runtime::Runtime;
-use bun_options_types::CompileTarget::{self, OperatingSystem};
+use bun_options_types::CompileTarget;
+use bun_core::env::OperatingSystem;
 use bun_options_types::Context::MacroOptions;
 use bun_paths::{self as resolve_path, PathBuffer};
 use bun_str::strings;
@@ -834,7 +835,7 @@ impl BuildCommand {
                                     ),
                                     encoding: crate::node::Encoding::Buffer,
                                     dirfd: Fd::from_std_dir(root_dir),
-                                    file: crate::node::fs::PathOrFileDescriptor::Path(
+                                    file: crate::node::PathOrFileDescriptor::Path(
                                         crate::node::PathLike {
                                             string: bun_str::PathString::init(map_basename),
                                         },

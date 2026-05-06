@@ -31,9 +31,12 @@ use bun_str::strings;
 use bun_sys::{self, Fd, File};
 
 use super::{
-    attempt_to_create_package_json, Command, PackageJSONEditor,
+    attempt_to_create_package_json, Command,
     PackageManager, PatchCommitResult, Subcommand, UpdateRequest,
 };
+// Zig's `PackageJSONEditor` is a file-namespace struct; the Rust port exposes
+// its functions directly on the `package_json_editor` module.
+use super::package_json_editor as PackageJSONEditor;
 use super::command_line_arguments::CommandLineArguments;
 // TODO(port): `update_request::Array` is a type alias in Zig (likely `ArrayListUnmanaged(UpdateRequest)`).
 use super::update_request::Array as UpdateRequestArray;

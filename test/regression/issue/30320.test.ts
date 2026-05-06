@@ -21,8 +21,8 @@
 // resolver never produces Windows-style `path.text` there; Windows CI
 // catches that half of the regression.
 
-import { expect, test } from "bun:test";
 import { packageJsonInternals } from "bun:internal-for-testing";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 const { sideEffectsHasSideEffects } = packageJsonInternals;
@@ -33,21 +33,13 @@ test("#30320 SideEffects matches glob against Windows-style path", () => {
   // `normalizeStringNodeT` for absolute-Windows inputs on `.loose`). The
   // runtime path `C:\pkg\adapters\foo.js` normalizes to
   // `C:/pkg/adapters/foo.js` — no leading `/` — so glob never matched.
-  expect(
-    sideEffectsHasSideEffects("C:\\pkg\\", ["adapters/**/*.js"], "C:\\pkg\\adapters\\foo.js", true),
-  ).toBe(false);
-  expect(
-    sideEffectsHasSideEffects("C:\\pkg\\", ["adapters/**/*.js"], "C:\\pkg\\adapters\\foo.js", false),
-  ).toBe(true);
+  expect(sideEffectsHasSideEffects("C:\\pkg\\", ["adapters/**/*.js"], "C:\\pkg\\adapters\\foo.js", true)).toBe(false);
+  expect(sideEffectsHasSideEffects("C:\\pkg\\", ["adapters/**/*.js"], "C:\\pkg\\adapters\\foo.js", false)).toBe(true);
 });
 
 test("#30320 SideEffects matches glob with ./ prefix against Windows-style path", () => {
-  expect(
-    sideEffectsHasSideEffects("C:\\pkg\\", ["./adapters/**/*.js"], "C:\\pkg\\adapters\\foo.js", true),
-  ).toBe(false);
-  expect(
-    sideEffectsHasSideEffects("C:\\pkg\\", ["./adapters/**/*.js"], "C:\\pkg\\adapters\\foo.js", false),
-  ).toBe(true);
+  expect(sideEffectsHasSideEffects("C:\\pkg\\", ["./adapters/**/*.js"], "C:\\pkg\\adapters\\foo.js", true)).toBe(false);
+  expect(sideEffectsHasSideEffects("C:\\pkg\\", ["./adapters/**/*.js"], "C:\\pkg\\adapters\\foo.js", false)).toBe(true);
 });
 
 test("#30320 SideEffects matches exact pattern against Windows-style path", () => {
@@ -55,12 +47,8 @@ test("#30320 SideEffects matches exact pattern against Windows-style path", () =
   // leading-`/` form, the runtime lookup key had no leading `/`, so the
   // hash never collided. (This is the `todo: isWindows` the PR also
   // removes from PackageJsonSideEffectsArray{Keep,KeepModule*}.)
-  expect(
-    sideEffectsHasSideEffects("C:\\pkg\\", ["adapters/foo.js"], "C:\\pkg\\adapters\\foo.js", true),
-  ).toBe(false);
-  expect(
-    sideEffectsHasSideEffects("C:\\pkg\\", ["adapters/foo.js"], "C:\\pkg\\adapters\\foo.js", false),
-  ).toBe(true);
+  expect(sideEffectsHasSideEffects("C:\\pkg\\", ["adapters/foo.js"], "C:\\pkg\\adapters\\foo.js", true)).toBe(false);
+  expect(sideEffectsHasSideEffects("C:\\pkg\\", ["adapters/foo.js"], "C:\\pkg\\adapters\\foo.js", false)).toBe(true);
 });
 
 test("#30320 SideEffects mixed (exact + glob) both match against Windows-style paths", () => {

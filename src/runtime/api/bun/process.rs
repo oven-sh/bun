@@ -2012,7 +2012,7 @@ pub(crate) mod spawn_sys {
     pub const TAG_FCNTL: bun_sys::Tag = bun_sys::Tag(0);
     pub const TAG_MEMFD_CREATE: bun_sys::Tag = bun_sys::Tag(0);
 
-    pub const INVALID_FD: Fd = Fd::INSVALID;
+    pub const INVALID_FD: Fd = Fd::INVALID;
 
     /// Raw libc `environ` global (null-terminated `char **`). The `libc` crate
     /// doesn't export the `environ` static on all targets, so declare it here.
@@ -3444,7 +3444,7 @@ pub mod sync {
         // [*:null]?[*:0]const u8
         // SAFETY: std.c.environ is the C environ array
         let envp: *const *const c_char =
-            options.envp.unwrap_or_else(|| unsafe { libc::environ as *const *const c_char });
+            options.envp.unwrap_or_else(|| spawn_sys::raw_environ());
         let argv = &options.argv;
         let mut string_builder = bun_str::StringBuilder::default();
         for arg in argv {

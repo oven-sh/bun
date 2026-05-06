@@ -821,6 +821,20 @@ pub fn last_errno() -> i32 {
 #[cfg(windows)]
 #[inline] fn last_errno() -> i32 { 0 /* TODO(b2-windows): GetLastError() */ }
 
+/// `std.c._errno()` — pointer to thread-local errno. Prefer `last_errno()`
+/// for the value; this exists for callers that match the Zig `*_errno()` API
+/// shape (`unsafe { *bun_sys::errno() }`).
+#[cfg(unix)]
+#[inline]
+pub unsafe fn errno() -> *mut i32 { unsafe { errno_ptr() } }
+
+/// `std.posix.toPosixPath` — copy `path` into a NUL-terminated buffer.
+/// Returns `NameTooLong` if `path` contains an interior NUL.
+#[inline]
+pub fn to_posix_path(path: &[u8]) -> core::result::Result<std::ffi::CString, bun_core::Error> {
+    std::ffi::CString::new(path).map_err(|_| bun_core::err!("NameTooLong"))
+}
+
 #[inline]
 fn err_with(tag: Tag) -> Error {
     Error::from_code_int(last_errno(), tag)
@@ -2757,6 +2771,11 @@ pub mod c {
     use core::ffi::{c_char, c_int, c_void};
     pub use libc::stat as Stat;
     pub use libc::{fchmod, memcmp};
+    /// `std.c.fd_t` / `std.posix.fd_t` — native fd backing int (c_int on POSIX,
+    /// HANDLE on Windows). Use `bun_sys::Fd` everywhere else; this raw alias
+    /// exists only for direct libc FFI (e.g. `socketpair`).
+    #[cfg(unix)] #[allow(non_camel_case_types)] pub type fd_t = c_int;
+    #[cfg(windows)] #[allow(non_camel_case_types)] pub type fd_t = bun_core::FdNative;
     /// `bun.c.struct_statfs` — raw `struct statfs` (POSIX) / `uv_statfs_t` (Windows).
     /// Aliased here so `bun.StatFS` (bun.zig:1703) resolves through `bun_sys::c`.
     pub use super::StatFS as struct_statfs;

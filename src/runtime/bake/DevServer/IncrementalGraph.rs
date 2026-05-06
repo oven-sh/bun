@@ -2407,7 +2407,7 @@ impl IncrementalGraph<Client> {
                     ChunkKind::HmrChunk => b"latest_hmr.js",
                 };
                 if let Err(err) =
-                    DevServer::dump_bundle(dump_dir, Side::Client, rel_path_escaped, &list[start..], false)
+                    dev_server_body::dump_bundle(dump_dir, Side::Client, rel_path_escaped, &list[start..], false)
                 {
                     // TODO(port): bun.handleErrorReturnTrace
                     Output::warn(format_args!("Could not dump bundle: {}", err.name()));
@@ -2426,7 +2426,7 @@ impl IncrementalGraph<Client> {
         let paths = self.bundled_files.keys();
         let files = self.bundled_files.values();
 
-        let _buf = path_buffer_pool().get();
+        let _buf = path_buffer_pool::get();
 
         let mut file_paths: Vec<*const [u8]> =
             Vec::with_capacity(self.current_chunk_parts.len());
@@ -2445,7 +2445,7 @@ impl IncrementalGraph<Client> {
         }
 
         overlapping_memory_cost +=
-            contained_maps.memory_cost() + DevServer::memory_cost_slice(&file_paths);
+            contained_maps.memory_cost() + memory_cost_slice(&file_paths);
 
         let ref_count = out.ref_count;
         *out = SourceMapStore::Entry {
@@ -2523,7 +2523,7 @@ impl IncrementalGraph<Server> {
                     ChunkKind::HmrChunk => b"latest_hmr.js",
                 };
                 if let Err(err) =
-                    DevServer::dump_bundle(dump_dir, Side::Server, rel_path_escaped, &list[start..], false)
+                    dev_server_body::dump_bundle(dump_dir, Side::Server, rel_path_escaped, &list[start..], false)
                 {
                     Output::warn(format_args!("Could not dump bundle: {}", err.name()));
                 }
@@ -2554,7 +2554,7 @@ impl IncrementalGraph<Server> {
         }
 
         overlapping_memory_cost += u32::try_from(
-            contained_maps.memory_cost() + DevServer::memory_cost_slice(&file_paths),
+            contained_maps.memory_cost() + memory_cost_slice(&file_paths),
         )
         .unwrap();
 

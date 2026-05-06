@@ -169,15 +169,15 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
                 if line.starts_with(b"DA:") {
                     let mut parts = line[3..].split(|b| *b == b',');
                     let Some(ln_s) = parts.next() else { continue };
-                    let Ok(ln) = bun_str::parse_int::<u32>(ln_s, 10) else { continue };
+                    let Ok(ln) = strings::parse_int::<u32>(ln_s, 10) else { continue };
                     let Some(cnt_s) = parts.next() else { continue };
-                    let Ok(cnt) = bun_str::parse_int::<u32>(cnt_s, 10) else { continue };
+                    let Ok(cnt) = strings::parse_int::<u32>(cnt_s, 10) else { continue };
                     let gop = fc.da.get_or_put(ln);
                     *gop.value = if gop.found_existing { gop.value.saturating_add(cnt) } else { cnt };
                 } else if line.starts_with(b"FNF:") {
-                    fc.fnf = fc.fnf.max(bun_str::parse_int::<u32>(&line[4..], 10).unwrap_or(0));
+                    fc.fnf = fc.fnf.max(strings::parse_int::<u32>(&line[4..], 10).unwrap_or(0));
                 } else if line.starts_with(b"FNH:") {
-                    fc.fnh = fc.fnh.max(bun_str::parse_int::<u32>(&line[4..], 10).unwrap_or(0));
+                    fc.fnh = fc.fnh.max(strings::parse_int::<u32>(&line[4..], 10).unwrap_or(0));
                 }
             }
         }
@@ -192,19 +192,17 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
     by_file.sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
 
     if opts.reporters.lcov {
-        // TODO(port): bun_jsc::node::fs::NodeFs mkdir_recursive — verify crate path
-        let mut fs = jsc::node::fs::NodeFs::default();
-        let _ = fs.mkdir_recursive(jsc::node::fs::MkdirArgs {
-            path: jsc::node::PathLike::EncodedSlice(bun_str::ZigString::Slice::from_utf8_never_free(&opts.reports_directory)),
+        let mut fs = NodeFS::default();
+        let _ = fs.mkdir_recursive(fs_args::Mkdir {
+            path: PathLike::EncodedSlice(bun_str::zig_string::Slice::from_utf8_never_free(&opts.reports_directory)),
             always_return_none: true,
             ..Default::default()
         });
         let mut path_buf = PathBuffer::uninit();
-        let out_path = bun_paths::join_abs_string_buf_z(
-            bun_fs::FileSystem::instance().top_level_dir(),
-            &mut path_buf,
+        let out_path = bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Auto>(
+            bun_paths::fs::FileSystem::instance().top_level_dir(),
+            &mut path_buf.0,
             &[&opts.reports_directory, b"lcov.info"],
-            bun_paths::Platform::Auto,
         );
         match File::openat(Fd::cwd(), out_path, O::CREAT | O::WRONLY | O::TRUNC | O::CLOEXEC, 0o644) {
             bun_sys::Result::Err(e) => Output::err(

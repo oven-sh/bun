@@ -9,7 +9,9 @@ use bun_collections::StringArrayHashMap;
 use bun_core::{self as bun, err, Error, Global, Output};
 use bun_io::{BufferedReader, ReadState};
 use bun_jsc::{EventLoopHandle};
+use bun_jsc::MiniEventLoop::MiniEventLoop;
 use bun_paths::{self as path, PathBuffer};
+use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
 use bun_str::{strings, ZStr};
 
 use crate::filter_arg as FilterArg;

@@ -2805,6 +2805,7 @@ pub mod JSZlib {
 #[allow(non_snake_case)]
 pub mod JSZstd {
     use super::*;
+    use bun_jsc::virtual_machine::VirtualMachine;
 
     #[unsafe(no_mangle)]
     pub extern "C" fn deallocator(_: *mut c_void, ctx: *mut c_void) {
@@ -2968,7 +2969,7 @@ pub mod JSZstd {
         pub vm: &'static VirtualMachine,
         pub output: Vec<u8>,
         pub error_message: Option<&'static [u8]>,
-        pub any_task: jsc::AnyTask,
+        pub any_task: jsc::AnyTask::AnyTask,
         pub poll: KeepAlive,
     }
 
@@ -2987,7 +2988,7 @@ pub mod JSZstd {
             };
             let job = unsafe { &mut *job };
             let _enqueue = scopeguard::guard((), |_| {
-                job.vm.enqueue_task_concurrent(jsc::ConcurrentTask::create(
+                job.vm.enqueue_task_concurrent(jsc::ConcurrentTask::ConcurrentTask::create(
                     job.any_task.task(),
                 ));
             });

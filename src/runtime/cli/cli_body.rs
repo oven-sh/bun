@@ -1371,7 +1371,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
     }
 
     fn bun_eval_print(ctx: Context) -> Result<(), bun_core::Error> {
-        let trigger = bun_paths::path_literal(b"/[eval]");
+        // Spec: `bun.pathLiteral("/[eval]")` — `/` on POSIX, `\` on Windows.
+        let trigger: &[u8] = if cfg!(windows) { b"\\[eval]" } else { b"/[eval]" };
         let mut entry_point_buf = [0u8; bun_paths::MAX_PATH_BYTES + 8 /* trigger.len() */];
         // TODO(port): const-fold trigger.len() into array length once path_literal is const fn
         let cwd = bun_sys::getcwd(&mut entry_point_buf)

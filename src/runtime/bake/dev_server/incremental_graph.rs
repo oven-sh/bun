@@ -79,10 +79,12 @@ pub enum Content {
 }
 
 /// `IncrementalGraph(side)`. The Zig original is comptime-parameterized over
-/// `bake.Side` so `File` resolves to `ServerFile`/`ClientFile`; the Rust
-/// shape is monomorphic until `adt_const_params` (or a trait dispatch) lands.
+/// `bake.Side` so `File` resolves to `ServerFile`/`ClientFile`. Mirrored here
+/// via `adt_const_params` on `bake::Side`; `File` itself is still the folded
+/// union (see TODO above) until a trait dispatch picks the per-side layout.
+/// Default `SIDE = Server` keeps not-yet-annotated call sites compiling.
 #[derive(Default)]
-pub struct IncrementalGraph {
+pub struct IncrementalGraph<const SIDE: bake::Side = { bake::Side::Server }> {
     /// Keys are absolute paths (owned). Index = `FileIndex`.
     pub bundled_files: StringArrayHashMap<File>,
     /// Parallel to `bundled_files`; bit set = file is stale and must rebundle.
@@ -93,7 +95,7 @@ pub struct IncrementalGraph {
     pub free_edge_head: Option<EdgeIndex>,
 }
 
-impl IncrementalGraph {
+impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     /// Helper for `DevServer::is_file_cached`.
     #[inline]
     pub fn file_kind_at(&self, index: usize) -> FileKind {

@@ -72,10 +72,9 @@ impl ScanOpts {
                 }
             };
 
-            let cwd_str = resolve_path::join_string_buf(
+            let cwd_str = join_string_buf::<platform::Auto>(
                 &mut path_buf2,
                 &[cwd, cwd_utf8.slice()],
-                resolve_path::Platform::Auto,
             );
             break 'cwd_str Box::<[u8]>::from(cwd_str);
         };
@@ -314,7 +313,10 @@ impl Glob {
         Ok(Some(glob_walker))
     }
 
-    #[bun_jsc::host_fn]
+    // PORT NOTE: no `#[bun_jsc::host_fn]` here — the `#[bun_jsc::JsClass]` derive on
+    // the struct already emits the `GlobClass__construct` shim that calls
+    // `<Glob>::constructor(..)`. The free-fn `host_fn` expansion can't name an
+    // associated fn without a receiver.
     pub fn constructor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<Box<Glob>> {
         let arguments_ = callframe.arguments_old(1);
         let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), arguments_.slice());

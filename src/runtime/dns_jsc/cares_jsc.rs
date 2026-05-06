@@ -185,26 +185,24 @@ pub fn addr_info_to_js_array(
         while !current.is_null() {
             // SAFETY: current is non-null (loop guard); c-ares owns the linked list.
             let this_node = unsafe { &*current };
-            // TODO(port): GetAddrInfo::Result::to_js lives in dns_jsc extension trait
-            let address = match this_node.family {
-                x if x == c_ares::AF::INET => {
-                    // SAFETY: addr is non-null sockaddr_in for AF_INET.
-                    bun_dns::Address::from_in(unsafe { *(this_node.addr as *const bun_sys::sockaddr_in) })
-                }
-                x if x == c_ares::AF::INET6 => {
-                    // SAFETY: addr is non-null sockaddr_in6 for AF_INET6.
-                    bun_dns::Address::from_in6(unsafe { *(this_node.addr as *const bun_sys::sockaddr_in6) })
-                }
-                _ => unreachable!(),
-            };
+            // PORT NOTE: Zig matched on family and union-viewed std.net.Address.
+            // bun_dns::Address::init_posix copies from the raw sockaddr by family,
+            // so we hand it `this_node.addr` directly after asserting a known family.
+            debug_assert!(
+                this_node.family == c_ares::AF::INET || this_node.family == c_ares::AF::INET6
+            );
+            // SAFETY: addr is non-null sockaddr_in/in6 for AF_INET/AF_INET6 (c-ares contract).
+            let address = unsafe { bun_dns::Address::init_posix(this_node.addr.cast()) };
             array.put_index(
                 global_this,
                 j,
-                bun_dns::get_addr_info::Result {
-                    address,
-                    ttl: this_node.ttl,
-                }
-                .to_js(global_this)?,
+                result_to_js(
+                    &bun_dns::GetAddrInfoResult {
+                        address,
+                        ttl: this_node.ttl,
+                    },
+                    global_this,
+                )?,
             )?;
             j += 1;
             current = this_node.next;

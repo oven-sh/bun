@@ -38,7 +38,10 @@ use core::ffi::c_void;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer};
 use bun_str::{String as BunString, ZigString};
 use bun_core::StackCheck;
-use bun_md as md;
+// PORT NOTE: Zig's `bun.md` is `src/md/root.zig`; the Rust crate's lib.rs is a
+// thin mod-decl shim, so alias the `root` module (which re-exports BlockType,
+// SpanType, TextType, SpanDetail, Renderer, helpers, types, ansi, …) as `md`.
+use bun_md::root as md;
 
 pub fn create(global_this: &JSGlobalObject) -> JSValue {
     let object = JSValue::create_empty_object(global_this, 4);
@@ -581,7 +584,7 @@ impl<'a> ParseRenderer<'a> {
         }
     }
 
-    const VTABLE: md::renderer::VTable = md::renderer::VTable {
+    const VTABLE: md::types::VTable = md::types::VTable {
         enter_block: Self::enter_block_impl,
         leave_block: Self::leave_block_impl,
         enter_span: Self::enter_span_impl,
@@ -1041,7 +1044,7 @@ impl<'a> JsCallbackRenderer<'a> {
         }
     }
 
-    const VTABLE: md::renderer::VTable = md::renderer::VTable {
+    const VTABLE: md::types::VTable = md::types::VTable {
         enter_block: Self::enter_block_impl,
         leave_block: Self::leave_block_impl,
         enter_span: Self::enter_span_impl,

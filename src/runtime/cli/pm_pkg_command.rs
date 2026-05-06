@@ -4,9 +4,9 @@ use crate::cli::command::Context;
 use bun_collections::{BabyList, StringArrayHashMap};
 use bun_core::{err, Error, Global, Output};
 use bun_install::PackageManager;
-use bun_js_parser::js_printer as js_printer;
+use bun_interchange::json;
 use bun_js_parser::{self as js_ast, E, Expr, ExprData, G};
-use bun_json as json;
+use bun_js_printer as js_printer;
 use bun_logger::{self as logger, Loc, Log, Source};
 use bun_paths::{self as path, PathBuffer};
 use bun_str::strings;
@@ -73,7 +73,7 @@ impl PmPkgCommand {
         Output::prettyln(
             const_format::concatcp!(
                 "<r><b>bun pm pkg<r> <d>v",
-                Global::PACKAGE_JSON_VERSION_WITH_SHA,
+                Global::package_json_version_with_sha,
                 "<r>"
             ),
             format_args!(""),
@@ -109,13 +109,16 @@ impl PmPkgCommand {
         let mut current_dir = cwd;
 
         loop {
-            let pkg_path =
-                path::join_abs_string_buf_z(current_dir, &mut path_buf, &[b"package.json"], path::Style::Auto);
+            let pkg_path = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
+                current_dir,
+                &mut path_buf,
+                &[b"package.json"],
+            );
             if bun_sys::exists_z(pkg_path) {
                 return Ok(Box::<[u8]>::from(pkg_path.as_bytes()));
             }
 
-            let parent = path::dirname(current_dir, path::Style::Auto);
+            let parent = path::resolve_path::dirname::<path::platform::Auto>(current_dir);
             if strings::eql(parent, current_dir) {
                 break;
             }
@@ -385,16 +388,15 @@ impl PmPkgCommand {
 
                     if let ExprData::EString(str) = &value.data {
                         let bin_path = str.slice();
-                        let mut pkg_dir = path::dirname(&path, path::Style::Auto);
+                        let mut pkg_dir = path::resolve_path::dirname::<path::platform::Auto>(&path);
                         if pkg_dir.is_empty() {
                             pkg_dir = cwd;
                         }
                         let mut buf = PathBuffer::uninit();
-                        let full_path = path::join_abs_string_buf_z(
+                        let full_path = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
                             pkg_dir,
                             &mut buf,
                             &[bin_path],
-                            path::Style::Auto,
                         );
 
                         if !bun_sys::exists_z(full_path) {

@@ -9,8 +9,9 @@ use crate::cli::Command;
 use bun_collections::StringHashMap;
 use bun_core::{Global, Output};
 use bun_io::{BufferedReader, ReadState};
-use bun_jsc::{EventLoopHandle};
-use bun_resolver::package_json::DependencyMap;
+use bun_jsc::EventLoopHandle;
+use bun_jsc::MiniEventLoop::MiniEventLoop;
+use bun_resolver::package_json::{DependencyMap, IncludeDependencies, IncludeScripts};
 use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
 use bun_str::{strings, ZStr};
 use bun_sys as sys;
@@ -87,7 +88,7 @@ impl<'a> ProcessHandle<'a> {
         // TODO(port): Zig uses `[_:null]?[*:0]const u8` (null-terminated array of nullable C strings).
 
         handle.start_time = Some(Instant::now());
-        let mut spawned: spawn::process::SpawnProcessResult = 'brk: {
+        let mut spawned: spawn::SpawnProcessResult = 'brk: {
             // Get the envp with the PATH configured
             // There's probably a more optimal way to do this where you have a Vec shared
             // instead of creating a new one for each process
@@ -458,7 +459,7 @@ impl<'a> State<'a> {
                         }
                     }
                     Status::Signaled(code) => {
-                        if code == spawn::Signal::SIGINT {
+                        if code == bun_sys::SignalCode::SIGINT.0 {
                             write!(&mut self.draw_buf, fmt!("<red>Interrupted<r>\n"))?;
                         } else {
                             write!(

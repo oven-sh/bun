@@ -750,7 +750,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             Vec::with_capacity(dev.framework.file_system_router_types.len());
 
         for (i, fsr) in dev.framework.file_system_router_types.iter().enumerate() {
-            let buf = paths::path_buffer_pool().get();
+            let buf = paths::path_buffer_pool::get();
             let joined_root =
                 paths::join_abs_string_buf(&dev.root, &mut *buf, &[&fsr.root], paths::Style::Auto);
             let Some(entry) = dev
@@ -1725,7 +1725,7 @@ impl DevServer<'_> {
                 None => 'str: {
                     let name = &self.server_graph.bundled_files.keys()
                         [from_opaque_file_id::<{ bake::Side::Server }>(router_type.server_file).get() as usize];
-                    let buf = paths::path_buffer_pool().get();
+                    let buf = paths::path_buffer_pool::get();
                     let s = BunString::create_utf8_for_js(global, self.relative_path(&mut *buf, name))?;
                     router_type.server_file_string = jsc::StrongOptional::create(s, global);
                     break 'str s;
@@ -1748,7 +1748,7 @@ impl DevServer<'_> {
                     let arr = JSValue::create_empty_array(global, n)?;
                     route = self.router.route_ptr(framework_bundle.route_index);
                     {
-                        let buf = paths::path_buffer_pool().get();
+                        let buf = paths::path_buffer_pool::get();
                         let mut route_name = BunString::clone_utf8(self.relative_path(
                             &mut *buf,
                             &keys[from_opaque_file_id::<{ bake::Side::Server }>(
@@ -1761,7 +1761,7 @@ impl DevServer<'_> {
                     n = 1;
                     loop {
                         if let Some(layout) = route.file_layout.unwrap_() {
-                            let buf = paths::path_buffer_pool().get();
+                            let buf = paths::path_buffer_pool::get();
                             let mut layout_name = BunString::clone_utf8(self.relative_path(
                                 &mut *buf,
                                 &keys[from_opaque_file_id::<{ bake::Side::Server }>(layout).get() as usize],
@@ -2684,7 +2684,7 @@ impl DevServer<'_> {
         let arr = jsc::JSArray::create_empty(global, items.len())?;
         let names = self.server_graph.bundled_files.keys();
         for (i, item) in items.iter().enumerate() {
-            let buf = paths::path_buffer_pool().get();
+            let buf = paths::path_buffer_pool::get();
             let s = BunString::clone_utf8(self.relative_path(&mut *buf, &names[item.get() as usize]));
             let _deref = scopeguard::guard((), |_| s.deref_());
             arr.put_index(global, u32::try_from(i).unwrap(), s.to_js(global)?)?;
@@ -3497,7 +3497,7 @@ pub fn finalize_bundle(
         // Intentionally creating a new scope here so we can limit the lifetime
         // of the `relative_path_buf`
         {
-            let buf = paths::path_buffer_pool().get();
+            let buf = paths::path_buffer_pool::get();
 
             // Compute a file name to display
             let file_name: Option<&[u8]> = if current_bundle.had_reload_event {
@@ -3942,16 +3942,16 @@ impl DevServer<'_> {
                     let mut file = packed_file.unpack();
                     file.html_route_bundle_index = Some(bundle_index);
                     *packed_file = file.pack();
-                    break 'brk route_bundle::Data::Html(route_bundle::HTML {
+                    break 'brk route_bundle::Data::Html(route_bundle::Html {
                         html_bundle: HTMLBundleRoute::Ref::init_ref(html),
                         bundled_file: incremental_graph_index,
-                        script_injection_offset: route_bundle::ScriptOffset::NONE,
+                        script_injection_offset: None,
                         cached_response: None,
                         bundled_html_text: None,
                     });
                 }
             },
-            client_script_generation: bun_core::random::int::<u32>(),
+            client_script_generation: bun_core::fast_random() as u32,
             server_state: route_bundle::State::Unqueued,
             client_bundle: None,
             active_viewers: 0,
@@ -4289,7 +4289,7 @@ pub fn dump_bundle(
     chunk: &[u8],
     wrap: bool,
 ) -> Result<(), bun_core::Error> {
-    let buf = paths::path_buffer_pool().get();
+    let buf = paths::path_buffer_pool::get();
     let name = &paths::join_abs_string_buf(
         b"/",
         &mut *buf,
@@ -4504,7 +4504,7 @@ impl DevServer<'_> {
                 payload.extend_from_slice(&u32::try_from(g.bundled_files.len()).unwrap().to_le_bytes());
                 for (i, (k, v)) in g.bundled_files.keys().iter().zip(g.bundled_files.values()).enumerate() {
                     let file = v.unpack();
-                    let buf = paths::path_buffer_pool().get();
+                    let buf = paths::path_buffer_pool::get();
                     let normalized_key = self.relative_path(&mut *buf, k);
                     payload.extend_from_slice(&u32::try_from(normalized_key.len()).unwrap().to_le_bytes());
                     if k.is_empty() { continue; }
@@ -4962,7 +4962,7 @@ impl DevServer<'_> {
             }
         ));
         Output::pretty_errorln(format_args!("  - <blue>{}<r>", bstr::BStr::new(rel_path)));
-        let buf = paths::path_buffer_pool().get();
+        let buf = paths::path_buffer_pool::get();
         Output::pretty_errorln(format_args!(
             "  - <blue>{}<r>",
             bstr::BStr::new(self.relative_path(

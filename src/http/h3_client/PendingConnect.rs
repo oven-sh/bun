@@ -124,7 +124,7 @@ impl PendingConnect {
             fail_session(session, bun_core::err!("DNSResolutionFailed"));
             return;
         };
-        s.qsocket = Some(qs);
+        s.qsocket = Some(core::ptr::NonNull::from(&mut *qs));
         // SAFETY: qs.ext() returns the per-socket user storage slot for ClientSession.
         unsafe { *qs.ext::<ClientSession>() = core::ptr::NonNull::new(session) };
     }

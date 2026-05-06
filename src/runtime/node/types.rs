@@ -27,6 +27,52 @@ impl SliceWithUnderlyingString {
     pub fn slice(&self) -> &[u8] { self.utf8.slice() }
     pub fn deinit(&self) {}
     pub fn to_thread_safe(&mut self) {}
+
+    /// `string_jsc.sliceWithUnderlyingStringTransferToJS` — hand this slice to
+    /// JS, consuming both the utf8 buffer and the underlying `bun.String` ref.
+    pub fn transfer_to_js(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+        use bun_str::Tag;
+        if matches!(self.underlying.tag(), Tag::Dead | Tag::Empty) && !self.utf8.slice().is_empty() {
+            // Zig: `if (this.utf8.allocator.get()) |_|` — heap-owned bytes can
+            // be donated to JSC without a copy.
+            if matches!(self.utf8, ZigStringSlice::Owned(_)) {
+                debug_assert!(
+                    !matches!(self.utf8, ZigStringSlice::WTF { .. }),
+                    "WTF-backed slice should never reach the owned-transfer path",
+                );
+                let ZigStringSlice::Owned(bytes) =
+                    core::mem::replace(&mut self.utf8, ZigStringSlice::default())
+                else {
+                    unreachable!()
+                };
+                if let Ok(Some(utf16)) = strings::to_utf16_alloc(&bytes, false, false) {
+                    drop(bytes);
+                    let utf16 = core::mem::ManuallyDrop::new(utf16);
+                    return Ok(jsc::zig_string::to_external_u16(
+                        utf16.as_ptr(),
+                        utf16.len(),
+                        global_object,
+                    ));
+                }
+                // All-ASCII (or UTF-16 conversion declined): hand the Latin-1
+                // bytes to JSC; ownership transfers via the external-string
+                // finalizer (mimalloc-backed Vec).
+                let bytes = core::mem::ManuallyDrop::new(bytes);
+                // SAFETY: `bytes` is leaked into JSC; ptr/len remain valid for
+                // the lifetime of the external string.
+                let slice = unsafe { core::slice::from_raw_parts(bytes.as_ptr(), bytes.len()) };
+                return Ok(jsc::zig_string::ZigString::init(slice).to_external_value(global_object));
+            }
+
+            // Borrowed/WTF-backed: copy into a fresh JS string, then release.
+            let result = jsc::bun_string_jsc::create_utf8_for_js(global_object, self.utf8.slice());
+            self.utf8 = ZigStringSlice::default();
+            return result;
+        }
+
+        self.utf8 = ZigStringSlice::default();
+        jsc::bun_string_jsc::transfer_to_js(&mut self.underlying, global_object)
+    }
 }
 
 // `bun.jsc.MarkedArrayBuffer` (the `Buffer` payload). Opaque until `bun_jsc`

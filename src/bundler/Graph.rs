@@ -146,26 +146,19 @@ impl Graph {
     ///
     /// Returns true if there were more tasks queued.
     pub fn drain_deferred_tasks(&mut self, transpiler: &mut BundleV2) -> bool {
-        
-        {
-            transpiler.thread_lock.assert_locked();
+        transpiler.thread_lock.assert_locked();
 
-            if self.deferred_pending > 0 {
-                self.pending_items += self.deferred_pending;
-                self.deferred_pending = 0;
+        if self.deferred_pending > 0 {
+            self.pending_items += self.deferred_pending;
+            self.deferred_pending = 0;
 
-                transpiler.drain_defer_task.init();
-                transpiler.drain_defer_task.schedule();
+            transpiler.drain_defer_task.init();
+            transpiler.drain_defer_task.schedule();
 
-                return true;
-            }
-
-            return false;
+            return true;
         }
-        // TODO(b2-blocked): crate::bundle_v2::BundleV2 fields (`thread_lock`,
-        // `drain_defer_task`) — bundle_v2 module is still gated.
-        let _ = transpiler;
-        unimplemented!("b2-blocked: BundleV2 fields")
+
+        false
     }
 }
 

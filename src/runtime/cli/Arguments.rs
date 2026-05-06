@@ -16,15 +16,18 @@ use std::sync::LazyLock;
 
 use bun_clap as clap;
 use bun_clap::parse_param;
-use bun_core::{self, Global, Output};
+use bun_core::{self, env_var, Global, Output};
 use bun_logger as logger;
 use bun_options_types::schema::api;
 use bun_options_types::Context::HotReload;
+use bun_paths::resolve_path;
+use bun_paths::{platform, PathBuffer};
 use bun_str::ZStr;
 use bstr::BStr;
 
 use crate::cli::concat_params;
 use crate::cli::command::{self, Context, Tag as CommandTag};
+use crate::cli::Bunfig;
 
 pub type ParamType = clap::Param<clap::Help>;
 

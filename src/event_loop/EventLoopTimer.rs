@@ -10,8 +10,24 @@ pub struct Timespec {
 }
 impl Timespec {
     pub const EPOCH: Self = Self { sec: 0, nsec: 0 };
+    /// Returns the nanoseconds of this timer. Note that maxInt(u64) ns is
+    /// 584 years so if we get any overflows we just use maxInt(u64). If
+    /// any software is running in 584 years waiting on this timer...
+    /// shame on me I guess... but I'll be dead.
     pub fn ns(&self) -> u64 {
-        todo!("B-2: Timespec::ns")
+        if self.sec <= 0 {
+            return self.nsec.max(0) as u64;
+        }
+        debug_assert!(self.sec >= 0);
+        debug_assert!(self.nsec >= 0);
+        const NS_PER_S: u64 = 1_000_000_000;
+        let s_ns = match (self.sec.max(0) as u64).checked_mul(NS_PER_S) {
+            Some(v) => v,
+            None => return u64::MAX,
+        };
+        // PORT NOTE: Zig returns maxInt(i64) (not u64) on the add overflow — preserved verbatim.
+        s_ns.checked_add(self.nsec.max(0) as u64)
+            .unwrap_or(i64::MAX as u64)
     }
 }
 use Timespec as timespec;

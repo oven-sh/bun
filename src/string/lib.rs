@@ -1077,6 +1077,10 @@ impl ZigStringSlice {
     pub const EMPTY: Self = Self::Static(core::ptr::null(), 0);
     pub fn from_utf8_never_free(s: &[u8]) -> Self { Self::Static(s.as_ptr(), s.len()) }
     pub fn init_owned(v: Vec<u8>) -> Self { Self::Owned(v) }
+    /// `ZigString.Slice.initDupe` — allocate an owned copy of `input`.
+    pub fn init_dupe(input: &[u8]) -> Result<Self, bun_core::AllocError> {
+        Ok(Self::Owned(input.to_vec()))
+    }
     pub fn slice(&self) -> &[u8] {
         match self {
             Self::Static(p, l) if *l == 0 => &[],

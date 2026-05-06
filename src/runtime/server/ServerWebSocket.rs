@@ -240,7 +240,7 @@ impl ServerWebSocket {
         bun_output::scoped_log!(
             WebSocketServer,
             "onMessage({}): {}",
-            opcode as u8,
+            opcode.0,
             bstr::BStr::new(message)
         );
         let on_message_handler = self.handler.on_message;

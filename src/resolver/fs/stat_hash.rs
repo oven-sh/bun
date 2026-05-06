@@ -1,8 +1,8 @@
 use bun_sys::{Stat, Timespec, S};
-// TODO(port): confirm XxHash64 source crate (Zig used std.hash.XxHash64; likely twox-hash or a bun_hash port)
-use bun_hash::XxHash64;
-// MOVE_DOWN(b0): wtf::write_http_date relocated from bun_jsc → bun_http_types (T3)
-use bun_http_types::wtf;
+// Zig: `std.hash.XxHash64` (streaming init/update/digest).
+use bun_hash::XxHash64Streaming as XxHash64;
+// MOVE_DOWN(b0): wtf::write_http_date relocated from bun_jsc → bun_http_types::ETag (T3)
+use bun_http_types::ETag::wtf;
 
 pub struct StatHash {
     pub value: u64,
@@ -33,7 +33,7 @@ fn as_bytes<T>(v: &T) -> &[u8] {
 
 impl StatHash {
     pub fn hash(&mut self, stat: &Stat, path: &[u8]) {
-        let mut stat_hasher = XxHash64::with_seed(42);
+        let mut stat_hasher = XxHash64::new(42);
         stat_hasher.update(as_bytes(&stat.size));
         stat_hasher.update(as_bytes(&stat.mode));
         stat_hasher.update(as_bytes(&stat.mtime()));
@@ -41,10 +41,10 @@ impl StatHash {
         stat_hasher.update(path);
 
         let prev = self.value;
-        self.value = stat_hasher.finish();
+        self.value = stat_hasher.digest();
 
         // TODO(port): narrow @intCast target type for stat.mode (Zig inferred from S.ISREG param)
-        if prev != self.value && S::isreg(u32::try_from(stat.mode).unwrap()) {
+        if prev != self.value && S::ISREG(u32::try_from(stat.mode).unwrap()) {
             let mtime_timespec = stat.mtime();
             // Clamp negative values to 0 to avoid timestamp overflow issues on Windows
             let mtime = Timespec {
@@ -61,7 +61,7 @@ impl StatHash {
                 self.last_modified_buffer_len = 0;
                 self.last_modified_u64 = 0;
             }
-        } else if !S::isreg(u32::try_from(stat.mode).unwrap()) {
+        } else if !S::ISREG(u32::try_from(stat.mode).unwrap()) {
             self.last_modified_buffer_len = 0;
             self.last_modified_u64 = 0;
         }

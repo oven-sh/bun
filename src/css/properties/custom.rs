@@ -714,29 +714,23 @@ impl TokenList {
         Ok(())
     }
 
-    
-    // blocked_on: CssColor::get_fallback (allocator-shaped), TokenOrValue::deep_clone,
-    // Function/Variable/EnvironmentVariable::get_fallback un-gate.
-    pub fn get_fallback(&self, kind: ColorFallbackKind) -> Self {
+    pub fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> Self {
         let mut tokens = TokenList::default();
         tokens.v.reserve_exact(self.v.len());
         for old in self.v.iter() {
             let new = match old {
-                TokenOrValue::Color(color) => TokenOrValue::Color(color.get_fallback(kind)),
-                TokenOrValue::Function(f) => TokenOrValue::Function(f.get_fallback(kind)),
-                TokenOrValue::Var(v) => TokenOrValue::Var(v.get_fallback(kind)),
-                TokenOrValue::Env(e) => TokenOrValue::Env(e.get_fallback(kind)),
-                _ => old.deep_clone(),
+                TokenOrValue::Color(color) => TokenOrValue::Color(color.get_fallback(bump, kind)),
+                TokenOrValue::Function(f) => TokenOrValue::Function(f.get_fallback(bump, kind)),
+                TokenOrValue::Var(v) => TokenOrValue::Var(v.get_fallback(bump, kind)),
+                TokenOrValue::Env(e) => TokenOrValue::Env(e.get_fallback(bump, kind)),
+                _ => old.deep_clone(bump),
             };
             tokens.v.push(new);
         }
         tokens
     }
 
-    
-    // blocked_on: ColorFallbackKind::supports_condition (gated_full_impl in
-    // values/color.rs) + TokenList::get_fallback.
-    pub fn get_fallbacks(&mut self, targets: css::targets::Targets) -> css::SmallList<Fallbacks, 2> {
+    pub fn get_fallbacks(&mut self, bump: &Arena, targets: css::targets::Targets) -> css::SmallList<Fallbacks, 2> {
         // Get the full list of possible fallbacks, and remove the lowest one, which will replace
         // the original declaration. The remaining fallbacks need to be added as @supports rules.
         let mut fallbacks = self.get_necessary_fallbacks(targets);
@@ -748,7 +742,7 @@ impl TokenList {
             // PERF(port): was assume_capacity
             res.append((
                 ColorFallbackKind::P3.supports_condition(),
-                self.get_fallback(ColorFallbackKind::P3),
+                self.get_fallback(bump, ColorFallbackKind::P3),
             ));
         }
 
@@ -756,7 +750,7 @@ impl TokenList {
             // PERF(port): was assume_capacity
             res.append((
                 ColorFallbackKind::LAB.supports_condition(),
-                self.get_fallback(ColorFallbackKind::LAB),
+                self.get_fallback(bump, ColorFallbackKind::LAB),
             ));
         }
 
@@ -764,19 +758,19 @@ impl TokenList {
             for token_or_value in self.v.iter_mut() {
                 match token_or_value {
                     TokenOrValue::Color(color) => {
-                        *color = color.get_fallback(lowest_fallback);
+                        *color = color.get_fallback(bump, lowest_fallback);
                     }
                     TokenOrValue::Function(f) => {
-                        *f = f.get_fallback(lowest_fallback);
+                        *f = f.get_fallback(bump, lowest_fallback);
                     }
                     TokenOrValue::Var(v) => {
                         if let Some(fallback) = &mut v.fallback {
-                            *fallback = fallback.get_fallback(lowest_fallback);
+                            *fallback = fallback.get_fallback(bump, lowest_fallback);
                         }
                     }
                     TokenOrValue::Env(v) => {
                         if let Some(fallback) = &mut v.fallback {
-                            *fallback = fallback.get_fallback(lowest_fallback);
+                            *fallback = fallback.get_fallback(bump, lowest_fallback);
                         }
                     }
                     _ => {}
@@ -1047,11 +1041,10 @@ impl Variable {
         dest.write_char(b')')
     }
 
-     // blocked_on: TokenList::get_fallback
-    pub fn get_fallback(&self, kind: ColorFallbackKind) -> Self {
+    pub fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> Self {
         Variable {
             name: self.name,
-            fallback: self.fallback.as_ref().map(|fallback| fallback.get_fallback(kind)),
+            fallback: self.fallback.as_ref().map(|fallback| fallback.get_fallback(bump, kind)),
         }
     }
 
@@ -1115,12 +1108,11 @@ impl EnvironmentVariable {
         dest.write_char(b')')
     }
 
-     // blocked_on: TokenList::get_fallback
-    pub fn get_fallback(&self, kind: ColorFallbackKind) -> Self {
+    pub fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> Self {
         EnvironmentVariable {
             name: self.name.clone(),
             indices: self.indices.clone(),
-            fallback: self.fallback.as_ref().map(|fallback| fallback.get_fallback(kind)),
+            fallback: self.fallback.as_ref().map(|fallback| fallback.get_fallback(bump, kind)),
         }
     }
 
@@ -1265,11 +1257,10 @@ impl Function {
 
     // eql / hash / deep_clone — provided by `#[derive(CssEql, CssHash, DeepClone)]`.
 
-     // blocked_on: TokenList::get_fallback + Ident::deep_clone
-    pub fn get_fallback(&self, kind: ColorFallbackKind) -> Self {
+    pub fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> Self {
         Function {
             name: self.name,
-            arguments: self.arguments.get_fallback(kind),
+            arguments: self.arguments.get_fallback(bump, kind),
         }
     }
 }

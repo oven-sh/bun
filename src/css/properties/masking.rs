@@ -574,7 +574,7 @@ pub enum WebKitMaskSourceType {
     Alpha,
 }
 
- // blocked_on: PropertyId::WebkitMaskComposite variant name (codegen spelling is `WebKitMaskComposite`)
+ // blocked_on: PropertyId::WebKitMaskComposite variant name (codegen spelling is `WebKitMaskComposite`)
 pub fn get_webkit_mask_property(property_id: &PropertyId) -> Option<PropertyId> {
     // TODO(port): PropertyId variant naming — Zig uses kebab-case @"mask-border-source" etc.
     // Mapping to PascalCase variants here; Phase B should verify exact PropertyId enum shape.
@@ -585,7 +585,7 @@ pub fn get_webkit_mask_property(property_id: &PropertyId) -> Option<PropertyId> 
         PropertyId::MaskBorderOutset => Some(PropertyId::MaskBoxImageOutset(VendorPrefix::WEBKIT)),
         PropertyId::MaskBorderRepeat => Some(PropertyId::MaskBoxImageRepeat(VendorPrefix::WEBKIT)),
         PropertyId::MaskBorder => Some(PropertyId::MaskBoxImage(VendorPrefix::WEBKIT)),
-        PropertyId::MaskComposite => Some(PropertyId::WebkitMaskComposite),
+        PropertyId::MaskComposite => Some(PropertyId::WebKitMaskComposite),
         PropertyId::MaskMode => Some(PropertyId::MaskSourceType(VendorPrefix::WEBKIT)),
         _ => None,
     }

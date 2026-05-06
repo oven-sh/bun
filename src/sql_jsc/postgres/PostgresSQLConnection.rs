@@ -293,8 +293,13 @@ impl PostgresSQLConnection {
     }
 
     pub fn disable_connection_timeout(&mut self) {
+        // PORT NOTE: reshaped for borrowck — `self.vm()` borrows `*self` while
+        // `&mut self.timer` needs a disjoint mutable borrow. Route through the
+        // raw VM pointer (the VM and the timer field are independent objects).
+        let vm: *mut VirtualMachine = self.vm;
         if self.timer.state == EventLoopTimerState::ACTIVE {
-            unsafe { self.vm() }.timer().remove(&mut self.timer);
+            // SAFETY: `vm` is the live VM singleton stored in this connection.
+            unsafe { &mut *vm }.timer().remove(&mut self.timer);
         }
         self.timer.state = EventLoopTimerState::CANCELLED;
     }
@@ -305,15 +310,19 @@ impl PostgresSQLConnection {
             return;
         }
         let interval = self.get_timeout_interval();
+        // PORT NOTE: reshaped for borrowck — see `disable_connection_timeout`.
+        let vm: *mut VirtualMachine = self.vm;
         if self.timer.state == EventLoopTimerState::ACTIVE {
-            unsafe { self.vm() }.timer().remove(&mut self.timer);
+            // SAFETY: `vm` is the live VM singleton stored in this connection.
+            unsafe { &mut *vm }.timer().remove(&mut self.timer);
         }
         if interval == 0 {
             return;
         }
 
         self.timer.next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::AllowMockedTime, i64::from(interval));
-        unsafe { self.vm() }.timer().insert(&mut self.timer);
+        // SAFETY: `vm` is the live VM singleton stored in this connection.
+        unsafe { &mut *vm }.timer().insert(&mut self.timer);
     }
 
     // TODO(b2-blocked): #[crate::jsc::host_fn(getter)] proc-macro attr

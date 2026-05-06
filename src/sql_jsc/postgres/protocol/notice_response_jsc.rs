@@ -1,8 +1,8 @@
-use crate::jsc::{JSGlobalObject, JSValue, ZigStringJsc as _};
+use crate::jsc::{JSGlobalObject, JSValue};
 use bun_core::StringBuilder;
+use bun_jsc::zig_string::ZigString;
 use bun_sql::postgres::protocol::field_message::FieldMessage;
 use bun_sql::postgres::protocol::notice_response::NoticeResponse;
-use bun_string::ZigString;
 
 /// Zig `switch (msg) { inline else => |m| ... }` — every `FieldMessage` variant
 /// carries a single `bun.String` payload. `bun_sql::FieldMessage` doesn't (yet)

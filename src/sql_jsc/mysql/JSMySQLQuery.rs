@@ -103,12 +103,12 @@ impl JSMySQLQuery {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
-        let mut args = jsc::call_frame::ArgumentsSlice::init(global_this.bun_vm(), arguments);
+        let mut args = jsc::call_frame::ArgumentsSlice::init(global_this.sql_vm(), arguments);
         // defer args.deinit() — handled by Drop
-        let Some(query) = args.next_eat() else {
+        let Some(query) = args.next() else {
             return Err(global_this.throw(format_args!("query must be a string")));
         };
-        let Some(values) = args.next_eat() else {
+        let Some(values) = args.next() else {
             return Err(global_this.throw(format_args!("values must be an array")));
         };
 
@@ -120,10 +120,10 @@ impl JSMySQLQuery {
             return Err(global_this.throw(format_args!("values must be an array")));
         }
 
-        let pending_value: JSValue = args.next_eat().unwrap_or(JSValue::UNDEFINED);
-        let columns: JSValue = args.next_eat().unwrap_or(JSValue::UNDEFINED);
-        let js_bigint: JSValue = args.next_eat().unwrap_or(JSValue::FALSE);
-        let js_simple: JSValue = args.next_eat().unwrap_or(JSValue::FALSE);
+        let pending_value: JSValue = args.next().unwrap_or(JSValue::UNDEFINED);
+        let columns: JSValue = args.next().unwrap_or(JSValue::UNDEFINED);
+        let js_bigint: JSValue = args.next().unwrap_or(JSValue::FALSE);
+        let js_simple: JSValue = args.next().unwrap_or(JSValue::FALSE);
 
         let bigint = js_bigint.is_boolean() && js_bigint.as_boolean();
         let simple = js_simple.is_boolean() && js_simple.as_boolean();
@@ -143,9 +143,9 @@ impl JSMySQLQuery {
         let this = Box::into_raw(Box::new(Self {
             this_value: JsRef::empty(),
             ref_count: Cell::new(1),
-            // SAFETY: `bun_vm_ptr()` is non-null (asserted in debug builds);
+            // SAFETY: `sql_vm_ptr()` is non-null (asserted in debug builds);
             // stored with full write provenance for later `&mut *p` at use sites.
-            vm: unsafe { NonNull::new_unchecked(global_this.bun_vm_ptr()) },
+            vm: unsafe { NonNull::new_unchecked(global_this.sql_vm_ptr()) },
             global_object: NonNull::from(global_this),
             query: MySQLQuery::init(query.to_bun_string(global_this)?, bigint, simple),
         }));
@@ -173,7 +173,7 @@ impl JSMySQLQuery {
     ) -> JsResult<JSValue> {
         debug!("doRun");
         this.ref_();
-        let _guard = scopeguard::guard(this as *mut Self, |p| {
+        let mut _guard = scopeguard::guard(this as *mut Self, |p| {
             // SAFETY: `p` points to `*this`, which outlives this scope (m_ctx payload).
             unsafe { (*p).deref() };
         });
@@ -278,7 +278,7 @@ impl JSMySQLQuery {
     pub fn resolve(&mut self, queries_array: JSValue, result: MySQLQueryResult) {
         self.ref_();
         let is_last_result = result.is_last_result;
-        let _guard = scopeguard::guard(self as *mut Self, move |p| {
+        let mut _guard = scopeguard::guard(self as *mut Self, move |p| {
             // SAFETY: `p` points to `*self`; defer runs at scope exit on the same thread.
             unsafe {
                 if (*p).this_value.is_not_empty() && is_last_result {
@@ -344,7 +344,7 @@ impl JSMySQLQuery {
         // Attention: we cannot touch JS here
         // If you need to touch JS, you wanna to use reject or reject_with_js_value instead
         self.ref_();
-        let _guard = scopeguard::guard(self as *mut Self, |p| {
+        let mut _guard = scopeguard::guard(self as *mut Self, |p| {
             // SAFETY: `p` aliases `*self` for the duration of this scope only.
             unsafe { (*p).deref() };
         });
@@ -380,7 +380,7 @@ impl JSMySQLQuery {
     pub fn reject_with_js_value(&mut self, queries_array: JSValue, err: JSValue) {
         self.ref_();
 
-        let _guard = scopeguard::guard(self as *mut Self, |p| {
+        let mut _guard = scopeguard::guard(self as *mut Self, |p| {
             // SAFETY: `p` aliases `*self` for the duration of this scope only.
             unsafe {
                 if (*p).this_value.is_not_empty() {
@@ -442,9 +442,14 @@ impl JSMySQLQuery {
             // already running or completed
             return Ok(());
         }
-        let global_object = self.global_object();
+        // PORT NOTE: detach `global_object`'s lifetime from `&self` so the
+        // `&mut self` re-borrows below (this_value.upgrade / errguard / query)
+        // don't conflict. `self.global_object` is a `NonNull` whose pointee
+        // outlives every JSMySQLQuery (owned by the VM).
+        // SAFETY: see `Self::global_object()` — same invariant, unbounded 'a.
+        let global_object: &JSGlobalObject = unsafe { &*self.global_object.as_ptr() };
         self.this_value.upgrade(global_object);
-        let errguard = scopeguard::guard(self as *mut Self, |p| {
+        let mut errguard = scopeguard::guard(self as *mut Self, |p| {
             // SAFETY: errdefer rollback; `p` valid for this scope.
             unsafe {
                 (*p).this_value.downgrade();

@@ -192,7 +192,14 @@ pub fn decode_binary_value<Context: ReaderContext>(
             l @ (11 | 7 | 4) => {
                 let data = reader.read(l as usize)?;
                 let time = DateTime::from_data(&data)?;
-                Ok(SQLDataCell { tag: CellTag::Date, value: CellValue { date: time.to_js_timestamp(global_object)? }, ..Default::default() })
+                // PORT NOTE: Zig's `!SQLDataCell` is anyerror; map JsError variants to their
+                // interned bun_core::Error names so `?` can widen here.
+                let ts = time.to_js_timestamp(global_object).map_err(|e| match e {
+                    bun_jsc::JsError::OutOfMemory => bun_core::err!("OutOfMemory"),
+                    bun_jsc::JsError::Terminated => bun_core::err!("Terminated"),
+                    bun_jsc::JsError::Thrown => bun_core::err!("Thrown"),
+                })?;
+                Ok(SQLDataCell { tag: CellTag::Date, value: CellValue { date: ts }, ..Default::default() })
             }
             _ => Err(bun_core::err!("InvalidBinaryValue")),
         },

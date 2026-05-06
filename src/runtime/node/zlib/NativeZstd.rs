@@ -462,6 +462,66 @@ impl Context {
         self.state.unwrap_or(ptr::null_mut())
     }
 }
+
+// ─── CompressionStream mixin wiring ───────────────────────────────────────
+// Trait impls let `CompressionStream::<NativeZstd>::*` (write/writeSync/reset/
+// close/emit_error/...) reach this struct's fields the way the Zig comptime
+// mixin did via duck-typed `this.field` access.
+
+impl CompressionContext for Context {
+    #[inline] fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>) { Context::set_buffers(self, in_, out) }
+    #[inline] fn set_flush(&mut self, flush: i32) { Context::set_flush(self, flush) }
+    #[inline] fn do_work(&mut self) { Context::do_work(self) }
+    #[inline] fn reset(&mut self) -> Error { Context::reset(self) }
+    #[inline] fn close(&mut self) { Context::close(self) }
+    #[inline] fn get_error_info(&mut self) -> Error { Context::get_error_info(self) }
+    #[inline] fn update_write_result(&mut self, avail_in: &mut u32, avail_out: &mut u32) {
+        Context::update_write_result(self, avail_in, avail_out)
+    }
+}
+
+impl CompressionStreamImpl for NativeZstd {
+    type Stream = Context;
+
+    #[inline] fn global_this(&self) -> *mut JSGlobalObject { self.global_this as *mut JSGlobalObject }
+    #[inline] fn stream_mut(&mut self) -> &mut Self::Stream { &mut self.stream }
+    #[inline] fn write_result_ptr(&mut self) -> Option<*mut u32> { self.write_result }
+    #[inline] fn poll_ref_mut(&mut self) -> &mut CountedKeepAlive { &mut self.poll_ref }
+    #[inline] fn this_value_mut(&mut self) -> &mut StrongOptional { &mut self.this_value }
+    #[inline] fn task_mut(&mut self) -> &mut WorkPoolTask { &mut self.task }
+    #[inline] fn write_in_progress_mut(&mut self) -> &mut bool { &mut self.write_in_progress }
+    #[inline] fn pending_close_mut(&mut self) -> &mut bool { &mut self.pending_close }
+    #[inline] fn pending_reset_mut(&mut self) -> &mut bool { &mut self.pending_reset }
+    #[inline] fn closed_mut(&mut self) -> &mut bool { &mut self.closed }
+
+    #[inline]
+    unsafe fn from_task(task: *mut WorkPoolTask) -> *mut Self {
+        // Zig `@fieldParentPtr("task", task)`.
+        // SAFETY: caller guarantees `task` points at the `task` field of a live `NativeZstd`.
+        unsafe { task.byte_sub(mem::offset_of!(NativeZstd, task)).cast::<Self>() }
+    }
+
+    fn ref_(&self) {
+        self.ref_count.set(self.ref_count.get() + 1);
+    }
+    fn deref(&self) {
+        let n = self.ref_count.get() - 1;
+        self.ref_count.set(n);
+        if n == 0 {
+            // SAFETY: `self` was Box-allocated by `constructor()`; refcount hit zero so
+            // no other borrow exists. Reconstitute the Box to run Drop + free.
+            // PORT NOTE: matches Zig `bun.destroy(this)` via RefCount.deinit.
+            unsafe { drop(Box::from_raw(self as *const Self as *mut Self)) };
+        }
+    }
+
+    // Per-class codegen accessors (`jsc.Codegen.JSNativeZstd.*GetCached/SetCached`).
+    // TODO(port): wire to generated `JSNativeZstd` cached-property storage once
+    // .classes.ts codegen emits Rust shims (mirrors NativeBrotli.rs / NativeZlib.rs).
+    fn write_callback_get_cached(_this_value: JSValue) -> Option<JSValue> { None }
+    fn error_callback_get_cached(_this_value: JSValue) -> Option<JSValue> { None }
+    fn error_callback_set_cached(_this_value: JSValue, _global: &JSGlobalObject, _cb: JSValue) {}
+}
 } // mod _impl
 
 // ──────────────────────────────────────────────────────────────────────────

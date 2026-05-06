@@ -384,7 +384,10 @@ impl<'a> Scanner<'a> {
 
                 self.dirs_to_scan.push_back(ScanEntry {
                     relative_dir: fd,
-                    name: entry.base_,
+                    // SAFETY: StringOrTinyString is repr(C) POD ([u8;31] + u8) with
+                    // no Drop; Zig copied it by value. Upstream type lacks
+                    // Clone/Copy, so bitwise-copy here to match Zig semantics.
+                    name: unsafe { core::ptr::read(&entry.base_) },
                     dir_path: entry.dir,
                 });
             }

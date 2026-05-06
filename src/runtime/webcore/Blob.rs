@@ -5959,10 +5959,14 @@ pub trait FileCloser: Sized {
     }
 
     fn do_close(&mut self, is_allowed_to_close_fd: bool) -> bool {
-        if let Some(io_request) = self.io_request() {
-            if self.close_after_io() {
-                self.state()
-                    .store(ClosingState::Closing as u8, core::sync::atomic::Ordering::SeqCst);
+        // PORT NOTE: Zig nests `if (@hasField(This, "io_request")) { if (this.close_after_io) … }`.
+        // `@hasField` is comptime (constant per concrete `Self`), so swapping the
+        // order is sound and lets us finish the immutable `self` reads before
+        // taking the `&mut self` borrow via `io_request()`.
+        if self.close_after_io() {
+            self.state()
+                .store(ClosingState::Closing as u8, core::sync::atomic::Ordering::SeqCst);
+            if let Some(io_request) = self.io_request() {
                 // TODO(port): @atomicStore on the io_request.callback fn pointer.
                 io_request.callback = Self::schedule_close;
                 if !io_request.scheduled {

@@ -113,19 +113,21 @@ pub fn view(
     }
 
     let mut response_buf = MutableString::init(2048)?;
+    // TODO(port): headers.content.ptr.?[0..headers.content.len]
+    // SAFETY: `headers.allocate()` populated `ptr` with at least `len` bytes.
+    let header_buf: &[u8] = match headers.content.ptr {
+        Some(p) => unsafe { core::slice::from_raw_parts(p.as_ptr(), headers.content.len) },
+        None => &[],
+    };
+    let http_proxy = manager.http_proxy(&url);
     let mut req = http::AsyncHTTP::init_sync(
         http::Method::GET,
         url,
         headers.entries,
-        // TODO(port): headers.content.ptr.?[0..headers.content.len]
-        // SAFETY: `headers.allocate()` populated `ptr` with at least `len` bytes.
-        match headers.content.ptr {
-            Some(p) => unsafe { core::slice::from_raw_parts(p.as_ptr(), headers.content.len) },
-            None => &[],
-        },
+        header_buf,
         &mut response_buf,
         b"",
-        manager.http_proxy(&url),
+        http_proxy,
         None,
         http::FetchRedirect::Follow,
     );

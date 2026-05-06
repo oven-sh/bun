@@ -287,46 +287,43 @@ impl BunxCommand {
         dir_fd: Fd,
         subpath_z: &ZStr,
     ) -> Result<Box<[u8]>, bun_core::Error> {
-        let target_package_json_fd = bun_sys::openat(dir_fd, subpath_z, O::RDONLY, 0).unwrap_result()?;
+        let target_package_json_fd = bun_sys::openat(dir_fd, subpath_z, O::RDONLY, 0)?;
         let target_package_json = bun_sys::File { handle: target_package_json_fd };
         // PORT NOTE: `defer target_package_json.close()` handled by Drop on bun_sys::File.
         // TODO(port): confirm bun_sys::File implements Drop → close.
 
-        let package_json_read = target_package_json.read_to_end();
-
         // TODO: make this better
-        if let Some(err) = package_json_read.err {
-            bun_sys::Result::<()>::Err(err).unwrap_result()?;
-        }
+        let package_json_bytes = target_package_json.read_to_end()?;
 
-        let package_json_contents = package_json_read.bytes.as_slice();
+        let package_json_contents = package_json_bytes.as_slice();
         let source = bun_logger::Source::init_path_string(subpath_z.as_bytes(), package_json_contents);
 
-        bun_js_parser::Expr::Data::Store::create();
-        bun_js_parser::Stmt::Data::Store::create();
+        bun_js_parser::ast::expr::data::Store::create();
+        bun_js_parser::ast::stmt::data::Store::create();
 
-        let expr = json::parse_package_json_utf8(&source, &mut transpiler.log)?;
-        // TODO(port): allocator param dropped from parse_package_json_utf8
+        // SAFETY: `transpiler.log` is set by `Transpiler::init` and is process-lifetime.
+        let log = unsafe { &mut *transpiler.log };
+        let expr = json::parse_package_json_utf8(&source, log, bunx_bump())?;
 
         // choose the first package that fits
         if let Some(bin_expr) = expr.get(b"bin") {
             match &bin_expr.data {
-                bun_js_parser::ExprData::EObject(object) => {
+                ExprData::EObject(object) => {
                     for prop in object.properties.slice() {
                         if let Some(key) = &prop.key {
-                            if let Some(bin_name) = key.as_string() {
+                            if let Some(bin_name) = key.as_utf8_string_literal() {
                                 if bin_name.is_empty() {
                                     continue;
                                 }
-                                return Ok(bin_name.into());
+                                return Ok(Box::<[u8]>::from(bin_name));
                             }
                         }
                     }
                 }
-                bun_js_parser::ExprData::EString(_) => {
+                ExprData::EString(_) => {
                     if let Some(name_expr) = expr.get(b"name") {
-                        if let Some(name) = name_expr.as_string() {
-                            return Ok(name.into());
+                        if let Some(name) = name_expr.as_utf8_string_literal() {
+                            return Ok(Box::<[u8]>::from(name));
                         }
                     }
                 }
@@ -336,8 +333,8 @@ impl BunxCommand {
 
         if let Some(dirs) = expr.as_property(b"directories") {
             if let Some(bin_prop) = dirs.expr.as_property(b"bin") {
-                if let Some(dir_name) = bin_prop.expr.as_string() {
-                    let bin_dir = bun_sys::openat_a(dir_fd, &dir_name, O::RDONLY | O::DIRECTORY, 0).unwrap_result()?;
+                if let Some(dir_name) = bin_prop.expr.as_utf8_string_literal() {
+                    let bin_dir = bun_sys::openat_a(dir_fd, dir_name, O::RDONLY | O::DIRECTORY, 0)?;
                     // PORT NOTE: `defer bin_dir.close()` → Drop.
                     let mut iterator = bun_sys::dir_iterator::iterate(bin_dir);
                     let mut entry = iterator.next();

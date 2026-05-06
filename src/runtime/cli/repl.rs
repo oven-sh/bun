@@ -1227,7 +1227,7 @@ impl<'a> Repl<'a> {
         }
 
         // Tick the event loop to handle any pending work
-        vm.tick();
+        vm_mut(vm).tick();
     }
 
     /// Evaluate a script from `bun repl -e/--eval` or `-p/--print` non-interactively.

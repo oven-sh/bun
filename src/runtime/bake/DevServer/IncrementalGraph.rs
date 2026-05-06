@@ -1468,13 +1468,15 @@ impl<S: GraphSide> IncrementalGraph<S> {
                 } else {
                     None
                 };
-                if let Some(i) = ctx.get_cached_index(S::SIDE, import_record.source_index).unwrap() {
-                    break 'brk (i, kind);
+                let cached = *ctx.get_cached_index(S::SIDE, import_record.source_index.into());
+                if cached.raw() != u32::MAX {
+                    break 'brk (FileIndex::init(cached.raw()), kind);
                 } else if mode == EdgeAttachmentMode::Css {
                     let index = self.insert_empty(key, kind.unwrap())?.index;
                     // TODO: make this more clear that:
                     // temp_alloc == bv2.graph.allocator
-                    ctx.gts.resize(S::SIDE, temp_alloc, index.get() as usize + 1)?;
+                    let _ = temp_alloc;
+                    ctx.gts.resize(S::SIDE, index.get() as usize + 1).map_err(|_| bun_alloc::AllocError)?;
                     break 'brk (index, kind);
                 }
             }

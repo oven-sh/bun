@@ -114,8 +114,8 @@ unsafe extern "C" {
 }
 
 struct Argv0Result {
-    argv0: Box<ZStr>, // TODO(port): lifetime — was arena-owned [:0]const u8; caller must keep alive past spawn_process
-    arg0: Box<ZStr>,  // TODO(port): lifetime — was arena-owned [:0]u8; caller must keep alive past spawn_process
+    argv0: ZBox, // TODO(port): lifetime — was arena-owned [:0]const u8; caller must keep alive past spawn_process
+    arg0: ZBox,  // TODO(port): lifetime — was arena-owned [:0]u8; caller must keep alive past spawn_process
 }
 
 // This is split into a separate function to conserve stack space.
@@ -127,12 +127,12 @@ fn get_argv0(
     pretend_argv0: Option<&CStr>,
     first_cmd: JSValue,
 ) -> JsResult<Argv0Result> {
-    let arg0 = first_cmd.to_slice_or_null_with_allocator(global_this)?;
+    let arg0 = first_cmd.to_slice_or_null(global_this)?;
     // `arg0` drops at scope exit (was `defer arg0.deinit()`).
 
     // Check for null bytes in command (security: prevent null byte injection)
     if strings::index_of_char(arg0.slice(), 0).is_some() {
-        return global_this
+        return Err(global_this
             .err(
                 jsc::ErrorCode::INVALID_ARG_VALUE,
                 format_args!(
@@ -140,13 +140,15 @@ fn get_argv0(
                     bun_fmt::quote(arg0.slice())
                 ),
             )
-            .throw();
+            .throw());
     }
     // Heap allocate it to ensure we don't run out of stack space.
-    let path_buf: Box<PathBuffer> = Box::new(PathBuffer::uninit());
+    // SAFETY: `which()` writes into the buffer before reading any byte of it.
+    let mut path_buf: Box<bun_core::PathBuffer> =
+        unsafe { Box::new(bun_core::PathBuffer::uninit().assume_init()) };
     // drops at scope exit (was `defer bun.default_allocator.destroy(path_buf)`).
 
-    let actual_argv0: Box<ZStr>;
+    let actual_argv0: ZBox;
 
     let argv0_to_use: &[u8] = arg0.slice();
 

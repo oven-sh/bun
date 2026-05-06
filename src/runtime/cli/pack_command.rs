@@ -2342,27 +2342,27 @@ fn archive_package_json(
     // Zig: `entry: *Archive.Entry` → `*Archive.Entry` (same pointer after `.clear()`).
     // SAFETY: caller passes a live entry from `Entry::new2`/previous `.clear()`.
     let entry = unsafe { &*entry };
-    let stat = match bun_sys::fstatat(Fd::from_std_dir(root_dir), ZStr::from_lit(b"package.json\0")).unwrap() {
+    let stat = match bun_sys::fstatat(Fd::from_std_dir(root_dir), bun_core::zstr!("package.json")) {
         Ok(s) => s,
         Err(err) => {
-            Output::err(err, "failed to stat package.json", format_args!(""));
+            Output::err(bun_core::Error::from(err), "failed to stat package.json", format_args!(""));
             Global::crash();
         }
     };
 
-    entry.set_pathname(ZStr::from_lit(b"package/package.json\0"));
+    entry.set_pathname_utf8(bun_core::zstr!("package/package.json"));
     // TODO(port): PACKAGE_PREFIX ++ "package.json" comptime concat
     entry.set_size(i64::try_from(edited_package_json.len()).unwrap());
     // https://github.com/libarchive/libarchive/blob/898dc8319355b7e985f68a9819f182aaed61b53a/libarchive/archive_entry.h#L185
     entry.set_filetype(0o100000);
-    entry.set_perm(u32::try_from(stat.mode).unwrap());
+    entry.set_perm(u32::try_from(stat.st_mode).unwrap());
     // '1985-10-26T08:15:00.000Z'
     // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L28
     entry.set_mtime(499162500, 0);
 
     match archive.write_header(entry) {
-        Archive::Status::Failed | Archive::Status::Fatal | Archive::Status::Warn => {
-            Output::err_generic("failed to write tarball header: {}", format_args!("{}", bstr::BStr::new(archive.error_string())));
+        ArchiveStatus::Failed | ArchiveStatus::Fatal | ArchiveStatus::Warn => {
+            Output::err_generic("failed to write tarball header: {}", format_args!("{}", bstr::BStr::new(Archive::error_string(archive as *mut Archive))));
             Global::crash();
         }
         _ => {}

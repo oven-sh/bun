@@ -414,11 +414,11 @@ fn consume_watch_trigger() -> Option<StringSet> {
 
     #[cfg(not(windows))]
     {
-        let trigger_path_raw = getenv_z(TRIGGER_FILE_ENV_VAR)?;
+        let trigger_path_raw = getenv_z(TRIGGER_FILE_ENV_VAR_Z)?;
         if trigger_path_raw.is_empty() {
             return None;
         }
-        let trigger_path = ZStr::from_bytes(trigger_path_raw);
+        let trigger_path = ZBox::from_bytes(trigger_path_raw);
 
         let contents = match sys::File::read_from(sys::Fd::cwd(), &trigger_path) {
             sys::Result::Ok(bytes) => bytes,

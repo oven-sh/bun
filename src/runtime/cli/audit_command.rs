@@ -63,40 +63,12 @@ pub struct AuditCommand;
 impl AuditCommand {
     // TODO(port): `!noreturn` → `Result<Infallible, _>` so callers can `?`; all Ok paths Global::exit.
     pub fn exec(ctx: Command::Context) -> Result<core::convert::Infallible, bun_core::Error> {
-        let cli = PackageManager::CommandLineArguments::parse(PackageManager::Subcommand::Audit)?;
-        let (manager, _) = match PackageManager::init(ctx, cli, PackageManager::Subcommand::Audit) {
-            Ok(v) => v,
-            Err(err) => {
-                if err == bun_core::err!("MissingPackageJSON") {
-                    let mut cwd_buf = bun_paths::PathBuffer::uninit();
-                    match bun_sys::getcwd(&mut cwd_buf) {
-                        Ok(cwd) => {
-                            Output::err_generic(format_args!(
-                                "No package.json was found for directory \"{}\"",
-                                BStr::new(cwd)
-                            ));
-                        }
-                        Err(_) => {
-                            Output::err_generic(format_args!("No package.json was found"));
-                        }
-                    }
-                    Output::note(format_args!("Run \"bun init\" to initialize a project"));
-                    Global::exit(1);
-                }
-
-                return Err(err);
-            }
-        };
-
-        let code = Self::audit(
-            ctx,
-            manager,
-            manager.options.json_output,
-            cli.audit_level,
-            cli.production,
-            &cli.audit_ignore_list,
-        )?;
-        Global::exit(code);
+        let _ = ctx;
+        // Body depends on `bun_install::CommandLineArguments::parse`,
+        // `bun_install::Subcommand::Audit`, `bun_install::PackageManager::init`,
+        // and `PackageManager.options.json_output` — all gated behind the
+        // upstream `package_manager_real` un-gate (reconciler-6).
+        todo!("blocked_on: bun_install::PackageManager::init / bun_install::Subcommand::Audit")
     }
 
     /// Returns the exit code of the command. 0 if no vulnerabilities were found, 1 if vulnerabilities were found.

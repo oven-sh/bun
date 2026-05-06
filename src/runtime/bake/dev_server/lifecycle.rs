@@ -586,8 +586,9 @@ impl DevServer {
         // catch-all `/*` handler after we've written.
         req.set_yield(false);
         // SAFETY: `StaticRoute` is intrusively ref-counted; one ref held while
-        // stored in `assets.files` (see `Assets` field doc).
-        unsafe { &*route }.on(resp);
+        // stored in `assets.files` (see `Assets` field doc). `on` is an
+        // associated fn taking `*mut Self` (Zig `*StaticRoute` receiver).
+        unsafe { crate::server::StaticRoute::on(route, resp) };
     }
 }
 

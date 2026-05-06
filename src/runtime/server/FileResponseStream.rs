@@ -141,8 +141,10 @@ impl FileResponseStream {
         let this = unsafe { &mut *this };
 
         this.resp.timeout(this.idle_timeout);
-        this.resp
-            .on_aborted::<FileResponseStream>(Self::on_aborted, this);
+        this.resp.on_aborted(
+            |p: *mut FileResponseStream, r| unsafe { (*p).on_aborted(r) },
+            this as *mut FileResponseStream,
+        );
 
         bun_output::scoped_log!(
             FileResponseStream,

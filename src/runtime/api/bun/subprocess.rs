@@ -16,9 +16,10 @@ use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, JSGlobalObject, JSPromise, JSValue, JsRef, JsResult,
     VirtualMachine,
 };
+use bun_jsc::{JsClass, SysErrorJsc};
 #[allow(deprecated)]
 use bun_jsc::ZigString;
-use bun_sys::{self, Fd, SignalCode};
+use bun_sys::{self, Fd, FdExt, SignalCode};
 use enumset::{EnumSet, EnumSetType};
 
 // Process / spawn machinery lives in this crate (api/bun/process.rs), not in an

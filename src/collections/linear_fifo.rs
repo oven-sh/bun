@@ -214,6 +214,17 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         self.buf.len()
     }
 
+    /// Rewind `head` to 0 when the queue is empty so the next `write` can use
+    /// the full contiguous buffer without wrapping. Perf-only micro-opt; a
+    /// no-op when items remain. Mirrors the `head = 0` post-drain idiom in
+    /// `src/jsc/Task.zig` `tickQueueWithCount`.
+    #[inline]
+    pub fn reset_head_if_empty(&mut self) {
+        if self.count == 0 {
+            self.head = 0;
+        }
+    }
+
     pub fn realign(&mut self) {
         let buf_len = self.buf_len();
         if buf_len - self.head >= self.count {

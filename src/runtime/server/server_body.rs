@@ -23,6 +23,7 @@ use crate::webcore::fetch as Fetch;
 use bun_jsc::Debugger::{AsyncTaskTracker, DebuggerId};
 use bun_jsc::{StringJsc as _, ZigStringJsc as _};
 use crate::api::{js_bundler as JSBundler, SocketAddress};
+use crate::api::js_bundler::PluginJscExt as _;
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::response::HeadersRef;
 use bun_logger as logger;

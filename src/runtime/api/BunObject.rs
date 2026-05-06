@@ -1420,7 +1420,9 @@ pub fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
     }
 
     EDITOR_CONTEXT.with(|cell| -> JsResult<JSValue> {
-        let mut edit = cell.borrow_mut();
+        let mut slot = cell.borrow_mut();
+        let slot = &mut *slot;
+        let edit = &mut slot.ctx;
         // SAFETY: `transpiler.env` is the process-lifetime dotenv loader.
         let env = unsafe { &mut *vm.transpiler.env };
 
@@ -1431,15 +1433,21 @@ pub fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
                     let prev_name = edit.name;
 
                     if !strings::eql_long(prev_name, sliced.slice(), true) {
-                        let prev = core::mem::take(&mut *edit);
+                        let prev = core::mem::take(edit);
                         // PORT NOTE: Zig stashed the arena-backed slice
-                        // directly. Promote to a leaked `'static` here
-                        // (one-shot, user-supplied editor name) so the
-                        // `&'static [u8]` field type is upheld without an
-                        // arena. Editor switching is not hot-path.
-                        let leaked: &'static [u8] =
-                            Box::leak(sliced.slice().to_vec().into_boxed_slice());
-                        edit.name = leaked;
+                        // directly into the persistent EditorContext (latent
+                        // UAF in spec). Own the bytes in `name_storage` and
+                        // hand back a thread-lifetime borrow.
+                        slot.name_storage = sliced.slice().to_vec();
+                        // SAFETY: `name_storage` lives in a thread_local that
+                        // outlives any caller; we never reallocate it while
+                        // `edit.name` is observed (single-threaded JS VM).
+                        edit.name = unsafe {
+                            core::slice::from_raw_parts(
+                                slot.name_storage.as_ptr(),
+                                slot.name_storage.len(),
+                            )
+                        };
                         edit.detect_editor(env);
                         editor_choice = edit.editor;
                         if editor_choice.is_none() {
@@ -1449,10 +1457,18 @@ pub fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
                                 bstr::BStr::new(sliced.slice()),
                             )));
                         } else if edit.name.as_ptr() == edit.path.as_ptr() {
-                            // detect_editor pointed `name` at `path`'s storage;
-                            // dupe `name` so a later `path` overwrite doesn't
+                            // detect_editor pointed `name` at `path`'s storage
+                            // (process-lifetime dirname_store); dupe into our
+                            // owned buffer so a later `path` overwrite doesn't
                             // dangling-alias it.
-                            edit.name = Box::leak(edit.path.to_vec().into_boxed_slice());
+                            slot.name_storage = edit.path.to_vec();
+                            // SAFETY: see above.
+                            edit.name = unsafe {
+                                core::slice::from_raw_parts(
+                                    slot.name_storage.as_ptr(),
+                                    slot.name_storage.len(),
+                                )
+                            };
                         }
                     }
                 }

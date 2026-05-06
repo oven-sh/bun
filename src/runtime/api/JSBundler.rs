@@ -1982,6 +1982,7 @@ pub mod js_bundler {
 pub use js_bundler as JSBundler;
 /// `jsc.API.JSBundler.Plugin` — re-exported for `crate::bake` (`SplitBundlerOptions.plugin`).
 pub use js_bundler::Plugin;
+pub use js_bundler::PluginJscExt;
 pub use js_bundler::Config;
 
 /// Full `.classes.ts` payload — wraps a `webcore::Blob` plus

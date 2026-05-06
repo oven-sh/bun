@@ -16,7 +16,7 @@ use bun_sourcemap::{self as source_map, SourceMapState};
 use bun_str::string_joiner::StringJoiner;
 
 use crate::bake::{self, Side};
-use crate::bake::dev_server_body::{map_log, DevAllocator};
+use crate::bake::dev_server_body::map_log;
 use crate::timer::EventLoopTimerState;
 
 use super::{packed_map, ChunkKind, DevServer, EventLoopTimer, Magic, TimerTag};

@@ -240,12 +240,13 @@ impl PendingValue {
     /// If chunked encoded this will represent the total received size (ignoring the chunk headers)
     /// If the size is unknown will be 0
     fn size_hint(&self) -> blob::SizeType {
+        // SAFETY: `self.global` is stored from a live `&JSGlobalObject` at
+        // construction time; the JSC global object outlives every Body that holds it.
         if let Some(readable) = self.readable.get(unsafe { &*self.global }) {
             if let webcore::readable_stream::Source::Bytes(bytes) = readable.ptr {
-                // TODO(b2-blocked): ByteStream is a stub unit struct in webcore.rs;
-                // its `size_hint` field will return once the real ByteStream module
-                // is wired in. Until then, fall through to `self.size_hint`.
-                let _ = bytes;
+                // SAFETY: `Source::Bytes` holds a live `*mut ByteStream` for the
+                // lifetime of the ReadableStream JS wrapper (rooted via `self.readable`).
+                return unsafe { (*bytes).size_hint };
             }
         }
         self.size_hint

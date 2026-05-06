@@ -272,9 +272,9 @@ pub mod lib_info {
 
         poll.enable_keeping_process_alive(ctx);
         // SAFETY: request is live (heap-allocated) and exclusively accessed on this thread.
-        // TODO(port): `file_poll` stores `Box<FilePoll>` but the slot is hive-allocated;
-        // Phase B: change field to `*mut FilePoll` and route deinit through the pool.
-        unsafe { (*request).backend.as_libinfo_mut().file_poll = Some(Box::from_raw(poll_ptr)) };
+        // The slot is hive-allocated by `FilePoll::init` and returned via
+        // `FilePoll::deinit` in `get_addr_info_async_callback`.
+        unsafe { (*request).backend.as_libinfo_mut().file_poll = NonNull::new(poll_ptr) };
         let vm = this.vm;
         // SAFETY: `vm` is the live BACKREF held by Resolver for its lifetime.
         this.request_sent(unsafe { &*vm });
@@ -824,7 +824,7 @@ impl CAresNameInfo {
         if let Some(err) = err_ {
             // SAFETY: see fn contract.
             unsafe {
-                err.to_deferred("getnameinfo", Some((*this).name.as_ref()), &mut (*this).promise)
+                error_to_deferred(err, b"getnameinfo", Some((*this).name.as_ref()), &mut (*this).promise)
                     .reject_later(global_this);
                 Self::destroy(this);
             }
@@ -834,7 +834,7 @@ impl CAresNameInfo {
             // SAFETY: see fn contract.
             unsafe {
                 c_ares::Error::ENOTFOUND
-                    .to_deferred("getnameinfo", Some((*this).name.as_ref()), &mut (*this).promise)
+                error_to_deferred(c_ares::Error::ENOTFOUND, b"getnameinfo", Some((*this).name.as_ref()), &mut (*this).promise)
                     .reject_later(global_this);
                 Self::destroy(this);
             }
@@ -1052,7 +1052,9 @@ pub mod get_addr_info_request {
     }
 
     pub struct BackendLibInfo {
-        pub file_poll: Option<Box<FilePoll>>, // OWNED
+        /// OWNED hive slot from `FilePoll::init` (returned via `FilePoll::deinit`,
+        /// not `Box`/global-alloc — Zig: `?*bun.Async.FilePoll`).
+        pub file_poll: Option<NonNull<FilePoll>>,
         pub machport: mach_port,
     }
 
@@ -1271,7 +1273,9 @@ impl GetAddrInfoRequest {
         unsafe {
             if let get_addr_info_request::Backend::Libinfo(li) = &mut (*this).backend {
                 if let Some(poll) = li.file_poll.take() {
-                    drop(poll);
+                    // SAFETY: `poll` is the hive slot returned by `FilePoll::init`;
+                    // exclusive on the JS thread. `deinit` returns it to the pool.
+                    (*poll.as_ptr()).deinit();
                 }
             }
 
@@ -1394,7 +1398,9 @@ impl GetAddrInfoRequest {
             debug_assert!(uv_info == (*this).backend.as_libc_uv_mut() as *mut _);
             if let get_addr_info_request::Backend::Libinfo(li) = &mut (*this).backend {
                 if let Some(poll) = li.file_poll.take() {
-                    drop(poll);
+                    // SAFETY: `poll` is the hive slot returned by `FilePoll::init`;
+                    // exclusive on the JS thread. `deinit` returns it to the pool.
+                    (*poll.as_ptr()).deinit();
                 }
             }
 
@@ -1480,14 +1486,14 @@ impl CAresReverse {
         unsafe {
             let global_this = &*(*this).global_this;
             if let Some(err) = err_ {
-                err.to_deferred("getHostByAddr", Some(&(*this).name), &mut (*this).promise)
+                error_to_deferred(err, b"getHostByAddr", Some(&(*this).name), &mut (*this).promise)
                     .reject_later(global_this);
                 Self::destroy(this);
                 return;
             }
             let Some(node) = result else {
                 c_ares::Error::ENOTFOUND
-                    .to_deferred("getHostByAddr", Some(&(*this).name), &mut (*this).promise)
+                error_to_deferred(c_ares::Error::ENOTFOUND, b"getHostByAddr", Some(&(*this).name), &mut (*this).promise)
                     .reject_later(global_this);
                 Self::destroy(this);
                 return;
@@ -1593,7 +1599,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
         unsafe {
             let global_this = &*(*this).global_this;
             if let Some(err) = err_ {
-                err.to_deferred(syscall, Some(&(*this).name), &mut (*this).promise)
+                error_to_deferred(err, syscall.as_bytes(), Some(&(*this).name), &mut (*this).promise)
                     .reject_later(global_this);
                 Self::destroy(this);
                 return;

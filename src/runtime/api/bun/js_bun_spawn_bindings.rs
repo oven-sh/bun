@@ -1144,10 +1144,6 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     };
 
     // Use the isolated loop for spawnSync operations
-    // TODO(port): `to_process` returns `*mut Process`; the Subprocess field is
-    // `ManuallyDrop<Arc<Process>>`. Until process.rs settles on a single
-    // intrusive RefPtr<Process> shape, wrap the raw pointer in an Arc by
-    // assuming it was Box-allocated (process.rs does `Box::into_raw`).
     //
     // PORT NOTE: `PosixSpawnResult::to_process` consumes `self` but only reads
     // `pid`/`pidfd`/`has_exited`. Zig kept using `spawned.stdin/stdout/stderr/
@@ -1157,12 +1153,12 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     let spawned_stdout = spawned.stdout.take();
     let spawned_stderr = spawned.stderr.take();
     let mut spawned_extra_pipes = core::mem::take(&mut spawned.extra_pipes);
-    let process_raw = spawned.to_process(loop_handle, IS_SYNC);
-    // SAFETY: `to_process` returns a freshly Box-allocated `Process`; Arc takes
-    // ownership of that allocation. TODO(port): switch to RefPtr<Process>.
-    let process = core::mem::ManuallyDrop::new(unsafe {
-        std::sync::Arc::from_raw(process_raw as *const Process)
-    });
+    // `to_process` returns a freshly Box-allocated `Process` carrying an
+    // intrusive `ThreadSafeRefCount` initialized to 1. `Subprocess.process`
+    // stores it as `*mut Process` (Zig: `*Process`); the matching `deref()` in
+    // `Subprocess::finalize` (or the error path below) frees the Box when the
+    // refcount reaches zero.
+    let process: *mut Process = spawned.to_process(loop_handle, IS_SYNC);
 
     #[cfg(unix)]
     let posix_ipc_fd = if !IS_SYNC && maybe_ipc_mode.is_some() {
@@ -1297,12 +1293,11 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             }
             subprocess.finalize_streams();
             // SAFETY: see `process_mut` doc.
-            unsafe { process_mut(&subprocess.process) }.detach();
-            // Zig: `subprocess.process.deref()` releases the intrusive ref. The
-            // field is `ManuallyDrop<Arc<Process>>`; release the Arc strong ref
-            // explicitly here (finalize() won't run on this error path).
+            unsafe { process_mut(subprocess.process) }.detach();
+            // Zig: `subprocess.process.deref()` releases the intrusive ref
+            // (finalize() won't run on this error path).
             // SAFETY: this error path returns without ever reading `process` again.
-            unsafe { core::mem::ManuallyDrop::drop(&mut subprocess.process) };
+            unsafe { process_mut(subprocess.process) }.deref();
             MaxBuf::remove_from_subprocess(&mut subprocess.stdout_maxbuf);
             MaxBuf::remove_from_subprocess(&mut subprocess.stderr_maxbuf);
             subprocess.deref();
@@ -1351,7 +1346,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     // existing_terminal: don't close slave_fd - user manages lifecycle and can reuse
 
     // SAFETY: see `process_mut` doc.
-    unsafe { process_mut(&subprocess.process) }
+    unsafe { process_mut(subprocess.process) }
         .set_exit_handler(subprocess_ptr as *mut (), &Subprocess::PROCESS_EXIT_VTABLE);
 
     promise_for_stream.ensure_still_alive();
@@ -1433,7 +1428,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                 .as_err()
             {
                 subprocess.deref();
-                return global_this.throw_value(err.to_js(global_this)?);
+                return Err(global_this.throw_value(err.to_js(global_this)?));
             }
             subprocess.stdio_pipes[usize::try_from(ipc_channel).unwrap()] =
                 ExtraPipe::Unavailable;
@@ -1519,7 +1514,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
 
         // SAFETY: see `process_mut` doc.
-        match unsafe { process_mut(&subprocess.process) }.watch() {
+        match unsafe { process_mut(subprocess.process) }.watch() {
             sys::Result::Ok(()) => {}
             sys::Result::Err(_) => {
                 send_exit_notification = true;
@@ -1627,14 +1622,14 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         unsafe { &mut *jsc_vm_ptr }.counters.mark(jsc::counters::Field::SpawnSyncBlocking);
         let debug_timer = Output::DebugTimer::start();
         // SAFETY: see `process_mut` doc.
-        unsafe { process_mut(&subprocess.process) }.wait(true);
+        unsafe { process_mut(subprocess.process) }.wait(true);
         bun_output::scoped_log!(Subprocess, "spawnSync fast path took {}", debug_timer);
 
         // watchOrReap will handle the already exited case for us.
     }
 
     // SAFETY: see `process_mut` doc.
-    match unsafe { process_mut(&subprocess.process) }.watch_or_reap() {
+    match unsafe { process_mut(subprocess.process) }.watch_or_reap() {
         sys::Result::Ok(_) => {
             // Once everything is set up, we can add the abort listener
             // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
@@ -1651,7 +1646,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
         sys::Result::Err(_) => {
             // SAFETY: see `process_mut` doc.
-            unsafe { process_mut(&subprocess.process) }.wait(true);
+            unsafe { process_mut(subprocess.process) }.wait(true);
         }
     }
 

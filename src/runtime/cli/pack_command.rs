@@ -2902,16 +2902,15 @@ fn edit_root_package_json(
                                         _ => unreachable!(),
                                     };
                                     // Zig: `try std.fmt.allocPrint(allocator, "{s}{}", ...)`.
-                                    // Allocate into the pack arena (`ctx.allocator` analog);
-                                    // `EString::init` erases the lifetime.
-                                    let data: &[u8] = bumpalo::format!(
-                                        in pack_bump(),
+                                    // Format on the heap then copy into the pack arena
+                                    // (`ctx.allocator` analog); `EString::init` erases the
+                                    // lifetime.
+                                    let tmp = format!(
                                         "{}{}",
                                         bstr::BStr::new(prefix),
                                         workspace_version.fmt(lockfile.buffers.string_bytes.as_slice()),
-                                    )
-                                    .into_bump_str()
-                                    .as_bytes();
+                                    );
+                                    let data = pack_bump().alloc_slice_copy(tmp.as_bytes());
                                     dependency.value = Some(Expr::init(
                                         E::EString::init(data),
                                         Default::default(),

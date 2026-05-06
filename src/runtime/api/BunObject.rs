@@ -2404,7 +2404,7 @@ pub mod JSZlib {
     fn get_options(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
-    ) -> JsResult<(jsc::node::StringOrBuffer, Option<JSValue>)> {
+    ) -> JsResult<(node::StringOrBuffer, Option<JSValue>)> {
         let arguments = callframe.arguments_old(2).slice();
         let buffer_value: JSValue = if arguments.len() > 0 {
             arguments[0]
@@ -2420,7 +2420,7 @@ pub mod JSZlib {
             None
         };
 
-        if let Some(buffer) = jsc::node::StringOrBuffer::from_js(global_this, buffer_value)? {
+        if let Some(buffer) = node::StringOrBuffer::from_js(global_this, buffer_value)? {
             return Ok((buffer, options_val));
         }
 
@@ -2454,7 +2454,7 @@ pub mod JSZlib {
 
     pub fn gunzip_or_inflate_sync(
         global_this: &JSGlobalObject,
-        buffer: jsc::node::StringOrBuffer,
+        buffer: node::StringOrBuffer,
         options_val_: Option<JSValue>,
         is_gzip: bool,
     ) -> JsResult<JSValue> {
@@ -2643,7 +2643,7 @@ pub mod JSZlib {
 
     pub fn gzip_or_deflate_sync(
         global_this: &JSGlobalObject,
-        buffer: jsc::node::StringOrBuffer,
+        buffer: node::StringOrBuffer,
         options_val_: Option<JSValue>,
         is_gzip: bool,
     ) -> JsResult<JSValue> {
@@ -2806,7 +2806,7 @@ pub mod JSZstd {
     fn get_options(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
-    ) -> JsResult<(jsc::node::StringOrBuffer, Option<JSValue>)> {
+    ) -> JsResult<(node::StringOrBuffer, Option<JSValue>)> {
         let arguments = callframe.arguments();
         let buffer_value: JSValue = if arguments.len() > 0 {
             arguments[0]
@@ -2822,7 +2822,7 @@ pub mod JSZstd {
             None
         };
 
-        if let Some(buffer) = jsc::node::StringOrBuffer::from_js(global_this, buffer_value)? {
+        if let Some(buffer) = node::StringOrBuffer::from_js(global_this, buffer_value)? {
             return Ok((buffer, options_val));
         }
 
@@ -2856,7 +2856,7 @@ pub mod JSZstd {
     fn get_options_async(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
-    ) -> JsResult<(jsc::node::StringOrBuffer, Option<JSValue>, i32)> {
+    ) -> JsResult<(node::StringOrBuffer, Option<JSValue>, i32)> {
         let arguments = callframe.arguments();
         let buffer_value: JSValue = if arguments.len() > 0 {
             arguments[0]
@@ -2875,7 +2875,7 @@ pub mod JSZstd {
         let level = get_level(global_this, options_val)?;
 
         let allow_string_object = true;
-        if let Some(buffer) = jsc::node::StringOrBuffer::from_js_maybe_async(
+        if let Some(buffer) = node::StringOrBuffer::from_js_maybe_async(
             global_this,
             buffer_value,
             true,
@@ -2950,7 +2950,7 @@ pub mod JSZstd {
     // --- Async versions ---
 
     pub struct ZstdJob {
-        pub buffer: jsc::node::StringOrBuffer,
+        pub buffer: node::StringOrBuffer,
         pub is_compress: bool,
         pub level: i32,
         pub task: jsc::WorkPoolTask,
@@ -3077,7 +3077,7 @@ pub mod JSZstd {
         pub fn create(
             vm: &'static VirtualMachine,
             global_this: &JSGlobalObject,
-            buffer: jsc::node::StringOrBuffer,
+            buffer: node::StringOrBuffer,
             is_compress: bool,
             level: i32,
         ) -> *mut ZstdJob {

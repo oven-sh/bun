@@ -6,7 +6,8 @@ use bun_jsc::{
     ArgumentsSlice, CallFrame, ConcurrentPromiseTask, JSGlobalObject, JSPromise, JSValue, JsResult,
     JsTerminated, ZigString,
 };
-use bun_paths::{self as resolve_path, PathBuffer, MAX_PATH_BYTES};
+use bun_paths::{self as resolve_path, platform, PathBuffer, MAX_PATH_BYTES};
+use bun_paths::resolve_path::join_string_buf;
 use bun_str::String as BunString;
 use bun_sys as syscall;
 

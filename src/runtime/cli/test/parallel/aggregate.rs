@@ -15,9 +15,10 @@ use bun_str::{strings, ZStr};
 use bun_sys::{self, Fd, File, O};
 
 use crate::cli::test::parallel::coordinator::Coordinator;
+use crate::node::fs::{args as fs_args, NodeFS};
+use crate::node::PathLike;
 use crate::test_command;
 use crate::test_runner::jest::Summary;
-use bun_jsc::{self as jsc};
 
 fn attr_value(head: &[u8], name: &'static [u8]) -> u32 {
     // PERF(port): was comptime `" " ++ name ++ "=\""` concat — profile in Phase B

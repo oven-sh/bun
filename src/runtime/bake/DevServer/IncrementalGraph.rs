@@ -2308,7 +2308,7 @@ impl IncrementalGraph<Client> {
         debug_assert!(self.current_chunk_len > 0);
 
         let runtime: HmrRuntime = match kind {
-            ChunkKind::InitialResponse => bake::get_hmr_runtime(Side::Client),
+            ChunkKind::InitialResponse => crate::bake::bake_body::get_hmr_runtime(Side::Client),
             ChunkKind::HmrChunk => HmrRuntime::init(b"self[Symbol.for(\"bun:hmr\")]({\n"),
         };
 
@@ -2482,7 +2482,7 @@ impl IncrementalGraph<Server> {
         debug_assert!(self.current_chunk_len > 0);
 
         let runtime: HmrRuntime = match kind {
-            ChunkKind::InitialResponse => bake::get_hmr_runtime(Side::Server),
+            ChunkKind::InitialResponse => crate::bake::bake_body::get_hmr_runtime(Side::Server),
             ChunkKind::HmrChunk => HmrRuntime::init(b"({"),
         };
 

@@ -48,17 +48,19 @@ pub fn open_url(url: &ZStr) {
     #[cfg(not(target_os = "android"))]
     let args_buf: &[&[u8]] = &two_args;
 
+    let argv: Vec<Box<[u8]>> = args_buf.iter().map(|s| s.to_vec().into_boxed_slice()).collect();
+
     'maybe_fallback: {
-        // TODO(port): exact crate path for spawn_sync (src/runtime/api/bun/process.zig)
-        let spawn_result = match crate::process::spawn_sync(&crate::process::SpawnOptions {
-            argv: args_buf,
+        let spawn_result = match sync::spawn(&sync::Options {
+            argv,
             envp: None,
-            stderr: crate::process::Stdio::Inherit,
-            stdout: crate::process::Stdio::Inherit,
-            stdin: crate::process::Stdio::Inherit,
+            stderr: sync::SyncStdio::Inherit,
+            stdout: sync::SyncStdio::Inherit,
+            stdin: sync::SyncStdio::Inherit,
             #[cfg(windows)]
-            windows: crate::process::WindowsOptions {
+            windows: crate::api::bun::process::WindowsOptions {
                 loop_: bun_jsc::EventLoopHandle::init(bun_event_loop::MiniEventLoop::init_global(None, None)),
+                ..Default::default()
             },
             ..Default::default()
         }) {
@@ -68,12 +70,12 @@ pub fn open_url(url: &ZStr) {
 
         match spawn_result {
             // don't fallback:
-            bun_sys::Result::Ok(result) => {
+            bun_sys::Maybe::Result(result) => {
                 if result.is_ok() {
                     return;
                 }
             }
-            bun_sys::Result::Err(_) => {}
+            bun_sys::Maybe::Err(_) => {}
         }
     }
 

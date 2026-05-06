@@ -70,12 +70,12 @@ pub fn to_contain_all_values(
     }
 
     // handle failure
+    // PORT NOTE: Zig shared one Formatter for both `toFmt` calls; Rust borrowck forbids two
+    // live `&mut formatter` borrows, so allocate a second Formatter for the expected value.
     let mut formatter = super::make_formatter(global);
+    let mut formatter2 = super::make_formatter(global);
     // `defer formatter.deinit()` — handled by Drop.
-    // TODO(port): `to_fmt(&mut formatter)` below yields overlapping &mut borrows of `formatter`;
-    // Phase B may need interior mutability on Formatter or to inline the Display wrappers.
-    let value_fmt = value.to_fmt(&mut formatter);
-    let expected_fmt = expected.to_fmt(&mut formatter);
+    let expected_fmt = expected.to_fmt(&mut formatter2);
     if not {
         let received_fmt = value.to_fmt(&mut formatter);
         return this.throw(

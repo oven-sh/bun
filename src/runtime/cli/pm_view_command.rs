@@ -431,7 +431,8 @@ pub fn view(
 
     // Display dependencies if they exist
     if let Some(deps) = &dependencies_object {
-        let dependencies = deps.data.e_object().unwrap().properties.slice();
+        let deps_e_obj = deps.data.e_object().unwrap();
+        let dependencies = deps_e_obj.properties.slice();
         if !dependencies.is_empty() {
             Output::prettyln(format_args!("\n<b>dependencies<r><d> ({}):<r>", dependencies.len()));
         }

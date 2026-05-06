@@ -367,6 +367,10 @@ impl IOWriter {
             }
             #[cfg(not(windows))]
             {
+                // PORT NOTE: `__start()` re-derives `state()` (and may mutate
+                // `writer.handle` on the EINVAL/EPERM fallback paths), which
+                // invalidates the `s` borrow under Stacked Borrows. Re-derive.
+                let s = self.state();
                 // if `handle == .fd` it means it's a file which does not
                 // support polling for writeability and we should just write to it
                 if matches!(s.writer.handle, bun_io::pipes::PollOrFd::Fd(_)) {
@@ -633,11 +637,14 @@ impl IOWriter {
     /// Spec: IOWriter.zig `onWritePollable` (the `BufferedWriter.onWrite`
     /// hook). Runs on the event loop when the fd is writable.
     fn on_write_pollable(&self, amount: usize, status: bun_io::WriteStatus) {
+        // PORT NOTE: `set_writing` re-derives `state()` on Windows, which would
+        // invalidate `s` under Stacked Borrows; do it before binding `s`
+        // (matches the ordering in `on_error`).
+        self.set_writing(false);
         let s = self.state();
         #[cfg(not(windows))]
         debug_assert!(s.flags.pollable);
 
-        self.set_writing(false);
         if s.writer_idx >= s.writers.len() {
             return;
         }
@@ -860,11 +867,15 @@ impl IOWriter {
             let _ = write!(&mut s.buf, "{}: ", k.as_str());
         }
         let _ = s.buf.write_fmt(args);
-        if let Some(y) = self.handle_broken_pipe(child) {
-            // Spec: Zig writes into `buf` *before* checking broken_pipe in
-            // `enqueueFmt`; mirror that ordering (the bytes are dead but the
-            // buffer will be cleared on the error path anyway).
-            return y;
+        // Spec: Zig writes into `buf` *before* checking broken_pipe in
+        // `enqueueFmt`; mirror that ordering (the bytes are dead but the
+        // buffer will be cleared on the error path anyway).
+        // PORT NOTE: inline `handle_broken_pipe` instead of calling the helper —
+        // the helper re-derives `state()` while `s` is still live, which is two
+        // simultaneous `&mut State` (UB under Stacked Borrows).
+        if s.flags.broken_pipe {
+            let err = sys::Error::from_code(E::EPIPE, sys::Tag::write).to_shell_system_error();
+            return Yield::OnIoWriterChunk { child, written: 0, err: Some(err) };
         }
         let end = s.buf.len();
         s.writers.push(Writer { ptr: child, len: end - start, written: 0, bytelist });

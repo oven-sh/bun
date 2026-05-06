@@ -451,7 +451,7 @@ impl BunTestRoot {
         // Zig: active_file = .new(undefined); active_file.get().?.init(...)
         // TODO(port): in-place init — Rc::new_cyclic or two-phase init may be
         // needed because BunTest stores a backref to BunTestRoot.
-        let bun_test = Rc::new(BunTest::init(
+        let bun_test = BunTestCell::new(BunTest::init(
             self as *const BunTestRoot,
             file_id,
             Some(reporter),
@@ -467,12 +467,9 @@ impl BunTestRoot {
 
         debug_assert!(self.active_file.is_some());
         if let Some(active) = &self.active_file {
-            // TODO(port): interior mutability — need &mut through Rc
-            // SAFETY: single-threaded; BunTestRoot is sole strong owner here per assert above semantics
-            unsafe {
-                let p = Rc::as_ptr(active) as *mut BunTest;
-                (*p).reporter = None;
-            }
+            // SAFETY: single-threaded; no other `&mut BunTest` is live during
+            // teardown. Write goes through `UnsafeCell` (see `BunTestCell::get`).
+            active.get().reporter = None;
         }
         self.active_file = None; // drops the Rc (deinit)
     }
@@ -482,9 +479,10 @@ impl BunTestRoot {
         if unsafe { (*vm).is_in_preload } {
             return None;
         }
-        // TODO(port): interior mutability — see BunTestPtr note
-        // SAFETY: single-threaded; BunTestRoot owns the only strong ref while not in preload
-        self.active_file.as_ref().map(|rc| unsafe { &mut *(Rc::as_ptr(rc) as *mut BunTest) })
+        // SAFETY: single-threaded; caller (js_fns::generic_hook) holds the only
+        // live `&mut` for the duration of the hook-append below. Projection goes
+        // through `UnsafeCell` (see `BunTestCell::get`).
+        self.active_file.as_ref().map(|rc| rc.get())
     }
 
     pub fn clone_active_file(&self) -> Option<BunTestPtr> {

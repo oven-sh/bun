@@ -2007,9 +2007,14 @@ fn run_with_source_code(
     // TODO(port): errdefer transpiler.resetStore() + errdefer entry.deinit().
     // Reshaped: cleanup runs on the err return paths explicitly (scopeguard
     // would alias the `&mut Transpiler` / `&mut CacheEntry` borrows below).
+    // PORT NOTE: `resolver` is a field of `*transpiler` (Zig
+    // `&transpiler.resolver`). Keep raw — never materialize `&mut Transpiler`
+    // while a `&mut` derived from `resolver` is live. Per Zig, `resolver` is
+    // bound *before* the possible `transpiler` reassignment below and stays
+    // pointing into the original target's transpiler.
     // SAFETY: `transpiler` just derived from a live `&mut`.
-    let resolver: &mut Resolver =
-        unsafe { &mut *(core::ptr::addr_of_mut!((*transpiler).resolver)) };
+    let resolver: *mut Resolver =
+        unsafe { core::ptr::addr_of_mut!((*transpiler).resolver) };
     let file_path = &mut task.path;
     let loader = task
         .loader
@@ -2059,9 +2064,11 @@ fn run_with_source_code(
     let entry_contents: &[u8] = entry.contents.as_slice();
     let is_empty = strings::is_all_whitespace(entry_contents);
 
-    // SAFETY: `transpiler` derived from a live `&mut` above.
-    let transpiler_ref = unsafe { &mut *transpiler };
-    let use_directive: UseDirective = if !is_empty && transpiler_ref.options.server_components {
+    // SAFETY: `transpiler` derived from a live `&mut` above. Reborrow only the
+    // disjoint `options` field — never the whole struct — so the raw `resolver`
+    // pointer (which targets `(*transpiler).resolver`) remains valid.
+    let topts = unsafe { &(*transpiler).options };
+    let use_directive: UseDirective = if !is_empty && topts.server_components {
         UseDirective::parse(entry_contents).unwrap_or(UseDirective::None)
     } else {
         UseDirective::None
@@ -2080,15 +2087,16 @@ fn run_with_source_code(
             .separate_ssr_graph)
         ||
         // set the target to the client when bundling client-side files
-        ((transpiler_ref.options.server_components || !transpiler_ref.options.dev_server.is_null())
+        ((topts.server_components || !topts.dev_server.is_null())
             && task.known_target == options::Target::Browser)
     {
         // separate_ssr_graph makes boundaries switch to client because the server file uses that generated file as input.
         // this is not done when there is one server graph because it is easier for plugins to deal with.
         transpiler = this.transpiler_for_target(options::Target::Browser) as *mut _;
     }
-    // SAFETY: `transpiler` re-derived from a live `&mut` above.
-    let transpiler_ref = unsafe { &mut *transpiler };
+    // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler` (possibly
+    // reassigned above); reborrow only the disjoint `options` field.
+    let topts = unsafe { &(*transpiler).options };
 
     let source = Source {
         // PORT NOTE: `Source.path` is `bun_logger::fs::Path`, distinct from

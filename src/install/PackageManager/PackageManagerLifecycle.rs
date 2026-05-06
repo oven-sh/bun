@@ -405,13 +405,20 @@ impl PackageManager {
 
         self.ensure_temp_node_gyp_script()?;
 
-        let cwd = list.cwd.as_bytes();
+        // PORT NOTE: `list` is moved into `spawn_package_scripts` below; copy
+        // `cwd` out so the PATH builder can borrow it independently.
+        let cwd_owned: Vec<u8> = list.cwd.as_bytes().to_vec();
+        let cwd: &[u8] = &cwd_owned;
         let this_transpiler = self.configure_env_for_scripts(ctx, log_level)?;
 
-        let mut script_env = this_transpiler.env.map.clone_with_allocator()?;
+        // SAFETY: `Transpiler.env` is set during `Transpiler::init` and never null afterward.
+        let env_loader = unsafe { &mut *this_transpiler.env };
+        let mut script_env = env_loader.map.clone_with_allocator()?;
         // `defer script_env.map.deinit()` — handled by Drop
 
-        let original_path = script_env.get(b"PATH").unwrap_or(b"");
+        // PORT NOTE: `script_env.put` below needs `&mut`; copy PATH out so the
+        // shared borrow does not span it.
+        let original_path: Vec<u8> = script_env.get(b"PATH").unwrap_or(b"").to_vec();
 
         // Zig: `bun.EnvPath(.{})` — `EnvPathOptions` is currently fieldless.
         let mut path = EnvPath::init_capacity(
@@ -464,7 +471,7 @@ impl PackageManager {
         RealLifecycleScriptSubprocess::spawn_package_scripts(
             self,
             list,
-            envp.as_ptr(),
+            envp.as_ptr() as *const *const core::ffi::c_char,
             shell_bin,
             optional,
             log_level,

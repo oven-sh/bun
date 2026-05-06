@@ -142,6 +142,23 @@ pub mod resolution {
         pub version: bun_semver::Version,
         pub url: bun_semver::String,
     }
+    /// Port of `bun.meta.Tagged(Value, Tag)` (src/install/resolution.zig) — a
+    /// tagged view of `Value` used by `Resolution::init` to construct a
+    /// zero-padded flat struct from a single variant payload. Mirrors
+    /// `resolution_real::TaggedValue<u64>` for the stub layout.
+    pub enum TaggedValue {
+        Uninitialized,
+        Root,
+        Npm(crate::versioned_url::VersionedURL),
+        Folder(bun_semver::String),
+        LocalTarball(bun_semver::String),
+        Github(crate::repository::Repository),
+        Git(crate::repository::Repository),
+        Symlink(bun_semver::String),
+        Workspace(bun_semver::String),
+        RemoteTarball(bun_semver::String),
+        SingleFileModule(bun_semver::String),
+    }
     #[derive(Default, Clone, Copy, PartialEq, Eq, Debug, core::marker::ConstParamTy)]
     #[repr(u8)]
     pub enum Tag {
@@ -213,7 +230,41 @@ pub mod resolution {
         /// `Resolution` with the given tagged value (Zig used a tagged-union
         /// init; here `Value` is a flat struct so the tag selects which field
         /// is meaningful).
-        pub fn init(tag: Tag, value: Value) -> Self {
+        pub fn init(value: TaggedValue) -> Self {
+            let (tag, value) = match value {
+                TaggedValue::Uninitialized => (Tag::Uninitialized, Value::default()),
+                TaggedValue::Root => (Tag::Root, Value::default()),
+                TaggedValue::Npm(v) => (
+                    Tag::Npm,
+                    Value {
+                        npm: NpmVersionInfo { version: v.version, url: v.url },
+                        ..Default::default()
+                    },
+                ),
+                TaggedValue::Folder(s) => {
+                    (Tag::Folder, Value { folder: s, ..Default::default() })
+                }
+                TaggedValue::LocalTarball(s) => {
+                    (Tag::LocalTarball, Value { local_tarball: s, ..Default::default() })
+                }
+                TaggedValue::Github(r) => {
+                    (Tag::Github, Value { github: r, ..Default::default() })
+                }
+                TaggedValue::Git(r) => (Tag::Git, Value { git: r, ..Default::default() }),
+                TaggedValue::Symlink(s) => {
+                    (Tag::Symlink, Value { symlink: s, ..Default::default() })
+                }
+                TaggedValue::Workspace(s) => {
+                    (Tag::Workspace, Value { workspace: s, ..Default::default() })
+                }
+                TaggedValue::RemoteTarball(s) => {
+                    (Tag::RemoteTarball, Value { remote_tarball: s, ..Default::default() })
+                }
+                TaggedValue::SingleFileModule(s) => (
+                    Tag::SingleFileModule,
+                    Value { single_file_module: s, ..Default::default() },
+                ),
+            };
             Resolution { tag, _padding: [0; 7], value }
         }
 
@@ -2081,7 +2132,7 @@ impl RootPackageId {
     pub peer_dependencies:
         bun_collections::linear_fifo::LinearFifo<DependencyID, bun_collections::linear_fifo::DynamicBuffer<DependencyID>>,
     /// Zig: `root_lifecycle_scripts: ?Package.Scripts.List = null`.
-    pub root_lifecycle_scripts: Option<lockfile::package::scripts::List>,
+    pub root_lifecycle_scripts: Option<crate::lockfile_real::package::scripts::List>,
     /// Zig: `patched_dependencies_to_remove: std.ArrayHashMapUnmanaged(u64, void, …)`.
     pub patched_dependencies_to_remove: bun_collections::ArrayHashMap<u64, ()>,
     /// Zig: `any_failed_to_install: bool = false`.
@@ -2843,10 +2894,6 @@ impl PackageManager {
     /// Zig: `PackageManager.verifyResolutions()` (PackageManagerResolution.zig).
     pub fn verify_resolutions(&mut self, _log_level: package_manager::Options::LogLevel) {
         todo!("blocked_on: package_manager_real::package_manager_resolution un-gate (reconciler-6)")
-    }
-    /// Zig: `PackageManager.loadRootLifecycleScripts()` (PackageManagerLifecycle.zig).
-    pub fn load_root_lifecycle_scripts(&mut self, _root: &lockfile::package::Package) {
-        todo!("blocked_on: package_manager_real::package_manager_lifecycle un-gate (reconciler-6)")
     }
     /// Zig: `PackageManager.setupGlobalDir()` (PackageManagerDirectories.zig).
     pub fn setup_global_dir(&mut self, _ctx: &package_manager_real::Command::ContextData) -> Result<(), bun_core::Error> {

@@ -1111,7 +1111,7 @@ impl Diff {
                     let mut to_trusted_iter = to_trusted_dependencies.iterator();
                     while let Some(entry) = to_trusted_iter.next() {
                         let to_trusted = *entry.key_ptr;
-                        if !from_trusted_dependencies.contains(to_trusted) {
+                        if !from_trusted_dependencies.contains(&to_trusted) {
                             summary.added_trusted_dependencies.put(to_trusted, true)?;
                         }
                     }
@@ -1122,7 +1122,7 @@ impl Diff {
                     let mut from_trusted_iter = from_trusted_dependencies.iterator();
                     while let Some(entry) = from_trusted_iter.next() {
                         let from_trusted = *entry.key_ptr;
-                        if !to_trusted_dependencies.contains(from_trusted) {
+                        if !to_trusted_dependencies.contains(&from_trusted) {
                             summary.removed_trusted_dependencies.put(from_trusted, ())?;
                         }
                     }
@@ -1142,7 +1142,7 @@ impl Diff {
                     // added
                     for entry in default_trusted_dependencies::entries() {
                         if !from_trusted_dependencies
-                            .contains(entry.hash as TruncatedPackageNameHash)
+                            .contains(&(entry.hash as TruncatedPackageNameHash))
                         {
                             // although this is a new trusted dependency, it is from the default
                             // list so it shouldn't be added to the lockfile

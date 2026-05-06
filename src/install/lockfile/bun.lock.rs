@@ -2235,7 +2235,7 @@ pub fn parse_into_binary_lockfile(
 
         {
             // first the root dependencies are resolved
-            pkg_resolutions[0] = Resolution::init(ResolutionTag::Root, ResolutionValue::default());
+            pkg_resolutions[0] = Resolution::init(crate::resolution::TaggedValue::Root);
             pkg_metas[0].origin = Origin::Local;
 
             for _dep_id in pkg_deps[0].begin()..pkg_deps[0].end() {

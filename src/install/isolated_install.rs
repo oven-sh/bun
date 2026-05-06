@@ -1751,54 +1751,47 @@ pub fn install_isolated_packages(
                     // 4. attempt renaming 'node_modules/.old_modules-{hex}/.cache' to 'node_modules/.cache'
                     // 5. rename each workspace 'node_modules' into 'node_modules/.old_modules-{hex}/old_{basename}_modules'
                     let mut temp_node_modules_buf = PathBuffer::uninit();
-                    let temp_node_modules = paths::fs::FileSystem::tmpname(
+                    let temp_node_modules = crate::bun_fs::FileSystem::tmpname(
                         b"tmp_modules",
-                        &mut temp_node_modules_buf,
+                        &mut temp_node_modules_buf.0,
                         fast_random(),
-                    )
-                    .expect("unreachable");
+                    );
 
                     // 1
-                    if sys::renameat(Fd::cwd(), b"node_modules", Fd::cwd(), temp_node_modules)
-                        .unwrap()
-                        .is_err()
-                    {
+                    if sys::renameat(Fd::cwd(), bun_str::zstr!(b"node_modules"), Fd::cwd(), temp_node_modules).is_err() {
                         break 'is_new_bun_modules true;
                     }
 
                     // 2
-                    if let Err(err) = sys::mkdirat(Fd::cwd(), node_modules_path, 0o755).unwrap() {
+                    if let Err(err) = sys::mkdirat(Fd::cwd(), node_modules_path, 0o755) {
                         Output::err(err, "failed to create './node_modules'", format_args!(""));
                         Global::exit(1);
                     }
 
-                    if let Err(err) = sys::mkdirat(Fd::cwd(), bun_modules_path, 0o755).unwrap() {
+                    if let Err(err) = sys::mkdirat(Fd::cwd(), bun_modules_path, 0o755) {
                         Output::err(err, "failed to create './node_modules/.bun'", format_args!(""));
                         Global::exit(1);
                     }
 
-                    let mut rename_path = AutoRelPath::from(b"node_modules");
+                    let mut rename_path = bun_core::handle_oom(AutoRelPath::from(b"node_modules"));
 
-                    rename_path.append_fmt(format_args!(
+                    bun_core::handle_oom(rename_path.append_fmt(format_args!(
                         ".old_modules-{}",
                         hex_lower(bytes_of(&fast_random()))
-                    ));
+                    )));
 
                     // 3
-                    if sys::renameat(Fd::cwd(), temp_node_modules, Fd::cwd(), rename_path.slice_z())
-                        .unwrap()
-                        .is_err()
-                    {
+                    if sys::renameat(Fd::cwd(), temp_node_modules, Fd::cwd(), rename_path.slice_z()).is_err() {
                         break 'is_new_bun_modules true;
                     }
 
-                    rename_path.append(b".cache");
+                    bun_core::handle_oom(rename_path.append(b".cache"));
 
-                    let mut cache_path = AutoRelPath::from(b"node_modules");
-                    cache_path.append(b".cache");
+                    let mut cache_path = bun_core::handle_oom(AutoRelPath::from(b"node_modules"));
+                    bun_core::handle_oom(cache_path.append(b".cache"));
 
                     // 4
-                    let _ = sys::renameat(Fd::cwd(), rename_path.slice_z(), Fd::cwd(), cache_path.slice_z()).unwrap();
+                    let _ = sys::renameat(Fd::cwd(), rename_path.slice_z(), Fd::cwd(), cache_path.slice_z());
 
                     // remove .cache so we can append destination for each workspace
                     rename_path.undo(1);
@@ -1806,24 +1799,31 @@ pub fn install_isolated_packages(
                     // 5
                     for workspace_path in lockfile.workspace_paths.values() {
                         let mut workspace_node_modules =
-                            AutoRelPath::from(workspace_path.slice(&lockfile.buffers.string_bytes));
+                            bun_core::handle_oom(AutoRelPath::from(workspace_path.slice(&lockfile.buffers.string_bytes)));
 
-                        let basename = workspace_node_modules.basename();
+                        // PORT NOTE: reshaped for borrowck — clone basename before
+                        // mutating `workspace_node_modules` (Zig held a slice into
+                        // the buffer across an append-with-separator).
+                        let basename = workspace_node_modules.basename().to_vec();
 
-                        workspace_node_modules.append(b"node_modules");
+                        bun_core::handle_oom(workspace_node_modules.append(b"node_modules"));
 
                         let rename_path_save = rename_path.save();
-                        let _restore = scopeguard::guard((), |_| rename_path_save.restore());
+                        // TODO(port): defer save.restore() — Phase B should use
+                        // ResetScope's Drop directly.
+                        let _restore = scopeguard::guard(rename_path_save, |s| s.restore());
 
-                        rename_path.append_fmt(format_args!(".old_{}_modules", BStr::new(basename)));
+                        bun_core::handle_oom(rename_path.append_fmt(format_args!(
+                            ".old_{}_modules",
+                            BStr::new(&basename)
+                        )));
 
                         let _ = sys::renameat(
                             Fd::cwd(),
                             workspace_node_modules.slice_z(),
                             Fd::cwd(),
                             rename_path.slice_z(),
-                        )
-                        .unwrap();
+                        );
                     }
                 }
 
@@ -1831,7 +1831,7 @@ pub fn install_isolated_packages(
             }
         }
 
-        if let Err(err) = sys::mkdirat(Fd::cwd(), bun_modules_path, 0o755).unwrap() {
+        if let Err(err) = sys::mkdirat(Fd::cwd(), bun_modules_path, 0o755) {
             Output::err(err, "failed to create './node_modules/.bun'", format_args!(""));
             Global::exit(1);
         }
@@ -1840,17 +1840,21 @@ pub fn install_isolated_packages(
     };
 
     {
-        let mut root_node: *mut Progress::Node = core::ptr::null_mut();
+        let mut root_node: *mut ProgressNode = core::ptr::null_mut();
         // TODO(port): Progress.Node locals are conditionally initialized in Zig;
         // model with Option in Phase B.
-        let mut download_node: Progress::Node;
-        let mut install_node: Progress::Node;
-        let mut scripts_node: Progress::Node;
-        let progress = &mut manager.progress;
+        let mut download_node: ProgressNode = ProgressNode::default();
+        let mut install_node: ProgressNode = ProgressNode::default();
+        let mut scripts_node: ProgressNode = ProgressNode::default();
+        let progress: *mut Progress = &mut manager.progress;
+        // SAFETY: `progress` aliases `manager.progress`; reborrows below are
+        // disjoint from the other `manager.*` field accesses (Zig holds the
+        // same two pointers freely).
+        let progress = unsafe { &mut *progress };
 
         if manager.options.log_level.show_progress() {
             progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
-            root_node = progress.start("", 0);
+            root_node = progress.start(b"", 0);
             // SAFETY: root_node was just assigned from progress.start() above and is
             // non-null inside this `log_level.show_progress()` branch.
             download_node = unsafe { (*root_node).start(ProgressStrings::download(), 0) };
@@ -1860,26 +1864,26 @@ pub fn install_isolated_packages(
             scripts_node = unsafe { (*root_node).start(ProgressStrings::script(), 0) };
 
             manager.downloads_node = None;
-            manager.scripts_node = Some(&mut scripts_node);
-            manager.downloads_node = Some(&mut download_node);
+            manager.scripts_node = Some(core::ptr::NonNull::from(&mut scripts_node));
+            manager.downloads_node = Some(&mut download_node as *mut _);
         }
 
         let nodes_slice = store.nodes.slice();
-        let node_pkg_ids = nodes_slice.items().pkg_id;
-        let node_dep_ids = nodes_slice.items().dep_id;
+        let node_pkg_ids = nodes_slice.pkg_id();
+        let node_dep_ids = nodes_slice.dep_id();
 
         let entries = store.entries.slice();
-        let entry_node_ids = entries.items().node_id;
-        let entry_steps = entries.items().step;
-        let entry_dependencies = entries.items().dependencies;
-        let entry_hoisted = entries.items().hoisted;
+        let entry_node_ids = entries.node_id();
+        let entry_steps = entries.step();
+        let entry_dependencies = entries.dependencies();
+        let entry_hoisted = entries.hoisted();
 
         let string_buf = &lockfile.buffers.string_bytes[..];
 
         let pkgs = lockfile.packages.slice();
-        let pkg_names = pkgs.items().name;
-        let pkg_name_hashes = pkgs.items().name_hash;
-        let pkg_resolutions = pkgs.items().resolution;
+        let pkg_names = pkgs.items_name();
+        let pkg_name_hashes = pkgs.items_name_hash();
+        let pkg_resolutions = pkgs.items_resolution();
 
         let mut seen_entry_ids: HashMap<store::entry::Id, ()> = HashMap::default();
         seen_entry_ids.reserve(store.entries.len());
@@ -1893,27 +1897,39 @@ pub fn install_isolated_packages(
             // below before any read of `tasks[..]`.
             unsafe { Box::new_uninit_slice(store.entries.len()).assume_init() };
 
+        let show_progress = manager.options.log_level.show_progress();
+        let installed = DynamicBitSet::init_empty(lockfile.packages.len())?;
+        let trusted_dependencies_from_update_requests =
+            manager.find_trusted_dependencies_from_update_requests();
+        // PORT NOTE: reshaped for borrowck — Zig holds `*PackageManager` while
+        // also borrowing `manager.lockfile`; raw-reborrow so both `&mut`s exist.
+        let manager_ptr: *mut PackageManager = manager;
         let mut installer = store::Installer {
             lockfile,
-            manager,
+            manager: unsafe { &mut *manager_ptr },
             command_ctx,
-            installed: DynamicBitSet::init_empty(lockfile.packages.len()),
-            install_node: if manager.options.log_level.show_progress() { Some(&mut install_node) } else { None },
-            scripts_node: if manager.options.log_level.show_progress() { Some(&mut scripts_node) } else { None },
+            installed,
+            install_node: if show_progress { Some(&mut install_node) } else { None },
+            scripts_node: if show_progress { Some(&mut scripts_node) } else { None },
             store: &store,
-            tasks: &mut tasks[..],
+            tasks,
             trusted_dependencies_mutex: Default::default(),
-            trusted_dependencies_from_update_requests: manager.find_trusted_dependencies_from_update_requests(),
-            supported_backend: std::sync::atomic::AtomicU32::new(PackageInstall::supported_method() as u32),
+            trusted_dependencies_from_update_requests,
+            supported_backend: std::sync::atomic::AtomicU8::new(PackageInstall::supported_method() as u8),
             // TODO(port): .init(PackageInstall.supported_method) — verify atomic enum init
             is_new_bun_modules,
-            global_store_path: global_store_path.as_deref(),
+            global_store_path: global_store_path.as_deref().map(|b| {
+                // SAFETY: `global_store_path` was built with a trailing NUL above.
+                unsafe { bun_str::ZStr::from_raw(b.as_ptr(), b.len() - 1) }
+            }),
             global_store_tmp_suffix: fast_random(),
-            ..Default::default()
+            summary: Default::default(),
+            task_queue: Default::default(),
         };
+        let manager = unsafe { &mut *manager_ptr };
         // (Drop handles installer.deinit())
 
-        for (_entry_id, task) in tasks.iter_mut().enumerate() {
+        for (_entry_id, task) in installer.tasks.iter_mut().enumerate() {
             let entry_id = store::entry::Id::from(u32::try_from(_entry_id).unwrap());
             *task = installer::Task {
                 entry_id,
@@ -1921,7 +1937,10 @@ pub fn install_isolated_packages(
                 // TODO(port): back-pointer to installer; raw ptr to avoid borrowck cycle
                 result: installer::Result::None,
 
-                task: bun_threading::thread_pool::Task { callback: installer::Task::callback },
+                task: bun_threading::thread_pool::Task {
+                    callback: installer::Task::callback,
+                    node: Default::default(),
+                },
                 next: core::ptr::null_mut(),
             };
         }

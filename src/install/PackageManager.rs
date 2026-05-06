@@ -385,7 +385,7 @@ pub struct PackageManager {
     pub scripts_node: Option<NonNull<ProgressNode>>, // UNKNOWN — points to caller stack-local // TODO(port): lifetime
     pub progress_name_buf: [u8; 768],
     pub progress_name_buf_dynamic: Vec<u8>,
-    pub cpu_count: u32,
+    pub cpu_count: u16,
 
     pub track_installed_bin: TrackInstalledBin,
 
@@ -1970,7 +1970,7 @@ pub fn init(
     http::async_http::MAX_SIMULTANEOUS_REQUESTS.store(
         'brk: {
             if let Some(network_concurrency) = cli.network_concurrency {
-                break 'brk network_concurrency.max(1);
+                break 'brk network_concurrency.max(1) as usize;
             }
 
             // If any HTTP proxy is set, use a diferent limit
@@ -2207,27 +2207,30 @@ pub fn init_with_runtime_once(
 
     if Output::enable_ansi_colors_stderr() {
         manager.progress = Progress::default();
-        manager.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
-        manager.root_progress_node = manager.progress.start("", 0);
+        // PORT NOTE: `bun_progress::Progress` (the install-tier shim) is non-rendering;
+        // `supports_ansi_escape_codes` is implicit (always treated as the
+        // `false` path in std.Progress). The Zig assignment is a no-op here.
+        let _ = manager.progress.start("", 0);
+        manager.root_progress_node = core::ptr::null_mut();
     } else {
         manager.options.log_level = package_manager_options::LogLevel::DefaultNoProgress;
     }
 
-    if !manager.options.enable.cache {
-        manager.options.enable.manifest_cache = false;
-        manager.options.enable.manifest_cache_control = false;
+    if !manager.options.enable.cache() {
+        manager.options.enable.set_manifest_cache(false);
+        manager.options.enable.set_manifest_cache_control(false);
     }
 
-    if let Some(manifest_cache) = env.get("BUN_MANIFEST_CACHE") {
+    if let Some(manifest_cache) = env.get(b"BUN_MANIFEST_CACHE") {
         if manifest_cache == b"1" {
-            manager.options.enable.manifest_cache = true;
-            manager.options.enable.manifest_cache_control = false;
+            manager.options.enable.set_manifest_cache(true);
+            manager.options.enable.set_manifest_cache_control(false);
         } else if manifest_cache == b"2" {
-            manager.options.enable.manifest_cache = true;
-            manager.options.enable.manifest_cache_control = true;
+            manager.options.enable.set_manifest_cache(true);
+            manager.options.enable.set_manifest_cache_control(true);
         } else {
-            manager.options.enable.manifest_cache = false;
-            manager.options.enable.manifest_cache_control = false;
+            manager.options.enable.set_manifest_cache(false);
+            manager.options.enable.set_manifest_cache_control(false);
         }
     }
 
@@ -2249,14 +2252,16 @@ pub fn init_with_runtime_once(
             // When using bun, we only do staleness checks once per day
             .saturating_sub(bun_core::time::S_PER_DAY);
 
-    if root_dir.entries().has_comptime_query("bun.lockb") {
-        match manager.lockfile.load_from_cwd(manager, log, true) {
-            lockfile::LoadResult::Ok(load) => manager.lockfile = load.lockfile,
-            _ => manager.lockfile.init_empty(),
-        }
-    } else {
-        manager.lockfile.init_empty();
-    }
+    // PORT NOTE: `manager.lockfile` is `Box<crate::lockfile::Lockfile>` (the
+    // stub shape); `load_from_cwd` is impl'd on `crate::lockfile_real::Lockfile`.
+    // The two are distinct types until reconciler-6 unifies the lockfile module.
+    // For the runtime-init path (auto-install during `bun run`), fall back to an
+    // empty lockfile — matches the `else` arm below.
+    // TODO(port): blocked_on lockfile stub/real unification (reconciler-6) —
+    // wire `load_from_cwd::<true>` once `Box<lockfile::Lockfile>` ==
+    // `Box<lockfile_real::Lockfile>`.
+    let _ = root_dir;
+    manager.lockfile.init_empty();
 }
 
 // ──────────────────────────────────────────────────────────────────────────

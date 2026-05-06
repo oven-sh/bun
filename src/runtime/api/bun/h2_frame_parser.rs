@@ -5880,7 +5880,10 @@ impl H2FrameParser {
         self.detach();
         // PORT NOTE: JsRef::deinit() dropped — overwrite with empty(); Drop releases the Strong slot.
         self.strong_this = JsRef::empty();
-        for (_, item) in self.streams.iter() {
+        // PORT NOTE: borrowck reshape — take the map out first so `self` is free
+        // for `free_resources(self)` to borrow mut while we walk the entries.
+        let streams = core::mem::replace(&mut self.streams, BunHashMap::default());
+        for (_, item) in streams.iter() {
             let stream = *item;
             // SAFETY: stream is *mut Stream from self.streams; this is final teardown, freed exactly once via Box::from_raw
             unsafe {
@@ -5888,7 +5891,6 @@ impl H2FrameParser {
                 drop(Box::from_raw(stream));
             }
         }
-        let streams = core::mem::replace(&mut self.streams, BunHashMap::default());
         drop(streams);
 
         // defer: pool.put(this) / bun.destroy(this)

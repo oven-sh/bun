@@ -1211,20 +1211,20 @@ To create a project with the official Next.js scaffolding tool, run\n\
             let mut bunx_args: Vec<&ZStr> = Vec::with_capacity(
                 2 + args.len() - template_name_start + (dash_dash_bun as usize),
             );
-            bunx_args.push(ZStr::from_static(b"bunx\0"));
+            bunx_args.push(bun_core::zstr!("bunx"));
             if dash_dash_bun {
-                bunx_args.push(ZStr::from_static(b"--bun\0"));
+                bunx_args.push(bun_core::zstr!("--bun"));
             }
-            // PORT NOTE: `add_create_prefix` returns an owned buffer; leak it
-            // for the process lifetime (Zig allocs into `bun.default_allocator`
-            // and never frees — process exits via exec/exit).
+            // PORT NOTE: `add_create_prefix` returns an owned NUL-terminated
+            // buffer; leak it for the process lifetime (Zig allocs into
+            // `bun.default_allocator` and never frees — process exits via exec/exit).
             let prefixed = BunxCommand::add_create_prefix(template_name)?;
-            // SAFETY: `prefixed` is NUL-terminated by add_create_prefix; leaked
-            // for process lifetime so the &'static borrow is sound.
             let prefixed: &'static [u8] = Box::leak(prefixed.into_boxed_slice());
-            bunx_args.push(ZStr::from_static(prefixed));
+            // SAFETY: `add_create_prefix` guarantees `prefixed[len-1] == 0`;
+            // leaked for process lifetime so the &'static borrow is sound.
+            bunx_args.push(unsafe { ZStr::from_raw(prefixed.as_ptr(), prefixed.len() - 1) });
             for src in &args[template_name_start..] {
-                bunx_args.push(src);
+                bunx_args.push(*src);
             }
             return BunxCommand::exec(ctx, &bunx_args);
         }
@@ -1233,31 +1233,18 @@ To create a project with the official Next.js scaffolding tool, run\n\
     }
 
     fn bun_info(log: &mut logger::Log) -> Result<(), bun_core::Error> {
-        // Parse arguments manually since the standard flow doesn't work for
-        // standalone commands.
-        let cli = bun_install::PackageManager::CommandLineArguments::parse(
-            bun_install::PackageManager::Subcommand::Info,
-        )?;
         // SAFETY: single-threaded startup.
-        let ctx = unsafe { &mut *init(Tag::InfoCommand, log)? };
-        let (pm, _) = bun_install::PackageManager::init(
-            ctx,
-            cli,
-            bun_install::PackageManager::Subcommand::Info,
-        )?;
+        let _ctx = unsafe { &mut *init(Tag::InfoCommand, log)? };
 
         // Find non-flag arguments starting from argv[2] (after "bun info").
         let mut package_name: &[u8] = b"";
         let mut property_path: Option<&[u8]> = None;
-        let mut arg_idx: usize = 2;
         let mut found_package = false;
 
         let argv = bun::argv();
-        while arg_idx < argv.len() {
-            let arg = argv[arg_idx].as_bytes();
+        for arg in argv.iter().skip(2) {
             // Skip flags
             if !arg.is_empty() && arg[0] == b'-' {
-                arg_idx += 1;
                 continue;
             }
             if !found_package {
@@ -1267,10 +1254,15 @@ To create a project with the official Next.js scaffolding tool, run\n\
                 property_path = Some(arg);
                 break;
             }
-            arg_idx += 1;
         }
 
-        super::pm_view_command::view(pm, package_name, property_path, cli.json_output)
+        let _ = (package_name, property_path);
+        // PORT NOTE: `bun_install::PackageManager::CommandLineArguments::parse`,
+        // `PackageManager::init`, and `Subcommand::Info` are gated behind
+        // `package_manager_real` (`#![cfg(any())]` reconciler-6) in the
+        // bun_install crate. Wire `pm_view_command::view(pm, package_name,
+        // property_path, cli.json_output)` once un-gated.
+        todo!("blocked_on: bun_install::PackageManager::init / CommandLineArguments::parse / Subcommand::Info")
     }
 
     /// Per-tag clap param table. Runtime dispatch (was const-generic in Zig;

@@ -279,19 +279,22 @@ pub mod js_fns {
                         });
                     };
 
+                    // SAFETY: `get_current_and_valid_execution_sequence` returns a NonNull
+                    // into `execution.sequences`; deref at point-of-use only.
+                    let sequence_ref = unsafe { sequence.as_mut() };
                     let append_point: *mut ExecutionEntry = match tag {
                         GenericHookTag::AfterAll | GenericHookTag::AfterEach => 'blk: {
-                            let mut iter = sequence.active_entry;
+                            let mut iter = sequence_ref.active_entry;
                             while let Some(entry) = iter {
                                 // SAFETY: intrusive linked-list nodes are valid while sequence is live
-                                let entry_ref = unsafe { &mut *entry };
-                                if Some(entry) == sequence.test_entry {
-                                    break 'blk sequence.test_entry.unwrap();
+                                let entry_ref = unsafe { entry.as_ref() };
+                                if Some(entry) == sequence_ref.test_entry {
+                                    break 'blk sequence_ref.test_entry.unwrap().as_ptr();
                                 }
-                                iter = entry_ref.next;
+                                iter = entry_ref.next.map(|p| unsafe { core::ptr::NonNull::new_unchecked(p) });
                             }
-                            match sequence.active_entry {
-                                Some(e) => break 'blk e,
+                            match sequence_ref.active_entry {
+                                Some(e) => break 'blk e.as_ptr(),
                                 None => {
                                     return Err(global_this.throw(format_args!(
                                         "Cannot call {}() here. Call it inside describe() instead.",
@@ -302,7 +305,7 @@ pub mod js_fns {
                         }
                         GenericHookTag::OnTestFinished => 'blk: {
                             // Find the last entry in the sequence
-                            let Some(mut last_entry) = sequence.active_entry else {
+                            let Some(mut last_entry) = sequence_ref.active_entry.map(|p| p.as_ptr()) else {
                                 return Err(global_this.throw(format_args!(
                                     "Cannot call {}() here. Call it inside a test instead.",
                                     tag_name
@@ -651,7 +654,8 @@ impl<'a> BunTest<'a> {
 
         // Zig sets up allocation_scope/gpa/arena first then re-assigns *this.
         // In Rust we construct directly.
-        let allocation_scope = AllocationScope::init();
+        // PORT NOTE: `AllocationScope` is a unit-struct stub in `bun_alloc`.
+        let allocation_scope = AllocationScope;
 
         BunTest {
             bun_test_root,

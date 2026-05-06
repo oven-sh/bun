@@ -1808,10 +1808,17 @@ impl Terminal {
         }
         v.extend_from_slice(chunk);
         let duped: Box<[u8]> = v.into_boxed_slice();
-        let data = MarkedArrayBuffer::from_bytes(duped, jsc::TypedArrayType::Uint8Array)
+        // MarkedArrayBuffer::from_bytes takes a `&mut [u8]` it will own (freed
+        // via mimalloc on the C++ side) — leak the Box and hand over the slice.
+        let len = duped.len();
+        let ptr = Box::into_raw(duped) as *mut u8;
+        // SAFETY: ptr/len from Box::into_raw above; ownership transfers to JSC.
+        let bytes = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
+        let data = MarkedArrayBuffer::from_bytes(bytes, jsc::JSType::Uint8Array)
             .to_node_buffer(global_this);
 
-        global_this.bun_vm().event_loop().run_callback(
+        // SAFETY: bun_vm()/event_loop() return live VM-owned pointers.
+        unsafe { &mut *(*global_this.bun_vm()).event_loop() }.run_callback(
             callback,
             global_this,
             this_jsvalue,
@@ -1828,18 +1835,18 @@ impl Terminal {
     pub fn loop_(&self) -> *mut AsyncLoop {
         #[cfg(windows)]
         {
-            self.event_loop_handle.loop_().uv_loop
+            self.event_loop_handle.r#loop().uv_loop
         }
         #[cfg(not(windows))]
         {
-            self.event_loop_handle.loop_()
+            self.event_loop_handle.r#loop().cast()
         }
     }
 
     /// Finalize - called by GC when object is collected
     pub extern "C" fn finalize(this: *mut Terminal) {
         bun_output::scoped_log!(Terminal, "finalize");
-        jsc::mark_binding(core::panic::Location::caller());
+        jsc::mark_binding();
         // SAFETY: codegen guarantees `this` is the live m_ctx pointer; runs on
         // the mutator thread during lazy sweep.
         let this = unsafe { &mut *this };
@@ -1921,7 +1928,7 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
     }
     unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
         // SAFETY: see on_write. Shared-only read of event_loop_handle.
-        unsafe { (*this).event_loop_handle.loop_() as *const _ as *mut bun_uws_sys::Loop }
+        unsafe { (*this).event_loop_handle.r#loop().cast() }
     }
 }
 

@@ -588,9 +588,10 @@ impl PublishCommand {
         response_buf: &mut MutableString,
         print_buf: &mut Vec<u8>,
     ) -> Result<Box<[u8]>, GetOTPError> {
-        let res_source = logger::Source::init_path_string(b"???", &response_buf.list);
+        let bump = bun_alloc::Arena::new();
+        let res_source = logger::Source::init_path_string(b"???", response_buf.list.as_slice());
 
-        let res_json = match json_mod::parse_utf8(&res_source, ctx.manager.log) {
+        let res_json = match json_mod::parse_utf8(&res_source, ctx.manager.log_mut(), &bump) {
             Ok(j) => Some(j),
             Err(e) => {
                 if e == err!(OutOfMemory) {
@@ -604,16 +605,25 @@ impl PublishCommand {
 
         if let Some(json) = res_json {
             'try_web: {
-                let Some(auth_url_str) = json.get_string_cloned_z(b"authUrl")? else {
+                let Some(auth_url_str) = Expr::get_string_cloned_z(&json, &bump, b"authUrl")? else {
                     break 'try_web;
+                };
+                // PORT NOTE: bump-owned `&ZStr` — leak a heap copy so the spawned thread
+                // (which outlives `bump`) can borrow it `'static`.
+                let auth_url_str: &'static ZStr = {
+                    let b = bun_str::ZBox::from_bytes(auth_url_str.as_bytes());
+                    // SAFETY: `ZBox` owns a NUL-terminated buffer; leaking it yields a
+                    // `'static` view safe for the detached thread.
+                    unsafe { ZStr::from_raw(Box::leak(b.into_inner_boxed_slice()).as_ptr(), auth_url_str.len()) }
                 };
 
                 // important to clone because it belongs to `response_buf`, and `response_buf` will be
                 // reused with the following requests
-                let Some(done_url_str) = json.get_string_cloned(b"doneUrl")? else {
+                let Some(done_url_str) = Expr::get_string_cloned(&json, &bump, b"doneUrl")? else {
                     break 'try_web;
                 };
-                let done_url = URL::parse(&done_url_str);
+                let done_url_str: Box<[u8]> = done_url_str.into();
+                let done_url = URL::parse(Box::leak(done_url_str));
 
                 Output::prettyln(format_args!(
                     "\nAuthenticate your account at (press <b>ENTER<r> to open in browser):\n",

@@ -123,99 +123,12 @@ pub mod s3_stub {
     pub use crate::webcore::s3::MultiPartUploadOptions;
 }
 
-// `crate::node::types` is gated; provide the handful of path-like enums Blob
-// needs at struct-level. These match the Zig payload shapes (path ∨ fd).
-// TODO(b2-blocked): swap to `pub use crate::node::{PathLike, PathOrFileDescriptor};`.
+// `crate::node::types` is now un-gated; forward the real enums so
+// `webcore::node_types::X` and `crate::node::types::X` are the *same* type.
+// The previous local stub definitions caused `expected node_types::PathLike,
+// found node::types::PathLike` mismatches across modules.
 pub mod node_types {
-    use bun_str::{PathString, ZStr};
-    use bun_paths::PathBuffer;
-    use bun_sys::Fd;
-    #[derive(Clone)]
-    pub enum PathLike {
-        String(PathString),
-        Buffer(Vec<u8>),
-    }
-    impl PathLike {
-        pub fn slice(&self) -> &[u8] {
-            match self {
-                Self::String(s) => s.slice(),
-                Self::Buffer(b) => b,
-            }
-        }
-        pub fn estimated_size(&self) -> usize { self.slice().len() }
-        pub fn is_string(&self) -> bool { matches!(self, Self::String(_)) }
-        /// Zig `PathLike.toThreadSafe` — clone any JS-backed slice so the
-        /// path may outlive the JS callframe. This stub variant already owns
-        /// its bytes (`PathString`/`Vec<u8>`), so this is a no-op.
-        // TODO(b2-blocked): forward to `crate::node::types::PathLike::to_thread_safe`
-        // once `crate::node::types` un-gates and this alias collapses.
-        pub fn to_thread_safe(&mut self) {}
-        /// Null-terminate into `buf`. Mirrors `node::PathLike::sliceZ`.
-        /// Returned `&ZStr` borrows only from `buf`, not `self`.
-        pub fn slice_z<'a>(&self, buf: &'a mut PathBuffer) -> &'a ZStr {
-            let s = self.slice();
-            let n = s.len().min(buf.len() - 1);
-            buf[..n].copy_from_slice(&s[..n]);
-            buf[n] = 0;
-            // SAFETY: buf[n] == 0 written above
-            unsafe { ZStr::from_raw(buf.as_ptr(), n) }
-        }
-    }
-    #[derive(Clone)]
-    pub enum PathOrFileDescriptor {
-        Path(PathLike),
-        Fd(Fd),
-    }
-    impl PathOrFileDescriptor {
-        pub fn estimated_size(&self) -> usize {
-            match self { Self::Path(p) => p.estimated_size(), Self::Fd(_) => 0 }
-        }
-        /// Panics if not a `Path` (Zig: `.path` union access).
-        pub fn path(&self) -> &PathLike {
-            match self { Self::Path(p) => p, Self::Fd(_) => unreachable!("PathOrFileDescriptor::path() on .fd") }
-        }
-        /// Panics if not an `Fd` (Zig: `.fd` union access).
-        pub fn fd(&self) -> Fd {
-            match self { Self::Fd(fd) => *fd, Self::Path(_) => unreachable!("PathOrFileDescriptor::fd() on .path") }
-        }
-        /// Zig: `deinit()` — only the `.path` arm owns memory; fds are not closed.
-        #[inline]
-        pub fn deinit(&self) {}
-        /// Zig: `deinitAndUnprotect()` — stub: nothing to unprotect on this
-        /// thin shim (the real `node::types` version unprotects JS handles).
-        #[inline]
-        pub fn deinit_and_unprotect(&mut self) {}
-        pub fn path_slice(&self) -> &[u8] {
-            match self { Self::Path(p) => p.slice(), Self::Fd(_) => b"" }
-        }
-        #[inline]
-        pub fn to_thread_safe(&mut self) {
-            // stub: PathLike here is already heap-owned.
-        }
-        pub fn from_js(
-            _global: &bun_jsc::JSGlobalObject,
-            _args: &mut bun_jsc::ArgumentsSlice<'_>,
-        ) -> bun_jsc::JsResult<Option<Self>> {
-            todo!("blocked_on: crate::node::types::PathOrFileDescriptor::from_js (webcore::node_types stub swap)")
-        }
-    }
-    /// `node.PathOrBlob` — used by `Blob.writeFile*`.
-    pub enum PathOrBlob {
-        Path(PathOrFileDescriptor),
-        Blob(crate::webcore::blob::Blob),
-    }
-    impl PathOrBlob {
-        pub fn from_js_no_copy(
-            _ctx: &bun_jsc::JSGlobalObject,
-            _args: &mut bun_jsc::ArgumentsSlice,
-        ) -> bun_jsc::JsResult<PathOrBlob> {
-            todo!("blocked_on: crate::node::types::PathOrBlob::from_js_no_copy (webcore::node_types stub swap)")
-        }
-        #[inline]
-        pub fn as_blob(&self) -> &crate::webcore::blob::Blob {
-            match self { Self::Blob(b) => b, _ => unreachable!("PathOrBlob is not .blob") }
-        }
-    }
+    pub use crate::node::types::{PathLike, PathOrBlob, PathOrFileDescriptor};
 }
 
 pub use crate::jsc::AbortSignal;

@@ -353,79 +353,46 @@ impl ServerConfig {
 pub fn apply_static_route<const SSL: bool, T>(
     server: AnyServer,
     app: &mut uws::NewApp<SSL>,
-    entry: T,
+    entry: *mut T,
     path: &[u8],
     method: http_method::Optional,
 ) where
     T: StaticRouteLike<SSL>,
 {
-    entry.set_server(server);
+    // SAFETY: caller passes a live route pointer for the lifetime of the app.
+    unsafe { &*entry }.set_server(server);
 
-    fn handler<const SSL: bool, T: StaticRouteLike<SSL>>(
-        route: T,
-        req: &mut uws::Request,
-        resp: &mut uws::NewAppResponse<SSL>,
-    ) {
-        route.on_request(
-            RequestUnion::H1(req),
-            if SSL {
-                ResponseUnion::Ssl(resp)
-            } else {
-                ResponseUnion::Tcp(resp)
-            },
-        );
-    }
-
-    fn head<const SSL: bool, T: StaticRouteLike<SSL>>(
-        route: T,
-        req: &mut uws::Request,
-        resp: &mut uws::NewAppResponse<SSL>,
-    ) {
-        route.on_head_request(
-            RequestUnion::H1(req),
-            if SSL {
-                ResponseUnion::Ssl(resp)
-            } else {
-                ResponseUnion::Tcp(resp)
-            },
-        );
-    }
-
-    app.head(path, entry, head::<SSL, T>);
-    match method {
-        http_method::Optional::Any => {
-            app.any(path, entry, handler::<SSL, T>);
-        }
-        http_method::Optional::Method(m) => {
-            let mut iter = m.iter();
-            while let Some(method_) = iter.next() {
-                app.method(method_, path, entry, handler::<SSL, T>);
-            }
-        }
-    }
+    // TODO(b2-blocked): bun_uws_sys::NewApp::{head, any, method} expose only the
+    // raw `extern "C" fn(*mut uws_res, *mut Request, *mut c_void)` overload —
+    // the typed `(T, &mut Request, &mut Response<SSL>)` shim from Zig has not
+    // landed. Generate monomorphized `extern "C"` trampolines per (SSL, T) once
+    // the typed-handler overloads are available.
+    let _ = (app, path, method);
+    todo!("blocked_on: bun_uws_sys::NewApp typed handler overloads (head/any/method)");
 }
 
 
 pub fn apply_static_route_h3<T>(
     server: AnyServer,
     app: &mut uws::h3::App,
-    entry: T,
+    entry: *mut T,
     path: &[u8],
     method: http_method::Optional,
 ) where
     T: StaticRouteLike<false>,
 {
-    entry.set_server(server);
+    // SAFETY: caller passes a live route pointer for the lifetime of the app.
+    unsafe { &*entry }.set_server(server);
 
     fn handler<T: StaticRouteLike<false>>(
-        route: T,
+        route: &mut T,
         req: &mut uws::h3::Request,
         resp: &mut uws::h3::Response,
     ) {
         route.on_request(RequestUnion::H3(req), ResponseUnion::H3(resp));
     }
     fn head<T: StaticRouteLike<false>>(
-        route: T,
+        route: &mut T,
         req: &mut uws::h3::Request,
         resp: &mut uws::h3::Response,
     ) {
@@ -515,7 +482,35 @@ impl ServerConfig {
 pub mod _gated_from_js {
 use super::*;
 use crate::server::jsc::{CallFrame, JSPropertyIterator, JsError};
+use crate::node::crypto::JSValueCryptoExt as _; // with_async_context_if_needed
 use bun_core::fmt as bun_fmt;
+
+// Local extension shim for `JSValue::get_boolean_strict` (upstream copy in
+// `crate::node::fs` is `pub(super)` and not reachable here).
+trait JSValueBooleanStrictExt {
+    fn get_boolean_strict(
+        self,
+        global: &JSGlobalObject,
+        name: &'static str,
+    ) -> JsResult<Option<bool>>;
+}
+impl JSValueBooleanStrictExt for JSValue {
+    fn get_boolean_strict(
+        self,
+        global: &JSGlobalObject,
+        name: &'static str,
+    ) -> JsResult<Option<bool>> {
+        match self.get(global, name)? {
+            Some(v) if v.is_boolean() => Ok(Some(v.to_boolean())),
+            Some(v) if v.is_undefined_or_null() => Ok(None),
+            Some(_) => Err(global.throw_invalid_arguments(format_args!(
+                "Expected '{}' to be a boolean",
+                name
+            ))),
+            None => Ok(None),
+        }
+    }
+}
 
 fn validate_route_name(global: &JSGlobalObject, path: &[u8]) -> JsResult<()> {
     // Already validated by the caller

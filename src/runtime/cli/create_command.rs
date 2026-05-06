@@ -1868,6 +1868,17 @@ impl<'a> Analyzer<'a> {
     }
 }
 
+// Type-erased trampoline matching `DependenciesScanner.on_fetch`; see PORT NOTE at use site.
+fn analyzer_on_fetch_trampoline(
+    ctx: *mut (),
+    result: &mut bun_bundler::bundle_v2::__phase_a_draft::DependenciesScannerResult,
+) -> Result<(), bun_core::Error> {
+    // SAFETY: `ctx` is `&mut analyzer as *mut _ as *mut ()` set by the caller in
+    // `run_on_entry_point`; lives for the duration of the scan call.
+    let analyzer = unsafe { &mut *(ctx as *mut Analyzer<'_>) };
+    Analyzer::on_analyze(analyzer, result)
+}
+
 fn run_on_entry_point(
     ctx: &Command::Context,
     example_tag: ExampleTag,
@@ -2148,7 +2159,14 @@ impl Example {
             }
         }
 
-        let http_proxy: Option<URL> = env_loader.get_http_proxy_for(&api_url);
+        // SAFETY: `api_url` borrows from the `static mut GITHUB_REPOSITORY_URL_BUF` and
+        // `http_proxy` borrows from env_loader's leaked map — both are process-static.
+        // `init_sync` requires `'static` URLs; erase the local borrow lifetimes.
+        let api_url: URL<'static> =
+            unsafe { core::mem::transmute::<URL<'_>, URL<'static>>(api_url) };
+        let http_proxy: Option<URL<'static>> = env_loader
+            .get_http_proxy_for(&api_url)
+            .map(|u| unsafe { core::mem::transmute::<URL<'_>, URL<'static>>(u) });
         let mutable = Box::leak(Box::new(MutableString::init(8192)?));
 
         // ensure very stable memory address

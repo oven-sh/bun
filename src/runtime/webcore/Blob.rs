@@ -4021,40 +4021,40 @@ mod zigstring_blob_ext {
         ) -> JSValue;
         fn ZigString__toJSONObject(this: *const ZigString, global: *const JSGlobalObject) -> JSValue;
     }
-    pub(super) trait ZigStringBlobExt {
-        fn to_js(&self, global: &JSGlobalObject) -> JSValue;
-        fn to_external_value(&self, global: &JSGlobalObject) -> JSValue;
+    // PORT NOTE: `to_js` / `to_external_value` / `to_json_object` live on the
+    // crate-level `ZigStringBlobExt` (pulled in via `use super::*`). This local
+    // trait only adds `external` (the JSC finalizer-backed external string),
+    // which the crate-level trait doesn't carry yet, to avoid E0034 collisions.
+    pub(super) trait ZigStringExternalExt {
         fn external(
             &self,
             global: &JSGlobalObject,
             ctx: *mut c_void,
             cb: unsafe extern "C" fn(*mut c_void, *mut c_void, usize),
         ) -> JSValue;
-        fn to_json_object(&self, global: &JSGlobalObject) -> JSValue;
     }
-    impl ZigStringBlobExt for ZigString {
-        #[inline] fn to_js(&self, global: &JSGlobalObject) -> JSValue {
-            // SAFETY: `self` is `#[repr(C)] (ptr,len)`; `global` is live.
-            unsafe { ZigString__toValueGC(self, global) }
-        }
-        #[inline] fn to_external_value(&self, global: &JSGlobalObject) -> JSValue {
-            // SAFETY: see `to_js`.
-            unsafe { ZigString__toExternalValue(self, global) }
-        }
+    impl ZigStringExternalExt for ZigString {
         #[inline] fn external(
             &self,
             global: &JSGlobalObject,
             ctx: *mut c_void,
             cb: unsafe extern "C" fn(*mut c_void, *mut c_void, usize),
         ) -> JSValue {
-            // SAFETY: see `to_js`; ownership of `ctx` transfers to JSC's finalizer.
+            // SAFETY: `self` is `#[repr(C)] (ptr,len)`; `global` is live;
+            // ownership of `ctx` transfers to JSC's finalizer.
             unsafe { ZigString__external(self, global, ctx, cb) }
         }
-        #[inline] fn to_json_object(&self, global: &JSGlobalObject) -> JSValue {
-            // SAFETY: see `to_js`.
-            unsafe { ZigString__toJSONObject(self, global) }
-        }
     }
+    #[inline]
+    pub(super) fn zig_string_to_json_object(this: &ZigString, global: &JSGlobalObject) -> JSValue {
+        // SAFETY: see `external`.
+        unsafe { ZigString__toJSONObject(this, global) }
+    }
+    // Silence dead_code on the unused FFI re-decls (kept for symbol parity).
+    #[allow(dead_code)]
+    const _: (unsafe extern "C" fn(*const ZigString, *const JSGlobalObject) -> JSValue,
+              unsafe extern "C" fn(*const ZigString, *const JSGlobalObject) -> JSValue) =
+        (ZigString__toValueGC, ZigString__toExternalValue);
     #[inline]
     pub(super) fn zig_string_to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObject) -> JSValue {
         // SAFETY: `ptr[..len]` is a leaked default-allocator `Box<[u16]>`;

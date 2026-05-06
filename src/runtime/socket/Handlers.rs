@@ -9,7 +9,7 @@ use bun_sys::Fd;
 use bun_uws as uws;
 
 use super::Listener;
-use super::ListenerType;
+use super::listener::ListenerType;
 use super::SSLConfig;
 use super::SocketMode;
 

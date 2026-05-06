@@ -507,7 +507,7 @@ fn cpus_impl_darwin(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
     let multiplier: u64 = 1000 / u64::try_from(ticks).unwrap();
 
     // Set up each CPU value in the return
-    let values = JSValue::create_empty_array(global_this, u32::try_from(num_cpus).unwrap())?;
+    let values = JSValue::create_empty_array(global_this, num_cpus as usize)?;
     let mut cpu_index: u32 = 0;
     // SAFETY: info points to num_cpus entries per host_processor_info contract
     let info_slice = unsafe { core::slice::from_raw_parts(info, num_cpus as usize) };

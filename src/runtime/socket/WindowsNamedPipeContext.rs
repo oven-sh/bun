@@ -2,7 +2,6 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr;
 use core::ptr::NonNull;
-use std::sync::Arc;
 
 use bun_core::Output;
 use bun_jsc::{self as jsc, JSGlobalObject, SysErrorJsc};

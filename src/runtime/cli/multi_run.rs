@@ -149,17 +149,18 @@ impl<'a> ProcessHandle<'a> {
         // PERF(port): was arena bulk-free — envp built into a temporary arena freed at scope
         // end. Phase A uses heap; profile in Phase B.
         let envp;
+        let env_ptr = state.env;
         let spawned: SpawnProcessResult = {
             // SAFETY: state.env points at the process-lifetime DotEnv loader.
-            let env = unsafe { &mut *state.env };
+            let env = unsafe { &mut *env_ptr };
             let original_path: Box<[u8]> = env.map.get(b"PATH").map(Box::from).unwrap_or_default();
             let _ = env.map.put(b"PATH", &self.config.path);
-            let _restore = scopeguard::guard(original_path, |original_path| {
-                // SAFETY: backref; see above
-                let state = unsafe { &mut *(self.state as *mut State) };
-                let _ = unsafe { (*state.env).map.put(b"PATH", &original_path) };
+            let _restore = scopeguard::guard(original_path, move |original_path| {
+                // SAFETY: env_ptr is the process-lifetime loader; outlives this scope.
+                let _ = unsafe { (*env_ptr).map.put(b"PATH", &original_path) };
             });
-            envp = env.map.create_null_delimited_env_map()?;
+            // SAFETY: same loader; the `_restore` guard's closure has not fired yet.
+            envp = unsafe { (*env_ptr).map.create_null_delimited_env_map()? };
             spawn::spawn_process(
                 &self.options,
                 argv.as_ptr(),

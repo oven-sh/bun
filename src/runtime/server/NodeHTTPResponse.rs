@@ -1396,7 +1396,7 @@ impl NodeHTTPResponse {
 
         let strict_content_length: Option<u64> = 'brk: {
             if arguments.len() > 3 && arguments[3].is_number() {
-                break 'brk Some(arguments[3].to_i64().max(0) as u64);
+                break 'brk Some(arguments[3].to_int64().max(0) as u64);
             }
             break 'brk None;
         };

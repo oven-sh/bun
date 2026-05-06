@@ -631,6 +631,7 @@ pub fn basename_windows_t<'a, T: PathChar>(path: &'a [T], suffix: Option<&[T]>) 
 
 mod _basename_js {
 use super::*;
+#[allow(unused_imports)]
 use crate::jsc::bun_string_jsc as BunString;
 use crate::node::validators::validate_string;
 pub fn basename_posix_js_t<T: PathChar>(

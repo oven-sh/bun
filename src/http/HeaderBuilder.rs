@@ -11,10 +11,10 @@ pub struct HeaderBuilder {
 }
 
 impl HeaderBuilder {
-    pub fn count(&mut self, name: &[u8], value: &[u8]) {
+    pub fn count(&mut self, name: impl AsRef<[u8]>, value: impl AsRef<[u8]>) {
         self.header_count += 1;
-        self.content.count(name);
-        self.content.count(value);
+        self.content.count(name.as_ref());
+        self.content.count(value.as_ref());
     }
 
     pub fn allocate(&mut self) -> Result<(), AllocError> {
@@ -24,7 +24,9 @@ impl HeaderBuilder {
         Ok(())
     }
 
-    pub fn append(&mut self, name: &[u8], value: &[u8]) {
+    pub fn append(&mut self, name: impl AsRef<[u8]>, value: impl AsRef<[u8]>) {
+        let name = name.as_ref();
+        let value = value.as_ref();
         let name_ptr = api::StringPointer {
             offset: self.content.len as u32,
             length: name.len() as u32,
@@ -41,7 +43,8 @@ impl HeaderBuilder {
         self.entries.append_assume_capacity(Entry { name: name_ptr, value: value_ptr });
     }
 
-    pub fn append_fmt(&mut self, name: &[u8], args: core::fmt::Arguments<'_>) {
+    pub fn append_fmt(&mut self, name: impl AsRef<[u8]>, args: core::fmt::Arguments<'_>) {
+        let name = name.as_ref();
         let name_ptr = api::StringPointer {
             offset: self.content.len as u32,
             length: name.len() as u32,

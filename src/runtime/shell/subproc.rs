@@ -189,22 +189,24 @@ pub type WatchFd = Fd;
 
 // PORT NOTE: ProcessExitOwner trait does not exist; the vtable pattern uses
 // a free fn registered in ProcessExitVTable. This adapter is referenced by
-// `EXIT_VTABLE` in ShellSubprocess::set_exit_handler below.
-impl ShellSubprocess {
-    unsafe fn on_process_exit_dyn(
-        this: *mut Self,
-        _process: *mut Process,
-        _status: bun_process::Status,
-        _rusage: &Rusage,
-    ) {
-        // SAFETY: `this` was registered via `set_exit_handler(self_ptr)` and the
-        // owning Cmd outlives the Process exit callback.
-        let _this = unsafe { &mut *this };
-        // PORT NOTE: ShellSubprocess::on_process_exit currently takes
-        // `bun_spawn::Status`; until the two `Status` enums are unified the thunk
-        // cannot forward losslessly.
-        todo!("blocked_on: bun_spawn::Status <-> bun_process::Status unification");
-    }
+// `SHELL_EXIT_VTABLE` and wired via `Process::set_exit_handler` below.
+static SHELL_EXIT_VTABLE: bun_process::ProcessExitVTable = bun_process::ProcessExitVTable {
+    on_process_exit: shell_on_process_exit_thunk,
+};
+
+unsafe fn shell_on_process_exit_thunk(
+    owner: *mut (),
+    _process: *mut Process,
+    _status: bun_process::Status,
+    _rusage: *const Rusage,
+) {
+    // SAFETY: `owner` was registered as `*mut ShellSubprocess` via
+    // `set_exit_handler` and the owning Cmd outlives the Process exit callback.
+    let _this = unsafe { &mut *(owner as *mut ShellSubprocess) };
+    // PORT NOTE: ShellSubprocess::on_process_exit currently takes
+    // `bun_spawn::Status`; until the two `Status` enums are unified the thunk
+    // cannot forward losslessly.
+    todo!("blocked_on: bun_spawn::Status <-> bun_process::Status unification");
 }
 
 impl ShellSubprocess {

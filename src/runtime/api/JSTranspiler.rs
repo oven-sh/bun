@@ -613,14 +613,16 @@ impl Config {
                             )));
                         }
 
-                        // PERF(port): was getOrPutAssumeCapacity — profile in Phase B
-                        let entry = replacements
-                            .get_or_put(&key)
-                            .map_err(|_| bun_jsc::JsError::OutOfMemory)?;
-
+                        // PERF(port): was getOrPutAssumeCapacity — profile in Phase B.
+                        // PORT NOTE: reshaped — `StringArrayHashMap::get_or_put` is gated on
+                        // `V: Default` upstream and `ReplaceableExport` has no Default. Compute
+                        // the value first, then `put` (which upserts without needing a default
+                        // slot). The Zig getOrPut left the slot uninitialized on the error path
+                        // anyway, so this is strictly safer.
                         if let Some(expr) = export_replacement_value(value, global)? {
-                            *entry.value_ptr =
-                                Runtime::ReplaceableExport::Replace(expr);
+                            replacements
+                                .put(&key, Runtime::ReplaceableExport::Replace(expr))
+                                .map_err(|_| bun_jsc::JsError::OutOfMemory)?;
                             continue;
                         }
 
@@ -641,11 +643,15 @@ impl Config {
                                     )));
                                 }
 
-                                *entry.value_ptr =
-                                    Runtime::ReplaceableExport::Inject {
-                                        name: replacement_name.into(),
-                                        value: to_replace,
-                                    };
+                                replacements
+                                    .put(
+                                        &key,
+                                        Runtime::ReplaceableExport::Inject {
+                                            name: replacement_name.into(),
+                                            value: to_replace,
+                                        },
+                                    )
+                                    .map_err(|_| bun_jsc::JsError::OutOfMemory)?;
                                 continue;
                             }
                         }

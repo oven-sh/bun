@@ -312,6 +312,10 @@ impl Editor {
                 cursor.write_all(file).map_err(|_| bun_core::err!("WriteFailed"))?;
                 let file_path_len = usize::try_from(cursor.position()).unwrap();
 
+                // PORT NOTE: borrowck — `cursor` holds `&mut spawned.file_path_buf`;
+                // hoist all writes/position reads above the slice reads so NLL can
+                // end the cursor borrow before we re-borrow `file_path_buf` immutably.
+                let mut end_pos = file_path_len;
                 if let Some(line_) = line {
                     if !line_.is_empty() {
                         push_arg!(b"--line");
@@ -326,16 +330,17 @@ impl Editor {
                             }
                         }
 
-                        let pos = usize::try_from(cursor.position()).unwrap();
-                        let line_column = &spawned.file_path_buf[file_path_len..pos];
-                        if !line_column.is_empty() {
-                            push_arg!(line_column);
-                        }
+                        end_pos = usize::try_from(cursor.position()).unwrap();
                     }
                 }
+                // cursor's borrow of spawned.file_path_buf ends here (NLL).
 
-                let pos = usize::try_from(cursor.position()).unwrap();
-                if pos > 0 {
+                if end_pos > file_path_len {
+                    let line_column = &spawned.file_path_buf[file_path_len..end_pos];
+                    push_arg!(line_column);
+                }
+
+                if end_pos > 0 {
                     let file_path = &spawned.file_path_buf[0..file_path_len];
                     push_arg!(file_path);
                 }

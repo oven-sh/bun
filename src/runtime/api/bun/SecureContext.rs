@@ -49,6 +49,21 @@ impl BunSocketContextOptionsExt for uws::SocketContext::BunSocketContextOptions 
     }
 }
 
+/// Local free-fn shim: `RareData::ssl_ctx_cache()` returns the private
+/// `bun_jsc::rare_data::high_tier::SSLContextCache` opaque stub (cycle-break
+/// placeholder), so we cannot name it to write an extension trait. The real
+/// implementation is `crate::api::SSLContextCache::get_or_create_digest`; this
+/// keeps the call-site shape from the .zig spec compiling until the rare-data
+/// type-carrier wires the concrete cache through.
+#[inline(never)]
+fn ssl_ctx_cache_get_or_create_digest(
+    _opts: &uws::SocketContext::BunSocketContextOptions,
+    _d: [u8; 32],
+    _err: &mut bun_uws_sys::create_bun_socket_error_t,
+) -> Option<*mut boringssl::SSL_CTX> {
+    todo!("blocked_on: bun_jsc::rare_data::SSLContextCache::get_or_create_digest")
+}
+
 // Codegen (`.classes.ts`) wires `to_js`/`from_js`/`from_js_direct` via this derive.
 #[bun_jsc::JsClass]
 pub struct SecureContext {

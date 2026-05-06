@@ -2272,6 +2272,7 @@ impl<'a> BundleOptions<'a> {
         log: &'a mut logger::Log,
         transform: api::TransformOptions,
     ) -> Result<BundleOptions<'a>, bun_core::Error> {
+        #[cfg(any())]
         use core::sync::atomic::Ordering;
 
         let target = Target::from(transform.target);

@@ -781,35 +781,34 @@ impl<'a> Transpiler<'a> {
         // PERF(port): one extra alloc vs Zig's borrowed-slice — profile Phase B.
         let symbols = js_ast::ast::symbol::Map::init_with_one_list(core::mem::take(&mut ast.symbols));
 
-        // TODO(b2-blocked): three Options fields can't cross the type seam yet
+        // TODO(b2-blocked): two Options fields can't cross the type seam yet
         // (only this crate is editable); set to `Default` and forward once the
         // lower-tier types unify:
         //   * `css_import_behavior` — `self.options.css_import_behavior()`
         //     returns `bun_options_types::schema::api::CssInJsBehavior` but
         //     `js_printer::Options` still uses its local stand-in
         //     `js_printer::CssInJsBehavior` (variants don't even match —
-        //     `AutoOnimportcss` vs `AutoOnlyCssFiles`).
+        //     `AutoOnimportcss` vs `AutoOnlyCssFiles`). Spec: zig:595/621/647.
         //   * `runtime_imports` — `Ast.runtime_imports` is the opaque
         //     `ast::runtime_stub::Imports` unit struct; `Options.runtime_imports`
         //     wants `bun_js_parser::runtime::Imports` (parser.rs stub).
-        //   * `target` — `BundleOptions.target` is `crate::options::Target`
-        //     (the bundler-local enum at options.rs:490); `Options.target`
-        //     wants `bun_options_types::BundleEnums::Target`. Same shape,
-        //     distinct nominal type — needs a `From` in options_types.
-        // None of these affect the `EsmAscii`/bun runtime path's printer
-        // output for the un-gated callers (RuntimeTranspilerStore/AsyncModule
-        // never bundle CSS-in-JS and don't use runtime-imports rewriting).
-        let _ = (runtime_transpiler_cache, module_info);
+        //     Spec: zig:593/619/645.
+        // `target` is now forwarded via `to_bundle_enums_target` below — it
+        // *does* affect the EsmAscii/bun-runtime path (js_printer/lib.rs:6872
+        // gates the `var {require}=import.meta;` hoist on `target == Bun`;
+        // regression of oven-sh/bun#15738 if left at the `Browser` default).
+        //
         // TODO(b2-blocked): `runtime_transpiler_cache` — `Options` wants
         // `Option<RuntimeTranspilerCacheRef>` (erased `(owner, &'static
         // vtable)`), but `crate::cache::RuntimeTranspilerCache` exposes no
         // `put` yet to build the vtable from. Forward once `cache.rs` grows
-        // the `RUNTIME_TRANSPILER_CACHE_VTABLE` static.
+        // the `RUNTIME_TRANSPILER_CACHE_VTABLE` static. Spec: zig:601/627/662.
         // TODO(b2-blocked): `module_info` — `js_printer` defines its own
         // inline `analyze_transpiled_module::ModuleInfo` (lib.rs:109); the
         // bundler's `crate::analyze_transpiled_module::ModuleInfo` is a
         // sibling, not the same type. Unify in Phase B (move js_printer's
         // inline mod to a `pub use bun_bundler::analyze_transpiled_module`).
+        // Spec: zig:663 — EsmAscii arm only.
 
         let require_ref = ast.require_ref;
         let import_meta_ref = ast.import_meta_ref;
@@ -868,10 +867,12 @@ impl<'a> Transpiler<'a> {
                 if self.options.target.is_bun() {
                     self.print_ast_esm_ascii::<W, ENABLE_SOURCE_MAP, true>(
                         writer, ast, symbols, source, source_map_context, exports_kind,
+                        runtime_transpiler_cache, module_info,
                     )
                 } else {
                     self.print_ast_esm_ascii::<W, ENABLE_SOURCE_MAP, false>(
                         writer, ast, symbols, source, source_map_context, exports_kind,
+                        runtime_transpiler_cache, module_info,
                     )
                 }
             }
@@ -884,6 +885,7 @@ impl<'a> Transpiler<'a> {
     // PORT NOTE: hoisted from `inline else => |is_bun|` arm of
     // print_with_source_map_maybe to express the comptime bool dispatch as a
     // const generic.
+    #[allow(clippy::too_many_arguments)]
     fn print_ast_esm_ascii<W, const ENABLE_SOURCE_MAP: bool, const IS_BUN: bool>(
         &mut self,
         writer: W,
@@ -892,10 +894,16 @@ impl<'a> Transpiler<'a> {
         source: &logger::Source,
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
         exports_kind: js_ast::ExportsKind,
+        runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
+        module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
     ) -> Result<usize, bun_core::Error>
     where
         W: js_printer::WriterTrait,
     {
+        // TODO(b2-blocked): set on `Options` once the type seam unifies — see
+        // the block comment in `print_with_source_map_maybe`. Spec
+        // transpiler.zig:662-663 sets both on this (EsmAscii) arm only.
+        let _ = (runtime_transpiler_cache, module_info);
         let opts = js_printer::Options {
             bundling: false,
             require_ref: Some(ast.require_ref),
@@ -918,6 +926,11 @@ impl<'a> Transpiler<'a> {
             print_dce_annotations: self.options.emit_dce_annotations,
             hmr_ref: ast.wrapper_ref,
             mangled_props: None,
+            // Spec transpiler.zig:664. The printer reads `opts.target` at
+            // js_printer/lib.rs:6872 to gate the `var {require}=import.meta;`
+            // hoist on `Target::Bun` — defaulting to `Browser` here regressed
+            // oven-sh/bun#15738.
+            target: to_bundle_enums_target(self.options.target),
             ..Default::default()
         };
         js_printer::print_ast::<W, IS_BUN, ENABLE_SOURCE_MAP>(writer, ast, symbols, source, opts)

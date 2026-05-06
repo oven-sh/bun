@@ -7790,7 +7790,7 @@ impl LowerUsingDeclarationsContext {
                     let value_loc = decl_value.loc;
                     p.record_usage(self.stack_ref);
                     let args = p.allocator.alloc_slice_copy(&[
-                        p.new_expr(E::Identifier { r#ref: self.stack_ref, ..Default::default() }, stmt_loc),
+                        p.new_expr(E::Identifier { ref_: self.stack_ref, ..Default::default() }, stmt_loc),
                         *decl_value,
                         // 1. always pass this param for hopefully better jit performance
                         // 2. pass 1 or 0 to be shorter than `true` or `false`
@@ -7898,14 +7898,14 @@ impl LowerUsingDeclarationsContext {
         let err_ref = p.generate_temp_ref(Some(b"_err"));
         let has_err_ref = p.generate_temp_ref(Some(b"_hasErr"));
 
-        let mut scope = p.current_scope;
+        let mut scope: *mut Scope = p.current_scope;
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
         while !unsafe { &*scope }.kind_stops_hoisting() {
             // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-            scope = unsafe { &*scope }.parent.unwrap();
+            scope = unsafe { &*scope }.parent.unwrap().as_ptr();
         }
 
-        let is_top_level = scope == p.module_scope;
+        let is_top_level = core::ptr::eq(scope, p.module_scope);
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
         unsafe { &mut *scope }
             .generated
@@ -7928,9 +7928,9 @@ impl LowerUsingDeclarationsContext {
             p.record_usage(err_ref);
             p.record_usage(has_err_ref);
             let args = p.allocator.alloc_slice_copy(&[
-                p.new_expr(E::Identifier { r#ref: self.stack_ref, ..Default::default() }, loc),
-                p.new_expr(E::Identifier { r#ref: err_ref, ..Default::default() }, loc),
-                p.new_expr(E::Identifier { r#ref: has_err_ref, ..Default::default() }, loc),
+                p.new_expr(E::Identifier { ref_: self.stack_ref, ..Default::default() }, loc),
+                p.new_expr(E::Identifier { ref_: err_ref, ..Default::default() }, loc),
+                p.new_expr(E::Identifier { ref_: has_err_ref, ..Default::default() }, loc),
             ]);
             // SAFETY: bump-arena slice valid for 'a; Borrowed origin → no-op Drop.
             p.call_runtime(loc, b"__callDispose", unsafe { ExprNodeList::from_bump_slice(args) })
@@ -7942,7 +7942,7 @@ impl LowerUsingDeclarationsContext {
             unsafe { &mut *scope }.generated.append(promise_ref).expect("oom");
             p.declared_symbols.append_assume_capacity(DeclaredSymbol { is_top_level, ref_: promise_ref });
 
-            let promise_ref_expr = p.new_expr(E::Identifier { r#ref: promise_ref, ..Default::default() }, loc);
+            let promise_ref_expr = p.new_expr(E::Identifier { ref_: promise_ref, ..Default::default() }, loc);
 
             let await_expr = p.new_expr(E::Await { value: promise_ref_expr }, loc);
             p.record_usage(promise_ref);
@@ -7998,7 +7998,7 @@ impl LowerUsingDeclarationsContext {
         let catch_binding = p.b(B::Identifier { r#ref: caught_ref }, loc);
         let catch_body: *mut [Stmt] = {
             let err_binding = p.b(B::Identifier { r#ref: err_ref }, loc);
-            let err_value = p.new_expr(E::Identifier { r#ref: caught_ref, ..Default::default() }, loc);
+            let err_value = p.new_expr(E::Identifier { ref_: caught_ref, ..Default::default() }, loc);
             let has_err_binding = p.b(B::Identifier { r#ref: has_err_ref }, loc);
             let has_err_value = p.new_expr(E::Number { value: 1.0 }, loc);
             let mut decls = G::DeclList::default();

@@ -24,6 +24,7 @@
 //! new handler appended. `detach()` removes a handler; the last one out tears down
 //! the OS watch.
 
+use core::cell::UnsafeCell;
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicBool, Ordering};
 

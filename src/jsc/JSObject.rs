@@ -179,10 +179,12 @@ impl JSObject {
         length: usize,
     ) -> JSValue {
         // SAFETY: `initializer_call::<Ctx>` casts `ctx` back to `*mut Ctx`, which
-        // is exactly what we pass here.
+        // is exactly what we pass here. `global.as_ptr()` is the centralized
+        // opaque-handle → `*mut` conversion (JSC mutates VM/heap state through
+        // it; interior mutability is the intended contract per JSObject.zig).
         unsafe {
             JSC__JSObject__create(
-                global as *const _ as *mut _,
+                global.as_ptr(),
                 length,
                 creator as *mut Ctx as *mut c_void,
                 initializer_call::<Ctx>,
@@ -196,8 +198,10 @@ impl JSObject {
         // with an exception:
         // https://github.com/oven-sh/WebKit/blob/397dafc9721b8f8046f9448abb6dbc14efe096d3/Source/JavaScriptCore/runtime/JSObjectInlines.h#L112
         // TODO(b2-blocked): TopExceptionScope::init is in-place (Pin); skipped in stub path.
-        // SAFETY: thin FFI shim into JSC.
-        let value = unsafe { JSC__JSObject__getIndex(this, global_this as *const _ as *mut _, i) };
+        // SAFETY: thin FFI shim into JSC. `global_this.as_ptr()` yields the raw
+        // opaque handle; C++ may set a pending exception (interior mut) but
+        // Rust never materializes a `&`-view of that state.
+        let value = unsafe { JSC__JSObject__getIndex(this, global_this.as_ptr(), i) };
         if global_this.has_exception() {
             return Err(JsError::Thrown);
         }
@@ -213,11 +217,13 @@ impl JSObject {
         // Mirror that here so callers don't observe a silent success.
         // TODO(port): replace with the host-call wrapper once `fromJSHostCall`
         // is ported; raw C++ return type still unverified (see extern decl above).
-        // SAFETY: pointers are valid for the duration of the call; C++ does not retain them.
+        // SAFETY: pointers are valid for the duration of the call; C++ does not
+        // retain them. `global.as_ptr()` is the centralized opaque-handle FFI
+        // conversion (interior mutability — C++ may throw through it).
         unsafe {
             JSC__JSObject__putRecord(
                 self,
-                global as *const _ as *mut _,
+                global.as_ptr(),
                 key,
                 values.as_mut_ptr(),
                 values.len(),
@@ -231,8 +237,10 @@ impl JSObject {
 
     /// This will not call getters or be observable from JavaScript.
     pub fn get_code_property_vm_inquiry(&mut self, global: &JSGlobalObject) -> Option<JSValue> {
-        // SAFETY: thin FFI shim into JSC; does not throw.
-        let v = unsafe { Bun__JSObject__getCodePropertyVMInquiry(global as *const _ as *mut _, self) };
+        // SAFETY: thin FFI shim into JSC; does not throw. `global.as_ptr()`
+        // yields the raw opaque handle (VMInquiry is read-only on the JS side,
+        // but the C++ signature is non-const; centralized via `as_ptr()`).
+        let v = unsafe { Bun__JSObject__getCodePropertyVMInquiry(global.as_ptr(), self) };
         if v.is_empty() {
             return None;
         }

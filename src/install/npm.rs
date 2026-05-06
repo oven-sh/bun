@@ -1399,7 +1399,7 @@ pub mod package_manifest {
                 // https://manpages.debian.org/testing/manpages-dev/openat.2.en.html#O_TMPFILE
                 #[cfg(target_os = "linux")]
                 {
-                    match File::openat(cache_dir, b".", flags | bun_sys::O::TMPFILE, mask) {
+                    match File::openat(cache_dir, bun_core::zstr!("."), flags | bun_sys::O::TMPFILE, mask) {
                         bun_sys::Result::Err(_) => {
                             static DID_WARN: core::sync::atomic::AtomicBool =
                                 core::sync::atomic::AtomicBool::new(false);
@@ -1409,9 +1409,10 @@ pub mod package_manifest {
                                 // previously set this to true.
                                 if !DID_WARN.swap(true, core::sync::atomic::Ordering::Relaxed) {
                                     // This is not an error. Nor is it really a warning.
-                                    Output::note(format_args!(
-                                        "Linux filesystem or kernel lacks O_TMPFILE support. Using a fallback instead."
-                                    ));
+                                    Output::note(
+                                        "Linux filesystem or kernel lacks O_TMPFILE support. Using a fallback instead.",
+                                        (),
+                                    );
                                     Output::flush();
                                 }
                             }
@@ -1431,14 +1432,13 @@ pub mod package_manifest {
                     path_to_use_for_opening_file,
                     flags | bun_sys::O::CREAT | bun_sys::O::TRUNC,
                     mask,
-                )
-                .unwrap()?
+                )?
             };
 
             {
                 // errdefer file.close() — handled by scopeguard
-                let guard = scopeguard::guard((), |_| file.close());
-                file.write_all(&buffer).unwrap()?;
+                let guard = scopeguard::guard((), |_| { let _ = file.close(); });
+                file.write_all(&buffer)?;
                 scopeguard::ScopeGuard::into_inner(guard);
             }
 

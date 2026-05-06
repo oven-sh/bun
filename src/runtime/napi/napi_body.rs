@@ -186,34 +186,42 @@ impl From<EscapeError> for bun_core::Error {
 }
 
 impl NapiHandleScope {
+    /// Recover the `*mut NapiHandleScope` FFI pointer from `&self`. See
+    /// [`NapiEnv::as_mut_ptr`] for the soundness argument.
+    #[inline(always)]
+    fn as_mut_ptr(&self) -> *mut NapiHandleScope {
+        ptr::from_ref(self).cast_mut()
+    }
+
     /// Create a new handle scope in the given environment, or return null if creating one now is
     /// unsafe (i.e. inside a finalizer)
     pub fn open(env: &NapiEnv, escapable: bool) -> *mut NapiHandleScope {
-        // SAFETY: env is valid; may return null.
-        unsafe { NapiHandleScope__open(env as *const _ as *mut _, escapable) }
+        // SAFETY: env is valid; C++ mutates env's scope stack (interior mutability).
+        unsafe { NapiHandleScope__open(env.as_mut_ptr(), escapable) }
     }
 
     /// Closes the given handle scope, releasing all values inside it, if it is safe to do so.
     /// Asserts that self is the current handle scope in env.
     pub fn close(self_: *mut NapiHandleScope, env: &NapiEnv) {
         // SAFETY: NapiHandleScope__close handles null `current`.
-        unsafe { NapiHandleScope__close(env as *const _ as *mut _, self_) }
+        unsafe { NapiHandleScope__close(env.as_mut_ptr(), self_) }
     }
 
     /// Place a value in the handle scope. Must be done while returning any JS value into NAPI
     /// callbacks, as the value must remain alive as long as the handle scope is active, even if the
     /// native module doesn't keep it visible on the stack.
     pub fn append(env: &NapiEnv, value: JSValue) {
-        // SAFETY: env is valid.
-        unsafe { NapiHandleScope__append(env as *const _ as *mut _, value.encoded()) }
+        // SAFETY: env is valid; C++ appends to the current scope (interior mutability).
+        unsafe { NapiHandleScope__append(env.as_mut_ptr(), value.encoded()) }
     }
 
     /// Move a value from the current handle scope (which must be escapable) to the reserved escape
     /// slot in the parent handle scope, allowing that value to outlive the current handle scope.
     /// Returns an error if escape() has already been called on this handle scope.
     pub fn escape(&self, value: JSValue) -> Result<(), EscapeError> {
-        // SAFETY: self is a valid handle scope.
-        if !unsafe { NapiHandleScope__escape(self as *const _ as *mut _, value.encoded()) } {
+        // SAFETY: self is a valid handle scope; C++ writes the escape slot
+        // (interior mutability via `as_mut_ptr`).
+        if !unsafe { NapiHandleScope__escape(self.as_mut_ptr(), value.encoded()) } {
             return Err(EscapeError::EscapeCalledTwice);
         }
         Ok(())
@@ -887,8 +895,10 @@ pub extern "C" fn napi_async_init(
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_async_init");
     let env = get_env!(env_);
-    // SAFETY: async_ctx is a valid out-pointer per N-API contract.
-    unsafe { *async_ctx = env as *const _ as *mut c_void };
+    // SAFETY: async_ctx is a valid out-pointer per N-API contract. We store the
+    // original `*mut NapiEnv` (preserving write provenance) rather than deriving
+    // it from the `&NapiEnv` borrow.
+    unsafe { *async_ctx = env_.cast::<c_void>() };
     env.ok()
 }
 

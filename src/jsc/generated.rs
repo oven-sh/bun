@@ -225,14 +225,12 @@ impl SocketConfigHandlers {
         // scope is a no-op outside `ci_assert` builds. The `success` bool is
         // the actual error signal (C++ left an exception pending iff !success).
         let mut ext = MaybeUninit::<ExternSocketConfigHandlers>::uninit();
-        // SAFETY: `global` is live; `ext` is a valid out-param; C++ fully
-        // initializes `*result` iff it returns true.
+        // SAFETY: `global` is an opaque ZST FFI handle (see
+        // `JSGlobalObject::as_ptr`) — the `*mut` is passed across FFI only,
+        // never written through on the Rust side; `ext` is a valid out-param;
+        // C++ fully initializes `*result` iff it returns true.
         let success = unsafe {
-            bindgenConvertJSToSocketConfigHandlers(
-                global as *const _ as *mut _,
-                value,
-                ext.as_mut_ptr(),
-            )
+            bindgenConvertJSToSocketConfigHandlers(global.as_ptr(), value, ext.as_mut_ptr())
         };
         if success {
             // SAFETY: success ⇒ C++ initialized `ext`.

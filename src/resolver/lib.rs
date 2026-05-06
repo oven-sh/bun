@@ -3986,11 +3986,29 @@ impl AnyResolveWatcher {
 // type-generator returning a struct with `.init(ctx) -> AnyResolveWatcher` and a
 // monomorphized `watch` shim. Per PORTING.md (`fn Foo(comptime T) type` → `struct Foo<T>`).
 //
-// TODO(b2-blocked): const fn-pointer generics (`adt_const_params` for fn ptrs)
-// are forbidden on stable. Reshape to a ZST `trait OnWatch` so the watch shim
-// monomorphizes; until then callers construct `AnyResolveWatcher` directly.
+// PORT NOTE: const fn-pointer generics (`adt_const_params` for fn ptrs) and
+// const params depending on type params are both forbidden. Reshape to a
+// runtime fn-pointer carried alongside the context — `init` produces the same
+// `AnyResolveWatcher` erased shim as Zig's monomorphized `wrap`.
 
-pub struct ResolveWatcher<C, const ON_WATCH: fn(*mut C, &[u8], FD)>;
+pub struct ResolveWatcher<C> {
+    on_watch: fn(*mut C, &[u8], FD),
+    _marker: core::marker::PhantomData<*mut C>,
+}
+impl<C> ResolveWatcher<C> {
+    pub const fn new(on_watch: fn(*mut C, &[u8], FD)) -> Self {
+        Self { on_watch, _marker: core::marker::PhantomData }
+    }
+    pub fn init(self, ctx: *mut C) -> AnyResolveWatcher {
+        AnyResolveWatcher {
+            // SAFETY: caller guarantees `ctx` is non-null and outlives the watcher.
+            context: NonNull::new(ctx.cast()).expect("ResolveWatcher: null ctx"),
+            // SAFETY: `fn(*mut C, &[u8], FD)` and `fn(*mut (), &[u8], FD)` are
+            // ABI-identical; the `wrap` shim in Zig did the same erase.
+            callback: unsafe { core::mem::transmute::<fn(*mut C, &[u8], FD), fn(*mut (), &[u8], FD)>(self.on_watch) },
+        }
+    }
+}
 
 pub struct Resolver<'a> {
     pub opts: options::BundleOptions,
@@ -6366,7 +6384,7 @@ impl<'a> Resolver<'a> {
     fn enqueue_dependency_to_resolve(
         &mut self,
         package_json_: Option<&mut PackageJSON>,
-        esm: &ESModule::Package,
+        esm: &crate::package_json::Package<'_>,
         behavior: Dependency::Behavior,
         input_package_id_: &mut Install::PackageID,
         version: Dependency::Version,

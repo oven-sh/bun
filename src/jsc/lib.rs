@@ -1221,6 +1221,15 @@ impl JSGlobalObject {
         // SAFETY: `vm()` never returns null for a live global; lifetime tied to &self.
         unsafe { &*JSC__JSGlobalObject__vm(self) }
     }
+    /// Raw `*mut VM` for FFI / storage. Unlike [`vm`], this preserves the
+    /// mutable provenance returned by C++ instead of narrowing through `&VM`,
+    /// so callers may pass it to FFI that mutates the VM without a
+    /// `&T -> *mut T` cast (which would be UB to write through).
+    #[inline]
+    pub fn vm_ptr(&self) -> *mut VM {
+        // SAFETY: FFI — &self is a valid JSGlobalObject*; returns the owning VM.
+        unsafe { JSC__JSGlobalObject__vm(self) }
+    }
     pub fn bun_vm(&self) -> *mut virtual_machine::VirtualMachine {
         // Spec (JSGlobalObject.zig:620) returns `*jsc.VirtualMachine` (raw
         // pointer). Returning `&mut` from `&self` would permit two callers to

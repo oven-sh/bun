@@ -353,15 +353,17 @@ impl ArrayBuffer {
     }
 
     pub fn to_js_from_default_allocator(global: &JSGlobalObject, bytes: &mut [u8]) -> JSValue {
-        // SAFETY: FFI — global is valid; bytes is a mimalloc-backed buffer whose ownership transfers to JSC.
-        unsafe { JSArrayBuffer__fromDefaultAllocator(global as *const _ as *mut _, bytes.as_mut_ptr(), bytes.len()) }
+        // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); `bytes` is a
+        // mimalloc-backed buffer whose ownership transfers to JSC.
+        unsafe { JSArrayBuffer__fromDefaultAllocator(global, bytes.as_mut_ptr(), bytes.len()) }
     }
 
     pub fn from_default_allocator(global: &JSGlobalObject, typed_array_type: JSType, bytes: &mut [u8]) -> JSValue {
         match typed_array_type {
-            // SAFETY: FFI — global is valid; bytes is a mimalloc-backed buffer whose ownership transfers to JSC.
+            // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); `bytes` is
+            // a mimalloc-backed buffer whose ownership transfers to JSC.
             JSType::ArrayBuffer => unsafe {
-                JSArrayBuffer__fromDefaultAllocator(global as *const _ as *mut _, bytes.as_mut_ptr(), bytes.len())
+                JSArrayBuffer__fromDefaultAllocator(global, bytes.as_mut_ptr(), bytes.len())
             },
             // PORT NOTE: `JSUint8Array::from_bytes` takes `Box<[u8]>`; reconstruct
             // ownership from the mimalloc-backed slice the caller hands us.
@@ -739,11 +741,12 @@ impl BinaryType {
             | BinaryType::BigInt64Array
             | BinaryType::BigUint64Array => {
                 let buffer = ArrayBuffer::create::<{ JSType::ArrayBuffer }>(global, bytes)?;
-                // SAFETY: FFI — global is valid; `buffer` is a fresh ArrayBuffer
-                // JSValue (cell pointer), so its encoded bits are a valid JSObjectRef.
+                // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const);
+                // `buffer` is a fresh ArrayBuffer JSValue (cell pointer), so its encoded bits
+                // are a valid JSObjectRef.
                 let obj = unsafe {
                     JSObjectMakeTypedArrayWithArrayBuffer(
-                        global as *const _ as *mut _,
+                        global,
                         self.to_typed_array_type().to_c(),
                         buffer.0 as jsc_c::JSObjectRef,
                         ptr::null_mut(),
@@ -1012,9 +1015,10 @@ pub fn make_array_buffer_with_bytes_no_copy(
     deallocator: jsc_c::JSTypedArrayBytesDeallocator,
     deallocator_context: *mut c_void,
 ) -> JsResult<JSValue> {
-    // SAFETY: FFI — global is valid; ptr/len/deallocator are forwarded as-is to JSC which adopts ownership.
+    // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const);
+    // ptr/len/deallocator are forwarded as-is to JSC which adopts ownership.
     crate::host_fn::from_js_host_call(global, || unsafe {
-        Bun__makeArrayBufferWithBytesNoCopy(global as *const _ as *mut _, ptr, len, deallocator, deallocator_context)
+        Bun__makeArrayBufferWithBytesNoCopy(global, ptr, len, deallocator, deallocator_context)
     })
 }
 
@@ -1026,9 +1030,10 @@ pub fn make_typed_array_with_bytes_no_copy(
     deallocator: jsc_c::JSTypedArrayBytesDeallocator,
     deallocator_context: *mut c_void,
 ) -> JsResult<JSValue> {
-    // SAFETY: FFI — global is valid; ptr/len/deallocator are forwarded as-is to JSC which adopts ownership.
+    // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const);
+    // ptr/len/deallocator are forwarded as-is to JSC which adopts ownership.
     crate::host_fn::from_js_host_call(global, || unsafe {
-        Bun__makeTypedArrayWithBytesNoCopy(global as *const _ as *mut _, array_type, ptr, len, deallocator, deallocator_context)
+        Bun__makeTypedArrayWithBytesNoCopy(global, array_type, ptr, len, deallocator, deallocator_context)
     })
 }
 } // mod _body

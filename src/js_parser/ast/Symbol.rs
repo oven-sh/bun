@@ -560,20 +560,28 @@ impl Map {
 
     pub fn follow_all(&mut self) {
         // TODO(b2-blocked): bun_perf::trace("Symbols.followAll") — RAII guard
-        // PORT NOTE: reshaped for borrowck — iterate via raw ptrs (same aliasing
-        // model as `get`). follow() does not reallocate symbols_for_source.
-        let outer_len = self.symbols_for_source.slice().len();
+        // PORT NOTE: reshaped for borrowck — iterate via raw ptrs (same aliasing model as
+        // `get`). follow() does not reallocate symbols_for_source. Derive *mut from the
+        // raw NonNull fields directly (NOT via `.slice()`, which would yield read-only
+        // provenance).
+        let outer_len = self.symbols_for_source.len as usize;
+        let outer = self.symbols_for_source.ptr.as_ptr();
         for src in 0..outer_len {
-            let inner = self.symbols_for_source.at(src);
-            let base = inner.slice().as_ptr() as *mut Symbol;
-            let inner_len = inner.slice().len();
+            // SAFETY: src in-bounds; raw-ptr field reads — no `&` created.
+            let (base, inner_len) = unsafe {
+                let inner: *mut List = outer.add(src);
+                ((*inner).ptr.as_ptr(), (*inner).len as usize)
+            };
             for i in 0..inner_len {
-                // SAFETY: in-bounds; storage stable across follow().
-                let symbol = unsafe { &mut *base.add(i) };
-                if !symbol.has_link() {
+                // SAFETY: in-bounds; storage stable across follow(). Raw-ptr access — no
+                // `&mut` held across the `follow(&self, ..)` call.
+                let symbol = unsafe { base.add(i) };
+                if !unsafe { (*symbol).has_link() } {
                     continue;
                 }
-                symbol.link = Self::follow(self, symbol.link);
+                let link = unsafe { (*symbol).link };
+                let resolved = Self::follow(self, link);
+                unsafe { (*symbol).link = resolved };
             }
         }
     }
@@ -583,16 +591,19 @@ impl Map {
         let Some(symbol_ptr) = self.get(ref_) else {
             return ref_;
         };
-        // SAFETY: see note on `get` — union-find path compression mutates through *mut.
-        let symbol = unsafe { &mut *symbol_ptr };
-        if !symbol.has_link() {
+        // SAFETY: see note on `get` — union-find path compression mutates through *mut
+        // derived from BabyList's raw NonNull. Raw-ptr-only access; no `&mut` held across
+        // the recursive call (which may write other symbols' `link` fields).
+        if !unsafe { (*symbol_ptr).has_link() } {
             return ref_;
         }
 
-        let link = Self::follow(self, symbol.link);
+        let cur_link = unsafe { (*symbol_ptr).link };
+        let link = Self::follow(self, cur_link);
 
-        if !symbol.link.eql(link) {
-            symbol.link = link;
+        // SAFETY: storage not reallocated by recursion; ptr still valid.
+        if !unsafe { (*symbol_ptr).link }.eql(link) {
+            unsafe { (*symbol_ptr).link = link };
         }
 
         link

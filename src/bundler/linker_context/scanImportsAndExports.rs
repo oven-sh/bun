@@ -1387,9 +1387,12 @@ mod __css_validation {
         input_files: *mut [Source],
     ) {
         // SAFETY: column ptrs valid per `col_ptr!` invariants; `css_asts[id]`
-        // checked Some by caller.
-        let css_ast: &mut BundlerStyleSheet =
-            unsafe { &mut *(col!(css_asts)[id].unwrap() as *const _ as *mut BundlerStyleSheet) };
+        // checked Some by caller. The `*mut c_void` in the column was produced
+        // from a `Box<BundlerStyleSheet>` raw pointer (see `BundledAst.css`).
+        // We only *read* the AST here, and `other_css_ast` below may alias the
+        // same allocation when a file composes from itself, so bind as shared.
+        let css_ast: &BundlerStyleSheet =
+            unsafe { &*(col_ref!(css_asts)[id].unwrap() as *const BundlerStyleSheet) };
         let import_records: &mut [ImportRecord] = col!(import_records_list)[id].slice_mut();
 
         // Validate cross-file "composes: ... from" named imports
@@ -1405,7 +1408,7 @@ mod __css_validation {
                 }
                 let Some(other_css_ast) =
                     col_ref!(css_asts)[record.source_index.get() as usize].map(|p| unsafe {
-                        &*(p as *const _ as *const BundlerStyleSheet)
+                        &*(p as *const BundlerStyleSheet)
                     })
                 else {
                     continue;
@@ -1461,7 +1464,7 @@ mod __css_validation {
     fn validate_composes_from_properties(
         this: &mut LinkerContext,
         index: IndexInt,
-        root_css_ast: &mut BundlerStyleSheet,
+        root_css_ast: &BundlerStyleSheet,
         import_records_list: *mut [ImportRecordList],
         all_css_asts: *mut [CssCol],
     ) {
@@ -1583,7 +1586,7 @@ mod __css_validation {
                                 let Some(other_ast) = col_ref!(self.all_css_asts)
                                     [record.source_index.get() as usize]
                                     .map(|p| unsafe {
-                                        &*(p as *const _ as *const BundlerStyleSheet)
+                                        &*(p as *const BundlerStyleSheet)
                                     })
                                 else {
                                     continue;

@@ -120,11 +120,7 @@ impl AbortSignal {
         let mut reason: u8 = 0;
         // SAFETY: `reason` is a valid out-param; self/global are live.
         let js_reason = unsafe {
-            WebCore__AbortSignal__reasonIfAborted(
-                self.as_mut_ptr(),
-                global as *const _ as *mut _,
-                &mut reason,
-            )
+            WebCore__AbortSignal__reasonIfAborted(self.as_mut_ptr(), global.as_ptr(), &mut reason)
         };
         if reason > 0 {
             debug_assert!(js_reason.is_undefined());
@@ -164,18 +160,18 @@ impl AbortSignal {
 
     pub fn to_js(&self, global: &JSGlobalObject) -> JSValue {
         // SAFETY: thin FFI forward.
-        unsafe { WebCore__AbortSignal__toJS(self.as_mut_ptr(), global as *const _ as *mut _) }
+        unsafe { WebCore__AbortSignal__toJS(self.as_mut_ptr(), global.as_ptr()) }
     }
 
     pub fn create(global: &JSGlobalObject) -> JSValue {
         // SAFETY: thin FFI forward.
-        unsafe { WebCore__AbortSignal__create(global as *const _ as *mut _) }
+        unsafe { WebCore__AbortSignal__create(global.as_ptr()) }
     }
 
     pub fn new(global: &JSGlobalObject) -> *mut AbortSignal {
         // TODO(port): jsc.markBinding(@src()) — debug-only binding tracer
         // SAFETY: thin FFI forward; returns a freshly-ref'd signal.
-        unsafe { WebCore__AbortSignal__new(global as *const _ as *mut _) }
+        unsafe { WebCore__AbortSignal__new(global.as_ptr()) }
     }
 
     /// Returns a borrowed handle to the internal Timeout, or null.

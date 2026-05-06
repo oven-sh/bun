@@ -5587,14 +5587,20 @@ pub mod testing_apis {
                 let mut lexer =
                     LexerAscii::new(&arena, &script[..], &mut jsstrings[..], jsobjs_len);
                 if let Err(err) = lexer.lex() {
-                    return Err(global.throw_error(err.into(), "failed to lex shell"));
+                    return Err(global.throw_error(
+                        bun_core::err!("{}", <&'static str>::from(&err)),
+                        "failed to lex shell",
+                    ));
                 }
                 break 'brk lexer.get_result();
             }
             let mut lexer =
                 LexerUnicode::new(&arena, &script[..], &mut jsstrings[..], jsobjs_len);
             if let Err(err) = lexer.lex() {
-                return Err(global.throw_error(err.into(), "failed to lex shell"));
+                return Err(global.throw_error(
+                    bun_core::err!("{}", <&'static str>::from(&err)),
+                    "failed to lex shell",
+                ));
             }
             lexer.get_result()
         };

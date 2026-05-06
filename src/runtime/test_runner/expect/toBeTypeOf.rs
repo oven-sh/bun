@@ -21,9 +21,9 @@ pub fn to_be_type_of(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // TODO(port): `defer this.postMatch(globalThis)` — scopeguard captures &mut self for the
-    // whole body; Phase B may need to reshape (call post_match before each return) for borrowck.
-    let _post = scopeguard::guard((), |_| this.post_match(global));
+    // PORT NOTE: `defer this.postMatch(globalThis)` — reshaped for borrowck: scopeguard owns the
+    // `&mut Expect` borrow and DerefMut's it for the body so post_match runs on every exit path.
+    let mut this = scopeguard::guard(this, |t| t.post_match(global));
 
     let this_value = frame.this();
     let _arguments = frame.arguments_old::<1>();

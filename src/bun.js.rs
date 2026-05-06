@@ -753,25 +753,10 @@ fn log_clear_msgs(vm: &mut VirtualMachine) {
 // TODO(port): these use callconv(jsc.conv) + noreturn; `#[bun_jsc::host_fn]`
 // expects `IntoHostFnResult` which `!` does not implement. Return `JSValue`
 // nominally — `Global::exit` diverges before reaching the return.
-#[bun_jsc::host_fn]
-#[unsafe(no_mangle)]
-pub fn Bun__onResolveEntryPointResult(global: &JSGlobalObject, callframe: &CallFrame) -> JSValue {
-    let arguments = callframe.arguments_old::<1>();
-    let _result = arguments.slice()[0];
-    // TODO(b2-blocked): `JSValue::print(global, .Log, .Log)` — not yet ported.
-    // SAFETY: `bun_vm()` returns the live per-thread VM.
-    Global::exit(unsafe { (*global.bun_vm()).exit_handler.exit_code }.into());
-}
-
-#[bun_jsc::host_fn]
-#[unsafe(no_mangle)]
-pub fn Bun__onRejectEntryPointResult(global: &JSGlobalObject, callframe: &CallFrame) -> JSValue {
-    let arguments = callframe.arguments_old::<1>();
-    let _result = arguments.slice()[0];
-    // TODO(b2-blocked): `JSValue::print(global, .Log, .Log)` — not yet ported.
-    // SAFETY: `bun_vm()` returns the live per-thread VM.
-    Global::exit(unsafe { (*global.bun_vm()).exit_handler.exit_code }.into());
-}
+//
+// Bun__on{Resolve,Reject}EntryPointResult are defined in
+// `crate::hw_exports` (real bodies via ConsoleObject); not duplicated here.
+pub use crate::hw_exports::{on_reject_entry_point_result, on_resolve_entry_point_result};
 
 #[cold]
 #[inline(never)]

@@ -1196,8 +1196,9 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         &mut self,
         scalar: NodeScalar<Enc>,
         off: Pos,
-        text: &[Enc::Unit],
+        text: impl AsRef<[Enc::Unit]>,
     ) -> Result<(), AllocError> {
+        let text = text.as_ref();
         self.str_builder
             .append_expected_source_slice(off, off.add(text.len()), text)?;
 
@@ -2249,8 +2250,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         &self.input[self.pos.cast()..]
     }
 
-    fn remain_starts_with(&self, cs: &[Enc::Unit]) -> bool {
-        self.remain().starts_with(cs)
+    fn remain_starts_with(&self, cs: impl AsRef<[Enc::Unit]>) -> bool {
+        self.remain().starts_with(cs.as_ref())
     }
 
     fn remain_starts_with_char(&self, ch: Enc::Unit) -> bool {
@@ -5250,10 +5251,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         false
     }
 
-    fn is_any_or_eof_at(&self, values: &[Enc::Unit], n: usize) -> bool {
+    fn is_any_or_eof_at(&self, values: impl AsRef<[Enc::Unit]>, n: usize) -> bool {
         let pos = self.pos.add(n);
         if pos.is_less_than(self.input.len()) {
-            return values.contains(&self.input[pos.cast()]);
+            return values.as_ref().contains(&self.input[pos.cast()]);
         }
         false
         // PORT NOTE: Zig returns `false` for EOF here despite the name (matches source).

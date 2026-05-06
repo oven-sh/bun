@@ -237,11 +237,9 @@ impl FetchTasklet {
         unsafe { FetchTasklet::deinit(this) };
     }
 
-    pub fn init() -> Result<FetchTasklet, BunError> {
-        // TODO(port): Zig returned a default-initialized struct; in Rust most fields lack defaults.
-        // This fn appears unused; callers use `get()` directly.
-        unimplemented!("FetchTasklet::init - use FetchTasklet::get() instead")
-    }
+    // PORT NOTE: Zig `pub fn init(_: std.mem.Allocator) anyerror!FetchTasklet { return FetchTasklet{}; }`
+    // was dead code — `FetchTasklet{}` would not compile if analyzed (promise/mutex/tracker lack
+    // defaults). All callers use `get()` directly. Dropped in the port.
 
     fn clear_sink(&mut self) {
         if let Some(sink) = self.sink.take() {

@@ -696,12 +696,6 @@ pub mod api {
         }
     }
 
-    /// schema.zig — peechy `struct StringMap { keys: [][]u8, values: [][]u8 }`.
-    #[derive(Clone, Debug, Default)]
-    pub struct StringMap {
-        pub keys: Vec<Box<[u8]>>,
-        pub values: Vec<Box<[u8]>>,
-    }
     impl StringMap {
         pub fn encode(&self, w: &mut super::Writer<'_>) {
             w.write_int(self.keys.len() as u32);

@@ -2636,21 +2636,12 @@ where
 
             if let Some(input_files) = self.options.input_files_for_dev_server {
                 debug_assert!(module_type == bundle_opts::Format::InternalBakeDev);
-                let _ = input_files;
-                // TODO(b2-blocked): bun_logger::fs::Path::pretty — spec js_printer.zig:1746
-                // prints `path.pretty`, not `path.text`. Emitting `path.text` would produce
-                // the wrong HMR module specifier, so this branch is gated until the field
-                // lands rather than silently emitting incorrect output.
-                
-                {
-                    self.print_space_before_identifier();
-                    self.print_symbol(self.options.hmr_ref);
-                    self.print(b".require(");
-                    let path = &input_files[record.source_index.get() as usize].path;
-                    self.print_string_literal_utf8(path.pretty, false);
-                    self.print(b")");
-                }
-                todo!("bun_logger::fs::Path::pretty not yet ported (b2-blocked)");
+                self.print_space_before_identifier();
+                self.print_symbol(self.options.hmr_ref);
+                self.print(b".require(");
+                let path = &input_files[record.source_index.get() as usize].path;
+                self.print_string_literal_utf8(path.pretty, false);
+                self.print(b")");
             } else if !meta.was_unwrapped_require {
                 // Call the wrapper
                 if meta.wrapper_ref.is_valid() {

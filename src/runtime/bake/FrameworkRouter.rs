@@ -1335,19 +1335,16 @@ impl FrameworkRouter {
         Ok(RouteIndex::init(u32::try_from(i).unwrap()))
     }
 
-    // TODO(port): `newEdge` references `fr.freed_edges`/`fr.edges`/`Route.Edge` which do not exist
-    // on FrameworkRouter in the source — appears to be dead code in the Zig. Ported verbatim with stubs.
     #[allow(dead_code)]
-    fn new_edge(&mut self, _edge_data: ()) -> Result<(), AllocError> {
-        // if let Some(i) = self.freed_edges.pop() {
-        //     self.edges[i.get()] = edge_data;
-        //     return Ok(i);
-        // } else {
-        //     let i = self.edges.len();
-        //     self.edges.push(edge_data);
-        //     return Ok(RouteEdgeIndex::init(i));
-        // }
-        unimplemented!("dead code in source — Route.Edge undefined")
+    fn new_edge(&mut self, edge_data: RouteEdge) -> Result<RouteEdgeIndex, AllocError> {
+        if let Some(i) = self.freed_edges.pop() {
+            self.edges[i.get()] = edge_data;
+            Ok(i)
+        } else {
+            let i = self.edges.len();
+            self.edges.push(edge_data);
+            Ok(RouteEdgeIndex::init(i))
+        }
     }
 }
 

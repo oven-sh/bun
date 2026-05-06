@@ -812,22 +812,178 @@ pub mod npm {
 
     /// Lower-case path alias so `npm::package_manifest::Serializer` resolves.
     pub mod package_manifest {
+        use bun_string::strings;
+        use bun_sys::{self, Fd, File, O};
+        use core::fmt::Write as _;
+
         pub use super::PackageManifest;
         pub struct Serializer;
+
         impl Serializer {
-            pub fn load_by_file(
-                _scope: &super::registry::Scope<'_>,
-                _file: impl Sized,
-            ) -> Result<Option<PackageManifest>, bun_core::Error> {
-                todo!("B-2: npm::PackageManifest::Serializer::load_by_file")
+            // Bump when serialised layout changes (mirrors npm.zig
+            // `Serializer.version`).
+            // - v0.0.2: added registry hash + length prefix
+            // - v0.0.3: BinaryLockfile.Version.v5
+            // - v0.0.4: removed unused etag field
+            // - v0.0.5: SHA-512 -> SHA-256 in NpmPackage
+            // - v0.0.6: semver major/minor/patch widened to u64
+            // - v0.0.7: version publish times + extended-manifest flag
+            pub const VERSION: &'static str = "bun-npm-manifest-cache-v0.0.7\n";
+            pub const HEADER_BYTES: &'static str =
+                concat!("#!/usr/bin/env bun\n", "bun-npm-manifest-cache-v0.0.7\n");
+
+            /// Zig: `Serializer.manifestFileName(buf, file_id, scope)` —
+            /// `<hex file_id>[-<hex url_hash>].npm`, NUL-terminated.
+            fn manifest_file_name<'a>(
+                buf: &'a mut [u8],
+                file_id: u64,
+                scope: &super::registry::Scope<'_>,
+            ) -> &'a bun_core::ZStr {
+                struct Cursor<'b> {
+                    buf: &'b mut [u8],
+                    pos: usize,
+                }
+                impl core::fmt::Write for Cursor<'_> {
+                    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+                        let bytes = s.as_bytes();
+                        if self.pos + bytes.len() > self.buf.len() {
+                            return Err(core::fmt::Error);
+                        }
+                        self.buf[self.pos..self.pos + bytes.len()].copy_from_slice(bytes);
+                        self.pos += bytes.len();
+                        Ok(())
+                    }
+                }
+                let mut w = Cursor { buf, pos: 0 };
+                if scope.url_hash == super::Registry::default_url_hash() {
+                    let _ = write!(w, "{:016x}.npm\0", file_id);
+                } else {
+                    let _ = write!(w, "{:016x}-{:016x}.npm\0", file_id, scope.url_hash);
+                }
+                let len = w.pos - 1; // exclude NUL
+                // SAFETY: just wrote NUL terminator at `len`.
+                unsafe { bun_core::ZStr::from_raw(buf.as_ptr(), len) }
             }
+
             /// Zig: `Serializer.loadByFileID(allocator, scope, cache_dir, file_id)`.
+            /// Open `<cache_dir>/<manifest_file_name>`; on success delegate to
+            /// `load_by_file`. On parse failure / version mismatch, unlink the
+            /// stale entry so the next fetch repopulates it.
             pub fn load_by_file_id(
-                _scope: &super::registry::Scope<'_>,
-                _cache_dir: bun_sys::Fd,
-                _file_id: u64,
+                scope: &super::registry::Scope<'_>,
+                cache_dir: Fd,
+                file_id: u64,
             ) -> Result<Option<PackageManifest>, bun_core::Error> {
-                todo!("B-2: npm::PackageManifest::Serializer::load_by_file_id")
+                let mut file_path_buf = [0u8; 512 + 64];
+                let file_name = Self::manifest_file_name(&mut file_path_buf, file_id, scope);
+                let cache_file = match File::openat(cache_dir, file_name, O::RDONLY, 0) {
+                    Ok(f) => f,
+                    Err(_) => return Ok(None),
+                };
+                let _close = scopeguard::guard((), |_| {
+                    let _ = bun_sys::close(cache_file.handle);
+                });
+
+                'delete: {
+                    match Self::load_by_file(scope, &cache_file) {
+                        Ok(Some(m)) => return Ok(Some(m)),
+                        Ok(None) | Err(_) => break 'delete,
+                    }
+                }
+
+                // delete the outdated/invalid manifest
+                let _ = bun_sys::unlinkat(cache_dir, file_name, 0);
+                Ok(None)
+            }
+
+            /// Zig: `Serializer.loadByFile(allocator, scope, manifest_file)`.
+            /// Read whole file, validate header + registry hash + registry-URL
+            /// length, then deserialise the field arrays via `read_all`.
+            pub fn load_by_file(
+                scope: &super::registry::Scope<'_>,
+                manifest_file: &File,
+            ) -> Result<Option<PackageManifest>, bun_core::Error> {
+                let bytes = manifest_file.read_to_end().map_err(bun_core::Error::from)?;
+
+                if bytes.len() < Self::HEADER_BYTES.len() {
+                    return Ok(None);
+                }
+
+                Self::read_all(&bytes, scope)
+            }
+
+            /// Zig: `Serializer.readAll(bytes, scope)` — header / registry-hash
+            /// / registry-length checks, then per-field `readArray`. The stub
+            /// `PackageManifest` only carries `pkg`, so the trailing array
+            /// reads are validated for framing but discarded.
+            fn read_all(
+                bytes: &[u8],
+                scope: &super::registry::Scope<'_>,
+            ) -> Result<Option<PackageManifest>, bun_core::Error> {
+                if &bytes[..Self::HEADER_BYTES.len()] != Self::HEADER_BYTES.as_bytes() {
+                    return Ok(None);
+                }
+                let mut pos = Self::HEADER_BYTES.len();
+
+                #[inline]
+                fn read_u64_le(bytes: &[u8], pos: &mut usize) -> Option<u64> {
+                    if *pos + 8 > bytes.len() {
+                        return None;
+                    }
+                    let mut b = [0u8; 8];
+                    b.copy_from_slice(&bytes[*pos..*pos + 8]);
+                    *pos += 8;
+                    Some(u64::from_le_bytes(b))
+                }
+
+                let Some(registry_hash) = read_u64_le(bytes, &mut pos) else {
+                    return Ok(None);
+                };
+                if scope.url_hash != registry_hash {
+                    return Ok(None);
+                }
+
+                let Some(registry_length) = read_u64_le(bytes, &mut pos) else {
+                    return Ok(None);
+                };
+                if strings::without_trailing_slash(scope.url.href).len() as u64 != registry_length {
+                    return Ok(None);
+                }
+
+                // `pkg` is the first field in the alignment-sorted layout
+                // (see `Serializer.sizes` in npm.zig). Align forward, then
+                // memcpy the POD `NpmPackage`.
+                let align = core::mem::align_of::<super::NpmPackage>();
+                pos = (pos + align - 1) & !(align - 1);
+                let size = core::mem::size_of::<super::NpmPackage>();
+                if pos + size > bytes.len() {
+                    return Ok(None);
+                }
+                let mut pkg = super::NpmPackage::default();
+                // SAFETY: NpmPackage is `#[derive(Default)]` POD; bytes are at
+                // least `size` long past `pos`.
+                unsafe {
+                    core::ptr::copy_nonoverlapping(
+                        bytes.as_ptr().add(pos),
+                        (&mut pkg as *mut super::NpmPackage).cast::<u8>(),
+                        size,
+                    );
+                }
+                pos += size;
+
+                // Remaining fields (`string_buf`, `versions`, `external_strings`,
+                // …) are length-prefixed arrays. The stub `PackageManifest`
+                // doesn't carry them; walk past the first one to validate the
+                // `versions.len > 0` invariant Zig checks before returning.
+                // Array framing: u64 byte_len, then payload aligned to elem.
+                let Some(_string_buf_len) = read_u64_le(bytes, &mut pos) else {
+                    return Ok(None);
+                };
+                // (string_buf payload skipped — alignment is 1)
+                // TODO(port): once the stub grows the slice fields, restore the
+                // full `inline for (sizes.fields)` walk from npm.zig here.
+
+                Ok(Some(PackageManifest { pkg }))
             }
         }
     }

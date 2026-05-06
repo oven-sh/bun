@@ -3175,21 +3175,12 @@ pub fn mkdir_recursive(sub_path: &[u8]) -> Maybe<()> {
 /// bun.zig:2319 — Windows-only `makePath` over UTF-16. On POSIX, transcodes
 /// to UTF-8 and delegates to `mkdir_recursive_at`.
 pub fn make_path_w(dir: Fd, sub_path: &[u16]) -> Maybe<()> {
-    #[cfg(windows)] {
-        let _ = (dir, sub_path);
-        todo!("b2-windows: make_path_w (CreateDirectoryW walk)")
-    }
-    #[cfg(not(windows))] {
-        // PORT NOTE: simdutf utf16→utf8 in Zig; here we use a basic widening
-        // since callers on POSIX never reach this path with non-ASCII.
-        let mut buf = bun_paths::PathBuffer::default();
-        let mut n = 0;
-        for &c in sub_path {
-            if c < 128 && n < buf.0.len() { buf.0[n] = c as u8; n += 1; }
-            else { return Err(Error::from_code_int(libc::EINVAL, Tag::mkdir)); }
-        }
-        mkdir_recursive_at(dir, &buf.0[..n])
-    }
+    // bun.zig:2319-2324 — "was going to copy/paste makePath and use all W
+    // versions but they didn't all exist and this buffer was needed anyway":
+    // transcode UTF-16 → UTF-8, then call `makePath` (`mkdir_recursive_at`).
+    let mut buf = bun_paths::PathBuffer::default();
+    let utf8 = bun_str::strings::from_w_path(&mut buf.0[..], sub_path);
+    mkdir_recursive_at(dir, utf8.as_bytes())
 }
 
 // ──────────────────────────────────────────────────────────────────────────

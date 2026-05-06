@@ -184,11 +184,14 @@ const _: () = {
             let ptr = Box::into_raw(Box::new(self));
             // SAFETY: `global` is live; ownership of `ptr` transfers to the
             // C++ wrapper (freed via `ArchiveClass__finalize` → `finalize()`).
-            unsafe { __create(global as *const _ as *mut _, ptr) }
+            // `as_ptr()` routes through `JSGlobalObject`'s `UnsafeCell`
+            // interior so the `*mut` retains write provenance for C++.
+            unsafe { __create(global.as_ptr(), ptr) }
         }
         fn get_constructor(global: &JSGlobalObject) -> JSValue {
             // SAFETY: `global` is live; codegen extern returns the cached ctor.
-            unsafe { __get_constructor(global as *const _ as *mut _) }
+            // `as_ptr()` yields the opaque `*mut` FFI handle (UnsafeCell-backed).
+            unsafe { __get_constructor(global.as_ptr()) }
         }
     }
 };

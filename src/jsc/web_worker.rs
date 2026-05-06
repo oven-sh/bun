@@ -184,13 +184,16 @@ pub enum Status {
 }
 
 // TODO(port): move to <area>_sys
+// `JSGlobalObject` is an opaque FFI handle (ZST); per codebase convention
+// (see JSGlobalObject.rs externs) it crosses FFI as `*const` even when C++
+// mutates — Rust never reads/writes bytes through it, so no `*mut` needed.
 unsafe extern "C" {
-    fn WebWorker__teardownJSCVM(global: *mut JSGlobalObject);
+    fn WebWorker__teardownJSCVM(global: *const JSGlobalObject);
     fn WebWorker__dispatchExit(cpp_worker: *mut c_void, exit_code: i32);
-    fn WebWorker__dispatchOnline(cpp_worker: *mut c_void, global: *mut JSGlobalObject);
-    fn WebWorker__fireEarlyMessages(cpp_worker: *mut c_void, global: *mut JSGlobalObject);
+    fn WebWorker__dispatchOnline(cpp_worker: *mut c_void, global: *const JSGlobalObject);
+    fn WebWorker__fireEarlyMessages(cpp_worker: *mut c_void, global: *const JSGlobalObject);
     fn WebWorker__dispatchError(
-        global: *mut JSGlobalObject,
+        global: *const JSGlobalObject,
         cpp_worker: *mut c_void,
         message: BunString,
         err: JSValue,
@@ -753,10 +756,11 @@ mod __phase_a_body {
 
             self.flush_logs(vm);
             log!("[{}] event loop start", self.execution_context_id);
-            // SAFETY: cpp_worker valid for the lifetime of this struct.
+            // SAFETY: cpp_worker valid for the lifetime of this struct;
+            // `vm.global` is the live `*mut JSGlobalObject` published in start_vm.
             unsafe {
-                WebWorker__dispatchOnline(self.cpp_worker, vm.global as *const _ as *mut _);
-                WebWorker__fireEarlyMessages(self.cpp_worker, vm.global as *const _ as *mut _);
+                WebWorker__dispatchOnline(self.cpp_worker, vm.global);
+                WebWorker__fireEarlyMessages(self.cpp_worker, vm.global);
             }
             self.set_status(Status::Running);
 
@@ -820,7 +824,7 @@ mod __phase_a_body {
 
             // 2. User exit handlers
             let mut exit_code: i32 = 0;
-            let mut global_object: Option<*mut JSGlobalObject> = None;
+            let mut global_object: Option<*const JSGlobalObject> = None;
             if !vm_ptr.is_null() {
                 // SAFETY: vm_ptr valid; sole owner.
                 let vm = unsafe { &mut *vm_ptr };
@@ -832,7 +836,7 @@ mod __phase_a_body {
                     rare.close_all_socket_groups(vm);
                 }
                 exit_code = vm.exit_handler.exit_code;
-                global_object = Some(vm.global as *const _ as *mut _);
+                global_object = Some(vm.global);
             }
 
             // 3. JSC VM teardown
@@ -892,7 +896,7 @@ mod __phase_a_body {
                 vm.global,
                 core::panic::Location::caller(),
                 |g, cpp, s, e| unsafe { WebWorker__dispatchError(g, cpp, s, e) },
-                (vm.global as *const _ as *mut _, self.cpp_worker, str, err),
+                (vm.global, self.cpp_worker, str, err),
             );
             if let Err(e) = dispatch {
                 let _ = vm.global.report_uncaught_exception(
@@ -949,10 +953,11 @@ mod __phase_a_body {
             error_instance = global_object.try_take_exception().unwrap();
         }
         jsc::mark_binding(core::panic::Location::caller());
-        // SAFETY: cpp_worker valid; global_object valid.
+        // SAFETY: cpp_worker valid; global_object is a live opaque FFI handle
+        // (`&JSGlobalObject` coerces to `*const JSGlobalObject`).
         unsafe {
             WebWorker__dispatchError(
-                global_object as *const _ as *mut _,
+                global_object,
                 worker.cpp_worker,
                 BunString::clone_utf8(&array),
                 error_instance,

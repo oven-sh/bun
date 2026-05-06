@@ -1638,7 +1638,7 @@ impl PackageJSON {
                         let mut arch = Architecture::none().negatable();
                         while let Some(item) = array.next() {
                             if let Some(str) = item.as_utf8_string_literal() {
-                                arch.apply(&str);
+                                arch.apply(str);
                             }
                         }
 
@@ -1652,7 +1652,7 @@ impl PackageJSON {
                         let mut os = OperatingSystem::none().negatable();
                         while let Some(item) = array.next() {
                             if let Some(str) = item.as_utf8_string_literal() {
-                                os.apply(&str);
+                                os.apply(str);
                             }
                         }
 

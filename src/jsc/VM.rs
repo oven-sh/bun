@@ -249,9 +249,16 @@ impl VM {
         unsafe { JSC__VM__performOpportunisticallyScheduledTasks(self.as_mut_ptr(), until) }
     }
 
+    /// Raw `*mut VM` for FFI. Sound for callees that mutate: `VM` contains
+    /// `UnsafeCell`, so `&VM` carries interior-mutable provenance and deriving
+    /// a writable pointer via `UnsafeCell::get` does not launder a read-only
+    /// borrow (unlike a bare `&T as *const T as *mut T` cast).
     #[inline(always)]
     fn as_mut_ptr(&self) -> *mut VM {
-        self as *const VM as *mut VM
+        // SAFETY: `_p` is at offset 0 of a `#[repr(C)]` ZST handle, so its
+        // address is the address of `self`; `UnsafeCell::get` yields a `*mut`
+        // with write provenance from a shared borrow.
+        self._p.get() as *mut VM
     }
 }
 

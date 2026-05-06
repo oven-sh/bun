@@ -1074,13 +1074,12 @@ pub fn inject(
                             // but we only do that once because otherwise it's just silly
                             if !tried_changing_abs_dir {
                                 tried_changing_abs_dir = true;
-                                // TODO(b2-blocked): bun_resolver::fs::RealFS::tmpdir_path —
-                                // T6 crate not in deps. Retry-in-tmpdir fallback skipped
-                                // until tmpdir_path moves down or bun_resolver is added.
-                                
+                                // `RealFS::tmpdir_path` lives in `bun_resolver::fs` (T6);
+                                // reached via `bun_bundler`'s public re-export so this
+                                // crate doesn't take a direct `bun_resolver` edge.
                                 {
                                 let zname_z = bun_str::strings::concat(&[
-                                    bun_fs::FileSystem::RealFS::tmpdir_path(),
+                                    bun_bundler::bun_fs::RealFS::tmpdir_path(),
                                     SEP_STR.as_bytes(),
                                     zname.as_bytes(),
                                     &[0],

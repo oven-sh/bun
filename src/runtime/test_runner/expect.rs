@@ -1191,7 +1191,7 @@ impl Expect {
             let diff_format = DiffFormatter {
                 received_string: Some(&pretty_value),
                 expected_string: Some(saved_value),
-                global_this,
+                global_this: Some(global_this),
                 ..Default::default()
             };
             return Err(global_this.throw_pretty(signature, format_args!("\n\n{}\n", diff_format)));
@@ -2476,7 +2476,7 @@ impl ExpectMatcherUtils {
             expected_string: None,
             received: Some(received),
             expected: Some(expected),
-            global_this,
+            global_this: Some(global_this),
             not: is_not,
         };
 

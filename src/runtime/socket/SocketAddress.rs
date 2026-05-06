@@ -547,7 +547,7 @@ impl SocketAddress {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_port(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(this.port())
+        JSValue::js_number(f64::from(this.port()))
     }
 
     /// Get the port number in host byte order.

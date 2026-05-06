@@ -1631,7 +1631,9 @@ impl napi_async_work {
 
     pub fn run_from_js(&mut self, vm: &mut VirtualMachine, global: &JSGlobalObject) {
         // Note: the "this" value here may already be freed by the user in `complete`
-        let mut poll_ref = self.poll_ref;
+        // PORT NOTE: Zig copied the struct; KeepAlive is not `Copy` in Rust, so
+        // move it out (the original slot may be freed under us by `complete`).
+        let mut poll_ref = core::mem::take(&mut self.poll_ref);
         let _guard = scopeguard::guard((), |_| poll_ref.unref(vm_ctx()));
 
         // https://github.com/nodejs/node/blob/a2de5b9150da60c77144bb5333371eaca3fab936/src/node_api.cc#L1201

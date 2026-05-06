@@ -1484,10 +1484,10 @@ impl ServerWebSocket {
         bun_output::scoped_log!(WebSocketServer, "getBufferedAmount()");
 
         if self.is_closed() {
-            return Ok(JSValue::js_number(0));
+            return Ok(JSValue::js_number(0.0));
         }
 
-        Ok(JSValue::js_number(self.websocket().get_buffered_amount()))
+        Ok(JSValue::js_number(self.websocket().get_buffered_amount() as f64))
     }
 
     #[bun_jsc::host_fn(method)]

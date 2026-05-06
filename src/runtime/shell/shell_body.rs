@@ -5706,7 +5706,7 @@ pub mod testing_apis {
         let _ = &script_ast;
         todo!("blocked_on: bun_core::json::fmt");
         #[allow(unreachable_code)]
-        BunString::create_utf8_for_js(global, &str)
+        bun_jsc::bun_string_jsc::create_utf8_for_js(global, &str)
     }
 }
 pub use testing_apis as TestingAPIs;

@@ -15,7 +15,7 @@ use bun_boringssl_sys::SSL_CTX;
 use bun_collections::BabyList;
 use bun_core::{self, fmt as bun_fmt};
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, Strong, SystemError,
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsClass, JsRef, JsResult, Strong, SysErrorJsc, SystemError,
 };
 // `bun_jsc::VirtualMachine` is the *module* (alias of `virtual_machine`); name the
 // struct directly so `VirtualMachine::get()` resolves as an associated fn.
@@ -2476,7 +2476,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             if let Some(t) = opts.get_truthy(global, "tls")? {
                 if !t.is_boolean() {
                     ssl_opts = SSLConfig::from_js(
-                        VirtualMachine::get(),
+                        unsafe { &*VirtualMachine::get() },
                         global,
                         t,
                     )?;
@@ -2485,7 +2485,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         } else if let Some(tls_js) = opts.get_truthy(global, "tls")? {
             if !tls_js.is_boolean() {
                 ssl_opts = SSLConfig::from_js(
-                    VirtualMachine::get(),
+                        unsafe { &*VirtualMachine::get() },
                     global,
                     tls_js,
                 )?;

@@ -234,7 +234,12 @@ pub struct PacketBuffer {
 
 impl PacketBuffer {
     pub fn get_peer(&mut self, index: c_int) -> &mut sockaddr_storage {
-        // SAFETY: uSockets guarantees a non-null peer pointer for indices < packet count.
+        // SAFETY: uSockets guarantees a non-null, properly-aligned peer pointer for
+        // indices < packet count. The returned storage lives inside the C-owned packet
+        // buffer, which is exclusively loaned to the data callback for its duration; no
+        // other Rust or C path holds a reference to it. The reborrow of `&mut self`
+        // ties the returned lifetime to this handle, so the borrow checker prevents
+        // obtaining a second overlapping `&mut` via `get_peer`/`get_payload`.
         unsafe { &mut *us_udp_packet_buffer_peer(self, index) }
     }
 

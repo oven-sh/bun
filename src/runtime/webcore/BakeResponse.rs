@@ -33,9 +33,11 @@ pub enum SSRKind {
 pub fn to_js_for_ssr(this: &mut Response, global_object: &JSGlobalObject, kind: SSRKind) -> JSValue {
     this.calculate_estimated_byte_size();
     // SAFETY: `this` is a valid &mut Response; `global_object` is a live borrow; FFI does not retain either.
+    // `JSGlobalObject` wraps `UnsafeCell`, so `as_mut_ptr()` yields a `*mut` with write provenance
+    // from `&self` — sound for callees that mutate (see `JSGlobalObject::as_mut_ptr`).
     unsafe {
         BakeResponse__createForSSR(
-            global_object as *const _ as *mut JSGlobalObject,
+            global_object.as_mut_ptr(),
             this as *mut Response,
             kind as u8,
         )

@@ -2146,13 +2146,15 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
     ///
     /// `set_socket_field` replaces Zig's `comptime field: []const u8` +
     /// `@field(owner, field)` reflection — the closure writes the resulting
-    /// `Self` into the owner's socket field.
+    /// `Self` into the owner's socket field via the raw `*mut Owner` (Zig's
+    /// `*T` aliases freely; passing `&mut Owner` here would alias any live
+    /// `&mut` the caller already holds, so we keep it raw-ptr-only).
     pub fn adopt_group<Owner>(
         tcp: *mut us_socket_t,
         g: *mut SocketGroup,
         kind: SocketKind,
         owner: *mut Owner,
-        set_socket_field: impl FnOnce(&mut Owner, Self),
+        set_socket_field: impl FnOnce(*mut Owner, Self),
     ) -> bool {
         // SAFETY: `tcp` and `g` are non-null FFI handles; ext sizes are word-sized.
         let new_s = unsafe {

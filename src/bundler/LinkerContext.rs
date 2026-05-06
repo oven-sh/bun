@@ -4079,11 +4079,8 @@ impl<'a> LinkerContext<'a> {
         re_exports: &mut Vec<Dependency>,
     ) -> MatchImport {
         let cycle_detector_top = self.cycle_detector.len();
-        let _guard = scopeguard::guard(&mut self.cycle_detector as *mut Vec<ImportTracker>, |cd| {
-            // SAFETY: cd points to self.cycle_detector which outlives this scope
-            unsafe { (*cd).truncate(cycle_detector_top) };
-        });
-        // TODO(port): scopeguard captures &mut self.cycle_detector via raw ptr to avoid borrowck conflict
+        // PORT NOTE: see the un-gated copy above — explicit post-loop
+        // `truncate` instead of a raw-ptr scopeguard (Stacked-Borrows unsound).
 
         let mut tracker = init_tracker;
         let mut ambiguous_results: Vec<MatchImport> = Vec::new();

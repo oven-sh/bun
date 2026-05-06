@@ -1946,7 +1946,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     #[cfg(debug_assertions)]
     {
         if let Some(store) = body.store() {
-            if store.ref_count.load(core::sync::atomic::Ordering::Relaxed)
+            if store.ref_count.load(core::sync::atomic::Ordering::Relaxed) as usize
                 == initial_body_reference_count
             {
                 Output::panic(format_args!("Expected body ref count to have incremented in FetchTasklet"));

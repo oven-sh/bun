@@ -574,8 +574,6 @@ impl SavedSourceMap {
         column: Ordinal,
         source_handling: SourceMap::SourceContentHandling,
     ) -> Option<SourceMap::mapping::Lookup<'_>> {
-         // TODO(b2-blocked): bun_sourcemap::{ParseUrl fields, ParsedSourceMap::find_mapping, mapping::Lookup fields}
-        {
         let parse = self.get_with_content(
             path,
             match source_handling {
@@ -586,6 +584,7 @@ impl SavedSourceMap {
                     SourceMap::ParseUrlResultHint::All {
                         line: line.zero_based().max(0),
                         column: column.zero_based().max(0),
+                        include_names: false,
                     }
                 }
             },
@@ -594,18 +593,24 @@ impl SavedSourceMap {
 
         let mapping = match parse.mapping {
             Some(m) => m,
-            // SAFETY: `map` was just ref'd in get_with_content and is non-null.
-            None => unsafe { (*map).find_mapping(line, column)? },
+            None => map.find_mapping(
+                SourceMap::Ordinal::from_zero_based(line.zero_based()),
+                SourceMap::Ordinal::from_zero_based(column.zero_based()),
+            )?,
         };
 
+        // TODO(b2-blocked): `Lookup::source_map` is `Option<&'a ParsedSourceMap>`
+        // but `get_with_content` yields an owned `Arc<ParsedSourceMap>`; cannot
+        // hand out a borrow that outlives this stack frame. Zig's `Lookup` holds
+        // the refcounted pointer directly. Until `Lookup` switches to `Arc`,
+        // drop the strong ref here and return without the source_map back-ref.
+        let _ = map;
         Some(SourceMap::mapping::Lookup {
             mapping,
-            source_map: map,
+            source_map: None,
             prefetched_source_code: parse.source_contents,
+            name: None,
         })
-        } // end 
-        let _ = (path, line, column, source_handling);
-        None
     }
 }
 

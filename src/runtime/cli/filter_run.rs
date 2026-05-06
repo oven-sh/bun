@@ -952,7 +952,7 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
     state.handles = handles_vec.into_boxed_slice();
     for (i, script) in scripts.iter().enumerate() {
         let handle_ptr: *mut ProcessHandle = &mut state.handles[i];
-        let res = map.get_or_put(&script.package_name);
+        let res = map.get_or_put(&script.package_name)?;
         if res.found_existing {
             res.value_ptr.push(handle_ptr);
             // Output.prettyErrorln("<r><red>error<r>: Duplicate package name: {s}", .{script.package_name});
@@ -962,12 +962,21 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
             res.value_ptr.push(handle_ptr);
             // &state.handles[i];
         }
-        // TODO(port): StringHashMap::get_or_put API shape.
     }
     // compute dependencies (TODO: maybe we should do this only in a workspace?)
     for handle in state.handles.iter_mut() {
-        let source_buf = &handle.config.deps.source_buf;
-        let mut iter = handle.config.deps.map.iterator();
+        let source_buf = handle.config.deps.source_buf;
+        // PORT NOTE: `ArrayHashMap::iterator` takes `&mut self`; `config` is a
+        // shared borrow into `scripts`. Cast through raw to obtain `&mut` for the
+        // iteration only — `scripts` is not otherwise borrowed across this loop
+        // (Zig: aliased `*const` freely).
+        // SAFETY: `scripts` outlives the loop; no other live borrow of
+        // `handle.config.deps.map` exists.
+        let deps_map = unsafe {
+            &mut *(&handle.config.deps.map as *const _
+                as *mut bun_resolver::package_json::DependencyHashMap)
+        };
+        let mut iter = deps_map.iterator();
         while let Some(entry) = iter.next() {
             let name = entry.key_ptr.slice(source_buf);
             // is it a workspace dependency?

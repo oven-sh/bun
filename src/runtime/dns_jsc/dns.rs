@@ -4802,22 +4802,21 @@ impl Resolver {
         }
 
         let request = GetNameInfoRequest::init(
-            cache, Some(resolver),
+            cache, Some(resolver as *mut Resolver),
             cache_name, // transfer ownership here
             global_this,
             PendingCacheField::PendingNameinfoCacheCares,
         );
 
         let promise = unsafe { (*(*request).tail).promise.value() };
-        unsafe {
-            (*channel).get_name_info(
-                &mut sa as *mut _ as *mut libc::sockaddr,
-                request,
-                GetNameInfoRequest::on_cares_complete,
-            );
-        }
+        // TODO(port): blocked_on bun_cares_sys::c_ares_draft::Channel::get_name_info —
+        // upstream is `get_name_info<T: NameinfoHandler>(&mut self, sa: &mut sockaddr,
+        // ctx: &mut T)` (trait-based callback). `GetNameInfoRequest` does not yet impl
+        // `NameinfoHandler`; Zig passed `(sa, ctx, callback)` directly.
+        let _ = (channel, &mut sa, request);
 
-        resolver.request_sent(global_this.bun_vm());
+        // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
+        resolver.request_sent(unsafe { &*global_this.bun_vm() });
         Ok(promise)
     }
 
@@ -4826,7 +4825,16 @@ impl Resolver {
         global_this: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        global_this.bun_vm().dns_result_order.to_js(global_this)
+        // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
+        // PORT NOTE: VirtualMachine.dns_result_order is `u8` upstream (see
+        // jsc/VirtualMachine.rs TODO(b2-cycle)); cast through Order's repr(u8).
+        let raw = unsafe { (*global_this.bun_vm()).dns_result_order };
+        let order = match raw {
+            4 => Order::Ipv4first,
+            6 => Order::Ipv6first,
+            _ => Order::Verbatim,
+        };
+        order.to_js(global_this)
     }
 }
 

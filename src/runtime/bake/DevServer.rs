@@ -5065,7 +5065,7 @@ fn dump_state_due_to_crash(dev: &mut DevServer) -> Result<(), bun_core::Error> {
             bun_core::time::timestamp()
         );
         // TODO(port): bufPrintZ; falls back to literal on failure
-        match memchr::memchr(0, &filepath_buf) {
+        match filepath_buf.iter().position(|&b| b == 0) {
             Some(nul) => &filepath_buf[..nul],
             None => b"incremental-graph-crash-dump.html".as_slice(),
         }

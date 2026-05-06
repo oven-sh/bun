@@ -193,16 +193,16 @@ pub fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
         ParseArgumentsCfg { callback: callback_mode, kind: FunctionKind::TestOrDescribe },
     )?;
 
-    let callback_length = if let Some(callback) = args.callback {
-        callback.get_length(global)?
+    let callback_length: usize = if let Some(callback) = args.callback {
+        callback.get_length(global)? as usize
     } else {
         0
     };
 
     if !this.each.is_empty() {
         if this.each.is_undefined_or_null() || !this.each.is_array() {
-            let formatter = bun_jsc::ConsoleObject::Formatter::new(global);
-            return global.throw(format_args!("Expected array, got {}", this.each.to_fmt(&formatter)));
+            let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global);
+            return Err(global.throw(format_args!("Expected array, got {}", this.each.to_fmt(&mut formatter))));
         }
         let mut iter = this.each.array_iterator(global)?;
         let mut test_idx: usize = 0;
@@ -211,33 +211,36 @@ pub fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
                 break;
             }
 
-            // PORTING.md §JSC types: Vec<JSValue> backing storage is on the Rust heap (not
-            // stack-scanned). MarkedArgumentBuffer is registered with the VM as a root, so
-            // values appended mid-loop survive the allocations triggered by array_iterator/
-            // format_label/bind below. Replaces Zig's heap ArrayList + parallel raw slice.
-            let mut args_list = MarkedArgumentBuffer::new();
+            // PORT NOTE: Zig keeps a parallel `ArrayList(Strong)` to root each element across
+            // the format_label/bind allocations below. `bun_jsc::MarkedArgumentBuffer` only
+            // exposes a scoped-closure constructor (no `as_slice`/`len`), so for Phase D we
+            // use a plain `Vec<JSValue>` mirroring Zig's `args_list_raw`. The outer `iter`
+            // keeps `this.each` alive; per-element rooting is a TODO once Strong<JSValue>
+            // lands in bun_jsc.
+            // TODO(port): root args via Strong / MarkedArgumentBuffer once upstream surface exists.
+            let mut args_list: Vec<JSValue> = Vec::new();
 
             if item.is_array() {
                 // Spread array as args_list (matching Jest & Vitest)
                 let mut item_iter = item.array_iterator(global)?;
                 let mut idx: usize = 0;
                 while let Some(array_item) = item_iter.next()? {
-                    args_list.append(array_item);
+                    args_list.push(array_item);
                     idx += 1;
                 }
                 let _ = idx;
             } else {
-                args_list.append(item);
+                args_list.push(item);
             }
 
             let formatted_label: Option<Vec<u8>> = if let Some(desc) = args.description.as_deref() {
-                Some(jest::format_label(global, desc, args_list.as_slice(), test_idx)?)
+                Some(jest::format_label(global, desc, args_list.as_slice(), test_idx)?.into_vec())
             } else {
                 None
             };
 
             let bound = if let Some(cb) = args.callback {
-                Some(cb.bind(global, item, &BunString::static_str("cb"), 0, args_list.as_slice())?)
+                Some(JSValueTestExt::bind(cb, global, item, &BunString::static_str("cb"), 0.0, args_list.as_slice())?)
             } else {
                 None
             };

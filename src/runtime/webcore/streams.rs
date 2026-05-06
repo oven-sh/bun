@@ -676,6 +676,10 @@ impl Pending {
     }
 }
 
+impl bun_event_loop::Taskable for Pending {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::StreamPending;
+}
+
 pub enum PendingFuture {
     Promise {
         // TODO(port): JSC_BORROW *mut JSPromise — GC-rooted via protect/unprotect

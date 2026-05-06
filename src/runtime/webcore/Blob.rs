@@ -1521,8 +1521,8 @@ pub fn write_file_with_source_destination(
 
     if destination_type == Store::DataTag::File && source_type == Store::DataTag::Bytes {
         let write_file_promise = Box::into_raw(Box::new(WriteFilePromise {
+            promise: jsc::JSPromiseStrong::default(),
             global_this: ctx,
-            ..Default::default()
         }));
 
         #[cfg(windows)]
@@ -1532,7 +1532,7 @@ pub fn write_file_with_source_destination(
             promise_value.ensure_still_alive();
             // SAFETY: write_file_promise was just produced by Box::into_raw above; sole owner.
             unsafe { (*write_file_promise).promise.strong.set(ctx, promise_value) };
-            match write_file::WriteFileWindows::create(
+            match write_file_mod::WriteFileWindows::create(
                 ctx.bun_vm().event_loop(),
                 destination_blob.clone(),
                 source_blob.clone(),
@@ -1549,7 +1549,7 @@ pub fn write_file_with_source_destination(
 
         #[cfg(not(windows))]
         {
-            let file_copier = write_file::WriteFile::create(
+            let file_copier = write_file_mod::WriteFile::create(
                 destination_blob.clone(),
                 source_blob.clone(),
                 write_file_promise,
@@ -1557,7 +1557,7 @@ pub fn write_file_with_source_destination(
                 options.mkdirp_if_not_exists.unwrap_or(true),
             )
             .expect("unreachable");
-            let task = write_file::WriteFileTask::create_on_js_thread(ctx, file_copier);
+            let task = write_file_mod::WriteFileTask::create_on_js_thread(ctx, file_copier);
             // Defer promise creation until we're just about to schedule the task
             let promise = JSPromise::create(ctx);
             let promise_value = promise.as_value(ctx);
@@ -4157,7 +4157,11 @@ impl Blob {
                     unsafe { drop(Box::from_raw(raw_bytes)) };
                 }
             });
-            let out = BunString::clone_utf16(bun_core::reinterpret_slice::<u16>(buf));
+            // SAFETY: BOM::Utf16Le ⇒ buf is UTF-16LE bytes; len is even after BOM strip.
+            // Mirrors Zig `bun.reinterpretSlice(u16, buf)`.
+            let out = BunString::clone_utf16(unsafe {
+                core::slice::from_raw_parts(buf.as_ptr() as *const u16, buf.len() / 2)
+            });
             return Ok(out.to_js(global));
         }
 

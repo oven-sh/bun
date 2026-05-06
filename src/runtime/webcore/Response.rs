@@ -970,20 +970,17 @@ impl Response {
                     };
 
                     let credentials = blob.store.as_ref().unwrap().data.s3().get_credentials();
+                    let _ = credentials;
 
-                    let result = match credentials.sign_request(
-                        s3::SignRequestOptions {
-                            path: blob.store.as_ref().unwrap().data.s3().path(),
-                            method: Method::GET,
-                        },
-                        false,
-                        s3::SignOptions { expires: 15 * 60 },
-                    ) {
-                        Ok(r) => r,
-                        Err(sign_err) => {
-                            return s3::throw_sign_error(sign_err, global_this);
-                        }
-                    };
+                    // TODO(b2-blocked): bun_s3 — `s3_stub::S3Credentials` is an
+                    // opaque placeholder with no `sign_request`; the real call is
+                    //   credentials.sign_request::<false>(
+                    //       bun_s3_signing::SignOptions { path: ..s3().path(), method: Method::GET, ..Default },
+                    //       Some(bun_s3_signing::SignQueryOptions { expires: 15 * 60 }),
+                    //   )
+                    // mapped through `crate::webcore::__s3_client::throw_sign_error` on Err.
+                    let result: bun_s3_signing::SignResult =
+                        todo!("blocked_on: bun_s3::S3Credentials::sign_request");
                     // result drops at scope exit
                     let headers = response.get_or_create_headers(global_this)?;
                     response.redirected = true;

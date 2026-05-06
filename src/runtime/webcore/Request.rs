@@ -500,7 +500,8 @@ impl Request {
     #[inline]
     pub fn detach_readable_stream(&mut self, global_object: &JSGlobalObject) {
         if let Some(js_ref) = self.js_ref.try_get() {
-            js::gc::stream::clear(js_ref, global_object);
+            // Zig `js.gc.stream.clear(...)` → `set(.zero)`.
+            js_gen::stream_set_cached(js_ref, global_object, JSValue::ZERO);
         }
         if let BodyValue::Locked(locked) = self.body.value_mut() {
             // TODO(port): Arc<BodyValue> mutation — see field note
@@ -980,7 +981,7 @@ impl Request {
                     // to avoid circular references. The Request object owns the stream,
                     // so Locked.readable should not be used directly by consumers.
                     stream.value.ensure_still_alive();
-                    js::gc::stream::set(js_value, global_object, stream.value);
+                    js_gen::stream_set_cached(js_value, global_object, stream.value);
                     locked.readable.deinit();
                     locked.readable = Default::default();
                 }
@@ -1481,8 +1482,8 @@ impl Request {
             // After toJS, checkBodyStreamRef has already moved the streams from
             // Locked.readable to js.gc.stream. So we need to use js.gc.stream
             // to get the streams and update the body cache.
-            if let Some(cloned_stream) = js::gc::stream::get(js_wrapper) {
-                js::body_set_cached(js_wrapper, global_this, cloned_stream);
+            if let Some(cloned_stream) = js_gen::stream_get_cached(js_wrapper) {
+                js_gen::body_set_cached(js_wrapper, global_this, cloned_stream);
             }
         }
 
@@ -1491,7 +1492,7 @@ impl Request {
         // because checkBodyStreamRef hasn't been called on the original request yet.
         if let BodyValue::Locked(locked) = self.body.value() {
             if let Some(readable) = locked.readable.get(global_this) {
-                js::body_set_cached(this_value, global_this, readable.value);
+                js_gen::body_set_cached(this_value, global_this, readable.value);
             }
         }
 
@@ -1510,7 +1511,7 @@ impl Request {
         let vm = global_this.bun_vm();
         let mut body_ = 'brk: {
             if let Some(js_ref) = self.js_ref.try_get() {
-                if let Some(stream) = js::gc::stream::get(js_ref) {
+                if let Some(stream) = js_gen::stream_get_cached(js_ref) {
                     let mut readable = ReadableStream::from_js(stream, global_this)?;
                     if let Some(r) = readable.as_mut() {
                         break 'brk self.body.value().clone_with_readable_stream(global_this, r)?;

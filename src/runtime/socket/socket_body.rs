@@ -1873,10 +1873,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         // PERF(port): was stack-fallback alloc — profile in Phase B.
-        let buffer: jsc::node::BlobOrStringOrBuffer = if args[0].is_undefined() {
-            jsc::node::BlobOrStringOrBuffer::StringOrBuffer(jsc::node::StringOrBuffer::EMPTY)
+        let buffer: BlobOrStringOrBuffer = if args[0].is_undefined() {
+            BlobOrStringOrBuffer::StringOrBuffer(StringOrBuffer::EMPTY)
         } else {
-            match jsc::node::BlobOrStringOrBuffer::from_js_with_encoding_value_allow_request_response(
+            match BlobOrStringOrBuffer::from_js_with_encoding_value_allow_request_response(
                 global,
                 args[0],
                 encoding_value,
@@ -2125,7 +2125,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
-        this.close_and_detach(uws::SocketCloseCode::Failure);
+        this.close_and_detach(uws::CloseCode::Failure);
         Ok(JSValue::UNDEFINED)
     }
 
@@ -2160,7 +2160,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // detach + unref immediately below, orphaning the `us_socket_t`). NOT `.failure`:
         // that arms SO_LINGER{1,0} → RST and drops any data still in the kernel send
         // buffer, which `destroy()` after `write()` must not do.
-        this.socket.close(uws::SocketCloseCode::FastShutdown);
+        this.socket.close(uws::CloseCode::FastShutdown);
         this.socket.detach();
         this.poll_ref.unref(global.bun_vm());
         Ok(JSValue::UNDEFINED)
@@ -2253,7 +2253,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
         if let Some(ctx) = this_ref.owned_ssl_ctx.take() {
             // SAFETY: BoringSSL FFI; we hold one owned ref.
-            unsafe { boringssl::SSL_CTX_free(ctx) };
+            unsafe { boringssl_sys::SSL_CTX_free(ctx) };
         }
         // SAFETY: `this` was Box::into_raw'd in `new()`.
         drop(unsafe { Box::from_raw(this) });
@@ -2266,7 +2266,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         this_ref.flags.insert(Flags::FINALIZING);
         this_ref.this_value.finalize();
         if !this_ref.socket.is_closed() {
-            this_ref.close_and_detach(uws::SocketCloseCode::Failure);
+            this_ref.close_and_detach(uws::CloseCode::Failure);
         }
 
         this_ref.deref();
@@ -2414,10 +2414,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         let mut owned_ctx = scopeguard::guard(None::<*mut SSL_CTX>, |c| {
             if let Some(c) = c {
                 // SAFETY: BoringSSL FFI; `c` is the +1 ref taken below.
-                unsafe { boringssl::SSL_CTX_free(c) };
+                unsafe { boringssl_sys::SSL_CTX_free(c) };
             }
         });
-        let mut ssl_opts: Option<jsc::api::ServerConfig::SSLConfig> = None;
+        let mut ssl_opts: Option<SSLConfig> = None;
         // Drop frees ssl_opts.
 
         // node:net wraps the result of `[buntls]` as `opts.tls`, so the
@@ -2448,7 +2448,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // servername / ALPN still come from the surrounding tls config.
             if let Some(t) = opts.get_truthy(global, "tls")? {
                 if !t.is_boolean() {
-                    ssl_opts = jsc::api::ServerConfig::SSLConfig::from_js(
+                    ssl_opts = SSLConfig::from_js(
                         VirtualMachine::get(),
                         global,
                         t,
@@ -2457,13 +2457,13 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
         } else if let Some(tls_js) = opts.get_truthy(global, "tls")? {
             if !tls_js.is_boolean() {
-                ssl_opts = jsc::api::ServerConfig::SSLConfig::from_js(
+                ssl_opts = SSLConfig::from_js(
                     VirtualMachine::get(),
                     global,
                     tls_js,
                 )?;
             } else if tls_js.to_boolean() {
-                ssl_opts = Some(jsc::api::ServerConfig::SSLConfig::ZERO);
+                ssl_opts = Some(SSLConfig::ZERO);
             }
             let cfg = ssl_opts
                 .as_mut()
@@ -2485,10 +2485,10 @@ impl<const SSL: bool> NewSocket<SSL> {
                     if create_err != uws::create_bun_socket_error_t::None {
                         return global.throw_value(create_err.to_js(global));
                     }
-                    return global.throw_value(boringssl::err_to_js(
+                    return global.throw_value(boringssl_err_to_js(
                         global,
                         // SAFETY: BoringSSL FFI.
-                        unsafe { boringssl::ERR_get_error() },
+                        unsafe { boringssl_sys::ERR_get_error() },
                     ));
                 }
             };
@@ -2572,11 +2572,11 @@ impl<const SSL: bool> NewSocket<SSL> {
             Some(s) => s,
             None => {
                 // SAFETY: BoringSSL FFI.
-                let err = unsafe { boringssl::ERR_get_error() };
+                let err = unsafe { boringssl_sys::ERR_get_error() };
                 let _clear = scopeguard::guard((), |_| {
                     if err != 0 {
                         // SAFETY: BoringSSL FFI.
-                        unsafe { boringssl::ERR_clear_error() };
+                        unsafe { boringssl_sys::ERR_clear_error() };
                     }
                 });
                 // tls.deinit drops the owned_ctx ref. Null the handlers field
@@ -2594,7 +2594,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 // created above; sole owner here.
                 drop(unsafe { Box::from_raw(handlers_ptr.as_ptr()) });
                 if err != 0 && !global.has_exception() {
-                    return global.throw_value(boringssl::err_to_js(global, err));
+                    return global.throw_value(boringssl_err_to_js(global, err));
                 }
                 if !global.has_exception() {
                     return global.throw(
@@ -2922,7 +2922,7 @@ pub struct DuplexUpgradeContext {
     pub task_event: EventState,
     /// Config to build a fresh `SSL_CTX` from (legacy `{ca,cert,key}` callers).
     /// Mutually exclusive with `owned_ctx` — `runEvent` prefers `owned_ctx`.
-    pub ssl_config: Option<jsc::api::ServerConfig::SSLConfig>,
+    pub ssl_config: Option<SSLConfig>,
     /// One ref on a prebuilt `SSL_CTX` (from `opts.tls.secureContext` — the
     /// memoised `tls.createSecureContext` path). Adopted by `startTLSWithCTX`
     /// on success, freed in `deinit` if Close races ahead of StartTLS.
@@ -3127,7 +3127,7 @@ impl DuplexUpgradeContext {
         self.ssl_config = None;
         if let Some(ctx) = self.owned_ctx.take() {
             // SAFETY: BoringSSL FFI; we hold one owned ref.
-            unsafe { boringssl::SSL_CTX_free(ctx) };
+            unsafe { boringssl_sys::SSL_CTX_free(ctx) };
         }
         self.upgrade.deinit();
         // SAFETY: `self` was Box::into_raw'd in `new()`.
@@ -3193,7 +3193,7 @@ pub fn js_upgrade_duplex_to_tls(
     let mut owned_ctx = scopeguard::guard(None::<*mut SSL_CTX>, |c| {
         if let Some(c) = c {
             // SAFETY: BoringSSL FFI; `c` is the +1 ref taken below.
-            unsafe { boringssl::SSL_CTX_free(c) };
+            unsafe { boringssl_sys::SSL_CTX_free(c) };
         }
     });
     let sc_js: JSValue = 'blk: {
@@ -3222,20 +3222,20 @@ pub fn js_upgrade_duplex_to_tls(
 
     // Still parse SSLConfig for servername/ALPN (those live on the JS-side
     // wrapper, not the SSL_CTX) and as the build source when no SecureContext.
-    let mut ssl_opts: Option<jsc::api::ServerConfig::SSLConfig> = None;
+    let mut ssl_opts: Option<SSLConfig> = None;
     // Drop frees ssl_opts on error.
     if let Some(tls) = opts.get_truthy(global, "tls")? {
         if !tls.is_boolean() {
             ssl_opts =
-                jsc::api::ServerConfig::SSLConfig::from_js(VirtualMachine::get(), global, tls)?;
+                SSLConfig::from_js(VirtualMachine::get(), global, tls)?;
         } else if tls.to_boolean() {
-            ssl_opts = Some(jsc::api::ServerConfig::SSLConfig::ZERO);
+            ssl_opts = Some(SSLConfig::ZERO);
         }
     }
     if owned_ctx.is_none() && ssl_opts.is_none() {
         return global.throw("Expected \"tls\" option", ());
     }
-    let socket_config: Option<&jsc::api::ServerConfig::SSLConfig> = ssl_opts.as_ref();
+    let socket_config: Option<&SSLConfig> = ssl_opts.as_ref();
 
     let mut default_data = JSValue::ZERO;
     if let Some(v) = opts.fast_get(global, jsc::BuiltinName::Data)? {

@@ -180,8 +180,9 @@ pub fn get_peer_x509_certificate(this: &mut This, global: &JSGlobalObject, _fram
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::UNDEFINED) };
     // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
     let cert = unsafe { ffi::SSL_get_peer_certificate(ssl_ptr) };
-    if let Some(x509) = cert {
-        return X509::to_js_object(x509, global);
+    if !cert.is_null() {
+        // SAFETY: cert is a non-null *mut X509 (null-checked above).
+        return X509::to_js_object(unsafe { &mut *cert }, global);
     }
     Ok(JSValue::UNDEFINED)
 }
@@ -190,8 +191,10 @@ pub fn get_x509_certificate(this: &mut This, global: &JSGlobalObject, _frame: &C
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::UNDEFINED) };
     // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
     let cert = unsafe { ffi::SSL_get_certificate(ssl_ptr) };
-    if let Some(x509) = cert {
-        return X509::to_js_object(x509.ref_(), global);
+    if !cert.is_null() {
+        // SAFETY: cert is a non-null *mut X509 (null-checked above); X509_up_ref bumps the refcount before handing to JS.
+        unsafe { ffi::X509_up_ref(cert) };
+        return X509::to_js_object(unsafe { &mut *cert }, global);
     }
     Ok(JSValue::UNDEFINED)
 }

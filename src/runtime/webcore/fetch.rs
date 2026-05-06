@@ -110,7 +110,7 @@ fn data_url_response(data_url_: DataURL, global_this: &JSGlobalObject) -> JSValu
     let mut blob = Blob::init(data, global_this);
 
     let mut allocated = false;
-    let mime_type = MimeType::init(data_url.mime_type, &mut allocated);
+    let mime_type = MimeType::MimeType::init(data_url.mime_type, true, Some(&mut allocated));
     blob.content_type = mime_type.value;
     if allocated {
         blob.content_type_allocated = true;
@@ -252,7 +252,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     jsc::mark_binding(core::panic::Location::caller());
     let global_this = ctx;
     let arguments = callframe.arguments_old(2);
-    bun_core::analytics::Features::fetch_inc();
+    bun_core::analytics::Features::FETCH.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     let vm = VirtualMachine::get();
 
     // used to clean up dynamically allocated memory on error (a poor man's errdefer)
@@ -1286,11 +1286,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 #[cfg(not(windows))]
                 let cwd = global_this.bun_vm().transpiler.fs.top_level_dir;
 
-                let fullpath = bun_paths::join_abs_string_buf(
+                let fullpath = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
                     cwd,
                     &mut path_buf,
                     &[global_this.bun_vm().main, b"../", url_path_decoded],
-                    bun_paths::Platform::Auto,
                 );
                 #[cfg(windows)]
                 {
@@ -1312,11 +1311,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
             url_string = jsc::URL::file_url_from_string(BunString::borrow_utf8(temp_file_path));
 
-            let mut pathlike = node::PathOrFileDescriptor::Path(node::PathLike {
-                encoded_slice: ZigString::Slice::init(
+            let mut pathlike = node::PathOrFileDescriptor::Path(node::PathLike::EncodedSlice(
+                ZigString::Slice::init(
                     Box::<[u8]>::from(temp_file_path),
                 ),
-            });
+            ));
 
             break 'blob Blob::find_or_create_file_from_path(&mut pathlike, global_this, true);
         };
@@ -1457,7 +1456,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     #[cfg(target_os = "macos")]
                     {
                         // macOS only supports regular files for sendfile()
-                        if !bun_sys::is_regular_file(stat.mode) {
+                        if !bun_sys::S::ISREG(stat.mode) {
                             break 'use_sendfile;
                         }
                     }
@@ -1469,7 +1468,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
                     let original_size = body.any_blob().blob().size;
                     let stat_size = Blob::SizeType::try_from(stat.size).unwrap();
-                    let blob_size = if bun_sys::is_regular_file(stat.mode) {
+                    let blob_size = if bun_sys::S::ISREG(stat.mode) {
                         stat_size
                     } else {
                         original_size.min(stat_size)
@@ -1482,7 +1481,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         content_size: blob_size,
                     });
 
-                    if bun_sys::is_regular_file(stat.mode) {
+                    if bun_sys::S::ISREG(stat.mode) {
                         let sf = http_body.sendfile_mut();
                         sf.offset = sf.offset.min(stat_size);
                         sf.remain = sf
@@ -1500,7 +1499,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // TODO: make this async + lazy
             let res = node::fs::NodeFS::read_file(
                 global_this.bun_vm().node_fs(),
-                node::fs::ReadFileArgs {
+                node::fs::args::ReadFile {
                     encoding: node::Encoding::Buffer,
                     path: node::PathOrFileDescriptor::Fd(opened_fd),
                     offset: body.any_blob().blob().offset,
@@ -1627,7 +1626,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
 
         let mut result = match credentials_with_options.credentials.sign_request(
-            s3::SignOptions {
+            SignOptions {
                 path: url.s3_path(),
                 method,
                 ..Default::default()

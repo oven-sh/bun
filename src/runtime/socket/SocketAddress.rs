@@ -198,18 +198,33 @@ impl SocketAddress {
         // - "[::1]" -> "::1"
         // - "0x.0x.0" -> "0.0.0.0"
         let paddr = host.latin1(); // presentation address
+        // PORT NOTE: Zig used `std.net.Ip{4,6}Address.parse`; Rust port uses
+        // `ares_inet_pton` (already linked) to fill the sockaddr in place.
         let addr = if paddr[0] == b'[' && paddr[paddr.len() - 1] == b']' {
-            // TODO(port): std::net is banned; need bun_net::Ip6Address::parse equivalent
-            let Ok(v6) = bun_net::Ip6Address::parse(&paddr[1..paddr.len() - 1], port_) else {
-                return Ok(JSValue::UNDEFINED);
+            let inner = &paddr[1..paddr.len() - 1];
+            let mut sin6 = inet::sockaddr_in6 {
+                family: AF::INET6.int(),
+                port: port_.to_be(),
+                flowinfo: 0,
+                addr: [0u8; 16],
+                scope_id: 0,
+                ..unsafe { mem::zeroed() } // SAFETY: sockaddr_in6 is #[repr(C)] POD
             };
-            SocketAddress { _addr: sockaddr { sin6: v6.sa }, _presentation: BunString::dead() }
+            if !pton_noerr(inet::AF_INET6, inner, (&mut sin6.addr) as *mut _ as *mut c_void) {
+                return Ok(JSValue::UNDEFINED);
+            }
+            SocketAddress { _addr: sockaddr { sin6 }, _presentation: BunString::dead() }
         } else {
-            // TODO(port): std::net is banned; need bun_net::Ip4Address::parse equivalent
-            let Ok(v4) = bun_net::Ip4Address::parse(paddr, port_) else {
-                return Ok(JSValue::UNDEFINED);
+            let mut sin = inet::sockaddr_in {
+                family: AF::INET.int(),
+                port: port_.to_be(),
+                addr: 0,
+                ..unsafe { mem::zeroed() } // SAFETY: sockaddr_in is #[repr(C)] POD
             };
-            SocketAddress { _addr: sockaddr { sin: v4.sa }, _presentation: BunString::dead() }
+            if !pton_noerr(inet::AF_INET, paddr, (&mut sin.addr) as *mut _ as *mut c_void) {
+                return Ok(JSValue::UNDEFINED);
+            }
+            SocketAddress { _addr: sockaddr { sin }, _presentation: BunString::dead() }
         };
 
         Ok(SocketAddress::new(addr).to_js(global))

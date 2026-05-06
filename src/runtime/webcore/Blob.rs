@@ -338,6 +338,11 @@ impl Blob {
 mod _jsc_gated {
 use super::*;
 use crate::node as node;
+use crate::webcore::s3_file as S3File;
+use crate::webcore::s3::client as s3_client;
+use crate::webcore::s3::simple_request::S3UploadResult;
+use crate::api::archive::Archive;
+use super::write_file::WriteFileWaitFromLockedValueTask;
 
 impl Blob {
     pub fn do_read_from_s3<F>(&mut self, global: &JSGlobalObject) -> jsc::JsTerminatedResult<JSValue>

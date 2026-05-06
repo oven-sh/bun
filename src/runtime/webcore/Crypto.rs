@@ -367,7 +367,7 @@ pub fn bun_random_uuid_v5(global: &JSGlobalObject, callframe: &CallFrame) -> JsR
             .throw());
     };
 
-    let uuid = UUID5::init(&namespace, name.as_bytes());
+    let uuid = UUID5::init(&namespace, name.slice());
 
     if encoding == Encoding::Hex {
         let (mut str, bytes) = BunString::create_uninitialized_latin1(36);

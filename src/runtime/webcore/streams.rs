@@ -29,7 +29,7 @@ pub type ByteListPoolNode = bun_collections::pool::Node<bun_collections::ByteLis
 // as opaque `c_void` so the struct is name-able from RequestContext.
 // TODO(b2-blocked): swap to `crate::webcore::s3::multipart::MultiPartUpload`
 // once `webcore::s3` is un-gated in webcore.rs.
-mod bun_s3 {
+pub mod bun_s3 {
     pub type MultiPartUpload = core::ffi::c_void;
 }
 
@@ -1459,12 +1459,12 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             }
 
             if self.buffer.write(bytes).is_err() {
-                return Writable::Err(SysError::from_code(sys::E::NOMEM, sys::Syscall::Write));
+                return Writable::Err(SysError::from_code(sys::E::NOMEM, sys::Tag::write));
             }
         } else if self.buffer.len + len >= self.high_water_mark {
             // TODO: attempt to write both in a corked buffer?
             if self.buffer.write(bytes).is_err() {
-                return Writable::Err(SysError::from_code(sys::E::NOMEM, sys::Syscall::Write));
+                return Writable::Err(SysError::from_code(sys::E::NOMEM, sys::Tag::write));
             }
             // PORT NOTE: reshaped for borrowck
             let slice_ptr = self.readable_slice().as_ptr();
@@ -1477,7 +1477,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         } else {
             // queue the data wait until highWaterMark is reached or the auto flusher kicks in
             if self.buffer.write(bytes).is_err() {
-                return Writable::Err(SysError::from_code(sys::E::NOMEM, sys::Syscall::Write));
+                return Writable::Err(SysError::from_code(sys::E::NOMEM, sys::Tag::write));
             }
         }
 
@@ -1522,7 +1522,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             }
 
             if self.buffer.write_latin1(bytes).is_err() {
-                return Writable::Err(SysError::from_code(sys::E::NOMEM, sys::Syscall::Write));
+                return Writable::Err(SysError::from_code(sys::E::NOMEM, sys::Tag::write));
             }
 
             if do_send {
@@ -1540,7 +1540,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             // - combined chunk is large enough to flush automatically
             // - no backpressure
             if self.buffer.write_latin1(bytes).is_err() {
-                return Writable::Err(SysError::from_code(sys::E::NOMEM, sys::Syscall::Write));
+                return Writable::Err(SysError::from_code(sys::E::NOMEM, sys::Tag::write));
             }
             // PORT NOTE: reshaped for borrowck
             let slice_ptr = self.readable_slice().as_ptr();
@@ -1552,7 +1552,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             }
         } else {
             if self.buffer.write_latin1(bytes).is_err() {
-                return Writable::Err(SysError::from_code(sys::E::NOMEM, sys::Syscall::Write));
+                return Writable::Err(SysError::from_code(sys::E::NOMEM, sys::Tag::write));
             }
         }
 
@@ -1588,7 +1588,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         let written = match self.buffer.write_utf16(utf16) {
             Ok(n) => n,
             Err(_) => {
-                return Writable::Err(SysError::from_code(sys::E::NOMEM, sys::Syscall::Write))
+                return Writable::Err(SysError::from_code(sys::E::NOMEM, sys::Tag::write))
             }
         };
 
@@ -2077,7 +2077,7 @@ impl NetworkSink {
                 .write_bytes(bytes, false)
                 .is_err()
             {
-                return Writable::Err(SysError::from_code(sys::E::NOMEM, sys::Syscall::Write));
+                return Writable::Err(SysError::from_code(sys::E::NOMEM, sys::Tag::write));
             }
         }
         Writable::Owned(len)
@@ -2101,7 +2101,7 @@ impl NetworkSink {
                 .write_latin1(bytes, false)
                 .is_err()
             {
-                return Writable::Err(SysError::from_code(sys::E::NOMEM, sys::Syscall::Write));
+                return Writable::Err(SysError::from_code(sys::E::NOMEM, sys::Tag::write));
             }
         }
         Writable::Owned(len)
@@ -2120,7 +2120,7 @@ impl NetworkSink {
                 .write_utf16(bytes, false)
                 .is_err()
             {
-                return Writable::Err(SysError::from_code(sys::E::NOMEM, sys::Syscall::Write));
+                return Writable::Err(SysError::from_code(sys::E::NOMEM, sys::Tag::write));
             }
         }
 

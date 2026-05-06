@@ -109,9 +109,9 @@ extern "C" fn on_data(socket: *mut uws::udp::Socket, buf: *mut uws::udp::PacketB
 
         // SAFETY: peer points to a sockaddr_storage; family discriminates the cast.
         match unsafe { (*peer).family } {
-            f if f == posix::AF_INET => {
+            f if f == inet::AF_INET => {
                 // SAFETY: family == AF_INET so peer is sockaddr_in.
-                let peer4 = unsafe { &*(peer as *const posix::sockaddr_in) };
+                let peer4 = unsafe { &*(peer as *const sockaddr_in) };
                 // SAFETY: libc addr-format fn; src points to in_addr, dst is INET6_ADDRSTRLEN+1 bytes.
                 hostname = unsafe {
                     inet_ntop(
@@ -124,9 +124,9 @@ extern "C" fn on_data(socket: *mut uws::udp::Socket, buf: *mut uws::udp::PacketB
                 // SAFETY: libc byte-order fn; pure on u16.
                 port = unsafe { ntohs(peer4.port) };
             }
-            f if f == posix::AF_INET6 => {
+            f if f == inet::AF_INET6 => {
                 // SAFETY: family == AF_INET6 so peer is sockaddr_in6.
-                let peer6 = unsafe { &*(peer as *const posix::sockaddr_in6) };
+                let peer6 = unsafe { &*(peer as *const sockaddr_in6) };
                 // SAFETY: libc addr-format fn; src points to in6_addr, dst is INET6_ADDRSTRLEN+1 bytes.
                 hostname = unsafe {
                     inet_ntop(
@@ -162,9 +162,9 @@ extern "C" fn on_data(socket: *mut uws::udp::Socket, buf: *mut uws::udp::PacketB
             'blk: {
                 #[cfg(not(windows))]
                 {
-                    let mut buffer = [0u8; bun_sys::c::IF_NAMESIZE + 1];
+                    let mut buffer = [0u8; IF_NAMESIZE + 1];
                     // SAFETY: buffer is IF_NAMESIZE+1 bytes, NUL-terminated by zero-init.
-                    if !unsafe { bun_sys::c::if_indextoname(id, buffer.as_mut_ptr() as *mut c_char) }.is_null() {
+                    if !unsafe { if_indextoname(id, buffer.as_mut_ptr() as *mut c_char) }.is_null() {
                         // SAFETY: if_indextoname wrote a NUL-terminated string.
                         let name = unsafe { core::ffi::CStr::from_ptr(buffer.as_ptr() as *const c_char) }.to_bytes();
                         break 'blk BunString::create_format(format_args!(

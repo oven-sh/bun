@@ -4125,7 +4125,7 @@ pub type DebugHTTPSServer = NewServer<true, true>;
 // ─── AnyServer ───────────────────────────────────────────────────────────────
 #[derive(Clone, Copy)]
 pub struct AnyServer {
-    pub ptr: TaggedPtrUnion<(HTTPServer, HTTPSServer, DebugHTTPServer, DebugHTTPSServer)>,
+    pub ptr: TaggedPtrUnion<AnyServerTypes>,
 }
 
 pub enum AnyUserRouteList<'a> {

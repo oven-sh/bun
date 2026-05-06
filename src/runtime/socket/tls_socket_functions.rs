@@ -397,24 +397,24 @@ pub fn get_shared_sigalgs(this: &mut This, global: &JSGlobalObject, _frame: &Cal
             ffi::EVP_PKEY_EC => {
                 sig_with_md = b"ECDSA";
             }
-            boringssl::NID_ED25519 => {
+            ffi::NID_ED25519 => {
                 sig_with_md = b"Ed25519";
             }
-            boringssl::NID_ED448 => {
+            ffi::NID_ED448 => {
                 sig_with_md = b"Ed448";
             }
-            boringssl::NID_id_GostR3410_2001 => {
+            ffi::NID_id_GostR3410_2001 => {
                 sig_with_md = b"gost2001";
             }
-            boringssl::NID_id_GostR3410_2012_256 => {
+            ffi::NID_id_GostR3410_2012_256 => {
                 sig_with_md = b"gost2012_256";
             }
-            boringssl::NID_id_GostR3410_2012_512 => {
+            ffi::NID_id_GostR3410_2012_512 => {
                 sig_with_md = b"gost2012_512";
             }
             _ => {
                 // SAFETY: OBJ_nid2sn is safe to call with any nid; returns null if unknown.
-                let sn_str = unsafe { boringssl::OBJ_nid2sn(sign_nid) };
+                let sn_str = unsafe { ffi::OBJ_nid2sn(sign_nid) };
                 if !sn_str.is_null() {
                     // SAFETY: OBJ_nid2sn returns a static NUL-terminated C string.
                     sig_with_md = unsafe { CStr::from_ptr(sn_str) }.to_bytes();
@@ -425,7 +425,7 @@ pub fn get_shared_sigalgs(this: &mut This, global: &JSGlobalObject, _frame: &Cal
         }
 
         // SAFETY: OBJ_nid2sn is safe to call with any nid; returns null if unknown.
-        let hash_str = unsafe { boringssl::OBJ_nid2sn(hash_nid) };
+        let hash_str = unsafe { ffi::OBJ_nid2sn(hash_nid) };
         if !hash_str.is_null() {
             // SAFETY: OBJ_nid2sn returns a static NUL-terminated C string.
             let hash_slice = unsafe { CStr::from_ptr(hash_str) }.to_bytes();
@@ -640,7 +640,7 @@ pub fn get_ephemeral_key_info(this: &mut This, global: &JSGlobalObject, _frame: 
                 // SAFETY: ec is the EC_KEY returned for an EC pkey; EC_KEY_get0_group on it is valid.
                 let nid = unsafe { boringssl::EC_GROUP_get_curve_name(boringssl::EC_KEY_get0_group(ec)) };
                 // SAFETY: OBJ_nid2sn is safe to call with any nid; returns null if unknown.
-                let nid_str = unsafe { boringssl::OBJ_nid2sn(nid) };
+                let nid_str = unsafe { ffi::OBJ_nid2sn(nid) };
                 if !nid_str.is_null() {
                     // SAFETY: OBJ_nid2sn returns a static NUL-terminated C string.
                     curve_name = unsafe { CStr::from_ptr(nid_str) }.to_bytes();
@@ -649,7 +649,7 @@ pub fn get_ephemeral_key_info(this: &mut This, global: &JSGlobalObject, _frame: 
                 }
             } else {
                 // SAFETY: OBJ_nid2sn is safe to call with any nid; returns null if unknown.
-                let kid_str = unsafe { boringssl::OBJ_nid2sn(kid) };
+                let kid_str = unsafe { ffi::OBJ_nid2sn(kid) };
                 if !kid_str.is_null() {
                     // SAFETY: OBJ_nid2sn returns a static NUL-terminated C string.
                     curve_name = unsafe { CStr::from_ptr(kid_str) }.to_bytes();

@@ -311,24 +311,27 @@ impl TextDecoder {
 
                 // switch (this.fatal) { inline else => |fail_if_invalid| ... }
                 let maybe_decode_result = if self.fatal {
-                    strings::to_utf16_alloc_maybe_buffered::<true>(input, FLUSH)
+                    strings::to_utf16_alloc_maybe_buffered::<true, FLUSH>(input)
                 } else {
-                    strings::to_utf16_alloc_maybe_buffered::<false>(input, FLUSH)
+                    strings::to_utf16_alloc_maybe_buffered::<false, FLUSH>(input)
                 };
 
                 let maybe_decode_result = match maybe_decode_result {
                     Ok(v) => v,
                     Err(err) => {
                         // `joined_owned` drops at scope exit (matches `if (deinit) free(input)`).
+                        // `unicode_draft::ToUTF16Error` is private to `bun_str`; match by
+                        // its `IntoStaticStr` name to avoid naming the type.
+                        let err_name: &'static str = (&err).into();
                         if self.fatal {
-                            if err == bun_core::err!("InvalidByteSequence") {
+                            if err_name == "InvalidByteSequence" {
                                 return global_this
                                     .err(jsc::ErrorCode::ERR_ENCODING_INVALID_ENCODED_DATA, format_args!("Invalid byte sequence"))
                                     .throw();
                             }
                         }
 
-                        debug_assert!(err == bun_core::err!("OutOfMemory"));
+                        debug_assert!(err_name == "OutOfMemory");
                         return Err(global_this.throw_out_of_memory());
                     }
                 };

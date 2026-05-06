@@ -879,6 +879,13 @@ unsafe extern "C" {
     fn JSC__JSValue__jsEmptyString(global: *const JSGlobalObject) -> JSValue;
     fn JSC__JSValue__createEmptyObject(global: *const JSGlobalObject, len: usize) -> JSValue;
     fn JSC__JSValue__createEmptyObjectWithNullPrototype(global: *const JSGlobalObject) -> JSValue;
+    fn JSC__JSValue__createObject2(
+        global: *const JSGlobalObject,
+        key1: *const bun_string::ZigString,
+        key2: *const bun_string::ZigString,
+        value1: JSValue,
+        value2: JSValue,
+    ) -> JSValue;
     fn JSC__JSValue__createEmptyArray(global: *const JSGlobalObject, len: usize) -> JSValue;
     fn JSBuffer__bufferFromPointerAndLengthAndDeinit(
         global: *const JSGlobalObject, ptr: *mut u8, len: usize,

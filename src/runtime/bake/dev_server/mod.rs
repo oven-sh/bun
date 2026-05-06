@@ -253,15 +253,25 @@ pub struct EntryPointList {
     pub set: StringArrayHashMap<entry_point_list::Flags>,
 }
 impl EntryPointList {
-    /// `EntryPointList.appendCss` — DevServer.zig.
-    pub fn append_css(&mut self, abs_path: &[u8]) -> Result<(), bun_core::Error> {
+    /// `EntryPointList.append` — DevServer.zig:4351. Deduplicates requests to
+    /// bundle the same file twice by OR-ing flags.
+    pub fn append(
+        &mut self,
+        abs_path: &[u8],
+        flags: entry_point_list::Flags,
+    ) -> Result<(), bun_core::Error> {
         let gop = bun_core::handle_oom(self.set.get_or_put(abs_path));
         if gop.found_existing {
-            *gop.value_ptr |= entry_point_list::Flags::CLIENT | entry_point_list::Flags::CSS;
+            *gop.value_ptr |= flags;
         } else {
-            *gop.value_ptr = entry_point_list::Flags::CLIENT | entry_point_list::Flags::CSS;
+            *gop.value_ptr = flags;
         }
         Ok(())
+    }
+
+    /// `EntryPointList.appendCss` — DevServer.zig.
+    pub fn append_css(&mut self, abs_path: &[u8]) -> Result<(), bun_core::Error> {
+        self.append(abs_path, entry_point_list::Flags::CLIENT | entry_point_list::Flags::CSS)
     }
 }
 

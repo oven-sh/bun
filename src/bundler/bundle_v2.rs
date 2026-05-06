@@ -2206,7 +2206,7 @@ impl<'a> BundleV2<'a> {
         // TODO(port): errdefer this.graph.heap.deinit() — Drop handles arena teardown
 
         *pool = ThreadPool::init(&mut *this, thread_pool)?;
-        this.graph.pool = NonNull::from(pool);
+        this.graph.pool = NonNull::from(&mut *pool);
         pool.start();
         Ok(this)
     }

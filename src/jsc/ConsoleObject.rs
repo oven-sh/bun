@@ -1053,13 +1053,94 @@ impl<'a> TablePrinter<'a> {
 // writeTrace
 // ───────────────────────────────────────────────────────────────────────────
 
-pub fn write_trace(_writer: &mut (impl bun_io::Write + ?Sized), _global: &JSGlobalObject) {
-    // TODO(phase-d): body re-gated — `VirtualMachine::print_stack_trace` takes a
-    // concrete `bun_core::io::Writer` (not the generic `bun_io::Write` we receive
-    // here), and `remap_zig_exception`'s slice parameter is still typed against
-    // the unported `ZigString::Slice` path. `console.trace()` falls through to a
-    // no-op until those signatures settle.
-    todo!("blocked_on: VirtualMachine::print_stack_trace writer type / remap_zig_exception slice param");
+/// Adapter: erase a `&mut dyn bun_io::Write` behind the `bun_core::io::Writer`
+/// vtable header so it can be handed to `VirtualMachine::print_stack_trace` /
+/// `print_errorlike_object`, which take the concrete `io::Writer` type.
+///
+/// `bun_core::io::Writer` is the first `#[repr(C)]` field, so the vtable thunks
+/// recover `&mut Self` from the `*mut io::Writer` they receive (same pattern as
+/// `Output::QuietWriterAdapter::new_interface`).
+#[repr(C)]
+pub(crate) struct DynWriteAdapter<'a> {
+    head: bun_core::io::Writer,
+    inner: &'a mut dyn bun_io::Write,
+}
+
+impl<'a> DynWriteAdapter<'a> {
+    pub(crate) fn new(inner: &'a mut dyn bun_io::Write) -> Self {
+        Self {
+            head: bun_core::io::Writer {
+                write_all: Self::thunk_write_all,
+                flush: Self::thunk_flush,
+            },
+            inner,
+        }
+    }
+
+    /// Reborrow as the `io::Writer` head.
+    #[inline]
+    pub(crate) fn interface(&mut self) -> &mut bun_core::io::Writer {
+        // SAFETY: `head` is the first `#[repr(C)]` field, so `&mut self.head`
+        // and `&mut *self as *mut io::Writer` are the same address; the thunks
+        // below cast back to `*mut Self`.
+        &mut self.head
+    }
+
+    unsafe fn thunk_write_all(
+        w: *mut bun_core::io::Writer,
+        bytes: &[u8],
+    ) -> Result<(), bun_core::Error> {
+        // SAFETY: `w` always points at `Self.head`, the first repr(C) field.
+        let this = unsafe { &mut *(w as *mut Self) };
+        this.inner.write_all(bytes)
+    }
+
+    unsafe fn thunk_flush(w: *mut bun_core::io::Writer) -> Result<(), bun_core::Error> {
+        // SAFETY: `w` always points at `Self.head`, the first repr(C) field.
+        let this = unsafe { &mut *(w as *mut Self) };
+        this.inner.flush()
+    }
+}
+
+pub fn write_trace(writer: &mut (impl bun_io::Write + ?Sized), global: &JSGlobalObject) {
+    let mut holder = crate::zig_exception::Holder::init();
+    // SAFETY: per-thread VM; `console.trace()` only runs on the JS thread.
+    let vm = unsafe { &mut *VirtualMachine::get() };
+
+    let mut source_code_slice: Option<bun_string::ZigStringSlice> = None;
+
+    let err = ZigString::init(b"trace output").to_error_instance(global);
+    {
+        let exception = holder.zig_exception();
+        err.to_zig_exception(global, exception);
+    }
+    // PORT NOTE: reshaped for borrowck — Zig held `exception` and
+    // `&holder.need_to_clear_parser_arena_on_deinit` simultaneously; in Rust
+    // those are two `&mut` into `holder`. Capture the flag in a local and
+    // write it back after.
+    let mut need_to_clear = holder.need_to_clear_parser_arena_on_deinit;
+    vm.remap_zig_exception(
+        holder.zig_exception(),
+        err,
+        None,
+        &mut need_to_clear,
+        &mut source_code_slice,
+        false,
+    );
+    holder.need_to_clear_parser_arena_on_deinit = need_to_clear;
+
+    let mut adapter = DynWriteAdapter::new(writer);
+    let _ = VirtualMachine::print_stack_trace(
+        adapter.interface(),
+        &holder.zig_exception().stack,
+        Output::enable_ansi_colors_stderr(),
+    );
+
+    // Zig: `defer if (source_code_slice) |slice| slice.deinit();` —
+    // `ZigStringSlice` frees on `Drop`.
+    drop(source_code_slice);
+    // Zig: `defer holder.deinit(vm);` — explicit (takes `vm`).
+    holder.deinit(vm);
 }
 
 // ───────────────────────────────────────────────────────────────────────────

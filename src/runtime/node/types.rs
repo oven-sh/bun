@@ -680,6 +680,44 @@ impl StringOrBuffer {
     }
 }
 
+/// `bun.String.encode` (string.zig:642) — `self.toZigString().encodeWithAllocator(...)`.
+///
+/// Dispatches on the string's storage (Latin-1 vs UTF-16) to
+/// `webcore::encoding::construct_from_{u8,u16}`. Lives here (not in `bun_str`)
+/// because the encoder is in `bun_runtime::webcore` and depending on it from
+/// `bun_str` would invert the crate graph.
+fn encode_bun_string(s: &bun_str::String, encoding: Encoding) -> Vec<u8> {
+    use crate::webcore::encoding::{construct_from_u8, construct_from_u16};
+    // PERF(port): Zig used `inline else` over Encoding × repr — profile in Phase B.
+    if s.is_utf16() {
+        let repr = s.utf16();
+        match encoding {
+            Encoding::Utf8 => construct_from_u16::<{ Encoding::Utf8 as u8 }>(repr.as_ptr(), repr.len()),
+            Encoding::Ucs2 => construct_from_u16::<{ Encoding::Ucs2 as u8 }>(repr.as_ptr(), repr.len()),
+            Encoding::Utf16le => construct_from_u16::<{ Encoding::Utf16le as u8 }>(repr.as_ptr(), repr.len()),
+            Encoding::Latin1 => construct_from_u16::<{ Encoding::Latin1 as u8 }>(repr.as_ptr(), repr.len()),
+            Encoding::Ascii => construct_from_u16::<{ Encoding::Ascii as u8 }>(repr.as_ptr(), repr.len()),
+            Encoding::Base64 => construct_from_u16::<{ Encoding::Base64 as u8 }>(repr.as_ptr(), repr.len()),
+            Encoding::Base64url => construct_from_u16::<{ Encoding::Base64url as u8 }>(repr.as_ptr(), repr.len()),
+            Encoding::Hex => construct_from_u16::<{ Encoding::Hex as u8 }>(repr.as_ptr(), repr.len()),
+            Encoding::Buffer => construct_from_u16::<{ Encoding::Buffer as u8 }>(repr.as_ptr(), repr.len()),
+        }
+    } else {
+        let repr = s.latin1();
+        match encoding {
+            Encoding::Utf8 => construct_from_u8::<{ Encoding::Utf8 as u8 }>(repr.as_ptr(), repr.len()),
+            Encoding::Ucs2 => construct_from_u8::<{ Encoding::Ucs2 as u8 }>(repr.as_ptr(), repr.len()),
+            Encoding::Utf16le => construct_from_u8::<{ Encoding::Utf16le as u8 }>(repr.as_ptr(), repr.len()),
+            Encoding::Latin1 => construct_from_u8::<{ Encoding::Latin1 as u8 }>(repr.as_ptr(), repr.len()),
+            Encoding::Ascii => construct_from_u8::<{ Encoding::Ascii as u8 }>(repr.as_ptr(), repr.len()),
+            Encoding::Base64 => construct_from_u8::<{ Encoding::Base64 as u8 }>(repr.as_ptr(), repr.len()),
+            Encoding::Base64url => construct_from_u8::<{ Encoding::Base64url as u8 }>(repr.as_ptr(), repr.len()),
+            Encoding::Hex => construct_from_u8::<{ Encoding::Hex as u8 }>(repr.as_ptr(), repr.len()),
+            Encoding::Buffer => construct_from_u8::<{ Encoding::Buffer as u8 }>(repr.as_ptr(), repr.len()),
+        }
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 
 /// https://github.com/nodejs/node/blob/master/lib/buffer.js#L587

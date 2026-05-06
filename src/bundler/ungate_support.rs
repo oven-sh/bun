@@ -202,16 +202,15 @@ pub mod bun_css {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Value types extracted from `bundle_v2.zig` (gated `__phase_a_draft`).
+// Value types extracted from `bundle_v2.zig`.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// `bundle_v2.zig:PartRange`.
 ///
-/// PORT NOTE: re-exported from `bundle_v2::__phase_a_draft` so `Chunk.rs`
+/// PORT NOTE: re-exported from `bundle_v2` so `Chunk.rs`
 /// (`parts_in_chunk_in_order: Box<[PartRange]>`) and the `bundle_v2.rs`
-/// `compute_chunks` body that fills it agree on a single type. Once
-/// `__phase_a_draft` un-gates, this collapses to a plain local def.
-pub use crate::bundle_v2::__phase_a_draft::PartRange;
+/// `compute_chunks` body that fills it agree on a single type.
+pub use crate::bundle_v2::PartRange;
 
 /// `bundle_v2.zig:StableRef` — `packed struct(u96)`.
 #[repr(C, packed)]

@@ -23,7 +23,9 @@ pub trait ConcurrentPromiseTaskContext {
 /// - `run(*Context)` - performs the work on the thread pool
 /// - `then(*Context, jsc.JSPromise)` - resolves the promise with the result on the JS thread
 pub struct ConcurrentPromiseTask<'a, Context: ConcurrentPromiseTaskContext> {
-    pub ctx: &'a mut Context,
+    // Zig: `ctx: *Context` — heap-allocated by caller (e.g. `bun.new(CopyFile, ...)`).
+    // Owned here so dropping the task frees the context (matches Zig `Context.deinit()` → `bun.destroy`).
+    pub ctx: Box<Context>,
     pub task: WorkPoolTask,
     pub event_loop: &'static EventLoop,
     // PORT NOTE: `allocator: std.mem.Allocator` field dropped — global mimalloc (non-AST crate)
@@ -40,7 +42,7 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
 
     pub fn create_on_js_thread(
         global_this: &'a JSGlobalObject,
-        value: &'a mut Context,
+        value: Box<Context>,
     ) -> Box<Self> {
         let mut this = Box::new(Self {
             ctx: value,

@@ -600,20 +600,14 @@ where
             return;
         }
 
-         // TODO(b2-blocked): bun_core::{Output::flush, reload_process}, crate::{ConcurrentTask, Task::init, NewHotReloader::enqueue_task_concurrent}
-        {
         if RELOAD_IMMEDIATELY {
             Output::flush();
-            // TODO(port): `if (comptime Ctx == ImportWatcher)` — Rust cannot
-            // compare a generic type parameter to a concrete type. The Zig
-            // branch closed listen sockets via `ctx.rare_data` when Ctx is
-            // ImportWatcher. Phase B: express via a trait method with a
-            // default no-op impl.
-            // if Ctx == ImportWatcher {
-            //     if let Some(rare) = unsafe { (*(*self.reloader).ctx).rare_data } {
-            //         rare.close_all_listen_sockets_for_watch_mode();
-            //     }
-            // }
+            // Zig: `if (comptime Ctx == ImportWatcher) { if (ctx.rare_data) |rare|
+            // rare.closeAllListenSocketsForWatchMode(); }`. Rust can't compare a
+            // generic type parameter to a concrete type, so this is a trait
+            // method with a default no-op; only `VirtualMachine` overrides.
+            // SAFETY: ctx outlives reloader (BACKREF).
+            unsafe { (*(*self.reloader).ctx).close_all_listen_sockets_for_watch_mode() };
             flush_changed_paths_for_reload();
             // SAFETY: CLEAR_SCREEN is only mutated during single-threaded init.
             bun_core::reload_process(unsafe { CLEAR_SCREEN }, false);
@@ -648,7 +642,6 @@ where
             (*self.reloader)
                 .enqueue_task_concurrent((*that).concurrent_task.assume_init_mut() as *mut _);
         }
-        } // end 
         self.count = 0;
     }
 

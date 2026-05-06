@@ -1270,7 +1270,7 @@ pub fn migrate_yarn_lockfile<'a>(
     dependencies_buf = &mut dependencies_buf[actual_root_dep_count as usize..];
     resolutions_buf = &mut resolutions_buf[actual_root_dep_count as usize..];
 
-    for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
+    for yarn_idx in 0..yarn_lock.entries.len() {
         let package_id = yarn_entry_to_package_id[yarn_idx];
         if package_id == install::INVALID_PACKAGE_ID {
             continue;
@@ -1278,97 +1278,94 @@ pub fn migrate_yarn_lockfile<'a>(
 
         let dependencies_start = dependencies_buf.as_mut_ptr();
         let resolutions_start = resolutions_buf.as_mut_ptr();
-        if let Some(deps) = &entry.dependencies {
+
+        // PORT NOTE: reshaped for borrowck — iterate by index and re-borrow
+        // `yarn_lock.entries[yarn_idx]` for each map so the shared borrow of
+        // `yarn_lock` passed into `process_deps` doesn't overlap an iterator.
+        if let Some(deps) = yarn_lock.entries[yarn_idx].dependencies.as_ref() {
             let processed = process_deps(
                 deps,
                 DependencyType::Production,
-                &mut yarn_lock,
-                &mut string_buf,
+                &yarn_lock,
+                &mut sbuf!(),
                 dependencies_buf,
                 resolutions_buf,
-                log,
-                manager,
+                &mut *log,
+                &mut *manager,
                 &yarn_entry_to_package_id,
             )?;
-            // TODO(port): borrowck — iterating yarn_lock.entries while passing &mut yarn_lock
-            // to process_deps. Phase B: make find_entry_by_spec take &self or restructure.
             dependencies_buf = &mut dependencies_buf[processed..];
             resolutions_buf = &mut resolutions_buf[processed..];
         }
 
-        if let Some(deps) = &entry.optional_dependencies {
+        if let Some(deps) = yarn_lock.entries[yarn_idx].optional_dependencies.as_ref() {
             let processed = process_deps(
                 deps,
                 DependencyType::Optional,
-                &mut yarn_lock,
-                &mut string_buf,
+                &yarn_lock,
+                &mut sbuf!(),
                 dependencies_buf,
                 resolutions_buf,
-                log,
-                manager,
+                &mut *log,
+                &mut *manager,
                 &yarn_entry_to_package_id,
             )?;
             dependencies_buf = &mut dependencies_buf[processed..];
             resolutions_buf = &mut resolutions_buf[processed..];
         }
 
-        if let Some(deps) = &entry.peer_dependencies {
+        if let Some(deps) = yarn_lock.entries[yarn_idx].peer_dependencies.as_ref() {
             let processed = process_deps(
                 deps,
                 DependencyType::Peer,
-                &mut yarn_lock,
-                &mut string_buf,
+                &yarn_lock,
+                &mut sbuf!(),
                 dependencies_buf,
                 resolutions_buf,
-                log,
-                manager,
+                &mut *log,
+                &mut *manager,
                 &yarn_entry_to_package_id,
             )?;
             dependencies_buf = &mut dependencies_buf[processed..];
             resolutions_buf = &mut resolutions_buf[processed..];
         }
 
-        if let Some(deps) = &entry.dev_dependencies {
+        if let Some(deps) = yarn_lock.entries[yarn_idx].dev_dependencies.as_ref() {
             let processed = process_deps(
                 deps,
                 DependencyType::Development,
-                &mut yarn_lock,
-                &mut string_buf,
+                &yarn_lock,
+                &mut sbuf!(),
                 dependencies_buf,
                 resolutions_buf,
-                log,
-                manager,
+                &mut *log,
+                &mut *manager,
                 &yarn_entry_to_package_id,
             )?;
             dependencies_buf = &mut dependencies_buf[processed..];
             resolutions_buf = &mut resolutions_buf[processed..];
         }
 
-        // SAFETY: dependencies_start/dependencies_buf.as_ptr() are within the same allocation
-        let deps_len = unsafe {
-            (dependencies_buf.as_mut_ptr() as usize) - (dependencies_start as usize)
-        };
-        let deps_off = unsafe { (dependencies_start as usize) - (dependencies_base_ptr as usize) };
+        // dependencies_start/dependencies_buf.as_ptr() are within the same allocation
+        let deps_len =
+            (dependencies_buf.as_mut_ptr() as usize) - (dependencies_start as usize);
+        let deps_off = (dependencies_start as usize) - (dependencies_base_ptr as usize);
         this.packages.items_dependencies_mut()[package_id as usize] = lockfile::DependencySlice::new(
             u32::try_from(deps_off / core::mem::size_of::<Dependency>()).unwrap(),
             u32::try_from(deps_len / core::mem::size_of::<Dependency>()).unwrap(),
         );
-        let res_off =
-            unsafe { (resolutions_start as usize) - (resolutions_base_ptr as usize) };
-        let res_len = unsafe {
-            (resolutions_buf.as_mut_ptr() as usize) - (resolutions_start as usize)
-        };
+        let res_off = (resolutions_start as usize) - (resolutions_base_ptr as usize);
+        let res_len =
+            (resolutions_buf.as_mut_ptr() as usize) - (resolutions_start as usize);
         this.packages.items_resolutions_mut()[package_id as usize] = lockfile::DependencyIDSlice::new(
             u32::try_from(res_off / core::mem::size_of::<PackageID>()).unwrap(),
             u32::try_from(res_len / core::mem::size_of::<PackageID>()).unwrap(),
         );
     }
 
-    let final_deps_len = unsafe {
-        // SAFETY: same allocation
+    let final_deps_len =
         ((dependencies_buf.as_mut_ptr() as usize) - (dependencies_base_ptr as usize))
-            / core::mem::size_of::<Dependency>()
-    };
+            / core::mem::size_of::<Dependency>();
     unsafe {
         // SAFETY: all elements in 0..final_deps_len initialized above; capacity >= num_deps
         this.buffers.dependencies.set_len(final_deps_len);

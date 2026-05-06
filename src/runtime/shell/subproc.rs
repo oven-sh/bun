@@ -1516,14 +1516,23 @@ impl CapturedWriter {
             self.parent().buffered_output.len()
         );
         // `dead == false` ⇒ writer.is_some() (set in PipeReader::create).
-        let _writer = self.writer.clone().expect("CapturedWriter live without writer");
-        let _ = chunk;
-        // TODO(port): `IOWriter::enqueue` now takes a `ChildPtr {node, tag}`
-        // (NodeId-arena port) but `CapturedWriter` lives inside a `PipeReader`
-        // with no NodeId. The dispatch back to `on_iowriter_chunk` needs a
-        // dedicated `WriterTag::SubprocCapture` arm carrying the
-        // `*mut CapturedWriter`. Tracked separately.
-        todo!("blocked_on: shell::io_writer::ChildPtr variant for CapturedWriter")
+        let writer = self
+            .writer
+            .clone()
+            .expect("CapturedWriter live without writer");
+        // The CapturedWriter lives outside the NodeId arena (embedded in a
+        // heap-allocated PipeReader), so dispatch is by raw pointer — see
+        // `io_writer::ChildPtr::subproc_capture` / `WriterTag::Subproc`.
+        let child = io_writer::ChildPtr::subproc_capture(self as *mut _ as *mut c_void);
+        let y = writer.enqueue(child, None, chunk);
+        // SAFETY: `self` borrow ends before `run_yield` reborrows the parent
+        // PipeReader; field-parent recovery is sound (single-threaded shell).
+        let parent = unsafe {
+            &*(self as *mut _ as *mut u8)
+                .sub(offset_of!(PipeReader, captured_writer))
+                .cast::<PipeReader>()
+        };
+        parent.run_yield(y);
     }
 
     pub fn get_buffer(&self) -> &[u8] {

@@ -1347,19 +1347,34 @@ pub struct H2FrameParser {
 }
 
 // IntrusiveRc — bun.ptr.RefCount(@This(), "ref_count", deinit, .{})
+impl bun_ptr::RefCounted for H2FrameParser {
+    type DestructorCtx = ();
+    unsafe fn get_ref_count(this: *mut Self) -> *mut bun_ptr::RefCount<Self> {
+        // SAFETY: caller contract — `this` points to a live Self.
+        unsafe { &raw mut (*this).ref_count }
+    }
+    unsafe fn destructor(this: *mut Self, _ctx: ()) {
+        // SAFETY: refcount reached zero; sole owner of the `Box::into_raw`
+        // allocation. `deinit` performs final teardown and frees `this` via
+        // `Box::from_raw`; `this` is not used after.
+        unsafe { (*this).deinit() };
+    }
+}
 impl H2FrameParser {
     pub fn ref_(&self) {
-        self.ref_count.set(self.ref_count.get() + 1);
+        // SAFETY: `self` is live; `RefCount::ref_` only reads/writes the
+        // embedded `ref_count` Cell (interior-mutable), so `&self`→`*mut`
+        // is sound for that single field access.
+        unsafe { bun_ptr::RefCount::<Self>::ref_(self as *const Self as *mut Self) };
     }
+    // Takes `&mut self` so the destructor pointer carries write provenance —
+    // `&T as *const T as *mut T` followed by a write is UB under Stacked
+    // Borrows even when refcount==0 makes us the sole owner.
     pub fn deref(&mut self) {
-        let n = self.ref_count.get() - 1;
-        self.ref_count.set(n);
-        if n == 0 {
-            // ref_count hit zero; mirrors Zig RefCount.deinit dispatch. We hold the
-            // sole remaining reference via `&mut self`, so deinit (which frees self)
-            // is the last use of this borrow.
-            self.deinit();
-        }
+        // SAFETY: `self` is live; `deref` decrements the intrusive count and,
+        // on zero, calls `destructor(this)` which frees via `Box::from_raw`.
+        // The caller must not touch `self` after this returns when count was 1.
+        unsafe { bun_ptr::RefCount::<Self>::deref(self as *mut Self) };
     }
 }
 
@@ -5792,7 +5807,7 @@ impl H2FrameParser {
         // PERF(port): was HiveArray pool — profile in Phase B
         // TODO(port): ENABLE_ALLOCATOR_POOL path uses thread-local HiveArray; for now Box::new
         let this: *mut H2FrameParser = Box::into_raw(Box::new(H2FrameParser {
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             handlers,
             global_this: global_object as *const _,
             strong_this: JsRef::empty(),

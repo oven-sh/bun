@@ -728,11 +728,15 @@ impl Subprocess<'_> {
     #[bun_jsc::host_fn(getter)]
     pub fn get_terminal(this: &Self, global_this: &JSGlobalObject) -> JSValue {
         if let Some(terminal) = this.terminal {
-            // `crate::api::bun::Terminal` is currently the gated stub
-            // (api.rs:227); the real `bun_terminal_body::js::to_js` isn't wired
-            // through it yet.
-            let _ = (terminal, global_this);
-            todo!("blocked_on: crate::api::bun::Terminal::to_js")
+            // PORT NOTE: `self.terminal` is typed as the opaque
+            // `crate::api::bun::Terminal` stub (api.rs); the actual allocation
+            // it points to is a `bun_terminal_body::Terminal` (created by
+            // `Terminal::init_terminal`). Cast through to call the real
+            // codegen `to_js` — Zig's `terminal.toJS(global)` is `js.toJS`.
+            return crate::api::bun_terminal_body::js::to_js(
+                terminal.as_ptr().cast::<crate::api::bun_terminal_body::Terminal>(),
+                global_this,
+            );
         }
         JSValue::UNDEFINED
     }
@@ -1440,10 +1444,7 @@ impl Subprocess<'_> {
             // `bun_sys::SignalCode`.
             let sys_sig = bun_sys::SignalCode(signal as u8);
             if let Some(name) = sys_sig.name() {
-                let _ = (name, global);
-                // TODO(blocked_on: bun_str::ZigString::to_js): `ZigStringJsc`
-                // only exposes error-instance constructors, not plain `to_js`.
-                todo!("blocked_on: bun_str::ZigString::to_js")
+                return bun_jsc::zig_string::ZigString::init(name.as_bytes()).to_js(global);
             } else {
                 return JSValue::js_number(signal as u32 as f64);
             }

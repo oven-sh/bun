@@ -83,7 +83,9 @@ impl Handlers {
 
     pub fn enter(&mut self) -> Scope<'_> {
         self.mark_active();
-        self.vm.event_loop().enter();
+        // SAFETY: `event_loop()` returns a non-null self-pointer into the VM;
+        // single JS thread, no aliasing `&mut EventLoop` outlives this call.
+        unsafe { (*self.vm.event_loop()).enter() };
         Scope { handlers: self }
     }
 

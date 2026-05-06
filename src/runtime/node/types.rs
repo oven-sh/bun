@@ -604,9 +604,40 @@ impl Encoding {
 
     /// Caller must verify the value is a string
     pub fn from(slice: &[u8]) -> Option<Encoding> {
-        // TODO(port): case-insensitive lookup — phf is case-sensitive.
-        ENCODING_MAP.get(slice).copied()
+        // phf is case-sensitive; lowercase ASCII first (encodings are short).
+        if slice.len() > 16 {
+            return None;
+        }
+        let mut buf = [0u8; 16];
+        for (i, b) in slice.iter().enumerate() {
+            buf[i] = b.to_ascii_lowercase();
+        }
+        ENCODING_MAP.get(&buf[..slice.len()]).copied()
     }
+}
+
+/// Same `repr(u8)` and variant order as `bun_str::NodeEncoding`; bridge so
+/// callers passing `node::Encoding` to `webcore::encoding::*` (which take
+/// `bun_str::NodeEncoding`) compile without `.into()` churn at every site.
+impl From<Encoding> for bun_str::NodeEncoding {
+    #[inline]
+    fn from(e: Encoding) -> Self {
+        // SAFETY: both enums are `#[repr(u8)]` with identical, contiguous
+        // discriminants `0..=8` (see bun_str::encoding::Encoding).
+        unsafe { core::mem::transmute::<u8, bun_str::NodeEncoding>(e as u8) }
+    }
+}
+
+/// Local FFI shim for `VM::deprecated_report_extra_memory` — the inherent
+/// method lives in the cfg-gated `VM.rs`, not on the opaque `crate::jsc::VM`
+/// returned by `JSGlobalObject::vm()`.
+#[inline]
+fn vm_report_extra_memory(global: &JSGlobalObject, size: usize) {
+    unsafe extern "C" {
+        fn JSC__VM__reportExtraMemory(vm: *mut jsc::VM, size: usize);
+    }
+    // SAFETY: `global.vm()` yields a live opaque JSC VM handle (interior-mutable).
+    unsafe { JSC__VM__reportExtraMemory(global.vm().as_mut_ptr(), size) };
 }
 
 // Gated: every body calls JSC methods (`.is_falsey()`, `.is_string()`,

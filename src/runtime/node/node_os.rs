@@ -1252,14 +1252,14 @@ unsafe extern "C" {
 
 pub fn set_process_priority_impl(pid: i32, priority: i32) -> bun_sys::E {
     if pid < 0 {
-        return bun_sys::E::SRCH;
+        return bun_sys::E::ESRCH;
     }
 
     // SAFETY: pure FFI call
     let code: i32 = unsafe { set_process_priority(pid, priority) };
 
     if code == -2 {
-        return bun_sys::E::SRCH;
+        return bun_sys::E::ESRCH;
     }
     if code == 0 {
         return bun_sys::E::SUCCESS;

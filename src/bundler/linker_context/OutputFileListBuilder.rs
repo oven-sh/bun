@@ -56,7 +56,7 @@ impl OutputFileList {
         c: &LinkerContext,
         chunks: &[Chunk],
         _unused: usize,
-    ) -> Self {
+    ) -> Result<Self, bun_core::Error> {
         let (length, supplementary_file_count) =
             OutputFileList::calculate_output_file_list_capacity(c, chunks);
         let mut output_files: Vec<options::OutputFile> =
@@ -64,7 +64,7 @@ impl OutputFileList {
         // PERF(port): was appendNTimesAssumeCapacity — profile in Phase B
         output_files.resize_with(length as usize, || OutputFile::zero_value());
 
-        Self {
+        Ok(Self {
             output_files,
             index_for_chunk: 0,
             index_for_sourcemaps_and_bytecode: if supplementary_file_count == 0 {
@@ -75,7 +75,7 @@ impl OutputFileList {
             additional_output_files_start: u32::try_from(chunks.len()).unwrap()
                 + supplementary_file_count,
             total_insertions: 0,
-        }
+        })
     }
 
     pub fn take(&mut self) -> Vec<options::OutputFile> {

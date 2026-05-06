@@ -752,13 +752,18 @@ impl StreamResult {
         global_this: &JSGlobalObject,
     ) {
         let vm = unsafe { &*global_this.bun_vm() };
-        let event_loop = unsafe { &mut *vm.event_loop() };
+        // PORT NOTE: Zig holds `loop` across re-entrant promise.resolve/reject. In
+        // Rust a long-lived `&mut EventLoop` would alias any `&mut` the re-entered
+        // JS path materializes through `vm.event_loop()`. Keep the raw pointer and
+        // form a fresh temporary `&mut` per call so no two `&mut` are live at once.
+        let event_loop = vm.event_loop();
         // SAFETY: promise is GC-rooted via protect()
         let promise = unsafe { &mut *promise };
         let promise_value = promise.to_js();
         let _unprotect = scopeguard::guard((), |_| promise_value.unprotect());
 
-        event_loop.enter();
+        // SAFETY: event_loop is the VM's singleton loop; sole `&mut` for this call.
+        unsafe { &mut *event_loop }.enter();
         // PORT NOTE: cannot capture &mut event_loop in scopeguard while also using
         // `promise` (borrowck); call exit() explicitly on each path instead.
 
@@ -787,7 +792,8 @@ impl StreamResult {
                         *result = StreamResult::Temporary(ByteList::default());
                         let _ = promise.reject(global_this, Err(err));
                         // TODO: properly propagate exception upwards
-                        event_loop.exit();
+                        // SAFETY: see enter() above; sole `&mut` for this call.
+                        unsafe { &mut *event_loop }.exit();
                         return;
                     }
                 };
@@ -798,7 +804,8 @@ impl StreamResult {
                 // TODO: properly propagate exception upwards
             }
         }
-        event_loop.exit();
+        // SAFETY: see enter() above; sole `&mut` for this call.
+        unsafe { &mut *event_loop }.exit();
     }
 
     pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
@@ -1135,19 +1142,26 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             );
             return false;
         };
-        // SAFETY: res is a live uWS response handle (FFI)
-        let res = unsafe { &mut *(res as *mut uws::Response) };
+        // PORT NOTE: Zig holds `res` across `handleFirstWriteIfNecessary`, whose
+        // callback (RequestContext.renderMetadata) writes status/headers through
+        // the same uWS response. Keep the raw pointer and form a fresh temporary
+        // `&mut` per FFI call so no `&mut uws::Response` is live across the
+        // re-entrant `on_first_write` invocation.
+        let res = res as *mut uws::Response;
         // TODO(port): UwsResponse type erasure — casting to placeholder uws::Response
 
-        if self.requested_end && !res.state().is_http_write_called() {
+        // SAFETY: res is a live uWS response handle (FFI); sole `&mut` for this call.
+        if self.requested_end && !unsafe { &mut *res }.state().is_http_write_called() {
             self.handle_first_write_if_necessary();
-            let success = res.try_end(buf, self.end_len, false);
+            // SAFETY: res is a live uWS handle; sole `&mut` for this call.
+            let success = unsafe { &mut *res }.try_end(buf, self.end_len, false);
             if success {
                 self.has_backpressure = false;
                 self.handle_wrote(self.end_len);
             } else if self.res.is_some() {
                 self.has_backpressure = true;
-                res.on_writable::<Self>(Self::on_writable, self);
+                // SAFETY: res is a live uWS handle; sole `&mut` for this call.
+                unsafe { &mut *res }.on_writable::<Self>(Self::on_writable, self);
             }
             bun_core::scoped_log!(
                 HTTPServerWritable,
@@ -1160,7 +1174,8 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         // clean this so we know when its relevant or not
         self.end_len = 0;
         // we clear the onWritable handler so uWS can handle the backpressure for us
-        res.clear_on_writable();
+        // SAFETY: res is a live uWS handle; sole `&mut` for this call.
+        unsafe { &mut *res }.clear_on_writable();
         self.handle_first_write_if_necessary();
         // uWebSockets lacks a tryWrite() function
         // This means that backpressure will be handled by appending to an "infinite" memory buffer
@@ -1168,10 +1183,12 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         // so in this scenario, we just append to the buffer
         // and report success
         if self.requested_end {
-            res.end(buf, false);
+            // SAFETY: res is a live uWS handle; sole `&mut` for this call.
+            unsafe { &mut *res }.end(buf, false);
             self.has_backpressure = false;
         } else {
-            self.has_backpressure = res.write(buf) == uws::WriteResult::Backpressure;
+            // SAFETY: res is a live uWS handle; sole `&mut` for this call.
+            self.has_backpressure = unsafe { &mut *res }.write(buf) == uws::WriteResult::Backpressure;
         }
         self.handle_wrote(buf.len());
         bun_core::scoped_log!(
@@ -1733,19 +1750,20 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
     pub fn destroy(this: *mut Self) {
         bun_core::scoped_log!(HTTPServerWritableLog, "destroy()");
-        // SAFETY: this is Box-allocated; destroy takes ownership
-        let this_ref = unsafe { &mut *this };
+        // SAFETY: this was Box::into_raw'd; destroy takes sole ownership. Reclaim
+        // the Box first so we never hold a `&mut *this` alongside the Box's
+        // unique pointer.
+        let mut this = unsafe { Box::from_raw(this) };
         // Callers may tear this sink down without routing through
         // flushPromise() (e.g. handleResolveStream / handleRejectStream).
         // Drop the GC root so the promise can be collected.
-        if let Some(prom) = this_ref.pending_flush.take() {
+        if let Some(prom) = this.pending_flush.take() {
             // SAFETY: prom is GC-rooted
             unsafe { &*prom }.to_js().unprotect();
         }
-        this_ref.buffer.deinit();
-        this_ref.unregister_auto_flusher();
-        // SAFETY: this was Box::into_raw'd
-        drop(unsafe { Box::from_raw(this) });
+        this.buffer.deinit();
+        this.unregister_auto_flusher();
+        drop(this);
     }
 
     /// This can be called _many_ times for the same instance
@@ -2047,11 +2065,11 @@ impl NetworkSink {
     }
 
     pub fn finalize_and_destroy(this: *mut Self) {
-        // SAFETY: this is Box-allocated
-        let this_ref = unsafe { &mut *this };
-        this_ref.finalize();
-        // SAFETY: this was Box::into_raw'd
-        drop(unsafe { Box::from_raw(this) });
+        // SAFETY: this was Box::into_raw'd; reclaim sole ownership before
+        // touching fields so no `&mut *this` is live alongside the Box.
+        let mut this = unsafe { Box::from_raw(this) };
+        this.finalize();
+        drop(this);
     }
 
     pub fn abort(&mut self) {

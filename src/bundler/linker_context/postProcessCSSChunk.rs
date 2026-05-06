@@ -17,12 +17,11 @@ pub fn post_process_css_chunk(
 ) -> Result<(), bun_core::Error> {
     // TODO(port): narrow error set
     let c = ctx.c;
-    let mut j = StringJoiner {
-        // TODO(port): worker.allocator is a per-worker arena — thread `&'bump Bump` in Phase B
-        watcher: Watcher {
-            input: chunk.unique_key,
-            ..Default::default()
-        },
+    // TODO(port): worker.allocator is a per-worker arena — thread `&'bump Bump` in Phase B
+    // PORT NOTE: avoid FRU `..Default::default()` — StringJoiner impls Drop (E0509).
+    let mut j = StringJoiner::default();
+    j.watcher = Watcher {
+        input: chunk.unique_key,
         ..Default::default()
     };
 

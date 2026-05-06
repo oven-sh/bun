@@ -969,6 +969,7 @@ pub mod fs {
         /// reference to this slot.
         #[inline(always)]
         pub unsafe fn entry_mut(&self) -> &'a mut Entry {
+            // SAFETY: upheld by caller — see fn doc. `self.entry` is an EntryStore slot.
             unsafe { &mut *self.entry }
         }
     }
@@ -4292,6 +4293,8 @@ impl<'a> Resolver<'a> {
         }
         bun_http::HTTPThread::init(&Default::default());
         let pm = PackageManager::init_with_runtime(
+            // SAFETY: BACKREF — `self.log` points at owner-allocated `Log` (see `log()` PORT NOTE);
+            // disjoint from `self`, narrow borrow for this call only.
             unsafe { &mut *self.log() },
             self.opts.install,
             // This cannot be the threadlocal allocator. It goes to the HTTP thread.
@@ -4426,6 +4429,9 @@ impl<'a> Resolver<'a> {
         // PORT NOTE: capture `log` before partially borrowing `self.debug_logs`
         // so the method call doesn't conflict with the field borrow (`log()`
         // derefs the raw `*mut Log` and is lifetime-decoupled from `&self`).
+        // SAFETY: BACKREF — `self.log` points at owner-allocated `Log`; disjoint from
+        // `self.debug_logs` (separate allocation), so the `&mut Log` does not alias the
+        // `self.debug_logs.as_mut()` borrow below.
         let log = unsafe { &mut *self.log() };
         if let Some(debug) = self.debug_logs.as_mut() {
             // PORT NOTE: spec resolver.zig:650-658 — only consume `what`/`notes` inside
@@ -4885,8 +4891,12 @@ impl<'a> Resolver<'a> {
         let mut module_type = result.module_type;
         while let Some(path) = iter.next() {
             let Ok(Some(dir)) = self.read_dir_info(path.name.dir()) else { continue };
-            // SAFETY: ARENA — DirInfo ptr is a slot in the BSSMap singleton (`dir_cache`) and outlives the resolver (see LIFETIMES.tsv).
-            let dir: &mut DirInfo::DirInfo = unsafe { &mut *dir };
+            // SAFETY: ARENA — DirInfo ptr is a slot in the BSSMap singleton (`dir_cache`) and outlives
+            // the resolver (see LIFETIMES.tsv). Shared borrow only — `dir` is read-only in this loop
+            // body; a `&mut DirInfo` here would assert unique access to the slot while
+            // `dir.get_entries()` (which internally re-borrows the entries singleton) and the next
+            // iteration's `read_dir_info` run, which is unnecessary and SB-fragile.
+            let dir: &DirInfo::DirInfo = unsafe { &*dir };
             let mut needs_side_effects = true;
             if let Some(existing_ptr) = result.package_json {
                 // SAFETY: ARENA — PackageJSON ptrs are interned in the global allocator-backed cache and outlive the resolver (see LIFETIMES.tsv).
@@ -5718,7 +5728,11 @@ impl<'a> Resolver<'a> {
     /// See `assertValidCacheKey` for requirements on the input
     pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
         Self::assert_valid_cache_key(path);
+        // SAFETY: process-global `FileSystem` singleton (see `fs()` PORT NOTE); narrow
+        // `&mut` for this call only, dies before the `dir_cache()` deref below.
         let first_bust = unsafe { &mut *self.fs() }.fs.bust_entries_cache(path);
+        // SAFETY: ARENA — `DirInfo::hash_map_instance()` singleton (see `dir_cache()` PORT NOTE);
+        // narrow `&mut` for this call only.
         let second_bust = unsafe { &mut *self.dir_cache() }.remove(path);
         bun_output::scoped_log!(Resolver, "Bust {} = {}, {}", bstr::BStr::new(path), first_bust, second_bust);
         first_bust || second_bust
@@ -6417,9 +6431,12 @@ impl<'a> Resolver<'a> {
         let dir_path = strings::without_trailing_slash_windows_path(dir_path_maybe_trail_slash);
 
         Self::assert_valid_cache_key(dir_path);
+        // SAFETY: ARENA — `DirInfo::hash_map_instance()` singleton (see `dir_cache()` PORT NOTE);
+        // narrow `&mut` per call, each dies before the next deref.
         let mut dir_cache_info_result = unsafe { &mut *self.dir_cache() }.get_or_put(dir_path)?;
         if dir_cache_info_result.status == allocators::Status::Exists {
             // we've already looked up this package before
+            // SAFETY: see above — narrow `&mut`, immediately erased to `*mut DirInfo`.
             return Ok(unsafe { &mut *self.dir_cache() }.at_index(dir_cache_info_result.index).map(|d| d as *mut _));
         }
         // SAFETY: PORT (Stacked Borrows) — derive `rfs` from the raw `*mut FileSystem`
@@ -6440,6 +6457,7 @@ impl<'a> Resolver<'a> {
             Ok(d) => d,
             Err(err) => {
                 // TODO: handle this error better
+                // SAFETY: BACKREF — `self.log` (see `log()` PORT NOTE); narrow `&mut` for this call.
                 let _ = unsafe { &mut *self.log() }.add_error_fmt(
                     None,
                     logger::Loc::EMPTY,
@@ -6521,6 +6539,7 @@ impl<'a> Resolver<'a> {
         // This is important so that browser_scope has a valid index.
         // PORT NOTE: erase the `&mut DirInfo` borrow to `*mut` immediately so
         // `self.dir_cache` (and `*self`) are reborrowable for the call below.
+        // SAFETY: ARENA — `dir_cache()` singleton (see PORT NOTE); narrow `&mut` for this call.
         let dir_info_ptr: *mut DirInfo::DirInfo =
             unsafe { &mut *self.dir_cache() }.put(&mut dir_cache_info_result, DirInfo::DirInfo::default()).expect("unreachable");
 
@@ -6884,6 +6903,8 @@ impl<'a> Resolver<'a> {
         // Since tsconfig.json is cached permanently, in our DirEntries cache
         // we must use the global allocator
         let mut entry = self.caches.fs.read_file_with_allocator(
+            // SAFETY: process-global `FileSystem` singleton (see `fs()` PORT NOTE); narrow `&mut`
+            // for this call only — `self.caches` is a field of `self` (disjoint allocation).
             unsafe { &mut *self.fs() },
             file,
             dirname_fd,
@@ -6914,6 +6935,8 @@ impl<'a> Resolver<'a> {
         let source = logger::Source::init_path_string(key_path, contents_static);
         let file_dir = source.path.source_dir();
 
+        // SAFETY: BACKREF — `self.log` (see `log()` PORT NOTE); disjoint from `self.caches`,
+        // narrow `&mut` for this call only.
         let mut result = match TSConfigJSON::parse(unsafe { &mut *self.log() }, &source, &mut self.caches.json)? {
             Some(r) => r,
             None => return Ok(None),
@@ -7050,8 +7073,11 @@ impl<'a> Resolver<'a> {
 
         let path_without_trailing_slash = strings::without_trailing_slash_windows_path(input_path);
         Self::assert_valid_cache_key(path_without_trailing_slash);
+        // SAFETY: ARENA — `dir_cache()` singleton (see PORT NOTE); narrow `&mut` per call,
+        // each dies before the next deref.
         let top_result = unsafe { &mut *self.dir_cache() }.get_or_put(path_without_trailing_slash)?;
         if top_result.status != allocators::Status::Unknown {
+            // SAFETY: see above — narrow `&mut`, immediately erased to `*mut DirInfo`.
             return Ok(unsafe { &mut *self.dir_cache() }.at_index(top_result.index).map(|d| d as *mut _));
         }
 
@@ -7099,6 +7125,7 @@ impl<'a> Resolver<'a> {
 
         while top.len() > root_path.len() {
             debug_assert!(top.as_ptr() == root_path.as_ptr());
+            // SAFETY: ARENA — `dir_cache()` singleton (see PORT NOTE); narrow `&mut` for this call.
             let result = unsafe { &mut *self.dir_cache() }.get_or_put(top)?;
 
             if result.status != allocators::Status::Unknown {
@@ -7143,6 +7170,7 @@ impl<'a> Resolver<'a> {
         }
 
         if top == root_path {
+            // SAFETY: ARENA — `dir_cache()` singleton (see PORT NOTE); narrow `&mut` for this call.
             let result = unsafe { &mut *self.dir_cache() }.get_or_put(root_path)?;
             if result.status != allocators::Status::Unknown {
                 top_parent = result;
@@ -7293,12 +7321,14 @@ impl<'a> Resolver<'a> {
                             //
                             //   openat(dfd: CWD, filename: "node_modules/react", flags: RDONLY|DIRECTORY) = -1 ENOENT (No such file or directory)
                             //   ...
+                            // SAFETY: ARENA — `dir_cache()` singleton (see PORT NOTE); narrow `&mut` for this call.
                             unsafe { &mut *self.dir_cache() }.mark_not_found(queue_top.result);
                             // SAFETY: resolver mutex held; no aliased map access.
                             unsafe { rfs!().entries.mark_not_found(cached_dir_entry_result) };
                             if !(err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound")) {
                                 if ENABLE_LOGGING {
                                     let pretty = queue_top_unsafe_path;
+                                    // SAFETY: BACKREF — `self.log` (see `log()` PORT NOTE); narrow `&mut` for this call.
                                     let _ = unsafe { &mut *self.log() }.add_error_fmt(
                                         None,
                                         logger::Loc::default(),
@@ -7435,8 +7465,11 @@ impl<'a> Resolver<'a> {
             // This is important so that browser_scope has a valid index.
             // PORT NOTE: erase the `&mut DirInfo` borrow to `*mut` immediately so
             // `self.dir_cache` (and `*self`) are reborrowable for the call below.
+            // SAFETY: ARENA — `dir_cache()` singleton (see PORT NOTE); narrow `&mut` per call,
+            // each dies before the next deref.
             let dir_info_ptr: *mut DirInfo::DirInfo =
                 unsafe { &mut *self.dir_cache() }.put(&mut queue_top.result, DirInfo::DirInfo::default())?;
+            // SAFETY: see above — narrow `&mut`, immediately erased to `*mut DirInfo`.
             let parent_dir_ptr = unsafe { &mut *self.dir_cache() }.at_index(top_parent.index).map(|d| d as *mut _);
 
             self.dir_info_uncached(
@@ -8291,6 +8324,7 @@ impl<'a> Resolver<'a> {
                     || e == bun_core::err!("ENOTDIR")
                     || e == bun_core::err!("NotDir") => {}
                 _ => {
+                    // SAFETY: BACKREF — `self.log` (see `log()` PORT NOTE); narrow `&mut` for this call.
                     let _ = unsafe { &mut *self.log() }.add_error_fmt(
                         None,
                         logger::Loc::EMPTY,

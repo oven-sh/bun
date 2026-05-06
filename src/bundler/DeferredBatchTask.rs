@@ -99,8 +99,8 @@ impl DeferredBatchTask {
             // From Bun.build — `completion.jsc_event_loop.enqueueTaskConcurrent(task)`.
             let vt = COMPLETION_DISPATCH.load(Ordering::Acquire);
             debug_assert!(!vt.is_null(), "COMPLETION_DISPATCH not registered by T6");
-            // SAFETY: vtable registered by T6 at init; `completion` is a live backref.
-            unsafe { ((*vt).enqueue_task_concurrent)(completion, task) };
+            // SAFETY: vtable registered by T6 at init; `completion` is a live non-null backref.
+            unsafe { ((*vt).enqueue_task_concurrent)(NonNull::new_unchecked(completion), task) };
         } else {
             // Bake path: the bundle loop *is* the JS event loop (Zig's
             // `switch (this.loop().*) { .js => |l| l, .mini => @panic(...) }`).
@@ -132,8 +132,8 @@ impl DeferredBatchTask {
                 Some(completion) => {
                     let vt = COMPLETION_DISPATCH.load(Ordering::Acquire);
                     debug_assert!(!vt.is_null(), "COMPLETION_DISPATCH not registered by T6");
-                    // SAFETY: vtable registered by T6; `completion` is a live backref.
-                    unsafe { ((*vt).result_is_err)(completion) }
+                    // SAFETY: vtable registered by T6; `completion` is a live non-null backref.
+                    unsafe { ((*vt).result_is_err)(NonNull::new_unchecked(completion)) }
                 }
                 None => false,
             };

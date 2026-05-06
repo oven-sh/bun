@@ -42,8 +42,8 @@ crate::stub_ty!(
     CppTask,
     PosixSignalHandle,
     PosixSignalTask,
-    WorkTask,
 );
+pub use crate::work_task::{WorkTask, WorkTaskContext};
 pub use crate::garbage_collection_controller::GarbageCollectionController;
 
 bun_core::declare_scope!(EventLoop, hidden);

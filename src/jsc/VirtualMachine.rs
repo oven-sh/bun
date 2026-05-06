@@ -177,8 +177,7 @@ pub struct VirtualMachine {
     pub is_in_preload: bool,
     pub has_patched_run_main: bool,
 
-    // TODO(b2): `transpiler_store` is `RuntimeTranspilerStore` (gated sibling).
-    pub transpiler_store: (),
+    pub transpiler_store: crate::runtime_transpiler_store::RuntimeTranspilerStore,
 
     pub after_event_loop_callback_ctx: Option<*mut c_void>,
     pub after_event_loop_callback: Option<OpaqueCallback>,

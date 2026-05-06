@@ -1240,6 +1240,26 @@ impl JSValue {
             Bun__JSValue__toNumber(self, global)
         })
     }
+
+    /// `JSValue.toPortNumber` (JSValue.zig:211) — Node `validatePort` semantics:
+    /// numeric, non-NaN, integer-truncated `0..=65535`, else `ERR_SOCKET_BAD_PORT`.
+    pub fn to_port_number(self, global: &JSGlobalObject) -> JsResult<u16> {
+        if self.is_number() {
+            let double = self.to_number(global)?;
+            if double.is_nan() {
+                return Err(crate::ErrorCode::SOCKET_BAD_PORT
+                    .throw(global, format_args!("Invalid port number")));
+            }
+            let port = self.to_int64();
+            if (0..=65535).contains(&port) {
+                return Ok(port.max(0) as u16);
+            }
+            return Err(crate::ErrorCode::SOCKET_BAD_PORT
+                .throw(global, format_args!("Port number out of range: {port}")));
+        }
+        Err(crate::ErrorCode::SOCKET_BAD_PORT
+            .throw(global, format_args!("Invalid port number")))
+    }
     /// `JSValue.coerce(f64)` (JSValue.zig:153) — fast-path doubles, else `ToNumber`.
     pub fn coerce_f64(self, global: &JSGlobalObject) -> JsResult<f64> {
         if self.is_double() { return Ok(self.as_double()); }

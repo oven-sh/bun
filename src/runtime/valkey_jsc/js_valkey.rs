@@ -2070,11 +2070,12 @@ impl Options {
     pub fn from_js(
         global_object: &JSGlobalObject,
         options_obj: JSValue,
-    ) -> Result<valkey::Options, bun_core::Error> {
+    ) -> JsResult<valkey::Options> {
         // TODO(port): narrow error set
         let mut this = valkey::Options {
             enable_auto_pipelining: !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING
-                .get(),
+                .get()
+                .unwrap_or(false),
             ..Default::default()
         };
 

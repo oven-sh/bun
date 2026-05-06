@@ -462,41 +462,6 @@ pub extern "C" fn Bun__EventLoop__exitLoop(el: *mut EventLoop) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// JSCScheduler.zig — un-gated bodies (the full `JSCScheduler.rs` draft is
-// ════════════════════════════════════════════════════════════════════════════
-
-/// `export fn Bun__eventLoop__incrementRefConcurrently(vm, delta)` — bumps the
-/// event loop's `concurrent_ref` (called from off-thread JSC scheduler).
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__eventLoop__incrementRefConcurrently(
-    jsc_vm: *mut VirtualMachine,
-    delta: core::ffi::c_int,
-) {
-    crate::mark_binding!();
-    // SAFETY: `jsc_vm` is the live VM (passed from C++ BunScheduler).
-    let el = unsafe { &*(*jsc_vm).event_loop() };
-    if delta > 0 { el.ref_concurrently() } else { el.unref_concurrently() };
-}
-
-/// `export fn Bun__queueJSCDeferredWorkTaskConcurrently(vm, task)` — enqueue an
-/// opaque `JSC::DeferredWorkTimer::Ticket` (BunVMScheduler.cpp).
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__queueJSCDeferredWorkTaskConcurrently(
-    jsc_vm: *mut VirtualMachine,
-    task: *mut c_void,
-) {
-    crate::mark_binding!();
-    // SAFETY: `jsc_vm` is the live VM; called off-thread (concurrent enqueue is
-    // thread-safe via `ConcurrentTask` MPSC + loop wakeup).
-    unsafe {
-        (*(*jsc_vm).event_loop()).enqueue_task_concurrent(ConcurrentTask::create(Task {
-            tag: bun_event_loop::task_tag::JSCDeferredWorkTask,
-            ptr: task.cast(),
-        }));
-    }
-}
-
-// ════════════════════════════════════════════════════════════════════════════
 // RareData socket-group accessors — exported for `bun_sql_jsc`, which holds
 // an opaque `*mut VirtualMachine` and cannot name `bun_jsc::rare_data` types
 // directly. Real bodies (lazy `SocketGroup::init`) live in

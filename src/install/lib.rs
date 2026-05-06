@@ -2705,13 +2705,7 @@ impl PackageManager {
         // `node-gyp` resolve to bun's wrapper.
         let cache = self.get_cache_directory();
         let _ = bun_sys::mkdirat(cache, b".bin", 0o755);
-        // The body of the script is `#!/usr/bin/env bun
-bun x node-gyp "$@"`.
-        const NODE_GYP_SHIM: &[u8] =
-            b"#!/usr/bin/env bun
-import {spawnSync} from 'node:child_process';
-process.exit(spawnSync('bun',['x','node-gyp',...process.argv.slice(2)],{stdio:'inherit'}).status??1);
-";
+        const NODE_GYP_SHIM: &[u8] = b"#!/usr/bin/env bun\nimport {spawnSync} from 'node:child_process';\nprocess.exit(spawnSync('bun',['x','node-gyp',...process.argv.slice(2)],{stdio:'inherit'}).status??1);\n";
         bun_sys::File::write_file_at(cache, b".bin/node-gyp", NODE_GYP_SHIM)
             .map_err(Into::into)
             .map(|_| ())

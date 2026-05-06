@@ -4086,19 +4086,16 @@ pub fn finalize_bundle(
         let rb = dev.route_bundle_ptr(req.route_bundle_index);
         rb.server_state = route_bundle::State::Loaded;
 
-        match &mut req.handler {
+        // PORT NOTE: `SavedRequest` is move-only (`Strong` field). Take the
+        // handler by value so the `Saved` payload moves into the union; the
+        // node is being torn down via `_deref` regardless.
+        match ::core::mem::replace(&mut req.handler, Handler::Aborted) {
             Handler::Aborted => continue,
             Handler::ServerHandler(saved) => {
                 let response = saved.response;
                 dev.on_framework_request_with_bundle(
                     req.route_bundle_index,
-                    // TODO(port): `SavedRequest` is move-only; Zig copied the
-                    // pointer-only struct by value. Replace with by-value move
-                    // once `Handler::ServerHandler` stores it by-value.
-                    SavedRequestUnion::Saved({
-                        let _ = saved;
-                        todo!("blocked_on: server::SavedRequest by-value move")
-                    }),
+                    SavedRequestUnion::Saved(saved),
                     response,
                 )?
             }

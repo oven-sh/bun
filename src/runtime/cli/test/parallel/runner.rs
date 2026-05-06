@@ -153,9 +153,35 @@ pub fn run_as_coordinator(
     }
 
     let mut workers: Vec<Worker> = Vec::with_capacity(k as usize);
-    // TODO(port): Zig allocates uninitialized then assigns in-place below; Rust
-    // pushes constructed values. Self-referential `out.worker = w` / `err.worker = w`
-    // backrefs need raw pointers fixed up after the Vec is fully populated.
+    // TODO(port): Zig allocates uninitialized then assigns in-place; Rust pushes
+    // constructed values. Populate fully BEFORE constructing Coordinator so it
+    // can hold `&mut [Worker]` without aliasing the push loop. The `coord`
+    // backref is null here and patched once Coordinator's address is fixed.
+    for i in 0..k {
+        let idx: u32 = i;
+        workers.push(Worker {
+            // BACKREF (LIFETIMES.tsv: *const Coordinator<'static>) — patched below
+            coord: core::ptr::null(),
+            idx,
+            range: FileRange { lo: idx * n / k, hi: (idx + 1) * n / k },
+            out: WorkerPipe::new(PipeRole::Stdout, core::ptr::null()),
+            err: WorkerPipe::new(PipeRole::Stderr, core::ptr::null()),
+            process: None,
+            ipc: Channel::default(),
+            inflight: None,
+            dispatched_at: 0,
+            captured: Vec::new(),
+            alive: false,
+            exit_status: None,
+            extra_fd_stdio: [Stdio::Ignore],
+        });
+        let w: *mut Worker = workers.last_mut().unwrap();
+        // SAFETY: w points into workers; Vec will not reallocate (capacity == k)
+        unsafe {
+            (*w).out.worker = w;
+            (*w).err.worker = w;
+        }
+    }
 
     let mut coord = Coordinator {
         // SAFETY: see vm_ptr note above.
@@ -200,32 +226,12 @@ pub fn run_as_coordinator(
     abort_handler::install();
     let _abort_guard = scopeguard::guard((), |_| abort_handler::uninstall());
 
-    for i in 0..k {
-        let idx: u32 = i;
-        // TODO(port): in-place init — Zig assigns into pre-allocated slot with
-        // self-referential `out.worker`/`err.worker` backrefs. Construct then
-        // fix up raw backrefs after push.
-        workers.push(Worker {
-            // BACKREF (LIFETIMES.tsv: *const Coordinator<'static>)
-            coord: &coord as *const Coordinator<'_> as *const Coordinator<'static>,
-            idx,
-            range: FileRange { lo: idx * n / k, hi: (idx + 1) * n / k },
-            out: WorkerPipe::new(PipeRole::Stdout, core::ptr::null()),
-            err: WorkerPipe::new(PipeRole::Stderr, core::ptr::null()),
-            process: None,
-            ipc: Channel::default(),
-            inflight: None,
-            dispatched_at: 0,
-            captured: Vec::new(),
-            alive: false,
-            exit_status: None,
-            extra_fd_stdio: [Stdio::Ignore],
-        });
-        let w: *mut Worker = workers.last_mut().unwrap();
-        // SAFETY: w points into workers; Vec will not reallocate (capacity == k)
-        unsafe {
-            (*w).out.worker = w;
-            (*w).err.worker = w;
+    // Patch the Worker→Coordinator backref now that `coord`'s address is fixed.
+    // Access workers through `coord.workers` to avoid a second &mut on the Vec.
+    {
+        let coord_ptr = &coord as *const Coordinator<'_> as *const Coordinator<'static>;
+        for w in coord.workers.iter_mut() {
+            w.coord = coord_ptr;
         }
     }
 
@@ -236,7 +242,14 @@ pub fn run_as_coordinator(
 
     if ctx.test_options.reporters.junit {
         if let Some(outfile) = &ctx.test_options.reporter_outfile {
-            aggregate::merge_junit_fragments(&mut coord, outfile, reporter.summary());
+            // `coord` holds the unique &mut to `reporter`; obtain the summary
+            // through it. Raw-pointer reborrow because merge_junit_fragments
+            // also needs &mut coord (it only reads from summary).
+            let summary_ptr: *const crate::test_runner::jest::Summary =
+                coord.reporter.summary();
+            // SAFETY: summary lives in *coord.reporter, which outlives this call
+            // and is not mutated by merge_junit_fragments.
+            aggregate::merge_junit_fragments(&mut coord, outfile, unsafe { &*summary_ptr });
         }
     }
     if coverage_opts.enabled {

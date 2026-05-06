@@ -41,6 +41,24 @@ use crate::cli::command::{ContextData, Tag as CommandTag};
 
 bun_core::declare_scope!(RUN_LOG, visible);
 
+/// Local extension trait providing `.unwrap_or_oom()` on `Result<T, E>`.
+/// Zig: `catch bun.outOfMemory()` / `bun.handleOom(expr)`. No shared
+/// `UnwrapOrOom` is exported from a lower-tier crate yet, so define it here.
+trait UnwrapOrOom {
+    type Output;
+    fn unwrap_or_oom(self) -> Self::Output;
+}
+impl<T, E> UnwrapOrOom for ::core::result::Result<T, E> {
+    type Output = T;
+    #[inline]
+    fn unwrap_or_oom(self) -> T {
+        match self {
+            Ok(v) => v,
+            Err(_) => bun_core::out_of_memory(),
+        }
+    }
+}
+
 /// Process-lifetime arena for the runner's `Transpiler`. Zig passed
 /// `ctx.allocator` (== `bun.default_allocator`); the Rust port threads an
 /// `&'static Arena` per PORTING.md §AST crates. `bun_alloc::Arena` (=
@@ -3532,7 +3550,9 @@ impl RunCommand {
                             let mut has_copied = false;
                             let mut dir_slice_len: usize = 0;
                             while let Some(entry) = iter.next() {
-                                let value = entry.value;
+                                // SAFETY: `EntryMap` stores non-null `*mut Entry` values owned by
+                                // the resolver dir-cache for the process lifetime.
+                                let value = unsafe { &**entry.1 };
                                 // SAFETY: `Transpiler::fs` is the non-null process-static singleton.
                                 if value.kind(unsafe { &(*this_transpiler.fs).fs }, true) == bun_resolver::fs::EntryKind::File {
                                     if !has_copied {
@@ -3584,7 +3604,9 @@ impl RunCommand {
                     let mut iter = entries.data.iter();
 
                     while let Some(entry) = iter.next() {
-                        let value = entry.value;
+                        // SAFETY: `EntryMap` stores non-null `*mut Entry` values owned by the
+                        // resolver dir-cache for the process lifetime.
+                        let value = unsafe { &**entry.1 };
                         let name = value.base();
                         if name[0] != b'.'
                             && this_transpiler
@@ -4133,8 +4155,7 @@ impl RunCommand {
             }
         }
         Global::configure_allocator(Global::AllocatorConfiguration { long_running: true, ..Default::default() });
-        let Ok(dup) = Box::<[u8]>::try_from(path) else { return false };
-        // TODO(port): Box::try_from doesn't exist; use to_vec().into_boxed_slice()
+        let dup: Box<[u8]> = Box::from(path);
         if let Err(err) = bun_bun_js::Run::boot(ctx, dup, loader) {
             // SAFETY: `ctx.log` is the process-lifetime CLI log.
             let _ = unsafe { &*ctx.log }.print(Output::error_writer() as *mut _);

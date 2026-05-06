@@ -1,7 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_str::strings;
 
-use crate::expect::{get_signature, Expect};
+use super::{get_signature, Expect};
 
 #[bun_jsc::host_fn(method)]
 pub fn to_end_with(
@@ -44,7 +44,7 @@ pub fn to_end_with(
         // value_string / expected_string drop here (was: defer .deinit())
     }
 
-    let not = this.flags.not;
+    let not = this.flags.not();
     if not {
         pass = !pass;
     }

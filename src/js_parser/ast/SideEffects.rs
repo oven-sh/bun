@@ -37,64 +37,319 @@ pub struct BinaryExpressionSimplifyVisitor {
 
 impl SideEffects {
     pub fn can_change_strict_to_loose(lhs: &ExprData, rhs: &ExprData) -> bool {
-        let _ = (lhs, rhs);
-        todo!("b2-ast-E: can_change_strict_to_loose")
+        let left = lhs.known_primitive();
+        let right = rhs.known_primitive();
+        left == right
+            && left != ast::expr::PrimitiveType::Unknown
+            && left != ast::expr::PrimitiveType::Mixed
     }
+
     pub fn simplify_boolean<'a, const TS: bool, J: JsxT, const SCAN: bool>(
         p: &P<'a, TS, J, SCAN>,
         expr: Expr,
     ) -> Expr {
-        let _ = p;
-        expr
+        if !p.options.features.dead_code_elimination {
+            return expr;
+        }
+        let mut result: Expr = expr;
+        Self::_simplify_boolean(p, &mut result);
+        result
     }
+
+    fn _simplify_boolean<'a, const TS: bool, J: JsxT, const SCAN: bool>(
+        p: &P<'a, TS, J, SCAN>,
+        expr: &mut Expr,
+    ) {
+        loop {
+            match &mut expr.data {
+                ExprData::EUnary(e) => {
+                    if e.op == Op::Code::UnNot {
+                        // "!!a" => "a"
+                        if let ExprData::EUnary(inner) = &e.value.data {
+                            if inner.op == Op::Code::UnNot {
+                                *expr = inner.value;
+                                continue;
+                            }
+                        }
+                        Self::_simplify_boolean(p, &mut e.value);
+                    }
+                }
+                ExprData::EBinary(e) => match e.op {
+                    Op::Code::BinLogicalAnd => {
+                        let effects = SideEffects::to_boolean(p, &e.right.data);
+                        if effects.ok && effects.value && effects.side_effects == SideEffects::NoSideEffects {
+                            // "if (anything && truthyNoSideEffects)" => "if (anything)"
+                            *expr = e.left;
+                            continue;
+                        }
+                    }
+                    Op::Code::BinLogicalOr => {
+                        let effects = SideEffects::to_boolean(p, &e.right.data);
+                        if effects.ok && !effects.value && effects.side_effects == SideEffects::NoSideEffects {
+                            // "if (anything || falsyNoSideEffects)" => "if (anything)"
+                            *expr = e.left;
+                            continue;
+                        }
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+            break;
+        }
+    }
+
+    // Re-exports of ExprData methods (Zig: `pub const toNumber = Expr.Data.toNumber;`)
+    #[inline(always)]
     pub fn to_number(data: &ExprData) -> Option<f64> {
-        let _ = data;
-        None // TODO(b2-ast-E): forward to Expr::Data::to_number
+        data.to_number()
     }
+    #[inline(always)]
     pub fn typeof_(data: &ExprData) -> Option<&'static [u8]> {
-        let _ = data;
-        None
+        data.to_typeof()
     }
+    #[inline(always)]
+    pub fn to_type_of(data: &ExprData) -> Option<&'static [u8]> {
+        data.to_typeof()
+    }
+
     pub fn is_primitive_to_reorder(data: &ExprData) -> bool {
-        let _ = data;
-        false
+        matches!(
+            data,
+            ExprData::ENull(_)
+                | ExprData::EUndefined(_)
+                | ExprData::EString(_)
+                | ExprData::EBoolean(_)
+                | ExprData::EBranchBoolean(_)
+                | ExprData::ENumber(_)
+                | ExprData::EBigInt(_)
+                | ExprData::EInlinedEnum(_)
+                | ExprData::ERequireMain
+        )
     }
+
     pub fn simplify_unused_expr<'a, const TS: bool, J: JsxT, const SCAN: bool>(
         p: &mut P<'a, TS, J, SCAN>,
         expr: Expr,
     ) -> Option<Expr> {
+        // blocked_on: P::{expr_can_be_removed_if_unused, class_can_be_removed_if_unused,
+        //   call_runtime} gated (P.rs:640 impl block); 400-line body in _draft.
         let _ = p;
         Some(expr)
     }
+
     pub fn should_keep_stmt_in_dead_control_flow(stmt: Stmt, bump: &Bump) -> bool {
+        // blocked_on: BindingData variant matching + Binding::extract_decls_for_binding;
+        //   StmtData::SLocal decl walk (BabyList<Decl>); Stmt::allocate arity. _draft:640.
         let _ = (stmt, bump);
         true
     }
+
     pub fn is_primitive_with_side_effects(data: &ExprData) -> bool {
-        let _ = data;
-        false
+        match data {
+            ExprData::ENull(_)
+            | ExprData::EUndefined(_)
+            | ExprData::EBoolean(_)
+            | ExprData::EBranchBoolean(_)
+            | ExprData::ENumber(_)
+            | ExprData::EBigInt(_)
+            | ExprData::EString(_)
+            | ExprData::EInlinedEnum(_) => true,
+            ExprData::EUnary(e) => matches!(
+                e.op,
+                // number or bigint
+                Op::Code::UnPos | Op::Code::UnNeg | Op::Code::UnCpl
+                | Op::Code::UnPreDec | Op::Code::UnPreInc
+                | Op::Code::UnPostDec | Op::Code::UnPostInc
+                // boolean
+                | Op::Code::UnNot | Op::Code::UnDelete
+                // undefined
+                | Op::Code::UnVoid
+                // string
+                | Op::Code::UnTypeof
+            ),
+            ExprData::EBinary(e) => match e.op {
+                Op::Code::BinStrictEq | Op::Code::BinStrictNe | Op::Code::BinLooseEq
+                | Op::Code::BinLooseNe | Op::Code::BinLt | Op::Code::BinGt
+                | Op::Code::BinLe | Op::Code::BinGe | Op::Code::BinInstanceof
+                | Op::Code::BinIn
+                | Op::Code::BinSub | Op::Code::BinMul | Op::Code::BinDiv
+                | Op::Code::BinRem | Op::Code::BinPow | Op::Code::BinShl
+                | Op::Code::BinShr | Op::Code::BinUShr | Op::Code::BinBitwiseOr
+                | Op::Code::BinBitwiseAnd | Op::Code::BinBitwiseXor => true,
+                // also "number or bigint" or "string" (since "+" can also concat)
+                Op::Code::BinAdd => true,
+                Op::Code::BinComma | Op::Code::BinAssign => {
+                    Self::is_primitive_with_side_effects(&e.right.data)
+                }
+                Op::Code::BinLogicalAnd | Op::Code::BinLogicalOr | Op::Code::BinNullishCoalescing => {
+                    Self::is_primitive_with_side_effects(&e.left.data)
+                        && Self::is_primitive_with_side_effects(&e.right.data)
+                }
+                _ => false,
+            },
+            ExprData::EIf(e) => {
+                Self::is_primitive_with_side_effects(&e.yes.data)
+                    && Self::is_primitive_with_side_effects(&e.no.data)
+            }
+            _ => false,
+        }
     }
-    pub fn to_type_of(data: &ExprData) -> Option<&'static [u8]> {
-        let _ = data;
-        None
-    }
+
     pub fn to_null_or_undefined<'a, const TS: bool, J: JsxT, const SCAN: bool>(
         p: &P<'a, TS, J, SCAN>,
         exp: &ExprData,
     ) -> Result {
-        let _ = (p, exp);
-        Result::default()
+        if !p.options.features.dead_code_elimination {
+            // value should not be read if ok is false, all existing calls already adhere to this
+            return Result { ok: false, value: false, side_effects: SideEffects::CouldHaveSideEffects };
+        }
+        match exp {
+            // Never null or undefined
+            ExprData::EBoolean(_) | ExprData::EBranchBoolean(_) | ExprData::ENumber(_)
+            | ExprData::EString(_) | ExprData::ERegExp(_) | ExprData::EFunction(_)
+            | ExprData::EArrow(_) | ExprData::EBigInt(_) => {
+                Result { value: false, side_effects: SideEffects::NoSideEffects, ok: true }
+            }
+            ExprData::EObject(_) | ExprData::EArray(_) | ExprData::EClass(_) => {
+                Result { value: false, side_effects: SideEffects::CouldHaveSideEffects, ok: true }
+            }
+            // Always null or undefined
+            ExprData::ENull(_) | ExprData::EUndefined(_) => {
+                Result { value: true, side_effects: SideEffects::NoSideEffects, ok: true }
+            }
+            ExprData::EUnary(e) => match e.op {
+                // Never null or undefined
+                Op::Code::UnNot | Op::Code::UnTypeof | Op::Code::UnDelete => {
+                    Result { value: false, side_effects: SideEffects::CouldHaveSideEffects, ok: true }
+                }
+                // Always undefined
+                Op::Code::UnVoid => {
+                    Result { value: true, side_effects: SideEffects::CouldHaveSideEffects, ok: true }
+                }
+                _ => Result::default(),
+            },
+            ExprData::EBinary(e) => match e.op {
+                Op::Code::BinStrictEq | Op::Code::BinStrictNe | Op::Code::BinLooseEq
+                | Op::Code::BinLooseNe | Op::Code::BinLt | Op::Code::BinGt
+                | Op::Code::BinLe | Op::Code::BinGe | Op::Code::BinInstanceof
+                | Op::Code::BinIn => {
+                    Result { ok: true, value: false, side_effects: SideEffects::CouldHaveSideEffects }
+                }
+                Op::Code::BinComma => {
+                    let res = Self::to_null_or_undefined(p, &e.right.data);
+                    if res.ok {
+                        Result { value: res.value, side_effects: SideEffects::CouldHaveSideEffects, ok: true }
+                    } else {
+                        Result::default()
+                    }
+                }
+                _ => Result::default(),
+            },
+            ExprData::EInlinedEnum(e) => Self::to_null_or_undefined(p, &e.value.data),
+            _ => Result::default(),
+        }
     }
+
     pub fn to_boolean<'a, const TS: bool, J: JsxT, const SCAN: bool>(
         p: &P<'a, TS, J, SCAN>,
         exp: &ExprData,
     ) -> Result {
-        let _ = (p, exp);
-        Result::default()
+        if !p.options.features.dead_code_elimination {
+            return Result::default();
+        }
+        match exp {
+            ExprData::ENull(_) | ExprData::EUndefined(_) => {
+                Result { value: false, side_effects: SideEffects::NoSideEffects, ok: true }
+            }
+            ExprData::EBoolean(e) | ExprData::EBranchBoolean(e) => {
+                Result { value: e.value, side_effects: SideEffects::NoSideEffects, ok: true }
+            }
+            ExprData::ENumber(e) => Result {
+                value: e.value != 0.0 && !e.value.is_nan(),
+                side_effects: SideEffects::NoSideEffects,
+                ok: true,
+            },
+            ExprData::EBigInt(e) => {
+                // SAFETY: arena-owned slice valid for the parse
+                let v = unsafe { &*e.value };
+                Result {
+                    value: !bun_string::strings::eql_comptime(v, b"0"),
+                    side_effects: SideEffects::NoSideEffects,
+                    ok: true,
+                }
+            }
+            ExprData::EString(e) => Result {
+                value: e.len() > 0,
+                side_effects: SideEffects::NoSideEffects,
+                ok: true,
+            },
+            ExprData::EFunction(_) | ExprData::EArrow(_) | ExprData::ERegExp(_) => {
+                Result { value: true, side_effects: SideEffects::NoSideEffects, ok: true }
+            }
+            ExprData::EObject(_) | ExprData::EArray(_) | ExprData::EClass(_) => {
+                Result { value: true, side_effects: SideEffects::CouldHaveSideEffects, ok: true }
+            }
+            ExprData::EUnary(e) => match e.op {
+                Op::Code::UnVoid => {
+                    Result { value: false, side_effects: SideEffects::CouldHaveSideEffects, ok: true }
+                }
+                Op::Code::UnTypeof => {
+                    // Never an empty string
+                    Result { value: true, side_effects: SideEffects::CouldHaveSideEffects, ok: true }
+                }
+                Op::Code::UnNot => {
+                    let res = Self::to_boolean(p, &e.value.data);
+                    if res.ok {
+                        Result { value: !res.value, side_effects: res.side_effects, ok: true }
+                    } else {
+                        Result::default()
+                    }
+                }
+                _ => Result::default(),
+            },
+            ExprData::EBinary(e) => match e.op {
+                Op::Code::BinLogicalOr => {
+                    let res = Self::to_boolean(p, &e.right.data);
+                    if res.ok && res.value {
+                        Result { value: true, side_effects: SideEffects::CouldHaveSideEffects, ok: true }
+                    } else {
+                        Result::default()
+                    }
+                }
+                Op::Code::BinLogicalAnd => {
+                    let res = Self::to_boolean(p, &e.right.data);
+                    if res.ok && !res.value {
+                        Result { value: false, side_effects: SideEffects::CouldHaveSideEffects, ok: true }
+                    } else {
+                        Result::default()
+                    }
+                }
+                Op::Code::BinComma => {
+                    let res = Self::to_boolean(p, &e.right.data);
+                    if res.ok {
+                        Result { value: res.value, side_effects: SideEffects::CouldHaveSideEffects, ok: true }
+                    } else {
+                        Result::default()
+                    }
+                }
+                _ => Result::default(),
+            },
+            ExprData::EInlinedEnum(e) => Self::to_boolean(p, &e.value.data),
+            _ => Result::default(),
+        }
     }
 }
 
-#[cfg(any())] // TODO(b2-ast-E): full draft body — apply mixin→impl-P recipe per-method
+#[cfg(any())]
+// blocked_on: simplify_unused_expr (~420L) needs P::{expr_can_be_removed_if_unused,
+//   class_can_be_removed_if_unused} gated (P.rs:640); Expr::join_with_comma associated-fn
+//   reshape (Zig method form); E::Call.can_be_unwrapped_if_unused (CallUnwrap, not bool).
+//   should_keep_stmt_in_dead_control_flow (~110L) needs P::extract_decls_for_binding gated;
+//   StmtNodeList = *mut [Stmt] iteration; B::* raw-ptr deref.
+//   The 9 simpler bodies (can_change_strict_to_loose / simplify_boolean / to_number /
+//   typeof_ / to_type_of / is_primitive_to_reorder / is_primitive_with_side_effects /
+//   to_null_or_undefined / to_boolean) are un-gated above.
 #[allow(warnings)]
 mod _draft {
 use crate::ast::{self, Binding, BindingData, E, Expr, ExprData, G, Op, Stmt, StmtData};

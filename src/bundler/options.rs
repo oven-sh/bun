@@ -2,21 +2,76 @@
 //! Normalization is necessary because most fields in the API schema are optional
 
 use bun_logger as logger;
-use bun_str::strings;
+use bun_string::strings;
 use bun_core::{Output, Global};
 use bun_collections::{StringHashMap, StringArrayHashMap, ArrayHashMap, MultiArrayList};
-use bun_fs as Fs;
-// TODO(b0-genuine): bun_resolver::package_json — same-tier (T5) mutual; revisit if resolver→bundler edge appears
-use bun_resolver::{self as resolver, package_json::{MacroMap as MacroRemap, PackageJSON, ESModule::ConditionsMap}};
+// TODO(b2-blocked): bun_resolver — crate has compile errors in working tree
+// (Wyhash / PathBuffer::as_mut_slice). Using `bun_logger::fs` (which mirrors the
+// minimal `Path`/`PathName` surface) and local opaque stubs for PackageJSON /
+// MacroMap until resolver is green.
+use bun_logger::fs as Fs;
+mod resolver {
+    /// Stub: real `bun_resolver::package_json::MacroMap`.
+    #[derive(Default)]
+    pub struct MacroRemap(());
+    /// Stub: real `bun_resolver::package_json::PackageJSON`.
+    pub struct PackageJSON(());
+    /// Stub: real `bun_resolver::is_package_path`.
+    pub fn is_package_path(_path: &[u8]) -> bool {
+        // TODO(b2-blocked): bun_resolver::is_package_path
+        unimplemented!("b2-blocked: bun_resolver")
+    }
+}
+use resolver::{MacroRemap, PackageJSON};
 use bun_dotenv as DotEnv;
 use bun_url::URL;
+#[cfg(any())]
 use bun_js_parser::runtime::Runtime;
-use bun_schema::api;
+use bun_options_types::schema::api;
+// TODO(b2-blocked): bun_analytics — adding the dep triggers upstream rebuilds
+// that expose in-progress breakage in css/logger. The two `analytics::Features`
+// call sites (`from_api`) are already gated.
+#[cfg(any())]
 use bun_analytics as analytics;
 use enum_map::{EnumMap, Enum};
 
 pub use crate::defines;
 pub use defines::Define;
+pub use bun_options_types::GlobalCache::GlobalCache;
+
+// ── B-2 type aliases for incomplete lower-tier surfaces ──
+// TODO(b2-blocked): bun_resolver::package_json::ESModule::ConditionsMap — module
+// path doesn't expose this yet; local alias matches Zig `StringArrayHashMap(void)`.
+pub type ConditionsMap = StringArrayHashMap<()>;
+// TODO(b2-blocked): bun_sys::Dir — directory handle. Mapped to Fd for now
+// (matches `bun.FD.fromStdDir` pattern).
+pub type Dir = bun_sys::Fd;
+/// `Loader.HashTable` (Zig nested type alias). Hoisted because Rust inherent
+/// impls cannot define associated types.
+pub type LoaderHashTable = StringArrayHashMap<Loader>;
+/// `Loader.Map` (Zig nested type alias).
+pub type LoaderEnumMap = EnumMap<Loader, &'static [u8]>;
+
+/// `bun.http.MimeType` lives in `bun_http_types` (lower tier), not `bun_http`.
+mod bun_http {
+    pub use bun_http_types::MimeType::MimeType;
+}
+// TODO(b2-blocked): bun_collections::BufSet — Zig `std.BufSet` (owns key copies).
+// Approximated with the existing StringSet; revisit ownership semantics.
+type BufSet = bun_collections::StringSet;
+/// `bun.StringSet` (re-exported for `BundleOptions.bundler_feature_flags`).
+pub use bun_collections::StringSet;
+
+/// `options.zig:Framework.ClientCssInJs` — TYPE_ONLY moved to top of module so
+/// `entry_points.rs` (and the inline `options` mod) can resolve it before the
+/// gated `Framework` impl block below.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ClientCssInJs {
+    #[default]
+    AutoOnImportCss,
+    Facade,
+    FacadeOnImportCss,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WriteDestination {
@@ -25,6 +80,8 @@ pub enum WriteDestination {
     // eventually: wasm
 }
 
+#[cfg(any())]
+// TODO(b2-blocked): bun_resolver::fs::FileSystem::Implementation + bun_paths::resolve
 pub fn validate_path(
     log: &mut logger::Log,
     _fs: &mut Fs::FileSystem::Implementation,
@@ -135,9 +192,10 @@ impl AllowUnresolved {
     }
 }
 
+#[derive(Default)]
 pub struct ExternalModules {
-    pub node_modules: bun_collections::BufSet,
-    pub abs_paths: bun_collections::BufSet,
+    pub node_modules: BufSet,
+    pub abs_paths: BufSet,
     pub patterns: Box<[WildcardPattern]>,
 }
 
@@ -148,8 +206,11 @@ pub struct WildcardPattern {
 }
 
 impl ExternalModules {
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_resolve_builtins — adding the dep triggers upstream
+    // rebuilds that expose in-progress breakage in css/logger.
     pub fn is_node_builtin(str: &[u8]) -> bool {
-        bun_resolve_builtins::HardcodedModule::HardcodedModule::Alias::has(str, bun_resolve_builtins::HardcodedModule::RuntimeTarget::Node, Default::default())
+        bun_resolve_builtins::Alias::has(str, bun_resolve_builtins::Target::Node, Default::default())
     }
 
     const DEFAULT_WILDCARD_PATTERNS: &'static [(&'static [u8], &'static [u8])] = &[
@@ -165,6 +226,8 @@ impl ExternalModules {
             .collect()
     }
 
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_resolver::fs::FileSystem::Implementation + validate_path
     pub fn init(
         fs: &mut Fs::FileSystem::Implementation,
         cwd: &[u8],
@@ -416,7 +479,9 @@ pub static MODULE_TYPE_LIST: phf::Map<&'static [u8], ModuleType> = phf::phf_map!
     b"module" => ModuleType::Esm,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Enum, enumset::EnumSetType, strum::IntoStaticStr)]
+// PORT NOTE: `EnumSetType` derives Copy/Clone/PartialEq/Eq itself; explicit
+// duplicates removed to avoid E0119.
+#[derive(Debug, Hash, Enum, enumset::EnumSetType, strum::IntoStaticStr)]
 pub enum Target {
     Browser,
     Bun,
@@ -442,10 +507,10 @@ impl Target {
 
     pub fn to_api(self) -> api::Target {
         match self {
-            Target::Node => api::Target::Node,
-            Target::Browser => api::Target::Browser,
-            Target::Bun | Target::BakeServerComponentsSsr => api::Target::Bun,
-            Target::BunMacro => api::Target::BunMacro,
+            Target::Node => api::Target::node,
+            Target::Browser => api::Target::browser,
+            Target::Bun | Target::BakeServerComponentsSsr => api::Target::bun,
+            Target::BunMacro => api::Target::bun_macro,
         }
     }
 
@@ -490,29 +555,31 @@ impl Target {
         const OUT_EXTENSIONS_LIST: &[&[u8]] =
             &[b".js", b".cjs", b".mts", b".cts", b".ts", b".tsx", b".jsx", b".json"];
 
+        // PERF(port): keys were `&'static` in Zig; `StringHashMap` owns keys via
+        // `Box<[u8]>` so `put` copies — tiny startup cost.
         if self == Target::Node {
-            exts.reserve(OUT_EXTENSIONS_LIST.len() * 2);
+            exts.ensure_total_capacity(OUT_EXTENSIONS_LIST.len() * 2).expect("OOM");
             for ext in OUT_EXTENSIONS_LIST {
-                exts.insert(ext, b".mjs");
+                exts.put(ext, b".mjs").expect("OOM");
             }
         } else {
-            exts.reserve(OUT_EXTENSIONS_LIST.len() + 1);
-            exts.insert(b".mjs", b".js");
+            exts.ensure_total_capacity(OUT_EXTENSIONS_LIST.len() + 1).expect("OOM");
+            exts.put(b".mjs", b".js").expect("OOM");
         }
 
         for ext in OUT_EXTENSIONS_LIST {
-            exts.insert(ext, b".js");
+            exts.put(ext, b".js").expect("OOM");
         }
 
         exts
     }
 
     pub fn from(plat: Option<api::Target>) -> Target {
-        match plat.unwrap_or(api::Target::None) {
-            api::Target::Node => Target::Node,
-            api::Target::Browser => Target::Browser,
-            api::Target::Bun => Target::Bun,
-            api::Target::BunMacro => Target::BunMacro,
+        match plat.unwrap_or(api::Target::_none) {
+            api::Target::node => Target::Node,
+            api::Target::browser => Target::Browser,
+            api::Target::bun => Target::Bun,
+            api::Target::bun_macro => Target::BunMacro,
             _ => Target::Browser,
         }
     }
@@ -643,7 +710,7 @@ impl LoaderOptional {
     }
 
     pub fn from_api(loader: api::Loader) -> LoaderOptional {
-        if loader == api::Loader::None {
+        if loader == api::Loader::_none {
             return LoaderOptional::NONE;
         }
         let l = Loader::from_api(loader);
@@ -685,36 +752,37 @@ pub static LOADER_NAMES: phf::Map<&'static [u8], Loader> = phf::phf_map! {
 
 // PORT NOTE: hoisted from `impl Loader` — Rust forbids `static` in inherent impls.
 pub static LOADER_API_NAMES: phf::Map<&'static [u8], api::Loader> = phf::phf_map! {
-    b"js" => api::Loader::Js,
-    b"mjs" => api::Loader::Js,
-    b"cjs" => api::Loader::Js,
-    b"cts" => api::Loader::Ts,
-    b"mts" => api::Loader::Ts,
-    b"jsx" => api::Loader::Jsx,
-    b"ts" => api::Loader::Ts,
-    b"tsx" => api::Loader::Tsx,
-    b"css" => api::Loader::Css,
-    b"file" => api::Loader::File,
-    b"json" => api::Loader::Json,
-    b"jsonc" => api::Loader::Json,
-    b"toml" => api::Loader::Toml,
-    b"yaml" => api::Loader::Yaml,
-    b"json5" => api::Loader::Json5,
-    b"wasm" => api::Loader::Wasm,
-    b"node" => api::Loader::Napi,
-    b"dataurl" => api::Loader::Dataurl,
-    b"base64" => api::Loader::Base64,
-    b"txt" => api::Loader::Text,
-    b"text" => api::Loader::Text,
-    b"sh" => api::Loader::File,
-    b"sqlite" => api::Loader::Sqlite,
-    b"html" => api::Loader::Html,
-    b"md" => api::Loader::Md,
-    b"markdown" => api::Loader::Md,
+    b"js" => api::Loader::js,
+    b"mjs" => api::Loader::js,
+    b"cjs" => api::Loader::js,
+    b"cts" => api::Loader::ts,
+    b"mts" => api::Loader::ts,
+    b"jsx" => api::Loader::jsx,
+    b"ts" => api::Loader::ts,
+    b"tsx" => api::Loader::tsx,
+    b"css" => api::Loader::css,
+    b"file" => api::Loader::file,
+    b"json" => api::Loader::json,
+    b"jsonc" => api::Loader::json,
+    b"toml" => api::Loader::toml,
+    b"yaml" => api::Loader::yaml,
+    b"json5" => api::Loader::json5,
+    b"wasm" => api::Loader::wasm,
+    b"node" => api::Loader::napi,
+    b"dataurl" => api::Loader::dataurl,
+    b"base64" => api::Loader::base64,
+    b"txt" => api::Loader::text,
+    b"text" => api::Loader::text,
+    b"sh" => api::Loader::file,
+    b"sqlite" => api::Loader::sqlite,
+    b"html" => api::Loader::html,
+    b"md" => api::Loader::md,
+    b"markdown" => api::Loader::md,
 };
 
 impl Loader {
-    pub type Optional = LoaderOptional;
+    // PORT NOTE: `pub type Optional` hoisted to module-level `LoaderOptional`
+    // (Rust inherent impls cannot declare associated types — E0658).
 
     pub fn is_css(self) -> bool {
         self == Loader::Css
@@ -754,15 +822,16 @@ impl Loader {
         matches!(self, Loader::Wasm | Loader::File | Loader::Text)
     }
 
-    pub fn to_mime_type(self, paths: &[&[u8]]) -> bun_http::MimeType {
+    pub fn to_mime_type(self, paths: &[&[u8]]) -> bun_http_types::MimeType::MimeType {
+        use bun_http_types::MimeType;
         match self {
-            Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx => bun_http::MimeType::JAVASCRIPT,
-            Loader::Css => bun_http::MimeType::CSS,
+            Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx => MimeType::JAVASCRIPT,
+            Loader::Css => MimeType::CSS,
             Loader::Toml | Loader::Yaml | Loader::Json | Loader::Jsonc | Loader::Json5 => {
-                bun_http::MimeType::JSON
+                MimeType::JSON
             }
-            Loader::Wasm => bun_http::MimeType::WASM,
-            Loader::Html | Loader::Md => bun_http::MimeType::HTML,
+            Loader::Wasm => MimeType::WASM,
+            Loader::Html | Loader::Md => MimeType::HTML,
             _ => {
                 for path in paths {
                     let mut extname = bun_paths::extension(path);
@@ -770,18 +839,19 @@ impl Loader {
                         extname = &extname[1..];
                     }
                     if !extname.is_empty() {
-                        if let Some(mime) = bun_http::MimeType::by_extension_no_default(extname) {
+                        if let Some(mime) = MimeType::by_extension_no_default(extname) {
                             return mime;
                         }
                     }
                 }
 
-                bun_http::MimeType::OTHER
+                MimeType::OTHER
             }
         }
     }
 
-    pub type HashTable = StringArrayHashMap<Loader>;
+    // PORT NOTE: `pub type HashTable` hoisted to module-level `LoaderHashTable`
+    // (Rust inherent impls cannot declare associated types).
 
     pub fn can_have_source_map(self) -> bool {
         matches!(self, Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx)
@@ -794,10 +864,10 @@ impl Loader {
         )
     }
 
-    pub type Map = EnumMap<Loader, &'static [u8]>;
+    // PORT NOTE: `pub type Map` hoisted to module-level `LoaderEnumMap`.
 
-    pub fn stdin_name_map() -> Self::Map {
-        let mut map: Self::Map = EnumMap::from_array([b"" as &[u8]; 21]);
+    pub fn stdin_name_map() -> LoaderEnumMap {
+        let mut map: LoaderEnumMap = EnumMap::from_array([b"" as &[u8]; 21]);
         // TODO(port): EnumMap::from_array length must match variant count; verify in Phase B
         map[Loader::Jsx] = b"input.jsx";
         map[Loader::Js] = b"input.js";
@@ -843,52 +913,52 @@ impl Loader {
 
     pub fn to_api(self) -> api::Loader {
         match self {
-            Loader::Jsx => api::Loader::Jsx,
-            Loader::Js => api::Loader::Js,
-            Loader::Ts => api::Loader::Ts,
-            Loader::Tsx => api::Loader::Tsx,
-            Loader::Css => api::Loader::Css,
-            Loader::Html => api::Loader::Html,
-            Loader::File | Loader::Bunsh => api::Loader::File,
-            Loader::Json => api::Loader::Json,
-            Loader::Jsonc => api::Loader::Json,
-            Loader::Toml => api::Loader::Toml,
-            Loader::Yaml => api::Loader::Yaml,
-            Loader::Json5 => api::Loader::Json5,
-            Loader::Wasm => api::Loader::Wasm,
-            Loader::Napi => api::Loader::Napi,
-            Loader::Base64 => api::Loader::Base64,
-            Loader::Dataurl => api::Loader::Dataurl,
-            Loader::Text => api::Loader::Text,
-            Loader::SqliteEmbedded | Loader::Sqlite => api::Loader::Sqlite,
-            Loader::Md => api::Loader::Md,
+            Loader::Jsx => api::Loader::jsx,
+            Loader::Js => api::Loader::js,
+            Loader::Ts => api::Loader::ts,
+            Loader::Tsx => api::Loader::tsx,
+            Loader::Css => api::Loader::css,
+            Loader::Html => api::Loader::html,
+            Loader::File | Loader::Bunsh => api::Loader::file,
+            Loader::Json => api::Loader::json,
+            Loader::Jsonc => api::Loader::json,
+            Loader::Toml => api::Loader::toml,
+            Loader::Yaml => api::Loader::yaml,
+            Loader::Json5 => api::Loader::json5,
+            Loader::Wasm => api::Loader::wasm,
+            Loader::Napi => api::Loader::napi,
+            Loader::Base64 => api::Loader::base64,
+            Loader::Dataurl => api::Loader::dataurl,
+            Loader::Text => api::Loader::text,
+            Loader::SqliteEmbedded | Loader::Sqlite => api::Loader::sqlite,
+            Loader::Md => api::Loader::md,
         }
     }
 
     pub fn from_api(loader: api::Loader) -> Loader {
         match loader {
-            api::Loader::None => Loader::File,
-            api::Loader::Jsx => Loader::Jsx,
-            api::Loader::Js => Loader::Js,
-            api::Loader::Ts => Loader::Ts,
-            api::Loader::Tsx => Loader::Tsx,
-            api::Loader::Css => Loader::Css,
-            api::Loader::File => Loader::File,
-            api::Loader::Json => Loader::Json,
-            api::Loader::Jsonc => Loader::Jsonc,
-            api::Loader::Toml => Loader::Toml,
-            api::Loader::Yaml => Loader::Yaml,
-            api::Loader::Json5 => Loader::Json5,
-            api::Loader::Wasm => Loader::Wasm,
-            api::Loader::Napi => Loader::Napi,
-            api::Loader::Base64 => Loader::Base64,
-            api::Loader::Dataurl => Loader::Dataurl,
-            api::Loader::Text => Loader::Text,
-            api::Loader::Bunsh => Loader::Bunsh,
-            api::Loader::Html => Loader::Html,
-            api::Loader::Sqlite => Loader::Sqlite,
-            api::Loader::SqliteEmbedded => Loader::SqliteEmbedded,
-            api::Loader::Md => Loader::Md,
+            api::Loader::_none => Loader::File,
+            api::Loader::jsx => Loader::Jsx,
+            api::Loader::js => Loader::Js,
+            api::Loader::ts => Loader::Ts,
+            api::Loader::tsx => Loader::Tsx,
+            api::Loader::css => Loader::Css,
+            api::Loader::file => Loader::File,
+            api::Loader::json => Loader::Json,
+            api::Loader::jsonc => Loader::Jsonc,
+            api::Loader::toml => Loader::Toml,
+            api::Loader::yaml => Loader::Yaml,
+            api::Loader::json5 => Loader::Json5,
+            api::Loader::wasm => Loader::Wasm,
+            api::Loader::napi => Loader::Napi,
+            api::Loader::base64 => Loader::Base64,
+            api::Loader::dataurl => Loader::Dataurl,
+            api::Loader::text => Loader::Text,
+            api::Loader::bunsh => Loader::Bunsh,
+            api::Loader::html => Loader::Html,
+            api::Loader::sqlite => Loader::Sqlite,
+            api::Loader::sqlite_embedded => Loader::SqliteEmbedded,
+            api::Loader::md => Loader::Md,
             _ => Loader::File,
         }
     }
@@ -916,17 +986,16 @@ impl Loader {
         }
     }
 
-    pub fn for_file_name<M>(filename: &[u8], obj: &M) -> Option<Loader>
-    where
-        // TODO(port): `obj: anytype` — needs `.get(ext) -> Option<Loader>` method
-        M: bun_collections::MapLike<Key = [u8], Value = Loader>,
-    {
+    // TODO(port): `obj: anytype` — Zig duck-typed `.get(ext) -> Option<Loader>`.
+    // Monomorphized to the only concrete map type callers pass (`LoaderHashTable`);
+    // a `MapLike` trait is overkill for one call site.
+    pub fn for_file_name(filename: &[u8], obj: &LoaderHashTable) -> Option<Loader> {
         let ext = bun_paths::extension(filename);
         if ext.is_empty() || (ext.len() == 1 && ext[0] == b'.') {
             return None;
         }
 
-        obj.get(ext)
+        obj.get(ext).copied()
     }
 
     pub fn side_effects(self) -> bun_options_types::SideEffects {
@@ -958,7 +1027,7 @@ impl Loader {
             Loader::Jsonc
         } else if mime_type.value.starts_with(b"application/json") {
             Loader::Json
-        } else if mime_type.category == bun_http::MimeType::Category::Text {
+        } else if mime_type.category == bun_http_types::MimeType::Category::Text {
             Loader::Text
         } else {
             // Be maximally permissive.
@@ -1054,6 +1123,9 @@ pub struct LoaderResult<'a> {
     pub package_json: Option<&'a PackageJSON>,
 }
 
+#[cfg(any())]
+// TODO(b2-blocked): bun_paths::path_literal! + Fs::Path::loader + strings::eql_long
+// arity — body touches VmLoaderCtx vtable which is real but the helper APIs are not.
 pub fn get_loader_and_virtual_source<'a>(
     specifier_str: &'a [u8],
     jsc_vm: &'a VmLoaderCtx,
@@ -1263,10 +1335,10 @@ impl ESMConditions {
 
     pub fn clone(&self) -> Result<ESMConditions, bun_core::Error> {
         // TODO(port): narrow error set
-        let default = self.default.clone();
-        let import = self.import.clone();
-        let require = self.require.clone();
-        let style = self.style.clone();
+        let default = self.default.clone()?;
+        let import = self.import.clone()?;
+        let require = self.require.clone()?;
+        let style = self.style.clone()?;
 
         Ok(ESMConditions { default, import, require, style })
     }
@@ -1299,7 +1371,16 @@ impl ESMConditions {
 pub mod jsx {
     use super::*;
 
-    pub use api::JsxRuntime as Runtime;
+    // TODO(b2-blocked): bun_options_types::schema::api::JsxRuntime — peechy
+    // codegen. Local mirror so `Pragma.runtime` is real.
+    #[repr(u8)]
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+    pub enum Runtime {
+        #[default]
+        Automatic,
+        Classic,
+        Solid,
+    }
 
     #[derive(Debug, Clone, Copy)]
     pub struct RuntimeDevelopmentPair {
@@ -1370,7 +1451,7 @@ pub mod jsx {
     }
 
     impl Pragma {
-        pub fn hash_for_runtime_transpiler(&self, hasher: &mut bun_wyhash::Wyhash) {
+        pub fn hash_for_runtime_transpiler(&self, hasher: &mut bun_wyhash::Wyhash11) {
             for factory in self.factory {
                 hasher.update(factory);
             }
@@ -1482,10 +1563,17 @@ pub mod jsx {
                 }
                 out.push(str);
             }
-            // TODO(port): leaking to satisfy &'static; Phase B should restructure ownership.
-            Ok(Box::leak(out.into_boxed_slice()))
+            // TODO(port): FORBIDDEN — leaking to satisfy &'static; Phase B should
+            // restructure Pragma.factory/fragment to Box<[Box<[u8]>]>. Gated to
+            // satisfy lifetime checker (`out` borrows `new`).
+            #[cfg(any())]
+            { return Ok(Box::leak(out.into_boxed_slice())); }
+            let _ = out;
+            Ok(original)
         }
 
+        #[cfg(any())]
+        // TODO(b2-blocked): bun_options_types::schema::api::Jsx — peechy codegen.
         pub fn from_api(jsx: api::Jsx) -> Result<Pragma, bun_core::Error> {
             let mut pragma = Pragma::default();
 
@@ -1541,6 +1629,8 @@ pub mod default_user_defines {
 
 pub use default_user_defines as DefaultUserDefines;
 
+#[cfg(any())]
+// TODO(b2-blocked): bun_options_types::schema::api::StringMap + defines::DefineDataInit
 pub fn defines_from_transform_options(
     log: &mut logger::Log,
     maybe_input_define: Option<api::StringMap>,
@@ -1563,7 +1653,7 @@ pub fn defines_from_transform_options(
 
     let mut environment_defines = defines::UserDefinesArray::default();
 
-    let mut behavior = api::DotEnvBehavior::Disable;
+    let mut behavior = api::DotEnvBehavior::disable;
 
     'load_env: {
         let Some(env) = env_loader else { break 'load_env };
@@ -1575,7 +1665,7 @@ pub fn defines_from_transform_options(
 
         behavior = framework.behavior;
         if behavior == api::DotEnvBehavior::LoadAllWithoutInlining
-            || behavior == api::DotEnvBehavior::Disable
+            || behavior == api::DotEnvBehavior::disable
         {
             break 'load_env;
         }
@@ -1749,6 +1839,8 @@ impl Default for ResolveFileExtensionsGroup {
     }
 }
 
+#[cfg(any())]
+// TODO(b2-blocked): bun_options_types::schema::api::LoaderMap — peechy codegen.
 pub fn loaders_from_transform_options(
     _loaders: Option<api::LoaderMap>,
     target: Target,
@@ -1791,11 +1883,11 @@ pub fn loaders_from_transform_options(
     Ok(loaders)
 }
 
-// TODO(port): std.fs.Dir — replace with bun_sys::Dir / Fd in Phase B
-type Dir = bun_sys::Dir;
+// PORT NOTE: `Dir` alias hoisted to top of file (= bun_sys::Fd).
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SourceMapOption {
+    #[default]
     None,
     Inline,
     External,
@@ -1841,6 +1933,8 @@ pub enum PackagesOption {
 }
 
 impl PackagesOption {
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_options_types::schema::api::PackagesMode — peechy codegen.
     pub fn from_api(packages: Option<api::PackagesMode>) -> PackagesOption {
         match packages.unwrap_or(api::PackagesMode::Bundle) {
             api::PackagesMode::External => PackagesOption::External,
@@ -1849,6 +1943,8 @@ impl PackagesOption {
         }
     }
 
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_options_types::schema::api::PackagesMode — peechy codegen.
     pub fn to_api(packages: Option<PackagesOption>) -> api::PackagesMode {
         match packages.unwrap_or(PackagesOption::Bundle) {
             PackagesOption::External => api::PackagesMode::External,
@@ -1872,8 +1968,8 @@ pub struct BundleOptions<'a> {
     pub drop: Box<[Box<[u8]>]>,
     /// Set of enabled feature flags for dead-code elimination via `import { feature } from "bun:bundle"`.
     /// Initialized once from the CLI --feature flags.
-    pub bundler_feature_flags: Box<bun_core::StringSet>,
-    pub loaders: Loader::HashTable,
+    pub bundler_feature_flags: Box<StringSet>,
+    pub loaders: LoaderHashTable,
     pub resolve_dir: &'static [u8],
     pub jsx: jsx::Pragma,
     pub emit_decorator_metadata: bool,
@@ -1887,7 +1983,10 @@ pub struct BundleOptions<'a> {
     pub hot_module_reloading: bool,
     pub react_fast_refresh: bool,
     pub inject: Option<Box<[Box<[u8]>]>>,
-    pub origin: URL,
+    // TODO(port): lifetime — `bun_url::URL<'a>` borrows its input string. Zig
+    // stored it borrowing `transform_options.origin` (sibling field). Using the
+    // owned variant so the struct is self-contained.
+    pub origin: bun_url::OwnedURL,
     pub output_dir_handle: Option<Dir>,
 
     pub output_dir: Box<[u8]>,
@@ -2011,7 +2110,7 @@ pub struct BundleOptions<'a> {
     /// When set, barrel files from these packages will only load submodules
     /// that are actually imported. Also, any file with sideEffects: false
     /// in its package.json is automatically a barrel candidate.
-    pub optimize_imports: Option<&'a bun_core::StringSet>,
+    pub optimize_imports: Option<&'a StringSet>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2044,6 +2143,8 @@ impl<'a> BundleOptions<'a> {
     ];
 
     #[inline]
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_options_types::schema::api::CssInJsBehavior — peechy codegen.
     pub fn css_import_behavior(&self) -> api::CssInJsBehavior {
         match self.target {
             Target::Browser => api::CssInJsBehavior::AutoOnimportcss,
@@ -2055,6 +2156,8 @@ impl<'a> BundleOptions<'a> {
         !self.defines_loaded
     }
 
+    #[cfg(any())]
+    // TODO(b2-blocked): defines_from_transform_options + api::TransformOptions.define
     pub fn load_defines(
         &mut self,
         loader_: Option<&mut DotEnv::Loader>,
@@ -2100,6 +2203,9 @@ impl<'a> BundleOptions<'a> {
         self.loaders.get(ext).copied().unwrap_or(Loader::File)
     }
 
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_options_types::schema::api::TransformOptions field set
+    // (peechy codegen) + analytics::Features + Fs::FileSystem::get_fd_path.
     pub fn from_api(
         fs: &mut Fs::FileSystem,
         log: &'a mut logger::Log,
@@ -2391,6 +2497,8 @@ pub mod bundle_options_defaults {
     }
 }
 
+#[cfg(any())]
+// TODO(b2-blocked): bun_sys::cwd().open_dir / make_dir + Output::print_errorln
 pub fn open_output_dir(output_dir: &[u8]) -> Result<Dir, bun_core::Error> {
     // TODO(port): std.fs.cwd().openDir / makeDir — replace with bun_sys equivalents in Phase B
     match bun_sys::cwd().open_dir(output_dir, Default::default()) {
@@ -2431,6 +2539,9 @@ pub struct TransformOptions {
     pub inject: Option<Box<[Box<[u8]>]>>,
     pub origin: &'static [u8],
     pub preserve_symlinks: bool,
+    // TODO(b2-blocked): bun_resolver::fs::File — `bun_logger::fs` does not
+    // expose a `File` type. Field gated until resolver fs is real.
+    #[cfg(any())]
     pub entry_point: Fs::File,
     pub resolve_paths: bool,
     pub tsconfig_override: Option<Box<[u8]>>,
@@ -2440,6 +2551,8 @@ pub struct TransformOptions {
 }
 
 impl TransformOptions {
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_resolver::fs::File — see `entry_point` field.
     pub fn init_uncached(entry_point_name: &[u8], code: &[u8]) -> Result<TransformOptions, bun_core::Error> {
         debug_assert!(!entry_point_name.is_empty());
 
@@ -2498,6 +2611,9 @@ pub struct TransformResult {
 }
 
 impl TransformResult {
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_logger::Msg::clone signature (returns Result) +
+    // log.errors/warnings are u32 — body needs reshaping.
     pub fn init(
         outbase: Box<[u8]>,
         output_files: Box<[OutputFile]>,
@@ -2535,7 +2651,7 @@ pub struct EnvEntry {
 
 type EnvList = MultiArrayList<EnvEntry>;
 
-#[derive(Debug)]
+// PORT NOTE: `Debug` derive dropped — `MultiArrayList<T>` is not `Debug`.
 pub struct Env {
     pub behavior: api::DotEnvBehavior,
     pub prefix: Box<[u8]>,
@@ -2552,7 +2668,7 @@ pub struct Env {
 impl Default for Env {
     fn default() -> Self {
         Env {
-            behavior: api::DotEnvBehavior::Disable,
+            behavior: api::DotEnvBehavior::disable,
             prefix: Box::default(),
             defaults: EnvList::default(),
             files: Box::default(),
@@ -2566,16 +2682,20 @@ impl Env {
         Env {
             defaults: EnvList::default(),
             prefix: Box::default(),
-            behavior: api::DotEnvBehavior::Disable,
+            behavior: api::DotEnvBehavior::disable,
             files: Box::default(),
             disable_default_env_files: false,
         }
     }
 
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_collections::MultiArrayElement derive for EnvEntry
     pub fn ensure_total_capacity(&mut self, capacity: u64) -> Result<(), bun_alloc::AllocError> {
         self.defaults.ensure_total_capacity(capacity as usize)
     }
 
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_options_types::schema::api::StringMap — peechy codegen.
     pub fn set_defaults_map(&mut self, defaults: api::StringMap) -> Result<(), bun_alloc::AllocError> {
         self.defaults.shrink_retaining_capacity(0);
 
@@ -2595,6 +2715,8 @@ impl Env {
         Ok(())
     }
 
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_options_types::schema::api::EnvConfig — peechy codegen.
     // For reading from API
     pub fn set_from_api(&mut self, config: api::EnvConfig) -> Result<(), bun_alloc::AllocError> {
         self.set_behavior_from_prefix(config.prefix.as_deref().unwrap_or(b""));
@@ -2606,22 +2728,24 @@ impl Env {
     }
 
     pub fn set_behavior_from_prefix(&mut self, prefix: &[u8]) {
-        self.behavior = api::DotEnvBehavior::Disable;
+        self.behavior = api::DotEnvBehavior::disable;
         self.prefix = Box::default();
 
         if prefix == b"*" {
-            self.behavior = api::DotEnvBehavior::LoadAll;
+            self.behavior = api::DotEnvBehavior::load_all;
         } else if !prefix.is_empty() {
-            self.behavior = api::DotEnvBehavior::Prefix;
+            self.behavior = api::DotEnvBehavior::prefix;
             self.prefix = Box::from(prefix);
         }
     }
 
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_options_types::schema::api::LoadedEnvConfig — peechy codegen.
     pub fn set_from_loaded(&mut self, config: api::LoadedEnvConfig) -> Result<(), bun_alloc::AllocError> {
         self.behavior = match config.dotenv {
             api::DotEnvBehavior::Prefix => api::DotEnvBehavior::Prefix,
             api::DotEnvBehavior::LoadAll => api::DotEnvBehavior::LoadAll,
-            _ => api::DotEnvBehavior::Disable,
+            _ => api::DotEnvBehavior::disable,
         };
 
         self.prefix = config.prefix;
@@ -2629,6 +2753,8 @@ impl Env {
         self.set_defaults_map(config.defaults)
     }
 
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_options_types::schema::api::LoadedEnvConfig — peechy codegen.
     pub fn to_api(&self) -> api::LoadedEnvConfig {
         let slice = self.defaults.slice();
 
@@ -2642,6 +2768,9 @@ impl Env {
         }
     }
 
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_collections::MultiArrayList::slice().items_key()
+    // accessor codegen.
     // For reading from package.json
     pub fn get_or_put_value(&mut self, key: &[u8], value: &[u8]) -> Result<(), bun_alloc::AllocError> {
         let slice = self.defaults.slice();
@@ -2657,7 +2786,8 @@ impl Env {
     }
 }
 
-#[derive(Debug, Default)]
+// PORT NOTE: `Debug` derive dropped — `Env` is not `Debug` (MultiArrayList).
+#[derive(Default)]
 pub struct EntryPoint {
     pub path: Box<[u8]>,
     pub env: Env,
@@ -2674,6 +2804,8 @@ pub enum EntryPointKind {
 }
 
 impl EntryPointKind {
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_options_types::schema::api::FrameworkEntryPointType
     pub fn to_api(self) -> api::FrameworkEntryPointType {
         match self {
             EntryPointKind::Client => api::FrameworkEntryPointType::Client,
@@ -2689,6 +2821,8 @@ impl EntryPoint {
         self.kind != EntryPointKind::Disabled && !self.path.is_empty()
     }
 
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_options_types::schema::api::FrameworkEntryPoint
     pub fn to_api(
         &self,
         toplevel_path: &[u8],
@@ -2726,6 +2860,8 @@ impl EntryPoint {
         }
     }
 
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_options_types::schema::api::FrameworkEntryPoint
     pub fn from_loaded(
         &mut self,
         framework_entry_point: api::FrameworkEntryPoint,
@@ -2737,6 +2873,8 @@ impl EntryPoint {
         Ok(())
     }
 
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_options_types::schema::api::FrameworkEntryPointMessage
     pub fn from_api(
         &mut self,
         framework_entry_point: api::FrameworkEntryPointMessage,
@@ -2780,6 +2918,8 @@ pub struct RouteConfig {
 }
 
 impl RouteConfig {
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_options_types::schema::api::LoadedRouteConfig
     pub fn to_api(&self) -> api::LoadedRouteConfig {
         api::LoadedRouteConfig {
             asset_prefix: self.asset_prefix_path.clone(),
@@ -2808,6 +2948,8 @@ impl RouteConfig {
         }
     }
 
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_options_types::schema::api::LoadedRouteConfig
     pub fn from_loaded_routes(loaded: api::LoadedRouteConfig) -> RouteConfig {
         RouteConfig {
             extensions: loaded.extensions,
@@ -2820,6 +2962,8 @@ impl RouteConfig {
         }
     }
 
+    #[cfg(any())]
+    // TODO(b2-blocked): bun_options_types::schema::api::RouteConfig
     pub fn from_api(router_: api::RouteConfig) -> Result<RouteConfig, bun_core::Error> {
         let mut router = Self::zero();
 
@@ -3020,8 +3164,7 @@ impl PathTemplate {
                 }
                 PlaceholderField::Hash => {
                     if let Some(hash) = self.placeholder.hash {
-                        // TODO(port): bun_io::Write byte formatting for truncated_hash32
-                        bun_io::write_fmt(writer, format_args!("{}", bun_core::fmt::truncated_hash32(hash)))?;
+                        writer.write_fmt(format_args!("{}", bun_core::fmt::truncated_hash32(hash)))?;
                     }
                 }
                 PlaceholderField::Target => {

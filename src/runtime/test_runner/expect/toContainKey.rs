@@ -1,7 +1,7 @@
 use bun_jsc::console_object::Formatter;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
-use crate::expect::Expect;
+use super::Expect;
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
@@ -35,7 +35,7 @@ impl Expect {
         };
         // `defer formatter.deinit()` — handled by Drop.
 
-        let not = this.flags.not;
+        let not = this.flags.not();
         if !value.is_object() {
             return global.throw_invalid_arguments(format_args!(
                 "Expected value must be an object\nReceived: {}",

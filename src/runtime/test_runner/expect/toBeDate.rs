@@ -2,7 +2,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::console_object::Formatter;
 
 use super::Expect;
-use super::Expect::get_signature;
+use super::get_signature;
 
 #[bun_jsc::host_fn(method)]
 pub fn to_be_date(this: &mut Expect, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
@@ -15,7 +15,7 @@ pub fn to_be_date(this: &mut Expect, global: &JSGlobalObject, frame: &CallFrame)
 
     this.increment_expect_call_counter();
 
-    let not = this.flags.not;
+    let not = this.flags.not();
     let pass = value.is_date() != not;
 
     if pass {

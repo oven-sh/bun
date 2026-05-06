@@ -21,7 +21,7 @@ pub fn to_throw_error_matching_snapshot(
 
     this.increment_expect_call_counter();
 
-    let not = this.flags.not;
+    let not = this.flags.not();
     if not {
         let signature = get_signature("toThrowErrorMatchingSnapshot", "", true);
         return this.throw(

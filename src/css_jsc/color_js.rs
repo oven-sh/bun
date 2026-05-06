@@ -311,11 +311,11 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
 
             input = args[0].to_slice(global)?;
 
-            let mut parser_input = css::ParserInput::new(&arena, input.slice());
+            let mut parser_input = css::ParserInput::new(input.slice());
             let mut parser = css::Parser::new(
                 &mut parser_input,
                 None,
-                <css::ParserOptions<'_> as Default>::default(),
+                css::css_parser::ParserOpts::default(),
                 None,
             );
             break 'brk CssColor::parse(&mut parser);
@@ -559,7 +559,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                 // TODO(port): css::Printer::new signature — Zig passes (allocator, ArrayList, writer, opts, null, null, &symbols)
                 let mut printer = css::Printer::new(
                     &arena,
-                    Vec::<u8>::new(),
+                    bun_alloc::ArenaVec::<u8>::new_in(&arena),
                     &mut dest,
                     css::PrinterOptions::default(),
                     None,
@@ -570,6 +570,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                 if let Err(err) = result.to_css(&mut printer) {
                     return Err(global.throw(format_args!("color() internal error: {}", err.name())));
                 }
+                drop(printer);
 
                 return bun_jsc::bun_string_jsc::create_utf8_for_js(global, &dest);
             }

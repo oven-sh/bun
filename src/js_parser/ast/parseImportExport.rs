@@ -14,8 +14,6 @@ use bun_logger as logger;
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
     /// Note: The caller has already parsed the "import" keyword
     pub fn parse_import_expr(&mut self, loc: logger::Loc, level: Level) -> Result<Expr, Error> {
-        #[cfg(any())] // TODO(b2-ast-D): body
-        {
         let p = self;
         // Parse an "import.meta" expression
         if p.lexer.token == T::TDot {
@@ -26,7 +24,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 p.has_import_meta = true;
                 return Ok(p.new_expr(E::ImportMeta {}, loc));
             } else {
-                p.lexer.expected_string("\"meta\"")?;
+                p.lexer.expected_string(b"\"meta\"")?;
             }
         }
 
@@ -34,9 +32,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             let r = js_lexer::range_of_identifier(p.source, loc);
             p.log
                 .add_range_error(
-                    p.source,
+                    Some(p.source),
                     r,
-                    "Cannot use an \"import\" expression here without parentheses",
+                    b"Cannot use an \"import\" expression here without parentheses",
                 )
                 .expect("unreachable");
         }
@@ -53,7 +51,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         p.lexer.preserve_all_comments_before = false;
 
-        let value = p.parse_expr(Level::Comma)?;
+        let mut value = p.parse_expr(Level::Comma)?;
 
         let mut import_options = Expr::EMPTY;
         if p.lexer.token == T::TComma {
@@ -76,26 +74,31 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.allow_in = old_allow_in;
 
         if SCAN_ONLY {
-            if let ExprData::EString(e_string) = &value.data {
+            // PORT NOTE: reshaped for borrowck — EString::slice takes &mut self (rope flatten),
+            // so capture the slice (arena-lifetime) before re-using `value` by-value below.
+            let slice_opt: Option<&'a [u8]> = if let ExprData::EString(e_string) = &mut value.data {
                 if e_string.is_utf8() && e_string.is_present() {
-                    // PORT NOTE: reshaped for borrowck — capture slice before calling &mut self method.
-                    let slice = e_string.slice(p.allocator);
+                    Some(e_string.slice(p.allocator))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            if let Some(slice) = slice_opt {
+                #[cfg(any())] // blocked_on: bun_options_types::ImportRecord: Default (P::add_import_record chain re-gated)
+                {
                     let import_record_index = p.add_import_record(
                         bun_options_types::ImportKind::Dynamic,
                         value.loc,
                         slice,
                     );
-
                     return Ok(p.new_expr(
-                        E::Import {
-                            expr: value,
-                            // .leading_interior_comments = comments,
-                            import_record_index,
-                            options: import_options,
-                        },
+                        E::Import { expr: value, import_record_index, options: import_options },
                         loc,
                     ));
                 }
+                let _ = slice;
             }
         }
 
@@ -109,14 +112,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 options: import_options,
             },
             loc,
-        ));
-        } // end #[cfg(any())]
-        let _ = (loc, level);
-        todo!("b2-ast-D: parse_import_expr body")
+        ))
     }
 
     pub fn parse_import_clause(&mut self) -> Result<ImportClause, Error> {
-        #[cfg(any())] // TODO(b2-ast-D): body
+        #[cfg(any())]
+        // blocked_on: P::{store_name_in_ref, check_for_non_bmp_code_point} gated (P.rs:640
+        //   impl block); ClauseItem.alias is ArenaStr (*const [u8]) not &[u8]; BumpVec
+        //   construction (items.push needs &'a Bump); LocRef.ref_ is Option<Ref>.
         {
         let p = self;
         // TODO(port): narrow error set
@@ -299,7 +302,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 
     pub fn parse_export_clause(&mut self) -> Result<ExportClauseResult, Error> {
-        #[cfg(any())] // TODO(b2-ast-D): body
+        #[cfg(any())]
+        // blocked_on: P::{store_name_in_ref, check_for_non_bmp_code_point} gated (P.rs:640
+        //   impl block); ClauseItem.alias is ArenaStr (*const [u8]) not &[u8];
+        //   ExportClauseResult.clauses is &'a [ClauseItem] (need into_bump_slice).
         {
         let p = self;
         // TODO(port): narrow error set

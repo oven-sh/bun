@@ -1399,6 +1399,13 @@ pub fn eql_case_insensitive_ascii_ignore_length(a: &[u8], b: &[u8]) -> bool {
     eql_case_insensitive_ascii::<false>(a, b)
 }
 
+pub fn eql_case_insensitive_ascii_check_length(a: &[u8], b: &[u8]) -> bool {
+    eql_case_insensitive_ascii::<true>(a, b)
+}
+
+/// Preserves Zig's triple-`i` typo (`eqlCaseInsensitiveASCIIICheckLength`); both
+/// spellings are reachable from ported call sites until the next typo sweep.
+#[inline]
 pub fn eql_case_insensitive_asciii_check_length(a: &[u8], b: &[u8]) -> bool {
     eql_case_insensitive_ascii::<true>(a, b)
 }
@@ -2011,6 +2018,26 @@ pub fn trim_prefix_comptime<'a, T: Copy + Eq>(buffer: &'a [T], prefix: &'static 
 pub fn trim_suffix_comptime<'a>(buffer: &'a [u8], suffix: &'static [u8]) -> &'a [u8] {
     if has_suffix_comptime(buffer, suffix) {
         &buffer[0..buffer.len() - suffix.len()]
+    } else {
+        buffer
+    }
+}
+
+/// Non-comptime variants — runtime prefix/suffix may borrow from a non-static
+/// buffer (`hosted_git_info`, `npm-pack-args` parsers).
+#[inline]
+pub fn trim_prefix<'a>(buffer: &'a [u8], prefix: &[u8]) -> &'a [u8] {
+    if buffer.len() >= prefix.len() && &buffer[..prefix.len()] == prefix {
+        &buffer[prefix.len()..]
+    } else {
+        buffer
+    }
+}
+
+#[inline]
+pub fn trim_suffix<'a>(buffer: &'a [u8], suffix: &[u8]) -> &'a [u8] {
+    if buffer.len() >= suffix.len() && &buffer[buffer.len() - suffix.len()..] == suffix {
+        &buffer[..buffer.len() - suffix.len()]
     } else {
         buffer
     }

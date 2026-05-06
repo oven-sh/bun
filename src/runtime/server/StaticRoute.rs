@@ -4,26 +4,25 @@
 use core::cell::Cell;
 use core::mem::size_of;
 
-use bun_core::Error;
-use bun_http::{ETag, Headers, Method, MimeType};
-use bun_jsc::{JSGlobalObject, JSValue, JsResult};
-use bun_ptr::IntrusiveRc;
-use bun_schema::api::StringPointer;
+use bun_http::Headers;
+use bun_http_types::MimeType::MimeType;
 use bun_uws::{AnyRequest, AnyResponse};
 
-use crate::api::server::{write_status, AnyServer};
-use crate::webcore::body::Value as BodyValue;
-use crate::webcore::{AnyBlob, FetchHeaders, Response};
+use crate::server::jsc::{JSGlobalObject, JSValue, JsResult};
+use crate::server::AnyServer;
+use crate::webcore::{AnyBlob, FetchHeaders};
 
-// bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — intrusive single-thread refcount.
-// `*StaticRoute` crosses FFI (uws onAborted/onWritable context), so IntrusiveRc not Rc.
-pub type StaticRouteRc = IntrusiveRc<StaticRoute>;
-
+// bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — single-thread refcount.
+// PORT NOTE (§Pointers Rc/Arc default): owned via `Rc<StaticRoute>` from
+// `AnyRoute`. `*StaticRoute` is also passed as uws onAborted/onWritable
+// userdata; if cargo-check shows FFI breakage, swap to `bun_ptr::RefPtr` and
+// `impl RefCounted`. ref_count Cell kept for now so the on()/send paths can
+// bump locally without `Rc::clone` churn.
 pub struct StaticRoute {
     // TODO: Remove optional. StaticRoute requires a server object or else it will
     // not ensure it is alive while sending a large blob.
     ref_count: Cell<u32>,
-    pub server: Option<AnyServer>,
+    pub server: Cell<Option<AnyServer>>,
     pub status_code: u16,
     pub blob: AnyBlob,
     pub cached_blob_size: u64,
@@ -48,6 +47,28 @@ impl<'a> Default for InitFromBytesOptions<'a> {
         }
     }
 }
+
+impl StaticRoute {
+    pub fn memory_cost(&self) -> usize {
+        size_of::<StaticRoute>() + self.blob.memory_cost() + self.headers.memory_cost()
+    }
+}
+
+// ─── route-handler bodies (gated) ────────────────────────────────────────────
+// init_from_any_blob / from_js / clone need: Headers::from(body=..),
+// AnyBlob::{to_blob, dupe, content_type, slice}, ETag::append_to_headers,
+// JSValue::as_::<Response>.
+// on / on_head_request / on_response / send need: bun_uws AnyResponse
+// write/end/on_writable/on_aborted (cycle-5-B), HTTPStatusText, RangeRequest.
+// TODO(b2-blocked): bun_jsc + bun_uws response write surface.
+#[cfg(any())]
+mod _gated {
+use super::*;
+use bun_core::Error;
+use bun_http_types::{ETag, Method};
+use crate::server::write_status;
+use crate::webcore::body::Value as BodyValue;
+use crate::webcore::Response;
 
 impl StaticRoute {
     // pub const ref / deref — intrusive refcount accessors.
@@ -119,10 +140,6 @@ impl StaticRoute {
             server: self.server,
             status_code: self.status_code,
         })))
-    }
-
-    pub fn memory_cost(&self) -> usize {
-        size_of::<StaticRoute>() + self.blob.memory_cost() + self.headers.memory_cost()
     }
 
     pub fn from_js(global_this: &JSGlobalObject, argument: JSValue) -> JsResult<Option<*mut StaticRoute>> {
@@ -490,6 +507,7 @@ impl Drop for StaticRoute {
 use crate::webcore::blob::InternalBlob;
 use crate::webcore::fetch_headers::HttpHeader;
 use bun_http::HeadersFromOptions;
+} // mod _gated
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

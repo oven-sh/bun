@@ -1,8 +1,8 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::console_object::Formatter;
 
-use crate::expect::Expect;
-use crate::expect::Expect::get_signature;
+use super::Expect;
+use super::get_signature;
 
 #[bun_jsc::host_fn(method)]
 pub fn to_be_instance_of(
@@ -44,7 +44,7 @@ pub fn to_be_instance_of(
     let value: JSValue =
         this.get_value(global, this_value, "toBeInstanceOf", "<green>expected<r>")?;
 
-    let not = this.flags.not;
+    let not = this.flags.not();
     let mut pass = value.is_instance_of(global, expected_value);
     if not {
         pass = !pass;

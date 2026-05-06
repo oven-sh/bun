@@ -1,7 +1,7 @@
 use bun_jsc::console_object::Formatter as ConsoleFormatter;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
-use crate::expect::Expect;
+use super::Expect;
 
 #[bun_jsc::host_fn(method)]
 pub fn to_be_function(
@@ -17,7 +17,7 @@ pub fn to_be_function(
 
         this.increment_expect_call_counter();
 
-        let not = this.flags.not;
+        let not = this.flags.not();
         let pass = value.is_callable() != not;
 
         if pass {

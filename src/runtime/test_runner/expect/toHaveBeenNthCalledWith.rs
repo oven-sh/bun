@@ -1,6 +1,6 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::console_object::Formatter;
-use crate::diff_format::DiffFormatter;
+use super::DiffFormatter;
 use super::Expect;
 
 #[bun_jsc::host_fn(method)]
@@ -25,7 +25,7 @@ pub fn to_have_been_nth_called_with(
 
     this.increment_expect_call_counter();
 
-    let calls = bun_jsc::cpp::JSMockFunction__getCalls(global, value)?;
+    let calls = super::mock::JSMockFunction__getCalls(global, value)?;
     if !calls.js_type().is_array() {
         let mut formatter = Formatter { global_this: global, quote_strings: true, ..Default::default() };
         return this.throw(
@@ -79,7 +79,7 @@ pub fn to_have_been_nth_called_with(
         }
     }
 
-    if pass != this.flags.not {
+    if pass != this.flags.not() {
         return Ok(JSValue::UNDEFINED);
     }
 
@@ -93,7 +93,7 @@ pub fn to_have_been_nth_called_with(
     }
     expected_args_js_array.ensure_still_alive();
 
-    if this.flags.not {
+    if this.flags.not() {
         let signature = Expect::get_signature("toHaveBeenNthCalledWith", "<green>n<r>, <green>...expected<r>", true);
         return this.throw(
             global,

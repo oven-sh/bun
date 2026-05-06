@@ -54,13 +54,12 @@ mod b1_stubs {
         }
     }
 
-    // TODO(b1): bun_sys::fs missing (MOVE_DOWN pending)
-    pub mod Fs {
-        pub struct FileSystem;
-        pub struct DirEntry;
-        pub struct Entry;
-    }
-    pub use Fs::FileSystem;
+    // CYCLEBREAK B-2: bun_sys::fs landed opaque MOVE_DOWN stubs for FileSystem /
+    // Entry / DirEntry / DirnameStore. Re-export so router types name the real
+    // lower-tier surface; bodies that need fields the stub doesn't expose stay
+    // gated below with a precise blocked_on.
+    pub use bun_sys::fs as Fs;
+    pub use bun_sys::fs::FileSystem;
 
     // TODO(b2-blocked): bun_options_types::schema::{RouteConfig, LoadedRouteConfig, StringPointer}
     // — schema.rs port hasn't reached these types yet. Shapes below mirror
@@ -958,9 +957,10 @@ impl<'a> RouteLoader<'a> {
     #[cfg(any())]
     // TODO(b2-blocked): bun_sys::fs::DirEntry::iter — opaque stub exposes no
     //   way to iterate `data` (Zig: `entries.data.iterator()`); MOVE_DOWN
-    //   bun_resolver::fs→sys still pending the EntryMap surface.
-    // TODO(b2-blocked): bun_sys::fs::Entry::dir — field access; opaque stub
-    //   only has getter, but `load` needs the slice for sub-slicing.
+    //   bun_resolver::fs→sys still pending the EntryMap surface. Once that
+    //   lands, the body below already uses the accessor API (entry.dir()/base()/
+    //   kind()) and Route::parse is un-gated, so this should compile with only
+    //   the iterator-loop reshape.
     pub fn load<R: ResolverLike>(
         &mut self,
         resolver: &mut R,
@@ -970,24 +970,26 @@ impl<'a> RouteLoader<'a> {
         let fs = self.fs;
 
         if let Some(entries) = root_dir_info.get_entries_const() {
-            let mut iter = entries.data.iterator();
-            'outer: while let Some(entry_ptr) = iter.next() {
-                let entry = *entry_ptr.value_ptr;
+            let mut iter = entries.iter();
+            'outer: while let Some(entry) = iter.next() {
+                let entry: &mut Fs::Entry = entry;
                 if entry.base()[0] == b'.' {
                     continue 'outer;
                 }
 
-                match entry.kind(&fs.fs, false) {
-                    Fs::EntryKind::Dir => {
+                // PORT NOTE: Entry::kind takes the resolver fs impl as erased *mut c_void
+                // (tier-clean stub); pass null until bun_resolver wires the vtable.
+                match entry.kind(core::ptr::null_mut(), false) {
+                    bun_sys::EntryKind::Directory => {
                         for banned_dir in BANNED_DIRS.iter() {
                             if entry.base() == *banned_dir {
                                 continue 'outer;
                             }
                         }
 
-                        let abs_parts = [entry.dir, entry.base()];
+                        let abs_parts = [entry.dir(), entry.base()];
                         if let Some(_dir_info) =
-                            resolver.read_dir_info_ignore_error(fs.abs(&abs_parts))
+                            resolver.read_dir_info_ignore_error(&fs.abs(&abs_parts))
                         {
                             let dir_info: DirInfoRef = _dir_info;
 
@@ -995,7 +997,7 @@ impl<'a> RouteLoader<'a> {
                         }
                     }
 
-                    Fs::EntryKind::File => {
+                    bun_sys::EntryKind::File => {
                         let extname = bun_paths::extension(entry.base());
                         // exclude "." or ""
                         if extname.len() < 2 {
@@ -1006,15 +1008,16 @@ impl<'a> RouteLoader<'a> {
                             if &extname[1..] == _extname.as_ref() {
                                 // length is extended by one
                                 // entry.dir is a string with a trailing slash
+                                let entry_dir = entry.dir();
                                 if cfg!(debug_assertions) {
                                     debug_assert!(bun_paths::is_sep_any(
-                                        entry.dir[base_dir.len() - 1]
+                                        entry_dir[base_dir.len() - 1]
                                     ));
                                 }
 
                                 // SAFETY: entry.dir is at least base_dir.len()-1 bytes; verified above in debug
                                 let public_dir =
-                                    &entry.dir[base_dir.len() - 1..entry.dir.len()];
+                                    &entry_dir[base_dir.len() - 1..entry_dir.len()];
 
                                 if let Some(route) = Route::parse(
                                     entry.base(),
@@ -1030,6 +1033,7 @@ impl<'a> RouteLoader<'a> {
                             }
                         }
                     }
+                    _ => {}
                 }
             }
         }
@@ -1159,12 +1163,6 @@ pub type RoutePtr = TinyPtr;
 impl Route {
     pub const INDEX_ROUTE_NAME: &'static [u8] = b"/";
 
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_sys::fs::Entry::set_abs_path — body mutates
-    //   `entry.abs_path` (Zig: `entry.abs_path = PathString.init(...)`); the
-    //   opaque MOVE_DOWN stub has no setter.
-    // TODO(b2-blocked): bun_sys::fs::Entry::cache — body reads
-    //   `entry.cache.fd`; opaque stub's `cache()` returns a copy, not a field.
     pub fn parse(
         base_: &[u8],
         extname: &[u8],
@@ -1173,10 +1171,13 @@ impl Route {
         public_dir_: &[u8],
         routes_dirname_len: u16,
     ) -> Option<Route> {
-        let mut abs_path_str: &[u8] = if entry.abs_path.is_empty() {
+        // PORT NOTE: bun_sys::fs::Entry is opaque — field reads go through
+        // accessor methods (abs_path()/dir()/base()/cache()).
+        let entry_abs_path = entry.abs_path().slice();
+        let mut abs_path_str: &[u8] = if entry_abs_path.is_empty() {
             b""
         } else {
-            entry.abs_path.slice()
+            entry_abs_path
         };
 
         let base = &base_[0..base_.len() - extname.len()];
@@ -1197,7 +1198,9 @@ impl Route {
                 let mut buf: &mut [u8] = &mut route_file_buf[..];
 
                 if !public_dir.is_empty() {
-                    route_file_buf[0] = b'/';
+                    // PORT NOTE: reshaped for borrowck — `buf` already aliases
+                    // route_file_buf[..]; write through it instead of re-borrowing.
+                    buf[0] = b'/';
                     buf = &mut buf[1..];
                     buf[..public_dir.len()].copy_from_slice(public_dir);
                 }
@@ -1236,13 +1239,16 @@ impl Route {
 
             name = strings::trim_right(name, b"/");
 
-            let mut match_name: &[u8] = name;
-
             let mut validation_result = pattern::ValidationResult::default();
             let is_index = name.is_empty();
 
             let mut has_uppercase = false;
-            if !name.is_empty() {
+            // PORT NOTE: reshaped for borrowck — both arms intern via DirnameStore
+            // (process-lifetime arena → `&'static`), so the post-if bindings are
+            // 'static and the route_file_buf borrow is dropped before the
+            // abs-path block below needs it mutably.
+            let (public_path, name, match_name): (&'static [u8], &'static [u8], &'static [u8]) =
+                if !name.is_empty() {
                 validation_result = match Pattern::validate(&name[1..], log) {
                     Some(v) => v,
                     None => return None,
@@ -1257,92 +1263,90 @@ impl Route {
 
                 let name_offset =
                     name.as_ptr() as usize - public_path.as_ptr() as usize;
+                let name_len = name.len();
 
-                if has_uppercase {
-                    public_path = FileSystem::dirname_store()
-                        .append(public_path)
-                        .expect("unreachable");
-                    name = &public_path[name_offset..][0..name.len()];
-                    match_name = FileSystem::dirname_store()
-                        .append_lower_case(&name[1..])
-                        .expect("unreachable");
+                // PORT NOTE: DirnameStore::append returns `&'static [u8]` (process-
+                // lifetime arena), so rebinding here drops the borrow on
+                // `route_file_buf` and removes the need for the Phase-A
+                // lifetime transmutes that were below.
+                let dirname_store = FileSystem::instance().dirname_store();
+                let public_path: &'static [u8] =
+                    dirname_store.append(public_path).expect("unreachable");
+                let name: &'static [u8] = &public_path[name_offset..][0..name_len];
+                let match_name: &'static [u8] = if has_uppercase {
+                    dirname_store.append_lower_case(&name[1..]).expect("unreachable")
                 } else {
-                    public_path = FileSystem::dirname_store()
-                        .append(public_path)
-                        .expect("unreachable");
-                    name = &public_path[name_offset..][0..name.len()];
-                    match_name = &name[1..];
-                }
+                    &name[1..]
+                };
 
                 debug_assert!(match_name[0] != b'/');
                 debug_assert!(name[0] == b'/');
+                (public_path, name, match_name)
             } else {
-                name = Route::INDEX_ROUTE_NAME;
-                match_name = Route::INDEX_ROUTE_NAME;
-
-                public_path = FileSystem::dirname_store()
-                    .append(public_path)
-                    .expect("unreachable");
-            }
+                let dirname_store = FileSystem::instance().dirname_store();
+                let public_path: &'static [u8] =
+                    dirname_store.append(public_path).expect("unreachable");
+                (public_path, Route::INDEX_ROUTE_NAME, Route::INDEX_ROUTE_NAME)
+            };
 
             if abs_path_str.is_empty() {
-                // TODO(port): replace std.fs.File with bun_sys::File / bun_sys::open
-                let mut file: Option<bun_sys::File> = None;
-                let mut needs_close = true;
-                // defer if (needs_close) file.close();
-                let _guard = scopeguard::guard((), |_| {
-                    if needs_close {
-                        if let Some(f) = file.take() {
-                            f.close();
+                // PORT NOTE: reshaped for borrowck — `defer if (needs_close) file.close()`
+                // becomes a scopeguard owning the Option<File>; `needs_close` is a
+                // Cell so the drop closure can read it while the body still mutates.
+                let needs_close = core::cell::Cell::new(true);
+                let mut file = scopeguard::guard(None::<bun_sys::File>, |f| {
+                    if needs_close.get() {
+                        if let Some(f) = f {
+                            let _ = f.close();
                         }
                     }
                 });
 
-                if let Some(valid) = entry.cache.fd.unwrap_valid() {
-                    file = Some(valid.std_file());
-                    needs_close = false;
+                if let Some(valid) = entry.cache().fd.unwrap_valid() {
+                    *file = Some(bun_sys::File::from_fd(valid));
+                    needs_close.set(false);
                 } else {
-                    let parts = [entry.dir, entry.base()];
-                    abs_path_str = FileSystem::instance().abs_buf(&parts, route_file_buf);
-                    route_file_buf[abs_path_str.len()] = 0;
-                    // SAFETY: NUL-terminated above
+                    let parts = [entry.dir(), entry.base()];
+                    let abs_len =
+                        FileSystem::instance().abs_buf(&parts, route_file_buf).len();
+                    route_file_buf[abs_len] = 0;
+                    // SAFETY: NUL-terminated above; `abs_len` bytes valid in route_file_buf.
                     let buf = unsafe {
-                        bun_str::ZStr::from_raw(route_file_buf.as_ptr(), abs_path_str.len())
+                        bun_core::ZStr::from_raw(route_file_buf.as_ptr(), abs_len)
                     };
-                    match bun_sys::open_file_absolute_z(buf, bun_sys::OpenMode::ReadOnly) {
+                    match bun_sys::open_file_absolute_z(buf, bun_sys::OpenFlags::READ_ONLY) {
                         Ok(f) => {
-                            file = Some(f);
+                            *file = Some(f);
                         }
                         Err(err) => {
-                            needs_close = false;
+                            needs_close.set(false);
                             log.add_error_fmt(
                                 None,
                                 logger::Loc::EMPTY,
                                 format_args!(
                                     "{} opening route: {}",
-                                    err.name(),
-                                    bstr::BStr::new(abs_path_str)
+                                    bstr::BStr::new(err.name()),
+                                    bstr::BStr::new(&route_file_buf[..abs_len])
                                 ),
                             )
                             .expect("unreachable");
                             return None;
                         }
                     }
-                    FileSystem::set_max_fd(file.as_ref().unwrap().handle());
+                    FileSystem::instance()
+                        .set_max_fd(file.as_ref().unwrap().handle().native());
                 }
 
-                let _abs = match bun_sys::get_fd_path(
-                    Fd::from_std_file(file.as_ref().unwrap()),
-                    route_file_buf,
-                ) {
-                    Ok(p) => p,
+                let fd = file.as_ref().unwrap().handle();
+                let _abs = match bun_sys::get_fd_path(fd, route_file_buf) {
+                    Ok(p) => &p[..],
                     Err(err) => {
                         log.add_error_fmt(
                             None,
                             logger::Loc::EMPTY,
                             format_args!(
                                 "{} resolving route: {}",
-                                err.name(),
+                                bstr::BStr::new(err.name()),
                                 bstr::BStr::new(abs_path_str)
                             ),
                         )
@@ -1351,10 +1355,17 @@ impl Route {
                     }
                 };
 
-                abs_path_str = FileSystem::dirname_store()
+                abs_path_str = FileSystem::instance()
+                    .dirname_store()
                     .append(_abs)
                     .expect("unreachable");
-                entry.abs_path = PathString::init(abs_path_str);
+                #[cfg(any())]
+                // TODO(b2-blocked): bun_sys::fs::Entry::set_abs_path — opaque
+                //   MOVE_DOWN stub exposes no setter for `abs_path`
+                //   (Zig: `entry.abs_path = PathString.init(...)`).
+                {
+                    entry.set_abs_path(bun_string::PathString::init(abs_path_str));
+                }
             }
 
             #[cfg(windows)]
@@ -1376,12 +1387,14 @@ impl Route {
                 debug_assert!(!strings::index_of_char(entry.base(), b'\\').is_some());
             }
 
-            // TODO(port): lifetime — name/match_name/public_path/abs_path_str borrow DirnameStore (static singleton)
-            // SAFETY: DirnameStore is process-lifetime; treat as 'static for Phase A
-            let name: &'static [u8] = unsafe { core::mem::transmute(name) };
-            let match_name: &'static [u8] = unsafe { core::mem::transmute(match_name) };
-            let public_path: &'static [u8] = unsafe { core::mem::transmute(public_path) };
-            let basename: &'static [u8] = unsafe { core::mem::transmute(entry.base()) };
+            // PORT NOTE: name/match_name/public_path are already `&'static` via
+            // DirnameStore::append above. `entry.base()` is backed by the same
+            // arena in Zig, but the opaque accessor returns a borrowed `&[u8]`;
+            // intern it explicitly to get `&'static` without a lifetime transmute.
+            let basename: &'static [u8] = FileSystem::instance()
+                .dirname_store()
+                .append(entry.base())
+                .expect("unreachable");
 
             Some(Route {
                 name,

@@ -4,30 +4,36 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_core::Output;
-use bun_http::MimeType;
-use bun_jsc::{
+use bun_http_types::MimeType::MimeType;
+use crate::webcore::jsc::{
     self as jsc, CallFrame, CommonAbortReason, DOMFormData, JSGlobalObject, JSPromise, JSValue,
     JsResult, Strong, SystemError, URLSearchParams, VirtualMachine,
 };
-use bun_runtime::webcore::{
-    self, streams, AnyBlob, Blob, ByteStream, DrainResult, FetchHeaders, InternalBlob, Lifetime,
-    Pipe, ReadableStream,
+use crate::webcore::{
+    self, blob, streams, AnyBlob, Blob, ByteStream, DrainResult, FetchHeaders, InternalBlob,
+    Lifetime, Pipe, ReadableStream,
 };
-use bun_runtime::webcore::sink::ArrayBufferSink;
 use bun_str::{self as strings, MutableString, String as BunString, ZigString};
-use bun_wtf::StringImpl as WTFStringImpl;
+use bun_str::WTFStringImpl;
 
-bun_output::declare_scope!(BodyValue, visible);
-bun_output::declare_scope!(BodyMixin, visible);
-bun_output::declare_scope!(BodyValueBufferer, visible);
+bun_core::declare_scope!(BodyValue, visible);
+bun_core::declare_scope!(BodyMixin, visible);
+bun_core::declare_scope!(BodyValueBufferer, visible);
 
 // TODO(port): `bun.JSTerminated!T` is a narrower error set than `bun.JSError`; using JsResult for now.
-type JsTerminated<T> = bun_jsc::JsResult<T>;
+type JsTerminated<T> = jsc::JsResult<T>;
 
-pub struct Body<'a> {
-    pub value: Value<'a>, // = Value::Empty,
+pub struct Body {
+    pub value: Value, // = Value::Empty,
 }
 
+impl Default for Body {
+    fn default() -> Self { Self { value: Value::Empty } }
+}
+
+// TODO(b2-blocked): bun_jsc::* — len/slice/use_/clone/write_format all forward
+// to Value JSC methods (gated below). Re-enable once `impl Value` is un-gated.
+#[cfg(any())]
 impl<'a> Body<'a> {
     pub fn len(&self) -> blob::SizeType {
         self.value.size()
@@ -111,7 +117,9 @@ impl<'a> Body<'a> {
 // TODO(port): not a clean Drop — Value::reset mutates self to Null/Used and is called explicitly
 // at specific protocol points (e.g. resolve()). PORTING.md forbids `pub fn deinit(&mut self)`;
 // renamed to `reset()` since it cannot take `self` by value (in-place state transition).
-impl<'a> Body<'a> {
+// TODO(b2-blocked): Value::reset gated above.
+#[cfg(any())]
+impl Body {
     pub fn reset(&mut self) {
         self.value.reset();
     }
@@ -121,12 +129,16 @@ impl<'a> Body<'a> {
 // PendingValue
 // ────────────────────────────────────────────────────────────────────────────
 
-pub struct PendingValue<'a> {
+pub struct PendingValue {
     pub promise: Option<JSValue>,
     pub readable: webcore::readable_stream::Strong,
     // writable: webcore::Sink
 
-    pub global: &'a JSGlobalObject,
+    // PORT NOTE: LIFETIMES.tsv JSC_BORROW → `&JSGlobalObject`, but `Value::Locked`
+    // is stored on heap (Body in Request/Response m_ctx). Dropped the `<'a>`
+    // lifetime per PORTING.md §Type map ("never put a lifetime param on a struct
+    // in Phase A"); raw ptr until Phase B picks `&'static` vs JSC handle.
+    pub global: *const JSGlobalObject,
     pub task: Option<*mut c_void>,
 
     /// runs after the data is available.
@@ -145,20 +157,12 @@ pub struct PendingValue<'a> {
     pub action: Action,
 }
 
-impl<'a> Default for PendingValue<'a> {
-    fn default() -> Self {
-        // TODO(port): `global` has no Zig default; callers must always set it. This Default
-        // is only for convenient `..Default::default()` field-init at call sites that DO set global.
-        unreachable!("PendingValue must be constructed with `global` set")
-    }
-}
-
-impl<'a> PendingValue<'a> {
-    pub fn new(global: &'a JSGlobalObject) -> Self {
+impl PendingValue {
+    pub fn new(global: &JSGlobalObject) -> Self {
         Self {
             promise: None,
             readable: webcore::readable_stream::Strong::default(),
-            global,
+            global: global as *const _,
             task: None,
             on_receive_value: None,
             on_start_buffering: None,
@@ -170,7 +174,12 @@ impl<'a> PendingValue<'a> {
             action: Action::None,
         }
     }
+}
 
+// TODO(b2-blocked): bun_jsc::* — readable.get/is_disturbed/to_any_blob,
+// JSPromise::create, JSValue::protect, global.readable_stream_to_*.
+#[cfg(any())]
+impl PendingValue {
     /// For Http Client requests
     /// when Content-Length is provided this represents the whole size of the request
     /// If chunked encoded this will represent the total received size (ignoring the chunk headers)
@@ -313,7 +322,9 @@ pub enum Action {
     GetArrayBuffer,
     GetBytes,
     GetBlob,
-    GetFormData(Option<Box<bun_core::form_data::AsyncFormData>>),
+    // TODO(b2-blocked): bun_core::form_data (gated). Payload boxed; concrete type
+    // swaps to `Box<bun_core::form_data::AsyncFormData>` once un-gated.
+    GetFormData(Option<Box<()>>),
 }
 
 impl Action {
@@ -333,7 +344,7 @@ pub trait BodyOwnerJs {
 // ────────────────────────────────────────────────────────────────────────────
 
 /// This is a duplex stream!
-pub enum Value<'a> {
+pub enum Value {
     Blob(Blob),
 
     /// This is the String type from WebKit
@@ -375,7 +386,7 @@ pub enum Value<'a> {
     InternalBlob(InternalBlob),
     /// Single-use Blob that stores the bytes in the Value itself.
     // InlineBlob(InlineBlob),
-    Locked(PendingValue<'a>),
+    Locked(PendingValue),
     Used,
     Empty,
     Error(ValueError),
@@ -383,9 +394,10 @@ pub enum Value<'a> {
 }
 
 // TODO(port): bun.heap_breakdown.enabled is a build-time flag.
-const POOL_SIZE: usize = if cfg!(feature = "heap_breakdown") { 0 } else { 256 };
-pub type HiveRef<'a> = bun_collections::HiveRef<Value<'a>, POOL_SIZE>;
-pub type HiveAllocator<'a> = bun_collections::hive_array::Fallback<HiveRef<'a>, POOL_SIZE>;
+// TODO(b2-blocked): bun_collections::HiveRef / hive_array::Fallback — not yet exported.
+#[cfg(any())] const POOL_SIZE: usize = if cfg!(feature = "heap_breakdown") { 0 } else { 256 };
+#[cfg(any())] pub type HiveRef = bun_collections::HiveRef<Value, POOL_SIZE>;
+#[cfg(any())] pub type HiveAllocator = bun_collections::hive_array::Fallback<HiveRef, POOL_SIZE>;
 
 pub const HEAP_BREAKDOWN_LABEL: &str = "BodyValue";
 
@@ -413,6 +425,9 @@ pub enum ValueError {
     JSValue(jsc::strong::Optional),
 }
 
+// TODO(b2-blocked): bun_jsc::* — to_js/dupe/reset call SystemError/BunString
+// JSC methods, jsc::strong::Optional::create/get, JSValue::attach_async_stack.
+#[cfg(any())]
 impl ValueError {
     pub fn to_stream_error(&mut self, global_object: &JSGlobalObject) -> streams::result::StreamError {
         match self {
@@ -494,7 +509,7 @@ impl ValueError {
     }
 }
 
-impl<'a> Value<'a> {
+impl Value {
     pub fn tag(&self) -> Tag {
         match self {
             Value::Blob(_) => Tag::Blob,
@@ -508,6 +523,22 @@ impl<'a> Value<'a> {
         }
     }
 
+    pub fn was_string(&self) -> bool {
+        match self {
+            Value::InternalBlob(blob) => blob.was_string,
+            Value::WTFStringImpl(_) => true,
+            _ => false,
+        }
+    }
+}
+
+// TODO(b2-blocked): bun_jsc::* — every method below either calls into gated
+// `PendingValue` JSC methods (to_any_blob/size_hint), gated `Blob` methods
+// (get_size_for_bindings/dupe/init/etc.), `WTFStringImpl::to_utf8_if_needed`,
+// or JSValue/JSPromise/ReadableStream JSC surface. Un-gate alongside the
+// PendingValue/Blob impls once `bun_jsc` is a dep of bun_runtime.
+#[cfg(any())]
+impl Value {
     // We may not have all the data yet
     // So we can't know for sure if it's empty or not
     // We CAN know that it is definitely empty.
@@ -519,14 +550,6 @@ impl<'a> Value<'a> {
             Value::Blob(b) => b.size == 0,
             Value::WTFStringImpl(s) => s.length() == 0,
             Value::Error(_) | Value::Locked(_) => false,
-        }
-    }
-
-    pub fn was_string(&self) -> bool {
-        match self {
-            Value::InternalBlob(blob) => blob.was_string,
-            Value::WTFStringImpl(_) => true,
-            _ => false,
         }
     }
 
@@ -850,7 +873,7 @@ impl<'a> Value<'a> {
         global: &JSGlobalObject,
         headers: Option<&FetchHeaders>,
     ) -> JsTerminated<()> {
-        bun_output::scoped_log!(BodyValue, "resolve");
+        bun_core::scoped_log!(BodyValue, "resolve");
         if let Value::Locked(locked) = to_resolve {
             if let Some(readable) = locked.readable.get(global) {
                 readable.done(global);
@@ -916,7 +939,7 @@ impl<'a> Value<'a> {
                             if let Some(content_type) = fetch_headers.fast_get(FetchHeaders::ContentType) {
                                 let content_slice = content_type.to_slice();
                                 let mut allocated = false;
-                                let mime_type = MimeType::init(content_slice.slice(), &mut allocated);
+                                let mime_type = bun_http_types::MimeType::init(content_slice.slice(), &mut allocated);
                                 blob.content_type = mime_type.value;
                                 blob.content_type_allocated = allocated;
                                 blob.content_type_was_set = true;
@@ -927,10 +950,10 @@ impl<'a> Value<'a> {
                             }
                         }
                         if !blob.content_type_was_set && blob.store.is_some() {
-                            blob.content_type = MimeType::TEXT.value;
+                            blob.content_type = bun_http_types::MimeType::TEXT.value;
                             blob.content_type_allocated = false;
                             blob.content_type_was_set = true;
-                            blob.store.as_mut().unwrap().mime_type = MimeType::TEXT;
+                            blob.store.as_mut().unwrap().mime_type = bun_http_types::MimeType::TEXT;
                         }
                         promise.resolve(global, blob.to_js(global))?;
                     }
@@ -1315,6 +1338,18 @@ impl<'a> Value<'a> {
     }
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// JSC-integration: extract / BodyMixin (host-fn methods) / ValueBufferer.
+// TODO(b2-blocked): bun_jsc::* — host_fn proc-macro, JSValue/JSPromise methods,
+// bun_core::form_data, ArrayBufferSink, blob::read_file. The BodyMixin trait
+// is referenced by Response/Request as a marker — a stub trait is provided
+// outside this gate so `impl BodyMixin for Response/Request {}` type-checks.
+// ────────────────────────────────────────────────────────────────────────────
+#[cfg(any())]
+mod _jsc_gated {
+use super::*;
+use crate::webcore::sink::ArrayBufferSink;
+
 // https://github.com/WebKit/webkit/blob/main/Source/WebCore/Modules/fetch/FetchBody.cpp#L45
 pub fn extract<'a>(global_this: &'a JSGlobalObject, value: JSValue) -> JsResult<Body<'a>> {
     let mut body = Body { value: Value::Null };
@@ -1344,7 +1379,7 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
         None
     }
 
-    #[bun_jsc::host_fn(method)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     fn get_text(
         &mut self,
         global_object: &JSGlobalObject,
@@ -1385,7 +1420,7 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
         ))
     }
 
-    #[bun_jsc::host_fn(getter)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     fn get_body(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         let body = self.get_body_value();
 
@@ -1400,7 +1435,7 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
         self.get_body_value().to_readable_stream(global_this)
     }
 
-    #[bun_jsc::host_fn(getter)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     fn get_body_used(&mut self, global_object: &JSGlobalObject) -> JSValue {
         let used = match self.get_body_value() {
             Value::Used => true,
@@ -1421,7 +1456,7 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
         JSValue::from(used)
     }
 
-    #[bun_jsc::host_fn(method)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     fn get_json(
         &mut self,
         global_object: &JSGlobalObject,
@@ -1469,13 +1504,13 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
         ))
     }
 
-    #[bun_jsc::host_fn(method)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     fn get_array_buffer(
         &mut self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        bun_output::scoped_log!(BodyMixin, "getArrayBuffer");
+        bun_core::scoped_log!(BodyMixin, "getArrayBuffer");
         let value = self.get_body_value();
 
         if matches!(value, Value::Used) {
@@ -1519,7 +1554,7 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
         ))
     }
 
-    #[bun_jsc::host_fn(method)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     fn get_bytes(
         &mut self,
         global_object: &JSGlobalObject,
@@ -1568,7 +1603,7 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
         ))
     }
 
-    #[bun_jsc::host_fn(method)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     fn get_form_data(
         &mut self,
         global_object: &JSGlobalObject,
@@ -1642,7 +1677,7 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
         Ok(JSPromise::wrap_value(global_object, js_value))
     }
 
-    #[bun_jsc::host_fn(method)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     fn get_blob(
         &mut self,
         global_object: &JSGlobalObject,
@@ -1702,7 +1737,7 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
                 if let Some(content_type) = fetch_headers.fast_get(FetchHeaders::ContentType) {
                     let content_slice = content_type.to_slice();
                     let mut allocated = false;
-                    let mime_type = MimeType::init(content_slice.slice(), &mut allocated);
+                    let mime_type = bun_http_types::MimeType::init(content_slice.slice(), &mut allocated);
                     blob.content_type = mime_type.value;
                     blob.content_type_allocated = allocated;
                     blob.content_type_was_set = true;
@@ -1713,10 +1748,10 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
                 }
             }
             if !blob.content_type_was_set && blob.store.is_some() {
-                blob.content_type = MimeType::TEXT.value;
+                blob.content_type = bun_http_types::MimeType::TEXT.value;
                 blob.content_type_allocated = false;
                 blob.content_type_was_set = true;
-                blob.store.as_mut().unwrap().mime_type = MimeType::TEXT;
+                blob.store.as_mut().unwrap().mime_type = bun_http_types::MimeType::TEXT;
             }
         }
         Ok(JSPromise::resolved_promise_value(
@@ -1810,16 +1845,16 @@ impl<'a> ValueBufferer<'a> {
 
         match value {
             Value::Used => {
-                bun_output::scoped_log!(BodyValueBufferer, "Used");
+                bun_core::scoped_log!(BodyValueBufferer, "Used");
                 return Err(bun_core::err!("StreamAlreadyUsed"));
             }
             Value::Empty | Value::Null => {
-                bun_output::scoped_log!(BodyValueBufferer, "Empty");
+                bun_core::scoped_log!(BodyValueBufferer, "Empty");
                 (self.on_finished_buffering)(self.ctx, b"", None, false);
                 return Ok(());
             }
             Value::Error(err) => {
-                bun_output::scoped_log!(BodyValueBufferer, "Error");
+                bun_core::scoped_log!(BodyValueBufferer, "Error");
                 // Zig passes `err` by bitwise value copy with no ref bump; mirror exactly.
                 // SAFETY: ValueError is plain data in Zig (no Drop on the copy); callback owns
                 // neither original nor copy refcount-wise — matches Zig 1:1.
@@ -1840,7 +1875,7 @@ impl<'a> ValueBufferer<'a> {
                     }
                 } else {
                     let bytes = input.slice();
-                    bun_output::scoped_log!(BodyValueBufferer, "Blob {}", bytes.len());
+                    bun_core::scoped_log!(BodyValueBufferer, "Blob {}", bytes.len());
                     (self.on_finished_buffering)(self.ctx, bytes, None, false);
                     input.detach();
                 }
@@ -1856,11 +1891,11 @@ impl<'a> ValueBufferer<'a> {
     fn on_finished_loading_file(&mut self, bytes: blob::read_file::ReadFileResultType) {
         match bytes {
             blob::read_file::ReadFileResultType::Err(err) => {
-                bun_output::scoped_log!(BodyValueBufferer, "onFinishedLoadingFile Error");
+                bun_core::scoped_log!(BodyValueBufferer, "onFinishedLoadingFile Error");
                 (self.on_finished_buffering)(self.ctx, b"", Some(ValueError::SystemError(err)), true);
             }
             blob::read_file::ReadFileResultType::Result(data) => {
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     BodyValueBufferer,
                     "onFinishedLoadingFile Data {}",
                     data.buf.len()
@@ -1882,11 +1917,11 @@ impl<'a> ValueBufferer<'a> {
         );
 
         let chunk = stream_.slice();
-        bun_output::scoped_log!(BodyValueBufferer, "onStreamPipe chunk {}", chunk.len());
+        bun_core::scoped_log!(BodyValueBufferer, "onStreamPipe chunk {}", chunk.len());
         let _ = self.stream_buffer.write(chunk);
         if stream_.is_done() {
             let bytes = self.stream_buffer.list.as_slice();
-            bun_output::scoped_log!(BodyValueBufferer, "onStreamPipe done {}", bytes.len());
+            bun_core::scoped_log!(BodyValueBufferer, "onStreamPipe done {}", bytes.len());
             (self.on_finished_buffering)(self.ctx, bytes, None, true);
         }
 
@@ -1900,7 +1935,7 @@ impl<'a> ValueBufferer<'a> {
         }
     }
 
-    #[bun_jsc::host_fn]
+    // TODO(b2-blocked): #[bun_jsc::host_fn]
     pub fn on_resolve_stream(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let args = callframe.arguments_old(2);
         let Some(sink) =
@@ -1912,7 +1947,7 @@ impl<'a> ValueBufferer<'a> {
         Ok(JSValue::UNDEFINED)
     }
 
-    #[bun_jsc::host_fn]
+    // TODO(b2-blocked): #[bun_jsc::host_fn]
     pub fn on_reject_stream(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let args = callframe.arguments_old(2);
         let Some(sink) =
@@ -1947,10 +1982,10 @@ impl<'a> ValueBufferer<'a> {
     fn handle_resolve_stream(&mut self, is_async: bool) {
         if let Some(wrapper) = &self.js_sink {
             let bytes = wrapper.sink.bytes.slice();
-            bun_output::scoped_log!(BodyValueBufferer, "handleResolveStream {}", bytes.len());
+            bun_core::scoped_log!(BodyValueBufferer, "handleResolveStream {}", bytes.len());
             (self.on_finished_buffering)(self.ctx, bytes, None, is_async);
         } else {
-            bun_output::scoped_log!(BodyValueBufferer, "handleResolveStream no sink");
+            bun_core::scoped_log!(BodyValueBufferer, "handleResolveStream no sink");
             (self.on_finished_buffering)(self.ctx, b"", None, is_async);
         }
     }
@@ -2077,7 +2112,7 @@ impl<'a> ValueBufferer<'a> {
                     // If we've received the complete body by the time this function is called
                     // we can avoid streaming it and just send it all at once.
                     if byte_stream.has_received_last_chunk {
-                        bun_output::scoped_log!(
+                        bun_core::scoped_log!(
                             BodyValueBufferer,
                             "byte stream has_received_last_chunk {}",
                             bytes.len()
@@ -2090,7 +2125,7 @@ impl<'a> ValueBufferer<'a> {
 
                     byte_stream.pipe = Pipe::wrap::<Self>(Self::on_stream_pipe).init(self);
                     self.byte_stream = Some(NonNull::from(byte_stream));
-                    bun_output::scoped_log!(
+                    bun_core::scoped_log!(
                         BodyValueBufferer,
                         "byte stream pre-buffered {}",
                         bytes.len()
@@ -2127,7 +2162,7 @@ impl<'a> ValueBufferer<'a> {
         let sink = unsafe { &mut *(ctx as *mut Self) };
         match value {
             Value::Error(err) => {
-                bun_output::scoped_log!(BodyValueBufferer, "onReceiveValue Error");
+                bun_core::scoped_log!(BodyValueBufferer, "onReceiveValue Error");
                 // Zig passes `err` by bitwise value copy with no ref bump; mirror exactly.
                 // SAFETY: matches Zig's struct-by-value pass; see run() above.
                 // TODO(port): callback ownership — verify no double-free once ValueError gains Drop.
@@ -2138,7 +2173,7 @@ impl<'a> ValueBufferer<'a> {
                 value.to_blob_if_possible();
                 let mut input = value.use_as_any_blob_allow_non_utf8_string();
                 let bytes = input.slice();
-                bun_output::scoped_log!(BodyValueBufferer, "onReceiveValue {}", bytes.len());
+                bun_core::scoped_log!(BodyValueBufferer, "onReceiveValue {}", bytes.len());
                 (sink.on_finished_buffering)(sink.ctx, bytes, None, true);
             }
         }
@@ -2146,7 +2181,7 @@ impl<'a> ValueBufferer<'a> {
 }
 
 // comptime { @export(...) } → no_mangle extern "C" exports.
-// TODO(port): #[bun_jsc::host_fn] on on_resolve_stream/on_reject_stream emits the JSC ABI shim;
+// TODO(port): // TODO(b2-blocked): #[bun_jsc::host_fn] on on_resolve_stream/on_reject_stream emits the JSC ABI shim;
 // these no_mangle re-exports point at those shims under the C names the C++ side expects.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__BodyValueBufferer__onResolveStream(
@@ -2165,12 +2200,14 @@ pub extern "C" fn Bun__BodyValueBufferer__onRejectStream(
     jsc::to_js_host_fn(ValueBufferer::on_reject_stream)(global, callframe)
 }
 
-// Re-export module path aliases used above.
-mod blob {
-    pub use bun_runtime::webcore::Blob;
-    pub type SizeType = super::Blob::SizeType;
-    pub use bun_runtime::webcore::blob::read_file;
-}
+} // mod _jsc_gated
+
+/// Stub `BodyMixin` so `impl BodyMixin for Response/Request {}` type-checks
+/// while the real trait (with `get_text`/`get_json`/etc. host-fn defaults)
+/// is gated above. The real trait extends `BodyOwnerJs` and provides ~9
+/// default-method bodies that call JSC.
+// TODO(b2-blocked): replace with `pub use _jsc_gated::BodyMixin;`.
+pub trait BodyMixin: Sized {}
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

@@ -60,7 +60,7 @@ impl Expect {
             ));
         }
 
-        let not = this.flags.not;
+        let not = this.flags.not();
         let mut pass = false;
 
         let expect_string_as_str_owned = expect_string.to_slice_or_null(global)?;

@@ -31,7 +31,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 }
 
-#[cfg(any())] // TODO(b2-ast-E): full draft body — apply mixin→impl-P recipe per-method
+#[cfg(any())]
+// blocked_on: P::{push_scope_for_visit_pass, pop_scope, record_usage, ignore_usage,
+//   maybe_relocate_vars_to_top_level, mark_exported_decls_inside_namespace, lower_class,
+//   stmts_to_single_stmt, find_label_symbol, generate_closure_for_type_script_namespace_or_enum,
+//   should_lower_using_declarations, replace_decl_and_possibly_remove, is_export_to_eliminate}
+//   all gated (P.rs:640 impl block); _draft uses `const JSX: JSXTransformType` const-generic
+//   (needs J: JsxT lowering); SideEffects::should_keep_stmt_in_dead_control_flow body;
+//   ~2050-line bodies, >30 path/shape errors per method.
 #[allow(warnings)]
 mod _draft {
 use core::marker::PhantomData;

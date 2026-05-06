@@ -11,7 +11,7 @@ use bun_jsc::{
 use bun_js_parser::js_lexer as JSLexer;
 use bun_str::{strings, ZigString};
 
-use crate::expect;
+use super::expect;
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]

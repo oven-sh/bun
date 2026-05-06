@@ -22,22 +22,22 @@
 // PORT NOTE: `h2_client`/`h3_client` are now un-gated as thin shells (atomics
 // + constants only); their heavy submodules (Stream/ClientSession/…) remain
 // gated inside H2Client.rs/H3Client.rs until the cluster above lands.
-#[cfg(any())] #[path = "AsyncHTTP.rs"]              pub mod async_http;
+#[path = "AsyncHTTP.rs"]                            pub mod async_http;
 #[path = "CertificateInfo.rs"]                      pub mod certificate_info;
 #[path = "Decompressor.rs"]                         pub mod decompressor;
 #[path = "H2Client.rs"]                             pub mod h2_client;
 #[path = "H2FrameParser.rs"]                        pub mod h2_frame_parser;
 #[path = "H3Client.rs"]                             pub mod h3_client;
 #[path = "HTTPCertError.rs"]                        pub mod http_cert_error;
-#[cfg(any())] #[path = "HTTPContext.rs"]            pub mod http_context;
+#[path = "HTTPContext.rs"]                          pub mod http_context;
 #[path = "HTTPRequestBody.rs"]                      pub mod http_request_body;
-#[cfg(any())] #[path = "HTTPThread.rs"]             pub mod http_thread;
+#[path = "HTTPThread.rs"]                           pub mod http_thread;
 #[path = "HeaderBuilder.rs"]                        pub mod header_builder;
 #[path = "HeaderValueIterator.rs"]                  pub mod header_value_iterator;
 #[path = "Headers.rs"]                              pub mod headers;
 #[path = "InitError.rs"]                            pub mod init_error;
 #[path = "InternalState.rs"]                        pub mod internal_state;
-#[cfg(any())] #[path = "ProxyTunnel.rs"]            pub mod proxy_tunnel;
+#[path = "ProxyTunnel.rs"]                          pub mod proxy_tunnel;
 #[path = "SendFile.rs"]                             pub mod send_file;
 #[path = "Signals.rs"]                              pub mod signals;
 #[path = "ThreadSafeStreamBuffer.rs"]               pub mod thread_safe_stream_buffer;
@@ -46,11 +46,7 @@
 #[path = "websocket_http_client.rs"]                pub mod websocket_http_client;
 #[path = "zlib.rs"]                                 pub mod zlib;
 
-// ── minimal stub surface (opaque types; real impls gated below) ──
-// TODO(b1): expand as downstream crates need symbols.
-pub struct HTTPClient(());
-pub struct AsyncHTTP(());
-pub struct HTTPThread(());
+// ── crate-root re-exports (real types from un-gated modules) ──
 pub use signals::Signals;
 pub use internal_state::InternalState;
 pub use http_request_body::HTTPRequestBody;
@@ -61,13 +57,38 @@ pub use header_builder::HeaderBuilder;
 pub use decompressor::Decompressor;
 pub use thread_safe_stream_buffer::ThreadSafeStreamBuffer;
 pub use send_file::SendFile;
-pub struct ProxyTunnel(());
+pub use proxy_tunnel::ProxyTunnel;
+pub use http_context::{HTTPContext, HTTPSocket};
+pub use http_thread::HttpThread as HTTPThread;
+pub use async_http::AsyncHTTP;
 #[path = "ssl_config.rs"] pub mod ssl_config;
 pub use ssl_config::SSLConfig;
 // PORT NOTE: SSLWrapper was MOVE_DOWN to bun_uws (tier 4); re-export here so
 // `crate::ssl_wrapper::SSLWrapper` resolves for ProxyTunnel/HTTPContext.
 pub use bun_uws::ssl_wrapper;
 pub use bun_uws::ssl_wrapper::SSLWrapper;
+
+// ── naming aliases ──
+// Phase-A drafts used both `HTTPClient`/`HttpClient` and the Zig type-factory
+// name `NewHTTPContext`; alias all spellings to the canonical types so submodules
+// resolve without churn.
+pub use h2_client as h2;
+pub use h3_client as h3;
+pub use h2_client as H2;
+pub use h3_client as H3;
+pub use http_context as new_http_context;
+pub type NewHTTPContext<const SSL: bool> = http_context::HTTPContext<SSL>;
+pub type NewHttpContext<const SSL: bool> = http_context::HTTPContext<SSL>;
+pub type HttpsContext = http_context::HTTPContext<true>;
+pub type HttpContext = http_context::HTTPContext<false>;
+pub type HttpClient = HTTPClient;
+pub type HttpThread = HTTPThread;
+pub type AsyncHttp = AsyncHTTP;
+pub type ThreadlocalAsyncHttp = ThreadlocalAsyncHTTP;
+pub use HTTPClientResult as http_client_result;
+pub use bun_http_types::Method::Method;
+pub use bun_http_types::FetchRedirect::FetchRedirect;
+pub use bun_picohttp as picohttp;
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
@@ -383,20 +404,139 @@ pub fn hash_header_name(name: &[u8]) -> u64 {
     hasher.final_()
 }
 
+// ───────────────────────────── HTTPClient struct ─────────────────────────────
+// Extracted from `_phase_a_draft`. The heavy `impl HTTPClient` (socket
+// dispatch / state machine) remains gated below until the missing
+// `bun_uws::NewSocketHandler` methods (`ext`/`timeout`/`raw_write`/`flush`/
+// `shutdown`/`connect_group`/…) land.
+
+use core::ptr::NonNull;
+use bun_url::URL;
+use bun_string::ZigStringSlice;
+
+// TODO: reduce the size of this struct
+// Many of these fields can be moved to a packed struct and use less space
+pub struct HTTPClient {
+    pub method: Method,
+    pub header_entries: headers::EntryList,
+    pub header_buf: &'static [u8], // TODO(port): lifetime — borrows external buffer
+    pub url: URL<'static>,
+    pub connected_url: URL<'static>,
+    // allocator param dropped — global mimalloc
+    pub verbose: HTTPVerboseLevel,
+    pub remaining_redirect_count: i8,
+    pub allow_retry: bool,
+    /// Transparent re-dispatch count for REFUSED_STREAM / graceful-GOAWAY,
+    /// where the server promises the request was not processed. Capped by
+    /// `MAX_H2_RETRIES`.
+    pub h2_retries: u8,
+    pub redirect_type: FetchRedirect,
+    pub redirect: Vec<u8>,
+    /// The previous hop's `redirect` buffer, parked by `handle_response_metadata`
+    /// when it overwrites `redirect`. `connected_url` may still borrow from it
+    /// until `do_redirect` has released the socket, so it is freed there rather
+    /// than at the assignment site. Also freed in `Drop` for error paths.
+    pub prev_redirect: Vec<u8>,
+    // TODO(port): lifetime — &mut Progress::Node owned by caller; raw to avoid <'a>
+    pub progress_node: Option<NonNull<bun_core::Progress::Node>>,
+
+    pub flags: Flags,
+
+    pub state: InternalState,
+    pub tls_props: Option<ssl_config::SharedPtr>,
+    /// The custom SSL context used for this request (None = default context).
+    /// Set by HTTPThread.connect() when using custom TLS configs.
+    // TODO(port): was Arc<HttpsContext>; HttpsContext is intrusive-refcounted and
+    // recovered from socket ext, so kept raw + manual ref/deref for now.
+    pub custom_ssl_ctx: Option<NonNull<HttpsContext>>,
+    pub result_callback: HTTPClientResultCallback,
+
+    /// Some HTTP servers (such as npm) report Last-Modified times but ignore If-Modified-Since.
+    /// This is a workaround for that.
+    pub if_modified_since: &'static [u8], // TODO(port): lifetime
+    pub request_content_len_buf: [u8; b"-4294967295".len()],
+
+    pub http_proxy: Option<URL<'static>>,
+    pub proxy_headers: Option<Headers>,
+    pub proxy_authorization: Option<Vec<u8>>,
+    // TODO(port): ProxyTunnel is intrusive-refcounted (RefPtr); raw NonNull until
+    // bun_ptr::IntrusiveRc<ProxyTunnel> is wired through detach_and_deref.
+    pub proxy_tunnel: Option<NonNull<ProxyTunnel>>,
+    /// Set when this request is bound to a stream on an HTTP/2 session.
+    /// Owned by the session; cleared by the session when the stream completes.
+    pub h2: Option<NonNull<h2::Stream>>,
+    /// Set when this request is bound to an HTTP/3 stream. Owned by the H3
+    /// session; cleared by the session when the stream completes.
+    pub h3: Option<NonNull<h3::Stream>>,
+    /// Set while this request is the leader of a fresh TLS connect that other
+    /// h2-capable requests have coalesced onto. Resolved (and freed) once ALPN
+    /// is known or the connect fails.
+    pub pending_h2: Option<Box<h2::PendingConnect>>,
+    pub signals: Signals,
+    pub async_http_id: u32,
+    // TODO(port): lifetime — set by AsyncHTTP, not freed here (Zig deinit never frees `hostname`)
+    pub hostname: Option<&'static [u8]>,
+    pub unix_socket_path: ZigStringSlice,
+}
+
+impl Drop for HTTPClient {
+    fn drop(&mut self) {
+        // redirect / prev_redirect are Vec<u8> — dropped automatically.
+        // proxy_authorization: Option<Vec<u8>> — dropped automatically.
+        // proxy_headers: Option<Headers> — dropped automatically.
+        if let Some(tunnel) = self.proxy_tunnel.take() {
+            // SAFETY: tunnel was created by ProxyTunnel::new (Box::into_raw) and
+            // refcounted; detach_and_deref releases this client's strong ref.
+            unsafe { (*tunnel.as_ptr()).detach_and_deref() };
+        }
+        // The session detaches `h2` before any terminal callback, so this should
+        // be None by the time the result callback's deinit path runs.
+        debug_assert!(self.h2.is_none());
+        // tls_props: Option<SharedPtr> — Drop releases strong ref.
+        // custom_ssl_ctx: Option<NonNull> — manual deref in to_result/fail.
+        self.unix_socket_path = ZigStringSlice::EMPTY;
+    }
+}
+
+impl HTTPClient {
+    #[inline]
+    pub fn is_https(&self) -> bool {
+        if let Some(proxy) = &self.http_proxy {
+            return proxy.is_https();
+        }
+        self.url.is_https()
+    }
+}
+
+// ── HTTP-thread globals (single-threaded; initialized by HTTPThread::on_start) ──
+pub static mut HTTP_THREAD: Option<HTTPThread> = None;
+
+#[inline]
+pub fn http_thread() -> &'static mut HTTPThread {
+    // SAFETY: HTTP_THREAD is initialized before any HTTPClient runs and only
+    // accessed from the single HTTP thread.
+    unsafe { HTTP_THREAD.as_mut().expect("http_thread initialized") }
+}
+#[inline]
+pub fn http_thread_mut() -> &'static mut HTTPThread { http_thread() }
+
+// TODO: this needs to be freed when Worker Threads are implemented
+// TODO(port): static mutable map; wrap in proper sync primitive in Phase B
+pub static mut SOCKET_ASYNC_HTTP_ABORT_TRACKER:
+    Option<bun_collections::ArrayHashMap<u32, bun_uws::AnySocket>> = None;
+
 // ═══════════════════════════════════════════════════════════════════════
 // Phase-A draft (gated)
-// RESOLVED this pass: ssl_config (extracted to ssl_config.rs), ssl_wrapper
-//   (re-exported from bun_uws), SocketHandler/SocketGroup/AnySocket types
-//   (now in bun_uws).
+// RESOLVED this pass: HTTPClient struct + Drop, HTTPContext/HTTPThread/
+//   ProxyTunnel/AsyncHTTP module types, h2/h3 stub re-exports, http_thread()
+//   accessor + abort tracker, naming aliases.
 // TODO(b2-blocked): bun_uws::NewSocketHandler method bodies
-//   (connect/ext/write/raw_write/is_shutdown/timeout/get_native_handle/…)
-//   — types exist but most methods used by HTTPContext/HTTPClient are stubs.
-// TODO(b2-blocked): bun_uws::quic::{Stream,Context,Header,PendingConnect,Socket}
-//   — only quic::global_init() is exported; h3_client/* needs the rest.
-// The HTTPClient struct + impl, HTTPContext, HTTPThread, AsyncHTTP, ProxyTunnel,
-// h2_client/, h3_client/ are mutually recursive. Un-gating any one of them
-// requires the full set; next B-2 pass should attempt the cluster together
-// once the bun_uws method surface lands.
+//   (ext/timeout/set_timeout_minutes/raw_write/flush/shutdown/start_tls/ssl/
+//    connect_group/connect_unix_group/get_verify_error/fd/local_port/…)
+//   — the `impl HTTPClient` state machine below dispatches on all of these.
+// The remaining gated block is the ~3000-line `impl HTTPClient` socket
+// dispatch + free helpers that write to sockets; un-gates once the bun_uws
+// method surface lands.
 // ═══════════════════════════════════════════════════════════════════════
 #[cfg(any())]
 mod _phase_a_draft {

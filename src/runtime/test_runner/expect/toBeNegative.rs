@@ -23,7 +23,7 @@ pub fn to_be_negative(
         pass = num.round() < 0.0 && !num.is_infinite() && !num.is_nan();
     }
 
-    let not = this.flags.not;
+    let not = this.flags.not();
     if not {
         pass = !pass;
     }

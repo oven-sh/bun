@@ -62,7 +62,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 }
 
-#[cfg(any())] // TODO(b2-ast-D): full bodies — see stub impl above
+#[cfg(any())]
+// blocked_on: P::{push_scope_for_parse_pass, pop_scope, declare_symbol, declare_binding,
+//   validate_function_name, store_name_in_ref, hoist_symbols, declare_generated_symbol}
+//   all gated (P.rs:640 impl block); G::Fn.{args, body, flags} field shapes (args is
+//   *mut [G::Arg], flags is FunctionSet bitflags); G::Arg full struct-init; E::Arrow.args
+//   is &'static [G::Arg] (arena slice rework). ~590-line bodies, >30 shape errors.
 mod _draft_bodies {
 use super::*;
 struct ParseFn<const T: bool, const J: u8, const S: bool>;

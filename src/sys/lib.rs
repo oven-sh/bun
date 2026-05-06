@@ -2812,7 +2812,137 @@ pub type FileSystem = fs::FileSystem;
 // ──────────────────────────────────────────────────────────────────────────
 // OUTPUT_SINK — bun_core's stderr vtable, installed by us at init (B-0 hook).
 // ──────────────────────────────────────────────────────────────────────────
+
+/// `bun_core::output::QuietWriter` is an opaque `[*mut (); 4]`. We stash the
+/// raw fd in slot 0 and ignore the rest. (Zig's `QuietWriter` is `{ context:
+/// File { handle: Fd } }`; the buffering layer in Zig is the std-adapter, which
+/// we route to `QuietWriterAdapter` below.)
+#[inline]
+unsafe fn qw_fd(qw: *const bun_core::output::QuietWriter) -> Fd {
+    // SAFETY: repr(C) [*mut (); 4]; slot 0 carries fd-as-usize-as-ptr.
+    let raw = unsafe { *(qw as *const *mut ()) };
+    Fd::from_native(raw as usize as _)
+}
+#[inline]
+unsafe fn qw_set_fd(qw: *mut bun_core::output::QuietWriter, fd: Fd) {
+    // SAFETY: repr(C) [*mut (); 4]; slot 0 carries fd-as-usize-as-ptr.
+    unsafe { *(qw as *mut *mut ()) = fd.native() as usize as *mut (); }
+}
+
+/// Best-effort write-all loop (Zig `QuietWriter.writeAll`: errors swallowed).
+fn fd_write_all_quiet(fd: Fd, mut bytes: &[u8]) {
+    while !bytes.is_empty() {
+        match write(fd, bytes) {
+            Ok(0) => return, // short write → give up (matches Zig quiet semantics)
+            Ok(n) => bytes = &bytes[n..],
+            Err(_) => return,
+        }
+    }
+}
+
+/// Concrete repr behind the opaque `bun_core::output::QuietWriterAdapter`
+/// (`[u8; 64]`). First field MUST be `io::Writer` so `new_interface()`'s
+/// pointer-cast is sound. Layout asserted below.
+#[repr(C)]
+struct SysQuietWriterAdapter {
+    writer: bun_core::io::Writer,
+    fd: Fd,
+}
+const _: () = {
+    assert!(core::mem::size_of::<SysQuietWriterAdapter>()
+        <= core::mem::size_of::<bun_core::output::QuietWriterAdapter>());
+    assert!(core::mem::align_of::<bun_core::output::QuietWriterAdapter>()
+        >= core::mem::align_of::<SysQuietWriterAdapter>());
+};
+
+unsafe fn adapter_write_all(w: *mut bun_core::io::Writer, bytes: &[u8])
+    -> core::result::Result<(), bun_core::Error>
+{
+    // SAFETY: `w` points at the first field of a SysQuietWriterAdapter (repr(C)).
+    let this = unsafe { &*(w as *const SysQuietWriterAdapter) };
+    fd_write_all_quiet(this.fd, bytes);
+    Ok(())
+}
+unsafe fn adapter_flush(_w: *mut bun_core::io::Writer)
+    -> core::result::Result<(), bun_core::Error>
+{
+    // Unbuffered (we write straight to the fd above), so flush is a no-op.
+    // PERF(port): Zig buffers via `adaptToNewApi(buf)`; wire that in B-2.
+    Ok(())
+}
+
+#[cfg(unix)]
+unsafe fn sink_tty_winsize(fd: Fd) -> Option<bun_core::Winsize> {
+    let mut ws: libc::winsize = unsafe { core::mem::zeroed() };
+    // SAFETY: TIOCGWINSZ expects a *mut winsize.
+    let rc = unsafe { libc::ioctl(fd.native(), libc::TIOCGWINSZ, &mut ws as *mut _) };
+    if rc != 0 { return None; }
+    Some(bun_core::Winsize {
+        row: ws.ws_row,
+        col: ws.ws_col,
+        xpixel: ws.ws_xpixel,
+        ypixel: ws.ws_ypixel,
+    })
+}
+#[cfg(not(unix))]
+unsafe fn sink_tty_winsize(_fd: Fd) -> Option<bun_core::Winsize> {
+    // TODO(b2-windows): GetConsoleScreenBufferInfo.
+    None
+}
+
+/// Backs `bun_core::output::OUTPUT_SINK_VTABLE` — stderr/mkdir/open/QuietWriter.
+pub static OUTPUT_SINK_VTABLE_IMPL: bun_core::output::OutputSinkVTable =
+    bun_core::output::OutputSinkVTable {
+        stderr: || bun_core::output::File(Fd::stderr()),
+        make_path: |cwd, dir| {
+            mkdir_recursive_at(cwd, dir).map_err(Into::into)
+        },
+        create_file: |cwd, path| {
+            openat_a(cwd, path, O::WRONLY | O::CREAT | O::TRUNC, 0o664)
+                .map_err(Into::into)
+        },
+        quiet_writer_from_fd: |fd| {
+            let mut out = bun_core::output::QuietWriter::ZEROED;
+            // SAFETY: see qw_set_fd.
+            unsafe { qw_set_fd(&mut out, fd) };
+            out
+        },
+        quiet_writer_adapt: |qw, _buf, _len| {
+            // SAFETY: qw came from quiet_writer_from_fd above.
+            let fd = unsafe { qw_fd(&qw) };
+            let concrete = SysQuietWriterAdapter {
+                writer: bun_core::io::Writer {
+                    write_all: adapter_write_all,
+                    flush: adapter_flush,
+                },
+                fd,
+            };
+            let mut out = bun_core::output::QuietWriterAdapter::uninit();
+            // SAFETY: size/align asserted in const block above; out is repr(C) [u8;64].
+            unsafe {
+                core::ptr::write(
+                    &mut out as *mut _ as *mut SysQuietWriterAdapter,
+                    concrete,
+                );
+            }
+            out
+        },
+        quiet_writer_flush: |_qw| {
+            // Unbuffered — see adapter_flush.
+        },
+        quiet_writer_write_all: |qw, bytes| {
+            // SAFETY: qw came from quiet_writer_from_fd above.
+            let fd = unsafe { qw_fd(qw) };
+            fd_write_all_quiet(fd, bytes);
+        },
+        quiet_writer_fd: |qw| {
+            // SAFETY: qw came from quiet_writer_from_fd above.
+            unsafe { qw_fd(qw) }
+        },
+        tty_winsize: sink_tty_winsize,
+        is_terminal: |fd| isatty(fd),
+    };
+
 pub fn install_output_sink() {
-    // B-2: build a real OutputSinkVTable wrapping stderr/make_path/create_file
-    // and call bun_core::output::install_output_sink(&STATIC_VTABLE).
+    bun_core::output::install_output_sink(&OUTPUT_SINK_VTABLE_IMPL);
 }

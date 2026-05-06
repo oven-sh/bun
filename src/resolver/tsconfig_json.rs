@@ -1,5 +1,5 @@
-// TODO(b2-blocked): bun_bundler::cache — higher-tier crate; usages gated below.
-// TODO(b2-blocked): bun_bundler::options — higher-tier crate; usages gated below.
+// CYCLEBREAK: bun_bundler::cache → JsonCache vtable (see below).
+// CYCLEBREAK: bun_bundler::options::jsx::Pragma → local structural def (see `options` mod).
 use bun_collections::ArrayHashMap;
 use bun_js_parser as js_ast;
 use bun_js_parser::lexer as js_lexer;
@@ -7,12 +7,82 @@ use bun_logger as logger;
 use bun_string::strings;
 use enumset::{EnumSet, EnumSetType};
 
-// TODO(b2-blocked): bun_bundler::options::jsx::Pragma — local opaque stand-in so the
-// struct field type-checks. Replace with the real Pragma once bun_bundler compiles.
-mod options {
+// CYCLEBREAK: `bun_bundler::options::jsx::Pragma` is TYPE_ONLY but lives in a
+// higher-tier crate. Per CYCLEBREAK.md the type def belongs in a lower tier;
+// until the move-down lands, the resolver carries the structural definition it
+// needs (the five fields read/written by `merge_jsx` + `parse`). bun_bundler
+// re-exports this on its side once the move-in pass runs.
+// TODO(b0): bun_bundler::options::jsx::Pragma arrives from move-in (or moves to bun_options_types).
+pub mod options {
     pub mod jsx {
-        #[derive(Default, Clone)]
-        pub struct Pragma(());
+        /// Port of `options.JSX.Runtime` (= `api.JsxRuntime`).
+        #[repr(u8)]
+        #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
+        pub enum Runtime {
+            #[default]
+            Automatic = 0,
+            Classic = 1,
+            Solid = 2,
+        }
+
+        /// Port of `options.JSX.ImportSource`.
+        #[derive(Clone)]
+        pub struct ImportSource {
+            pub development: Box<[u8]>,
+            pub production: Box<[u8]>,
+        }
+
+        impl Default for ImportSource {
+            fn default() -> Self {
+                ImportSource {
+                    development: Box::from(b"react/jsx-dev-runtime".as_slice()),
+                    production: Box::from(b"react/jsx-runtime".as_slice()),
+                }
+            }
+        }
+
+        /// Port of `options.JSX.Pragma` — fields the resolver reads/writes.
+        #[derive(Clone, Default)]
+        pub struct Pragma {
+            pub factory: Vec<Box<[u8]>>,
+            pub fragment: Vec<Box<[u8]>>,
+            pub runtime: Runtime,
+            pub import_source: ImportSource,
+            pub development: bool,
+        }
+    }
+}
+
+/// CYCLEBREAK (§Dispatch, cold-path manual vtable): replaces the
+/// `bun_bundler::cache::Json` direct dep so `TSConfigJSON::parse` does not name
+/// a higher-tier type. `bun_bundler` provides a static `JsonCacheVTable` that
+/// forwards to `cache::Json::parse_tsconfig`; the resolver only sees `(*mut (), &vtable)`.
+pub struct JsonCacheVTable {
+    /// Returns `Ok(Some(expr))` on a successful parse, `Ok(None)` when the
+    /// source produced no AST (empty/comments-only), `Err` on hard failure.
+    pub parse_tsconfig: unsafe fn(
+        cache: *mut (),
+        log: &mut logger::Log,
+        source: &logger::Source,
+    ) -> Result<Option<js_ast::Expr>, bun_core::Error>,
+}
+
+/// Erased handle to a `bun_bundler::cache::Json` (or equivalent).
+pub struct JsonCache {
+    pub ptr: *mut (),
+    pub vtable: &'static JsonCacheVTable,
+}
+
+impl JsonCache {
+    #[inline]
+    pub fn parse_tsconfig(
+        &mut self,
+        log: &mut logger::Log,
+        source: &logger::Source,
+    ) -> Result<Option<js_ast::Expr>, bun_core::Error> {
+        // SAFETY: `ptr` points to the cache instance the vtable was minted for;
+        // caller (bun_bundler) guarantees they were paired.
+        unsafe { (self.vtable.parse_tsconfig)(self.ptr, log, source) }
     }
 }
 
@@ -115,9 +185,6 @@ impl TSConfigJSON {
     }
 
     pub fn merge_jsx(&self, current: options::jsx::Pragma) -> options::jsx::Pragma {
-        // TODO(b2-blocked): bun_bundler::options::jsx::Pragma
-        #[cfg(any())]
-        {
         let mut out = current;
 
         if self.jsx_flags.contains(JsxField::Factory) {
@@ -141,8 +208,6 @@ impl TSConfigJSON {
         }
 
         out
-        }
-        todo!("b2-blocked: bun_bundler::options::jsx::Pragma")
     }
 
     /// Support ${configDir}, but avoid allocating when possible.
@@ -197,13 +262,15 @@ impl TSConfigJSON {
         Ok(Box::from(&written[..len]))
     }
 
-    // TODO(b2-blocked): bun_bundler::cache::Json + bun_js_parser::Expr full API.
-    // Signature uses an opaque `&mut ()` for the json_cache slot until bun_bundler::cache lands.
+    // CYCLEBREAK: `json_cache` is now the erased `JsonCache` vtable handle (was
+    // `&mut bun_bundler::cache::Json`). Body remains gated on the bun_js_parser
+    // `Expr` query API (`as_property`/`as_string`/`as_bool`/`as_array`).
+    // TODO(b2-blocked): bun_js_parser::Expr full query API.
     #[cfg(any())]
     pub fn parse(
         log: &mut logger::Log,
         source: &logger::Source,
-        json_cache: &mut cache::Json,
+        json_cache: &mut JsonCache,
     ) -> Result<Option<Box<TSConfigJSON>>, bun_core::Error> {
         // Unfortunately "tsconfig.json" isn't actually JSON. It's some other
         // format that appears to be defined by the implementation details of the

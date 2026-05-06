@@ -1350,9 +1350,9 @@ pub fn parse_with_tag(
 
             // Now we have parsed info, we need to find these substrings in the original dependency
             // to create String objects that point to the original buffer
-            let owner_str: &[u8] = info.user.as_deref().unwrap_or(b"");
-            let repo_str: &[u8] = &info.project;
-            let committish_str: &[u8] = info.committish.as_deref().unwrap_or(b"");
+            let owner_str: &[u8] = info.user().unwrap_or(b"");
+            let repo_str: &[u8] = info.project();
+            let committish_str: &[u8] = info.committish().unwrap_or(b"");
 
             // Find owner in dependency string
             let owner_idx = strings::index_of(dependency, owner_str);

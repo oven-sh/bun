@@ -2,29 +2,112 @@ use core::ffi::c_void;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU32;
 
-use bun_jsc::{self as jsc, JSGlobalObject, CallFrame, JSValue, JsResult, JsError, Strong, VirtualMachine};
+use crate as jsc;
+use crate::{JSGlobalObject, CallFrame, JSValue, JsResult, JsError, VirtualMachine};
+use crate::strong::Optional as Strong;
 use bun_uws::{self as uws, SocketGroup, SslCtx};
-use bun_boringssl_sys as boring_sys;
 use bun_boringssl as boring_ssl;
 use bun_aio::{self as Async, FilePoll};
 use bun_sys::{self as syscall, Fd};
-use bun_core::{self as bun_core, Output, Mutex};
+use bun_core::{Output, Mutex};
 use bun_collections::{StringArrayHashMap, TaggedPtrUnion};
-use bun_str::{self as strings, ZStr};
+use bun_string::{self as strings, ZStr};
 use bun_paths::MAX_PATH_BYTES;
 use bun_http::MimeType;
 use bun_ptr::RefPtr;
 
-use bun_runtime::api::{self, dns, cron::CronJob, mysql::MySQLContext, postgres::PostgresSQLContext, SSLContextCache};
-use bun_runtime::node::node_fs_watcher::FSWatcher;
-use bun_runtime::node::node_fs_stat_watcher::{StatWatcher, StatWatcherScheduler};
-use bun_runtime::valkey_jsc::ValkeyContext;
-use bun_runtime::webcore::{Blob, blob::Store as BlobStore, S3Client};
-use bun_http_jsc::websocket_client::websocket_deflate::{self as websocket_deflate_mod, RareData as WebSocketDeflateRareData};
-use bun_runtime::cli::open::EditorContext;
-use bun_event_loop::SpawnSyncEventLoop;
+use bun_event_loop::SpawnSyncEventLoop::SpawnSyncEventLoop;
 
 use super::uuid::UUID;
+
+// ──────────────────────────────────────────────────────────────────────────
+// High-tier type shims (§Dispatch / cycle-break).
+//
+// `RareData` is a bag of lazy-init optional subsystems whose concrete types
+// live in `bun_runtime` / `bun_http_jsc` (tier-6). Naming them here would
+// create a crate cycle. Per LIFETIMES.tsv these are all OWNED (Box/Arc) or
+// BACKREF (`*mut`); we keep the field shape but substitute opaque payloads.
+// Phase B: `bun_runtime` registers its real types via a vtable / generic
+// `RareData<R: RuntimeTypes>` carrier, or these become `Box<dyn Any>` slots.
+// TODO(port): replace each `high_tier::*` with the real type once the
+// `bun_runtime` ↔ `bun_jsc` split lands.
+// ──────────────────────────────────────────────────────────────────────────
+mod high_tier {
+    macro_rules! opaque_default {
+        ($($name:ident),* $(,)?) => {
+            $(
+                #[derive(Default)]
+                pub struct $name { _opaque: () }
+            )*
+        };
+    }
+    opaque_default!(
+        CronJob, MySQLContext, PostgresSQLContext, SSLContextCache,
+        FSWatcher, StatWatcher, StatWatcherScheduler,
+        ValkeyContext, Blob, BlobStore, S3Client,
+        WebSocketDeflateRareData, EditorContext, DnsGlobalData,
+    );
+    pub mod boring_sys {
+        // bun_boringssl_sys is not in bun_jsc's dep graph; opaque FFI handles.
+        #[repr(C)] pub struct ENGINE { _p: [u8; 0] }
+        #[repr(C)] pub struct SSL_CTX { _p: [u8; 0] }
+    }
+    /// `bun.API` namespace placeholder for `HotMap`'s `TaggedPtrUnion` payload list.
+    pub mod api {
+        crate::stub_ty!(
+            HTTPServer, HTTPSServer, DebugHTTPServer, DebugHTTPSServer,
+            DebugModeDevServer, DebugModeDevSSLServer, DevServer, DevSSLServer,
+            TCPSocket, TLSSocket, UDPSocket, Listener,
+        );
+    }
+}
+use high_tier::{
+    CronJob, MySQLContext, PostgresSQLContext, SSLContextCache, FSWatcher, StatWatcher,
+    StatWatcherScheduler, ValkeyContext, Blob, BlobStore, S3Client, WebSocketDeflateRareData,
+    EditorContext, boring_sys, api,
+};
+type DnsGlobalData = high_tier::DnsGlobalData;
+
+// ──────────────────────────────────────────────────────────────────────────
+// Forward decls of field types whose full bodies are gated below.
+// Full impls live in `mod _accessor_body` (gated).
+// ──────────────────────────────────────────────────────────────────────────
+
+pub struct HotMap {
+    _map: StringArrayHashMap<HotMapEntry>,
+}
+#[derive(Copy, Clone)]
+pub struct HotMapEntry { pub tag: u8, pub ptr: *mut () }
+
+pub struct EntropyCache { pub cache: [u8; Self::SIZE], pub index: usize }
+impl EntropyCache {
+    pub const BUFFERED_UUIDS_COUNT: usize = 16;
+    pub const SIZE: usize = Self::BUFFERED_UUIDS_COUNT * 128;
+    pub fn fill(&mut self) { bun_core::csprng(&mut self.cache); self.index = 0; }
+    pub fn get(&mut self) -> [u8; 16] {
+        if self.index + 16 > self.cache.len() { self.fill(); }
+        let mut r = [0u8; 16];
+        r.copy_from_slice(&self.cache[self.index..self.index + 16]);
+        self.index += 16; r
+    }
+    pub fn slice(&mut self, len: usize) -> &mut [u8] {
+        if len > self.cache.len() { return &mut []; }
+        if self.index + len > self.cache.len() { self.fill(); }
+        let s = self.index; self.index += len;
+        &mut self.cache[s..s + len]
+    }
+}
+impl Default for EntropyCache {
+    fn default() -> Self { Self { cache: [0u8; Self::SIZE], index: 0 } }
+}
+
+pub type CleanupHookFunction = unsafe extern "C" fn(*mut c_void);
+#[derive(Clone, Copy)]
+pub struct CleanupHook {
+    pub ctx: *mut c_void,
+    pub func: CleanupHookFunction,
+    pub global_this: *const JSGlobalObject,
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // RareData
@@ -88,12 +171,15 @@ pub struct RareData {
     /// SHA-256 + map lookup. Ref owned here.
     pub default_client_ssl_ctx: Option<*mut boring_sys::SSL_CTX>,
 
-    pub mime_types: Option<bun_http::mime_type::Map>,
+    // TODO(port): `bun_http::mime_type::Map` — verify path; opaque until then.
+    pub mime_types: Option<Box<()>>,
 
-    pub node_fs_stat_watcher_scheduler: Option<RefPtr<StatWatcherScheduler>>,
+    // TODO(port): `RefPtr<StatWatcherScheduler>` needs `T: RefCounted`; the
+    // high-tier shim can't impl that here. Stored as raw until real type lands.
+    pub node_fs_stat_watcher_scheduler: Option<core::ptr::NonNull<StatWatcherScheduler>>,
 
     pub listening_sockets_for_watch_mode: Vec<Fd>,
-    pub listening_sockets_for_watch_mode_lock: Mutex,
+    pub listening_sockets_for_watch_mode_lock: Mutex<()>,
 
     pub fs_watchers_for_isolation: Vec<*mut FSWatcher>,
     pub stat_watchers_for_isolation: Vec<*mut StatWatcher>,
@@ -102,12 +188,15 @@ pub struct RareData {
 
     pub aws_signature_cache: AWSSignatureCache,
 
-    pub s3_default_client: Strong, // Strong.Optional → bun_jsc::Strong (nullable handle slot)
+    pub s3_default_client: Strong, // Strong.Optional → crate::Strong (nullable handle slot)
     pub default_csrf_secret: Box<[u8]>,
 
     pub valkey_context: ValkeyContext,
 
-    pub tls_default_ciphers: Option<Box<ZStr>>, // TODO(port): owned NUL-terminated byte buffer; verify ZStr ownership shape
+    // TODO(port): owned NUL-terminated byte buffer (`[:0]u8`). `bun_string::ZStr`
+    // is a borrowed slice newtype; an owned form needs `Box<[u8]>` with the
+    // invariant that `bytes[bytes.len()-1] == 0`.
+    pub tls_default_ciphers: Option<Box<[u8]>>,
 
     // proxy_env_storage moved to VirtualMachine — see comment there on why
     // lazy RareData creation raced with worker spawn.
@@ -119,7 +208,6 @@ pub struct RareData {
 
 // Type aliases matching Zig's local imports
 pub type FilePollStore = Async::file_poll::Store;
-pub type DnsGlobalData = dns::GlobalData;
 
 impl Default for RareData {
     fn default() -> Self {
@@ -243,7 +331,7 @@ pub struct ProxyEnvStorage {
     /// with the parent's deref → free on the same pointer; (2) the env.map's
     /// backing ArrayHashMap being iterated during clone while the parent's
     /// put() rehashes it.
-    pub lock: Mutex,
+    pub lock: Mutex<()>,
 }
 
 pub struct Slot<'a> {
@@ -312,6 +400,8 @@ impl ProxyEnvStorage {
     /// map and the reffed storage agree — defense-in-depth in case the map
     /// clone captured a snapshot the storage doesn't hold a ref on (e.g. an
     /// initial-environ value later overwritten by the setter).
+    // TODO(port): `bun_dotenv::Map` not in dep graph at this tier — gated.
+    #[cfg(any())]
     pub fn sync_into(&self, map: &mut bun_dotenv::Map) {
         macro_rules! sync_one {
             ($name:literal, $field:ident) => {
@@ -358,7 +448,7 @@ impl RefCountedEnvValue {
 pub struct AWSSignatureCache {
     pub cache: StringArrayHashMap<[u8; DIGESTED_HMAC_256_LEN]>,
     pub date: u64,
-    pub lock: Mutex,
+    pub lock: Mutex<()>,
 }
 
 impl Default for AWSSignatureCache {
@@ -370,6 +460,24 @@ impl Default for AWSSignatureCache {
         }
     }
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// TODO(port): the `RareData` accessor / lazy-init bodies below depend on:
+//   - `bun_core::Mutex::lock()/unlock()` (parking_lot Mutex<()> uses RAII guard)
+//   - `bun_uws::SocketGroup::loop_` field / `init()` shape
+//   - `bun_sys::disable_linger`, `Fd::close`
+//   - `bun_http::MimeType::create_hash_table`
+//   - `bun_aio::file_poll::Store::init`
+//   - `bun_collections::StringArrayHashMap` get_key/get_entry/ordered_remove
+//   - `SpawnSyncEventLoop::init(vm)` (takes different args at this tier)
+//   - `bun_string::ZStr::from_bytes` (owned NUL-terminated alloc)
+// Gated wholesale; the struct + `Default` + `EntropyCache` + `CleanupHook` +
+// `entropy_slice`/`next_uuid`/`mysql_context`/`postgresql_context` accessors
+// stay un-gated above/below to satisfy current downstream callers.
+// ──────────────────────────────────────────────────────────────────────────
+#[cfg(any())]
+mod _accessor_body {
+use super::*;
 
 impl AWSSignatureCache {
     pub fn clean(&mut self) {
@@ -484,14 +592,21 @@ impl RareData {
     }
 
     pub fn close_all_watchers_for_isolation(&mut self) {
-        while let Some(watcher) = self.fs_watchers_for_isolation.pop() {
-            // SAFETY: watcher was registered via add_fs_watcher_for_isolation and is still live
-            unsafe { (*watcher).detach() };
+        // TODO(port): high-tier — FSWatcher::detach / StatWatcher::close live in
+        // bun_runtime::node. Gated until cycle-break vtable lands.
+        #[cfg(any())]
+        {
+            while let Some(watcher) = self.fs_watchers_for_isolation.pop() {
+                // SAFETY: watcher was registered via add_fs_watcher_for_isolation and is still live
+                unsafe { (*watcher).detach() };
+            }
+            while let Some(watcher) = self.stat_watchers_for_isolation.pop() {
+                // SAFETY: watcher was registered via add_stat_watcher_for_isolation and is still live
+                unsafe { (*watcher).close() };
+            }
         }
-        while let Some(watcher) = self.stat_watchers_for_isolation.pop() {
-            // SAFETY: watcher was registered via add_stat_watcher_for_isolation and is still live
-            unsafe { (*watcher).close() };
-        }
+        self.fs_watchers_for_isolation.clear();
+        self.stat_watchers_for_isolation.clear();
     }
 
     pub fn hot_map(&mut self) -> &mut HotMap {
@@ -528,6 +643,16 @@ type TCPSocket = api::TCPSocket;
 type TLSSocket = api::TLSSocket;
 type Listener = api::Listener;
 
+// TODO(port): `TaggedPtrUnion<(T0..Tn)>` requires `(T0..Tn): TypeList`, which
+// `bun_collections` only impls up to a fixed arity for *known* types. The
+// real payload list lives in `bun_runtime::api`; until then, store the raw
+// `(tag, ptr)` pair per §Dispatch.
+#[derive(Copy, Clone)]
+pub struct HotMapEntry {
+    pub tag: u8,
+    pub ptr: *mut (),
+}
+#[cfg(any())]
 pub type HotMapEntry = TaggedPtrUnion<(
     HTTPServer,
     HTTPSServer,
@@ -545,6 +670,14 @@ impl HotMap {
         }
     }
 
+    pub fn get_entry(&mut self, key: &[u8]) -> Option<HotMapEntry> {
+        self._map.get(key).copied()
+    }
+
+    // TODO(port): typed `get<T>`/`insert<T>` need `TaggedPtrUnion`'s
+    // `TaggedPtrGet`/`TaggedPtrInit` traits — gated until the high-tier
+    // type list is wired (see HotMapEntry note).
+    #[cfg(any())]
     pub fn get<T>(&mut self, key: &[u8]) -> Option<*mut T>
     where
         HotMapEntry: bun_collections::TaggedPtrGet<T>,
@@ -553,10 +686,7 @@ impl HotMap {
         entry.get::<T>()
     }
 
-    pub fn get_entry(&mut self, key: &[u8]) -> Option<HotMapEntry> {
-        self._map.get(key).copied()
-    }
-
+    #[cfg(any())]
     pub fn insert<T>(&mut self, key: &[u8], ptr: *mut T)
     where
         HotMapEntry: bun_collections::TaggedPtrInit<T>,
@@ -722,8 +852,10 @@ impl RareData {
         match self.boring_ssl_engine {
             Some(e) => e,
             None => {
-                // SAFETY: ENGINE_new is safe to call; returns null on OOM
-                let e = unsafe { boring_sys::ENGINE_new() };
+                // TODO(port): bun_boringssl_sys not in bun_jsc dep graph.
+                #[cfg(any())]
+                { let e = unsafe { boring_sys::ENGINE_new() }; }
+                let e = core::ptr::null_mut();
                 self.boring_ssl_engine = Some(e);
                 e
             }
@@ -733,8 +865,13 @@ impl RareData {
 
 // ──────────────────────────────────────────────────────────────────────────
 // stderr / stdout / stdin
+//
+// TODO(port): high-tier — `Blob::FileStore` / `BlobStore::new_file` live in
+// `bun_runtime::webcore`. Gated until the runtime crate can register a
+// constructor hook (or `BlobStore` moves to `bun_webcore` at this tier).
 // ──────────────────────────────────────────────────────────────────────────
 
+#[cfg(any())]
 impl RareData {
     pub fn stderr(&mut self) -> &Arc<BlobStore> {
         bun_core::analytics::Features::bun_stderr_inc();
@@ -832,6 +969,8 @@ pub enum StdinFdType {
     Socket = 2,
 }
 
+// TODO(port): depends on gated stderr()/stdout()/stdin() above.
+#[cfg(any())]
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Process__getStdinFdType(vm: *mut VirtualMachine, fd: i32) -> StdinFdType {
     // SAFETY: vm is a valid VirtualMachine pointer passed from C++
@@ -853,9 +992,11 @@ pub extern "C" fn Bun__Process__getStdinFdType(vm: *mut VirtualMachine, fd: i32)
 
 // ──────────────────────────────────────────────────────────────────────────
 // TLS default ciphers JS bindings
+// TODO(port): `#[crate::host_fn]` proc-macro not yet implemented; gated.
 // ──────────────────────────────────────────────────────────────────────────
 
-#[bun_jsc::host_fn]
+#[cfg(any())]
+#[crate::host_fn]
 #[unsafe(export_name = "Bun__setTLSDefaultCiphers")]
 fn set_tls_default_ciphers_from_js(
     global_this: &JSGlobalObject,
@@ -872,7 +1013,8 @@ fn set_tls_default_ciphers_from_js(
     Ok(JSValue::UNDEFINED)
 }
 
-#[bun_jsc::host_fn]
+#[cfg(any())]
+#[crate::host_fn]
 #[unsafe(export_name = "Bun__getTLSDefaultCiphers")]
 fn get_tls_default_ciphers_from_js(
     global_this: &JSGlobalObject,
@@ -881,9 +1023,9 @@ fn get_tls_default_ciphers_from_js(
     let vm = global_this.bun_vm();
     let ciphers = match vm.rare_data().tls_default_ciphers() {
         Some(c) => c.as_bytes(),
-        None => return bun_str::String::create_utf8_for_js(global_this, uws::get_default_ciphers()),
+        None => return bun_string::String::create_utf8_for_js(global_this, uws::get_default_ciphers()),
     };
-    bun_str::String::create_utf8_for_js(global_this, ciphers)
+    bun_string::String::create_utf8_for_js(global_this, ciphers)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -965,6 +1107,20 @@ impl RareData {
         &mut self.ssl_ctx_cache
     }
 
+    /// `RareData.mysqlContext` accessor (legacy stub callers).
+    #[inline]
+    pub fn mysql_context(&mut self) -> &mut MySQLContext { &mut self.mysql_context }
+    /// `RareData.postgresqlContext` accessor (legacy stub callers).
+    #[inline]
+    pub fn postgresql_context(&mut self) -> &mut PostgresSQLContext { &mut self.postgresql_context }
+}
+
+// TODO(port): high-tier — bodies below name `bun_runtime` types/methods
+// (`SSLContextCache::get_or_create_opts`, `dns::GlobalData::init`,
+// `StatWatcherScheduler::init`, `s3::S3Credentials`, `S3Client::new`).
+// Gated until cycle-break vtable lands.
+#[cfg(any())]
+impl RareData {
     /// Shared `SSL_CTX*` for client connects that didn't supply a custom CA
     /// (`Valkey({tls: true})`, `new WebSocket("wss://…")`). The old code allocated
     /// a fresh `us_socket_context_t` per such case and cached the pointer; now
@@ -1045,7 +1201,9 @@ impl RareData {
         self.s3_default_client = Strong::create(js_client, global_this);
         js_client
     }
+}
 
+impl RareData {
     pub fn tls_default_ciphers(&self) -> Option<&ZStr> {
         self.tls_default_ciphers.as_deref()
     }
@@ -1076,6 +1234,8 @@ impl Drop for RareData {
         // aws_signature_cache: StringArrayHashMap drops owned keys automatically
         // s3_default_client: Strong has Drop
 
+        // TODO(port): bun_boringssl_sys not in dep graph — gated.
+        #[cfg(any())]
         if let Some(engine) = self.boring_ssl_engine.take() {
             // SAFETY: engine was created by ENGINE_new
             unsafe { boring_sys::ENGINE_free(engine) };
@@ -1089,6 +1249,7 @@ impl Drop for RareData {
         // tls_default_ciphers: Option<Box<ZStr>> drops automatically
         // valkey_context: has Drop
 
+        #[cfg(any())]
         if let Some(s) = self.default_client_ssl_ctx.take() {
             // SAFETY: s was returned by ssl_ctx_cache.get_or_create_opts with +1 ref
             unsafe { boring_sys::SSL_CTX_free(s) };
@@ -1161,7 +1322,54 @@ impl RareData {
     }
 }
 
-pub use bun_event_loop::SpawnSyncEventLoop as SpawnSyncEventLoopReexport;
+} // mod _accessor_body
+
+// ─── Un-gated accessors (no high-tier deps) ──────────────────────────────────
+impl RareData {
+    /// `RareData.mysqlContext`.
+    #[inline]
+    pub fn mysql_context(&mut self) -> &mut MySQLContext { &mut self.mysql_context }
+    /// `RareData.postgresqlContext`.
+    #[inline]
+    pub fn postgresql_context(&mut self) -> &mut PostgresSQLContext { &mut self.postgresql_context }
+
+    pub fn entropy_slice(&mut self, len: usize) -> &mut [u8] {
+        self.entropy_cache
+            .get_or_insert_with(|| {
+                let mut c = Box::new(EntropyCache::default());
+                c.fill();
+                c
+            })
+            .slice(len)
+    }
+
+    pub fn next_uuid(&mut self) -> UUID {
+        let bytes = self
+            .entropy_cache
+            .get_or_insert_with(|| {
+                let mut c = Box::new(EntropyCache::default());
+                c.fill();
+                c
+            })
+            .get();
+        UUID::init_with(&bytes)
+    }
+
+    pub fn ws_client_group<const SSL: bool>(
+        &mut self,
+        _vm: &mut crate::virtual_machine::VirtualMachine,
+    ) -> &mut SocketGroup {
+        // TODO(port): lazy `SocketGroup::init` body — gated (see _accessor_body).
+        if SSL { &mut self.ws_client_tls_group } else { &mut self.ws_client_group_ }
+    }
+
+    pub fn boring_engine(&mut self) -> *mut boring_sys::ENGINE {
+        // TODO(port): bun_boringssl_sys::ENGINE_new lazy-init — gated.
+        self.boring_ssl_engine.unwrap_or(core::ptr::null_mut())
+    }
+}
+
+pub use bun_event_loop::SpawnSyncEventLoop::SpawnSyncEventLoop as SpawnSyncEventLoopReexport;
 // TODO(port): Zig had `pub const SpawnSyncEventLoop = @import(...)` — already imported above
 
 // ──────────────────────────────────────────────────────────────────────────

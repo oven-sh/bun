@@ -1,17 +1,18 @@
 use core::mem;
 use std::rc::Rc;
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult};
+use crate::webcore::jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult};
 use bun_str::{String as BunString, ZigString};
 use bun_core::Output;
-use bun_http::MimeType;
-use bun_http_types::Method;
+use bun_http_types::MimeType::MimeType;
+use bun_http_types::Method::Method;
 
-use super::body::{Body, BodyValue, Mixin as BodyMixin};
+use super::body::{Body, BodyMixin, Value as BodyValue};
 use super::blob::{Blob, Internal as InternalBlob};
 use super::{FetchHeaders, ReadableStream, Request};
 // TODO(port): bun.S3 lives outside runtime/webcore — confirm crate path
-use bun_s3 as s3;
+use crate::webcore::s3_stub as s3;
+use bun_ptr::weak_ptr::WeakPtrData;
 
 // C++ helper functions for AsyncLocalStorage integration
 // TODO(port): move to <area>_sys
@@ -24,14 +25,12 @@ unsafe extern "C" {
 // In Rust the C++ JSCell wrapper stays generated; this module re-exports the
 // generated bindings (toJSUnchecked, fromJS, fromJSDirect, gc.stream slot,
 // bodySetCached). Phase B wires this to the codegen output.
-pub mod js {
-    pub use bun_jsc::codegen::js_response::*;
-}
+pub use crate::webcore::jsc::codegen::JSResponse as js;
 // NOTE: toJS is overridden
 pub use js::from_js;
 pub use js::from_js_direct;
 
-#[bun_jsc::JsClass]
+// TODO(b2-blocked): #[bun_jsc::JsClass]
 pub struct Response {
     body: Body,
     init: Init,
@@ -44,7 +43,7 @@ pub struct Response {
     /// `handleResolveStream` / `handleRejectStream` can safely observe that the
     /// Response was GC'd (null) instead of dereferencing a freed pointer when
     /// backpressure lets GC run between `render()` and the async callback.
-    pub weak_ptr_data: bun_ptr::WeakPtrData,
+    pub weak_ptr_data: WeakPtrData,
     js_ref: JsRef,
 
     // We must report a consistent value for this
@@ -59,7 +58,7 @@ impl Default for Response {
             url: BunString::empty(),
             redirected: false,
             ref_count: 1,
-            weak_ptr_data: bun_ptr::WeakPtrData::EMPTY,
+            weak_ptr_data: WeakPtrData::EMPTY,
             js_ref: JsRef::empty(),
             reported_estimated_size: 0,
         }
@@ -68,7 +67,13 @@ impl Default for Response {
 
 // TODO(port): WeakPtr is intrusive (embedded WeakPtrData field). Keep raw-pointer
 // semantics; do NOT map to std::rc::Weak (owner is intrusive-refcounted).
-pub type WeakRef = bun_ptr::WeakPtr<Response /* , field = weak_ptr_data */>;
+impl bun_ptr::weak_ptr::HasWeakPtrData for Response {
+    unsafe fn weak_ptr_data(this: *mut Self) -> *mut WeakPtrData {
+        // SAFETY: caller guarantees `this` points to a live (possibly-finalized) allocation.
+        unsafe { core::ptr::addr_of_mut!((*this).weak_ptr_data) }
+    }
+}
+pub type WeakRef = bun_ptr::WeakPtr<Response>;
 
 // TODO(port): BodyMixin(@This()) is a comptime type fn that generates getText/
 // getBody/getBytes/getBodyUsed/getJSON/getArrayBuffer/getBlob/getBlobWithoutCallFrame/
@@ -119,7 +124,7 @@ impl Response {
     }
 
     #[inline]
-    pub fn get_utf8_url(&self) -> bun_str::Utf8Slice<'_> {
+    pub fn get_utf8_url(&self) -> bun_str::ZigStringSlice {
         self.url.to_utf8()
     }
 
@@ -139,13 +144,30 @@ impl Response {
     }
 
     #[inline]
-    pub fn get_body_len(&self) -> usize {
-        self.body.len()
+    pub fn get_method(&self) -> Method {
+        self.init.method
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn estimated_size(this: *mut Response) -> usize {
+        // SAFETY: called by JSC codegen with valid m_ctx pointer
+        unsafe { (*this).reported_estimated_size }
     }
 
     #[inline]
-    pub fn get_method(&self) -> Method {
-        self.init.method
+    pub fn get_body_value(&mut self) -> &mut BodyValue {
+        &mut self.body.value
+    }
+}
+
+// TODO(b2-blocked): bun_jsc::* + bun_core::form_data — to_js, JsRef::try_get/
+// init_weak, js::gc::stream, ReadableStream::from_js, BodyValue::estimated_size,
+// JSValue methods. Everything below until `Init` is JSC integration.
+#[cfg(any())]
+impl Response {
+    #[inline]
+    pub fn get_body_len(&self) -> usize {
+        self.body.len()
     }
 
     pub fn get_form_data_encoding(&self) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
@@ -157,12 +179,6 @@ impl Response {
             return Ok(None);
         };
         Ok(Some(bun_core::form_data::AsyncFormData::init(encoding)))
-    }
-
-    #[unsafe(no_mangle)]
-    pub extern "C" fn estimated_size(this: *mut Response) -> usize {
-        // SAFETY: called by JSC codegen with valid m_ctx pointer
-        unsafe { (*this).reported_estimated_size }
     }
 
     pub fn calculate_estimated_byte_size(&mut self) {
@@ -196,11 +212,6 @@ impl Response {
 
         self.check_body_stream_ref(global_object);
         js_value
-    }
-
-    #[inline]
-    pub fn get_body_value(&mut self) -> &mut BodyValue {
-        &mut self.body.value
     }
 
     #[inline]
@@ -248,7 +259,12 @@ impl Response {
     }
 }
 
-#[bun_jsc::host_fn]
+// TODO(b2-blocked): bun_jsc::* — host_fn, callframe.arguments_old, JSValue::as_.
+#[cfg(any())]
+mod _jsc_host_fns {
+use super::*;
+
+// TODO(b2-blocked): #[bun_jsc::host_fn]
 #[unsafe(no_mangle)]
 pub fn js_function_request_or_response_has_body_value(_global: &JSGlobalObject, callframe: &CallFrame) -> JSValue {
     let arguments = callframe.arguments_old(1);
@@ -266,7 +282,7 @@ pub fn js_function_request_or_response_has_body_value(_global: &JSGlobalObject, 
     JSValue::FALSE
 }
 
-#[bun_jsc::host_fn]
+// TODO(b2-blocked): #[bun_jsc::host_fn]
 #[unsafe(no_mangle)]
 pub fn js_function_get_complete_request_or_response_body_value_as_array_buffer(
     global_object: &JSGlobalObject,
@@ -313,6 +329,8 @@ pub fn js_function_get_complete_request_or_response_body_value_as_array_buffer(
     }
 }
 
+} // mod _jsc_host_fns
+
 impl Response {
     pub fn get_fetch_headers(&self) -> Option<&FetchHeaders> {
         self.init.headers.as_deref()
@@ -322,7 +340,14 @@ impl Response {
     pub fn status_code(&self) -> u16 {
         self.init.status_code
     }
+}
 
+pub struct Props {}
+
+// TODO(b2-blocked): bun_jsc::* — write_format ConsoleFormatter, getters/setters
+// host_fn bodies, constructor/from_js paths, FetchHeaders::HTTPHeaderName.
+#[cfg(any())]
+impl Response {
     pub fn redirect_location(&self) -> Option<&[u8]> {
         self.header(FetchHeaders::HTTPHeaderName::Location)
     }
@@ -332,11 +357,7 @@ impl Response {
         // assuming infallible here.
         self.init.headers.as_ref()?.fast_get(name).map(|str| str.slice())
     }
-}
 
-pub struct Props {}
-
-impl Response {
     pub fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
         &mut self,
         formatter: &mut F,
@@ -407,13 +428,13 @@ impl Response {
     }
 
     // PORT NOTE: Zig getUrl vs getURL collide under snake_case — JS getter renamed get_url_js
-    #[bun_jsc::host_fn(getter)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_url_js(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/url
         Ok(this.url.to_js(global_this))
     }
 
-    #[bun_jsc::host_fn(getter)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_response_type(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         if this.init.status_code < 200 {
             return Ok(global_this.common_strings().error());
@@ -422,19 +443,19 @@ impl Response {
         Ok(global_this.common_strings().default())
     }
 
-    #[bun_jsc::host_fn(getter)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_status_text(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/statusText
         Ok(this.init.status_text.to_js(global_this))
     }
 
-    #[bun_jsc::host_fn(getter)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_redirected(this: &Self, _global: &JSGlobalObject) -> JSValue {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/redirected
         JSValue::from(this.redirected)
     }
 
-    #[bun_jsc::host_fn(getter)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_ok(this: &Self, _global: &JSGlobalObject) -> JSValue {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/ok
         JSValue::from(this.is_ok())
@@ -455,12 +476,12 @@ impl Response {
         Ok(self.init.headers.as_ref().unwrap())
     }
 
-    #[bun_jsc::host_fn(getter)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_headers(this: &mut Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(this.get_or_create_headers(global_this)?.to_js(global_this))
     }
 
-    #[bun_jsc::host_fn(method)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     pub fn do_clone(this: &mut Self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let this_value = callframe.this();
         let cloned = this.clone(global_this)?;
@@ -524,7 +545,7 @@ impl Response {
         Ok(Box::into_raw(Box::new(self.clone_value(global_this)?)))
     }
 
-    #[bun_jsc::host_fn(getter)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_status(this: &Self, _global: &JSGlobalObject) -> JSValue {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/status
         JSValue::js_number(this.init.status_code)
@@ -592,7 +613,7 @@ impl Response {
         Ok(None)
     }
 
-    #[bun_jsc::host_fn]
+    // TODO(b2-blocked): #[bun_jsc::host_fn]
     pub fn construct_json(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let args_list = callframe.arguments_old(2);
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
@@ -665,7 +686,7 @@ impl Response {
         }
 
         let headers_ref = response.get_or_create_headers(global_this)?;
-        headers_ref.put_default(FetchHeaders::HTTPHeaderName::ContentType, MimeType::json().value, global_this)?;
+        headers_ref.put_default(FetchHeaders::HTTPHeaderName::ContentType, bun_http_types::MimeType::json.value, global_this)?;
         Ok(Box::leak(Box::new(response)).to_js(global_this))
     }
 
@@ -682,7 +703,7 @@ impl Response {
         }
     }
 
-    #[bun_jsc::host_fn]
+    // TODO(b2-blocked): #[bun_jsc::host_fn]
     pub fn construct_redirect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let response = Self::construct_redirect_impl(global_this, callframe)?;
         let ptr = Box::leak(Box::new(response));
@@ -744,7 +765,7 @@ impl Response {
         Ok(response)
     }
 
-    #[bun_jsc::host_fn]
+    // TODO(b2-blocked): #[bun_jsc::host_fn]
     pub fn construct_error(global_this: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
         let response = Box::leak(Box::new(Response {
             init: Init { status_code: 0, ..Default::default() },
@@ -758,7 +779,7 @@ impl Response {
     }
 
     // TODO(port): codegen — constructor signature includes js_this (the pre-allocated
-    // JS wrapper). The #[bun_jsc::host_fn] macro needs a `constructor` variant that
+    // JS wrapper). The // TODO(b2-blocked): #[bun_jsc::host_fn] macro needs a `constructor` variant that
     // passes the wrapper through.
     pub fn constructor(global_this: &JSGlobalObject, callframe: &CallFrame, js_this: JSValue) -> JsResult<*mut Response> {
         let arguments = callframe.arguments_as_array::<2>();
@@ -875,6 +896,9 @@ impl Default for Init {
     }
 }
 
+// TODO(b2-blocked): bun_jsc::* — FetchHeaders::clone_this/create_from_js,
+// JSValue::is_cell/js_type/as_direct/fast_get/coerce_to_int64.
+#[cfg(any())]
 impl Init {
     pub fn clone(&self, ctx: &JSGlobalObject) -> JsResult<Init> {
         let headers = match &self.headers {
@@ -992,7 +1016,7 @@ fn empty_with_status(_global: &JSGlobalObject, status: u16) -> *mut Response {
     }))
 }
 
-/// https://developer.mozilla.org/en-US/docs/Web/API/Headers
+// https://developer.mozilla.org/en-US/docs/Web/API/Headers
 // TODO: move to http.zig. this has nothing to do with jsc or WebCore
 
 // ──────────────────────────────────────────────────────────────────────────

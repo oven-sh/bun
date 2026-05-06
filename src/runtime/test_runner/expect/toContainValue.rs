@@ -29,7 +29,7 @@ impl Expect {
         let value: JSValue =
             this.get_value(global, this_value, "toContainValue", "<green>expected<r>")?;
 
-        let not = this.flags.not;
+        let not = this.flags.not();
         let mut pass = false;
 
         if !value.is_undefined_or_null() {

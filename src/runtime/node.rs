@@ -16,6 +16,30 @@ pub mod assert {
     pub use super::myers_diff_impl as myers_diff;
 }
 
+// ─── un-gated in B-2 round (type defs real; JSC bodies re-gated inside) ───
+#[path = "node/types.rs"]
+pub mod types;
+pub use types::{
+    BlobOrStringOrBuffer, CallbackTask, Dirent, Encoding, FileSystemFlags, PathLike, PathOrBlob,
+    PathOrFileDescriptor, StringOrBuffer, Valid, VectorArrayBuffer,
+};
+
+#[path = "node/path.rs"]
+pub mod path;
+
+#[path = "node/node_os.rs"]
+pub mod os;
+
+#[path = "node/node_process.rs"]
+pub mod process;
+
+// node_fs.rs (~4.6kL) is JSC-dense throughout (every Arguments/Return pair
+// has `.fromJS`/`.toJS`); kept gated at module level for this round.
+// TODO(b2-blocked): un-gate once bun_jsc method surface lands.
+#[cfg(any())]
+#[path = "node/node_fs.rs"]
+pub mod fs;
+
 // ─── submodule re-exports ─────────────────────────────────────────────────
 // All `node/` subdir modules depend heavily on `bun_jsc` (currently broken
 // under concurrent B-2 work) — gated until the lower tier is green.

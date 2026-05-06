@@ -1246,8 +1246,6 @@ pub struct ExportsMap {
 }
 
 impl ExportsMap {
-    // TODO(b2-blocked): bun_js_parser::Expr full API
-    #[cfg(any())]
     pub fn parse(
         source: &logger::Source,
         log: &mut logger::Log,
@@ -1276,26 +1274,27 @@ pub struct Visitor<'a> {
 }
 
 impl<'a> Visitor<'a> {
-    // TODO(b2-blocked): bun_js_parser::ExprData variants + bun_collections::MultiArrayList column accessors
-    #[cfg(any())]
     pub fn visit(&mut self, expr: js_ast::Expr) -> Entry {
         let mut first_token: logger::Range = logger::Range::NONE;
 
         match &expr.data {
-            js_ast::ExprData::ENull => {
+            js_ast::ExprData::ENull(_) => {
                 return Entry {
                     first_token: js_lexer::range_of_identifier(self.source, expr.loc),
                     data: EntryData::Null,
                 };
             }
             js_ast::ExprData::EString(str) => {
+                // PORT NOTE: JSON-parsed strings are always UTF-8 (latin1 source bytes);
+                // `str.data` is the raw slice, no bump-arena transcode needed.
+                debug_assert!(!str.is_utf16);
                 return Entry {
-                    data: EntryData::String(str.slice()),
+                    data: EntryData::String(Box::from(str.data)),
                     first_token: self.source.range_of_string(expr.loc),
                 };
             }
             js_ast::ExprData::EArray(e_array) => {
-                let mut array: Vec<Entry> = Vec::with_capacity(e_array.items.len());
+                let mut array: Vec<Entry> = Vec::with_capacity(e_array.items.len as usize);
                 for item in e_array.items.slice() {
                     array.push(self.visit(*item));
                 }
@@ -1305,21 +1304,24 @@ impl<'a> Visitor<'a> {
                 };
             }
             js_ast::ExprData::EObject(e_obj) => {
-                let mut map_data = EntryDataMapList::default();
-                map_data.ensure_total_capacity(e_obj.properties.len()).expect("unreachable");
-                map_data.set_len(e_obj.properties.len());
-                let mut expansion_keys: Vec<MapEntry> = Vec::with_capacity(e_obj.properties.len());
-                let mut map_data_slices = map_data.slice();
-                let map_data_keys = map_data_slices.items_mut::<{ MapEntryField::Key }>();
-                let map_data_ranges = map_data_slices.items_mut::<{ MapEntryField::KeyRange }>();
-                let map_data_entries = map_data_slices.items_mut::<{ MapEntryField::Value }>();
-                // TODO(port): MultiArrayList slice column accessors — Phase B API
+                let prop_len = e_obj.properties.len as usize;
+                // PORT NOTE: reshaped for borrowck — Zig used MultiArrayList column slices;
+                // EntryDataMapList is a Vec<MapEntry> placeholder until
+                // bun_collections::MultiArrayList lands. Push whole entries instead of
+                // writing through three parallel column slices.
+                // TODO(b2-blocked): bun_collections::MultiArrayList column accessors
+                let mut map_data: EntryDataMapList = Vec::with_capacity(prop_len);
+                let mut expansion_keys: Vec<MapEntry> = Vec::with_capacity(prop_len);
                 let mut is_conditional_sugar = false;
                 first_token.loc = expr.loc;
                 first_token.len = 1;
                 for (i, prop) in e_obj.properties.slice().iter().enumerate() {
-                    let key: Box<[u8]> = prop.key.as_ref().unwrap().data.e_string().slice();
-                    let key_range: logger::Range = self.source.range_of_string(prop.key.as_ref().unwrap().loc);
+                    let prop_key = prop.key.as_ref().unwrap();
+                    let key: Box<[u8]> = match prop_key.data.e_string() {
+                        Some(s) => Box::from(s.data),
+                        None => Box::from([].as_slice()),
+                    };
+                    let key_range: logger::Range = self.source.range_of_string(prop_key.loc);
 
                     // If exports is an Object with both a key starting with "." and a key
                     // not starting with ".", throw an Invalid Package Configuration error.
@@ -1327,8 +1329,7 @@ impl<'a> Visitor<'a> {
                     if i == 0 {
                         is_conditional_sugar = cur_is_conditional_sugar;
                     } else if is_conditional_sugar != cur_is_conditional_sugar {
-                        let prev_key_range = map_data_ranges[i - 1];
-                        let prev_key = &map_data_keys[i - 1];
+                        let prev = &map_data[i - 1];
                         self.log
                             .add_range_warning_fmt_with_note(
                                 Some(self.source),
@@ -1338,10 +1339,10 @@ impl<'a> Visitor<'a> {
                                 ),
                                 format_args!(
                                     "The previous key \"{}\" is incompatible with the current key \"{}\"",
-                                    bstr::BStr::new(prev_key),
+                                    bstr::BStr::new(&prev.key),
                                     bstr::BStr::new(&key)
                                 ),
-                                prev_key_range,
+                                prev.key_range,
                             )
                             .expect("unreachable");
                         // map_data.deinit / allocator.free(expansion_keys) — drop handles cleanup
@@ -1351,14 +1352,13 @@ impl<'a> Visitor<'a> {
                         };
                     }
 
-                    map_data_keys[i] = key.clone();
-                    map_data_ranges[i] = key_range;
-                    map_data_entries[i] = self.visit(prop.value.unwrap());
+                    let value = self.visit(prop.value.unwrap());
+                    map_data.push(MapEntry { key: key.clone(), key_range, value: value.clone() });
 
                     // safe to use "/" on windows. exports in package.json does not use "\\"
                     if strings::ends_with(&key, b"/") || strings::contains_char(&key, b'*') {
                         expansion_keys.push(MapEntry {
-                            value: map_data_entries[i].clone(),
+                            value,
                             key,
                             key_range,
                         });
@@ -1371,7 +1371,6 @@ impl<'a> Visitor<'a> {
                 // Let expansionKeys be the list of keys of matchObj either ending in "/"
                 // or containing only a single "*", sorted by the sorting function
                 // PATTERN_KEY_COMPARE which orders in descending order of specificity.
-                // TODO(port): strings.NewGlobLengthSorter — implement comparator in bun_str::strings
                 expansion_keys.sort_by(|a, b| strings::glob_length_compare(&a.key, &b.key));
 
                 return Entry {
@@ -1399,7 +1398,7 @@ impl<'a> Visitor<'a> {
             .add_range_warning(
                 Some(self.source),
                 first_token,
-                "This value must be a string, an object, an array, or null",
+                b"This value must be a string, an object, an array, or null",
             )
             .expect("unreachable");
         Entry {

@@ -18,7 +18,7 @@ impl Expect {
 
         this.increment_expect_call_counter();
 
-        let not = this.flags.not;
+        let not = this.flags.not();
         let pass = value.is_undefined_or_null() != not;
 
         if pass {

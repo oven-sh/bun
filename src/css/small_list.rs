@@ -98,8 +98,10 @@ impl<T, const N: usize> SmallList<T, N> {
         this
     }
 
-    // `parse` / `to_css` depend on the still-gated parser/printer/generics hubs.
-    // They re-enable as inherent methods (or trait impls) when those un-gate.
+    // `parse` depends on still-gated `css_parser` internals (`Parser` methods,
+    // `Delimiters`, `Result<T>`, `generic::parse_for`). Re-enables when that
+    // hub un-gates. `to_css` is un-gated below (B-2) — `Printer::delim` is
+    // stubbed in the lib.rs printer shim until `printer.rs` un-gates.
     #[cfg(any())]
     pub fn parse(input: &mut Parser) -> CssResult<Self> {
         // TODO(port): trait bound — T must implement css generic parse protocol
@@ -125,15 +127,16 @@ impl<T, const N: usize> SmallList<T, N> {
         }
     }
 
-    #[cfg(any())]
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // TODO(port): trait bound — T must implement ToCss
+    pub fn to_css(&self, dest: &mut crate::printer::Printer) -> Result<(), crate::PrintErr>
+    where
+        T: generic::ToCss,
+    {
         let length = self.len();
         for (idx, val) in self.slice().iter().enumerate() {
             generic::to_css(val, dest)?;
             // widen u32→usize (infallible) instead of narrowing idx
             if idx + 1 < length as usize {
-                dest.delim(',', false)?;
+                dest.delim(b',', false)?;
             }
         }
         Ok(())

@@ -48,14 +48,25 @@ pub static live_streams: AtomicI32 = AtomicI32::new(0);
 pub use live_sessions as LIVE_SESSIONS;
 pub use live_streams as LIVE_STREAMS;
 
-// TODO(b2-blocked): Stream/ClientSession/PendingConnect bottom out on
-// HTTPClient/HTTPContext/uws socket types — un-gate together with the
-// `_phase_a_draft` cluster in lib.rs.
-#[cfg(any())] #[path = "h2_client/Stream.rs"]         pub mod Stream;
-#[cfg(any())] #[path = "h2_client/ClientSession.rs"]  pub mod ClientSession;
-#[cfg(any())] #[path = "h2_client/PendingConnect.rs"] pub mod PendingConnect;
+// TODO(b2-blocked): ClientSession/dispatch/encode bottom out on the full
+// `impl HTTPClient` state machine + uws socket write/ext/flush methods —
+// un-gate once the lib.rs `_phase_a_draft` impl block lands.
+#[cfg(any())] #[path = "h2_client/Stream.rs"]         pub mod stream;
+#[cfg(any())] #[path = "h2_client/ClientSession.rs"]  pub mod client_session;
+#[path = "h2_client/PendingConnect.rs"]               pub mod pending_connect;
 #[cfg(any())] #[path = "h2_client/dispatch.rs"]       pub mod dispatch;
 #[cfg(any())] #[path = "h2_client/encode.rs"]         pub mod encode;
+
+// ── type-only stubs so the HTTPClient/HTTPContext cluster can name
+//    `h2::Stream`/`h2::ClientSession` while the impl modules stay gated ──
+// TODO(b2-blocked): replace with `pub use stream::Stream` once un-gated.
+pub struct Stream(());
+pub struct ClientSession(());
+impl ClientSession {
+    pub fn registry_index(&self) -> u32 { u32::MAX }
+    pub fn set_registry_index(&self, _i: u32) {}
+}
+pub use pending_connect::PendingConnect;
 
 // PORT NOTE: Zig had `pub const TestingAPIs = @import("../http_jsc/headers_jsc.zig").H2TestingAPIs;`
 // — a `*_jsc` alias. Deleted per PORTING.md: `to_js`/host-fn surfaces live in the

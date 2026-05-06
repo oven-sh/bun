@@ -1,13 +1,13 @@
 use core::ffi::c_void;
 
-use bun_jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
-use bun_str::ZigString;
+use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
 use bun_uws as uws;
 
-pub struct WebSocketServerContext<'a> {
+pub struct WebSocketServerContext {
     // TODO(port): lifetime — Zig leaves this `undefined` and server.zig:2784 assigns it later.
-    pub global_object: &'a JSGlobalObject,
-    pub handler: Handler<'a>,
+    // LIFETIMES.tsv = JSC_BORROW; raw ptr until bun_jsc is a dep (shim type is opaque/Copy).
+    pub global_object: *const JSGlobalObject,
+    pub handler: Handler,
 
     pub max_payload_length: u32, // default 16MB
     pub max_lifetime: u16,
@@ -19,7 +19,7 @@ pub struct WebSocketServerContext<'a> {
     pub close_on_backpressure_limit: bool,
 }
 
-pub struct Handler<'a> {
+pub struct Handler {
     pub on_open: JSValue,
     pub on_message: JSValue,
     pub on_close: JSValue,
@@ -31,8 +31,9 @@ pub struct Handler<'a> {
     pub app: Option<*mut c_void>,
 
     // Always set manually.
-    pub vm: &'static VirtualMachine,
-    pub global_object: &'a JSGlobalObject,
+    // TODO(port): LIFETIMES.tsv = STATIC → `&'static VirtualMachine` once bun_jsc is real.
+    pub vm: *const VirtualMachine,
+    pub global_object: *const JSGlobalObject,
     pub active_connections: usize,
 
     /// used by publish()
@@ -49,7 +50,11 @@ bitflags::bitflags! {
     }
 }
 
-impl<'a> Handler<'a> {
+// JS callback bodies — gated until bun_jsc method surface (JSValue::call,
+// get_truthy, protect, JSGlobalObject::throw_*) is available.
+// TODO(b2-blocked): bun_jsc::{JSValue, JSGlobalObject} methods.
+#[cfg(any())]
+impl Handler {
     pub fn run_error_callback(
         &self,
         vm: &VirtualMachine,
@@ -67,7 +72,7 @@ impl<'a> Handler<'a> {
         let _ = vm.uncaught_exception(global_object, error_value, false);
     }
 
-    pub fn from_js(global_object: &'a JSGlobalObject, object: JSValue) -> JsResult<Handler<'a>> {
+    pub fn from_js(global_object: &JSGlobalObject, object: JSValue) -> JsResult<Handler> {
         let mut handler = Handler {
             on_open: JSValue::ZERO,
             on_message: JSValue::ZERO,
@@ -149,7 +154,7 @@ impl<'a> Handler<'a> {
     }
 }
 
-impl<'a> WebSocketServerContext<'a> {
+impl WebSocketServerContext {
     pub fn to_behavior(&self) -> uws::WebSocketBehavior {
         uws::WebSocketBehavior {
             max_payload_length: self.max_payload_length,
@@ -164,14 +169,11 @@ impl<'a> WebSocketServerContext<'a> {
         }
     }
 
-    pub fn protect(&self) {
-        self.handler.protect();
-    }
-    pub fn unprotect(&self) {
-        self.handler.unprotect();
-    }
+    // protect/unprotect → see gated `impl Handler` above; thin forwarders kept
+    // gated alongside since they only call gated methods.
 }
 
+#[cfg(any())]
 static COMPRESS_TABLE: phf::Map<&'static [u8], i32> = phf::phf_map! {
     b"disable" => 0,
     b"shared" => uws::SHARED_COMPRESSOR,
@@ -186,6 +188,7 @@ static COMPRESS_TABLE: phf::Map<&'static [u8], i32> = phf::phf_map! {
     b"256KB" => uws::DEDICATED_COMPRESSOR_256KB,
 };
 
+#[cfg(any())]
 static DECOMPRESS_TABLE: phf::Map<&'static [u8], i32> = phf::phf_map! {
     b"disable" => 0,
     b"shared" => uws::SHARED_DECOMPRESSOR,
@@ -200,18 +203,22 @@ static DECOMPRESS_TABLE: phf::Map<&'static [u8], i32> = phf::phf_map! {
     b"256KB" => uws::DEDICATED_COMPRESSOR_256KB,
 };
 
+#[cfg(any())]
 // TODO(port): phf custom hasher — Zig used `.getWithEql(zig_string, ZigString.eqlComptime)`,
 // which compares a ZigString (possibly UTF-16) against the literal keys. Here we go through
 // `ZigString::as_bytes_if_latin1()` (or equivalent) and look up in the phf map; Phase B should
 // verify UTF-16-backed ZigStrings still match.
-fn lookup_zig_string(table: &phf::Map<&'static [u8], i32>, key: &ZigString) -> Option<i32> {
+fn lookup_zig_string(table: &phf::Map<&'static [u8], i32>, key: &bun_str::ZigString) -> Option<i32> {
     table.get(key.slice()).copied()
 }
 
-pub fn on_create<'a>(
-    global_object: &'a JSGlobalObject,
+// TODO(b2-blocked): bun_jsc::JSValue::{get, get_truthy, to_boolean, is_string,
+// get_zig_string, to_int64, is_any_int}.
+#[cfg(any())]
+pub fn on_create(
+    global_object: &JSGlobalObject,
     object: JSValue,
-) -> JsResult<WebSocketServerContext<'a>> {
+) -> JsResult<WebSocketServerContext> {
     // PORT NOTE: Zig wrote `var server = WebSocketServerContext{};` (all field defaults,
     // `globalObject`/`handler.vm`/`handler.globalObject` left `undefined`) and then assigned
     // `server.handler` on the next line. Rust cannot leave `&JSGlobalObject` fields

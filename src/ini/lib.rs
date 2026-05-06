@@ -1230,10 +1230,6 @@ pub struct ScopeItem {
 
 impl<'a> ScopeIterator<'a> {
     pub fn next(&mut self) -> OOM<Option<IniOption<ScopeItem>>> {
-        #[cfg(any())]
-        // TODO(b2-blocked): bun_api::npm_registry::Parser
-        // TODO(b2-blocked): bun_api::NpmRegistry
-        {
         if self.prop_idx >= self.config.properties.len as usize {
             return Ok(None);
         }
@@ -1246,6 +1242,10 @@ impl<'a> ScopeIterator<'a> {
             if let Some(key) = keyexpr.as_utf8_string_literal() {
                 if strings::has_prefix(key, b"@") && strings::ends_with(key, b":registry") {
                     if !self.count {
+                        // TODO(b2-blocked): bun_api::npm_registry::Parser
+                        // TODO(b2-blocked): bun_api::NpmRegistry
+                        #[cfg(any())]
+                        {
                         let registry = 'brk: {
                             if let Some(value) = prop.value {
                                 if let Some(str_) = value.as_utf8_string_literal() {
@@ -1263,14 +1263,15 @@ impl<'a> ScopeIterator<'a> {
                             scope: Box::<[u8]>::from(&key[1..key.len() - b":registry".len()]),
                             registry,
                         })));
+                        } // end #[cfg(any())]
+                        let _ = prop.value;
+                        todo!("b2-blocked: bun_api::npm_registry::Parser / bun_api::NpmRegistry");
                     }
                 }
             }
         }
 
         Ok(Some(IniOption::None))
-        } // end #[cfg(any())]
-        todo!("b2-blocked: bun_api::npm_registry::Parser / bun_api::NpmRegistry")
     }
 }
 
@@ -1880,5 +1881,5 @@ fn handle_auth(
 //   source:     src/ini/ini.zig (1357 lines)
 //   confidence: medium
 //   todos:      6
-//   notes:      B-2: Parser::parse()/prepare_str()/ConfigIterator::next() bodies un-gated against live bun_js_parser accessor surface (Object::get/put/get_or_put_object, Array::push, ExprData::e_object_mut/e_array_mut, Expr::as_utf8_string_literal, IntoExprData). Quoted-value JSON fast path in prepare_str() stays gated on bun_interchange::json (returns bun_logger::js_ast::Expr stub, not bun_js_parser::Expr). load_npmrc/load_npmrc_config/handle_auth + ScopeIterator::next/ScopeItem.registry stay gated on empty bun_api crate (BunInstall/NpmRegistry/Ca/npm_registry::Parser).
+//   notes:      B-2: Parser::parse()/prepare_str()/ConfigIterator::next()/ScopeIterator::next() bodies un-gated against live bun_js_parser accessor surface (Object::get/put/get_or_put_object, Array::push, ExprData::e_object_mut/e_array_mut, Expr::as_utf8_string_literal, IntoExprData, BabyList::at/len). Quoted-value JSON fast path in prepare_str() stays gated on bun_interchange::json (returns bun_logger::js_ast::Expr stub, not bun_js_parser::Expr). ScopeIterator::next inner registry-parse block + ScopeItem.registry field stay gated on bun_api::NpmRegistry/npm_registry::Parser. load_npmrc/load_npmrc_config/handle_auth stay gated wholesale on empty bun_api crate (BunInstall/NpmRegistry/NpmRegistryMap/Ca/npm_registry::Parser).
 // ──────────────────────────────────────────────────────────────────────────

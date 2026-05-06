@@ -37,6 +37,23 @@ pub enum DotEnvBehavior {
     LoadAllWithoutInlining = 4,
 }
 
+/// Mirrors the value fields of `bun_s3_signing::S3Credentials` (T5). Defined locally so
+/// this T2 crate names no `bun_s3_signing` types — see PORTING.md §Dispatch (cold-path,
+/// upward dep). The high-tier caller constructs the real refcounted `S3Credentials` from
+/// this POD at the call site (same pattern as `DotEnvBehavior` above).
+// TODO(port): once bun_s3_signing TYPE_ONLY move-down lands ≤T2, re-export that struct here.
+#[derive(Clone, Default)]
+pub struct S3Credentials {
+    pub access_key_id: Box<[u8]>,
+    pub secret_access_key: Box<[u8]>,
+    pub region: Box<[u8]>,
+    pub endpoint: Box<[u8]>,
+    pub bucket: Box<[u8]>,
+    pub session_token: Box<[u8]>,
+    /// Important for MinIO support.
+    pub insecure_http: bool,
+}
+
 pub struct Loader<'a> {
     pub map: &'a mut Map,
     // allocator dropped — global mimalloc (see PORTING.md §Allocators)
@@ -58,9 +75,8 @@ pub struct Loader<'a> {
     pub did_load_process: bool,
     pub reject_unauthorized: Option<bool>,
 
-    // TODO(b2-blocked): bun_s3_signing::S3Credentials (T5 type — needs TYPE_ONLY move-down).
-    // Field kept opaque so the public surface stays stable; `get_s3_credentials` is gated.
-    aws_credentials: Option<()>,
+    // Local POD mirror of `bun_s3_signing::S3Credentials` — see type doc above.
+    aws_credentials: Option<S3Credentials>,
 }
 
 // Module-level mutable statics from the Zig (`var` decls inside `Loader`).
@@ -140,10 +156,63 @@ impl<'a> Loader<'a> {
 
     pub fn load_tracy(&self) {}
 
-    #[cfg(any())]
-    pub fn get_s3_credentials(&mut self) {
-        // TODO(b2-blocked): bun_s3_signing::S3Credentials (T5 — needs TYPE_ONLY move-down ≤T2)
-        // TODO(b2-blocked): bun_url::URL::host_with_path (gated in B-1)
+    pub fn get_s3_credentials(&mut self) -> &S3Credentials {
+        if self.aws_credentials.is_some() {
+            return self.aws_credentials.as_ref().unwrap();
+        }
+
+        // PORT NOTE: reshaped for borrowck — Zig stored borrowed `[]const u8` slices into
+        // the env map; here we copy to `Box<[u8]>` so the cached struct owns its bytes and
+        // we can release the `&self` borrow before writing `&mut self.aws_credentials`.
+        // PERF(port): one-shot, cached — copies are negligible.
+        let access_key_id: Box<[u8]> = self
+            .get(b"S3_ACCESS_KEY_ID")
+            .or_else(|| self.get(b"AWS_ACCESS_KEY_ID"))
+            .map(Box::from)
+            .unwrap_or_default();
+        let secret_access_key: Box<[u8]> = self
+            .get(b"S3_SECRET_ACCESS_KEY")
+            .or_else(|| self.get(b"AWS_SECRET_ACCESS_KEY"))
+            .map(Box::from)
+            .unwrap_or_default();
+        let region: Box<[u8]> = self
+            .get(b"S3_REGION")
+            .or_else(|| self.get(b"AWS_REGION"))
+            .map(Box::from)
+            .unwrap_or_default();
+
+        let mut endpoint: Box<[u8]> = Box::default();
+        let mut insecure_http = false;
+        if let Some(endpoint_) =
+            self.get(b"S3_ENDPOINT").or_else(|| self.get(b"AWS_ENDPOINT"))
+        {
+            let url = URL::parse(endpoint_);
+            endpoint = Box::from(url.host_with_path());
+            insecure_http = url.is_http();
+        }
+
+        let bucket: Box<[u8]> = self
+            .get(b"S3_BUCKET")
+            .or_else(|| self.get(b"AWS_BUCKET"))
+            .map(Box::from)
+            .unwrap_or_default();
+        let session_token: Box<[u8]> = self
+            .get(b"S3_SESSION_TOKEN")
+            .or_else(|| self.get(b"AWS_SESSION_TOKEN"))
+            .map(Box::from)
+            .unwrap_or_default();
+
+        self.aws_credentials = Some(S3Credentials {
+            access_key_id,
+            secret_access_key,
+            region,
+            endpoint,
+            bucket,
+            session_token,
+            insecure_http,
+        });
+
+        self.aws_credentials.as_ref().unwrap()
     }
 
     /// Checks whether `NODE_TLS_REJECT_UNAUTHORIZED` is set to `0` or `false`.
@@ -1483,5 +1552,6 @@ pub static INSTANCE: OnceLock<usize /* *mut Loader<'static> */> = OnceLock::new(
 //               via DefineStoreVTable + local DotEnvBehavior mirror (api.StringMap flattened
 //               to slice pair). load_env_file{,_dynamic} bodies re-gated on bun_logger::Source
 //               owning contents (PORTING.md §Forbidden bans Box::leak); get_s3_credentials
-//               re-gated on bun_s3_signing::S3Credentials TYPE_ONLY move-down (higher tier).
+//               un-gated via local S3Credentials POD mirror (§Dispatch — high-tier callers
+//               construct the real refcounted bun_s3_signing::S3Credentials from it).
 // ──────────────────────────────────────────────────────────────────────────

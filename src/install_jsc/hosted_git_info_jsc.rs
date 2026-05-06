@@ -15,7 +15,7 @@ impl HostedGitInfoJsc for bun_install::hosted_git_info::HostedGitInfo {
         obj.put(
             go,
             b"type",
-            BunString::from_bytes(self.host_provider.type_str()).to_js(go)?,
+            BunString::from_bytes(self.host_provider.type_str().as_bytes()).to_js(go)?,
         );
         obj.put(
             go,
@@ -25,12 +25,12 @@ impl HostedGitInfoJsc for bun_install::hosted_git_info::HostedGitInfo {
         obj.put(
             go,
             b"project",
-            BunString::from_bytes(&self.project).to_js(go)?,
+            BunString::from_bytes(self.project()).to_js(go)?,
         );
         obj.put(
             go,
             b"user",
-            if let Some(user) = &self.user {
+            if let Some(user) = self.user() {
                 BunString::from_bytes(user).to_js(go)?
             } else {
                 JSValue::NULL
@@ -39,7 +39,7 @@ impl HostedGitInfoJsc for bun_install::hosted_git_info::HostedGitInfo {
         obj.put(
             go,
             b"committish",
-            if let Some(committish) = &self.committish {
+            if let Some(committish) = self.committish() {
                 BunString::from_bytes(committish).to_js(go)?
             } else {
                 JSValue::NULL
@@ -87,7 +87,7 @@ pub fn js_parse_url(go: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
         Err(err) => {
             return Err(go.throw(format_args!(
                 "Invalid Git URL: {}",
-                bstr::BStr::new(err.name())
+                bstr::BStr::new(<&'static str>::from(err))
             )));
         }
     };
@@ -126,7 +126,7 @@ pub fn js_from_url(go: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVal
         Err(err) => {
             return Err(go.throw(format_args!(
                 "Invalid Git URL: {}",
-                bstr::BStr::new(err.name())
+                bstr::BStr::new(<&'static str>::from(err))
             )));
         }
     };

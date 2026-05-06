@@ -33,7 +33,7 @@ pub fn to_contain_any_values(
         let value: JSValue =
             this.get_value(global, this_value, "toContainAnyValues", "<green>expected<r>")?;
 
-        let not = this.flags.not;
+        let not = this.flags.not();
         let mut pass = false;
 
         if !value.is_undefined_or_null() {

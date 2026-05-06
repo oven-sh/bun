@@ -1,30 +1,18 @@
 use core::ffi::{c_uint, c_void};
 use core::ptr::NonNull;
-use std::sync::Arc;
 use std::rc::Rc;
-use std::io::Write as _;
+use std::sync::Arc;
 
-use bun_core::Output;
-use bun_str::{self as bun_string, String as BunString};
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, CallFrame, JsResult, VirtualMachine};
-use bun_jsc::webcore::{self as WebCore, Blob, Body, FetchHeaders, Request, Response, ReadableStream, AbortSignal, CookieMap, ByteStream};
-use bun_jsc::api::{AnyRequestContext, NativePromiseContext};
-use bun_http::{self as HTTP, MimeType, Method};
-use bun_uws::{self as uws, AnyResponse, SocketAddress, WebSocketUpgradeContext};
-use bun_logger as logger;
-use bun_sys;
-use bun_paths::PathBuffer;
-use bun_collections::{HiveArray, ByteList};
-use bun_runtime::server::{FileResponseStream, HTTPStatusText, RangeRequest};
-use bun_runtime::api::S3;
-use bun_js_parser::runtime::Fallback;
-use bun_schema::api as Api;
+use bun_http_types::Method::Method;
+use bun_str::String as BunString;
+use bun_uws::{self as uws, SocketAddress, WebSocketUpgradeContext};
 
-bun_output::declare_scope!(RequestContext, visible);
-bun_output::declare_scope!(ReadableStream, visible);
-
-macro_rules! ctx_log { ($($t:tt)*) => { bun_output::scoped_log!(RequestContext, $($t)*) }; }
-macro_rules! stream_log { ($($t:tt)*) => { bun_output::scoped_log!(ReadableStream, $($t)*) }; }
+use crate::server::jsc::{self, JSGlobalObject, JSValue, JsResult, VirtualMachine};
+use crate::server::{RangeRequest, ServerLike};
+use crate::webcore::{
+    self as WebCore, blob::SizeType as BlobSizeType, body, readable_stream, request, response,
+    AbortSignal, AnyBlob, ByteStream, CookieMap, FetchHeaders, Request, Response,
+};
 
 /// Q: Why is this needed?
 /// A: The dev server needs to attach its own callback when the request is
@@ -59,25 +47,44 @@ pub trait Transport {
 }
 
 // TODO(port): the Zig picks `uws.H3.Response` vs `uws.NewApp(ssl_enabled).Response` and
-// `uws.H3.Request` vs `uws.Request`. Phase B: implement `Transport` for the four
-// (ssl_enabled, http3) combinations in bun_uws.
+// `uws.H3.Request` vs `uws.Request`. Const-generic `bool` cannot drive an
+// associated type in stable Rust without specialization, so the four
+// monomorphizations are spelled out. Once `bun_uws_sys` exposes a `Transport`
+// trait directly, collapse these.
 pub struct TransportFor<const SSL_ENABLED: bool, const HTTP3: bool>;
-impl<const SSL_ENABLED: bool, const HTTP3: bool> Transport for TransportFor<SSL_ENABLED, HTTP3> {
-    // TODO(port): wire to bun_uws::H3::Response / bun_uws::NewApp<SSL_ENABLED>::Response
-    type Response = uws::Response;
-    type Request = uws::Request;
+impl Transport for TransportFor<false, false> {
+    type Response = bun_uws_sys::NewAppResponse<false>;
+    type Request = bun_uws_sys::Request;
+}
+impl Transport for TransportFor<true, false> {
+    type Response = bun_uws_sys::NewAppResponse<true>;
+    type Request = bun_uws_sys::Request;
+}
+impl Transport for TransportFor<false, true> {
+    type Response = bun_uws_sys::h3::Response;
+    type Request = bun_uws_sys::h3::Request;
+}
+impl Transport for TransportFor<true, true> {
+    type Response = bun_uws_sys::h3::Response;
+    type Request = bun_uws_sys::h3::Request;
 }
 
-pub type Req<const SSL_ENABLED: bool, const HTTP3: bool> =
-    <TransportFor<SSL_ENABLED, HTTP3> as Transport>::Request;
-pub type Resp<const SSL_ENABLED: bool, const HTTP3: bool> =
-    <TransportFor<SSL_ENABLED, HTTP3> as Transport>::Response;
+// PORT NOTE: spelling these as `<TransportFor<SSL,H3> as Transport>::Response`
+// forces a `where TransportFor<SSL,H3>: Transport` bound onto every generic
+// that names `RequestContext` (NewServer, RequestContextStackAllocator,
+// AnyRequestContext…). The struct only stores raw pointers, so erase to
+// `c_void` here and downcast at the (gated) call sites via
+// `<TransportFor<..> as Transport>::Response`. Reconcile when the gated bodies
+// un-gate.
+pub type Req<const SSL_ENABLED: bool, const HTTP3: bool> = c_void;
+pub type Resp<const SSL_ENABLED: bool, const HTTP3: bool> = c_void;
 
 // TODO(port): jsc.WebCore.HTTPServerWritable(ssl_enabled, http3) — comptime type fn.
-pub type ResponseStream<const SSL_ENABLED: bool, const HTTP3: bool> =
-    WebCore::HTTPServerWritable<SSL_ENABLED, HTTP3>;
-pub type ResponseStreamJSSink<const SSL_ENABLED: bool, const HTTP3: bool> =
-    <ResponseStream<SSL_ENABLED, HTTP3> as WebCore::Writable>::JSSink;
+// TODO(b2-blocked): `webcore::streams::HTTPServerWritable<SSL,H3>` name-clashes
+// with the `declare_scope!` static of the same name; alias to c_void until
+// streams.rs renames the scope. The JSSink wrapper is also gated there.
+pub type ResponseStream<const SSL_ENABLED: bool, const HTTP3: bool> = c_void;
+pub type ResponseStreamJSSink<const SSL_ENABLED: bool, const HTTP3: bool> = c_void;
 
 /// This pre-allocates up to 2,048 RequestContext structs.
 /// It costs about 655,632 bytes.
@@ -99,9 +106,11 @@ pub struct RequestContext<ThisServer, const SSL_ENABLED: bool, const DEBUG_MODE:
     /// this prevents an extra pthread_getspecific() call which shows up in profiling
     // TODO(port): allocator field deleted — global mimalloc per PORTING.md §Allocators.
     pub req: Option<*mut Req<SSL_ENABLED, HTTP3>>,
-    pub request_weakref: Request::WeakRef,
+    pub request_weakref: request::WeakRef,
+    // TODO(port): LIFETIMES.tsv = SHARED → Arc<AbortSignal>. Shim AbortSignal
+    // is opaque/Copy; revisit once bun_jsc::AbortSignal is real.
     pub signal: Option<Arc<AbortSignal>>,
-    pub method: HTTP::Method,
+    pub method: Method,
     pub cookies: Option<Rc<CookieMap>>,
 
     pub flags: Flags<DEBUG_MODE>,
@@ -122,21 +131,23 @@ pub struct RequestContext<ThisServer, const SSL_ENABLED: bool, const DEBUG_MODE:
     /// cleanup and safely observe null instead of UAF. File/.Locked
     /// bodies still protect() response_jsvalue, so the pointer stays
     /// valid for renderMetadata() on those paths.
-    pub response_weakref: Response::WeakRef,
-    pub blob: WebCore::Blob::Any,
+    pub response_weakref: response::WeakRef,
+    pub blob: AnyBlob,
 
     pub sendfile: SendfileContext,
     pub range: RangeRequest::Raw,
 
-    pub request_body_readable_stream_ref: WebCore::ReadableStream::Strong,
-    pub request_body: Option<Rc<WebCore::body::value::HiveRef>>,
+    pub request_body_readable_stream_ref: readable_stream::Strong,
+    // TODO(b2-blocked): `WebCore::body::value::HiveRef` — webcore gates the
+    // HiveArray pool. Raw ptr to the pooled `Body::Value` slot until that lands.
+    pub request_body: Option<NonNull<body::Value>>,
     pub request_body_buf: Vec<u8>,
     pub request_body_content_len: usize,
 
-    pub sink: Option<Box<ResponseStreamJSSink<SSL_ENABLED, HTTP3>>>,
+    pub sink: Option<NonNull<ResponseStreamJSSink<SSL_ENABLED, HTTP3>>>,
     pub byte_stream: Option<NonNull<ByteStream>>,
     /// This keeps the Response body's ReadableStream alive.
-    pub response_body_readable_stream_ref: WebCore::ReadableStream::Strong,
+    pub response_body_readable_stream_ref: readable_stream::Strong,
 
     /// Used in errors
     pub pathname: BunString,
@@ -157,25 +168,9 @@ pub struct RequestContext<ThisServer, const SSL_ENABLED: bool, const DEBUG_MODE:
 impl<ThisServer, const SSL_ENABLED: bool, const DEBUG_MODE: bool, const HTTP3: bool>
     RequestContext<ThisServer, SSL_ENABLED, DEBUG_MODE, HTTP3>
 where
-    ThisServer: ServerLike, // TODO(port): trait bound capturing the methods/fields used on ThisServer
+    ThisServer: ServerLike,
 {
     pub const IS_H3: bool = HTTP3;
-    const RESP_KIND: uws::ResponseKind = uws::ResponseKind::from(SSL_ENABLED, HTTP3);
-
-    pub fn set_signal_aborted(&mut self, reason: jsc::CommonAbortReason) {
-        if let Some(signal) = &self.signal {
-            if let Some(server) = self.server {
-                // SAFETY: server is valid while RequestContext is alive (BACKREF)
-                signal.signal(unsafe { (*server).global_this() }, reason);
-            }
-        }
-    }
-
-    pub fn dev_server(&self) -> Option<&crate::bake::DevServer> {
-        let server = self.server?;
-        // SAFETY: server is valid while RequestContext is alive (BACKREF)
-        unsafe { (*server).dev_server() }
-    }
 
     pub fn memory_cost(&self) -> usize {
         // The Sink and ByteStream aren't owned by this.
@@ -188,6 +183,60 @@ where
     #[inline]
     pub fn is_async(&self) -> bool {
         self.defer_deinit_until_callback_completes.is_none()
+    }
+
+    pub fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer> {
+        let server = self.server?;
+        // SAFETY: server is valid while RequestContext is alive (BACKREF)
+        unsafe { (*server).dev_server() }
+    }
+}
+
+// ─── per-request state machine bodies (gated) ────────────────────────────────
+// Everything below until the helper structs at the bottom is the request
+// state machine: render(), on_abort(), on_resolve(), do_render_*, sendfile,
+// stream handling, error handling. All of it touches:
+//   - bun_jsc method surface (JSValue::call/protect/as_, JSGlobalObject::throw_*,
+//     ConsoleObject, NativePromiseContext, host_fn macro)
+//   - bun_uws_sys::Response::{on_aborted, on_timeout, run_corked_with_type,
+//     try_end, write, end} (cycle-5-B is filling these)
+//   - WebCore::{Body, ReadableStream, FetchHeaders, Response} method bodies
+// TODO(b2-blocked): bun_jsc + bun_uws response surface.
+#[cfg(any())]
+mod _gated_state_machine {
+use super::*;
+use std::io::Write as _;
+use bun_core::Output;
+use bun_http_types::MimeType::MimeType;
+use bun_uws::AnyResponse;
+use bun_logger as logger;
+use bun_paths::PathBuffer;
+use bun_collections::ByteList;
+use crate::server::{FileResponseStream, HTTPStatusText};
+use crate::server::jsc::CallFrame;
+use crate::webcore::{Blob, ReadableStream};
+
+bun_core::declare_scope!(RequestContext, visible);
+bun_core::declare_scope!(ReadableStream, visible);
+
+macro_rules! ctx_log { ($($t:tt)*) => { bun_core::scoped_log!(RequestContext, $($t)*) }; }
+macro_rules! stream_log { ($($t:tt)*) => { bun_core::scoped_log!(ReadableStream, $($t)*) }; }
+
+impl<ThisServer, const SSL_ENABLED: bool, const DEBUG_MODE: bool, const HTTP3: bool>
+    RequestContext<ThisServer, SSL_ENABLED, DEBUG_MODE, HTTP3>
+where
+    TransportFor<SSL_ENABLED, HTTP3>: Transport,
+    ThisServer: ServerLike,
+{
+    const RESP_KIND: uws::ResponseKind = uws::ResponseKind::from(SSL_ENABLED, HTTP3);
+
+    pub fn set_signal_aborted(&mut self, reason: jsc::CommonAbortReason) {
+        if let Some(signal) = &self.signal {
+            if let Some(server) = self.server {
+                // SAFETY: server is valid while RequestContext is alive (BACKREF)
+                signal.signal(unsafe { (*server).global_this() }, reason);
+            }
+        }
     }
 
     fn drain_microtasks(&self) {
@@ -2962,7 +3011,7 @@ where
                         bytes: core::mem::take(bytes),
                     });
                     // }
-                    let _ = &'getter ();
+                    break 'getter;
                 }
                 this.request_body_buf = Vec::new();
 
@@ -3115,6 +3164,9 @@ pub struct PathnameFormatter<'a, ThisServer, const SSL: bool, const DBG: bool, c
     ctx: &'a RequestContext<ThisServer, SSL, DBG, H3>,
 }
 
+} // mod _gated_state_machine
+
+#[cfg(any())]
 impl<'a, ThisServer, const SSL: bool, const DBG: bool, const H3: bool> core::fmt::Display
     for PathnameFormatter<'a, ThisServer, SSL, DBG, H3>
 {
@@ -3141,10 +3193,10 @@ impl<'a, ThisServer, const SSL: bool, const DBG: bool, const H3: bool> core::fmt
 // `FileResponseStream` now.
 #[derive(Default, Clone, Copy)]
 pub struct SendfileContext {
-    pub remain: Blob::SizeType,
-    pub offset: Blob::SizeType,
+    pub remain: BlobSizeType,
+    pub offset: BlobSizeType,
     /// When non-zero, the Content-Range total (`/{total}` instead of `/*`).
-    pub total: Blob::SizeType,
+    pub total: BlobSizeType,
 }
 
 // `NewFlags(comptime debug_mode: bool)` — packed struct(u16). All fields are bool
@@ -3228,10 +3280,11 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
     }
 }
 
+#[cfg(any())] // TODO(b2-blocked): FetchHeaders::fast_get + MimeType::init/sniff/by_name.
 fn get_content_type(
     headers: Option<&FetchHeaders>,
-    blob: &WebCore::Blob::Any,
-) -> (MimeType, bool, bool) {
+    blob: &AnyBlob,
+) -> (bun_http_types::MimeType::MimeType, bool, bool) {
     let mut needs_content_type = true;
     let mut content_type_needs_free = false;
 
@@ -3265,21 +3318,10 @@ fn get_content_type(
     (content_type, needs_content_type, content_type_needs_free)
 }
 
-// TODO(port): trait capturing the surface of `ThisServer` used by RequestContext.
-// Phase B: replace with the concrete server trait from bun_runtime::server.
-pub trait ServerLike {
-    fn global_this(&self) -> &JSGlobalObject;
-    fn vm(&self) -> &VirtualMachine;
-    fn dev_server(&self) -> Option<&crate::bake::DevServer>;
-    fn config(&self) -> &bun_runtime::server::ServerConfig;
-    fn flags(&self) -> &bun_runtime::server::ServerFlags;
-    fn js_value(&self) -> &jsc::JsRef;
-    fn on_request_complete(&self);
-    fn request_pool_allocator(&self) -> &dyn core::any::Any; // TODO(port): concrete pool type
-    fn h3_request_pool_allocator(&self) -> &dyn core::any::Any; // TODO(port): concrete pool type
-    fn h3_alt_svc(&self) -> Option<&[u8]> { None }
-}
+// `ServerLike` lives in `crate::server` (mod.rs) and is impl'd for the four
+// `NewServer` monomorphizations.
 
+#[cfg(any())] // TODO(b2-blocked): ../api/welcome-page.html.gz path resolves at link time.
 static WELCOME_PAGE_HTML_GZ: &[u8] = include_bytes!("../api/welcome-page.html.gz");
 
 // ──────────────────────────────────────────────────────────────────────────

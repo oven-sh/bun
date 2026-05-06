@@ -42,7 +42,7 @@ impl Expect {
             ));
         }
 
-        let not = this.flags.not;
+        let not = this.flags.not();
         let mut pass = false;
 
         if !value.is_big_int() && !other_value.is_big_int() {

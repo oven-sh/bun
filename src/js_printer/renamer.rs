@@ -915,7 +915,7 @@ impl NameUse {
     }
 }
 
-enum UnusedName {
+pub enum UnusedName {
     NoCollision,
     Renamed(NameStr),
 }

@@ -33,15 +33,114 @@ pub fn create_crypto_error(global_this: &JSGlobalObject, err_code: u32) -> JSVal
     todo!("create_crypto_error: blocked on bun_boringssl_sys + bun_jsc")
 }
 
-// ─── stub re-exports (replace with real ones as submodules un-gate) ───────
+// ─── real type surface (B-2 struct/state un-gate) ─────────────────────────
+// Full method bodies (host fns, `from_js`, WorkPool jobs) stay in the gated
+// drafts above — they need `bun_jsc::{host_fn, JSGlobalObject method surface,
+// node::StringOrBuffer}` and `bun_crypto_std::{sha3, blake2}` /
+// `bun_crypto::pwhash` (not yet vendored).
 pub mod password_object {
+    /// Namespace marker — `Bun.password` is a plain JS object whose methods
+    /// dispatch to `JSPasswordObject` host fns; no native fields.
     pub struct PasswordObject;
     pub struct JSPasswordObject;
+
+    #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
+    #[repr(u8)]
+    pub enum Algorithm {
+        #[strum(serialize = "argon2i")]
+        Argon2i,
+        #[strum(serialize = "argon2d")]
+        Argon2d,
+        #[strum(serialize = "argon2id")]
+        Argon2id,
+        #[strum(serialize = "bcrypt")]
+        Bcrypt,
+    }
+
+    #[derive(Copy, Clone)]
+    pub struct Argon2Params {
+        pub time_cost: u32,
+        pub memory_cost: u32,
+    }
+    impl Argon2Params {
+        pub const DEFAULT: Self = Self { time_cost: 2, memory_cost: 65536 };
+    }
+
+    /// Zig: `Algorithm.Value = union(Algorithm)`.
+    #[derive(Copy, Clone)]
+    pub enum AlgorithmValue {
+        Argon2i(Argon2Params),
+        Argon2d(Argon2Params),
+        Argon2id(Argon2Params),
+        /// bcrypt cost (Zig: u6).
+        Bcrypt(u8),
+    }
+    impl AlgorithmValue {
+        pub const BCRYPT_DEFAULT: u8 = 10;
+        pub const DEFAULT: Self = Self::Argon2id(Argon2Params::DEFAULT);
+    }
+
+    impl Algorithm {
+        pub const LABEL: phf::Map<&'static [u8], Algorithm> = phf::phf_map! {
+            b"argon2i" => Algorithm::Argon2i,
+            b"argon2d" => Algorithm::Argon2d,
+            b"argon2id" => Algorithm::Argon2id,
+            b"bcrypt" => Algorithm::Bcrypt,
+        };
+    }
 }
 pub mod crypto_hasher {
-    pub struct CryptoHasher;
-    macro_rules! stub_hasher { ($($n:ident),*) => { $(pub struct $n;)* } }
-    stub_hasher!(MD4, MD5, SHA1, SHA224, SHA256, SHA384, SHA512, SHA512_256);
+    use super::{evp, hmac};
+
+    /// `union(enum)` → Rust enum with payload variants. `.classes.ts`
+    /// payload (the C++ JSCell wrapper stays generated; this is `m_ctx`).
+    pub enum CryptoHasher {
+        /// HMAC_CTX contains 3 EVP_CTX, so store as a pointer.
+        Hmac(Option<Box<hmac::HMAC>>),
+        Evp(evp::EVP),
+        Zig(CryptoHasherZig),
+    }
+
+    /// Wraps the Zig-stdlib hashers BoringSSL doesn't ship (sha3-*, blake2,
+    /// shake). `algorithm` discriminates; `state` is the in-progress digest
+    /// boxed behind an erased pointer because the variant set isn't closed
+    /// at this tier.
+    pub struct CryptoHasherZig {
+        pub algorithm: evp::Algorithm,
+        // TODO(b2-blocked): bun_crypto_std::{sha3,blake2} state union.
+        // Erased until the std-crypto shim crate exists.
+        pub state: *mut core::ffi::c_void,
+        pub digest_length: u16,
+    }
+
+    /// `bun.sha.Hashers.*` newtype hashers exposed as `Bun.SHA1` etc.
+    /// Each is a `.classes.ts` payload over the BoringSSL one-shot ctx.
+    macro_rules! decl_hasher {
+        ($($name:ident => $ctx:ty, $len:expr);* $(;)?) => {$(
+            pub struct $name {
+                pub ctx: $ctx,
+            }
+            impl $name {
+                pub const DIGEST_LENGTH: usize = $len;
+            }
+        )*};
+    }
+    // TODO(b2-blocked): bun_boringssl_sys::{MD4_CTX, MD5_CTX} — not in the
+    // bindgen output yet; sized opaque storage until added.
+    #[repr(C, align(8))]
+    pub struct Md4CtxStorage([u8; 96]);
+    #[repr(C, align(8))]
+    pub struct Md5CtxStorage([u8; 96]);
+    decl_hasher! {
+        MD4        => Md4CtxStorage,                 16;
+        MD5        => Md5CtxStorage,                 16;
+        SHA1       => bun_boringssl_sys::SHA_CTX,    20;
+        SHA224     => bun_boringssl_sys::SHA256_CTX, 28;
+        SHA256     => bun_boringssl_sys::SHA256_CTX, 32;
+        SHA384     => bun_boringssl_sys::SHA512_CTX, 48;
+        SHA512     => bun_boringssl_sys::SHA512_CTX, 64;
+        SHA512_256 => bun_boringssl_sys::SHA512_CTX, 32;
+    }
 }
 /// For usage in Rust (`src/runtime/crypto/PBKDF2.zig` `pub fn pbkdf2`).
 ///

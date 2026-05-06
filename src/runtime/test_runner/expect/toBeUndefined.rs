@@ -19,7 +19,7 @@ impl Expect {
 
         this.increment_expect_call_counter();
 
-        let not = this.flags.not;
+        let not = this.flags.not();
         let mut pass = false;
         if value.is_undefined() {
             pass = true;

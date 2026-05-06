@@ -3,7 +3,7 @@
 //! a JS streaming sink) onto the lsquic stream. Mirrors `h2_client/encode.rs`.
 
 use bun_core::err;
-use bun_str::strings;
+use bun_string::strings;
 use bun_uws::quic;
 
 use super::client_session::ClientSession;

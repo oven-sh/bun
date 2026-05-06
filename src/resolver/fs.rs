@@ -2224,7 +2224,9 @@ impl Path {
             name_to_use = &self.text[node_modules + 14..];
         }
 
-        let pkgname = bun_bundler::options::jsx::Pragma::parse_package_name(name_to_use);
+        // CYCLEBREAK: was `bun_bundler::options::jsx::Pragma::parse_package_name` —
+        // pure byte-slice helper, inlined as a free fn to break the resolver→bundler edge.
+        let pkgname = parse_package_name(name_to_use);
         if pkgname.is_empty() || !pkgname[0].is_ascii_alphanumeric() {
             return None;
         }
@@ -2232,30 +2234,33 @@ impl Path {
         Some(pkgname)
     }
 
+    // CYCLEBREAK: was `bun_bundler::options::{Loader, LoaderHashTable}` — both moved
+    // down to `bun_options_types::BundleEnums` (TYPE_ONLY per CYCLEBREAK.md).
     pub fn loader(
         &self,
-        loaders: &bun_bundler::options::LoaderHashTable,
-    ) -> Option<bun_bundler::options::Loader> {
+        loaders: &bun_options_types::BundleEnums::LoaderHashTable,
+    ) -> Option<bun_options_types::BundleEnums::Loader> {
+        use bun_options_types::BundleEnums::Loader;
         if self.is_data_url() {
-            return Some(bun_bundler::options::Loader::Dataurl);
+            return Some(Loader::Dataurl);
         }
 
         let ext = self.name.ext;
 
-        let result = loaders.get(ext).or_else(|| bun_bundler::options::Loader::from_string(ext));
-        if result.is_none() || result == Some(bun_bundler::options::Loader::Json) {
+        let result = loaders.get(ext).copied().or_else(|| Loader::from_string(ext));
+        if result.is_none() || result == Some(Loader::Json) {
             let str = self.name.filename;
             if str == b"package.json" || str == b"bun.lock" {
-                return Some(bun_bundler::options::Loader::Jsonc);
+                return Some(Loader::Jsonc);
             }
 
             if str.ends_with(b".jsonc") {
-                return Some(bun_bundler::options::Loader::Jsonc);
+                return Some(Loader::Jsonc);
             }
 
             if str.starts_with(b"tsconfig.") || str.starts_with(b"jsconfig.") {
                 if str.ends_with(b".json") {
-                    return Some(bun_bundler::options::Loader::Jsonc);
+                    return Some(Loader::Jsonc);
                 }
             }
         }

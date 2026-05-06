@@ -19,50 +19,50 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         mode: RelocateVarsMode,
     ) -> RelocateVars {
         let p = self;
-        let _ = (decls, mode);
-        todo!("b2-ast-E: maybe_relocate_vars_to_top_level body");
-        #[cfg(any())] // TODO(b2-ast-E): body — Scope parent walk, S::SExpr struct shape, kind_stops_hoisting
-        {
         // Only do this when the scope is not already top-level and when we're not inside a function.
-        if p.current_scope == p.module_scope {
+        if core::ptr::eq(p.current_scope, p.module_scope) {
             return RelocateVars { ok: false, ..Default::default() };
         }
 
-        let mut scope = p.current_scope;
-        while !scope.kind_stops_hoisting() {
-            if cfg!(debug_assertions) {
-                debug_assert!(scope.parent.is_some());
-            }
-            scope = scope.parent.unwrap();
+        // SAFETY: current_scope is arena-owned and valid for the parser lifetime; the
+        // parent backref chain terminates at module_scope (which has no parent).
+        let mut scope: *mut js_ast::Scope = p.current_scope;
+        while !unsafe { &*scope }.kind_stops_hoisting() {
+            let parent = unsafe { &*scope }.parent;
+            debug_assert!(parent.is_some());
+            scope = parent.unwrap().as_ptr();
         }
 
-        if scope != p.module_scope {
+        if !core::ptr::eq(scope, p.module_scope) {
             return RelocateVars { ok: false, ..Default::default() };
         }
 
-        let mut value: Expr = Expr {
-            loc: logger::Loc::EMPTY,
-            data: Expr::Data::EMissing(E::Missing {}),
-        };
-
+        // blocked_on: Binding2ExprWrapperHoisted is a `()` stub (P.rs round-C);
+        // Binding::to_expr requires `&mut impl ToExprWrapper`. The decl loop
+        // un-gates once the wrapper carries `&mut P` + wrap_identifier_hoisted.
+        #[cfg(any())]
+        {
+        let mut value: Expr = Expr::EMPTY;
         for decl in decls {
-            let binding = Binding::to_expr(&decl.binding, p.to_expr_wrapper_hoisted);
+            let binding = Binding::to_expr(&decl.binding, &mut p.to_expr_wrapper_hoisted);
             if let Some(decl_value) = decl.value {
-                value = value.join_with_comma(Expr::assign(binding, decl_value), p.allocator);
-            } else if mode == RelocateVars::Mode::ForInOrForOf {
-                value = value.join_with_comma(binding, p.allocator);
+                value = Expr::join_with_comma(value, Expr::assign(binding, decl_value));
+            } else if mode == RelocateVarsMode::ForInOrForOf {
+                value = Expr::join_with_comma(value, binding);
             }
         }
 
-        if matches!(value.data, Expr::Data::EMissing(_)) {
+        if matches!(value.data, js_ast::ExprData::EMissing(_)) {
             return RelocateVars { ok: true, ..Default::default() };
         }
 
-        RelocateVars {
-            stmt: p.s(S::SExpr { value }, value.loc),
+        return RelocateVars {
+            stmt: Some(p.s(S::SExpr { value, does_not_affect_tree_shaking: false }, value.loc)),
             ok: true,
-        }
+        };
         } // end #[cfg(any())]
+        let _ = (decls, mode);
+        RelocateVars { ok: false, ..Default::default() }
     }
 
     // EDot nodes represent a property access. This function may return an
@@ -78,8 +78,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     ) -> Option<Expr> {
         let p = self;
         let _ = (loc, target, name, name_loc, identifier_opts);
+        // blocked_on: P::{ignore_usage, ignore_usage_of_identifier_in_dot_chain, wrap_inlined_enum,
+        //   handle_identifier, record_usage, value_for_import_meta_main} live in the gated
+        //   `#[cfg(any())] impl P` block (P.rs:625); ImportItemForNamespaceMap::get_or_put_value;
+        //   p.ts_namespace (RecentlyVisitedTSNamespace) field shape.
         todo!("b2-ast-E: maybe_rewrite_property_access body");
-        #[cfg(any())] // TODO(b2-ast-E): body — Expr::Data variant accessors, import_items_for_namespace, ts_namespace, JscURL dep
+        #[cfg(any())]
         {
         // Zig labeled switch with `continue :sw` → loop + match with mutable scrutinee.
         let mut sw_data = target.data;
@@ -731,7 +735,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let p = self;
         let _ = (name, target, loc, name_loc);
         todo!("b2-ast-E: maybe_rewrite_property_access_for_namespace body");
-        #[cfg(any())] // TODO(b2-ast-E): body — TSNamespaceMemberData variants, ts_namespace field, E::Dot/Number shapes
+        #[cfg(any())]
+        // blocked_on: P::{ignore_usage_of_identifier_in_dot_chain, wrap_inlined_enum} gated (P.rs:625);
+        //   RecentlyVisitedTSNamespace.map field shape; E::Dot has no Default (needs full struct-init).
         {
         if let Some(value) = p.ts_namespace.map.unwrap().get(name) {
             match value.data {
@@ -801,76 +807,49 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
     pub fn check_if_defined_helper(&mut self, expr: Expr) -> Result<Expr, bun_core::Error> {
         let p = self;
-        let _ = expr;
-        todo!("b2-ast-E: check_if_defined_helper body");
-        #[cfg(any())] // TODO(b2-ast-E): body — E::Binary/Unary/String struct shapes
-        {
         // TODO(port): narrow error set
+        let flags = if matches!(expr.data, js_ast::ExprData::EIdentifier(_)) {
+            E::UnaryFlags::WAS_ORIGINALLY_TYPEOF_IDENTIFIER
+        } else {
+            E::UnaryFlags::empty()
+        };
+        let left = p.new_expr(
+            E::Unary { op: js_ast::OpCode::UnTypeof, value: expr, flags },
+            logger::Loc::EMPTY,
+        );
+        let right = p.new_expr(E::EString::from_static(b"undefined"), logger::Loc::EMPTY);
         Ok(p.new_expr(
-            E::Binary {
-                op: js_ast::Op::BinStrictEq,
-                left: p.new_expr(
-                    E::Unary {
-                        op: js_ast::Op::UnTypeof,
-                        value: expr,
-                        flags: E::Unary::Flags {
-                            was_originally_typeof_identifier: matches!(expr.data, Expr::Data::EIdentifier(_)),
-                            ..Default::default()
-                        },
-                    },
-                    logger::Loc::EMPTY,
-                ),
-                right: p.new_expr(
-                    E::String { data: b"undefined", ..Default::default() },
-                    logger::Loc::EMPTY,
-                ),
-            },
+            E::Binary { op: js_ast::OpCode::BinStrictEq, left, right },
             logger::Loc::EMPTY,
         ))
-        } // end #[cfg(any())]
     }
 
     pub fn maybe_defined_helper(&mut self, identifier_expr: Expr) -> Result<Expr, bun_core::Error> {
         let p = self;
-        let _ = identifier_expr;
-        todo!("b2-ast-E: maybe_defined_helper body");
-        #[cfg(any())] // TODO(b2-ast-E): body — E::If struct shape, find_symbol
-        {
         // TODO(port): narrow error set
+        let test_ = Self::check_if_defined_helper(p, identifier_expr)?;
+        let object_ref = p.find_symbol(logger::Loc::EMPTY, b"Object").expect("unreachable").r#ref;
+        let yes = p.new_expr(E::Identifier::init(object_ref), logger::Loc::EMPTY);
         Ok(p.new_expr(
-            E::If {
-                test_: Self::check_if_defined_helper(p, identifier_expr)?,
-                yes: p.new_expr(
-                    E::Identifier {
-                        ref_: p.find_symbol(logger::Loc::EMPTY, b"Object").expect("unreachable").ref_,
-                    },
-                    logger::Loc::EMPTY,
-                ),
-                no: identifier_expr,
-            },
+            E::If { test_, yes, no: identifier_expr },
             logger::Loc::EMPTY,
         ))
-        } // end #[cfg(any())]
     }
 
-    pub fn maybe_comma_spread_error(&mut self, _comma_after_spread: Option<logger::Loc>) {
+    pub fn maybe_comma_spread_error(&mut self, comma_after_spread: Option<logger::Loc>) {
         let p = self;
-        todo!("b2-ast-E: maybe_comma_spread_error body");
-        #[cfg(any())] // TODO(b2-ast-E): body — log.add_range_error signature (&[u8] vs &str)
-        {
-        let Some(comma_after_spread) = _comma_after_spread else { return };
+        let Some(comma_after_spread) = comma_after_spread else { return };
         if comma_after_spread.start == -1 {
             return;
         }
 
         p.log
             .add_range_error(
-                p.source,
+                Some(p.source),
                 logger::Range { loc: comma_after_spread, len: 1 },
                 b"Unexpected \",\" after rest pattern",
             )
             .expect("unreachable");
-        } // end #[cfg(any())]
     }
 }
 

@@ -1,7 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::console_object::Formatter;
-use bun_jsc::expect::Expect;
-use bun_jsc::expect::Expect::get_signature;
+use super::Expect;
+use super::get_signature;
 
 #[bun_jsc::host_fn(method)]
 pub fn to_be_array_of_size(
@@ -32,7 +32,7 @@ pub fn to_be_array_of_size(
 
     this.increment_expect_call_counter();
 
-    let not = this.flags.not;
+    let not = this.flags.not();
     let mut pass = value.js_type().is_array()
         && i32::try_from(value.get_length(global)?).unwrap() == size.to_int32();
 

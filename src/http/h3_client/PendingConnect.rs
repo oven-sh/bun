@@ -45,15 +45,23 @@ impl PendingConnect {
         // TODO(port): `ref` is a Rust keyword — assuming ClientSession exposes `ref_()`/`deref()`
         // SAFETY: pc is a live quic::PendingConnect C handle; addrinfo() yields its addrinfo
         // request slot which the DNS layer fills. self_ is the Box we just leaked above.
-        unsafe {
-            bun_dns::internal::register_quic((*pc).addrinfo().cast(), self_);
-        }
+        // TODO(b2-blocked): bun_dns::internal::register_quic — `internal` module
+        // is gated in bun_dns; wire once that crate un-gates its DNS cache.
+        let _ = (self_, unsafe { (*pc).addrinfo() });
     }
 
     pub fn r#loop(&self) -> *mut uws::Loop {
         self.loop_ptr
     }
+}
 
+// TODO(b2-blocked): on_dns_resolved/fail_session reach into ClientSession
+// fields (closed/pending/qsocket) and ClientContext::get/unregister — both
+// gated until the lib.rs `_phase_a_draft` impl block lands.
+#[cfg(any())]
+mod _phase_a_draft {
+use super::*;
+impl PendingConnect {
     /// SAFETY: `this` must be the pointer produced by `Box::into_raw` in `register`
     /// and must not be used after this call (it is freed here).
     pub unsafe fn on_dns_resolved(this: *mut PendingConnect) {
@@ -150,8 +158,10 @@ pub fn fail_session(session: *mut ClientSession, err: bun_core::Error) {
     unsafe { (*session).deref() };
 }
 
-// TODO(port): bun.Mutex — assuming `bun_threading::Mutex` with const `new()` + lock()/unlock()
+// TODO(port): bun.Mutex — assuming `bun_threading::Mutex` with const default + lock()/unlock()
 static RESOLVED_MUTEX: bun_threading::Mutex = bun_threading::Mutex::new();
+} // mod _phase_a_draft
+
 // SAFETY: only accessed while RESOLVED_MUTEX is held (see on_dns_resolved_threadsafe / drain_resolved).
 // TODO(port): `static mut` — Phase B may want UnsafeCell/AtomicPtr to satisfy edition-2024 lints.
 static mut RESOLVED_HEAD: *mut PendingConnect = ptr::null_mut();

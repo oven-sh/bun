@@ -3,15 +3,14 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use bun_collections::HashMap;
-use bun_http::MimeType;
-use bun_jsc::{JSGlobalObject, JSPromise, JSValue, JsResult, ZigString};
-use bun_paths::PathString;
-use bun_runtime::node::{self, PathLike, PathOrFileDescriptor};
-use bun_s3::{
+use bun_http_types::MimeType::MimeType;
+use crate::webcore::jsc::{JSGlobalObject, JSPromise, JSValue, JsResult};
+use bun_str::{strings, PathString, ZigString};
+use crate::webcore::node_types::{self as node, PathLike, PathOrFileDescriptor};
+use crate::webcore::s3_stub::{
     self as s3, MultiPartUploadOptions, S3Credentials, S3CredentialsWithOptions, S3DeleteResult,
     S3ListObjectsOptions, S3ListObjectsResult, ACL, StorageClass,
 };
-use bun_str::strings;
 use bun_url::URL;
 
 use super::{Blob, SizeType};
@@ -30,7 +29,7 @@ impl Default for Store {
     fn default() -> Self {
         Self {
             data: Data::Bytes(Bytes::default()),
-            mime_type: MimeType::NONE,
+            mime_type: bun_http_types::MimeType::NONE,
             ref_count: AtomicU32::new(1),
             is_all_ascii: None,
         }
@@ -60,7 +59,7 @@ impl Store {
     pub fn get_path(&self) -> Option<&[u8]> {
         match &self.data {
             Data::Bytes(bytes) => {
-                if bytes.stored_name.len() > 0 {
+                if !bytes.stored_name.slice().is_empty() {
                     Some(bytes.stored_name.slice())
                 } else {
                     None
@@ -80,7 +79,7 @@ impl Store {
     pub fn size(&self) -> SizeType {
         match &self.data {
             Data::Bytes(bytes) => bytes.len(),
-            Data::S3(_) | Data::File(_) => Blob::MAX_SIZE,
+            Data::S3(_) | Data::File(_) => super::MAX_SIZE,
         }
     }
 
@@ -94,10 +93,10 @@ impl Store {
     }
 
     /// Caller is responsible for derefing the Store.
-    pub fn to_any_blob(&mut self) -> Option<Blob::Any> {
+    pub fn to_any_blob(&mut self) -> Option<super::Any> {
         if self.has_one_ref() {
             if let Data::Bytes(bytes) = &mut self.data {
-                return Some(Blob::Any::InternalBlob(bytes.to_internal_blob()));
+                return Some(super::Any::InternalBlob(bytes.to_internal_blob()));
             }
         }
 
@@ -116,6 +115,10 @@ impl Store {
         this.deref();
     }
 
+    // TODO(b2-blocked): S3/file constructors call PathLike::to_thread_safe/clone,
+    // bun_paths::extension, bun_http_types::MimeType::by_extension_no_default — un-gate once
+    // node_types::PathLike is the real `crate::node::PathLike`.
+    #[cfg(any())]
     pub fn init_s3_with_referenced_credentials(
         pathlike: PathLike,
         mime_type: Option<MimeType>,
@@ -133,7 +136,7 @@ impl Store {
                     if !sliced.is_empty() {
                         let mut extname = bun_paths::extension(sliced);
                         extname = strings::trim(extname, b".");
-                        if let Some(mime) = MimeType::by_extension_no_default(extname) {
+                        if let Some(mime) = bun_http_types::MimeType::by_extension_no_default(extname) {
                             break 'brk Some(mime);
                         }
                     }
@@ -141,13 +144,14 @@ impl Store {
                 }),
                 credentials,
             )),
-            mime_type: MimeType::NONE,
+            mime_type: bun_http_types::MimeType::NONE,
             ref_count: AtomicU32::new(1),
             is_all_ascii: None,
         });
         Ok(store)
     }
 
+    #[cfg(any())]
     pub fn init_s3(
         pathlike: PathLike,
         mime_type: Option<MimeType>,
@@ -165,7 +169,7 @@ impl Store {
                     if !sliced.is_empty() {
                         let mut extname = bun_paths::extension(sliced);
                         extname = strings::trim(extname, b".");
-                        if let Some(mime) = MimeType::by_extension_no_default(extname) {
+                        if let Some(mime) = bun_http_types::MimeType::by_extension_no_default(extname) {
                             break 'brk Some(mime);
                         }
                     }
@@ -173,13 +177,14 @@ impl Store {
                 }),
                 credentials,
             )),
-            mime_type: MimeType::NONE,
+            mime_type: bun_http_types::MimeType::NONE,
             ref_count: AtomicU32::new(1),
             is_all_ascii: None,
         });
         Ok(store)
     }
 
+    #[cfg(any())]
     pub fn init_file(
         pathlike: PathOrFileDescriptor,
         mime_type: Option<MimeType>,
@@ -193,7 +198,7 @@ impl Store {
                         if !sliced.is_empty() {
                             let mut extname = bun_paths::extension(sliced);
                             extname = strings::trim(extname, b".");
-                            if let Some(mime) = MimeType::by_extension_no_default(extname) {
+                            if let Some(mime) = bun_http_types::MimeType::by_extension_no_default(extname) {
                                 break 'brk Some(mime);
                             }
                         }
@@ -202,7 +207,7 @@ impl Store {
                     break 'brk None;
                 }),
             )),
-            mime_type: MimeType::NONE,
+            mime_type: bun_http_types::MimeType::NONE,
             ref_count: AtomicU32::new(1),
             is_all_ascii: None,
         });
@@ -213,7 +218,7 @@ impl Store {
     pub fn init(bytes: Vec<u8>) -> Box<Store> {
         let store = Store::new(Store {
             data: Data::Bytes(Bytes::init(bytes)),
-            mime_type: MimeType::NONE,
+            mime_type: bun_http_types::MimeType::NONE,
             ref_count: AtomicU32::new(1),
             is_all_ascii: None,
         });
@@ -244,6 +249,8 @@ impl Store {
     // `allocator.free(file.pathlike.path.slice())` / `s3.deinit(allocator)` paths are
     // now handled by the owned types' own `Drop` impls.
 
+    // TODO(b2-blocked): node::PathOrFileDescriptorSerializeTag (gated in crate::node).
+    #[cfg(any())]
     pub fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         match &self.data {
@@ -329,24 +336,28 @@ pub struct File {
     pub seekable: Option<bool>,
     pub max_size: SizeType,
     /// milliseconds since ECMAScript epoch
-    pub last_modified: bun_jsc::JSTimeType,
+    // TODO(b2-blocked): bun_jsc::JSTimeType (= f64).
+    pub last_modified: f64,
 }
 
 impl Default for File {
     fn default() -> Self {
         Self {
-            pathlike: PathOrFileDescriptor::default(),
-            mime_type: MimeType::OTHER,
+            pathlike: PathOrFileDescriptor::Fd(bun_sys::Fd::INVALID),
+            mime_type: bun_http_types::MimeType::OTHER,
             is_atty: None,
             mode: 0,
             seekable: None,
-            max_size: Blob::MAX_SIZE,
-            last_modified: bun_jsc::INIT_TIMESTAMP,
+            max_size: super::MAX_SIZE,
+            // TODO(b2-blocked): bun_jsc::INIT_TIMESTAMP.
+            last_modified: 0.0,
         }
     }
 }
 
 impl File {
+    // TODO(b2-blocked): bun_jsc::* + crate::node::fs (gated).
+    #[cfg(any())]
     pub fn unlink(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         match &self.pathlike {
             PathOrFileDescriptor::Path(path_like) => {
@@ -378,7 +389,8 @@ impl File {
         }
 
         if self.mode != 0 {
-            return Some(bun_sys::is_regular_file(self.mode));
+            // bun.isRegularFile(mode) → S_ISREG check.
+            return Some(bun_core::kind_from_mode(self.mode) == bun_core::FileKind::File);
         }
 
         None
@@ -387,7 +399,7 @@ impl File {
     pub fn init(pathlike: PathOrFileDescriptor, mime_type: Option<MimeType>) -> File {
         File {
             pathlike,
-            mime_type: mime_type.unwrap_or(MimeType::OTHER),
+            mime_type: mime_type.unwrap_or(bun_http_types::MimeType::OTHER),
             ..Default::default()
         }
     }
@@ -404,20 +416,6 @@ pub struct S3 {
     pub request_payer: bool,
 }
 
-impl Default for S3 {
-    fn default() -> Self {
-        Self {
-            pathlike: PathLike::default(),
-            mime_type: MimeType::OTHER,
-            credentials: None,
-            options: MultiPartUploadOptions::default(),
-            acl: None,
-            storage_class: None,
-            request_payer: false,
-        }
-    }
-}
-
 impl S3 {
     pub fn is_seekable(&self) -> Option<bool> {
         Some(true)
@@ -427,6 +425,19 @@ impl S3 {
         debug_assert!(self.credentials.is_some());
         self.credentials.as_ref().unwrap()
     }
+
+    pub fn estimated_size(&self) -> usize {
+        self.pathlike.estimated_size()
+            + core::mem::size_of::<S3>()
+            + self.credentials.as_ref().map(|c| c.estimated_size()).unwrap_or(0)
+    }
+}
+
+// TODO(b2-blocked): bun_jsc::* + bun_s3 — S3 JSC integration (presign/stat/unlink/
+// list_objects/get_credentials_with_options/upload). All depend on JSPromise
+// resolved_promise_value, JSValue methods, and the real `bun_s3` crate.
+#[cfg(any())]
+impl S3 {
 
     pub fn get_credentials_with_options(
         &self,
@@ -661,7 +672,7 @@ impl S3 {
         S3 {
             credentials: Some(Arc::clone(&credentials)),
             pathlike,
-            mime_type: mime_type.unwrap_or(MimeType::OTHER),
+            mime_type: mime_type.unwrap_or(bun_http_types::MimeType::OTHER),
             ..Default::default()
         }
     }
@@ -671,7 +682,7 @@ impl S3 {
             // Zig: credentials.dupe() — heap-allocate a fresh refcounted copy.
             credentials: Some(Arc::new(credentials)),
             pathlike,
-            mime_type: mime_type.unwrap_or(MimeType::OTHER),
+            mime_type: mime_type.unwrap_or(bun_http_types::MimeType::OTHER),
             ..Default::default()
         }
     }
@@ -708,7 +719,7 @@ impl Bytes {
     pub fn init(bytes: Vec<u8>) -> Bytes {
         Bytes {
             data: bytes,
-            stored_name: PathString::empty(),
+            stored_name: PathString::default(),
         }
     }
 
@@ -725,11 +736,12 @@ impl Bytes {
         Ok(Bytes::init(list))
     }
 
-    pub fn to_internal_blob(&mut self) -> Blob::Internal {
+    pub fn to_internal_blob(&mut self) -> super::Internal {
         // PORT NOTE: reshaped — Zig manually rebuilt an ArrayList from ptr/len/cap then
         // zeroed self. With Vec<u8>, mem::take moves the buffer out and leaves an empty Vec.
-        Blob::Internal {
+        super::Internal {
             bytes: core::mem::take(&mut self.data),
+            was_string: false,
         }
     }
 

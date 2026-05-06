@@ -2,7 +2,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::console_object::Formatter as ConsoleFormatter;
 use bun_str::ZigString;
 
-use crate::diff_format::DiffFormatter;
+use super::DiffFormatter;
 use super::Expect;
 
 #[bun_jsc::host_fn(method)]
@@ -44,7 +44,7 @@ pub fn to_have_property(
         return global.throw(format_args!("Expected path must be a string or an array"));
     }
 
-    let not = this.flags.not;
+    let not = this.flags.not();
     let mut path_string = ZigString::EMPTY;
     expected_property_path.to_zig_string(&mut path_string, global)?;
 

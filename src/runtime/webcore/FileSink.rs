@@ -1,21 +1,29 @@
 use core::cell::Cell;
+use bun_sys::{self as sys, Fd};
+use crate::webcore::jsc::{EventLoopHandle, JSGlobalObject, JSValue, JsResult};
+
+bun_core::declare_scope!(FileSink, visible);
+
+// TODO(b2-blocked): bun_jsc::* + bun_io::StreamingWriter<Handler> + Sink::JSSink
+// — `FileSink` struct fields reference `streams::result::writable::Pending`
+// (gated), `streams::Signal` (gated), `readable_stream::Strong` (real), and
+// `bun_io::StreamingWriter<FileSink>` (handler trait not yet wired). The full
+// I/O state machine + JSSink wrapper is gated below; a minimal FileSink struct
+// is defined at the bottom of this file for type-level references from
+// `webcore::file_sink::FileSink`.
+#[cfg(any())]
+mod _gated {
+use super::*;
 use core::ffi::c_void;
 use core::mem::offset_of;
 use core::sync::atomic::{AtomicI32, Ordering};
-
-use bun_jsc::{CallFrame, EventLoopHandle, JSGlobalObject, JSValue, JsResult, Strong, Task};
-use bun_sys::{self as sys, Fd};
+use crate::webcore::jsc::{CallFrame, Strong, Task};
 use bun_io::{self, WriteResult, WriteStatus};
-use bun_output;
-
-use crate::webcore::{self, streams, AutoFlusher, Blob, PathOrFileDescriptor, ReadableStream, Sink};
+use crate::webcore::{self, streams, AutoFlusher, Blob, PathOrFileDescriptor, ReadableStream};
 // TODO(port): verify module path for `bun.spawn.Status`
 use crate::api::bun::spawn::Status as SpawnStatus;
-
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
-
-bun_output::declare_scope!(FileSink, visible);
 
 // ───────────────────────────────────────────────────────────────────────────
 // FileSink
@@ -84,7 +92,7 @@ pub static LIVE_COUNT: AtomicI32 = AtomicI32::new(0);
 pub mod testing_apis {
     use super::*;
 
-    #[bun_jsc::host_fn]
+    // TODO(b2-blocked): #[bun_jsc::host_fn]
     pub fn file_sink_live_count(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         Ok(JSValue::js_number(LIVE_COUNT.load(Ordering::Relaxed)))
     }
@@ -194,7 +202,7 @@ pub extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
 
 impl FileSink {
     pub fn on_attached_process_exit(&mut self, status: &SpawnStatus) {
-        bun_output::scoped_log!(FileSink, "onAttachedProcessExit()");
+        bun_core::scoped_log!(FileSink, "onAttachedProcessExit()");
 
         // `writer.close()` below re-enters `onClose` which releases the
         // keep-alive ref, and `stream.cancel`/`runPending` drain microtasks
@@ -254,7 +262,7 @@ impl FileSink {
     }
 
     pub fn on_write(&mut self, amount: usize, status: WriteStatus) {
-        bun_output::scoped_log!(FileSink, "onWrite({}, {:?})", amount, status);
+        bun_core::scoped_log!(FileSink, "onWrite({}, {:?})", amount, status);
 
         // `runPending()` below drains microtasks and may drop the JS wrapper's
         // ref, and `writer.end()`/`writer.close()` re-enter `onClose` which
@@ -318,7 +326,7 @@ impl FileSink {
     }
 
     pub fn on_error(&mut self, err: sys::Error) {
-        bun_output::scoped_log!(FileSink, "onError({:?})", err);
+        bun_core::scoped_log!(FileSink, "onError({:?})", err);
         if self.pending.state == streams::result::writable::PendingState::Pending {
             self.pending.result = streams::result::Writable::Err(err);
             if let Some(vm) = self.event_loop().bun_vm() {
@@ -348,12 +356,12 @@ impl FileSink {
     }
 
     pub fn on_ready(&mut self) {
-        bun_output::scoped_log!(FileSink, "onReady()");
+        bun_core::scoped_log!(FileSink, "onReady()");
         self.signal.ready(None, None);
     }
 
     pub fn on_close(&mut self) {
-        bun_output::scoped_log!(FileSink, "onClose()");
+        bun_core::scoped_log!(FileSink, "onClose()");
         if self.readable_stream.has() {
             if let Some(global) = self.event_loop_handle.global_object() {
                 if let Some(stream) = self.readable_stream.get(global) {
@@ -936,9 +944,9 @@ impl FileSink {
     }
 }
 
-#[bun_jsc::host_fn]
+// TODO(b2-blocked): #[bun_jsc::host_fn]
 fn on_resolve_stream(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    bun_output::scoped_log!(FileSink, "onResolveStream");
+    bun_core::scoped_log!(FileSink, "onResolveStream");
     let args = callframe.arguments();
     let this: *mut FileSink = args[args.len() - 1].as_promise_ptr::<FileSink>();
     // SAFETY: `this` is kept alive by the ref taken in `assign_to_stream`; this deref balances it.
@@ -948,9 +956,9 @@ fn on_resolve_stream(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsR
     Ok(JSValue::UNDEFINED)
 }
 
-#[bun_jsc::host_fn]
+// TODO(b2-blocked): #[bun_jsc::host_fn]
 fn on_reject_stream(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    bun_output::scoped_log!(FileSink, "onRejectStream");
+    bun_core::scoped_log!(FileSink, "onRejectStream");
     let args = callframe.arguments();
     let this: *mut FileSink = args[args.len() - 1].as_promise_ptr::<FileSink>();
     let err = args[0];
@@ -1019,7 +1027,7 @@ impl FileSink {
 }
 
 // `comptime { @export(&jsc.toJSHostFn(onResolveStream), ...) }`
-// The `#[bun_jsc::host_fn]` attribute above emits the `callconv(jsc.conv)` shim;
+// The `// TODO(b2-blocked): #[bun_jsc::host_fn]` attribute above emits the `callconv(jsc.conv)` shim;
 // re-export under the C symbol names the C++ side expects.
 // TODO(port): gate on `export_cpp_apis` feature in Phase B.
 #[unsafe(no_mangle)]
@@ -1027,6 +1035,19 @@ pub static Bun__FileSink__onResolveStream: bun_jsc::JSHostFn = on_resolve_stream
 #[unsafe(no_mangle)]
 pub static Bun__FileSink__onRejectStream: bun_jsc::JSHostFn = on_reject_stream::SHIM;
 // TODO(port): exact mechanism for exporting host-fn shims by name TBD in `bun_jsc`.
+
+} // mod _gated
+
+// Minimal real type so `webcore::FileSink` re-export type-checks. Full struct
+// (with IOWriter, streams::Signal, JSSink ref, etc.) lives in `_gated` above.
+// TODO(b2-blocked): replace with `pub use _gated::FileSink;` once un-gated.
+#[derive(Debug)]
+pub struct FileSink {
+    ref_count: Cell<u32>,
+    pub fd: Fd,
+    pub event_loop_handle: EventLoopHandle,
+    _opaque: [u8; 0],
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

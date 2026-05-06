@@ -9,7 +9,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
 use bun_core::err;
-use bun_str::strings;
+use bun_string::strings;
 use bun_uws::quic;
 
 use crate::h3_client::client_context::ClientContext;
@@ -21,7 +21,7 @@ use crate::H3Client as H3;
 use crate::HttpClient;
 use bun_picohttp as picohttp;
 
-bun_output::declare_scope!(h3_client, hidden);
+bun_core::declare_scope!(h3_client, hidden);
 
 pub struct ClientSession {
     /// Ref holders: the `ClientContext.sessions` registry while listed (1), the
@@ -201,7 +201,7 @@ impl ClientSession {
         self.closed = true;
         let port = self.port;
         let host: Box<[u8]> = Box::from(&*self.hostname);
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             h3_client,
             "retry {}:{} after {}",
             bstr::BStr::new(&host),

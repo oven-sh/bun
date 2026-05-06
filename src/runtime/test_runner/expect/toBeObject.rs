@@ -20,7 +20,7 @@ impl Expect {
 
         this.increment_expect_call_counter();
 
-        let not = this.flags.not;
+        let not = this.flags.not();
         let pass = value.is_object() != not;
 
         if pass {

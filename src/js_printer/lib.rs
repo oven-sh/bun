@@ -6,9 +6,9 @@
 //! compile against the real `bun_js_parser::ast::{e,s,b,g,op,expr,stmt}`
 //! types. Remaining `#[cfg(any())]` islands are leaf optimizations / entry
 //! points blocked on lower-tier surface (see TODO(b2-blocked) markers below):
-//! the destructuring-minify rewrite, template-inlining fold, the ESM-to-CJS
-//! __export emission path, `print_dev_server_module`, and the top-level
-//! `print_*` driver fns in `__gated_entry_points`.
+//! the template-inlining fold, the ESM-to-CJS __export emission path,
+//! `print_dev_server_module`, the source-map self-borrow in `init`, and the
+//! top-level `print_*` driver fns in `__gated_entry_points`.
 
 #![allow(unused, nonstandard_style, clippy::all)]
 #![allow(unsafe_op_in_unsafe_fn)]
@@ -249,11 +249,64 @@ pub mod analyze_transpiled_module {
         }
     }
 
+    /// Heap byte buffer with guaranteed 4-byte alignment.
+    ///
+    /// `as_ref()` below reinterprets interior ranges as `&[u32]` / `&[StringID]` /
+    /// `&[FetchParameters]` via `slice::from_raw_parts`. A plain `Box<[u8]>` only
+    /// guarantees `align(1)`, so forming an aligned `&[u32]` from it is UB. The Zig
+    /// sibling sidesteps this by typing the fields `[]align(1) const u32`
+    /// (analyze_transpiled_module.zig); Rust has no under-aligned slice type, so we
+    /// instead over-align the allocation itself.
+    struct AlignedBytes {
+        ptr: core::ptr::NonNull<u8>,
+        len: usize,
+    }
+    // SAFETY: owns a unique heap allocation; no interior shared mutability.
+    unsafe impl Send for AlignedBytes {}
+    unsafe impl Sync for AlignedBytes {}
+    impl AlignedBytes {
+        fn copy_from(src: &[u8]) -> Self {
+            let len = src.len();
+            if len == 0 {
+                // Dangling u32 pointer is non-null and 4-aligned — valid for any
+                // zero-length `from_raw_parts::<u32>` we might form over it.
+                return Self { ptr: core::ptr::NonNull::<u32>::dangling().cast(), len: 0 };
+            }
+            let layout = core::alloc::Layout::from_size_align(len, 4).unwrap();
+            // SAFETY: layout size is non-zero.
+            let raw = unsafe { std::alloc::alloc(layout) };
+            let ptr = core::ptr::NonNull::new(raw)
+                .unwrap_or_else(|| std::alloc::handle_alloc_error(layout));
+            // SAFETY: `ptr` is a fresh allocation of `len` bytes; regions do not overlap.
+            unsafe { core::ptr::copy_nonoverlapping(src.as_ptr(), ptr.as_ptr(), len) };
+            Self { ptr, len }
+        }
+        #[inline]
+        fn as_ptr(&self) -> *const u8 { self.ptr.as_ptr() }
+    }
+    impl core::ops::Deref for AlignedBytes {
+        type Target = [u8];
+        #[inline]
+        fn deref(&self) -> &[u8] {
+            // SAFETY: `ptr` is valid for `len` initialized bytes for our lifetime.
+            unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+        }
+    }
+    impl Drop for AlignedBytes {
+        fn drop(&mut self) {
+            if self.len != 0 {
+                let layout = core::alloc::Layout::from_size_align(self.len, 4).unwrap();
+                // SAFETY: same layout as `copy_from` allocated with.
+                unsafe { std::alloc::dealloc(self.ptr.as_ptr(), layout) };
+            }
+        }
+    }
+
     /// Owns a duplicated byte buffer and exposes a `ModuleInfoDeserialized` view into it.
     /// Replaces Zig's `.owner = .allocated_slice` arm.
     pub struct ModuleInfoDeserializedOwned {
         #[allow(dead_code)]
-        backing: Box<[u8]>,
+        backing: AlignedBytes,
         // Offsets/lengths into `backing` — reconstructed as slices in `as_ref()`.
         record_kinds: (usize, usize),
         buffer: (usize, usize),
@@ -265,7 +318,7 @@ pub mod analyze_transpiled_module {
     }
     impl ModuleInfoDeserializedOwned {
         pub fn create(source: &[u8]) -> Result<Box<Self>, BadModuleInfo> {
-            let duped: Box<[u8]> = source.to_vec().into_boxed_slice();
+            let duped = AlignedBytes::copy_from(source);
             let mut off = 0usize;
             macro_rules! eat { ($len:expr) => {{
                 let len = $len;
@@ -315,8 +368,10 @@ pub mod analyze_transpiled_module {
         }
         pub fn as_ref(&self) -> ModuleInfoDeserialized<'_> {
             // SAFETY: offsets/lengths were validated in `create`; backing types are
-            // #[repr(transparent)] u32 / #[repr(u8)] and the serialized stream is
-            // 4-byte aligned at every u32 boundary by construction.
+            // #[repr(transparent)] u32 / #[repr(u8)]; the serialized stream keeps every
+            // u32 field at a 4-byte offset by construction; and `backing` is an
+            // `AlignedBytes` whose base pointer is 4-byte aligned, so each
+            // `.add(off).cast::<u32>()` yields a properly-aligned pointer.
             unsafe {
                 ModuleInfoDeserialized {
                     record_kinds: core::slice::from_raw_parts(
@@ -1428,10 +1483,24 @@ pub(crate) fn set_flag<T: enumset::EnumSetType>(set: &mut enumset::EnumSet<T>, f
 // TODO(b2-blocked): bun_string::strings::contains_non_bmp_code_point_or_is_invalid_identifier
 #[inline]
 pub(crate) fn contains_non_bmp_code_point_or_is_invalid_identifier(alias: &[u8]) -> bool {
-    // Conservative: if it's not a valid identifier, take the quoted-string path.
-    // Non-BMP detection is folded into `is_identifier`'s WTF-8 walk; matching the
-    // Zig fast-path exactly is deferred until the highway helper lands upstream.
-    !js_ast::lexer::is_identifier(alias)
+    // Mirrors src/string/immutable/unicode.zig:containsNonBmpCodePointOrIsInvalidIdentifier.
+    // NB: `is_identifier` *accepts* non-BMP ID chars; the Zig deliberately also flags any
+    // c > 0xFFFF (even valid identifier chars) so the printer quotes such aliases.
+    let iter = CodepointIterator::init(alias);
+    let mut curs = strings::Cursor::default();
+
+    if !iter.next(&mut curs) {
+        return true;
+    }
+    if curs.c > 0xFFFF || !js_ast::lexer::is_identifier_start(curs.c) {
+        return true;
+    }
+    while iter.next(&mut curs) {
+        if curs.c > 0xFFFF || !js_ast::lexer::is_identifier_continue(curs.c) {
+            return true;
+        }
+    }
+    false
 }
 // TODO(b2-blocked): bun_string::strings::encode_wtf8_rune_t (generic CodeUnit variant)
 #[inline]
@@ -1996,10 +2065,6 @@ where
             unreachable!();
         }
 
-        // TODO(b2-blocked): bun_js_parser::ast::b::Property: Default + Binding::init
-        // — destructuring-minify rewrite needs B::Property defaults and a
-        // Binding constructor that the lower-tier crate doesn't yet expose.
-        #[cfg(any())]
         if bun_core::FeatureFlags::SAME_TARGET_BECOMES_DESTRUCTURING {
             // Minify
             //
@@ -2048,21 +2113,19 @@ where
                 {
                     // Reset the temporary bindings array early on
                     let mut temp_bindings = core::mem::take(&mut self.temporary_bindings);
-                    // PORT NOTE: Zig's defer swaps temp_bindings back if not replaced — Drop handles cleanup.
-                    let _guard = scopeguard::guard((), |_| {
-                        // TODO(port): replicate the Zig swap-back semantics in Phase B (see js_printer.zig:1251)
-                    });
                     temp_bindings.reserve(2);
-                    // PERF(port): was assume_capacity
+                    // PERF(port): was appendAssumeCapacity — profile in Phase B
                     temp_bindings.push(B::Property {
+                        flags: Default::default(),
                         key: Expr::init(E::String::init(target_e_dot.name), target_e_dot.name_loc),
                         value: decls[0].binding,
-                        ..Default::default()
+                        default_value: None,
                     });
                     temp_bindings.push(B::Property {
+                        flags: Default::default(),
                         key: Expr::init(E::String::init(second_e_dot.name), second_e_dot.name_loc),
                         value: decls[1].binding,
-                        ..Default::default()
+                        default_value: None,
                     });
 
                     decls = &decls[2..];
@@ -2076,7 +2139,7 @@ where
                             break;
                         }
 
-                        let e_dot = match &decl.value.as_ref().unwrap().data { ExprData::EDot(d) => d, _ => unreachable!() };
+                        let e_dot = match &decl.value.as_ref().unwrap().data { ExprData::EDot(d) => *d, _ => unreachable!() };
                         if !matches!(e_dot.target.data, ExprData::EIdentifier(_)) || e_dot.optional_chain.is_some() {
                             break;
                         }
@@ -2087,19 +2150,34 @@ where
                         }
 
                         temp_bindings.push(B::Property {
+                            flags: Default::default(),
                             key: Expr::init(E::String::init(e_dot.name), e_dot.name_loc),
                             value: decl.binding,
-                            ..Default::default()
+                            default_value: None,
                         });
                         decls = &decls[1..];
                     }
                     let mut b_object = B::Object {
-                        properties: &temp_bindings[..], // TODO(port): lifetime — temp_bindings is local
+                        // SAFETY: `temp_bindings`' heap buffer is stable until the
+                        // matching clear()/drop below; `print_binding` only reads it.
+                        properties: temp_bindings.as_mut_slice() as *mut [B::Property],
                         is_single_line: true,
                     };
-                    let binding = Binding::init(&mut b_object, target_e_dot.target.loc);
+                    // PORT NOTE: `Binding::init(*B.Object, loc)` is gated upstream;
+                    // inline its body — it just tags the union and copies `loc`.
+                    let binding = Binding {
+                        loc: target_e_dot.target.loc,
+                        data: BindingData::BObject(&mut b_object as *mut B::Object),
+                    };
                     self.print_binding(binding, tlm);
-                    self.temporary_bindings = temp_bindings;
+                    // Zig defer (js_printer.zig:1252): if recursion replaced
+                    // `self.temporary_bindings`, drop our local; else clear+restore.
+                    if self.temporary_bindings.capacity() > 0 {
+                        drop(temp_bindings);
+                    } else {
+                        temp_bindings.clear();
+                        self.temporary_bindings = temp_bindings;
+                    }
                 }
 
                 self.print_whitespacer(ws!(b" = "));
@@ -2150,7 +2228,7 @@ where
     }
 
     pub fn print_symbol(&mut self, ref_: Ref) {
-        debug_assert!(!ref_.is_null()); // Invalid Symbol
+        debug_assert!(!ref_.is_empty()); // Invalid Symbol
         let name = self.name_for_symbol(ref_);
         self.print_identifier(name);
     }
@@ -2585,7 +2663,7 @@ where
                     }
                 }
             } else {
-                if !meta.exports_ref.is_null() {
+                if !meta.exports_ref.is_empty() {
                     self.print_symbol(meta.exports_ref);
                 }
             }
@@ -3555,10 +3633,11 @@ where
                 self.print_string_literal_e_string(&e, true);
             }
             ExprData::ETemplate(e) => {
-                // TODO(b2-blocked): bun_js_parser::E::TemplatePart: Clone + E::Template::fold reshape
-                // — the inlining-rewrite path requires `TemplatePart: Clone` and a
-                // `fold(&mut self, &Bump, Loc)` overload that the lower-tier crate
-                // doesn't yet expose under matching arity.
+                // TODO(b2-blocked): bun_js_parser::ast::e::Template::fold — the
+                // `impl Template { fn fold(&mut self, &Bump, Loc) -> Expr }` block
+                // is itself `#[cfg(any())]`-gated in E.rs (and `TemplatePart` is
+                // not `Copy`/`Clone`). Re-gate the inlining-rewrite path until
+                // those land.
                 #[cfg(any())]
                 if e.tag.is_none() && (self.options.minify_syntax || self.was_lazy_export) {
                     let mut replaced: Vec<E::TemplatePart> = Vec::new();
@@ -5824,12 +5903,16 @@ where
         self.print_decls(keyword, decls, ExprFlag::none(), tlm);
         self.print_semicolon_after_statement();
         // TODO(b2-blocked): bun_js_parser::runtime::Imports::__export — the
-        // real `Runtime::Imports` is gated upstream; the stub has no fields.
+        // full `runtime.rs` is `#[cfg(any())]`-gated upstream; the active
+        // `parser.rs::Runtime::Imports` stub is a fieldless unit struct.
         #[cfg(any())]
         if REWRITE_ESM_TO_CJS && is_export && !decls.is_empty() {
+            // PORT NOTE: Zig stored `?GeneratedSymbol`; the Rust `runtime::Imports`
+            // flattens this to `Option<Ref>`, so no `.ref_` projection.
+            let export_ref = self.options.runtime_imports.__export.unwrap();
             for decl in decls {
                 self.print_indent();
-                self.print_symbol(self.options.runtime_imports.__export.as_ref().unwrap().ref_);
+                self.print_symbol(export_ref);
                 self.print(b"(");
                 self.print_space_before_identifier();
                 self.print_module_export_symbol();
@@ -5838,21 +5921,27 @@ where
 
                 match &decl.binding.data {
                     BindingData::BIdentifier(ident) => {
+                        // SAFETY: arena-owned; outlives the print pass.
+                        let ident = unsafe { &**ident };
                         self.print(b"{");
                         self.print_space();
-                        self.print_symbol(ident.ref_);
+                        self.print_symbol(ident.r#ref);
                         if self.options.minify_whitespace { self.print(b":()=>("); } else { self.print(b": () => ("); }
-                        self.print_symbol(ident.ref_);
+                        self.print_symbol(ident.r#ref);
                         self.print(b") }");
                     }
                     BindingData::BObject(obj) => {
+                        // SAFETY: arena-owned; outlives the print pass.
+                        let obj = unsafe { &**obj };
                         self.print(b"{");
                         self.print_space();
-                        for prop in obj.properties.iter() {
+                        for prop in slice_of(obj.properties).iter() {
                             if let BindingData::BIdentifier(ident) = &prop.value.data {
-                                self.print_symbol(ident.ref_);
+                                // SAFETY: arena-owned; outlives the print pass.
+                                let ident = unsafe { &**ident };
+                                self.print_symbol(ident.r#ref);
                                 if self.options.minify_whitespace { self.print(b":()=>("); } else { self.print(b": () => ("); }
-                                self.print_symbol(ident.ref_);
+                                self.print_symbol(ident.r#ref);
                                 self.print(b"),");
                                 self.print_newline();
                             }

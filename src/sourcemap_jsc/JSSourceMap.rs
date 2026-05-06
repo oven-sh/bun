@@ -75,32 +75,33 @@ fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
 
     let source_url = source_url_slice.slice();
 
-    // TODO(b2-blocked): bun_jsc::JsClass — `to_js` codegen accessor not yet emitted by
-    // generate-classes.ts for Rust. The `SavedSourceMap` lookup itself now type-checks
-    // (`bun_jsc::VirtualMachine::source_mappings().get(&[u8]) -> Option<*mut ParsedSourceMap>`),
-    // but `JSSourceMap.sourcemap` is currently `Arc<ParsedSourceMap>` whereas the
-    // intrusive-refcount contract returns `*mut ParsedSourceMap`; reconciling that
-    // (likely `bun_ptr::RefPtr<ParsedSourceMap>`) is the same Phase-B JsClass pass.
+    let vm = global.bun_vm();
+    let Some(source_map) = vm.source_mappings().get(source_url) else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    // Zig: `bun.default_allocator.alloc(bun.String, 1) catch return globalObject.throwOutOfMemory()`
+    // Rust Box allocation aborts on OOM (handleOom semantics).
+    let fake_sources_array: Box<[bstring::String]> = Box::new([source_url_string.dupe_ref()]);
+
+    // TODO(b2-blocked): bun_sourcemap::ParsedSourceMap::deref_ — `SavedSourceMap::get`
+    // returns an intrusive `*mut ParsedSourceMap` (+1 ref) but the lower-tier
+    // `ParsedSourceMap` exposes only `ref_count: AtomicU32` with no
+    // `ref_()`/`deref_()`/`AnyRefCounted` impl yet, so we cannot adopt it into
+    // `RefPtr` nor reconcile with the `Arc<ParsedSourceMap>` field. Once that
+    // lands, change `JSSourceMap.sourcemap` to `bun_ptr::RefPtr<ParsedSourceMap>`
+    // and use `RefPtr::adopt_ref(source_map)` here + `RefPtr::new(mapping_list)`
+    // in `constructor`.
     #[cfg(any())]
     {
-        let vm = global.bun_vm();
-        let Some(source_map) = vm.source_mappings().get(source_url) else {
-            return Ok(JSValue::UNDEFINED);
-        };
-        // Zig: `bun.default_allocator.alloc(bun.String, 1) catch return globalObject.throwOutOfMemory()`
-        // Rust Box allocation aborts on OOM (handleOom semantics).
-        let fake_sources_array: Box<[bstring::String]> = Box::new([source_url_string.dupe_ref()]);
-
         let this = Box::new(JSSourceMap {
             sourcemap: source_map,
             sources: fake_sources_array,
             names: Box::default(),
         });
-
-        return Ok(this.to_js(global));
+        return Ok(JSSourceMap::to_js(this, global));
     }
-    let _ = (source_url, &source_url_string);
-    todo!("blocked on bun_jsc::SavedSourceMap::get / bun_jsc::JsClass")
+    let _ = (source_map, fake_sources_array);
+    todo!("blocked on bun_sourcemap::ParsedSourceMap::deref_ / bun_ptr::AnyRefCounted")
 }
 
 impl JSSourceMap {
@@ -203,6 +204,13 @@ impl JSSourceMap {
     // TODO(b2-blocked): bun_jsc::JsClass — generate-classes.ts emits the real
     // `*_set_cached`/`to_js` thunks; these forward to extern stubs so the
     // constructor body type-checks today.
+    #[inline]
+    fn to_js(this: Box<Self>, global: &JSGlobalObject) -> JSValue {
+        // Codegen body (ZigGeneratedClasses.zig:21141): `SourceMap__create(global, this)`.
+        // SAFETY: `global` is live; `this` is the freshly-constructed payload whose
+        // ownership transfers to the C++ JSCell wrapper (`m_ctx`).
+        unsafe { SourceMap__create(global.as_ptr(), Box::into_raw(this)) }
+    }
     #[inline]
     fn payload_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
         // SAFETY: `global` is live; `this_value` is the freshly-constructed wrapper.
@@ -340,6 +348,10 @@ fn get_line_column(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<[i32;
 
 // TODO(port): move to sourcemap_jsc_sys (or bun_jsc_sys)
 unsafe extern "C" {
+    // Codegen-emitted constructor thunk (`js.toJS` → `SourceMap__create` in
+    // ZigGeneratedClasses.zig); ownership of `ctx` transfers to the C++ JSCell.
+    fn SourceMap__create(globalObject: *mut JSGlobalObject, ctx: *mut JSSourceMap) -> JSValue;
+
     // Codegen-emitted cached-value setters (see `js.payloadSetCached` in
     // JSSourceMap.zig); name matches generated_classes.ts output.
     fn SourceMapPrototype__payloadSetCachedValue(

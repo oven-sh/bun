@@ -21,7 +21,7 @@ use super::stream::Stream;
 // module name as this directory; Phase B resolves the actual path.
 use crate::H3Client as H3;
 
-bun_output::declare_scope!(h3_client, hidden);
+bun_core::declare_scope!(h3_client, hidden);
 
 pub fn register(qctx: &mut quic::Context) {
     qctx.on_hsk_done(on_hsk_done);
@@ -40,7 +40,7 @@ extern "C" fn on_hsk_done(qs: *mut quic::Socket, ok: c_int) {
     let Some(mut session) = *qs.ext::<ClientSession>() else { return };
     // SAFETY: ext slot was set by ClientSession on connect; live until on_conn_close clears it.
     let session = unsafe { session.as_mut() };
-    bun_output::scoped_log!(h3_client, "hsk_done ok={} pending={}", ok, session.pending.len());
+    bun_core::scoped_log!(h3_client, "hsk_done ok={} pending={}", ok, session.pending.len());
     if ok == 0 {
         session.closed = true;
         return;
@@ -62,7 +62,7 @@ extern "C" fn on_goaway(qs: *mut quic::Socket) {
     let Some(mut session) = *qs.ext::<ClientSession>() else { return };
     // SAFETY: ext slot is live until on_conn_close clears it.
     let session = unsafe { session.as_mut() };
-    bun_output::scoped_log!(
+    bun_core::scoped_log!(
         h3_client,
         "goaway {}:{}",
         BStr::new(&session.hostname),
@@ -81,11 +81,11 @@ extern "C" fn on_conn_close(qs: *mut quic::Socket) {
     session.qsocket = None;
     let mut buf = [0u8; 256];
     let st = qs.status(&mut buf);
-    bun_output::scoped_log!(
+    bun_core::scoped_log!(
         h3_client,
         "conn_close status={} '{}'",
         st,
-        BStr::new(bun_str::slice_to_nul(&buf))
+        BStr::new(bun_string::slice_to_nul(&buf))
     );
     if let Some(ctx) = ClientContext::get() {
         ctx.unregister(session);
@@ -138,7 +138,7 @@ extern "C" fn on_stream_open(s: *mut quic::Stream, is_client: c_int) {
     };
     stream.qstream = Some(NonNull::from(&mut *s));
     *s.ext::<Stream>() = Some(NonNull::from(&mut *stream));
-    bun_output::scoped_log!(h3_client, "stream_open");
+    bun_core::scoped_log!(h3_client, "stream_open");
     if let Err(e) = encode::write_request(session, stream, s) {
         session.fail(stream, e);
     }
@@ -233,7 +233,7 @@ extern "C" fn on_stream_close(s: *mut quic::Stream) {
     let stream = unsafe { stream.as_mut() };
     *s.ext::<Stream>() = None;
     stream.qstream = None;
-    bun_output::scoped_log!(
+    bun_core::scoped_log!(
         h3_client,
         "stream_close status={} delivered={}",
         stream.status_code,

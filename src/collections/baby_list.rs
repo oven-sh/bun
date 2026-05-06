@@ -165,6 +165,29 @@ impl<T> BabyList<T> {
         }
     }
 
+    /// Wrap a bump-arena (or otherwise externally-owned) slice as a BabyList
+    /// without taking ownership. `Drop` will *not* free the buffer (origin is
+    /// `Borrowed` in debug; in release `cap == len` and the global allocator
+    /// is never asked to free arena memory because callers never grow it).
+    ///
+    /// Used by the JS parser for `&'bump mut [T]` AST node lists where the
+    /// Zig side passed `BabyList(T).fromOwnedSlice(arena_slice)`.
+    ///
+    /// # Safety
+    /// Caller must not call any growth method (`append`, `ensure_*`) on the
+    /// resulting list — the buffer was not allocated by the global allocator.
+    pub unsafe fn from_bump_slice(items: &mut [T]) -> Self {
+        let len = items.len();
+        Self {
+            // SAFETY: slice pointer is non-null (dangling for len==0 via [T]::as_mut_ptr).
+            ptr: unsafe { NonNull::new_unchecked(items.as_mut_ptr()) },
+            len: u32::try_from(len).unwrap(),
+            cap: u32::try_from(len).unwrap(),
+            #[cfg(debug_assertions)]
+            origin: Origin::Borrowed { trace: None },
+        }
+    }
+
     /// Same requirements as `from_owned_slice`.
     /// PORT NOTE: takes a `Vec<T>` with len==0 (the buffer); Zig took a raw `[]Type`.
     pub fn init_with_buffer_vec(buffer: Vec<T>) -> Self {

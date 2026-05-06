@@ -10,16 +10,32 @@ use core::ffi::c_void;
 use core::fmt::Write as _;
 
 use bun_collections::HashMap;
-use bun_core::{Environment, Mutex, Output, StackCheck};
-use bun_jsc::{
-    self as jsc, CallFrame, EventType, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
+use bun_core::{Environment, Output, StackCheck};
+use crate as jsc;
+use crate::{
+    CallFrame, EventType, JSGlobalObject, JSPromise, JSValue, JsResult,
     ZigException, ZigString,
 };
-use bun_str::{self as strings, String as BunString};
+use crate::virtual_machine::VirtualMachine;
+use bun_string::{self as strings, String as BunString};
 
-use bun_runtime::cli::Command as CLI;
-use bun_js_parser::{js_lexer as JSLexer, js_printer as JSPrinter};
-use bun_runtime::test_runner::pretty_format::JestPrettyFormat;
+// High-tier deps (CLI command-line, JS lexer/printer, Jest pretty-format) —
+// gated; bodies that reference them are gated below.
+// TODO(port): bun_runtime / bun_js_parser cycle.
+#[cfg(any())] use bun_runtime::cli::Command as CLI;
+#[cfg(any())] use bun_js_parser::{js_lexer as JSLexer, js_printer as JSPrinter};
+#[cfg(any())] use bun_runtime::test_runner::pretty_format::JestPrettyFormat;
+
+/// Local front for `bun_core::pretty_fmt!` that accepts a runtime / const-
+/// generic bool. Zig's `Output.prettyFmt(comptime fmt, comptime enable_colors)`
+/// took a comptime bool; the Rust macro only matches `true`/`false` literals,
+/// so monomorphized callers (`<const C: bool>`) branch here.
+// PERF(port): was comptime bool dispatch — both arms are `&'static str`.
+macro_rules! pfmt {
+    ($fmt:expr, $colors:expr) => {
+        if $colors { ::bun_core::pretty_fmt!($fmt, true) } else { ::bun_core::pretty_fmt!($fmt, false) }
+    };
+}
 
 // ───────────────────────────────────────────────────────────────────────────
 // ConsoleObject
@@ -47,8 +63,8 @@ pub struct ConsoleObject {
     // we restructure as direct buffered writer fields and expose them via
     // `error_writer()` / `writer()` getters (LIFETIMES.tsv: BORROW_FIELD →
     // self-ref; restructure as getter).
-    error_writer_backing: Output::source::stream_type::QuietWriterAdapter,
-    writer_backing: Output::source::stream_type::QuietWriterAdapter,
+    error_writer_backing: Output::QuietWriterAdapter,
+    writer_backing: Output::QuietWriterAdapter,
 
     pub default_indent: u16,
 
@@ -68,14 +84,14 @@ impl ConsoleObject {
     // `out: *ConsoleObject` so it can take internal pointers to its own
     // buffers; in Rust those become getters, so plain return works.
     pub fn init(
-        error_writer: Output::source::StreamType,
-        writer: Output::source::StreamType,
+        error_writer: Output::StreamType,
+        writer: Output::StreamType,
     ) -> Self {
         let mut out = ConsoleObject {
             stderr_buffer: [0; 4096],
             stdout_buffer: [0; 4096],
-            error_writer_backing: Output::source::stream_type::QuietWriterAdapter::uninit(),
-            writer_backing: Output::source::stream_type::QuietWriterAdapter::uninit(),
+            error_writer_backing: Output::QuietWriterAdapter::uninit(),
+            writer_backing: Output::QuietWriterAdapter::uninit(),
             default_indent: 0,
             counts: Counter::default(),
         };
@@ -88,14 +104,14 @@ impl ConsoleObject {
 
     /// Replacement for Zig's self-referential `error_writer: *std.Io.Writer`.
     #[inline]
-    pub fn error_writer(&mut self) -> &mut dyn bun_io::Write {
-        &mut self.error_writer_backing.new_interface
+    pub fn error_writer(&mut self) -> &mut bun_core::io::Writer {
+        self.error_writer_backing.new_interface()
     }
 
     /// Replacement for Zig's self-referential `writer: *std.Io.Writer`.
     #[inline]
-    pub fn writer(&mut self) -> &mut dyn bun_io::Write {
-        &mut self.writer_backing.new_interface
+    pub fn writer(&mut self) -> &mut bun_core::io::Writer {
+        self.writer_backing.new_interface()
     }
 }
 
@@ -130,6 +146,113 @@ pub enum MessageType {
     Image = 13,
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// Un-gated public type surface (matches the lib.rs B-2 stub this replaces).
+// The full ~4kL formatter body below is gated until `JSValue.rs` /
+// `JSGlobalObject.rs` un-gate — it depends on ~40 methods not yet surfaced.
+// ───────────────────────────────────────────────────────────────────────────
+
+pub use formatter::Formatter;
+
+pub mod formatter {
+    use super::*;
+
+    /// `ConsoleObject.Formatter` — the recursive value pretty-printer. Field
+    /// list kept; method bodies gated in `_body` below.
+    pub struct Formatter<'a> {
+        pub global_this: &'a JSGlobalObject,
+        pub remaining_values: &'a [JSValue],
+        pub map: bun_collections::HashMap<JSValue, ()>,
+        pub hide_native: bool,
+        pub indent: u32,
+        pub depth: u16,
+        pub max_depth: u16,
+        pub quote_strings: bool,
+        pub quote_keys: bool,
+        pub failed: bool,
+        pub estimated_line_length: usize,
+        pub always_newline_scope: bool,
+        pub single_line: bool,
+        pub ordered_properties: bool,
+        pub disable_inspect_custom: bool,
+        pub can_throw_stack_overflow: bool,
+        pub format_buffer_as_text: bool,
+    }
+
+    /// `ConsoleObject.Formatter.Tag` — classifies a JSValue for printing.
+    // PORT NOTE: Zig used `comptime Format: Tag`; `ConstParamTy` is unstable
+    // (`adt_const_params`), so `Tag` is passed at runtime — see `print_as` in
+    // the gated body. PERF(port): was comptime monomorphization.
+    #[derive(Copy, Clone, Eq, PartialEq, Debug, strum::IntoStaticStr)]
+    pub enum Tag {
+        StringPossiblyFormatted,
+        String,
+        Undefined,
+        Double,
+        Integer,
+        Null,
+        Boolean,
+        Array,
+        Object,
+        Function,
+        Class,
+        Error,
+        TypedArray,
+        Map,
+        MapIterator,
+        SetIterator,
+        Set,
+        BigInt,
+        Symbol,
+        CustomFormattedObject,
+        GlobalObject,
+        Private,
+        Promise,
+        JSON,
+        ToJSON,
+        NativeCode,
+        JSX,
+        Event,
+        GetterSetter,
+        CustomGetterSetter,
+        Proxy,
+        RevokedProxy,
+    }
+
+    /// `Tag.Result` — classification + resolved cell type.
+    #[derive(Debug, Clone, Copy)]
+    pub struct Result {
+        pub tag: Tag,
+        pub cell: crate::JSType,
+    }
+
+    impl Tag {
+        /// `Tag.get(value, global)` — classify a JSValue.
+        pub fn get(value: JSValue, global: &JSGlobalObject) -> crate::JsResult<Result> {
+            let _ = (value, global);
+            // TODO(b2): full classifier (ConsoleObject.zig:1190) — gated body.
+            todo!("ConsoleObject::Formatter::Tag::get")
+        }
+    }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// TODO(port): full body — `format2` / `TablePrinter` / `Formatter::print_as`
+// / C-exported `Bun__ConsoleObject__*` shims. ~4kL; depends on:
+//   - `JSValue` surface: is_callable, fast_get, get_prototype, get_name,
+//     iterators, symbol_for, BuiltinName fast-paths, …
+//   - `JSGlobalObject` surface: err(), clear_exception(), …
+//   - `bun_io::Write`, `bun_core::Output::source::stream_type`
+//   - `bun_js_parser::js_printer` (source highlighting)
+//   - `bun_runtime::cli::Command`, `bun_runtime::test_runner::JestPrettyFormat`
+//   - `#[crate::host_call]` proc-macro
+// Gated wholesale; Phase B reopens incrementally as JSValue.rs un-gates.
+// ───────────────────────────────────────────────────────────────────────────
+#[cfg(any())]
+mod _body {
+use super::*;
+use super::formatter::Tag;
+
 static STDERR_MUTEX: Mutex = Mutex::new();
 static STDOUT_MUTEX: Mutex = Mutex::new();
 
@@ -139,7 +262,7 @@ thread_local! {
 }
 
 /// <https://console.spec.whatwg.org/#formatter>
-#[bun_jsc::host_call]
+#[crate::host_call]
 pub extern "C" fn message_with_type_and_level(
     ctype: *mut ConsoleObject,
     message_type: MessageType,
@@ -151,7 +274,7 @@ pub extern "C" fn message_with_type_and_level(
     if let Err(err) =
         message_with_type_and_level_(ctype, message_type, level, global, vals, len)
     {
-        bun_jsc::host_fn::void_from_js_error(err, global);
+        crate::host_fn::void_from_js_error(err, global);
     }
 }
 
@@ -229,7 +352,7 @@ fn message_with_type_and_level_(
 
     if message_type == MessageType::Assert && len == 0 {
         let text: &str = if Output::enable_ansi_colors_stderr() {
-            Output::pretty_fmt!("<r><red>Assertion failed<r>\n", true)
+            pfmt!("<r><red>Assertion failed<r>\n", true)
         } else {
             "Assertion failed\n"
         };
@@ -251,7 +374,7 @@ fn message_with_type_and_level_(
         console.writer()
     };
 
-    if let Some(runner) = bun_jsc::Jest::runner() {
+    if let Some(runner) = crate::Jest::runner() {
         runner.bun_test_root.on_before_print();
     }
 
@@ -749,11 +872,11 @@ impl<'a> TablePrinter<'a> {
                 let needed = (col.width as usize).saturating_sub(len);
                 writer.splat_byte_all(b' ', 1).ok();
                 if ENABLE_ANSI_COLORS {
-                    writer.write_all(Output::pretty_fmt!("<r><b>", true).as_bytes()).ok();
+                    writer.write_all(pfmt!("<r><b>", true).as_bytes()).ok();
                 }
                 write!(writer, "{}", col.name).ok();
                 if ENABLE_ANSI_COLORS {
-                    writer.write_all(Output::pretty_fmt!("<r>", true).as_bytes()).ok();
+                    writer.write_all(pfmt!("<r>", true).as_bytes()).ok();
                 }
                 writer.splat_byte_all(b' ', needed + PADDING as usize).ok();
             }
@@ -938,12 +1061,12 @@ impl core::fmt::Display for ErrorDisplayLevelFormatter {
     fn fmt(&self, writer: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         if self.enable_colors {
             match self.level {
-                ErrorDisplayLevel::Normal => writer.write_str(Output::pretty_fmt!("<r>", true))?,
+                ErrorDisplayLevel::Normal => writer.write_str(pfmt!("<r>", true))?,
                 ErrorDisplayLevel::Warn => {
-                    writer.write_str(Output::pretty_fmt!("<r><yellow>", true))?
+                    writer.write_str(pfmt!("<r><yellow>", true))?
                 }
                 ErrorDisplayLevel::Full => {
-                    writer.write_str(Output::pretty_fmt!("<r><red>", true))?
+                    writer.write_str(pfmt!("<r><red>", true))?
                 }
             }
         }
@@ -958,13 +1081,13 @@ impl core::fmt::Display for ErrorDisplayLevelFormatter {
 
         if self.colon == Colon::ExcludeColon {
             if self.enable_colors {
-                writer.write_str(Output::pretty_fmt!("<r>", true))?;
+                writer.write_str(pfmt!("<r>", true))?;
             }
             return Ok(());
         }
 
         if self.enable_colors {
-            writer.write_str(Output::pretty_fmt!("<r><d>:<r> ", true))?;
+            writer.write_str(pfmt!("<r><d>:<r> ", true))?;
         } else {
             writer.write_str(": ")?;
         }
@@ -1091,11 +1214,11 @@ pub fn format2(
         if matches!(tag.tag, TagPayload::String) {
             if options.enable_colors {
                 if level == MessageLevel::Error {
-                    let _ = writer.write_all(Output::pretty_fmt!("<r><red>", true).as_bytes());
+                    let _ = writer.write_all(pfmt!("<r><red>", true).as_bytes());
                 }
                 fmt.format::<true>(tag, writer, vals[0], global)?;
                 if level == MessageLevel::Error {
-                    let _ = writer.write_all(Output::pretty_fmt!("<r>", true).as_bytes());
+                    let _ = writer.write_all(pfmt!("<r>", true).as_bytes());
                 }
             } else {
                 fmt.format::<false>(tag, writer, vals[0], global)?;
@@ -1153,7 +1276,7 @@ pub fn format2(
     let mut any = false;
     if options.enable_colors {
         if level == MessageLevel::Error {
-            let _ = writer.write_all(Output::pretty_fmt!("<r><red>", true).as_bytes());
+            let _ = writer.write_all(pfmt!("<r><red>", true).as_bytes());
         }
         loop {
             if any {
@@ -1175,7 +1298,7 @@ pub fn format2(
             fmt.remaining_values = &fmt.remaining_values[1..];
         }
         if level == MessageLevel::Error {
-            let _ = writer.write_all(Output::pretty_fmt!("<r>", true).as_bytes());
+            let _ = writer.write_all(pfmt!("<r>", true).as_bytes());
         }
     } else {
         loop {
@@ -2167,7 +2290,7 @@ pub mod formatter {
             &mut self,
             writer: &mut dyn bun_io::Write,
         ) -> Result<(), bun_io::Error> {
-            writer.write_all(Output::pretty_fmt!("<r><d>,<r>", ENABLE_ANSI_COLORS).as_bytes())?;
+            writer.write_all(pfmt!("<r><d>,<r>", ENABLE_ANSI_COLORS).as_bytes())?;
             self.estimated_line_length += 1;
             Ok(())
         }
@@ -2403,9 +2526,9 @@ pub mod formatter {
                     this.add_for_new_line(key.len + 1);
                     writer.print(format_args!(
                         concat!("{}", "{}", "{}"),
-                        Output::pretty_fmt!("<r>", C),
+                        pfmt!("<r>", C),
                         key,
-                        Output::pretty_fmt!("<d>:<r> ", C),
+                        pfmt!("<d>:<r> ", C),
                     ));
                 } else if key.is_16_bit()
                     && (!this.quote_keys
@@ -2414,9 +2537,9 @@ pub mod formatter {
                     this.add_for_new_line(key.len + 1);
                     writer.print(format_args!(
                         concat!("{}", "{}", "{}"),
-                        Output::pretty_fmt!("<r>", C),
+                        pfmt!("<r>", C),
                         key,
-                        Output::pretty_fmt!("<d>:<r> ", C),
+                        pfmt!("<d>:<r> ", C),
                     ));
                 } else if key.is_16_bit() {
                     let mut utf16_slice = key.utf16_slice_aligned();
@@ -2424,7 +2547,7 @@ pub mod formatter {
                     this.add_for_new_line(utf16_slice.len() + 2);
 
                     if C {
-                        writer.write_all(Output::pretty_fmt!("<r><green>", true).as_bytes());
+                        writer.write_all(pfmt!("<r><green>", true).as_bytes());
                     }
 
                     writer.write_all(b"\"");
@@ -2439,40 +2562,40 @@ pub mod formatter {
 
                     writer.print(format_args!(
                         "{}",
-                        Output::pretty_fmt!("\"<r><d>:<r> ", C)
+                        pfmt!("\"<r><d>:<r> ", C)
                     ));
                 } else {
                     this.add_for_new_line(key.len + 2);
 
                     writer.print(format_args!(
                         "{}{}{}",
-                        Output::pretty_fmt!("<r><green>", C),
+                        pfmt!("<r><green>", C),
                         bun_core::fmt::format_json_string_latin1(key.slice()),
-                        Output::pretty_fmt!("<r><d>:<r> ", C),
+                        pfmt!("<r><d>:<r> ", C),
                     ));
                 }
             } else if cfg!(debug_assertions) && is_private_symbol {
                 this.add_for_new_line(1 + "$:".len() + key.len);
                 writer.print(format_args!(
                     "{}{}{}{}",
-                    Output::pretty_fmt!("<r><magenta>", C),
+                    pfmt!("<r><magenta>", C),
                     if key.len > 0 && key.char_at(0) == u32::from(b'#') { "" } else { "$" },
                     key,
-                    Output::pretty_fmt!("<r><d>:<r> ", C),
+                    pfmt!("<r><d>:<r> ", C),
                 ));
             } else {
                 this.add_for_new_line(1 + "[Symbol()]:".len() + key.len);
                 writer.print(format_args!(
                     "{}Symbol({}){}",
-                    Output::pretty_fmt!("<r><d>[<r><blue>", C),
+                    pfmt!("<r><d>[<r><blue>", C),
                     key,
-                    Output::pretty_fmt!("<r><d>]:<r> ", C),
+                    pfmt!("<r><d>]:<r> ", C),
                 ));
             }
 
             if tag.cell.is_string_like() {
                 if C {
-                    writer.write_all(Output::pretty_fmt!("<r><green>", true).as_bytes());
+                    writer.write_all(pfmt!("<r><green>", true).as_bytes());
                 }
             }
 
@@ -2480,7 +2603,7 @@ pub mod formatter {
 
             if tag.cell.is_string_like() {
                 if C {
-                    writer.write_all(Output::pretty_fmt!("<r>", true).as_bytes());
+                    writer.write_all(pfmt!("<r>", true).as_bytes());
                 }
             }
         }
@@ -2582,7 +2705,7 @@ pub mod formatter {
                 let entry = self.map.get_or_put(value).expect("unreachable");
                 if entry.found_existing {
                     writer.write_all(
-                        Output::pretty_fmt!("<r><cyan>[Circular]<r>", ENABLE_ANSI_COLORS).as_bytes(),
+                        pfmt!("<r><cyan>[Circular]<r>", ENABLE_ANSI_COLORS).as_bytes(),
                     );
                     return Ok(());
                 } else {
@@ -2596,10 +2719,10 @@ pub mod formatter {
                 }
             });
 
-            // Helper macro: `Output::pretty_fmt!(fmt, ENABLE_ANSI_COLORS)`.
+            // Helper macro: `pfmt!(fmt, ENABLE_ANSI_COLORS)`.
             macro_rules! pf {
                 ($s:literal) => {
-                    Output::pretty_fmt!($s, ENABLE_ANSI_COLORS)
+                    pfmt!($s, ENABLE_ANSI_COLORS)
                 };
             }
 
@@ -2623,11 +2746,11 @@ pub mod formatter {
                         }
 
                         if ENABLE_ANSI_COLORS {
-                            writer.write_all(Output::pretty_fmt!("<r><green>", true).as_bytes());
+                            writer.write_all(pfmt!("<r><green>", true).as_bytes());
                         }
                         let _reset = scopeguard::guard((), |_| {
                             if ENABLE_ANSI_COLORS {
-                                writer.write_all(Output::pretty_fmt!("<r>", true).as_bytes());
+                                writer.write_all(pfmt!("<r>", true).as_bytes());
                             }
                         });
 
@@ -2657,7 +2780,7 @@ pub mod formatter {
                         }
                         let _reset = scopeguard::guard((), |_| {
                             if ENABLE_ANSI_COLORS {
-                                writer.write_all(Output::pretty_fmt!("<r>", true).as_bytes());
+                                writer.write_all(pfmt!("<r>", true).as_bytes());
                             }
                         });
 
@@ -2811,7 +2934,7 @@ pub mod formatter {
                     // is one; we'll need to pass the callback through to the "this"
                     // value in here.
                     // SAFETY: FFI call; global_this is a valid JSGlobalObject pointer for the call's duration.
-                    let result = bun_jsc::from_js_host_call(self.global_this, || unsafe {
+                    let result = crate::from_js_host_call(self.global_this, || unsafe {
                         JSC__JSValue__callCustomInspectFunction(
                             self.global_this as *const _ as *mut _,
                             self.custom_formatted_object.function,
@@ -3076,7 +3199,7 @@ pub mod formatter {
                     const FMT: &str = "[Global Object]";
                     self.add_for_new_line(FMT.len());
                     writer.write_all(
-                        Output::pretty_fmt!(concat!("<cyan>", "[Global Object]", "<r>"), ENABLE_ANSI_COLORS)
+                        pfmt!(concat!("<cyan>", "[Global Object]", "<r>"), ENABLE_ANSI_COLORS)
                             .as_bytes(),
                     );
                 }
@@ -3238,7 +3361,7 @@ pub mod formatter {
                 failed: false,
                 estimated_line_length: &mut self.estimated_line_length,
             };
-            macro_rules! pf { ($s:literal) => { Output::pretty_fmt!($s, C) }; }
+            macro_rules! pf { ($s:literal) => { pfmt!($s, C) }; }
 
             let len = value.get_length(self.global_this)?;
 
@@ -3299,7 +3422,7 @@ pub mod formatter {
                     };
 
                     if tag.cell.is_string_like() && C {
-                        writer.write_all(Output::pretty_fmt!("<r>", true).as_bytes());
+                        writer.write_all(pfmt!("<r>", true).as_bytes());
                     }
                 }
 
@@ -3385,7 +3508,7 @@ pub mod formatter {
                     };
 
                     if tag.cell.is_string_like() && C {
-                        writer.write_all(Output::pretty_fmt!("<r>", true).as_bytes());
+                        writer.write_all(pfmt!("<r>", true).as_bytes());
                     }
                     i += 1;
                 }
@@ -3479,8 +3602,8 @@ pub mod formatter {
             remove_before_recurse: &mut bool,
         ) -> JsResult<()> {
             // TODO(port): each `value.as::<T>()` downcast below maps to
-            // `bun_jsc::JsClass::from_js`. The list of types is preserved.
-            macro_rules! pf { ($s:literal) => { Output::pretty_fmt!($s, C) }; }
+            // `crate::JsClass::from_js`. The list of types is preserved.
+            macro_rules! pf { ($s:literal) => { pfmt!($s, C) }; }
             let mut writer = WrappedWriter {
                 ctx: writer_,
                 failed: false,
@@ -3518,7 +3641,7 @@ pub mod formatter {
                         .unwrap_or_else(|err| self.global_this.take_exception(err));
                     return self.print_as::<{ Tag::Object }, C>(writer_, result, jsc::JSType::Object);
                 }
-            } else if value.as_::<bun_jsc::DOMFormData>().is_some() {
+            } else if value.as_::<crate::DOMFormData>().is_some() {
                 if let Some(to_json_function) = value.get(self.global_this, "toJSON")? {
                     let prev_quote_keys = self.quote_keys;
                     self.quote_keys = true;
@@ -3769,7 +3892,7 @@ pub mod formatter {
             value: JSValue,
             remove_before_recurse: &mut bool,
         ) -> JsResult<()> {
-            macro_rules! pf { ($s:literal) => { Output::pretty_fmt!($s, C) }; }
+            macro_rules! pf { ($s:literal) => { pfmt!($s, C) }; }
 
             let event_type_value: JSValue = 'brk: {
                 let Some(value_) = value.get(self.global_this, "type")? else {
@@ -3893,7 +4016,7 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            macro_rules! pf { ($s:literal) => { Output::pretty_fmt!($s, C) }; }
+            macro_rules! pf { ($s:literal) => { pfmt!($s, C) }; }
             let mut writer = WrappedWriter {
                 ctx: writer_, failed: false,
                 estimated_line_length: &mut self.estimated_line_length,
@@ -4014,7 +4137,7 @@ pub mod formatter {
                             ));
 
                             if tag.cell.is_string_like() && C {
-                                writer.write_all(Output::pretty_fmt!("<r><green>", true).as_bytes());
+                                writer.write_all(pfmt!("<r><green>", true).as_bytes());
                             }
 
                             drop(writer);
@@ -4025,7 +4148,7 @@ pub mod formatter {
                             };
 
                             if tag.cell.is_string_like() && C {
-                                writer.write_all(Output::pretty_fmt!("<r>", true).as_bytes());
+                                writer.write_all(pfmt!("<r>", true).as_bytes());
                             }
 
                             if !self.single_line
@@ -4065,7 +4188,7 @@ pub mod formatter {
                                         let children_string = children.get_zig_string(self.global_this)?;
                                         if children_string.len == 0 { break 'print_children; }
                                         if C {
-                                            writer.write_all(Output::pretty_fmt!("<r>", true).as_bytes());
+                                            writer.write_all(pfmt!("<r>", true).as_bytes());
                                         }
                                         writer.write_all(b">");
                                         if children_string.len < 128 {
@@ -4166,7 +4289,7 @@ pub mod formatter {
             value: JSValue,
             js_type: jsc::JSType,
         ) -> JsResult<()> {
-            macro_rules! pf { ($s:literal) => { Output::pretty_fmt!($s, C) }; }
+            macro_rules! pf { ($s:literal) => { pfmt!($s, C) }; }
             debug_assert!(value.is_cell());
             let prev_quote_strings = self.quote_strings;
             self.quote_strings = true;
@@ -4292,11 +4415,11 @@ pub mod formatter {
                 && strings::is_valid_utf8(slice)
             {
                 if C {
-                    writer.write_all(Output::pretty_fmt!("<r><green>", true).as_bytes());
+                    writer.write_all(pfmt!("<r><green>", true).as_bytes());
                 }
                 let _ = JSPrinter::write_json_string(slice, writer_, JSPrinter::Encoding::Utf8);
                 if C {
-                    writer.write_all(Output::pretty_fmt!("<r>", true).as_bytes());
+                    writer.write_all(pfmt!("<r>", true).as_bytes());
                 }
                 return Ok(());
             }
@@ -4362,10 +4485,10 @@ pub mod formatter {
         ) {
             writer.print(format_args!(
                 "{}{}{}{}",
-                Output::pretty_fmt!("<r><yellow>", C),
+                pfmt!("<r><yellow>", C),
                 N::display(slice[0]),
                 if N::IS_BIGINT { "n" } else { "" },
-                Output::pretty_fmt!("<r>", C),
+                pfmt!("<r>", C),
             ));
             let leftover = &slice[1..];
             const MAX: usize = 512;
@@ -4378,20 +4501,20 @@ pub mod formatter {
 
                 writer.print(format_args!(
                     "{}{}{}{}",
-                    Output::pretty_fmt!("<r><yellow>", C),
+                    pfmt!("<r><yellow>", C),
                     N::display(el),
                     if N::IS_BIGINT { "n" } else { "" },
-                    Output::pretty_fmt!("<r>", C),
+                    pfmt!("<r>", C),
                 ));
             }
 
             if slice.len() > MAX + 1 {
                 writer.print(format_args!(
                     "{}{}, ... {} more{}",
-                    Output::pretty_fmt!("<r><d>", C),
+                    pfmt!("<r><d>", C),
                     if N::IS_BIGINT { "n" } else { "" },
                     slice.len() - MAX - 1,
-                    Output::pretty_fmt!("<r>", C),
+                    pfmt!("<r>", C),
                 ));
             }
         }
@@ -4482,7 +4605,7 @@ pub mod formatter {
 // ───────────────────────────────────────────────────────────────────────────
 
 #[unsafe(no_mangle)]
-#[bun_jsc::host_call]
+#[crate::host_call]
 pub extern "C" fn Bun__ConsoleObject__count(
     _console: *mut ConsoleObject,
     global_this: &JSGlobalObject,
@@ -4503,12 +4626,12 @@ pub extern "C" fn Bun__ConsoleObject__count(
         let _ = write!(
             writer,
             "{}{}{}: {}{}{}{}\n",
-            Output::pretty_fmt!("<r>", true),
+            pfmt!("<r>", true),
             bstr::BStr::new(slice),
-            Output::pretty_fmt!("<d>", true),
-            Output::pretty_fmt!("<r><yellow>", true),
+            pfmt!("<d>", true),
+            pfmt!("<r><yellow>", true),
             current,
-            Output::pretty_fmt!("<r>", true),
+            pfmt!("<r>", true),
             "",
         );
     } else {
@@ -4518,7 +4641,7 @@ pub extern "C" fn Bun__ConsoleObject__count(
 }
 
 #[unsafe(no_mangle)]
-#[bun_jsc::host_call]
+#[crate::host_call]
 pub extern "C" fn Bun__ConsoleObject__countReset(
     _console: *mut ConsoleObject,
     global_this: &JSGlobalObject,
@@ -4541,7 +4664,7 @@ thread_local! {
 }
 
 #[unsafe(no_mangle)]
-#[bun_jsc::host_call]
+#[crate::host_call]
 pub extern "C" fn Bun__ConsoleObject__time(
     _console: *mut ConsoleObject,
     _global: &JSGlobalObject,
@@ -4564,7 +4687,7 @@ pub extern "C" fn Bun__ConsoleObject__time(
 }
 
 #[unsafe(no_mangle)]
-#[bun_jsc::host_call]
+#[crate::host_call]
 pub extern "C" fn Bun__ConsoleObject__timeEnd(
     _console: *mut ConsoleObject,
     _global: &JSGlobalObject,
@@ -4596,7 +4719,7 @@ pub extern "C" fn Bun__ConsoleObject__timeEnd(
 }
 
 #[unsafe(no_mangle)]
-#[bun_jsc::host_call]
+#[crate::host_call]
 pub extern "C" fn Bun__ConsoleObject__timeLog(
     _console: *mut ConsoleObject,
     global: &JSGlobalObject,
@@ -4659,7 +4782,7 @@ pub extern "C" fn Bun__ConsoleObject__timeLog(
 }
 
 #[unsafe(no_mangle)]
-#[bun_jsc::host_call]
+#[crate::host_call]
 pub extern "C" fn Bun__ConsoleObject__profile(
     _console: *mut ConsoleObject,
     _global: &JSGlobalObject,
@@ -4669,7 +4792,7 @@ pub extern "C" fn Bun__ConsoleObject__profile(
 }
 
 #[unsafe(no_mangle)]
-#[bun_jsc::host_call]
+#[crate::host_call]
 pub extern "C" fn Bun__ConsoleObject__profileEnd(
     _console: *mut ConsoleObject,
     _global: &JSGlobalObject,
@@ -4679,7 +4802,7 @@ pub extern "C" fn Bun__ConsoleObject__profileEnd(
 }
 
 #[unsafe(no_mangle)]
-#[bun_jsc::host_call]
+#[crate::host_call]
 pub extern "C" fn Bun__ConsoleObject__takeHeapSnapshot(
     _console: *mut ConsoleObject,
     global_this: &JSGlobalObject,
@@ -4699,7 +4822,7 @@ pub extern "C" fn Bun__ConsoleObject__takeHeapSnapshot(
 }
 
 #[unsafe(no_mangle)]
-#[bun_jsc::host_call]
+#[crate::host_call]
 pub extern "C" fn Bun__ConsoleObject__timeStamp(
     _console: *mut ConsoleObject,
     _global: &JSGlobalObject,
@@ -4708,7 +4831,7 @@ pub extern "C" fn Bun__ConsoleObject__timeStamp(
 }
 
 #[unsafe(no_mangle)]
-#[bun_jsc::host_call]
+#[crate::host_call]
 pub extern "C" fn Bun__ConsoleObject__record(
     _console: *mut ConsoleObject,
     _global: &JSGlobalObject,
@@ -4717,7 +4840,7 @@ pub extern "C" fn Bun__ConsoleObject__record(
 }
 
 #[unsafe(no_mangle)]
-#[bun_jsc::host_call]
+#[crate::host_call]
 pub extern "C" fn Bun__ConsoleObject__recordEnd(
     _console: *mut ConsoleObject,
     _global: &JSGlobalObject,
@@ -4726,7 +4849,7 @@ pub extern "C" fn Bun__ConsoleObject__recordEnd(
 }
 
 #[unsafe(no_mangle)]
-#[bun_jsc::host_call]
+#[crate::host_call]
 pub extern "C" fn Bun__ConsoleObject__screenshot(
     _console: *mut ConsoleObject,
     _global: &JSGlobalObject,
@@ -4735,7 +4858,7 @@ pub extern "C" fn Bun__ConsoleObject__screenshot(
 }
 
 #[unsafe(no_mangle)]
-#[bun_jsc::host_call]
+#[crate::host_call]
 pub extern "C" fn Bun__ConsoleObject__messageWithTypeAndLevel(
     ctype: *mut ConsoleObject,
     message_type: MessageType,
@@ -4747,10 +4870,12 @@ pub extern "C" fn Bun__ConsoleObject__messageWithTypeAndLevel(
     message_with_type_and_level(ctype, message_type, level, global, vals, len);
 }
 
+} // mod _body
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/jsc/ConsoleObject.zig (3833 lines)
 //   confidence: low
 //   todos:      15
-//   notes:      Heavy borrowck reshaping around WrappedWriter (borrows self.estimated_line_length); print_as arms hoisted to helpers; Output::pretty_fmt! assumed macro; self-ref writer fields restructured as getters per LIFETIMES.tsv; const-generic Tag dispatch needs ConstParamTy; f16 path stubbed. WrappedWriter kept dyn (PERF-tagged) — generic cascade touches iterator ctxs.
+//   notes:      Heavy borrowck reshaping around WrappedWriter (borrows self.estimated_line_length); print_as arms hoisted to helpers; pfmt! assumed macro; self-ref writer fields restructured as getters per LIFETIMES.tsv; const-generic Tag dispatch needs ConstParamTy; f16 path stubbed. WrappedWriter kept dyn (PERF-tagged) — generic cascade touches iterator ctxs.
 // ──────────────────────────────────────────────────────────────────────────

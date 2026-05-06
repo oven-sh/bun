@@ -19,7 +19,7 @@ pub fn to_throw_error_matching_inline_snapshot(
 
     this.increment_expect_call_counter();
 
-    let not = this.flags.not;
+    let not = this.flags.not();
     if not {
         let signature = Expect::get_signature("toThrowErrorMatchingInlineSnapshot", "", true);
         return this.throw(

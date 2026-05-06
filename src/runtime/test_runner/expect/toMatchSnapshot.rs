@@ -2,7 +2,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_str::ZigString;
 
 use super::Expect;
-use super::Expect::get_signature;
+use super::get_signature;
 
 #[bun_jsc::host_fn(method)]
 pub fn to_match_snapshot(
@@ -21,7 +21,7 @@ pub fn to_match_snapshot(
 
     this.increment_expect_call_counter();
 
-    let not = this.flags.not;
+    let not = this.flags.not();
     if not {
         // PERF(port): was `comptime getSignature(...)` — requires `get_signature` be `const fn` in Phase B.
         let signature = const { get_signature("toMatchSnapshot", "", true) };

@@ -562,3 +562,35 @@ pub mod asan {
     #[inline] pub fn assert_unpoisoned<T>(_: *const T) {}
     pub const ENABLED: bool = false;
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// PHASE-C: glibc-compat / link wraps. Zig: src/workaround_missing_symbols.zig.
+// build.ninja links with `-Wl,--wrap=gettid` so libc/std references land here.
+// ────────────────────────────────────────────────────────────────────────────
+#[cfg(target_os = "linux")]
+#[unsafe(no_mangle)]
+pub extern "C" fn __wrap_gettid() -> libc::pid_t {
+    // SAFETY: SYS_gettid takes no arguments and never fails.
+    unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t }
+}
+
+/// PHASE-C: stack capture for `Global::StoredTrace` / `bun_crash_handler`.
+/// Zig used `std.debug.captureStackTrace`; route through libc `backtrace()`.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__captureStackTrace(begin: usize, out: *mut usize, cap: usize) -> usize {
+    if out.is_null() || cap == 0 {
+        return 0;
+    }
+    #[cfg(unix)]
+    unsafe {
+        let n = libc::backtrace(out.cast::<*mut core::ffi::c_void>(), cap as core::ffi::c_int);
+        let n = if n < 0 { 0 } else { n as usize };
+        if begin > 0 && begin < n {
+            core::ptr::copy(out.add(begin), out, n - begin);
+            return n - begin;
+        }
+        return n;
+    }
+    #[cfg(not(unix))]
+    { let _ = begin; 0 }
+}

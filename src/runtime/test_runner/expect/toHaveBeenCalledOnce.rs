@@ -1,7 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::console_object::Formatter;
-use crate::test_runner::expect::Expect;
-use crate::test_runner::expect::get_signature;
+use super::Expect;
+use super::get_signature;
 
 #[bun_jsc::host_fn(method)]
 pub fn to_have_been_called_once(
@@ -21,7 +21,7 @@ pub fn to_have_been_called_once(
     this.increment_expect_call_counter();
 
     // TODO(port): bun.cpp.* FFI shim location — assuming bun_jsc::cpp re-exports generated bindings
-    let calls = bun_jsc::cpp::JSMockFunction__getCalls(global, value)?;
+    let calls = super::mock::JSMockFunction__getCalls(global, value)?;
     if !calls.js_type().is_array() {
         let mut formatter = Formatter {
             global,
@@ -37,7 +37,7 @@ pub fn to_have_been_called_once(
     let calls_length = calls.get_length(global)?;
     let mut pass = calls_length == 1;
 
-    let not = this.flags.not;
+    let not = this.flags.not();
     if not {
         pass = !pass;
     }

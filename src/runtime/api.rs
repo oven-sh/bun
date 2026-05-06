@@ -55,6 +55,130 @@ pub struct ResolveMessage {
 #[path = "api/cron_parser.rs"]
 pub mod cron_parser;
 
+// ─── api/bun/ core (process / spawn / pty / h2) ──────────────────────────────
+// `#[path]` is relative to the dir containing this file (`src/runtime/`); the
+// inline `mod bun { }` below is a re-export façade only — module bodies are
+// declared flat to avoid the non-mod-rs nested-path resolution rules.
+
+// process.rs — Process struct + posix_spawn/uv_spawn machinery. §Dispatch
+// vtable applied for ProcessExitHandler; structs + non-JSC methods un-gated.
+// spawn_process_{posix,windows} bodies + waiter-thread dispatch loop + sync
+// mod remain re-gated inside the file (depend on sibling `spawn` posix_spawn
+// wrappers and bun_aio FilePoll method surface).
+#[path = "api/bun/process.rs"]
+pub mod bun_process;
+
+// ── JSC-heavy siblings: Phase-A drafts preserved on disk, body-gated. ──
+// TODO(b2-blocked): bun_jsc method surface — un-gate bodies once bun_jsc dep is green.
+
+// posix_spawn(2) wrappers + Stdio enum. process.rs references this as
+// `super::spawn`; body uses `bun_sys::posix::*` (not yet exported).
+#[cfg(any())]
+#[path = "api/bun/spawn.rs"]
+pub mod bun_spawn;
+
+// JS-facing `Bun.Subprocess` payload (.classes.ts m_ctx).
+#[cfg(any())]
+#[path = "api/bun/subprocess.rs"]
+pub mod bun_subprocess;
+
+// Bun.spawn() / Bun.spawnSync() host fns. Entirely JSC (~75 jsc refs).
+#[cfg(any())]
+#[path = "api/bun/js_bun_spawn_bindings.rs"]
+pub mod js_bun_spawn_bindings;
+
+// Bun.Terminal — PTY/ConPTY. JsRef lifecycle + BufferedReader/StreamingWriter
+// generic owner wiring (~120 jsc refs).
+#[cfg(any())]
+#[path = "api/bun/Terminal.rs"]
+pub mod bun_terminal_body;
+
+// H2FrameParser — ~338 jsc refs (Strong, JsRef, host_fn getters, AbortSignal).
+#[cfg(any())]
+#[path = "api/bun/h2_frame_parser.rs"]
+pub mod h2_frame_parser_body;
+
+// SSL siblings — gated (boringssl_sys bindgen surface).
+#[cfg(any())]
+#[path = "api/bun/SSLContextCache.rs"]
+pub mod bun_ssl_context_cache;
+#[cfg(any())]
+#[path = "api/bun/SecureContext.rs"]
+pub mod bun_secure_context;
+#[cfg(any())]
+#[path = "api/bun/x509.rs"]
+pub mod bun_x509;
+
+pub mod bun {
+    pub use super::bun_process as process;
+    pub use process::{
+        Dup2, Exited, ExtraPipe, PidFdType, PidT, Poller, PosixSpawnOptions, PosixSpawnResult,
+        PosixStdio, Process, ProcessExitHandler, ProcessExitVTable, Rusage, SpawnOptions,
+        SpawnProcessResult, Status, StdioKind, WaiterThread,
+    };
+    pub use process::StdioKind as SubprocessStdioKind;
+
+    pub mod terminal {
+        use core::ffi::{c_int, c_void};
+        /// Opaque surface — full struct gated in `terminal_body` (JsRef + IOReader/IOWriter fields).
+        // TODO(b2-blocked): bun_jsc::JsRef — replace with terminal_body::Terminal once un-gated.
+        pub struct Terminal(());
+        /// `Terminal.PtyResult` — pure FFI handles, no JSC.
+        pub struct PtyResult {
+            pub master_fd: bun_sys::Fd,
+            pub slave_fd: bun_sys::Fd,
+            pub read_fd: bun_sys::Fd,
+            pub write_fd: bun_sys::Fd,
+            #[cfg(windows)]
+            pub hpcon: *mut c_void,
+        }
+        /// Mirrors libc `winsize` / Win32 `COORD`-ish layout used by ioctl(TIOCSWINSZ).
+        #[repr(C)]
+        #[derive(Clone, Copy, Default)]
+        pub struct Winsize {
+            pub ws_row: u16,
+            pub ws_col: u16,
+            pub ws_xpixel: u16,
+            pub ws_ypixel: u16,
+        }
+        #[cfg(unix)]
+        pub type OpenPtyFn = unsafe extern "C" fn(
+            *mut c_int,
+            *mut c_int,
+            *mut core::ffi::c_char,
+            *const c_void,
+            *const Winsize,
+        ) -> c_int;
+        #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
+        pub enum CreatePtyError {
+            #[error("openpty failed")]
+            OpenPty(bun_sys::Error),
+            #[error("dup failed")]
+            Dup(bun_sys::Error),
+            #[cfg(windows)]
+            #[error("CreatePseudoConsole failed")]
+            CreatePseudoConsole(bun_sys::Error),
+        }
+    }
+    pub use terminal::Terminal;
+
+    pub mod h2_frame_parser {
+        // TODO(b2-blocked): bun_jsc::{Strong,JsRef,AbortSignal,host_fn} — full body in h2_frame_parser_body.
+        pub struct H2FrameParser(());
+        /// RFC 7540 §6.5.2 setting identifiers.
+        #[repr(transparent)]
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        pub struct SettingsType(pub u16);
+        /// RFC 7540 §7 error codes.
+        #[repr(transparent)]
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        pub struct ErrorCode(pub u32);
+    }
+    pub use h2_frame_parser::H2FrameParser;
+}
+pub use bun::process::Process as SpawnProcess;
+
+
 // ─── un-gated re-exports (targets compile) ───────────────────────────────────
 pub use crate::image as Image;
 pub use crate::shell as Shell;

@@ -1,16 +1,26 @@
-use core::mem;
+use bun_sys::{self as sys, Fd};
+use crate::webcore::jsc::{self as jsc, EventLoopHandle, JSValue};
 
+bun_core::declare_scope!(FileReader, visible);
+
+// TODO(b2-blocked): bun_jsc::* + bun_io::BufferedReader handler vtable —
+// `FileReader` struct fields reference `streams::result::Pending` (real) but
+// the impl bodies depend on `bun_io::BufferedReader::init<T>()` handler trait,
+// `streams::Start`, `readable_stream::Source<C>`/SourceContext, JSValue
+// methods, and `aio::PollFlags`. Struct + Lazy/ReadDuringJSOnPullResult enums
+// are kept un-gated; the I/O state-machine impls are gated below until
+// `bun_jsc` and `bun_io` handler traits are wired.
+#[cfg(any())]
+mod _gated {
+use super::*;
+use core::mem;
 use bun_aio as aio;
 use bun_collections::ByteList;
 use bun_io::{BufferedReader, FileType, ReadState};
-use bun_jsc::{self as jsc, EnsureStillAlive, EventLoopHandle, JSValue, Strong};
-use bun_sys::{self as sys, Fd};
-
+use crate::webcore::jsc::{EnsureStillAlive, Strong};
 use crate::webcore::blob::{self, Blob};
 use crate::webcore::readable_stream::{self, ReadableStream};
 use crate::webcore::streams;
-
-bun_output::declare_scope!(FileReader, visible);
 
 // TODO(port): `pending_view` and the `Js`/`Temporary` variants below borrow into a
 // JS-owned typed-array buffer kept alive by `pending_value: Strong` / `ensure_still_alive`.
@@ -412,7 +422,7 @@ impl FileReader {
 
     pub fn on_read_chunk(&mut self, init_buf: &[u8], state: ReadState) -> bool {
         let mut buf = init_buf;
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             FileReader,
             "onReadChunk() = {} ({}) - read_inside_on_pull: {}",
             buf.len(),
@@ -614,7 +624,7 @@ impl FileReader {
         let mut drained = self.drain();
 
         if drained.len > 0 {
-            bun_output::scoped_log!(FileReader, "onPull({}) = {}", buffer.len(), drained.len);
+            bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer.len(), drained.len);
 
             self.pending_value.clear_without_deallocation();
             self.pending_view = &mut [];
@@ -654,7 +664,7 @@ impl FileReader {
         if !self.reader.has_pending_read() {
             // If not flowing (paused), don't initiate new reads
             if !self.flowing {
-                bun_output::scoped_log!(FileReader, "onPull({}) = pending (not flowing)", buffer.len());
+                bun_core::scoped_log!(FileReader, "onPull({}) = pending (not flowing)", buffer.len());
                 self.pending_value.set(self.parent().global_this(), array);
                 self.pending_view = buffer;
                 return streams::Result::Pending(&mut self.pending);
@@ -671,7 +681,7 @@ impl FileReader {
                 ReadDuringJSOnPullResult::Js(remaining_buf) => {
                     let amount_read = buffer_len - remaining_buf.len();
 
-                    bun_output::scoped_log!(FileReader, "onPull({}) = {}", buffer_len, amount_read);
+                    bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer_len, amount_read);
 
                     if amount_read > 0 {
                         if self.reader.is_done() {
@@ -694,11 +704,11 @@ impl FileReader {
                     // Recover it from `remaining_buf` (amount_read == 0 ⇒ same slice).
                     self.pending_value.set(self.parent().global_this(), array);
                     self.pending_view = remaining_buf;
-                    bun_output::scoped_log!(FileReader, "onPull({}) = pending", buffer_len);
+                    bun_core::scoped_log!(FileReader, "onPull({}) = pending", buffer_len);
                     return streams::Result::Pending(&mut self.pending);
                 }
                 ReadDuringJSOnPullResult::Temporary(buf) => {
-                    bun_output::scoped_log!(FileReader, "onPull({}) = {}", buffer_len, buf.len());
+                    bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer_len, buf.len());
                     if self.reader.is_done() {
                         return streams::Result::TemporaryAndDone(ByteList::from_borrowed_slice_dangerous(buf));
                     }
@@ -706,7 +716,7 @@ impl FileReader {
                     return streams::Result::Temporary(ByteList::from_borrowed_slice_dangerous(buf));
                 }
                 ReadDuringJSOnPullResult::UseBuffered(_) => {
-                    bun_output::scoped_log!(FileReader, "onPull({}) = {}", buffer_len, self.buffered.len());
+                    bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer_len, self.buffered.len());
                     if self.reader.is_done() {
                         return streams::Result::OwnedAndDone(ByteList::move_from_vec(&mut self.buffered));
                     }
@@ -716,7 +726,7 @@ impl FileReader {
             }
 
             if self.reader.is_done() {
-                bun_output::scoped_log!(FileReader, "onPull({}) = done", buffer_len);
+                bun_core::scoped_log!(FileReader, "onPull({}) = done", buffer_len);
                 return streams::Result::Done;
             }
 
@@ -726,7 +736,7 @@ impl FileReader {
             // verify whether this path is reachable and, if so, recover the slice.
             self.pending_value.set(self.parent().global_this(), array);
             self.pending_view = &mut [];
-            bun_output::scoped_log!(FileReader, "onPull({}) = pending", buffer_len);
+            bun_core::scoped_log!(FileReader, "onPull({}) = pending", buffer_len);
             return streams::Result::Pending(&mut self.pending);
         }
 
@@ -734,7 +744,7 @@ impl FileReader {
         self.pending_value.set(self.parent().global_this(), array);
         self.pending_view = buffer;
 
-        bun_output::scoped_log!(FileReader, "onPull({}) = pending", buffer_len);
+        bun_core::scoped_log!(FileReader, "onPull({}) = pending", buffer_len);
 
         streams::Result::Pending(&mut self.pending)
     }
@@ -769,7 +779,7 @@ impl FileReader {
     }
 
     pub fn on_reader_done(&mut self) {
-        bun_output::scoped_log!(FileReader, "onReaderDone()");
+        bun_core::scoped_log!(FileReader, "onReaderDone()");
         if !self.is_pulling() {
             self.consume_reader_buffer();
             if self.pending.state == streams::result::PendingState::Pending {
@@ -819,7 +829,7 @@ impl FileReader {
     }
 
     pub fn set_flowing(&mut self, flag: bool) {
-        bun_output::scoped_log!(FileReader, "setFlowing({}) was={}", flag, self.flowing);
+        bun_core::scoped_log!(FileReader, "setFlowing({}) was={}", flag, self.flowing);
 
         if self.flowing == flag {
             return;
@@ -874,6 +884,19 @@ impl AllocatedSlice for Vec<u8> {
         // pointer-range containment checks in `is_slice_in_buffer`, never read.
         unsafe { core::slice::from_raw_parts(self.as_ptr(), self.capacity()) }
     }
+}
+
+} // mod _gated
+
+// Minimal real type so `readable_stream::Source::File(*mut FileReader)` and
+// `webcore::FileReader` re-exports type-check. Full struct (with IOReader,
+// streams::Pending, Strong, etc.) lives in `_gated` above.
+// TODO(b2-blocked): replace with `pub use _gated::FileReader;` once un-gated.
+#[derive(Debug)]
+pub struct FileReader {
+    pub fd: Fd,
+    pub event_loop: EventLoopHandle,
+    _opaque: [u8; 0],
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -20,7 +20,7 @@ pub fn to_be_valid_date(
 
     this.increment_expect_call_counter();
 
-    let not = this.flags.not;
+    let not = this.flags.not();
     let mut pass = value.is_date() && !value.get_unix_timestamp().is_nan();
     if not {
         pass = !pass;

@@ -43,7 +43,11 @@ impl<'a> ConvertESMExportsForHmr<'a> {
     ) -> Result<(), AllocError> {
         let _ = (p, stmt);
         todo!("b2-ast-E: convert_stmt body");
-        #[cfg(any())] // TODO(b2-ast-E): body — StmtData variant matching, S::Import shape, E::Dot/Object struct-init, get_or_put map API
+        #[cfg(any())]
+        // blocked_on: P::{record_usage, new_symbol, generate_temp_ref} gated (P.rs:640 impl block);
+        //   S::Import.{items, default_name} field shapes (BabyList vs Option<*mut [ClauseItem]>);
+        //   E::Dot/E::Object/E::Arrow struct-init needs full field set (no Default);
+        //   StringArrayHashMap::get_or_put_value API.
         {
         let new_stmt = match stmt.data {
             js_ast::StmtData::SLocal(st) => 'stmt: {
@@ -388,7 +392,10 @@ impl<'a> ConvertESMExportsForHmr<'a> {
     ) -> Result<DeduplicatedImportResult, AllocError> {
         let _ = (p, import_record_index, namespace_ref, items, star_name_loc, default_name, loc);
         todo!("b2-ast-E: deduplicated_import body");
-        #[cfg(any())] // TODO(b2-ast-E): body — import_records.items access, get_or_put API, S::Import struct-init
+        #[cfg(any())]
+        // blocked_on: P::{add_import_record, new_symbol} gated (P.rs:640 impl block);
+        //   StringArrayHashMap::get_or_put_value (Zig getOrPut → found_existing/value_ptr pair);
+        //   S::Import struct-init needs full field set (no Default).
         {
         let ir = &mut p.import_records.items[import_record_index as usize];
         let gop = self.imports_seen.get_or_put(ir.path.text)?;
@@ -481,28 +488,27 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         p: &mut P<'p, TS, J, SCAN>,
         binding: Binding,
     ) -> Result<(), AllocError> {
-        let _ = (p, binding);
-        todo!("b2-ast-E: visit_binding_to_export body");
-        #[cfg(any())] // TODO(b2-ast-E): body — BindingData variant names
-        {
         match binding.data {
-            js_ast::BindingData::BMissing => {}
-            js_ast::BindingData::BIdentifier(id) => {
-                self.visit_ref_to_export(p, id.ref_, None, binding.loc, false)?;
+            B::B::BMissing(_) => {}
+            B::B::BIdentifier(id) => {
+                // SAFETY: arena-owned Identifier ptr valid for the parse.
+                let id = unsafe { &*id };
+                self.visit_ref_to_export(p, id.r#ref, None, binding.loc, false)?;
             }
-            js_ast::BindingData::BArray(array) => {
-                for item in array.items.iter() {
+            B::B::BArray(array) => {
+                // SAFETY: arena-owned Array + items slice valid for the parse.
+                for item in unsafe { (*(*array).items).iter() } {
                     self.visit_binding_to_export(p, item.binding)?;
                 }
             }
-            js_ast::BindingData::BObject(object) => {
-                for item in object.properties.iter() {
+            B::B::BObject(object) => {
+                // SAFETY: arena-owned Object + properties slice valid for the parse.
+                for item in unsafe { (*(*object).properties).iter() } {
                     self.visit_binding_to_export(p, item.value)?;
                 }
             }
         }
         Ok(())
-        } // end #[cfg(any())]
     }
 
     fn visit_ref_to_export<'p, const TS: bool, J: JsxT, const SCAN: bool>(
@@ -515,7 +521,10 @@ impl<'a> ConvertESMExportsForHmr<'a> {
     ) -> Result<(), AllocError> {
         let _ = (p, ref_, export_symbol_name, loc, is_live_binding_source);
         todo!("b2-ast-E: visit_ref_to_export body");
-        #[cfg(any())] // TODO(b2-ast-E): body — symbol::Kind path, E::ImportIdentifier shape, G::Property struct-init
+        #[cfg(any())]
+        // blocked_on: G::Property struct-init (kind/flags/key/value/initializer/ts_decorators —
+        //   no Default, ExprNodeIndex value vs Option<Expr>); E::Arrow.args is &'static [G::Arg]
+        //   (needs arena slice rework); G::FnBody::init_return_expr returns Result.
         {
         let symbol = p.symbols.items[ref_.inner_index()];
         let id = if symbol.kind == js_ast::SymbolKind::Import {
@@ -597,7 +606,10 @@ impl<'a> ConvertESMExportsForHmr<'a> {
     ) -> Result<(), AllocError> {
         let _ = (p, all_parts);
         todo!("b2-ast-E: finalize body");
-        #[cfg(any())] // TODO(b2-ast-E): body — G::Property::List, PartTag, append_list/append_slice, SymbolUse map API
+        #[cfg(any())]
+        // blocked_on: P::{record_usage, call_runtime} gated (P.rs:640 impl block);
+        //   js_ast::Part.{stmts, declared_symbols, tag} field types (StmtNodeList = *mut [Stmt]);
+        //   BabyList::move_from_list takes Vec<T> not BumpVec; PartSymbolUseMap iteration API.
         {
         if !self.export_star_props.is_empty() {
             if self.export_props.is_empty() {

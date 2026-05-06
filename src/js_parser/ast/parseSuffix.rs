@@ -25,7 +25,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 }
 
-#[cfg(any())] // TODO(b2-ast-E): full draft body — apply mixin→impl-P recipe per-method
+#[cfg(any())]
+// blocked_on: P::{store_name_in_ref, mark_expr_as_parenthesized, will_need_binding_pattern}
+//   gated (P.rs:640 impl block); E::Dot/E::Index/E::Call/E::Binary full struct-init (no Default —
+//   optional_chain/can_be_removed_if_unused/call_can_be_unwrapped_if_unused all required);
+//   E::Template.{head, parts, tag_loc, legacy_octal_loc} field shapes; OptionalChain variant names;
+//   _draft uses `const JSX: JSXTransformType` const-generic (needs J: JsxT lowering);
+//   ~1560-line bodies, >30 path/shape errors per method.
 #[allow(warnings)]
 mod _draft {
 use bun_core::{err, Error};

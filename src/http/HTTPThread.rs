@@ -4,13 +4,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Once};
 use std::time::Instant;
 
-use bun_alloc::Arena; // MimallocArena
 use bun_collections::ArrayHashMap;
-use bun_core::{self, Global, Output};
+use bun_core::{self, Output};
 
-use bun_str::{strings, ZStr};
+use bun_string::{strings, ZStr};
 use bun_threading::{Mutex, UnboundedQueue};
-use bun_threading::thread_pool::Batch;
 
 use crate::proxy_tunnel::ProxyTunnel;
 use crate::ssl_config::SslConfig; // bun.api.server.ServerConfig.SSLConfig
@@ -21,8 +19,12 @@ use crate::h3;
 // TODO(port): TSV names `NewHTTPContext(true)` as `HttpsContext`; assumed alias here.
 type HttpsContext = NewHttpContext<true>;
 
-bun_output::declare_scope!(HTTPThread, hidden); // threadlog
-bun_output::declare_scope!(HTTPThread_log, visible); // log
+// TODO(b2-blocked): `bun_event_loop` is a higher-tier crate (not in bun_http
+// deps); MiniEventLoop is referenced only as a borrowed handle here.
+type MiniEventLoop = c_void;
+
+bun_core::declare_scope!(HTTPThread, hidden); // threadlog
+bun_core::declare_scope!(HTTPThread_log, visible); // log
 // TODO(port): Zig had two `Output.scoped(.HTTPThread, ...)` with different visibilities (.hidden + .visible).
 // Rust scope registry keys on name; pick one visibility in Phase B or split scope names.
 
@@ -47,7 +49,9 @@ fn custom_ssl_context_map() -> &'static mut ArrayHashMap<*const SslConfig, SslCo
 }
 
 pub struct HttpThread {
-    pub loop_: &'static MiniEventLoop,
+    // TODO(b2-blocked): &'static bun_event_loop::MiniEventLoop once that crate
+    // is reachable from bun_http (currently higher-tier).
+    pub loop_: *const MiniEventLoop,
     pub http_context: NewHttpContext<false>,
     pub https_context: NewHttpContext<true>,
 
@@ -83,9 +87,23 @@ pub struct HttpThread {
 
 pub struct HeapRequestBodyBuffer {
     pub buffer: [u8; 512 * 1024],
-    pub fixed_buffer_allocator: bun_alloc::FixedBufferAllocator,
-    // TODO(port): `fixed_buffer_allocator` borrows `buffer` — self-referential. Phase B: store only a cursor.
+    // TODO(port): was `std.heap.FixedBufferAllocator` borrowing `buffer` —
+    // self-referential. Phase B: bun_alloc::FixedBufferAllocator or just a cursor.
+    pub fixed_buffer_allocator: usize,
 }
+
+// TODO(b2-blocked): HeapRequestBodyBuffer/RequestBodyBuffer/LibdeflateState
+// methods + every `impl HttpThread` block below dispatch into the gated
+// `impl HTTPClient` (start/do_redirect/progress_update) and use
+// `bun_uws::NewSocketHandler::{connect_group,connect_unix_group,ext}` and
+// higher-tier types (bun_event_loop::MiniEventLoop, bun_alloc::StackFallback).
+// Un-gate together with the lib.rs `_phase_a_draft` impl.
+#[cfg(any())]
+mod _phase_a_draft {
+use super::*;
+use bun_alloc::Arena;
+use bun_core::Global;
+use bun_threading::thread_pool::Batch;
 
 impl HeapRequestBodyBuffer {
     pub fn init() -> Box<Self> {
@@ -187,7 +205,7 @@ impl HttpThread {
     pub fn get_request_body_send_buffer(&mut self, estimated_size: usize) -> RequestBodyBuffer {
         if estimated_size >= REQUEST_BODY_SEND_STACK_BUFFER_SIZE {
             if self.lazy_request_body_buffer.is_none() {
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     HTTPThread_log,
                     "Allocating HeapRequestBodyBuffer due to {} bytes request body",
                     estimated_size
@@ -339,7 +357,7 @@ pub fn on_start(opts: InitOpts) {
 
     #[cfg(windows)]
     {
-        if bun_sys::windows::getenv_w(bun_str::w!("SystemRoot")).is_none() {
+        if bun_sys::windows::getenv_w(bun_string::w!("SystemRoot")).is_none() {
             Output::err_generic(format_args!(
                 "The %SystemRoot% environment variable is not set. Bun needs this set in order for network requests to work."
             ));
@@ -594,7 +612,7 @@ impl HttpThread {
             if len == 0 {
                 break;
             }
-            bun_output::scoped_log!(HTTPThread, "drained {} queued shutdowns", len);
+            bun_core::scoped_log!(HTTPThread, "drained {} queued shutdowns", len);
         }
     }
 
@@ -657,7 +675,7 @@ impl HttpThread {
             if len == 0 {
                 break;
             }
-            bun_output::scoped_log!(HTTPThread, "drained {} queued writes", len);
+            bun_core::scoped_log!(HTTPThread, "drained {} queued writes", len);
         }
     }
 
@@ -703,7 +721,7 @@ impl HttpThread {
             if len == 0 {
                 break;
             }
-            bun_output::scoped_log!(HTTPThread, "drained {} queued drains", len);
+            bun_core::scoped_log!(HTTPThread, "drained {} queued drains", len);
         }
     }
 
@@ -726,7 +744,7 @@ impl HttpThread {
         let _defer_log = scopeguard::guard((), |_| {
             if cfg!(debug_assertions) {
                 if count > 0 {
-                    bun_output::scoped_log!(HTTPThread_log, "Processed {} tasks\n", count);
+                    bun_core::scoped_log!(HTTPThread_log, "Processed {} tasks\n", count);
                 }
             }
         });
@@ -870,7 +888,7 @@ impl HttpThread {
             // this.loop.run();
             if cfg!(debug_assertions) {
                 let end = bun_core::time::nano_timestamp();
-                bun_output::scoped_log!(HTTPThread, "Waited {}\n", (end - start_time) as i64);
+                bun_core::scoped_log!(HTTPThread, "Waited {}\n", (end - start_time) as i64);
                 Output::flush();
             }
         }
@@ -889,7 +907,7 @@ impl HttpThread {
     }
 
     pub fn schedule_shutdown(&mut self, http: &AsyncHttp) {
-        bun_output::scoped_log!(HTTPThread, "scheduleShutdown {}", http.async_http_id);
+        bun_core::scoped_log!(HTTPThread, "scheduleShutdown {}", http.async_http_id);
         {
             self.queued_shutdowns_lock.lock();
             let _guard = scopeguard::guard((), |_| self.queued_shutdowns_lock.unlock());
@@ -953,6 +971,45 @@ impl HttpThread {
         }
     }
 }
+
+} // mod _phase_a_draft
+
+pub enum RequestBodyBuffer {
+    // Option<> so Drop can `.take()` the Box and hand it to `put()` (which consumes by value).
+    Heap(Option<Box<HeapRequestBodyBuffer>>),
+    // PERF(port): was std.heap.StackFallbackAllocator(32KB) — inline stack buffer with heap fallback.
+    // TODO(b2-blocked): bun_alloc::StackFallbackAllocator<REQUEST_BODY_SEND_STACK_BUFFER_SIZE>
+    Stack([u8; 0]),
+}
+
+pub struct WriteMessage {
+    pub async_http_id: u32,
+    pub kind: WriteMessageType,
+}
+
+#[repr(u8)]
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum WriteMessageType {
+    Data = 0,
+    End = 1,
+}
+
+pub struct DrainMessage {
+    pub async_http_id: u32,
+}
+
+pub struct ShutdownMessage {
+    pub async_http_id: u32,
+}
+
+pub struct LibdeflateState {
+    // TODO(port): `*mut bun_libdeflate_sys::Decompressor` — libdeflate exports
+    // raw `libdeflate_alloc_decompressor`; wrap once a typed handle exists.
+    pub decompressor: *mut c_void,
+    pub shared_buffer: [u8; 512 * 1024],
+}
+
+pub const REQUEST_BODY_SEND_STACK_BUFFER_SIZE: usize = 32 * 1024;
 
 // TODO(port): UnboundedQueue is intrusive over `AsyncHttp.next`; encode field offset in Phase B.
 pub type Queue = UnboundedQueue<AsyncHttp>;

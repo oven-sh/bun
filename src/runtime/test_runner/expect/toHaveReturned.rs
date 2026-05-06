@@ -78,7 +78,7 @@ fn to_have_returned_times_fn<const MODE: Mode>(
         Mode::ToHaveReturnedTimes => actual_success_count == expected_success_count,
     };
 
-    let not = this.flags.not;
+    let not = this.flags.not();
     if not {
         pass = !pass;
     }

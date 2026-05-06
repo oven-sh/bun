@@ -54,19 +54,17 @@ pub mod debug {
     pub fn return_address() -> usize { 0 }
 
     /// Zig: `std.debug.captureStackTrace`. Uses the same C++ helper bun_core does.
-    pub fn capture_stack_trace(begin: usize, trace: &mut StackTrace<'_>) {
+    /// Writes captured return addresses into `addrs` and returns the count written.
+    /// Callers construct the (immutable-slice) `StackTrace` *after* this returns —
+    /// the previous signature round-tripped through `StackTrace.instruction_addresses:
+    /// &[usize]` and wrote via a `*mut` cast of a shared-ref-derived pointer (UB).
+    pub fn capture_stack_trace(begin: usize, addrs: &mut [usize]) -> usize {
         unsafe extern "C" {
             fn Bun__captureStackTrace(begin: usize, out: *mut usize, cap: usize) -> usize;
         }
-        // SAFETY: instruction_addresses is a valid mutable slice for `cap` entries.
-        let n = unsafe {
-            Bun__captureStackTrace(
-                begin,
-                trace.instruction_addresses.as_ptr() as *mut usize,
-                trace.instruction_addresses.len(),
-            )
-        };
-        trace.index = n;
+        // SAFETY: `addrs` is a valid mutable slice for `addrs.len()` entries; the
+        // C++ side writes at most `cap` words and returns the count written.
+        unsafe { Bun__captureStackTrace(begin, addrs.as_mut_ptr(), addrs.len()) }
     }
 
     /// Zig: `std.debug.panicImpl` fallback when ENABLE == false.
@@ -639,11 +637,7 @@ pub fn crash_handler(
                         }
                     }
                     let desired_begin_addr = begin_addr.unwrap_or_else(|| debug::return_address());
-                    let mut idx: usize = {
-                        let mut tmp = StackTrace { index: 0, instruction_addresses: &addr_buf };
-                        debug::capture_stack_trace(desired_begin_addr, &mut tmp);
-                        tmp.index
-                    };
+                    let mut idx: usize = debug::capture_stack_trace(desired_begin_addr, &mut addr_buf);
 
                     #[cfg(all(target_os = "linux", target_env = "gnu"))]
                     {
@@ -1312,8 +1306,6 @@ pub fn print_metadata(writer: &mut impl Write) -> Result<(), bun_core::Error> {
     { write!(writer, "\n{}", bun_analytics::Features::formatter()).map_err(fmt_err)?; }
     writer.write_all(b"\n")?;
 
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_alloc::mimalloc::mi_process_info
     if bun_core::USE_MIMALLOC {
         let mut elapsed_msecs: usize = 0;
         let mut user_msecs: usize = 0;
@@ -1336,7 +1328,7 @@ pub fn print_metadata(writer: &mut impl Write) -> Result<(), bun_core::Error> {
                 &mut page_faults,
             );
         }
-        write!(writer, "Elapsed: {}ms | User: {}ms | Sys: {}ms\n", elapsed_msecs, user_msecs, system_msecs)?;
+        write!(writer, "Elapsed: {}ms | User: {}ms | Sys: {}ms\n", elapsed_msecs, user_msecs, system_msecs).map_err(fmt_err)?;
 
         // TODO(port): {B:<3.2} byte-size formatting — use bun_fmt::bytes()
         write!(
@@ -1346,11 +1338,11 @@ pub fn print_metadata(writer: &mut impl Write) -> Result<(), bun_core::Error> {
             bun_fmt::bytes(peak_rss),
             bun_fmt::bytes(current_commit),
             page_faults,
-        )?;
+        ).map_err(fmt_err)?;
 
         // SAFETY: read-only access to exported global
         if unsafe { Bun__reported_memory_size } > 0 {
-            write!(writer, " | Machine: {}", bun_fmt::bytes(unsafe { Bun__reported_memory_size }))?;
+            write!(writer, " | Machine: {}", bun_fmt::bytes(unsafe { Bun__reported_memory_size })).map_err(fmt_err)?;
         }
 
         writer.write_all(b"\n")?;
@@ -2195,9 +2187,6 @@ pub fn dump_stack_trace(trace: &StackTrace, limits: WriteStackTraceLimits) {
 }
 
 fn spawn_symbolizer(program: &bun_core::ZStr, trace: &StackTrace) -> Result<(), bun_core::Error> {
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_core::spawn_sync_inherit  (no std::process per PORTING.md)
-    {
     // TODO(port): narrow error set
     let mut argv: Vec<Vec<u8>> = Vec::new();
     argv.push(program.as_bytes().to_vec());
@@ -2217,7 +2206,7 @@ fn spawn_symbolizer(program: &bun_core::ZStr, trace: &StackTrace) -> Result<(), 
     });
 
     let mut name_bytes: [u8; 1024] = [0; 1024];
-    for &addr in &trace.instruction_addresses()[0..trace.index] {
+    for &addr in &trace.instruction_addresses[0..trace.index] {
         let Some(line) = StackLine::from_address(addr, &mut name_bytes) else { continue; };
         let mut buf = Vec::new();
         use std::io::Write as _;
@@ -2225,9 +2214,8 @@ fn spawn_symbolizer(program: &bun_core::ZStr, trace: &StackTrace) -> Result<(), 
         argv.push(buf);
     }
 
-    // TODO(port): std.process.Child — banned per PORTING.md (no std::process). Phase B should
-    // route this through bun_core::spawn_sync or a raw posix_spawn. Preserving logic shape only.
-    let stderr = &mut bun_sys::stderr_writer();
+    // PORTING.md: no std::process — routed through bun_core::spawn_sync_inherit (posix_spawn).
+    let stderr = &mut stderr_writer();
     let result = bun_core::spawn_sync_inherit(&argv).map_err(|err| {
         let _ = write!(stderr, "Failed to invoke command: {}\n", bun_fmt::fmt_slice(&argv, " "));
         if cfg!(windows) {
@@ -2239,15 +2227,13 @@ fn spawn_symbolizer(program: &bun_core::ZStr, trace: &StackTrace) -> Result<(), 
     if !result.is_ok() {
         let _ = write!(stderr, "Failed to invoke command: {}\n", bun_fmt::fmt_slice(&argv, " "));
     }
-    } // end #[cfg(any())]
-    let _ = (program, trace);
     Ok(())
 }
 
 pub fn dump_current_stack_trace(first_address: Option<usize>, limits: WriteStackTraceLimits) {
     let mut addrs: [usize; 32] = [0; 32];
-    let mut stack = StackTrace { index: 0, instruction_addresses: &addrs };
-    debug::capture_stack_trace(first_address.unwrap_or_else(|| debug::return_address()), &mut stack);
+    let n = debug::capture_stack_trace(first_address.unwrap_or_else(|| debug::return_address()), &mut addrs);
+    let stack = StackTrace { index: n, instruction_addresses: &addrs };
     dump_stack_trace(&stack, limits);
 }
 
@@ -2361,9 +2347,7 @@ impl StoredTrace {
 
     pub fn capture(begin: Option<usize>) -> StoredTrace {
         let mut stored = StoredTrace::EMPTY;
-        let mut frame = StackTrace { index: 0, instruction_addresses: &stored.data };
-        debug::capture_stack_trace(begin.unwrap_or_else(|| debug::return_address()), &mut frame);
-        stored.index = frame.index;
+        stored.index = debug::capture_stack_trace(begin.unwrap_or_else(|| debug::return_address()), &mut stored.data);
         for (i, &addr) in stored.data[0..stored.index].iter().enumerate() {
             if addr == 0 {
                 stored.index = i;

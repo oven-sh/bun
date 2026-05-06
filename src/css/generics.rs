@@ -292,29 +292,26 @@ impl CssEql for bun_logger::Loc {
     }
 }
 
-// CustomIdent/DashedIdent/Ident wrapper structs live in the gated css_parser
-// hub (re-exported from values/ident.rs). Re-enable when that un-gates.
-#[cfg(any())]
+// CustomIdent/DashedIdent/Ident wrapper structs are hoisted as data-only stubs
+// in `crate::values::ident` (lib.rs); the full impls live in gated
+// `values/ident.rs` and supersede these on un-gate.
 mod ident_eql {
-    use super::*;
-    impl CssEql for CustomIdent {
-        #[inline]
-        fn eql(&self, other: &Self) -> bool {
-            bun_string::strings::eql(self.v, other.v)
-        }
+    use super::CssEql;
+    use crate::values::ident::{CustomIdent, DashedIdent, Ident};
+
+    macro_rules! ident_eql_impl {
+        ($($t:ty),* $(,)?) => {$(
+            impl CssEql for $t {
+                #[inline]
+                fn eql(&self, other: &Self) -> bool {
+                    // SAFETY: `.v` borrows the parser arena, which outlives
+                    // every CssEql comparison (callers hold the arena).
+                    unsafe { bun_string::strings::eql(&*self.v, &*other.v) }
+                }
+            }
+        )*};
     }
-    impl CssEql for DashedIdent {
-        #[inline]
-        fn eql(&self, other: &Self) -> bool {
-            bun_string::strings::eql(self.v, other.v)
-        }
-    }
-    impl CssEql for Ident {
-        #[inline]
-        fn eql(&self, other: &Self) -> bool {
-            bun_string::strings::eql(self.v, other.v)
-        }
-    }
+    ident_eql_impl!(CustomIdent, DashedIdent, Ident);
 }
 
 // TODO(port): Zig also special-cases `@typeInfo(T).struct.layout == .packed` →

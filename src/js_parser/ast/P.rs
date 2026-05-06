@@ -73,13 +73,11 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> ParserLike<'a> for P<'a, TS,
     #[inline] fn lexer(&mut self) -> &mut js_lexer::Lexer<'a> { &mut self.lexer }
     #[inline] fn log(&mut self) -> &mut logger::Log { self.log }
     #[inline] fn bump(&self) -> &'a Bump { self.allocator }
-    #[inline] fn new_expr<T: js_ast::expr::IntoExprData>(&mut self, _t: T, _loc: logger::Loc) -> Expr {
-        #[cfg(any())] { return P::new_expr(self, _t, _loc); }
-        unimplemented!("ParserLike::new_expr — P impl block gated until round-D")
+    #[inline] fn new_expr<T: js_ast::expr::IntoExprData>(&mut self, t: T, loc: logger::Loc) -> Expr {
+        P::new_expr(self, t, loc)
     }
-    #[inline] fn store_name_in_ref(&mut self, _name: &'a [u8]) -> Result<Ref, bun_core::Error> {
-        #[cfg(any())] { return P::store_name_in_ref(self, _name); }
-        unimplemented!("ParserLike::store_name_in_ref — P impl block gated until round-D")
+    #[inline] fn store_name_in_ref(&mut self, name: &'a [u8]) -> Result<Ref, bun_core::Error> {
+        P::store_name_in_ref(self, name)
     }
 }
 
@@ -169,12 +167,12 @@ pub type MacroCallCountType = u32;
 // In Rust these are inherent methods on `P` defined in sibling files via separate
 // `impl<...> P<...>` blocks. Round-D/E: those files un-gate per-module; until
 // then their re-exports are gated so the *struct* + core helpers compile.
-#[cfg(any())] pub use super::skip_typescript::*;
-#[cfg(any())] pub use super::parse::*;
-#[cfg(any())] pub use super::visit::*;
-#[cfg(any())] pub use super::maybe::*;
+pub use super::skip_typescript::*;
+pub use super::parse::*;
+pub use super::visit::*;
+pub use super::maybe::*;
 pub use super::symbols::*;
-#[cfg(any())] pub use super::lower_decorators::*;
+pub use super::lower_decorators::*;
 // `BinaryExpressionVisitor` is referenced as a field type; provide an opaque
 // stand-in until visit_binary_expression.rs un-gates.
 #[derive(Default)]
@@ -598,34 +596,67 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         scan_only: SCAN_ONLY,
     };
     pub const JSX_TRANSFORM_TYPE: JSXTransformType = J::KIND;
+
+    // ── thin allocate-helpers (un-gated so the parse_*/visit_* mixin bodies
+    //    can reference them; the full bodies with SCAN_ONLY require-scan and
+    //    @typeInfo branches stay in the gated block below) ────────────────
+    #[inline]
+    pub fn new_expr<T>(&mut self, t: T, loc: logger::Loc) -> Expr
+    where
+        T: js_ast::expr::IntoExprData,
+    {
+        // TODO(port): SCAN_ONLY branch scans E::Call args for require("...") —
+        // un-gates with the full impl block below (needs as_e_call accessor).
+        Expr::init(t, loc)
+    }
+
+    #[inline]
+    pub fn s<T>(&self, t: T, loc: logger::Loc) -> Stmt
+    where
+        T: js_ast::stmt::StatementData,
+    {
+        Stmt::alloc(t, loc)
+    }
+
+    pub fn load_name_from_ref(&self, r#ref: Ref) -> &'a [u8] {
+        use js_ast::base::RefTag;
+        match r#ref.tag() {
+            // SAFETY: original_name is an arena-owned slice valid for 'a (Symbol is created
+            // from p.allocator / source.contents in this same parse).
+            RefTag::Symbol => unsafe { &*self.symbols[r#ref.inner_index() as usize].original_name },
+            RefTag::SourceContentsSlice => {
+                let start = r#ref.source_index() as usize;
+                let end = start + r#ref.inner_index() as usize;
+                &self.source.contents[start..end]
+            }
+            RefTag::AllocatedName => self.allocated_names[r#ref.inner_index() as usize],
+            _ => panic!("Internal error: JS parser tried to load an invalid name from a Ref"),
+        }
+    }
 }
 
-#[cfg(any())]
+// ═══════════════════════════════════════════════════════════════════════════
+// Round-D: core helper methods on P. Un-gated in groups; heavy bodies that
+// touch unfinished E/S/ts surface or call into parse_*/visit_* sibling files
+// stay individually `#[cfg(any())] // blocked_on:` below.
+// ═══════════════════════════════════════════════════════════════════════════
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     P<'a, TYPESCRIPT, J, SCAN_ONLY>
 {
-    pub const IS_TYPESCRIPT_ENABLED: bool = TYPESCRIPT;
-    pub const IS_JSX_ENABLED: bool = J::ENABLED;
-    pub const ONLY_SCAN_IMPORTS_AND_DO_NOT_VISIT: bool = SCAN_ONLY;
-    pub const TRACK_SYMBOL_USAGE_DURING_PARSE_PASS: bool = SCAN_ONLY && TYPESCRIPT;
-    pub const PARSER_FEATURES: ParserFeatures = ParserFeatures {
-        typescript: TYPESCRIPT,
-        jsx: J::KIND,
-        scan_only: SCAN_ONLY,
-    };
-    pub const JSX_TRANSFORM_TYPE: JSXTransformType = J::KIND;
     pub const ALLOW_MACROS: bool = true /* TODO(b2-blocked): feature_flag::IS_MACRO_ENABLED */;
 
     /// use this instead of checking p.source.index
     /// because when not bundling, p.source.index is `0`
     #[inline]
     pub fn is_source_runtime(&self) -> bool {
-        self.options.bundle && self.source.index.is_runtime()
+        // Zig: Index.isRuntime() — index 0 is the synthetic runtime chunk.
+        self.options.bundle && self.source.index.0 == 0
     }
 
     /// Extracts a matchable "shape" from a dynamic import argument.
     /// Template literals: static parts joined by \x00 placeholders.
     /// Everything else: empty string.
+    #[cfg(any())] // blocked_on: E::Template::Head enum (TemplateContents in E.rs differs); options.allow_unresolved
     fn extract_dynamic_specifier_shape(
         &mut self,
         arg: Expr,
@@ -656,6 +687,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Ok(b"")
     }
 
+    #[cfg(any())] // blocked_on: extract_dynamic_specifier_shape; options.allow_unresolved
     pub fn check_dynamic_specifier(
         &mut self,
         arg: Expr,
@@ -712,6 +744,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Ok(())
     }
 
+    #[cfg(any())] // blocked_on: TransposeState fields; ImportRecord.flags struct; check_dynamic_specifier
     pub fn transpose_import(&mut self, arg: Expr, state: &TransposeState) -> Expr {
         // The argument must be a string
         if let Some(str_) = arg.data.as_e_string() {
@@ -771,6 +804,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         )
     }
 
+    #[cfg(any())] // blocked_on: check_dynamic_specifier; ExprNodeList::from_owned_slice(&mut [T])
     pub fn transpose_require_resolve(&mut self, arg: Expr, require_resolve_ref: Expr) -> Expr {
         // The argument must be a string
         if matches!(arg.data, js_ast::ExprData::EString(_)) {
@@ -803,6 +837,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         )
     }
 
+    #[cfg(any())] // blocked_on: ImportRecord.flags struct; e_string().string(bump) signature
     #[inline]
     pub fn transpose_require_resolve_known_string(&mut self, arg: Expr) -> Expr {
         debug_assert!(matches!(arg.data, js_ast::ExprData::EString(_)));
@@ -833,6 +868,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         )
     }
 
+    #[cfg(any())] // blocked_on: fs::Path::package_name; ImportRecord.flags; check_dynamic_specifier
     pub fn transpose_require(&mut self, arg: Expr, state: &TransposeState) -> Expr {
         if !self.options.features.allow_runtime {
             let args = self.allocator.alloc_slice_copy(&[arg]);
@@ -937,6 +973,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         self.options.features.unwrap_commonjs_to_esm
     }
 
+    #[cfg(any())] // blocked_on: Binding::Data variant payload deref (B::Array/Object store *mut [..]); named_imports.contains
     fn is_binding_used(&mut self, binding: Binding, default_export_ref: Ref) -> bool {
         match binding.data {
             Binding::Data::BIdentifier(ident) => {
@@ -976,6 +1013,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
     }
 
+    #[cfg(any())] // blocked_on: is_binding_used; SideEffects::to_boolean; Part fields; named_exports key type
     pub fn tree_shake(&mut self, parts: &mut &'a mut [js_ast::Part], merge: bool) {
         let mut parts_ = core::mem::take(parts);
         // PORT NOTE: Zig used `defer` to merge parts after the loop. We replicate by
@@ -1122,6 +1160,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         *parts = parts_;
     }
 
+    #[cfg(any())] // blocked_on: Part.symbol_uses keys()/values() (ArrayHashMap returns slices but use_count_estimate type)
     fn clear_symbol_usages_from_dead_part(&mut self, part: &js_ast::Part) {
         let symbol_use_refs = part.symbol_uses.keys();
         let symbol_use_values = part.symbol_uses.values();
@@ -1140,16 +1179,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
     }
 
-    pub fn s<T>(&self, t: T, loc: logger::Loc) -> Stmt
-    where
-        T: js_ast::stmt::StatementData,
-    {
-        // TODO(port): Zig used @typeInfo to detect *T vs T and pick Stmt.init vs Stmt.alloc.
-        // In Rust we expose this via a `StmtPayload` trait that knows how to construct itself.
-        // The `only_scan_imports_and_do_not_visit` ExportFrom branch was a no-op (commented out).
-        Stmt::alloc(t, loc)
-    }
+    // s() lives in the round-C live block above (deduped).
 
+    #[cfg(any())] // blocked_on: lexer.all_comments; CharFreq.scan slice arg; Scope.members.iter() entry shape
     fn compute_character_frequency(&mut self) -> Option<js_ast::CharFreq> {
         if !self.options.features.minify_identifiers || self.is_source_runtime() {
             return None;
@@ -1199,32 +1231,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Some(freq)
     }
 
-    pub fn new_expr<T>(&mut self, t: T, loc: logger::Loc) -> Expr
-    where
-        T: js_ast::expr::IntoExprData,
-    {
-        // TODO(port): Zig branched on @typeInfo(Type) == .pointer and on
-        // `only_scan_imports_and_do_not_visit` to scan E.Call for require("..").
-        // The pointer/value distinction collapses in Rust (Expr::init handles both).
-        if SCAN_ONLY {
-            if let Some(call) = t.as_e_call() {
-                if let js_ast::ExprData::EIdentifier(ident) = call.target.data {
-                    // is this a require("something")
-                    if self.load_name_from_ref(ident.r#ref) == b"require"
-                        && call.args.len == 1
-                        && matches!(call.args.at(0).data, js_ast::ExprData::EString(_))
-                    {
-                        let _ = self.add_import_record(
-                            ImportKind::Require,
-                            loc,
-                            call.args.at(0).data.e_string().string(self.allocator).expect("unreachable"),
-                        );
-                    }
-                }
-            }
-        }
-        Expr::init(t, loc)
-    }
+    // new_expr() lives in the round-C live block above (deduped). The
+    // SCAN_ONLY require("...") sniff branch is restored there once
+    // IntoExprData::as_e_call() lands.
 
     // TODO(b2-blocked): BindingAlloc trait gated in Binding.rs (round-A _draft).
     #[cfg(any())]
@@ -1235,6 +1244,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Binding::alloc(self.allocator, t, loc)
     }
 
+    #[cfg(any())] // blocked_on: B::Array/Object payload deref (*mut [..] iteration)
     pub fn record_exported_binding(&mut self, binding: Binding) {
         match binding.data {
             Binding::Data::BMissing(_) => {}
@@ -1255,6 +1265,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
     }
 
+    #[cfg(any())] // blocked_on: named_exports key type (StringHashMap put arg); logger::Data field set
     pub fn record_export(
         &mut self,
         loc: logger::Loc,
@@ -1297,7 +1308,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         self.commonjs_named_exports_deoptimized && self.commonjs_named_exports.count() > 0
     }
 
-    pub fn record_usage(&mut self, r#ref: Ref) {
+    pub fn record_usage(&mut self, ref_: Ref) {
         if self.is_revisit_for_substitution {
             return;
         }
@@ -1306,12 +1317,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // code regions since those will be culled.
         if !self.is_control_flow_dead {
             if cfg!(debug_assertions) {
-                debug_assert!(self.symbols.len() > r#ref.inner_index() as usize);
+                debug_assert!(self.symbols.len() > ref_.inner_index() as usize);
             }
-            self.symbols[r#ref.inner_index() as usize].use_count_estimate += 1;
-            let result = self.symbol_uses.get_or_put(self.allocator, r#ref).expect("unreachable");
+            self.symbols[ref_.inner_index() as usize].use_count_estimate += 1;
+            let result = self.symbol_uses.get_or_put(ref_).expect("unreachable");
             if !result.found_existing {
-                *result.value_ptr = Symbol::Use { count_estimate: 1 };
+                *result.value_ptr = js_ast::symbol::Use { count_estimate: 1 };
             } else {
                 result.value_ptr.count_estimate += 1;
             }
@@ -1321,7 +1332,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // symbol use counts for the whole file, including dead code regions. This is
         // tracked separately in a parser-only data structure.
         if TYPESCRIPT {
-            self.ts_use_counts[r#ref.inner_index() as usize] += 1;
+            self.ts_use_counts[ref_.inner_index() as usize] += 1;
         }
     }
 
@@ -1329,14 +1340,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         if errors.invalid_expr_await.len > 0 {
             let r = errors.invalid_expr_await;
             self.log
-                .add_range_error(self.source, r, "Cannot use an \"await\" expression here")
+                .add_range_error(Some(self.source), r, b"Cannot use an \"await\" expression here")
                 .expect("unreachable");
         }
 
         if errors.invalid_expr_yield.len > 0 {
             let r = errors.invalid_expr_yield;
             self.log
-                .add_range_error(self.source, r, "Cannot use a \"yield\" expression here")
+                .add_range_error(Some(self.source), r, b"Cannot use a \"yield\" expression here")
                 .expect("unreachable");
         }
     }
@@ -1344,12 +1355,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     pub fn key_name_for_error(&mut self, key: &js_ast::Expr) -> &'a [u8] {
         match &key.data {
             js_ast::ExprData::EString(s) => s.string(self.allocator).expect("unreachable"),
-            js_ast::ExprData::EPrivateIdentifier(private) => self.load_name_from_ref(private.r#ref),
+            js_ast::ExprData::EPrivateIdentifier(private) => self.load_name_from_ref(private.ref_),
             _ => b"property",
         }
     }
 
     /// This function is very very hot.
+    #[cfg(any())] // blocked_on: const_values map; ts::Data variants; wrap_inlined_enum; find_symbol (symbols.rs)
     pub fn handle_identifier(
         &mut self,
         loc: logger::Loc,
@@ -1506,6 +1518,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Expr { data: js_ast::ExprData::EIdentifier(ident), loc }
     }
 
+    #[cfg(any())] // blocked_on: ClauseItem fields; NamedImport fields; Part fields; S::Import shape
     pub fn generate_import_stmt_for_bake_response(
         &mut self,
         parts: &mut ListManaged<'a, js_ast::Part>,
@@ -1584,6 +1597,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Ok(())
     }
 
+    #[cfg(any())] // blocked_on: ClauseItem; NamedImport; Part; S::Import; GenerateImportSymbols trait shape
     pub fn generate_import_stmt<I, Sym>(
         &mut self,
         import_path: &'a [u8],
@@ -1697,6 +1711,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Ok(())
     }
 
+    #[cfg(any())] // blocked_on: generate_react_refresh_import_hmr
     pub fn generate_react_refresh_import(
         &mut self,
         parts: &mut ListManaged<'a, js_ast::Part>,
@@ -1710,6 +1725,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
     }
 
+    #[cfg(any())] // blocked_on: B::Object::Property; b(); S::Local/Import; Decl::List; Part
     fn generate_react_refresh_import_hmr<const HOT_MODULE_RELOADING: bool>(
         &mut self,
         parts: &mut ListManaged<'a, js_ast::Part>,
@@ -1819,6 +1835,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Ok(())
     }
 
+    #[cfg(any())] // blocked_on: visit_expr; StmtData variant payload mut access; substitute_single_use_symbol_in_expr
     pub fn substitute_single_use_symbol_in_stmt(
         &mut self,
         stmt: Stmt,
@@ -1892,6 +1909,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         false
     }
 
+    #[cfg(any())] // blocked_on: full ExprData variant set mut access via StoreRef
     fn substitute_single_use_symbol_in_expr(
         &mut self,
         expr: Expr,
@@ -2465,6 +2483,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         self.runtime_imports.put(b"__require", self.runtime_imports.__require.unwrap());
     }
 
+    #[cfg(any())] // blocked_on: ensure_require_symbol (gated above)
     pub fn resolve_common_js_symbols(&mut self) {
         if !self.options.features.allow_runtime {
             return;
@@ -2476,6 +2495,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         self.options.bundle || self.options.features.minify_identifiers
     }
 
+    #[cfg(any())] // blocked_on: Scope.members.iter_mut() entry shape; get_or_put_member_with_hash key_ptr; logger::range_data
     fn hoist_symbols(&mut self, scope: *mut js_ast::Scope) {
         // SAFETY: scope is arena-owned and valid for parser lifetime
         let scope_ref = unsafe { &mut *scope };
@@ -2674,11 +2694,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     }
 
     #[inline]
-    fn next_scope_in_order_for_visit_pass(&mut self) -> ScopeOrder {
-        let head = self.scope_order_to_visit[0];
-        let len = self.scope_order_to_visit.len();
+    fn next_scope_in_order_for_visit_pass(&mut self) -> ScopeOrder<'a> {
         // PORT NOTE: reshaped for borrowck — Zig sliced [1..len]
-        self.scope_order_to_visit = &mut core::mem::take(&mut self.scope_order_to_visit)[1..len];
+        let taken = core::mem::take(&mut self.scope_order_to_visit);
+        let (head, rest) = taken.split_first_mut().expect("scope_order_to_visit empty");
+        let head = *head;
+        self.scope_order_to_visit = rest;
         head
     }
 
@@ -2694,15 +2715,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         if cfg!(debug_assertions) && (order.loc.start != loc.start || unsafe { &*order.scope }.kind != kind) {
             self.log.level = logger::Level::Verbose;
             let _ = self.log.add_debug_fmt(
-                self.source,
+                Some(self.source),
                 loc,
-                self.allocator,
                 format_args!("Expected this scope (.{})", <&'static str>::from(kind)),
             );
             let _ = self.log.add_debug_fmt(
-                self.source,
+                Some(self.source),
                 order.loc,
-                self.allocator,
                 // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
                 format_args!("Found this scope (.{})", <&'static str>::from(unsafe { &*order.scope }.kind)),
             );
@@ -2724,18 +2743,19 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     ) -> Result<usize, bun_core::Error> {
         let parent: *mut Scope = self.current_scope;
         let allocator = self.allocator;
-        let scope = allocator.alloc(Scope {
+        let scope: *mut Scope = allocator.alloc(Scope {
             kind: KIND,
             label_ref: None,
-            parent: Some(parent),
+            // SAFETY: parent is the live current_scope (arena-owned, non-null after init()).
+            parent: Some(unsafe { NonNull::new_unchecked(parent) }),
             generated: Default::default(),
             ..Default::default()
         });
 
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        unsafe { &mut *parent }.children.push(allocator, scope as *mut _)?;
-        // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        scope.strict_mode = unsafe { &*parent }.strict_mode;
+        unsafe { &mut *parent }.children.append(unsafe { NonNull::new_unchecked(scope) })?;
+        // SAFETY: arena-owned Scope pointers valid for parser 'a lifetime; no aliasing &mut outstanding
+        unsafe { (*scope).strict_mode = (*parent).strict_mode };
 
         self.current_scope = scope;
 
@@ -2756,14 +2776,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     last_i -= 1;
                 }
 
-                if let Some(prev_scope) = &self.scopes_in_order[last_i] {
-                    if prev_scope.loc.start >= loc.start {
+                // PORT NOTE: reshaped for borrowck — copy out loc before borrowing self mutably.
+                if let Some(prev_loc) = self.scopes_in_order[last_i].as_ref().map(|s| s.loc) {
+                    if prev_loc.start >= loc.start {
                         self.log.level = logger::Level::Verbose;
-                        let _ = self.log.add_debug_fmt(self.source, prev_scope.loc, self.allocator, format_args!("Previous Scope"));
-                        let _ = self.log.add_debug_fmt(self.source, loc, self.allocator, format_args!("Next Scope"));
+                        let _ = self.log.add_debug_fmt(Some(self.source), prev_loc, format_args!("Previous Scope"));
+                        let _ = self.log.add_debug_fmt(Some(self.source), loc, format_args!("Next Scope"));
                         self.panic(
                             "Scope location must be greater than previous",
-                            format_args!("{} must be greater than {}", loc.start, prev_scope.loc.start),
+                            format_args!("{} must be greater than {}", loc.start, prev_loc.start),
                         );
                     }
                 }
@@ -2777,23 +2798,22 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
             debug_assert!(unsafe { &*parent }.kind == js_ast::scope::Kind::FunctionArgs);
 
-            // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-            let parent_ref = unsafe { &mut *(scope.parent.unwrap()) };
-            let mut iter = parent_ref.members.iter();
-            while let Some(entry) = iter.next() {
+            // SAFETY: arena-owned Scope pointers valid for parser 'a lifetime; parent != scope so no alias.
+            let (parent_ref, scope_ref) = unsafe { (&*parent, &mut *scope) };
+            for (key, value) in parent_ref.members.iter() {
                 // Don't copy down the optional function expression name. Re-declaring
                 // the name of a function expression is allowed.
-                let value = *entry.value();
-                let adjacent_kind = self.symbols[value.r#ref.inner_index() as usize].kind;
+                let value = *value;
+                let adjacent_kind = self.symbols[value.ref_.inner_index() as usize].kind;
                 if adjacent_kind != js_ast::symbol::Kind::HoistedFunction {
-                    scope.members.put(allocator, *entry.key(), value)?;
+                    scope_ref.members.put(key, value)?;
                 }
             }
         }
 
         // Remember the length in case we call popAndDiscardScope() later
         let scope_index = self.scopes_in_order.len();
-        self.scopes_in_order.push(allocator, Some(ScopeOrder { loc, scope }))?;
+        self.scopes_in_order.push(Some(ScopeOrder::new(loc, scope)));
         // Output.print("\nLoc: {d}\n", .{loc.start});
         Ok(scope_index)
     }
@@ -2937,8 +2957,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         ExprBindingTuple { binding: bind, expr: initializer }
     }
 
-    pub fn forbid_lexical_decl(&self, loc: logger::Loc) -> Result<(), bun_core::Error> {
-        self.log.add_error(self.source, loc, "Cannot use a declaration in a single-statement context")
+    pub fn forbid_lexical_decl(&mut self, loc: logger::Loc) -> Result<(), bun_core::Error> {
+        Ok(self.log.add_error(Some(self.source), loc, b"Cannot use a declaration in a single-statement context")?)
     }
 
     /// If we attempt to parse TypeScript syntax outside of a TypeScript file
@@ -2954,15 +2974,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
     pub fn log_expr_errors(&mut self, errors: &mut DeferredErrors) {
         if let Some(r) = errors.invalid_expr_default_value {
-            self.log.add_range_error(self.source, r, "Unexpected \"=\"").expect("unreachable");
+            self.log.add_range_error(Some(self.source), r, b"Unexpected \"=\"").expect("unreachable");
         }
 
         if let Some(r) = errors.invalid_expr_after_question {
             self.log
                 .add_range_error_fmt(
-                    self.source,
+                    Some(self.source),
                     r,
-                    self.allocator,
                     format_args!("Unexpected {}", bstr::BStr::new(&self.source.contents[r.loc.i()..r.end_i()])),
                 )
                 .expect("unreachable");
@@ -2977,7 +2996,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // Move up to the parent scope
         let to_discard = self.current_scope;
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        let parent = unsafe { &*to_discard }.parent.expect("unreachable");
+        let parent = unsafe { &*to_discard }.parent.expect("unreachable").as_ptr();
 
         self.current_scope = parent;
 
@@ -2988,13 +3007,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let children = &mut unsafe { &mut *parent }.children;
         // Remove the last child from the parent scope
         let last = children.len - 1;
-        if children.slice()[last as usize] != to_discard {
+        if children.slice()[last as usize].as_ptr() != to_discard {
             self.panic("Internal error", format_args!(""));
         }
 
         let _ = children.pop();
     }
 
+    #[cfg(any())] // blocked_on: S::Import field set; MacroState::RefData; ParsedPath fields; ImportItemForNamespaceMap API
     pub fn process_import_statement(
         &mut self,
         stmt_: S::Import,
@@ -3250,6 +3270,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Ok(self.s(stmt, loc))
     }
 
+    #[cfg(any())] // blocked_on: ParsedPath fields; S::Import.items; options::Loader
     #[cold]
     fn validate_and_set_import_type(&mut self, path: &ParsedPath, stmt: &mut S::Import) -> Result<(), bun_core::Error> {
         if let Some(loader) = path.loader {
@@ -3284,6 +3305,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Ok(())
     }
 
+    #[cfg(any())] // blocked_on: source.path.name.non_unique_name_string (logger::fs::PathName API)
     pub fn create_default_name(&mut self, loc: logger::Loc) -> Result<js_ast::LocRef, bun_core::Error> {
         let mut buf = BumpVec::new_in(self.allocator);
         let _ = write!(
@@ -3304,20 +3326,21 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
     pub fn new_symbol(&mut self, kind: js_ast::symbol::Kind, identifier: &'a [u8]) -> Result<Ref, bun_core::Error> {
         // TODO(port): narrow error set
-        let inner_index = self.symbols.len() as Ref::Int; // @truncate
-        self.symbols.push(Symbol { kind, original_name: identifier, ..Default::default() });
+        let inner_index = self.symbols.len() as js_ast::base::RefInt; // @truncate
+        self.symbols.push(Symbol { kind, original_name: identifier as *const [u8], ..Default::default() });
 
         if TYPESCRIPT {
             self.ts_use_counts.push(0);
         }
 
-        Ok(Ref {
+        Ok(Ref::new(
             inner_index,
-            source_index: u32::try_from(self.source.index.get()).unwrap(),
-            tag: Ref::Tag::Symbol,
-        })
+            self.source.index.0 as js_ast::base::RefInt,
+            js_ast::base::RefTag::Symbol,
+        ))
     }
 
+    #[cfg(any())] // blocked_on: create_default_name; E::Function/Class field shapes
     pub fn default_name_for_expr(&mut self, expr: Expr, loc: logger::Loc) -> LocRef {
         match &expr.data {
             js_ast::ExprData::EFunction(func_container) => {
@@ -3348,6 +3371,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         self.create_default_name(loc).expect("unreachable")
     }
 
+    #[cfg(any())] // blocked_on: BabyList<NonNull<Scope>> Copy/ordered_remove; child.scope NonNull eq *mut
     pub fn discard_scopes_up_to(&mut self, scope_index: usize) {
         // Remove any direct children from their parent
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
@@ -3380,6 +3404,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         self.scopes_in_order.truncate(scope_index);
     }
 
+    #[cfg(any())] // blocked_on: B::Object/Array payload deref; TSNamespaceMemberMap.put allocator arg
     pub fn define_exported_namespace_binding(
         &mut self,
         exported_members: &mut js_ast::TSNamespaceMemberMap,
@@ -3427,18 +3452,16 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     }
                     // PERF(port): was comptimePrint — runtime format here is fine for error path
                     self.log.add_error_fmt(
-                        self.source,
+                        Some(self.source),
                         value.loc,
-                        self.allocator,
                         format_args!("for-{} loop variables cannot have an initializer", loop_type),
                     )?;
                 }
             }
             _ => {
                 self.log.add_error_fmt(
-                    self.source,
+                    Some(self.source),
                     decls[0].binding.loc,
-                    self.allocator,
                     format_args!("for-{} loops must have a single declaration", loop_type),
                 )?;
             }
@@ -3461,25 +3484,27 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         for decl in decls {
             if decl.value.is_none() {
                 match &decl.binding.data {
-                    Binding::Data::BIdentifier(ident) => {
+                    js_ast::b::B::BIdentifier(ident) => {
                         let r = js_lexer::range_of_identifier(self.source, decl.binding.loc);
+                        // SAFETY: B::Identifier is arena-allocated; valid for 'a.
+                        let ident_ref = unsafe { &**ident }.r#ref;
+                        // SAFETY: original_name is an arena-owned slice valid for 'a.
+                        let name = unsafe { &*self.symbols[ident_ref.inner_index() as usize].original_name };
                         self.log.add_range_error_fmt(
-                            self.source,
+                            Some(self.source),
                             r,
-                            self.allocator,
                             format_args!(
                                 "The {} \"{}\" must be initialized",
                                 what,
-                                bstr::BStr::new(self.symbols[ident.r#ref.inner_index() as usize].original_name)
+                                bstr::BStr::new(name)
                             ),
                         )?;
                         // return;/
                     }
                     _ => {
                         self.log.add_error_fmt(
-                            self.source,
+                            Some(self.source),
                             decl.binding.loc,
-                            self.allocator,
                             format_args!("This {} must be initialized", what),
                         )?;
                     }
@@ -3492,6 +3517,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     // Generate a TypeScript namespace object for this namespace's scope. If this
     // namespace is another block that is to be merged with an existing namespace,
     // use that earlier namespace's object instead.
+    #[cfg(any())] // blocked_on: TSNamespaceScope field set; ts::Data::Namespace payload type
     pub fn get_or_create_exported_namespace_members(
         &mut self,
         name: &[u8],
@@ -3555,6 +3581,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     // TODO:
     pub fn check_for_non_bmp_code_point(&mut self, _: logger::Loc, _: &[u8]) {}
 
+    #[cfg(any())] // blocked_on: is_strict_mode_output_format; logger::range_data signature; logger::Data Copy
     pub fn mark_strict_mode_feature(
         &mut self,
         feature: StrictModeFeature,
@@ -3623,6 +3650,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         unsafe { &*self.current_scope }.strict_mode != js_ast::StrictModeKind::SloppyMode
     }
 
+    #[cfg(any())] // blocked_on: options::Format::is_esm()
     #[inline]
     pub fn is_strict_mode_output_format(&self) -> bool {
         self.options.bundle && self.options.output_format.is_esm()
@@ -3636,7 +3664,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let name_hash = Scope::get_member_hash(name);
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
         let module_scope = unsafe { &mut *self.module_scope };
-        let member = module_scope.get_member_with_hash(name, name_hash).copied();
+        let member = module_scope.get_member_with_hash(name, name_hash);
 
         // If the code declared this symbol using "var name", then this is actually
         // not a collision. For example, node will let you do this:
@@ -3657,23 +3685,23 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // Both the "exports" argument and "var exports" are hoisted variables, so
         // they don't collide.
         if let Some(_member) = &member {
-            if self.symbols[_member.r#ref.inner_index() as usize].kind == js_ast::symbol::Kind::Hoisted
+            if self.symbols[_member.ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Hoisted
                 && kind == js_ast::symbol::Kind::Hoisted
                 && !self.has_es_module_syntax
             {
-                return Ok(_member.r#ref);
+                return Ok(_member.ref_);
             }
         }
 
         // Create a new symbol if we didn't merge with an existing one above
-        let r#ref = self.new_symbol(kind, name)?;
+        let ref_ = self.new_symbol(kind, name)?;
 
         if member.is_none() {
             // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
             unsafe { &mut *self.module_scope }
                 .members
-                .put(self.allocator, name, Scope::Member { r#ref, loc: logger::Loc::EMPTY })?;
-            return Ok(r#ref);
+                .put(name, js_ast::scope::Member { ref_, loc: logger::Loc::EMPTY })?;
+            return Ok(ref_);
         }
 
         // If the variable was declared, then it shadows this symbol. The code in
@@ -3681,8 +3709,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // still add the symbol to the scope so it gets minified (automatically-
         // generated code may still reference the symbol).
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        unsafe { &mut *self.module_scope }.generated.push(self.allocator, r#ref)?;
-        Ok(r#ref)
+        unsafe { &mut *self.module_scope }.generated.append(ref_)?;
+        Ok(ref_)
     }
 
     /// Zig: `comptime name: string` — every call site passes a literal, and
@@ -3700,8 +3728,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
         // Runtime equivalent of `generated_symbol_name!` (Zig comptime concat).
         // Same bytes as the macro produces; arena-owned for symbol lifetime.
-        let hash = bun_wyhash::hash(0, name) as u32;
-        let hashed: &'a [u8] = bumpalo::format!(in self.bump, "{}_{}", bstr::BStr::new(name), bun_core::fmt::truncated_hash32(hash)).into_bump_str().as_bytes();
+        let hash = bun_wyhash::hash(name);
+        let hashed: &'a [u8] = bumpalo::format!(in self.allocator, "{}_{}", bstr::BStr::new(name), bun_core::fmt::truncated_hash32(hash)).into_bump_str().as_bytes();
         self.declare_symbol_maybe_generated::<true>(kind, logger::Loc::EMPTY, hashed)
     }
 
@@ -3725,79 +3753,95 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         if !IS_GENERATED {
             // Forbid declaring a symbol with a reserved word in strict mode
             if self.is_strict_mode()
-                && name.as_ptr() != arguments_str().as_ptr()
-                && crate::lexer_tables::STRICT_MODE_RESERVED_WORDS.has(name)
+                && name.as_ptr() != arguments_str.as_ptr()
+                && crate::lexer_tables::STRICT_MODE_RESERVED_WORDS.contains(name)
             {
-                self.mark_strict_mode_feature(StrictModeFeature::ReservedWord, js_lexer::range_of_identifier(self.source, loc), name)?;
+                // TODO(port): mark_strict_mode_feature gated above; emit a plain range error meanwhile.
+                let r = js_lexer::range_of_identifier(self.source, loc);
+                self.log.add_range_error_fmt(
+                    Some(self.source),
+                    r,
+                    format_args!("\"{}\" is a reserved word and cannot be used in strict mode", bstr::BStr::new(name)),
+                )?;
             }
         }
 
         // Allocate a new symbol
-        let mut r#ref = self.new_symbol(kind, name)?;
+        let mut ref_ = self.new_symbol(kind, name)?;
 
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
         let scope = unsafe { &mut *self.current_scope };
-        let entry = scope.members.get_or_put(self.allocator, name)?;
+        // PORT NOTE: reshaped for borrowck — get_or_put borrows scope.members mutably; the
+        // can_merge_symbols call below needs an immutable borrow of `scope`. We re-derive
+        // the &Scope from the raw pointer (disjoint field, same arena object).
+        // SAFETY: members borrow is on a distinct field from kind/kind_stops_hoisting reads.
+        let scope_ro: &Scope = unsafe { &*self.current_scope };
+        let entry = scope.members.get_or_put(name)?;
         if entry.found_existing {
             let existing = *entry.value_ptr;
-            let symbol_idx = existing.r#ref.inner_index() as usize;
+            let symbol_idx = existing.ref_.inner_index() as usize;
 
             if !IS_GENERATED {
-                match scope.can_merge_symbols(self.symbols[symbol_idx].kind, kind, TYPESCRIPT) {
-                    Scope::MergeResult::Forbidden => {
+                use js_ast::scope::SymbolMergeResult as MR;
+                match scope_ro.can_merge_symbols::<TYPESCRIPT>(self.symbols[symbol_idx].kind, kind) {
+                    MR::Forbidden => {
+                        // SAFETY: original_name is an arena-owned slice valid for 'a.
+                        let orig = unsafe { &*self.symbols[symbol_idx].original_name };
                         self.log.add_symbol_already_declared_error(
-                            self.allocator,
                             self.source,
-                            self.symbols[symbol_idx].original_name,
+                            orig,
                             loc,
                             existing.loc,
                         )?;
-                        return Ok(existing.r#ref);
+                        return Ok(existing.ref_);
                     }
-                    Scope::MergeResult::KeepExisting => {
-                        r#ref = existing.r#ref;
+                    MR::KeepExisting => {
+                        ref_ = existing.ref_;
                     }
-                    Scope::MergeResult::ReplaceWithNew => {
-                        self.symbols[symbol_idx].link = r#ref;
+                    MR::ReplaceWithNew => {
+                        self.symbols[symbol_idx].link = ref_;
 
                         // If these are both functions, remove the overwritten declaration
                         if kind.is_function() && self.symbols[symbol_idx].kind.is_function() {
                             self.symbols[symbol_idx].remove_overwritten_function_declaration = true;
                         }
                     }
-                    Scope::MergeResult::BecomePrivateGetSetPair => {
-                        r#ref = existing.r#ref;
+                    MR::BecomePrivateGetSetPair => {
+                        ref_ = existing.ref_;
                         self.symbols[symbol_idx].kind = js_ast::symbol::Kind::PrivateGetSetPair;
                     }
-                    Scope::MergeResult::BecomePrivateStaticGetSetPair => {
-                        r#ref = existing.r#ref;
+                    MR::BecomePrivateStaticGetSetPair => {
+                        ref_ = existing.ref_;
                         self.symbols[symbol_idx].kind = js_ast::symbol::Kind::PrivateStaticGetSetPair;
                     }
-                    Scope::MergeResult::OverwriteWithNew => {}
+                    MR::OverwriteWithNew => {}
                 }
             } else {
-                self.symbols[r#ref.inner_index() as usize].link = existing.r#ref;
+                self.symbols[ref_.inner_index() as usize].link = existing.ref_;
             }
         }
-        *entry.key_ptr = name;
-        *entry.value_ptr = js_ast::Scope::Member { r#ref, loc };
+        // PORT NOTE: StringHashMapGetOrPut has no key_ptr (std::HashMap can't hand out &mut K).
+        // The key is already `name` (boxed copy) so the Zig `*entry.key_ptr = name` is a no-op here.
+        *entry.value_ptr = js_ast::scope::Member { ref_, loc };
         if IS_GENERATED {
             // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-            unsafe { &mut *self.module_scope }.generated.push(self.allocator, r#ref)?;
+            unsafe { &mut *self.module_scope }.generated.append(ref_)?;
         }
-        Ok(r#ref)
+        Ok(ref_)
     }
 
     pub fn validate_function_name(&mut self, func: &G::Fn, kind: FunctionKind) {
         if let Some(name) = &func.name {
-            let original_name = self.symbols[name.r#ref.unwrap().inner_index() as usize].original_name;
+            // SAFETY: Symbol.original_name is an arena/source-contents slice valid for 'a.
+            let original_name: &[u8] =
+                unsafe { &*self.symbols[name.ref_.unwrap().inner_index() as usize].original_name };
 
             if func.flags.contains(Flags::Function::IsAsync) && original_name == b"await" {
                 self.log
                     .add_range_error(
-                        self.source,
+                        Some(self.source),
                         js_lexer::range_of_identifier(self.source, name.loc),
-                        "An async function cannot be named \"await\"",
+                        b"An async function cannot be named \"await\"",
                     )
                     .expect("unreachable");
             } else if kind == FunctionKind::Expr
@@ -3806,9 +3850,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             {
                 self.log
                     .add_range_error(
-                        self.source,
+                        Some(self.source),
                         js_lexer::range_of_identifier(self.source, name.loc),
-                        "An generator function expression cannot be named \"yield\"",
+                        b"An generator function expression cannot be named \"yield\"",
                     )
                     .expect("unreachable");
             }
@@ -3822,19 +3866,23 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         opts: &ParseStatementOptions,
     ) -> Result<(), bun_core::Error> {
         match &mut binding.data {
-            Binding::Data::BMissing(_) => {}
-            Binding::Data::BIdentifier(bind) => {
+            js_ast::b::B::BMissing(_) => {}
+            js_ast::b::B::BIdentifier(bind) => {
                 if !opts.is_typescript_declare || (opts.is_namespace_scope && opts.is_export) {
+                    // SAFETY: B::Identifier payload is arena-allocated; valid for 'a.
+                    let bind = unsafe { &mut **bind };
                     bind.r#ref = self.declare_symbol(kind, binding.loc, self.load_name_from_ref(bind.r#ref))?;
                 }
             }
-            Binding::Data::BArray(bind) => {
-                for item in bind.items.iter_mut() {
+            js_ast::b::B::BArray(bind) => {
+                // SAFETY: B::Array payload + items slice are arena-allocated; valid for 'a.
+                for item in unsafe { (*(**bind).items).iter_mut() } {
                     self.declare_binding(kind, &mut item.binding, opts).expect("unreachable");
                 }
             }
-            Binding::Data::BObject(bind) => {
-                for prop in bind.properties.iter_mut() {
+            js_ast::b::B::BObject(bind) => {
+                // SAFETY: B::Object payload + properties slice are arena-allocated; valid for 'a.
+                for prop in unsafe { (*(**bind).properties).iter_mut() } {
                     self.declare_binding(kind, &mut prop.value, opts).expect("unreachable");
                 }
             }
@@ -3845,7 +3893,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     pub fn store_name_in_ref(&mut self, name: &'a [u8]) -> Result<Ref, bun_core::Error> {
         if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
             if let Some(uses) = &mut self.parse_pass_symbol_uses {
-                if let Some(res) = uses.get_ptr(name) {
+                if let Some(res) = uses.get_mut(name) {
                     res.used = true;
                 }
             }
@@ -3854,29 +3902,21 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let contents_ptr = self.source.contents.as_ptr() as usize;
         let name_ptr = name.as_ptr() as usize;
         if contents_ptr <= name_ptr && (name_ptr + name.len()) <= (contents_ptr + self.source.contents.len()) {
-            Ok(Ref::init_source_end(Ref::InitSourceEnd {
-                source_index: u32::try_from(name_ptr - contents_ptr).unwrap(),
-                inner_index: u32::try_from(name.len()).unwrap(),
-                tag: Ref::Tag::SourceContentsSlice,
-            }))
+            // Zig: `.{ .source_index = offset, .inner_index = len, .tag = .source_contents_slice }`
+            Ok(Ref::new(
+                u32::try_from(name.len()).unwrap(),
+                u32::try_from(name_ptr - contents_ptr).unwrap(),
+                js_ast::base::RefTag::SourceContentsSlice,
+            ))
         } else {
             // TODO(port): Zig u31 — Rust has no u31; using u32 and trusting bit-width
             let inner_index = u32::try_from(self.allocated_names.len()).unwrap();
             self.allocated_names.push(name);
-            Ok(Ref::init(inner_index, self.source.index.get(), false))
+            Ok(Ref::init(inner_index, self.source.index.0, false))
         }
     }
 
-    pub fn load_name_from_ref(&self, r#ref: Ref) -> &'a [u8] {
-        match r#ref.tag {
-            Ref::Tag::Symbol => self.symbols[r#ref.inner_index() as usize].original_name,
-            Ref::Tag::SourceContentsSlice => {
-                &self.source.contents[r#ref.source_index() as usize..(r#ref.source_index() + r#ref.inner_index()) as usize]
-            }
-            Ref::Tag::AllocatedName => self.allocated_names[r#ref.inner_index() as usize],
-            _ => panic!("Internal error: JS parser tried to load an invalid name from a Ref"),
-        }
-    }
+    // load_name_from_ref() lives in the round-C live block above (deduped).
 
     #[inline]
     pub fn add_import_record(&mut self, kind: ImportKind, loc: logger::Loc, name: &'a [u8]) -> u32 {
@@ -3884,9 +3924,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     }
 
     pub fn add_import_record_by_range(&mut self, kind: ImportKind, range: logger::Range, name: &'a [u8]) -> u32 {
-        self.add_import_record_by_range_and_path(kind, range, fs::Path::init(name))
+        // TODO(port): fs::Path::init takes &'static [u8] in Phase A; the parser passes
+        // arena-owned 'a slices. Thread the lifetime through bun_logger::fs::Path in
+        // round-E (or transmute-extend here once that's audited).
+        let _ = (kind, range, name);
+        // blocked_on: ImportRecord field defaults (no Default impl) + fs::Path<'a>
+        todo!("add_import_record_by_range — ImportRecord ctor needs Default/lifetime plumbing")
     }
 
+    #[cfg(any())] // blocked_on: ImportRecord: Default (bun_options_types); fs::Path<'a> lifetime
     pub fn add_import_record_by_range_and_path(&mut self, kind: ImportKind, range: logger::Range, path: fs::Path) -> u32 {
         let index = self.import_records.len();
         let record = ImportRecord { kind, range, path, ..Default::default() };
@@ -3946,13 +3992,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 //     continue;
                 // }
 
-                self.symbols[member.value().r#ref.inner_index() as usize].must_not_be_renamed = true;
+                self.symbols[member.1.ref_.inner_index() as usize].must_not_be_renamed = true;
             }
         }
 
         self.current_scope = current_scope
             .parent
-            .unwrap_or_else(|| self.panic("Internal error: attempted to call popScope() on the topmost scope", format_args!("")));
+            .unwrap_or_else(|| self.panic("Internal error: attempted to call popScope() on the topmost scope", format_args!("")))
+            .as_ptr();
     }
 
     pub fn mark_expr_as_parenthesized(&mut self, expr: &mut Expr) {
@@ -3965,9 +4012,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
     #[cold]
     pub fn panic(&mut self, fmt: &'static str, args: core::fmt::Arguments) -> ! {
-        self.panic_loc(fmt, args, None);
+        // TODO(port): forward to panic_loc once that un-gates (needs log.print(&mut [u8])).
+        Output::panic(format_args!("{}\n{}", fmt, args));
     }
 
+    #[cfg(any())] // blocked_on: log.print(&mut [u8]); add_range_error_fmt allocator arg; Output::panic
     pub fn panic_loc(&mut self, fmt: &'static str, args: core::fmt::Arguments, loc: Option<logger::Loc>) -> ! {
         let panic_buffer = self.allocator.alloc_slice_fill_default::<u8>(32 * 1024);
         // TODO(port): std.Io.Writer.fixed → write into &mut [u8] via std::io::Write
@@ -4058,15 +4107,16 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     pub fn will_need_binding_pattern(&self) -> bool {
         match self.lexer.token {
             // "[a] = b;"
-            js_lexer::T::Equals => true,
+            js_lexer::T::TEquals => true,
             // "for ([a] in b) {}"
-            js_lexer::T::In => !self.allow_in,
+            js_lexer::T::TIn => !self.allow_in,
             // "for ([a] of b) {}"
-            js_lexer::T::Identifier => !self.allow_in && self.lexer.is_contextual_keyword(b"of"),
+            js_lexer::T::TIdentifier => !self.allow_in && self.lexer.is_contextual_keyword(b"of"),
             _ => false,
         }
     }
 
+    #[cfg(any())] // blocked_on: visit_stmts_and_prepend_temp_refs; b(); Part fields; symbol_uses.count()
     pub fn append_part(
         &mut self,
         parts: &mut ListManaged<'a, js_ast::Part>,
@@ -4154,6 +4204,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Ok(())
     }
 
+    #[cfg(any())] // blocked_on: binding_can_be_removed_if_unused_without_dce_check
     fn binding_can_be_removed_if_unused(&mut self, binding: Binding) -> bool {
         if !self.options.features.dead_code_elimination {
             return false;
@@ -4161,6 +4212,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         self.binding_can_be_removed_if_unused_without_dce_check(binding)
     }
 
+    #[cfg(any())] // blocked_on: B::Array/Object payload deref (*mut [..] iteration)
     fn binding_can_be_removed_if_unused_without_dce_check(&mut self, binding: Binding) -> bool {
         match &binding.data {
             Binding::Data::BArray(bi) => {
@@ -4197,6 +4249,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         true
     }
 
+    #[cfg(any())] // blocked_on: stmts_can_be_removed_if_unused_without_dce_check
     fn stmts_can_be_removed_if_unused(&mut self, stmts: &[Stmt]) -> bool {
         if !self.options.features.dead_code_elimination {
             return false;
@@ -4204,6 +4257,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         self.stmts_can_be_removed_if_unused_without_dce_check(stmts)
     }
 
+    #[cfg(any())] // blocked_on: StmtData variant set; S::Try.body/finally; binding_can_be_removed_if_unused
     fn stmts_can_be_removed_if_unused_without_dce_check(&mut self, stmts: &[Stmt]) -> bool {
         for stmt in stmts {
             match &stmt.data {
@@ -4319,6 +4373,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
     }
 
+    #[cfg(any())] // blocked_on: fn_only_data_visit.class_name_ref deref; null_value_expr() (Prefill gate)
     pub fn value_for_this(&mut self, loc: logger::Loc) -> Option<Expr> {
         // Substitute "this" if we're inside a static class property initializer
         if self.fn_only_data_visit.should_replace_this_with_class_name_ref {
@@ -4352,7 +4407,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
     pub fn is_valid_assignment_target(&self, expr: Expr) -> bool {
         match &expr.data {
-            js_ast::ExprData::EIdentifier(ident) => !is_eval_or_arguments(self.load_name_from_ref(ident.r#ref)),
+            js_ast::ExprData::EIdentifier(ident) => !is_eval_or_arguments(self.load_name_from_ref(ident.ref_)),
             js_ast::ExprData::EDot(e) => e.optional_chain.is_none(),
             js_ast::ExprData::EIndex(e) => e.optional_chain.is_none(),
             js_ast::ExprData::EArray(e) => !e.is_parenthesized,
@@ -4363,6 +4418,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
     /// This is only allowed to be called if allow_runtime is true
     /// If --target=bun, this does nothing.
+    #[cfg(any())] // blocked_on: ensure_require_symbol; runtime_identifier_ref (round-E block)
     pub fn record_usage_of_runtime_require(&mut self) {
         // target bun does not have __require
         if self.options.features.auto_polyfill_require {
@@ -4373,6 +4429,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
     }
 
+    #[cfg(any())] // blocked_on: runtime_identifier_ref (round-E block)
     pub fn ignore_usage_of_runtime_require(&mut self) {
         if self.options.features.auto_polyfill_require {
             debug_assert!(self.runtime_imports.__require.is_some());
@@ -4386,9 +4443,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     #[inline]
     pub fn value_for_require(&self, loc: logger::Loc) -> Expr {
         debug_assert!(!self.is_source_runtime());
-        Expr { data: js_ast::ExprData::ERequireCallTarget(()), loc }
+        Expr { data: js_ast::ExprData::ERequireCallTarget, loc }
     }
 
+    #[cfg(any())] // blocked_on: record_usage_of_runtime_require; options.import_meta_main_value
     #[inline]
     pub fn value_for_import_meta_main(&mut self, inverted: bool, loc: logger::Loc) -> Expr {
         if let Some(known) = self.options.import_meta_main_value {
@@ -4434,7 +4492,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             return false;
         }
         for arg in args {
-            if !matches!(arg.binding.data, Binding::Data::BIdentifier(_)) || arg.default.is_some() {
+            if !matches!(arg.binding.data, js_ast::b::B::BIdentifier(_)) || arg.default.is_some() {
                 return false;
             }
         }
@@ -4442,6 +4500,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     }
 
     // This one is never called in places that haven't already checked if DCE is enabled.
+    #[cfg(any())] // blocked_on: G::Class.properties.iter; G::Property.kind/class_static_block; stmts_can_be_removed_if_unused
     pub fn class_can_be_removed_if_unused(&mut self, class: &G::Class) -> bool {
         if let Some(extends) = &class.extends {
             if !self.expr_can_be_removed_if_unused_without_dce_check(extends) {
@@ -4480,6 +4539,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     // TODO:
     // When React Fast Refresh is enabled, anything that's a JSX component should not be removable
     // This is to improve the reliability of fast refresh between page loads.
+    #[cfg(any())] // blocked_on: expr_can_be_removed_if_unused_without_dce_check
     pub fn expr_can_be_removed_if_unused(&mut self, expr: &Expr) -> bool {
         if !self.options.features.dead_code_elimination {
             return false;
@@ -4487,6 +4547,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         self.expr_can_be_removed_if_unused_without_dce_check(expr)
     }
 
+    #[cfg(any())] // blocked_on: class_can_be_removed_if_unused; E::Class deref; E::If/Unary/Binary field names; SideEffects::can_change_strict_to_loose
     fn expr_can_be_removed_if_unused_without_dce_check(&mut self, expr: &Expr) -> bool {
         use js_ast::Op;
         match &expr.data {
@@ -4711,6 +4772,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
     // (Zig commented-out `exprCanBeHoistedForJSX` omitted — was already dead code.)
 
+    #[cfg(any())] // blocked_on: ExprData::e_identifier accessor; E::Unary.flags; E::Binary deref; EString::eql_comptime
     fn is_side_effect_free_unbound_identifier_ref(
         &mut self,
         value: Expr,
@@ -4787,6 +4849,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
     }
 
+    #[cfg(any())] // blocked_on: jsx_import
     pub fn jsx_import_automatic(&mut self, loc: logger::Loc, is_static: bool) -> Expr {
         self.jsx_import(
             if is_static && !self.options.jsx.development && false /* TODO(b2-blocked): feature_flag */ {
@@ -4800,6 +4863,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         )
     }
 
+    #[cfg(any())] // blocked_on: jsx_imports.get_with_tag/set; handle_identifier; JSXImport.tag_name()
     pub fn jsx_import(&mut self, kind: JSXImport, loc: logger::Loc) -> Expr {
         // TODO(port): Zig used `switch (kind) { inline else => |field| ... @tagName(field) }`.
         // We replicate via tag_name() helper on the enum.
@@ -4880,7 +4944,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         loop {
             match &current.data {
                 js_ast::ExprData::EIdentifier(id) => {
-                    self.ignore_usage(id.r#ref);
+                    self.ignore_usage(id.ref_);
                 }
                 js_ast::ExprData::EDot(dot) => {
                     current = dot.target;
@@ -4898,11 +4962,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
     }
 
+    #[cfg(any())] // blocked_on: options.features.replace_exports type (currently bool placeholder)
     pub fn is_export_to_eliminate(&self, r#ref: Ref) -> bool {
         let symbol_name = self.load_name_from_ref(r#ref);
         self.options.features.replace_exports.contains(symbol_name)
     }
 
+    #[cfg(any())] // blocked_on: b(); visit_and_append_stmt; Runtime::ReplaceableExport variants; Decl::List
     pub fn inject_replacement_export(
         &mut self,
         stmts: &mut StmtList,
@@ -4944,6 +5010,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
     }
 
+    #[cfg(any())] // blocked_on: b(); visit_expr; Runtime::ReplaceableExport variants
     pub fn replace_decl_and_possibly_remove(
         &mut self,
         decl: &mut G::Decl,
@@ -4970,12 +5037,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
     }
 
+    #[cfg(any())] // blocked_on: mark_exported_binding_inside_namespace
     pub fn mark_exported_decls_inside_namespace(&mut self, ns_ref: Ref, decls: &[G::Decl]) {
         for decl in decls {
             self.mark_exported_binding_inside_namespace(ns_ref, decl.binding);
         }
     }
 
+    #[cfg(any())] // blocked_on: S::Block stmts field type; statement_cares_about_scope arg type
     pub fn append_if_body_preserving_scope(
         &mut self,
         stmts: &mut ListManaged<'a, Stmt>,
@@ -5005,6 +5074,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Ok(())
     }
 
+    #[cfg(any())] // blocked_on: B::Array/Object payload deref; is_exported_inside_namespace.put (std HashMap no allocator)
     fn mark_exported_binding_inside_namespace(&mut self, r#ref: Ref, binding: BindingNodeIndex) {
         match binding.data {
             Binding::Data::BMissing(_) => {}
@@ -5024,6 +5094,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
     }
 
+    #[cfg(any())] // blocked_on: b(); G::Decl::List; E::Arrow.args slice type; S::SExpr/Return; emitted_namespace_vars.put_no_clobber
     pub fn generate_closure_for_type_script_namespace_or_enum(
         &mut self,
         stmts: &mut ListManaged<'a, Stmt>,

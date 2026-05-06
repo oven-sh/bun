@@ -61,11 +61,27 @@ gated_mod!(media_query, "media_query.rs");
 #[path = "generics.rs"]
 pub mod generics;
 
-// `values`, `printer`, `css_parser` carry stub bodies so cross-crate
-// dependents (css_jsc, bundler) can name the public surface types while the
-// 6k+-line implementation hubs stay gated. Bodies hold *data layout only* —
-// behavior (parse/to_css/minify) re-enables when the real module un-gates.
-gated_mod!(values, "values/mod.rs", {
+// ─── B-2 round 2: parser core un-gated ────────────────────────────────────
+// `css_parser.rs` now compiles for real: Parser / ParserInput / Tokenizer /
+// Token / Delimiters / VendorPrefix / SourceLocation / serializer / nth /
+// color / dtoa_short. The rule-orchestration layer (AtRulePrelude,
+// TopLevelRuleParser, NestedRuleParser, StyleSheet, StyleAttribute) stays
+// internally `#[cfg(any())]`-gated until rules/ + properties/ + selectors/
+// un-gate. `printer.rs` is real (Printer struct + write/indent/delim).
+// `values/` is real for the leaf submodules; the heavy ones (color, calc,
+// gradient, image, length, syntax) are internally gated inside values/mod.rs.
+#[path = "printer.rs"]
+pub mod printer;
+#[path = "css_parser.rs"]
+pub mod css_parser;
+#[path = "values/mod.rs"]
+pub mod values;
+
+/// Data-only value-type stubs re-exported through `values::{color,ident,url}`
+/// while the real `values/*.rs` files stay gated on the calc lattice. These
+/// were the previous `gated_mod!(values, ...)` body — now a real module so
+/// printer.rs / css_parser.rs can name the types.
+pub mod values_stub {
     /// Minimal real defs hoisted from `values/color.rs` (gated). Data-only:
     /// the conversion / parse / to_css impls live in the gated file and
     /// supersede these when un-gated. Field layout matches `color.zig`.
@@ -195,13 +211,26 @@ gated_mod!(values, "values/mod.rs", {
         impl SRGB {
             /// `none` components are NaN; resolve them to 0 before quantizing.
             #[inline]
-            fn resolve(&self) -> SRGB {
+            fn resolve_missing(&self) -> SRGB {
                 #[inline] fn nz(v: f32) -> f32 { if v.is_nan() { 0.0 } else { v } }
                 SRGB { r: nz(self.r), g: nz(self.g), b: nz(self.b), alpha: nz(self.alpha) }
             }
+            /// BoundedColorGamut::inGamut — each channel within [0, 1].
+            #[inline]
+            fn in_gamut(&self) -> bool {
+                (0.0..=1.0).contains(&self.r)
+                    && (0.0..=1.0).contains(&self.g)
+                    && (0.0..=1.0).contains(&self.b)
+            }
             #[inline]
             pub fn into_rgba(&self) -> RGBA {
-                let rgb = self.resolve();
+                let rgb = self.resolve_missing();
+                if !rgb.in_gamut() {
+                    // Zig's `resolve()` calls `mapGamut()` here (perceptual gamut-map via
+                    // OKLCH), which lives in the gated `values/color.rs` matrix tables.
+                    // Hard-clamping via `clamp_unit_f32` would silently diverge from Zig.
+                    todo!("bun_css::values::color::SRGB mapGamut — gated on values/color.rs un-gate")
+                }
                 RGBA::from_floats(rgb.r, rgb.g, rgb.b, rgb.alpha)
             }
         }
@@ -320,6 +349,55 @@ gated_mod!(values, "values/mod.rs", {
         }
     }
 
+    /// Data-only stubs of `values/ident.rs::{Ident,DashedIdent,CustomIdent}` so
+    /// `generics::ident_eql` and cross-crate name lookups compile. Behavior
+    /// (`parse`/`to_css`) lives in the gated file. Field layout matches
+    /// `ident.zig` (single arena-borrowed slice).
+    pub mod ident {
+        // TODO(port): arena lifetime — `v` borrows the parser arena; Phase B
+        // threads `'bump` once the bumpalo arena lifetime is plumbed.
+        macro_rules! ident_newtype {
+            ($name:ident) => {
+                #[derive(Debug, Clone, Copy)]
+                pub struct $name {
+                    pub v: *const [u8],
+                }
+                impl $name {
+                    /// Borrow the underlying arena slice.
+                    /// SAFETY: caller must ensure the parser arena outlives the borrow.
+                    #[inline]
+                    pub unsafe fn as_slice(&self) -> &[u8] {
+                        // SAFETY: upheld by caller per fn-level contract.
+                        unsafe { &*self.v }
+                    }
+                }
+            };
+        }
+        ident_newtype!(Ident);
+        ident_newtype!(DashedIdent);
+        ident_newtype!(CustomIdent);
+
+        /// Zig: `pub const CustomIdentList = SmallList(CustomIdent, 1);`
+        pub type CustomIdentList = crate::SmallList<CustomIdent, 1>;
+
+        /// Either a literal identifier or a reference into the symbol table
+        /// (CSS-modules local name). Data-only stub of `values/ident.rs::
+        /// IdentOrRef`; printer.rs's `lookup_ident_or_ref` consumes this.
+        #[derive(Clone, Copy)]
+        pub struct IdentOrRef {
+            pub v: Ident,
+            pub ref_: Option<bun_logger::Ref>,
+        }
+        impl IdentOrRef {
+            #[inline] pub fn is_ident(&self) -> bool { self.ref_.is_none() }
+            #[inline] pub fn as_ident(&self) -> Option<Ident> {
+                if self.ref_.is_none() { Some(self.v) } else { None }
+            }
+            #[inline] pub fn as_ref(&self) -> Option<bun_logger::Ref> { self.ref_ }
+            #[inline] pub fn debug_ident(&self) -> &'static [u8] { b"<ident-or-ref>" }
+        }
+    }
+
     /// Data-only stub of `values/url.rs::Url` so `dependencies::UrlDependency::new`
     /// can compile. Behavior (`parse`/`is_absolute`/`to_css`) lives in the gated
     /// file. Field layout matches `url.zig`.
@@ -331,312 +409,8 @@ gated_mod!(values, "values/mod.rs", {
             pub loc: crate::dependencies::Location,
         }
     }
-});
+}
 
-gated_mod!(printer, "printer.rs", {
-    use crate::{dependencies, sourcemap, targets::Targets};
-    use bun_collections::BabyList;
-    use bun_options_types::ImportRecord;
-
-    /// Options that control how CSS is serialized to a string.
-    /// Data-only stub of `printer.rs::PrinterOptions`; field layout matches.
-    pub struct PrinterOptions<'a> {
-        pub minify: bool,
-        pub source_map: Option<&'a mut sourcemap::SourceMap>,
-        pub project_root: Option<&'a [u8]>,
-        pub targets: Targets,
-        pub analyze_dependencies: Option<dependencies::DependencyOptions>,
-        pub pseudo_classes: Option<PseudoClasses<'a>>,
-        pub public_path: &'a [u8],
-    }
-
-    impl<'a> Default for PrinterOptions<'a> {
-        fn default() -> Self {
-            Self {
-                minify: false,
-                source_map: None,
-                project_root: None,
-                targets: Targets::default(),
-                analyze_dependencies: None,
-                pseudo_classes: None,
-                public_path: b"",
-            }
-        }
-    }
-
-    /// User-action pseudo-class → class-name mapping.
-    #[derive(Default, Clone, Copy)]
-    pub struct PseudoClasses<'a> {
-        pub hover: Option<&'a [u8]>,
-        pub active: Option<&'a [u8]>,
-        pub focus: Option<&'a [u8]>,
-        pub focus_visible: Option<&'a [u8]>,
-        pub focus_within: Option<&'a [u8]>,
-    }
-
-    /// Import-record view passed to the printer. Zig: `printer.zig::ImportInfo`.
-    pub struct ImportInfo<'a> {
-        pub import_records: &'a BabyList<ImportRecord>,
-        pub ast_urls_for_css: &'a [&'a [u8]],
-        pub ast_unique_key_for_additional_file: &'a [&'a [u8]],
-    }
-
-    impl<'a> ImportInfo<'a> {
-        /// Only safe outside the bundler (records not resolved to source indices).
-        pub fn init_outside_of_bundler(records: &'a BabyList<ImportRecord>) -> ImportInfo<'a> {
-            ImportInfo {
-                import_records: records,
-                ast_urls_for_css: &[],
-                ast_unique_key_for_additional_file: &[],
-            }
-        }
-    }
-
-    /// CSS serialization sink. Opaque stub: the real struct (printer.rs:131)
-    /// carries a `dyn Write` dest, source-map state, css-module state, etc.
-    /// Dependents only name the type (`&mut Printer`) until the hub un-gates.
-    #[non_exhaustive]
-    pub struct Printer<'a> {
-        // keep the lifetime parameter live without committing to layout
-        _life: core::marker::PhantomData<&'a ()>,
-    }
-
-    impl<'a> Printer<'a> {
-        /// Construct a printer over `dest`. Signature mirrors
-        /// `printer.rs::Printer::new` (gated): `(allocator, scratchbuf, dest,
-        /// options, import_info, local_names, symbols)`. Body is a stub until
-        /// the real `printer.rs` un-gates with its full field set.
-        pub fn new(
-            allocator: &'a bun_alloc::Arena,
-            scratchbuf: Vec<u8>,
-            dest: &'a mut dyn std::io::Write,
-            options: PrinterOptions<'a>,
-            import_info: Option<ImportInfo<'a>>,
-            local_names: Option<&'a crate::css_parser::LocalsResultsMap>,
-            symbols: &'a bun_logger::symbol::Map,
-        ) -> Printer<'a> {
-            let _ = (allocator, scratchbuf, dest, options, import_info, local_names, symbols);
-            todo!("bun_css::Printer::new — gated on printer.rs un-gate")
-        }
-    }
-});
-
-gated_mod!(css_parser, "css_parser.rs", {
-    use crate::{css_modules, error, printer, targets, PrintErr};
-    use crate::css_modules::{CssModuleExports, CssModuleReferences};
-    use bun_alloc::Arena;
-    use bun_collections::{ArrayHashMap, BabyList};
-    use bun_options_types::ImportRecord;
-    /// `bun.ast.Index` — source-file index (alias of the bundler's `Index`).
-    pub type SrcIndex = bun_options_types::BundleEnums::Index;
-
-    /// Zero-sized default custom-at-rule used by `StyleSheet<DefaultAtRule>`
-    /// when callers don't extend the at-rule grammar (css_parser.zig:1295).
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-    pub struct DefaultAtRule;
-
-    /// Options for `StyleSheet::minify` (css_parser.zig:2898).
-    #[derive(Default)]
-    pub struct MinifyOptions {
-        pub targets: targets::Targets,
-        pub unused_symbols: ArrayHashMap<Box<[u8]>, ()>,
-    }
-
-    bitflags::bitflags! {
-        /// Parser feature flags.
-        #[derive(Clone, Copy, PartialEq, Eq, Default)]
-        pub struct ParserFlags: u8 {
-            const NESTING = 0b001;
-            const CUSTOM_MEDIA = 0b010;
-            const DEEP_SELECTOR_COMBINATOR = 0b100;
-        }
-    }
-
-    /// Options to `StyleSheet::parse` / `StyleAttribute::parse`
-    /// (css_parser.zig:3683). Data-only stub of `css_parser.rs::ParserOptions`.
-    pub struct ParserOptions<'a> {
-        pub filename: &'a [u8],
-        pub css_modules: Option<css_modules::Config>,
-        pub source_index: u32,
-        pub error_recovery: bool,
-        pub logger: Option<&'a mut bun_logger::Log>,
-        pub flags: ParserFlags,
-    }
-
-    impl<'a> Default for ParserOptions<'a> {
-        fn default() -> Self {
-            Self {
-                filename: b"",
-                css_modules: None,
-                source_index: 0,
-                error_recovery: false,
-                logger: None,
-                flags: ParserFlags::default(),
-            }
-        }
-    }
-
-    /// Local-symbol renaming results. Zig: `bun.bundle_v2.MangledProps`
-    /// (`ArrayHashMap(Ref, []const u8)`); `Ref` is hoisted in `bun_logger`.
-    pub type LocalsResultsMap = ArrayHashMap<bun_logger::Ref, Box<[u8]>>;
-
-    /// Tokenizer + cached lookahead (css_parser.zig:4545). Opaque stub:
-    /// field layout depends on `Tokenizer` which is still gated.
-    #[non_exhaustive]
-    pub struct ParserInput<'a> {
-        _life: core::marker::PhantomData<&'a ()>,
-    }
-
-    /// CSS parser cursor (css_parser.zig:3804). Opaque stub.
-    #[non_exhaustive]
-    pub struct Parser<'a> {
-        _life: core::marker::PhantomData<&'a ()>,
-    }
-
-    /// A parsed stylesheet (css_parser.zig:3045). Opaque stub generic over
-    /// the custom-at-rule type so `StyleSheet<DefaultAtRule>` / `BundlerStyleSheet`
-    /// type-paths resolve; `parse`/`minify`/`to_css` re-enable on un-gate.
-    #[non_exhaustive]
-    pub struct StyleSheet<AtRule> {
-        _at: core::marker::PhantomData<AtRule>,
-    }
-
-    /// A parsed inline `style="…"` attribute (css_parser.zig:3450). Opaque stub.
-    #[non_exhaustive]
-    pub struct StyleAttribute {
-        _p: (),
-    }
-
-    /// Side-table populated during parse and consumed by `minify`
-    /// (css_parser.zig:3211). Opaque stub: real layout carries `LocalScope`,
-    /// `SymbolList`, `ComposesMap`; depends on gated `selectors`/`rules`.
-    #[non_exhaustive]
-    #[derive(Default)]
-    pub struct StylesheetExtra {
-        _p: (),
-    }
-
-    /// Result of `StyleSheet::to_css` / `StyleAttribute::to_css`.
-    pub struct ToCssResult {
-        /// Serialized CSS code.
-        pub code: Vec<u8>,
-        /// CSS-module exports, if `css_modules` was enabled at parse time.
-        pub exports: Option<CssModuleExports<'static>>,
-        /// CSS-module `dashed_idents` references.
-        pub references: Option<CssModuleReferences<'static>>,
-        /// `@import` / `url()` dependencies, if `analyze_dependencies` was set.
-        pub dependencies: Option<Vec<crate::Dependency>>,
-    }
-
-    // ───── stub impls: bodies re-enable when `css_parser.rs` un-gates ─────
-
-    impl<'a> ParserOptions<'a> {
-        /// Associated default constructor matching the Zig
-        /// `ParserOptions.default(allocator, log)` shape (css_parser.zig:3736).
-        /// The arena is currently unused by the stub field set.
-        pub fn default(_arena: &'a Arena, log: &'a mut bun_logger::Log) -> ParserOptions<'a> {
-            ParserOptions {
-                filename: b"",
-                css_modules: None,
-                source_index: 0,
-                error_recovery: false,
-                logger: Some(log),
-                flags: ParserFlags::default(),
-            }
-        }
-    }
-
-    impl<'a> ParserInput<'a> {
-        /// Wrap a CSS source slice in a tokenizer + lookahead cache.
-        pub fn new(arena: &'a Arena, code: &'a [u8]) -> ParserInput<'a> {
-            let _ = (arena, code);
-            todo!("bun_css::ParserInput::new — gated on css_parser.rs Tokenizer un-gate")
-        }
-    }
-
-    impl<'a> Parser<'a> {
-        /// Construct a parser cursor over `input`. `import_records` collects
-        /// `@import`/`url()` references; pass `None` outside the bundler.
-        pub fn new(
-            input: &'a mut ParserInput<'a>,
-            import_records: Option<&'a mut BabyList<ImportRecord>>,
-            options: ParserOptions<'a>,
-            extra: Option<&'a mut StylesheetExtra>,
-        ) -> Parser<'a> {
-            let _ = (input, import_records, options, extra);
-            todo!("bun_css::Parser::new — gated on css_parser.rs un-gate")
-        }
-    }
-
-    impl<AtRule> StyleSheet<AtRule> {
-        /// Parse a top-level stylesheet from `code`.
-        pub fn parse(
-            arena: &Arena,
-            code: &[u8],
-            options: ParserOptions<'_>,
-            import_records: &mut BabyList<ImportRecord>,
-            source_index: SrcIndex,
-        ) -> Result<(Self, StylesheetExtra), error::Err<error::ParserError>> {
-            let _ = (arena, code, options, import_records, source_index);
-            todo!("bun_css::StyleSheet::parse — gated on css_parser.rs un-gate")
-        }
-
-        /// Minify and lower the stylesheet for `options.targets`.
-        pub fn minify(
-            &mut self,
-            arena: &Arena,
-            options: MinifyOptions,
-            extra: &mut StylesheetExtra,
-        ) -> Result<(), error::Err<error::MinifyErrorKind>> {
-            let _ = (arena, options, extra);
-            todo!("bun_css::StyleSheet::minify — gated on css_parser.rs un-gate")
-        }
-
-        /// Serialize the stylesheet to CSS text.
-        pub fn to_css(
-            &self,
-            arena: &Arena,
-            options: printer::PrinterOptions<'_>,
-            import_info: printer::ImportInfo<'_>,
-            local_names: &mut LocalsResultsMap,
-            symbols: &bun_logger::symbol::Map,
-        ) -> Result<ToCssResult, error::Err<error::PrinterErrorKind>> {
-            let _ = (arena, options, import_info, local_names, symbols);
-            todo!("bun_css::StyleSheet::to_css — gated on css_parser.rs un-gate")
-        }
-    }
-
-    impl StyleAttribute {
-        /// Parse an inline `style="…"` attribute.
-        pub fn parse(
-            arena: &Arena,
-            code: &[u8],
-            options: ParserOptions<'_>,
-            import_records: &mut BabyList<ImportRecord>,
-            source_index: SrcIndex,
-        ) -> Result<StyleAttribute, error::Err<error::ParserError>> {
-            let _ = (arena, code, options, import_records, source_index);
-            todo!("bun_css::StyleAttribute::parse — gated on css_parser.rs un-gate")
-        }
-
-        /// Minify and lower the declaration block for `options.targets`.
-        pub fn minify(&mut self, arena: &Arena, options: MinifyOptions) {
-            let _ = (arena, options);
-            todo!("bun_css::StyleAttribute::minify — gated on css_parser.rs un-gate")
-        }
-
-        /// Serialize the declaration block to CSS text.
-        pub fn to_css(
-            &self,
-            arena: &Arena,
-            options: printer::PrinterOptions<'_>,
-            import_info: printer::ImportInfo<'_>,
-        ) -> Result<ToCssResult, PrintErr> {
-            let _ = (arena, options, import_info);
-            todo!("bun_css::StyleAttribute::to_css — gated on css_parser.rs un-gate")
-        }
-    }
-});
 
 // ─── stub re-exports referenced cross-crate ────────────────────────────────
 // TODO(b1): real types come back when modules are un-gated in B-2.
@@ -675,8 +449,9 @@ pub use printer::{ImportInfo, Printer, PrinterOptions, PseudoClasses};
 /// `printer::ImportInfo`, exposed under both names.
 pub type ImportRecordHandler<'a> = printer::ImportInfo<'a>;
 pub use values::color::{
-    CssColor, CssColorParseResult, FloatColor, LABColor, LabColor, PredefinedColor, RGBA,
+    CssColor, FloatColor, LABColor, LabColor, PredefinedColor, RGBA,
 };
+pub use values_stub::color::CssColorParseResult;
 
 // Real re-exports from un-gated modules (cross-crate surface).
 pub use error::{
@@ -780,7 +555,7 @@ pub struct Location {
 
 impl Location {
     pub fn dummy() -> Location {
-        Location { source_index: 0, line: 0, column: 0 }
+        Location { source_index: u32::MAX, line: u32::MAX, column: u32::MAX }
     }
 }
 

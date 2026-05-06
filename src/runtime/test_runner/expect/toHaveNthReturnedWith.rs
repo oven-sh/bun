@@ -1,8 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::console_object::Formatter;
-use bun_jsc::cpp;
 
-use crate::diff_format::DiffFormatter;
+use super::DiffFormatter;
 use super::{Expect, get_signature};
 
 #[bun_jsc::host_fn(method)]
@@ -35,7 +34,7 @@ pub fn to_have_nth_returned_with(
     }
 
     this.increment_expect_call_counter();
-    let returns = cpp::JSMockFunction__getReturns(global, value)?;
+    let returns = super::mock::JSMockFunction__getReturns(global, value)?;
     if !returns.js_type().is_array() {
         let mut formatter = Formatter { global, quote_strings: true, ..Default::default() };
         return global.throw(format_args!(
@@ -74,7 +73,7 @@ pub fn to_have_nth_returned_with(
         }
     }
 
-    if pass != this.flags.not {
+    if pass != this.flags.not() {
         return Ok(JSValue::UNDEFINED);
     }
 
@@ -85,7 +84,7 @@ pub fn to_have_nth_returned_with(
     // TODO(port): get_signature should be a const fn returning &'static str (was `comptime getSignature(...)`)
     let signature = get_signature("toHaveNthReturnedWith", "<green>n<r>, <green>expected<r>", false);
 
-    if this.flags.not {
+    if this.flags.not() {
         return this.throw(
             global,
             get_signature("toHaveNthReturnedWith", "<green>n<r>, <green>expected<r>", true),

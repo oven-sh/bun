@@ -4,7 +4,7 @@
 
 use core::ptr::NonNull;
 
-use bun_str::strings;
+use bun_string::strings;
 
 use crate::HTTPClient;
 use crate::NewHTTPContext;
@@ -46,17 +46,16 @@ impl PendingConnect {
     ) -> bool {
         self.port == port
             && self.ssl_config == ssl_config
-            && strings::eql_long(&self.hostname, hostname, true)
+            && strings::eql_long::<true>(&self.hostname, hostname)
     }
 
     pub fn unregister_from(&mut self, ctx: &mut NewHTTPContext<true>) {
         let list = &mut ctx.pending_h2_connects;
         let this_ptr: *const Self = self;
         // PORT NOTE: reshaped for borrowck (was `for + swapRemove + return`)
-        // TODO(port): assumes `pending_h2_connects: Vec<NonNull<PendingConnect>>`
         if let Some(i) = list
             .iter()
-            .position(|p| core::ptr::eq(p.as_ptr(), this_ptr))
+            .position(|p| core::ptr::eq(&**p as *const Self, this_ptr))
         {
             list.swap_remove(i);
         }

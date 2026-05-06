@@ -9,9 +9,6 @@
 //! Phase B may thread a crate-wide `'bump` and rewrite to `&'bump`.
 #![allow(non_snake_case, dead_code, unused, clippy::all)]
 
-use core::ops::{Deref, DerefMut};
-use core::ptr::NonNull;
-
 // ── REAL (un-gated Phase-A drafts) ─────────────────────────────────────────
 #[path = "base.rs"]
 pub mod base;
@@ -58,81 +55,10 @@ pub mod part {
 
 /// Arena-owned pointer into a `NewStore` block (or `bumpalo::Bump`).
 ///
-/// Thin `NonNull<T>` newtype — `Copy`, `Deref`/`DerefMut`. The pointee lives
-/// until the owning Store/arena is `reset()`/`destroy()`d; callers must not
-/// hold a `StoreRef` across that boundary. This matches Zig's `*T` payloads
-/// in `Expr.Data` / `Stmt.Data`.
-#[repr(transparent)]
-pub struct StoreRef<T>(NonNull<T>);
-
-impl<T> StoreRef<T> {
-    #[inline]
-    pub const fn from_non_null(p: NonNull<T>) -> Self {
-        StoreRef(p)
-    }
-    /// SAFETY: `p` must be non-null, aligned, and outlive the next Store reset.
-    #[inline]
-    pub const unsafe fn from_raw(p: *mut T) -> Self {
-        // SAFETY: caller contract.
-        StoreRef(unsafe { NonNull::new_unchecked(p) })
-    }
-    /// Wrap a `bumpalo::Bump::alloc` result.
-    #[inline]
-    pub fn from_bump(r: &mut T) -> Self {
-        StoreRef(NonNull::from(r))
-    }
-    #[inline]
-    pub const fn as_ptr(self) -> *mut T {
-        self.0.as_ptr()
-    }
-    /// Wrap a `&'static T` (compile-time/global singleton — e.g. Prefill
-    /// constants). The pointee is never freed, so the StoreRef is valid for
-    /// the program lifetime. Mutation through the resulting `StoreRef` is UB;
-    /// callers must treat it as read-only.
-    #[inline]
-    pub const fn from_static(r: &'static T) -> Self {
-        // SAFETY: `r` is a non-null aligned `'static` reference.
-        StoreRef(unsafe { NonNull::new_unchecked(r as *const T as *mut T) })
-    }
-    /// Borrow the pointee (explicit form of `Deref`). Mirrors Zig's `.*` deref
-    /// in chained-option contexts (`next.map(|r| r.get())`).
-    #[inline]
-    pub fn get(&self) -> &T {
-        // SAFETY: StoreRef invariant — points into a live Store/arena block.
-        unsafe { self.0.as_ref() }
-    }
-}
-impl<T> Clone for StoreRef<T> {
-    #[inline]
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-impl<T> Copy for StoreRef<T> {}
-impl<T> Deref for StoreRef<T> {
-    type Target = T;
-    #[inline]
-    fn deref(&self) -> &T {
-        // SAFETY: StoreRef invariant — points into a live Store/arena block.
-        unsafe { self.0.as_ref() }
-    }
-}
-impl<T> DerefMut for StoreRef<T> {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut T {
-        // SAFETY: StoreRef invariant. AST nodes are mutated in-place during
-        // visiting; Zig held `*T` and freely mutated. No two `StoreRef` to the
-        // same node are deref'd `&mut` simultaneously in single-threaded
-        // parser/visitor passes — same as the Zig contract.
-        unsafe { self.0.as_mut() }
-    }
-}
-impl<T> From<NonNull<T>> for StoreRef<T> {
-    #[inline]
-    fn from(p: NonNull<T>) -> Self {
-        StoreRef(p)
-    }
-}
+/// MOVE_DOWN: canonical definition lives in `bun_logger::js_ast` (T2) so
+/// `bun_interchange`/`bun_ini` can name `StoreRef<E::EString>` without a T4
+/// dep. Re-exported here unchanged.
+pub use bun_logger::js_ast::StoreRef;
 
 /// `bun.DebugOnlyDisabler(T)` — debug-build re-entrancy guard around Store
 /// access. No-op in release; in debug, asserts `!disabled`. Phase A keeps

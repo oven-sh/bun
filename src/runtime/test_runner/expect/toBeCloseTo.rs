@@ -1,7 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
-use crate::expect::Expect;
-use crate::expect::get_signature;
+use super::Expect;
+use super::get_signature;
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
@@ -66,7 +66,7 @@ impl Expect {
         let actual_diff = (received - expected).abs();
         let mut pass = actual_diff < expected_diff;
 
-        let not = this.flags.not;
+        let not = this.flags.not();
         if not {
             pass = !pass;
         }

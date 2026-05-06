@@ -40,8 +40,8 @@ pub mod defines_table;
 pub mod transpiler;
 #[cfg(any())]
 pub mod ParseTask;
-#[cfg(any())]
-pub mod options;
+#[path = "options.rs"]
+pub mod options_impl;
 #[cfg(any())]
 pub mod LinkerContext;
 #[cfg(any())]
@@ -59,8 +59,8 @@ pub struct BundleV2(());
 /// Stub: see gated `transpiler` module.
 #[derive(Default)]
 pub struct Transpiler(());
-/// Stub: see gated `options` module.
-pub struct BundleOptions(());
+/// Real `BundleOptions` (un-gated B-2). See `options_impl`.
+pub use options_impl::BundleOptions;
 pub use output_file::OutputFile;
 /// Stub: see gated `Chunk` module.
 pub struct Chunk(());
@@ -87,19 +87,24 @@ pub enum AdditionalFile {
 /// as `pub const Index = bun.ast.Index`.
 pub use bun_options_types::BundleEnums::{Index, IndexInt};
 
-// Re-export stub modules under their original names so `bun_bundler::options::X`
-// style paths resolve to *something* during B-1.
+// Re-export the real `options` module (un-gated B-2). Downstream crates that
+// were compiled against the B-1 stub aliases (Loader/Target re-exported from
+// `bun_options_types::BundleEnums`) keep those names; the file-backed
+// `options_impl` module supplies the rest. The two `Loader`/`Target` enums are
+// structurally identical — Phase B-3 collapses them once all callers move.
 pub mod options {
-    pub use super::BundleOptions;
-    pub type Options = super::BundleOptions;
-    // Type-only enums live in `bun_options_types` (lower tier); re-export here so
-    // intra-crate `crate::options::Loader` paths resolve while the full `options`
-    // module remains gated.
+    pub use super::options_impl::*;
+    // PORT NOTE: shadow the file-backed Loader/Target with the lower-tier
+    // `bun_options_types::BundleEnums` defs so downstream crates that already
+    // depend on those exact types (via bun_options_types) keep compiling. The
+    // file-backed defs are still reachable as `crate::options_impl::Loader` for
+    // intra-crate use.
     pub use bun_options_types::BundleEnums::{Loader, LoaderHashTable, Target};
     pub use bun_options_types::schema::api::DotEnvBehavior as EnvBehavior;
     pub use super::OutputFile;
     pub use super::output_file::Value as OutputValue;
     pub use super::output_file::Value as OutputFileValue;
+    pub type Options<'a> = super::BundleOptions<'a>;
 
     /// `jsc.API.BuildArtifact.OutputKind` (JSBundler.zig:1799). Re-exported by
     /// `options.zig` callers via `OutputFile.output_kind`.
@@ -219,10 +224,8 @@ pub mod options {
 
     /// Legacy `options::Framework` (referenced by `resolver/package_json.zig`'s
     /// `FrameworkRouterPair`). The full struct is `bun.bake.Framework` which
-    /// lives in a higher-tier crate; opaque placeholder until bake types move
-    /// in.
-    #[derive(Default)]
-    pub struct Framework(());
+    /// lives in a higher-tier crate; minimal real struct lives in `bake_types`.
+    pub use crate::bake_types::Framework;
 
     pub mod jsx {
         /// `api.JsxRuntime` (schema.zig:771). Defined locally — peechy codegen
@@ -374,3 +377,109 @@ pub mod bundle_v2 {
 }
 
 pub use cache::Set as Cache;
+
+// ──────────────────────────────────────────────────────────────────────────
+// CYCLEBREAK(b0) TYPE_ONLY: pure value types from bake that bundler needs
+// without depending on bun_runtime::bake (T6). Extracted from the gated
+// `bundle_v2.rs::bake_types` so `options.rs` / `LinkerContext.rs` resolve
+// `crate::bake_types::*`. The full set (HmrRuntime, EntryPointMap, virtual
+// sources) stays gated until bun_logger::Source / OUT_DIR codegen are real.
+// ──────────────────────────────────────────────────────────────────────────
+pub mod bake_types {
+    /// Mirrors src/bake/lib.zig `Side`.
+    #[repr(u8)]
+    #[derive(Copy, Clone, Eq, PartialEq, Debug)]
+    pub enum Side {
+        Client = 0,
+        Server = 1,
+    }
+    /// Mirrors src/bake/lib.zig `Graph`.
+    #[repr(u8)]
+    #[derive(Copy, Clone, Eq, PartialEq, Debug)]
+    pub enum Graph {
+        Client = 0,
+        Server = 1,
+        Ssr = 2,
+    }
+    impl Side {
+        pub fn graph(self) -> Graph {
+            match self {
+                Side::Client => Graph::Client,
+                Side::Server => Graph::Server,
+            }
+        }
+    }
+    /// Mirrors src/bake/DevServer.zig `FileKind`.
+    #[repr(u8)]
+    #[derive(Copy, Clone, Eq, PartialEq, Debug)]
+    pub enum CacheKind {
+        Unknown = 0,
+        Js = 1,
+        Asset = 2,
+        Css = 3,
+    }
+    #[derive(Copy, Clone)]
+    pub struct CacheEntry {
+        pub kind: CacheKind,
+    }
+    /// Mirrors src/bake/DevServer.zig `ASSET_PREFIX`.
+    pub const ASSET_PREFIX: &str = "/_bun/asset";
+    pub const DEV_SERVER_ASSET_PREFIX: &str = ASSET_PREFIX;
+
+    /// Mirrors src/bake/bake.zig:355 `BuiltInModule`.
+    pub enum BuiltInModule {
+        Import(Box<[u8]>),
+        Code(Box<[u8]>),
+    }
+
+    /// Mirrors src/bake/bake.zig `Framework` — only the field bundler reads
+    /// (`built_in_modules`). Remaining fields are opaque until tier-6 collapse.
+    pub struct Framework {
+        pub built_in_modules: bun_collections::StringArrayHashMap<BuiltInModule>,
+        // TODO(b0-genuine): remaining Framework fields (server_components,
+        // react_fast_refresh, file_system_router_types, ...) — bake constructs.
+        _opaque_tail: (),
+    }
+
+    /// Alias used at the crate root (`crate::HmrRuntimeSide`); identical to `Side`.
+    pub type HmrRuntimeSide = Side;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// CYCLEBREAK(b0) §Dispatch: erased DevServer handle. Extracted from the gated
+// `bundle_v2.rs::dispatch` so `LinkerContext.rs` / `barrel_imports.rs` /
+// `options.rs` resolve `crate::dispatch::DevServerHandle`. PERF(port): was
+// inline switch in Zig.
+// ──────────────────────────────────────────────────────────────────────────
+pub mod dispatch {
+    /// Erased handle to bake::DevServer.
+    #[derive(Clone, Copy)]
+    pub struct DevServerHandle {
+        pub owner: *mut (),
+        pub vtable: &'static DevServerVTable,
+    }
+    pub struct DevServerVTable {
+        /// `dev.isFileCached(abs_path, side)` — DevServer.zig:2128.
+        pub is_file_cached:
+            unsafe fn(*mut (), &[u8], super::bake_types::Side) -> Option<super::bake_types::CacheEntry>,
+        /// `dev.allocator().dupe(u8, ..)` — DevServer-owned bump for barrel keys.
+        pub dupe: unsafe fn(*mut (), &[u8]) -> &'static [u8],
+        /// `dev.barrel_needed_exports.getOrPut(path)` etc. Opaque body lives in
+        /// bun_runtime; bundler only registers.
+        pub register_barrel_export: unsafe fn(*mut (), &[u8], &[u8]),
+        // ── full slot set (finalize_bundle, handle_parse_task_failure,
+        //    put_or_overwrite_asset, …) stays in the gated bundle_v2.rs draft
+        //    until BundleV2/DevServerOutput types are real here.
+    }
+    impl DevServerHandle {
+        #[inline]
+        pub fn is_file_cached(
+            &self,
+            abs_path: &[u8],
+            side: super::bake_types::Side,
+        ) -> Option<super::bake_types::CacheEntry> {
+            // SAFETY: owner is a live *mut DevServer per handle invariant.
+            unsafe { (self.vtable.is_file_cached)(self.owner, abs_path, side) }
+        }
+    }
+}

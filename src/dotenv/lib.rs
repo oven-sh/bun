@@ -4,5 +4,6 @@ pub mod env_loader;
 
 pub use env_loader::{
     DefineStoreRef, DefineStoreVTable, DotEnvBehavior, DotEnvFileSuffix, HashTableValue, Loader,
-    Map, NullDelimitedEnvMap, StdEnvMapWrapper, HAS_NO_CLEAR_SCREEN_CLI_FLAG, INSTANCE,
+    Map, NullDelimitedEnvMap, S3Credentials, StdEnvMapWrapper, HAS_NO_CLEAR_SCREEN_CLI_FLAG,
+    INSTANCE,
 };

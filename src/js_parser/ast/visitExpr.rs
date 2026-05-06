@@ -28,7 +28,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 }
 
-#[cfg(any())] // TODO(b2-ast-E): full draft body — apply mixin→impl-P recipe per-method
+#[cfg(any())]
+// blocked_on: P::{handle_identifier, record_usage, ignore_usage, value_for_this, value_for_define,
+//   is_dot_define_match, transpose_import, transpose_require, jsx_import, jsx_import_automatic,
+//   call_runtime, maybe_rewrite_property_access, expr_can_be_removed_if_unused,
+//   handle_import_meta_hot_accept_call, handle_react_refresh_hook_call, ts_namespace}
+//   all gated (P.rs:640 impl block); _draft uses `const JSX: JSXTransformType` const-generic
+//   (needs J: JsxT lowering); BinaryExpressionVisitor::visit_right_and_finish body;
+//   ~2590-line bodies, >30 path/shape errors per method.
 #[allow(warnings)]
 mod _draft {
 use core::ffi::c_void;

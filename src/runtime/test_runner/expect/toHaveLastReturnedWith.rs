@@ -1,10 +1,10 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::console_object::Formatter;
 // TODO(port): verify path for JSMockFunction__getReturns FFI binding
-use bun_jsc::cpp::JSMockFunction__getReturns;
+use super::mock::JSMockFunction__getReturns;
 
-use crate::diff_format::DiffFormatter;
-use crate::expect::Expect;
+use super::DiffFormatter;
+use super::Expect;
 
 #[bun_jsc::host_fn(method)]
 pub fn to_have_last_returned_with(
@@ -64,7 +64,7 @@ pub fn to_have_last_returned_with(
         }
     }
 
-    if pass != this.flags.not {
+    if pass != this.flags.not() {
         return Ok(JSValue::UNDEFINED);
     }
 
@@ -73,7 +73,7 @@ pub fn to_have_last_returned_with(
 
     let signature = Expect::get_signature("toHaveBeenLastReturnedWith", "<green>expected<r>", false);
 
-    if this.flags.not {
+    if this.flags.not() {
         return this.throw(
             global_this,
             Expect::get_signature("toHaveBeenLastReturnedWith", "<green>expected<r>", true),

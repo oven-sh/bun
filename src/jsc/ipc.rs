@@ -5,23 +5,45 @@ use bun_aio::KeepAlive;
 use bun_collections::ByteList;
 use bun_core::Output;
 use bun_io::StreamBuffer;
-use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, ManagedTask, Task,
+use crate as jsc;
+use crate::{
+    CallFrame, JSGlobalObject, JSValue, JsError, JsResult, ManagedTask, Task,
     VirtualMachine, ZigString,
 };
-use bun_runtime::api::Subprocess;
-use bun_runtime::node::node_cluster_binding;
-use bun_str::{strings, String as BunString};
+use bun_string::{strings, String as BunString};
+#[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 use bun_sys::Fd;
 use bun_uws;
 
-use crate::json_line_buffer::JSONLineBuffer;
+// ──────────────────────────────────────────────────────────────────────────
+// High-tier shims (§Dispatch / cycle-break).
+// `Subprocess` and `node_cluster_binding` live in `bun_runtime` (tier-6);
+// `JSONLineBuffer` is a sibling still gated. Replaced with opaque locals so
+// the IPC channel struct/protocol code compiles; the JS-callback dispatch
+// arms that touch real `Subprocess` fields are gated below.
+// TODO(port): swap shims for real types when `bun_runtime` cycle lands.
+// ──────────────────────────────────────────────────────────────────────────
+mod high_tier {
+    #[derive(Default)] pub struct Subprocess { _opaque: () }
+    pub mod node_cluster_binding {
+        use crate::{JSGlobalObject, JSValue, JsResult};
+        pub fn handle_internal_message_child(_g: &JSGlobalObject, _m: JSValue) -> JsResult<bool> {
+            // TODO(port): bun_runtime::node::node_cluster_binding
+            Ok(false)
+        }
+        pub fn handle_internal_message_primary(
+            _g: &JSGlobalObject, _sub: *mut super::Subprocess, _m: JSValue,
+        ) -> JsResult<bool> { Ok(false) }
+    }
+    #[derive(Default)] pub struct JSONLineBuffer { _opaque: () }
+}
+use high_tier::{Subprocess, node_cluster_binding, JSONLineBuffer};
 
-bun_output::declare_scope!(IPC, visible);
+bun_core::declare_scope!(IPC, visible);
 
 macro_rules! log {
-    ($($arg:tt)*) => { bun_output::scoped_log!(IPC, $($arg)*) };
+    ($($arg:tt)*) => { bun_core::scoped_log!(IPC, $($arg)*) };
 }
 
 /// Union type that switches between simple ByteList (for advanced mode)
@@ -138,6 +160,22 @@ pub enum IPCSerializationError {
     #[error("OutOfMemory")]
     OutOfMemory,
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// TODO(port): the IPC channel body below depends on:
+//   - `bun_uws::SocketHandler<false>` API surface (write/close/is_closed/…)
+//   - `crate::ManagedTask` as a *type* (currently a module re-export)
+//   - `Subprocess`/`node_cluster_binding` (high-tier, shimmed above)
+//   - `JSONLineBuffer` sibling (still gated)
+//   - `bun_sys::windows::libuv` (windows-only; cfg-gated above)
+//   - `JSValue::call_next_tick`, `JSGlobalObject::err`, `Fd::close`
+//   - `#[crate::host_fn]` proc-macro
+// Gated wholesale; the public `Mode`/`SerializeAndSendResult`/error enums
+// above are the only surface downstream callers need at this tier.
+// ──────────────────────────────────────────────────────────────────────────
+#[cfg(any())]
+mod _body {
+use super::*;
 
 mod advanced {
     use super::*;
@@ -360,7 +398,7 @@ mod json {
                 &mut was_ascii_string_freed,
                 json_ipc_data_string_free_cb,
             );
-            if s.tag() == bun_str::Tag::Dead {
+            if s.tag() == bun_string::Tag::Dead {
                 #[cold]
                 fn cold() {}
                 cold();
@@ -425,7 +463,7 @@ mod json {
         value.json_stringify_fast(global, &mut out)?;
         // `out` Drops (deref) at scope exit.
 
-        if out.tag() == bun_str::Tag::Dead {
+        if out.tag() == bun_string::Tag::Dead {
             return Err(bun_core::err!("SerializationFailed"));
         }
 
@@ -1443,7 +1481,8 @@ impl Drop for SendQueue {
 
 const MAX_HANDLE_RETRANSMISSIONS: u32 = 3;
 
-#[bun_jsc::host_fn]
+// TODO(port): #[crate::host_fn] proc-macro — gated.
+#[cfg(any())]
 fn emit_process_error_event(
     global_this: &JSGlobalObject,
     callframe: &CallFrame,
@@ -1600,7 +1639,8 @@ pub fn do_send(
     })
 }
 
-#[bun_jsc::host_fn]
+// TODO(port): #[crate::host_fn] proc-macro — gated.
+#[cfg(any())]
 pub fn emit_handle_ipc_message(
     global_this: &JSGlobalObject,
     callframe: &CallFrame,
@@ -2273,6 +2313,7 @@ pub fn ipc_parse(
     }
     Ok(r)
 }
+} // mod _body
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

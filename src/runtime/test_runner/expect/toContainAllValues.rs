@@ -1,7 +1,7 @@
 use bun_jsc::console_object::Formatter;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
-use crate::expect::Expect;
+use super::Expect;
 
 #[bun_jsc::host_fn(method)]
 pub fn to_contain_all_values(
@@ -30,7 +30,7 @@ pub fn to_contain_all_values(
     let value: JSValue =
         this.get_value(global, this_value, "toContainAllValues", "<green>expected<r>")?;
 
-    let not = this.flags.not;
+    let not = this.flags.not();
     let mut pass = false;
 
     if !value.is_undefined_or_null() {

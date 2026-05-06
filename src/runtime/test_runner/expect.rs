@@ -5,14 +5,15 @@ use bun_core::{Output, deprecated};
 use bun_jsc::{
     CallFrame, JSGlobalObject, JSValue, JsError, JsResult, VirtualMachine, ZigString,
     ConsoleObject, JSFunction, JSPropertyIterator, JSArrayIterator, JSString,
-    Jest::{self, bun_test, DescribeScope, TestRunner},
 };
 use bun_str::{self as bun_string, strings};
-use crate::test_runner::diff_format::DiffFormatter;
 
-// TODO(port): re-export matcher modules
-pub use crate::expect::to_be::to_be;
-// (full list below in impl Expect)
+use super::bun_test;
+use super::diff_format::DiffFormatter;
+use super::jest::{self, DescribeScope, TestRunner};
+
+// Matcher submodules are declared in `super::expect` (mod.rs); this file
+// provides only the `Expect` payload + helpers they extend.
 
 #[derive(Default, Clone, Copy)]
 pub struct Counter {
@@ -49,7 +50,9 @@ pub struct TestScope<'a> {
     pub describe: &'a DescribeScope,
 }
 
-#[repr(u2)] // TODO(port): Rust has no u2; encoded inside Flags packed repr
+// PORT NOTE: Zig `enum(u2)`; Rust has no `u2`. Stored packed inside `Flags(u8)`
+// bits 0..2, so `repr(u8)` here only governs the standalone discriminant size.
+#[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum Promise {
     #[default]
@@ -274,7 +277,9 @@ impl Expect {
         &self,
         global_this: &JSGlobalObject,
         this_value: JSValue,
-        matcher_name: &[u8],
+        // PORT NOTE: Zig took `[]const u8`; every caller passes a string literal,
+        // so accept `&str` (BStr::new below takes `AsRef<[u8]>`, so no copy).
+        matcher_name: &str,
         matcher_params_fmt: &'static str,
     ) -> JsResult<JSValue> {
         let Some(value) = Self::js::captured_value_get_cached(this_value) else {
@@ -671,82 +676,6 @@ impl Expect {
     }
 }
 
-// Re-export individual matcher implementations (thin re-exports)
-pub use crate::expect::to_be::to_be;
-pub use crate::expect::to_be_array::to_be_array;
-pub use crate::expect::to_be_array_of_size::to_be_array_of_size;
-pub use crate::expect::to_be_boolean::to_be_boolean;
-pub use crate::expect::to_be_close_to::to_be_close_to;
-pub use crate::expect::to_be_date::to_be_date;
-pub use crate::expect::to_be_defined::to_be_defined;
-pub use crate::expect::to_be_empty::to_be_empty;
-pub use crate::expect::to_be_empty_object::to_be_empty_object;
-pub use crate::expect::to_be_even::to_be_even;
-pub use crate::expect::to_be_false::to_be_false;
-pub use crate::expect::to_be_falsy::to_be_falsy;
-pub use crate::expect::to_be_finite::to_be_finite;
-pub use crate::expect::to_be_function::to_be_function;
-pub use crate::expect::to_be_greater_than::to_be_greater_than;
-pub use crate::expect::to_be_greater_than_or_equal::to_be_greater_than_or_equal;
-pub use crate::expect::to_be_instance_of::to_be_instance_of;
-pub use crate::expect::to_be_integer::to_be_integer;
-pub use crate::expect::to_be_less_than::to_be_less_than;
-pub use crate::expect::to_be_less_than_or_equal::to_be_less_than_or_equal;
-pub use crate::expect::to_be_nan::to_be_nan;
-pub use crate::expect::to_be_negative::to_be_negative;
-pub use crate::expect::to_be_nil::to_be_nil;
-pub use crate::expect::to_be_null::to_be_null;
-pub use crate::expect::to_be_number::to_be_number;
-pub use crate::expect::to_be_object::to_be_object;
-pub use crate::expect::to_be_odd::to_be_odd;
-pub use crate::expect::to_be_one_of::to_be_one_of;
-pub use crate::expect::to_be_positive::to_be_positive;
-pub use crate::expect::to_be_string::to_be_string;
-pub use crate::expect::to_be_symbol::to_be_symbol;
-pub use crate::expect::to_be_true::to_be_true;
-pub use crate::expect::to_be_truthy::to_be_truthy;
-pub use crate::expect::to_be_type_of::to_be_type_of;
-pub use crate::expect::to_be_undefined::to_be_undefined;
-pub use crate::expect::to_be_valid_date::to_be_valid_date;
-pub use crate::expect::to_be_within::to_be_within;
-pub use crate::expect::to_contain::to_contain;
-pub use crate::expect::to_contain_all_keys::to_contain_all_keys;
-pub use crate::expect::to_contain_all_values::to_contain_all_values;
-pub use crate::expect::to_contain_any_keys::to_contain_any_keys;
-pub use crate::expect::to_contain_any_values::to_contain_any_values;
-pub use crate::expect::to_contain_equal::to_contain_equal;
-pub use crate::expect::to_contain_key::to_contain_key;
-pub use crate::expect::to_contain_keys::to_contain_keys;
-pub use crate::expect::to_contain_value::to_contain_value;
-pub use crate::expect::to_contain_values::to_contain_values;
-pub use crate::expect::to_end_with::to_end_with;
-pub use crate::expect::to_equal::to_equal;
-pub use crate::expect::to_equal_ignoring_whitespace::to_equal_ignoring_whitespace;
-pub use crate::expect::to_have_been_called::to_have_been_called;
-pub use crate::expect::to_have_been_called_once::to_have_been_called_once;
-pub use crate::expect::to_have_been_called_times::to_have_been_called_times;
-pub use crate::expect::to_have_been_called_with::to_have_been_called_with;
-pub use crate::expect::to_have_been_last_called_with::to_have_been_last_called_with;
-pub use crate::expect::to_have_been_nth_called_with::to_have_been_nth_called_with;
-pub use crate::expect::to_have_last_returned_with::to_have_last_returned_with;
-pub use crate::expect::to_have_length::to_have_length;
-pub use crate::expect::to_have_nth_returned_with::to_have_nth_returned_with;
-pub use crate::expect::to_have_property::to_have_property;
-pub use crate::expect::to_have_returned::to_have_returned;
-pub use crate::expect::to_have_returned_times::to_have_returned_times;
-pub use crate::expect::to_have_returned_with::to_have_returned_with;
-pub use crate::expect::to_include::to_include;
-pub use crate::expect::to_include_repeated::to_include_repeated;
-pub use crate::expect::to_match::to_match;
-pub use crate::expect::to_match_inline_snapshot::to_match_inline_snapshot;
-pub use crate::expect::to_match_object::to_match_object;
-pub use crate::expect::to_match_snapshot::to_match_snapshot;
-pub use crate::expect::to_satisfy::to_satisfy;
-pub use crate::expect::to_start_with::to_start_with;
-pub use crate::expect::to_strict_equal::to_strict_equal;
-pub use crate::expect::to_throw::to_throw;
-pub use crate::expect::to_throw_error_matching_inline_snapshot::to_throw_error_matching_inline_snapshot;
-pub use crate::expect::to_throw_error_matching_snapshot::to_throw_error_matching_snapshot;
 
 pub struct TrimResult<'a> {
     pub trimmed: &'a [u8],
@@ -1039,7 +968,7 @@ impl Expect {
             }
 
             // 2. save to write later
-            runner.snapshots.add_inline_snapshot_to_write(file_id, crate::test_runner::snapshot::InlineSnapshotToWrite {
+            runner.snapshots.add_inline_snapshot_to_write(file_id, super::snapshot::InlineSnapshotToWrite {
                 line: srcloc.line,
                 col: srcloc.column,
                 value: core::mem::take(&mut pretty_value).into_boxed_slice(),
@@ -2503,8 +2432,36 @@ impl ExpectTypeOf {
 pub mod mock {
     use super::*;
 
+    // TODO(port): move to <area>_sys
+    unsafe extern "C" {
+        #[link_name = "JSMockFunction__getCalls"]
+        fn JSMockFunction__getCalls_raw(value: JSValue) -> JSValue;
+        #[link_name = "JSMockFunction__getReturns"]
+        fn JSMockFunction__getReturns_raw(value: JSValue) -> JSValue;
+    }
+
+    /// `bun.cpp.JSMockFunction__getCalls` — returns the `mock.calls` array for a
+    /// JSMockFunction, or `JSValue::zero` if `value` is not a mock. Safe wrapper
+    /// over the C++ shim so matchers don't carry their own `extern` blocks.
+    #[allow(non_snake_case)]
+    #[inline]
+    pub fn JSMockFunction__getCalls(global: &JSGlobalObject, value: JSValue) -> JsResult<JSValue> {
+        let _ = global; // C++ side does not throw; kept for signature parity with matcher drafts.
+        // SAFETY: JSValue is repr(transparent) i64, fn never throws.
+        Ok(unsafe { JSMockFunction__getCalls_raw(value) })
+    }
+
+    /// `bun.cpp.JSMockFunction__getReturns` — see `JSMockFunction__getCalls`.
+    #[allow(non_snake_case)]
+    #[inline]
+    pub fn JSMockFunction__getReturns(global: &JSGlobalObject, value: JSValue) -> JsResult<JSValue> {
+        let _ = global;
+        // SAFETY: JSValue is repr(transparent) i64, fn never throws.
+        Ok(unsafe { JSMockFunction__getReturns_raw(value) })
+    }
+
     pub fn jest_mock_iterator(global_this: &JSGlobalObject, value: JSValue) -> JsResult<JSArrayIterator> {
-        let returns: JSValue = bun_jsc::cpp::JSMockFunction__getReturns(global_this, value)?;
+        let returns: JSValue = JSMockFunction__getReturns(global_this, value)?;
         if !returns.js_type().is_array() {
             let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
             return Err(global_this.throw(

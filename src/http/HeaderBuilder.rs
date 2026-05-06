@@ -62,8 +62,6 @@ impl HeaderBuilder {
         self.entries.append_assume_capacity(Entry { name: name_ptr, value: value_ptr });
     }
 
-    #[cfg(any())]
-    // TODO(b2-blocked): crate::HTTPClient (struct fields gated in lib.rs _phase_a_draft)
     pub fn apply(&mut self, client: &mut crate::HTTPClient) {
         client.header_entries = core::mem::take(&mut self.entries);
         // TODO(port): lifetime — header_buf borrows from self.content's allocation; in Zig this

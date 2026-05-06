@@ -7,31 +7,41 @@ use enumset::EnumSet;
 
 use bun_alloc::AllocError;
 use bun_core::{fmt as bun_fmt, Output};
-use bun_http::MimeType;
-use bun_http_types::{FetchCacheMode, FetchRedirect, FetchRequestMode, Method};
-use bun_jsc::codegen::JSRequest as js;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsError, JsRef, JsResult, Strong, URL};
-use bun_ptr::WeakPtrData;
-use bun_runtime::api::{AnyRequestContext, NodeHTTPResponse};
-use bun_runtime::webcore::body::{self, Body, BodyMixin, BodyValue};
-use bun_runtime::webcore::{AbortSignal, Blob, CookieMap, FetchHeaders, ReadableStream, Response};
+use bun_http_types::MimeType::MimeType;
+use bun_http_types::FetchCacheMode::FetchCacheMode;
+use bun_http_types::FetchRedirect::FetchRedirect;
+use bun_http_types::FetchRequestMode::FetchRequestMode;
+use bun_http_types::Method::Method;
+use crate::webcore::jsc::codegen::JSRequest as js;
+use crate::webcore::jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsRef, JsResult, Strong, URL};
+use bun_ptr::weak_ptr::WeakPtrData;
+use crate::api::{AnyRequestContext, NodeHTTPResponse};
+use crate::webcore::body::{self, Body, BodyMixin, Value as BodyValue};
+use crate::webcore::{AbortSignal, Blob, CookieMap, FetchHeaders, ReadableStream, Response};
 use bun_str::{strings, String as BunString, ZigString};
 use bun_uws as uws;
 
 // TODO(port): WeakRef = bun.ptr.WeakPtr(Request, "weak_ptr_data") — intrusive weak-ptr;
 // keep raw *mut Request + embedded WeakPtrData. See PORTING.md §Pointers.
+impl bun_ptr::weak_ptr::HasWeakPtrData for Request {
+    unsafe fn weak_ptr_data(this: *mut Self) -> *mut WeakPtrData {
+        // SAFETY: caller guarantees `this` points to a live (possibly-finalized) allocation.
+        unsafe { core::ptr::addr_of_mut!((*this).weak_ptr_data) }
+    }
+}
 pub type WeakRef = bun_ptr::WeakPtr<Request>;
 
-#[bun_jsc::JsClass]
+// TODO(b2-blocked): #[bun_jsc::JsClass]
 pub struct Request {
     pub url: BunString,
 
     headers: Option<Arc<FetchHeaders>>,
     pub signal: Option<Arc<AbortSignal>>,
-    body: Arc<BodyValue>,
-    // TODO(port): Arc<BodyValue> mapped from *Body.Value.HiveRef per LIFETIMES.tsv;
-    // Zig mutates `#body.value` in place — Phase B must decide on interior mutability
-    // (Arc<RefCell<BodyValue>> or IntrusiveRc<HiveRef>) since Arc<T> alone is immutable.
+    // TODO(port): mapped from *Body.Value.HiveRef per LIFETIMES.tsv. Zig pools
+    // BodyValue in a HiveAllocator and mutates `#body.value` in place; Phase B
+    // must decide on `Arc<RefCell<BodyValue>>` vs `IntrusiveRc<HiveRef>` once
+    // body::HiveRef is un-gated. Boxed for now to keep struct size stable.
+    body: Box<BodyValue>,
     js_ref: JsRef,
     pub method: Method,
     pub flags: Flags,
@@ -80,6 +90,15 @@ impl Request {
 // these re-exports become trait methods (get_text/get_bytes/get_body/get_body_used/
 // get_json/get_array_buffer/get_blob/get_form_data/get_blob_without_call_frame).
 impl BodyMixin for Request {}
+
+// TODO(b2-blocked): bun_jsc::* — every block below until `Flags`-adjacent
+// `init`/accessors depends on JSC method surface (JSValue::is_number/to/call,
+// Strong::create/get, request_context methods, JsRef::try_get, codegen
+// gc.stream slots, etc.). Struct + Flags + InternalJSEventCallback type are
+// kept un-gated; impl bodies gated.
+#[cfg(any())]
+mod _jsc_gated {
+use super::*;
 
 impl Request {
     pub fn memory_cost(&self) -> usize {
@@ -151,11 +170,6 @@ pub extern "C" fn Request__clone(
 }
 
 // `comptime { _ = Request__clone; ... }` force-reference block → drop. Rust links what's pub.
-
-#[derive(Default)]
-pub struct InternalJSEventCallback {
-    pub function: Strong, // jsc.Strong.Optional → bun_jsc::Strong
-}
 
 pub type EventType = <NodeHTTPResponse as bun_runtime::api::HasAbortEvent>::AbortEvent;
 // TODO(port): `jsc.API.NodeHTTPResponse.AbortEvent` — direct path is
@@ -273,7 +287,7 @@ impl Request {
         )))
     }
 
-    #[bun_jsc::host_call]
+    // TODO(b2-blocked): #[bun_jsc::host_call]
     pub extern "C" fn estimated_size(this: *mut Request) -> usize {
         // SAFETY: called from JSC codegen with live m_ctx
         unsafe { (*this).reported_estimated_size }
@@ -359,7 +373,7 @@ unsafe extern "C" {
         global_object: *const JSGlobalObject,
         request_ptr: *mut Request,
     ) -> JSValue;
-    // callconv(jsc.conv) — see #[bun_jsc::host_fn] note; raw extern keeps C ABI here and
+    // callconv(jsc.conv) — see // TODO(b2-blocked): #[bun_jsc::host_fn] note; raw extern keeps C ABI here and
     // fromJSHostCall handles the calling-convention shim.
 }
 
@@ -539,27 +553,27 @@ impl Request {
         }
     }
 
-    #[bun_jsc::host_fn(getter)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_cache(&self, global_this: &JSGlobalObject) -> JSValue {
         self.flags.cache.to_js(global_this)
     }
 
-    #[bun_jsc::host_fn(getter)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_credentials(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
         global_this.common_strings().include()
     }
 
-    #[bun_jsc::host_fn(getter)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_destination(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
         ZigString::init(b"").to_js(global_this)
     }
 
-    #[bun_jsc::host_fn(getter)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_integrity(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
         ZigString::EMPTY.to_js(global_this)
     }
 
-    #[bun_jsc::host_fn(getter)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_signal(&mut self, global_this: &JSGlobalObject) -> JSValue {
         // Already have an C++ instance
         if let Some(signal) = &self.signal {
@@ -575,12 +589,12 @@ impl Request {
         }
     }
 
-    #[bun_jsc::host_fn(getter)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_method(&self, global_this: &JSGlobalObject) -> JSValue {
         self.method.to_js(global_this)
     }
 
-    #[bun_jsc::host_fn(getter)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_mode(&self, global_this: &JSGlobalObject) -> JSValue {
         self.flags.mode.to_js(global_this)
     }
@@ -611,12 +625,12 @@ impl Request {
         }
     }
 
-    #[bun_jsc::host_fn(getter)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_redirect(&self, global_this: &JSGlobalObject) -> JSValue {
         self.flags.redirect.to_js(global_this)
     }
 
-    #[bun_jsc::host_fn(getter)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_referrer(&self, global_object: &JSGlobalObject) -> JSValue {
         if let Some(headers_ref) = &self.headers {
             if let Some(referrer) = headers_ref.get(b"referrer", global_object) {
@@ -627,12 +641,12 @@ impl Request {
         ZigString::init(b"").to_js(global_object)
     }
 
-    #[bun_jsc::host_fn(getter)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_referrer_policy(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
         ZigString::init(b"").to_js(global_this)
     }
 
-    #[bun_jsc::host_fn(getter)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_url(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         self.ensure_url()?;
         Ok(self.url.to_js(global_object))
@@ -1278,7 +1292,7 @@ impl Request {
         Ok(req)
     }
 
-    #[bun_jsc::host_fn]
+    // TODO(b2-blocked): #[bun_jsc::host_fn]
     pub fn constructor(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -1296,7 +1310,7 @@ impl Request {
         self.body.value_mut()
     }
 
-    #[bun_jsc::host_fn(method)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     pub fn do_clone(
         &mut self,
         global_this: &JSGlobalObject,
@@ -1411,7 +1425,7 @@ impl Request {
     }
 
     /// This should only be called by the JS code. use getFetchHeaders to get the current headers or ensureFetchHeaders to get the headers and create them if they don't exist.
-    #[bun_jsc::host_fn(getter)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_headers(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(self.ensure_fetch_headers(global_this)?.to_js(global_this))
     }
@@ -1513,6 +1527,47 @@ impl Request {
 
     pub fn set_timeout(&mut self, seconds: c_uint) {
         let _ = self.request_context.set_timeout(seconds);
+    }
+}
+
+} // mod _jsc_gated
+
+#[derive(Default)]
+pub struct InternalJSEventCallback {
+    pub function: jsc::strong::Optional, // jsc.Strong.Optional → bun_jsc::Strong
+}
+
+impl Request {
+    pub fn init(
+        method: Method,
+        request_context: AnyRequestContext,
+        https: bool,
+        signal: Option<Arc<AbortSignal>>,
+        body: Box<BodyValue>,
+    ) -> Request {
+        Request {
+            url: BunString::empty(),
+            headers: None,
+            signal,
+            body,
+            js_ref: JsRef::empty(),
+            method,
+            flags: Flags { https, ..Flags::default() },
+            request_context,
+            weak_ptr_data: WeakPtrData::EMPTY,
+            reported_estimated_size: 0,
+            internal_event_callback: InternalJSEventCallback::default(),
+        }
+    }
+
+    #[inline]
+    pub fn get_body_value(&mut self) -> &mut BodyValue {
+        &mut self.body
+    }
+
+    #[inline]
+    pub fn get_fetch_headers(&self) -> Option<&FetchHeaders> {
+        self.headers.as_deref()
     }
 }
 

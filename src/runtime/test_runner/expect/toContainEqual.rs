@@ -1,10 +1,10 @@
 use core::ffi::c_void;
 
 use bun_jsc::console_object::Formatter;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, Vm};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, VM};
 use bun_str::strings;
 
-use crate::expect::{get_signature, Expect};
+use super::{get_signature, Expect};
 
 struct ExpectedEntry<'a> {
     global_this: &'a JSGlobalObject,
@@ -53,7 +53,7 @@ pub fn to_contain_equal(
     expected.ensure_still_alive();
     let value: JSValue = this.get_value(global, this_value, "toContainEqual", "<green>expected<r>")?;
 
-    let not = this.flags.not;
+    let not = this.flags.not();
     let mut pass = false;
 
     let value_type = value.js_type();

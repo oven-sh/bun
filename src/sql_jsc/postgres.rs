@@ -126,11 +126,6 @@ pub mod types {
 }
 
 pub mod protocol {
-    // TODO(b2-blocked): bun_jsc::JSGlobalObject::take_error
-    // TODO(b2-blocked): bun_string::String::{utf8_byte_length,byte_slice,eql,is_empty}
-    // TODO(b2-blocked): bun_string::StringBuilder::{append,append_str,allocated_slice}
-    // TODO(b2-blocked): bun_sql::postgres::protocol::error_response::FieldMessage
-    #[cfg(any())]
     #[path = "error_response_jsc.rs"]
     pub mod error_response_jsc;
 

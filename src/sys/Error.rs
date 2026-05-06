@@ -41,7 +41,7 @@ pub fn oom() -> Error {
     Error::from_code(E::ENOMEM, Tag::read)
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Error {
     pub errno: Int,
     pub fd: Fd,

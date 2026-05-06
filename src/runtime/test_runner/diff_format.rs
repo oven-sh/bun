@@ -3,8 +3,8 @@ use core::fmt;
 use bun_core::Output;
 use bun_jsc::{JSGlobalObject, JSValue};
 
-use crate::diff::print_diff::{print_diff_main, DiffConfig};
-use crate::pretty_format::JestPrettyFormat;
+use super::diff::print_diff::{print_diff_main, DiffConfig};
+use super::pretty_format::JestPrettyFormat;
 
 pub struct DiffFormatter<'a> {
     pub received_string: Option<&'a [u8]>,

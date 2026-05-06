@@ -12,8 +12,8 @@ use bun_str::{strings, ZStr};
 use bun_sys::{self, Fd};
 use bun_wyhash::hash;
 
-use crate::diff_format::DiffFormatter;
-use crate::expect::Expect;
+use super::diff_format::DiffFormatter;
+use super::expect::Expect;
 use crate::jest::{Jest, TestRunner};
 
 // TODO(port): TestRunner.File.ID — exact path depends on jest.rs port; using a local alias.

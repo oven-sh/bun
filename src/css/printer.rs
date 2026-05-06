@@ -10,7 +10,7 @@ use crate::css_parser as css;
 use crate::sourcemap;
 use crate::values as css_values;
 
-use css::{Location, PrintErr};
+use crate::{Location, PrintErr};
 use css_values::ident::DashedIdent;
 
 pub use css::Error;
@@ -140,7 +140,7 @@ pub struct Printer<'a> {
     pub targets: Targets,
     pub vendor_prefix: css::VendorPrefix,
     pub in_calc: bool,
-    pub css_module: Option<css::CssModule>,
+    pub css_module: Option<css::CssModule<'a>>,
     pub dependencies: Option<BumpVec<'a, css::Dependency>>,
     pub remove_imports: bool,
     /// A mapping of pseudo classes to replace with class names that can be applied
@@ -167,7 +167,8 @@ thread_local! {
 }
 
 impl<'a> Printer<'a> {
-    pub fn lookup_symbol(&self, ref_: bun_js_parser::Ref) -> &[u8] {
+    #[cfg(any())] // blocked_on: symbol::Map::follow/get API + LocalsResultsMap key type
+    pub fn lookup_symbol(&self, ref_: bun_logger::Ref) -> &[u8] {
         let symbols = self.symbols;
 
         let final_ref = symbols.follow(ref_);
@@ -181,6 +182,7 @@ impl<'a> Printer<'a> {
         original_name
     }
 
+    #[cfg(any())] // blocked_on: lookup_symbol
     pub fn lookup_ident_or_ref(&self, ident: css_values::ident::IdentOrRef) -> &[u8] {
         #[cfg(debug_assertions)]
         {
@@ -222,7 +224,7 @@ impl<'a> Printer<'a> {
     /// Add an error related to std lib fmt errors
     pub fn add_fmt_error(&mut self) -> PrintErr {
         self.error_kind = Some(css::PrinterError {
-            kind: css::PrinterErrorKind::FmtError,
+            kind: css::PrinterErrorKind::fmt_error,
             loc: None,
         });
         PrintErr::CSSPrintError
@@ -230,7 +232,7 @@ impl<'a> Printer<'a> {
 
     pub fn add_no_import_record_error(&mut self) -> PrintErr {
         self.error_kind = Some(css::PrinterError {
-            kind: css::PrinterErrorKind::NoImportRecords,
+            kind: css::PrinterErrorKind::no_import_records,
             loc: None,
         });
         PrintErr::CSSPrintError
@@ -238,9 +240,9 @@ impl<'a> Printer<'a> {
 
     pub fn add_invalid_css_modules_pattern_in_grid_error(&mut self) -> PrintErr {
         self.error_kind = Some(css::PrinterError {
-            kind: css::PrinterErrorKind::InvalidCssModulesPatternInGrid,
+            kind: css::PrinterErrorKind::invalid_css_modules_pattern_in_grid,
             loc: Some(css::ErrorLocation {
-                filename: self.filename().into(),
+                filename: self.filename() as *const [u8],
                 line: self.loc.line,
                 column: self.loc.column,
             }),
@@ -258,7 +260,7 @@ impl<'a> Printer<'a> {
         self.error_kind = Some(css::PrinterError {
             kind,
             loc: maybe_loc.map(|loc| css::ErrorLocation {
-                filename: self.filename().into(),
+                filename: self.filename() as *const [u8],
                 line: loc.line - 1,
                 column: loc.column,
             }),
@@ -325,8 +327,8 @@ impl<'a> Printer<'a> {
 
     pub fn print_import_record(&mut self, import_record_idx: u32) -> PrintResult<()> {
         if let Some(info) = &self.import_info {
-            let import_record = info.import_records.at(import_record_idx);
-            let (a, b) = bun_str::cheap_prefix_normalizer(self.public_path, &import_record.path.text);
+            let import_record = info.import_records.at(import_record_idx as usize);
+            let (a, b) = bun_string::cheap_prefix_normalizer(self.public_path, &import_record.path.text);
             // PORT NOTE: reshaped for borrowck — copied (a, b) out before re-borrowing &mut self
             let a = a.to_vec();
             let b = b.to_vec();
@@ -341,7 +343,7 @@ impl<'a> Printer<'a> {
     #[inline]
     pub fn import_record(&mut self, import_record_idx: u32) -> PrintResult<&ImportRecord> {
         if let Some(info) = &self.import_info {
-            return Ok(info.import_records.at(import_record_idx));
+            return Ok(info.import_records.at(import_record_idx as usize));
         }
         Err(self.add_no_import_record_error())
     }
@@ -351,7 +353,7 @@ impl<'a> Printer<'a> {
         let Some(import_info) = &self.import_info else {
             return Err(self.add_no_import_record_error());
         };
-        let record = import_info.import_records.at(import_record_idx);
+        let record = import_info.import_records.at(import_record_idx as usize);
         if record.source_index.is_valid() {
             // It has an inlined url for CSS
             let urls_for_css = import_info.ast_urls_for_css[record.source_index.get() as usize];
@@ -380,6 +382,23 @@ impl<'a> Printer<'a> {
     pub fn write_all(&mut self, str_: &[u8]) -> Result<(), bun_alloc::AllocError> {
         self.write_str(str_).map_err(|_| bun_alloc::AllocError)
     }
+}
+
+/// `Printer` participates in `serializer::serialize_*<W: WriteAll>` so
+/// `Token::to_css` and friends can write through it generically.
+impl<'a> css::WriteAll for Printer<'a> {
+    type Error = PrintErr;
+    #[inline]
+    fn write_all(&mut self, buf: &[u8]) -> Result<(), PrintErr> {
+        self.write_str(buf)
+    }
+    #[inline]
+    fn write_byte(&mut self, b: u8) -> Result<(), PrintErr> {
+        self.write_char(b)
+    }
+}
+
+impl<'a> Printer<'a> {
 
     pub fn write_comment(&mut self, comment: &[u8]) -> PrintResult<()> {
         if self.dest.write_all(comment).is_err() {
@@ -401,11 +420,25 @@ impl<'a> Printer<'a> {
     ///
     /// NOTE: Is is assumed that the string does not contain any newline characters.
     /// If such a string is written, it will break source maps.
-    pub fn write_str(&mut self, s: &[u8]) -> PrintResult<()> {
+    pub fn write_str(&mut self, s: impl AsRef<[u8]>) -> PrintResult<()> {
+        let s = s.as_ref();
         #[cfg(debug_assertions)]
         {
             debug_assert!(!s.contains(&b'\n'));
         }
+        self.col += u32::try_from(s.len()).unwrap();
+        if self.dest.write_all(s).is_err() {
+            return Err(self.add_fmt_error());
+        }
+        Ok(())
+    }
+
+    /// Alias of `write_str` for callers that want to be explicit about
+    /// possibly-newline-containing byte content (Zig: `writeBytes`).
+    #[inline]
+    pub fn write_bytes(&mut self, s: &[u8]) -> PrintResult<()> {
+        // TODO(port): Zig writeBytes did not assert no-newline; tracked
+        // line/col separately. For now route through write_str.
         self.col += u32::try_from(s.len()).unwrap();
         if self.dest.write_all(s).is_err() {
             return Err(self.add_fmt_error());
@@ -438,6 +471,7 @@ impl<'a> Printer<'a> {
         str_
     }
 
+    #[cfg(any())] // blocked_on: lookup_ident_or_ref + serializer oom signature
     pub fn write_ident_or_ref(
         &mut self,
         ident: css_values::ident::IdentOrRef,
@@ -469,6 +503,7 @@ impl<'a> Printer<'a> {
     /// Writes a CSS identifier to the underlying destination, escaping it
     /// as appropriate. If the `css_modules` option was enabled, then a hash
     /// is added, and the mapping is added to the CSS module.
+    #[cfg(any())] // blocked_on: css_modules::Pattern::write closure-arity reshape
     pub fn write_ident(&mut self, ident: &[u8], handle_css_module: bool) -> PrintResult<()> {
         if handle_css_module {
             if let Some(css_module) = &mut self.css_module {
@@ -521,6 +556,7 @@ impl<'a> Printer<'a> {
         css::serializer::serialize_identifier(ident, self).map_err(|_| self.add_fmt_error())
     }
 
+    #[cfg(any())] // blocked_on: css_modules::Pattern::write closure-arity reshape
     pub fn write_dashed_ident(
         &mut self,
         ident: &DashedIdent,

@@ -6,46 +6,54 @@ use std::io::Write as _;
 
 use bun_core::{self, FeatureFlags};
 use bun_logger::{Loc, Log};
-use bun_str::{self, MutableString};
+use bun_string::{self, MutableString};
 use bun_threading::thread_pool::{self, Batch, Task, ThreadPool};
 use bun_threading::Channel;
 use bun_url::{PercentEncoding, URL};
 
 use bun_dotenv::Loader as DotEnvLoader;
-use bun_http_types::Encoding;
+use bun_http_types::Encoding::Encoding;
 use bun_picohttp as picohttp;
 
 use crate::headers::{self, Headers};
-use crate::http_client_result::{self, HTTPClientResult};
+use crate::{HTTPClientResult, HTTPClientResultCallback};
 use crate::{
-    FetchRedirect, HTTPClient, HTTPRequestBody, HTTPThread, HTTPVerboseLevel, Method, Signals,
-    ThreadlocalAsyncHTTP,
+    FetchRedirect, HTTPClient, HTTPRequestBody, HTTPVerboseLevel, Method, Signals,
 };
 
 // TODO(b0): SSLConfig + ssl_config::SharedPtr arrive from move-in
 // (MOVE_DOWN bun_runtime::api::server::server_config::ssl_config → bun_http)
 use crate::ssl_config::SharedPtr as SSLConfigSharedPtr;
 
-bun_output::declare_scope!(AsyncHTTP, visible);
+bun_core::declare_scope!(AsyncHTTP, visible);
 
-pub struct AsyncHTTP<'a> {
-    pub request: Option<picohttp::Request>,
-    pub response: Option<picohttp::Response>,
+// PORT NOTE: Phase-A draft had `<'a>` for `response_buffer`/`request_header_buf`/
+// `real`. Per PORTING.md ("never put a lifetime param on a struct in Phase A")
+// and because AsyncHTTP is stored in static intrusive queues + raw `*mut` ext
+// slots, the borrowed fields are kept as raw pointers. LIFETIMES.tsv classes
+// `real`/`next` as INTRUSIVE.
+pub struct AsyncHTTP {
+    pub request: Option<picohttp::Request<'static>>,
+    pub response: Option<picohttp::Response<'static>>,
     pub request_headers: headers::EntryList,
     pub response_headers: headers::EntryList,
-    pub response_buffer: &'a mut MutableString,
+    // TODO(port): lifetime — caller-owned response buffer; never freed here.
+    pub response_buffer: *mut MutableString,
     pub request_body: HTTPRequestBody,
     // PORT NOTE: `allocator: std.mem.Allocator` field dropped — global mimalloc is used everywhere.
-    pub request_header_buf: &'a [u8],
+    // TODO(port): lifetime — borrows external buffer for the request lifetime.
+    pub request_header_buf: *const [u8],
     pub method: Method,
-    pub url: URL,
-    pub http_proxy: Option<URL>,
-    pub real: Option<&'a mut AsyncHTTP<'a>>,
+    pub url: URL<'static>,
+    pub http_proxy: Option<URL<'static>>,
+    // TODO(port): lifetime — backref to the JS-thread `real` AsyncHTTP this
+    // HTTP-thread copy mirrors. Cleared in finalize.
+    pub real: Option<NonNull<AsyncHTTP>>,
     /// Intrusive link for `UnboundedQueue(AsyncHTTP, .next)` in HTTPThread.
-    pub next: *mut AsyncHTTP<'a>,
+    pub next: *mut AsyncHTTP,
 
     pub task: thread_pool::Task,
-    pub result_callback: http_client_result::Callback,
+    pub result_callback: HTTPClientResultCallback,
 
     pub redirected: bool,
 
@@ -65,15 +73,48 @@ pub struct AsyncHTTP<'a> {
     pub signals: Signals,
 }
 
+// SAFETY: intrusive `next` link for `UnboundedQueue(AsyncHTTP, .next)`. All four
+// accessors target the same field; atomic variants treat it as `AtomicPtr`.
+unsafe impl bun_threading::unbounded_queue::Node for AsyncHTTP {
+    unsafe fn get_next(item: *mut Self) -> *mut Self {
+        unsafe { (*item).next }
+    }
+    unsafe fn set_next(item: *mut Self, ptr: *mut Self) {
+        unsafe { (*item).next = ptr; }
+    }
+    unsafe fn atomic_load_next(item: *mut Self, ordering: Ordering) -> *mut Self {
+        unsafe {
+            core::sync::atomic::AtomicPtr::from_ptr(core::ptr::addr_of_mut!((*item).next))
+                .load(ordering)
+        }
+    }
+    unsafe fn atomic_store_next(item: *mut Self, ptr: *mut Self, ordering: Ordering) {
+        unsafe {
+            core::sync::atomic::AtomicPtr::from_ptr(core::ptr::addr_of_mut!((*item).next))
+                .store(ptr, ordering)
+        }
+    }
+}
+
 pub static ACTIVE_REQUESTS_COUNT: AtomicUsize = AtomicUsize::new(0);
 pub static MAX_SIMULTANEOUS_REQUESTS: AtomicUsize = AtomicUsize::new(256);
+
+// TODO(b2-blocked): every `impl AsyncHTTP` block + `load_env`/`preconnect`/
+// `start_async_http` below dispatches into the gated `impl HTTPClient`
+// state machine and unresolved cross-crate APIs (bun_base64::url_safe_encode,
+// bun_dotenv::Loader::get, ThreadlocalAsyncHTTP::new). Un-gate together
+// with the lib.rs `_phase_a_draft` impl.
+#[cfg(any())]
+mod _phase_a_draft {
+use super::*;
+use crate::{HTTPThread, ThreadlocalAsyncHTTP};
 
 pub fn load_env(logger: &mut Log, env: &mut DotEnvLoader) {
     if let Some(max_http_requests) = env.get(b"BUN_CONFIG_MAX_HTTP_REQUESTS") {
         // TODO(port): narrow error set
         // PORT NOTE: env vars are bytes — never round-trip through &str. Zig used std.fmt.parseInt
-        // on []const u8 directly; map to the byte-slice parser in bun_str::strings.
-        let max: u16 = match bun_str::strings::parse_int::<u16>(max_http_requests, 10).ok() {
+        // on []const u8 directly; map to the byte-slice parser in bun_string::strings.
+        let max: u16 = match bun_string::strings::parse_int::<u16>(max_http_requests, 10).ok() {
             Some(v) => v,
             None => {
                 logger
@@ -127,7 +168,7 @@ impl<'a> AsyncHTTP<'a> {
         self.response = None;
         // TODO(port): ZigString.Slice ownership semantics — verify deinit is needed or Drop handles it.
         self.client.unix_socket_path.deinit();
-        self.client.unix_socket_path = bun_str::zig_string::Slice::empty();
+        self.client.unix_socket_path = bun_string::zig_string::Slice::empty();
     }
 }
 
@@ -164,7 +205,7 @@ pub struct Options<'a> {
     // PORT NOTE: Zig had `?[]u8` (mutable slice); only ever read, so `&[u8]` here.
     pub hostname: Option<&'a [u8]>,
     pub signals: Option<Signals>,
-    pub unix_socket_path: Option<bun_str::zig_string::Slice>,
+    pub unix_socket_path: Option<bun_string::zig_string::Slice>,
     pub disable_timeout: Option<bool>,
     pub verbose: Option<HTTPVerboseLevel>,
     pub disable_keepalive: Option<bool>,
@@ -352,7 +393,7 @@ impl<'a> AsyncHTTP<'a> {
                 let username = match PercentEncoding::decode_alloc(proxy.username) {
                     Ok(u) => u,
                     Err(err) => {
-                        bun_output::scoped_log!(
+                        bun_core::scoped_log!(
                             AsyncHTTP,
                             "failed to decode proxy username: {}",
                             err
@@ -366,7 +407,7 @@ impl<'a> AsyncHTTP<'a> {
                     let password = match PercentEncoding::decode_alloc(proxy.password) {
                         Ok(p) => p,
                         Err(err) => {
-                            bun_output::scoped_log!(
+                            bun_core::scoped_log!(
                                 AsyncHTTP,
                                 "failed to decode proxy password: {}",
                                 err
@@ -450,7 +491,7 @@ impl<'a> AsyncHTTP<'a> {
                 let username = match PercentEncoding::decode_alloc(proxy.username) {
                     Ok(u) => u,
                     Err(err) => {
-                        bun_output::scoped_log!(
+                        bun_core::scoped_log!(
                             AsyncHTTP,
                             "failed to decode proxy username: {}",
                             err
@@ -464,7 +505,7 @@ impl<'a> AsyncHTTP<'a> {
                     let password = match PercentEncoding::decode_alloc(proxy.password) {
                         Ok(p) => p,
                         Err(err) => {
-                            bun_output::scoped_log!(
+                            bun_core::scoped_log!(
                                 AsyncHTTP,
                                 "failed to decode proxy password: {}",
                                 err
@@ -573,7 +614,7 @@ impl<'a> AsyncHTTP<'a> {
         #[cfg(feature = "debug_logs")]
         {
             if crate::socket_async_http_abort_tracker().count() > 0 {
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     AsyncHTTP,
                     "bun.http.socket_async_http_abort_tracker count: {}",
                     crate::socket_async_http_abort_tracker().count()
@@ -600,7 +641,7 @@ impl<'a> AsyncHTTP<'a> {
                         .sub(offset_of!(ThreadlocalAsyncHTTP, async_http))
                         .cast::<ThreadlocalAsyncHTTP>())
                 };
-                bun_output::scoped_log!(AsyncHTTP, "onAsyncHTTPCallback: {:?}", self.elapsed);
+                bun_core::scoped_log!(AsyncHTTP, "onAsyncHTTPCallback: {:?}", self.elapsed);
                 (callback.function)(callback.ctx, async_http, result);
                 // PORT NOTE: Zig `defer threadlocal_http.deinit()` — explicit call after callback.
                 threadlocal_http.deinit();
@@ -689,6 +730,33 @@ impl HTTPChannelContext {
         unsafe { this.channel.unwrap().as_mut() }
             .write_item(data)
             .expect("unreachable");
+    }
+}
+} // mod _phase_a_draft
+
+#[repr(u32)]
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum State {
+    Pending = 0,
+    Scheduled = 1,
+    Sending = 2,
+    Success = 3,
+    Fail = 4,
+}
+
+#[repr(transparent)]
+pub struct AtomicState(AtomicU32);
+
+impl AtomicState {
+    pub const fn new(s: State) -> Self {
+        Self(AtomicU32::new(s as u32))
+    }
+    pub fn store(&self, s: State, order: Ordering) {
+        self.0.store(s as u32, order);
+    }
+    pub fn load(&self, order: Ordering) -> State {
+        // SAFETY: only ever stored via `store` above with valid `State` discriminants.
+        unsafe { core::mem::transmute::<u32, State>(self.0.load(order)) }
     }
 }
 

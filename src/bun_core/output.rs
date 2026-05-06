@@ -131,11 +131,14 @@ impl core::fmt::Write for QuietWriter {
 
 /// Opaque adapter wrapping a QuietWriter and exposing `crate::io::Writer`.
 /// TODO(b0-genuine): bun_sys::QuietWrite::Adapter — size/align must match.
-#[repr(C)]
+#[repr(C, align(8))]
 pub struct QuietWriterAdapter {
     _opaque: [u8; 64],
 }
 impl QuietWriterAdapter {
+    /// Zeroed placeholder; caller must overwrite via `adapt_to_new_api` before use.
+    #[inline]
+    pub const fn uninit() -> Self { Self { _opaque: [0u8; 64] } }
     #[inline]
     pub fn new_interface(&mut self) -> &mut io::Writer {
         // SAFETY: erased <bun_sys::QuietWrite>::Adapter; bun_sys guarantees

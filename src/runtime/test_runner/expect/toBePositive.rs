@@ -1,7 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::console_object::Formatter as ConsoleFormatter;
-use crate::test_runner::expect::Expect;
-use crate::test_runner::expect::Expect::get_signature;
+use super::Expect;
+use super::get_signature;
 
 #[bun_jsc::host_fn(method)]
 pub fn to_be_positive(
@@ -24,7 +24,7 @@ pub fn to_be_positive(
         pass = num.round() > 0.0 && !num.is_infinite() && !num.is_nan();
     }
 
-    let not = this.flags.not;
+    let not = this.flags.not();
     if not {
         pass = !pass;
     }

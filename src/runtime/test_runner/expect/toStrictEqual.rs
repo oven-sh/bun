@@ -1,7 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
-use crate::diff_format::DiffFormatter;
-use crate::expect::Expect;
+use super::DiffFormatter;
+use super::Expect;
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
@@ -32,7 +32,7 @@ impl Expect {
         let value: JSValue =
             this.get_value(global, this_value, "toStrictEqual", "<green>expected<r>")?;
 
-        let not = this.flags.not;
+        let not = this.flags.not();
         let mut pass = value.jest_strict_deep_equals(expected, global)?;
 
         if not {

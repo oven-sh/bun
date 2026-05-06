@@ -1,6 +1,6 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use crate::test_runner::diff_format::DiffFormatter;
-use crate::test_runner::expect::{get_signature, Expect};
+use super::DiffFormatter;
+use super::{get_signature, Expect};
 
 #[bun_jsc::host_fn(method)]
 pub fn to_match_object(
@@ -20,7 +20,7 @@ pub fn to_match_object(
 
     this.increment_expect_call_counter();
 
-    let not = this.flags.not;
+    let not = this.flags.not();
 
     let received_object: JSValue =
         this.get_value(global, this_value, "toMatchObject", "<green>expected<r>")?;

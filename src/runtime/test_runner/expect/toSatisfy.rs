@@ -48,7 +48,7 @@ pub fn to_satisfy(this: &mut Expect, global: &JSGlobalObject, frame: &CallFrame)
         }
     };
 
-    let not = this.flags.not;
+    let not = this.flags.not();
     let pass = (result.is_boolean() && result.to_boolean()) != not;
 
     if pass {

@@ -2,9 +2,9 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::console_object::Formatter as ConsoleFormatter;
 use bun_core::Output;
 
-use crate::diff_format::DiffFormatter;
-use crate::expect::mock;
-use crate::expect::Expect;
+use super::DiffFormatter;
+use super::mock;
+use super::Expect;
 
 #[bun_jsc::host_fn(method)]
 pub fn to_have_returned_with(
@@ -25,7 +25,7 @@ pub fn to_have_returned_with(
     this.increment_expect_call_counter();
 
     // TODO(port): bun.cpp.JSMockFunction__getReturns — extern C++ shim; confirm crate path.
-    let returns = bun_jsc::cpp::JSMockFunction__getReturns(global, value)?;
+    let returns = super::mock::JSMockFunction__getReturns(global, value)?;
     if !returns.js_type().is_array() {
         let mut formatter = ConsoleFormatter { global, quote_strings: true, ..Default::default() };
         return global.throw(format_args!(
@@ -70,7 +70,7 @@ pub fn to_have_returned_with(
         }
     }
 
-    if pass != this.flags.not {
+    if pass != this.flags.not() {
         return Ok(JSValue::UNDEFINED);
     }
 
@@ -79,7 +79,7 @@ pub fn to_have_returned_with(
 
     const SIGNATURE: &str = Expect::get_signature("toHaveReturnedWith", "<green>expected<r>", false);
 
-    if this.flags.not {
+    if this.flags.not() {
         const NOT_SIGNATURE: &str = Expect::get_signature("toHaveReturnedWith", "<green>expected<r>", true);
         return this.throw(
             global,

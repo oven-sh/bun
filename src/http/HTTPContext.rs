@@ -6,14 +6,14 @@ use bun_boringssl as boringssl;
 use bun_boringssl_sys::SSL_CTX;
 use bun_collections::{HiveArray, TaggedPtrUnion};
 use bun_core::{self, Error, FeatureFlags};
-use bun_http::{self as http, h2, HTTPCertError, HTTPClient, HTTPThread, InitError, ProxyTunnel};
+use crate::{self as http, h2, HTTPCertError, HTTPClient, HTTPThread, InitError, ProxyTunnel};
 // TODO(b0): SSLConfig arrives from move-in
 // (MOVE_DOWN bun_runtime::api::server::server_config::SSLConfig → bun_http)
 use crate::ssl_config::SSLConfig;
-use bun_str::strings;
+use bun_string::strings;
 use bun_uws as uws;
 
-bun_output::declare_scope!(HTTPContext, hidden);
+bun_core::declare_scope!(HTTPContext, hidden);
 
 const POOL_SIZE: usize = 64;
 const MAX_KEEPALIVE_HOSTNAME: usize = 128;
@@ -117,11 +117,40 @@ impl<const SSL: bool> HTTPContext<SSL> {
         uws::SocketKind::HttpClient
     };
 
-    /// `dispatch.zig` reaches `Handler` via this name. The ext stores
-    /// `*anyopaque` (the `ActiveSocket` tagged pointer), so dispatch reads
-    /// it as `**anyopaque` and `Handler` decodes the tag.
-    pub type ActiveSocketHandler = Handler<SSL>;
+    pub fn ref_(&self) {
+        // TODO(port): IntrusiveRc::ref — increments self.ref_count
+        self.ref_count.set(self.ref_count.get() + 1);
+    }
 
+    pub fn deref(&self) {
+        // TODO(port): IntrusiveRc::deref — decrements; runs Drop at 0.
+        let n = self.ref_count.get() - 1;
+        self.ref_count.set(n);
+        if n == 0 {
+            // SAFETY: refcount hit zero; this struct was Box-allocated for
+            // custom-SSL entries (statics never reach 0).
+            unsafe { drop(Box::from_raw(self as *const Self as *mut Self)) };
+        }
+    }
+}
+
+/// `dispatch.zig` reaches `Handler` via this name. The ext stores
+/// `*anyopaque` (the `ActiveSocket` tagged pointer), so dispatch reads
+/// it as `**anyopaque` and `Handler` decodes the tag.
+// PORT NOTE: was `pub type ActiveSocketHandler = Handler<SSL>;` (inherent
+// associated type — unstable). Hoisted to a free alias.
+pub type ActiveSocketHandler<const SSL: bool> = Handler<SSL>;
+
+// TODO(b2-blocked): the socket-dispatch impl below depends on
+// `bun_uws::NewSocketHandler::{ext, timeout, set_timeout, set_timeout_minutes,
+// raw_write, flush, shutdown, start_tls, ssl, get_verify_error, connect_group,
+// connect_unix_group}` and the full `impl HTTPClient` state machine
+// (on_open/on_data/on_close/first_call/…). Un-gate once those land.
+#[cfg(any())]
+mod _phase_a_draft {
+use super::*;
+
+impl<const SSL: bool> HTTPContext<SSL> {
     pub fn ref_(&self) {
         // TODO(port): IntrusiveRc::ref — increments self.ref_count
         self.ref_count.set(self.ref_count.get() + 1);
@@ -408,7 +437,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 pending.target_port = target_port;
                 pending.h2_session = h2_session;
 
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     HTTPContext,
                     "Keep-Alive release {}:{} tunnel={} target={}:{}",
                     bstr::BStr::new(hostname),
@@ -420,7 +449,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 return;
             }
         }
-        bun_output::scoped_log!(HTTPContext, "close socket");
+        bun_core::scoped_log!(HTTPContext, "close socket");
         if let Some(t) = tunnel {
             t.shutdown();
             // TODO(port): `detachAndDeref()` — Arc drop subsumes deref; detach
@@ -537,7 +566,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 let h2_session = socket.h2_session.take();
                 let ok = self.pending_sockets.put(socket);
                 debug_assert!(ok);
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     HTTPContext,
                     "+ Keep-Alive reuse {}:{}{}",
                     bstr::BStr::new(hostname),
@@ -765,14 +794,14 @@ impl<const SSL: bool> Handler<SSL> {
             match client.on_open::<SSL>(socket) {
                 Ok(_) => return,
                 Err(_) => {
-                    bun_output::scoped_log!(HTTPContext, "Unable to open socket");
+                    bun_core::scoped_log!(HTTPContext, "Unable to open socket");
                     HTTPContext::<SSL>::terminate_socket(socket);
                     return;
                 }
             }
         }
 
-        bun_output::scoped_log!(HTTPContext, "Unexpected open on unknown socket");
+        bun_core::scoped_log!(HTTPContext, "Unexpected open on unknown socket");
         HTTPContext::<SSL>::terminate_socket(socket);
     }
 
@@ -787,16 +816,16 @@ impl<const SSL: bool> Handler<SSL> {
         let handshake_error = HTTPCertError {
             error_no: ssl_error.error_no,
             code: if ssl_error.code.is_null() {
-                bun_str::ZStr::EMPTY
+                bun_string::ZStr::EMPTY
             } else {
                 // SAFETY: non-null NUL-terminated C string from uSockets.
-                unsafe { bun_str::ZStr::from_ptr(ssl_error.code) }
+                unsafe { bun_string::ZStr::from_ptr(ssl_error.code) }
             },
             reason: if ssl_error.code.is_null() {
-                bun_str::ZStr::EMPTY
+                bun_string::ZStr::EMPTY
             } else {
                 // SAFETY: non-null NUL-terminated C string from uSockets.
-                unsafe { bun_str::ZStr::from_ptr(ssl_error.reason) }
+                unsafe { bun_string::ZStr::from_ptr(ssl_error.reason) }
             },
         };
 
@@ -901,7 +930,7 @@ impl<const SSL: bool> Handler<SSL> {
             // SSLWrapper. We'd hand back a tunnel whose inner state
             // diverged from ours. Evict it.
             if pooled.proxy_tunnel.is_some() {
-                bun_output::scoped_log!(HTTPContext, "Data on idle pooled tunnel — evicting");
+                bun_core::scoped_log!(HTTPContext, "Data on idle pooled tunnel — evicting");
                 HTTPContext::<SSL>::terminate_socket(socket);
                 return;
             }
@@ -919,11 +948,11 @@ impl<const SSL: bool> Handler<SSL> {
                 return;
             }
 
-            bun_output::scoped_log!(HTTPContext, "Unexpected data on socket");
+            bun_core::scoped_log!(HTTPContext, "Unexpected data on socket");
 
             return;
         }
-        bun_output::scoped_log!(HTTPContext, "Unexpected data on unknown socket");
+        bun_core::scoped_log!(HTTPContext, "Unexpected data on unknown socket");
         HTTPContext::<SSL>::terminate_socket(socket);
     }
 
@@ -937,7 +966,7 @@ impl<const SSL: bool> Handler<SSL> {
             // it's a keep-alive socket
         } else {
             // don't know what this is, let's close it
-            bun_output::scoped_log!(HTTPContext, "Unexpected writable on socket");
+            bun_core::scoped_log!(HTTPContext, "Unexpected writable on socket");
             HTTPContext::<SSL>::terminate_socket(socket);
         }
     }
@@ -987,6 +1016,11 @@ impl<const SSL: bool> Handler<SSL> {
         }
     }
 }
+} // mod _phase_a_draft
+
+/// Zero-sized handler tag; callbacks reference `Handler::<SSL>::on_*` from
+/// dispatch. Body lives in the gated `_phase_a_draft` impl above.
+pub struct Handler<const SSL: bool>;
 
 /// Must be aligned to `align_of::<usize>()` so that tagged pointer values
 /// embedding this address pass the align check in `bun.cast`.

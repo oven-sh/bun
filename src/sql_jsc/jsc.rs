@@ -56,6 +56,16 @@ impl From<JsError> for bun_core::Error {
 impl From<JsError> for bun_sql::postgres::AnyPostgresError {
     fn from(_: JsError) -> Self { bun_sql::postgres::AnyPostgresError::JSError }
 }
+impl From<JsError> for bun_sql::mysql::protocol::any_mysql_error::Error {
+    fn from(e: JsError) -> Self {
+        use bun_sql::mysql::protocol::any_mysql_error::Error as E;
+        match e {
+            JsError::Thrown => E::JSError,
+            JsError::OutOfMemory => E::OutOfMemory,
+            JsError::Terminated => E::JSTerminated,
+        }
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // JSValue surface (subset; signatures mirror src/jsc/lib.rs exactly)
@@ -152,6 +162,21 @@ impl JSValue {
     pub fn put(self, global: &JSGlobalObject, key: &[u8], value: JSValue) {
         unimplemented!("b2-blocked: bun_jsc::JSValue::put")
     }
+    pub fn is_big_int_in_int64_range(self, _min: i64, _max: i64) -> bool {
+        unimplemented!("b2-blocked: bun_jsc::JSValue::is_big_int_in_int64_range")
+    }
+    pub fn is_big_int_in_uint64_range(self, _min: u64, _max: u64) -> bool {
+        unimplemented!("b2-blocked: bun_jsc::JSValue::is_big_int_in_uint64_range")
+    }
+    pub fn to_boolean(self) -> bool {
+        unimplemented!("b2-blocked: bun_jsc::JSValue::to_boolean")
+    }
+    /// `JSValue::jsDoubleNumber` — boxes an f64. Distinct from `js_number`
+    /// which may pick the int32 fast path.
+    pub fn js_double_number(n: f64) -> JSValue {
+        let _ = n;
+        unimplemented!("b2-blocked: bun_jsc::JSValue::js_double_number")
+    }
     pub fn ensure_still_alive(self) {
         // no-op stub: real impl is `std::hint::black_box`.
         let _ = core::hint::black_box(self);
@@ -181,10 +206,46 @@ impl JSGlobalObject {
     pub fn create_out_of_memory_error(&self) -> JSValue {
         unimplemented!("b2-blocked: bun_jsc::JSGlobalObject::create_out_of_memory_error")
     }
+    pub fn throw_invalid_arguments(&self, msg: &str) -> JsError {
+        let _ = msg; unimplemented!("b2-blocked: bun_jsc::JSGlobalObject::throw_invalid_arguments")
+    }
+    /// `globalObject.ERR(.OUT_OF_RANGE, fmt, args)` — returns a builder so
+    /// callsites can chain `.throw()`.
+    pub fn err_out_of_range(&self, args: core::fmt::Arguments<'_>) -> ErrBuilder<'_> {
+        let _ = args; ErrBuilder { _g: self }
+    }
+    /// `globalObject.gregorianDateTimeToMS` — JSC date→ms helper.
+    pub fn gregorian_date_time_to_ms(
+        &self,
+        year: u16, month: u8, day: u8, hour: u8, minute: u8, second: u8, ms: u32,
+    ) -> JsResult<f64> {
+        let _ = (year, month, day, hour, minute, second, ms);
+        unimplemented!("b2-blocked: bun_jsc::JSGlobalObject::gregorian_date_time_to_ms")
+    }
     pub fn ERR_INVALID_ARG_TYPE(&self, args: core::fmt::Arguments<'_>) -> JSValue {
         let _ = args; unimplemented!("b2-blocked: bun_jsc::JSGlobalObject::ERR_INVALID_ARG_TYPE")
     }
-    /// `globalThis.bunVM()` — returns the per-thread Bun VirtualMachine.
+}
+
+/// Returned by `JSGlobalObject::err_*` so callsites can chain `.throw()`
+/// (mirrors `bun_jsc::ErrBuilder`).
+pub struct ErrBuilder<'a> { _g: &'a JSGlobalObject }
+impl<'a> ErrBuilder<'a> {
+    pub fn throw(self) -> JsError { JsError::Thrown }
+}
+
+/// `JSC::MarkedArgumentBuffer` — GC-rooting append-only buffer. Stub keeps
+/// the field shape so callers compile; bodies unimplemented.
+#[derive(Default)]
+pub struct MarkedArgumentBuffer { _opaque: PhantomData<*const ()> }
+impl MarkedArgumentBuffer {
+    pub fn append(&mut self, value: JSValue) {
+        let _ = value;
+        unimplemented!("b2-blocked: bun_jsc::MarkedArgumentBuffer::append")
+    }
+}
+
+impl JSGlobalObject {
     pub fn bun_vm(&self) -> &mut VirtualMachine {
         unimplemented!("b2-blocked: bun_jsc::JSGlobalObject::bun_vm")
     }

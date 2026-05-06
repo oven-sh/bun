@@ -1,7 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::console_object::Formatter;
 
-use crate::expect::Expect;
+use super::Expect;
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
@@ -33,7 +33,7 @@ impl Expect {
         expected.ensure_still_alive();
         let value: JSValue = this.get_value(global, this_value, "toContainValues", "<green>expected<r>")?;
 
-        let not = this.flags.not;
+        let not = this.flags.not();
         let mut pass = true;
 
         if !value.is_undefined_or_null() {

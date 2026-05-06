@@ -1,24 +1,8 @@
-use core::ffi::c_char;
-
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, ZigString};
-use bun_paths::{self, Platform, WPathBuffer, MAX_PATH_BYTES};
-use bun_str::{self as bstr, strings, String as BunString, ZStr};
-use bun_sys::{self, Syscall};
-
-use crate::node::util::validators::{validate_object, validate_string};
-
-// TODO(port): move to runtime_sys
-unsafe extern "C" {
-    fn Process__getCachedCwd(global: *const JSGlobalObject) -> JSValue;
-    fn PathParsedObject__create(
-        global: *const JSGlobalObject,
-        root: JSValue,
-        dir: JSValue,
-        base: JSValue,
-        ext: JSValue,
-        name: JSValue,
-    ) -> JSValue;
-}
+// TODO(b2-blocked): bun_jsc — using crate-local opaque shim until `bun_jsc` is a dep.
+use crate::jsc::{JSGlobalObject, JSValue, JsResult};
+use bun_paths::{self, Platform, MAX_PATH_BYTES};
+use bun_str::{self, strings, ZigString};
+use bun_sys;
 
 // Allow on the stack:
 // - 8 string slices
@@ -41,6 +25,8 @@ pub trait PathChar: Copy + Eq + Ord + Default + 'static {
     const IS_U16: bool;
     fn from_u8(c: u8) -> Self;
     fn as_u32(self) -> u32;
+    /// `bun.strings.literal(T, "...")` — yields a `&'static [T]` for an ASCII literal.
+    fn lit(s: &'static [u8]) -> &'static [Self];
 }
 impl PathChar for u8 {
     const IS_U16: bool = false;
@@ -51,6 +37,10 @@ impl PathChar for u8 {
     #[inline]
     fn as_u32(self) -> u32 {
         self as u32
+    }
+    #[inline]
+    fn lit(s: &'static [u8]) -> &'static [u8] {
+        s
     }
 }
 impl PathChar for u16 {
@@ -63,13 +53,18 @@ impl PathChar for u16 {
     fn as_u32(self) -> u32 {
         self as u32
     }
+    #[inline]
+    fn lit(_s: &'static [u8]) -> &'static [u16] {
+        // TODO(port): const widening to u16 (Zig: bun.strings.literal(u16, "..")).
+        // No u16 callsite reaches `l()` in un-gated code yet.
+        unimplemented!("PathChar<u16>::lit — needs const widening")
+    }
 }
 
 /// `bun.strings.literal(T, "...")` — yields a `&'static [T]` for the ASCII literal.
-// TODO(port): implement in bun_str::strings; needs const widening for u16.
 #[inline]
 fn l<T: PathChar>(s: &'static [u8]) -> &'static [T] {
-    bun_str::strings::literal::<T>(s)
+    T::lit(s)
 }
 
 /// Taken from Zig 0.11.0 zig/src/resinator/rc.zig
@@ -82,7 +77,7 @@ fn eql_ignore_case_t<T: PathChar>(a: &[T], b: &[T]) -> bool {
         // TODO(port): avoid transmute once specialization lands
         let a8: &[u8] = unsafe { core::mem::transmute(a) };
         let b8: &[u8] = unsafe { core::mem::transmute(b) };
-        return bun_str::strings::eql_case_insensitive_ascii(a8, b8, true);
+        return strings::eql_case_insensitive_ascii::<true>(a8, b8);
     }
     // TODO(port): Zig body for u16 falls through with no return; matches comptime-only u8 path.
     // Phase B: add u16 case-insensitive compare if ever called with T=u16.
@@ -138,6 +133,9 @@ pub struct PathParsed<'a, T: PathChar> {
     pub name: &'a [T],
 }
 
+// Gated: calls `BunString::create_utf8_for_js` + FFI (bun_jsc method surface).
+// TODO(b2-blocked): un-gate once bun_jsc is a dep.
+#[cfg(any())]
 impl<'a, T: PathChar> PathParsed<'a, T> {
     pub fn to_js_object(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         let root = BunString::create_utf8_for_js(global_object, self.root)?;
@@ -152,7 +150,7 @@ impl<'a, T: PathChar> PathParsed<'a, T> {
 
 pub const fn max_path_size<T: PathChar>() -> usize {
     if T::IS_U16 {
-        bun_sys::windows::PATH_MAX_WIDE
+        bun_paths::PATH_MAX_WIDE
     } else {
         MAX_PATH_BYTES
     }
@@ -207,6 +205,12 @@ fn format_ext_t<'a, T: PathChar>(ext: &'a [T], buf: &'a mut [T]) -> &'a [T] {
 /// Based on Node v21.6.1 private helper posixCwd:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1074
 #[inline]
+// ─── gated: cwd helpers (bun_fs::FileSystem not yet a crate) ──────────────
+// TODO(b2-blocked): un-gate once bun_fs::FileSystem + strings::convert_utf8_to_utf16_in_buffer land.
+#[cfg(any())]
+mod _cwd {
+use super::*;
+
 fn posix_cwd_t<T: PathChar>(buf: &mut [T]) -> MaybeBuf<'_, T> {
     let cwd = match get_cwd_t(buf) {
         Ok(r) => r,
@@ -302,6 +306,7 @@ pub fn get_cwd_t<T: PathChar>(buf: &mut [T]) -> MaybeBuf<'_, T> {
 
 // Alias for naming consistency.
 pub use get_cwd_u8 as get_cwd;
+} // mod _cwd
 
 /// Based on Node v21.6.1 path.posix.basename:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1309
@@ -511,6 +516,11 @@ pub fn basename_windows_t<'a, T: PathChar>(path: &'a [T], suffix: Option<&[T]>) 
     }
 }
 
+// ─── gated: JSC bindings (basename) ─────────────────────────────────────────
+// TODO(b2-blocked): un-gate once bun_jsc method surface lands.
+#[cfg(any())]
+mod _basename_js {
+use super::*;
 pub fn basename_posix_js_t<T: PathChar>(
     global_object: &JSGlobalObject,
     path: &[T],
@@ -585,6 +595,7 @@ pub fn basename(
         suffix_zslice.as_ref().map(|s| s.slice()),
     )
 }
+} // mod _basename_js
 
 /// Based on Node v21.6.1 path.posix.dirname:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1278
@@ -736,6 +747,10 @@ pub fn dirname_windows_t<T: PathChar>(path: &[T]) -> &[T] {
     }
 }
 
+// ─── gated: JSC bindings (dirname) ──────────────────────────────────────────
+#[cfg(any())]
+mod _dirname_js {
+use super::*;
 pub fn dirname_posix_js_t<T: PathChar>(
     global_object: &JSGlobalObject,
     path: &[T],
@@ -783,6 +798,7 @@ pub fn dirname(
     let path_zslice = path_zstr.to_slice();
     dirname_js_t::<u8>(global_object, is_windows, path_zslice.slice())
 }
+} // mod _dirname_js
 
 /// Based on Node v21.6.1 path.posix.extname:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1388
@@ -942,6 +958,60 @@ pub fn extname_windows_t<T: PathChar>(path: &[T]) -> &[T] {
     &path[_start_dot.._end]
 }
 
+#[inline]
+pub fn is_sep_posix_t<T: PathChar>(byte: T) -> bool {
+    byte == T::from_u8(CHAR_FORWARD_SLASH)
+}
+
+#[inline]
+pub fn is_sep_windows_t<T: PathChar>(byte: T) -> bool {
+    byte == T::from_u8(CHAR_FORWARD_SLASH) || byte == T::from_u8(CHAR_BACKWARD_SLASH)
+}
+
+/// `'A' <= byte <= 'Z' || 'a' <= byte <= 'z'`
+#[inline]
+pub fn is_windows_device_root_t<T: PathChar>(byte: T) -> bool {
+    let c = byte.as_u32();
+    (b'A' as u32 <= c && c <= b'Z' as u32) || (b'a' as u32 <= c && c <= b'z' as u32)
+}
+
+/// Based on Node v21.6.1 path.posix.isAbsolute:
+/// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1159
+#[inline]
+pub fn is_absolute_posix_t<T: PathChar>(path: &[T]) -> bool {
+    // validateString of `path` is performed in pub fn isAbsolute.
+    !path.is_empty() && path[0] == T::from_u8(CHAR_FORWARD_SLASH)
+}
+
+/// Based on Node v21.6.1 path.win32.isAbsolute:
+/// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L406
+#[inline]
+pub fn is_absolute_windows_t<T: PathChar>(path: &[T]) -> bool {
+    // validateString of `path` is performed in pub fn isAbsolute.
+    let len = path.len();
+    if len == 0 {
+        return false;
+    }
+    let byte0 = path[0];
+    is_sep_windows_t(byte0)
+        || (len > 2
+            && is_windows_device_root_t(byte0)
+            && path[1] == T::from_u8(CHAR_COLON)
+            && is_sep_windows_t(path[2]))
+}
+
+// ─── gated: remaining path ops (format/join/normalize/parse/relative/      ──
+//     resolve/to_namespaced) and their JSC bindings.                         ──
+// Blocked on:
+//   - bun_jsc method surface (`BunString::create_utf8_for_js`, validators)
+//   - `<const PLATFORM: Platform>` (adt_const_params; bun_paths uses
+//     `PlatformT` trait instead — Phase B should switch normalize_string_t)
+//   - cwd helpers (`_cwd` mod above; bun_fs::FileSystem)
+// is_sep_*_t / is_absolute_*_t / is_windows_device_root_t hoisted above.
+// TODO(b2-blocked): un-gate once bun_jsc + bun_fs land.
+#[cfg(any())]
+mod _rest {
+use super::*;
 pub fn extname_posix_js_t<T: PathChar>(
     global_object: &JSGlobalObject,
     path: &[T],
@@ -3509,6 +3579,7 @@ bun_jsc::export_host_fn_wrap4v! {
     "Bun__Path__resolve" => resolve,
     "Bun__Path__toNamespacedPath" => to_namespaced_path,
 }
+} // mod _rest
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

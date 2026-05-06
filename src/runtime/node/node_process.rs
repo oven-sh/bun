@@ -1,5 +1,13 @@
 //! Process information and control APIs (`globalThis.process` / `node:process`)
 
+// ─── gated: every fn body is a JSC host fn or `extern "C"` shim that calls
+//     bun_jsc methods (`.bun_vm()`, `.throw_value()`, `ZigString::to_js`) or
+//     reaches `crate::cli::process_title` / `bun_core::Global` consts not yet
+//     exported. No standalone type defs to hoist — this module is process
+//     accessors only.
+// TODO(b2-blocked): un-gate once bun_jsc + bun_core::Global consts land.
+#[cfg(any())]
+mod _impl {
 use core::ffi::{c_char, c_void};
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
@@ -455,6 +463,7 @@ pub static Bun__versions_usockets: *const c_char =
 #[unsafe(no_mangle)]
 pub static Bun__version_sha: *const c_char =
     const_format::concatcp!(Environment::GIT_SHA, "\0").as_ptr() as *const c_char;
+} // mod _impl
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

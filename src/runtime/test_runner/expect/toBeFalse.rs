@@ -1,7 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::console_object::Formatter as ConsoleFormatter;
 
-use crate::expect::Expect;
+use super::Expect;
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
@@ -20,7 +20,7 @@ impl Expect {
 
         this.increment_expect_call_counter();
 
-        let not = this.flags.not;
+        let not = this.flags.not();
         let pass = (value.is_boolean() && !value.to_boolean()) != not;
 
         if pass {

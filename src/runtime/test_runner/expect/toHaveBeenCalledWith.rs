@@ -1,6 +1,6 @@
 use bun_jsc::{CallFrame, ConsoleObject, JSGlobalObject, JSValue, JsResult};
 
-use crate::diff_format::DiffFormatter;
+use super::DiffFormatter;
 use super::mock;
 use super::Expect;
 
@@ -22,7 +22,7 @@ pub fn to_have_been_called_with(
     this.increment_expect_call_counter();
 
     // TODO(port): move to *_jsc — bun.cpp.JSMockFunction__getCalls is a C++ extern binding
-    let calls = bun_jsc::cpp::JSMockFunction__getCalls(global, value)?;
+    let calls = super::mock::JSMockFunction__getCalls(global, value)?;
     if !calls.js_type().is_array() {
         let mut formatter = ConsoleObject::Formatter { global_this: global, quote_strings: true, ..Default::default() };
         return this.throw(
@@ -68,7 +68,7 @@ pub fn to_have_been_called_with(
         }
     }
 
-    if pass != this.flags.not {
+    if pass != this.flags.not() {
         return Ok(JSValue::UNDEFINED);
     }
 
@@ -81,7 +81,7 @@ pub fn to_have_been_called_with(
     }
     expected_args_js_array.ensure_still_alive();
 
-    if this.flags.not {
+    if this.flags.not() {
         let signature = Expect::get_signature("toHaveBeenCalledWith", "<green>...expected<r>", true);
         return this.throw(
             global,

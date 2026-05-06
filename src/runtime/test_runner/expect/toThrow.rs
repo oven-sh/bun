@@ -3,7 +3,7 @@ use bun_jsc::console_object::Formatter;
 use bun_str::{strings, ZigString};
 
 use super::Expect;
-use super::expect_any::ExpectAny;
+use super::ExpectAny;
 use super::get_signature;
 
 #[bun_jsc::host_fn(method)]
@@ -53,7 +53,7 @@ pub fn to_throw(
     };
     expected_value.ensure_still_alive();
 
-    let not = this.flags.not;
+    let not = this.flags.not();
 
     let (result_, return_value_from_function) = this.get_value_as_to_throw(
         global,

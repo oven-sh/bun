@@ -3,30 +3,33 @@ use std::ffi::CString;
 use std::io::Write as _;
 
 use bun_collections::{BabyList, StringHashMap};
-use bun_core::fmt as bun_fmt;
-use bun_jsc::{CallFrame, JSGlobalObject, JSPropertyIterator, JSValue, JsError, JsResult, Strong};
 use bun_str::strings;
-use bun_uws as uws;
-use bun_wyhash::Wyhash;
 
-use bun_http::{self as http, Method};
+use bun_http_types::Method as http_method;
+pub use http_method::{Method, Optional as MethodOptional};
 // TODO(port): confirm crate path for bun.URL (internal URL parser, not jsc::URL)
 use bun_url::URL;
 
+use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, Strong};
 use super::web_socket_server_context::WebSocketServerContext;
-// TODO(port): confirm crate paths for AnyRoute / AnyServer
-use bun_runtime::api::server::AnyRoute;
-use bun_runtime::server::AnyServer;
+use super::{AnyRoute, AnyServer};
 
 // `pub const SSLConfig = @import("../socket/SSLConfig.zig");`
-pub use bun_runtime::socket::ssl_config::SSLConfig;
+// TODO(b2-blocked): crate::socket::ssl_config is `#[cfg(any())]`-gated.
+// Re-enable the re-export once that un-gates; opaque placeholder until then.
+#[cfg(any())]
+pub use crate::socket::ssl_config::SSLConfig;
+#[derive(Default)]
+pub struct SSLConfig(());
 
 pub struct ServerConfig {
     pub address: Address,
     pub idle_timeout: u8, // TODO: should we match websocket default idleTimeout of 120?
     pub has_idle_timeout: bool,
     // TODO: use webkit URL parser instead of bun's
-    pub base_url: URL,
+    // PORT NOTE: Zig URL borrows into base_uri; URL<'static> + empty default
+    // until OwnedURL or self-referential reshape lands (see Phase-A todo below).
+    pub base_url: URL<'static>,
     pub base_uri: Box<[u8]>,
 
     pub ssl_config: Option<SSLConfig>,
@@ -43,9 +46,9 @@ pub struct ServerConfig {
     /// If HMR is not enabled, then this field is ignored.
     pub enable_chrome_devtools_automatic_workspace_folders: bool,
 
-    pub on_error: Option<Strong>,
-    pub on_request: Option<Strong>,
-    pub on_node_http_request: Option<Strong>,
+    pub on_error: Option<Strong<JSValue>>,
+    pub on_request: Option<Strong<JSValue>>,
+    pub on_node_http_request: Option<Strong<JSValue>>,
 
     pub websocket: Option<WebSocketServerContext>,
 
@@ -163,7 +166,7 @@ pub struct RouteDeclaration {
 
 pub enum RouteMethod {
     Any,
-    Specific(http::Method),
+    Specific(Method),
 }
 
 impl Default for RouteDeclaration {
@@ -181,7 +184,7 @@ impl Default for RouteDeclaration {
 pub struct StaticRouteEntry {
     pub path: Box<[u8]>,
     pub route: AnyRoute,
-    pub method: http::method::Optional,
+    pub method: MethodOptional,
 }
 
 impl StaticRouteEntry {
@@ -189,21 +192,12 @@ impl StaticRouteEntry {
         self.path.len() + self.route.memory_cost()
     }
 
-    /// Clone the path buffer and increment the ref count
-    /// This doesn't actually clone the route, it just increments the ref count
-    pub fn clone(&self) -> Result<StaticRouteEntry, bun_core::Error> {
-        // TODO(port): narrow error set
-        self.route.ref_();
-
-        Ok(StaticRouteEntry {
-            path: Box::<[u8]>::from(&*self.path),
-            route: self.route,
-            method: self.method,
-        })
-    }
+    // clone(): Rc-based AnyRoute makes the Zig clone() a plain `Clone` derive
+    // once AnyRoute impls it. Kept gated until AnyRoute::ref_ semantics settle.
+    // TODO(port): impl Clone for StaticRouteEntry via Rc::clone on route.
 
     pub fn is_less_than(_: (), this: &StaticRouteEntry, other: &StaticRouteEntry) -> bool {
-        strings::cmp_strings_desc((), &this.path, &other.path)
+        strings::cmp_strings_desc(&(), &this.path, &other.path)
     }
 }
 
@@ -215,13 +209,16 @@ impl Drop for StaticRouteEntry {
 }
 
 impl ServerConfig {
+    // TODO(b2-blocked): bun_wyhash::Wyhash (std seed-0 flavor not yet ported;
+    // only Wyhash11 exists) + http_method::Set iterator. Body preserved.
+    #[cfg(any())]
     fn normalize_static_routes_list(&mut self) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         fn hash(route: &StaticRouteEntry) -> u64 {
             let mut hasher = Wyhash::init(0);
             match &route.method {
-                http::method::Optional::Any => hasher.update(b"ANY"),
-                http::method::Optional::Method(set) => {
+                MethodOptional::Any => hasher.update(b"ANY"),
+                MethodOptional::Method(set) => {
                     let mut iter = set.iter();
                     while let Some(method) = iter.next() {
                         hasher.update(<&'static str>::from(method).as_bytes());
@@ -270,6 +267,7 @@ impl ServerConfig {
         Ok(())
     }
 
+    #[cfg(any())] // gated alongside normalize_static_routes_list (its only callee).
     pub fn clone_for_reloading_static_routes(&mut self) -> Result<ServerConfig, bun_core::Error> {
         // TODO(port): narrow error set
         // TODO(port): Zig did `var that = this.*;` (bitwise struct copy) then nulled ONLY
@@ -293,7 +291,7 @@ impl ServerConfig {
         &mut self,
         path: &[u8],
         route: AnyRoute,
-        method: http::method::Optional,
+        method: MethodOptional,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         self.static_routes.push(StaticRouteEntry {
@@ -309,6 +307,9 @@ impl ServerConfig {
 // fn pointers to uws app.head/any/method. Rust cannot capture generics in fn pointers
 // without monomorphized free fns. Phase B: define a trait `StaticRouteHandler` with
 // `on_request` / `on_head_request` and generate the extern shims per (SSL, T).
+// TODO(b2-blocked): bun_uws_sys::App::{head, any, method} typed-handler overloads
+// (cycle-5-B). Gated until those land; struct/enum surface below is real.
+#[cfg(any())]
 pub fn apply_static_route<const SSL: bool, T>(
     server: AnyServer,
     app: &mut uws::NewApp<SSL>,
@@ -364,6 +365,7 @@ pub fn apply_static_route<const SSL: bool, T>(
     }
 }
 
+#[cfg(any())]
 pub fn apply_static_route_h3<T>(
     server: AnyServer,
     app: &mut uws::h3::App,
@@ -411,15 +413,14 @@ pub trait StaticRouteLike<const SSL: bool>: Copy {
 }
 
 // TODO(port): these unions mirror the anon struct literals `.{ .h1 = req }` / `.{ .SSL = resp }`.
-// Real types live in bun_runtime::server; replace in Phase B.
 pub enum RequestUnion<'a> {
-    H1(&'a mut uws::Request),
-    H3(&'a mut uws::h3::Request),
+    H1(&'a mut bun_uws_sys::Request),
+    H3(&'a mut bun_uws_sys::h3::Request),
 }
 pub enum ResponseUnion<'a> {
-    Ssl(&'a mut uws::NewAppResponse<true>),
-    Tcp(&'a mut uws::NewAppResponse<false>),
-    H3(&'a mut uws::h3::Response),
+    Ssl(&'a mut bun_uws_sys::NewAppResponse<true>),
+    Tcp(&'a mut bun_uws_sys::NewAppResponse<false>),
+    H3(&'a mut bun_uws_sys::h3::Response),
 }
 
 impl ServerConfig {
@@ -451,18 +452,30 @@ impl ServerConfig {
     pub fn get_usockets_options(&self) -> i32 {
         // Unlike Node.js, we set exclusive port in case reuse port is not set
         let mut out: i32 = if self.reuse_port {
-            uws::LIBUS_LISTEN_REUSE_PORT | uws::LIBUS_LISTEN_REUSE_ADDR
+            bun_uws_sys::LIBUS_LISTEN_REUSE_PORT | bun_uws_sys::LIBUS_LISTEN_REUSE_ADDR
         } else {
-            uws::LIBUS_LISTEN_EXCLUSIVE_PORT
+            bun_uws_sys::LIBUS_LISTEN_EXCLUSIVE_PORT
         };
 
         if self.ipv6_only {
-            out |= uws::LIBUS_SOCKET_IPV6_ONLY;
+            out |= bun_uws_sys::LIBUS_SOCKET_IPV6_ONLY;
         }
 
         out
     }
 }
+
+// ─── from_js + JS-side parsing (gated) ───────────────────────────────────────
+// All of validate_route_name / get_routes_object / FromJSOptions / from_js
+// touch bun_jsc method surface (JSValue::get, JSGlobalObject::throw_*,
+// JSPropertyIterator, ArgumentsSlice). Preserved verbatim; un-gate once
+// `bun_jsc` is a dep of bun_runtime.
+// TODO(b2-blocked): bun_jsc method surface.
+#[cfg(any())]
+mod _gated_from_js {
+use super::*;
+use crate::server::jsc::{CallFrame, JSPropertyIterator, JsError};
+use bun_core::fmt as bun_fmt;
 
 fn validate_route_name(global: &JSGlobalObject, path: &[u8]) -> JsResult<()> {
     // Already validated by the caller
@@ -1405,10 +1418,28 @@ impl ServerConfig {
         Ok(args)
     }
 }
+} // mod _gated_from_js
+
+#[derive(Clone, Copy)]
+pub struct FromJSOptions {
+    pub allow_bake_config: bool,
+    pub is_fetch_required: bool,
+    pub has_user_routes: bool,
+}
+
+impl Default for FromJSOptions {
+    fn default() -> Self {
+        Self {
+            allow_bake_config: true,
+            is_fetch_required: true,
+            has_user_routes: false,
+        }
+    }
+}
 
 pub struct UserRouteBuilder {
     pub route: RouteDeclaration,
-    pub callback: Strong, // jsc.Strong.Optional
+    pub callback: Strong<JSValue>, // jsc.Strong.Optional
 }
 
 // ──────────────────────────────────────────────────────────────────────────

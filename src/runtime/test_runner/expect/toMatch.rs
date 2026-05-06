@@ -52,7 +52,7 @@ pub fn to_match(
         ));
     }
 
-    let not = this.flags.not;
+    let not = this.flags.not();
     let mut pass: bool = 'brk: {
         if expected_value.is_string() {
             break 'brk value.string_includes(global, expected_value);

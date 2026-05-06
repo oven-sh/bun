@@ -746,6 +746,9 @@ pub enum ZigStringSlice {
     /// avoid wtf-module cycle; `wtf::to_latin1_slice` constructs this.
     WTF { string_impl: *mut wtf::WTFStringImplStruct, ptr: *const u8, len: usize },
 }
+impl Default for ZigStringSlice {
+    fn default() -> Self { Self::EMPTY }
+}
 impl ZigStringSlice {
     pub const EMPTY: Self = Self::Static(core::ptr::null(), 0);
     pub fn from_utf8_never_free(s: &[u8]) -> Self { Self::Static(s.as_ptr(), s.len()) }

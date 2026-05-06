@@ -195,20 +195,13 @@ pub struct Binary {
     pub op: crate::ast::OpCode,
 }
 
-#[derive(Clone, Copy)]
-pub struct Boolean {
-    pub value: bool,
-}
-// `toJS` alias deleted — lives in `js_parser_jsc` extension trait.
-
-#[derive(Clone, Copy, Default)]
-pub struct Super;
-#[derive(Clone, Copy, Default)]
-pub struct Null;
-#[derive(Clone, Copy, Default)]
-pub struct This;
-#[derive(Clone, Copy, Default)]
-pub struct Undefined;
+// MOVE_DOWN: leaf scalar payloads canonical in `bun_logger::js_ast::E` (T2)
+// so `bun_interchange` can construct them without a T4 dep. Re-exported here
+// so the full `expr::Data` and parser code address the same types.
+// `toJS` aliases deleted — live in `js_parser_jsc` extension trait.
+pub use bun_logger::js_ast::E::{
+    Boolean, ImportMeta, ImportMetaMain, Missing, NewTarget, Null, Super, This, Undefined,
+};
 
 pub struct New {
     pub target: ExprNodeIndex,
@@ -220,21 +213,15 @@ pub struct New {
 
     pub close_parens_loc: logger::Loc,
 }
-
-#[derive(Clone, Copy)]
-pub struct NewTarget {
-    pub range: logger::Range,
-}
-
-#[derive(Clone, Copy, Default)]
-pub struct ImportMeta;
-
-#[derive(Clone, Copy, Default)]
-pub struct ImportMetaMain {
-    /// If we want to print `!import.meta.main`, set this flag to true
-    /// instead of wrapping in a unary not. This way, the printer can easily
-    /// print `require.main != module` instead of `!(require.main == module)`
-    pub inverted: bool,
+impl Default for New {
+    fn default() -> Self {
+        Self {
+            target: ExprNodeIndex::EMPTY,
+            args: ExprNodeList::default(),
+            can_be_unwrapped_if_unused: CallUnwrap::Never,
+            close_parens_loc: logger::Loc::EMPTY,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -278,6 +265,19 @@ pub struct Call {
     /// Used when printing to generate the source prop on the fly
     pub was_jsx_element: bool,
 }
+impl Default for Call {
+    fn default() -> Self {
+        Self {
+            target: ExprNodeIndex::EMPTY,
+            args: ExprNodeList::default(),
+            optional_chain: None,
+            is_direct_eval: false,
+            close_paren_loc: logger::Loc::EMPTY,
+            can_be_unwrapped_if_unused: CallUnwrap::Never,
+            was_jsx_element: false,
+        }
+    }
+}
 impl Call {
     pub fn has_same_flags_as(&self, b: &Call) -> bool {
         self.optional_chain == b.optional_chain
@@ -311,6 +311,18 @@ pub struct Dot {
     /// unwrapped if the resulting value is unused. Unwrapping means discarding
     /// the call target but keeping any arguments with side effects.
     pub call_can_be_unwrapped_if_unused: CallUnwrap,
+}
+impl Default for Dot {
+    fn default() -> Self {
+        Self {
+            target: ExprNodeIndex::EMPTY,
+            name: b"",
+            name_loc: logger::Loc::EMPTY,
+            optional_chain: None,
+            can_be_removed_if_unused: false,
+            call_can_be_unwrapped_if_unused: CallUnwrap::Never,
+        }
+    }
 }
 impl Dot {
     pub fn has_same_flags_as(&self, b: &Dot) -> bool {
@@ -561,16 +573,10 @@ impl JSXSpecialProp {
     }
 }
 
-#[derive(Clone, Copy, Default)]
-pub struct Missing;
-impl Missing {
-    // TODO(port): jsonStringify — Zig std.json protocol; Phase B picks a serde strategy.
-    pub fn json_stringify<W>(&self, writer: &mut W) -> Result<(), bun_core::Error> {
-        let _ = writer;
-        // writer.write(null)
-        todo!("jsonStringify protocol")
-    }
-}
+// `Missing` re-exported from `bun_logger::js_ast::E` above.
+// TODO(port): `Missing::json_stringify` — Zig std.json protocol; orphan rules
+// prevent an inherent impl here now that the type lives at T2. Phase B picks a
+// serde strategy (extension trait or move the method down).
 
 #[derive(Clone, Copy)]
 pub struct Number {

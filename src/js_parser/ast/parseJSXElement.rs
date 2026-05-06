@@ -13,7 +13,11 @@ use bun_string::strings;
 
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
     pub fn parse_jsx_element(&mut self, loc: logger::Loc) -> Result<Expr, bun_core::Error> {
-        #[cfg(any())] // TODO(b2-ast-D): body — depends on JSXTag::parse, skip_type_script_type_arguments, G::PropertyList path fixups
+        #[cfg(any())]
+        // blocked_on: JSXTag::parse (parsePrefix.rs _draft); P::store_name_in_ref gated (P.rs:640);
+        //   G::PropertyList = BabyList<G::Property> (BumpVec→BabyList conversion);
+        //   G::Property full struct-init (kind/flags/key/value/initializer/ts_decorators — no Default);
+        //   E::JSXElement.{tag, properties, children} field types; Flags::JSXElementBitset insert.
         {
         let p = self;
         if SCAN_ONLY {

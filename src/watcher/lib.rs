@@ -10,11 +10,12 @@
 
 // ─── platform impls ───────────────────────────────────────────────────────
 //
-// Each platform watcher is compiled only for its target. The Linux and
-// macOS/FreeBSD backends are fully un-gated. The Windows backend keeps a
-// `#[cfg(any())]` re-gate around its draft body until it can be
-// cross-compile-verified against the now-populated `bun_sys::windows`
-// surface — a host build never sees it anyway.
+// Each platform watcher is compiled only for its target. All three backends
+// are now un-gated against their respective `bun_sys` platform surfaces. The
+// Windows backend's `init()` body alone remains re-gated on lower-tier
+// symbols that have not landed (`bun_windows_sys::ntdll::NtCreateFile`,
+// `bun_string::strings::to_nt_path`); see the `TODO(b2-blocked)` markers in
+// `WindowsWatcher.rs`. A host build never compiles the non-native backends.
 
 #[cfg(target_os = "linux")]
 #[path = "INotifyWatcher.rs"]

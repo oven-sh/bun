@@ -8,10 +8,13 @@
 // exposes the minimal stub surface so dependents compile. Un-gating in B-2.
 // ──────────────────────────────────────────────────────────────────────────
 
-// Submodules: Phase-A drafts gated; not yet compiling.
+// Submodules. `fs.rs` (full RealFS readdir/stat/kind path) remains gated; the
+// inline `pub mod fs` below carries the real type surface (FileSystem, RealFS,
+// Path, PathName, Entry, DirEntry, EntryLookup, EntriesOption, Implementation)
+// plus the bundler-cycle-broken `Path::loader`/`package_name`.
 pub mod data_url;
 pub mod dir_info;
-#[cfg(any())] pub mod fs;
+#[cfg(any())] #[path = "fs.rs"] mod fs_full;
 pub mod node_fallbacks;
 pub mod package_json;
 pub mod tsconfig_json;
@@ -165,11 +168,15 @@ pub mod fs {
 
     // ── FileSystem ───────────────────────────────────────────────────────
 
-    /// Port of `FileSystem` in `fs.zig` (minimal — `fs: Implementation`,
-    /// `dirname_store`, `filename_store` omitted until bun_alloc::BSSStringList
-    /// is un-gated).
+    /// Port of `FileSystem` in `fs.zig` (`dirname_store`, `filename_store`
+    /// omitted until bun_alloc::BSSStringList per-type singletons are real).
     pub struct FileSystem {
         pub top_level_dir: &'static ZStr,
+
+        pub fs: Implementation,
+        // TODO(b2-blocked): bun_alloc::BSSStringList per-type singleton —
+        //   pub dirname_store: &'static DirnameStore,
+        //   pub filename_store: &'static FilenameStore,
     }
 
     // TODO(port): lifetime — global mutable singleton; Zig used `var instance: FileSystem = undefined`
@@ -465,6 +472,113 @@ pub mod fs {
                 is_symlink: false,
             }
         }
+
+        /// Port of `Path.hashKey` in `fs.zig`.
+        pub fn hash_key(&self) -> u64 {
+            if self.is_file() {
+                return bun_wyhash::hash(self.text);
+            }
+
+            // PERF(port): Zig used incremental `std.hash.Wyhash.update`; bun_wyhash
+            // exposes only the stateless `WyhashStateless` (aligned-chunk update +
+            // tail final) and one-shot `hash`. Concat to a temp and one-shot.
+            let mut buf = Vec::with_capacity(self.namespace.len() + 8 + self.text.len());
+            buf.extend_from_slice(self.namespace);
+            buf.extend_from_slice(b"::::::::");
+            buf.extend_from_slice(self.text);
+            bun_wyhash::hash(&buf)
+        }
+
+        /// Port of `Path.hashForKit` in `fs.zig`.
+        ///
+        /// This hash is used by the hot-module-reloading client in order to
+        /// identify modules. Since that code is JavaScript, the hash must remain in
+        /// range [-MAX_SAFE_INTEGER, MAX_SAFE_INTEGER] or else information is lost
+        /// due to floating-point precision.
+        pub fn hash_for_kit(&self) -> u64 {
+            // u52 — truncate to 52 bits
+            self.hash_key() & ((1u64 << 52) - 1)
+        }
+
+        /// Port of `Path.packageName` in `fs.zig`.
+        pub fn package_name(&self) -> Option<&[u8]> {
+            let mut name_to_use = self.pretty;
+            // SEP_STR ++ "node_modules" ++ SEP_STR
+            let needle = const_format::concatcp!(bun_paths::SEP_STR, "node_modules", bun_paths::SEP_STR).as_bytes();
+            if let Some(node_modules) = bun_string::strings::last_index_of(self.text, needle) {
+                name_to_use = &self.text[node_modules + 14..];
+            }
+
+            // CYCLEBREAK: was `bun_bundler::options::jsx::Pragma::parse_package_name` —
+            // pure byte-slice helper, inlined here to break the resolver→bundler edge.
+            let pkgname = parse_package_name(name_to_use);
+            if pkgname.is_empty() || !pkgname[0].is_ascii_alphanumeric() {
+                return None;
+            }
+
+            Some(pkgname)
+        }
+
+        /// Port of `Path.loader` in `fs.zig`.
+        // CYCLEBREAK: was `bun_bundler::options::{Loader, LoaderHashTable}` — both moved
+        // down to `bun_options_types::BundleEnums` (TYPE_ONLY per CYCLEBREAK.md).
+        pub fn loader(
+            &self,
+            loaders: &bun_options_types::BundleEnums::LoaderHashTable,
+        ) -> Option<bun_options_types::BundleEnums::Loader> {
+            use bun_options_types::BundleEnums::Loader;
+            if self.is_data_url() {
+                return Some(Loader::Dataurl);
+            }
+
+            let ext = self.name.ext;
+
+            let result = loaders.get(ext).copied().or_else(|| Loader::from_string(ext));
+            if result.is_none() || result == Some(Loader::Json) {
+                let str = self.name.filename;
+                if str == b"package.json" || str == b"bun.lock" {
+                    return Some(Loader::Jsonc);
+                }
+
+                if str.ends_with(b".jsonc") {
+                    return Some(Loader::Jsonc);
+                }
+
+                if str.starts_with(b"tsconfig.") || str.starts_with(b"jsconfig.") {
+                    if str.ends_with(b".json") {
+                        return Some(Loader::Jsonc);
+                    }
+                }
+            }
+            result
+        }
+    }
+
+    /// Port of `options.JSX.Pragma.parsePackageName` (a pure byte-slice helper).
+    // CYCLEBREAK: inlined from bun_bundler to break resolver→bundler edge. The
+    // bundler copy remains; both should converge to `bun_string::strings` in Phase B.
+    pub fn parse_package_name(str: &[u8]) -> &[u8] {
+        use bun_string::strings;
+        if str.is_empty() {
+            return str;
+        }
+        if str[0] == b'@' {
+            if let Some(first_slash) = strings::index_of_char(&str[1..], b'/') {
+                let first_slash = first_slash as usize;
+                let remainder = &str[1 + first_slash + 1..];
+
+                if let Some(last_slash) = strings::index_of_char(remainder, b'/') {
+                    let last_slash = last_slash as usize;
+                    return &str[0..first_slash + 1 + last_slash + 1];
+                }
+            }
+        }
+
+        if let Some(first_slash) = strings::index_of_char(str, b'/') {
+            return &str[0..first_slash as usize];
+        }
+
+        str
     }
 
     impl Default for Path<'_> {
@@ -557,14 +671,82 @@ pub mod fs {
         pub data: dir_entry::EntryMap,
     }
 
+    /// Port of `FileSystem.DirEntry.DifferentCase` in `fs.zig`.
+    #[derive(Clone, Copy)]
+    pub struct DifferentCase<'a> {
+        pub dir: &'a [u8],
+        pub query: &'a [u8],
+        pub actual: &'a [u8],
+    }
+
+    /// Port of `FileSystem.DirEntry.Lookup` in `fs.zig`.
+    pub struct EntryLookup<'a> {
+        pub entry: &'a Entry,
+        pub diff_case: Option<DifferentCase<'a>>,
+    }
+
     impl DirEntry {
         pub fn init(dir: &'static [u8], generation: Generation) -> DirEntry {
             DirEntry { dir, data: dir_entry::EntryMap::default(), generation, fd: Fd::INVALID }
         }
 
-        // TODO(b2-blocked): get / get_comptime_query / has_comptime_query — depend on
-        // bun_string::strings::copy_lowercase_if_needed + StringHashMap adapted lookups
-        // (see gated fs.rs:326). Exposed once those land.
+        /// Port of `DirEntry.get` in `fs.zig`.
+        // PORT NOTE: `query_` tied to `'a` so `DifferentCase.query` can borrow it;
+        // Zig stored the caller's slice verbatim (no lifetime distinction).
+        pub fn get<'a>(&'a self, query_: &'a [u8]) -> Option<EntryLookup<'a>> {
+            if query_.is_empty() || query_.len() > bun_paths::MAX_PATH_BYTES {
+                return None;
+            }
+            let mut scratch_lookup_buffer = bun_paths::PathBuffer::uninit();
+
+            let query = strings::copy_lowercase_if_needed(query_, &mut scratch_lookup_buffer[..]);
+            let &result_ptr = self.data.get(query)?;
+            // SAFETY: EntryStore-owned pointer, valid for lifetime of store
+            let result = unsafe { &*result_ptr };
+            let basename = result.base();
+            if !strings::eql_long::<true>(basename, query_) {
+                return Some(EntryLookup {
+                    entry: result,
+                    diff_case: Some(DifferentCase {
+                        dir: self.dir,
+                        query: query_, // TODO(port): lifetime — Zig stored caller's slice
+                        actual: basename,
+                    }),
+                });
+            }
+
+            Some(EntryLookup { entry: result, diff_case: None })
+        }
+
+        /// Port of `DirEntry.getComptimeQuery` in `fs.zig`.
+        // PORT NOTE: Zig used comptime string lowering + comptime hash; Rust port
+        // takes a &'static [u8] that is already lowercase.
+        pub fn get_comptime_query<'a>(&'a self, query_lower: &'static [u8]) -> Option<EntryLookup<'a>> {
+            // PERF(port): was comptime hash precompute — profile in Phase B
+            let &result_ptr = self.data.get(query_lower)?;
+            // SAFETY: EntryStore-owned pointer
+            let result = unsafe { &*result_ptr };
+            let basename = result.base();
+
+            if basename != query_lower {
+                return Some(EntryLookup {
+                    entry: result,
+                    diff_case: Some(DifferentCase {
+                        dir: self.dir,
+                        query: query_lower,
+                        actual: basename,
+                    }),
+                });
+            }
+
+            Some(EntryLookup { entry: result, diff_case: None })
+        }
+
+        /// Port of `DirEntry.hasComptimeQuery` in `fs.zig`.
+        pub fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool {
+            // PERF(port): was comptime hash precompute — profile in Phase B
+            self.data.contains_key(query_lower)
+        }
     }
 
     /// Port of `FileSystem.RealFS.EntriesOption` in `fs.zig`.
@@ -577,19 +759,48 @@ pub mod fs {
     /// `RealFS::read_directory` `ReadDirResult`; the Zig type is `EntriesOption`.
     pub type ReadDirResult = EntriesOption;
 
+    /// Port of `FileSystem.RealFS.EntriesOption.Map` in `fs.zig`:
+    /// `allocators.BSSMap(EntriesOption, Preallocate.Counts.dir_entry, false, 256, true)`.
+    /// `store_keys=false` → Rust `BSSMapInner<V, COUNT, RM_SLASH>` (est_key_len unused on inner shape).
+    pub type EntriesOptionMap = bun_alloc::BSSMapInner<EntriesOption, 2048, true>;
+
+    /// Zig: `pub const Implementation = RealFS;`
+    pub type Implementation = RealFS;
+
     // ── RealFS ───────────────────────────────────────────────────────────
 
-    /// Port of `FileSystem.RealFS` in `fs.zig` (minimal — `entries: &EntriesOptionMap`
-    /// omitted until `bun_alloc::BSSMap` is un-gated).
+    /// Port of `FileSystem.RealFS` in `fs.zig`.
     pub struct RealFS {
         pub entries_mutex: Mutex,
-        // TODO(b2-blocked): bun_alloc::BSSMap — `pub entries: &'static EntriesOptionMap`
+        /// Port of `entries: *EntriesOption.Map`. `None` until `init()` runs;
+        /// `BSSMapInner` per-type singleton storage is still Phase-B (see bun_alloc).
+        pub entries: Option<core::ptr::NonNull<EntriesOptionMap>>,
         pub cwd: &'static [u8],
         pub file_limit: usize,
         pub file_quota: usize,
     }
 
     impl RealFS {
+        /// Port of `RealFS.entriesAt` in `fs.zig` — index-only fast path.
+        ///
+        /// The full Zig body re-reads the directory when `entries.generation < generation`
+        /// (open + readdir + cache replace). That path needs `bun_sys::open_dir_for_iteration`
+        /// + `RealFS::readdir`/`read_directory_error`, which remain in the gated `fs.rs`
+        /// Phase-A draft. This impl handles the cache-hit case and falls through on
+        /// stale-generation (returning the stale entry, matching pre-watch behaviour).
+        // TODO(b2-blocked): bun_sys::open_dir_for_iteration + RealFS::readdir — restore
+        // generation-check re-read once those land.
+        pub fn entries_at(
+            &mut self,
+            index: bun_alloc::IndexType,
+            _generation: Generation,
+        ) -> Option<&mut EntriesOption> {
+            // SAFETY: `entries` set during `FileSystem::init`; resolver code only calls
+            // this after init (matches Zig invariant).
+            let map = unsafe { self.entries?.as_mut() };
+            map.at_index(index)
+        }
+
         fn platform_temp_dir_compute() -> &'static [u8] {
             use bun_core::env_var;
             // Try TMPDIR, TMP, and TEMP in that order, matching Node.js.
@@ -670,12 +881,18 @@ pub fn is_package_path_not_absolute(non_absolute_path: &[u8]) -> bool {
         }
 }
 
-// TODO(b1): missing peer-crate symbols referenced by Phase-A body:
-//   bun_bundler::{cache, options} — crate does not compile
-//   bun_http::{MimeType, HTTPThread, mime_type} — crate does not compile
-//   bun_install::{PackageManager, WakeHandler, dependency, lockfile, resolution, npm}
-//   bun_str::{strings, ZStr, ZString, String, StringBuilder} — crate name mismatch (bun_string?)
-//   bun_output::{declare_scope!, scoped_log!} — crate missing
+// CYCLEBREAK STATUS (resolver↔bundler):
+//   ✓ bun_bundler::options::{Loader, LoaderHashTable, ModuleType, Target} → bun_options_types::BundleEnums (already moved)
+//   ✓ bun_bundler::options::jsx::Pragma → crate::tsconfig_json::options::jsx::Pragma (structural local def; TYPE_ONLY)
+//   ✓ bun_bundler::options::jsx::Pragma::parse_package_name → crate::fs::parse_package_name (inlined)
+//   ✓ bun_bundler::cache::Json → crate::tsconfig_json::JsonCache (manual vtable, §Dispatch cold-path)
+//   ✓ bun_bundler::cache::Set → *mut () FORWARD_DECL inside __phase_a_body
+//   ✗ bun_bundler::options::{BundleOptions, Packages} — TODO(b0-genuine): MOVE_DOWN to bun_options_types
+//
+// Remaining peer-crate blocks on __phase_a_body (NOT cycle-related):
+//   bun_install::{PackageManager, WakeHandler, dependency, lockfile, resolution, npm} — higher tier
+//   bun_http::{HTTPThread} — higher tier
+//   bun_js_parser::Expr query API (as_property/as_string/as_bool/as_array) — same tier, not yet ported
 
 // ──────────────────────────────────────────────────────────────────────────
 // Phase-A draft body (gated; preserved verbatim for B-2 un-gating)
@@ -689,8 +906,24 @@ use std::cell::RefCell;
 use std::io::Write as _;
 
 use bun_alloc::allocators;
-use bun_bundler::cache::Set as CacheSet;
-use bun_bundler::options;
+// CYCLEBREAK: bun_bundler::cache::Set — FORWARD_DECL. The resolver only needs
+// `caches.json.parse_tsconfig(..)`; that path now goes through
+// `crate::tsconfig_json::JsonCache` (manual vtable, §Dispatch cold-path).
+// `CacheSet` is held opaquely so the bundler can pass its real `cache::Set`
+// without resolver naming the type.
+type CacheSet = *mut (); // SAFETY: erased bun_bundler::cache::Set
+// CYCLEBREAK: bun_bundler::options — TYPE_ONLY. `ModuleType`/`Loader`/`Target`/
+// `LoaderHashTable` already moved down to `bun_options_types::BundleEnums`;
+// `jsx::Pragma` lives in `crate::tsconfig_json::options::jsx`. `BundleOptions`/
+// `Packages` remain higher-tier and are the genuine block on un-gating this body.
+// TODO(b0-genuine): bun_bundler::options::{BundleOptions, Packages} — MOVE_DOWN
+// to bun_options_types so the resolver can read `.target`/`.packages`/
+// `.extension_order`/`.global_cache` without a back-edge.
+mod options {
+    pub use bun_options_types::BundleEnums::{Loader, LoaderHashTable, ModuleType, Target};
+    pub use crate::tsconfig_json::options::jsx;
+    pub use bun_bundler::options::{BundleOptions, Packages, bundle_options, Env, EnvDefault};
+}
 use bun_collections::{BoundedArray, MultiArrayList};
 use bun_core::Output;
 use bun_core::{Environment, FeatureFlags, Generation, Mutex, MutableString, PathString};

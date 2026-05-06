@@ -1409,7 +1409,7 @@ impl<'a> Lexer<'a> {
         Ok(lex)
     }
 
-    // TODO(b2-blocked): bun_logger::js_ast::Expr
+    // TODO(b2-blocked): bun_logger::js_ast::E::String — T2 stub is field-less `(())`.
     #[cfg(any())]
     #[inline]
     pub fn to_string(&self, loc_: logger::Loc) -> js_ast::Expr {

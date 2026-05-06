@@ -66,9 +66,6 @@ pub mod my_sql_query;
 #[path = "mysql/JSMySQLQuery.rs"]
 pub mod js_my_sql_query;
 
-// TODO(b2-blocked): bun_jsc::JSValue::{js_number,js_type,is_*,to_*,as_*}
-// TODO(b2-blocked): bun_jsc::JSType (real enum)
-#[cfg(any())]
 #[path = "mysql/MySQLValue.rs"]
 pub mod my_sql_value;
 

@@ -35,7 +35,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         todo!("b2-ast-E: visit_stmts_and_prepend_temp_refs")
     }
     pub fn record_declared_symbol(&mut self, r#ref: Ref) {
-        let _ = r#ref;
+        debug_assert!(r#ref.is_symbol());
+        self.declared_symbols
+            .append(crate::DeclaredSymbol {
+                ref_: r#ref,
+                is_top_level: core::ptr::eq(self.current_scope, self.module_scope),
+            })
+            .expect("oom");
     }
     pub fn visit_func(&mut self, func: &mut G::Fn, open_parens_loc: logger::Loc) {
         let _ = (func, open_parens_loc);
@@ -43,7 +49,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     pub fn visit_args(&mut self, args: &mut [G::Arg], opts: VisitArgsOpts) {
         let _ = (args, opts);
     }
-    pub fn visit_ts_decorators(&mut self, decs: ExprNodeList) -> ExprNodeList {
+    pub fn visit_ts_decorators(&mut self, mut decs: ExprNodeList) -> ExprNodeList {
+        for dec in decs.slice_mut() {
+            *dec = self.visit_expr(*dec);
+        }
         decs
     }
     pub fn visit_decls<const IS_POSSIBLY_DECL_TO_REMOVE: bool>(
@@ -94,11 +103,32 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 }
 
 pub fn fn_body_contains_use_strict(body: &[Stmt]) -> Option<logger::Loc> {
-    let _ = body;
+    use crate::ast::stmt::Data as StmtData;
+    for stmt in body {
+        // "use strict" has to appear at the top of the function body
+        // but we can allow comments
+        match &stmt.data {
+            StmtData::SComment(_) => continue,
+            StmtData::SDirective(dir) => {
+                // SAFETY: arena-owned slice valid for the parse.
+                if unsafe { &*dir.value } == b"use strict" {
+                    return Some(stmt.loc);
+                }
+            }
+            StmtData::SEmpty(_) => {}
+            _ => return None,
+        }
+    }
     None
 }
 
-#[cfg(any())] // TODO(b2-ast-E): full draft body — apply mixin→impl-P recipe per-method
+#[cfg(any())]
+// blocked_on: P::{push_scope_for_visit_pass, pop_scope, record_usage, ignore_usage,
+//   record_declared_symbol, mark_strict_mode_feature, declare_symbol, find_label_symbol,
+//   handle_react_refresh_*, lower_class, generate_temp_ref, append_if_body_preserving_scope}
+//   all gated (P.rs:640 impl block); _draft uses `const JSX: JSXTransformType` const-generic
+//   (needs J: JsxT lowering); `defer`-restore patterns need scopeguard; ~1400-line bodies,
+//   >30 path/shape errors per method.
 #[allow(warnings)]
 mod _draft {
 //! Port of src/js_parser/ast/visit.zig

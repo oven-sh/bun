@@ -17,16 +17,29 @@
 
 use core::sync::atomic::AtomicU32;
 
-// TODO(b2-blocked): Stream/ClientSession/ClientContext/PendingConnect/AltSvc/
-// callbacks/encode bottom out on HTTPClient/HTTPContext/uws quic socket types
-// — un-gate together with the `_phase_a_draft` cluster in lib.rs.
-#[cfg(any())] #[path = "h3_client/Stream.rs"]          pub mod Stream;
-#[cfg(any())] #[path = "h3_client/ClientSession.rs"]   pub mod ClientSession;
-#[cfg(any())] #[path = "h3_client/ClientContext.rs"]   pub mod ClientContext;
-#[cfg(any())] #[path = "h3_client/PendingConnect.rs"]  pub mod PendingConnect;
+// TODO(b2-blocked): ClientSession/ClientContext/callbacks/encode bottom out on
+// the full `impl HTTPClient` state machine (build_request/progress_update_h3/
+// handle_response_metadata) — un-gate once the lib.rs `_phase_a_draft` impl
+// block lands.
+#[path = "h3_client/Stream.rs"]                        pub mod stream;
+#[cfg(any())] #[path = "h3_client/ClientSession.rs"]   pub mod client_session;
+#[cfg(any())] #[path = "h3_client/ClientContext.rs"]   pub mod client_context;
+#[path = "h3_client/PendingConnect.rs"]                pub mod pending_connect;
 #[path = "h3_client/AltSvc.rs"]                        pub mod AltSvc;
 #[cfg(any())] #[path = "h3_client/callbacks.rs"]       pub mod callbacks;
 #[cfg(any())] #[path = "h3_client/encode.rs"]          pub mod encode;
+
+// ── type-only stubs so the HTTPClient cluster can name `h3::ClientSession`/
+//    `h3::ClientContext` while the impl modules stay gated ──
+// TODO(b2-blocked): replace with `pub use client_session::ClientSession` etc.
+pub struct ClientSession(());
+impl ClientSession {
+    pub fn ref_(&self) {}
+    pub fn deref(&self) {}
+}
+pub struct ClientContext(());
+pub use stream::Stream;
+pub use pending_connect::PendingConnect;
 
 /// Live-object counters for the leak test in fetch-http3-client.test.ts.
 /// Incremented at allocation, decremented in deinit. Read from the JS thread

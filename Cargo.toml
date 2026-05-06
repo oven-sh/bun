@@ -97,6 +97,8 @@ members = [
   "src/simdutf_sys",
   "src/which",
   "src/transpiler",
+  "src/spawn",
+  "src/bun_bin",
 ]
 
 [workspace.package]

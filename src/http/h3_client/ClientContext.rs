@@ -17,7 +17,7 @@ use crate::h3_client as H3;
 // top-level client struct lives at the crate root. Adjust path in Phase B.
 use crate::HttpClient;
 
-bun_output::declare_scope!(h3_client, hidden);
+bun_core::declare_scope!(h3_client, hidden);
 
 pub struct ClientContext {
     // TODO(port): lifetime — FFI handle owned for process lifetime (never freed).
@@ -74,7 +74,7 @@ impl ClientContext {
             // SAFETY: sessions vec holds live ClientSession pointers; removed via unregister() before destroy.
             let s = unsafe { &mut *s };
             if s.matches(hostname, port, reject) && s.has_headroom() {
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     h3_client,
                     "reuse session {}:{}",
                     bstr::BStr::new(hostname),
@@ -87,7 +87,7 @@ impl ClientContext {
 
         // TODO(port): ownership — host_z is moved into ClientSession.hostname; ZStr::from_bytes
         // must yield an owned NUL-terminated buffer here (Zig was allocator.dupeZ).
-        let host_z = bun_str::ZStr::from_bytes(hostname);
+        let host_z = bun_string::ZStr::from_bytes(hostname);
         let session = ClientSession::new(ClientSession {
             qsocket: None,
             hostname: host_z,
@@ -115,7 +115,7 @@ impl ClientContext {
                     (*session).qsocket = Some(qs);
                     *qs.ext::<*mut ClientSession>() = session;
                 }
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     h3_client,
                     "connect {}:{} (sync)",
                     bstr::BStr::new(hostname),
@@ -123,7 +123,7 @@ impl ClientContext {
                 );
             }
             quic::ConnectResult::Pending(pending) => {
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     h3_client,
                     "connect {}:{} (dns pending)",
                     bstr::BStr::new(hostname),
@@ -133,7 +133,7 @@ impl ClientContext {
                 PendingConnect::register(session, pending, unsafe { (*self.qctx.as_ptr()).loop_() });
             }
             quic::ConnectResult::Err => {
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     h3_client,
                     "connect {}:{} failed",
                     bstr::BStr::new(hostname),

@@ -4,7 +4,7 @@ use std::io::Write;
 
 use bstr::BStr;
 
-use crate::diff::diff_match_patch;
+use super::diff_match_patch;
 use bun_str::strings;
 
 // TODO(port): verify diff_match_patch::Dmp<T> API surface (default(), config.diff_timeout,

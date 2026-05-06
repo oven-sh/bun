@@ -3,8 +3,8 @@ use core::ffi::c_void;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, VM};
 use bun_jsc::console_object::Formatter;
 
-use crate::expect::Expect;
-use crate::expect::get_signature;
+use super::Expect;
+use super::get_signature;
 
 struct ExpectedEntry<'a> {
     global_this: &'a JSGlobalObject,
@@ -54,7 +54,7 @@ pub fn to_be_one_of(
     let expected = this.get_value(global_this, this_value, "toBeOneOf", "<green>expected<r>")?;
     let list_value: JSValue = arguments[0];
 
-    let not = this.flags.not;
+    let not = this.flags.not();
     let mut pass = false;
 
     if list_value.js_type_loose().is_array_like() {

@@ -1,8 +1,8 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::console_object::Formatter;
 
-use crate::diff_format::DiffFormatter;
-use crate::expect::{Expect, get_signature};
+use super::DiffFormatter;
+use super::{Expect, get_signature};
 
 #[bun_jsc::host_fn(method)]
 pub fn to_have_been_last_called_with(
@@ -26,7 +26,7 @@ pub fn to_have_been_last_called_with(
 
     this.increment_expect_call_counter();
 
-    let calls = bun_jsc::cpp::js_mock_function_get_calls(global, value)?;
+    let calls = super::mock::JSMockFunction__getCalls(global, value)?;
     if !calls.js_type().is_array() {
         let mut formatter = Formatter {
             global_this: global,
@@ -76,7 +76,7 @@ pub fn to_have_been_last_called_with(
         }
     }
 
-    if pass != this.flags.not {
+    if pass != this.flags.not() {
         return Ok(JSValue::UNDEFINED);
     }
 
@@ -93,7 +93,7 @@ pub fn to_have_been_last_called_with(
     }
     expected_args_js_array.ensure_still_alive();
 
-    if this.flags.not {
+    if this.flags.not() {
         let signature = get_signature("toHaveBeenLastCalledWith", "<green>...expected<r>", true);
         return this.throw(
             global,
@@ -131,5 +131,5 @@ pub fn to_have_been_last_called_with(
 //   source:     src/test_runner/expect/toHaveBeenLastCalledWith.zig (91 lines)
 //   confidence: medium
 //   todos:      0
-//   notes:      `defer this.postMatch` reshaped via scopeguard::guard(this, ..) + DerefMut re-borrow (no raw ptr); `bun.cpp.JSMockFunction__getCalls` → bun_jsc::cpp::js_mock_function_get_calls; get_signature assumed const fn.
+//   notes:      `defer this.postMatch` reshaped via scopeguard::guard(this, ..) + DerefMut re-borrow (no raw ptr); `bun.cpp.JSMockFunction__getCalls` → super::mock::JSMockFunction__getCalls; get_signature assumed const fn.
 // ──────────────────────────────────────────────────────────────────────────

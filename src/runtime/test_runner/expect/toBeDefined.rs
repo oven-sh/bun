@@ -1,7 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::console_object::Formatter;
 
-use crate::expect::Expect;
+use super::Expect;
 
 #[bun_jsc::host_fn(method)]
 pub fn to_be_defined(
@@ -18,7 +18,7 @@ pub fn to_be_defined(
 
     this.increment_expect_call_counter();
 
-    let not = this.flags.not;
+    let not = this.flags.not();
     let mut pass = !value.is_undefined();
     if not {
         pass = !pass;

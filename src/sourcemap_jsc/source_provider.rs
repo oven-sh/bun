@@ -58,26 +58,25 @@ impl BakeSourceProvider {
     // TODO(port): returned slice borrows from `PerThread.bundled_outputs`; lifetime
     // is not expressible against `&self`. Phase B: thread `'pt` or return owned.
     pub fn get_external_data(&self, source_filename: &[u8]) -> Option<&'static [u8]> {
+        let global = bun_jsc::virtual_machine::VirtualMachine::get().global;
+        // SAFETY: `global` is the live JSGlobalObject for this VM thread.
+        if !unsafe { BakeGlobalObject__isBakeGlobalObject(global) } {
+            return None;
+        }
         #[cfg(any())]
         {
-            // TODO(b2-blocked): bun_jsc::VirtualMachine::global — stub VM has no `global` field
-            // TODO(b2-blocked): bun_runtime::bake::production::PerThread
-            let global = bun_jsc::VirtualMachine::get().global;
-            // SAFETY: `global` is the live JSGlobalObject for this VM thread.
-            if !unsafe { BakeGlobalObject__isBakeGlobalObject(global as *const _ as *mut _) } {
-                return None;
-            }
+            // TODO(b2-blocked): bun_runtime::bake::production::PerThread — stub
+            // `PerThread(())` has no `source_maps` / `bundled_outputs` fields,
+            // and `bun_runtime` is a higher-tier crate (would create a cycle).
             // SAFETY: checked above that this is a Bake global; C++ guarantees non-null.
-            let pt: &bun_runtime::bake::production::PerThread = unsafe {
-                &*BakeGlobalObject__getPerThreadData(global as *const _ as *mut _).cast()
-            };
+            let pt: &bun_runtime::bake::production::PerThread =
+                unsafe { &*BakeGlobalObject__getPerThreadData(global).cast() };
             if let Some(value) = pt.source_maps.get(source_filename) {
                 return Some(pt.bundled_outputs[value.get()].value.as_slice());
             }
-            return Some(b"");
         }
         let _ = source_filename;
-        None
+        Some(b"")
     }
 
     /// The last two arguments to this specify loading hints

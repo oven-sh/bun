@@ -44,7 +44,7 @@ pub fn to_start_with(
         // `defer *.deinit()` dropped — Utf8Slice/ZigString::Slice impl Drop.
     }
 
-    let not = this.flags.not;
+    let not = this.flags.not();
     if not {
         pass = !pass;
     }

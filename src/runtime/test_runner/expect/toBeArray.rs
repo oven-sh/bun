@@ -14,7 +14,7 @@ pub fn to_be_array(this: &mut Expect, global: &JSGlobalObject, frame: &CallFrame
 
         this.increment_expect_call_counter();
 
-        let not = this.flags.not;
+        let not = this.flags.not();
         let pass = value.js_type().is_array() != not;
 
         if pass {

@@ -6,11 +6,14 @@ use core::slice;
 
 use bun_alloc::{AllocError, NullableAllocator};
 use bun_core::fmt as bun_fmt;
-use bun_jsc::node::Encoding;
-use bun_jsc::webcore::{encoding, DOMExceptionCode};
-use bun_jsc::{c_api, JSGlobalObject, JSValue, VM};
+use crate::DOMExceptionCode;
+use crate::{c_api, JSGlobalObject, JSValue, VM};
+// TODO(port): `crate::node::Encoding` / `crate::webcore::encoding` are stubs
+// at this tier; gate the methods that use them below.
+#[cfg(any())] use crate::node::Encoding;
+#[cfg(any())] use crate::webcore::encoding;
 use bun_paths::PathBuffer;
-use bun_str::{strings, String as BunString, ZStr};
+use bun_string::{strings, String as BunString, ZStr};
 
 // TODO(port): move to jsc_sys
 unsafe extern "C" {
@@ -39,7 +42,7 @@ unsafe extern "C" {
     fn ZigString__toRangeErrorInstance(this: *const ZigString, global: *const JSGlobalObject) -> JSValue;
 }
 
-/// Prefer using `bun_str::String` instead of `ZigString` in new code.
+/// Prefer using `bun_string::String` instead of `ZigString` in new code.
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct ZigString {
@@ -54,6 +57,31 @@ pub enum ByteString<'a> {
     Latin1(&'a [u8]),
     Utf16(&'a [u16]),
 }
+
+/// `ZigString.Slice` re-export for `crate::zig_string::Slice` callers.
+pub use bun_string::ZigStringSlice as Slice;
+
+/// `ZigString.static(comptime s)` — borrow a static UTF-8 literal.
+#[inline]
+pub fn static_(s: &'static [u8]) -> bun_string::ZigString {
+    let mut z = bun_string::ZigString::init(s);
+    z.mark_utf8();
+    z
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// TODO(port): the local `pub struct ZigString` below DUPLICATES
+// `bun_string::ZigString` (same #[repr(C)] layout) so it can grow JSC-side
+// `to_js`/`to_error_instance` methods. Per PORTING.md these belong on a
+// `ZigStringJsc` extension trait impl'd for `bun_string::ZigString`. The
+// method bodies depend on `bun_string::strings` API surface (is_all_ascii,
+// to_utf8_from_latin1, …), `crate::node::Encoding`, `crate::webcore::encoding`,
+// and `NullableAllocator::default_alloc/null` not yet exposed at this tier.
+// Gated wholesale; `static_`/`Slice` above satisfy current downstream callers.
+// ──────────────────────────────────────────────────────────────────────────
+#[cfg(any())]
+mod _body {
+use super::*;
 
 impl ZigString {
     pub fn from_bytes(slice_: &[u8]) -> ZigString {
@@ -190,13 +218,13 @@ impl ZigString {
     }
 
     pub fn to_json_object(&self, global_this: &JSGlobalObject) -> JSValue {
-        bun_jsc::mark_binding!();
+        crate::mark_binding!();
         // SAFETY: self points to valid #[repr(C)] data; global_this is a live borrow.
         unsafe { ZigString__toJSONObject(self, global_this) }
     }
 
     pub fn to_url(&self, global_this: &JSGlobalObject) -> JSValue {
-        bun_jsc::mark_binding!();
+        crate::mark_binding!();
         // SAFETY: self points to valid #[repr(C)] data; global_this is a live borrow.
         unsafe { BunString__toURL(self, global_this) }
     }
@@ -511,7 +539,7 @@ impl ZigString {
             // SAFETY: ptr was allocated by global mimalloc with len u16 elements.
             unsafe { bun_alloc::free_slice(ptr as *mut u16, len) };
             // TODO(port): propagate?
-            let _ = global.err(bun_jsc::ErrorCode::STRING_TOO_LONG, "Cannot create a string longer than 2^32-1 characters").throw();
+            let _ = global.err(crate::ErrorCode::STRING_TOO_LONG, "Cannot create a string longer than 2^32-1 characters").throw();
             return JSValue::ZERO;
         }
         // SAFETY: ptr/len describe a globally-allocated UTF-16 buffer; ownership transferred to JSC.
@@ -701,7 +729,7 @@ impl ZigString {
             // SAFETY: byte_slice() memory was globally allocated.
             unsafe { bun_alloc::free_slice(self.byte_slice().as_ptr() as *mut u8, self.byte_slice().len()) };
             // TODO(port): propagate?
-            let _ = global.err(bun_jsc::ErrorCode::STRING_TOO_LONG, "Cannot create a string longer than 2^32-1 characters").throw();
+            let _ = global.err(crate::ErrorCode::STRING_TOO_LONG, "Cannot create a string longer than 2^32-1 characters").throw();
             return JSValue::ZERO;
         }
         // SAFETY: self points to globally-allocated string; ownership transferred to JSC.
@@ -727,7 +755,7 @@ impl ZigString {
             // SAFETY: invoking caller-provided destructor on the buffer.
             unsafe { callback(ctx, self.byte_slice().as_ptr() as *mut c_void, self.len) };
             // TODO(port): propagate?
-            let _ = global.err(bun_jsc::ErrorCode::STRING_TOO_LONG, "Cannot create a string longer than 2^32-1 characters").throw();
+            let _ = global.err(crate::ErrorCode::STRING_TOO_LONG, "Cannot create a string longer than 2^32-1 characters").throw();
             return JSValue::ZERO;
         }
         // SAFETY: FFI call; ownership of buffer transferred to JSC with ctx/callback.
@@ -1013,6 +1041,7 @@ pub extern "C" fn ZigString__freeGlobal(ptr: *const u8, len: usize) {
     // SAFETY: untagged ptr was allocated by mimalloc.
     unsafe { bun_alloc::mimalloc::mi_free(untagged) };
 }
+} // mod _body
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

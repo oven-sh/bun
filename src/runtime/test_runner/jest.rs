@@ -13,7 +13,7 @@ use bun_logger as logger;
 use bun_str as strings;
 
 pub use crate::bun_test;
-use crate::expect::{Expect, ExpectTypeOf};
+use super::expect::{Expect, ExpectTypeOf};
 use crate::snapshot::Snapshots;
 
 #[derive(Default)]

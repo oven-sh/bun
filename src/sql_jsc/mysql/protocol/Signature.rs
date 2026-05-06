@@ -72,17 +72,11 @@ impl Signature {
                 continue;
             }
             let mut unsigned = false;
-            #[cfg(any())]
-            let tag = {
-                // TODO(b2-blocked): bun_sql::mysql::mysql_types::FieldType::from_js
-                // (jsc-side ext fn; lives in MySQLValue.rs which is still gated)
-                FieldType::from_js(global_object, value, &mut unsigned)?
-            };
-            #[cfg(not(any()))]
-            let tag: FieldType = {
-                let _ = (value, &mut unsigned);
-                unimplemented!("b2-blocked: FieldType::from_js (MySQLValue.rs gated)")
-            };
+            let tag = crate::mysql::my_sql_value::field_type_from_js(
+                global_object,
+                value,
+                &mut unsigned,
+            )?;
             if unsigned {
                 // 128 is more than enought right now
                 // PORT NOTE: reshaped — Zig used `std.fmt.bufPrint` into a 128-byte

@@ -66,6 +66,8 @@ pub mod cli;
 pub mod napi;
 #[path = "api.rs"]
 pub mod api;
+pub mod timer;
+pub mod dispatch;
 
 // Newly declared in B-2 (was in the "unwired" list).
 pub mod image {
@@ -82,4 +84,5 @@ pub mod image {
 // Additional subdirectories present under src/runtime/ but not yet wired:
 // dns_jsc, test_runner, timer, valkey_jsc, webview.
 // These remain un-declared (blocked on bun_jsc method surface).
+
 

@@ -32,7 +32,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 }
 
-#[cfg(any())] // TODO(b2-ast-E): full draft body — apply mixin→impl-P recipe per-method
+#[cfg(any())]
+// blocked_on: P::{push_scope_for_parse_pass, pop_scope, declare_symbol, store_name_in_ref,
+//   add_import_record, process_import_statement, forbid_lexical_decl, mark_type_script_only,
+//   discard_scopes_up_to, create_default_name, require_initializers, forbid_initializers}
+//   all gated (P.rs:640 impl block); _draft uses `const JSX: JSXTransformType` const-generic
+//   (needs J: JsxT lowering); S::* struct-init shapes (no Default — full field set);
+//   StmtNodeList = *mut [Stmt]; ~1770-line bodies, >30 path/shape errors per method.
 #[allow(warnings)]
 mod _draft {
 use bun_core::{self, err};

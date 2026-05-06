@@ -1,6 +1,6 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::console_object::Formatter;
-use crate::test_runner::expect::Expect;
+use super::Expect;
 
 #[bun_jsc::host_fn(method)]
 pub fn to_have_been_called(
@@ -25,7 +25,7 @@ pub fn to_have_been_called(
     let value: JSValue = this.get_value(global, this_value, "toHaveBeenCalled", "")?;
 
     // TODO(port): verify crate path for `bun.cpp.JSMockFunction__getCalls` extern binding
-    let calls = bun_cpp::JSMockFunction__getCalls(global, value)?;
+    let calls = super::mock::JSMockFunction__getCalls(global, value)?;
     this.increment_expect_call_counter();
     if !calls.js_type().is_array() {
         let formatter = Formatter {
@@ -43,7 +43,7 @@ pub fn to_have_been_called(
     let calls_length = calls.get_length(global)?;
     let mut pass = calls_length > 0;
 
-    let not = this.flags.not;
+    let not = this.flags.not();
     if not {
         pass = !pass;
     }

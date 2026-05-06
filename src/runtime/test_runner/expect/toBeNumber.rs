@@ -1,8 +1,8 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::console_object::Formatter;
 
-use crate::expect::Expect;
-use crate::expect::get_signature;
+use super::Expect;
+use super::get_signature;
 
 #[bun_jsc::host_fn(method)]
 pub fn to_be_number(
@@ -19,7 +19,7 @@ pub fn to_be_number(
 
     this.increment_expect_call_counter();
 
-    let not = this.flags.not;
+    let not = this.flags.not();
     let pass = value.is_number() != not;
 
     if pass {

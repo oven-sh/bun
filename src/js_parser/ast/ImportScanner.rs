@@ -43,7 +43,12 @@ impl<'a> ImportScanner<'a> {
         );
         let _ = (p, stmts, will_transform_to_common_js, hot_module_reloading_context);
         todo!("b2-ast-E: ImportScanner::scan body");
-        #[cfg(any())] // TODO(b2-ast-E): body — Stmt copy semantics, S::Import field paths, p.import_records mut access, named_imports map API
+        #[cfg(any())]
+        // blocked_on: P::{record_export, ignore_usage, record_exported_binding} gated (P.rs:640
+        //   impl block); S::Import.{items, default_name, star_name_loc} field shapes
+        //   (Option<*mut [ClauseItem]> vs BabyList); p.named_imports NamedImportsType<'a> wrapper
+        //   (.put API); p.import_records.items_mut()[i] mutation; ImportRecord.{path, is_unused}
+        //   field paths; StmtNodeList = *mut [Stmt] iteration. ~660-line body, >30 shape errors.
         {
 
         let mut scanner = ImportScanner::default();

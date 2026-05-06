@@ -35,7 +35,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let p = self;
         let _ = (kind, opts, is_computed, key, key_range);
         todo!("b2-ast-E: parse_method_expression body");
-        #[cfg(any())] // TODO(b2-ast-E): body — Flags::Property bitflags, G::Fn/FnBody shapes, FnOrArrowDataParse field set
+        #[cfg(any())]
+        // blocked_on: P::{push_scope_for_parse_pass, pop_scope, declare_symbol,
+        //   pop_and_discard_scope, validate_function_name} gated (P.rs:640 impl block);
+        //   G::Property full struct-init (kind/flags/key/value/initializer/ts_decorators/
+        //   class_static_block — no Default); Flags::PropertySet (EnumSet) construction
+        //   (Property::IsComputed | Property::IsMethod, not struct-init).
         {
         if p.lexer.token == T::TOpenParen && kind != Property::Kind::Get && kind != Property::Kind::Set {
             // markSyntaxFeature object extensions
@@ -213,7 +218,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let p = self;
         let _ = (kind_, opts, errors_);
         todo!("b2-ast-E: parse_property body");
-        #[cfg(any())] // TODO(b2-ast-E): body — PropertyModifierKeyword path, Expr::Data variants, Flags::Property bitflags, opts struct fields
+        #[cfg(any())]
+        // blocked_on: P::{push_scope_for_parse_pass, pop_scope, store_name_in_ref, declare_symbol,
+        //   pop_and_discard_scope, log_expr_errors} gated (P.rs:640 impl block);
+        //   PropertyModifierKeyword enum (TypeScript.rs); G::Property full struct-init;
+        //   Flags::PropertySet (EnumSet) — `Property::IsComputed | ...` not struct-init;
+        //   PropertyOpts.{is_class, is_static, ts_decorators} field set; ~540-line body, >30 errors.
         {
         let mut kind = kind_;
         let mut errors = errors_;

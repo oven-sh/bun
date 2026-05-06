@@ -19,7 +19,7 @@ pub fn to_be_even(
 
     this.increment_expect_call_counter();
 
-    let not = this.flags.not;
+    let not = this.flags.not();
     let mut pass = false;
 
     if value.is_any_int() {

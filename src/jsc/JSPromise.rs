@@ -1,14 +1,15 @@
 use core::ffi::c_void;
 use core::marker::{PhantomData, PhantomPinned};
 
-use bun_str::String as BunString;
+use bun_string::String as BunString;
 
 use crate::{JSGlobalObject, JSValue, JsError, JsResult, VM};
 // `jsc.Strong.Optional` and `jsc.Weak(T)` collide with this module's own `Strong`/`Weak`,
 // so import them under aliases.
-use crate::Strong as JscStrong;
-use crate::Weak as JscWeak;
-use crate::{JsTerminated, VirtualMachine};
+use crate::strong::Optional as JscStrong;
+use crate::weak::{Weak as JscWeak, WeakRefType};
+use crate::JsTerminated;
+use crate::virtual_machine::VirtualMachine;
 
 /// Opaque handle to a `JSC::JSPromise` cell. Always used by reference; never
 /// constructed or owned on the Rust side (GC-managed).
@@ -59,17 +60,17 @@ unsafe extern "C" {
 // ───────────────────────────── JSPromise.Weak(T) ─────────────────────────────
 
 /// Zig: `pub fn Weak(comptime T: type) type { return struct { ... } }`
-pub struct Weak<T> {
-    weak: JscWeak<T>,
+pub struct Weak<'a, T> {
+    weak: JscWeak<'a, T>,
 }
 
-impl<T> Default for Weak<T> {
+impl<'a, T> Default for Weak<'a, T> {
     fn default() -> Self {
         Self { weak: JscWeak::default() }
     }
 }
 
-impl<T> Weak<T> {
+impl<'a, T> Weak<'a, T> {
     pub fn reject(&mut self, global: &JSGlobalObject, val: JSValue) {
         // TODO(port): Zig discards the `JSTerminated` from `JSPromise::reject` here
         // (return type is `void`). Mirror that by ignoring the Result.
@@ -98,14 +99,16 @@ impl<T> Weak<T> {
     }
 
     pub fn init(
-        global: &JSGlobalObject,
+        global: &'a JSGlobalObject,
         promise: JSValue,
+        ref_type: WeakRefType,
         ctx: &mut T,
-        // PERF(port): was comptime monomorphization — profile in Phase B
-        finalizer: fn(&mut T, JSValue),
     ) -> Self {
+        // PORT NOTE: Zig threaded a `comptime finalizer` fn-ptr; the Rust
+        // `Weak<T>` encodes that via `WeakRefType` (one variant per finalizer
+        // — see Weak.rs). PERF(port): was comptime monomorphization.
         Self {
-            weak: JscWeak::<T>::create(promise, global, ctx, finalizer),
+            weak: JscWeak::<T>::create(promise, global, ref_type, ctx),
         }
     }
 
@@ -145,7 +148,7 @@ pub struct Strong {
 }
 
 impl Strong {
-    pub const EMPTY: Self = Self { strong: JscStrong::EMPTY };
+    pub const fn empty() -> Self { Self { strong: JscStrong::empty() } }
 
     pub fn reject_without_swap(&mut self, global: &JSGlobalObject, val: JsResult<JSValue>) {
         let Some(v) = self.strong.get() else { return };
@@ -229,12 +232,12 @@ impl Strong {
     pub fn swap(&mut self) -> &mut JSPromise {
         let prom = self.strong.swap().as_promise().unwrap();
         // Zig: `this.strong.deinit()` — release the handle slot now.
-        self.strong = JscStrong::EMPTY;
+        self.strong = JscStrong::empty();
         prom
     }
 
     pub fn take(&mut self) -> Self {
-        core::mem::replace(self, Self::EMPTY)
+        core::mem::replace(self, Self::empty())
     }
 }
 
@@ -276,7 +279,6 @@ impl JSPromise {
             crate::to_js_host_call(g, (this.f.take().unwrap())(g))
         }
 
-        let scope = crate::TopExceptionScope::init(global);
         let mut ctx = Wrapper { f: Some(f) };
         // SAFETY: `ctx` outlives the synchronous FFI call; `call::<F>` matches the
         // expected `extern "C" fn(*mut c_void, *mut JSGlobalObject) -> JSValue` signature.
@@ -287,7 +289,9 @@ impl JSPromise {
                 call::<F>,
             )
         };
-        scope.assert_no_exception_except_termination()?;
+        // TODO(b2): `TopExceptionScope::init(global).assert_no_exception_except_termination()?`
+        // — TopExceptionScope::init signature differs at this tier; verify in Phase B.
+        if global.has_exception() { return Err(JsTerminated::JSTerminated); }
         Ok(promise)
     }
 
@@ -374,14 +378,14 @@ impl JSPromise {
             loop_.debug.js_call_count_outside_tick_queue +=
                 (!loop_.debug.is_inside_tick_queue) as usize;
             if loop_.debug.track_last_fn_name && !loop_.debug.is_inside_tick_queue {
-                loop_.debug.last_fn_name = BunString::static_("resolve");
+                loop_.debug.last_fn_name = BunString::static_(b"resolve");
             }
         }
 
         // SAFETY: `self` and `global` are valid; FFI may run JS (microtasks).
         let ok = unsafe { JSC__JSPromise__resolve(self, global as *const _ as *mut _, value) };
         if !ok {
-            return Err(JsTerminated);
+            return Err(JsTerminated::JSTerminated);
         }
         Ok(())
     }
@@ -393,7 +397,7 @@ impl JSPromise {
             loop_.debug.js_call_count_outside_tick_queue +=
                 (!loop_.debug.is_inside_tick_queue) as usize;
             if loop_.debug.track_last_fn_name && !loop_.debug.is_inside_tick_queue {
-                loop_.debug.last_fn_name = BunString::static_("reject");
+                loop_.debug.last_fn_name = BunString::static_(b"reject");
             }
         }
 
@@ -416,7 +420,7 @@ impl JSPromise {
         // SAFETY: `self` and `global` are valid; FFI may run JS (microtasks).
         let ok = unsafe { JSC__JSPromise__reject(self, global as *const _ as *mut _, err) };
         if !ok {
-            return Err(JsTerminated);
+            return Err(JsTerminated::JSTerminated);
         }
         Ok(())
     }
@@ -425,7 +429,7 @@ impl JSPromise {
         // SAFETY: `self` and `global` are valid; FFI may run JS.
         let ok = unsafe { JSC__JSPromise__rejectAsHandled(self, global as *const _ as *mut _, value) };
         if !ok {
-            return Err(JsTerminated);
+            return Err(JsTerminated::JSTerminated);
         }
         Ok(())
     }

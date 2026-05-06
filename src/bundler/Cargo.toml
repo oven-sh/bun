@@ -22,10 +22,19 @@ bumpalo.workspace = true
 typed-arena.workspace = true
 bun_base64.workspace = true
 bun_alloc.workspace = true
+# TODO(b2-blocked): bun_analytics / bun_resolve_builtins / bun_resolver — adding
+# these triggers a fresh build of upstream crates (css/logger/js_parser) which
+# have in-progress uncommitted breakage in the working tree. Re-add once the
+# tree is green; usages in options.rs are gated or stubbed locally.
+# bun_analytics.workspace = true
+# bun_resolver.workspace = true
+# bun_resolve_builtins.workspace = true
 bun_core.workspace = true
 bun_collections.workspace = true
 bun_crash_handler.workspace = true
-bun_css.workspace = true
+# TODO(b2-blocked): bun_css — only used by gated Chunk.rs/ParseTask.rs/LinkerContext.rs;
+# working tree has in-progress breakage in css/. Re-add when those modules un-gate.
+# bun_css.workspace = true
 bun_dotenv.workspace = true
 bun_event_loop.workspace = true
 bun_glob.workspace = true

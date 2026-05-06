@@ -1,8 +1,8 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::console_object::Formatter;
 
-use crate::diff_format::DiffFormatter;
-use crate::expect::Expect;
+use super::DiffFormatter;
+use super::Expect;
 
 impl Expect {
     /// Object.is()
@@ -31,7 +31,7 @@ impl Expect {
         right.ensure_still_alive();
         let left = this.get_value(global_this, this_value, "toBe", "<green>expected<r>")?;
 
-        let not = this.flags.not;
+        let not = this.flags.not();
         let mut pass = right.is_same_value(left, global_this)?;
 
         if not {

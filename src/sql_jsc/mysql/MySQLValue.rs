@@ -4,17 +4,16 @@
 
 use core::ffi::c_int;
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer};
-use bun_str::{self, String as BunString, ZigString};
-// TODO(port): confirm exact module path for ZigString::Slice in bun_str
-use bun_str::zig_string::Slice as ZigStringSlice;
+use crate::jsc::{self, bun_string_jsc, JSGlobalObject, JSType, JSValue, JsError, JsResult, MarkedArgumentBuffer};
+use bun_string::{String as BunString, ZigString};
+use bun_string::zig_string::Slice as ZigStringSlice;
 
 use bun_sql::mysql::mysql_types::FieldType;
 use bun_sql::mysql::protocol::any_mysql_error;
 use bun_sql::shared::Data;
 
-// TODO(port): confirm Blob lives at bun_runtime::webcore::Blob (accessed as JSC.WebCore.Blob in Zig)
-use bun_runtime::webcore::Blob;
+// TODO(b2-blocked): bun_runtime::webcore::Blob — bun_runtime currently fails to
+// compile (concurrent B-2 work). Only used in the gated `Value::from_js` body.
 
 pub fn field_type_from_js(
     global_object: &JSGlobalObject,
@@ -31,7 +30,7 @@ pub fn field_type_from_js(
             return Ok(FieldType::MYSQL_TYPE_STRING);
         }
 
-        if tag == bun_jsc::JSType::JSDate {
+        if tag == JSType::JSDate {
             return Ok(FieldType::MYSQL_TYPE_DATETIME);
         }
 
@@ -39,7 +38,7 @@ pub fn field_type_from_js(
             return Ok(FieldType::MYSQL_TYPE_BLOB);
         }
 
-        if tag == bun_jsc::JSType::HeapBigInt {
+        if tag == JSType::HeapBigInt {
             if value.is_big_int_in_int64_range(i64::MIN, i64::MAX) {
                 return Ok(FieldType::MYSQL_TYPE_LONGLONG);
             }
@@ -57,17 +56,17 @@ pub fn field_type_from_js(
         }
 
         if global_object.has_exception() {
-            return Err(bun_jsc::JsError::Thrown);
+            return Err(JsError::Thrown);
         }
 
         // Ban these types:
-        if tag == bun_jsc::JSType::NumberObject {
+        if tag == JSType::NumberObject {
             return Err(global_object.throw_invalid_arguments(
                 "Cannot bind NumberObject to query parameter. Use a primitive number instead.",
             ));
         }
 
-        if tag == bun_jsc::JSType::BooleanObject {
+        if tag == JSType::BooleanObject {
             return Err(global_object.throw_invalid_arguments(
                 "Cannot bind BooleanObject to query parameter. Use a primitive boolean instead.",
             ));
@@ -235,26 +234,24 @@ impl Value {
             }
             // Value::Decimal(dec) => return dec.to_binary(field_type),
             Value::StringData(data) | Value::BytesData(data) => {
-                // TODO(port): Zig returned `data` by value (copy of Data union); confirm Data is Clone/Copy
-                return Ok(data.clone());
+                // TODO(port): Zig returned `data` by value (copy of Data union);
+                // `bun_sql::shared::Data` is not `Clone` in the Rust port, so
+                // return a `Temporary` aliasing the same bytes. `to_data` callers
+                // must keep `self` alive until the returned `Data` is consumed.
+                let s = data.slice();
+                return Ok(if s.is_empty() { Data::Empty } else { Data::Temporary(s as *const [u8]) });
             }
             Value::String(slice) => {
-                return Ok(if slice.len() > 0 {
-                    Data::Temporary(slice.slice())
-                } else {
-                    Data::Empty
-                });
+                let s = slice.slice();
+                return Ok(if s.is_empty() { Data::Empty } else { Data::Temporary(s as *const [u8]) });
             }
             Value::Bytes(b) => {
-                return Ok(if b.slice.len() > 0 {
-                    Data::Temporary(b.slice.slice())
-                } else {
-                    Data::Empty
-                });
+                let s = b.slice.slice();
+                return Ok(if s.is_empty() { Data::Empty } else { Data::Temporary(s as *const [u8]) });
             }
         }
 
-        Data::create(&buffer[0..pos])
+        Data::create(&buffer[0..pos]).map_err(|_| any_mysql_error::Error::OutOfMemory)
     }
 
     pub fn from_js(
@@ -264,6 +261,18 @@ impl Value {
         unsigned: bool,
         roots: &mut MarkedArgumentBuffer,
     ) -> Result<Value, any_mysql_error::Error> {
+        #[cfg(not(any()))]
+        {
+            // TODO(b2-blocked): bun_jsc::JSGlobalObject::{validate_integer_range,validate_big_int_range}
+            // TODO(b2-blocked): bun_jsc::JSValue::{coerce,json_stringify_fast,as_<T>}
+            // TODO(b2-blocked): bun_jsc::JSType::is_array_buffer_like
+            // TODO(b2-blocked): bun_runtime::webcore::Blob
+            // TODO(b2-blocked): bun_string::String::from_js (jsc-side ctor)
+            let _ = (value, global_object, field_type, unsigned, roots);
+            unimplemented!("b2-blocked: bun_jsc / bun_runtime method surface")
+        }
+        #[cfg(any())]
+        {
         if value.is_empty_or_undefined_or_null() {
             return Ok(Value::Null);
         }
@@ -424,6 +433,7 @@ impl Value {
                 Ok(Value::String(str.to_utf8()))
             }
         }
+        } // cfg(any()) gate
     }
 }
 
@@ -748,7 +758,7 @@ impl Decimal {
             str.push(digit + b'0');
         }
 
-        BunString::create_utf8_for_js(global_object, &str).unwrap_or(JSValue::ZERO)
+        bun_string_jsc::create_utf8_for_js(global_object, &str).unwrap_or(JSValue::ZERO)
     }
 
     pub fn to_binary(&self, _field_type: FieldType) -> Result<Data, bun_core::Error> {

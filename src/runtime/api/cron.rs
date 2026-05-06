@@ -8,9 +8,22 @@
 //! OS-level uses crontab (Linux), launchctl + launchd plist (macOS), or
 //! schtasks (Windows). Async, event-loop-integrated via bun.spawn.
 
+use std::io::Write as _;
+
+use super::cron_parser::{self, CronExpression};
+
+// ─── JSC-heavy job/timer/spawn machinery ────────────────────────────────────
+// CronJobBase / CronRegisterJob / CronRemoveJob / CronJob / spawn_cmd_generic
+// all reference `bun_jsc`, `crate::api::bun::spawn` (gated under keystone-I),
+// and `#[bun_jsc::host_fn]`. Bodies preserved verbatim under `_jsc_gated`;
+// the OS-level cron→{crontab,plist,schtasks-XML} translators below are pure
+// and compile today.
+// TODO(b2-blocked): bun_jsc + #[bun_jsc::host_fn] proc-macro + api::bun::spawn
+#[cfg(any())]
+mod _jsc_gated {
+use super::*;
 use core::ffi::c_char;
 use std::cell::Cell;
-use std::io::Write as _;
 use std::sync::Arc;
 
 use bun_aio::{KeepAlive, Loop as AsyncLoop};
@@ -21,12 +34,10 @@ use bun_jsc::{
     JSPromise, JSValue, JsRef, JsResult, VirtualMachine,
 };
 use bun_paths::{self as path, PathBuffer};
-use bun_runtime::api::bun::spawn::{self, Process, Rusage, SpawnOptions, Status};
-use bun_runtime::api::timer::EventLoopTimer;
+use crate::api::bun::spawn::{self, Process, Rusage, SpawnOptions, Status};
+use crate::api::timer::EventLoopTimer;
 use bun_str::{self as strings, ZStr, ZString};
 use bun_sys::{self as sys, Fd, File};
-
-use super::cron_parser::{self, CronExpression};
 
 // ============================================================================
 // CronJobBase — shared base for CronRegisterJob and CronRemoveJob
@@ -1794,11 +1805,92 @@ fn find_crontab() -> Option<*const c_char> {
     }
 }
 
+fn resolve_path(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+    path_: &[u8],
+) -> Result<ZString, bun_core::Error> {
+    let vm = global.bun_vm();
+    let srcloc = frame.get_caller_src_loc(global);
+    let caller_utf8 = srcloc.str.to_utf8();
+    let raw_dir = path::dirname(caller_utf8.slice(), path::Platform::Auto);
+    let source_dir: &[u8] = if raw_dir.is_empty() { b"." } else { raw_dir };
+    let mut resolved = vm
+        .transpiler
+        .resolver
+        .resolve(source_dir, path_, bun_options_types::ImportKind::EntryPointRun)
+        .map_err(|_| bun_core::err!("ModuleNotFound"))?;
+    let entry_path = resolved.path().ok_or(bun_core::err!("ModuleNotFound"))?;
+    Ok(ZString::from_bytes(entry_path.text))
+}
+
+fn alloc_print_z(args: core::fmt::Arguments<'_>) -> Result<ZString, bun_alloc::AllocError> {
+    let mut v = Vec::new();
+    v.write_fmt(args).map_err(|_| bun_alloc::AllocError)?;
+    Ok(ZString::from_vec(v))
+}
+
+/// Create a temp file path with a random suffix to avoid TOCTOU/symlink attacks.
+fn make_temp_path(prefix: &'static str) -> Result<ZString, bun_alloc::AllocError> {
+    let mut name_buf = PathBuffer::uninit();
+    // PORT NOTE: Zig used `prefix ++ "tmp"` at comptime; concat at runtime here.
+    // TODO(port): use const_format::concatcp! once call sites pass a const.
+    let mut full_prefix = Vec::with_capacity(prefix.len() + 3);
+    full_prefix.extend_from_slice(prefix.as_bytes());
+    full_prefix.extend_from_slice(b"tmp");
+    let name = bun_fs::FileSystem::tmpname(&full_prefix, &mut name_buf, bun_core::fast_random())
+        .map_err(|_| bun_alloc::AllocError)?;
+    let joined = path::join_abs_string(
+        bun_fs::FileSystem::RealFS::platform_temp_dir(),
+        &[name],
+        path::Platform::Auto,
+    );
+    Ok(ZString::from_bytes(joined))
+}
+} // mod _jsc_gated
+
+// Opaque surface for `CronJob` (the in-process `.classes.ts` payload). Full
+// struct lives in `_jsc_gated` (uses `JsRef`, `EventLoopTimer`, `KeepAlive`).
+// TODO(b2-blocked): bun_jsc::JsRef — replace with _jsc_gated::CronJob once un-gated.
+pub struct CronJob(());
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ClearMode {
+    Cancel,
+    Drain,
+}
+
+// ============================================================================
+// Pure OS-level cron translators (crontab filter, launchd plist, schtasks XML).
+// No JSC dependencies — operate on `&[u8]` and `cron_parser::CronExpression`.
+// ============================================================================
+
+#[cfg(any())] // duplicate now lives inside _jsc_gated; keep gated to avoid double-def
+fn _find_crontab_dup() -> Option<*const core::ffi::c_char> {
+    #[cfg(windows)]
+    {
+        return None;
+    }
+    #[cfg(not(windows))]
+    {
+        // Zig: `const static = struct { var buf: bun.PathBuffer = undefined; };`
+        // TODO(port): static mut PathBuffer is unsound under aliasing; safe here
+        // because callers serialize on the JS thread.
+        static mut BUF: PathBuffer = PathBuffer::ZEROED;
+        let path_env = env_var::PATH.get().unwrap_or(b"/usr/bin:/bin");
+        // SAFETY: single-threaded JS access.
+        let buf = unsafe { &mut BUF };
+        let found = bun_core::which(buf, path_env, b"", b"crontab")?;
+        Some(found.as_ptr().cast())
+    }
+}
+
 /// Get the current user ID portably.
-fn get_uid() -> u32 {
+pub fn get_uid() -> u32 {
     #[cfg(unix)]
     {
-        bun_sys::c::getuid()
+        // SAFETY: getuid(2) is always successful and has no preconditions.
+        unsafe { libc::getuid() as u32 }
     }
     #[cfg(not(unix))]
     {
@@ -1845,6 +1937,7 @@ fn filter_crontab(
     Ok(())
 }
 
+#[cfg(any())] // moved into _jsc_gated above (uses JSGlobalObject/CallFrame)
 fn resolve_path(
     global: &JSGlobalObject,
     frame: &CallFrame,
@@ -2389,15 +2482,32 @@ fn append_calendar_trigger_with_schedule(
     Ok(())
 }
 
-/// If all set bits are evenly spaced, return the step size. Otherwise None.
-fn compute_step_interval<T>(bits: T, _min: u8, max: u8) -> Option<u32>
-where
-    T: Copy
-        + core::ops::BitAnd<Output = T>
-        + core::ops::Sub<Output = T>
-        + PartialEq
-        + bun_core::BitOps, // TODO(port): trait providing count_ones/trailing_zeros/ZERO/ONE across uN
+/// Local stand-in for the planned `bun_core::BitOps` trait — only what
+/// `compute_step_interval` needs, implemented for the two integer widths the
+/// cron bitfields use.
+// TODO(port): replace with `bun_core::BitOps` once that trait lands.
+trait StepBits:
+    Copy + core::ops::BitAnd<Output = Self> + core::ops::Sub<Output = Self> + PartialEq
 {
+    const ZERO: Self;
+    const ONE: Self;
+    fn count_ones(self) -> u32;
+    fn trailing_zeros(self) -> u32;
+}
+macro_rules! impl_step_bits {
+    ($($t:ty),*) => {$(
+        impl StepBits for $t {
+            const ZERO: Self = 0;
+            const ONE: Self = 1;
+            #[inline] fn count_ones(self) -> u32 { <$t>::count_ones(self) }
+            #[inline] fn trailing_zeros(self) -> u32 { <$t>::trailing_zeros(self) }
+        }
+    )*};
+}
+impl_step_bits!(u32, u64);
+
+/// If all set bits are evenly spaced, return the step size. Otherwise None.
+fn compute_step_interval<T: StepBits>(bits: T, _min: u8, max: u8) -> Option<u32> {
     if bits == T::ZERO {
         return None;
     }

@@ -11,19 +11,19 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 
-use bun_aio::{self as aio, Closer};
-use bun_core::Environment;
-use bun_io::{BufferedReader, FileType, ReadState};
-use bun_jsc::{AnyTask, EventLoopHandle, Task, VirtualMachine};
+use bun_io::{BufferedReader, FileType};
 use bun_sys::{self as sys, Fd};
 use bun_uws::AnyResponse;
 
-bun_output::declare_scope!(FileResponseStream, hidden);
+use crate::server::jsc::{AnyTask, VirtualMachine};
 
-pub struct FileResponseStream<'a> {
+pub struct FileResponseStream {
     ref_count: Cell<u32>,
     resp: AnyResponse,
-    vm: &'a VirtualMachine,
+    // TODO(port): LIFETIMES.tsv = STATIC → `&'static VirtualMachine` once
+    // bun_jsc is real. Dropping the `<'a>` removes the lifetime param from
+    // every NewServer/RequestContext that owns one of these.
+    vm: *const VirtualMachine,
     fd: Fd,
     auto_close: bool,
     idle_timeout: u8,
@@ -52,12 +52,17 @@ enum Mode {
     Sendfile,
 }
 
-#[derive(Default)]
 struct Sendfile {
     socket_fd: Fd, // default = bun_sys::Fd::invalid()
     remain: u64,
     offset: u64,
     has_set_on_writable: bool,
+}
+
+impl Default for Sendfile {
+    fn default() -> Self {
+        Self { socket_fd: Fd::INVALID, remain: 0, offset: 0, has_set_on_writable: false }
+    }
 }
 
 bitflags::bitflags! {
@@ -71,11 +76,11 @@ bitflags::bitflags! {
     }
 }
 
-pub struct StartOptions<'a> {
+pub struct StartOptions {
     pub fd: Fd,
     pub auto_close: bool, // default = true
     pub resp: AnyResponse,
-    pub vm: &'a VirtualMachine,
+    pub vm: *const VirtualMachine,
     pub file_type: FileType,
     pub pollable: bool,
     /// Byte offset into the file to begin reading from.
@@ -92,8 +97,23 @@ pub struct StartOptions<'a> {
     pub on_error: fn(*mut c_void, AnyResponse, sys::Error),
 }
 
-impl<'a> FileResponseStream<'a> {
-    pub fn start(opts: StartOptions<'a>) {
+// ─── start() / sendfile / reader callbacks (gated) ───────────────────────────
+// All bodies need: bun_uws AnyResponse on_aborted/on_writable/timeout/end
+// (cycle-5-B), bun_aio::Closer, bun_io::ReadState/BufferedReader callbacks,
+// bun_jsc::Task/EventLoopHandle.
+// TODO(b2-blocked): bun_uws response surface + bun_jsc event-loop.
+#[cfg(any())]
+mod _gated {
+use super::*;
+use bun_aio::{self as aio, Closer};
+use bun_core::Environment;
+use bun_io::ReadState;
+use crate::server::jsc::{EventLoopHandle, Task};
+
+bun_core::declare_scope!(FileResponseStream, hidden);
+
+impl FileResponseStream {
+    pub fn start(opts: StartOptions) {
         let use_sendfile = can_sendfile(opts.resp, opts.file_type, opts.length);
 
         // TODO(port): bun.new — heap-allocate as IntrusiveRc payload; pointer is
@@ -503,9 +523,9 @@ impl<'a> FileResponseStream<'a> {
     }
 }
 
-impl Drop for FileResponseStream<'_> {
+impl Drop for FileResponseStream {
     fn drop(&mut self) {
-        bun_output::scoped_log!(FileResponseStream, "deinit");
+        bun_core::scoped_log!(FileResponseStream, "deinit");
         // `self.reader` (BufferedReader) is torn down by its own `Drop` as a
         // field — closes the poll handle. `bun.destroy(this)` is owned by
         // `bun_ptr::IntrusiveRc` (Box::from_raw in `deref`), not here.
@@ -538,6 +558,7 @@ fn can_sendfile(resp: AnyResponse, file_type: FileType, length: Option<u64>) -> 
         len >= (1 << 20)
     }
 }
+} // mod _gated
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

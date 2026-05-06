@@ -1,7 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::console_object::Formatter;
 
-use crate::expect::Expect;
+use super::Expect;
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
@@ -56,7 +56,7 @@ impl Expect {
             pass = num >= start_value.as_number() && num < end_value.as_number();
         }
 
-        let not = this.flags.not;
+        let not = this.flags.not();
         if not {
             pass = !pass;
         }

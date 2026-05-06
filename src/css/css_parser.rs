@@ -9,13 +9,21 @@ use core::fmt;
 use bun_alloc::Arena as Bump;
 use bun_collections::{ArrayHashMap, BabyList, StaticBitSet};
 use bun_logger::{self as logger, Log};
-use bun_str::strings;
+use bun_string::strings;
 
 // ───────────────────────────── re-exports ─────────────────────────────
+//
+// B-2 un-gate: the Zig css_parser hub re-exports the entire crate surface.
+// Un-gated modules re-export for real; still-gated hubs (rules/, properties/,
+// selectors/, declaration, media_query, context) are shimmed below so the
+// Parser/Tokenizer core compiles standalone. Shims become `pub use` lines as
+// each module un-gates.
 
-pub use bun_js_parser::Index as SrcIndex;
 pub use bun_logger::symbol::List as SymbolList;
 pub use bun_options_types::{ImportKind, ImportRecord};
+/// `bun.ast.Index` — bundler source-file index. CYCLEBREAK: hoisted into
+/// `bun_options_types` to keep css below the parser tier.
+pub use bun_options_types::BundleEnums::Index as SrcIndex;
 
 pub use crate::prefixes;
 pub use crate::dependencies::{self, Dependency};
@@ -23,42 +31,9 @@ pub use crate::css_modules::{
     self, Config as CssModuleConfig, CssModule, CssModuleExports, CssModuleReference,
     CssModuleReferences,
 };
-pub use crate::rules::{
-    self as css_rules, CssRule, CssRuleList, Location, MinifyContext, StyleContext,
-    import::{ImportConditions, ImportRule},
-    layer::{LayerName, LayerStatementRule},
-    namespace::NamespaceRule,
-    style::StyleRule,
-    supports::{SupportsCondition, SupportsRule},
-    tailwind::TailwindAtRule,
-    unknown::UnknownAtRule,
-};
-pub use crate::rules::custom_media::CustomMediaRule as CustomMedia;
-pub use crate::media_query::{self, MediaFeatureType, MediaList};
-pub use crate::values::{
-    self as css_values,
-    color::{ColorFallbackKind, CssColor},
-    ident::{
-        CustomIdent, CustomIdentFns, CustomIdentList, DashedIdent, DashedIdentFns, Ident, IdentFns,
-    },
-    number::{CSSInteger, CSSIntegerFns, CSSNumber, CSSNumberFns},
-    string::{CSSString, CSSStringFns},
-    url::Url,
-};
-pub use crate::declaration::{self, DeclarationBlock, DeclarationHandler, DeclarationList};
-pub use crate::properties::{
-    self as css_properties, Property, PropertyId, PropertyIdTag,
-    css_modules::{Composes, Specifier},
-    custom::{TokenList, TokenListFns},
-};
-pub use crate::selectors::selector::{
-    self,
-    parser::{Component, PseudoClass, PseudoElement, Selector, SelectorList},
-};
 pub use crate::logical::{self, LogicalGroup, PropertyCategory};
-pub use crate::printer::{self as css_printer, ImportInfo, Printer, PrinterOptions, Targets};
-pub use crate::targets::{self, Features};
-pub use crate::context::PropertyHandlerContext;
+pub use crate::printer::{self as css_printer, ImportInfo, Printer, PrinterOptions};
+pub use crate::targets::{self, Features, Targets};
 pub use crate::compat::{self, Feature};
 pub use crate::error::{
     self as errors_, fmt_printer_error, BasicParseError, BasicParseErrorKind, Err, ErrorLocation,
@@ -70,16 +45,153 @@ pub use crate::generics::{
 };
 pub use crate::small_list::SmallList;
 
+pub use crate::values::{
+    self as css_values,
+    color::CssColor,
+    ident::{CustomIdent, CustomIdentList, DashedIdent, Ident},
+};
+
+// ── gated cross-module re-exports ────────────────────────────────────────
+// Real paths once the sibling hubs un-gate; until then `gated_shims` provides
+// data-layout-only stand-ins so the Parser/Tokenizer core type-checks.
+#[cfg(any())]
+pub use crate::rules::{
+    self as css_rules, CssRule, CssRuleList, Location, MinifyContext, StyleContext,
+    import::{ImportConditions, ImportRule},
+    layer::{LayerName, LayerStatementRule},
+    namespace::NamespaceRule,
+    style::StyleRule,
+    supports::{SupportsCondition, SupportsRule},
+    tailwind::TailwindAtRule,
+    unknown::UnknownAtRule,
+};
+#[cfg(any())]
+pub use crate::rules::custom_media::CustomMediaRule as CustomMedia;
+#[cfg(any())]
+pub use crate::media_query::{self, MediaFeatureType, MediaList};
+#[cfg(any())]
+pub use crate::values::{
+    color::ColorFallbackKind,
+    ident::{CustomIdentFns, DashedIdentFns, IdentFns},
+    number::{CSSInteger, CSSIntegerFns, CSSNumber, CSSNumberFns},
+    string::{CSSString, CSSStringFns},
+    url::Url,
+};
+#[cfg(any())]
+pub use crate::declaration::{self, DeclarationBlock, DeclarationHandler, DeclarationList};
+#[cfg(any())]
+pub use crate::properties::{
+    self as css_properties, Property, PropertyId, PropertyIdTag,
+    css_modules::{Composes, Specifier},
+    custom::{TokenList, TokenListFns},
+};
+#[cfg(any())]
+pub use crate::selectors::selector::{
+    self,
+    parser::{Component, PseudoClass, PseudoElement, Selector, SelectorList},
+};
+#[cfg(any())]
+pub use crate::context::PropertyHandlerContext;
+
+#[cfg(not(any()))]
+pub use gated_shims::*;
+
+/// Minimal stand-ins for types that live in still-gated sibling modules
+/// (rules/, properties/, selectors/, declaration, media_query, context,
+/// values::{number,string,url}). Each is the smallest shape the *un-gated*
+/// portion of this file touches; the heavy rule-parser bodies that need the
+/// real layouts stay `#[cfg(any())]`-gated below. When a sibling un-gates,
+/// delete the matching shim and flip the `pub use` above to the real path.
+#[cfg(not(any()))]
+mod gated_shims {
+    use super::*;
+
+    // ── rules/ ────────────────────────────────────────────────────────────
+    pub use crate::Location;
+    /// `rules::layer::LayerName` — `SmallList<[]const u8, 1>` newtype.
+    #[derive(Default)]
+    pub struct LayerName { pub v: SmallList<&'static [u8], 1> }
+    impl LayerName {
+        pub fn deep_clone(&self) -> Self { Self::default() /* unreachable via shim */ }
+    }
+    /// `rules::import::ImportRule` — only the fields `on_import_rule` writes.
+    #[derive(Default)]
+    pub struct ImportRule {
+        pub url: &'static [u8],
+        pub import_record_idx: u32,
+        pub supports: Option<SupportsCondition>,
+    }
+    #[derive(Default, Clone)]
+    pub struct SupportsCondition;
+    /// `rules::StyleContext` — printer's nesting-context cursor.
+    pub struct StyleContext<'a> {
+        pub selectors: &'a SelectorList,
+        pub parent: Option<&'a StyleContext<'a>>,
+    }
+    pub use crate::rules as css_rules;
+
+    // ── media_query ──────────────────────────────────────────────────────
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum MediaFeatureType { Boolean, Number, Length, Integer, Ratio, Resolution, Ident }
+    #[derive(Default, Clone)]
+    pub struct MediaList;
+
+    // ── selectors ────────────────────────────────────────────────────────
+    #[derive(Default, Clone)]
+    pub struct SelectorList;
+
+    // ── properties ───────────────────────────────────────────────────────
+    pub type PropertyId = ();
+    pub type Property = ();
+    /// `properties::custom::TokenList` — `BabyList<TokenOrValue>` newtype.
+    #[derive(Default, Clone)]
+    pub struct TokenList;
+    pub struct TokenListFns;
+    impl TokenListFns {
+        pub fn parse(_input: &mut Parser, _opts: &ParserOptions, _depth: u32) -> CssResult<TokenList> {
+            // TODO(port): real impl in properties/custom.rs (gated).
+            Ok(TokenList::default())
+        }
+    }
+    #[derive(Default, Clone)]
+    pub struct Composes;
+
+    // ── declaration ──────────────────────────────────────────────────────
+    #[derive(Default)]
+    pub struct DeclarationBlock;
+
+    // ── values::{number,string} ──────────────────────────────────────────
+    pub type CSSNumber = f32;
+    pub type CSSInteger = i32;
+    pub type CSSString = &'static [u8];
+
+    // ── ast crate-tier shims (CYCLEBREAK) ────────────────────────────────
+    /// `bun.ast.Ref` / `bun.ast.MangledProps` were re-exported via
+    /// `bun_js_parser`; css sits below that tier. The real types were
+    /// MOVE_DOWN'd into `bun_logger` (see logger/lib.rs:216).
+    pub mod ast {
+        pub use bun_logger::{Ref, RefTag};
+        pub type MangledProps = bun_collections::ArrayHashMap<Ref, *const [u8]>;
+        /// `bun.fs.Path` — `ImportRecord.path` field type. CYCLEBREAK: the
+        /// real `bun.fs.Path` was MOVE_DOWN'd into `bun_paths::fs`.
+        pub mod fs {
+            pub use bun_paths::fs::Path;
+            #[inline]
+            pub fn path_init(text: &'static [u8]) -> Path<'static> {
+                Path::init(text)
+            }
+        }
+    }
+}
+
 // `Maybe` in Zig is `bun.jsc.Node.Maybe` — a tagged result. In Rust we use
 // `core::result::Result` directly; callers `.ok()`/`.err()` instead of
 // `.asValue()`/`.asErr()`.
 pub use core::result::Result as Maybe;
 
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum PrintErr {
-    #[error("CSS print error")]
-    CSSPrintError,
-}
+// PrintErr is hoisted at crate root (single-variant `to_css` error signal);
+// re-export so `css_parser::PrintErr` resolves for sibling modules.
+pub use crate::PrintErr;
 
 #[cold]
 #[inline(never)]
@@ -100,30 +212,12 @@ pub mod todo_stuff {
 }
 
 // ───────────────────────────── VendorPrefix ─────────────────────────────
+// Data layout hoisted at crate root (lib.rs) so leaf modules (targets,
+// prefixes) compile without the parser hub. Behavior impls live here.
 
-bitflags::bitflags! {
-    #[derive(Clone, Copy, PartialEq, Eq, Default)]
-    pub struct VendorPrefix: u8 {
-        /// No vendor prefixes. 0b00000001
-        const NONE   = 0b0000_0001;
-        /// The `-webkit` vendor prefix. 0b00000010
-        const WEBKIT = 0b0000_0010;
-        /// The `-moz` vendor prefix. 0b00000100
-        const MOZ    = 0b0000_0100;
-        /// The `-ms` vendor prefix. 0b00001000
-        const MS     = 0b0000_1000;
-        /// The `-o` vendor prefix. 0b00010000
-        const O      = 0b0001_0000;
-    }
-}
+pub use crate::VendorPrefix;
 
 impl VendorPrefix {
-    pub const EMPTY: VendorPrefix = VendorPrefix::empty();
-    pub const ALL_PREFIXES: VendorPrefix = VendorPrefix::all();
-
-    /// Fields listed here so we can iterate them in the order we want
-    pub const FIELDS: &'static [&'static str] = &["webkit", "moz", "ms", "o", "none"];
-
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self.bits() {
             x if x == VendorPrefix::WEBKIT.bits() => dest.write_str("-webkit-"),
@@ -134,58 +228,18 @@ impl VendorPrefix {
         }
     }
 
-    // TODO(port): `fromName` used Zig comptime field set; callers should use
-    // the bitflag consts directly (e.g. `VendorPrefix::WEBKIT`).
-    #[inline]
-    pub fn from_name(name: &str) -> VendorPrefix {
-        match name {
-            "none" => VendorPrefix::NONE,
-            "webkit" => VendorPrefix::WEBKIT,
-            "moz" => VendorPrefix::MOZ,
-            "ms" => VendorPrefix::MS,
-            "o" => VendorPrefix::O,
-            _ => unreachable!(),
-        }
-    }
-
-    /// Returns VendorPrefix::None if empty.
-    #[inline]
-    pub fn or_none(self) -> VendorPrefix {
-        self.or_(VendorPrefix::NONE)
-    }
-
-    /// **WARNING**: NOT THE SAME as bitwise-or!!
-    #[inline]
-    pub fn or_(self, other: VendorPrefix) -> VendorPrefix {
-        if self.is_empty() { other } else { self }
-    }
-
-    pub fn difference_(left: Self, right: Self) -> Self {
-        // Zig used arithmetic subtraction on bits; preserve that.
-        Self::from_bits_retain(left.bits().wrapping_sub(right.bits()))
-    }
-
-    pub fn bitwise_and(a: Self, b: Self) -> Self {
-        a & b
-    }
-
-    pub fn as_bits(self) -> u8 {
-        self.bits()
-    }
 }
 
 // ───────────────────────────── SourceLocation ─────────────────────────────
+// Data layout hoisted at crate root (lib.rs); error.rs / dependencies.rs
+// reference `crate::SourceLocation` directly. Behavior impls live here.
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SourceLocation {
-    pub line: u32,
-    pub column: u32,
-}
+pub use crate::SourceLocation;
 
 impl SourceLocation {
-    pub fn to_logger_location(&self, file: &[u8]) -> logger::Location {
+    pub fn to_logger_location(&self, file: &'static [u8]) -> logger::Location {
         logger::Location {
-            file: file.into(),
+            file,
             line: i32::try_from(self.line).unwrap(),
             column: i32::try_from(self.column).unwrap(),
             ..Default::default()
@@ -195,7 +249,7 @@ impl SourceLocation {
     /// Create a new BasicParseError at this location for an unexpected token
     pub fn new_basic_unexpected_token_error(self, token: Token) -> ParseError<ParserError> {
         BasicParseError {
-            kind: BasicParseErrorKind::UnexpectedToken(token),
+            kind: BasicParseErrorKind::unexpected_token(token),
             location: self,
         }
         .into_default_parse_error()
@@ -204,7 +258,7 @@ impl SourceLocation {
     /// Create a new ParseError at this location for an unexpected token
     pub fn new_unexpected_token_error(self, token: Token) -> ParseError<ParserError> {
         ParseError {
-            kind: errors_::ParseErrorKind::Basic(BasicParseErrorKind::UnexpectedToken(token)),
+            kind: errors_::ParserErrorKind::basic(BasicParseErrorKind::unexpected_token(token)),
             location: self,
         }
     }
@@ -214,7 +268,7 @@ impl SourceLocation {
     // becomes a trait `IntoParserError` implemented by each. Phase B wires it.
     pub fn new_custom_error(self, err: impl IntoParserError) -> ParseError<ParserError> {
         ParseError {
-            kind: errors_::ParseErrorKind::Custom(err.into_parser_error()),
+            kind: errors_::ParserErrorKind::custom(err.into_parser_error()),
             location: self,
         }
     }
@@ -225,7 +279,10 @@ impl SourceLocation {
 pub trait IntoParserError {
     fn into_parser_error(self) -> ParserError;
 }
-// TODO(port): impl IntoParserError for ParserError / BasicParseError /
+impl IntoParserError for ParserError {
+    #[inline] fn into_parser_error(self) -> ParserError { self }
+}
+// TODO(port): impl IntoParserError for BasicParseError /
 // selector::parser::SelectorParseErrorKind in Phase B.
 
 pub type Error = Err<ParserError>;
@@ -286,14 +343,14 @@ pub trait DefineListShorthand {}
 
 /// Rect shorthand: `top right bottom left` parsed via `Rect<V>`.
 /// TODO(port): becomes `#[derive(RectShorthand)]` over a 4-field struct.
-pub trait DefineRectShorthand<V: generic::Parse + generic::ToCss>: Sized {
+pub trait DefineRectShorthand<V>: Sized {
     fn parse(input: &mut Parser) -> CssResult<Self>;
     fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr>;
 }
 
 /// Size shorthand: 2-field struct parsed via `Size2D<V>`.
 /// TODO(port): becomes `#[derive(SizeShorthand)]`.
-pub trait DefineSizeShorthand<V: generic::Parse + generic::ToCss>: Sized {
+pub trait DefineSizeShorthand<V>: Sized {
     fn parse(input: &mut Parser) -> CssResult<Self>;
     fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr>;
 }
@@ -336,11 +393,12 @@ pub mod enum_property_util {
         if let Some(x) = T::from_ascii_case_insensitive(ident) {
             return Ok(x);
         }
-        Err(location.new_unexpected_token_error(Token::Ident(ident)))
+        // SAFETY: ident is a sub-slice of `input.tokenizer.src`; see `src_str`.
+        Err(location.new_unexpected_token_error(Token::Ident(unsafe { src_str(ident) })))
     }
 
     pub fn to_css<T: Into<&'static str> + Copy>(this: &T, dest: &mut Printer) -> Result<(), PrintErr> {
-        dest.write_str(as_str(this))
+        dest.write_str(as_str(this).as_bytes())
     }
 }
 
@@ -360,7 +418,8 @@ pub trait EnumProperty: Sized + Copy + Into<&'static str> {
     }
 
     fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        dest.write_str((*self).into())
+        let s: &'static str = (*self).into();
+        dest.write_str(s.as_bytes())
     }
 
     #[inline]
@@ -368,7 +427,7 @@ pub trait EnumProperty: Sized + Copy + Into<&'static str> {
         *self
     }
 
-    fn hash(&self, hasher: &mut bun_wyhash::Wyhash)
+    fn hash(&self, hasher: &mut bun_wyhash::Wyhash11)
     where
         Self: Into<u32>,
     {
@@ -389,15 +448,16 @@ pub trait DeriveValueType {
 
 #[cold]
 fn consume_until_end_of_block(block_type: BlockType, tokenizer: &mut Tokenizer) {
-    let mut stack: SmallList<BlockType, 16> = SmallList::default();
+    // PERF(port): was SmallList<BlockType, 16> + appendAssumeCapacity — Vec is
+    // fine for the cold path; profile in Phase B.
+    let mut stack: Vec<BlockType> = Vec::with_capacity(16);
     stack.push(block_type);
-    // PERF(port): was appendAssumeCapacity
 
     while let Ok(tok) = tokenizer.next() {
         if let Some(b) = BlockType::closing(&tok) {
-            if stack.last_unchecked() == b {
+            if *stack.last().unwrap() == b {
                 let _ = stack.pop();
-                if stack.len() == 0 {
+                if stack.is_empty() {
                     return;
                 }
             }
@@ -454,6 +514,7 @@ fn parse_at_rule<P: AtRuleParser>(
     }
 }
 
+#[cfg(any())] // blocked_on: rules/ (AtRulePrelude payload types)
 fn parse_custom_at_rule_prelude<T: CustomAtRuleParser>(
     name: &[u8],
     input: &mut Parser,
@@ -465,7 +526,7 @@ fn parse_custom_at_rule_prelude<T: CustomAtRuleParser>(
         Err(e) => {
             if matches!(
                 e.kind,
-                errors_::ParseErrorKind::Basic(BasicParseErrorKind::AtRuleInvalid(_))
+                errors_::ParserErrorKind::basic(BasicParseErrorKind::at_rule_invalid(_))
             ) {
                 // do nothing
             } else {
@@ -474,12 +535,13 @@ fn parse_custom_at_rule_prelude<T: CustomAtRuleParser>(
         }
     }
 
-    options.warn(input.new_error(BasicParseErrorKind::AtRuleInvalid(name)));
+    options.warn(input.new_error(BasicParseErrorKind::at_rule_invalid(name)));
     input.skip_whitespace();
     let tokens = TokenListFns::parse(input, options, 0)?;
     Ok(AtRulePrelude::Unknown { name, tokens })
 }
 
+#[cfg(any())] // blocked_on: rules/ (CssRule)
 fn parse_custom_at_rule_without_block<T: CustomAtRuleParser>(
     prelude: T::Prelude,
     start: &ParserState,
@@ -506,7 +568,7 @@ fn parse_custom_at_rule_body<T: CustomAtRuleParser>(
         Err(_e) => {
             // match &err.kind {
             //   ParseErrorKind::Basic(kind) => ParseError { ... },
-            //   _ => input.new_error(BasicParseErrorKind::AtRuleBodyInvalid),
+            //   _ => input.new_error(BasicParseErrorKind::at_rule_body_invalid),
             // }
             todo("This part here");
         }
@@ -537,25 +599,29 @@ fn parse_until_before<T, C>(
     parse_fn: impl FnOnce(C, &mut Parser) -> CssResult<T>,
 ) -> CssResult<T> {
     let delimiters = parser.stop_before | delimiters_;
+    // PORT NOTE: reshaped for borrowck — Zig held `parser.input` aliased
+    // between the outer Parser and a stack-local "delimited" Parser. In Rust
+    // `&'a mut ParserInput<'a>` is invariant and cannot be reborrowed into a
+    // second `Parser<'a>` while the first lives. We instead temporarily swap
+    // `stop_before`/`at_start_of` on the *same* Parser, run the inner parse,
+    // and restore. The inner `parse_entirely` call sees identical state.
+    let saved_stop_before = parser.stop_before;
+    let saved_at_start_of = parser.at_start_of.take();
+    parser.stop_before = delimiters;
     let result = {
-        let mut delimited_parser = Parser {
-            input: parser.input,
-            at_start_of: parser.at_start_of.take(),
-            stop_before: delimiters,
-            import_records: parser.import_records,
-            flags: parser.flags,
-            extra: parser.extra,
-        };
-        // PORT NOTE: reshaped for borrowck — Zig held `parser.input` aliased.
-        let result = delimited_parser.parse_entirely(closure, parse_fn);
+        let result = parser.parse_entirely(closure, parse_fn);
         if matches!(error_behavior, ParseUntilErrorBehavior::Stop) && result.is_err() {
+            parser.stop_before = saved_stop_before;
+            parser.at_start_of = saved_at_start_of;
             return result;
         }
-        if let Some(block_type) = delimited_parser.at_start_of {
-            consume_until_end_of_block(block_type, &mut delimited_parser.input.tokenizer);
+        if let Some(block_type) = parser.at_start_of.take() {
+            consume_until_end_of_block(block_type, &mut parser.input.tokenizer);
         }
         result
     };
+    parser.stop_before = saved_stop_before;
+    parser.at_start_of = saved_at_start_of;
 
     // FIXME: have a special-purpose tokenizer method for this that does less work.
     loop {
@@ -616,19 +682,17 @@ fn parse_nested_block<T>(
         BlockType::SquareBracket => Delimiters::CLOSE_SQUARE_BRACKET,
         BlockType::Parenthesis => Delimiters::CLOSE_PARENTHESIS,
     };
-    let mut nested_parser = Parser {
-        input: parser.input,
-        at_start_of: None,
-        stop_before: closing_delimiter,
-        import_records: parser.import_records,
-        flags: parser.flags,
-        extra: parser.extra,
-    };
     // PORT NOTE: reshaped for borrowck — same aliasing as parse_until_before.
-    let result = nested_parser.parse_entirely((), |(), p| parsefn(p));
-    if let Some(block_type2) = nested_parser.at_start_of {
-        consume_until_end_of_block(block_type2, &mut nested_parser.input.tokenizer);
+    // Swap stop_before/at_start_of in place rather than constructing a second
+    // Parser over the invariant `&'a mut ParserInput<'a>`.
+    let saved_stop_before = parser.stop_before;
+    parser.stop_before = closing_delimiter;
+    parser.at_start_of = None;
+    let result = parser.parse_entirely((), |(), p| parsefn(p));
+    if let Some(block_type2) = parser.at_start_of.take() {
+        consume_until_end_of_block(block_type2, &mut parser.input.tokenizer);
     }
+    parser.stop_before = saved_stop_before;
     consume_until_end_of_block(block_type, &mut parser.input.tokenizer);
     result
 }
@@ -665,7 +729,7 @@ pub struct DefaultAtRule;
 
 impl DefaultAtRule {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        dest.new_error(PrinterErrorKind::FmtError, None)
+        dest.new_error(PrinterErrorKind::fmt_error, None)
     }
     pub fn deep_clone(&self) -> Self {
         Self
@@ -743,7 +807,7 @@ impl CustomAtRuleParser for DefaultAtRuleParser {
         input: &mut Parser,
         _: &ParserOptions,
     ) -> CssResult<()> {
-        Err(input.new_error(BasicParseErrorKind::AtRuleInvalid(name)))
+        Err(input.new_error(BasicParseErrorKind::at_rule_invalid(name)))
     }
 
     fn parse_block(
@@ -754,7 +818,7 @@ impl CustomAtRuleParser for DefaultAtRuleParser {
         _: &ParserOptions,
         _: bool,
     ) -> CssResult<DefaultAtRule> {
-        Err(input.new_error(BasicParseErrorKind::AtRuleBodyInvalid))
+        Err(input.new_error(BasicParseErrorKind::at_rule_body_invalid))
     }
 
     fn rule_without_block(
@@ -792,6 +856,7 @@ pub struct BundlerAtRuleParser<'a> {
     pub enclosing_layer: LayerName,
 }
 
+#[cfg(any())] // blocked_on: BabyList push/len/reserve API + ImportRecord Default
 impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
     // TODO(port): when ENABLE_TAILWIND_PARSING, Prelude = enum { Tailwind(TailwindAtRule) }.
     type Prelude = ();
@@ -804,7 +869,7 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
         _: &ParserOptions,
     ) -> CssResult<Self::Prelude> {
         // TODO(port): tailwind branch (gated on ENABLE_TAILWIND_PARSING).
-        Err(input.new_error(BasicParseErrorKind::AtRuleInvalid(name)))
+        Err(input.new_error(BasicParseErrorKind::at_rule_invalid(name)))
     }
 
     fn parse_block(
@@ -815,7 +880,7 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
         _: &ParserOptions,
         _: bool,
     ) -> CssResult<Self::AtRule> {
-        Err(input.new_error(BasicParseErrorKind::AtRuleBodyInvalid))
+        Err(input.new_error(BasicParseErrorKind::at_rule_body_invalid))
     }
 
     fn rule_without_block(
@@ -833,7 +898,7 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
         let import_record_index = this.import_records.len();
         import_rule.import_record_idx = import_record_index;
         this.import_records.push(ImportRecord {
-            path: bun_fs::Path::init(import_rule.url),
+            path: ast::fs::path_init(import_rule.url),
             kind: if import_rule.supports.is_some() { ImportKind::AtConditional } else { ImportKind::At },
             range: logger::Range {
                 loc: logger::Loc { start: i32::try_from(start_position).unwrap() },
@@ -888,6 +953,15 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
 }
 
 // ───────────────────────────── AtRulePrelude ─────────────────────────────
+//
+// blocked_on: rules/ + selectors/ + media_query — AtRulePrelude variants and
+// the Top/Nested rule-parser impls reference concrete types from those hubs
+// (KeyframesName, PageSelector, ContainerCondition, CssRule, CssRuleList,
+// SelectorList, MediaList, DeclarationBlock). Wrapped in a gated module so
+// the Parser/Tokenizer core below compiles standalone; un-wrap once those
+// hubs un-gate.
+#[cfg(any())]
+mod rule_parsers { use super::*;
 
 pub enum AtRulePrelude<T> {
     FontFace,
@@ -1462,7 +1536,7 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                     Err(e) => {
                         if matches!(
                             e.kind,
-                            errors_::ParseErrorKind::Basic(BasicParseErrorKind::EndOfInput)
+                            errors_::ParserErrorKind::basic(BasicParseErrorKind::end_of_input)
                         ) {
                             SmallList::default()
                         } else {
@@ -1536,7 +1610,7 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
         };
 
         if this.is_in_style_rule && !result.allowed_in_style_rule() {
-            return Err(input.new_error(BasicParseErrorKind::AtRuleInvalid(name)));
+            return Err(input.new_error(BasicParseErrorKind::at_rule_invalid(name)));
         }
 
         Ok(result)
@@ -1666,7 +1740,7 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                 } else if layer.len() == 1 {
                     Some(layer.at(0).clone())
                 } else {
-                    return Err(input.new_error(BasicParseErrorKind::AtRuleBodyInvalid));
+                    return Err(input.new_error(BasicParseErrorKind::at_rule_body_invalid));
                 };
 
                 T::on_layer_rule(this.at_rule_parser, &layer);
@@ -2009,6 +2083,10 @@ where
     }
 }
 
+} // mod rule_parsers
+#[cfg(any())]
+pub use rule_parsers::*;
+
 /// A result returned from `to_css`, including the serialized CSS and other
 /// metadata depending on the input options.
 pub struct ToCssResult {
@@ -2016,18 +2094,20 @@ pub struct ToCssResult {
     pub code: Vec<u8>,
     /// A map of CSS module exports, if the `css_modules` option was enabled
     /// during parsing.
-    pub exports: Option<CssModuleExports>,
+    // TODO(port): arena lifetime — CssModuleExports/References borrow the
+    // parser arena. `'static` placeholder until `<'bump>` threads.
+    pub exports: Option<CssModuleExports<'static>>,
     /// A map of CSS module references, if the `css_modules` config had
     /// `dashed_idents` enabled.
-    pub references: Option<CssModuleReferences>,
+    pub references: Option<CssModuleReferences<'static>>,
     /// A list of dependencies (e.g. `@import` or `url()`) found in the style
     /// sheet, if the `analyze_dependencies` option is enabled.
     pub dependencies: Option<Vec<Dependency>>,
 }
 
 pub struct ToCssResultInternal {
-    pub exports: Option<CssModuleExports>,
-    pub references: Option<CssModuleReferences>,
+    pub exports: Option<CssModuleExports<'static>>,
+    pub references: Option<CssModuleReferences<'static>>,
     pub dependencies: Option<Vec<Dependency>>,
 }
 
@@ -2045,17 +2125,17 @@ impl Default for MinifyOptions {
     }
 }
 
-pub type BundlerStyleSheet = StyleSheet<BundlerAtRule>;
-pub type BundlerCssRuleList = CssRuleList<BundlerAtRule>;
-pub type BundlerCssRule = CssRule<BundlerAtRule>;
-pub type BundlerLayerBlockRule = css_rules::layer::LayerBlockRule<BundlerAtRule>;
-pub type BundlerSupportsRule = css_rules::supports::SupportsRule<BundlerAtRule>;
-pub type BundlerMediaRule = css_rules::media::MediaRule<BundlerAtRule>;
-pub type BundlerPrintResult = css_printer::PrintResult<BundlerAtRule>;
+#[cfg(any())] pub type BundlerStyleSheet = StyleSheet<BundlerAtRule>;
+#[cfg(any())] pub type BundlerCssRuleList = CssRuleList<BundlerAtRule>;
+#[cfg(any())] pub type BundlerCssRule = CssRule<BundlerAtRule>;
+#[cfg(any())] pub type BundlerLayerBlockRule = css_rules::layer::LayerBlockRule<BundlerAtRule>;
+#[cfg(any())] pub type BundlerSupportsRule = css_rules::supports::SupportsRule<BundlerAtRule>;
+#[cfg(any())] pub type BundlerMediaRule = css_rules::media::MediaRule<BundlerAtRule>;
+#[cfg(any())] pub type BundlerPrintResult = css_printer::PrintResult<BundlerAtRule>;
 
 pub struct BundlerTailwindState {
     pub source: Box<[u8]>,
-    pub index: bun_js_parser::Index,
+    pub index: SrcIndex,
     pub output_from_tailwind: Option<Box<[u8]>>,
 }
 
@@ -2124,12 +2204,10 @@ impl CssRef {
         source_index
     }
 
-    pub fn to_real_ref(self, source_index: u32) -> bun_js_parser::Ref {
-        bun_js_parser::Ref {
-            inner_index: self.inner_index(),
-            source_index: u32::try_from(source_index).unwrap(),
-            tag: bun_js_parser::RefTag::Symbol,
-        }
+    pub fn to_real_ref(self, source_index: u32) -> bun_logger::Ref {
+        // bun_logger::Ref packs (inner_index, source_index, is_slice) — the
+        // Symbol tag is implied by `is_source_contents_slice = false`.
+        bun_logger::Ref::init(self.inner_index(), source_index, false)
     }
 }
 
@@ -2144,28 +2222,37 @@ pub struct LocalEntry {
 /// until print time.
 pub type LocalScope = ArrayHashMap<Box<[u8]>, LocalEntry>;
 /// Local symbol renaming results go here
-pub type LocalsResultsMap = bun_js_parser::MangledProps;
+pub type LocalsResultsMap = ast::MangledProps;
 /// Using `compose` and having conflicting properties is undefined behavior
 /// according to the css modules spec. We should warn the user about this.
-pub type LocalPropertyUsage = ArrayHashMap<bun_js_parser::Ref, PropertyUsage>;
-pub type ComposesMap = ArrayHashMap<bun_js_parser::Ref, ComposesEntry>;
+pub type LocalPropertyUsage = ArrayHashMap<bun_logger::Ref, PropertyUsage>;
+pub type ComposesMap = ArrayHashMap<bun_logger::Ref, ComposesEntry>;
 
 #[derive(Default)]
 pub struct ComposesEntry {
     pub composes: BabyList<Composes>,
 }
 
-#[derive(Default)]
 pub struct PropertyUsage {
     pub bitset: PropertyBitset,
     pub custom_properties: Box<[&'static [u8]]>, // TODO(port): lifetime — arena slices
     pub range: logger::Range,
 }
 
+impl Default for PropertyUsage {
+    fn default() -> Self {
+        Self {
+            bitset: PropertyBitset::init_empty(),
+            custom_properties: Box::default(),
+            range: logger::Range::default(),
+        }
+    }
+}
+
 impl PropertyUsage {
     #[inline]
-    pub fn fill(&mut self, used: &PropertyBitset, custom_properties: &[&[u8]]) {
-        self.bitset |= *used;
+    pub fn fill(&mut self, used: &PropertyBitset, custom_properties: &[&'static [u8]]) {
+        self.bitset.set_union(*used);
         // TODO(port): lifetime — Zig stored borrowed slice; box for now.
         self.custom_properties = custom_properties.to_vec().into_boxed_slice();
     }
@@ -2175,6 +2262,7 @@ impl PropertyUsage {
 // Phase B computes the variant count via `strum::EnumCount`.
 pub type PropertyBitset = StaticBitSet<{ 1024 }>;
 
+#[cfg(any())] // blocked_on: properties/ (Property variants, PropertyIdTag)
 pub fn fill_property_bit_set(
     bitset: &mut PropertyBitset,
     block: &DeclarationBlock,
@@ -2209,6 +2297,13 @@ pub fn fill_property_bit_set(
 }
 
 // ───────────────────────────── StyleSheet ─────────────────────────────
+//
+// blocked_on: rules/ (CssRuleList, CssRule, MinifyContext) + declaration
+// (DeclarationBlock impl) + context (PropertyHandlerContext). The StyleSheet
+// surface (parse/minify/to_css) is the orchestration layer over the gated
+// rule-parser hub above; un-gate together.
+#[cfg(any())]
+mod stylesheet_impl { use super::*;
 
 pub struct StyleSheet<AtRule> {
     /// A list of top-level rules within the style sheet.
@@ -2694,7 +2789,26 @@ impl StyleAttribute {
     }
 }
 
+} // mod stylesheet_impl
+#[cfg(any())]
+pub use stylesheet_impl::{StyleSheet, StyleAttribute};
+
+/// B-2 surface stub: real layout in `stylesheet_impl` (gated). Generic over
+/// the custom-at-rule type so `StyleSheet<DefaultAtRule>` / `BundlerStyleSheet`
+/// type-paths resolve for cross-crate dependents.
+#[cfg(not(any()))]
+#[non_exhaustive]
+pub struct StyleSheet<AtRule> { _at: core::marker::PhantomData<AtRule> }
+#[cfg(not(any()))]
+#[non_exhaustive]
+pub struct StyleAttribute { _p: () }
+
 // ───────────────────────────── RuleBodyParser ─────────────────────────────
+//
+// blocked_on: rule_parsers (RuleBodyItemParser/DeclarationParser traits live
+// inside the gated NestedRuleParser block above).
+#[cfg(any())]
+mod rule_body_parser { use super::*;
 
 pub struct RuleBodyParser<'a, P: RuleBodyItemParser> {
     pub input: &'a mut Parser<'a>,
@@ -2794,6 +2908,10 @@ where
     }
 }
 
+} // mod rule_body_parser
+#[cfg(any())]
+pub use rule_body_parser::RuleBodyParser;
+
 // ───────────────────────────── ParserOptions ─────────────────────────────
 
 pub struct ParserOptions<'a> {
@@ -2841,6 +2959,7 @@ impl<'a> ParserOptions<'a> {
         }
     }
 
+    #[cfg(any())] // blocked_on: bun_logger::Log API shape (notes ownership)
     pub fn warn_fmt_with_notes(
         &self,
         args: fmt::Arguments<'_>,
@@ -2857,6 +2976,7 @@ impl<'a> ParserOptions<'a> {
         }
     }
 
+    #[cfg(any())] // blocked_on: bun_logger::Log API shape (range note)
     pub fn warn_fmt_with_note(
         &self,
         args: fmt::Arguments<'_>,
@@ -2939,12 +3059,13 @@ pub struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
+    #[cfg(any())] // blocked_on: ArrayHashMap::entry API + SymbolList push
     pub fn add_symbol_for_name(
         &mut self,
         name: &[u8],
         tag: CssRefTag,
         loc: logger::Loc,
-    ) -> bun_js_parser::Ref {
+    ) -> bun_logger::Ref {
         // don't call this if css modules is not enabled!
         debug_assert!(self.flags.css_modules());
         debug_assert!(self.extra.is_some());
@@ -2977,6 +3098,7 @@ impl<'a> Parser<'a> {
     }
 
     // TODO: dedupe import records??
+    #[cfg(any())] // blocked_on: BabyList push/len API + ImportRecord Default
     pub fn add_import_record(
         &mut self,
         url: &[u8],
@@ -2986,7 +3108,7 @@ impl<'a> Parser<'a> {
         if let Some(import_records) = &mut self.import_records {
             let idx = import_records.len();
             import_records.push(ImportRecord {
-                path: bun_fs::Path::init(url),
+                path: ast::fs::path_init(url),
                 kind,
                 range: logger::Range {
                     loc: logger::Loc { start: i32::try_from(start_position).unwrap() },
@@ -3037,17 +3159,17 @@ impl<'a> Parser<'a> {
 
     pub fn new_error(&self, kind: BasicParseErrorKind) -> ParseError<ParserError> {
         ParseError {
-            kind: errors_::ParseErrorKind::Basic(kind),
+            kind: errors_::ParserErrorKind::basic(kind),
             location: self.current_source_location(),
         }
     }
 
     pub fn new_unexpected_token_error(&self, token: Token) -> ParseError<ParserError> {
-        self.new_error(BasicParseErrorKind::UnexpectedToken(token))
+        self.new_error(BasicParseErrorKind::unexpected_token(token))
     }
 
     pub fn new_basic_unexpected_token_error(&self, token: Token) -> ParseError<ParserError> {
-        self.new_basic_error(BasicParseErrorKind::UnexpectedToken(token))
+        self.new_basic_error(BasicParseErrorKind::unexpected_token(token))
             .into_default_parse_error()
     }
 
@@ -3291,7 +3413,7 @@ impl<'a> Parser<'a> {
         let start_location = self.current_source_location();
         let tok = self.next()?;
         if let Token::Ident(i) = tok {
-            if strings::eql_case_insensitive_ascii_check_length(name, i) {
+            if strings::eql_case_insensitive_asciii_check_length(name, i) {
                 return Ok(());
             }
         }
@@ -3313,7 +3435,7 @@ impl<'a> Parser<'a> {
         let start_location = self.current_source_location();
         let tok = self.next()?;
         if let Token::Function(fn_name) = tok {
-            if strings::eql_case_insensitive_ascii_check_length(name, fn_name) {
+            if strings::eql_case_insensitive_asciii_check_length(name, fn_name) {
                 return Ok(());
             }
         }
@@ -3348,8 +3470,11 @@ impl<'a> Parser<'a> {
         match tok {
             Token::UnquotedUrl(value) => return Ok(*value),
             Token::Function(name) => {
-                if strings::eql_case_insensitive_ascii_check_length(b"url", name) {
-                    return self.parse_nested_block(|parser| parser.expect_string());
+                if strings::eql_case_insensitive_asciii_check_length(b"url", name) {
+                    return self.parse_nested_block(|parser| parser.expect_string().map(|s| {
+                        // SAFETY: see `src_str` — slice borrows the same input.
+                        unsafe { src_str(s) }
+                    }));
                 }
             }
             _ => {}
@@ -3367,8 +3492,11 @@ impl<'a> Parser<'a> {
             Token::UnquotedUrl(value) => return Ok(*value),
             Token::QuotedString(value) => return Ok(*value),
             Token::Function(name) => {
-                if strings::eql_case_insensitive_ascii_check_length(b"url", name) {
-                    return self.parse_nested_block(|parser| parser.expect_string());
+                if strings::eql_case_insensitive_asciii_check_length(b"url", name) {
+                    return self.parse_nested_block(|parser| parser.expect_string().map(|s| {
+                        // SAFETY: see `src_str` — slice borrows the same input.
+                        unsafe { src_str(s) }
+                    }));
                 }
             }
             _ => {}
@@ -3440,11 +3568,11 @@ impl<'a> Parser<'a> {
             Err(e) => {
                 if matches!(
                     e.kind,
-                    errors_::ParseErrorKind::Basic(BasicParseErrorKind::EndOfInput)
+                    errors_::ParserErrorKind::basic(BasicParseErrorKind::end_of_input)
                 ) {
                     Ok(())
                 } else {
-                    unreachable!("Unexpected error encountered: {:?}", e.kind);
+                    unreachable!("Unexpected error encountered: {}", e.kind);
                 }
             }
         };
@@ -3500,7 +3628,8 @@ impl<'a> Parser<'a> {
         self.input.tokenizer.reset(state_);
         self.at_start_of = state_.at_start_of;
         if let Some(import_records) = &mut self.import_records {
-            import_records.set_len(state_.import_record_count);
+            // Roll back any speculatively-added @import/url() records.
+            import_records.shrink_retaining_capacity(state_.import_record_count as usize);
         }
     }
 
@@ -3513,7 +3642,7 @@ impl<'a> Parser<'a> {
             import_record_count: self
                 .import_records
                 .as_ref()
-                .map(|ir| ir.len())
+                .map(|ir| ir.len)
                 .unwrap_or(0),
         }
     }
@@ -3526,7 +3655,7 @@ impl<'a> Parser<'a> {
 
         let byte = self.input.tokenizer.next_byte();
         if self.stop_before.contains(Delimiters::from_byte(byte)) {
-            return Err(self.new_error(BasicParseErrorKind::EndOfInput));
+            return Err(self.new_error(BasicParseErrorKind::end_of_input));
         }
 
         let token_start_position = self.input.tokenizer.get_position();
@@ -3547,7 +3676,7 @@ impl<'a> Parser<'a> {
         } else {
             let new_token = match self.input.tokenizer.next() {
                 Ok(v) => v,
-                Err(()) => return Err(self.new_error(BasicParseErrorKind::EndOfInput)),
+                Err(()) => return Err(self.new_error(BasicParseErrorKind::end_of_input)),
             };
             self.input.cached_token = Some(CachedToken {
                 token: new_token,
@@ -3570,7 +3699,7 @@ impl<'a> Parser<'a> {
             Ok(t) => t.clone(),
             Err(e) => return e,
         };
-        self.new_error(BasicParseErrorKind::UnexpectedToken(token))
+        self.new_error(BasicParseErrorKind::unexpected_token(token))
     }
 }
 
@@ -3695,9 +3824,9 @@ pub mod nth {
             Token::Dimension(d) => {
                 if let Some(a) = d.num.int_value {
                     let unit = d.unit;
-                    if strings::eql_case_insensitive_ascii_check_length(unit, b"n") {
+                    if strings::eql_case_insensitive_asciii_check_length(unit, b"n") {
                         return parse_b(input, a);
-                    } else if strings::eql_case_insensitive_ascii_check_length(unit, b"n-") {
+                    } else if strings::eql_case_insensitive_asciii_check_length(unit, b"n-") {
                         return parse_signless_b(input, a, -1);
                     } else {
                         if let Ok(b) = parse_n_dash_digits(unit) {
@@ -3738,9 +3867,9 @@ pub mod nth {
                 let next_tok = input.next_including_whitespace()?;
                 if let Token::Ident(value) = next_tok {
                     let value = *value;
-                    if strings::eql_case_insensitive_ascii_check_length(value, b"n") {
+                    if strings::eql_case_insensitive_asciii_check_length(value, b"n") {
                         return parse_b(input, 1);
-                    } else if strings::eql_case_insensitive_ascii_check_length(value, b"-n") {
+                    } else if strings::eql_case_insensitive_asciii_check_length(value, b"-n") {
                         return parse_signless_b(input, 1, -1);
                     } else {
                         if let Ok(b) = parse_n_dash_digits(value) {
@@ -3802,7 +3931,7 @@ pub mod nth {
     fn parse_n_dash_digits(str: &[u8]) -> Maybe<i32, ()> {
         let bytes = str;
         if bytes.len() >= 3
-            && strings::eql_case_insensitive_ascii_check_length(&bytes[0..2], b"n-")
+            && strings::eql_case_insensitive_asciii_check_length(&bytes[0..2], b"n-")
             && bytes[2..].iter().all(|&b| b >= b'0' && b <= b'9')
         {
             parse_number_saturate(&str[1..]) // Include the minus sign
@@ -3867,21 +3996,55 @@ pub struct Tokenizer<'a> {
 const FORM_FEED_BYTE: u8 = 0x0C;
 const REPLACEMENT_CHAR: u32 = 0xFFFD;
 const REPLACEMENT_CHAR_UNICODE: [u8; 3] = [0xEF, 0xBF, 0xBD];
+/// UTF-8 encoding of U+FFFD (replacement character) — used by `serializer`
+/// where Zig called `bun.strings.encodeUTF8Comptime(0xFFD)`. The Zig literal
+/// is `0xFFD` (sic — likely a typo for `0xFFFD`); Phase B should confirm.
+// TODO(port): verify upstream — Zig wrote 0xFFD, comment says "replacement
+// character" which is U+FFFD. Preserving the spec intent (FFFD).
+const REPLACEMENT_CHAR_UTF8: &[u8] = &[0xEF, 0xBF, 0xBD];
 const MAX_ONE_B: u32 = 0x80;
 const MAX_TWO_B: u32 = 0x800;
 const MAX_THREE_B: u32 = 0x10000;
 
+/// Per-thread placeholder arena for `Tokenizer::init` callers that don't
+/// thread one (e.g. `nth::parse_number_saturate` makes a tiny throwaway
+/// tokenizer). Real callers should use `init_with_allocator`.
+// TODO(port): thread `&'bump Bump` from ParserInput::new once arena lifetime
+// is plumbed end-to-end; this Phase-A bridge leaks a small Bump per thread.
+fn placeholder_arena() -> &'static Bump {
+    thread_local! { static ARENA: &'static Bump = Box::leak(Box::new(Bump::new())); }
+    ARENA.with(|a| *a)
+}
+
+/// Erase a source-slice borrow to `'static` for storing in `Token` payloads.
+/// `Token`'s `&'static [u8]` fields are a Phase-A placeholder for the parser
+/// arena/source lifetime (see PORTING.md §AST crates "no struct lifetime
+/// params in Phase A"). Tokens never outlive the `ParserInput` that produced
+/// them — `Parser::reset`/`state` invalidate cached tokens, and the arena owns
+/// any unescaped strings.
+// TODO(port): replace with `Token<'a>` once `<'bump>` is threaded.
+// SAFETY: every call site below feeds either (a) a sub-slice of `self.src`
+// (`&'a [u8]`) or (b) an arena-allocated `CopyOnWriteStr::to_slice()` whose
+// backing storage lives in `self.allocator: &'a Bump`. The returned reference
+// is only ever stored in a `Token` reachable through that same `Parser<'a>`.
+#[inline(always)]
+unsafe fn src_str(s: &[u8]) -> &'static [u8] {
+    unsafe { core::mem::transmute::<&[u8], &'static [u8]>(s) }
+}
+
 impl<'a> Tokenizer<'a> {
     pub fn init(src: &'a [u8]) -> Tokenizer<'a> {
-        // TODO(port): allocator param dropped; arena threaded externally.
-        // For Phase A draft, leave a placeholder.
+        Self::init_with_allocator(src, placeholder_arena())
+    }
+
+    pub fn init_with_allocator(src: &'a [u8], allocator: &'a Bump) -> Tokenizer<'a> {
         Tokenizer {
             src,
             position: 0,
             source_map_url: None,
             current_line_start_position: 0,
             current_line_number: 0,
-            allocator: Bump::leak_placeholder(), // TODO(port): thread &Bump
+            allocator,
             var_or_env_functions: SeenStatus::DontCare,
             current: Token::Whitespace(b""),
             previous: Token::Whitespace(b""),
@@ -4333,7 +4496,7 @@ impl<'a> Tokenizer<'a> {
         Token::Ident(value)
     }
 
-    pub fn consume_name(&mut self) -> &'a [u8] {
+    pub fn consume_name(&mut self) -> &'static [u8] {
         let start_pos = self.position;
         let mut value_bytes: CopyOnWriteStr;
 
@@ -4396,7 +4559,7 @@ impl<'a> Tokenizer<'a> {
         value_bytes.to_slice()
     }
 
-    pub fn consume_quoted_string<const SINGLE_QUOTE: bool>(&mut self) -> (&'a [u8], bool) {
+    pub fn consume_quoted_string<const SINGLE_QUOTE: bool>(&mut self) -> (&'static [u8], bool) {
         self.advance(1); // Skip the initial quote
         let start_pos = self.position;
         let mut string_bytes: CopyOnWriteStr;
@@ -4673,8 +4836,10 @@ impl<'a> Tokenizer<'a> {
     pub fn consume_escape_and_write(&mut self, bytes: &mut CopyOnWriteStr<'a>) {
         let val = self.consume_escape();
         let mut utf8bytes = [0u8; 4];
-        // TODO(port): Zig used std.unicode.utf8Encode; use bun_str equivalent.
-        let len = strings::encode_wtf8_rune(val, &mut utf8bytes);
+        // TODO(port): Zig used std.unicode.utf8Encode; route through char's
+        // UTF-8 encoder (val is guaranteed a valid scalar by consume_escape).
+        let c = char::from_u32(val).unwrap_or('\u{FFFD}');
+        let len = c.encode_utf8(&mut utf8bytes).len();
         bytes.append(self.allocator, &utf8bytes[..len]);
     }
 
@@ -4694,7 +4859,8 @@ impl<'a> Tokenizer<'a> {
                         _ => {}
                     }
                 }
-                if c != 0 && strings::utf8_valid_codepoint(c) {
+                // valid Unicode scalar: not a surrogate, ≤ U+10FFFF
+                if c != 0 && c <= 0x10FFFF && !(0xD800..=0xDFFF).contains(&c) {
                     return c;
                 }
                 REPLACEMENT_CHAR
@@ -4733,7 +4899,7 @@ impl<'a> Tokenizer<'a> {
         c
     }
 
-    pub fn consume_comment(&mut self) -> &'a [u8] {
+    pub fn consume_comment(&mut self) -> &'static [u8] {
         self.advance(2);
         let start_position = self.position;
         while !self.is_eof() {
@@ -4745,7 +4911,8 @@ impl<'a> Tokenizer<'a> {
                     self.advance(1);
                     if self.next_byte() == Some(b'/') {
                         self.advance(1);
-                        let contents = &self.src[start_position..end_position];
+                        // SAFETY: see `src_str` — sub-slice of `self.src`.
+                        let contents = unsafe { src_str(&self.src[start_position..end_position]) };
                         self.check_for_source_map(contents);
                         return contents;
                     }
@@ -4881,7 +5048,10 @@ impl<'a> Tokenizer<'a> {
     #[inline]
     pub fn next_char(&self) -> u32 {
         let len = strings::utf8_byte_sequence_length(self.src[self.position]);
-        strings::decode_wtf8_rune_t(&self.src[self.position..], len, strings::UNICODE_REPLACEMENT)
+        let mut p = [0u8; 4];
+        let avail = (self.src.len() - self.position).min(4);
+        p[..avail].copy_from_slice(&self.src[self.position..self.position + avail]);
+        strings::decode_wtf8_rune_t::<u32>(&p, len, strings::UNICODE_REPLACEMENT as u32)
     }
 
     #[inline]
@@ -4890,8 +5060,11 @@ impl<'a> Tokenizer<'a> {
     }
 
     #[inline]
-    pub fn slice_from(&self, start: usize) -> &'a [u8] {
-        &self.src[start..self.position]
+    pub fn slice_from(&self, start: usize) -> &'static [u8] {
+        // SAFETY: see `src_str` — slice borrows `self.src: &'a [u8]` which the
+        // returned `Token` never outlives. `'static` is the Phase-A
+        // placeholder for the not-yet-threaded `'bump`/`'input` lifetime.
+        unsafe { src_str(&self.src[start..self.position]) }
     }
 }
 
@@ -5023,73 +5196,23 @@ impl TokenKind {
     }
 }
 
-// TODO: make strings be allocated in string pool
+// Data layout hoisted at crate root (lib.rs) so error.rs can name `Token`
+// without the parser hub. Behavior impls (kind/is_parse_error/to_css_generic)
+// live here. TODO: make strings be allocated in string pool.
 // TODO(port): lifetime — every &[u8] payload borrows the arena/source. Phase
 // A uses `&'static [u8]` placeholder; Phase B threads `<'a>`.
-#[derive(Clone)]
-pub enum Token {
-    /// An [`<ident-token>`](https://drafts.csswg.org/css-syntax/#typedef-ident-token)
-    Ident(&'static [u8]),
-    /// Value is the ident
-    Function(&'static [u8]),
-    /// Value is the ident
-    AtKeyword(&'static [u8]),
-    /// `<hash-token>` with type flag "unrestricted". No `#` marker.
-    UnrestrictedHash(&'static [u8]),
-    /// `<hash-token>` with type flag "id". No `#` marker.
-    IdHash(&'static [u8]),
-    /// `<string-token>`. No quotes.
-    QuotedString(&'static [u8]),
-    BadString(&'static [u8]),
-    /// `url(<string-token>)` is represented by a `Function` token
-    UnquotedUrl(&'static [u8]),
-    BadUrl(&'static [u8]),
-    /// A `<delim-token>` — single codepoint. In practice always ASCII.
-    Delim(u32),
-    /// A `<number-token>`
-    Number(Num),
-    Percentage {
-        has_sign: bool,
-        unit_value: f32,
-        int_value: Option<i32>,
-    },
-    Dimension(Dimension),
-    Whitespace(&'static [u8]),
-    /// `<!--`
-    Cdo,
-    /// `-->`
-    Cdc,
-    /// `~=`
-    IncludeMatch,
-    /// `|=`
-    DashMatch,
-    /// `^=`
-    PrefixMatch,
-    /// `$=`
-    SuffixMatch,
-    /// `*=`
-    SubstringMatch,
-    Colon,
-    Semicolon,
-    Comma,
-    OpenSquare,
-    CloseSquare,
-    OpenParen,
-    CloseParen,
-    OpenCurly,
-    CloseCurly,
-    /// Not an actual token in the spec, but we keep it anyway
-    Comment(&'static [u8]),
-}
+pub use crate::Token;
 
 impl Token {
+    #[cfg(any())] // blocked_on: generics::CssEql/CssHash blanket impls for Token payload set
     pub fn eql(lhs: &Token, rhs: &Token) -> bool {
         // TODO(port): Zig used implementEql (comptime field-walk).
         // Phase B: derive PartialEq once payload lifetimes settle.
         generic::implement_eql(lhs, rhs)
     }
 
-    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
+    #[cfg(any())] // blocked_on: generics::CssHash
+    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash11) {
         generic::implement_hash(self, hasher)
     }
 
@@ -5326,30 +5449,13 @@ impl Token {
     }
 }
 
-impl fmt::Display for Token {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Zig `pub fn format(this, writer)` — same body as `to_css_generic`
-        // except `quoted_string` calls `serialize_string` and `idhash` calls
-        // `serialize_identifier`. We delegate to a `core::fmt::Write` adapter.
-        struct FmtAdapter<'a, 'b>(&'a mut fmt::Formatter<'b>);
-        impl WriteAll for FmtAdapter<'_, '_> {
-            type Error = fmt::Error;
-            fn write_all(&mut self, buf: &[u8]) -> Result<(), fmt::Error> {
-                // CSS source is arbitrary bytes (WTF-8 / latin-1); never validate
-                // UTF-8 — Zig prints verbatim. bstr::BStr's Display escapes
-                // non-UTF-8 bytes losslessly.
-                self.0.write_fmt(format_args!("{}", bstr::BStr::new(buf)))
-            }
-            fn write_byte(&mut self, b: u8) -> Result<(), fmt::Error> {
-                self.0.write_char(char::from(b))
-            }
-        }
-        // TODO(port): Zig `format` had subtle differences from
-        // `to_css_generic` (quoted_string→serialize_string,
-        // idhash→serialize_identifier). Phase B specializes.
-        self.to_css_generic(&mut FmtAdapter(f))
-    }
-}
+// `impl Display for Token` lives at crate root (lib.rs) — minimal rendering
+// for error messages. The full Zig `Token.format` (CSS-serialization-correct)
+// is `Token::to_css_generic` above; switch lib.rs's impl to delegate once
+// dependents stop relying on the simple form.
+// TODO(port): Zig `format` had subtle differences from `to_css_generic`
+// (quoted_string→serialize_string, idhash→serialize_identifier). Phase B
+// specializes.
 
 /// Minimal byte-writer trait for `serializer` and `to_css_generic` (replaces
 /// Zig `anytype` writer).
@@ -5361,36 +5467,20 @@ pub trait WriteAll {
     }
 }
 
-#[derive(Clone, Copy)]
-pub struct Num {
-    pub has_sign: bool,
-    pub value: f32,
-    pub int_value: Option<i32>,
-}
+// Num/Dimension data layouts hoisted at crate root (lib.rs).
+pub use crate::{Num, Dimension};
 
+// Num/Dimension eql/hash gated until generics::CssEql/CssHash blanket impls
+// cover the float/slice payloads.
+#[cfg(any())]
 impl Num {
-    pub fn eql(lhs: &Num, rhs: &Num) -> bool {
-        generic::implement_eql(lhs, rhs)
-    }
-    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
-        generic::implement_hash(self, hasher)
-    }
+    pub fn eql(lhs: &Num, rhs: &Num) -> bool { generic::implement_eql(lhs, rhs) }
+    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash11) { generic::implement_hash(self, hasher) }
 }
-
-#[derive(Clone)]
-pub struct Dimension {
-    pub num: Num,
-    /// e.g. "px"
-    pub unit: &'static [u8], // TODO(port): lifetime
-}
-
+#[cfg(any())]
 impl Dimension {
-    pub fn eql(lhs: &Self, rhs: &Self) -> bool {
-        generic::implement_eql(lhs, rhs)
-    }
-    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
-        generic::implement_hash(self, hasher)
-    }
+    pub fn eql(lhs: &Self, rhs: &Self) -> bool { generic::implement_eql(lhs, rhs) }
+    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash11) { generic::implement_hash(self, hasher) }
 }
 
 pub enum CopyOnWriteStr<'a> {
@@ -5415,13 +5505,15 @@ impl<'a> CopyOnWriteStr<'a> {
         }
     }
 
-    pub fn to_slice(&self) -> &'a [u8] {
+    pub fn to_slice(&self) -> &'static [u8] {
         match self {
-            CopyOnWriteStr::Borrowed(b) => b,
+            // SAFETY: see `src_str` — both arms borrow either the source or
+            // arena, neither of which the consuming `Token` outlives.
+            CopyOnWriteStr::Borrowed(b) => unsafe { src_str(b) },
             // SAFETY: bumpalo Vec storage is in the arena and outlives 'a.
             // TODO(port): bumpalo's `into_bump_slice()` is the proper API.
             CopyOnWriteStr::Owned(o) => unsafe {
-                core::slice::from_raw_parts(o.as_ptr(), o.len())
+                src_str(core::slice::from_raw_parts(o.as_ptr(), o.len()))
             },
         }
     }
@@ -5435,11 +5527,14 @@ pub mod color {
     /// The opaque alpha value of 1.0.
     pub const OPAQUE: f32 = 1.0;
 
-    #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
+    #[derive(Debug, strum::IntoStaticStr)]
     pub enum ColorError {
-        #[error("parse")]
         Parse,
     }
+    impl core::fmt::Display for ColorError {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result { f.write_str("parse") }
+    }
+    impl core::error::Error for ColorError {}
 
     /// Either an angle or a number.
     pub enum AngleOrNumber {
@@ -5705,7 +5800,7 @@ pub mod serializer {
             let escaped: Option<&[u8]> = match b {
                 b'0'..=b'9' | b'A'..=b'Z' | b'a'..=b'z' | b'_' | b'-' => continue,
                 // the unicode replacement character
-                0 => Some(strings::encode_utf8_comptime::<0xFFD>()),
+                0 => Some(REPLACEMENT_CHAR_UTF8),
                 _ => {
                     if !b.is_ascii() {
                         continue;
@@ -5735,7 +5830,7 @@ pub mod serializer {
         writer.write_all(b"\"")
     }
 
-    pub fn serialize_dimension(value: f32, unit: &[u8], dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn serialize_dimension(value: f32, unit: &'static [u8], dest: &mut Printer) -> Result<(), PrintErr> {
         let int_value: Option<i32> = if fract(value) == 0.0 {
             Some(value as i32) // saturating like Zig bun.intFromFloat
         } else {
@@ -5882,7 +5977,7 @@ pub mod serializer {
                     b'"' => Some(b"\\\""),
                     b'\\' => Some(b"\\\\"),
                     // replacement character
-                    0 => Some(strings::encode_utf8_comptime::<0xFFD>()),
+                    0 => Some(REPLACEMENT_CHAR_UTF8),
                     0x01..=0x1F | 0x7F => None,
                     _ => continue,
                 };
@@ -5951,6 +6046,7 @@ pub mod to_css {
     use super::*;
 
     /// Serialize `self` in CSS syntax and return a string.
+    #[cfg(any())] // blocked_on: printer.rs Printer::new arena signature reshape
     pub fn string<T: generic::ToCss>(
         this: &T,
         options: PrinterOptions,
@@ -5978,6 +6074,7 @@ pub mod to_css {
         Ok(())
     }
 
+    #[cfg(any())] // blocked_on: BabyList::len() trait-bound divergence
     pub fn from_baby_list<T: generic::ToCss>(
         this: &BabyList<T>,
         dest: &mut Printer,
@@ -5992,10 +6089,11 @@ pub mod to_css {
         Ok(())
     }
 
-    pub fn integer<T: itoa::Integer>(this: T, dest: &mut Printer) -> Result<(), PrintErr> {
-        let mut buf = itoa::Buffer::new();
-        let str = buf.format(this);
-        dest.write_str(str)
+    pub fn integer(this: i32, dest: &mut Printer) -> Result<(), PrintErr> {
+        // PERF(port): Zig used a comptime-sized stack buffer + std.fmt.int.
+        // `itoa` crate would be ideal here but isn't a workspace dep yet;
+        // route through write_fmt (no heap alloc — Printer's dest is the sink).
+        dest.write_fmt(format_args!("{this}"))
     }
 
     pub fn float32(this: f32, writer: &mut Printer) -> Result<(), PrintErr> {
@@ -6050,10 +6148,10 @@ pub fn copysign(self_: f32, sign: f32) -> f32 {
     f32::from_bits(result_bits)
 }
 
-pub fn deep_clone<V: generic::DeepClone>(list: &Vec<V>) -> Vec<V> {
+pub fn deep_clone<'b, V: generic::DeepClone<'b>>(bump: &'b Bump, list: &Vec<V>) -> Vec<V> {
     let mut newlist = Vec::with_capacity(list.len());
     for item in list {
-        newlist.push(item.deep_clone());
+        newlist.push(item.deep_clone(bump));
         // PERF(port): was appendAssumeCapacity
     }
     newlist
@@ -6098,7 +6196,11 @@ pub fn dtoa_short(buf: &mut [u8; 129], value: f32, precision: u8) -> (&[u8], Opt
 pub fn dtoa_short_impl(buf: &mut [u8; 129], value: f32, precision: u8) -> (&[u8], Notation) {
     buf[0] = b'0';
     debug_assert!(value.is_finite());
-    let buf_len = bun_core::fmt::FormatDouble::dtoa(&mut buf[1..], value as f64).len();
+    // bun_core::fmt::FormatDouble::dtoa wants a fixed-size [u8; 124] buffer.
+    let buf_len = {
+        let inner: &mut [u8; 124] = (&mut buf[1..125]).try_into().unwrap();
+        bun_core::fmt::FormatDouble::dtoa(inner, value as f64).len()
+    };
     restrict_prec(&mut buf[0..buf_len + 1], precision)
 }
 

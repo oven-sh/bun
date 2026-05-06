@@ -2,7 +2,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::console_object::Formatter;
 
 use super::Expect;
-use super::Expect::get_signature;
+use super::get_signature;
 
 #[bun_jsc::host_fn(method)]
 pub fn to_have_length(
@@ -56,7 +56,7 @@ pub fn to_have_length(
         ));
     }
 
-    let not = this.flags.not;
+    let not = this.flags.not();
     let mut pass = false;
 
     let actual_length = value.get_length_if_property_exists_internal(global)?;

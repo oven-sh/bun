@@ -21,10 +21,6 @@ fn try_optimize_typeof_undefined<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN
     p: &mut P<'a, TYPESCRIPT, J, SCAN_ONLY>,
     replacement_op: js_ast::op::Code,
 ) -> Option<Expr> {
-    let _ = (e_, p, replacement_op);
-    todo!("b2-ast-E: try_optimize_typeof_undefined body");
-    #[cfg(any())] // TODO(b2-ast-E): body — E::String::eql_comptime, ExprData variant payloads
-    {
     // Check if this is a typeof comparison with "undefined"
     let (typeof_expr, string_expr, flip_comparison) = 'exprs: {
         // Try left side as typeof, right side as string
@@ -55,21 +51,16 @@ fn try_optimize_typeof_undefined<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN
     };
 
     // Create new string with "u"
-    let u_string = p.new_expr(E::String { data: b"u".into() }, string_expr.loc);
+    let u_string = p.new_expr(E::EString::from_static(b"u"), string_expr.loc);
 
     // Create the optimized comparison
     let left = if flip_comparison { u_string } else { typeof_expr };
     let right = if flip_comparison { typeof_expr } else { u_string };
 
     Some(p.new_expr(
-        E::Binary {
-            left,
-            right,
-            op: replacement_op,
-        },
+        E::Binary { left, right, op: replacement_op },
         e_.left.loc,
     ))
-    } // end #[cfg(any())]
 }
 
 pub struct BinaryExpressionVisitor<'arena> {
@@ -92,7 +83,11 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
     ) -> Expr {
         let _ = (v, p);
         todo!("b2-ast-E: visit_right_and_finish body");
-        #[cfg(any())] // TODO(b2-ast-E): body — fold_string_addition, SideEffects::to_boolean, ExprData payload deref, fmod extern
+        #[cfg(any())]
+        // blocked_on: fold_string_addition (StringAdditionKind, gated mod); P::{expr_can_be_removed_if_unused,
+        //   maybe_mangle_if_expr} gated (P.rs:640 impl block); SideEffects::{to_boolean,to_number,simplify_boolean}
+        //   bodies are todo!() stubs; Expr::extract_numeric_values returns Option<[f64;2]> not (f64,f64);
+        //   prefill::Data::{ZERO,ONE,NEG_ONE} consts; fmod extern "C" decl.
         {
         let e_ = &mut *v.e;
         // PORT NOTE: reshaped for borrowck — Zig compared `e_ == p.call_target.e_binary` (ptr eq).
@@ -649,22 +644,17 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
         v: &mut Self,
         p: &mut P<'a, TYPESCRIPT, J, SCAN_ONLY>,
     ) -> Option<Expr> {
-        let _ = (v, p);
-        todo!("b2-ast-E: check_and_prepare body");
-        #[cfg(any())] // TODO(b2-ast-E): body — Symbol::is_kind_private, find_symbol, ExprData::EBinary ptr-eq
-        {
-        let e_ = &mut *v.e;
-        match &e_.left.data {
+        let e_: &mut E::Binary = &mut *v.e;
+        match e_.left.data {
             // Special-case private identifiers
-            ExprData::EPrivateIdentifier(_private) => {
+            ExprData::EPrivateIdentifier(mut private) => {
                 if e_.op == Op::Code::BinIn {
-                    let mut private = *_private;
                     let name = p.load_name_from_ref(private.ref_);
                     let result = p.find_symbol(e_.left.loc, name).expect("unreachable");
-                    private.ref_ = result.ref_;
+                    private.ref_ = result.r#ref;
 
                     // Unlike regular identifiers, there are no unbound private identifiers
-                    let kind: Symbol::Kind = p.symbols[result.ref_.inner_index()].kind;
+                    let kind = p.symbols[result.r#ref.inner_index() as usize].kind;
                     if !Symbol::is_kind_private(kind) {
                         let r = logger::Range {
                             loc: e_.left.loc,
@@ -672,9 +662,8 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
                         };
                         p.log
                             .add_range_error_fmt(
-                                p.source,
+                                Some(p.source),
                                 r,
-                                p.allocator,
                                 format_args!(
                                     "Private name \"{}\" must be declared in an enclosing class",
                                     bstr::BStr::new(name)
@@ -690,22 +679,28 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
                     };
 
                     // privateSymbolNeedsToBeLowered
-                    return Some(Expr { loc: v.loc, data: ExprData::EBinary(e_) });
+                    // PORT NOTE: re-wrap the in-place E::Binary as a StoreRef so the
+                    // returned Expr aliases the same arena slot.
+                    return Some(Expr {
+                        loc: v.loc,
+                        data: ExprData::EBinary(js_ast::StoreRef::from_non_null(
+                            core::ptr::NonNull::from(&mut *v.e),
+                        )),
+                    });
                 }
             }
             _ => {}
         }
 
         v.is_stmt_expr =
-            matches!(p.stmt_expr_value, ExprData::EBinary(ptr) if core::ptr::eq(ptr, e_));
+            matches!(p.stmt_expr_value, ExprData::EBinary(ptr) if core::ptr::eq(ptr.as_ptr(), e_ as *mut _));
 
         v.left_in = ExprIn {
-            assign_target: e_.op.binary_assign_target(),
+            assign_target: Op::Code::binary_assign_target(e_.op),
             ..ExprIn::default()
         };
 
         None
-        } // end #[cfg(any())]
     }
 }
 

@@ -1,6 +1,6 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::console_object::Formatter;
-use crate::test_runner::expect::Expect;
+use super::Expect;
 
 // PORT NOTE: std.ascii.isWhitespace includes VT (0x0B); Rust's u8::is_ascii_whitespace does not.
 // Zig matches ' ' and '\t'..'\r' (0x09–0x0D).
@@ -42,7 +42,7 @@ pub fn to_equal_ignoring_whitespace(
         ));
     }
 
-    let not = this.flags.not;
+    let not = this.flags.not();
     let mut pass = value.is_string() && expected.is_string();
 
     if pass {

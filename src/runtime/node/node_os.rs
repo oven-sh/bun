@@ -1,52 +1,73 @@
 use core::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_ulonglong, c_void};
-use std::io::Write as _;
 
-use bun_core::{env_var, fmt as bun_fmt, HOST_NAME_MAX};
-use bun_jsc::{
-    node::ErrorCode, CallFrame, JSArray, JSGlobalObject, JSObject, JSValue, JsResult, SystemError,
-};
-use bun_paths::PathBuffer;
-use bun_str::{strings, String as BunString, ZigString};
-use bun_sys::c;
-#[cfg(windows)]
-use bun_sys::windows::{self, libuv};
-
-// TODO(port): generated bindings (bun.gen.node_os) — Phase B wires codegen output
-use crate::gen::node_os as gen;
+// TODO(b2-blocked): bun_jsc — using crate-local opaque shim until `bun_jsc` is a dep.
+use crate::jsc::{JSGlobalObject, JSValue, JsResult};
+use bun_str::String as BunString;
+use bun_core;
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
     fn bun_sysconf__SC_NPROCESSORS_ONLN() -> i32;
 }
 
+#[derive(Default, Clone, Copy)]
+pub struct CPUTimes {
+    pub user: u64,
+    pub nice: u64,
+    pub sys: u64,
+    pub idle: u64,
+    pub irq: u64,
+}
+
+pub fn freemem() -> u64 {
+    // OsBinding.cpp
+    // TODO(port): move to <area>_sys
+    unsafe extern "C" {
+        fn Bun__Os__getFreeMemory() -> u64;
+    }
+    // SAFETY: pure FFI getter
+    unsafe { Bun__Os__getFreeMemory() }
+}
+
+// ─── gated: JSC bindings + platform syscall bodies ────────────────────────
+// Every fn body builds JS objects (`JSValue::create_*`, `ZigString::*::to_js`,
+// `global.throw_value`) or reaches `bun_sys::posix::sysctlbyname` /
+// `bun_sys::c::sysinfo` / `crate::gen_::node_os` which are not yet exported.
+// CPUTimes struct + freemem() + trailing pure helpers hoisted above/below.
+// TODO(b2-blocked): un-gate once bun_jsc + bun_sys::posix syscall surface land.
+#[cfg(any())]
+mod _impl {
+use super::*;
+use std::io::Write as _;
+use bun_core::{env_var, fmt as bun_fmt, HOST_NAME_MAX};
+use bun_jsc::{node::ErrorCode, CallFrame, JSArray, JSObject, SystemError};
+use bun_paths::PathBuffer;
+use bun_str::{strings, ZigString};
+use bun_sys::c;
+#[cfg(windows)]
+use bun_sys::windows::{self, libuv};
+// TODO(port): generated bindings (bun.gen.node_os) — Phase B wires codegen output
+use crate::generated::node_os as gen_;
+
 pub fn create_node_os_binding(global: &JSGlobalObject) -> JsResult<JSValue> {
     // TODO(port): JSObject::create struct-literal API — Phase B defines a builder/macro
     let obj = JSObject::create(global)?;
     // SAFETY: pure FFI getter
     obj.put(global, "hostCpuCount", JSValue::js_number(1i32.max(unsafe { bun_sysconf__SC_NPROCESSORS_ONLN() })));
-    obj.put(global, "cpus", gen::create_cpus_callback(global));
-    obj.put(global, "freemem", gen::create_freemem_callback(global));
-    obj.put(global, "getPriority", gen::create_get_priority_callback(global));
-    obj.put(global, "homedir", gen::create_homedir_callback(global));
-    obj.put(global, "hostname", gen::create_hostname_callback(global));
-    obj.put(global, "loadavg", gen::create_loadavg_callback(global));
-    obj.put(global, "networkInterfaces", gen::create_network_interfaces_callback(global));
-    obj.put(global, "release", gen::create_release_callback(global));
-    obj.put(global, "totalmem", gen::create_totalmem_callback(global));
-    obj.put(global, "uptime", gen::create_uptime_callback(global));
-    obj.put(global, "userInfo", gen::create_user_info_callback(global));
-    obj.put(global, "version", gen::create_version_callback(global));
-    obj.put(global, "setPriority", gen::create_set_priority_callback(global));
+    obj.put(global, "cpus", gen_::create_cpus_callback(global));
+    obj.put(global, "freemem", gen_::create_freemem_callback(global));
+    obj.put(global, "getPriority", gen_::create_get_priority_callback(global));
+    obj.put(global, "homedir", gen_::create_homedir_callback(global));
+    obj.put(global, "hostname", gen_::create_hostname_callback(global));
+    obj.put(global, "loadavg", gen_::create_loadavg_callback(global));
+    obj.put(global, "networkInterfaces", gen_::create_network_interfaces_callback(global));
+    obj.put(global, "release", gen_::create_release_callback(global));
+    obj.put(global, "totalmem", gen_::create_totalmem_callback(global));
+    obj.put(global, "uptime", gen_::create_uptime_callback(global));
+    obj.put(global, "userInfo", gen_::create_user_info_callback(global));
+    obj.put(global, "version", gen_::create_version_callback(global));
+    obj.put(global, "setPriority", gen_::create_set_priority_callback(global));
     Ok(obj.to_js())
-}
-
-#[derive(Default, Clone, Copy)]
-struct CPUTimes {
-    user: u64,
-    nice: u64,
-    sys: u64,
-    idle: u64,
-    irq: u64,
 }
 
 impl CPUTimes {
@@ -425,16 +446,6 @@ pub fn cpus_impl_windows(global_this: &JSGlobalObject) -> Result<JSValue, bun_co
     }
 
     Ok(values)
-}
-
-pub fn freemem() -> u64 {
-    // OsBinding.cpp
-    // TODO(port): move to <area>_sys
-    unsafe extern "C" {
-        fn Bun__Os__getFreeMemory() -> u64;
-    }
-    // SAFETY: pure FFI getter
-    unsafe { Bun__Os__getFreeMemory() }
 }
 
 // TODO(port): move to <area>_sys
@@ -1255,7 +1266,7 @@ pub fn uptime(global: &JSGlobalObject) -> JsResult<f64> {
     }
 }
 
-pub fn user_info(global_this: &JSGlobalObject, options: gen::UserInfoOptions) -> JsResult<JSValue> {
+pub fn user_info(global_this: &JSGlobalObject, options: gen_::UserInfoOptions) -> JsResult<JSValue> {
     let _ = options; // TODO:
 
     let result = JSValue::create_empty_object(global_this, 5);
@@ -1334,6 +1345,7 @@ pub fn version() -> JsResult<BunString> {
 
     Ok(BunString::clone_utf8(slice))
 }
+} // mod _impl
 
 /// Given a netmask returns a CIDR suffix.  Returns null if the mask is not valid.
 /// `T` must be one of u32 (IPv4) or u128 (IPv6)
@@ -1413,5 +1425,5 @@ fn slice_to_nul_u16(buf: &[u16]) -> &[u16] {
 //   source:     src/runtime/node/node_os.zig (1114 lines)
 //   confidence: medium
 //   todos:      16
-//   notes:      heavy platform-conditional FFI; std.fs/std.net/std.posix mapped to bun_sys placeholders; gen::node_os codegen wiring deferred to Phase B
+//   notes:      heavy platform-conditional FFI; std.fs/std.net/std.posix mapped to bun_sys placeholders; gen_::node_os codegen wiring deferred to Phase B
 // ──────────────────────────────────────────────────────────────────────────

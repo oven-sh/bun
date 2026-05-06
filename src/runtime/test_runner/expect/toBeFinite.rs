@@ -25,7 +25,7 @@ impl Expect {
             pass = num.is_finite() && !num.is_nan();
         }
 
-        let not = this.flags.not;
+        let not = this.flags.not();
         if not {
             pass = !pass;
         }

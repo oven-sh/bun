@@ -4,37 +4,34 @@
 
 use core::cell::Cell;
 use core::mem;
+use std::rc::Rc;
 
-use bun_alloc::AllocError;
 use crate::bake::dev_server::route_bundle;
-use bun_bundler::bundle_v2::JSBundleCompletionTask;
-use bun_core::{self, Output, fmt as bun_fmt};
-use bun_http::Method;
-use bun_jsc::{JSGlobalObject, JSValue, JsResult};
+use bun_http_types::Method::Method;
 use bun_logger::Log;
-use bun_ptr::IntrusiveRc;
-use bun_str;
 use bun_uws::{AnyRequest, AnyResponse};
-use std::sync::Arc;
 
-use super::StaticRoute;
-use crate::api::{AnyServer, JSBundler};
+use crate::server::jsc::{JSGlobalObject, JSValue, JsResult};
+use crate::server::{AnyServer, StaticRoute};
 
-bun_output::declare_scope!(HTMLBundle, hidden);
-
-// .classes.ts codegen wires toJS/fromJS/fromJSDirect via this derive.
+// .classes.ts codegen wires toJS/fromJS/fromJSDirect via #[bun_jsc::JsClass].
 // HTMLBundle can be owned by JavaScript as well as any number of Server instances,
-// hence the intrusive ref count (IntrusiveRc) alongside the JS wrapper.
-#[bun_jsc::JsClass]
+// hence the ref count alongside the JS wrapper.
+// PORT NOTE (§Pointers): `*mut HTMLBundle` is the m_ctx payload of a
+// `.classes.ts` wrapper — FFI rule says intrusive `RefPtr`. Kept as plain
+// struct + `ref_count` Cell for now; `impl bun_ptr::RefCounted` lands with
+// the codegen attribute once `bun_jsc` is a dep.
+// TODO(b2-blocked): #[bun_jsc::JsClass] + impl bun_ptr::RefCounted.
 pub struct HTMLBundle {
     ref_count: Cell<u32>,
-    // TODO(port): JSC_BORROW field on heap struct — verify &'static is sound (global outlives bundle)
-    global: &'static JSGlobalObject,
+    // TODO(port): JSC_BORROW field on heap struct — `&'static JSGlobalObject` once bun_jsc is real.
+    global: *const JSGlobalObject,
     path: Box<[u8]>,
 }
 
 // `pub const ref/deref = RefCount.ref/deref` — provided by IntrusiveRc<HTMLBundle>.
 
+#[cfg(any())] // TODO(b2-blocked): bun_jsc::host_fn + bun_str::create_utf8_for_js
 impl HTMLBundle {
     /// Initialize an HTMLBundle given a path.
     pub fn init(global: &'static JSGlobalObject, path: &[u8]) -> IntrusiveRc<HTMLBundle> {
@@ -69,17 +66,22 @@ pub type HTMLBundleRoute = Route;
 /// reference-counted because a server can have multiple instances of the same
 /// html file on multiple endpoints.
 pub struct Route {
-    bundle: IntrusiveRc<HTMLBundle>,
+    // TODO(port): FFI userdata — *Route is recovered from uws callback
+    // userdata (on_aborted, JSBundleCompletionTask backref). §Pointers FFI
+    // rule → `bun_ptr::RefPtr<HTMLBundle>` + `impl RefCounted`; held as raw
+    // ptr + Cell<u32> until bun_jsc/uws callbacks un-gate so the impl can be
+    // verified.
+    bundle: *const HTMLBundle,
     /// One HTMLBundle.Route can be specified multiple times
     ref_count: Cell<u32>,
     // TODO: attempt to remove the null case. null is only present during server
     // initialization as only a ServerConfig object is present.
-    server: Option<AnyServer>,
+    server: Cell<Option<AnyServer>>,
     /// When using DevServer, this value is never read or written to.
     state: State,
     /// Written and read by DevServer to identify if this route has been
     /// registered with the bundler.
-    dev_server_id: route_bundle::IndexOptional,
+    dev_server_id: Option<route_bundle::Index>,
     /// When state == .pending, incomplete responses are stored here.
     // Raw `*mut` because the pointer is handed to uws onAborted callback and
     // compared by identity; allocation/free is via Box::into_raw/from_raw.
@@ -90,7 +92,7 @@ pub struct Route {
 
 pub enum RouteMethod {
     Any,
-    Method(bun_http::method::Set),
+    Method(bun_http_types::Method::Set),
 }
 
 impl Default for RouteMethod {
@@ -108,18 +110,7 @@ impl Route {
         cost
     }
 
-    pub fn init(html_bundle: &HTMLBundle) -> IntrusiveRc<Route> {
-        IntrusiveRc::new(Route {
-            // SAFETY: html_bundle is a valid IntrusiveRc-managed allocation
-            bundle: unsafe { IntrusiveRc::retain(html_bundle) },
-            pending_responses: Vec::new(),
-            ref_count: Cell::new(1),
-            server: None,
-            state: State::Pending,
-            dev_server_id: route_bundle::IndexOptional::NONE,
-            method: RouteMethod::Any,
-        })
-    }
+    // init() gated alongside the route-handler bodies below (needs RefPtr).
 }
 
 impl Drop for Route {
@@ -133,11 +124,14 @@ impl Drop for Route {
 
 pub enum State {
     Pending,
-    Building(Option<Arc<JSBundleCompletionTask>>),
+    // TODO(b2-blocked): bun_bundler::bundle_v2::JSBundleCompletionTask is gated.
+    // Payload is `Option<Arc<JSBundleCompletionTask>>`; opaque ptr until then.
+    Building(Option<*mut ()>),
     Err(Log),
-    Html(Arc<StaticRoute>),
+    Html(Rc<StaticRoute>),
 }
 
+#[cfg(any())] // TODO(b2-blocked): JSBundleCompletionTask.cancelled interior-mutable write.
 impl Drop for State {
     fn drop(&mut self) {
         match self {
@@ -163,11 +157,25 @@ impl State {
         match self {
             State::Pending => 0,
             State::Building(_) => 0,
-            State::Err(log) => log.memory_cost(),
+            // TODO(b2-blocked): bun_logger::Log::memory_cost.
+            State::Err(_log) => 0,
             State::Html(html) => html.memory_cost(),
         }
     }
 }
+
+// ─── route-handler bodies (gated) ────────────────────────────────────────────
+// on_request / on_any_request / scheduleBundle / onBundleComplete need:
+// bun_uws AnyResponse write/on_aborted (cycle-5-B), bun_bundler::bundle_v2,
+// bun_jsc JSBundler, IntrusiveRc<Route>.
+// TODO(b2-blocked): bun_jsc + bun_bundler + bun_uws response surface.
+#[cfg(any())]
+mod _gated {
+use super::*;
+use bun_ptr::IntrusiveRc;
+use std::sync::Arc;
+use bun_bundler::bundle_v2::JSBundleCompletionTask;
+use crate::server::jsc::JSBundler;
 
 impl Route {
     pub fn on_request(&mut self, req: AnyRequest, resp: AnyResponse) {
@@ -647,18 +655,6 @@ impl Route {
     }
 }
 
-/// Represents an in-flight response before the bundle has finished building.
-pub struct PendingResponse {
-    method: Method,
-    resp: AnyResponse,
-    is_response_pending: bool,
-    server: Option<AnyServer>,
-    // PORT NOTE: LIFETIMES.tsv says SHARED→Arc<Route>, but Route is intrusively ref-counted
-    // (RefCount mixin) and *Route crosses FFI (uws callbacks, JSBundleCompletionTask backref).
-    // Intrusive-refcount + FFI rule overrides → IntrusiveRc.
-    route: IntrusiveRc<Route>,
-}
-
 impl Drop for PendingResponse {
     fn drop(&mut self) {
         if self.is_response_pending {
@@ -703,9 +699,22 @@ impl PendingResponse {
 // Phase B will resolve. Kept local to make control flow readable.
 use bun_bundler::options::{Loader, Target};
 use bun_bundler::output_file::{OutputFileValue, OutputKind};
-use bun_runtime::api::server::{AnyRoute, MethodFilter, PluginsResult, PluginsTarget};
-use bun_runtime::api::{EnvBehavior, ForceNodeEnv, SourceMapMode, TickCountMode};
+use crate::server::{AnyRoute, PluginsResult};
 type BundleResult = bun_bundler::bundle_v2::CompletionResult;
+} // mod _gated
+
+/// Represents an in-flight response before the bundle has finished building.
+pub struct PendingResponse {
+    method: Method,
+    resp: AnyResponse,
+    is_response_pending: bool,
+    server: Option<AnyServer>,
+    // PORT NOTE: LIFETIMES.tsv says SHARED→Rc<Route>, but *Route crosses FFI
+    // (uws callbacks, JSBundleCompletionTask backref) — §Pointers FFI rule →
+    // RefPtr. Raw ptr until `impl RefCounted for Route` lands with the gated
+    // bodies above.
+    route: *const Route,
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

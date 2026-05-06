@@ -2,12 +2,12 @@ use core::cell::Cell;
 use core::ffi::CStr;
 
 use bun_core::{err, Error};
-use bun_output::scoped_log;
-use bun_str::{strings, ZStr};
+use bun_core::scoped_log;
+use bun_string::{strings, ZStr};
 use bun_uws as uws;
 
 use crate::http_cert_error::HTTPCertError;
-use crate::new_http_context::NewHTTPContext;
+use crate::http_context::HTTPSocket;
 use crate::HTTPClient;
 // TODO(b0): SSLWrapper arrives from move-in
 // (MOVE_DOWN bun_runtime::socket::ssl_wrapper::SSLWrapper → bun_http)
@@ -16,7 +16,7 @@ use crate::ssl_wrapper::SSLWrapper;
 // (MOVE_DOWN bun_runtime::api::server::server_config::SSLConfig → bun_http)
 use crate::ssl_config::SSLConfig;
 
-bun_output::declare_scope!(http_proxy_tunnel, visible);
+bun_core::declare_scope!(http_proxy_tunnel, visible);
 
 // Intrusive single-thread refcount (bun.ptr.RefCount). `ref_count` field at
 // matching offset; deref() hitting 0 calls ProxyTunnel::deinit (mapped to Drop
@@ -26,11 +26,12 @@ pub type RefPtr = bun_ptr::IntrusiveRc<ProxyTunnel>;
 type ProxyTunnelWrapper = SSLWrapper<*mut HTTPClient>;
 
 /// active socket is the socket that is currently being used
+// PORT NOTE: Zig used `NewHTTPContext(B).HTTPSocket`; inherent associated types
+// are unstable in Rust, so the free `HTTPSocket<SSL>` alias from http_context
+// is used instead.
 pub enum Socket {
-    // TODO(port): inherent associated types are unstable; Phase B may need
-    // `type HTTPSocket<const SSL: bool>` alias instead of `NewHTTPContext::<B>::HTTPSocket`.
-    Tcp(NewHTTPContext::<false>::HTTPSocket),
-    Ssl(NewHTTPContext::<true>::HTTPSocket),
+    Tcp(HTTPSocket<false>),
+    Ssl(HTTPSocket<true>),
     None,
 }
 
@@ -70,14 +71,43 @@ impl Default for ProxyTunnel {
     }
 }
 
+impl ProxyTunnel {
+    // bun.ptr.RefCount(@This(), "ref_count", deinit, .{})
+    pub fn ref_(&self) {
+        self.ref_count.set(self.ref_count.get() + 1);
+    }
+    pub fn deref(&self) {
+        let n = self.ref_count.get() - 1;
+        self.ref_count.set(n);
+        if n == 0 {
+            // SAFETY: every live ProxyTunnel was created by `new` (Box::into_raw);
+            // ref_count hitting 0 means no other alias remains.
+            unsafe { drop(Box::from_raw(self as *const Self as *mut Self)) };
+        }
+    }
+    /// Drop the owning `HTTPClient` backref and release one strong ref.
+    /// Called from `HTTPClient::drop` and `progress_update`.
+    pub fn detach_and_deref(&self) {
+        // TODO(b2-blocked): wrapper.detach_owner() once SSLWrapper<*mut HTTPClient>
+        // exposes the typed owner slot. For now just release the ref.
+        self.deref();
+    }
+}
+
 // ─── SSLWrapper callbacks (ctx = *mut HTTPClient) ────────────────────────────
+// TODO(b2-blocked): bodies dispatch into the gated `impl HTTPClient` state
+// machine (on_data/on_writable/close_and_fail/progress_update) and use
+// `bun_uws::NewSocketHandler::{raw_write,ext}` — un-gate together.
+#[cfg(any())]
+mod _phase_a_draft {
+use super::*;
 
 fn on_open(this: &mut HTTPClient) {
     scoped_log!(http_proxy_tunnel, "ProxyTunnel onOpen");
     // TODO(port): bun.analytics.Features counter API
     bun_analytics::features::HTTP_CLIENT_PROXY.inc();
-    this.state.response_stage = .proxy_handshake;
-    this.state.request_stage = .proxy_handshake;
+    this.state.response_stage = Stage::ProxyHandshake;
+    this.state.request_stage = Stage::ProxyHandshake;
     if let Some(proxy) = this.proxy_tunnel {
         proxy.ref_();
         let _guard = scopeguard::guard((), |_| proxy.deref_());
@@ -200,8 +230,8 @@ fn on_handshake(this: &mut HTTPClient, handshake_success: bool, ssl_error: uws::
         scoped_log!(http_proxy_tunnel, "ProxyTunnel onHandshake");
         proxy.ref_();
         let _guard = scopeguard::guard((), |_| proxy.deref_());
-        this.state.response_stage = .proxy_headers;
-        this.state.request_stage = .proxy_headers;
+        this.state.response_stage = Stage::ProxyHeaders;
+        this.state.request_stage = Stage::ProxyHeaders;
         this.state.request_sent_len = 0;
         let handshake_error = HTTPCertError {
             error_no: ssl_error.error_no,
@@ -545,8 +575,8 @@ impl ProxyTunnel {
         // runs here, so the client's own flag would otherwise stay false and
         // re-pooling would erase the record.
         client.flags.did_have_handshaking_error = self.did_have_handshaking_error;
-        client.state.request_stage = .proxy_headers;
-        client.state.response_stage = .proxy_headers;
+        client.state.request_stage = Stage::ProxyHeaders;
+        client.state.response_stage = Stage::ProxyHeaders;
         client.state.request_sent_len = 0;
     }
 }
@@ -557,6 +587,7 @@ use crate::state::{ResponseStage, Stage};
 use crate::picohttp::ChunkedState;
 // TODO(b0): ssl_wrapper::Handlers arrives from move-in (MOVE_DOWN → bun_http)
 use crate::ssl_wrapper::Handlers as SSLWrapperHandlers;
+} // mod _phase_a_draft
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

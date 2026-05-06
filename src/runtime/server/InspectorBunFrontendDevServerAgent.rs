@@ -180,7 +180,7 @@ impl BunFrontendDevServerAgent {
                     connection_id,
                     url,
                     match route_bundle_id {
-                        Some(id) => id.get(),
+                        Some(id) => id.get() as i32,
                         None => -1,
                     },
                 );

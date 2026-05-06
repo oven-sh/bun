@@ -54,9 +54,9 @@ use std::io::Write as _;
 
 use bun_alloc::AllocError;
 use bun_core::StringBuilder;
-// MOVE_DOWN(b0): bun_jsc::URL → bun_url::URL (WHATWG parser moves out of jsc).
-use bun_url::URL as JscUrl;
-use bun_str::strings;
+// MOVE_DOWN(b0): bun_jsc::URL → bun_url::whatwg::URL (WHATWG parser moves out of jsc).
+use bun_url::whatwg::URL as JscUrl;
+use bun_string::strings;
 use bun_url::PercentEncoding;
 use bstr::BStr;
 use enum_map::{enum_map, Enum, EnumMap};
@@ -115,7 +115,8 @@ impl From<ParseUrlError> for bun_core::Error {
 /// to format a URL in a specific format, you can use its `format*` methods. However, each input
 /// string has a "default" representation which is used when calling `toString()`. Depending on the
 /// input, the default representation may be different.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
+#[strum(serialize_all = "lowercase")]
 pub enum Representation {
     /// foo/bar
     Shortcut,
@@ -186,7 +187,7 @@ impl HostedGitInfo {
         // TODO(port): PercentEncoding.decode in Zig takes a writer; here we assume a
         // `decode_into(dst: &mut [u8], src: &[u8]) -> Result<usize, _>` shape.
         let decoded_len =
-            PercentEncoding::decode_into(writable, input).map_err(|_| HostedGitInfoError::InvalidURL)?;
+            PercentEncoding::decode_into(writable, input).map_err(|_| HostedGitInfoError::InvalidURL)? as usize;
         sb.len += decoded_len;
         Ok(start..start + decoded_len)
     }
@@ -221,7 +222,7 @@ impl HostedGitInfo {
             None => None,
         };
 
-        let owned_buffer = sb.allocated_slice();
+        let owned_buffer = sb.ptr.take().unwrap_or_default();
 
         Ok(Self {
             committish: committish_part,
@@ -257,11 +258,8 @@ impl HostedGitInfo {
     // PORT NOTE: `pub const toJS = @import("../install_jsc/...")` deleted —
     // `to_js` is an extension-trait method living in `bun_install_jsc`.
 
-    pub struct StringPair {
-        // TODO(port): lifetime/ownership of these slices unclear; never constructed in this file.
-        pub save_spec: Box<[u8]>,
-        pub fetch_spec: Option<Box<[u8]>>,
-    }
+    // PORT NOTE: `pub const StringPair` was a Zig-nested struct; hoisted to module
+    // scope below (Rust forbids struct defs inside `impl`).
 
     /// Given a URL-like (including shortcuts) string, parses it into a HostedGitInfo structure.
     /// The HostedGitInfo is valid only for as long as `git_url` is valid.
@@ -270,7 +268,7 @@ impl HostedGitInfo {
         //  - It aliases `git_url`, in which case it must not be freed.
         //  - It actually points to a new allocation, in which case it must be freed.
         // PORT NOTE: modeled as Cow-like local; Drop handles the owned case.
-        let mut git_url_owned: Option<Vec<u8>> = None;
+        let mut git_url_owned: Option<Box<[u8]>> = None;
         let mut git_url_mut: &[u8] = git_url;
 
         if is_github_shorthand(git_url) {
@@ -280,7 +278,8 @@ impl HostedGitInfo {
             //
             // TODO(markovejnovic): Perhaps we can avoid this allocation...
             // This one seems quite easy to get rid of.
-            let concatenated = strings::concat(&[b"github:", git_url]);
+            let concatenated =
+                strings::concat(&[b"github:", git_url]).map_err(|_| HostedGitInfoError::OutOfMemory)?;
             git_url_owned = Some(concatenated);
             git_url_mut = git_url_owned.as_deref().unwrap();
         }
@@ -314,7 +313,7 @@ impl HostedGitInfo {
         }
 
         // Shortcut path: github:user/repo, gitlab:user/repo, etc. (from-url.js line 68-96)
-        let pathname_owned = parsed.url.pathname().to_owned_slice()?;
+        let pathname_owned = parsed.url.pathname().to_owned_slice();
         // Drop handles `defer allocator.free(pathname_owned)`.
 
         // Strip leading / (from-url.js line 69)
@@ -322,7 +321,7 @@ impl HostedGitInfo {
 
         // Strip auth (from-url.js line 70-74)
         if let Some(first_at) = strings::index_of_char(pathname, b'@') {
-            pathname = &pathname[first_at + 1..];
+            pathname = &pathname[first_at as usize + 1..];
         }
 
         // extract user and project from pathname (from-url.js line 76-86)
@@ -344,7 +343,7 @@ impl HostedGitInfo {
         let project_trimmed = strings::trim_suffix(project_part, b".git");
 
         // Get committish from URL fragment (from-url.js line 92-94)
-        let fragment = parsed.url.fragment_identifier().to_owned_slice()?;
+        let fragment = parsed.url.fragment_identifier().to_owned_slice();
         let committish: Option<&[u8]> = if !fragment.is_empty() { Some(&fragment) } else { None };
 
         // copy_from will URL-decode user, project, and committish
@@ -361,7 +360,11 @@ impl HostedGitInfo {
 // PORT NOTE: Zig nested `pub const StringPair = struct {...}` inside HostedGitInfo;
 // Rust can't nest struct defs inside `impl`, so it lives at module scope but is
 // re-exported through the type's namespace conceptually.
-// TODO(port): the `pub struct StringPair` above inside `impl` is invalid Rust — hoist here in Phase B.
+pub struct StringPair {
+    // TODO(port): lifetime/ownership of these slices unclear; never constructed in this file.
+    pub save_spec: Box<[u8]>,
+    pub fetch_spec: Option<Box<[u8]>>,
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // parse_url
@@ -430,9 +433,15 @@ pub enum WellDefinedProtocol {
     Sourcehut,
 }
 
+/// Buffer type for holding a protocol string with colon (e.g., "git+rsync:").
+/// Sized to hold the longest protocol name plus one character for the colon.
+// PORT NOTE: hoisted from `impl WellDefinedProtocol` — inherent associated types
+// are unstable (E0658).
+pub type StringWithColonBuffer = [u8; WellDefinedProtocol::MAX_PROTOCOL_LENGTH + 1];
+
 impl WellDefinedProtocol {
     /// Mapping from protocol string (without colon) to WellDefinedProtocol.
-    pub static STRINGS: phf::Map<&'static [u8], WellDefinedProtocol> = phf::phf_map! {
+    pub const STRINGS: phf::Map<&'static [u8], WellDefinedProtocol> = phf::phf_map! {
         b"bitbucket" => WellDefinedProtocol::Bitbucket,
         b"gist" => WellDefinedProtocol::Gist,
         b"git+file" => WellDefinedProtocol::GitPlusFile,
@@ -487,10 +496,6 @@ impl WellDefinedProtocol {
     // PORT NOTE: Zig computed this with a comptime loop over `strings.kvs`. The
     // longest keys ("git+https", "git+rsync", "sourcehut", "bitbucket") are 9 bytes.
     pub const MAX_PROTOCOL_LENGTH: usize = 9;
-
-    /// Buffer type for holding a protocol string with colon (e.g., "git+rsync:").
-    /// Sized to hold the longest protocol name plus one character for the colon.
-    pub type StringWithColonBuffer = [u8; Self::MAX_PROTOCOL_LENGTH + 1];
 
     /// Get the protocol string with colon (e.g., "https:") for a given protocol enum.
     /// Takes a buffer pointer to hold the result.
@@ -687,7 +692,7 @@ impl<'a> UrlProtocolPair<'a> {
         const _LONG_URL_THRESH: usize = 2048;
         // PERF(port): was stack-fallback (std.heap.stackFallback) — profile in Phase B
 
-        let mut protocol_buf: WellDefinedProtocol::StringWithColonBuffer =
+        let mut protocol_buf: StringWithColonBuffer =
             [0u8; WellDefinedProtocol::MAX_PROTOCOL_LENGTH + 1];
 
         match self.protocol {
@@ -713,9 +718,12 @@ impl<'a> UrlProtocolPair<'a> {
     fn concat_parts_to_url(parts: &[&[u8]]) -> Option<Box<JscUrl>> {
         // TODO(markovejnovic): There is a sad unnecessary allocation here that I don't know how to
         // get rid of -- in theory, URL.zig could allocate once.
-        let new_str = strings::concat(parts);
+        let new_str = strings::concat(parts).ok()?;
         // Drop handles `defer allocator.free(new_str)`.
-        JscUrl::from_string(bun_str::String::init(&new_str))
+        // TODO(port): `Box<JscUrl>` is a thin opaque-handle box; the C++ side owns the
+        // real allocation and `deinit()` must run before drop. Replace with `WhatwgUrl`
+        // (install/lib.rs) once the stub module split lands.
+        JscUrl::from_utf8(&new_str).map(|p| unsafe { Box::from_raw(p.as_ptr()) })
     }
 }
 
@@ -744,7 +752,7 @@ fn normalize_protocol(npa_str: &[u8]) -> UrlProtocolPair<'_> {
         // We need to slice off the protocol from the string. Note there are two very annoying
         // cases -- one where the protocol string is foo://bar and one where it is foo:bar.
         let post_colon =
-            strings::substring(npa_str, usize::try_from(first_colon_idx + 1).unwrap(), None);
+            strings::substring(npa_str, Some(usize::try_from(first_colon_idx + 1).unwrap()), None);
 
         return UrlProtocolPair {
             url: UrlProtocolPairUrl::Unmanaged(if post_colon.starts_with(b"//") {
@@ -819,7 +827,7 @@ fn normalize_protocol(npa_str: &[u8]) -> UrlProtocolPair<'_> {
             return UrlProtocolPair {
                 url: UrlProtocolPairUrl::Unmanaged(strings::substring(
                     npa_str,
-                    dup_slash_idx + 2,
+                    Some(dup_slash_idx + 2),
                     None,
                 )),
                 protocol: UrlProtocol::Custom(&npa_str[0..dup_slash_idx]),
@@ -833,7 +841,7 @@ fn normalize_protocol(npa_str: &[u8]) -> UrlProtocolPair<'_> {
         return UrlProtocolPair {
             url: UrlProtocolPairUrl::Unmanaged(strings::substring(
                 npa_str,
-                usize::try_from(first_colon_idx + 1).unwrap(),
+                Some(usize::try_from(first_colon_idx + 1).unwrap()),
                 None,
             )),
             protocol: UrlProtocol::Custom(
@@ -1408,7 +1416,7 @@ pub mod formatters {
             fn(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError>;
 
         pub fn github(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
-            let pathname_owned = url.pathname().to_owned_slice()?;
+            let pathname_owned = url.pathname().to_owned_slice();
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
             let mut iter = pathname.split(|&b| b == b'/');
@@ -1468,12 +1476,12 @@ pub mod formatters {
                 user: Some(user_slice),
                 project: project_slice,
                 committish: committish_slice,
-                _owned_buffer: Some(sb.allocated_slice()),
+                _owned_buffer: sb.ptr.take(),
             }))
         }
 
         pub fn bitbucket(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
-            let pathname_owned = url.pathname().to_owned_slice()?;
+            let pathname_owned = url.pathname().to_owned_slice();
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
             let mut iter = pathname.split(|&b| b == b'/');
@@ -1519,12 +1527,12 @@ pub mod formatters {
                 user: Some(user_slice),
                 project: project_slice,
                 committish: committish_slice,
-                _owned_buffer: Some(sb.allocated_slice()),
+                _owned_buffer: sb.ptr.take(),
             }))
         }
 
         pub fn gitlab(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
-            let pathname_owned = url.pathname().to_owned_slice()?;
+            let pathname_owned = url.pathname().to_owned_slice();
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
             if strings::index_of(pathname, b"/-/").is_some()
@@ -1573,12 +1581,12 @@ pub mod formatters {
                 user: Some(user_slice),
                 project: project_slice,
                 committish: committish_slice,
-                _owned_buffer: Some(sb.allocated_slice()),
+                _owned_buffer: sb.ptr.take(),
             }))
         }
 
         pub fn gist(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
-            let pathname_owned = url.pathname().to_owned_slice()?;
+            let pathname_owned = url.pathname().to_owned_slice();
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
             let mut iter = pathname.split(|&b| b == b'/');
@@ -1647,12 +1655,12 @@ pub mod formatters {
                 user: user_slice,
                 project: project_slice,
                 committish: committish_slice,
-                _owned_buffer: Some(sb.allocated_slice()),
+                _owned_buffer: sb.ptr.take(),
             }))
         }
 
         pub fn sourcehut(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
-            let pathname_owned = url.pathname().to_owned_slice()?;
+            let pathname_owned = url.pathname().to_owned_slice();
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
             let mut iter = pathname.split(|&b| b == b'/');
@@ -1695,6 +1703,7 @@ pub mod formatters {
                 let Ok(decoded_len) = PercentEncoding::decode_into(writable, user_part) else {
                     return Ok(None);
                 };
+                let decoded_len = decoded_len as usize;
                 sb.len += decoded_len;
                 break 'blk start..start + decoded_len;
             };
@@ -1704,6 +1713,7 @@ pub mod formatters {
                 let Ok(decoded_len) = PercentEncoding::decode_into(writable, project) else {
                     return Ok(None);
                 };
+                let decoded_len = decoded_len as usize;
                 sb.len += decoded_len;
                 break 'blk start..start + decoded_len;
             };
@@ -1713,6 +1723,7 @@ pub mod formatters {
                 let Ok(decoded_len) = PercentEncoding::decode_into(writable, c) else {
                     return Ok(None);
                 };
+                let decoded_len = decoded_len as usize;
                 sb.len += decoded_len;
                 Some(start..start + decoded_len)
             } else {
@@ -1723,7 +1734,7 @@ pub mod formatters {
                 user: Some(user_slice),
                 project: project_slice,
                 committish: committish_slice,
-                _owned_buffer: Some(sb.allocated_slice()),
+                _owned_buffer: sb.ptr.take(),
             }))
         }
     }

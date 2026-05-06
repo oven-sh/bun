@@ -19,7 +19,7 @@ pub fn to_be_truthy(
 
     this.increment_expect_call_counter();
 
-    let not = this.flags.not;
+    let not = this.flags.not();
     let mut pass = false;
 
     let truthy = value.to_boolean();

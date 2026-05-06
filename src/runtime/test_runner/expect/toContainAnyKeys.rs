@@ -1,7 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::console_object::Formatter;
 
-use crate::expect::Expect;
+use super::Expect;
 
 #[bun_jsc::host_fn(method)]
 pub fn to_contain_any_keys(
@@ -30,7 +30,7 @@ pub fn to_contain_any_keys(
         return global.throw_invalid_argument_type("toContainAnyKeys", "expected", "array");
     }
 
-    let not = this.flags.not;
+    let not = this.flags.not();
     let mut pass = false;
 
     let count = expected.get_length(global)?;

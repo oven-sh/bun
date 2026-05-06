@@ -1,14 +1,15 @@
 use core::ffi::{c_uint, c_void};
 use core::ptr;
 
-use bun_jsc::{self as jsc, JSGlobalObject, JSType, JSValue, JsResult, JsError};
-use bun_jsc::c as jsc_c; // jsc.C.* (JSTypedArrayType, JSTypedArrayBytesDeallocator, JSObjectMakeTypedArrayWithArrayBuffer)
+use crate as jsc;
+use crate::{JSGlobalObject, JSType, JSValue, JsResult, JsError};
+use crate::c as jsc_c; // jsc.C.* (JSTypedArrayType, JSTypedArrayBytesDeallocator, JSObjectMakeTypedArrayWithArrayBuffer)
 use bun_sys::{self, Fd};
-use bun_str as strings;
+use bun_string as strings;
 use bun_core::Output;
 use bun_alloc::mimalloc;
 
-bun_output::declare_scope!(ArrayBuffer, visible);
+bun_core::declare_scope!(ArrayBuffer, visible);
 
 // ──────────────────────────────────────────────────────────────────────────
 // ArrayBuffer
@@ -101,6 +102,48 @@ impl ArrayBuffer {
         }
     }
 
+    /// `byteSlice()` — `[offset..offset+byte_len]` view into the backing store.
+    #[inline]
+    pub fn byte_slice(&self) -> &mut [u8] {
+        if self.ptr.is_null() { return &mut []; }
+        // SAFETY: `ptr`/`byte_len` were filled in by JSC for a live ArrayBuffer.
+        unsafe { core::slice::from_raw_parts_mut(self.ptr, self.byte_len) }
+    }
+    pub fn from_bytes(bytes: &mut [u8], typed_array_type: JSType) -> ArrayBuffer {
+        ArrayBuffer {
+            ptr: bytes.as_mut_ptr(),
+            len: bytes.len(),
+            byte_len: bytes.len(),
+            value: JSValue::ZERO,
+            typed_array_type,
+            shared: false,
+            resizable: false,
+        }
+    }
+    pub fn create_uint8_array(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
+        // SAFETY: `global` is live; bytes ptr/len valid for the call (copied by C++).
+        let v = unsafe {
+            Bun__createUint8ArrayForCopy(global as *const _ as *mut _, bytes.as_ptr().cast(), bytes.len(), false)
+        };
+        if global.has_exception() { Err(JsError::Thrown) } else { Ok(v) }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// TODO(port): the remainder of `impl ArrayBuffer` and the `BinaryType` /
+// `MarkedArrayBuffer` method bodies depend on:
+//   - `jsc::mark_binding()` (signature mismatch — takes `&Location`)
+//   - `bytemuck` (not in dep graph)
+//   - `jsc_c::JSTypedArrayType` (javascript_core_c_api.rs gated)
+//   - `bun_sys` mmap, `bun_runtime::webcore::blob::Store`
+//   - `JSValue::as_object_ref` / `js_object` surface
+// Gated wholesale; the four methods above + struct/enum defs satisfy current
+// downstream callers.
+// ──────────────────────────────────────────────────────────────────────────
+#[cfg(any())]
+mod _body {
+use super::*;
+impl ArrayBuffer {
     /// Only use this when reading from the file descriptor is _very_ cheap. Like, for example, an in-memory file descriptor.
     /// Do not use this for pipes, however tempting it may seem.
     pub fn to_js_buffer_from_fd(fd: Fd, size: usize, global: &JSGlobalObject) -> JSValue {
@@ -221,22 +264,21 @@ impl ArrayBuffer {
 
     pub const NAME: &'static str = "Bun__ArrayBuffer";
 
-    // TODO(port): Zig `Stream = std.io.FixedBufferStream([]u8)`. std::io::Cursor<&mut [u8]>
-    // is the closest in-memory equivalent (no fs/net access).
-    pub type Stream<'a> = std::io::Cursor<&'a mut [u8]>;
-
     #[inline]
-    pub fn stream(self) -> Stream<'static> {
+    pub fn stream(self) -> ArrayBufferStream<'static> {
         // TODO(port): lifetime — Zig returns a stream over self.slice() (raw ptr-backed).
         // SAFETY: ptr is FFI-backed; caller must keep backing JSValue alive.
         let slice: &'static mut [u8] = unsafe { core::slice::from_raw_parts_mut(self.ptr, self.byte_len) };
         std::io::Cursor::new(slice)
     }
 
-    // TODO(port): JSType needs `#[derive(ConstParamTy)]` for this const-generic to type-check.
-    pub fn create<const KIND: JSType>(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
+    // PORT NOTE: Zig took `comptime kind: JSType`. Stable Rust forbids enum
+    // const-generic params (`adt_const_params` is unstable); demoted to a
+    // runtime arg. PERF(port): was comptime monomorphization — profile in
+    // Phase B (only 2 reachable arms, so the `match` is a single cmp).
+    pub fn create(global: &JSGlobalObject, kind: JSType, bytes: &[u8]) -> JsResult<JSValue> {
         jsc::mark_binding();
-        match KIND {
+        match kind {
             // SAFETY: FFI — global is valid; bytes ptr/len come from a live slice, copied by callee.
             JSType::Uint8Array => jsc::from_js_host_call(global, || unsafe {
                 Bun__createUint8ArrayForCopy(global as *const _ as *mut _, bytes.as_ptr().cast(), bytes.len(), false)
@@ -249,9 +291,9 @@ impl ArrayBuffer {
         }
     }
 
-    pub fn create_empty<const KIND: JSType>(global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub fn create_empty(global: &JSGlobalObject, kind: JSType) -> JsResult<JSValue> {
         jsc::mark_binding();
-        match KIND {
+        match kind {
             // SAFETY: FFI — global is valid; null ptr with len 0 is the documented empty case.
             JSType::Uint8Array => jsc::from_js_host_call(global, || unsafe {
                 Bun__createUint8ArrayForCopy(global as *const _ as *mut _, ptr::null(), 0, false)
@@ -280,9 +322,9 @@ impl ArrayBuffer {
         })
     }
 
-    pub fn alloc<const KIND: JSType>(global: &JSGlobalObject, len: u32) -> JsResult<(JSValue, &mut [u8])> {
+    pub fn alloc(global: &JSGlobalObject, kind: JSType, len: u32) -> JsResult<(JSValue, &mut [u8])> {
         let mut ptr_out: *mut u8 = ptr::null_mut();
-        let buf = match KIND {
+        let buf = match kind {
             // SAFETY: FFI — global is valid; ptr_out is a valid out-param written by callee on success.
             JSType::Uint8Array => jsc::from_js_host_call(global, || unsafe {
                 Bun__allocUint8ArrayForCopy(global as *const _ as *mut _, len as usize, (&mut ptr_out as *mut *mut u8).cast())
@@ -307,8 +349,8 @@ impl ArrayBuffer {
         unsafe { JSArrayBuffer__fromDefaultAllocator(global as *const _ as *mut _, bytes.as_mut_ptr(), bytes.len()) }
     }
 
-    pub fn from_default_allocator<const TYPED_ARRAY_TYPE: JSType>(global: &JSGlobalObject, bytes: &mut [u8]) -> JSValue {
-        match TYPED_ARRAY_TYPE {
+    pub fn from_default_allocator(global: &JSGlobalObject, typed_array_type: JSType, bytes: &mut [u8]) -> JSValue {
+        match typed_array_type {
             // SAFETY: FFI — global is valid; bytes is a mimalloc-backed buffer whose ownership transfers to JSC.
             JSType::ArrayBuffer => unsafe {
                 JSArrayBuffer__fromDefaultAllocator(global as *const _ as *mut _, bytes.as_mut_ptr(), bytes.len())
@@ -375,7 +417,7 @@ impl ArrayBuffer {
 
         // If it's not a mimalloc heap buffer, we're not going to call a deallocator
         if self.len > 0 && !mimalloc::mi_is_in_heap_region(self.ptr.cast()) {
-            bun_output::scoped_log!(ArrayBuffer, "toJS but will never free: {} bytes", self.len);
+            bun_core::scoped_log!(ArrayBuffer, "toJS but will never free: {} bytes", self.len);
 
             if self.typed_array_type == JSType::ArrayBuffer {
                 return make_array_buffer_with_bytes_no_copy(
@@ -501,12 +543,12 @@ impl ArrayBuffer {
 
 pub struct ArrayBufferStrong {
     pub array_buffer: ArrayBuffer,
-    pub held: bun_jsc::Strong, // jsc.Strong.Optional → bun_jsc::Strong (Optional variant)
+    pub held: crate::Strong, // jsc.Strong.Optional → crate::Strong (Optional variant)
 }
 
 impl Default for ArrayBufferStrong {
     fn default() -> Self {
-        Self { array_buffer: ArrayBuffer::default(), held: bun_jsc::Strong::empty() }
+        Self { array_buffer: ArrayBuffer::default(), held: crate::Strong::empty() }
     }
 }
 
@@ -523,7 +565,7 @@ impl ArrayBufferStrong {
     }
 }
 
-// Zig `deinit` only calls `this.held.deinit()`; `bun_jsc::Strong` already impls `Drop`,
+// Zig `deinit` only calls `this.held.deinit()`; `crate::Strong` already impls `Drop`,
 // so no explicit `impl Drop for ArrayBufferStrong` is needed.
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -691,6 +733,9 @@ pub enum TypedArrayType {
 }
 
 impl TypedArrayType {
+    // TODO(port): `jsc_c::JSTypedArrayType` lives in javascript_core_c_api.rs
+    // (still gated). Gated until that module un-gates.
+    #[cfg(any())]
     pub fn to_c(self) -> jsc_c::JSTypedArrayType {
         use jsc_c::JSTypedArrayType::*;
         match self {
@@ -711,6 +756,9 @@ impl TypedArrayType {
         }
     }
 
+    // TODO(port): `napi_typedarray_type` lives in `bun_runtime::api::napi`
+    // (tier-6). Gated until cycle-break.
+    #[cfg(any())]
     pub fn to_napi(self) -> Option<bun_runtime::api::napi::napi_typedarray_type> {
         use bun_runtime::api::napi::napi_typedarray_type::*;
         match self {
@@ -750,9 +798,14 @@ impl Default for MarkedArrayBuffer {
     }
 }
 
+// TODO(port): Zig `ArrayBuffer.Stream = std.io.FixedBufferStream([]u8)`.
+// `std::io::Cursor<&mut [u8]>` is the closest in-memory equivalent.
+// Hoisted to module scope (inherent associated type aliases are unstable).
+pub type ArrayBufferStream<'a> = std::io::Cursor<&'a mut [u8]>;
+
 impl MarkedArrayBuffer {
     #[inline]
-    pub fn stream(&mut self) -> ArrayBuffer::Stream<'_> {
+    pub fn stream(&mut self) -> ArrayBufferStream<'_> {
         // TODO(port): see ArrayBuffer::stream lifetime note.
         std::io::Cursor::new(self.buffer.byte_slice())
     }
@@ -903,6 +956,27 @@ pub fn make_typed_array_with_bytes_no_copy(
         Bun__makeTypedArrayWithBytesNoCopy(global as *const _ as *mut _, array_type, ptr, len, deallocator, deallocator_context)
     })
 }
+} // mod _body
+
+// Hoisted out of `_body` so re-exports type-check.
+pub struct MarkedArrayBuffer {
+    pub buffer: ArrayBuffer,
+    pub owns_buffer: bool,
+}
+impl Default for MarkedArrayBuffer {
+    fn default() -> Self { Self { buffer: ArrayBuffer::default(), owns_buffer: false } }
+}
+
+/// Mirror of `JSC::TypedArrayType`.
+#[repr(u8)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum TypedArrayType {
+    TypeNone = 0,
+    TypeInt8, TypeUint8, TypeUint8Clamped,
+    TypeInt16, TypeUint16, TypeInt32, TypeUint32,
+    TypeFloat16, TypeFloat32, TypeFloat64,
+    TypeBigInt64, TypeBigUint64, TypeDataView,
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // JSCArrayBuffer (opaque, corresponds to JSC::ArrayBuffer)
@@ -916,14 +990,10 @@ pub struct JSCArrayBuffer {
 }
 
 // TODO(port): bun.ptr.ExternalShared(Self) — externally-refcounted handle wrapper.
-// Map to bun_ptr::ExternalShared<JSCArrayBuffer> driven by the descriptor below.
+// `bun_ptr::ExternalShared<T>` requires `T: ExternalSharedDescriptor`; impl that
+// trait for `JSCArrayBuffer` once the FFI ref/deref shims are in jsc_sys.
+#[cfg(any())]
 pub type JSCArrayBufferRef = bun_ptr::ExternalShared<JSCArrayBuffer>;
-
-pub mod jsc_array_buffer_external_shared_descriptor {
-    use super::*;
-    pub const REF: unsafe extern "C" fn(*mut JSCArrayBuffer) = JSC__ArrayBuffer__ref;
-    pub const DEREF: unsafe extern "C" fn(*mut JSCArrayBuffer) = JSC__ArrayBuffer__deref;
-}
 
 impl JSCArrayBuffer {
     pub fn as_array_buffer(&mut self) -> ArrayBuffer {

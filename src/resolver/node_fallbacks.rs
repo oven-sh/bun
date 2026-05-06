@@ -1,8 +1,7 @@
-#[allow(unused_imports)]
 use crate::fs;
-use crate::package_json::PackageJSON;
-#[allow(unused_imports)]
+use crate::package_json::{PackageJSON, SideEffects};
 use bun_logger as logger;
+use bun_options_types::BundleEnums::ModuleType;
 
 pub const IMPORT_PATH: &[u8] = b"/bun-vfs$$/node_modules/";
 
@@ -79,13 +78,18 @@ macro_rules! fallback_module_init {
 
 type FallbackEntry = (&'static [u8], PackageJSON, fs::Path<'static>, fn() -> &'static str);
 
-// TODO(b2-blocked): bun_collections::ArrayHashMap Sync — PackageJSON contains
-// `StringArrayHashMap` which holds a `Cell<bool>`, making it `!Sync`, so it cannot
-// live in a process-wide `LazyLock`. The Zig built this at comptime (no thread-safety
-// concern). Un-gate once ArrayHashMap is `Sync` or PackageJSON sheds the !Sync field.
-#[cfg(any())]
-static MODULES: LazyLock<Box<[FallbackEntry]>> = LazyLock::new(|| {
-    Box::new([
+// PORT NOTE: `PackageJSON` is `!Sync` (contains `StringArrayHashMap` with a
+// `Cell<bool>`), so it cannot live in `LazyLock`/`OnceLock`. Zig built this at
+// comptime (no thread-safety concern); the Rust port uses `static mut` + `Once`,
+// which matches the "process-lifetime singleton, init once, read-only thereafter"
+// shape. All reads go through `modules()`/`map()` which assert init ordering.
+static mut MODULES: Option<Box<[FallbackEntry]>> = None;
+static mut MAP: Option<bun_collections::StringHashMap<FallbackModule>> = None;
+static INIT: std::sync::Once = std::sync::Once::new();
+
+#[cold]
+fn init_modules() {
+    let modules: Box<[FallbackEntry]> = Box::new([
         fallback_module_init!("assert",         "node-fallbacks/assert.js"),
         fallback_module_init!("buffer",         "node-fallbacks/buffer.js"),
         fallback_module_init!("console",        "node-fallbacks/console.js"),
@@ -109,21 +113,39 @@ static MODULES: LazyLock<Box<[FallbackEntry]>> = LazyLock::new(|| {
         fallback_module_init!("url",            "node-fallbacks/url.js"),
         fallback_module_init!("util",           "node-fallbacks/util.js"),
         fallback_module_init!("zlib",           "node-fallbacks/zlib.js"),
-    ])
-});
+    ]);
 
-// TODO(b2-blocked): bun_collections::ArrayHashMap Sync — see MODULES note above.
-#[cfg(any())]
-pub static MAP: LazyLock<StringHashMap<FallbackModule>> = LazyLock::new(|| {
-    let mut map = StringHashMap::<FallbackModule>::default();
-    for (name, pkg, path, code) in MODULES.iter() {
-        map.insert(
-            Box::from(*name),
-            FallbackModule { path: path.clone(), package_json: pkg, code: *code },
-        );
+    let mut m = bun_collections::StringHashMap::<FallbackModule>::default();
+    // SAFETY: `init_modules` runs exactly once under `Once::call_once`; no other
+    // thread observes `MODULES`/`MAP` until this returns. `&raw mut` avoids the
+    // static_mut_refs lint.
+    unsafe {
+        *(&raw mut MODULES) = Some(modules);
+        let modules_ref: &'static [FallbackEntry] =
+            (*(&raw const MODULES)).as_deref().unwrap();
+        for (name, pkg, path, code) in modules_ref.iter() {
+            m.insert(
+                Box::from(*name),
+                FallbackModule { path: path.clone(), package_json: pkg, code: *code },
+            );
+        }
+        *(&raw mut MAP) = Some(m);
     }
-    map
-});
+}
+
+#[inline]
+fn modules() -> &'static [FallbackEntry] {
+    INIT.call_once(init_modules);
+    // SAFETY: `INIT` guarantees `MODULES` is `Some` and never written again.
+    unsafe { (*(&raw const MODULES)).as_deref().unwrap() }
+}
+
+#[inline]
+pub fn map() -> &'static bun_collections::StringHashMap<FallbackModule> {
+    INIT.call_once(init_modules);
+    // SAFETY: `INIT` guarantees `MAP` is `Some` and never written again.
+    unsafe { (*(&raw const MAP)).as_ref().unwrap() }
+}
 
 pub fn contents_from_path(path: &[u8]) -> Option<&'static [u8]> {
     if cfg!(debug_assertions) {
@@ -136,12 +158,9 @@ pub fn contents_from_path(path: &[u8]) -> Option<&'static [u8]> {
         .position(|&b| b == b'/')
         .unwrap_or(module_name.len())];
 
-    // TODO(b2-blocked): bun_collections::ArrayHashMap Sync — MAP gated above.
-    #[cfg(any())]
-    if let Some(module) = MAP.get(module_name) {
+    if let Some(module) = map().get(module_name) {
         return Some((module.code)().as_bytes());
     }
-    let _ = module_name;
 
     None
 }

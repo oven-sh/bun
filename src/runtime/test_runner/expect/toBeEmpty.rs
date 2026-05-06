@@ -2,7 +2,7 @@ use core::ffi::c_void;
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, VM};
 
-use crate::expect::Expect;
+use super::Expect;
 
 #[bun_jsc::host_fn(method)]
 pub fn to_be_empty(
@@ -23,7 +23,7 @@ pub fn to_be_empty(
 
     this.increment_expect_call_counter();
 
-    let not = this.flags.not;
+    let not = this.flags.not();
     let mut pass = false;
     // TODO(port): ConsoleObject.Formatter field init — assumes remaining fields are Default.
     let mut formatter = bun_jsc::console_object::Formatter {

@@ -340,7 +340,8 @@ impl OutputFile {
     #[cfg(any())]
     // TODO(b2-blocked): bun_logger::fs::Path::init — current stub takes
     // `&'static [u8]`; `options.input_path: Box<[u8]>` is owned. Needs
-    // `fs::Path` to own its `text` (see field comment on `src_path`).
+    // `fs::Path` to own its `text` (see field comment on `src_path`). Per
+    // PORTING.md §Forbidden, `Box::leak` is not an acceptable workaround.
     pub fn init(options: Options) -> OutputFile {
         let size = options.size.unwrap_or_else(|| match &options.data {
             OptionsData::Buffer { data } => data.len(),

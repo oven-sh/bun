@@ -10,7 +10,7 @@ use core::sync::atomic::Ordering;
 use bun_picohttp as picohttp;
 use bun_uws::quic;
 
-use super::client_session::ClientSession;
+use super::ClientSession;
 // TODO(port): `bun.http` is the crate-root struct; confirm exact type name in Phase B.
 use crate::HttpClient;
 // TODO(port): H3Client.zig sits at src/http/H3Client.zig alongside the h3_client/ dir;
@@ -50,10 +50,10 @@ impl Stream {
     }
 
     pub fn abort(&mut self) {
-        if let Some(qs) = self.qstream {
+        if let Some(mut qs) = self.qstream {
             // SAFETY: `qstream` is set from lsquic's onStreamOpen and remains valid
             // until lsquic invokes onStreamClose; `abort` is only called while bound.
-            unsafe { qs.as_ref().close() };
+            unsafe { qs.as_mut().close() };
         }
     }
 }

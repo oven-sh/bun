@@ -115,7 +115,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 }
 
-#[cfg(any())] // TODO(b2-ast-E): full draft body — apply mixin→impl-P recipe per-method
+#[cfg(any())]
+// blocked_on: Lexer snapshot — Zig `const old = p.lexer` (value copy) for the four
+//   *_with_backtracking entry points; Rust Lexer holds `&mut Log` so cannot Clone — needs a
+//   POD `LexerSnapshot` that `restore()` accepts (same as TypeScript.rs:197 blocker);
+//   TypeScript::SkipTypeOptions::Bitset path (EnumSet<SkipTypeOptions>);
+//   TypeScript::Identifier::from_bytes lookup; Metadata::{MDot, MNever, ...} variant payloads;
+//   _draft uses `const JSX: JSXTransformType` const-generic (needs J: JsxT lowering);
+//   ~1540-line bodies, >30 path/shape errors per method.
 #[allow(warnings)]
 mod _draft {
 use bun_core::{self, err, Error};

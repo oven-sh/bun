@@ -1,7 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::console_object::Formatter;
-use crate::test_runner::expect::Expect;
-use crate::test_runner::expect::get_signature;
+use super::Expect;
+use super::get_signature;
 
 static JS_TYPE_OF_MAP: phf::Map<&'static [u8], &'static [u8]> = phf::phf_map! {
     b"function" => b"function",
@@ -52,7 +52,7 @@ pub fn to_be_type_of(
         ));
     };
 
-    let not = this.flags.not;
+    let not = this.flags.not();
     let mut pass = false;
     let mut what_is_the_type: &'static [u8] = b"";
 

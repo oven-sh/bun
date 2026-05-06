@@ -521,12 +521,9 @@ impl MacroEntryPoint {
 // Phase B: replace with the concrete `Transpiler` type or a real trait once
 // `bun_bundler::options` is ported.
 pub trait TranspilerLike {
-    fn options(&self) -> &crate::options::Options;
+    fn options(&self) -> &crate::options::Options<'_>;
 }
 
-// TODO(b2-blocked): crate::options::ClientCssInJs — lives in the still-gated
-// `options` module (`options.zig:Framework.ClientCssInJs`).
-#[cfg(any())]
 use crate::options::ClientCssInJs;
 
 // ──────────────────────────────────────────────────────────────────────────

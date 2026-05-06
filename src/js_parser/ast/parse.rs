@@ -149,7 +149,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 }
 
-#[cfg(any())] // TODO(b2-ast-E): full draft body — apply mixin→impl-P recipe per-method
+#[cfg(any())]
+// blocked_on: P::{push_scope_for_parse_pass, pop_scope, pop_and_discard_scope, declare_symbol,
+//   store_name_in_ref, declare_binding, convert_expr_to_binding_and_initializer,
+//   will_need_binding_pattern, log_expr_errors, log_arrow_arg_errors} all gated
+//   (P.rs:640 impl block); _draft uses `const JSX: JSXTransformType` const-generic
+//   (needs J: JsxT lowering); G::Decl/G::Arg full struct-init; B::* variant payloads
+//   are *mut (raw arena ptrs, need bump.alloc()); ~1780-line bodies, >30 path/shape errors.
 #[allow(warnings)]
 mod _draft {
 use core::mem;

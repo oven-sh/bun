@@ -33,7 +33,7 @@ impl Expect {
         expected.ensure_still_alive();
         let value: JSValue = this.get_value(global, this_value, "toContain", "<green>expected<r>")?;
 
-        let not = this.flags.not;
+        let not = this.flags.not();
         let mut pass = false;
 
         // FFI/BACKREF: erased to *mut c_void for for_each userdata; raw ptrs match the Zig

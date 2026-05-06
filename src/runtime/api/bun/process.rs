@@ -1,29 +1,68 @@
 use core::ffi::{c_char, c_int, c_void};
 use core::mem::offset_of;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::Arc;
 
 use bun_aio::{FilePoll, KeepAlive};
-use bun_collections::{TaggedPtrUnion, UnboundedQueue};
-use bun_core::{Environment, Global, Output, ParentDeathWatchdog};
-use bun_jsc::{self as jsc, EventLoopHandle, Subprocess};
-use bun_ptr::IntrusiveArc;
+use bun_core::{Environment, Global, Output};
+use bun_aio::ParentDeathWatchdog;
+use bun_event_loop::EventLoopHandle;
 use bun_sys::{self, Fd, Maybe};
+#[cfg(windows)]
 use bun_sys::windows::libuv as uv;
+#[cfg(not(windows))]
+mod uv {
+    //! libuv shim for non-Windows builds. The Zig source guards every `uv.*`
+    //! reference behind `if (Environment.isWindows)`; the Rust draft references
+    //! `uv::Pipe` / `uv::uv_process_t` in shared struct shapes. Phase B should
+    //! `#[cfg(windows)]`-gate those fields instead.
+    pub type Pipe = core::ffi::c_void;
+    pub type uv_pid_t = i32;
+}
 
-// TODO(port): exact crate paths for these cross-crate handler types
-use crate::cli::filter_run::ProcessHandle;
-use crate::cli::multi_run::ProcessHandle as MultiRunProcessHandle;
-use crate::cli::test::parallel_runner::Worker as TestWorkerHandle;
-use bun_runtime::api::cron::{CronRegisterJob, CronRemoveJob};
-use bun_runtime::api::{ChromeProcess, WebViewHostProcess};
-use bun_install::{LifecycleScriptSubprocess, SecurityScanSubprocess};
-use crate::shell::ShellSubprocess;
+// ─── §Dispatch: cross-tier exit handlers ─────────────────────────────────────
+// Zig: `TaggedPointerUnion` of 12 concrete *Handler types living in higher-tier
+// crates (cli::filter_run, cli::multi_run, cli::test, install, shell, webview,
+// api::cron, api::Subprocess). Per PORTING.md §Dispatch (cold path — called
+// once per process exit, callee does real work), the low tier defines a manual
+// vtable and the high tier provides static instances. This breaks the import
+// cycle without losing inlining where it doesn't matter.
+//
+// High-tier wiring (Phase B): each handler module defines
+//   pub static EXIT_VTABLE: ProcessExitVTable = ProcessExitVTable {
+//       on_process_exit: |p, proc, st, ru| unsafe { &mut *p.cast::<Self>() }.on_process_exit(proc, st, ru),
+//   };
+// and constructs `ProcessExitHandler { owner, vtable: &EXIT_VTABLE }`.
+#[cfg(any())]
+mod _exit_handler_variants {
+    // Preserved for diff-pass: the Zig union members. All un-declared in B-2.
+    use crate::cli::filter_run::ProcessHandle;
+    use crate::cli::multi_run::ProcessHandle as MultiRunProcessHandle;
+    use crate::cli::test::parallel_runner::Worker as TestWorkerHandle;
+    use crate::api::cron::{CronRegisterJob, CronRemoveJob};
+    use crate::api::{ChromeProcess, WebViewHostProcess};
+    use bun_install::{LifecycleScriptSubprocess, SecurityScanSubprocess};
+    use crate::shell::ShellSubprocess;
+    use crate::api::bun::subprocess::Subprocess;
+}
 
-// TODO(port): `bun.spawn` (PosixSpawn) crate path
-use bun_spawn as posix_spawn;
-use posix_spawn::{Actions as PosixSpawnActions, Attr as PosixSpawnAttr, WaitPidResult};
+// posix_spawn(2) wrappers live in the sibling `spawn` module
+// (src/runtime/api/bun/spawn.rs → `super::spawn::bun_spawn`), not the
+// low-tier `bun_spawn` crate. Gated until that sibling compiles.
+// TODO(b2-blocked): super::spawn — wire `use super::spawn::bun_spawn as posix_spawn;`.
+#[cfg(any())]
+use super::spawn::bun_spawn as posix_spawn;
+#[cfg(any())]
+use posix_spawn::{Actions as PosixSpawnActions, Attr as PosixSpawnAttr};
+/// `posix_spawn::WaitPidResult` — local mirror so `Status::from` and the
+/// waiter-thread queue compile while `super::spawn` is gated.
+#[derive(Clone, Copy)]
+pub struct WaitPidResult {
+    pub pid: PidT,
+    pub status: c_int,
+}
 
-bun_output::declare_scope!(PROCESS, visible);
+bun_core::declare_scope!(PROCESS, visible);
 
 #[cfg(unix)]
 pub type PidT = libc::pid_t;
@@ -155,14 +194,24 @@ fn rusage_zeroed() -> Rusage {
     unsafe { core::mem::zeroed() }
 }
 
-// const ShellSubprocessMini = bun.shell.ShellSubprocessMini;
+/// §Dispatch cold-path vtable. One static instance per high-tier handler type.
+/// Replaces the Zig `TaggedPointerUnion` 12-way `inline switch`.
+// PERF(port): was inline switch
+#[derive(Clone, Copy)]
+pub struct ProcessExitVTable {
+    pub on_process_exit:
+        unsafe fn(owner: *mut (), process: *mut Process, status: Status, rusage: *const Rusage),
+}
+
+#[derive(Clone, Copy)]
 pub struct ProcessExitHandler {
-    pub ptr: ExitHandlerTaggedPointer,
+    pub owner: *mut (),
+    pub vtable: Option<&'static ProcessExitVTable>,
 }
 
 impl Default for ProcessExitHandler {
     fn default() -> Self {
-        Self { ptr: ExitHandlerTaggedPointer::NULL }
+        Self { owner: core::ptr::null_mut(), vtable: None }
     }
 }
 
@@ -177,92 +226,21 @@ pub struct SyncProcessPosix {
 #[cfg(not(windows))]
 type SyncProcess = SyncProcessPosix;
 
-pub type ExitHandlerTaggedPointer = TaggedPtrUnion<(
-    Subprocess,
-    LifecycleScriptSubprocess,
-    ShellSubprocess,
-    ProcessHandle,
-    MultiRunProcessHandle,
-    TestWorkerHandle,
-    SecurityScanSubprocess,
-    WebViewHostProcess,
-    ChromeProcess,
-    SyncProcess,
-    CronRegisterJob,
-    CronRemoveJob,
-)>;
-
 impl ProcessExitHandler {
-    // TODO(port): `anytype` — accept any of the union member pointer types
-    pub fn init<T>(&mut self, ptr: *mut T) {
-        self.ptr = ExitHandlerTaggedPointer::init(ptr);
+    /// Zig: `init(anytype)` — high-tier callers pass `(&mut self, &SELF_EXIT_VTABLE)`.
+    pub fn init(&mut self, owner: *mut (), vtable: &'static ProcessExitVTable) {
+        self.owner = owner;
+        self.vtable = Some(vtable);
     }
 
     pub fn call(&self, process: &mut Process, status: Status, rusage: &Rusage) {
-        if self.ptr.is_null() {
+        let Some(vt) = self.vtable else { return };
+        if self.owner.is_null() {
             return;
         }
-
-        // TODO(port): TaggedPtrUnion tag dispatch API — using as_mut::<T>() per type
-        match self.ptr.tag() {
-            t if t == ExitHandlerTaggedPointer::tag_of::<Subprocess>() => {
-                let subprocess = self.ptr.as_mut::<Subprocess>();
-                subprocess.on_process_exit(process, status, rusage);
-            }
-            t if t == ExitHandlerTaggedPointer::tag_of::<LifecycleScriptSubprocess>() => {
-                let subprocess = self.ptr.as_mut::<LifecycleScriptSubprocess>();
-                subprocess.on_process_exit(process, status, rusage);
-            }
-            t if t == ExitHandlerTaggedPointer::tag_of::<ProcessHandle>() => {
-                let subprocess = self.ptr.as_mut::<ProcessHandle>();
-                subprocess.on_process_exit(process, status, rusage);
-            }
-            t if t == ExitHandlerTaggedPointer::tag_of::<MultiRunProcessHandle>() => {
-                let subprocess = self.ptr.as_mut::<MultiRunProcessHandle>();
-                subprocess.on_process_exit(process, status, rusage);
-            }
-            t if t == ExitHandlerTaggedPointer::tag_of::<TestWorkerHandle>() => {
-                let subprocess = self.ptr.as_mut::<TestWorkerHandle>();
-                subprocess.on_process_exit(process, status, rusage);
-            }
-            t if t == ExitHandlerTaggedPointer::tag_of::<ShellSubprocess>() => {
-                let subprocess = self.ptr.as_mut::<ShellSubprocess>();
-                subprocess.on_process_exit(process, status, rusage);
-            }
-            t if t == ExitHandlerTaggedPointer::tag_of::<SecurityScanSubprocess>() => {
-                let subprocess = self.ptr.as_mut::<SecurityScanSubprocess>();
-                subprocess.on_process_exit(process, status, rusage);
-            }
-            t if t == ExitHandlerTaggedPointer::tag_of::<WebViewHostProcess>() => {
-                let subprocess = self.ptr.as_mut::<WebViewHostProcess>();
-                subprocess.on_process_exit(process, status, rusage);
-            }
-            t if t == ExitHandlerTaggedPointer::tag_of::<ChromeProcess>() => {
-                let subprocess = self.ptr.as_mut::<ChromeProcess>();
-                subprocess.on_process_exit(process, status, rusage);
-            }
-            t if t == ExitHandlerTaggedPointer::tag_of::<CronRegisterJob>() => {
-                let cron_job = self.ptr.as_mut::<CronRegisterJob>();
-                cron_job.on_process_exit(process, status, rusage);
-            }
-            t if t == ExitHandlerTaggedPointer::tag_of::<CronRemoveJob>() => {
-                let cron_job = self.ptr.as_mut::<CronRemoveJob>();
-                cron_job.on_process_exit(process, status, rusage);
-            }
-            t if t == ExitHandlerTaggedPointer::tag_of::<SyncProcess>() => {
-                let subprocess = self.ptr.as_mut::<SyncProcess>();
-                #[cfg(unix)]
-                {
-                    let _ = subprocess;
-                    panic!("This code should not reached");
-                }
-                #[cfg(not(unix))]
-                subprocess.on_process_exit(status, rusage);
-            }
-            _ => {
-                panic!("Internal Bun error: ProcessExitHandler has an invalid tag. Please file a bug report.");
-            }
-        }
+        // SAFETY: vtable was registered with a matching owner type by the
+        // high-tier static; owner outlives the Process (it holds the strong ref).
+        unsafe { (vt.on_process_exit)(self.owner, process, status, rusage) };
     }
 }
 
@@ -276,30 +254,57 @@ pub struct Process {
     pub pidfd: PidFdType,
     pub status: Status,
     pub poller: Poller,
-    pub ref_count: AtomicU32, // bun.ptr.ThreadSafeRefCount → IntrusiveArc<Process>
+    pub ref_count: bun_ptr::ThreadSafeRefCount<Process>,
     pub exit_handler: ProcessExitHandler,
     pub sync: bool,
     pub event_loop: EventLoopHandle,
 }
 
-// bun.ptr.ThreadSafeRefCount → IntrusiveArc<Process>
-// TODO(port): wire IntrusiveArc<Process> ref/deref via bun_ptr; deinit() is the drop callback
-impl Process {
-    pub fn ref_(&self) {
-        IntrusiveArc::<Process>::ref_(self);
+// bun.ptr.ThreadSafeRefCount → intrusive (FFI-crossing: *mut Process recovered
+// via @fieldParentPtr in on_exit_uv / on_close_uv). Per PORTING.md §Pointers,
+// keep the embedded count and impl `bun_ptr::ThreadSafeRefCounted`.
+impl bun_ptr::ThreadSafeRefCounted for Process {
+    unsafe fn get_ref_count(this: *mut Self) -> *mut bun_ptr::ThreadSafeRefCount<Self> {
+        // SAFETY: caller contract — `this` points to a live Process.
+        unsafe { core::ptr::addr_of_mut!((*this).ref_count) }
     }
-    pub fn deref(&self) {
-        IntrusiveArc::<Process>::deref(self);
+    unsafe fn destructor(this: *mut Self) {
+        // SAFETY: refcount hit 0; allocation came from Box::into_raw in init_posix/spawn.
+        unsafe { drop(Box::from_raw(this)) };
     }
+}
 
+impl Process {
     pub fn memory_cost(&self) -> usize {
         core::mem::size_of::<Self>()
     }
 
-    pub fn set_exit_handler<T>(&mut self, handler: *mut T) {
-        self.exit_handler.init(handler);
+    pub fn set_exit_handler(&mut self, owner: *mut (), vtable: &'static ProcessExitVTable) {
+        self.exit_handler.init(owner, vtable);
     }
 
+    pub fn has_exited(&self) -> bool {
+        matches!(self.status, Status::Exited(_) | Status::Signaled(_) | Status::Err(_))
+    }
+
+    pub fn has_killed(&self) -> bool {
+        matches!(self.status, Status::Exited(_) | Status::Signaled(_))
+    }
+
+    pub fn signal_code(&self) -> Option<bun_core::SignalCode> {
+        self.status.signal_code()
+    }
+}
+
+// ─── posix_spawn / FilePoll / uv-backed Process methods ──────────────────────
+// Gated: depend on `super::spawn::bun_spawn::wait4` (sibling not yet declared),
+// `bun_aio::FilePoll::{init,register,enable_keeping_process_alive}` (method
+// surface unverified), `EventLoopHandle::{init,loop_}` (B-2 in flux), and
+// `bun_sys::{get_errno,E,Syscall,INVALID_FD}` shape mismatches (`Maybe` is a
+// `Result` alias, not a `.Result/.Err` enum).
+// TODO(b2-blocked): super::spawn + bun_aio FilePoll method surface.
+#[cfg(any())]
+impl Process {
     #[cfg(windows)]
     pub fn update_status_on_windows(&mut self) {
         if let Poller::Uv(uv_proc) = &self.poller {
@@ -734,7 +739,10 @@ impl Process {
     }
 }
 
-#[derive(Clone, Copy)]
+// PORT NOTE: not `Copy` — `bun_sys::Error` carries `Box<[u8]>` path/dest. The
+// Zig `union(enum)` is copyable because its `.err` arm borrows the path; the
+// Rust port owns it (see Error.rs TODO). Callers use `.clone()`.
+#[derive(Clone)]
 pub enum Status {
     Running,
     Exited(Exited),
@@ -775,10 +783,10 @@ impl Status {
         let mut signal: Option<u8> = None;
 
         match waitpid_result {
-            Maybe::Err(err_) => {
-                return Some(Status::Err(*err_));
+            Err(err_) => {
+                return Some(Status::Err(err_.clone()));
             }
-            Maybe::Result(result) => {
+            Ok(result) => {
                 if result.pid != pid {
                     return None;
                 }
@@ -835,6 +843,8 @@ impl Status {
     }
 }
 
+// TODO(b2-blocked): bun_core::SignalCode::to_exit_code + bun_sys::Error: Display.
+#[cfg(any())]
 impl core::fmt::Display for Status {
     fn fmt(&self, writer: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         if let Some(signal_code) = self.signal_code() {
@@ -869,7 +879,8 @@ impl Drop for PollerPosix {
     }
 }
 
-#[cfg(unix)]
+// TODO(b2-blocked): bun_aio::FilePoll::{can_enable,enable,disable}_keeping_process_alive — verify EventLoopHandle arg shape.
+#[cfg(any())]
 impl PollerPosix {
     fn into_fd(mut self) -> Option<Box<FilePoll>> {
         // PORT NOTE: reshaped for borrowck — Drop impl forbids partial move out of `self`.
@@ -967,6 +978,29 @@ impl PollerWindows {
 #[cfg(unix)]
 pub use waiter_thread_posix::WaiterThreadPosix as WaiterThread;
 
+#[cfg(unix)]
+pub mod waiter_thread_posix {
+    //! Thin un-gated surface: full body in `waiter_thread_posix_body` below.
+    //! Blocked on `super::spawn::bun_spawn::wait4`, `bun_threading::UnboundedQueue`
+    //! intrusive-next wiring, and `bun_event_loop::ConcurrentTask::create` /
+    //! `AnyTaskWithExtraContext::init_for` method surface.
+    use super::*;
+    pub struct WaiterThreadPosix(());
+    static SHOULD_USE_WAITER_THREAD: AtomicBool = AtomicBool::new(false);
+    impl WaiterThreadPosix {
+        #[inline]
+        pub fn should_use_waiter_thread() -> bool {
+            SHOULD_USE_WAITER_THREAD.load(Ordering::Relaxed)
+        }
+        #[inline]
+        pub fn set_should_use_waiter_thread() {
+            SHOULD_USE_WAITER_THREAD.store(true, Ordering::Relaxed);
+        }
+        // TODO(b2-blocked): super::spawn — append/loop_/init/reload_handlers in waiter_thread_posix_body.
+        pub fn reload_handlers() {}
+    }
+}
+
 #[cfg(not(unix))]
 pub mod WaiterThread {
     #[inline]
@@ -980,9 +1014,12 @@ pub mod WaiterThread {
 // Machines which do not support pidfd_open (GVisor, Linux Kernel < 5.6)
 // use a thread to wait for the child process to exit.
 // We use a single thread to call waitpid() in a loop.
-#[cfg(unix)]
-pub mod waiter_thread_posix {
+// TODO(b2-blocked): super::spawn::bun_spawn::wait4 + bun_event_loop::{ConcurrentTask,AnyTaskWithExtraContext} method surface.
+#[cfg(any())]
+pub mod waiter_thread_posix_body {
     use super::*;
+    use bun_threading::UnboundedQueue;
+    use bun_event_loop::{AnyTaskWithExtraContext, ConcurrentTask, Task};
 
     pub struct WaiterThreadPosix {
         pub started: AtomicU32,
@@ -1063,7 +1100,7 @@ pub mod waiter_thread_posix {
     pub struct ResultTaskMini<T: 'static> {
         pub result: bun_sys::Result<WaitPidResult>,
         pub subprocess: Arc<T>,
-        pub task: jsc::AnyTaskWithExtraContext,
+        pub task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
     }
 
     impl<T: ProcessLike> ResultTaskMini<T> {
@@ -1392,10 +1429,31 @@ impl Default for PosixSpawnOptions {
     }
 }
 
+/// `bun.jsc.Subprocess.StdioKind` — defined here (not in `subprocess`) to keep
+/// `process` leaf. The sibling `subprocess` module re-exports this.
+#[repr(u8)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum StdioKind {
+    Stdin = 0,
+    Stdout = 1,
+    Stderr = 2,
+}
+
+impl StdioKind {
+    #[inline]
+    pub fn to_fd(self) -> Fd {
+        match self {
+            StdioKind::Stdin => Fd::stdin(),
+            StdioKind::Stdout => Fd::stdout(),
+            StdioKind::Stderr => Fd::stderr(),
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct Dup2 {
-    pub out: jsc::subprocess::StdioKind,
-    pub to: jsc::subprocess::StdioKind,
+    pub out: StdioKind,
+    pub to: StdioKind,
 }
 
 pub enum PosixStdio {
@@ -1441,6 +1499,9 @@ pub enum WindowsStdioResult {
     BufferFd(Fd),
 }
 
+// TODO(b2-blocked): Arc<Process> interior mutability — Process is intrusively
+// ref-counted; switch process_ to RefPtr<Process> and drop the unsafe casts.
+#[cfg(any())]
 impl WindowsSpawnResult {
     pub fn to_process(&mut self, _event_loop: impl Sized, sync_: bool) -> Arc<Process> {
         let process = self.process_.take().unwrap();
@@ -1486,7 +1547,10 @@ pub struct WindowsSpawnOptions {
     pub pty_slave_fd: (),
     /// Windows ConPTY handle. When set, the child is attached to the
     /// pseudoconsole and stdin/stdout/stderr are provided by ConPTY.
+    #[cfg(windows)]
     pub pseudoconsole: Option<bun_sys::windows::HPCON>,
+    #[cfg(not(windows))]
+    pub pseudoconsole: Option<*mut c_void>,
 }
 
 pub struct WindowsOptions {
@@ -1517,6 +1581,8 @@ pub enum WindowsStdio {
     Dup2(Dup2),
 }
 
+// TODO(b2-blocked): bun_libuv_sys::Pipe::close_and_destroy — Windows-only.
+#[cfg(any())]
 impl Drop for WindowsStdio {
     fn drop(&mut self) {
         // TODO(port): close_and_destroy consumes the pipe in Zig (frees the heap
@@ -1579,13 +1645,14 @@ impl ExtraPipe {
     pub fn fd(&self) -> Fd {
         match self {
             ExtraPipe::OwnedFd(f) | ExtraPipe::UnownedFd(f) => *f,
-            ExtraPipe::Unavailable => bun_sys::INVALID_FD,
+            ExtraPipe::Unavailable => Fd::INVALID,
         }
     }
 }
 
 impl PosixSpawnResult {
     pub fn close(&mut self) {
+        use bun_sys::FdExt as _;
         for item in self.extra_pipes.iter() {
             match item {
                 ExtraPipe::OwnedFd(f) => f.close(),
@@ -1595,7 +1662,12 @@ impl PosixSpawnResult {
         self.extra_pipes.clear();
         self.extra_pipes.shrink_to_fit();
     }
+}
 
+// TODO(b2-blocked): Process::init_posix (gated above) + bun_analytics::kernel_version
+// + bun_sys::{pidfd_open, Syscall::PidfdOpen, E variants, get_errno} surface.
+#[cfg(any())]
+impl PosixSpawnResult {
     #[cfg(unix)]
     pub fn to_process(
         self,
@@ -1705,7 +1777,15 @@ pub type SpawnProcessResult = PosixSpawnResult;
 #[cfg(not(unix))]
 pub type SpawnProcessResult = WindowsSpawnResult;
 
-use std::sync::Arc;
+// ─── spawn_process bodies + sync runner ──────────────────────────────────────
+// Gated: posix_spawn::{Actions,Attr,spawn,spawnZ} (sibling `spawn` mod),
+// bun_sys::{c::*,socketpair,setsockopt,O,dup2,get_errno,E,Syscall,INVALID_FD}
+// surface, bun_analytics::Features, scopeguard borrow-conflict cleanup. The
+// option/result struct shapes above are the un-gated surface.
+// TODO(b2-blocked): super::spawn (posix_spawn wrappers) + bun_sys C-constant surface.
+#[cfg(any())]
+mod spawn_process_body {
+use super::*;
 
 pub fn spawn_process(
     options: &SpawnOptions,
@@ -3806,11 +3886,12 @@ pub mod sync {
         }
     }
 }
+} // mod spawn_process_body
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/api/bun/process.zig (2927 lines)
 //   confidence: low
-//   todos:      45
-//   notes:      Heavy defer/errdefer + @fieldParentPtr-on-union(enum) patterns; IntrusiveArc<Process> vs Arc (LIFETIMES.tsv conflict), scopeguard borrow conflicts, and uv::Pipe Box ownership all need Phase B rework. PollerWindows must become #[repr(C)] for offset_of.
+//   todos:      48
+//   notes:      B-2 un-gate: structs (Process/Status/Poller/SpawnOptions/SpawnResult) + pure accessors real; ProcessExitHandler converted to §Dispatch vtable (cold path). spawn_process bodies / waiter-thread loop / sync runner re-gated on sibling `spawn` posix_spawn wrappers + bun_aio FilePoll method surface. PollerWindows must become #[repr(C)] for offset_of.
 // ──────────────────────────────────────────────────────────────────────────

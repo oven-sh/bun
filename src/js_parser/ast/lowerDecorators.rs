@@ -33,7 +33,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 }
 
-#[cfg(any())] // TODO(b2-ast-E): full draft body — apply mixin→impl-P recipe per-method
+#[cfg(any())]
+// blocked_on: P::{generate_temp_ref, record_usage, new_symbol, call_runtime, b} all gated
+//   (P.rs:640 impl block); G::Property/G::Class/G::Fn full struct-init (no Default —
+//   ts_decorators/class_static_block/kind/flags all required); E::Arrow.args is &'static [G::Arg]
+//   (arena slice rework); Flags::PropertySet bitflags const names (IsComputed/IsMethod/IsStatic);
+//   _draft uses `const JSX: JSXTransformType` const-generic (needs J: JsxT lowering);
+//   ~2060-line bodies, >30 path/shape errors per method.
 #[allow(warnings)]
 mod _draft {
 //! Lowering for TC39 standard ES decorators.

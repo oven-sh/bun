@@ -3,48 +3,67 @@
 
 use core::ffi::c_uint;
 
-use bun_collections::TaggedPtrUnion;
 use bun_uws as uws;
 
 use crate::webcore::CookieMap;
 
 pub use super::request_context::AdditionalOnAbortCallback;
+use super::request_context::RequestContext;
+use super::{DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer};
 
-// TODO(port): these are the six monomorphizations of `NewRequestContext` (ssl × debug × h3).
-// In Zig they are nested as `HTTPServer.RequestContext` etc. The Rust shape of
-// `NewServer`/`NewRequestContext` (const-generic struct vs. distinct types) is decided when
-// `server.zig` / `RequestContext.zig` are ported — adjust these aliases then.
-use crate::api::{DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer};
-type HttpCtx = <HTTPServer as crate::api::ServerType>::RequestContext;
-type HttpsCtx = <HTTPSServer as crate::api::ServerType>::RequestContext;
-type DebugHttpCtx = <DebugHTTPServer as crate::api::ServerType>::RequestContext;
-type DebugHttpsCtx = <DebugHTTPSServer as crate::api::ServerType>::RequestContext;
-type HttpsH3Ctx = <HTTPSServer as crate::api::ServerType>::H3RequestContext;
-type DebugHttpsH3Ctx = <DebugHTTPSServer as crate::api::ServerType>::H3RequestContext;
+// The six monomorphizations of `NewRequestContext` (ssl × debug × h3).
+// In Zig these are nested as `HTTPServer.RequestContext` etc.
+type HttpCtx = RequestContext<HTTPServer, false, false, false>;
+type HttpsCtx = RequestContext<HTTPSServer, true, false, false>;
+type DebugHttpCtx = RequestContext<DebugHTTPServer, false, true, false>;
+type DebugHttpsCtx = RequestContext<DebugHTTPSServer, true, true, false>;
+type HttpsH3Ctx = RequestContext<HTTPSServer, true, false, true>;
+type DebugHttpsH3Ctx = RequestContext<DebugHTTPSServer, true, true, true>;
 
-pub type Pointer = TaggedPtrUnion<(
-    HttpCtx,
-    HttpsCtx,
-    DebugHttpCtx,
-    DebugHttpsCtx,
-    HttpsH3Ctx,
-    DebugHttpsH3Ctx,
-)>;
+// PORT NOTE (§Dispatch): Zig used `bun.ptr.TaggedPointerUnion(...)`. The
+// `bun_ptr::impl_tagged_ptr_union!` macro hits the orphan rule from outside
+// `bun_ptr`, so per §Dispatch store `(tag: u8, ptr: *mut ())` as two fields.
+// PERF(port): was TaggedPointerUnion pack — 8→16 bytes. AnyRequestContext is
+// stored inside `webcore::Request` (one per in-flight request); if profiling
+// flags the extra 8 bytes, move the impl_tagged_ptr_union! invocation into
+// `bun_ptr` for these six types.
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CtxTag {
+    None = 0,
+    Http,
+    Https,
+    DebugHttp,
+    DebugHttps,
+    HttpsH3,
+    DebugHttpsH3,
+}
 
-#[repr(transparent)]
 #[derive(Copy, Clone)]
 pub struct AnyRequestContext {
-    pub tagged_pointer: Pointer,
+    pub tag: CtxTag,
+    pub ptr: *mut (),
 }
 
 impl AnyRequestContext {
-    pub const NULL: Self = Self { tagged_pointer: Pointer::NULL };
+    pub const NULL: Self = Self { tag: CtxTag::None, ptr: core::ptr::null_mut() };
+}
 
-    pub fn init<T>(request_ctx: *mut T) -> Self
-    where
-        Pointer: From<*mut T>,
-    {
-        Self { tagged_pointer: Pointer::from(request_ctx) }
+/// Internal: maps each `RequestContext` monomorphization to its tag so
+/// `AnyRequestContext::init` is generic over the six types without `TypeList`.
+pub trait CtxKind {
+    const TAG: CtxTag;
+}
+impl CtxKind for HttpCtx { const TAG: CtxTag = CtxTag::Http; }
+impl CtxKind for HttpsCtx { const TAG: CtxTag = CtxTag::Https; }
+impl CtxKind for DebugHttpCtx { const TAG: CtxTag = CtxTag::DebugHttp; }
+impl CtxKind for DebugHttpsCtx { const TAG: CtxTag = CtxTag::DebugHttps; }
+impl CtxKind for HttpsH3Ctx { const TAG: CtxTag = CtxTag::HttpsH3; }
+impl CtxKind for DebugHttpsH3Ctx { const TAG: CtxTag = CtxTag::DebugHttpsH3; }
+
+impl AnyRequestContext {
+    pub fn init<T: CtxKind>(request_ctx: *const T) -> Self {
+        Self { tag: T::TAG, ptr: request_ctx as *mut () }
     }
 }
 
@@ -62,31 +81,64 @@ impl AnyRequestContext {
 macro_rules! dispatch {
     ($self:expr, $default:expr, |$T:ident, $ctx:ident| $body:expr) => {{
         let this = $self;
-        if this.tagged_pointer.is_null() {
-            return $default;
-        }
         macro_rules! arm {
-            ($Ty:ty) => {
-                if let Some($ctx) = this.tagged_pointer.get_mut::<$Ty>() {
-                    type $T = $Ty;
-                    #[allow(unused)]
-                    let _ = core::marker::PhantomData::<$T>;
-                    return $body;
-                }
-            };
+            ($Ty:ty) => {{
+                // SAFETY: tag matched; ptr is non-null and exclusively
+                // accessed for the duration of the dispatch arm.
+                let $ctx = unsafe { &mut *this.ptr.cast::<$Ty>() };
+                type $T = $Ty;
+                #[allow(unused)]
+                let _ = core::marker::PhantomData::<$T>;
+                $body
+            }};
         }
-        arm!(HttpCtx);
-        arm!(HttpsCtx);
-        arm!(DebugHttpCtx);
-        arm!(DebugHttpsCtx);
-        arm!(HttpsH3Ctx);
-        arm!(DebugHttpsH3Ctx);
-        unreachable!("Unexpected AnyRequestContext tag");
+        match this.tag {
+            CtxTag::None => $default,
+            CtxTag::Http => arm!(HttpCtx),
+            CtxTag::Https => arm!(HttpsCtx),
+            CtxTag::DebugHttp => arm!(DebugHttpCtx),
+            CtxTag::DebugHttps => arm!(DebugHttpsCtx),
+            CtxTag::HttpsH3 => arm!(HttpsH3Ctx),
+            CtxTag::DebugHttpsH3 => arm!(DebugHttpsH3Ctx),
+        }
     }};
 }
 
 impl AnyRequestContext {
+    pub fn memory_cost(self) -> usize {
+        dispatch!(self, 0, |_T, ctx| ctx.memory_cost())
+    }
+
     pub fn set_additional_on_abort_callback(self, cb: Option<AdditionalOnAbortCallback>) {
+        dispatch!(self, (), |_T, ctx| {
+            debug_assert!(ctx.additional_on_abort.is_none());
+            ctx.additional_on_abort = cb;
+        })
+    }
+
+    pub fn detach_request(self) {
+        dispatch!(self, (), |_T, ctx| {
+            ctx.req = None;
+        })
+    }
+
+    pub fn dev_server(self) -> Option<&'static crate::bake::DevServer::DevServer> {
+        // SAFETY: server backref outlives any AnyRequestContext (held only for
+        // the duration of a request callback).
+        dispatch!(self, None, |_T, ctx| unsafe {
+            core::mem::transmute::<Option<&_>, Option<&'static _>>(ctx.dev_server())
+        })
+    }
+}
+
+// ─── dispatch arms calling gated RequestContext methods ──────────────────────
+// set_timeout / set_cookies / set_timeout_handler / get_remote_socket_info /
+// on_abort / ref_ / deref / set_signal_aborted forward to RequestContext
+// methods that live in `_gated_state_machine`. Un-gate alongside.
+// TODO(b2-blocked): RequestContext state-machine bodies.
+#[cfg(any())]
+impl AnyRequestContext {
+    pub fn set_additional_on_abort_callback_(self, cb: Option<AdditionalOnAbortCallback>) {
         dispatch!(self, (), |_T, ctx| {
             debug_assert!(ctx.additional_on_abort.is_none());
             ctx.additional_on_abort = cb;
@@ -97,12 +149,12 @@ impl AnyRequestContext {
         dispatch!(self, 0, |_T, ctx| ctx.memory_cost())
     }
 
-    pub fn get<T>(self) -> Option<*mut T>
-    where
-        Pointer: bun_collections::TaggedPtrGet<T>,
-    {
-        // TODO(port): exact `TaggedPtrUnion::get<T>` signature TBD in bun_collections.
-        self.tagged_pointer.get::<T>()
+    pub fn get<T: CtxKind>(self) -> Option<*mut T> {
+        if self.tag == T::TAG {
+            Some(self.ptr.cast::<T>())
+        } else {
+            None
+        }
     }
 
     pub fn set_timeout(self, seconds: c_uint) -> bool {
@@ -164,7 +216,7 @@ impl AnyRequestContext {
         dispatch!(self, (), |_T, ctx| ctx.ref_())
     }
 
-    pub fn set_signal_aborted(self, reason: bun_jsc::CommonAbortReason) {
+    pub fn set_signal_aborted(self, reason: crate::server::jsc::CommonAbortReason) {
         dispatch!(self, (), |_T, ctx| ctx.set_signal_aborted(reason))
     }
 

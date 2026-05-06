@@ -50,7 +50,7 @@ gated_mod!(pub mod patch_install = "patch_install.rs";);
 #[path = "ConfigVersion.rs"]
 pub mod config_version;
 gated_mod!(pub mod hoisted_install = "hoisted_install.rs";);
-gated_mod!(pub mod hosted_git_info = "hosted_git_info.rs";);
+pub mod hosted_git_info;
 gated_mod!(pub mod migration = "migration.rs";);
 pub mod padding_checker;
 gated_mod!(pub mod pnpm = "pnpm.rs";);
@@ -648,8 +648,8 @@ pub mod isolated_install {
 #[cfg(not(any()))]
 pub mod patch_install { pub struct PatchTask; }
 
-#[cfg(not(any()))]
-pub mod hosted_git_info {
+#[cfg(any())] // B-2: replaced by real module above
+pub mod hosted_git_info_stub {
     /// Port of `HostedGitInfo` (src/install/hosted_git_info.zig). Owned-buffer
     /// fields collapse to `Box<[u8]>`; the Zig `_memory_buffer`/`_allocator`
     /// pair is the backing arena and drops with the struct.

@@ -1,25 +1,20 @@
 use core::mem;
-
-use bun_core::Output;
-use bun_jsc::{
-    self as jsc, ArrayBuffer, BinaryType, CallFrame, JSGlobalObject, JSString, JSUint8Array,
-    JSValue, JsRef, JsResult, ZigString,
-};
-use bun_runtime::server::WebSocketServerContext as WebSocketServer;
-use bun_runtime::server::WebSocketServerHandler;
-use bun_runtime::webcore::AbortSignal;
-use bun_str as strings;
-use bun_uws::{self as uws, AnyWebSocket, Opcode, SendStatus, WebSocketBehavior};
 use std::sync::Arc;
 
-bun_output::declare_scope!(WebSocketServer, visible);
+use bun_uws::{self as uws, AnyWebSocket, Opcode, SendStatus, WebSocketBehavior};
 
-// TODO(port): `'a` on a `.classes.ts` m_ctx payload is unusual; LIFETIMES.tsv classifies
-// `#handler` as BORROW_PARAM → `&'a WebSocketServerHandler`. Phase B may need to revisit
-// (raw `*mut` is the likely runtime shape since the handler outlives the JS wrapper).
-#[bun_jsc::JsClass]
-pub struct ServerWebSocket<'a> {
-    handler: &'a WebSocketServerHandler,
+use crate::server::jsc::{self, BinaryType, JSGlobalObject, JSValue, JsRef, JsResult};
+use crate::server::WebSocketServerHandler;
+use crate::webcore::AbortSignal;
+
+// PORT NOTE: `'a` on a `.classes.ts` m_ctx payload is wrong — the JS wrapper
+// outlives any stack frame. LIFETIMES.tsv says BORROW_PARAM but the handler
+// lives in `ServerConfig.websocket` for the server's lifetime. Raw `*const` +
+// // SAFETY notes is the runtime shape; revisit when bun_jsc::JsClass codegen
+// lands and can assert the invariant.
+// TODO(b2-blocked): #[bun_jsc::JsClass] codegen.
+pub struct ServerWebSocket {
+    handler: *const WebSocketServerHandler,
     this_value: JsRef,
     flags: Flags,
     signal: Option<Arc<AbortSignal>>,
@@ -34,9 +29,8 @@ pub struct Flags(u64);
 impl Default for Flags {
     fn default() -> Self {
         // ssl=false, closed=false, opened=false, binary_type=.Buffer, packed_websocket_ptr=0
-        let mut f = Flags(0);
-        f.set_binary_type(BinaryType::Buffer);
-        f
+        // TODO(b2-blocked): bun_jsc::BinaryType::Buffer discriminant — shim is opaque.
+        Flags(0)
     }
 }
 
@@ -86,6 +80,7 @@ impl Flags {
         }
     }
     #[inline]
+    #[cfg(any())] // TODO(b2-blocked): bun_jsc::BinaryType repr(u8) — shim is opaque(usize).
     pub fn binary_type(self) -> BinaryType {
         // SAFETY: stored value was written via set_binary_type from a valid BinaryType discriminant
         unsafe {
@@ -95,6 +90,7 @@ impl Flags {
         }
     }
     #[inline]
+    #[cfg(any())] // TODO(b2-blocked): bun_jsc::BinaryType repr(u8).
     pub fn set_binary_type(&mut self, v: BinaryType) {
         self.0 = (self.0 & !Self::BINARY_TYPE_MASK)
             | (((v as u8 as u64) << Self::BINARY_TYPE_SHIFT) & Self::BINARY_TYPE_MASK);
@@ -112,18 +108,35 @@ impl Flags {
     #[inline]
     fn websocket(self) -> AnyWebSocket {
         // Ensure those other bits are zeroed out
-        let ptr = self.packed_websocket_ptr() as usize;
+        let ptr = self.packed_websocket_ptr() as usize as *mut uws::RawWebSocket;
         if self.ssl() {
             // SAFETY: packed_websocket_ptr was set from ws.raw() in on_open; non-null while !closed
-            AnyWebSocket::Ssl(unsafe { &mut *(ptr as *mut uws::WebSocket<true>) })
+            AnyWebSocket::Ssl(ptr)
         } else {
             // SAFETY: same as above
-            AnyWebSocket::Tcp(unsafe { &mut *(ptr as *mut uws::WebSocket<false>) })
+            AnyWebSocket::Tcp(ptr)
         }
     }
 }
 
-impl<'a> ServerWebSocket<'a> {
+// ─── JS callback bodies + send/publish/subscribe (gated) ─────────────────────
+// init / on_open / on_message / on_close / on_drain / on_ping / on_pong /
+// publish* / send* / cork / close / terminate / subscribe / unsubscribe /
+// get_* / set_* all need: bun_jsc method surface (JSValue::call, JsRef::
+// init_strong, codegen js::data_set_cached, ArrayBuffer/JSUint8Array),
+// bun_uws::AnyWebSocket::{send, publish, subscribe, cork, end, …} (cycle-5-B).
+// TODO(b2-blocked): bun_jsc + bun_uws AnyWebSocket method surface.
+#[cfg(any())]
+mod _gated {
+use super::*;
+use bun_core::Output;
+use bun_str as strings;
+use crate::server::jsc::{ArrayBuffer, CallFrame, JSString, JSUint8Array, ZigString};
+use crate::server::WebSocketServerContext as WebSocketServer;
+
+bun_core::declare_scope!(WebSocketServer, visible);
+
+impl ServerWebSocket {
     #[inline]
     fn websocket(&self) -> AnyWebSocket {
         self.flags.websocket()
@@ -1601,6 +1614,7 @@ impl<'a> Corker<'a> {
         };
     }
 }
+} // mod _gated
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

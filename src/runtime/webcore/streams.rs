@@ -2,25 +2,41 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_collections::BabyList;
-use bun_core::FeatureFlags;
-use bun_jsc::{
-    ArrayBuffer, CommonAbortReason, JSGlobalObject, JSPromise, JSPromiseStrong, JSValue, JsResult,
-    Task, VirtualMachine,
+use crate::webcore::jsc::{
+    self as jsc, ArrayBuffer, CommonAbortReason, JSGlobalObject, JSPromise, JSPromiseStrong,
+    JSValue, JsResult, Task, VirtualMachine,
 };
-use bun_str::strings;
 use bun_sys::{self as sys, Error as SysError, Fd};
-use bun_uws as uws;
 
-use crate::webcore::blob::{AnyBlob, Blob};
-use crate::webcore::sink::{FileSink, Sink};
-use crate::webcore::{AutoFlusher, ByteListPool, ByteListPoolNode};
+use crate::webcore::blob::{Any as AnyBlob, Blob};
+use crate::webcore::{AutoFlusher, ByteListPool};
 
-bun_output::declare_scope!(HTTPServerWritable, visible);
-bun_output::declare_scope!(NetworkSink, visible);
+bun_core::declare_scope!(HTTPServerWritable, visible);
+bun_core::declare_scope!(NetworkSink, visible);
 
 /// `Blob.SizeType` is `u32` in Zig.
 type BlobSizeType = u32;
 type ByteList = BabyList<u8>;
+
+// Compat: `webcore::Pipe` and Body refer to `streams::Result` / `streams::result::StreamError`.
+pub use StreamResult as Result;
+pub mod result {
+    pub use super::{StreamError, StreamResult};
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// JSC-heavy: Start::to_js/from_js, HTTPServerWritable impl, NetworkSink impl,
+// Writable/StreamResult JSC paths. Gated until `bun_jsc` is a dep.
+// TODO(b2-blocked): bun_jsc::* — un-gate progressively.
+// ──────────────────────────────────────────────────────────────────────────
+#[cfg(any())]
+mod _jsc_gated {
+use super::*;
+use bun_core::FeatureFlags;
+use bun_str::strings;
+use bun_uws as uws;
+use crate::webcore::sink::{FileSink, Sink};
+use crate::webcore::ByteListPoolNode;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Start
@@ -235,6 +251,8 @@ impl Start {
     }
 }
 
+} // mod _jsc_gated (Start)
+
 // ──────────────────────────────────────────────────────────────────────────
 // Result
 // ──────────────────────────────────────────────────────────────────────────
@@ -252,6 +270,8 @@ pub enum StreamResult {
     IntoArrayAndDone(IntoArray),
 }
 
+// TODO(b2-blocked): bun_jsc::* — JSValue::unprotect.
+#[cfg(any())]
 impl StreamResult {
     // TODO(port): not Drop — Result is bitwise-copied in to_js() shutdown path; ownership is contextual.
     // Named `release` (not `deinit`) per PORTING.md — `pub fn deinit` is forbidden as a public API.
@@ -283,6 +303,8 @@ pub enum WasStrong {
     Weak,
 }
 
+// TODO(b2-blocked): bun_jsc::* — SysError::to_js, CommonAbortReason::to_js.
+#[cfg(any())]
 impl StreamError {
     pub fn to_js_weak(&self, global_object: &JSGlobalObject) -> (JSValue, WasStrong) {
         match self {
@@ -380,6 +402,8 @@ pub enum WritableFuture {
     Handler(WritableHandler),
 }
 
+// TODO(b2-blocked): bun_jsc::* — JSPromiseStrong::init/get.
+#[cfg(any())]
 impl WritablePending {
     pub fn promise(&mut self, global_this: &JSGlobalObject) -> *mut JSPromise {
         self.state = PendingState::Pending;
@@ -427,6 +451,8 @@ impl WritableHandler {
     }
 }
 
+// TODO(b2-blocked): bun_jsc::* — JSPromiseStrong::swap, Writable::fulfill_promise.
+#[cfg(any())]
 impl WritablePending {
     pub fn run(&mut self) {
         if self.state != PendingState::Pending {
@@ -471,6 +497,8 @@ impl Writable {
         )
     }
 
+    // TODO(b2-blocked): bun_jsc::* — JSPromise::reject_with_async_stack/resolve, JSValue::unprotect.
+    #[cfg(any())]
     pub fn fulfill_promise(result: Writable, promise: *mut JSPromise, global_this: &JSGlobalObject) {
         // SAFETY: promise is a valid GC-rooted JSPromise (protected by caller)
         let promise = unsafe { &mut *promise };
@@ -495,6 +523,8 @@ impl Writable {
         }
     }
 
+    // TODO(b2-blocked): bun_jsc::* — JSValue::js_number, JSPromise::rejected_promise.
+    #[cfg(any())]
     pub fn to_js(self, global_this: &JSGlobalObject) -> JSValue {
         match self {
             Writable::Err(err) => match err.to_js(global_this) {
@@ -529,7 +559,7 @@ pub struct IntoArray {
 impl Default for IntoArray {
     fn default() -> Self {
         Self {
-            value: JSValue::ZERO,
+            value: JSValue::default(),
             len: BlobSizeType::MAX,
         }
     }
@@ -569,6 +599,8 @@ impl Pending {
         self.state = PendingState::Pending;
     }
 
+    // TODO(b2-blocked): bun_jsc::* — JSPromise::create, VirtualMachine::get/event_loop.
+    #[cfg(any())]
     pub fn promise(&mut self, global_object: &JSGlobalObject) -> *mut JSPromise {
         let prom = JSPromise::create(global_object);
         self.future = PendingFuture::Promise {
@@ -579,6 +611,7 @@ impl Pending {
         prom
     }
 
+    #[cfg(any())]
     pub fn run_on_next_tick(&mut self) {
         if self.state != PendingState::Pending {
             return;
@@ -596,6 +629,7 @@ impl Pending {
         vm.event_loop().enqueue_task(Task::init(Box::into_raw(clone)));
     }
 
+    #[cfg(any())]
     pub fn run_from_js_thread(this: *mut Pending) {
         // SAFETY: this was Box::into_raw'd in run_on_next_tick
         let mut boxed = unsafe { Box::from_raw(this) };
@@ -653,6 +687,16 @@ pub enum PendingState {
     Pending,
     Used,
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// JSC-integration: Pending::run, StreamResult::to_js/fulfill_promise, Signal,
+// HTTPServerWritable<*> impl, NetworkSink impl, BufferAction, ReadResult.
+// TODO(b2-blocked): bun_jsc::* — JSPromise/JSValue methods, VirtualMachine::get,
+// Task::init, ArrayBuffer::create. Type defs are kept above; impls gated.
+// ──────────────────────────────────────────────────────────────────────────
+#[cfg(any())]
+mod _jsc_gated2 {
+use super::*;
 
 impl Pending {
     pub fn run(&mut self) {
@@ -961,7 +1005,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             self.offset = 0;
             self.buffer.len = 0;
         }
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             HTTPServerWritable,
             "handleWrote: {} offset: {}, {}",
             amount1,
@@ -989,7 +1033,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         debug_assert!(!self.done);
 
         let Some(res) = self.res else {
-            bun_output::scoped_log!(
+            bun_core::scoped_log!(
                 HTTPServerWritable,
                 "send: {} bytes (backpressure: {})",
                 buf.len(),
@@ -1011,7 +1055,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
                 self.has_backpressure = true;
                 res.on_writable::<Self>(Self::on_writable, self);
             }
-            bun_output::scoped_log!(
+            bun_core::scoped_log!(
                 HTTPServerWritable,
                 "send: {} bytes (backpressure: {})",
                 buf.len(),
@@ -1036,7 +1080,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             self.has_backpressure = res.write(buf) == uws::WriteResult::Backpressure;
         }
         self.handle_wrote(buf.len());
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             HTTPServerWritable,
             "send: {} bytes (backpressure: {})",
             buf.len(),
@@ -1063,7 +1107,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
     pub fn on_writable(&mut self, write_offset: u64, _res: *mut UwsResponse<SSL, HTTP3>) -> bool {
         // write_offset is the amount of data that was written not how much we need to write
-        bun_output::scoped_log!(HTTPServerWritable, "onWritable ({})", write_offset);
+        bun_core::scoped_log!(HTTPServerWritable, "onWritable ({})", write_offset);
         // onWritable reset backpressure state to allow flushing
         self.has_backpressure = false;
         if self.aborted {
@@ -1174,12 +1218,12 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
         self.done = false;
         self.signal.start();
-        bun_output::scoped_log!(HTTPServerWritable, "start({})", self.high_water_mark);
+        bun_core::scoped_log!(HTTPServerWritable, "start({})", self.high_water_mark);
         bun_sys::Result::Ok(())
     }
 
     fn flush_from_js_no_wait(&mut self) -> bun_sys::Result<JSValue> {
-        bun_output::scoped_log!(HTTPServerWritable, "flushFromJSNoWait");
+        bun_core::scoped_log!(HTTPServerWritable, "flushFromJSNoWait");
         bun_sys::Result::Ok(JSValue::js_number(self.flush_no_wait() as f64))
     }
 
@@ -1210,7 +1254,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         global_this: &JSGlobalObject,
         wait: bool,
     ) -> bun_sys::Result<JSValue> {
-        bun_output::scoped_log!(HTTPServerWritable, "flushFromJS({})", wait);
+        bun_core::scoped_log!(HTTPServerWritable, "flushFromJS({})", wait);
         self.unregister_auto_flusher();
 
         if !wait {
@@ -1255,7 +1299,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     }
 
     pub fn flush(&mut self) -> bun_sys::Result<()> {
-        bun_output::scoped_log!(HTTPServerWritable, "flush()");
+        bun_core::scoped_log!(HTTPServerWritable, "flush()");
         self.unregister_auto_flusher();
 
         if !self.has_backpressure() || self.done {
@@ -1280,7 +1324,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
         let bytes = data.slice();
         let len = bytes.len() as BlobSizeType;
-        bun_output::scoped_log!(HTTPServerWritable, "write({})", bytes.len());
+        bun_core::scoped_log!(HTTPServerWritable, "write({})", bytes.len());
 
         if self.buffer.len == 0 && len >= self.high_water_mark {
             // fast path:
@@ -1338,7 +1382,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
         let bytes = data.slice();
         let len = bytes.len() as BlobSizeType;
-        bun_output::scoped_log!(HTTPServerWritable, "writeLatin1({})", bytes.len());
+        bun_core::scoped_log!(HTTPServerWritable, "writeLatin1({})", bytes.len());
 
         if self.buffer.len == 0 && len >= self.high_water_mark {
             let mut do_send = true;
@@ -1409,7 +1453,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
         let bytes = data.slice();
 
-        bun_output::scoped_log!(HTTPServerWritable, "writeUTF16({})", bytes.len());
+        bun_core::scoped_log!(HTTPServerWritable, "writeUTF16({})", bytes.len());
 
         // we must always buffer UTF-16
         // we assume the case of all-ascii UTF-16 string is pretty uncommon
@@ -1446,7 +1490,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
     /// In this case, it's always an error
     pub fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
-        bun_output::scoped_log!(HTTPServerWritable, "end({:?})", err);
+        bun_core::scoped_log!(HTTPServerWritable, "end({:?})", err);
 
         if self.requested_end {
             return bun_sys::Result::Ok(());
@@ -1479,7 +1523,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     }
 
     pub fn end_from_js(&mut self, global_this: &JSGlobalObject) -> bun_sys::Result<JSValue> {
-        bun_output::scoped_log!(HTTPServerWritable, "endFromJS()");
+        bun_core::scoped_log!(HTTPServerWritable, "endFromJS()");
 
         if self.requested_end {
             return bun_sys::Result::Ok(JSValue::js_number(0.0));
@@ -1534,7 +1578,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     }
 
     pub fn abort(&mut self) {
-        bun_output::scoped_log!(HTTPServerWritable, "onAborted()");
+        bun_core::scoped_log!(HTTPServerWritable, "onAborted()");
         self.done = true;
         self.res = None;
         self.unregister_auto_flusher();
@@ -1568,7 +1612,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     }
 
     pub fn on_auto_flush(&mut self) -> bool {
-        bun_output::scoped_log!(HTTPServerWritable, "onAutoFlush()");
+        bun_core::scoped_log!(HTTPServerWritable, "onAutoFlush()");
         if self.done {
             self.auto_flusher.registered = false;
             return false;
@@ -1594,7 +1638,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     }
 
     pub fn destroy(this: *mut Self) {
-        bun_output::scoped_log!(HTTPServerWritable, "destroy()");
+        bun_core::scoped_log!(HTTPServerWritable, "destroy()");
         // SAFETY: this is Box-allocated; destroy takes ownership
         let this_ref = unsafe { &mut *this };
         // Callers may tear this sink down without routing through
@@ -1613,7 +1657,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     /// This can be called _many_ times for the same instance
     /// so it must zero out state instead of make it
     pub fn finalize(&mut self) {
-        bun_output::scoped_log!(HTTPServerWritable, "finalize()");
+        bun_core::scoped_log!(HTTPServerWritable, "finalize()");
         if !self.done {
             self.unregister_auto_flusher();
             if let Some(res) = self.res {
@@ -1665,7 +1709,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     pub fn flush_promise(&mut self) -> JsResult<()> {
         // TODO(port): narrow error set — Zig: bun.JSTerminated!void
         if let Some(prom) = self.pending_flush.take() {
-            bun_output::scoped_log!(HTTPServerWritable, "flushPromise()");
+            bun_core::scoped_log!(HTTPServerWritable, "flushPromise()");
 
             // SAFETY: global_this set when pending_flush was created
             let global_this = unsafe { &*self.global_this };
@@ -1804,7 +1848,7 @@ impl NetworkSink {
         flushed: u64,
     ) -> JsResult<()> {
         // TODO(port): narrow error set — Zig: bun.JSTerminated!void
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             NetworkSink,
             "onWritable flushed: {} state: {}",
             flushed,
@@ -2150,6 +2194,8 @@ impl ReadResult {
         }
     }
 }
+
+} // mod _jsc_gated2
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

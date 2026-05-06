@@ -61,17 +61,7 @@ impl Error {
     pub fn to_js(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
             Error::Protocol(err) => {
-                #[cfg(any())]
-                {
-                    // TODO(b2-blocked): bun_sql::postgres::PostgresErrorOptions<'a>
-                    // (lifetime param) — error_response_jsc::to_js is gated on it.
-                    return Ok(crate::postgres::protocol::error_response_jsc::to_js(err, global_object));
-                }
-                #[cfg(not(any()))]
-                {
-                    let _ = err;
-                    unimplemented!("b2-blocked: error_response_jsc::to_js (PostgresErrorOptions<'a>)")
-                }
+                Ok(crate::postgres::protocol::error_response_jsc::to_js(err, global_object))
             }
             Error::PostgresError(err) => Ok(postgres_error_to_js(global_object, None, *err)),
         }

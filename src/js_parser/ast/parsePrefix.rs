@@ -30,7 +30,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 }
 
-#[cfg(any())] // TODO(b2-ast-E): full draft body — apply mixin→impl-P recipe per-method
+#[cfg(any())]
+// blocked_on: P::{store_name_in_ref, push_scope_for_parse_pass, pop_scope,
+//   pop_and_flatten_scope, declare_symbol, mark_strict_mode_feature, log_expr_errors}
+//   all gated (P.rs:640 impl block); JSXTag struct + JSXTag::parse helper;
+//   E::* full struct-init (Array/Object/New/Unary/Yield — no Default); E::EString::init from
+//   lexer.string_literal_slice; E::Template head variant; AsyncPrefixExpression enum;
+//   _draft uses `const JSX: JSXTransformType` const-generic (needs J: JsxT lowering);
+//   ~1040-line bodies, >30 path/shape errors per method.
 #[allow(warnings)]
 mod _draft {
 use crate::js_ast::{self, Expr, ExprNodeList, B, E, G};

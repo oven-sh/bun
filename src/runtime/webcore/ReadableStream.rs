@@ -1,7 +1,9 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
+use crate::webcore::jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
+// `bun_jsc` not yet a dep; alias to local shim so `bun_jsc::Strong` etc. resolve.
+use crate::webcore::jsc as bun_jsc;
 use bun_sys as syscall;
 use bun_collections::ByteList;
 
@@ -16,15 +18,17 @@ pub struct ReadableStream {
 // ─── ReadableStream::Strong ──────────────────────────────────────────────────
 
 pub struct Strong {
-    held: bun_jsc::Strong, // jsc.Strong.Optional = .empty
+    held: bun_jsc::strong::Optional, // jsc.Strong.Optional = .empty
 }
 
 impl Default for Strong {
     fn default() -> Self {
-        Self { held: bun_jsc::Strong::empty() }
+        Self { held: bun_jsc::strong::Optional::empty() }
     }
 }
 
+// TODO(b2-blocked): bun_jsc::* — Strong methods (has/get/set/create), from_js, tee.
+#[cfg(any())]
 impl Strong {
     pub fn has(&mut self) -> bool {
         self.held.has()
@@ -113,7 +117,9 @@ unsafe extern "C" {
 }
 
 // ─── ReadableStream methods ──────────────────────────────────────────────────
-
+// TODO(b2-blocked): bun_jsc::* — every method body calls into JSC FFI helpers
+// (from_js_host_call_generic, JSValue::ZERO, ReadableStream__* externs).
+#[cfg(any())]
 impl ReadableStream {
     pub fn tee(&self, global_this: &JSGlobalObject) -> JsResult<Option<(ReadableStream, ReadableStream)>> {
         let mut out1 = JSValue::ZERO;
@@ -479,6 +485,13 @@ pub enum Source {
 // Rust: the comptime fn-pointer bundle becomes a trait `SourceContext` that
 // each `Context` type implements; `NewSource<C>` is the generic struct.
 
+// TODO(b2-blocked): bun_jsc::* — NewSource<C> JSC methods (start/on_pull/to_js/
+// updateRef/finalize/etc.) and streams::{Start,BufferActionTag}. The trait +
+// struct fields reference `&JSGlobalObject` lifetime and codegen accessors.
+#[cfg(any())]
+mod _new_source_gated {
+use super::*;
+
 /// Trait capturing the comptime fn params of Zig's `NewSource(...)`.
 pub trait SourceContext: Sized {
     /// `name_` — used to look up `jsc.Codegen.JS{NAME}InternalReadableStreamSource`.
@@ -524,7 +537,7 @@ pub trait SourceContext: Sized {
     fn set_flowing(&mut self, _flag: bool) {}
 }
 
-// TODO(port): #[bun_jsc::JsClass] — codegen name is "JS{C::NAME}InternalReadableStreamSource".
+// TODO(port): // TODO(b2-blocked): #[bun_jsc::JsClass] — codegen name is "JS{C::NAME}InternalReadableStreamSource".
 // The Zig `js = @field(jsc.Codegen, ...)` + toJS/fromJS/fromJSDirect aliases are wired by the
 // derive; cached-property accessors (pendingPromiseSetCached, onDrainCallback{Get,Set}Cached)
 // are emitted by the .classes.ts generator.
@@ -653,12 +666,12 @@ impl<C: SourceContext> NewSource<C> {
         ReadableStream::from_native(global_this, out_value)
     }
 
-    // TODO(port): codegen-provided — `#[bun_jsc::JsClass]` wires this.
+    // TODO(port): codegen-provided — `// TODO(b2-blocked): #[bun_jsc::JsClass]` wires this.
     pub fn to_js(&mut self, _global_this: &JSGlobalObject) -> JSValue {
         unimplemented!("provided by JsClass codegen")
     }
 
-    #[bun_jsc::host_fn(method)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     pub fn set_raw_mode_from_js(
         this: &mut Self,
         global: &JSGlobalObject,
@@ -674,7 +687,7 @@ impl<C: SourceContext> NewSource<C> {
         }
     }
 
-    #[bun_jsc::host_fn(method)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     pub fn set_flowing_from_js(
         this: &mut Self,
         _global: &JSGlobalObject,
@@ -693,12 +706,12 @@ impl<C: SourceContext> NewSource<C> {
 
 // Aliases wired to .classes.ts codegen entries (Zig: `pub const drainFromJS = JSReadableStreamSource.drain;` etc.)
 // In Rust the codegen references the fns in `js_readable_stream_source` directly by mangled name.
-// TODO(port): proc-macro — codegen binds these via #[bun_jsc::JsClass] on NewSource<C>.
+// TODO(port): proc-macro — codegen binds these via // TODO(b2-blocked): #[bun_jsc::JsClass] on NewSource<C>.
 
 pub mod js_readable_stream_source {
     use super::*;
 
-    #[bun_jsc::host_fn(method)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     pub fn pull<C: SourceContext>(
         this: &mut NewSource<C>,
         global_this: &JSGlobalObject,
@@ -716,7 +729,7 @@ pub mod js_readable_stream_source {
         process_result::<C>(this_jsvalue, global_this, arguments.ptr[1], result)
     }
 
-    #[bun_jsc::host_fn(method)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     pub fn start<C: SourceContext>(
         this: &mut NewSource<C>,
         global_this: &JSGlobalObject,
@@ -733,7 +746,7 @@ pub mod js_readable_stream_source {
         }
     }
 
-    #[bun_jsc::host_fn(getter)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn is_closed<C: SourceContext>(
         this: &NewSource<C>,
         _global_object: &JSGlobalObject,
@@ -784,7 +797,7 @@ pub mod js_readable_stream_source {
         }
     }
 
-    #[bun_jsc::host_fn(method)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     pub fn cancel<C: SourceContext>(
         this: &mut NewSource<C>,
         _global_object: &JSGlobalObject,
@@ -795,7 +808,7 @@ pub mod js_readable_stream_source {
         Ok(JSValue::UNDEFINED)
     }
 
-    #[bun_jsc::host_fn(setter)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(setter)]
     pub fn set_on_close_from_js<C: SourceContext>(
         this: &mut NewSource<C>,
         global_object: &JSGlobalObject,
@@ -821,7 +834,7 @@ pub mod js_readable_stream_source {
         Ok(true)
     }
 
-    #[bun_jsc::host_fn(setter)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(setter)]
     pub fn set_on_drain_from_js<C: SourceContext>(
         this: &mut NewSource<C>,
         global_object: &JSGlobalObject,
@@ -852,7 +865,7 @@ pub mod js_readable_stream_source {
         Ok(true)
     }
 
-    #[bun_jsc::host_fn(getter)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_on_close_from_js<C: SourceContext>(
         this: &NewSource<C>,
         _global_object: &JSGlobalObject,
@@ -860,7 +873,7 @@ pub mod js_readable_stream_source {
         Ok(this.close_jsvalue.get().unwrap_or(JSValue::UNDEFINED))
     }
 
-    #[bun_jsc::host_fn(getter)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_on_drain_from_js<C: SourceContext>(
         this: &NewSource<C>,
         _global_object: &JSGlobalObject,
@@ -872,7 +885,7 @@ pub mod js_readable_stream_source {
         Ok(JSValue::UNDEFINED)
     }
 
-    #[bun_jsc::host_fn(method)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     pub fn update_ref<C: SourceContext>(
         this: &mut NewSource<C>,
         _global_object: &JSGlobalObject,
@@ -900,7 +913,7 @@ pub mod js_readable_stream_source {
         let _ = this.decrement_count();
     }
 
-    #[bun_jsc::host_fn(method)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     pub fn drain<C: SourceContext>(
         this: &mut NewSource<C>,
         global_this: &JSGlobalObject,
@@ -915,7 +928,7 @@ pub mod js_readable_stream_source {
         Ok(JSValue::UNDEFINED)
     }
 
-    #[bun_jsc::host_fn(method)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     pub fn text<C: SourceContext>(
         this: &mut NewSource<C>,
         global_this: &JSGlobalObject,
@@ -929,7 +942,7 @@ pub mod js_readable_stream_source {
         Ok(JSValue::ZERO)
     }
 
-    #[bun_jsc::host_fn(method)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     pub fn array_buffer<C: SourceContext>(
         this: &mut NewSource<C>,
         global_this: &JSGlobalObject,
@@ -943,7 +956,7 @@ pub mod js_readable_stream_source {
         Ok(JSValue::ZERO)
     }
 
-    #[bun_jsc::host_fn(method)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     pub fn blob<C: SourceContext>(
         this: &mut NewSource<C>,
         global_this: &JSGlobalObject,
@@ -957,7 +970,7 @@ pub mod js_readable_stream_source {
         Ok(JSValue::ZERO)
     }
 
-    #[bun_jsc::host_fn(method)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     pub fn bytes<C: SourceContext>(
         this: &mut NewSource<C>,
         global_this: &JSGlobalObject,
@@ -971,7 +984,7 @@ pub mod js_readable_stream_source {
         Ok(JSValue::ZERO)
     }
 
-    #[bun_jsc::host_fn(method)]
+    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     pub fn json<C: SourceContext>(
         this: &mut NewSource<C>,
         global_this: &JSGlobalObject,
@@ -986,10 +999,12 @@ pub mod js_readable_stream_source {
     }
 }
 
+} // mod _new_source_gated
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/webcore/ReadableStream.zig (853 lines)
 //   confidence: medium
 //   todos:      15
-//   notes:      NewSource comptime fn-bundle → SourceContext trait; .classes.ts codegen accessors (js.*, toJS/fromJS, cached props) need #[bun_jsc::JsClass] proc-macro; global_this field lifetime needs Phase B decision; from_blob_copy_ref Bytes arm stubbed with todo!() pending ByteBlobLoader constructor reshape.
+//   notes:      NewSource comptime fn-bundle → SourceContext trait; .classes.ts codegen accessors (js.*, toJS/fromJS, cached props) need // TODO(b2-blocked): #[bun_jsc::JsClass] proc-macro; global_this field lifetime needs Phase B decision; from_blob_copy_ref Bytes arm stubbed with todo!() pending ByteBlobLoader constructor reshape.
 // ──────────────────────────────────────────────────────────────────────────

@@ -114,49 +114,51 @@ impl DirInfo {
     }
 
     pub fn get_entries(&self, generation: Generation) -> Option<&mut fs::DirEntry> {
-        // TODO(b2-blocked): bun_resolver::fs::FileSystem (RealFS::entries_at) — gated until fs.rs lands.
-        #[cfg(any())]
-        {
-        let Some(entries_ptr) = fs::FileSystem::instance().fs.entries_at(self.entries, generation) else {
-            return None;
-        };
+        let entries_ptr = fs::FileSystem::instance().fs.entries_at(self.entries, generation)?;
         match entries_ptr {
             fs::EntriesOption::Entries(entries) => Some(entries),
             fs::EntriesOption::Err(_) => None,
         }
-        }
-        let _ = generation;
-        None
     }
 
     pub fn get_entries_const(&self) -> Option<&fs::DirEntry> {
-        // TODO(b2-blocked): bun_resolver::fs::FileSystem — gated until fs.rs lands.
-        #[cfg(any())]
-        {
-        let Some(entries_ptr) = fs::FileSystem::instance().fs.entries.at_index(self.entries) else {
-            return None;
-        };
+        // SAFETY: `entries` set during `FileSystem::init`; resolver code only calls
+        // this after init (matches Zig invariant).
+        let map = unsafe { fs::FileSystem::instance().fs.entries?.as_mut() };
+        let entries_ptr = map.at_index(self.entries)?;
         match entries_ptr {
             fs::EntriesOption::Entries(entries) => Some(entries),
             fs::EntriesOption::Err(_) => None,
         }
-        }
-        None
     }
 
     pub fn get_parent(&self) -> Option<&mut DirInfo> {
-        // TODO(b2-blocked): bun_alloc::BSSMapInner::at_index — full impl gated inside bun_alloc
-        // (per-type singleton + at_index live in the `_bss_gated` module).
-        #[cfg(any())]
-        { return HashMap::instance().at_index(self.parent); }
-        None
+        hash_map_instance().at_index(self.parent)
     }
 
     pub fn get_enclosing_browser_scope(&self) -> Option<&mut DirInfo> {
-        // TODO(b2-blocked): bun_alloc::BSSMapInner::at_index — full impl gated inside bun_alloc.
-        #[cfg(any())]
-        { return HashMap::instance().at_index(self.enclosing_browser_scope); }
-        None
+        hash_map_instance().at_index(self.enclosing_browser_scope)
+    }
+}
+
+// PORT NOTE: Zig `BSSMap` is a per-monomorphization singleton (`var instance` inside
+// the comptime-returned struct). Rust `BSSMapInner<DirInfo, ..>` cannot host a
+// per-generic-instantiation static on stable, so the singleton pointer lives here at
+// the use site and `bun_alloc::BSSMapInner::init()` hands back the storage.
+// TODO(b2-blocked): bun_alloc::BSSMapInner per-type storage — `init()` body is
+// currently `unimplemented!()`; this becomes real once bun_alloc un-gates its BSS
+// backing arrays.
+static mut DIR_INFO_MAP: Option<NonNull<HashMap>> = None;
+
+#[inline]
+pub fn hash_map_instance() -> &'static mut HashMap {
+    // SAFETY: matches Zig's lazy global singleton; resolver init runs single-threaded
+    // before any concurrent access. `&raw mut` avoids the static_mut_refs lint.
+    unsafe {
+        if (*(&raw const DIR_INFO_MAP)).is_none() {
+            *(&raw mut DIR_INFO_MAP) = Some(NonNull::from(HashMap::init()));
+        }
+        (*(&raw mut DIR_INFO_MAP)).unwrap().as_mut()
     }
 }
 

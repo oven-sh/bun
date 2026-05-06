@@ -2,27 +2,35 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use core::mem::size_of;
 
-use bun_aio::Closer;
-use bun_fs::StatHash;
-use bun_http::{Headers, Method};
-use bun_io::FileType;
-use bun_jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
-use bun_runtime::api::server::{write_status, AnyServer, FileResponseStream, RangeRequest};
-use bun_runtime::webcore::{Blob, FetchHeaders, Response};
-use bun_str::String as BunString;
+use bun_http::Headers;
 use bun_sys::{self, Fd};
 use bun_uws::{AnyRequest, AnyResponse};
 
+use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
+use crate::server::AnyServer;
+use crate::webcore::{Blob, FetchHeaders};
+
 pub struct FileRoute {
-    ref_count: Cell<u32>, // intrusive refcount (see bun_ptr::IntrusiveRc below)
-    server: Option<AnyServer>,
+    // PORT NOTE (§Pointers Rc/Arc default): owned via `Rc<FileRoute>`; see
+    // StaticRoute.rs note re: FFI userdata fallback to RefPtr.
+    ref_count: Cell<u32>,
+    server: Cell<Option<AnyServer>>,
     blob: Blob,
     headers: Headers,
     status_code: u16,
+    // TODO(b2-blocked): bun_fs is not a workspace crate; StatHash lives at
+    // bun_resolver::fs::stat_hash. Inline the two fields used until that path
+    // is dependency-clean from bun_runtime.
     stat_hash: StatHash,
     has_last_modified_header: bool,
     has_content_length_header: bool,
     has_content_range_header: bool,
+}
+
+#[derive(Default)]
+struct StatHash {
+    last_modified_u64: u64,
+    size: u64,
 }
 
 pub struct InitOptions<'a> {
@@ -36,6 +44,29 @@ impl<'a> Default for InitOptions<'a> {
         Self { server: None, status_code: 200, headers: None }
     }
 }
+
+impl FileRoute {
+    pub fn memory_cost(&self) -> usize {
+        size_of::<FileRoute>() + self.headers.memory_cost() + self.blob.reported_estimated_size
+    }
+}
+
+// ─── route-handler bodies (gated) ────────────────────────────────────────────
+// last_modified_date / init_from_blob / from_js need: BunString::parse_date,
+// VirtualMachine::get(), Headers::from(body=..), JSValue::as_::<Response>.
+// open / write_head / on / on_head / streamed-response paths need: bun_uws
+// AnyResponse write surface (cycle-5-B), bun_aio::Closer, bun_io::FileType,
+// FileResponseStream, RangeRequest.
+// TODO(b2-blocked): bun_jsc + bun_uws response write surface.
+#[cfg(any())]
+mod _gated {
+use super::*;
+use bun_aio::Closer;
+use bun_http_types::Method;
+use bun_io::FileType;
+use bun_str::String as BunString;
+use crate::server::{write_status, FileResponseStream, RangeRequest};
+use crate::webcore::Response;
 
 impl FileRoute {
     pub fn last_modified_date(&self) -> JsResult<Option<u64>> {
@@ -78,10 +109,6 @@ impl FileRoute {
         // SAFETY: `this` was allocated via Box::into_raw in init_from_blob/from_js and the
         // intrusive ref_count has reached 0.
         unsafe { drop(Box::from_raw(this)) }
-    }
-
-    pub fn memory_cost(&self) -> usize {
-        size_of::<FileRoute>() + self.headers.memory_cost() + self.blob.reported_estimated_size
     }
 
     pub fn from_js(global: &JSGlobalObject, argument: JSValue) -> JsResult<Option<*mut FileRoute>> {
@@ -474,6 +501,7 @@ fn on_stream_error(ctx: *mut c_void, resp: AnyResponse, _err: bun_sys::Error) {
 // Macro provides `ref_()` / `deref()` over the embedded `ref_count: Cell<u32>`.
 // TODO(port): `ref` is a Rust keyword — using `ref_`; wire to bun_ptr::IntrusiveRc<FileRoute> in Phase B
 bun_ptr::intrusive_rc!(FileRoute, ref_count, FileRoute::deinit);
+} // mod _gated
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

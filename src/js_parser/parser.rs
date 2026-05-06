@@ -103,6 +103,19 @@ pub mod Runtime {
         pub top_level_await: bool,
         pub trim_unused_imports: bool,
         pub use_import_meta_require: bool,
+        // ── round-D additions: stub fields for gated parse_*/visit_* bodies ──
+        pub auto_polyfill_require: bool,
+        pub dont_bundle_twice: bool,
+        pub emit_decorator_metadata: bool,
+        pub is_macro_runtime: bool,
+        pub lower_using: bool,
+        pub minify_keep_names: bool,
+        pub minify_whitespace: bool,
+        pub remove_cjs_module_wrapper: bool,
+        pub runtime_transpiler_cache: bool,
+        pub should_unwrap_require: bool,
+        pub standard_decorators: bool,
+        pub unwrap_commonjs_to_esm: bool,
     }
     #[derive(Default, Clone, Copy)]
     pub struct Imports;
@@ -905,9 +918,21 @@ pub type StringBoolMap = StringHashMap<bool>;
 pub type RefMap = HashMap<Ref, ()>; // TODO(port): RefCtx hasher + 80% load factor
 pub type RefRefMap = HashMap<Ref, Ref>; // TODO(port): RefCtx hasher + 80% load factor
 
+// PORT NOTE: `scope` is `*mut` (not `&'arena`) because the visit pass writes
+// through it (push_scope_for_visit_pass assigns it to `current_scope: *mut`)
+// and the parse pass needs Copy for the BumpVec<Option<ScopeOrder>> to be
+// indexable + truncatable. The Scope itself is arena-owned for `'arena`.
+#[derive(Clone, Copy)]
 pub struct ScopeOrder<'arena> {
     pub loc: logger::Loc,
-    pub scope: &'arena Scope,
+    pub scope: *mut Scope,
+    _phantom: core::marker::PhantomData<&'arena Scope>,
+}
+impl<'arena> ScopeOrder<'arena> {
+    #[inline]
+    pub fn new(loc: logger::Loc, scope: *mut Scope) -> Self {
+        Self { loc, scope, _phantom: core::marker::PhantomData }
+    }
 }
 
 #[derive(Clone, Copy)]

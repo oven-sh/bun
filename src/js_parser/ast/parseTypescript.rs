@@ -19,7 +19,10 @@ use bumpalo::collections::Vec as BumpVec;
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
     // TODO(port): narrow error set
     pub fn parse_type_script_decorators(&mut self) -> Result<ExprNodeList, Error> {
-        #[cfg(any())] // TODO(b2-ast-E): body — ExprEFlags path, p.allocator vs p.bump, parse_expr_with_flags signature
+        #[cfg(any())]
+        // blocked_on: ExprNodeList = BabyList<Expr> (return type) — BumpVec→BabyList conversion
+        //   (BabyList::move_from_list takes Vec<T>, not BumpVec); p.options.features.standard_decorators
+        //   field missing on RuntimeFeatures (Parser.rs).
         {
         let p = self;
         if !Self::IS_TYPESCRIPT_ENABLED && !p.options.features.standard_decorators {
@@ -67,7 +70,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     ///   @ DecoratorParenthesizedExpression
     // TODO(port): narrow error set
     pub fn parse_standard_decorator(&mut self) -> Result<ExprNodeIndex, Error> {
-        #[cfg(any())] // TODO(b2-ast-E): body — E::Identifier/E::Dot/E::Call struct shapes, skip_type_script_type_arguments arity
+        #[cfg(any())]
+        // blocked_on: P::store_name_in_ref gated (P.rs:640 impl block); E::Dot has no Default
+        //   (needs full {target,name,name_loc,optional_chain,can_be_removed_if_unused,
+        //   call_can_be_unwrapped_if_unused}); E::Call.args is ExprNodeList (BabyList) not slice;
+        //   skip_type_script_type_arguments stub arity.
         {
         let p = self;
         let loc = p.lexer.loc();
@@ -162,7 +169,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         opts: &mut ParseStatementOptions,
     ) -> Result<Stmt, Error> {
         let _ = (loc, opts);
-        #[cfg(any())] // TODO(b2-ast-E): body — TSNamespaceMemberData/ScopeKind paths, current_scope deref, exported_members map API
+        #[cfg(any())]
+        // blocked_on: P::{push_scope_for_parse_pass, pop_scope, declare_symbol, new_symbol,
+        //   get_or_create_exported_namespace_members, declare_binding, parse_stmts_up_to,
+        //   pop_and_discard_scope} all gated (P.rs:640 impl block);
+        //   TSNamespaceScope.exported_members is *mut TSNamespaceMemberMap (raw deref).
         {
         let p = self;
         // "namespace foo {}";
@@ -414,7 +425,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         default_name: &'a [u8],
     ) -> Result<Stmt, Error> {
         let _ = (loc, opts, default_name_loc, default_name);
-        #[cfg(any())] // TODO(b2-ast-E): body — E::Call/E::Dot struct shapes, DeclList::from_owned_slice, p.b/p.s arg shapes
+        #[cfg(any())]
+        // blocked_on: P::{b, declare_symbol, push_scope_for_parse_pass, pop_scope} gated (P.rs:640);
+        //   G::DeclList = BabyList<Decl> (need from_slice/init_one); E::Call/E::Dot full struct-init.
         {
         let p = self;
         p.lexer.expect(T::TEquals)?;
@@ -501,7 +514,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         opts: &mut ParseStatementOptions,
     ) -> Result<Stmt, Error> {
         let _ = (loc, opts);
-        #[cfg(any())] // TODO(b2-ast-E): body — EnumValue field shapes, scopes_in_order_for_enum, TSNamespaceMemberData
+        #[cfg(any())]
+        // blocked_on: P::{push_scope_for_parse_pass, declare_symbol, get_or_create_exported_namespace_members,
+        //   pop_scope, store_name_in_ref} gated (P.rs:640); p.scopes_in_order_for_enum field shape;
+        //   EnumValue.{name,value} field types; TSNamespaceMemberMap insert API.
         {
         let p = self;
         p.lexer.expect(T::TEnum)?;

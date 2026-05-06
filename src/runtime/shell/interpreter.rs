@@ -532,7 +532,7 @@ impl Interpreter {
                 )
             }
         } else {
-            bun_sys::dup(Fd::stdin())
+            shell_dup(Fd::stdin())
         };
         let stdin_fd = match stdin_fd_res {
             Ok(fd) => fd,
@@ -1034,7 +1034,7 @@ impl Interpreter {
         let stdout_fd = if bun_core::output::stdio::is_stdout_null() {
             open_null_device()?
         } else {
-            bun_sys::dup(Fd::stdout())?
+            shell_dup(Fd::stdout())?
         };
 
         // ── dup stderr (errdefer closes stdout on failure) ────────────────
@@ -1042,7 +1042,7 @@ impl Interpreter {
         let stderr_fd_res = if bun_core::output::stdio::is_stderr_null() {
             open_null_device()
         } else {
-            bun_sys::dup(Fd::stderr())
+            shell_dup(Fd::stderr())
         };
         let stderr_fd = match stderr_fd_res {
             Ok(fd) => fd,
@@ -1524,6 +1524,134 @@ fn is_pollable(fd: Fd) -> bool {
 pub fn closefd(fd: Fd) {
     use bun_sys::FdExt;
     let _ = fd.close_allowing_bad_file_descriptor(None);
+}
+
+/// Spec: interpreter.zig `ShellSyscall.dup` (interpreter.zig:1931-1939).
+/// Same as `bun_sys::dup` on POSIX; on Windows the duped handle is converted
+/// to a libuv-owned fd via `makeLibUVOwnedForSyscall(.dup, .close_on_fail)` so
+/// the IOWriter/IOReader uv-based async write/read paths receive a uv fd
+/// instead of a raw NT handle.
+pub fn shell_dup(fd: Fd) -> bun_sys::Result<Fd> {
+    #[cfg(windows)]
+    {
+        use bun_sys::FdExt;
+        bun_sys::dup(fd)?
+            .make_lib_uv_owned_for_syscall(bun_sys::Tag::dup, bun_sys::ErrorCase::CloseOnFail)
+    }
+    #[cfg(not(windows))]
+    {
+        bun_sys::dup(fd)
+    }
+}
+
+/// Spec: interpreter.zig `ShellSyscall.getPath` (interpreter.zig:1823-1858).
+/// Windows-only: rewrite shell paths so POSIX-absolute `/foo` resolves onto
+/// `dirfd`'s drive root, `/dev/null` maps to `NUL`, and relative paths are
+/// joined against `dirfd`'s real path. Returns a NUL-terminated slice that
+/// either borrows `buf` or is `to` itself.
+#[cfg(windows)]
+fn shell_get_path<'a>(
+    dirfd: Fd,
+    to: &'a bun_core::ZStr,
+    buf: &'a mut bun_paths::PathBuffer,
+) -> bun_sys::Result<&'a bun_core::ZStr> {
+    if to.as_bytes() == b"/dev/null" {
+        return Ok(crate::shell::shell_body::WINDOWS_DEV_NULL);
+    }
+    if bun_paths::Platform::Posix.is_absolute(to.as_bytes()) {
+        let source_root_len = {
+            let dirpath =
+                bun_sys::get_fd_path(dirfd, buf).map_err(|e| e.with_fd(dirfd))?;
+            bun_paths::resolve_path::windows_filesystem_root(dirpath).len()
+        };
+        // Spec: `copyForwards(buf[0..root], source_root)` — `dirpath` already
+        // occupies `buf[0..]` and the root is its prefix, so that copy is a
+        // no-op here. Splice `to[1..]` after the root.
+        let to_tail = &to.as_bytes()[1..];
+        let end = source_root_len + to_tail.len();
+        buf[source_root_len..end].copy_from_slice(to_tail);
+        buf[end] = 0;
+        // SAFETY: wrote `end` bytes + NUL at `[end]`.
+        return Ok(unsafe { bun_core::ZStr::from_raw(buf.as_ptr(), end) });
+    }
+    if bun_paths::Platform::Windows.is_absolute(to.as_bytes()) {
+        return Ok(to);
+    }
+    // Relative: resolve dirfd → path, then join.
+    // PORT NOTE: reshaped for borrowck — Zig's `joinZBuf(buf, &.{dirpath, to})`
+    // reads `dirpath` (a slice of `buf`) while writing `buf`; copy `dirpath`
+    // out first so the mutable borrow on `buf` is exclusive.
+    let dirpath = bun_sys::get_fd_path(dirfd, buf)
+        .map_err(|e| e.with_fd(dirfd))?
+        .to_vec();
+    Ok(bun_paths::resolve_path::join_z_buf::<bun_paths::platform::Auto>(
+        &mut buf[..],
+        &[&dirpath, to.as_bytes()],
+    ))
+}
+
+/// Spec: interpreter.zig `ShellSyscall.openat` (interpreter.zig:1881-1918).
+/// POSIX: `bun_sys::openat` with the error tagged `.with_path(path)`.
+/// Windows: for `O_DIRECTORY` opens, rewrite POSIX-absolute paths via
+/// `shell_get_path` and use `openDirAtWindowsA(.iterable=true)` +
+/// `makeLibUVOwnedForSyscall`; for file opens, resolve via `shell_get_path`
+/// then `bun_sys::open`.
+pub fn shell_openat(
+    dir: Fd,
+    path: &bun_core::ZStr,
+    flags: i32,
+    perm: bun_sys::Mode,
+) -> bun_sys::Result<Fd> {
+    #[cfg(windows)]
+    {
+        use bun_sys::FdExt;
+        if flags & bun_sys::O::DIRECTORY != 0 {
+            if bun_paths::Platform::Posix.is_absolute(path.as_bytes()) {
+                let mut buf = bun_paths::path_buffer_pool::get();
+                let p = shell_get_path(dir, path, &mut buf)?;
+                return bun_sys::open_dir_at_windows_a(
+                    dir,
+                    p.as_bytes(),
+                    bun_sys::WindowsOpenDirOptions {
+                        iterable: true,
+                        no_follow: flags & bun_sys::O::NOFOLLOW != 0,
+                        ..Default::default()
+                    },
+                )
+                .map_err(|e| e.with_path(path.as_bytes()))?
+                .make_lib_uv_owned_for_syscall(
+                    bun_sys::Tag::open,
+                    bun_sys::ErrorCase::CloseOnFail,
+                );
+            }
+            return bun_sys::open_dir_at_windows_a(
+                dir,
+                path.as_bytes(),
+                bun_sys::WindowsOpenDirOptions {
+                    iterable: true,
+                    no_follow: flags & bun_sys::O::NOFOLLOW != 0,
+                    ..Default::default()
+                },
+            )
+            .map_err(|e| e.with_path(path.as_bytes()))?
+            .make_lib_uv_owned_for_syscall(
+                bun_sys::Tag::open,
+                bun_sys::ErrorCase::CloseOnFail,
+            );
+        }
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let p = shell_get_path(dir, path, &mut buf)?;
+        return bun_sys::open(p, flags, perm)?
+            .make_lib_uv_owned_for_syscall(
+                bun_sys::Tag::open,
+                bun_sys::ErrorCase::CloseOnFail,
+            );
+    }
+    #[cfg(not(windows))]
+    {
+        bun_sys::openat(dir, path, flags, perm)
+            .map_err(|e| e.with_path(path.as_bytes()))
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────────

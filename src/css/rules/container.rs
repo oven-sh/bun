@@ -97,9 +97,23 @@ impl crate::media_query::FeatureIdTrait for ContainerSizeFeatureId {
         css::enum_property_util::to_css(self, dest)
     }
 
-    fn from_str(_s: &[u8]) -> Option<Self> {
-        // TODO(port): css::enum_property_util::from_str — needs EnumProperty derive (Phase B)
-        unimplemented!("ContainerSizeFeatureId::from_str — enum_property_util EnumProperty derive")
+    fn from_str(s: &[u8]) -> Option<Self> {
+        <Self as css::EnumProperty>::from_ascii_case_insensitive(s)
+    }
+}
+
+// PORT NOTE: Zig `css.DefineEnumProperty(@This())` — hand-rolled until
+// `#[derive(DefineEnumProperty)]` covers `&[u8]` lookup.
+impl css::EnumProperty for ContainerSizeFeatureId {
+    fn from_ascii_case_insensitive(ident: &[u8]) -> Option<Self> {
+        use bun_string::strings::eql_case_insensitive_ascii_check_length as eq;
+        if eq(ident, b"width") { return Some(Self::Width); }
+        if eq(ident, b"height") { return Some(Self::Height); }
+        if eq(ident, b"inline-size") { return Some(Self::InlineSize); }
+        if eq(ident, b"block-size") { return Some(Self::BlockSize); }
+        if eq(ident, b"aspect-ratio") { return Some(Self::AspectRatio); }
+        if eq(ident, b"orientation") { return Some(Self::Orientation); }
+        None
     }
 }
 
@@ -133,8 +147,6 @@ impl ContainerSizeFeatureId {
     }
 }
 
-// blocked_on: css::enum_property_util EnumProperty parse bound.
-#[cfg(any())]
 impl ContainerSizeFeatureId {
     pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
         css::enum_property_util::parse::<Self>(input)
@@ -177,9 +189,16 @@ impl ToCss for StyleQuery {
 }
 
 impl QueryCondition for StyleQuery {
-    fn parse_feature(_input: &mut css::Parser) -> css::Result<Self> {
-        // blocked_on: PropertyId::parse + Property::parse + css::parse_important.
-        todo!("blocked_on: StyleQuery::parse_feature — PropertyId/Property::parse")
+    fn parse_feature(input: &mut css::Parser) -> css::Result<Self> {
+        let property_id = crate::properties::PropertyId::parse(input)?;
+        input.expect_colon()?;
+        input.skip_whitespace();
+        // PORT NOTE: Zig threaded `(input.allocator(), null)` here; Phase B
+        // re-threads `&Bump` once `ParserOptions` carries the arena.
+        let opts = css::ParserOptions::default(None);
+        let feature = StyleQuery::Feature(Property::parse(property_id, input, &opts)?);
+        let _ = input.try_parse(css::css_parser::parse_important);
+        Ok(feature)
     }
     fn create_negation(condition: Box<Self>) -> Self {
         StyleQuery::Not(condition)
@@ -187,10 +206,9 @@ impl QueryCondition for StyleQuery {
     fn create_operation(operator: Operator, conditions: Vec<Self>) -> Self {
         StyleQuery::Operation { operator, conditions }
     }
-    fn parse_style_query(_input: &mut css::Parser) -> css::Result<Self> {
-        // Zig: `return .{ .err = input.newErrorForNextToken() }` — parse path
-        // gated on Parser::new_error_for_next_token.
-        todo!("blocked_on: StyleQuery::parse_style_query — Parser::new_error_for_next_token")
+    fn parse_style_query(input: &mut css::Parser) -> css::Result<Self> {
+        // Zig: `return .{ .err = input.newErrorForNextToken() }`
+        Err(input.new_error_for_next_token())
     }
     fn needs_parens(&self, parent_operator: Option<Operator>, _targets: &css::Targets) -> bool {
         match self {
@@ -214,31 +232,6 @@ impl StyleQuery {
                 conditions: conditions.iter().map(|c| c.deep_clone(bump)).collect(),
             },
         }
-    }
-}
-
-// ─── StyleQuery parse ─────────────────────────────────────────────────────
-// blocked_on: Property::parse, PropertyId::parse, css::parse_important,
-// ParserOptions::default allocator.
-#[cfg(any())]
-impl StyleQuery {
-    pub fn parse_feature(input: &mut css::Parser) -> css::Result<StyleQuery> {
-        let property_id = match css::PropertyId::parse(input) {
-            Ok(vv) => vv,
-            Err(e) => return Err(e),
-        };
-        if let Some(e) = input.expect_colon().as_err() {
-            return Err(e);
-        }
-        input.skip_whitespace();
-        // TODO(port): css is an AST crate — thread &Bump from input.allocator() into ParserOptions::default (Zig passed (input.allocator(), null))
-        let opts = css::ParserOptions::default();
-        let feature = StyleQuery::Feature(match Property::parse(property_id, input, &opts) {
-            Ok(vv) => vv,
-            Err(e) => return Err(e),
-        });
-        let _ = input.try_parse(css::parse_important);
-        Ok(feature)
     }
 }
 
@@ -282,9 +275,9 @@ impl ToCss for ContainerCondition {
 }
 
 impl QueryCondition for ContainerCondition {
-    fn parse_feature(_input: &mut css::Parser) -> css::Result<Self> {
-        // blocked_on: QueryFeature::<ContainerSizeFeatureId>::parse.
-        todo!("blocked_on: ContainerCondition::parse_feature — QueryFeature::parse")
+    fn parse_feature(input: &mut css::Parser) -> css::Result<Self> {
+        let feature = QueryFeature::<ContainerSizeFeatureId>::parse(input)?;
+        Ok(ContainerCondition::Feature(feature))
     }
     fn create_negation(condition: Box<Self>) -> Self {
         ContainerCondition::Not(condition)
@@ -292,10 +285,17 @@ impl QueryCondition for ContainerCondition {
     fn create_operation(operator: Operator, conditions: Vec<Self>) -> Self {
         ContainerCondition::Operation { operator, conditions }
     }
-    fn parse_style_query(_input: &mut css::Parser) -> css::Result<Self> {
-        // blocked_on: Parser::{try_parse,parse_nested_block} +
-        // media_query::parse_query_condition::<StyleQuery>.
-        todo!("blocked_on: ContainerCondition::parse_style_query — parse_nested_block")
+    fn parse_style_query(input: &mut css::Parser) -> css::Result<Self> {
+        use crate::media_query::QueryConditionFlags;
+        // Zig defined a local `Fns` struct with two callbacks; in Rust pass closures.
+        input.parse_nested_block(|i| {
+            if let Ok(res) = i.try_parse(|i2| {
+                media_query::parse_query_condition::<StyleQuery>(i2, QueryConditionFlags::ALLOW_OR)
+            }) {
+                return Ok(ContainerCondition::Style(res));
+            }
+            Ok(ContainerCondition::Style(StyleQuery::parse_feature(i)?))
+        })
     }
     fn needs_parens(&self, parent_operator: Option<Operator>, targets: &css::Targets) -> bool {
         match self {
@@ -325,60 +325,13 @@ impl ContainerCondition {
 }
 
 // ─── ContainerCondition parse ─────────────────────────────────────────────
-// Stub so css_parser's now-un-gated `@container` prelude path type-checks.
-// Real body is the `#[cfg(any())]` port below.
-#[cfg(not(any()))]
-impl ContainerCondition {
-    pub fn parse(_input: &mut css::Parser) -> css::Result<ContainerCondition> {
-        todo!("port: ContainerCondition::parse — gated body below")
-    }
-}
-
-// blocked_on: media_query::{parse_query_condition,QueryConditionFlags
-// constructors}, QueryFeature::parse, Parser::{try_parse,parse_nested_block}.
-#[cfg(any())]
 impl ContainerCondition {
     pub fn parse(input: &mut css::Parser) -> css::Result<ContainerCondition> {
-        use crate::media_query::{self, QueryConditionFlags};
+        use crate::media_query::QueryConditionFlags;
         media_query::parse_query_condition::<ContainerCondition>(
             input,
             QueryConditionFlags::ALLOW_OR | QueryConditionFlags::ALLOW_STYLE,
         )
-    }
-
-    pub fn parse_feature(input: &mut css::Parser) -> css::Result<ContainerCondition> {
-        let feature = match QueryFeature::<ContainerSizeFeatureId>::parse(input) {
-            Ok(vv) => vv,
-            Err(e) => return Err(e),
-        };
-        Ok(ContainerCondition::Feature(feature))
-    }
-
-    pub fn parse_style_query(input: &mut css::Parser) -> css::Result<ContainerCondition> {
-        use crate::media_query::{self, QueryConditionFlags};
-        // Zig defined a local `Fns` struct with two callbacks; in Rust we pass closures.
-        fn adapted_parse_query_condition(
-            i: &mut css::Parser,
-            flags: QueryConditionFlags,
-        ) -> css::Result<StyleQuery> {
-            media_query::parse_query_condition::<StyleQuery>(i, flags)
-        }
-
-        fn parse_nested_block_fn(_: (), i: &mut css::Parser) -> css::Result<ContainerCondition> {
-            if let Some(res) = i
-                .try_parse(|i| adapted_parse_query_condition(i, QueryConditionFlags::ALLOW_OR))
-                .as_value()
-            {
-                return Ok(ContainerCondition::Style(res));
-            }
-
-            Ok(ContainerCondition::Style(match StyleQuery::parse_feature(i) {
-                Ok(vv) => vv,
-                Err(e) => return Err(e),
-            }))
-        }
-
-        input.parse_nested_block::<ContainerCondition, ()>((), parse_nested_block_fn)
     }
 }
 

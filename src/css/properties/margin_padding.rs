@@ -3,7 +3,7 @@ use crate as css;
 use crate::css_values::length::LengthPercentageOrAuto;
 use crate::logical::PropertyCategory;
 use crate::{DeclarationList, PropertyHandlerContext};
-use crate::properties::{Property, PropertyIdTag};
+use crate::properties::{Property, PropertyId, PropertyIdTag};
 use crate::compat::Feature;
 
 // `RectShorthand`/`SizeShorthand` mirror Zig's `css.DefineRectShorthand` /
@@ -716,27 +716,10 @@ impl<S: SizeHandlerSpec> Default for SizeHandler<S> {
     }
 }
 
-impl<S: SizeHandlerSpec> SizeHandler<S> {
-    // No-op stubs so `DeclarationHandler` compiles; real bodies are gated below.
-    #[inline]
-    pub fn handle_property(
-        &mut self,
-        _property: &Property,
-        _dest: &mut DeclarationList<'_>,
-        _context: &mut PropertyHandlerContext<'_>,
-    ) -> bool {
-        false
-    }
-    #[inline]
-    pub fn finalize(
-        &mut self,
-        _dest: &mut DeclarationList<'_>,
-        _context: &mut PropertyHandlerContext<'_>,
-    ) {
-    }
-}
-
-#[cfg(any())] // blocked_on: Property::id() + LengthPercentageOrAuto::deep_clone + PropertyHandlerContext::{allocator,targets,add_logical_rule}
+// PORT NOTE: un-gated B-2 round 15 — Property variants + prefixes::Feature +
+// PropertyHandlerContext::{targets,add_logical_rule} are real now.
+// `context.allocator` was dropped from PropertyHandlerContext; the arena is
+// recovered via `dest.bump()` (DeclarationList = bumpalo::Vec).
 impl<S: SizeHandlerSpec> SizeHandler<S> {
     // ---- @field(this, field) replacements ----
     fn physical_slot(&mut self, slot: PhysicalSlot) -> &mut Option<LengthPercentageOrAuto> {
@@ -779,7 +762,7 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         context: &mut PropertyHandlerContext,
     ) -> bool {
         // Zig: `switch (@as(PropertyIdTag, property.*))`
-        let tag = property.id();
+        let tag = property.property_id().tag();
         if tag == S::TOP {
             self.property_helper(
                 PhysicalSlot::Top,
@@ -820,9 +803,11 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
                 dest,
                 context,
             );
+            // PORT NOTE: Zig stored `property.deepClone(allocator)`; reconstruct
+            // via the spec's `make_X(extract_X)` pair (same observable shape).
             self.logical_property_helper(
                 LogicalSlot::BlockStart,
-                property.deep_clone(),
+                S::make_block_start(S::extract_block_start(property).clone()),
                 dest,
                 context,
             );
@@ -834,7 +819,12 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
                 dest,
                 context,
             );
-            self.logical_property_helper(LogicalSlot::BlockEnd, property.deep_clone(), dest, context);
+            self.logical_property_helper(
+                LogicalSlot::BlockEnd,
+                S::make_block_end(S::extract_block_end(property).clone()),
+                dest,
+                context,
+            );
         } else if tag == S::INLINE_START {
             self.flush_helper_logical(
                 LogicalSlot::InlineStart,
@@ -845,7 +835,7 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
             );
             self.logical_property_helper(
                 LogicalSlot::InlineStart,
-                property.deep_clone(),
+                S::make_inline_start(S::extract_inline_start(property).clone()),
                 dest,
                 context,
             );
@@ -859,7 +849,7 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
             );
             self.logical_property_helper(
                 LogicalSlot::InlineEnd,
-                property.deep_clone(),
+                S::make_inline_end(S::extract_inline_end(property).clone()),
                 dest,
                 context,
             );
@@ -881,13 +871,13 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
             );
             self.logical_property_helper(
                 LogicalSlot::BlockStart,
-                S::make_block_start(S::block_shorthand_start(val).deep_clone()),
+                S::make_block_start(S::block_shorthand_start(val).clone()),
                 dest,
                 context,
             );
             self.logical_property_helper(
                 LogicalSlot::BlockEnd,
-                S::make_block_end(S::block_shorthand_end(val).deep_clone()),
+                S::make_block_end(S::block_shorthand_end(val).clone()),
                 dest,
                 context,
             );
@@ -909,13 +899,13 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
             );
             self.logical_property_helper(
                 LogicalSlot::InlineStart,
-                S::make_inline_start(S::inline_shorthand_start(val).deep_clone()),
+                S::make_inline_start(S::inline_shorthand_start(val).clone()),
                 dest,
                 context,
             );
             self.logical_property_helper(
                 LogicalSlot::InlineEnd,
-                S::make_inline_end(S::inline_shorthand_end(val).deep_clone()),
+                S::make_inline_end(S::inline_shorthand_end(val).clone()),
                 dest,
                 context,
             );
@@ -949,10 +939,10 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
                 dest,
                 context,
             );
-            self.top = Some(S::shorthand_top(val).deep_clone());
-            self.right = Some(S::shorthand_right(val).deep_clone());
-            self.bottom = Some(S::shorthand_bottom(val).deep_clone());
-            self.left = Some(S::shorthand_left(val).deep_clone());
+            self.top = Some(S::shorthand_top(val).clone());
+            self.right = Some(S::shorthand_right(val).clone());
+            self.bottom = Some(S::shorthand_bottom(val).clone());
+            self.left = Some(S::shorthand_left(val).clone());
             self.block_start = None;
             self.block_end = None;
             self.inline_start = None;
@@ -960,12 +950,11 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
             self.has_any = true;
         } else if tag == PropertyIdTag::Unparsed {
             // Zig: `property.unparsed.property_id`
-            // TODO(port): confirm `Property::Unparsed` payload accessor name.
             let unparsed = match property {
                 Property::Unparsed(u) => u,
                 _ => unreachable!(),
             };
-            let id = unparsed.property_id;
+            let id = unparsed.property_id.tag();
             if id == S::TOP
                 || id == S::BOTTOM
                 || id == S::LEFT
@@ -978,39 +967,40 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
                 || id == S::INLINE_SHORTHAND
                 || id == S::SHORTHAND
             {
+                let bump = dest.bump();
                 // Even if we weren't able to parse the value (e.g. due to var() references),
                 // we can still add vendor prefixes to the property itself.
                 if id == S::BLOCK_START {
                     self.logical_property_helper(
                         LogicalSlot::BlockStart,
-                        property.deep_clone(),
+                        Property::Unparsed(unparsed.deep_clone(bump)),
                         dest,
                         context,
                     );
                 } else if id == S::BLOCK_END {
                     self.logical_property_helper(
                         LogicalSlot::BlockEnd,
-                        property.deep_clone(),
+                        Property::Unparsed(unparsed.deep_clone(bump)),
                         dest,
                         context,
                     );
                 } else if id == S::INLINE_START {
                     self.logical_property_helper(
                         LogicalSlot::InlineStart,
-                        property.deep_clone(),
+                        Property::Unparsed(unparsed.deep_clone(bump)),
                         dest,
                         context,
                     );
                 } else if id == S::INLINE_END {
                     self.logical_property_helper(
                         LogicalSlot::InlineEnd,
-                        property.deep_clone(),
+                        Property::Unparsed(unparsed.deep_clone(bump)),
                         dest,
                         context,
                     );
                 } else {
                     self.flush(dest, context);
-                    dest.push(property.deep_clone());
+                    dest.push(Property::Unparsed(unparsed.deep_clone(bump)));
                 }
             } else {
                 return false;
@@ -1047,7 +1037,7 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         if category != self.category
             || (self.physical_slot_is_some(field)
                 && context.targets.browsers.is_some()
-                && !val.is_compatible(context.targets.browsers.as_ref().unwrap()))
+                && !val.is_compatible(context.targets.browsers.unwrap()))
         {
             self.flush(dest, context);
         }
@@ -1069,7 +1059,7 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         if category != self.category
             || (self.logical_slot_is_some(field)
                 && context.targets.browsers.is_some()
-                && !val.is_compatible(context.targets.browsers.as_ref().unwrap()))
+                && !val.is_compatible(context.targets.browsers.unwrap()))
         {
             self.flush(dest, context);
         }
@@ -1085,7 +1075,7 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
     ) {
         // PERF(port): `category` was comptime monomorphization — profile in Phase B
         self.flush_helper_physical(field, val, category, dest, context);
-        *self.physical_slot(field) = Some(val.deep_clone());
+        *self.physical_slot(field) = Some(val.clone());
         self.category = category;
         self.has_any = true;
     }
@@ -1201,15 +1191,15 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         } else if inline_start.is_some() || inline_end.is_some() {
             let start_matches = inline_start
                 .as_ref()
-                .map(|p| p.id() == S::INLINE_START)
+                .map(|p| p.property_id().tag() == S::INLINE_START)
                 .unwrap_or(false);
             let end_matches = inline_end
                 .as_ref()
-                .map(|p| p.id() == S::INLINE_END)
+                .map(|p| p.property_id().tag() == S::INLINE_END)
                 .unwrap_or(false);
             let values_equal = if start_matches && end_matches {
                 S::extract_inline_start(inline_start.as_ref().unwrap())
-                    .eql(S::extract_inline_end(inline_end.as_ref().unwrap()))
+                    == S::extract_inline_end(inline_end.as_ref().unwrap())
             } else {
                 false
             };
@@ -1239,9 +1229,9 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
                     S::INLINE_START,
                     S::extract_inline_start,
                     S::make_left,
-                    S::LEFT,
+                    S::LEFT_ID,
                     S::make_right,
-                    S::RIGHT,
+                    S::RIGHT_ID,
                     dest,
                     context,
                 );
@@ -1250,9 +1240,9 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
                     S::INLINE_END,
                     S::extract_inline_end,
                     S::make_right,
-                    S::RIGHT,
+                    S::RIGHT_ID,
                     S::make_left,
-                    S::LEFT,
+                    S::LEFT_ID,
                     dest,
                     context,
                 );

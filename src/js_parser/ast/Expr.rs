@@ -2368,47 +2368,68 @@ impl Data {
             _ => Ok(this),
         }
     }
+} // end gated `impl Data` (clone/deep_clone)
 
-    /// `hasher` should be something with 'pub fn update([]const u8) void';
-    /// symbol table is passed to serialize `Ref` as an identifier names instead of a nondeterministic numbers
-    // TODO(b2-blocked): bun_core::write_any_to_hasher / bun_core::Hasher trait
-    // (track-A round-A `blocked_on`). `SymbolTable` is a parser-round trait
-    // abstraction over `symbol::Map`. Only the bake DevServer hot-reload diff
-    // uses this; cold path.
-    #[cfg(any())]
-    pub fn write_to_hasher<H: bun_core::Hasher, S: js_ast::SymbolTable>(
-        this: &Data,
-        hasher: &mut H,
-        symbol_table: &S,
-    ) {
-        bun_core::write_any_to_hasher(hasher, &this.tag());
-        match this {
-            Data::ENameOfSymbol(e) => {
-                let symbol = e.ref_.get_symbol(symbol_table);
-                hasher.update(symbol.original_name);
-            }
+impl Data {
+    /// `hasher` should be something with `fn update(&[u8])`;
+    /// symbol table is passed to serialize `Ref` as identifier names instead of nondeterministic numbers.
+    ///
+    /// Port of `Expr.Data.writeToHasher`. Zig fed raw bytes of anonymous tuples
+    /// (`std.mem.asBytes(&.{a, b, c})`) — including padding, which is undefined
+    /// in both languages. The Rust port hashes each scalar individually so the
+    /// output is deterministic (this is only consumed by React Refresh signature
+    /// generation; byte-for-byte parity with Zig is not required, only stability).
+    pub fn write_to_hasher<H, S>(&self, hasher: &mut H, symbol_table: &mut S)
+    where
+        H: bun_core::Hasher + ?Sized,
+        S: crate::ast::base::SymbolTable + ?Sized,
+    {
+        // Local mirror of `bun.writeAnyToHasher` for arbitrary `Copy` POD —
+        // `bun_core::write_any_to_hasher` is bound by `AsBytes` (ints only) and
+        // we cannot extend that trait from this crate-file scope.
+        #[inline(always)]
+        fn raw<H: bun_core::Hasher + ?Sized, T: Copy>(h: &mut H, v: T) {
+            // SAFETY: `T: Copy` ⇒ no drop glue / no interior refs we care about;
+            // we read exactly size_of::<T> initialized bytes from `v`'s stack slot.
+            // Mirrors Zig `hasher.update(std.mem.asBytes(&thing))`.
+            h.update(unsafe {
+                core::slice::from_raw_parts(
+                    core::ptr::addr_of!(v).cast::<u8>(),
+                    core::mem::size_of::<T>(),
+                )
+            });
+        }
+        #[inline(always)]
+        fn name_of<H: bun_core::Hasher + ?Sized, S: crate::ast::base::SymbolTable + ?Sized>(
+            h: &mut H,
+            symbol_table: &mut S,
+            r: Ref,
+        ) {
+            let sym = r.get_symbol(symbol_table);
+            // SAFETY: `original_name` is an arena-owned slice valid for the
+            // parser/AST arena that `symbol_table` borrows from.
+            h.update(unsafe { &*sym.original_name });
+        }
+
+        raw(hasher, self.tag() as u8);
+        match self {
+            Data::ENameOfSymbol(e) => name_of(hasher, symbol_table, e.ref_),
             Data::EArray(e) => {
-                bun_core::write_any_to_hasher(
-                    hasher,
-                    &(
-                        e.is_single_line,
-                        e.is_parenthesized,
-                        e.was_originally_macro,
-                        e.items.len(),
-                    ),
-                );
+                raw(hasher, e.is_single_line);
+                raw(hasher, e.is_parenthesized);
+                raw(hasher, e.was_originally_macro);
+                raw(hasher, e.items.len);
                 for item in e.items.slice() {
                     item.data.write_to_hasher(hasher, symbol_table);
                 }
             }
             Data::EUnary(e) => {
-                // SAFETY: e.flags is a bitflags-like packed u8
-                bun_core::write_any_to_hasher(hasher, &e.flags.bits());
-                bun_core::write_any_to_hasher(hasher, &(e.op,));
+                raw(hasher, e.flags.bits());
+                raw(hasher, e.op as u8);
                 e.value.data.write_to_hasher(hasher, symbol_table);
             }
             Data::EBinary(e) => {
-                bun_core::write_any_to_hasher(hasher, &(e.op,));
+                raw(hasher, e.op as u8);
                 e.left.data.write_to_hasher(hasher, symbol_table);
                 e.right.data.write_to_hasher(hasher, symbol_table);
             }
@@ -2416,12 +2437,13 @@ impl Data {
             Data::ENew(_) | Data::ECall(_) => {}
             Data::EFunction(_) => {}
             Data::EDot(e) => {
-                bun_core::write_any_to_hasher(hasher, &(e.optional_chain, e.name.len()));
+                raw(hasher, e.optional_chain);
+                raw(hasher, e.name.len());
                 e.target.data.write_to_hasher(hasher, symbol_table);
                 hasher.update(e.name);
             }
             Data::EIndex(e) => {
-                bun_core::write_any_to_hasher(hasher, &(e.optional_chain,));
+                raw(hasher, e.optional_chain);
                 e.target.data.write_to_hasher(hasher, symbol_table);
                 e.index.data.write_to_hasher(hasher, symbol_table);
             }
@@ -2442,7 +2464,8 @@ impl Data {
                 // TODO(port): Zig hashed the raw bytes of `.{ e.is_star, e.value }` (the full
                 // `?Expr` optional, including loc/data pointer). Rust `Option<Expr>` layout is
                 // not byte-compatible, so we hash the discriminant here and recurse below.
-                bun_core::write_any_to_hasher(hasher, &(e.is_star, e.value.is_some()));
+                raw(hasher, e.is_star);
+                raw(hasher, e.value.is_some());
                 if let Some(value) = &e.value {
                     value.data.write_to_hasher(hasher, symbol_table);
                 }
@@ -2456,27 +2479,15 @@ impl Data {
             Data::EImport(_e) => {
                 // autofix
             }
-            Data::EIdentifier(e) => {
-                let symbol = e.ref_.get_symbol(symbol_table);
-                hasher.update(symbol.original_name);
-            }
-            Data::EImportIdentifier(e) => {
-                let symbol = e.ref_.get_symbol(symbol_table);
-                hasher.update(symbol.original_name);
-            }
-            Data::EPrivateIdentifier(e) => {
-                let symbol = e.ref_.get_symbol(symbol_table);
-                hasher.update(symbol.original_name);
-            }
-            Data::ECommonjsExportIdentifier(e) => {
-                let symbol = e.ref_.get_symbol(symbol_table);
-                hasher.update(symbol.original_name);
-            }
+            Data::EIdentifier(e) => name_of(hasher, symbol_table, e.ref_),
+            Data::EImportIdentifier(e) => name_of(hasher, symbol_table, e.ref_),
+            Data::EPrivateIdentifier(e) => name_of(hasher, symbol_table, e.ref_),
+            Data::ECommonjsExportIdentifier(e) => name_of(hasher, symbol_table, e.ref_),
             Data::EBoolean(e) | Data::EBranchBoolean(e) => {
-                bun_core::write_any_to_hasher(hasher, &e.value);
+                raw(hasher, e.value);
             }
             Data::ENumber(e) => {
-                bun_core::write_any_to_hasher(hasher, &e.value);
+                raw(hasher, e.value);
             }
             Data::EBigInt(e) => {
                 hasher.update(e.value);
@@ -2485,26 +2496,29 @@ impl Data {
                 hasher.update(e.value);
             }
             Data::EString(e) => {
-                let mut next: Option<&E::String> = Some(e);
-                if let Some(current) = next {
-                    if current.is_utf8() {
-                        hasher.update(current.data);
-                    } else {
-                        hasher.update(bun_core::reinterpret_slice::<u8, _>(current.slice16()));
-                    }
-                    next = current.next.as_deref();
-                    let _ = next;
-                    hasher.update(b"\x00");
+                // PORT NOTE: Zig declared `var next: ?*E.String = e;` and tested `if (next)`
+                // — i.e. it only ever hashes the *first* rope segment (the `next = current.next`
+                // store is dead). Preserved here.
+                let current: &E::String = e;
+                if current.is_utf8() {
+                    hasher.update(current.data);
+                } else {
+                    let s16 = current.slice16();
+                    // SAFETY: reinterpret &[u16] as &[u8] — element size doubles, alignment relaxes.
+                    hasher.update(unsafe {
+                        core::slice::from_raw_parts(s16.as_ptr().cast::<u8>(), s16.len() * 2)
+                    });
                 }
+                hasher.update(b"\x00");
             }
             Data::ERequireString(e) => {
-                bun_core::write_any_to_hasher(hasher, &e.import_record_index); // preferably, i'd like to write the filepath
+                raw(hasher, e.import_record_index); // preferably, i'd like to write the filepath
             }
             Data::ERequireResolveString(e) => {
-                bun_core::write_any_to_hasher(hasher, &e.import_record_index);
+                raw(hasher, e.import_record_index);
             }
             Data::EImportMetaMain(e) => {
-                bun_core::write_any_to_hasher(hasher, &e.inverted);
+                raw(hasher, e.inverted);
             }
             Data::EInlinedEnum(e) => {
                 // pretend there is no comment
@@ -2524,7 +2538,7 @@ impl Data {
             | Data::ESpecial(_) => {}
         }
     }
-} // end gated `impl Data` (clone/deep_clone/write_to_hasher)
+}
 
 impl Data {
     /// "const values" here refers to expressions that can participate in constant

@@ -1322,20 +1322,38 @@ fn transpile_source_code_inner(
                 let printer: &mut bun_js_printer::BufferPrinter =
                     unsafe { &mut *(*extra).source_code_printer };
                 printer.ctx.reset();
-                // TODO(b2-cycle): `VirtualMachine::source_map_handler` is a
-                // `todo!()` stub returning `()` (VirtualMachine.rs:1566).
-                // Once it returns `js_printer::SourceMapHandler<'_>`, switch
-                // back to `print_with_source_map(parse_result, &mut *printer,
-                // Format::EsmAscii, mapper, None)`. Until then, route through
-                // `print` (same printer body, `ENABLE_SOURCE_MAP = false`).
-                #[cfg(any())]
-                let _mapper = unsafe { (*jsc_vm).source_map_handler(printer) };
-                unsafe {
-                    (*jsc_vm).transpiler.print(
-                        parse_result,
-                        &mut *printer,
-                        bun_js_printer::Format::EsmAscii,
-                    )?;
+                // Spec :529-538 — `var mapper = jsc_vm.sourceMapHandler(&printer);
+                // … jsc_vm.transpiler.printWithSourceMap(parse_result, &printer,
+                // .esm_ascii, mapper.get(), module_info)`.
+                //
+                // PORT NOTE (borrowck): `source_map_handler` borrows both the VM
+                // and the printer for the getter's lifetime, but the print call
+                // also needs `&mut vm.transpiler` and `&mut printer`. Per the
+                // raw-ptr aliasing convention at the top of this fn (see fn-level
+                // PORT NOTE), rederive both from `jsc_vm`/`extra` raw ptrs at
+                // each use-site so borrowck sees disjoint temporaries; the
+                // getter itself only stashes raw pointers (VirtualMachine.rs
+                // `SourceMapHandlerGetter`), so no live `&mut` actually overlaps.
+                {
+                    // SAFETY: `jsc_vm` / `(*extra).source_code_printer` are live
+                    // for the call (fn contract); `mapper` does not escape this
+                    // scope, so the unbounded `'a` from the raw-deref reborrows
+                    // is bounded by the block.
+                    let mut mapper = unsafe {
+                        (*jsc_vm).source_map_handler(&mut *(*extra).source_code_printer)
+                    };
+                    unsafe {
+                        (*jsc_vm).transpiler.print_with_source_map(
+                            parse_result,
+                            &mut *(*extra).source_code_printer,
+                            bun_js_printer::Format::EsmAscii,
+                            mapper.get(),
+                            // TODO(b2-blocked): `analyze_transpiled_module::
+                            // ModuleInfo::create` (spec :516-523) — pass it
+                            // through once the create-side above is un-gated.
+                            None,
+                        )?;
+                    }
                 }
 
                 if is_main {

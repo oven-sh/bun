@@ -1574,32 +1574,6 @@ impl<'a> Transpiler<'a> {
                 }
             }
             options::Loader::Css => {}
-            options::Loader::Toml
-            | options::Loader::Yaml
-            | options::Loader::Json
-            | options::Loader::Jsonc
-            | options::Loader::Json5
-            | options::Loader::Text
-            | options::Loader::Md => {
-                // TODO(b2-blocked): data-format loaders build `js_ast::Stmt`/
-                // `Part` slabs via `Arena::alloc_slice_*` and
-                // `Stmt::alloc(S::ExportDefault { .. })` — those constructors
-                // are shaped differently in the live `bun_js_parser::ast`
-                // surface. Full body preserved in `__phase_a_draft` below.
-                // PORTING.md §Forbidden: silent no-op — log instead of falling
-                // through to `None` with no diagnostic (spec
-                // transpiler.zig:993-1193 returns a real `ParseResult`).
-                let _ = log.add_error_fmt(
-                    None,
-                    logger::Loc::EMPTY,
-                    format_args!(
-                        "parsing \"{}\" (b2-blocked: data-format loader {:?})",
-                        bstr::BStr::new(path.text),
-                        loader,
-                    ),
-                );
-                return None;
-            }
             options::Loader::File
             | options::Loader::Napi
             | options::Loader::Base64

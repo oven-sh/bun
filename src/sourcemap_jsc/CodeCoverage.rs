@@ -494,24 +494,17 @@ impl ByteRangeMapping {
 
         let mut executable_lines: Bitset = Bitset::default();
         let mut lines_which_have_executed: Bitset = Bitset::default();
-        // PORT NOTE: `SavedSourceMap::get` returns `Option<*mut ParsedSourceMap>` with a
-        // +1 intrusive ref (Zig: `defer if (parsed_mappings_) |p| p.deref()`).
-        let parsed_mappings_: Option<*mut ParsedSourceMap> =
+        // PORT NOTE: Zig's `SavedSourceMap.get` returns a `?*ParsedSourceMap` with a +1
+        // intrusive ref (Zig: `defer if (parsed_mappings_) |p| p.deref()`). The Rust port
+        // models this as `Option<Arc<ParsedSourceMap>>`, so the +1 is released
+        // automatically when `parsed_mappings_` drops at scope exit — no explicit guard
+        // is required.
+        let parsed_mappings_: Option<std::sync::Arc<ParsedSourceMap>> =
             // SAFETY: `VirtualMachine::get()` returns the live singleton `*mut VirtualMachine`
             // with full write provenance; dereference to call the `&mut self` accessor.
             unsafe { &mut *bun_jsc::VirtualMachine::VirtualMachine::get() }
                 .source_mappings()
                 .get(source_url.slice());
-        // TODO(port): `ParsedSourceMap` is intrusively refcounted (`ref_count: AtomicU32`)
-        // but does not yet impl `bun_ptr::AnyRefCounted`; once it does, wrap in
-        // `RefPtr::from_raw` so the +1 from `get()` is released on scope exit.
-        let _parsed_mappings_guard = scopeguard::guard(parsed_mappings_, |p| {
-            if let Some(_ptr) = p {
-                // TODO(b2-blocked): bun_sourcemap::ParsedSourceMap::deref — intrusive
-                // ref-count release; stub `SavedSourceMap::get` returns `None` today so
-                // this is unreachable until the real impl un-gates.
-            }
-        });
         let mut line_hits = LinesHits::default();
 
         let mut functions: Vec<Block> = Vec::new();
@@ -623,11 +616,7 @@ impl ByteRangeMapping {
                     functions_which_have_executed.set(i);
                 }
             }
-        } else if let Some(parsed_mapping) =
-            // SAFETY: pointer was returned by `SavedSourceMap::get` with a +1 ref and
-            // is valid until the guard above releases it at scope exit.
-            parsed_mappings_.map(|p| unsafe { &*p })
-        {
+        } else if let Some(parsed_mapping) = parsed_mappings_.as_deref() {
             line_count = (parsed_mapping.input_line_count as u32) + 1;
             executable_lines = Bitset::init_empty(line_count as usize)?;
             lines_which_have_executed = Bitset::init_empty(line_count as usize)?;

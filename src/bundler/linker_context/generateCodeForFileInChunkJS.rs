@@ -179,7 +179,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
             // TODO: there is a weird edge case where the pretty path is not computed
             // it does not reproduce when debugging.
-            let mut source = c.get_source(source_index).clone();
+            let mut source = c.get_source(source_index as u32).clone();
             if core::ptr::eq(source.path.text.as_ptr(), source.path.pretty.as_ptr()) {
                 // PORT NOTE: `generic_path_with_pretty_initialized` operates on
                 // `bun_resolver::fs::Path<'_>`, but `Source.path` is the distinct
@@ -880,7 +880,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
     // PORT NOTE: split borrow — `print_code_for_file_in_chunk_js` takes `&mut self`,
     // so grab the source pointer first.
-    let source: *const _ = c.get_source(source_index);
+    let source: *const _ = c.get_source(source_index as u32);
     c.print_code_for_file_in_chunk_js(
         r,
         allocator,

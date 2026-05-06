@@ -4980,10 +4980,14 @@ impl<'a> BundleV2<'a> {
 
                 if process_log {
                     if let Some(dev_server) = this.dev_server {
+                        // Copy out the `'static` path slice so the `input_files`
+                        // borrow ends before we coerce `this` to `*mut _`.
+                        let abs_path: &'static [u8] =
+                            this.graph.input_files.items_source()[err.source_index.get() as usize].path.text;
                         dev_server.handle_parse_task_failure(
                             err.err,
                             err.target.bake_graph(),
-                            &graph.input_files.items_source()[err.source_index.get() as usize].path.text,
+                            abs_path,
                             &err.log as *const _,
                             this as *mut _,
                         ).expect("oom");

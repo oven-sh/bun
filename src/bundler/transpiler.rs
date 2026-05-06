@@ -990,6 +990,15 @@ fn resolver_bundle_options_subset(
         tsconfig_override: src.tsconfig_override.clone(),
         production: src.production,
         force_node_env: src.force_node_env,
+        // FORWARD_DECL: bundler-only fields read via `c.resolver.opts` in
+        // `linker_context/*` (Zig stores the full `BundleOptions` on the
+        // resolver). Project them so the linker sees the same values it would
+        // have read off the spec's shared struct.
+        output_dir: src.output_dir.clone(),
+        root_dir: src.root_dir.clone(),
+        public_path: src.public_path.clone(),
+        compile: src.compile,
+        supports_multiple_outputs: src.supports_multiple_outputs,
     }
 }
 

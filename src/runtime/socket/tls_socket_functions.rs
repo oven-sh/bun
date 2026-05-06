@@ -5,7 +5,7 @@ use bun_boringssl_sys as boringssl;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_str::{self, strings, String as BunString, ZigString};
 
-use crate::api::bun::x509 as X509;
+use crate::api::bun_x509 as X509;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Local BoringSSL FFI surface not yet in bun_boringssl_sys.

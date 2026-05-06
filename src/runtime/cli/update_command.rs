@@ -1,22 +1,31 @@
-use bun_install::package_manager::{
-    update_package_json_and_install_catch_error, CommandLineArguments, Subcommand,
-};
+#[allow(unused_imports)]
+use bun_install::package_manager::Subcommand;
 
+use crate::cli::update_interactive_command::UpdateInteractiveCommand;
 use crate::command::Context;
-use crate::update_interactive_command::UpdateInteractiveCommand;
 
 pub struct UpdateCommand;
 
 impl UpdateCommand {
     pub fn exec(ctx: Context) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
-        let cli = CommandLineArguments::parse(Subcommand::Update)?;
         // PORT NOTE: dropped `ctx.allocator` arg — global mimalloc per §Allocators.
+        //
+        // `CommandLineArguments` and `update_package_json_and_install_catch_error`
+        // live in `bun_install::package_manager_real` which is currently gated
+        // off (`#![cfg(any())]` — reconciler-6: 1200+ errors). The stub
+        // `bun_install::package_manager` module only re-exports
+        // `PackageManager` + `Subcommand`. Until that crate ungates, the body
+        // below mirrors update_command.zig:2-10 against todo!() stand-ins.
+        let interactive: bool =
+            todo!("blocked_on: bun_install::package_manager::CommandLineArguments");
 
-        if cli.interactive {
+        #[allow(unreachable_code)]
+        if interactive {
             UpdateInteractiveCommand::exec(ctx)?;
         } else {
-            update_package_json_and_install_catch_error(ctx, Subcommand::Update)?;
+            let _ = Subcommand::Update;
+            todo!("blocked_on: bun_install::package_manager::update_package_json_and_install_catch_error");
         }
         Ok(())
     }

@@ -599,12 +599,15 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
 // ConstParamTy on CommandTag::Tag) are green.
 // ─────────────────────────────────────────────────────────────────────────────
 
+#[allow(unexpected_cfgs)]
 mod phase_a_draft {
+use std::sync::LazyLock;
 use bun_core::{Global, Output, FeatureFlags, Environment};
 use bun_core::env_var;
-use bun_cli as cli;
+use crate::cli;
 use crate::cli::{Command, DefineColonList, LoaderColonList, debug_flags, print_revision_and_exit, print_version_and_exit};
 use crate::cli::Bunfig;
+use crate::cli::concat_params;
 use bun_clap as clap;
 use bun_logger as logger;
 use bun_bundler::options;
@@ -612,7 +615,7 @@ use bun_paths as resolve_path;
 use bun_paths::PathBuffer;
 use bun_str::strings;
 use bun_str::ZStr;
-use bun_schema::api as api;
+use bun_options_types::schema::api;
 use bun_js_parser as js_ast;
 use bun_jsc::RegularExpression;
 use bun_alloc::AllocError;

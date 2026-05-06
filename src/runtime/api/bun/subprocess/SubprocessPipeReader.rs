@@ -27,8 +27,10 @@ impl Default for State {
 
 pub struct PipeReader {
     pub reader: IOReader,
-    // TODO(port): lifetime — backref to owning Subprocess; cleared in detach()/onReaderDone()/onReaderError()
-    pub process: Option<NonNull<Subprocess>>,
+    // TODO(port): lifetime — backref to owning Subprocess; cleared in detach()/onReaderDone()/onReaderError().
+    // NonNull is a raw pointer; `'static` erases the borrow-checker lifetime since this is only
+    // dereferenced unsafely while the owning Subprocess is known-live.
+    pub process: Option<NonNull<Subprocess<'static>>>,
     // TODO(port): lifetime — long-lived borrow of the VM's event loop
     pub event_loop: NonNull<EventLoop>,
     /// Intrusive refcount field for `bun_ptr::IntrusiveRc<PipeReader>`.
@@ -95,7 +97,7 @@ impl PipeReader {
 
     pub fn create(
         event_loop: NonNull<EventLoop>,
-        process: NonNull<Subprocess>,
+        process: NonNull<Subprocess<'static>>,
         result: StdioResult,
         limit: Option<&mut MaxBuf>,
     ) -> IntrusiveRc<PipeReader> {

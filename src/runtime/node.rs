@@ -36,6 +36,14 @@ pub mod os;
 #[path = "node/node_process.rs"]
 pub mod process;
 
+#[path = "node/node_crypto_binding.rs"]
+pub mod crypto;
+
+#[path = "node/fs_events.rs"]
+pub mod fs_events;
+#[allow(non_snake_case)]
+pub use fs_events as FSEvents;
+
 // ─── un-gated in B-2 round 2 (node_fs sync paths live; async re-gated inside) ───
 // Sibling modules node_fs.rs imports by `super::` path. Stat/StatFS/time_like
 // are type-only at the surface; their JSC method bodies are re-gated inside

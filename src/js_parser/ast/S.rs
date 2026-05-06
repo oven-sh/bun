@@ -18,6 +18,16 @@ pub struct Block {
     pub close_brace_loc: logger::Loc, // = logger::Loc::EMPTY
 }
 
+impl Default for Block {
+    fn default() -> Self {
+        Self {
+            // Zig: `&.{}` — empty arena slice. Dangling zero-length fat pointer.
+            stmts: core::ptr::slice_from_raw_parts_mut(core::ptr::NonNull::dangling().as_ptr(), 0),
+            close_brace_loc: logger::Loc::EMPTY,
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct SExpr {
     pub value: ExprNodeIndex,

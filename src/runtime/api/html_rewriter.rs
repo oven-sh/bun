@@ -235,12 +235,7 @@ impl HTMLRewriter {
         };
 
         if kind != ResponseKind::Other {
-            // TODO(b2-blocked): `webcore::body::extract` lives in Body.rs's
-            // ` mod _jsc_gated` block. Un-gate when that lands.
-            
             let body_value = webcore::body::extract(global, response_value)?;
-            #[cfg(any())]
-            let body_value: Body = todo!("blocked_on: webcore::body::extract");
             let resp = Box::into_raw(Box::new(Response::init(
                 webcore::response::Init { status_code: 200, ..Default::default() },
                 body_value,

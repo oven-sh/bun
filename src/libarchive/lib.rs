@@ -2,10 +2,9 @@
 #![allow(unused, dead_code, clippy::all)]
 
 // ──────────────────────────────────────────────────────────────────────────
-// Phase B-2: un-gated. Phase-A draft is now compiled directly. Function
-// bodies that depend on still-gated lower-tier surfaces (bun_libarchive_sys
-// bindings, bun_sys directory ops) are individually re-gated with
-// `// TODO(b2-blocked): ...` markers and a `todo!()` fallback.
+// Phase D: libarchive FFI surface is fully wired. Thin `extern "C"` wrappers
+// over the C library live in `mod lib` below; higher-level extraction logic
+// (`Archiver`, `BufferReadStream`) sits on top and uses `bun_sys` for I/O.
 // ──────────────────────────────────────────────────────────────────────────
 
 use core::ffi::{c_char, c_int, c_void};

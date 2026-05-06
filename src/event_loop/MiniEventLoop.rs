@@ -667,8 +667,11 @@ impl<'a> MiniVM<'a> {
 
     #[inline]
     pub fn increment_pending_unref_counter(&self) {
+        // Zig spec body: `_ = this; @panic("FIXME TODO");` — MiniEventLoop has no
+        // pending_unref_counter (only `jsc.VirtualMachine` does). This is the REAL
+        // ported body, not a stub.
         let _ = self;
-        unimplemented!("FIXME TODO");
+        panic!("FIXME TODO");
     }
 
     #[inline]

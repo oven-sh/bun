@@ -31,65 +31,11 @@ use self::websocket_deflate::WebSocketDeflate;
 use self::websocket_proxy_tunnel::WebSocketProxyTunnel;
 
 // ─── Submodules ──────────────────────────────────────────────────────────
-// `cpp_websocket` + `websocket_proxy` + `websocket_deflate` are un-gated. The
-// remaining two Phase-A drafts stay gated:
-//   - websocket_proxy_tunnel:  blocked on bun_runtime::socket::ssl_wrapper::
-//                              SslWrapper + bun_runtime::api::server_config::
-//                              SslConfig (higher-tier; dep cycle).
-//   - websocket_upgrade_client: blocked on bun_runtime::api::server_config::
-//                              SSLConfig (dep cycle) + bun_picohttp +
-//                              bun_boringssl::c::SSL_get_servername.
-// Stubs below provide the type+method surface `WebSocket<SSL>` references.
-#[path = "websocket_client/CppWebSocket.rs"]                        pub mod cpp_websocket;
-#[path = "websocket_client/WebSocketDeflate.rs"]                    pub mod websocket_deflate;
-#[path = "websocket_client/WebSocketProxy.rs"]                      pub mod websocket_proxy;
- #[path = "websocket_client/WebSocketProxyTunnel.rs"]  pub mod websocket_proxy_tunnel;
- #[path = "websocket_client/WebSocketUpgradeClient.rs"] pub mod websocket_upgrade_client;
-
-#[cfg(any())]
-pub mod websocket_proxy_tunnel {
-    /// Stub for `WebSocketProxyTunnel` (real impl gated above).
-    pub struct WebSocketProxyTunnel { _priv: () }
-    impl WebSocketProxyTunnel {
-        pub fn shutdown(&self) {
-            // TODO(b2-blocked): self::websocket_proxy_tunnel (real module gated above)
-            todo!("WebSocketProxyTunnel::shutdown — gated")
-        }
-        pub fn clear_connected_websocket(&self) {
-            // TODO(b2-blocked): self::websocket_proxy_tunnel
-            todo!("WebSocketProxyTunnel::clear_connected_websocket — gated")
-        }
-        pub fn write(&self, _data: &[u8]) -> Result<usize, bun_core::Error> {
-            // TODO(b2-blocked): self::websocket_proxy_tunnel
-            todo!("WebSocketProxyTunnel::write — gated")
-        }
-        pub fn has_backpressure(&self) -> bool {
-            // TODO(b2-blocked): self::websocket_proxy_tunnel
-            todo!("WebSocketProxyTunnel::has_backpressure — gated")
-        }
-        // PORT NOTE: `WebSocketProxy.rs` calls `(*tunnel.as_ptr()).deref()` on
-        // the raw intrusive count directly (Zig `tunnel.deref()`).
-        pub fn deref(&self) {
-            // SAFETY: forwards to the AnyRefCounted impl below.
-            unsafe { <Self as bun_ptr::AnyRefCounted>::rc_deref_with_context(self as *const _ as *mut _, ()) }
-        }
-    }
-    // Minimal `AnyRefCounted` so `Option<IntrusiveArc<WebSocketProxyTunnel>>`
-    // type-checks in `WebSocket<SSL>`'s field layout. Real impl uses an
-    // embedded `ThreadSafeRefCount` (see WebSocketProxyTunnel.rs).
-    impl bun_ptr::AnyRefCounted for WebSocketProxyTunnel {
-        type DestructorCtx = ();
-        unsafe fn rc_ref(_this: *mut Self) { unreachable!("stub") }
-        unsafe fn rc_deref_with_context(_this: *mut Self, _ctx: ()) { unreachable!("stub") }
-        unsafe fn rc_has_one_ref(_this: *const Self) -> bool { unreachable!("stub") }
-        unsafe fn rc_assert_no_refs(_this: *const Self) { unreachable!("stub") }
-        unsafe fn rc_debug_data(_this: *mut Self) -> *mut dyn bun_ptr::ref_count::DebugDataOps {
-            unreachable!("stub")
-        }
-    }
-}
-#[cfg(any())]
-pub mod websocket_upgrade_client { /* stub: no types referenced from struct layout */ }
+#[path = "websocket_client/CppWebSocket.rs"]            pub mod cpp_websocket;
+#[path = "websocket_client/WebSocketDeflate.rs"]        pub mod websocket_deflate;
+#[path = "websocket_client/WebSocketProxy.rs"]          pub mod websocket_proxy;
+#[path = "websocket_client/WebSocketProxyTunnel.rs"]    pub mod websocket_proxy_tunnel;
+#[path = "websocket_client/WebSocketUpgradeClient.rs"]  pub mod websocket_upgrade_client;
 
 bun_core::declare_scope!(WebSocketClient, visible);
 

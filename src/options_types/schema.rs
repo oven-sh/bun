@@ -4,6 +4,59 @@
 //
 // B-2: minimal hand-stubbed `api` namespace so Context.rs / BundleEnums.rs
 // struct fields type-check. Full body arrives when peechy emits .rs.
+
+/// Port of `schema.Writer(WritableStream)` (schema.zig:169) specialised to a
+/// `Vec<u8>` sink — the only instantiation reachable from Rust today
+/// (`js_parser::runtime::Base64FallbackMessage::fmt`). The full generic shape
+/// arrives with the peechy-generated body.
+pub struct Writer<'a> {
+    writable: &'a mut Vec<u8>,
+}
+
+impl<'a> Writer<'a> {
+    #[inline]
+    pub fn new(writable: &'a mut Vec<u8>) -> Self {
+        Self { writable }
+    }
+    #[inline]
+    pub fn write(&mut self, bytes: &[u8]) {
+        self.writable.extend_from_slice(bytes);
+    }
+    #[inline]
+    pub fn write_byte(&mut self, byte: u8) {
+        self.writable.push(byte);
+    }
+    /// Zig: `writeInt` — `std.mem.asBytes(&int)` is native-endian raw bytes.
+    #[inline]
+    pub fn write_int<I: Copy>(&mut self, int: I) {
+        let bytes = unsafe {
+            core::slice::from_raw_parts(
+                (&int as *const I).cast::<u8>(),
+                core::mem::size_of::<I>(),
+            )
+        };
+        self.writable.extend_from_slice(bytes);
+    }
+    #[inline]
+    pub fn write_field_id(&mut self, id: u8) {
+        self.write_byte(id);
+    }
+    #[inline]
+    pub fn write_enum<E: Copy>(&mut self, val: E) {
+        self.write_int(val);
+    }
+    /// Zig: `writeArray(u8, slice)` — length-prefixed byte slice.
+    #[inline]
+    pub fn write_array_u8(&mut self, slice: &[u8]) {
+        self.write_int(slice.len() as u32);
+        self.write(slice);
+    }
+    #[inline]
+    pub fn end_message(&mut self) {
+        self.write_byte(0);
+    }
+}
+
 pub mod api {
     /// schema.zig:1172 — `enum(u32)`
     #[repr(u32)]

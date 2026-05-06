@@ -186,27 +186,27 @@ pub mod expect {
         }
         #[inline]
         fn is_constructor(self) -> bool {
-            todo!("blocked_on: bun_jsc::JSValue::is_constructor")
+            JSValue::is_constructor(self)
         }
         #[inline]
-        fn is_object_empty(self, _global: &JSGlobalObject) -> JsResult<bool> {
-            todo!("blocked_on: bun_jsc::JSValue::is_object_empty")
+        fn is_object_empty(self, global: &JSGlobalObject) -> JsResult<bool> {
+            JSValue::is_object_empty(self, global)
         }
         #[inline]
-        fn get_length_if_property_exists_internal(self, _global: &JSGlobalObject) -> JsResult<f64> {
-            todo!("blocked_on: bun_jsc::JSValue::get_length_if_property_exists_internal")
+        fn get_length_if_property_exists_internal(self, global: &JSGlobalObject) -> JsResult<f64> {
+            JSValue::get_length_if_property_exists_internal(self, global)
         }
         #[inline]
-        fn get_if_property_exists_from_path(self, _global: &JSGlobalObject, _path: JSValue) -> JsResult<JSValue> {
-            todo!("blocked_on: bun_jsc::JSValue::get_if_property_exists_from_path")
+        fn get_if_property_exists_from_path(self, global: &JSGlobalObject, path: JSValue) -> JsResult<JSValue> {
+            JSValue::get_if_property_exists_from_path(self, global, path)
         }
         #[inline]
-        fn string_includes(self, _global: &JSGlobalObject, _needle: JSValue) -> JsResult<bool> {
-            todo!("blocked_on: bun_jsc::JSValue::string_includes")
+        fn string_includes(self, global: &JSGlobalObject, needle: JSValue) -> JsResult<bool> {
+            JSValue::string_includes(self, global, needle)
         }
         #[inline]
-        fn to_match(self, _global: &JSGlobalObject, _value: JSValue) -> JsResult<bool> {
-            todo!("blocked_on: bun_jsc::JSValue::to_match (RegExp test)")
+        fn to_match(self, global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
+            JSValue::to_match(self, global, value)
         }
         #[inline]
         fn to_u32(self) -> u32 {

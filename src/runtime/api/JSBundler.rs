@@ -333,7 +333,7 @@ pub mod js_bundler {
         pub rootdir: OwnedString,
         pub serve: Serve,
         pub jsx: api::Jsx,
-        pub force_node_env: options::bundle_options::ForceNodeEnv,
+        pub force_node_env: options::ForceNodeEnv,
         pub code_splitting: bool,
         pub minify: Minify,
         pub no_macros: bool,
@@ -395,7 +395,7 @@ pub mod js_bundler {
                     development: true, // Default to development mode like old Pragma
                     ..Default::default()
                 },
-                force_node_env: options::bundle_options::ForceNodeEnv::Unspecified,
+                force_node_env: options::ForceNodeEnv::Unspecified,
                 code_splitting: false,
                 minify: Minify::default(),
                 no_macros: false,

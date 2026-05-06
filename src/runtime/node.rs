@@ -123,11 +123,12 @@ pub mod zlib {
     pub use super::native_zlib_impl as native_zlib;
     pub use super::native_brotli_impl as native_brotli;
     pub use super::native_zstd_impl as native_zstd;
-    // Type re-exports so callers can `use crate::node::zlib::{NativeZlib, ...}`
-    // (module-vs-type: the impl modules above are the *modules*, these are the structs).
-    pub use super::native_zlib_impl::NativeZlib;
-    pub use super::native_brotli_impl::NativeBrotli;
-    pub use super::native_zstd_impl::NativeZstd;
+    // PORT NOTE: the `NativeZlib` / `NativeBrotli` / `NativeZstd` *struct*
+    // re-exports were dropped — those structs live inside each file's private
+    // `mod _impl { ... }` (JSC-gated) and are not reachable from here. The only
+    // consumers (`node_zlib_binding.rs::_impl::Native*`) are themselves gated
+    // behind a private `_impl` and resolve through `crate::api::Native*` once
+    // un-gated. Re-add the type re-exports when the `_impl` mods go `pub`.
 }
 
 // ─── submodule re-exports ─────────────────────────────────────────────────

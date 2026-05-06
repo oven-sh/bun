@@ -135,7 +135,7 @@ pub fn new_detached_socket(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
     if !is_ssl {
         // TODO(port): TCPSocket::new struct-init shape — verify field names/defaults in Phase B
         let socket = TCPSocket::new(TCPSocket {
-            socket: crate::api::Socket::Detached,
+            socket: uws::NewSocketHandler::detached(),
             ref_count: Default::default(),
             protos: None,
             handlers: None,
@@ -145,7 +145,7 @@ pub fn new_detached_socket(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
     } else {
         // TODO(port): TLSSocket::new struct-init shape — verify field names/defaults in Phase B
         let socket = TLSSocket::new(TLSSocket {
-            socket: crate::api::Socket::Detached,
+            socket: uws::NewSocketHandler::detached(),
             ref_count: Default::default(),
             protos: None,
             handlers: None,

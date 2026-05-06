@@ -1544,12 +1544,13 @@ impl FrameworkRouter {
 
                         let mut rel_path_buf = PathBuffer::uninit();
                         let full_rel_path_len = {
-                            let full_rel_path = paths::relative_normalized_buf(
+                            let full_rel_path = paths::resolve_path::relative_normalized_buf::<
+                                paths::platform::Auto,
+                                true,
+                            >(
                                 &mut rel_path_buf[1..],
                                 &self.root,
                                 fs.abs(&[file.dir(), file.base()]),
-                                paths::Platform::Auto,
-                                true,
                             );
                             full_rel_path.len()
                         };

@@ -282,7 +282,7 @@ impl Job {
         // Rust `Vec` allocation aborts on OOM; mirror the error path with try_reserve.
         let mut buf = Vec::new();
         if buf.try_reserve_exact(len).is_err() {
-            job.err = Some(boringssl::EVP_R_MEMORY_LIMIT_EXCEEDED);
+            job.err = Some(EVP_R_MEMORY_LIMIT_EXCEEDED);
             return;
         }
         buf.resize(len, 0);

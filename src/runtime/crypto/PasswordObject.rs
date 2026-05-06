@@ -892,12 +892,17 @@ impl VerifyJob {
         // SAFETY: `result` was just returned from Box::into_raw in `VerifyResult::new`;
         // not yet shared (enqueue happens after this write).
         unsafe {
-            (*result).task = AnyTask::new::<VerifyResult>(result, VerifyResult::run_from_js);
+            // Zig: `AnyTask.New(VerifyResult, run_from_js).init(result)` — construct directly
+            // since Rust `New<T>` cannot carry a comptime callback param.
+            (*result).task = AnyTask {
+                ctx: Some(core::ptr::NonNull::new_unchecked(result).cast()),
+                callback: VerifyResult::run_from_js_erased,
+            };
         }
         this_ref.event_loop.enqueue_task_concurrent(
             // SAFETY: `result` is a valid Box::into_raw allocation; ownership transfers to
             // the event loop here. `task` is an intrusive field at a stable address.
-            ConcurrentTask::create_from(unsafe { &mut (*result).task }),
+            ConcurrentTask::create_from(unsafe { core::ptr::addr_of_mut!((*result).task) }),
         );
         // SAFETY: `this` came from Box::into_raw in `VerifyJob::new`; `this_ref` is no
         // longer used after this point. Drop runs secure_zero on password/prev_hash.

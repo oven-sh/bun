@@ -129,9 +129,8 @@ impl HotReloadEvent {
                 {
                     // PORT NOTE: reshaped for borrowck — Zig held `entry` ref while mutating
                     // `dev.directory_watchers.dependencies` and `self.files` in the loop body.
-                    let mut new_chain: directory_watch_store::DepIndexOptional =
-                        directory_watch_store::DepIndexOptional::NONE;
-                    let mut it: Option<directory_watch_store::DepIndex> =
+                    let mut new_chain: Option<u32> = None;
+                    let mut it: Option<u32> =
                         Some(dev.directory_watchers.watches.values()[watcher_index].first_dep);
 
                     while let Some(index) = it {
@@ -139,8 +138,8 @@ impl HotReloadEvent {
                         // holding `dep` ref across resolver call + appendFile + freeDependencyIndex
                         let (source_file_path, specifier, next) = {
                             let dep =
-                                &dev.directory_watchers.dependencies[index.get()];
-                            (dep.source_file_path, dep.specifier, dep.next.unwrap())
+                                &dev.directory_watchers.dependencies[index as usize];
+                            (dep.source_file_path, &*dep.specifier as *const [u8], dep.next)
                         };
                         it = next;
 

@@ -203,7 +203,9 @@ impl CryptoHasher {
         }
     }
 
-    #[bun_jsc::host_fn]
+    // PORT NOTE: `#[bun_jsc::host_fn]` (Free) emits a bare `fn_name(g, f)` call,
+    // which cannot resolve to an associated fn inside an `impl` block. The shim
+    // for this static prop getter is wired by `#[bun_jsc::JsClass]` codegen.
     pub fn get_algorithms(
         global: &JSGlobalObject,
         _: JSValue,

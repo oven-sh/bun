@@ -2378,7 +2378,7 @@ fn preserve_version_prefix(
         let mut alias: Option<&[u8]> = None;
 
         // Preserve npm: prefix
-        if let Some(after_npm) = strings::without_prefix_if_possible(original_version, b"npm:") {
+        if let Some(after_npm) = strings::without_prefix_if_possible_comptime(original_version, b"npm:") {
             if let Some(i) = strings::last_index_of_char(after_npm, b'@') {
                 alias = Some(&after_npm[0..i]);
                 if i + 2 < after_npm.len() {

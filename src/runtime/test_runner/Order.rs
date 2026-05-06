@@ -4,10 +4,8 @@ use core::ptr::NonNull;
 
 use bun_jsc::JsResult;
 
-use crate::execution::{ConcurrentGroup, ExecutionSequence};
-use crate::{DescribeScope, ExecutionEntry, TestScheduleEntry};
-// TODO(port): `std.Random` has no mapping in the crate map; placeholder type.
-use bun_core::Random;
+use super::bun_test::{AddedInPhase, DescribeScope, ExecutionEntry, Only, TestScheduleEntry};
+use super::execution::{ConcurrentGroup, ExecutionSequence};
 
 pub struct Order {
     pub groups: Vec<ConcurrentGroup>,
@@ -31,32 +29,36 @@ impl Order {
     }
     // `deinit` only freed `groups` / `sequences` — handled by Drop on Vec; no impl Drop needed.
 
-    pub fn generate_order_sub(&mut self, current: TestScheduleEntry) -> JsResult<()> {
+    pub fn generate_order_sub(&mut self, current: &mut TestScheduleEntry) -> JsResult<()> {
         match current {
             TestScheduleEntry::Describe(describe) => self.generate_order_describe(describe)?,
             TestScheduleEntry::TestCallback(test_callback) => {
-                self.generate_order_test(test_callback)?
+                self.generate_order_test(&mut **test_callback as *mut ExecutionEntry)?
             }
         }
         Ok(())
     }
 
-    pub fn generate_all_order(&mut self, entries: &[*mut ExecutionEntry]) -> JsResult<AllOrderResult> {
+    pub fn generate_all_order(&mut self, entries: &[Box<ExecutionEntry>]) -> JsResult<AllOrderResult> {
         let start = self.groups.len();
-        for &entry in entries {
-            // SAFETY: caller guarantees `entry` is a valid live ExecutionEntry (intrusive list node).
+        for entry_box in entries {
+            // SAFETY: intrusive-list pattern — entries are arena-style Box-owned by DescribeScope and
+            // outlive Order; Zig mutated through `*ExecutionEntry`, we cast away const to match.
+            let entry: *mut ExecutionEntry = (&**entry_box) as *const ExecutionEntry as *mut ExecutionEntry;
+            // SAFETY: `entry` is a valid live ExecutionEntry (Box-owned by caller's DescribeScope).
             let entry_ref = unsafe { &mut *entry };
-            if bun_core::Environment::CI_ASSERT && entry_ref.added_in_phase != Phase::Preload {
+            if bun_core::Environment::CI_ASSERT && entry_ref.added_in_phase != AddedInPhase::Preload {
                 debug_assert!(entry_ref.next.is_none());
             }
             entry_ref.next = None;
             entry_ref.failure_skip_past = None;
             let sequences_start = self.sequences.len();
-            self.sequences.push(ExecutionSequence::init(execution::SequenceInit {
-                first_entry: Some(NonNull::new(entry).expect("non-null")),
-                test_entry: None,
-                ..Default::default()
-            })); // add sequence to concurrentgroup
+            self.sequences.push(ExecutionSequence::init(
+                NonNull::new(entry),
+                None,
+                0,
+                0,
+            )); // add sequence to concurrentgroup
             let sequences_end = self.sequences.len();
             let failure_skip_to = self.groups.len() + 1;
             self.groups
@@ -81,18 +83,26 @@ impl Order {
         };
 
         // shuffle entries if randomize flag is set
-        if let Some(random) = &self.cfg.randomize {
-            random.shuffle(&mut current.entries);
+        if let Some(random) = self.cfg.randomize.as_mut() {
+            // Fisher-Yates shuffle — port of `std.Random.shuffle(TestScheduleEntry, items)`.
+            let items = &mut current.entries;
+            let mut i = items.len();
+            while i > 1 {
+                i -= 1;
+                // uintLessThan(i+1) — modulo bias is acceptable here (Zig's stdlib also biases for non-pow2).
+                let j = (random.next_u64() % (i as u64 + 1)) as usize;
+                items.swap(i, j);
+            }
         }
 
         // gather children
         // PORT NOTE: reshaped for borrowck — iterate by index since generate_order_sub borrows &mut self.
+        let scope_only = current.base.only;
         for i in 0..current.entries.len() {
-            let entry = current.entries[i];
-            if current.base.only == Only::Contains && entry.base().only == Only::No {
+            if scope_only == Only::Contains && current.entries[i].base().only == Only::No {
                 continue;
             }
-            self.generate_order_sub(entry)?;
+            self.generate_order_sub(&mut current.entries[i])?;
         }
 
         // update skip_to values for beforeAll to skip to the first afterAll
@@ -112,10 +122,8 @@ impl Order {
     }
 
     pub fn generate_order_test(&mut self, current: *mut ExecutionEntry) -> JsResult<()> {
-        // SAFETY: caller guarantees `current` is a valid live ExecutionEntry (intrusive list node).
+        // SAFETY: caller guarantees `current` is a valid live ExecutionEntry (Box-owned in DescribeScope.entries).
         let cur = unsafe { &mut *current };
-        // SAFETY: caller guarantees `current` is non-null (same invariant as above).
-        let current_nn = unsafe { NonNull::new_unchecked(current) };
         debug_assert!(cur.base.has_callback == cur.callback.is_some());
         let use_each_hooks = cur.base.has_callback;
 
@@ -123,20 +131,21 @@ impl Order {
 
         // gather beforeEach (alternatively, this could be implemented recursively to make it less complicated)
         if use_each_hooks {
-            let mut parent: Option<NonNull<DescribeScope>> = cur.base.parent;
+            let mut parent: Option<*const DescribeScope> = cur.base.parent;
             while let Some(p_ptr) = parent {
                 // SAFETY: parent chain consists of live DescribeScope nodes.
-                let p = unsafe { p_ptr.as_ref() };
+                let p = unsafe { &*p_ptr };
                 // prepend in reverse so they end up in forwards order
                 let mut i: usize = p.before_each.len();
                 while i > 0 {
                     // PERF(port): was arena bulk-free — Zig allocated this clone in `this.arena`.
                     // TODO(port): ownership — Box::into_raw leaks without the arena; Phase B must
                     // decide whether test_runner keeps an arena or tracks these for cleanup.
-                    // SAFETY: before_each[i-1] is a valid *ExecutionEntry; we clone its pointee.
-                    let cloned = Box::into_raw(Box::new(unsafe { (*p.before_each[i - 1]).clone() }));
-                    // SAFETY: Box::into_raw never returns null.
-                    list.prepend(unsafe { NonNull::new_unchecked(cloned) });
+                    // SAFETY: bitwise copy of *ExecutionEntry — matches Zig `bun.create(arena, T, src.*)`.
+                    // The clone is leaked (Box::into_raw) so its Strong/Box fields are never dropped twice.
+                    let src: *const ExecutionEntry = &*p.before_each[i - 1];
+                    let cloned = Box::into_raw(Box::new(unsafe { core::ptr::read(src) }));
+                    list.prepend(cloned);
                     i -= 1;
                 }
                 parent = p.base.parent;
@@ -144,20 +153,20 @@ impl Order {
         }
 
         // append test
-        list.append(current_nn); // add entry to sequence
+        list.append(current); // add entry to sequence
 
         // gather afterEach
         if use_each_hooks {
-            let mut parent: Option<NonNull<DescribeScope>> = cur.base.parent;
+            let mut parent: Option<*const DescribeScope> = cur.base.parent;
             while let Some(p_ptr) = parent {
                 // SAFETY: parent chain consists of live DescribeScope nodes.
-                let p = unsafe { p_ptr.as_ref() };
-                for &entry in p.after_each.iter() {
+                let p = unsafe { &*p_ptr };
+                for entry in p.after_each.iter() {
                     // PERF(port): was arena bulk-free — see note above.
-                    // SAFETY: entry is a valid *ExecutionEntry; we clone its pointee.
-                    let cloned = Box::into_raw(Box::new(unsafe { (*entry).clone() }));
-                    // SAFETY: Box::into_raw never returns null.
-                    list.append(unsafe { NonNull::new_unchecked(cloned) });
+                    // SAFETY: bitwise copy of *ExecutionEntry — matches Zig `bun.create(arena, T, src.*)`.
+                    let src: *const ExecutionEntry = &**entry;
+                    let cloned = Box::into_raw(Box::new(unsafe { core::ptr::read(src) }));
+                    list.append(cloned);
                 }
                 parent = p.base.parent;
             }
@@ -165,10 +174,10 @@ impl Order {
 
         // set skip_to values
         let mut index = list.first;
-        let mut failure_skip_past: Option<NonNull<ExecutionEntry>> = Some(current_nn);
+        let mut failure_skip_past: Option<*mut ExecutionEntry> = Some(current);
         while let Some(entry_ptr) = index {
             // SAFETY: list contains valid ExecutionEntry nodes linked via `next`.
-            let entry = unsafe { &mut *entry_ptr.as_ptr() };
+            let entry = unsafe { &mut *entry_ptr };
             entry.failure_skip_past = failure_skip_past; // we could consider matching skip_to in beforeAll to skip directly to the first afterAll from its own scope rather than skipping to the first afterAll from any scope
             if Some(entry_ptr) == failure_skip_past {
                 failure_skip_past = None;
@@ -178,12 +187,12 @@ impl Order {
 
         // add these as a single sequence
         let sequences_start = self.sequences.len();
-        self.sequences.push(ExecutionSequence::init(execution::SequenceInit {
-            first_entry: list.first,
-            test_entry: Some(current_nn),
-            retry_count: cur.retry_count,
-            repeat_count: cur.repeat_count,
-        })); // add sequence to concurrentgroup
+        self.sequences.push(ExecutionSequence::init(
+            list.first.and_then(NonNull::new),
+            NonNull::new(current),
+            cur.retry_count,
+            cur.repeat_count,
+        )); // add sequence to concurrentgroup
         let sequences_end = self.sequences.len();
         self.append_or_extend_concurrent_group(cur.base.concurrent, sequences_start, sequences_end)?; // add or extend the concurrent group
         Ok(())
@@ -237,36 +246,38 @@ impl AllOrderResult {
 
 pub struct Config {
     pub always_use_hooks: bool,
-    pub randomize: Option<Random>,
+    // TODO(port): `std.Random` interface mapped to the concrete `DefaultPrng` (xoshiro256++);
+    // bun_core has no type-erased Random vtable yet and the only call site seeds a DefaultPrng.
+    pub randomize: Option<bun_core::rand::DefaultPrng>,
 }
 
 #[derive(Default)]
 struct EntryList {
-    first: Option<NonNull<ExecutionEntry>>,
-    last: Option<NonNull<ExecutionEntry>>,
+    first: Option<*mut ExecutionEntry>,
+    last: Option<*mut ExecutionEntry>,
 }
 
 impl EntryList {
-    pub fn prepend(&mut self, current: NonNull<ExecutionEntry>) {
+    pub fn prepend(&mut self, current: *mut ExecutionEntry) {
         // SAFETY: `current` points to a live ExecutionEntry owned by the test scheduler.
-        unsafe { (*current.as_ptr()).next = self.first };
+        unsafe { (*current).next = self.first };
         self.first = Some(current);
         if self.last.is_none() {
             self.last = Some(current);
         }
     }
 
-    pub fn append(&mut self, current: NonNull<ExecutionEntry>) {
+    pub fn append(&mut self, current: *mut ExecutionEntry) {
         // SAFETY: `current` points to a live ExecutionEntry owned by the test scheduler.
-        let cur = unsafe { &mut *current.as_ptr() };
-        if bun_core::Environment::CI_ASSERT && cur.added_in_phase != Phase::Preload {
+        let cur = unsafe { &mut *current };
+        if bun_core::Environment::CI_ASSERT && cur.added_in_phase != AddedInPhase::Preload {
             debug_assert!(cur.next.is_none());
         }
         cur.next = None;
         if let Some(last) = self.last {
             // SAFETY: `last` was stored by a prior prepend/append and is still live.
-            let last_ref = unsafe { &mut *last.as_ptr() };
-            if bun_core::Environment::CI_ASSERT && last_ref.added_in_phase != Phase::Preload {
+            let last_ref = unsafe { &mut *last };
+            if bun_core::Environment::CI_ASSERT && last_ref.added_in_phase != AddedInPhase::Preload {
                 debug_assert!(last_ref.next.is_none());
             }
             last_ref.next = Some(current);
@@ -278,15 +289,10 @@ impl EntryList {
     }
 }
 
-// TODO(port): `Phase::Preload` / `Only::{Contains,No}` / `execution::SequenceInit` are referenced
-// from sibling modules in `bun_test_runner`; exact paths to be wired in Phase B.
-use crate::execution;
-use crate::{Only, Phase};
-
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/test_runner/Order.zig (186 lines)
 //   confidence: medium
-//   todos:      4
-//   notes:      arena field dropped per non-AST rule; ExecutionEntry clones now Box::into_raw (leak risk) — Phase B must restore arena or add cleanup. Intrusive list uses NonNull per LIFETIMES.tsv.
+//   todos:      3
+//   notes:      arena field dropped per non-AST rule; ExecutionEntry clones now Box::into_raw via ptr::read (leak risk) — Phase B must restore arena or add cleanup. Intrusive list uses Option<*mut> to match bun_test::ExecutionEntry.{next,failure_skip_past}. std.Random mapped to concrete DefaultPrng with inline Fisher-Yates shuffle.
 // ──────────────────────────────────────────────────────────────────────────

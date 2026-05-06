@@ -207,7 +207,7 @@ impl HTMLRewriter {
             // SAFETY: response is the m_ctx of a live JS Response (response_value
             // is on the stack, conservatively scanned).
             let body_value = unsafe { (*response).get_body_value() };
-            if matches!(*body_value, Body::Value::Used) {
+            if matches!(*body_value, webcore::body::Value::Used) {
                 return global.throw_invalid_arguments("Response body already used");
             }
             let out = self.begin_transform(global, response)?;
@@ -235,7 +235,7 @@ impl HTMLRewriter {
         };
 
         if kind != ResponseKind::Other {
-            let body_value = webcore::Body::extract(global, response_value)?;
+            let body_value = webcore::body::extract(global, response_value)?;
             let resp = Box::into_raw(Box::new(Response::init(
                 webcore::response::Init { status_code: 200, ..Default::default() },
                 body_value,
@@ -558,7 +558,7 @@ impl BufferOutputSink {
         let result = Box::into_raw(Box::new(Response::init(
             webcore::response::Init { status_code: 200, ..Default::default() },
             webcore::Body {
-                value: Body::Value::Locked(Body::PendingValue {
+                value: webcore::body::Value::Locked(webcore::body::PendingValue {
                     global: global_static,
                     task: sink as *mut core::ffi::c_void,
                     ..Default::default()
@@ -712,7 +712,7 @@ impl BufferOutputSink {
     pub fn on_finished_buffering(
         sink: *mut BufferOutputSink,
         bytes: &[u8],
-        js_err: Option<webcore::Body::Value::ValueError>,
+        js_err: Option<webcore::webcore::body::Value::ValueError>,
         is_async: bool,
     ) {
         let _g = scopeguard::guard(sink, |s| BufferOutputSink::deref(s));
@@ -724,19 +724,19 @@ impl BufferOutputSink {
             // SAFETY: sink.response is the heap Response allocated in init() and
             // kept alive by sink.response_value (Strong root).
             let sink_body_value = unsafe { (*sink.response).get_body_value() };
-            if matches!(sink_body_value, Body::Value::Locked(l)
+            if matches!(sink_body_value, webcore::body::Value::Locked(l)
                 if l.task as usize == sink as *mut _ as usize && l.promise.is_none())
             {
-                if let Body::Value::Locked(l) = sink_body_value {
+                if let webcore::body::Value::Locked(l) = sink_body_value {
                     l.readable.deinit();
                 }
-                *sink_body_value = Body::Value::Empty;
+                *sink_body_value = webcore::body::Value::Empty;
                 // is there a pending promise?
                 // we will need to reject it
-            } else if matches!(sink_body_value, Body::Value::Locked(l)
+            } else if matches!(sink_body_value, webcore::body::Value::Locked(l)
                 if l.task as usize == sink as *mut _ as usize && l.promise.is_some())
             {
-                if let Body::Value::Locked(l) = sink_body_value {
+                if let webcore::body::Value::Locked(l) = sink_body_value {
                     l.on_receive_value = None;
                     l.task = core::ptr::null_mut();
                 }
@@ -775,7 +775,7 @@ impl BufferOutputSink {
             if is_async {
                 // SAFETY: response == self.response, kept alive by response_value Strong.
                 let _ = unsafe { (*response).get_body_value() }
-                    .to_error_instance(Body::Value::ValueError::Message(create_lolhtml_string_error()), global);
+                    .to_error_instance(webcore::body::Value::ValueError::Message(create_lolhtml_string_error()), global);
                 // TODO: properly propagate exception upwards
                 return None;
             } else {
@@ -788,7 +788,7 @@ impl BufferOutputSink {
             if is_async {
                 // SAFETY: response == self.response, kept alive by response_value Strong.
                 let _ = unsafe { (*response).get_body_value() }
-                    .to_error_instance(Body::Value::ValueError::Message(create_lolhtml_string_error()), global);
+                    .to_error_instance(webcore::body::Value::ValueError::Message(create_lolhtml_string_error()), global);
                 // TODO: properly propagate exception upwards
                 return None;
             } else {
@@ -805,7 +805,7 @@ impl BufferOutputSink {
         let body_value = unsafe { (*self.response).get_body_value() };
         let mut prev_value = core::mem::replace(
             body_value,
-            Body::Value::InternalBlob(webcore::InternalBlob {
+            webcore::body::Value::InternalBlob(webcore::InternalBlob {
                 bytes: core::mem::replace(&mut self.bytes, MutableString::init_empty()).into_list(),
             }),
         );

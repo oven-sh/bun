@@ -457,7 +457,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let mut url_proxy_buffer: Vec<u8> = Vec::new();
     let mut url_type = URLType::Remote;
 
-    let mut ssl_config: Option<ssl_config::SharedPtr> = None;
+    let mut ssl_config: Option<http::ssl_config::SharedPtr> = None;
     let mut reject_unauthorized = vm.get_tls_reject_unauthorized();
     let mut check_server_identity: JSValue = JSValue::ZERO;
 

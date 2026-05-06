@@ -199,7 +199,7 @@ impl StandaloneModuleGraphStub {
 /// C/C++ — declare the extern and forward.
 #[inline]
 fn get_total_memory_size() -> u64 {
-    extern "C" {
+    unsafe extern "C" {
         fn Bun__ramSize() -> usize;
     }
     // SAFETY: FFI into bun's C++ bindings; no invariants required.

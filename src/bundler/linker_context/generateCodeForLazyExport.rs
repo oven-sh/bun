@@ -37,16 +37,18 @@ pub fn generate_code_for_lazy_export(
     #[cfg(not(feature = "css"))]
     let _ = all_sources;
     // PORT NOTE: reshaped for borrowck — `parts` re-borrowed below after other graph borrows drop.
-    let parts = &mut this.graph.ast.items_parts_mut()[source_index as usize];
+    let parts: *mut [Part] = this.graph.ast.items_parts_mut()[source_index as usize].slice_mut();
 
-    if parts.len() < 1 {
+    // SAFETY: `parts` is a stable SoA column slice valid for the link pass.
+    if unsafe { (*parts).len() } < 1 {
         panic!("Internal error: expected at least one part for lazy export");
     }
 
-    // TODO(port): `parts.ptr[1]` — BabyList raw indexing; using index 1 here.
-    let part: &mut Part = &mut parts[1];
+    // SAFETY: `parts.ptr[1]` — BabyList raw indexing; using index 1 here.
+    let part: &mut Part = unsafe { &mut (*parts)[1] };
 
-    if part.stmts.len() == 0 {
+    // SAFETY: `stmts: *mut [Stmt]` is an arena slice valid for the link pass.
+    if unsafe { (*part.stmts).is_empty() } {
         panic!("Internal error: expected at least one statement in the lazy export");
     }
 

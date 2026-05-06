@@ -1358,6 +1358,43 @@ impl ExtractTarball {
     pub response_buffer: bun_string::MutableString,
     pub response: NetworkTaskResponseStub,
     pub callback: NetworkTaskCallbackStub,
+    /// Zig: `next: ?*NetworkTask = null` (src/install/NetworkTask.zig:23) —
+    /// intrusive link for `AsyncNetworkTaskQueue` (`UnboundedQueue(NetworkTask, .next)`).
+    pub next: *mut NetworkTask,
+}
+// SAFETY: `next` is the sole intrusive link and is only ever read/written via
+// these accessors by `UnboundedQueue<NetworkTask>`. Mirrors Zig's
+// `@field(item, "next")` over `bun.UnboundedQueue(NetworkTask, .next)`.
+unsafe impl bun_threading::unbounded_queue::Node for NetworkTask {
+    #[inline]
+    unsafe fn get_next(item: *mut Self) -> *mut Self {
+        unsafe { (*item).next }
+    }
+    #[inline]
+    unsafe fn set_next(item: *mut Self, ptr: *mut Self) {
+        unsafe { (*item).next = ptr }
+    }
+    #[inline]
+    unsafe fn atomic_load_next(
+        item: *mut Self,
+        ordering: core::sync::atomic::Ordering,
+    ) -> *mut Self {
+        unsafe {
+            (*(core::ptr::addr_of!((*item).next) as *const core::sync::atomic::AtomicPtr<Self>))
+                .load(ordering)
+        }
+    }
+    #[inline]
+    unsafe fn atomic_store_next(
+        item: *mut Self,
+        ptr: *mut Self,
+        ordering: core::sync::atomic::Ordering,
+    ) {
+        unsafe {
+            (*(core::ptr::addr_of!((*item).next) as *const core::sync::atomic::AtomicPtr<Self>))
+                .store(ptr, ordering)
+        }
+    }
 }
 /// Owned subset of `bun_http::HTTPClientResult` (the real one borrows the body
 /// slice so cannot be `'static` here).
@@ -1500,6 +1537,43 @@ pub struct PackageManagerTmpDirStub {
 #[derive(Default)] pub struct FileCopier;
 #[derive(Default)] pub struct PatchTask {
     pub callback: PatchTaskCallbackStub,
+    /// Zig: `next: ?*PatchTask = null` (src/install/patch_install.zig:31) —
+    /// intrusive link for `PatchTaskQueue` (`UnboundedQueue(PatchTask, .next)`).
+    pub next: *mut PatchTask,
+}
+// SAFETY: `next` is the sole intrusive link and is only ever read/written via
+// these accessors by `UnboundedQueue<PatchTask>`. Mirrors Zig's
+// `@field(item, "next")` over `bun.UnboundedQueue(PatchTask, .next)`.
+unsafe impl bun_threading::unbounded_queue::Node for PatchTask {
+    #[inline]
+    unsafe fn get_next(item: *mut Self) -> *mut Self {
+        unsafe { (*item).next }
+    }
+    #[inline]
+    unsafe fn set_next(item: *mut Self, ptr: *mut Self) {
+        unsafe { (*item).next = ptr }
+    }
+    #[inline]
+    unsafe fn atomic_load_next(
+        item: *mut Self,
+        ordering: core::sync::atomic::Ordering,
+    ) -> *mut Self {
+        unsafe {
+            (*(core::ptr::addr_of!((*item).next) as *const core::sync::atomic::AtomicPtr<Self>))
+                .load(ordering)
+        }
+    }
+    #[inline]
+    unsafe fn atomic_store_next(
+        item: *mut Self,
+        ptr: *mut Self,
+        ordering: core::sync::atomic::Ordering,
+    ) {
+        unsafe {
+            (*(core::ptr::addr_of!((*item).next) as *const core::sync::atomic::AtomicPtr<Self>))
+                .store(ptr, ordering)
+        }
+    }
 }
 #[derive(Default)] pub struct PatchTaskCallbackStub {
     pub apply: PatchTaskApplyStub,

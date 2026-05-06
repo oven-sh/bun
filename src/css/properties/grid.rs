@@ -69,7 +69,7 @@ impl TrackList {
             }
 
             if items_index < self.items.len {
-                let item = self.items.at(items_index);
+                let item = self.items.at(items_index as usize);
                 items_index += 1;
 
                 // Whitespace is required if there are no line names.
@@ -348,7 +348,7 @@ impl TrackRepeat {
             }
 
             if track_sizes_index < self.track_sizes.len {
-                let size = self.track_sizes.at(track_sizes_index);
+                let size = self.track_sizes.at(track_sizes_index as usize);
                 track_sizes_index += 1;
 
                 if !names.is_empty() {

@@ -178,7 +178,8 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
 
     let mut log = logger::Log::init();
     let source = logger::Source::init_path_string("???", response_buf.list.as_slice());
-    let json = match JSON::parse_utf8(&source, &mut log) {
+    let bump = bun_alloc::Arena::new();
+    let json = match JSON::parse_utf8(&source, &mut log, &bump) {
         Ok(j) => j,
         Err(e) if e == err!("OutOfMemory") => return Err(WhoamiError::OutOfMemory),
         Err(e) => {
@@ -206,7 +207,8 @@ pub fn response_error<const OTP_RESPONSE: bool>(
     let message: Option<Vec<u8>> = 'message: {
         let mut log = logger::Log::init();
         let source = logger::Source::init_path_string("???", response_body.list.as_slice());
-        let json = match JSON::parse_utf8(&source, &mut log) {
+        let bump = bun_alloc::Arena::new();
+        let json = match JSON::parse_utf8(&source, &mut log, &bump) {
             Ok(j) => j,
             Err(e) if e == err!("OutOfMemory") => return Err(AllocError),
             Err(_) => break 'message None,

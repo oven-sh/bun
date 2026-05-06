@@ -296,6 +296,16 @@ impl<K, V, C> ArrayHashMap<K, V, C> {
         Ok(())
     }
 
+    /// Zig `ensureTotalCapacityContext`: same as `ensure_total_capacity` but
+    /// takes an explicit `ctx` for the stored key type. This port maintains no
+    /// separate index header (lookup scans the cached `hashes` vec), so the
+    /// context is accepted and ignored — capacity reservation is purely a Vec
+    /// operation here.
+    #[inline]
+    pub fn ensure_total_capacity_context<Ctx>(&mut self, n: usize, _ctx: Ctx) -> Result<(), AllocError> {
+        self.ensure_total_capacity(n)
+    }
+
     pub fn ensure_unused_capacity(&mut self, additional: usize) -> Result<(), AllocError> {
         self.keys.reserve(additional);
         self.values.reserve(additional);

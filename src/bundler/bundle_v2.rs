@@ -1445,12 +1445,11 @@ impl<'a> BundleV2<'a> {
         // once with no aliasing model).
         let redirect_map: *const PathToSourceIndexMap =
             self.path_to_source_index_map(self.transpiler.options.target) as *const _;
-        let scb_list = if scb_bitset.is_some() {
-            self.graph.server_component_boundaries.slice()
-        } else {
-            // SAFETY: will never be read since `scb_bitset` is `None`
-            unsafe { core::mem::zeroed() }
-        };
+        // Always materialize a valid slice; when the boundary list is empty
+        // this is a cheap `{ list: empty, map: &map }`. Avoids constructing a
+        // null `&Map` via `mem::zeroed()` (UB even though it was never read
+        // when `scb_bitset` is `None`).
+        let scb_list = self.graph.server_component_boundaries.slice();
 
         // PORT NOTE: reshaped for borrowck — SoA columns are physically
         // disjoint slabs but rustc cannot see that through `&mut
@@ -1690,7 +1689,7 @@ impl<'a> BundleV2<'a> {
                             break 'brk out_loader;
                         }
                         // SAFETY: see `transpiler` note above.
-                        break 'brk Fs::Path::init(path_primary.text.clone()).loader(unsafe { &(*transpiler).options.loaders }).unwrap_or(Loader::File);
+                        break 'brk Fs::Path::init(path_primary.text).loader(unsafe { &(*transpiler).options.loaders }).unwrap_or(Loader::File);
                     };
                     // For virtual files, use the path text as-is (no relative path computation needed).
                     path_primary.pretty = self.allocator().alloc_slice_copy(&path_primary.text);

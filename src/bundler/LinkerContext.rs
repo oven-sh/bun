@@ -571,15 +571,21 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
+    /// See [`Self::load`] for why `bundle` is a raw `*mut` (caller passes
+    /// `self` while the receiver is `self.linker`; field-disjoint access only).
+    ///
+    /// # Safety
+    /// `bundle` must be valid for the call and `self` must be `(*bundle).linker`.
     #[inline(never)]
-    pub fn link(
+    pub unsafe fn link(
         &mut self,
-        bundle: &mut BundleV2,
+        bundle: *mut BundleV2,
         entry_points: &[Index],
         server_component_boundaries: js_ast::ast::server_component_boundary::List,
         reachable: &[Index],
     ) -> Result<Box<[Chunk]>, LinkError> {
-        self.load(bundle, entry_points, server_component_boundaries, reachable)?;
+        // SAFETY: forwarded; see fn-level contract.
+        unsafe { self.load(bundle, entry_points, server_component_boundaries, reachable)? };
 
         if self.options.source_maps != SourceMapOption::None {
             // SAFETY: Index is repr(transparent) u32 wrapper; reinterpret slice
@@ -596,7 +602,8 @@ impl<'a> LinkerContext<'a> {
         }
 
         // Validate top-level await for all files first.
-        if bundle.has_any_top_level_await_modules {
+        // SAFETY: scalar `bool` read of a field disjoint from `self` (= `(*bundle).linker`).
+        if unsafe { (*bundle).has_any_top_level_await_modules } {
             // SAFETY: `parse_graph` is a backref to `BundleV2.graph`, disjoint
             // from `*self` (= `BundleV2.linker`). The SoA column slices below
             // are physically disjoint and the underlying slabs do not
@@ -673,7 +680,8 @@ impl<'a> LinkerContext<'a> {
             self.check_for_memory_corruption();
         }
 
-        let mut chunks = compute_chunks(self, bundle.unique_key)?;
+        // SAFETY: scalar `u64` read of a field disjoint from `self` (= `(*bundle).linker`).
+        let mut chunks = compute_chunks(self, unsafe { (*bundle).unique_key })?;
 
         if self.log.has_errors() {
             return Err(LinkError::BuildFailed);

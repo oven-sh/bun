@@ -922,7 +922,8 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
-        let mut scope = handlers.enter();
+        // SAFETY: reborrow scoped to `enter()` only.
+        let mut scope = unsafe { (*handlers).enter() };
         let result = match callback.call(global, this_value, &[this_value]) {
             Ok(v) => v,
             Err(err) => global.take_exception(err),
@@ -936,9 +937,11 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
 
             // TODO: properly propagate exception upwards
-            let rejected = handlers.reject_promise(err).unwrap_or(true);
+            // SAFETY: re-derived after the reentrant `callback.call` above.
+            let rejected = unsafe { (*handlers).reject_promise(err) }.unwrap_or(true);
             if !rejected {
-                let _ = handlers.call_error_handler(this_value, &[this_value, err]);
+                // SAFETY: re-derived after the reentrant `reject_promise`.
+                let _ = unsafe { (*handlers).call_error_handler(this_value, &[this_value, err]) };
             }
             self.mark_inactive();
         }
@@ -970,16 +973,19 @@ impl<const SSL: bool> NewSocket<SSL> {
             return;
         }
         let handlers = self.get_handlers();
+        // SAFETY: short-lived field reads; raw-ptr-only across reentrant
+        // `callback.call` — see `get_handlers` contract.
         log!(
             "onEnd {}",
-            if handlers.mode == SocketMode::Server { "S" } else { "C" }
+            if unsafe { (*handlers).mode } == SocketMode::Server { "S" } else { "C" }
         );
         // Ensure the socket remains alive until this is finished
         self.ref_();
 
-        let callback = handlers.on_end;
-        if callback.is_empty() || handlers.vm.is_shutting_down() {
-            self.poll_ref.unref(handlers.vm);
+        let callback = unsafe { (*handlers).on_end };
+        let vm = unsafe { (*handlers).vm };
+        if callback.is_empty() || vm.is_shutting_down() {
+            self.poll_ref.unref(vm);
 
             // If you don't handle TCP fin, we assume you're done.
             self.mark_inactive();
@@ -989,12 +995,16 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
-        let mut scope = handlers.enter();
+        // SAFETY: reborrow scoped to `enter()` only.
+        let mut scope = unsafe { (*handlers).enter() };
 
-        let global = handlers.global_object;
+        let global = unsafe { (*handlers).global_object };
         let this_value = self.get_this_value(global);
         if let Err(err) = callback.call(global, this_value, &[this_value]) {
-            let _ = handlers.call_error_handler(this_value, &[this_value, global.take_error(err)]);
+            // SAFETY: re-derived after reentrant call.
+            let _ = unsafe {
+                (*handlers).call_error_handler(this_value, &[this_value, global.take_error(err)])
+            };
         }
         if scope.exit() {
             self.handlers = None;
@@ -1015,9 +1025,11 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(());
         }
         let handlers = self.get_handlers();
+        // SAFETY: short-lived field reads; raw-ptr-only across reentrant
+        // `callback.call` — see `get_handlers` contract.
         log!(
             "onHandshake {} ({})",
-            if handlers.mode == SocketMode::Server { "S" } else { "C" },
+            if unsafe { (*handlers).mode } == SocketMode::Server { "S" } else { "C" },
             success
         );
 
@@ -1025,16 +1037,16 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         self.flags.set(Flags::AUTHORIZED, authorized);
 
-        let mut callback = handlers.on_handshake;
+        let mut callback = unsafe { (*handlers).on_handshake };
         let mut is_open = false;
 
-        if handlers.vm.is_shutting_down() {
+        if unsafe { (*handlers).vm }.is_shutting_down() {
             return Ok(());
         }
 
         // Use open callback when handshake is not provided
         if callback.is_empty() {
-            callback = handlers.on_open;
+            callback = unsafe { (*handlers).on_open };
             if callback.is_empty() {
                 return Ok(());
             }
@@ -1043,9 +1055,10 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
-        let mut scope = handlers.enter();
+        // SAFETY: reborrow scoped to `enter()` only.
+        let mut scope = unsafe { (*handlers).enter() };
 
-        let global = handlers.global_object;
+        let global = unsafe { (*handlers).global_object };
         let this_value = self.get_this_value(global);
 
         let result: JSValue;
@@ -1058,13 +1071,17 @@ impl<const SSL: bool> NewSocket<SSL> {
             };
 
             // only call onOpen once for clients
-            if handlers.mode != SocketMode::Server {
+            // SAFETY: re-derived after the reentrant `callback.call` above.
+            if unsafe { (*handlers).mode } != SocketMode::Server {
                 // clean onOpen callback so only called in the first handshake and not in every renegotiation
                 // on servers this would require a different approach but it's not needed because our servers will not call handshake multiple times
                 // servers don't support renegotiation
-                handlers.on_open.unprotect();
-                // TODO(port): mutation through &Handlers (Rc) — Phase B interior mutability.
-                // handlers.on_open = JSValue::ZERO;
+                // SAFETY: short-lived `&mut` write; raw-ptr access is the
+                // ONLY way to mutate the freely-aliased `Handlers` here.
+                unsafe {
+                    (*handlers).on_open.unprotect();
+                    (*handlers).on_open = JSValue::ZERO;
+                }
             }
         } else {
             // call handhsake callback with authorized and authorization error if has one
@@ -1095,7 +1112,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         if let Some(err_value) = result.to_error() {
-            let _ = handlers.call_error_handler(this_value, &[this_value, err_value]);
+            // SAFETY: re-derived after reentrant call.
+            let _ = unsafe { (*handlers).call_error_handler(this_value, &[this_value, err_value]) };
         }
         if scope.exit() {
             self.handlers = None;
@@ -1111,9 +1129,11 @@ impl<const SSL: bool> NewSocket<SSL> {
     ) -> JsResult<()> {
         jsc::mark_binding!();
         let handlers = self.get_handlers();
+        // SAFETY: short-lived field reads; raw-ptr-only across reentrant
+        // `callback.call` — see `get_handlers` contract.
         log!(
             "onClose {}",
-            if handlers.mode == SocketMode::Server { "S" } else { "C" }
+            if unsafe { (*handlers).mode } == SocketMode::Server { "S" } else { "C" }
         );
         self.detach_native_callback();
         self.socket.detach();
@@ -1142,10 +1162,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(());
         }
 
-        let vm = handlers.vm;
+        let vm = unsafe { (*handlers).vm };
         self.poll_ref.unref(vm);
 
-        let callback = handlers.on_close;
+        let callback = unsafe { (*handlers).on_close };
 
         if callback.is_empty() {
             drop(cleanup);
@@ -1159,9 +1179,10 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
-        let mut scope = handlers.enter();
+        // SAFETY: reborrow scoped to `enter()` only.
+        let mut scope = unsafe { (*handlers).enter() };
 
-        let global = handlers.global_object;
+        let global = unsafe { (*handlers).global_object };
         let this_value = self.get_this_value(global);
         let mut js_error: JSValue = JSValue::UNDEFINED;
         if err != 0 {
@@ -1181,7 +1202,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         if let Err(e) = callback.call(global, this_value, &[this_value, js_error]) {
-            let _ = handlers.call_error_handler(this_value, &[this_value, global.take_error(e)]);
+            // SAFETY: re-derived after reentrant call.
+            let _ = unsafe {
+                (*handlers).call_error_handler(this_value, &[this_value, global.take_error(e)])
+            };
         }
         if scope.exit() {
             self.handlers = None;
@@ -1197,26 +1221,28 @@ impl<const SSL: bool> NewSocket<SSL> {
             return;
         }
         let handlers = self.get_handlers();
+        // SAFETY: short-lived field reads; raw-ptr-only across reentrant
+        // `callback.call` — see `get_handlers` contract.
         log!(
             "onData {} ({})",
-            if handlers.mode == SocketMode::Server { "S" } else { "C" },
+            if unsafe { (*handlers).mode } == SocketMode::Server { "S" } else { "C" },
             data.len()
         );
         if self.native_callback.on_data(data) {
             return;
         }
 
-        let callback = handlers.on_data;
+        let callback = unsafe { (*handlers).on_data };
         if callback.is_empty() || self.flags.contains(Flags::FINALIZING) {
             return;
         }
-        if handlers.vm.is_shutting_down() {
+        if unsafe { (*handlers).vm }.is_shutting_down() {
             return;
         }
 
-        let global = handlers.global_object;
+        let global = unsafe { (*handlers).global_object };
         let this_value = self.get_this_value(global);
-        let output_value = match handlers.binary_type.to_js(data, global) {
+        let output_value = match unsafe { (*handlers).binary_type }.to_js(data, global) {
             Ok(v) => v,
             Err(err) => {
                 self.handle_error(global.take_exception(err));
@@ -1226,11 +1252,15 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
-        let mut scope = handlers.enter();
+        // SAFETY: reborrow scoped to `enter()` only.
+        let mut scope = unsafe { (*handlers).enter() };
 
         // const encoding = handlers.encoding;
         if let Err(err) = callback.call(global, this_value, &[this_value, output_value]) {
-            let _ = handlers.call_error_handler(this_value, &[this_value, global.take_error(err)]);
+            // SAFETY: re-derived after reentrant call.
+            let _ = unsafe {
+                (*handlers).call_error_handler(this_value, &[this_value, global.take_error(err)])
+            };
         }
         if scope.exit() {
             self.handlers = None;

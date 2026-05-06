@@ -296,6 +296,15 @@ pub mod Jest {
         unsafe { RUNNER.map(|p| &mut *p.as_ptr()) }
     }
 
+    /// Raw-pointer accessor for callers that must not materialise
+    /// `&'static mut TestRunner` because a sub-borrow of it (e.g.
+    /// `&BunTestRoot`, `&mut BunTest`) is already live — see
+    /// `BunTestRoot::on_before_print` / `BunTest::enter_file`.
+    pub fn runner_ptr() -> Option<NonNull<TestRunner<'static>>> {
+        // SAFETY: single-threaded JS VM; matches Zig's unguarded global access.
+        unsafe { RUNNER }
+    }
+
     #[unsafe(no_mangle)]
     pub extern "C" fn Bun__Jest__createTestModuleObject(
         global_object: &JSGlobalObject,

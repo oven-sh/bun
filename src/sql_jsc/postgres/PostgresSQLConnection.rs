@@ -782,7 +782,7 @@ impl PostgresSQLConnection {
         // Don't send any other messages while we're waiting for TLS.
         if let TLSStatus::MessageSent(sent) = self.tls_status {
             if sent < 8 {
-                self.start_tls(self.socket);
+                self.start_tls();
             }
             return;
         }
@@ -796,7 +796,13 @@ impl PostgresSQLConnection {
             return self.close();
         }
 
-        let event_loop = unsafe { self.vm() }.event_loop();
+        // PORT NOTE: reshaped for borrowck — `self.vm()` ties the returned
+        // `&EventLoop` to `&*self`, blocking the `&mut self` calls below. The
+        // event loop is a VM-owned singleton independent of this struct, so
+        // route through the raw VM pointer.
+        let vm: *mut VirtualMachine = self.vm;
+        // SAFETY: `vm` is the live VM singleton stored in this connection.
+        let event_loop = unsafe { &mut *vm }.event_loop();
         event_loop.enter();
 
         self.flush_data();
@@ -812,7 +818,8 @@ impl PostgresSQLConnection {
     pub fn on_data(&mut self, data: &[u8]) {
         self.r#ref();
         self.flags.insert(ConnectionFlags::IS_PROCESSING_DATA);
-        let vm = unsafe { self.vm() };
+        // PORT NOTE: reshaped for borrowck — see `drain_internal`.
+        let vm: *mut VirtualMachine = self.vm;
 
         self.disable_connection_timeout();
         // PORT NOTE: Zig `defer { ... }` block expanded after the body below; cannot use scopeguard

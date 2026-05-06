@@ -56,6 +56,7 @@ impl Signature {
         prepared_statement_id: u64,
         unnamed: bool,
     ) -> Result<Signature, bun_core::Error> {
+        use crate::jsc::js_error_to_postgres;
         use crate::postgres::types::tag_jsc;
         use crate::shared::QueryBindingIterator;
         use bun_sql::postgres::types::tag::Tag;
@@ -68,9 +69,10 @@ impl Signature {
 
         // (errdefer { fields.deinit(); name.deinit(); } — handled by Drop on `?`)
 
-        let mut iter = QueryBindingIterator::init(array_value, columns, global_object)?;
+        let mut iter = QueryBindingIterator::init(array_value, columns, global_object)
+            .map_err(js_error_to_postgres)?;
 
-        while let Some(value) = iter.next()? {
+        while let Some(value) = iter.next().map_err(js_error_to_postgres)? {
             if value.is_empty_or_undefined_or_null() {
                 // Allow postgres to decide the type
                 fields.push(0);
@@ -78,7 +80,7 @@ impl Signature {
                 continue;
             }
 
-            let tag = tag_jsc::from_js(global_object, value)?;
+            let tag = tag_jsc::from_js(global_object, value).map_err(js_error_to_postgres)?;
 
             match tag {
                 Tag::int8 => name.extend_from_slice(b".int8"),

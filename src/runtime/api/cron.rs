@@ -1856,7 +1856,8 @@ fn spawn_cmd_generic<T: SpawnCmdTarget>(
             unsafe { core::mem::zeroed::<bun_sys::windows::libuv::Pipe>() },
         )));
     }
-    let cwd = VirtualMachine::get().transpiler.fs.top_level_dir;
+    // SAFETY: per-thread VM singleton.
+    let cwd = unsafe { vm_mut() }.transpiler.fs.top_level_dir;
     let spawn_options = SpawnOptions {
         stdin: stdin_opt,
         stdout: stdout_opt,

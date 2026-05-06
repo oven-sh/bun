@@ -1036,12 +1036,20 @@ impl UpgradeCommand {
                     let _ = save_dir_.delete_tree(&version_name);
                     Output::pretty_errorln(format_args!(
                         "<r><red>error:<r> Failed to open Bun's install directory {}",
-                        err.name()
+                        bstr::BStr::new(err.name())
                     ));
                     Global::exit(1);
                 }
             };
-            let target_dir = target_dir_it;
+            let target_dir: sys::Dir = target_dir_it;
+
+            // PORT NOTE: `move_file_z` wants `&ZStr`; pre-compute a NUL-terminated
+            // copy of `exe` (Zig had it in a sentinel buffer).
+            let mut exe_z_buf = PathBuffer::uninit();
+            exe_z_buf[..exe.len()].copy_from_slice(exe);
+            exe_z_buf[exe.len()] = 0;
+            // SAFETY: NUL written above.
+            let exe_z: &ZStr = unsafe { ZStr::from_raw(exe_z_buf.as_ptr(), exe.len()) };
 
             if use_canary {
                 // Check if the versions are the same

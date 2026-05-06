@@ -23,13 +23,11 @@ pub struct NodeHTTPResponse {
 
     pub flags: Flags,
 
-    // TODO(b2-blocked): bun_jsc::Ref (event-loop keep-alive). Shim doesn't
-    // export it; opaque until bun_jsc is a dep.
-    pub poll_ref: jsc::JsRef,
+    pub poll_ref: jsc::Ref,
 
     pub body_read_state: BodyReadState,
-    pub body_read_ref: jsc::JsRef,
-    pub promise: Strong, // Strong.Optional
+    pub body_read_ref: jsc::Ref,
+    pub promise: StrongOptional, // Strong.Optional
     pub server: AnyServer,
 
     /// When you call pause() on the node:http IncomingMessage

@@ -953,18 +953,18 @@ fn transpile_source_code_inner(
                 {
                     (*jsc_vm).transpiler.linker.log = args.log;
                     if let Some(pm) = (*jsc_vm).transpiler.resolver.package_manager {
-                        (*pm).log = args.log;
+                        (*pm.as_ptr()).log = args.log;
                     }
                 }
             }
             let _log_guard = scopeguard::guard(jsc_vm, move |jsc_vm| unsafe {
                 (*jsc_vm).transpiler.log = old_log;
-                
+
                 {
                     (*jsc_vm).transpiler.resolver.log = old_log;
                     (*jsc_vm).transpiler.linker.log = old_log;
                     if let Some(pm) = (*jsc_vm).transpiler.resolver.package_manager {
-                        (*pm).log = old_log;
+                        (*pm.as_ptr()).log = old_log;
                     }
                 }
             });

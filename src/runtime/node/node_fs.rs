@@ -494,7 +494,7 @@ pub mod async_ {
                     );
                 }
                 Maybe::Ok(_) => {
-                    (this.completion)(this.completion_ctx, Maybe::SUCCESS);
+                    (this.completion)(this.completion_ctx, Maybe::Ok(()));
                 }
             }
         }
@@ -894,7 +894,7 @@ impl<const IS_SHELL: bool> CpSingleTask<IS_SHELL> {
             this.src,
             this.dest,
             constants::Copyfile::from_raw(
-                if args.flags.error_on_exist || !args.flags.force { constants::COPYFILE_EXCL } else { 0u8 },
+                if args.flags.error_on_exist || !args.flags.force { constants::COPYFILE_EXCL } else { 0i32 },
             ),
             None,
             &parent.args,
@@ -903,7 +903,7 @@ impl<const IS_SHELL: bool> CpSingleTask<IS_SHELL> {
         'brk: {
             match result {
                 Maybe::Err(ref err) => {
-                    if err.errno == E::EXIST as _ && !args.flags.error_on_exist {
+                    if err.errno == E::EEXIST as _ && !args.flags.error_on_exist {
                         break 'brk;
                     }
                     parent.finish_concurrently(result);
@@ -1072,7 +1072,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         if !this_ref.has_result.load(Ordering::Relaxed) {
             this_ref.has_result.store(true, Ordering::Relaxed);
             // SAFETY: count reached zero ⇒ this thread now has exclusive access.
-            unsafe { *this_ref.result.get() = Maybe::SUCCESS; }
+            unsafe { *this_ref.result.get() = Maybe::Ok(()); }
         }
 
         // Count reached zero ⇒ exclusive access. `this` carries mutable
@@ -1197,15 +1197,15 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
                         constants::Copyfile::from_raw(constants::Copyfile::FORCE)
                     } else {
                         constants::Copyfile::from_raw(
-                            if args.flags.error_on_exist || !args.flags.force { constants::COPYFILE_EXCL } else { 0u8 },
+                            if args.flags.error_on_exist || !args.flags.force { constants::COPYFILE_EXCL } else { 0i32 },
                         )
                     },
                     Some(attributes),
                     &this.args,
                 );
                 if let Maybe::Err(e) = &r {
-                    if e.errno == E::EXIST as _ && !args.flags.error_on_exist {
-                        this.finish_concurrently(Maybe::SUCCESS);
+                    if e.errno == E::EEXIST as _ && !args.flags.error_on_exist {
+                        this.finish_concurrently(Maybe::Ok(()));
                         return;
                     }
                 }
@@ -1231,15 +1231,15 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
                     src,
                     dest,
                     constants::Copyfile::from_raw(
-                        if args.flags.error_on_exist || !args.flags.force { constants::COPYFILE_EXCL } else { 0u8 },
+                        if args.flags.error_on_exist || !args.flags.force { constants::COPYFILE_EXCL } else { 0i32 },
                     ),
                     Some(stat_),
                     &this.args,
                 );
                 if let Maybe::Err(e) = &r {
-                    if e.errno == E::EXIST as _ && !args.flags.error_on_exist {
+                    if e.errno == E::EEXIST as _ && !args.flags.error_on_exist {
                         this.on_copy(src, dest);
-                        this.finish_concurrently(Maybe::SUCCESS);
+                        this.finish_concurrently(Maybe::Ok(()));
                         return;
                     }
                 }
@@ -1250,7 +1250,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         }
         if !args.flags.recursive {
             this.finish_concurrently(Maybe::Err(sys::Error {
-                errno: E::ISDIR as _,
+                errno: E::EISDIR as _,
                 syscall: sys::Tag::copyfile,
                 path: nodefs.os_path_into_sync_error_buf(src),
                 ..Default::default()
@@ -1302,7 +1302,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
                 src,
             ) {
                 match err.get_errno() {
-                    E::ACCES | E::NAMETOOLONG | E::ROFS | E::PERM | E::INVAL => {
+                    E::ACCES | E::ENAMETOOLONG | E::ROFS | E::PERM | E::INVAL => {
                         nodefs.sync_error_buf[..src.len()].copy_from_slice(src.as_bytes());
                         this_ref.finish_concurrently(Maybe::Err(err.err.with_path(&nodefs.sync_error_buf[..src.len()])));
                         return false;
@@ -1370,7 +1370,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
                 || (dest_dir_len as usize) + 1 + cname.len() >= dest_buf.len()
             {
                 this_ref.finish_concurrently(Maybe::Err(sys::Error {
-                    errno: E::NAMETOOLONG as _,
+                    errno: E::ENAMETOOLONG as _,
                     syscall: sys::Tag::copyfile,
                     path: nodefs.os_path_into_sync_error_buf(&src_buf[..src_dir_len as usize]),
                     ..Default::default()
@@ -3384,7 +3384,7 @@ impl NodeFS {
                     };
                     data = &data[written..];
                 }
-                Maybe::SUCCESS
+                Maybe::Ok(())
             }
             PathOrFileDescriptor::Path(path_) => {
                 let path = path_.slice_z(&mut self.sync_error_buf);
@@ -3400,7 +3400,7 @@ impl NodeFS {
                     };
                     data = &data[written..];
                 }
-                Maybe::SUCCESS
+                Maybe::Ok(())
             }
         }
     }
@@ -3409,7 +3409,7 @@ impl NodeFS {
         if let Some(err) = args.fd.close_allowing_bad_file_descriptor(None) {
             Maybe::Err(err)
         } else {
-            Maybe::SUCCESS
+            Maybe::Ok(())
         }
     }
 
@@ -3417,7 +3417,7 @@ impl NodeFS {
         if rc < 0 {
             return Maybe::Err(sys::Error { errno: (-rc) as _, syscall: sys::Tag::close, fd: args.fd, from_libuv: true, ..Default::default() });
         }
-        Maybe::SUCCESS
+        Maybe::Ok(())
     }
 
     // since we use a 64 KB stack buffer, we should not let this function get inlined
@@ -3490,7 +3490,7 @@ impl NodeFS {
             }
         }
 
-        Maybe::SUCCESS
+        Maybe::Ok(())
     }
 
     // copy_file_range() is frequently not supported across devices, such as tmpfs.
@@ -3511,12 +3511,12 @@ impl NodeFS {
             *wrote += amt as u64;
             if amt == 0 { break; }
         }
-        Maybe::SUCCESS
+        Maybe::Ok(())
     }
 
     pub fn copy_file(&mut self, args: &args::CopyFile, _: Flavor) -> Maybe<ret::CopyFile> {
         match self.copy_file_inner(args) {
-            Maybe::Ok(_) => Maybe::SUCCESS,
+            Maybe::Ok(_) => Maybe::Ok(()),
             Maybe::Err(err) => Maybe::Err(sys::Error {
                 errno: err.errno,
                 syscall: sys::Tag::copyfile,
@@ -3544,7 +3544,7 @@ impl NodeFS {
                 // https://www.manpagez.com/man/2/clonefile/
                 // SAFETY: src/dest are NUL-terminated; clonefile is the libc FFI
                 return Maybe::<ret::CopyFile>::errno_sys_p(unsafe { bun_sys::c::clonefile(src.as_ptr(), dest.as_ptr(), 0) }, sys::Tag::copyfile, src)
-                    .unwrap_or(Maybe::SUCCESS);
+                    .unwrap_or(Maybe::Ok(()));
             } else {
                 let stat_ = match Syscall::stat(src) {
                     Maybe::Ok(result) => result,
@@ -3565,7 +3565,7 @@ impl NodeFS {
                     // SAFETY: src/dest are NUL-terminated; clonefile is the libc FFI
                     if Maybe::<ret::CopyFile>::errno_sys_p(unsafe { bun_sys::c::clonefile(src.as_ptr(), dest.as_ptr(), 0) }, sys::Tag::copyfile, src).is_none() {
                         let _ = Syscall::chmod(dest, stat_.mode);
-                        return Maybe::SUCCESS;
+                        return Maybe::Ok(());
                     }
                 } else {
                     let src_fd = match Syscall::open(src, sys::O::RDONLY, 0o644) {
@@ -3604,7 +3604,7 @@ impl NodeFS {
             if args.mode.shouldnt_overwrite() { mode |= bun_sys::c::COPYFILE_EXCL; }
             // SAFETY: src/dest are NUL-terminated; copyfile(3) is the libc FFI
             return Maybe::<ret::CopyFile>::errno_sys_p(unsafe { bun_sys::c::copyfile(src.as_ptr(), dest.as_ptr(), core::ptr::null_mut(), mode) }, sys::Tag::copyfile, src)
-                .unwrap_or(Maybe::SUCCESS);
+                .unwrap_or(Maybe::Ok(()));
         }
 
         #[cfg(target_os = "freebsd")]
@@ -3666,7 +3666,7 @@ impl NodeFS {
                     E::SUCCESS => {
                         if rc == 0 {
                             let _ = Syscall::fchmod(dest_fd, stat_.mode);
-                            return Maybe::SUCCESS;
+                            return Maybe::Ok(());
                         }
                     }
                     E::INTR => continue,
@@ -3684,7 +3684,7 @@ impl NodeFS {
                 return Maybe::Err(err);
             }
             let _ = Syscall::fchmod(dest_fd, stat_.mode);
-            return Maybe::SUCCESS;
+            return Maybe::Ok(());
         }
 
         #[cfg(target_os = "linux")]
@@ -3736,7 +3736,7 @@ impl NodeFS {
                 }
                 let _ = Syscall::fchmod(dest_fd, stat_.mode);
                 dest_fd.close();
-                return Maybe::SUCCESS;
+                return Maybe::Ok(());
             }
 
             // If we know it's a regular file and ioctl_ficlone is available, attempt to use it.
@@ -3745,7 +3745,7 @@ impl NodeFS {
                 if rc == 0 {
                     let _ = Syscall::fchmod(dest_fd, stat_.mode);
                     dest_fd.close();
-                    return Maybe::SUCCESS;
+                    return Maybe::Ok(());
                 }
                 // If this fails for any reason, we say it's disabled
                 // We don't want to add the system call overhead of running this function on a lot of files that don't support it
@@ -3817,7 +3817,7 @@ impl NodeFS {
                 }
             }
 
-            return Maybe::SUCCESS;
+            return Maybe::Ok(());
         }
 
         #[cfg(windows)]
@@ -3831,7 +3831,7 @@ impl NodeFS {
                     return Self::should_ignore_ebusy(&args.src, &args.dest, rest);
                 }
             }
-            return Maybe::SUCCESS;
+            return Maybe::Ok(());
         }
 
         #[allow(unreachable_code)]
@@ -3880,7 +3880,7 @@ impl NodeFS {
         }
         match Syscall::chmod(path, args.mode) {
             Maybe::Err(err) => Maybe::Err(err.with_path(args.path.slice())),
-            Maybe::Ok(_) => Maybe::SUCCESS,
+            Maybe::Ok(_) => Maybe::Ok(()),
         }
     }
 
@@ -3897,7 +3897,7 @@ impl NodeFS {
         { return Syscall::fdatasync(args.fd); }
         // SAFETY: args.fd.native() is a valid open fd; fdatasync is the libc FFI
         Maybe::<ret::Fdatasync>::errno_sys_fd(unsafe { libc::fdatasync(args.fd.native()) }, sys::Tag::fdatasync, args.fd)
-            .unwrap_or(Maybe::SUCCESS)
+            .unwrap_or(Maybe::Ok(()))
     }
 
     pub fn fstat(&mut self, args: &args::Fstat, _: Flavor) -> Maybe<ret::Fstat> {
@@ -3915,7 +3915,7 @@ impl NodeFS {
         #[cfg(windows)]
         { return Syscall::fsync(args.fd); }
         Maybe::<ret::Fsync>::errno_sys(unsafe { libc::fsync(args.fd.native()) }, sys::Tag::fsync)
-            .unwrap_or(Maybe::SUCCESS)
+            .unwrap_or(Maybe::Ok(()))
     }
 
     pub fn ftruncate(&mut self, args: &args::FTruncate, _: Flavor) -> Maybe<ret::Ftruncate> {
@@ -3930,11 +3930,11 @@ impl NodeFS {
             let rc = unsafe { uv::uv_fs_futime(uv::Loop::get(), &mut req, args.fd.uv(), args.atime, args.mtime, None) };
             return if let Some(e) = rc.errno() {
                 Maybe::Err(sys::Error { errno: e, syscall: sys::Tag::futime, fd: args.fd, ..Default::default() })
-            } else { Maybe::SUCCESS };
+            } else { Maybe::Ok(()) };
         }
         match Syscall::futimens(args.fd, args.atime, args.mtime) {
             Maybe::Err(err) => Maybe::Err(err),
-            Maybe::Ok(_) => Maybe::SUCCESS,
+            Maybe::Ok(_) => Maybe::Ok(()),
         }
     }
 
@@ -3950,7 +3950,7 @@ impl NodeFS {
         let path = args.path.slice_z(&mut self.sync_error_buf);
         match Syscall::lchmod(path, args.mode) {
             Maybe::Err(err) => Maybe::Err(err.with_path(args.path.slice())),
-            Maybe::Ok(_) => Maybe::SUCCESS,
+            Maybe::Ok(_) => Maybe::Ok(()),
         }
     }
 
@@ -3960,7 +3960,7 @@ impl NodeFS {
         let path = args.path.slice_z(&mut self.sync_error_buf);
         match Syscall::lchown(path, args.uid, args.gid) {
             Maybe::Err(err) => Maybe::Err(err.with_path(args.path.slice())),
-            Maybe::Ok(_) => Maybe::SUCCESS,
+            Maybe::Ok(_) => Maybe::Ok(()),
         }
     }
 
@@ -3977,7 +3977,7 @@ impl NodeFS {
         }
         // SAFETY: `from`/`to` are NUL-terminated by `slice_z`; `link(2)` is the libc FFI.
         Maybe::<ret::Link>::errno_sys_pd(unsafe { libc::link(from.as_ptr().cast(), to.as_ptr().cast()) }, sys::Tag::link, args.old_path.slice(), args.new_path.slice())
-            .unwrap_or(Maybe::SUCCESS)
+            .unwrap_or(Maybe::Ok(()))
     }
 
     pub fn lstat(&mut self, args: &args::Lstat, _: Flavor) -> Maybe<ret::Lstat> {
@@ -4051,7 +4051,7 @@ impl NodeFS {
                 // `mkpath_np` in macOS also checks for `EISDIR`.
                 // it is unclear if macOS lies about if the existing item is
                 // a directory or not, so it is checked.
-                E::ISDIR | E::EXIST => {
+                E::EISDIR | E::EEXIST => {
                     return match sys::directory_exists_at(FD::INVALID, path) {
                         Maybe::Err(_) => Maybe::Err(sys::Error {
                             errno: err.errno, syscall: sys::Tag::mkdir,
@@ -4108,7 +4108,7 @@ impl NodeFS {
                     Maybe::Err(err) => {
                         working_mem[i as usize] = paths::SEP as OSPathChar;
                         match err.get_errno() {
-                            E::EXIST => {
+                            E::EEXIST => {
                                 // On Windows, this may happen if trying to mkdir replacing a file
                                 #[cfg(windows)]
                                 {
@@ -4171,7 +4171,7 @@ impl NodeFS {
                         working_mem[i as usize] = paths::SEP as OSPathChar;
                         match err.get_errno() {
                             // handle the race condition
-                            E::EXIST => {}
+                            E::EEXIST => {}
                             // NOENT shouldn't happen here
                             _ => {
                                 // SAFETY: `working_mem` is not used after this return.
@@ -4196,7 +4196,7 @@ impl NodeFS {
         let final_ = unsafe { OSPathSliceZ::from_raw(working_mem.as_ptr(), len as usize) };
         match mkdir_os_path(final_, mode) {
             Maybe::Err(err) => match err.get_errno() {
-                E::EXIST => {}
+                E::EEXIST => {}
                 _ => {
                     // SAFETY: `working_mem` is not used after this return.
                     let buf = unsafe { &mut *sync_error_buf_ptr };
@@ -4505,7 +4505,7 @@ impl NodeFS {
         }
 
         dirent_path.deref();
-        Maybe::SUCCESS
+        Maybe::Ok(())
     }
 
     pub fn readdir_with_entries_recursive_async<T: ReaddirEntry>(
@@ -4529,7 +4529,7 @@ impl NodeFS {
                         //
                         // This is different than what Node does, at the time of writing.
                         // Node doesn't gracefully handle errors like these. It fails the entire operation.
-                        E::NOENT | E::NOTDIR | E::PERM => return Maybe::SUCCESS,
+                        E::NOENT | E::NOTDIR | E::PERM => return Maybe::Ok(()),
                         _ => {}
                     }
                     let joined = paths::resolve_path::join_z_buf::<paths::platform::Auto>(
@@ -4642,7 +4642,7 @@ impl NodeFS {
         }
 
         dirent_path_prev.deref();
-        Maybe::SUCCESS
+        Maybe::Ok(())
     }
 
     fn readdir_with_entries_recursive_sync<T: ReaddirEntry>(
@@ -4803,7 +4803,7 @@ impl NodeFS {
             dirent_path_prev.deref();
         }
 
-        Maybe::SUCCESS
+        Maybe::Ok(())
     }
 
     fn should_throw_out_of_memory_early_for_javascript(encoding: Encoding, size: usize, syscall: sys::Tag) -> Option<sys::Error> {
@@ -5221,7 +5221,7 @@ impl NodeFS {
             #[cfg(not(windows))] { let _ = unsafe { libc::fsync(fd.cast()) }; }
         }
 
-        Maybe::SUCCESS
+        Maybe::Ok(())
     }
 
     pub fn write_file(&mut self, args: &args::WriteFile, _: Flavor) -> Maybe<ret::WriteFile> {
@@ -5367,7 +5367,7 @@ impl NodeFS {
                 if cfg!(windows) && errno == E::NOTDIR { errno = E::NOENT; }
                 return Maybe::Err(sys::Error::from_code(errno, sys::Tag::rmdir));
             }
-            return Maybe::SUCCESS;
+            return Maybe::Ok(());
         }
         #[cfg(windows)]
         {
@@ -5378,7 +5378,7 @@ impl NodeFS {
         }
         // SAFETY: path is NUL-terminated by slice_z; rmdir(2) is the libc FFI
         Maybe::<ret::Rmdir>::errno_sys_p(unsafe { libc::rmdir(args.path.slice_z(&mut self.sync_error_buf).as_ptr().cast()) }, sys::Tag::rmdir, args.path.slice())
-            .unwrap_or(Maybe::SUCCESS)
+            .unwrap_or(Maybe::Ok(()))
     }
 
     pub fn rm(&mut self, args: &args::Rm, _: Flavor) -> Maybe<ret::Rm> {
@@ -5386,14 +5386,14 @@ impl NodeFS {
         if args.recursive {
             if let Err(err) = zig_delete_tree(sys::Dir::cwd(), args.path.slice(), sys::FileKind::File) {
                 let errno = if err == bun_core::err!("FileNotFound") {
-                    if args.force { return Maybe::SUCCESS; }
+                    if args.force { return Maybe::Ok(()); }
                     E::NOENT
                 } else {
                     map_anyerror_to_errno_rm_tree(err)
                 };
                 return Maybe::Err(sys::Error::from_code(errno, sys::Tag::rm).with_path(args.path.slice()));
             }
-            return Maybe::SUCCESS;
+            return Maybe::Ok(());
         }
 
         let dest = args.path.slice_z(&mut self.sync_error_buf);
@@ -5406,19 +5406,19 @@ impl NodeFS {
             let e1 = err1.get_errno();
             // empirically, it seems to return AccessDenied when the
             // file is actually a directory on macOS.
-            if args.recursive && matches!(e1, E::ISDIR | E::NOTDIR | E::ACCES | E::PERM) {
+            if args.recursive && matches!(e1, E::EISDIR | E::NOTDIR | E::ACCES | E::PERM) {
                 // SAFETY: `dest` is NUL-terminated by `slice_z`; rmdir(2) is the libc FFI.
                 if let Some(err2) = Maybe::<()>::errno_sys_p(unsafe { libc::rmdir(dest.as_ptr().cast()) }, sys::Tag::rmdir, args.path.slice()) {
-                    let Maybe::Err(err2) = err2 else { return Maybe::SUCCESS };
-                    if err2.get_errno() == E::NOENT && args.force { return Maybe::SUCCESS; }
+                    let Maybe::Err(err2) = err2 else { return Maybe::Ok(()) };
+                    if err2.get_errno() == E::NOENT && args.force { return Maybe::Ok(()); }
                     return Maybe::Err(err2.with_path_and_syscall(args.path.slice(), sys::Tag::rm));
                 }
-                return Maybe::SUCCESS;
+                return Maybe::Ok(());
             }
-            if e1 == E::NOENT && args.force { return Maybe::SUCCESS; }
+            if e1 == E::NOENT && args.force { return Maybe::Ok(()); }
             return Maybe::Err(err1.with_path_and_syscall(args.path.slice(), sys::Tag::rm));
         }
-        Maybe::SUCCESS
+        Maybe::Ok(())
     }
 
     pub fn statfs(&mut self, args: &args::StatFS, _: Flavor) -> Maybe<ret::StatFS> {
@@ -5564,7 +5564,7 @@ impl NodeFS {
         let _ = flags;
         // SAFETY: path is NUL-terminated by slice_z; truncate(2) is the libc FFI
         Maybe::<ret::Truncate>::errno_sys_p(unsafe { libc::truncate(path.slice_z(&mut self.sync_error_buf).as_ptr().cast(), i64::try_from(len).unwrap()) }, sys::Tag::truncate, path.slice())
-            .unwrap_or(Maybe::SUCCESS)
+            .unwrap_or(Maybe::Ok(()))
     }
 
     pub fn truncate(&mut self, args: &args::Truncate, _: Flavor) -> Maybe<ret::Truncate> {
@@ -5584,7 +5584,7 @@ impl NodeFS {
         }
         // SAFETY: path is NUL-terminated by slice_z; unlink(2) is the libc FFI
         Maybe::<ret::Unlink>::errno_sys_p(unsafe { libc::unlink(args.path.slice_z(&mut self.sync_error_buf).as_ptr().cast()) }, sys::Tag::unlink, args.path.slice())
-            .unwrap_or(Maybe::SUCCESS)
+            .unwrap_or(Maybe::Ok(()))
     }
 
     // TODO(b2-blocked): args::WatchFile = StatWatcher::Arguments — module gated.
@@ -5621,11 +5621,11 @@ impl NodeFS {
             let rc = unsafe { uv::uv_fs_utime(bun_aio::Loop::get(), &mut req, args.path.slice_z(&mut self.sync_error_buf).as_ptr(), args.atime, args.mtime, None) };
             return if let Some(errno) = rc.errno() {
                 Maybe::Err(sys::Error { errno, syscall: sys::Tag::utime, path: args.path.slice().into(), ..Default::default() })
-            } else { Maybe::SUCCESS };
+            } else { Maybe::Ok(()) };
         }
         match Syscall::utimens(args.path.slice_z(&mut self.sync_error_buf), args.atime, args.mtime) {
             Maybe::Err(err) => Maybe::Err(err.with_path(args.path.slice())),
-            Maybe::Ok(_) => Maybe::SUCCESS,
+            Maybe::Ok(_) => Maybe::Ok(()),
         }
     }
 
@@ -5637,11 +5637,11 @@ impl NodeFS {
             let rc = unsafe { uv::uv_fs_lutime(bun_aio::Loop::get(), &mut req, args.path.slice_z(&mut self.sync_error_buf).as_ptr(), args.atime, args.mtime, None) };
             return if let Some(errno) = rc.errno() {
                 Maybe::Err(sys::Error { errno, syscall: sys::Tag::utime, path: args.path.slice().into(), ..Default::default() })
-            } else { Maybe::SUCCESS };
+            } else { Maybe::Ok(()) };
         }
         match Syscall::lutimens(args.path.slice_z(&mut self.sync_error_buf), args.atime, args.mtime) {
             Maybe::Err(err) => Maybe::Err(err.with_path(args.path.slice())),
-            Maybe::Ok(_) => Maybe::SUCCESS,
+            Maybe::Ok(_) => Maybe::Ok(()),
         }
     }
 
@@ -5728,12 +5728,12 @@ impl NodeFS {
             if attributes & sys::c::FILE_ATTRIBUTE_DIRECTORY == 0 {
                 let r = self._copy_single_file_sync(
                     src, dest,
-                    constants::Copyfile::from_raw(if cp_flags.error_on_exist || !cp_flags.force { constants::COPYFILE_EXCL } else { 0u8 }),
+                    constants::Copyfile::from_raw(if cp_flags.error_on_exist || !cp_flags.force { constants::COPYFILE_EXCL } else { 0i32 }),
                     Some(attributes),
                     args,
                 );
                 if let Maybe::Err(ref e) = r {
-                    if e.errno == E::EXIST as _ && !cp_flags.error_on_exist { return Maybe::SUCCESS; }
+                    if e.errno == E::EEXIST as _ && !cp_flags.error_on_exist { return Maybe::Ok(()); }
                 }
                 return r;
             }
@@ -5750,12 +5750,12 @@ impl NodeFS {
             if !sys::S::ISDIR(stat_.mode) {
                 let r = self._copy_single_file_sync(
                     src, dest,
-                    constants::Copyfile::from_raw(if cp_flags.error_on_exist || !cp_flags.force { constants::COPYFILE_EXCL } else { 0u8 }),
+                    constants::Copyfile::from_raw(if cp_flags.error_on_exist || !cp_flags.force { constants::COPYFILE_EXCL } else { 0i32 }),
                     Some(stat_),
                     args,
                 );
                 if let Maybe::Err(ref e) = r {
-                    if e.errno == E::EXIST as _ && !cp_flags.error_on_exist { return Maybe::SUCCESS; }
+                    if e.errno == E::EEXIST as _ && !cp_flags.error_on_exist { return Maybe::Ok(()); }
                 }
                 return r;
             }
@@ -5763,7 +5763,7 @@ impl NodeFS {
 
         if !cp_flags.recursive {
             return Maybe::Err(sys::Error {
-                errno: E::ISDIR as _,
+                errno: E::EISDIR as _,
                 syscall: sys::Tag::copyfile,
                 path: self.os_path_into_sync_error_buf(src.as_slice()).into(),
                 ..Default::default()
@@ -5777,7 +5777,7 @@ impl NodeFS {
                 sys::Tag::clonefile, src.as_bytes(),
             ) {
                 match err.get_errno() {
-                    E::NAMETOOLONG | E::ROFS | E::INVAL | E::ACCES | E::PERM => {
+                    E::ENAMETOOLONG | E::ROFS | E::INVAL | E::ACCES | E::PERM => {
                         if matches!(err.get_errno(), E::ACCES | E::PERM) && args.flags.force {
                             break 'try_with_clonefile;
                         }
@@ -5789,7 +5789,7 @@ impl NodeFS {
                     _ => {}
                 }
             } else {
-                return Maybe::SUCCESS;
+                return Maybe::Ok(());
             }
         }
 
@@ -5828,7 +5828,7 @@ impl NodeFS {
                 || dd + 1 + name_slice.len() >= dest_buf.len()
             {
                 return Maybe::Err(sys::Error {
-                    errno: E::NAMETOOLONG as _,
+                    errno: E::ENAMETOOLONG as _,
                     syscall: sys::Tag::copyfile,
                     path: self.os_path_into_sync_error_buf(&src_buf[..sd]).into(),
                     ..Default::default()
@@ -5858,18 +5858,18 @@ impl NodeFS {
                     let dest_z = unsafe { OSPathSliceZ::from_raw(dest_buf.as_ptr(), dd + 1 + name_slice.len()) };
                     let r = self._copy_single_file_sync(
                         src_z, dest_z,
-                        constants::Copyfile::from_raw(if cp_flags.error_on_exist || !cp_flags.force { constants::COPYFILE_EXCL } else { 0u8 }),
+                        constants::Copyfile::from_raw(if cp_flags.error_on_exist || !cp_flags.force { constants::COPYFILE_EXCL } else { 0i32 }),
                         None,
                         args,
                     );
                     if let Maybe::Err(ref e) = r {
-                        if e.errno == E::EXIST as _ && !cp_flags.error_on_exist { continue; }
+                        if e.errno == E::EEXIST as _ && !cp_flags.error_on_exist { continue; }
                         return r;
                     }
                 }
             }
         }
-        Maybe::SUCCESS
+        Maybe::Ok(())
     }
 
     /// On Windows, copying a file onto itself will return EBUSY, which is an
@@ -5895,7 +5895,7 @@ impl NodeFS {
             let Maybe::Ok(statbuf) = Syscall::stat(src.slice_z(&mut buf)) else { return result };
             let Maybe::Ok(new_statbuf) = Syscall::stat(dest.slice_z(&mut buf)) else { return result };
             if statbuf.dev == new_statbuf.dev && statbuf.ino == new_statbuf.ino {
-                return Maybe::SUCCESS;
+                return Maybe::Ok(());
             }
             result
         }
@@ -5925,7 +5925,7 @@ impl NodeFS {
             cwd, &mut resolved_buf[..resolved_buf.len() - 1], &[src_dir, link_target], paths::Platform::Posix,
         ) else {
             self.sync_error_buf[..src.len()].copy_from_slice(src.as_bytes());
-            return Maybe::Err(sys::Error { errno: E::NAMETOOLONG as _, syscall: sys::Tag::symlink, path: self.sync_error_buf[..src.len()].into(), ..Default::default() });
+            return Maybe::Err(sys::Error { errno: E::ENAMETOOLONG as _, syscall: sys::Tag::symlink, path: self.sync_error_buf[..src.len()].into(), ..Default::default() });
         };
         resolved_buf[resolved.len()] = 0;
         Syscall::symlink(unsafe { ZStr::from_raw(resolved_buf.as_ptr(), resolved.len()) }, dest)
@@ -5950,7 +5950,7 @@ impl NodeFS {
                 return Maybe::<ret::CopyFile>::errno_sys_p(
                     unsafe { bun_sys::c::clonefile(src.as_ptr(), dest.as_ptr(), 0) },
                     sys::Tag::clonefile, src.as_bytes(),
-                ).unwrap_or(Maybe::SUCCESS);
+                ).unwrap_or(Maybe::Ok(()));
             }
             let stat_ = match reuse_stat {
                 Some(s) => s,
@@ -5970,7 +5970,7 @@ impl NodeFS {
                     return Maybe::<ret::CopyFile>::errno_sys_p(
                         unsafe { bun_sys::c::copyfile(src.as_ptr(), dest.as_ptr(), core::ptr::null_mut(), mode_) },
                         sys::Tag::copyfile, src.as_bytes(),
-                    ).unwrap_or(Maybe::SUCCESS);
+                    ).unwrap_or(Maybe::Ok(()));
                 }
                 self.sync_error_buf[..src.len()].copy_from_slice(src.as_bytes());
                 return Maybe::Err(sys::Error {
@@ -5993,7 +5993,7 @@ impl NodeFS {
                     sys::Tag::clonefile, src.as_bytes(),
                 ).is_none() {
                     let _ = Syscall::chmod(dest, stat_.mode);
-                    return Maybe::SUCCESS;
+                    return Maybe::Ok(());
                 }
             } else {
                 let src_fd = match Syscall::open(src, sys::O::RDONLY, 0o644) {
@@ -6036,13 +6036,13 @@ impl NodeFS {
                 sys::Tag::copyfile, src.as_bytes(),
             );
             match first_try {
-                None => return Maybe::SUCCESS,
+                None => return Maybe::Ok(()),
                 Some(err) if err.get_errno() == E::NOENT => {
                     let _ = sys::Dir::cwd().make_path(paths::resolve_path::dirname::<paths::platform::Auto>(dest.as_bytes()));
                     return Maybe::<ret::CopyFile>::errno_sys_p(
                         unsafe { bun_sys::c::copyfile(src.as_ptr(), dest.as_ptr(), core::ptr::null_mut(), mode_) },
                         sys::Tag::copyfile, src.as_bytes(),
-                    ).unwrap_or(Maybe::SUCCESS);
+                    ).unwrap_or(Maybe::Ok(()));
                 }
                 Some(err) => return err,
             }
@@ -6094,7 +6094,7 @@ impl NodeFS {
                 if rc == 0 {
                     let _ = Syscall::fchmod(dest_fd, stat_.mode);
                     dest_fd.close();
-                    return Maybe::SUCCESS;
+                    return Maybe::Ok(());
                 }
                 sys::copy_file::disable_ioctl_ficlone();
             }
@@ -6171,7 +6171,7 @@ impl NodeFS {
                 }
             }
 
-            return Maybe::SUCCESS;
+            return Maybe::Ok(());
         }
 
         #[cfg(target_os = "freebsd")]
@@ -6243,9 +6243,9 @@ impl NodeFS {
                 let rc: isize = unsafe { sys::freebsd::copy_file_range(src_fd.native(), &mut off_in, dest_fd.native(), &mut off_out, want, 0) } as isize;
                 match sys::get_errno(rc) {
                     E::SUCCESS => {
-                        if rc == 0 { return Maybe::SUCCESS; }
+                        if rc == 0 { return Maybe::Ok(()); }
                         wrote.set(wrote.get().saturating_add(rc as u64));
-                        if size != 0 && wrote.get() >= size as u64 { return Maybe::SUCCESS; }
+                        if size != 0 && wrote.get() >= size as u64 { return Maybe::Ok(()); }
                     }
                     E::INTR => continue,
                     E::XDEV | E::INVAL | E::OPNOTSUPP | E::NOSYS | E::BADF => break 'cfr,
@@ -6293,7 +6293,7 @@ impl NodeFS {
                         windows::Win32Error::PATH_NOT_FOUND => {
                             let _ = sys::make_path::make_path_u16(sys::Dir::cwd(), paths::dirname_w(dest.as_slice()));
                             let second_try = unsafe { sys::c::CopyFileW(src.as_ptr(), dest.as_ptr(), mode.shouldnt_overwrite() as i32) };
-                            if second_try > 0 { return Maybe::SUCCESS; }
+                            if second_try > 0 { return Maybe::Ok(()); }
                             err = unsafe { windows::GetLastError() };
                         }
                         _ => {}
@@ -6303,7 +6303,7 @@ impl NodeFS {
                     let result = Maybe::<ret::CopyFile>::errno_sys_p(0, sys::Tag::copyfile, p).unwrap_or(src_enoent_maybe);
                     return Self::should_ignore_ebusy(&args.src, &args.dest, result);
                 }
-                return Maybe::SUCCESS;
+                return Maybe::Ok(());
             } else {
                 let handle = match sys::openat_windows(FD::INVALID, src, sys::O::RDONLY, 0) {
                     Maybe::Err(err) => return Maybe::Err(err),
@@ -6322,7 +6322,7 @@ impl NodeFS {
                     let p = self.os_path_into_sync_error_buf(dest.as_slice());
                     return Maybe::<ret::CopyFile>::errno_sys_p(0, sys::Tag::copyfile, p).unwrap_or(dst_enoent_maybe);
                 }
-                return Maybe::SUCCESS;
+                return Maybe::Ok(());
             }
         }
 
@@ -6579,7 +6579,7 @@ fn map_anyerror_to_errno(err: bun_core::Error) -> E {
         "FileTooBig" => E::FBIG,
         "SymLinkLoop" => E::LOOP,
         "ProcessFdQuotaExceeded" => E::NFILE,
-        "NameTooLong" => E::NAMETOOLONG,
+        "NameTooLong" => E::ENAMETOOLONG,
         "SystemFdQuotaExceeded" => E::MFILE,
         "SystemResources" => E::NOMEM,
         "ReadOnlyFileSystem" => E::ROFS,
@@ -6588,7 +6588,7 @@ fn map_anyerror_to_errno(err: bun_core::Error) -> E {
         "NotDir" => E::NOTDIR,
         "InvalidUtf8" | "InvalidWtf8" | "BadPathName" => E::INVAL,
         "FileNotFound" => E::NOENT,
-        "IsDir" => E::ISDIR,
+        "IsDir" => E::EISDIR,
         _ => E::FAULT,
     }
 }
@@ -6601,7 +6601,7 @@ fn map_anyerror_to_errno_rm_tree(err: bun_core::Error) -> E {
         "FileTooBig" => E::FBIG,
         "SymLinkLoop" => E::LOOP,
         "ProcessFdQuotaExceeded" => E::NFILE,
-        "NameTooLong" => E::NAMETOOLONG,
+        "NameTooLong" => E::ENAMETOOLONG,
         "SystemFdQuotaExceeded" => E::MFILE,
         "SystemResources" => E::NOMEM,
         "ReadOnlyFileSystem" => E::ROFS,
@@ -6610,7 +6610,7 @@ fn map_anyerror_to_errno_rm_tree(err: bun_core::Error) -> E {
         "NotDir" => E::NOTDIR,
         "InvalidUtf8" | "InvalidWtf8" | "BadPathName" => E::INVAL,
         "FileNotFound" => E::NOENT,
-        "IsDir" => E::ISDIR,
+        "IsDir" => E::EISDIR,
         _ => E::FAULT,
     }
 }
@@ -6621,7 +6621,7 @@ fn map_anyerror_to_errno_rm_narrow(err: bun_core::Error) -> E {
     match err.name() {
         "AccessDenied" => E::ACCES,
         "SymLinkLoop" => E::LOOP,
-        "NameTooLong" => E::NAMETOOLONG,
+        "NameTooLong" => E::ENAMETOOLONG,
         "SystemResources" => E::NOMEM,
         "ReadOnlyFileSystem" => E::ROFS,
         "FileBusy" => E::BUSY,
@@ -6680,13 +6680,13 @@ fn dt_err(errno: E) -> bun_core::Error {
         E::ACCES => "AccessDenied",
         E::PERM => "PermissionDenied",
         E::LOOP => "SymLinkLoop",
-        E::NAMETOOLONG => "NameTooLong",
+        E::ENAMETOOLONG => "NameTooLong",
         E::NOMEM => "SystemResources",
         E::ROFS => "ReadOnlyFileSystem",
         E::IO => "FileSystem",
         E::BUSY => "FileBusy",
         E::NOTDIR => "NotDir",
-        E::ISDIR => "IsDir",
+        E::EISDIR => "IsDir",
         E::NOTEMPTY => "DirNotEmpty",
         E::MFILE => "SystemFdQuotaExceeded",
         E::NFILE => "ProcessFdQuotaExceeded",
@@ -6818,7 +6818,7 @@ pub fn zig_delete_tree(self_: sys::Dir, sub_path: &[u8], kind_hint: sys::FileKin
                     let top_dir = sys::Dir::from_fd(stack[top_idx].iter.iter.dir);
                     match dt_delete_file(top_dir, &entry_name) {
                         Ok(()) => break 'handle_entry,
-                        Err(E::ISDIR) => { treat_as_dir = true; continue 'handle_entry; }
+                        Err(E::EISDIR) => { treat_as_dir = true; continue 'handle_entry; }
                         // PORT NOTE: Zig's std.fs error set distinguishes IsDir
                         // from "EPERM because it's a directory" (Linux returns
                         // EISDIR; macOS returns EPERM). We only get errno, so
@@ -6847,7 +6847,7 @@ pub fn zig_delete_tree(self_: sys::Dir, sub_path: &[u8], kind_hint: sys::FileKin
             Err(E::NOTEMPTY) => need_to_retry = true,
             // PORT NOTE: Zig also matched `error.EXIST` → DirNotEmpty here via
             // std.fs's deleteDir; mirror that for OSes that report EEXIST.
-            Err(E::EXIST) => need_to_retry = true,
+            Err(E::EEXIST) => need_to_retry = true,
             Err(e) => return Err(dt_err(e)),
         }
 
@@ -6870,7 +6870,7 @@ pub fn zig_delete_tree(self_: sys::Dir, sub_path: &[u8], kind_hint: sys::FileKin
                     match dt_delete_file(parent_dir, name) {
                         Ok(()) => continue 'process_stack,
                         Err(E::NOENT) => continue 'process_stack,
-                        Err(E::ISDIR) => { treat_as_dir = true; continue 'handle_entry; }
+                        Err(E::EISDIR) => { treat_as_dir = true; continue 'handle_entry; }
                         Err(E::NOTDIR) => {
                             #[cfg(debug_assertions)] unreachable!();
                             #[cfg(not(debug_assertions))] return Err(dt_err(E::IO));
@@ -6908,7 +6908,7 @@ fn zig_delete_tree_open_initial_subpath(self_: sys::Dir, sub_path: &[u8], kind_h
         } else {
             match dt_delete_file(self_, sub_path) {
                 Ok(()) => return Ok(None),
-                Err(E::ISDIR) => { treat_as_dir = true; continue; }
+                Err(E::EISDIR) => { treat_as_dir = true; continue; }
                 Err(e) => return Err(dt_err(e)),
             }
         }
@@ -6973,7 +6973,7 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(self_: sys::Dir, sub_path: &[u8
                         match dt_delete_file(dir, &entry_name) {
                             Ok(()) => continue 'dir_it,
                             Err(E::NOENT) => continue 'dir_it,
-                            Err(E::ISDIR) => { treat_as_dir = true; continue 'handle_entry; }
+                            Err(E::EISDIR) => { treat_as_dir = true; continue 'handle_entry; }
                             Err(E::NOTDIR) => {
                                 #[cfg(debug_assertions)] unreachable!();
                                 #[cfg(not(debug_assertions))] break 'scan_dir Err(dt_err(E::IO));
@@ -6991,7 +6991,7 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(self_: sys::Dir, sub_path: &[u8
             let dir_name: &[u8] = if dir_name_is_sub_path { sub_path } else { &dir_name_buf[..dir_name_len] };
             if let Some(d) = cleanup_dir_parent {
                 match dt_delete_dir(d, dir_name) {
-                    Ok(()) | Err(E::NOENT) | Err(E::NOTEMPTY) | Err(E::EXIST) => {
+                    Ok(()) | Err(E::NOENT) | Err(E::NOTEMPTY) | Err(E::EEXIST) => {
                         // These two things can happen due to file system race conditions.
                         d.close();
                         continue 'start_over;
@@ -7001,7 +7001,7 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(self_: sys::Dir, sub_path: &[u8
             } else {
                 match dt_delete_dir(self_, sub_path) {
                     Ok(()) | Err(E::NOENT) => return Ok(()),
-                    Err(E::NOTEMPTY) | Err(E::EXIST) => continue 'start_over,
+                    Err(E::NOTEMPTY) | Err(E::EEXIST) => continue 'start_over,
                     Err(e) => return Err(dt_err(e)),
                 }
             }

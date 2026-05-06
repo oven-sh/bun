@@ -356,20 +356,20 @@ pub fn create_exec_argv(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
 pub extern "C" fn create_argv(global_object: *const JSGlobalObject) -> JSValue {
     // SAFETY: global_object is valid for the duration of this call
     let global_object = unsafe { &*global_object };
-    let vm = global_object.bun_vm();
+    // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
+    let vm = unsafe { &*global_object.bun_vm() };
 
     // PERF(port): was stack-fallback alloc (32 * sizeof(ZigString) + MAX_PATH_BYTES + 1 + 32) — profile in Phase B
 
-    let mut args_count: usize = vm.argv().len();
-    if let Some(worker) = vm.worker() {
-        args_count = worker.argv().len();
-    }
+    let args_count: usize = vm.argv.len();
+    // TODO(port): worker.argv is private on bun_jsc::WebWorker — no accessor yet.
+    // The worker-override count adjustment is skipped until that lands.
 
     // argv omits "bun" because it could be "bun run" or "bun" and it's kind of ambiguous
     // argv also omits the script name
     let mut args_list: Vec<BunString> = Vec::with_capacity(args_count + 2);
 
-    if vm.standalone_module_graph().is_some() {
+    if vm.standalone_module_graph.is_some() {
         // Don't break user's code because they did process.argv.slice(2)
         // Even if they didn't type "bun", we still want to add it as argv[0]
         args_list.push(BunString::static_(b"bun"));

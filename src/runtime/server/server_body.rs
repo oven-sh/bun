@@ -1079,31 +1079,31 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     #[bun_jsc::host_fn(method)]
     pub fn do_subscriber_count(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old(1);
-        if arguments.len() < 1 {
-            return global.throw_not_enough_arguments("subscriberCount", 1, 0);
+        let arguments = callframe.arguments_old::<1>();
+        if arguments.len < 1 {
+            return Err(throw_not_enough_arguments(global, "subscriberCount", 1, 0));
         }
 
         if arguments.ptr[0].is_empty_or_undefined_or_null() {
-            return global.throw_invalid_arguments(
+            return Err(global.throw_invalid_arguments(
                 format_args!("subscriberCount requires a topic name as a string"),
-            );
+            ));
         }
 
         let topic = arguments.ptr[0].to_slice(global)?;
 
-        if topic.len() == 0 {
-            return Ok(JSValue::js_number(0));
+        if topic.slice().is_empty() {
+            return Ok(JSValue::js_number(0.0));
         }
 
         // SAFETY: self.app is Some and points to a live uws App for the lifetime of any JS-reachable Server
-        Ok(JSValue::js_number(unsafe { &*self.app.unwrap() }.num_subscribers(topic.slice())))
+        Ok(JSValue::js_number(f64::from(unsafe { &*self.app.unwrap() }.num_subscribers(topic.slice()))))
     }
 
     // `#[bun_jsc::JsClass]` emits the C-ABI `*Class__construct` shim that calls
     // this directly via `host_fn_construct_result` — no `#[host_fn]` attribute.
     pub fn constructor(global: &JSGlobalObject, _: &CallFrame) -> JsResult<*mut Self> {
-        global.throw2(format_args!("Server() is not a constructor"))
+        Err(global.throw2("Server() is not a constructor", ()))
     }
 
     pub fn js_value_assert_alive(&self) -> JSValue {

@@ -48,7 +48,42 @@ use bun_uws::{self as uws, ConnectingSocket, Loop};
 use bun_wyhash::hash as wyhash;
 
 use bun_cares_sys::c_ares_draft as c_ares;
-use crate::timer::{EventLoopTimer, EventLoopTimerTag};
+use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, ElTimespec};
+
+// ──────────────────────────────────────────────────────────────────────────
+// Local shims (Phase D — upstream `JSGlobalObject.rs` impl block is still
+// `#[cfg(any())]`-gated, so `throw_not_enough_arguments` /
+// `validate_integer_range` are unavailable as inherent methods).
+// ──────────────────────────────────────────────────────────────────────────
+
+trait JSGlobalObjectDnsExt {
+    fn throw_not_enough_arguments(
+        &self,
+        name_: &str,
+        expected: usize,
+        got: usize,
+    ) -> JsResult<JSValue>;
+}
+impl JSGlobalObjectDnsExt for JSGlobalObject {
+    fn throw_not_enough_arguments(
+        &self,
+        name_: &str,
+        expected: usize,
+        got: usize,
+    ) -> JsResult<JSValue> {
+        Err(self.throw_invalid_arguments(format_args!(
+            "Not enough arguments to '{name_}'. Expected {expected}, got {got}."
+        )))
+    }
+}
+
+/// Send-wrapper for raw pointers handed to the threaded work pool. The DNS
+/// `Request` is heap-allocated and only touched under `global_cache().lock()`,
+/// so crossing threads is sound — Rust just can't see that through `*mut T`.
+#[repr(transparent)]
+struct SendPtr<T>(*mut T);
+// SAFETY: see type doc — synchronization is provided by `global_cache()`.
+unsafe impl<T> Send for SendPtr<T> {}
 
 /// Bridge the JS-thread `VirtualMachine` to the aio-level `EventLoopCtx` used
 /// by `KeepAlive` / `FilePoll`. The DNS resolver always runs on the JS event
@@ -2509,7 +2544,7 @@ pub mod internal {
 
         bun_output::scoped_log!(dns, "getaddrinfo({}) = cache miss (libc)", bstr::BStr::new(host.map(|h| h.as_bytes()).unwrap_or(b"")));
         // schedule the request to be executed on the work pool
-        bun_threading::work_pool::WorkPool::go(req, work_pool_callback);
+        let _ = bun_threading::work_pool::WorkPool::go(SendPtr(req), |r: SendPtr<Request>| work_pool_callback(r.0));
         Some(req)
     }
 
@@ -2527,23 +2562,30 @@ pub mod internal {
         if hostname_or_url.is_string() {
             hostname_slice = hostname_or_url.to_slice(global_this)?;
         } else {
-            return global_this.throw_invalid_arguments("hostname must be a string", &[]);
+            return Err(global_this.throw_invalid_arguments("hostname must be a string"));
         }
 
-        let hostname_z = ZStr::from_bytes(hostname_slice.slice());
+        let hostname_z = bun::ZBox::from_bytes(hostname_slice.slice());
 
         let port: u16 = 'brk: {
             if arguments.len() > 1 && !arguments[1].is_undefined_or_null() {
-                break 'brk global_this.validate_integer_range::<u16>(
-                    arguments[1], 443, jsc::IntegerRangeOptions { field_name: "port", always_allow_zero: true, ..Default::default() },
-                )?;
+                // TODO(port): use `JSGlobalObject::validate_integer_range` once
+                // the gated `JSGlobalObject.rs` impl is enabled upstream.
+                let _ = jsc::IntegerRangeOptions { field_name: b"port", always_allow_zero: true, ..Default::default() };
+                let n = arguments[1].coerce::<i32>(global_this)?;
+                if n != 0 && !(0..=(u16::MAX as i32)).contains(&n) {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "port must be between 0 and 65535, got {n}"
+                    )));
+                }
+                break 'brk n as u16;
             } else {
                 break 'brk 443;
             }
         };
 
         // SAFETY: `VirtualMachine::get()` returns the live thread-local VM (panics if absent).
-        prefetch(unsafe { (*VirtualMachine::get()).uws_loop() }, Some(&hostname_z), port);
+        prefetch(unsafe { (*VirtualMachine::get()).uws_loop() }, Some(hostname_z.as_zstr()), port);
         Ok(JSValue::UNDEFINED)
     }
 
@@ -2560,8 +2602,11 @@ pub mod internal {
         let host: Option<&ZStr> = if _host.is_null() {
             None
         } else {
-            // SAFETY: caller passes NUL-terminated string
-            Some(unsafe { ZStr::from_ptr(_host as *const u8) })
+            // SAFETY: caller passes NUL-terminated string; compute len via strlen.
+            Some(unsafe {
+                let p = _host as *const u8;
+                ZStr::from_raw(p, libc::strlen(_host) as usize)
+            })
         };
         let mut is_cache_hit = false;
         let req = getaddrinfo(loop_, host, port, Some(&mut is_cache_hit)).unwrap();
@@ -2910,8 +2955,12 @@ impl<T: CAresRecordType> HasPendingCacheKey for ResolveInfoRequest<T> {
     fn key_len(key: &Self::PendingCacheKey) -> u16 { key.len }
     #[inline]
     unsafe fn key_write_hash_len(slot: *mut Self::PendingCacheKey, hash: u64, len: u16) {
-        ptr::addr_of_mut!((*slot).hash).write(hash);
-        ptr::addr_of_mut!((*slot).len).write(len);
+        // SAFETY: caller contract — `slot` points at a valid (possibly
+        // uninitialized) `PendingCacheKey` slot inside the resolver's HiveArray.
+        unsafe {
+            ptr::addr_of_mut!((*slot).hash).write(hash);
+            ptr::addr_of_mut!((*slot).len).write(len);
+        }
     }
 }
 
@@ -2931,8 +2980,12 @@ impl HasPendingCacheKey for GetHostByAddrInfoRequest {
     fn key_len(key: &Self::PendingCacheKey) -> u16 { key.len }
     #[inline]
     unsafe fn key_write_hash_len(slot: *mut Self::PendingCacheKey, hash: u64, len: u16) {
-        ptr::addr_of_mut!((*slot).hash).write(hash);
-        ptr::addr_of_mut!((*slot).len).write(len);
+        // SAFETY: caller contract — `slot` points at a valid (possibly
+        // uninitialized) `PendingCacheKey` slot inside the resolver's HiveArray.
+        unsafe {
+            ptr::addr_of_mut!((*slot).hash).write(hash);
+            ptr::addr_of_mut!((*slot).len).write(len);
+        }
     }
 }
 
@@ -2952,8 +3005,12 @@ impl HasPendingCacheKey for GetNameInfoRequest {
     fn key_len(key: &Self::PendingCacheKey) -> u16 { key.len }
     #[inline]
     unsafe fn key_write_hash_len(slot: *mut Self::PendingCacheKey, hash: u64, len: u16) {
-        ptr::addr_of_mut!((*slot).hash).write(hash);
-        ptr::addr_of_mut!((*slot).len).write(len);
+        // SAFETY: caller contract — `slot` points at a valid (possibly
+        // uninitialized) `PendingCacheKey` slot inside the resolver's HiveArray.
+        unsafe {
+            ptr::addr_of_mut!((*slot).hash).write(hash);
+            ptr::addr_of_mut!((*slot).len).write(len);
+        }
     }
 }
 
@@ -2986,7 +3043,7 @@ impl Order {
     pub const DEFAULT: Self = Order::Verbatim;
 
     pub fn to_js(self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        ZigString::init(<&'static str>::from(self).as_bytes()).to_js(global_this)
+        bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, <&'static str>::from(self).as_bytes())
     }
 
     pub fn from_string(order: &[u8]) -> Option<Order> {
@@ -2995,7 +3052,7 @@ impl Order {
 
     pub fn from_string_or_die(order: &[u8]) -> Order {
         Self::from_string(order).unwrap_or_else(|| {
-            Output::pretty_errorln("<r><red>error<r><d>:<r> Invalid DNS result order.", &[]);
+            Output::pretty_errorln("<r><red>error<r><d>:<r> Invalid DNS result order.");
             Global::exit(1);
         })
     }
@@ -3075,23 +3132,23 @@ impl Resolver {
             vm: vm as *const VirtualMachine,
             polls: PollsMap::new(),
             options: c_ares::ChannelOptions::default(),
-            event_loop_timer: EventLoopTimer { next: bun::timespec::EPOCH, tag: EventLoopTimerTag::DNSResolver, ..Default::default() },
-            pending_host_cache_cares: PendingCache::empty(),
-            pending_host_cache_native: PendingCache::empty(),
-            pending_srv_cache_cares: HiveArray::empty(),
-            pending_soa_cache_cares: HiveArray::empty(),
-            pending_txt_cache_cares: HiveArray::empty(),
-            pending_naptr_cache_cares: HiveArray::empty(),
-            pending_mx_cache_cares: HiveArray::empty(),
-            pending_caa_cache_cares: HiveArray::empty(),
-            pending_ns_cache_cares: HiveArray::empty(),
-            pending_ptr_cache_cares: HiveArray::empty(),
-            pending_cname_cache_cares: HiveArray::empty(),
-            pending_a_cache_cares: HiveArray::empty(),
-            pending_aaaa_cache_cares: HiveArray::empty(),
-            pending_any_cache_cares: HiveArray::empty(),
-            pending_addr_cache_cares: HiveArray::empty(),
-            pending_nameinfo_cache_cares: HiveArray::empty(),
+            event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::DNSResolver),
+            pending_host_cache_cares: PendingCache::init(),
+            pending_host_cache_native: PendingCache::init(),
+            pending_srv_cache_cares: HiveArray::init(),
+            pending_soa_cache_cares: HiveArray::init(),
+            pending_txt_cache_cares: HiveArray::init(),
+            pending_naptr_cache_cares: HiveArray::init(),
+            pending_mx_cache_cares: HiveArray::init(),
+            pending_caa_cache_cares: HiveArray::init(),
+            pending_ns_cache_cares: HiveArray::init(),
+            pending_ptr_cache_cares: HiveArray::init(),
+            pending_cname_cache_cares: HiveArray::init(),
+            pending_a_cache_cares: HiveArray::init(),
+            pending_aaaa_cache_cares: HiveArray::init(),
+            pending_any_cache_cares: HiveArray::init(),
+            pending_addr_cache_cares: HiveArray::init(),
+            pending_nameinfo_cache_cares: HiveArray::init(),
         }
     }
 
@@ -3108,7 +3165,7 @@ impl Resolver {
     fn deinit(this: *mut Self) {
         unsafe {
             if let Some(channel) = (*this).channel {
-                (*channel).deinit();
+                c_ares::Channel::destroy(channel);
             }
             drop(Box::from_raw(this));
         }
@@ -3122,8 +3179,13 @@ impl Resolver {
         // `&mut` (e.g. `request_completed`, `drain_pending_*`). Holding `&mut self`
         // across that call would create aliased `&mut Resolver` (UB).
         let this: *mut Self = self;
+        let uws_loop = vm.uws_loop();
         let _g = scopeguard::guard((), move |_| {
-            vm.timer.increment_timer_ref(-1);
+            // PORT NOTE (b2-cycle): low-tier `VirtualMachine.timer` is `()`;
+            // resolve via the high-tier `RuntimeState` hook.
+            let state = crate::jsc_hooks::runtime_state();
+            // SAFETY: `state` is the boxed per-thread `RuntimeState`; single-threaded JS heap.
+            unsafe { (*state).timer.increment_timer_ref(-1, uws_loop) };
             // SAFETY: `this` is the heap allocation from `init`. This releases the
             // ref taken by `add_timer` (no local `ref_()` pairing). The timer is
             // only ACTIVE while at least one pending request also holds an
@@ -3135,9 +3197,9 @@ impl Resolver {
         // SAFETY: `this` is live (see guard comment); short-lived `&mut` borrows
         // below are released before the re-entrant `ares_process_fd` call.
         unsafe {
-            (*this).event_loop_timer.state = EventLoopTimer::State::PENDING;
+            (*this).event_loop_timer.state = EventLoopTimerState::PENDING;
 
-            if let Ok(channel) = (*this).get_channel_or_error(vm.global) {
+            if let Ok(channel) = (*this).get_channel_or_error(vm.global()) {
                 if (*this).any_requests_pending() {
                     c_ares::ares_process_fd(channel, c_ares::ARES_SOCKET_BAD, c_ares::ARES_SOCKET_BAD);
                     let _ = (*this).add_timer(Some(now));
@@ -3173,20 +3235,28 @@ impl Resolver {
     }
 
     fn add_timer(&mut self, now: Option<&bun::timespec>) -> bool {
-        if self.event_loop_timer.state == EventLoopTimer::State::ACTIVE {
+        if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {
             return false;
         }
 
         self.ref_();
         let now_ts = now.copied().unwrap_or_else(|| bun::timespec::now(bun::TimespecMockMode::AllowMockedTime));
-        self.event_loop_timer.next = now_ts.add_ms(1000);
-        self.vm().timer.increment_timer_ref(1);
-        self.vm().timer.insert(&mut self.event_loop_timer);
+        let next = now_ts.add_ms(1000);
+        // PORT NOTE: `EventLoopTimer.next` uses the event-loop crate's local
+        // `Timespec` (distinct from `bun_core::Timespec`); convert by field.
+        self.event_loop_timer.next = ElTimespec { sec: next.sec, nsec: next.nsec };
+        let uws_loop = self.vm().uws_loop();
+        let state = crate::jsc_hooks::runtime_state();
+        // SAFETY: `state` is the boxed per-thread `RuntimeState`; single-threaded JS heap.
+        unsafe {
+            (*state).timer.increment_timer_ref(1, uws_loop);
+            (*state).timer.insert(&mut self.event_loop_timer);
+        }
         true
     }
 
     fn remove_timer(&mut self) {
-        if self.event_loop_timer.state != EventLoopTimer::State::ACTIVE {
+        if self.event_loop_timer.state != EventLoopTimerState::ACTIVE {
             return;
         }
 
@@ -3198,12 +3268,16 @@ impl Resolver {
             // path here) hold an `IntrusiveRc<Resolver>`, so the timer ref is never
             // the last and this `deref` cannot reach 0 while `&mut self` is live.
             unsafe {
-                (*this).vm().timer.increment_timer_ref(-1);
+                let uws_loop = (*this).vm().uws_loop();
+                let state = crate::jsc_hooks::runtime_state();
+                (*state).timer.increment_timer_ref(-1, uws_loop);
                 Self::deref(this);
             }
         });
 
-        self.vm().timer.remove(&mut self.event_loop_timer);
+        let state = crate::jsc_hooks::runtime_state();
+        // SAFETY: `state` is the boxed per-thread `RuntimeState`; single-threaded JS heap.
+        unsafe { (*state).timer.remove(&mut self.event_loop_timer) };
     }
 
     // ───────────── pending-cache helpers ─────────────
@@ -3284,21 +3358,21 @@ impl Resolver {
     fn get_key_host(&mut self, index: u8, field: PendingCacheField) -> get_addr_info_request::PendingCacheKey {
         let cache = self.pending_host_cache(field);
         debug_assert!(cache.used.is_set(index as usize));
-        let entry = unsafe { core::ptr::read(&cache.buffer[index as usize]) };
+        let entry = unsafe { core::ptr::read(cache.buffer[index as usize].as_ptr()) };
         cache.used.unset(index as usize);
         entry
     }
     fn get_key_addr(&mut self, index: u8) -> get_host_by_addr_info_request::PendingCacheKey {
         let cache = &mut self.pending_addr_cache_cares;
         debug_assert!(cache.used.is_set(index as usize));
-        let entry = unsafe { core::ptr::read(&cache.buffer[index as usize]) };
+        let entry = unsafe { core::ptr::read(cache.buffer[index as usize].as_ptr()) };
         cache.used.unset(index as usize);
         entry
     }
     fn get_key_nameinfo(&mut self, index: u8) -> get_name_info_request::PendingCacheKey {
         let cache = &mut self.pending_nameinfo_cache_cares;
         debug_assert!(cache.used.is_set(index as usize));
-        let entry = unsafe { core::ptr::read(&cache.buffer[index as usize]) };
+        let entry = unsafe { core::ptr::read(cache.buffer[index as usize].as_ptr()) };
         cache.used.unset(index as usize);
         entry
     }

@@ -1487,7 +1487,7 @@ pub mod js_bundler {
                     }
 
                     if compile.outfile.is_empty() {
-                        let entry_point = this.entry_points.keys()[0];
+                        let entry_point: &[u8] = &this.entry_points.keys()[0];
                         let mut outfile = bun_paths::basename(entry_point);
                         let ext = bun_paths::extension(outfile);
                         if !ext.is_empty() {

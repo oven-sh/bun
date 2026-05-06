@@ -56,8 +56,8 @@ pub fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Task) {
     let _crash_guard = {
         let prev_action = bun_crash_handler::current_action();
         bun_crash_handler::set_current_action(bun_crash_handler::Action::BundleGenerateChunk {
-            chunk: ctx.chunk as *const Chunk as *const (),
-            context: ctx.c as *const LinkerContext as *const (),
+            chunk: chunk_ptr as *const (),
+            context: c_ptr as *const (),
             part_range: &part_range.part_range,
         });
         scopeguard::guard((), move |_| {
@@ -68,7 +68,7 @@ pub fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Task) {
     #[cfg(feature = "show_crash_trace")]
     {
         // SAFETY: parse_graph is a backref into BundleV2.graph, valid for the bundle lifetime.
-        let parse_graph = unsafe { &*ctx.c.parse_graph };
+        let parse_graph = unsafe { &*(*c_ptr).parse_graph };
         let path = &parse_graph.input_files.items_source()
             [part_range.part_range.source_index.get() as usize]
             .path;
@@ -78,10 +78,17 @@ pub fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Task) {
         }
     }
 
-    // SAFETY: ctx.c / ctx.chunk are unique mutable for the duration of this task (one
-    // PendingPartRange per worker callback); cast through *const because `ctx` is held by `&`.
-    let c_mut: &mut LinkerContext = unsafe { &mut *(ctx.c as *const LinkerContext as *mut LinkerContext) };
-    let chunk_mut: &mut Chunk = unsafe { &mut *(ctx.chunk as *const Chunk as *mut Chunk) };
+    // SAFETY: `c_ptr` / `chunk_ptr` carry mutable provenance (see extraction above). In the
+    // Zig source these are bare `*LinkerContext` / `*Chunk` shared across all part-range
+    // tasks for a chunk; concurrent tasks uphold a disjoint-write contract:
+    //   - `chunk.compile_results_for_chunk[i]` is written at a per-task unique index `i`,
+    //   - `chunk.files_with_parts_in_chunk` entries are updated via atomic RMW only,
+    //   - all other access through `c` / `chunk` during codegen is read-only.
+    // No other live `&`/`&mut` to these allocations exists in this frame at this point
+    // (`bv2` and `ctx` are no longer used below).
+    let _ = ctx;
+    let c_mut: &mut LinkerContext = unsafe { &mut *c_ptr };
+    let chunk_mut: &mut Chunk = unsafe { &mut *chunk_ptr };
 
     chunk_mut.compile_results_for_chunk[part_range.i as usize] =
         generate_compile_result_for_js_chunk_impl(

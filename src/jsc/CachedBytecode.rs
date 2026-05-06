@@ -168,6 +168,6 @@ impl CachedBytecode {
 // PORT STATUS
 //   source:     src/jsc/CachedBytecode.zig (76 lines)
 //   confidence: medium
-//   todos:      4
-//   notes:      VTable/allocator/is_instance are Zig allocator-idiom shims left as todo!() stubs; Phase B should replace with an owning slice type whose Drop calls deref().
+//   todos:      2
+//   notes:      allocator()/is_instance() ported as &dyn Allocator fat-pointer vtable-identity (matches bun_safety::alloc pattern); the Zig free→deref slot has no trait method to ride, so Phase B should replace call sites with an owning slice type whose Drop calls deref().
 // ──────────────────────────────────────────────────────────────────────────

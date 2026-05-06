@@ -94,3 +94,30 @@ test("Map with duplicate-by-value keys rejects when values differ", () => {
     ),
   ).toBe(false);
 });
+
+// Asymmetric matchers (expect.anything, etc.) make the match relation non-transitive,
+// so bijection-via-greedy matching misses valid pairings that exist. For expect().toEqual,
+// we use Jest-compatible two-way subset semantics.
+test("expect().toEqual with expect.anything mixed with concrete values in Set", () => {
+  // Valid 1:1 pairing: {a:1}↔{a:1}, {a:2}↔anything()
+  expect(new Set([{ a: 1 }, { a: 2 }])).toEqual(new Set([expect.anything(), { a: 1 }]));
+});
+
+test("expect().toEqual with expect.anything in Set - reverse order", () => {
+  expect(new Set([expect.anything(), { a: 1 }])).toEqual(new Set([{ a: 1 }, { a: 2 }]));
+});
+
+test("expect().toEqual with expect.anything in Map", () => {
+  // Valid 1:1 pairing: ({a:1},"x")↔({a:1},"x"), ({a:2},"y")↔(anything(),"y")
+  expect(
+    new Map<object, string>([
+      [{ a: 1 }, "x"],
+      [{ a: 2 }, "y"],
+    ]),
+  ).toEqual(
+    new Map<object, string>([
+      [expect.anything(), "y"],
+      [{ a: 1 }, "x"],
+    ]),
+  );
+});

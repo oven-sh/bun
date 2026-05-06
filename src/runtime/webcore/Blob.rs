@@ -1802,7 +1802,7 @@ pub fn write_file_with_source_destination(
         };
         match &source_store.data {
             store::Data::Bytes(bytes) => {
-                if bytes.len > S3::MultiPartUploadOptions::MAX_SINGLE_UPLOAD_SIZE {
+                if bytes.len() as usize > S3::MultiPartUploadOptions::MAX_SINGLE_UPLOAD_SIZE {
                     if let Some(stream) = ReadableStream::from_js(
                         ReadableStream::from_blob_copy_ref(ctx, source_blob, s3.options.part_size as crate::webcore::blob::SizeType)?,
                         ctx,
@@ -1844,7 +1844,7 @@ pub fn write_file_with_source_destination(
                             let global = unsafe { &*this.global };
                             match result {
                                 S3UploadResult::Success => {
-                                    this.promise.resolve(global, JSValue::js_number(this.store.data.as_bytes().len as f64))?;
+                                    this.promise.resolve(global, JSValue::js_number(this.store.data.as_bytes().len() as f64))?;
                                 }
                                 S3UploadResult::Failure(err) => {
                                     // SAFETY: sole `&mut JSPromise` borrow; consumed immediately.
@@ -2133,7 +2133,7 @@ pub fn write_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
     )
 }
 
-const WRITE_PERMISSIONS: u32 = 0o664;
+const WRITE_PERMISSIONS: bun_sys::Mode = 0o664;
 
 fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     global_this: &JSGlobalObject,
@@ -2369,7 +2369,13 @@ pub fn jsdom_file_construct_(
 
                         // SAFETY: bun_vm() returns the live VM pointer for this global.
                         if let Some(mime) = unsafe { (*global_this.bun_vm()).mime_type(slice) } {
-                            blob.content_type = mime.value as *const [u8];
+                            blob.content_type = match mime.value {
+                                        ::std::borrow::Cow::Borrowed(s) => s as *const [u8],
+                                        ::std::borrow::Cow::Owned(v) => {
+                                            blob.content_type_allocated = true;
+                                            Box::into_raw(v.into_boxed_slice())
+                                        }
+                                    };
                             break 'inner;
                         }
                         let mut content_type_buf = vec![0u8; slice.len()];
@@ -3068,7 +3074,7 @@ impl Blob {
                     unsafe { webcore::FileSink::deref(sink) };
                     return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                         global_this,
-                        err.to_js(global_this)?,
+                        err.to_js(global_this),
                     ));
                 }
                 break 'brk_sink sink;
@@ -3194,20 +3200,23 @@ impl Blob {
             );
 
             let input_path: webcore::PathOrFileDescriptor = match &store.data.as_file().pathlike {
-                node::PathLike::Fd(fd) => webcore::PathOrFileDescriptor::Fd(*fd),
-                p => webcore::PathOrFileDescriptor::Path(bun_str::ZigStringSlice::init_dupe(p.slice()).expect("oom")),
+                PathOrFileDescriptor::Fd(fd) => webcore::PathOrFileDescriptor::Fd(*fd),
+                PathOrFileDescriptor::Path(p) => webcore::PathOrFileDescriptor::Path(
+                    bun_str::ZigStringSlice::init_dupe(p.slice()).expect("oom"),
+                ),
             };
 
-            let mut stream_start = streams::Start::FileSink(streams::FileSinkOptions {
-                input_path: input_path.clone(),
-                chunk_size: 0,
-            });
-
-            if !arguments.is_empty() && arguments[0].is_object() {
-                stream_start = streams::Start::from_js_with_tag::<{ streams::StartTag::FileSink }>(global_this, arguments[0])?;
-                if let streams::Start::FileSink(ref mut opts) = stream_start {
-                    opts.input_path = input_path;
-                }
+            // PORT NOTE: `webcore::PathOrFileDescriptor` is not `Clone`; build user
+            // options first, then move `input_path` in once.
+            let mut stream_start = if !arguments.is_empty() && arguments[0].is_object() {
+                streams::Start::from_js_with_tag::<{ streams::StartTag::FileSink }>(global_this, arguments[0])?
+            } else {
+                streams::Start::FileSink(streams::FileSinkOptions { chunk_size: 0, input_path: webcore::PathOrFileDescriptor::Fd(Fd::INVALID) })
+            };
+            if let streams::Start::FileSink(ref mut opts) = stream_start {
+                opts.input_path = input_path;
+            } else {
+                stream_start = streams::Start::FileSink(streams::FileSinkOptions { chunk_size: 0, input_path });
             }
 
             // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink; sole owner here.
@@ -3340,7 +3349,13 @@ impl Blob {
                     }
 
                     if let Some(mime) = unsafe { (*global_this.bun_vm()).mime_type(slice) } {
-                        content_type = mime.value as *const [u8];
+                        content_type = match mime.value {
+                            ::std::borrow::Cow::Borrowed(s) => s as *const [u8],
+                            ::std::borrow::Cow::Owned(v) => {
+                                content_type_was_allocated = true;
+                                Box::into_raw(v.into_boxed_slice())
+                            }
+                        };
                         break 'inner;
                     }
 
@@ -3583,11 +3598,10 @@ pub extern "C" fn Blob__fromMmapWithType(
     {
         // TODO(port): Store::init with a custom allocator vtable that munmap's on free.
         // SAFETY: caller guarantees [ptr, ptr+len) is a valid mmap'd region.
-        let store = Store::init_with_allocator(
-            unsafe { core::slice::from_raw_parts_mut(ptr, len) },
-            bun_alloc::AllocatorVTable::mmap(),
-        );
-        let blob = Blob::new(Blob::init_with_store(store, global_this));
+        let _ = (ptr, len);
+        todo!("blocked_on: Store::init_with_allocator / bun_alloc::AllocatorVTable::mmap");
+        #[allow(unreachable_code)]
+        let blob: *mut Blob = core::ptr::null_mut();
         // SAFETY: caller (C++) passes a valid NUL-terminated C string.
         let mime_slice = unsafe { core::ffi::CStr::from_ptr(mime) }.to_bytes();
         if !mime_slice.is_empty() {
@@ -3700,10 +3714,12 @@ impl Blob {
 }
 
 /// resolve file stat like size, last_modified
-fn resolve_file_stat(store: &Store) {
-    let file = store.data.as_file_mut();
+fn resolve_file_stat(store: &StoreRef) {
+    // SAFETY: `StoreRef::as_ptr()` yields the original `Box::into_raw` pointer; the
+    // caller holds the only ref across this call, so an exclusive borrow is sound.
+    let file = unsafe { (*store.as_ptr()).data.as_file_mut() };
     match &file.pathlike {
-        node::PathLike::Path(path) => {
+        PathOrFileDescriptor::Path(path) => {
             let mut buffer = bun_paths::PathBuffer::uninit();
             match bun_sys::stat(path.slice_z(&mut buffer)) {
                 bun_sys::Result::Ok(stat) => {
@@ -3720,7 +3736,7 @@ fn resolve_file_stat(store: &Store) {
                 _ => {}
             }
         }
-        node::PathLike::Fd(fd) => {
+        PathOrFileDescriptor::Fd(fd) => {
             match bun_sys::fstat(*fd) {
                 bun_sys::Result::Ok(stat) => {
                     file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
@@ -3770,7 +3786,13 @@ impl Blob {
                                     blob.content_type_was_set = true;
 
                                     if let Some(mime) = unsafe { (*global_this.bun_vm()).mime_type(slice) } {
-                                        blob.content_type = mime.value as *const [u8];
+                                        blob.content_type = match mime.value {
+                                        ::std::borrow::Cow::Borrowed(s) => s as *const [u8],
+                                        ::std::borrow::Cow::Owned(v) => {
+                                            blob.content_type_allocated = true;
+                                            Box::into_raw(v.into_boxed_slice())
+                                        }
+                                    };
                                         break 'inner;
                                     }
                                     let mut buf = vec![0u8; slice.len()];
@@ -3801,8 +3823,11 @@ impl Blob {
             this_ref.is_heap_allocated(),
             "`finalize` may only be called on a heap-allocated Blob"
         );
-        let mut shared = Ref::adopt(this);
-        shared.deinit();
+        // PORT NOTE: `Ref::adopt` requires `Blob: ExternalSharedDescriptor`,
+        // which is not yet implemented. Decrement the intrusive refcount directly;
+        // `deref` calls `deinit()` (which `drop(Box::from_raw)`s if heap-allocated)
+        // when the count reaches zero.
+        Blob__deref(this_ref);
     }
 
     pub fn init_with_all_ascii(bytes: Vec<u8>, global_this: &JSGlobalObject, is_all_ascii: bool) -> Blob {

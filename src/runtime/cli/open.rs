@@ -463,13 +463,17 @@ fn auto_close(spawned: *mut SpawnedEditorContext) {
     }
 
     // TODO(port): Zig called `child_process.spawn()` then `.wait()` via std.process.Child.
-    // Replace with crate::process::spawn_sync once available from a non-JS thread.
-    let _ = crate::process::spawn_sync(&crate::process::SpawnOptions {
-        argv: &argv[0..spawned.argc],
+    // Mapped to sync::spawn (bun.spawnSync) per src/CLAUDE.md guidance.
+    let owned_argv: Vec<Box<[u8]>> = argv[0..spawned.argc]
+        .iter()
+        .map(|s| s.to_vec().into_boxed_slice())
+        .collect();
+    let _ = sync::spawn(&sync::Options {
+        argv: owned_argv,
         envp: None,
-        stderr: crate::process::Stdio::Inherit,
-        stdout: crate::process::Stdio::Inherit,
-        stdin: crate::process::Stdio::Inherit,
+        stderr: sync::SyncStdio::Inherit,
+        stdout: sync::SyncStdio::Inherit,
+        stdin: sync::SyncStdio::Inherit,
         ..Default::default()
     });
 }

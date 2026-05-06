@@ -1978,7 +1978,7 @@ impl NetworkSink {
         self.signal = signal;
     }
 
-    pub fn sink(&mut self) -> Sink {
+    pub fn sink(&mut self) -> Sink<'_> {
         Sink::init(self)
     }
 

@@ -459,13 +459,15 @@ impl BlockList {
     /// directly (codegen-emitted; see generate-classes.ts).
     fn to_js_ptr(this: *mut Self, global: &JSGlobalObject) -> JSValue {
         unsafe extern "C" {
+            // `ptr` is `*mut BlockList` on the C++ side; pass as opaque `*mut c_void`
+            // here since `BlockList` (a `JsClass` payload) is not `#[repr(C)]`.
             #[link_name = "BlockList__create"]
-            fn __create(global: *mut JSGlobalObject, ptr: *mut BlockList) -> JSValue;
+            fn __create(global: *mut JSGlobalObject, ptr: *mut c_void) -> JSValue;
         }
         // SAFETY: `global` is live; `this` is a live `Box::into_raw` pointer
         // whose ref was bumped for this wrapper. Ownership of one ref transfers
         // to the C++ wrapper (released via `finalize` → `deref`).
-        unsafe { __create(global as *const _ as *mut _, this) }
+        unsafe { __create(global as *const _ as *mut _, this as *mut c_void) }
     }
 }
 

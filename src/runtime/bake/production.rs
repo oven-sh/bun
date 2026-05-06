@@ -252,7 +252,10 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
         }
         Err(e) => return Err(e),
     }
-    drop(api_lock);
+    // Explicitly end the API-lock scope here (mirrors Zig's `defer api_lock.release()`).
+    // `api_lock` is currently `()` until `bun_jsc::VM::get_api_lock` lands, so `drop`
+    // is a no-op that trips the dropping_copy_types lint — bind to `_` instead.
+    let _ = api_lock;
     Ok(())
 }
 

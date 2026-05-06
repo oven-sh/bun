@@ -138,16 +138,18 @@ impl Script {
     #[inline]
     fn stmt_count_of(me: &Script) -> usize {
         // SAFETY: `me.node` points into the AST arena, which the interpreter
-        // holds for its entire lifetime (`ShellArgs::__arena`).
-        unsafe { (*(*me.node).stmts).len() }
+        // holds for its entire lifetime (`ShellArgs::__arena`). Use the raw
+        // slice-pointer `len()` to avoid an implicit autoref on the deref.
+        unsafe { (*me.node).stmts.len() }
     }
 
     #[inline]
     fn stmt_at(interp: &Interpreter, this: NodeId, idx: usize) -> *const ast::Stmt {
         let me = interp.as_script(this);
         // SAFETY: see `stmt_count_of`; `idx` was bounds-checked against
-        // `stmt_count` by the caller.
-        unsafe { &(*(*me.node).stmts)[idx] as *const _ }
+        // `stmt_count` by the caller. Raw-pointer arithmetic avoids the
+        // implicit autoref that slice indexing would introduce.
+        unsafe { (*me.node).stmts.as_ptr().add(idx) }
     }
 }
 

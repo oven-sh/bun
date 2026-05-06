@@ -110,7 +110,11 @@ pub struct JSONLikeParser<
     const GUESS_INDENTATION: bool,
 > {
     pub lexer: js_lexer::Lexer<'a, 'bump>,
-    pub log: &'a mut logger::Log,
+    // PORT NOTE — Stacked Borrows: the Zig spec stores a second `*logger.Log`
+    // here (json.zig:103). In Rust that would alias the lexer's `*mut Log`; a
+    // live `&'a mut Log` field would invalidate the lexer's SharedReadWrite tag
+    // on first use (UB on the next lexer error). All log writes route through
+    // `self.lexer.log_mut()` instead — single provenance chain.
     pub bump: &'bump Bump,
     pub list_bump: &'bump Bump,
     pub stack_check: StackCheck,
@@ -183,7 +187,6 @@ where
         Ok(Self {
             lexer: js_lexer::Lexer::init(log, source_, bump, Self::OPTS)?,
             bump,
-            log,
             list_bump,
             stack_check: StackCheck::init(),
         })
@@ -339,13 +342,18 @@ where
 
                         // Warn about duplicate keys
                         if dup {
-                            self.log
+                            // Route through the lexer's single `*mut Log` —
+                            // see struct note re: Stacked Borrows.
+                            let source = self.lexer.source;
+                            let key_text = str.string(self.bump)?;
+                            self.lexer
+                                .log_mut()
                                 .add_range_warning_fmt(
-                                    Some(self.lexer.source),
+                                    Some(source),
                                     key_range,
                                     format_args!(
                                         "Duplicate key \"{}\" in object literal",
-                                        bstr::BStr::new(str.string(self.bump)?)
+                                        bstr::BStr::new(key_text)
                                     ),
                                 )
                                 .expect("unreachable");
@@ -381,12 +389,21 @@ where
             _ => {
                 if MAYBE_AUTO_QUOTE {
                     // PORT NOTE: borrowck — capture `source` (a `&'a Source`,
-                    // Copy) before reassigning `self.lexer` so the immutable
-                    // borrow of `self` via `self.source()` doesn't overlap the
-                    // `&mut self.lexer` write.
+                    // Copy) and the lexer's `*mut Log` before reassigning
+                    // `self.lexer`. The new lexer is built over the *same* raw
+                    // log pointer so there is still exactly one provenance
+                    // chain (see struct note); the temporary `&mut *log_ptr`
+                    // ends as soon as `init_json` stores it back as `*mut`.
                     let source = self.lexer.source;
-                    self.lexer =
-                        js_lexer::Lexer::init_json(self.log, source, self.bump, Self::OPTS)?;
+                    let log_ptr = self.lexer.log_ptr();
+                    // SAFETY: `log_ptr` is the sole handle to the `Log`; the
+                    // old lexer is being replaced and holds no live borrow.
+                    self.lexer = js_lexer::Lexer::init_json(
+                        unsafe { &mut *log_ptr },
+                        source,
+                        self.bump,
+                        Self::OPTS,
+                    )?;
                     self.lexer.parse_string_literal(0)?;
                     return self.parse_expr::<false, FORCE_UTF8>();
                 }
@@ -404,9 +421,11 @@ where
 
         if self.lexer.token == closer {
             if !ALLOW_TRAILING_COMMAS {
-                self.log
+                let source = self.lexer.source;
+                self.lexer
+                    .log_mut()
                     .add_range_error(
-                        Some(self.lexer.source),
+                        Some(source),
                         comma_range,
                         b"JSON does not support trailing commas",
                     )
@@ -435,7 +454,8 @@ where
 pub struct PackageJSONVersionChecker<'a, 'bump> {
     pub lexer: js_lexer::Lexer<'a, 'bump>,
     pub source: &'a logger::Source,
-    pub log: &'a mut logger::Log,
+    // PORT NOTE — Stacked Borrows: no separate `log` field; route through
+    // `self.lexer.log_mut()` (single provenance chain — see `JSONLikeParser`).
     pub bump: &'bump Bump,
     pub depth: usize,
     pub stack_check: StackCheck,
@@ -482,7 +502,6 @@ where
         Ok(Self {
             lexer: js_lexer::Lexer::init(log, source, bump, PKG_JSON_OPTS)?,
             bump,
-            log,
             source,
             depth: 0,
             stack_check: StackCheck::init(),
@@ -648,7 +667,8 @@ where
 
         if self.lexer.token == closer {
             if !PKG_JSON_OPTS.allow_trailing_commas {
-                self.log
+                self.lexer
+                    .log_mut()
                     .add_range_error(
                         Some(self.source),
                         comma_range,

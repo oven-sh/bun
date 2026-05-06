@@ -288,12 +288,22 @@ where
 
     // ── error reporting ──────────────────────────────────────────────────
 
+    /// Single provenance chain to the `Log` — the parser routes its own log
+    /// writes through here too (see struct doc).
     #[inline]
-    fn log_mut(&self) -> &mut logger::Log {
-        // SAFETY: see struct doc — `*mut Log` aliases the parser's `&mut Log`
-        // but is only dereferenced on the lexer's cold error paths, never
-        // overlapping a parser-side `&mut` borrow.
+    pub fn log_mut(&self) -> &mut logger::Log {
+        // SAFETY: see struct doc — `log` is the only handle to the `Log` for
+        // the lifetime of the parse; no `&mut Log` is held elsewhere, so this
+        // deref never overlaps another live borrow.
         unsafe { &mut *self.log }
+    }
+
+    /// Raw pointer escape hatch for the `MAYBE_AUTO_QUOTE` retry path in
+    /// `json.rs`, which must rebuild a fresh `Lexer` over the same `Log`
+    /// without introducing a second `&mut` provenance chain.
+    #[inline]
+    pub fn log_ptr(&self) -> *mut logger::Log {
+        self.log
     }
 
     #[cold]

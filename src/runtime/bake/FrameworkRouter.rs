@@ -1900,17 +1900,15 @@ impl JSFrameworkRouter {
         });
 
         // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachine` for a Bun-owned global.
-        let resolver = unsafe { &mut (*global.bun_vm()).transpiler.resolver };
-        jsfr.router.scan(
-            TypeIndex::init(0),
-            resolver,
-            // TODO(port): borrowck — `jsfr.router` and `jsfr` both borrowed; needs reshape (split fields)
-            {
-                todo!("blocked_on: borrowck — JSFrameworkRouter::constructor split-borrow of router/self");
-                #[allow(unreachable_code)]
-                &mut *jsfr as &mut dyn InsertionHandler
-            },
-        )?;
+        let _resolver = unsafe { &mut (*global.bun_vm()).transpiler.resolver };
+        // TODO(port): borrowck — Zig calls `jsfr.router.scan(.init(0), &vm.transpiler.resolver,
+        // InsertionContext.wrap(jsfr))`, which needs `&mut jsfr.router` and
+        // `&mut *jsfr as &mut dyn InsertionHandler` simultaneously. The handler only touches
+        // `files`/`stored_parse_errors`, so the regions are disjoint at runtime; needs a
+        // split-field reshape (move `router` out, scan, move back) in Phase B.
+        todo!("blocked_on: borrowck — JSFrameworkRouter::constructor split-borrow of router/self");
+        #[allow(unreachable_code)]
+        {
         if !jsfr.stored_parse_errors.is_empty() {
             let arr = JSValue::create_empty_array(global, jsfr.stored_parse_errors.len())?;
             for (i, item) in jsfr.stored_parse_errors.iter().enumerate() {
@@ -1920,7 +1918,7 @@ impl JSFrameworkRouter {
                     global.create_error_instance(format_args!(
                         "Invalid route {}: {}",
                         bun_core::fmt::quote(&item.rel_path),
-                        bstr::BStr::new(item.log.msg.slice()),
+                        bstr::BStr::new(item.log.msg.const_slice()),
                     )),
                 )?;
             }
@@ -1933,6 +1931,7 @@ impl JSFrameworkRouter {
         }
 
         Ok(jsfr)
+        }
     }
 
     #[bun_jsc::host_fn(method)]

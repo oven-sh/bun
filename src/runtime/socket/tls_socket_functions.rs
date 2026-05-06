@@ -2,10 +2,31 @@ use core::ffi::{c_char, c_int, c_long, c_void};
 use std::ffi::CStr;
 
 use bun_boringssl_sys as boringssl;
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, ZigStringJsc as _};
 use bun_str::{self, strings, String as BunString, ZigString};
 
 use crate::api::bun_x509 as X509;
+use crate::webcore::blob::ZigStringBlobExt as _;
+
+// ──────────────────────────────────────────────────────────────────────────
+// `JSValue::createBufferFromLength` lives upstream in `bun_jsc` (Zig) but the
+// Rust port currently exposes it only via the private
+// `crate::napi::napi_body::JSValueNapiExt`. Per port rules we shim the FFI
+// locally rather than touching the napi crate; migrate once `bun_jsc::JSValue`
+// grows the inherent method.
+// ──────────────────────────────────────────────────────────────────────────
+unsafe extern "C" {
+    fn JSBuffer__bufferFromLength(global: *mut JSGlobalObject, len: i64) -> JSValue;
+}
+#[inline]
+fn create_buffer_from_length(global: &JSGlobalObject, len: usize) -> JsResult<JSValue> {
+    // SAFETY: FFI; may throw OOM.
+    let v = unsafe { JSBuffer__bufferFromLength(global.as_ptr(), len as i64) };
+    if global.has_exception() {
+        return Err(jsc::JsError::Thrown);
+    }
+    Ok(v)
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Local BoringSSL FFI surface not yet in bun_boringssl_sys.

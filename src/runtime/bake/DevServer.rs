@@ -2965,15 +2965,20 @@ impl DevServer<'_> {
         match &route_bundle.data {
             route_bundle::Data::Framework(fw) => {
                 let mut route = self.router.route_ptr(fw.route_index);
-                let router_type = self.router.type_ptr(route.r#type);
+                // PORT NOTE: copy the two `Type` fields up front so the
+                // `&self.router` borrow doesn't overlap `&mut self.*_graph`.
+                let (rt_server_file, rt_client_file) = {
+                    let rt = self.router.type_ptr_const(route.r#type);
+                    (rt.server_file, rt.client_file)
+                };
 
                 // Both framework entry points are considered
                 self.server_graph.trace_imports(
-                    from_opaque_file_id::<{ bake::Side::Server }>(router_type.server_file),
+                    from_opaque_file_id::<{ bake::Side::Server }>(rt_server_file),
                     gts,
                     TraceImportGoal::FindCss,
                 )?;
-                if let Some(id) = router_type.client_file {
+                if let Some(id) = rt_client_file {
                     self.client_graph.trace_imports(
                         from_opaque_file_id::<{ bake::Side::Client }>(id),
                         gts,
@@ -3110,14 +3115,22 @@ pub fn finalize_bundle(
     result: &mut bundler::bundle_v2::DevServerOutput,
 ) -> JsResult<()> {
     debug_assert!(dev.magic == Magic::Valid);
-    let mut had_sent_hmr_event = false;
+    // PORT NOTE: `had_sent_hmr_event` is read inside the outer-defer scopeguard
+    // and mutated later in the body. Use a `Cell` so the closure capture is `&Cell`
+    // (shared), letting the body keep writing through `.set()`.
+    let had_sent_hmr_event = ::core::cell::Cell::new(false);
 
     // TODO(port): the giant `defer` block at the start of finalizeBundle has been
     // moved into a scopeguard. Phase B must verify ordering relative to ?-returns.
+    // PORT NOTE: erase `dev`/`bv2` to raw pointers inside the guard so the
+    // long-lived closure capture doesn't lock borrowck for the entire fn body
+    // (Zig `defer` had no aliasing analysis).
     let dev_ptr = dev as *mut DevServer;
+    let bv2_ptr = bv2 as *mut BundleV2;
     let _outer_defer = scopeguard::guard((), |_| {
-        // SAFETY: dev outlives this scope
+        // SAFETY: `dev`/`bv2` are `&mut` params; both outlive this fn-scoped guard.
         let dev = unsafe { &mut *dev_ptr };
+        let bv2 = unsafe { &mut *bv2_ptr };
         // TODO(port): heap moved out before deinit
         let mut heap = ::core::mem::replace(&mut bv2.graph.heap, bun_alloc::Arena::new());
         bv2.deinit_without_freeing_arena();
@@ -3143,7 +3156,7 @@ pub fn finalize_bundle(
                 HmrTopic::TestingWatchSynchronization,
                 &[
                     MessageId::TestingWatchSynchronization.char(),
-                    if had_sent_hmr_event { 4 } else { 3 },
+                    if had_sent_hmr_event.get() { 4 } else { 3 },
                 ],
                 Opcode::BINARY,
             );
@@ -3152,7 +3165,7 @@ pub fn finalize_bundle(
         dev.start_next_bundle_if_present();
 
         // Unref the ref added in `start_async_bundle`
-        if let Some(server) = &dev.server {
+        if let Some(server) = dev.server.as_mut() {
             server.on_static_request_complete();
         }
     });

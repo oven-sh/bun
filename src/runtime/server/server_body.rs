@@ -1326,7 +1326,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             None => PluginsResult::Found(None),
             Some(p) => match &p.state {
                 ServePluginsState::Unqueued(_) | ServePluginsState::Pending { .. } => PluginsResult::Pending,
-                ServePluginsState::Loaded(plugin) => PluginsResult::Found(Some(plugin)),
+                ServePluginsState::Loaded(plugin) => PluginsResult::Found(Some(plugin.as_ref())),
                 ServePluginsState::Err => PluginsResult::Err,
             },
         }
@@ -2438,9 +2438,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if self.inspector_server_id.get() != 0 {
             #[cold] fn cold() {}
             cold();
-            if let Some(debugger) = &mut self.vm_mut().debugger {
+            let has_debugger = self.vm_mut().debugger.is_some();
+            if has_debugger {
                 cold();
-                let _ = &debugger.http_server_agent;
                 // TODO(port): HTTPServerAgent is a forward-decl stub in bun_jsc::Debugger;
                 // the real `notify_server_stopped` lives in the gated http_server_agent crate.
                 todo!("blocked_on: bun_jsc::debugger::HTTPServerAgent::notify_server_stopped");

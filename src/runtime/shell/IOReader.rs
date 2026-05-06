@@ -96,6 +96,14 @@ impl IOReader {
         unsafe { &mut *self.state.get() }
     }
 
+    #[inline]
+    fn reader(&self) -> &mut ReaderImpl {
+        // SAFETY: single-threaded. Split into its own cell so a `&mut ReaderImpl`
+        // held by the bun_io read loop never overlaps a `&mut State` derived in a
+        // vtable callback (see struct doc comment).
+        unsafe { &mut *self.reader.get() }
+    }
+
     pub fn init(fd: Fd, evtloop: EventLoopHandle) -> std::sync::Arc<IOReader> {
         let mut reader = ReaderImpl::init::<IOReader>();
         #[cfg(not(windows))]
@@ -107,9 +115,9 @@ impl IOReader {
             reader.source = Some(bun_io::Source::open_file(fd));
         }
         let this = std::sync::Arc::new(IOReader {
+            reader: UnsafeCell::new(reader),
             state: UnsafeCell::new(State {
                 fd,
-                reader,
                 buf: Vec::new(),
                 readers: Readers::new(),
                 read: 0,
@@ -124,9 +132,15 @@ impl IOReader {
         });
         // PORT NOTE: set the parent backref after Arc allocation so the
         // address is stable.
-        let parent = std::sync::Arc::as_ptr(&this) as *mut IOReader;
-        // SAFETY: single owner; address stable for Arc lifetime.
-        unsafe { (*parent).state().reader.set_parent(parent.cast()) };
+        //
+        // SAFETY: `Arc::as_ptr` yields `*const IOReader`, but every field of
+        // `IOReader` is `UnsafeCell`, so all mutation flows through interior
+        // mutability (SharedReadWrite). The `*mut` cast exists solely to satisfy
+        // `set_parent`'s `*mut` signature for the vtable backref; the
+        // `BufferedReaderParent` callbacks only ever reborrow it as `&Self` to
+        // call `&self` methods — no `&mut IOReader` is materialized from it.
+        let parent: *const IOReader = std::sync::Arc::as_ptr(&this);
+        unsafe { (*this.reader.get()).set_parent((parent as *mut IOReader).cast()) };
         crate::shell_log!("IOReader(0x{:x}, fd={}) create", parent as usize, fd);
         this
     }
@@ -170,17 +184,18 @@ impl IOReader {
 
     /// Idempotent function to start the reading. Spec: IOReader.zig `start`.
     pub fn start(&self) -> Yield {
-        let s = self.state();
-        s.started = true;
+        self.state().started = true;
         #[cfg(not(windows))]
         {
-            let need_start = match &s.reader.handle {
+            let r = self.reader();
+            let need_start = match &r.handle {
                 bun_io::pipes::PollOrFd::Closed => true,
                 bun_io::pipes::PollOrFd::Poll(p) => !p.is_registered(),
                 bun_io::pipes::PollOrFd::Fd(_) => true,
             };
             if need_start {
-                if let Err(e) = s.reader.start(s.fd, true) {
+                let fd = self.state().fd;
+                if let Err(e) = r.start(fd, true) {
                     self.on_reader_error(e);
                 }
             }
@@ -188,11 +203,12 @@ impl IOReader {
         }
         #[cfg(windows)]
         {
+            let s = self.state();
             if s.is_reading {
                 return Yield::suspended();
             }
             s.is_reading = true;
-            if let Err(e) = s.reader.start_with_current_pipe() {
+            if let Err(e) = self.reader().start_with_current_pipe() {
                 self.on_reader_error(e);
                 return Yield::failed();
             }
@@ -239,16 +255,15 @@ impl IOReader {
         }
 
         let should_continue = has_more != bun_io::ReadState::Eof;
-        let s = self.state();
-        if should_continue && !s.readers.is_empty() {
+        if should_continue && !self.state().readers.is_empty() {
             self.set_reading(true);
             #[cfg(not(windows))]
             {
-                s.reader.register_poll();
+                self.reader().register_poll();
             }
             #[cfg(windows)]
             {
-                if let Err(e) = s.reader.start_with_current_pipe() {
+                if let Err(e) = self.reader().start_with_current_pipe() {
                     self.on_reader_error(e);
                     return false;
                 }

@@ -349,11 +349,12 @@ impl FileReader {
         let mut pollable = false;
         let mut file_type = FileType::File;
         if let Lazy::Blob(store) = &self.lazy {
-            // TODO(port): Arc<Store> interior mutability — `data.file` is mutated below.
-            // Phase B: blob::Store likely needs UnsafeCell/RefCell around `data`.
-            let store_ptr = std::sync::Arc::as_ptr(store) as *mut blob::Store;
-            // SAFETY: Store is single-threaded here and we hold the only mutating ref;
-            // matches Zig's `*Blob.Store` direct field access.
+            // SAFETY: `StoreRef::as_ptr` yields `*mut Store` with mutable provenance
+            // (originating from `Box::into_raw`). Store is single-threaded here and we
+            // hold the only mutating handle; matches Zig's `*Blob.Store` direct field
+            // access. No `&` to `*store_ptr` is live across this `&mut` — `store` only
+            // borrows the `StoreRef` wrapper (the `NonNull`), not the pointee.
+            let store_ptr: *mut blob::Store = store.as_ptr();
             let store_data = unsafe { &mut (*store_ptr).data };
             match store_data {
                 blob::store::Data::S3(_) | blob::store::Data::Bytes(_) => {
@@ -363,7 +364,7 @@ impl FileReader {
                     // PORT NOTE: reshaped for borrowck — Zig `defer { deref; lazy = none }`
                     // is hoisted after the match below since both arms fall through.
                     let open_result = Lazy::open_file_blob(file);
-                    // drop the Arc (Zig: this.lazy.blob.deref()) and clear lazy
+                    // drop the StoreRef (Zig: this.lazy.blob.deref()) and clear lazy
                     self.lazy = Lazy::None;
                     match open_result {
                         Err(err) => {

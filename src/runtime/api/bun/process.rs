@@ -1,7 +1,8 @@
 use core::ffi::{c_char, c_int, c_void};
 use core::mem::offset_of;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::Arc;
+// (std::sync::Arc removed — Process is intrusively ref-counted via
+// bun_ptr::ThreadSafeRefCount; see SyncWindowsProcess below.)
 
 use bun_aio::{FilePoll, KeepAlive};
 use bun_core::{Environment, Global, Output};

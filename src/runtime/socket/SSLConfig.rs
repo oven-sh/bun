@@ -1,5 +1,6 @@
 use core::ffi::c_char;
 use std::ffi::CString;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 
 use bun_uws as uws;
@@ -34,7 +35,11 @@ pub struct SSLConfig {
     pub requires_custom_request_ctx: bool,
     pub is_using_default_ciphers: bool,
     pub low_memory_mode: bool,
-    pub cached_hash: u64,
+    /// Memoized `content_hash()`. Interior-mutable because it's lazily filled
+    /// through `Arc<SSLConfig>` (shared ref) by the intern registry's hash
+    /// context. Zig used a plain `u64` mutated via `*SSLConfig` (Zig pointers
+    /// freely alias); Rust needs `UnsafeCell`-backed storage here.
+    pub cached_hash: AtomicU64,
 }
 
 /// Owned list of NUL-terminated strings paired with a contiguous
@@ -338,7 +343,7 @@ impl Clone for SSLConfig {
             requires_custom_request_ctx: self.requires_custom_request_ctx,
             is_using_default_ciphers: self.is_using_default_ciphers,
             low_memory_mode: self.low_memory_mode,
-            cached_hash: 0,
+            cached_hash: AtomicU64::new(0),
         }
     }
 }
@@ -581,7 +586,7 @@ impl Default for SSLConfig {
             requires_custom_request_ctx: false,
             is_using_default_ciphers: true,
             low_memory_mode: false,
-            cached_hash: 0,
+            cached_hash: AtomicU64::new(0),
         }
     }
 }

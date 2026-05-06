@@ -172,9 +172,11 @@ impl<'a> TestRunner<'a> {
         let Some(active_file) = self.bun_test_root.active_file.as_ref() else {
             return;
         };
-        // SAFETY: see BunTestPtr TODO — interior mutability; single-threaded JS VM.
-        let active_file =
-            unsafe { &mut *(Rc::as_ptr(active_file) as *mut bun_test::BunTest<'_>) };
+        // SAFETY: single-threaded JS VM; only borrow of this BunTest for the
+        // duration of the timer-removal below. The const→mut projection is
+        // centralized in `buntest_as_mut` pending the BunTestPtr interior-mut
+        // reshape (see bun_test.rs).
+        let active_file = unsafe { bun_test::buntest_as_mut(active_file) };
         if active_file.timer.state != TimerState::ACTIVE
             || active_file.timer.next.eql(&bun_core::Timespec::EPOCH)
         {
@@ -503,9 +505,11 @@ pub mod on_unhandled_rejection {
     ) {
         if let Some(buntest_strong) = bun_test::clone_active_strong() {
             // PORT NOTE: `defer buntest_strong.deinit()` — Rc::drop handles this.
-            // SAFETY: see BunTestPtr TODO — interior mutability; single-threaded JS VM.
-            let buntest =
-                unsafe { &mut *(Rc::as_ptr(&buntest_strong) as *mut bun_test::BunTest<'_>) };
+            // SAFETY: single-threaded JS VM; `buntest_strong` is the only handle
+            // dereferenced for this scope and is dropped before `BunTest::run`
+            // re-borrows. Const→mut projection is centralized in `buntest_as_mut`
+            // pending the BunTestPtr interior-mut reshape (see bun_test.rs).
+            let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
             // mark unhandled errors as belonging to the currently active test. note that this can be misleading.
             let mut current_state_data = buntest.get_current_state_data();
             // PORT NOTE: split entry()/sequence() borrows via raw-ptr capture (per-use reborrow).

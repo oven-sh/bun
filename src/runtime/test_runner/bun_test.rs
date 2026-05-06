@@ -331,6 +331,25 @@ pub type BunTestPtr = Rc<BunTest<'static>>;
 pub type BunTestPtrWeak = Weak<BunTest<'static>>;
 pub type BunTestPtrOptional = Option<Rc<BunTest<'static>>>;
 
+/// Centralized `Rc<BunTest>` → `&mut BunTest` projection.
+///
+/// Zig's `BunTestPtr.get()` hands back a freely-aliasing `*BunTest`; the Rust
+/// port currently models this with `Rc<BunTest>` and mutates through it. That
+/// requires casting `Rc::as_ptr`'s `*const T` to `*mut T`, which is UB once
+/// written through unless the pointee sits in an `UnsafeCell`. Until the
+/// Phase-B decision above lands (`Rc<RefCell<…>>` vs intrusive shared ptr),
+/// every call site funnels through this one function so the cast — and its
+/// eventual fix — lives in exactly one place.
+///
+/// # Safety
+/// Caller must guarantee the single-threaded JS VM invariant: no other live
+/// `&`/`&mut` borrow of the same `BunTest` overlaps this one (no reentrancy
+/// across the borrow). The returned reference must not outlive `ptr`.
+#[inline]
+pub unsafe fn buntest_as_mut(ptr: &BunTestPtr) -> &mut BunTest<'static> {
+    &mut *(Rc::as_ptr(ptr) as *mut BunTest<'static>)
+}
+
 pub struct BunTestRoot {
     // gpa dropped — global mimalloc
     pub active_file: BunTestPtrOptional,

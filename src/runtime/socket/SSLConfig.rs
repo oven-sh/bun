@@ -776,15 +776,15 @@ mod _gated_from_js {
                 || result.key.is_some();
 
             if let Some(key_file) = generated.key_file.get() {
-                result.key_file_name = Some(handle_path(global, "keyFile", key_file)?);
+                result.key_file_name = Some(handle_path(global, "keyFile", &key_file)?);
                 result.requires_custom_request_ctx = true;
             }
             if let Some(cert_file) = generated.cert_file.get() {
-                result.cert_file_name = Some(handle_path(global, "certFile", cert_file)?);
+                result.cert_file_name = Some(handle_path(global, "certFile", &cert_file)?);
                 result.requires_custom_request_ctx = true;
             }
             if let Some(ca_file) = generated.ca_file.get() {
-                result.ca_file_name = Some(handle_path(global, "caFile", ca_file)?);
+                result.ca_file_name = Some(handle_path(global, "caFile", &ca_file)?);
                 result.requires_custom_request_ctx = true;
             }
 

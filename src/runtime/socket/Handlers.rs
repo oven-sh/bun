@@ -1,6 +1,6 @@
 use core::mem::offset_of;
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, Strong};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StrongOptional as Strong};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::generated::{SocketConfig as GeneratedSocketConfig, SocketConfigHandlers as GeneratedSocketConfigHandlers};
@@ -9,8 +9,25 @@ use bun_sys::Fd;
 use bun_uws as uws;
 
 use super::Listener;
+use super::ListenerType;
 use super::SSLConfig;
 use super::SocketMode;
+
+// ─── local shims (upstream-crate gaps) ──────────────────────────────────────
+extern "C" {
+    fn AsyncContextFrame__withAsyncContextIfNeeded(
+        global: *const JSGlobalObject,
+        callback: JSValue,
+    ) -> JSValue;
+}
+
+/// JS-thread `EventLoopCtx` for `KeepAlive::ref_/unref`. Zig passed
+/// `*VirtualMachine` directly (anytype dispatch); the Rust split routes
+/// through the aio hook registered by `crate::init()`.
+#[inline]
+fn vm_ctx() -> bun_aio::EventLoopCtx {
+    bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js)
+}
 
 bun_output::declare_scope!(Listener, visible);
 

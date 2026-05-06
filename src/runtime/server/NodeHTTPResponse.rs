@@ -916,16 +916,17 @@ impl NodeHTTPResponse {
             js_value
         };
         if let Some(on_aborted) = js::on_aborted_get_cached(js_this) {
-            let global_this = VirtualMachine::get().global();
+            let global_this = vm_get().global();
 
-            let vm = global_this.bun_vm();
-            let event_loop = vm.event_loop();
+            let vm = bun_vm_mut(global_this);
+            // SAFETY: event_loop() returns the live VM event-loop pointer.
+            let event_loop = unsafe { &mut *vm.event_loop() };
 
             event_loop.run_callback(
                 on_aborted,
                 global_this,
                 js_this,
-                &[JSValue::js_number(EVENT as u8 as i32)],
+                &[JSValue::js_number_from_int32(EVENT as u8 as i32)],
             );
 
             if EVENT == AbortEvent::Abort {
@@ -962,7 +963,6 @@ impl NodeHTTPResponse {
         &mut self,
         _global: &JSGlobalObject,
         _frame: &CallFrame,
-        _this_value: JSValue,
     ) -> JsResult<JSValue> {
         scoped_log!(NodeHTTPResponse, "doPause");
         if self.flags.contains(Flags::REQUEST_HAS_COMPLETED)

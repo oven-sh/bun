@@ -24,7 +24,6 @@ mod _jsc_gated {
 use super::*;
 use core::ffi::c_char;
 use std::cell::Cell;
-use std::sync::Arc;
 
 use bun_aio::{KeepAlive, Loop as AsyncLoop};
 use bun_core::env_var;
@@ -1563,7 +1562,13 @@ impl CronJob {
                 jsc::js_promise::Status::Fulfilled => {}
                 jsc::js_promise::Status::Rejected => {
                     promise.set_handled(this_ref.global.vm());
-                    let reason = promise.result(this_ref.global.vm());
+                    // `bun_jsc::AnyPromise` (lib.rs duplicate) lacks `.result()`;
+                    // dispatch on the variant and call `JSPromise::result` directly.
+                    // SAFETY: variants hold a live JSC heap cell.
+                    let reason = match promise {
+                        jsc::AnyPromise::Normal(p) => unsafe { (*p).result(this_ref.global.vm()) },
+                        jsc::AnyPromise::Internal(p) => unsafe { (*p).result(this_ref.global.vm()) },
+                    };
                     // SAFETY: `vm.global` is live; `&mut` derived for the call only.
                     let global_ref = unsafe { &*vm.global };
                     unsafe { &mut *(vm as *const VirtualMachine as *mut VirtualMachine) }

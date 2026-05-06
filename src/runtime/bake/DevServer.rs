@@ -4586,83 +4586,9 @@ impl DevServer<'_> {
     }
 }
 
-/// Every message is to use `.binary`/`ArrayBuffer` transport mode. The first byte
-/// indicates a Message ID; see comments on each type for how to interpret the rest.
-/// All integers are sent in little-endian.
-#[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
-pub enum MessageId {
-    /// Version payload. Sent on connection startup.
-    Version = b'V',
-    /// Sent on a successful bundle, containing client code, updates routes, and
-    /// changed CSS files. See Zig source for full wire format.
-    HotUpdate = b'u',
-    /// Sent when the list of errors changes.
-    Errors = b'e',
-    /// A message from the browser.
-    BrowserMessage = b'b',
-    /// Sent to clear the messages from `browser_error`
-    BrowserMessageClear = b'B',
-    /// Sent when a request handler error is emitted.
-    RequestHandlerError = b'h',
-    /// Payload for `incremental_visualizer.html`.
-    Visualizer = b'v',
-    /// Payload for `memory_visualizer.html`.
-    MemoryVisualizer = b'M',
-    /// Sent in response to `set_url`.
-    SetUrlResponse = b'n',
-    /// Used for synchronization in DevServer tests.
-    TestingWatchSynchronization = b'r',
-}
-
-impl MessageId {
-    #[inline]
-    pub fn char(self) -> u8 {
-        self as u8
-    }
-}
-
-/// Avoid changing message ID values, as some of these are hard-coded in tests.
-#[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum IncomingMessageId {
-    /// Initialization packet.
-    Init = b'i',
-    /// Subscribe to an event channel.
-    Subscribe = b's',
-    /// Emitted on client-side navigations.
-    SetUrl = b'n',
-    /// Tells the DevServer to batch events together.
-    TestingBatchEvents = b'H',
-    /// Console log from the client
-    ConsoleLog = b'l',
-    /// Tells the DevServer to unref a source map.
-    UnrefSourceMap = b'u',
-    // _ => Invalid data — TODO(port): Zig non-exhaustive enum
-}
-
-#[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum ConsoleLogKind {
-    Log = b'l',
-    Err = b'e',
-}
-
-#[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
-pub enum HmrTopic {
-    HotUpdate = b'h',
-    Errors = b'e',
-    BrowserError = b'E',
-    IncrementalVisualizer = b'v',
-    MemoryVisualizer = b'M',
-    TestingWatchSynchronization = b'r',
-    // _ => Invalid data — TODO(port): Zig non-exhaustive enum
-}
-
-impl HmrTopic {
-    pub const MAX_COUNT: usize = 6;
-}
+// PORT NOTE: MessageId/IncomingMessageId/ConsoleLogKind/HmrTopic are defined
+// once in `crate::bake::dev_server` and re-exported here.
+pub use crate::bake::dev_server::{MessageId, IncomingMessageId, ConsoleLogKind, HmrTopic};
 
 bitflags::bitflags! {
     // TODO(port): Zig generated `Bits` via @Type from HmrTopic enum fields.

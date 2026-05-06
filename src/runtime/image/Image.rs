@@ -8,6 +8,8 @@
 //! work happens off-thread when a terminal (`bytes`/`buffer`/`blob`/
 //! `toBase64`/`metadata`) is awaited, via `jsc.ConcurrentPromiseTask`.
 
+#![allow(unused_imports, unreachable_code, unused_variables)]
+
 use core::ffi::c_int;
 use core::mem;
 

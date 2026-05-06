@@ -664,7 +664,12 @@ impl UpgradeCommand {
         let zip_url_bytes: &'static [u8] =
             Box::leak(core::mem::take(&mut version.zip_url));
         let zip_url = URL::parse(zip_url_bytes);
-        let http_proxy: Option<URL> = env_loader.get_http_proxy_for(&zip_url);
+        // SAFETY: see `get_latest_version` — env_loader storage is process-static.
+        let http_proxy: Option<URL<'static>> = unsafe {
+            core::mem::transmute::<Option<URL<'_>>, Option<URL<'static>>>(
+                env_loader.get_http_proxy_for(&zip_url),
+            )
+        };
 
         {
             let refresher: *mut Progress::Progress =

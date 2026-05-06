@@ -1154,21 +1154,21 @@ pub fn network_interfaces_windows(global_this: &JSGlobalObject) -> JsResult<JSVa
                 .expect("unreachable");
                 &mac_buf[..]
             };
-            interface.put(global_this, ZigString::static_("mac"), ZigString::init(mac).with_encoding().to_js(global_this));
+            interface.put(global_this, b"mac", ZigString::init(mac).with_encoding().to_js(global_this));
         }
 
         // internal
         {
-            interface.put(global_this, ZigString::static_("internal"), JSValue::from(iface.is_internal != 0));
+            interface.put(global_this, b"internal", JSValue::from(iface.is_internal != 0));
         }
 
         // cidr. this is here to keep ordering consistent with the node implementation
-        interface.put(global_this, ZigString::static_("cidr"), cidr);
+        interface.put(global_this, b"cidr", cidr);
 
         // scopeid
         if family == bun_sys::posix::AF::INET6 {
             // SAFETY: union read; family == INET6
-            interface.put(global_this, ZigString::static_("scopeid"), JSValue::js_number(unsafe { iface.address.address6.scope_id }));
+            interface.put(global_this, b"scopeid", JSValue::js_number(unsafe { iface.address.address6.scope_id } as f64));
         }
 
         // Does this entry already exist?
@@ -1180,10 +1180,9 @@ pub fn network_interfaces_windows(global_this: &JSGlobalObject) -> JsResult<JSVa
             array.put_index(global_this, next_index, interface)?;
         } else {
             // Add it as an array with this interface as an element
-            let member_name = ZigString::init(interface_name);
             let array = JSValue::create_empty_array(global_this, 1)?;
             array.put_index(global_this, 0, interface)?;
-            ret.put(global_this, &member_name, array);
+            ret.put(global_this, interface_name, array);
         }
     }
 

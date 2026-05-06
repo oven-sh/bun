@@ -248,7 +248,11 @@ impl WindowsNamedPipeContext {
     fn deinit_in_next_tick(&mut self) {
         debug_assert!(self.task_event != EventState::Deinit);
         self.task_event = EventState::Deinit;
-        self.vm.enqueue_task(Task::init(&mut self.task));
+        // SAFETY: `vm` is the process-global VirtualMachine; `enqueue_task` mutates
+        // its task queue. We hold `&'static VirtualMachine` (JSC_BORROW) so cast
+        // through a raw pointer to obtain the `&mut` the upstream API requires.
+        let vm = self.vm as *const VirtualMachine as *mut VirtualMachine;
+        unsafe { (*vm).enqueue_task(Task::init(&mut self.task)) };
     }
 
     pub fn create(global_this: &JSGlobalObject, socket: SocketType) -> *mut WindowsNamedPipeContext {

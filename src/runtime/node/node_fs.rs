@@ -25,7 +25,7 @@ use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_paths::{self as paths, OSPathBuffer, OSPathChar, OSPathSliceZ, PathBuffer};
 use bun_string::{self as bstr, strings, String as BunString, ZStr, PathString, ZigString};
-use bun_sys::{self as sys, Fd as FD, FdExt as _, Maybe, Mode, SystemErrno, E};
+use bun_sys::{self as sys, Fd as FD, Maybe, Mode, SystemErrno, E};
 use bun_threading::work_pool::{WorkPool, Task as WorkPoolTask};
 use crate::webcore;
 
@@ -52,28 +52,28 @@ impl<R> MaybeSysResultExt<R> for Maybe<R> {
     fn errno_sys<Rc: crate::node::SyscallRc + sys::GetErrno>(rc: Rc, syscall: sys::Tag) -> Option<Self> {
         match sys::get_errno(rc) {
             E::SUCCESS => None,
-            e => Some(Err(sys::Error { errno: crate::node::translate_to_err_int(e), syscall, ..Default::default() })),
+            e => Some(Err(sys::Error { errno: (e as u16), syscall, ..Default::default() })),
         }
     }
     #[inline]
     fn errno_sys_fd<Rc: crate::node::SyscallRc + sys::GetErrno>(rc: Rc, syscall: sys::Tag, fd: FD) -> Option<Self> {
         match sys::get_errno(rc) {
             E::SUCCESS => None,
-            e => Some(Err(sys::Error { errno: crate::node::translate_to_err_int(e), syscall, fd, ..Default::default() })),
+            e => Some(Err(sys::Error { errno: (e as u16), syscall, fd, ..Default::default() })),
         }
     }
     #[inline]
     fn errno_sys_p<Rc: crate::node::SyscallRc + sys::GetErrno>(rc: Rc, syscall: sys::Tag, path: impl AsRef<[u8]>) -> Option<Self> {
         match sys::get_errno(rc) {
             E::SUCCESS => None,
-            e => Some(Err(sys::Error { errno: crate::node::translate_to_err_int(e), syscall, path: path.as_ref().into(), ..Default::default() })),
+            e => Some(Err(sys::Error { errno: (e as u16), syscall, path: path.as_ref().into(), ..Default::default() })),
         }
     }
     #[inline]
     fn errno_sys_pd<Rc: crate::node::SyscallRc + sys::GetErrno>(rc: Rc, syscall: sys::Tag, path: impl AsRef<[u8]>, dest: impl AsRef<[u8]>) -> Option<Self> {
         match sys::get_errno(rc) {
             E::SUCCESS => None,
-            e => Some(Err(sys::Error { errno: crate::node::translate_to_err_int(e), syscall, path: path.as_ref().into(), dest: dest.as_ref().into(), ..Default::default() })),
+            e => Some(Err(sys::Error { errno: (e as u16), syscall, path: path.as_ref().into(), dest: dest.as_ref().into(), ..Default::default() })),
         }
     }
 }
@@ -599,7 +599,7 @@ pub mod async_ {
             let mut node_fs = NodeFS::default();
             // SAFETY: caller keeps `path` alive until completion
             let path = unsafe { &*this.path };
-            let result = node_fs.mkdir_recursive(args::Mkdir {
+            let result = node_fs.mkdir_recursive(&args::Mkdir {
                 path: PathLike::String(PathString::init(path)),
                 recursive: true,
                 ..Default::default()
@@ -6503,7 +6503,7 @@ impl NodeFS {
                     let bytes = dest.as_bytes();
                     let mut len = bytes.len();
                     while len > 0 && bytes[len - 1] != paths::SEP { len -= 1; }
-                    let mkdir_result = self.mkdir_recursive(args::Mkdir {
+                    let mkdir_result = self.mkdir_recursive(&args::Mkdir {
                         path: PathLike::String(PathString::init(&bytes[..len])),
                         recursive: true,
                         ..Default::default()
@@ -6806,7 +6806,7 @@ pub extern "C" fn Bun__mkdirp(global_this: *mut JSGlobalObject, path: *const c_c
     // SAFETY: caller passes a NUL-terminated C string
     let path_bytes = unsafe { core::ffi::CStr::from_ptr(path) }.to_bytes();
     !matches!(
-        global_this.bun_vm().node_fs().mkdir_recursive(args::Mkdir {
+        global_this.bun_vm().node_fs().mkdir_recursive(&args::Mkdir {
             path: PathLike::String(PathString::init(path_bytes)),
             recursive: true,
             ..Default::default()

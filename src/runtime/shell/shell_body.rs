@@ -446,10 +446,11 @@ impl<'a> GlobalMini<'a> {
     #[inline]
     pub fn enqueue_task_concurrent_wait_pid<T: 'static>(self, task: T) {
         // `AnyTaskWithExtraContext` is a *module* re-export in bun_jsc; the type lives inside it.
-        let anytask = Box::new(jsc::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default());
-        // TODO(port): .from(task, "runFromMainThreadMini") — comptime field name lookup
-        let anytask = Box::leak(anytask).from(task, "runFromMainThreadMini");
-        self.mini.enqueue_task_concurrent(anytask);
+        // TODO(port): .from(task, "runFromMainThreadMini") — comptime field-name lookup
+        // resolves `T::runFromMainThreadMini` as the callback. Needs a trait bound or
+        // explicit fn pointer plumbed through.
+        let _ = task;
+        todo!("blocked_on: bun_jsc::AnyTaskWithExtraContext::from(comptime field)")
     }
 
     #[inline]
@@ -471,7 +472,8 @@ impl<'a> GlobalMini<'a> {
 
     #[inline]
     pub fn platform_event_loop(self) -> &'a PlatformEventLoop {
-        jsc::AbstractVM(self.event_loop_ctx()).platform_event_loop()
+        let _ = self.event_loop_ctx();
+        todo!("blocked_on: bun_jsc::AbstractVM::platform_event_loop")
     }
 }
 

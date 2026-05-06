@@ -2108,7 +2108,7 @@ impl Function {
         if cfg!(feature = "codegen_embed") {
             include_bytes!("./FFI.h")
         } else {
-            bun_core::runtime_embed_file(bun_core::EmbedKind::Src, "runtime/ffi/FFI.h")
+            bun_core::runtime_embed_file(bun_core::EmbedKind::Src, "runtime/ffi/FFI.h").as_bytes()
         }
     }
 

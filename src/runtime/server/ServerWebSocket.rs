@@ -1111,7 +1111,7 @@ impl ServerWebSocket {
     ) -> JSValue {
         if self.is_closed() {
             bun_output::scoped_log!(WebSocketServer, "sendText() closed");
-            return JSValue::js_number(0);
+            return JSValue::js_number(0.0);
         }
 
         let string_slice = message_str.to_slice(global_this);
@@ -1124,7 +1124,7 @@ impl ServerWebSocket {
                     "sendText() backpressure ({} bytes string)",
                     buffer.len()
                 );
-                JSValue::js_number(-1)
+                JSValue::js_number(-1.0)
             }
             SendStatus::Success => {
                 bun_output::scoped_log!(
@@ -1132,7 +1132,7 @@ impl ServerWebSocket {
                     "sendText() success ({} bytes string)",
                     buffer.len()
                 );
-                JSValue::js_number(buffer.len())
+                JSValue::js_number(buffer.len() as f64)
             }
             SendStatus::Dropped => {
                 bun_output::scoped_log!(
@@ -1140,7 +1140,7 @@ impl ServerWebSocket {
                     "sendText() dropped ({} bytes string)",
                     buffer.len()
                 );
-                JSValue::js_number(0)
+                JSValue::js_number(0.0)
             }
         }
     }

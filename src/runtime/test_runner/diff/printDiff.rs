@@ -694,18 +694,18 @@ pub fn print_diff(
                 }
                 print_line_prefix(writer, config, prefix_styles::EQUAL)?;
                 print_segment(segment.removed, writer, config, styles::EQUAL)?;
-                writer.write_all(b"\n")?;
+                writer.write_str("\n")?;
             }
             DiffSegmentMode::Removed => {
                 print_line_prefix(writer, config, prefix_styles::REMOVED)?;
                 print_segment(segment.removed, writer, config, styles::REMOVED_LINE)?;
-                writer.write_all(b"\n")?;
+                writer.write_str("\n")?;
                 removed_diff_lines += segment.removed_line_count;
             }
             DiffSegmentMode::Inserted => {
                 print_line_prefix(writer, config, prefix_styles::INSERTED)?;
                 print_segment(segment.inserted, writer, config, styles::INSERTED_LINE)?;
-                writer.write_all(b"\n")?;
+                writer.write_str("\n")?;
                 inserted_diff_lines += segment.inserted_line_count;
             }
             DiffSegmentMode::Modified => {
@@ -725,7 +725,7 @@ pub fn print_diff(
         inserted_line_number += segment.inserted_line_count;
     }
 
-    writer.write_all(b"\n")?;
+    writer.write_str("\n")?;
 
     print_diff_footer(writer, config, removed_diff_lines, inserted_diff_lines)
 }

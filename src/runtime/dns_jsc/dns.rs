@@ -4235,15 +4235,20 @@ impl Resolver {
         let channel: *mut c_ares::Channel = match self.get_channel() {
             ChannelResult::Result(res) => res,
             ChannelResult::Err(err) => {
-                let syscall = bun_str::String::create_atom_ascii(&query.name);
+                let syscall = bun_str::String::create_atom(&query.name);
+                // PORT NOTE: SystemError has no Default impl upstream; spell out
+                // the Zig field defaults (.empty strings, fd = c_int::MIN).
                 let system_error = SystemError {
                     errno: -1,
                     code: bun_str::String::static_(err.code()),
                     message: bun_str::String::static_(err.label()),
+                    path: bun_str::String::empty(),
                     syscall,
-                    ..Default::default()
+                    hostname: bun_str::String::empty(),
+                    fd: c_int::MIN,
+                    dest: bun_str::String::empty(),
                 };
-                return global_this.throw_value(system_error.to_error_instance(global_this));
+                return Err(global_this.throw_value(system_error.to_error_instance(global_this)));
             }
         };
 

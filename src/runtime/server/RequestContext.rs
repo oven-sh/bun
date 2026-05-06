@@ -2209,7 +2209,7 @@ where
 
         if let Some(promise) = response_value.as_any_promise() {
             // If we immediately have the value available, we can skip the extra event loop tick
-            match promise.unwrap(vm.global.vm(), jsc::PromiseUnwrapMode::MarkHandled) {
+            match promise.unwrap(unsafe { (*vm.global).vm() }, jsc::PromiseUnwrapMode::MarkHandled) {
                 jsc::PromiseResult::Pending => {
                     ctx.ref_();
                     let cell = NativePromiseContext::create(this.global_this(), ctx);
@@ -2856,7 +2856,7 @@ where
         let server = unsafe { &*ctx.server.unwrap() };
         let vm = server.vm();
 
-        match promise.unwrap(vm.global.vm(), jsc::PromiseUnwrapMode::MarkHandled) {
+        match promise.unwrap(unsafe { (*vm.global).vm() }, jsc::PromiseUnwrapMode::MarkHandled) {
             jsc::PromiseResult::Pending => {
                 ctx.flags.set_is_error_promise_pending(true);
                 ctx.ref_();

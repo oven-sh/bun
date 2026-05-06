@@ -55,6 +55,47 @@ bitflags::bitflags! {
 // TODO(b2-blocked): bun_jsc::{JSValue, JSGlobalObject} methods.
 
 impl Handler {
+    /// Deref the raw `global_object` pointer.
+    /// SAFETY: `global_object` is set by the server before any websocket
+    /// connection exists and outlives every `ServerWebSocket`.
+    #[inline]
+    pub fn global_object(&self) -> &JSGlobalObject {
+        // SAFETY: see doc above — JSC_BORROW per LIFETIMES.tsv.
+        unsafe { &*self.global_object }
+    }
+
+    /// Deref the raw `vm` pointer.
+    /// SAFETY: `vm` is `'static` per LIFETIMES.tsv (set in `from_js`).
+    #[inline]
+    pub fn vm(&self) -> &VirtualMachine {
+        // SAFETY: see doc above.
+        unsafe { &*self.vm }
+    }
+
+    /// Zig: `handler.active_connections +|= n` through a `*Handler`.
+    /// PORT NOTE: takes `&self` and casts away const — the field is owned by
+    /// `ServerConfig.websocket` and only ever touched on the JS thread, so the
+    /// data race the borrow-checker would flag here is a false positive.
+    /// TODO(port): convert `active_connections` to `Cell<usize>`.
+    #[inline]
+    pub fn active_connections_saturating_add(&self, n: usize) {
+        // SAFETY: single-threaded JS heap; see PORT NOTE above.
+        unsafe {
+            let p = &self.active_connections as *const usize as *mut usize;
+            *p = (*p).saturating_add(n);
+        }
+    }
+
+    /// Zig: `handler.active_connections -|= n` — see `active_connections_saturating_add`.
+    #[inline]
+    pub fn active_connections_saturating_sub(&self, n: usize) {
+        // SAFETY: single-threaded JS heap; see PORT NOTE above.
+        unsafe {
+            let p = &self.active_connections as *const usize as *mut usize;
+            *p = (*p).saturating_sub(n);
+        }
+    }
+
     pub fn run_error_callback(
         &self,
         vm: &VirtualMachine,

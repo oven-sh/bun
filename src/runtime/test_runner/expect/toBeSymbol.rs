@@ -11,42 +11,45 @@ impl Expect {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        // TODO(port): `defer this.postMatch(globalThis)` — the scopeguard below captures
-        // `self`/`global` which are reused throughout the body; Phase B must reshape
-        // (e.g. immediately-invoked closure returning the result, then `self.post_match`).
-        let _post = scopeguard::guard((), |_| self.post_match(global));
+        // Zig: `defer this.postMatch(globalThis);`
+        // PORT NOTE: reshaped for borrowck — scopeguard would hold `&mut self` for the whole
+        // body, so run the match in an immediately-invoked closure and call `post_match` once
+        // on the way out (covers both Ok and Err paths).
+        let res = (|| -> JsResult<JSValue> {
+            let this_value = frame.this();
+            let value: JSValue = self.get_value(global, this_value, "toBeSymbol", "")?;
 
-        let this_value = frame.this();
-        let value: JSValue = self.get_value(global, this_value, "toBeSymbol", "")?;
+            self.increment_expect_call_counter();
 
-        self.increment_expect_call_counter();
+            let not = self.flags.not();
+            let pass = value.is_symbol() != not;
 
-        let not = self.flags.not();
-        let pass = value.is_symbol() != not;
+            if pass {
+                return Ok(JSValue::UNDEFINED);
+            }
 
-        if pass {
-            return Ok(JSValue::UNDEFINED);
-        }
+            let mut formatter = super::make_formatter(global);
+            // `defer formatter.deinit()` — handled by Drop
+            let received = value.to_fmt(&mut formatter);
 
-        let mut formatter = super::make_formatter(global);
-        // `defer formatter.deinit()` — handled by Drop
-        let received = value.to_fmt(&mut formatter);
+            if not {
+                let signature = Expect::get_signature("toBeSymbol", "", true);
+                return self.throw(
+                    global,
+                    signature,
+                    format_args!("\n\nReceived: <red>{}<r>\n", received),
+                );
+            }
 
-        if not {
-            let signature = Expect::get_signature("toBeSymbol", "", true);
-            return self.throw(
+            let signature = Expect::get_signature("toBeSymbol", "", false);
+            self.throw(
                 global,
                 signature,
                 format_args!("\n\nReceived: <red>{}<r>\n", received),
-            );
-        }
-
-        let signature = Expect::get_signature("toBeSymbol", "", false);
-        self.throw(
-            global,
-            signature,
-            format_args!("\n\nReceived: <red>{}<r>\n", received),
-        )
+            )
+        })();
+        self.post_match(global);
+        res
     }
 }
 

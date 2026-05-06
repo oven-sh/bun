@@ -125,8 +125,8 @@ impl CryptoHasher {
 
     #[unsafe(no_mangle)]
     pub extern "C" fn Bun__CryptoHasherExtern__destroy(handle: *mut CryptoHasher) {
-        // SAFETY: handle was produced by Box::into_raw via getByName/getFromOther
-        unsafe { CryptoHasher::finalize(handle) };
+        // handle was produced by Box::into_raw via getByName/getFromOther
+        CryptoHasher::finalize(handle);
     }
 
     #[unsafe(no_mangle)]

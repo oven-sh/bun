@@ -361,18 +361,9 @@ impl<'a> UpgradedDuplex<'a> {
             // SAFETY: ctx is a valid SSL_CTX* with one ref adopted by this fn.
             unsafe { bun_boringssl_sys::SSL_CTX_free(ctx) };
         });
-        self.wrapper = Some(WrapperType::init_with_ctx(
-            ctx,
-            is_client,
-            super::ssl_wrapper::Handlers {
-                ctx: self as *mut UpgradedDuplex,
-                on_open: Self::on_open,
-                on_handshake: Self::on_handshake,
-                on_data: Self::on_data,
-                on_close: Self::on_close,
-                write: Self::internal_write,
-            },
-        )?);
+        // SAFETY: contract — caller passes a non-null SSL_CTX* with one adopted ref.
+        let ctx_nn = unsafe { NonNull::new_unchecked(ctx) };
+        self.wrapper = Some(WrapperType::init_with_ctx(ctx_nn, is_client, self.ssl_handlers())?);
         // Success: disarm the errdefer.
         scopeguard::ScopeGuard::into_inner(ctx_guard);
 

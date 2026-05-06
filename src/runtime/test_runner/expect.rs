@@ -2401,28 +2401,32 @@ impl ExpectMatcherUtils {
 
     #[bun_jsc::host_fn(method)]
     pub fn stringify(_this: &mut Self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<1>().slice();
+        let arguments = callframe.arguments_old::<1>();
+        let arguments = arguments.slice();
         let value = if arguments.is_empty() { JSValue::UNDEFINED } else { arguments[0] };
         Ok(Self::print_value_catched(global_this, value, None))
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn print_expected(_this: &mut Self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<1>().slice();
+        let arguments = callframe.arguments_old::<1>();
+        let arguments = arguments.slice();
         let value = if arguments.is_empty() { JSValue::UNDEFINED } else { arguments[0] };
         Ok(Self::print_value_catched(global_this, value, Some("<green>")))
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn print_received(_this: &mut Self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<1>().slice();
+        let arguments = callframe.arguments_old::<1>();
+        let arguments = arguments.slice();
         let value = if arguments.is_empty() { JSValue::UNDEFINED } else { arguments[0] };
         Ok(Self::print_value_catched(global_this, value, Some("<red>")))
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn matcher_hint(_this: &mut Self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<4>().slice();
+        let arguments = callframe.arguments_old::<4>();
+        let arguments = arguments.slice();
 
         if arguments.is_empty() || !arguments[0].is_string() {
             return Err(global_this.throw2(

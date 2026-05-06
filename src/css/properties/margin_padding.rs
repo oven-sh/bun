@@ -1,9 +1,19 @@
+#![allow(unused_imports, dead_code, unused_macros)]
 use crate as css;
 use crate::css_values::length::LengthPercentageOrAuto;
 use crate::logical::PropertyCategory;
-use crate::{DeclarationList, Property, PropertyHandlerContext, PropertyIdTag};
-// TODO(port): verify these paths in Phase B — `css.compat.Feature` / `css.Feature`
+use crate::{DeclarationList, PropertyHandlerContext};
+use crate::properties::{Property, PropertyIdTag};
 use crate::compat::Feature;
+
+// TODO(port): `RectShorthand`/`SizeShorthand` are the trait spellings of Zig's
+// `css.DefineRectShorthand`/`css.DefineSizeShorthand` comptime mixins (provide
+// default `parse`/`to_css` from the 4-field/2-field shape). They are not yet
+// declared at the crate root; declare local marker traits here so the data
+// structs compile, and lift to `crate::generics` once the real default impls
+// land.
+pub trait RectShorthand { type Value; }
+pub trait SizeShorthand { type Value; }
 
 // ──────────────────────────────────────────────────────────────────────────
 // Shorthand value types
@@ -54,7 +64,7 @@ impl Inset {
 }
 // `pub const toCss = css_impl.toCss; pub const parse = css_impl.parse;`
 // → provided by the RectShorthand trait's default methods.
-impl css::RectShorthand for Inset {
+impl RectShorthand for Inset {
     type Value = LengthPercentageOrAuto;
 }
 
@@ -83,7 +93,7 @@ impl InsetBlock {
         self == rhs
     }
 }
-impl css::SizeShorthand for InsetBlock {
+impl SizeShorthand for InsetBlock {
     type Value = LengthPercentageOrAuto;
 }
 
@@ -112,7 +122,7 @@ impl InsetInline {
         self == rhs
     }
 }
-impl css::SizeShorthand for InsetInline {
+impl SizeShorthand for InsetInline {
     type Value = LengthPercentageOrAuto;
 }
 
@@ -141,7 +151,7 @@ impl MarginBlock {
         self == rhs
     }
 }
-impl css::SizeShorthand for MarginBlock {
+impl SizeShorthand for MarginBlock {
     type Value = LengthPercentageOrAuto;
 }
 
@@ -170,7 +180,7 @@ impl MarginInline {
         self == rhs
     }
 }
-impl css::SizeShorthand for MarginInline {
+impl SizeShorthand for MarginInline {
     type Value = LengthPercentageOrAuto;
 }
 
@@ -201,7 +211,7 @@ impl Margin {
         self == rhs
     }
 }
-impl css::RectShorthand for Margin {
+impl RectShorthand for Margin {
     type Value = LengthPercentageOrAuto;
 }
 
@@ -230,7 +240,7 @@ impl PaddingBlock {
         self == rhs
     }
 }
-impl css::SizeShorthand for PaddingBlock {
+impl SizeShorthand for PaddingBlock {
     type Value = LengthPercentageOrAuto;
 }
 
@@ -259,7 +269,7 @@ impl PaddingInline {
         self == rhs
     }
 }
-impl css::SizeShorthand for PaddingInline {
+impl SizeShorthand for PaddingInline {
     type Value = LengthPercentageOrAuto;
 }
 
@@ -290,7 +300,7 @@ impl Padding {
         self == rhs
     }
 }
-impl css::RectShorthand for Padding {
+impl RectShorthand for Padding {
     type Value = LengthPercentageOrAuto;
 }
 
@@ -319,7 +329,7 @@ impl ScrollMarginBlock {
         self == rhs
     }
 }
-impl css::SizeShorthand for ScrollMarginBlock {
+impl SizeShorthand for ScrollMarginBlock {
     type Value = LengthPercentageOrAuto;
 }
 
@@ -348,7 +358,7 @@ impl ScrollMarginInline {
         self == rhs
     }
 }
-impl css::SizeShorthand for ScrollMarginInline {
+impl SizeShorthand for ScrollMarginInline {
     type Value = LengthPercentageOrAuto;
 }
 
@@ -379,7 +389,7 @@ impl ScrollMargin {
         self == rhs
     }
 }
-impl css::RectShorthand for ScrollMargin {
+impl RectShorthand for ScrollMargin {
     type Value = LengthPercentageOrAuto;
 }
 
@@ -408,7 +418,7 @@ impl ScrollPaddingBlock {
         self == rhs
     }
 }
-impl css::SizeShorthand for ScrollPaddingBlock {
+impl SizeShorthand for ScrollPaddingBlock {
     type Value = LengthPercentageOrAuto;
 }
 
@@ -437,7 +447,7 @@ impl ScrollPaddingInline {
         self == rhs
     }
 }
-impl css::SizeShorthand for ScrollPaddingInline {
+impl SizeShorthand for ScrollPaddingInline {
     type Value = LengthPercentageOrAuto;
 }
 
@@ -468,7 +478,7 @@ impl ScrollPadding {
         self == rhs
     }
 }
-impl css::RectShorthand for ScrollPadding {
+impl RectShorthand for ScrollPadding {
     type Value = LengthPercentageOrAuto;
 }
 
@@ -645,6 +655,27 @@ impl<S: SizeHandlerSpec> Default for SizeHandler<S> {
     }
 }
 
+impl<S: SizeHandlerSpec> SizeHandler<S> {
+    // No-op stubs so `DeclarationHandler` compiles; real bodies are gated below.
+    #[inline]
+    pub fn handle_property(
+        &mut self,
+        _property: &Property,
+        _dest: &mut DeclarationList<'_>,
+        _context: &mut PropertyHandlerContext<'_>,
+    ) -> bool {
+        false
+    }
+    #[inline]
+    pub fn finalize(
+        &mut self,
+        _dest: &mut DeclarationList<'_>,
+        _context: &mut PropertyHandlerContext<'_>,
+    ) {
+    }
+}
+
+#[cfg(any())] // blocked_on: Property::id() + LengthPercentageOrAuto::deep_clone + PropertyHandlerContext::{allocator,targets,add_logical_rule}
 impl<S: SizeHandlerSpec> SizeHandler<S> {
     // ---- @field(this, field) replacements ----
     fn physical_slot(&mut self, slot: PhysicalSlot) -> &mut Option<LengthPercentageOrAuto> {

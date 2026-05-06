@@ -3475,10 +3475,257 @@ impl Property {
 
     /// Serializes the value (right-hand side) of this declaration.
     pub fn value_to_css(&self, dest: &mut css::Printer) -> Result<(), css::PrintErr> {
-        // TODO(port): per-variant `generic::to_css(&v, dest)` dispatch — gated
-        // until every value type implements the ToCss protocol.
-        let _ = dest;
-        todo!("Property::value_to_css codegen pending values/ un-gate")
+        match self {
+            Property::BackgroundColor(v) => css::generic::to_css(v, dest),
+            Property::BackgroundImage(v) => css::generic::to_css(v, dest),
+            Property::BackgroundPositionX(v) => css::generic::to_css(v, dest),
+            Property::BackgroundPositionY(v) => css::generic::to_css(v, dest),
+            Property::BackgroundPosition(v) => css::generic::to_css(v, dest),
+            Property::BackgroundSize(v) => css::generic::to_css(v, dest),
+            Property::BackgroundRepeat(v) => css::generic::to_css(v, dest),
+            Property::BackgroundAttachment(v) => css::generic::to_css(v, dest),
+            Property::BackgroundClip(v) => css::generic::to_css(&v.0, dest),
+            Property::BackgroundOrigin(v) => css::generic::to_css(v, dest),
+            Property::Background(v) => css::generic::to_css(v, dest),
+            Property::BoxShadow(v) => css::generic::to_css(&v.0, dest),
+            Property::Opacity(v) => css::generic::to_css(v, dest),
+            Property::Color(v) => css::generic::to_css(v, dest),
+            Property::Display(v) => css::generic::to_css(v, dest),
+            Property::Visibility(v) => css::generic::to_css(v, dest),
+            Property::Width(v) => css::generic::to_css(v, dest),
+            Property::Height(v) => css::generic::to_css(v, dest),
+            Property::MinWidth(v) => css::generic::to_css(v, dest),
+            Property::MinHeight(v) => css::generic::to_css(v, dest),
+            Property::MaxWidth(v) => css::generic::to_css(v, dest),
+            Property::MaxHeight(v) => css::generic::to_css(v, dest),
+            Property::BlockSize(v) => css::generic::to_css(v, dest),
+            Property::InlineSize(v) => css::generic::to_css(v, dest),
+            Property::MinBlockSize(v) => css::generic::to_css(v, dest),
+            Property::MinInlineSize(v) => css::generic::to_css(v, dest),
+            Property::MaxBlockSize(v) => css::generic::to_css(v, dest),
+            Property::MaxInlineSize(v) => css::generic::to_css(v, dest),
+            Property::BoxSizing(v) => css::generic::to_css(&v.0, dest),
+            Property::AspectRatio(v) => css::generic::to_css(v, dest),
+            Property::Overflow(v) => css::generic::to_css(v, dest),
+            Property::OverflowX(v) => css::generic::to_css(v, dest),
+            Property::OverflowY(v) => css::generic::to_css(v, dest),
+            Property::TextOverflow(v) => css::generic::to_css(&v.0, dest),
+            Property::Position(v) => css::generic::to_css(v, dest),
+            Property::Top(v) => css::generic::to_css(v, dest),
+            Property::Bottom(v) => css::generic::to_css(v, dest),
+            Property::Left(v) => css::generic::to_css(v, dest),
+            Property::Right(v) => css::generic::to_css(v, dest),
+            Property::InsetBlockStart(v) => css::generic::to_css(v, dest),
+            Property::InsetBlockEnd(v) => css::generic::to_css(v, dest),
+            Property::InsetInlineStart(v) => css::generic::to_css(v, dest),
+            Property::InsetInlineEnd(v) => css::generic::to_css(v, dest),
+            Property::InsetBlock(v) => css::generic::to_css(v, dest),
+            Property::InsetInline(v) => css::generic::to_css(v, dest),
+            Property::Inset(v) => css::generic::to_css(v, dest),
+            Property::BorderSpacing(v) => css::generic::to_css(v, dest),
+            Property::BorderTopColor(v) => css::generic::to_css(v, dest),
+            Property::BorderBottomColor(v) => css::generic::to_css(v, dest),
+            Property::BorderLeftColor(v) => css::generic::to_css(v, dest),
+            Property::BorderRightColor(v) => css::generic::to_css(v, dest),
+            Property::BorderBlockStartColor(v) => css::generic::to_css(v, dest),
+            Property::BorderBlockEndColor(v) => css::generic::to_css(v, dest),
+            Property::BorderInlineStartColor(v) => css::generic::to_css(v, dest),
+            Property::BorderInlineEndColor(v) => css::generic::to_css(v, dest),
+            Property::BorderTopStyle(v) => css::generic::to_css(v, dest),
+            Property::BorderBottomStyle(v) => css::generic::to_css(v, dest),
+            Property::BorderLeftStyle(v) => css::generic::to_css(v, dest),
+            Property::BorderRightStyle(v) => css::generic::to_css(v, dest),
+            Property::BorderBlockStartStyle(v) => css::generic::to_css(v, dest),
+            Property::BorderBlockEndStyle(v) => css::generic::to_css(v, dest),
+            Property::BorderInlineStartStyle(v) => css::generic::to_css(v, dest),
+            Property::BorderInlineEndStyle(v) => css::generic::to_css(v, dest),
+            Property::BorderTopWidth(v) => css::generic::to_css(v, dest),
+            Property::BorderBottomWidth(v) => css::generic::to_css(v, dest),
+            Property::BorderLeftWidth(v) => css::generic::to_css(v, dest),
+            Property::BorderRightWidth(v) => css::generic::to_css(v, dest),
+            Property::BorderBlockStartWidth(v) => css::generic::to_css(v, dest),
+            Property::BorderBlockEndWidth(v) => css::generic::to_css(v, dest),
+            Property::BorderInlineStartWidth(v) => css::generic::to_css(v, dest),
+            Property::BorderInlineEndWidth(v) => css::generic::to_css(v, dest),
+            Property::BorderTopLeftRadius(v) => css::generic::to_css(&v.0, dest),
+            Property::BorderTopRightRadius(v) => css::generic::to_css(&v.0, dest),
+            Property::BorderBottomLeftRadius(v) => css::generic::to_css(&v.0, dest),
+            Property::BorderBottomRightRadius(v) => css::generic::to_css(&v.0, dest),
+            Property::BorderStartStartRadius(v) => css::generic::to_css(v, dest),
+            Property::BorderStartEndRadius(v) => css::generic::to_css(v, dest),
+            Property::BorderEndStartRadius(v) => css::generic::to_css(v, dest),
+            Property::BorderEndEndRadius(v) => css::generic::to_css(v, dest),
+            Property::BorderRadius(v) => css::generic::to_css(&v.0, dest),
+            Property::BorderImageSource(v) => css::generic::to_css(v, dest),
+            Property::BorderImageOutset(v) => css::generic::to_css(v, dest),
+            Property::BorderImageRepeat(v) => css::generic::to_css(v, dest),
+            Property::BorderImageWidth(v) => css::generic::to_css(v, dest),
+            Property::BorderImageSlice(v) => css::generic::to_css(v, dest),
+            Property::BorderImage(v) => css::generic::to_css(&v.0, dest),
+            Property::BorderColor(v) => css::generic::to_css(v, dest),
+            Property::BorderStyle(v) => css::generic::to_css(v, dest),
+            Property::BorderWidth(v) => css::generic::to_css(v, dest),
+            Property::BorderBlockColor(v) => css::generic::to_css(v, dest),
+            Property::BorderBlockStyle(v) => css::generic::to_css(v, dest),
+            Property::BorderBlockWidth(v) => css::generic::to_css(v, dest),
+            Property::BorderInlineColor(v) => css::generic::to_css(v, dest),
+            Property::BorderInlineStyle(v) => css::generic::to_css(v, dest),
+            Property::BorderInlineWidth(v) => css::generic::to_css(v, dest),
+            Property::Border(v) => css::generic::to_css(v, dest),
+            Property::BorderTop(v) => css::generic::to_css(v, dest),
+            Property::BorderBottom(v) => css::generic::to_css(v, dest),
+            Property::BorderLeft(v) => css::generic::to_css(v, dest),
+            Property::BorderRight(v) => css::generic::to_css(v, dest),
+            Property::BorderBlock(v) => css::generic::to_css(v, dest),
+            Property::BorderBlockStart(v) => css::generic::to_css(v, dest),
+            Property::BorderBlockEnd(v) => css::generic::to_css(v, dest),
+            Property::BorderInline(v) => css::generic::to_css(v, dest),
+            Property::BorderInlineStart(v) => css::generic::to_css(v, dest),
+            Property::BorderInlineEnd(v) => css::generic::to_css(v, dest),
+            Property::Outline(v) => css::generic::to_css(v, dest),
+            Property::OutlineColor(v) => css::generic::to_css(v, dest),
+            Property::OutlineStyle(v) => css::generic::to_css(v, dest),
+            Property::OutlineWidth(v) => css::generic::to_css(v, dest),
+            Property::FlexDirection(v) => css::generic::to_css(&v.0, dest),
+            Property::FlexWrap(v) => css::generic::to_css(&v.0, dest),
+            Property::FlexFlow(v) => css::generic::to_css(&v.0, dest),
+            Property::FlexGrow(v) => css::generic::to_css(&v.0, dest),
+            Property::FlexShrink(v) => css::generic::to_css(&v.0, dest),
+            Property::FlexBasis(v) => css::generic::to_css(&v.0, dest),
+            Property::Flex(v) => css::generic::to_css(&v.0, dest),
+            Property::Order(v) => css::generic::to_css(&v.0, dest),
+            Property::AlignContent(v) => css::generic::to_css(&v.0, dest),
+            Property::JustifyContent(v) => css::generic::to_css(&v.0, dest),
+            Property::PlaceContent(v) => css::generic::to_css(v, dest),
+            Property::AlignSelf(v) => css::generic::to_css(&v.0, dest),
+            Property::JustifySelf(v) => css::generic::to_css(v, dest),
+            Property::PlaceSelf(v) => css::generic::to_css(v, dest),
+            Property::AlignItems(v) => css::generic::to_css(&v.0, dest),
+            Property::JustifyItems(v) => css::generic::to_css(v, dest),
+            Property::PlaceItems(v) => css::generic::to_css(v, dest),
+            Property::RowGap(v) => css::generic::to_css(v, dest),
+            Property::ColumnGap(v) => css::generic::to_css(v, dest),
+            Property::Gap(v) => css::generic::to_css(v, dest),
+            Property::BoxOrient(v) => css::generic::to_css(&v.0, dest),
+            Property::BoxDirection(v) => css::generic::to_css(&v.0, dest),
+            Property::BoxOrdinalGroup(v) => css::generic::to_css(&v.0, dest),
+            Property::BoxAlign(v) => css::generic::to_css(&v.0, dest),
+            Property::BoxFlex(v) => css::generic::to_css(&v.0, dest),
+            Property::BoxFlexGroup(v) => css::generic::to_css(&v.0, dest),
+            Property::BoxPack(v) => css::generic::to_css(&v.0, dest),
+            Property::BoxLines(v) => css::generic::to_css(&v.0, dest),
+            Property::FlexPack(v) => css::generic::to_css(&v.0, dest),
+            Property::FlexOrder(v) => css::generic::to_css(&v.0, dest),
+            Property::FlexAlign(v) => css::generic::to_css(&v.0, dest),
+            Property::FlexItemAlign(v) => css::generic::to_css(&v.0, dest),
+            Property::FlexLinePack(v) => css::generic::to_css(&v.0, dest),
+            Property::FlexPositive(v) => css::generic::to_css(&v.0, dest),
+            Property::FlexNegative(v) => css::generic::to_css(&v.0, dest),
+            Property::FlexPreferredSize(v) => css::generic::to_css(&v.0, dest),
+            Property::MarginTop(v) => css::generic::to_css(v, dest),
+            Property::MarginBottom(v) => css::generic::to_css(v, dest),
+            Property::MarginLeft(v) => css::generic::to_css(v, dest),
+            Property::MarginRight(v) => css::generic::to_css(v, dest),
+            Property::MarginBlockStart(v) => css::generic::to_css(v, dest),
+            Property::MarginBlockEnd(v) => css::generic::to_css(v, dest),
+            Property::MarginInlineStart(v) => css::generic::to_css(v, dest),
+            Property::MarginInlineEnd(v) => css::generic::to_css(v, dest),
+            Property::MarginBlock(v) => css::generic::to_css(v, dest),
+            Property::MarginInline(v) => css::generic::to_css(v, dest),
+            Property::Margin(v) => css::generic::to_css(v, dest),
+            Property::PaddingTop(v) => css::generic::to_css(v, dest),
+            Property::PaddingBottom(v) => css::generic::to_css(v, dest),
+            Property::PaddingLeft(v) => css::generic::to_css(v, dest),
+            Property::PaddingRight(v) => css::generic::to_css(v, dest),
+            Property::PaddingBlockStart(v) => css::generic::to_css(v, dest),
+            Property::PaddingBlockEnd(v) => css::generic::to_css(v, dest),
+            Property::PaddingInlineStart(v) => css::generic::to_css(v, dest),
+            Property::PaddingInlineEnd(v) => css::generic::to_css(v, dest),
+            Property::PaddingBlock(v) => css::generic::to_css(v, dest),
+            Property::PaddingInline(v) => css::generic::to_css(v, dest),
+            Property::Padding(v) => css::generic::to_css(v, dest),
+            Property::ScrollMarginTop(v) => css::generic::to_css(v, dest),
+            Property::ScrollMarginBottom(v) => css::generic::to_css(v, dest),
+            Property::ScrollMarginLeft(v) => css::generic::to_css(v, dest),
+            Property::ScrollMarginRight(v) => css::generic::to_css(v, dest),
+            Property::ScrollMarginBlockStart(v) => css::generic::to_css(v, dest),
+            Property::ScrollMarginBlockEnd(v) => css::generic::to_css(v, dest),
+            Property::ScrollMarginInlineStart(v) => css::generic::to_css(v, dest),
+            Property::ScrollMarginInlineEnd(v) => css::generic::to_css(v, dest),
+            Property::ScrollMarginBlock(v) => css::generic::to_css(v, dest),
+            Property::ScrollMarginInline(v) => css::generic::to_css(v, dest),
+            Property::ScrollMargin(v) => css::generic::to_css(v, dest),
+            Property::ScrollPaddingTop(v) => css::generic::to_css(v, dest),
+            Property::ScrollPaddingBottom(v) => css::generic::to_css(v, dest),
+            Property::ScrollPaddingLeft(v) => css::generic::to_css(v, dest),
+            Property::ScrollPaddingRight(v) => css::generic::to_css(v, dest),
+            Property::ScrollPaddingBlockStart(v) => css::generic::to_css(v, dest),
+            Property::ScrollPaddingBlockEnd(v) => css::generic::to_css(v, dest),
+            Property::ScrollPaddingInlineStart(v) => css::generic::to_css(v, dest),
+            Property::ScrollPaddingInlineEnd(v) => css::generic::to_css(v, dest),
+            Property::ScrollPaddingBlock(v) => css::generic::to_css(v, dest),
+            Property::ScrollPaddingInline(v) => css::generic::to_css(v, dest),
+            Property::ScrollPadding(v) => css::generic::to_css(v, dest),
+            Property::FontWeight(v) => css::generic::to_css(v, dest),
+            Property::FontSize(v) => css::generic::to_css(v, dest),
+            Property::FontStretch(v) => css::generic::to_css(v, dest),
+            Property::FontFamily(v) => css::generic::to_css(v, dest),
+            Property::FontStyle(v) => css::generic::to_css(v, dest),
+            Property::FontVariantCaps(v) => css::generic::to_css(v, dest),
+            Property::LineHeight(v) => css::generic::to_css(v, dest),
+            Property::Font(v) => css::generic::to_css(v, dest),
+            Property::TransitionProperty(v) => css::generic::to_css(&v.0, dest),
+            Property::TransitionDuration(v) => css::generic::to_css(&v.0, dest),
+            Property::TransitionDelay(v) => css::generic::to_css(&v.0, dest),
+            Property::TransitionTimingFunction(v) => css::generic::to_css(&v.0, dest),
+            Property::Transition(v) => css::generic::to_css(&v.0, dest),
+            Property::Transform(v) => css::generic::to_css(&v.0, dest),
+            Property::TransformOrigin(v) => css::generic::to_css(&v.0, dest),
+            Property::TransformStyle(v) => css::generic::to_css(&v.0, dest),
+            Property::TransformBox(v) => css::generic::to_css(v, dest),
+            Property::BackfaceVisibility(v) => css::generic::to_css(&v.0, dest),
+            Property::Perspective(v) => css::generic::to_css(&v.0, dest),
+            Property::PerspectiveOrigin(v) => css::generic::to_css(&v.0, dest),
+            Property::Translate(v) => css::generic::to_css(v, dest),
+            Property::Rotate(v) => css::generic::to_css(v, dest),
+            Property::Scale(v) => css::generic::to_css(v, dest),
+            Property::TextDecorationColor(v) => css::generic::to_css(&v.0, dest),
+            Property::TextEmphasisColor(v) => css::generic::to_css(&v.0, dest),
+            Property::TextShadow(v) => css::generic::to_css(v, dest),
+            Property::Direction(v) => css::generic::to_css(v, dest),
+            Property::Composes(v) => css::generic::to_css(v, dest),
+            Property::MaskImage(v) => css::generic::to_css(&v.0, dest),
+            Property::MaskMode(v) => css::generic::to_css(v, dest),
+            Property::MaskRepeat(v) => css::generic::to_css(&v.0, dest),
+            Property::MaskPositionX(v) => css::generic::to_css(v, dest),
+            Property::MaskPositionY(v) => css::generic::to_css(v, dest),
+            Property::MaskPosition(v) => css::generic::to_css(&v.0, dest),
+            Property::MaskClip(v) => css::generic::to_css(&v.0, dest),
+            Property::MaskOrigin(v) => css::generic::to_css(&v.0, dest),
+            Property::MaskSize(v) => css::generic::to_css(&v.0, dest),
+            Property::MaskComposite(v) => css::generic::to_css(v, dest),
+            Property::MaskType(v) => css::generic::to_css(v, dest),
+            Property::Mask(v) => css::generic::to_css(&v.0, dest),
+            Property::MaskBorderSource(v) => css::generic::to_css(v, dest),
+            Property::MaskBorderMode(v) => css::generic::to_css(v, dest),
+            Property::MaskBorderSlice(v) => css::generic::to_css(v, dest),
+            Property::MaskBorderWidth(v) => css::generic::to_css(v, dest),
+            Property::MaskBorderOutset(v) => css::generic::to_css(v, dest),
+            Property::MaskBorderRepeat(v) => css::generic::to_css(v, dest),
+            Property::MaskBorder(v) => css::generic::to_css(v, dest),
+            Property::WebKitMaskComposite(v) => css::generic::to_css(v, dest),
+            Property::MaskSourceType(v) => css::generic::to_css(&v.0, dest),
+            Property::MaskBoxImage(v) => css::generic::to_css(&v.0, dest),
+            Property::MaskBoxImageSource(v) => css::generic::to_css(&v.0, dest),
+            Property::MaskBoxImageSlice(v) => css::generic::to_css(&v.0, dest),
+            Property::MaskBoxImageWidth(v) => css::generic::to_css(&v.0, dest),
+            Property::MaskBoxImageOutset(v) => css::generic::to_css(&v.0, dest),
+            Property::MaskBoxImageRepeat(v) => css::generic::to_css(&v.0, dest),
+            Property::ColorScheme(v) => css::generic::to_css(v, dest),
+            Property::All(v) => css::generic::to_css(v, dest),
+            Property::Unparsed(u) => u.value.to_css(dest, false),
+            Property::Custom(c) => c.value.to_css(dest, matches!(c.name, CustomPropertyName::Custom(..))),
+        }
     }
 
     /// Parses a CSS property by name.
@@ -3487,10 +3734,1742 @@ impl Property {
         input: &mut css::Parser,
         options: &css::ParserOptions,
     ) -> css::Result<Property> {
-        // TODO(port): per-variant `T::parse(input)` dispatch + UnparsedProperty
-        // fallback — gated until every value type implements Parse.
-        let _ = (property_id, input, options);
-        todo!("Property::parse codegen pending values/ un-gate")
+        let state = input.state();
+
+        match property_id {
+            PropertyId::BackgroundColor => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::color::CssColor>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BackgroundColor(c));
+                    }
+                }
+            }
+            PropertyId::BackgroundImage => {
+                if let Some(c) = css::generic::parse_with_options::<SmallList<css::css_values::image::Image, 1>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BackgroundImage(c));
+                    }
+                }
+            }
+            PropertyId::BackgroundPositionX => {
+                if let Some(c) = css::generic::parse_with_options::<SmallList<css::css_values::position::HorizontalPosition, 1>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BackgroundPositionX(c));
+                    }
+                }
+            }
+            PropertyId::BackgroundPositionY => {
+                if let Some(c) = css::generic::parse_with_options::<SmallList<css::css_values::position::VerticalPosition, 1>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BackgroundPositionY(c));
+                    }
+                }
+            }
+            PropertyId::BackgroundPosition => {
+                if let Some(c) = css::generic::parse_with_options::<SmallList<background::BackgroundPosition, 1>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BackgroundPosition(c));
+                    }
+                }
+            }
+            PropertyId::BackgroundSize => {
+                if let Some(c) = css::generic::parse_with_options::<SmallList<background::BackgroundSize, 1>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BackgroundSize(c));
+                    }
+                }
+            }
+            PropertyId::BackgroundRepeat => {
+                if let Some(c) = css::generic::parse_with_options::<SmallList<background::BackgroundRepeat, 1>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BackgroundRepeat(c));
+                    }
+                }
+            }
+            PropertyId::BackgroundAttachment => {
+                if let Some(c) = css::generic::parse_with_options::<SmallList<background::BackgroundAttachment, 1>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BackgroundAttachment(c));
+                    }
+                }
+            }
+            PropertyId::BackgroundClip(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<SmallList<background::BackgroundClip, 1>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BackgroundClip((c, pre)));
+                    }
+                }
+            }
+            PropertyId::BackgroundOrigin => {
+                if let Some(c) = css::generic::parse_with_options::<SmallList<background::BackgroundOrigin, 1>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BackgroundOrigin(c));
+                    }
+                }
+            }
+            PropertyId::Background => {
+                if let Some(c) = css::generic::parse_with_options::<SmallList<background::Background, 1>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::Background(c));
+                    }
+                }
+            }
+            PropertyId::BoxShadow(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<SmallList<box_shadow::BoxShadow, 1>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BoxShadow((c, pre)));
+                    }
+                }
+            }
+            PropertyId::Opacity => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::alpha::AlphaValue>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::Opacity(c));
+                    }
+                }
+            }
+            PropertyId::Color => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::color::CssColor>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::Color(c));
+                    }
+                }
+            }
+            PropertyId::Display => {
+                if let Some(c) = css::generic::parse_with_options::<display::Display>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::Display(c));
+                    }
+                }
+            }
+            PropertyId::Visibility => {
+                if let Some(c) = css::generic::parse_with_options::<display::Visibility>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::Visibility(c));
+                    }
+                }
+            }
+            PropertyId::Width => {
+                if let Some(c) = css::generic::parse_with_options::<size::Size>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::Width(c));
+                    }
+                }
+            }
+            PropertyId::Height => {
+                if let Some(c) = css::generic::parse_with_options::<size::Size>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::Height(c));
+                    }
+                }
+            }
+            PropertyId::MinWidth => {
+                if let Some(c) = css::generic::parse_with_options::<size::Size>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MinWidth(c));
+                    }
+                }
+            }
+            PropertyId::MinHeight => {
+                if let Some(c) = css::generic::parse_with_options::<size::Size>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MinHeight(c));
+                    }
+                }
+            }
+            PropertyId::MaxWidth => {
+                if let Some(c) = css::generic::parse_with_options::<size::MaxSize>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MaxWidth(c));
+                    }
+                }
+            }
+            PropertyId::MaxHeight => {
+                if let Some(c) = css::generic::parse_with_options::<size::MaxSize>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MaxHeight(c));
+                    }
+                }
+            }
+            PropertyId::BlockSize => {
+                if let Some(c) = css::generic::parse_with_options::<size::Size>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BlockSize(c));
+                    }
+                }
+            }
+            PropertyId::InlineSize => {
+                if let Some(c) = css::generic::parse_with_options::<size::Size>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::InlineSize(c));
+                    }
+                }
+            }
+            PropertyId::MinBlockSize => {
+                if let Some(c) = css::generic::parse_with_options::<size::Size>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MinBlockSize(c));
+                    }
+                }
+            }
+            PropertyId::MinInlineSize => {
+                if let Some(c) = css::generic::parse_with_options::<size::Size>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MinInlineSize(c));
+                    }
+                }
+            }
+            PropertyId::MaxBlockSize => {
+                if let Some(c) = css::generic::parse_with_options::<size::MaxSize>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MaxBlockSize(c));
+                    }
+                }
+            }
+            PropertyId::MaxInlineSize => {
+                if let Some(c) = css::generic::parse_with_options::<size::MaxSize>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MaxInlineSize(c));
+                    }
+                }
+            }
+            PropertyId::BoxSizing(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<size::BoxSizing>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BoxSizing((c, pre)));
+                    }
+                }
+            }
+            PropertyId::AspectRatio => {
+                if let Some(c) = css::generic::parse_with_options::<size::AspectRatio>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::AspectRatio(c));
+                    }
+                }
+            }
+            PropertyId::Overflow => {
+                if let Some(c) = css::generic::parse_with_options::<overflow::Overflow>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::Overflow(c));
+                    }
+                }
+            }
+            PropertyId::OverflowX => {
+                if let Some(c) = css::generic::parse_with_options::<overflow::OverflowKeyword>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::OverflowX(c));
+                    }
+                }
+            }
+            PropertyId::OverflowY => {
+                if let Some(c) = css::generic::parse_with_options::<overflow::OverflowKeyword>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::OverflowY(c));
+                    }
+                }
+            }
+            PropertyId::TextOverflow(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<overflow::TextOverflow>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::TextOverflow((c, pre)));
+                    }
+                }
+            }
+            PropertyId::Position => {
+                if let Some(c) = css::generic::parse_with_options::<position::Position>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::Position(c));
+                    }
+                }
+            }
+            PropertyId::Top => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::Top(c));
+                    }
+                }
+            }
+            PropertyId::Bottom => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::Bottom(c));
+                    }
+                }
+            }
+            PropertyId::Left => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::Left(c));
+                    }
+                }
+            }
+            PropertyId::Right => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::Right(c));
+                    }
+                }
+            }
+            PropertyId::InsetBlockStart => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::InsetBlockStart(c));
+                    }
+                }
+            }
+            PropertyId::InsetBlockEnd => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::InsetBlockEnd(c));
+                    }
+                }
+            }
+            PropertyId::InsetInlineStart => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::InsetInlineStart(c));
+                    }
+                }
+            }
+            PropertyId::InsetInlineEnd => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::InsetInlineEnd(c));
+                    }
+                }
+            }
+            PropertyId::InsetBlock => {
+                if let Some(c) = css::generic::parse_with_options::<margin_padding::InsetBlock>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::InsetBlock(c));
+                    }
+                }
+            }
+            PropertyId::InsetInline => {
+                if let Some(c) = css::generic::parse_with_options::<margin_padding::InsetInline>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::InsetInline(c));
+                    }
+                }
+            }
+            PropertyId::Inset => {
+                if let Some(c) = css::generic::parse_with_options::<margin_padding::Inset>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::Inset(c));
+                    }
+                }
+            }
+            PropertyId::BorderSpacing => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::size::Size2D<css::css_values::length::Length>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderSpacing(c));
+                    }
+                }
+            }
+            PropertyId::BorderTopColor => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::color::CssColor>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderTopColor(c));
+                    }
+                }
+            }
+            PropertyId::BorderBottomColor => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::color::CssColor>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderBottomColor(c));
+                    }
+                }
+            }
+            PropertyId::BorderLeftColor => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::color::CssColor>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderLeftColor(c));
+                    }
+                }
+            }
+            PropertyId::BorderRightColor => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::color::CssColor>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderRightColor(c));
+                    }
+                }
+            }
+            PropertyId::BorderBlockStartColor => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::color::CssColor>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderBlockStartColor(c));
+                    }
+                }
+            }
+            PropertyId::BorderBlockEndColor => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::color::CssColor>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderBlockEndColor(c));
+                    }
+                }
+            }
+            PropertyId::BorderInlineStartColor => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::color::CssColor>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderInlineStartColor(c));
+                    }
+                }
+            }
+            PropertyId::BorderInlineEndColor => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::color::CssColor>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderInlineEndColor(c));
+                    }
+                }
+            }
+            PropertyId::BorderTopStyle => {
+                if let Some(c) = css::generic::parse_with_options::<border::LineStyle>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderTopStyle(c));
+                    }
+                }
+            }
+            PropertyId::BorderBottomStyle => {
+                if let Some(c) = css::generic::parse_with_options::<border::LineStyle>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderBottomStyle(c));
+                    }
+                }
+            }
+            PropertyId::BorderLeftStyle => {
+                if let Some(c) = css::generic::parse_with_options::<border::LineStyle>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderLeftStyle(c));
+                    }
+                }
+            }
+            PropertyId::BorderRightStyle => {
+                if let Some(c) = css::generic::parse_with_options::<border::LineStyle>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderRightStyle(c));
+                    }
+                }
+            }
+            PropertyId::BorderBlockStartStyle => {
+                if let Some(c) = css::generic::parse_with_options::<border::LineStyle>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderBlockStartStyle(c));
+                    }
+                }
+            }
+            PropertyId::BorderBlockEndStyle => {
+                if let Some(c) = css::generic::parse_with_options::<border::LineStyle>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderBlockEndStyle(c));
+                    }
+                }
+            }
+            PropertyId::BorderInlineStartStyle => {
+                if let Some(c) = css::generic::parse_with_options::<border::LineStyle>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderInlineStartStyle(c));
+                    }
+                }
+            }
+            PropertyId::BorderInlineEndStyle => {
+                if let Some(c) = css::generic::parse_with_options::<border::LineStyle>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderInlineEndStyle(c));
+                    }
+                }
+            }
+            PropertyId::BorderTopWidth => {
+                if let Some(c) = css::generic::parse_with_options::<border::BorderSideWidth>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderTopWidth(c));
+                    }
+                }
+            }
+            PropertyId::BorderBottomWidth => {
+                if let Some(c) = css::generic::parse_with_options::<border::BorderSideWidth>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderBottomWidth(c));
+                    }
+                }
+            }
+            PropertyId::BorderLeftWidth => {
+                if let Some(c) = css::generic::parse_with_options::<border::BorderSideWidth>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderLeftWidth(c));
+                    }
+                }
+            }
+            PropertyId::BorderRightWidth => {
+                if let Some(c) = css::generic::parse_with_options::<border::BorderSideWidth>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderRightWidth(c));
+                    }
+                }
+            }
+            PropertyId::BorderBlockStartWidth => {
+                if let Some(c) = css::generic::parse_with_options::<border::BorderSideWidth>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderBlockStartWidth(c));
+                    }
+                }
+            }
+            PropertyId::BorderBlockEndWidth => {
+                if let Some(c) = css::generic::parse_with_options::<border::BorderSideWidth>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderBlockEndWidth(c));
+                    }
+                }
+            }
+            PropertyId::BorderInlineStartWidth => {
+                if let Some(c) = css::generic::parse_with_options::<border::BorderSideWidth>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderInlineStartWidth(c));
+                    }
+                }
+            }
+            PropertyId::BorderInlineEndWidth => {
+                if let Some(c) = css::generic::parse_with_options::<border::BorderSideWidth>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderInlineEndWidth(c));
+                    }
+                }
+            }
+            PropertyId::BorderTopLeftRadius(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::size::Size2D<css::css_values::length::LengthPercentage>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderTopLeftRadius((c, pre)));
+                    }
+                }
+            }
+            PropertyId::BorderTopRightRadius(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::size::Size2D<css::css_values::length::LengthPercentage>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderTopRightRadius((c, pre)));
+                    }
+                }
+            }
+            PropertyId::BorderBottomLeftRadius(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::size::Size2D<css::css_values::length::LengthPercentage>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderBottomLeftRadius((c, pre)));
+                    }
+                }
+            }
+            PropertyId::BorderBottomRightRadius(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::size::Size2D<css::css_values::length::LengthPercentage>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderBottomRightRadius((c, pre)));
+                    }
+                }
+            }
+            PropertyId::BorderStartStartRadius => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::size::Size2D<css::css_values::length::LengthPercentage>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderStartStartRadius(c));
+                    }
+                }
+            }
+            PropertyId::BorderStartEndRadius => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::size::Size2D<css::css_values::length::LengthPercentage>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderStartEndRadius(c));
+                    }
+                }
+            }
+            PropertyId::BorderEndStartRadius => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::size::Size2D<css::css_values::length::LengthPercentage>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderEndStartRadius(c));
+                    }
+                }
+            }
+            PropertyId::BorderEndEndRadius => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::size::Size2D<css::css_values::length::LengthPercentage>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderEndEndRadius(c));
+                    }
+                }
+            }
+            PropertyId::BorderRadius(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<border_radius::BorderRadius>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderRadius((c, pre)));
+                    }
+                }
+            }
+            PropertyId::BorderImageSource => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::image::Image>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderImageSource(c));
+                    }
+                }
+            }
+            PropertyId::BorderImageOutset => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::rect::Rect<css::css_values::length::LengthOrNumber>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderImageOutset(c));
+                    }
+                }
+            }
+            PropertyId::BorderImageRepeat => {
+                if let Some(c) = css::generic::parse_with_options::<border_image::BorderImageRepeat>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderImageRepeat(c));
+                    }
+                }
+            }
+            PropertyId::BorderImageWidth => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::rect::Rect<border_image::BorderImageSideWidth>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderImageWidth(c));
+                    }
+                }
+            }
+            PropertyId::BorderImageSlice => {
+                if let Some(c) = css::generic::parse_with_options::<border_image::BorderImageSlice>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderImageSlice(c));
+                    }
+                }
+            }
+            PropertyId::BorderImage(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<border_image::BorderImage>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderImage((c, pre)));
+                    }
+                }
+            }
+            PropertyId::BorderColor => {
+                if let Some(c) = css::generic::parse_with_options::<border::BorderColor>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderColor(c));
+                    }
+                }
+            }
+            PropertyId::BorderStyle => {
+                if let Some(c) = css::generic::parse_with_options::<border::BorderStyle>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderStyle(c));
+                    }
+                }
+            }
+            PropertyId::BorderWidth => {
+                if let Some(c) = css::generic::parse_with_options::<border::BorderWidth>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderWidth(c));
+                    }
+                }
+            }
+            PropertyId::BorderBlockColor => {
+                if let Some(c) = css::generic::parse_with_options::<border::BorderBlockColor>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderBlockColor(c));
+                    }
+                }
+            }
+            PropertyId::BorderBlockStyle => {
+                if let Some(c) = css::generic::parse_with_options::<border::BorderBlockStyle>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderBlockStyle(c));
+                    }
+                }
+            }
+            PropertyId::BorderBlockWidth => {
+                if let Some(c) = css::generic::parse_with_options::<border::BorderBlockWidth>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderBlockWidth(c));
+                    }
+                }
+            }
+            PropertyId::BorderInlineColor => {
+                if let Some(c) = css::generic::parse_with_options::<border::BorderInlineColor>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderInlineColor(c));
+                    }
+                }
+            }
+            PropertyId::BorderInlineStyle => {
+                if let Some(c) = css::generic::parse_with_options::<border::BorderInlineStyle>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderInlineStyle(c));
+                    }
+                }
+            }
+            PropertyId::BorderInlineWidth => {
+                if let Some(c) = css::generic::parse_with_options::<border::BorderInlineWidth>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderInlineWidth(c));
+                    }
+                }
+            }
+            PropertyId::Border => {
+                if let Some(c) = css::generic::parse_with_options::<border::Border>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::Border(c));
+                    }
+                }
+            }
+            PropertyId::BorderTop => {
+                if let Some(c) = css::generic::parse_with_options::<border::BorderTop>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderTop(c));
+                    }
+                }
+            }
+            PropertyId::BorderBottom => {
+                if let Some(c) = css::generic::parse_with_options::<border::BorderBottom>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderBottom(c));
+                    }
+                }
+            }
+            PropertyId::BorderLeft => {
+                if let Some(c) = css::generic::parse_with_options::<border::BorderLeft>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderLeft(c));
+                    }
+                }
+            }
+            PropertyId::BorderRight => {
+                if let Some(c) = css::generic::parse_with_options::<border::BorderRight>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderRight(c));
+                    }
+                }
+            }
+            PropertyId::BorderBlock => {
+                if let Some(c) = css::generic::parse_with_options::<border::BorderBlock>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderBlock(c));
+                    }
+                }
+            }
+            PropertyId::BorderBlockStart => {
+                if let Some(c) = css::generic::parse_with_options::<border::BorderBlockStart>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderBlockStart(c));
+                    }
+                }
+            }
+            PropertyId::BorderBlockEnd => {
+                if let Some(c) = css::generic::parse_with_options::<border::BorderBlockEnd>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderBlockEnd(c));
+                    }
+                }
+            }
+            PropertyId::BorderInline => {
+                if let Some(c) = css::generic::parse_with_options::<border::BorderInline>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderInline(c));
+                    }
+                }
+            }
+            PropertyId::BorderInlineStart => {
+                if let Some(c) = css::generic::parse_with_options::<border::BorderInlineStart>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderInlineStart(c));
+                    }
+                }
+            }
+            PropertyId::BorderInlineEnd => {
+                if let Some(c) = css::generic::parse_with_options::<border::BorderInlineEnd>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BorderInlineEnd(c));
+                    }
+                }
+            }
+            PropertyId::Outline => {
+                if let Some(c) = css::generic::parse_with_options::<outline::Outline>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::Outline(c));
+                    }
+                }
+            }
+            PropertyId::OutlineColor => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::color::CssColor>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::OutlineColor(c));
+                    }
+                }
+            }
+            PropertyId::OutlineStyle => {
+                if let Some(c) = css::generic::parse_with_options::<outline::OutlineStyle>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::OutlineStyle(c));
+                    }
+                }
+            }
+            PropertyId::OutlineWidth => {
+                if let Some(c) = css::generic::parse_with_options::<border::BorderSideWidth>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::OutlineWidth(c));
+                    }
+                }
+            }
+            PropertyId::FlexDirection(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<flex::FlexDirection>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::FlexDirection((c, pre)));
+                    }
+                }
+            }
+            PropertyId::FlexWrap(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<flex::FlexWrap>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::FlexWrap((c, pre)));
+                    }
+                }
+            }
+            PropertyId::FlexFlow(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<flex::FlexFlow>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::FlexFlow((c, pre)));
+                    }
+                }
+            }
+            PropertyId::FlexGrow(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::number::CSSNumber>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::FlexGrow((c, pre)));
+                    }
+                }
+            }
+            PropertyId::FlexShrink(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::number::CSSNumber>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::FlexShrink((c, pre)));
+                    }
+                }
+            }
+            PropertyId::FlexBasis(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::FlexBasis((c, pre)));
+                    }
+                }
+            }
+            PropertyId::Flex(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<flex::Flex>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::Flex((c, pre)));
+                    }
+                }
+            }
+            PropertyId::Order(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::number::CSSInteger>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::Order((c, pre)));
+                    }
+                }
+            }
+            PropertyId::AlignContent(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<align::AlignContent>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::AlignContent((c, pre)));
+                    }
+                }
+            }
+            PropertyId::JustifyContent(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<align::JustifyContent>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::JustifyContent((c, pre)));
+                    }
+                }
+            }
+            PropertyId::PlaceContent => {
+                if let Some(c) = css::generic::parse_with_options::<align::PlaceContent>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::PlaceContent(c));
+                    }
+                }
+            }
+            PropertyId::AlignSelf(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<align::AlignSelf>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::AlignSelf((c, pre)));
+                    }
+                }
+            }
+            PropertyId::JustifySelf => {
+                if let Some(c) = css::generic::parse_with_options::<align::JustifySelf>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::JustifySelf(c));
+                    }
+                }
+            }
+            PropertyId::PlaceSelf => {
+                if let Some(c) = css::generic::parse_with_options::<align::PlaceSelf>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::PlaceSelf(c));
+                    }
+                }
+            }
+            PropertyId::AlignItems(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<align::AlignItems>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::AlignItems((c, pre)));
+                    }
+                }
+            }
+            PropertyId::JustifyItems => {
+                if let Some(c) = css::generic::parse_with_options::<align::JustifyItems>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::JustifyItems(c));
+                    }
+                }
+            }
+            PropertyId::PlaceItems => {
+                if let Some(c) = css::generic::parse_with_options::<align::PlaceItems>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::PlaceItems(c));
+                    }
+                }
+            }
+            PropertyId::RowGap => {
+                if let Some(c) = css::generic::parse_with_options::<align::GapValue>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::RowGap(c));
+                    }
+                }
+            }
+            PropertyId::ColumnGap => {
+                if let Some(c) = css::generic::parse_with_options::<align::GapValue>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::ColumnGap(c));
+                    }
+                }
+            }
+            PropertyId::Gap => {
+                if let Some(c) = css::generic::parse_with_options::<align::Gap>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::Gap(c));
+                    }
+                }
+            }
+            PropertyId::BoxOrient(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<flex::BoxOrient>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BoxOrient((c, pre)));
+                    }
+                }
+            }
+            PropertyId::BoxDirection(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<flex::BoxDirection>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BoxDirection((c, pre)));
+                    }
+                }
+            }
+            PropertyId::BoxOrdinalGroup(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::number::CSSInteger>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BoxOrdinalGroup((c, pre)));
+                    }
+                }
+            }
+            PropertyId::BoxAlign(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<flex::BoxAlign>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BoxAlign((c, pre)));
+                    }
+                }
+            }
+            PropertyId::BoxFlex(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::number::CSSNumber>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BoxFlex((c, pre)));
+                    }
+                }
+            }
+            PropertyId::BoxFlexGroup(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::number::CSSInteger>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BoxFlexGroup((c, pre)));
+                    }
+                }
+            }
+            PropertyId::BoxPack(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<flex::BoxPack>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BoxPack((c, pre)));
+                    }
+                }
+            }
+            PropertyId::BoxLines(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<flex::BoxLines>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BoxLines((c, pre)));
+                    }
+                }
+            }
+            PropertyId::FlexPack(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<flex::FlexPack>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::FlexPack((c, pre)));
+                    }
+                }
+            }
+            PropertyId::FlexOrder(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::number::CSSInteger>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::FlexOrder((c, pre)));
+                    }
+                }
+            }
+            PropertyId::FlexAlign(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<flex::BoxAlign>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::FlexAlign((c, pre)));
+                    }
+                }
+            }
+            PropertyId::FlexItemAlign(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<flex::FlexItemAlign>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::FlexItemAlign((c, pre)));
+                    }
+                }
+            }
+            PropertyId::FlexLinePack(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<flex::FlexLinePack>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::FlexLinePack((c, pre)));
+                    }
+                }
+            }
+            PropertyId::FlexPositive(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::number::CSSNumber>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::FlexPositive((c, pre)));
+                    }
+                }
+            }
+            PropertyId::FlexNegative(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::number::CSSNumber>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::FlexNegative((c, pre)));
+                    }
+                }
+            }
+            PropertyId::FlexPreferredSize(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::FlexPreferredSize((c, pre)));
+                    }
+                }
+            }
+            PropertyId::MarginTop => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MarginTop(c));
+                    }
+                }
+            }
+            PropertyId::MarginBottom => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MarginBottom(c));
+                    }
+                }
+            }
+            PropertyId::MarginLeft => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MarginLeft(c));
+                    }
+                }
+            }
+            PropertyId::MarginRight => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MarginRight(c));
+                    }
+                }
+            }
+            PropertyId::MarginBlockStart => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MarginBlockStart(c));
+                    }
+                }
+            }
+            PropertyId::MarginBlockEnd => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MarginBlockEnd(c));
+                    }
+                }
+            }
+            PropertyId::MarginInlineStart => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MarginInlineStart(c));
+                    }
+                }
+            }
+            PropertyId::MarginInlineEnd => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MarginInlineEnd(c));
+                    }
+                }
+            }
+            PropertyId::MarginBlock => {
+                if let Some(c) = css::generic::parse_with_options::<margin_padding::MarginBlock>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MarginBlock(c));
+                    }
+                }
+            }
+            PropertyId::MarginInline => {
+                if let Some(c) = css::generic::parse_with_options::<margin_padding::MarginInline>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MarginInline(c));
+                    }
+                }
+            }
+            PropertyId::Margin => {
+                if let Some(c) = css::generic::parse_with_options::<margin_padding::Margin>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::Margin(c));
+                    }
+                }
+            }
+            PropertyId::PaddingTop => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::PaddingTop(c));
+                    }
+                }
+            }
+            PropertyId::PaddingBottom => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::PaddingBottom(c));
+                    }
+                }
+            }
+            PropertyId::PaddingLeft => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::PaddingLeft(c));
+                    }
+                }
+            }
+            PropertyId::PaddingRight => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::PaddingRight(c));
+                    }
+                }
+            }
+            PropertyId::PaddingBlockStart => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::PaddingBlockStart(c));
+                    }
+                }
+            }
+            PropertyId::PaddingBlockEnd => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::PaddingBlockEnd(c));
+                    }
+                }
+            }
+            PropertyId::PaddingInlineStart => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::PaddingInlineStart(c));
+                    }
+                }
+            }
+            PropertyId::PaddingInlineEnd => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::PaddingInlineEnd(c));
+                    }
+                }
+            }
+            PropertyId::PaddingBlock => {
+                if let Some(c) = css::generic::parse_with_options::<margin_padding::PaddingBlock>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::PaddingBlock(c));
+                    }
+                }
+            }
+            PropertyId::PaddingInline => {
+                if let Some(c) = css::generic::parse_with_options::<margin_padding::PaddingInline>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::PaddingInline(c));
+                    }
+                }
+            }
+            PropertyId::Padding => {
+                if let Some(c) = css::generic::parse_with_options::<margin_padding::Padding>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::Padding(c));
+                    }
+                }
+            }
+            PropertyId::ScrollMarginTop => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::ScrollMarginTop(c));
+                    }
+                }
+            }
+            PropertyId::ScrollMarginBottom => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::ScrollMarginBottom(c));
+                    }
+                }
+            }
+            PropertyId::ScrollMarginLeft => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::ScrollMarginLeft(c));
+                    }
+                }
+            }
+            PropertyId::ScrollMarginRight => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::ScrollMarginRight(c));
+                    }
+                }
+            }
+            PropertyId::ScrollMarginBlockStart => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::ScrollMarginBlockStart(c));
+                    }
+                }
+            }
+            PropertyId::ScrollMarginBlockEnd => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::ScrollMarginBlockEnd(c));
+                    }
+                }
+            }
+            PropertyId::ScrollMarginInlineStart => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::ScrollMarginInlineStart(c));
+                    }
+                }
+            }
+            PropertyId::ScrollMarginInlineEnd => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::ScrollMarginInlineEnd(c));
+                    }
+                }
+            }
+            PropertyId::ScrollMarginBlock => {
+                if let Some(c) = css::generic::parse_with_options::<margin_padding::ScrollMarginBlock>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::ScrollMarginBlock(c));
+                    }
+                }
+            }
+            PropertyId::ScrollMarginInline => {
+                if let Some(c) = css::generic::parse_with_options::<margin_padding::ScrollMarginInline>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::ScrollMarginInline(c));
+                    }
+                }
+            }
+            PropertyId::ScrollMargin => {
+                if let Some(c) = css::generic::parse_with_options::<margin_padding::ScrollMargin>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::ScrollMargin(c));
+                    }
+                }
+            }
+            PropertyId::ScrollPaddingTop => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::ScrollPaddingTop(c));
+                    }
+                }
+            }
+            PropertyId::ScrollPaddingBottom => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::ScrollPaddingBottom(c));
+                    }
+                }
+            }
+            PropertyId::ScrollPaddingLeft => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::ScrollPaddingLeft(c));
+                    }
+                }
+            }
+            PropertyId::ScrollPaddingRight => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::ScrollPaddingRight(c));
+                    }
+                }
+            }
+            PropertyId::ScrollPaddingBlockStart => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::ScrollPaddingBlockStart(c));
+                    }
+                }
+            }
+            PropertyId::ScrollPaddingBlockEnd => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::ScrollPaddingBlockEnd(c));
+                    }
+                }
+            }
+            PropertyId::ScrollPaddingInlineStart => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::ScrollPaddingInlineStart(c));
+                    }
+                }
+            }
+            PropertyId::ScrollPaddingInlineEnd => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::length::LengthPercentageOrAuto>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::ScrollPaddingInlineEnd(c));
+                    }
+                }
+            }
+            PropertyId::ScrollPaddingBlock => {
+                if let Some(c) = css::generic::parse_with_options::<margin_padding::ScrollPaddingBlock>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::ScrollPaddingBlock(c));
+                    }
+                }
+            }
+            PropertyId::ScrollPaddingInline => {
+                if let Some(c) = css::generic::parse_with_options::<margin_padding::ScrollPaddingInline>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::ScrollPaddingInline(c));
+                    }
+                }
+            }
+            PropertyId::ScrollPadding => {
+                if let Some(c) = css::generic::parse_with_options::<margin_padding::ScrollPadding>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::ScrollPadding(c));
+                    }
+                }
+            }
+            PropertyId::FontWeight => {
+                if let Some(c) = css::generic::parse_with_options::<font::FontWeight>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::FontWeight(c));
+                    }
+                }
+            }
+            PropertyId::FontSize => {
+                if let Some(c) = css::generic::parse_with_options::<font::FontSize>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::FontSize(c));
+                    }
+                }
+            }
+            PropertyId::FontStretch => {
+                if let Some(c) = css::generic::parse_with_options::<font::FontStretch>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::FontStretch(c));
+                    }
+                }
+            }
+            PropertyId::FontFamily => {
+                if let Some(c) = css::generic::parse_with_options::<BabyList<font::FontFamily>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::FontFamily(c));
+                    }
+                }
+            }
+            PropertyId::FontStyle => {
+                if let Some(c) = css::generic::parse_with_options::<font::FontStyle>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::FontStyle(c));
+                    }
+                }
+            }
+            PropertyId::FontVariantCaps => {
+                if let Some(c) = css::generic::parse_with_options::<font::FontVariantCaps>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::FontVariantCaps(c));
+                    }
+                }
+            }
+            PropertyId::LineHeight => {
+                if let Some(c) = css::generic::parse_with_options::<font::LineHeight>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::LineHeight(c));
+                    }
+                }
+            }
+            PropertyId::Font => {
+                if let Some(c) = css::generic::parse_with_options::<font::Font>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::Font(c));
+                    }
+                }
+            }
+            PropertyId::TransitionProperty(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<SmallList<PropertyId, 1>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::TransitionProperty((c, pre)));
+                    }
+                }
+            }
+            PropertyId::TransitionDuration(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<SmallList<css::css_values::time::Time, 1>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::TransitionDuration((c, pre)));
+                    }
+                }
+            }
+            PropertyId::TransitionDelay(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<SmallList<css::css_values::time::Time, 1>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::TransitionDelay((c, pre)));
+                    }
+                }
+            }
+            PropertyId::TransitionTimingFunction(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<SmallList<css::css_values::easing::EasingFunction, 1>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::TransitionTimingFunction((c, pre)));
+                    }
+                }
+            }
+            PropertyId::Transition(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<SmallList<transition::Transition, 1>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::Transition((c, pre)));
+                    }
+                }
+            }
+            PropertyId::Transform(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<transform::TransformList>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::Transform((c, pre)));
+                    }
+                }
+            }
+            PropertyId::TransformOrigin(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::position::Position>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::TransformOrigin((c, pre)));
+                    }
+                }
+            }
+            PropertyId::TransformStyle(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<transform::TransformStyle>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::TransformStyle((c, pre)));
+                    }
+                }
+            }
+            PropertyId::TransformBox => {
+                if let Some(c) = css::generic::parse_with_options::<transform::TransformBox>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::TransformBox(c));
+                    }
+                }
+            }
+            PropertyId::BackfaceVisibility(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<transform::BackfaceVisibility>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::BackfaceVisibility((c, pre)));
+                    }
+                }
+            }
+            PropertyId::Perspective(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<transform::Perspective>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::Perspective((c, pre)));
+                    }
+                }
+            }
+            PropertyId::PerspectiveOrigin(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::position::Position>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::PerspectiveOrigin((c, pre)));
+                    }
+                }
+            }
+            PropertyId::Translate => {
+                if let Some(c) = css::generic::parse_with_options::<transform::Translate>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::Translate(c));
+                    }
+                }
+            }
+            PropertyId::Rotate => {
+                if let Some(c) = css::generic::parse_with_options::<transform::Rotate>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::Rotate(c));
+                    }
+                }
+            }
+            PropertyId::Scale => {
+                if let Some(c) = css::generic::parse_with_options::<transform::Scale>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::Scale(c));
+                    }
+                }
+            }
+            PropertyId::TextDecorationColor(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::color::CssColor>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::TextDecorationColor((c, pre)));
+                    }
+                }
+            }
+            PropertyId::TextEmphasisColor(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::color::CssColor>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::TextEmphasisColor((c, pre)));
+                    }
+                }
+            }
+            PropertyId::TextShadow => {
+                if let Some(c) = css::generic::parse_with_options::<SmallList<text::TextShadow, 1>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::TextShadow(c));
+                    }
+                }
+            }
+            PropertyId::Direction => {
+                if let Some(c) = css::generic::parse_with_options::<text::Direction>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::Direction(c));
+                    }
+                }
+            }
+            PropertyId::Composes => {
+                if let Some(c) = css::generic::parse_with_options::<css_modules::Composes>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::Composes(c));
+                    }
+                }
+            }
+            PropertyId::MaskImage(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<SmallList<css::css_values::image::Image, 1>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MaskImage((c, pre)));
+                    }
+                }
+            }
+            PropertyId::MaskMode => {
+                if let Some(c) = css::generic::parse_with_options::<SmallList<masking::MaskMode, 1>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MaskMode(c));
+                    }
+                }
+            }
+            PropertyId::MaskRepeat(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<SmallList<background::BackgroundRepeat, 1>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MaskRepeat((c, pre)));
+                    }
+                }
+            }
+            PropertyId::MaskPositionX => {
+                if let Some(c) = css::generic::parse_with_options::<SmallList<css::css_values::position::HorizontalPosition, 1>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MaskPositionX(c));
+                    }
+                }
+            }
+            PropertyId::MaskPositionY => {
+                if let Some(c) = css::generic::parse_with_options::<SmallList<css::css_values::position::VerticalPosition, 1>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MaskPositionY(c));
+                    }
+                }
+            }
+            PropertyId::MaskPosition(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<SmallList<css::css_values::position::Position, 1>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MaskPosition((c, pre)));
+                    }
+                }
+            }
+            PropertyId::MaskClip(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<SmallList<masking::MaskClip, 1>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MaskClip((c, pre)));
+                    }
+                }
+            }
+            PropertyId::MaskOrigin(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<SmallList<masking::GeometryBox, 1>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MaskOrigin((c, pre)));
+                    }
+                }
+            }
+            PropertyId::MaskSize(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<SmallList<background::BackgroundSize, 1>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MaskSize((c, pre)));
+                    }
+                }
+            }
+            PropertyId::MaskComposite => {
+                if let Some(c) = css::generic::parse_with_options::<SmallList<masking::MaskComposite, 1>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MaskComposite(c));
+                    }
+                }
+            }
+            PropertyId::MaskType => {
+                if let Some(c) = css::generic::parse_with_options::<masking::MaskType>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MaskType(c));
+                    }
+                }
+            }
+            PropertyId::Mask(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<SmallList<masking::Mask, 1>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::Mask((c, pre)));
+                    }
+                }
+            }
+            PropertyId::MaskBorderSource => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::image::Image>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MaskBorderSource(c));
+                    }
+                }
+            }
+            PropertyId::MaskBorderMode => {
+                if let Some(c) = css::generic::parse_with_options::<masking::MaskBorderMode>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MaskBorderMode(c));
+                    }
+                }
+            }
+            PropertyId::MaskBorderSlice => {
+                if let Some(c) = css::generic::parse_with_options::<border_image::BorderImageSlice>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MaskBorderSlice(c));
+                    }
+                }
+            }
+            PropertyId::MaskBorderWidth => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::rect::Rect<border_image::BorderImageSideWidth>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MaskBorderWidth(c));
+                    }
+                }
+            }
+            PropertyId::MaskBorderOutset => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::rect::Rect<css::css_values::length::LengthOrNumber>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MaskBorderOutset(c));
+                    }
+                }
+            }
+            PropertyId::MaskBorderRepeat => {
+                if let Some(c) = css::generic::parse_with_options::<border_image::BorderImageRepeat>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MaskBorderRepeat(c));
+                    }
+                }
+            }
+            PropertyId::MaskBorder => {
+                if let Some(c) = css::generic::parse_with_options::<masking::MaskBorder>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MaskBorder(c));
+                    }
+                }
+            }
+            PropertyId::WebKitMaskComposite => {
+                if let Some(c) = css::generic::parse_with_options::<SmallList<masking::WebKitMaskComposite, 1>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::WebKitMaskComposite(c));
+                    }
+                }
+            }
+            PropertyId::MaskSourceType(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<SmallList<masking::WebKitMaskSourceType, 1>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MaskSourceType((c, pre)));
+                    }
+                }
+            }
+            PropertyId::MaskBoxImage(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<border_image::BorderImage>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MaskBoxImage((c, pre)));
+                    }
+                }
+            }
+            PropertyId::MaskBoxImageSource(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::image::Image>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MaskBoxImageSource((c, pre)));
+                    }
+                }
+            }
+            PropertyId::MaskBoxImageSlice(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<border_image::BorderImageSlice>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MaskBoxImageSlice((c, pre)));
+                    }
+                }
+            }
+            PropertyId::MaskBoxImageWidth(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::rect::Rect<border_image::BorderImageSideWidth>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MaskBoxImageWidth((c, pre)));
+                    }
+                }
+            }
+            PropertyId::MaskBoxImageOutset(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<css::css_values::rect::Rect<css::css_values::length::LengthOrNumber>>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MaskBoxImageOutset((c, pre)));
+                    }
+                }
+            }
+            PropertyId::MaskBoxImageRepeat(pre) => {
+                if let Some(c) = css::generic::parse_with_options::<border_image::BorderImageRepeat>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::MaskBoxImageRepeat((c, pre)));
+                    }
+                }
+            }
+            PropertyId::ColorScheme => {
+                if let Some(c) = css::generic::parse_with_options::<ui::ColorScheme>(input, options).ok() {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::ColorScheme(c));
+                    }
+                }
+            }
+            PropertyId::All => return CSSWideKeyword::parse(input).map(Property::All),
+            PropertyId::Custom(name) => return CustomProperty::parse(name, input, options).map(Property::Custom),
+            PropertyId::Unparsed => {}
+        }
+
+        // If a value was unable to be parsed, treat as an unparsed property.
+        // This is different from a custom property, handled above, in that the property name is known
+        // and stored as an enum rather than a string. This lets property handlers more easily deal with it.
+        // Ideally we'd only do this if var() or env() references were seen, but err on the safe side for now.
+        input.reset(&state);
+        UnparsedProperty::parse(property_id, input, options).map(Property::Unparsed)
     }
 
     pub fn to_css(&self, dest: &mut css::Printer, important: bool) -> Result<(), css::PrintErr> {
@@ -3769,7 +5748,9 @@ impl PropertyId {
 //   confidence: medium
 //   todos:      3
 //   notes:      249-variant Property/PropertyId/PropertyIdTag enums are
-//               real; parse/value_to_css/deep_clone bodies are stubbed until
+//               real; parse/value_to_css per-variant dispatch un-gated
+//               (depends on generic::parse_with_options + Unparsed/Custom
+//               Property::parse from sibling modules); deep_clone stubbed until
 //               every leaf value type implements Parse/ToCss/DeepClone;
 //               from_name_and_prefix is a linear scan (Zig used a comptime
 //               perfect-hash map). Module is #[cfg(any())]-gated in mod.rs.

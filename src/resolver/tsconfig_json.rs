@@ -421,11 +421,13 @@ impl TSConfigJSON {
         Ok(Box::from(&written[..len]))
     }
 
-    // CYCLEBREAK: `json_cache` is now the erased `JsonCache` vtable handle (was
-    // `&mut bun_bundler::cache::Json`). Body remains gated on the bun_js_parser
-    // `Expr` query API (`as_property`/`as_string`/`as_bool`/`as_array`).
-    // TODO(b2-blocked): bun_js_parser::Expr full query API.
-    #[cfg(any())]
+    // CYCLEBREAK: `json_cache` is the erased `JsonCache` vtable handle (was
+    // `&mut bun_bundler::cache::Json`).
+    // PORT NOTE: Zig `Expr.asString(allocator)` allocates and never frees (the
+    // resolver owns the JSON AST for its lifetime). The live Rust `Expr` query
+    // API exposes `as_utf8_string_literal() -> Option<&[u8]>` instead — the
+    // tsconfig parser forces UTF-8 (cache.zig:313 `force_utf8=true`), so every
+    // `EString` is already a flat UTF-8 slice and we can copy at the boundary.
     pub fn parse(
         log: &mut logger::Log,
         source: &logger::Source,
@@ -444,18 +446,18 @@ impl TSConfigJSON {
             None => return Ok(None),
         };
 
-        bun_analytics::Features::tsconfig_inc();
+        bun_analytics::features::tsconfig.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
         let mut result = TSConfigJSON {
-            abs_path: Box::from(source.path.text.as_ref()),
+            abs_path: Box::from(source.path.text),
             paths: PathsMap::default(),
             ..Default::default()
         };
         // errdefer allocator.free(result.paths) — handled by Drop on `result`.
         if let Some(extends_value) = json.as_property(b"extends") {
             if !source.path.is_node_module() {
-                if let Some(str) = extends_value.expr.as_string() {
-                    result.extends = str;
+                if let Some(str) = extends_value.expr.as_utf8_string_literal() {
+                    result.extends = Box::from(str);
                 }
             }
         }
@@ -465,8 +467,8 @@ impl TSConfigJSON {
         if let Some(compiler_opts) = json.as_property(b"compilerOptions") {
             // Parse "baseUrl"
             if let Some(base_url_prop) = compiler_opts.expr.as_property(b"baseUrl") {
-                if let Some(base_url) = base_url_prop.expr.as_string() {
-                    result.base_url = match Self::str_replacing_templates(base_url, source) {
+                if let Some(base_url) = base_url_prop.expr.as_utf8_string_literal() {
+                    result.base_url = match Self::str_replacing_templates(Box::from(base_url), source) {
                         Ok(v) => v,
                         Err(_) => return Ok(None),
                     };
@@ -494,27 +496,27 @@ impl TSConfigJSON {
 
             // Parse "jsxFactory"
             if let Some(jsx_prop) = compiler_opts.expr.as_property(b"jsxFactory") {
-                if let Some(str) = jsx_prop.expr.as_string() {
+                if let Some(str) = jsx_prop.expr.as_utf8_string_literal() {
                     result.jsx.factory =
-                        Self::parse_member_expression_for_jsx(log, source, jsx_prop.loc, &str)?;
+                        Self::parse_member_expression_for_jsx(log, source, jsx_prop.loc, str)?;
                     result.jsx_flags.insert(JsxField::Factory);
                 }
             }
 
             // Parse "jsxFragmentFactory"
             if let Some(jsx_prop) = compiler_opts.expr.as_property(b"jsxFragmentFactory") {
-                if let Some(str) = jsx_prop.expr.as_string() {
+                if let Some(str) = jsx_prop.expr.as_utf8_string_literal() {
                     result.jsx.fragment =
-                        Self::parse_member_expression_for_jsx(log, source, jsx_prop.loc, &str)?;
+                        Self::parse_member_expression_for_jsx(log, source, jsx_prop.loc, str)?;
                     result.jsx_flags.insert(JsxField::Fragment);
                 }
             }
 
             // https://www.typescriptlang.org/docs/handbook/jsx.html#basic-usages
             if let Some(jsx_prop) = compiler_opts.expr.as_property(b"jsx") {
-                if let Some(str) = jsx_prop.expr.as_string() {
+                if let Some(str) = jsx_prop.expr.as_utf8_string_literal() {
                     let mut str_lower = vec![0u8; str.len()];
-                    let _ = strings::copy_lowercase(&str, &mut str_lower);
+                    let _ = strings::copy_lowercase(str, &mut str_lower);
                     // - We don't support "preserve" yet
                     if let Some(runtime) = options::jsx::RUNTIME_MAP.get(str_lower.as_slice()) {
                         result.jsx.runtime = runtime.runtime;
@@ -531,13 +533,13 @@ impl TSConfigJSON {
 
             // Parse "jsxImportSource"
             if let Some(jsx_prop) = compiler_opts.expr.as_property(b"jsxImportSource") {
-                if let Some(str) = jsx_prop.expr.as_string() {
+                if let Some(str) = jsx_prop.expr.as_utf8_string_literal() {
                     if str.len() >= b"solid-js".len() && &str[..b"solid-js".len()] == b"solid-js" {
                         result.jsx.runtime = options::jsx::Runtime::Solid;
                         result.jsx_flags.insert(JsxField::Runtime);
                     }
 
-                    result.jsx.package_name = str;
+                    result.jsx.package_name = Box::from(str);
                     result.jsx.set_import_source();
                     result.jsx_flags.insert(JsxField::ImportSource);
                 }

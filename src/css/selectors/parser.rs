@@ -2182,11 +2182,82 @@ impl<Impl: BunSelectorImpl> GenericComponent<Impl> {
     }
 
     pub fn deep_clone(&self) -> Self {
-        protocol_shims::implement_deep_clone(self)
+        // PORT NOTE: `#[derive(Clone)]` is structurally identical to Zig's
+        // `implementDeepClone` here — every owning container (`Vec`/`Box`/
+        // `SmallList`) deep-clones via `Clone`, and every borrowed payload
+        // (`Str`, `Ident.v`, `IdentOrRef`) is an arena-static identity copy.
+        self.clone()
     }
 
     pub fn eql(&self, rhs: &Self) -> bool {
-        protocol_shims::implement_eql(self, rhs)
+        use GenericComponent as C;
+        match (self, rhs) {
+            (C::Combinator(a), C::Combinator(b)) => a.eql(b),
+            (C::ExplicitAnyNamespace, C::ExplicitAnyNamespace)
+            | (C::ExplicitNoNamespace, C::ExplicitNoNamespace)
+            | (C::ExplicitUniversalType, C::ExplicitUniversalType)
+            | (C::Root, C::Root)
+            | (C::Empty, C::Empty)
+            | (C::Scope, C::Scope)
+            | (C::Nesting, C::Nesting) => true,
+            (C::DefaultNamespace(a), C::DefaultNamespace(b)) => strings::eql(a, b),
+            (
+                C::Namespace { prefix: ap, url: au },
+                C::Namespace { prefix: bp, url: bu },
+            ) => ap.eql(bp) && strings::eql(au, bu),
+            (C::LocalName(a), C::LocalName(b)) => a.eql(b),
+            (C::Id(a), C::Id(b)) | (C::Class(a), C::Class(b)) => a.eql(b),
+            (
+                C::AttributeInNoNamespaceExists { local_name: an, local_name_lower: al },
+                C::AttributeInNoNamespaceExists { local_name: bn, local_name_lower: bl },
+            ) => an.eql(bn) && al.eql(bl),
+            (
+                C::AttributeInNoNamespace {
+                    local_name: an,
+                    operator: ao,
+                    value: av,
+                    case_sensitivity: ac,
+                    never_matches: am,
+                },
+                C::AttributeInNoNamespace {
+                    local_name: bn,
+                    operator: bo,
+                    value: bv,
+                    case_sensitivity: bc,
+                    never_matches: bm,
+                },
+            ) => {
+                an.eql(bn)
+                    && ao == bo
+                    && ac == bc
+                    && am == bm
+                    // SAFETY: arena-owned slices live for the parse session.
+                    && unsafe { strings::eql(&**av, &**bv) }
+            }
+            (C::AttributeOther(a), C::AttributeOther(b)) => a.eql(b),
+            (C::Negation(a), C::Negation(b))
+            | (C::Where(a), C::Where(b))
+            | (C::Is(a), C::Is(b))
+            | (C::Has(a), C::Has(b)) => eql_selector_slice(a, b),
+            (C::Nth(a), C::Nth(b)) => a.eql(b),
+            (C::NthOf(a), C::NthOf(b)) => a.eql(b),
+            (C::NonTsPseudoClass(a), C::NonTsPseudoClass(b)) => a.eql(b),
+            (C::Slotted(a), C::Slotted(b)) => a.eql(b),
+            (C::Part(a), C::Part(b)) => {
+                a.len() == b.len() && a.iter().zip(b.iter()).all(|(l, r)| l.eql(r))
+            }
+            (C::Host(a), C::Host(b)) => match (a, b) {
+                (None, None) => true,
+                (Some(a), Some(b)) => a.eql(b),
+                _ => false,
+            },
+            (
+                C::Any { vendor_prefix: ap, selectors: asel },
+                C::Any { vendor_prefix: bp, selectors: bsel },
+            ) => ap == bp && eql_selector_slice(asel, bsel),
+            (C::PseudoElement(a), C::PseudoElement(b)) => a.eql(b),
+            _ => false,
+        }
     }
 
     pub fn as_combinator(&self) -> Option<Combinator> {
@@ -2222,8 +2293,67 @@ impl<Impl: BunSelectorImpl> GenericComponent<Impl> {
     }
 
     pub fn hash(&self, hasher: &mut Wyhash) {
-        protocol_shims::implement_hash(self, hasher)
+        use GenericComponent as C;
+        // Zig `implementHash`: `bun.writeAnyToHasher(@intFromEnum(this))` then payload.
+        // SAFETY: `GenericComponent` is `#[repr(Rust)]`; reading the discriminant
+        // via `core::mem::discriminant` is stable but not byte-hashable. Use a
+        // per-arm tag instead (CSS hashing is in-process dedup only — self-
+        // consistency, not Zig-byte-identity, is the contract).
+        macro_rules! tag { ($n:expr) => { hasher.update(&($n as u32).to_ne_bytes()) }; }
+        match self {
+            C::Combinator(c) => { tag!(0); c.hash(hasher); }
+            C::ExplicitAnyNamespace => tag!(1),
+            C::ExplicitNoNamespace => tag!(2),
+            C::DefaultNamespace(u) => { tag!(3); hasher.update(u); }
+            C::Namespace { prefix, url } => { tag!(4); prefix.hash(hasher); hasher.update(url); }
+            C::ExplicitUniversalType => tag!(5),
+            C::LocalName(ln) => { tag!(6); ln.hash(hasher); }
+            C::Id(i) => { tag!(7); i.hash(hasher); }
+            C::Class(i) => { tag!(8); i.hash(hasher); }
+            C::AttributeInNoNamespaceExists { local_name, local_name_lower } => {
+                tag!(9); local_name.hash(hasher); local_name_lower.hash(hasher);
+            }
+            C::AttributeInNoNamespace { local_name, operator, value, case_sensitivity, never_matches } => {
+                tag!(10);
+                local_name.hash(hasher);
+                CssHash::hash(operator, hasher);
+                // SAFETY: arena-owned slice.
+                hasher.update(unsafe { &**value });
+                CssHash::hash(case_sensitivity, hasher);
+                hasher.update(&[*never_matches as u8]);
+            }
+            C::AttributeOther(a) => { tag!(11); a.hash(hasher); }
+            C::Negation(s) => { tag!(12); hash_selector_slice(s, hasher); }
+            C::Root => tag!(13),
+            C::Empty => tag!(14),
+            C::Scope => tag!(15),
+            C::Nth(n) => { tag!(16); n.hash(hasher); }
+            C::NthOf(n) => { tag!(17); n.hash(hasher); }
+            C::NonTsPseudoClass(p) => { tag!(18); CssHash::hash(p, hasher); }
+            C::Slotted(s) => { tag!(19); s.hash(hasher); }
+            C::Part(p) => { tag!(20); for id in p.iter() { id.hash(hasher); } }
+            C::Host(h) => { tag!(21); if let Some(s) = h { s.hash(hasher); } }
+            C::Where(s) => { tag!(22); hash_selector_slice(s, hasher); }
+            C::Is(s) => { tag!(23); hash_selector_slice(s, hasher); }
+            C::Any { vendor_prefix, selectors } => {
+                tag!(24);
+                CssHash::hash(vendor_prefix, hasher);
+                hash_selector_slice(selectors, hasher);
+            }
+            C::Has(s) => { tag!(25); hash_selector_slice(s, hasher); }
+            C::PseudoElement(pe) => { tag!(26); CssHash::hash(pe, hasher); }
+            C::Nesting => tag!(27),
+        }
     }
+}
+
+impl<Impl: BunSelectorImpl> CssEql for GenericComponent<Impl> {
+    #[inline]
+    fn eql(&self, other: &Self) -> bool { self.eql(other) }
+}
+impl<Impl: BunSelectorImpl> CssHash for GenericComponent<Impl> {
+    #[inline]
+    fn hash(&self, hasher: &mut Wyhash) { self.hash(hasher) }
 }
 
 impl<Impl: BunSelectorImpl> fmt::Display for GenericComponent<Impl> {
@@ -3704,6 +3834,16 @@ pub struct LocalName<Impl: SelectorImpl> {
 impl<Impl: BunSelectorImpl> LocalName<Impl> {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         IdentFns::to_css(&self.name, dest)
+    }
+    pub fn eql(&self, rhs: &Self) -> bool {
+        self.name.eql(&rhs.name) && self.lower_name.eql(&rhs.lower_name)
+    }
+    pub fn hash(&self, hasher: &mut Wyhash) {
+        self.name.hash(hasher);
+        self.lower_name.hash(hasher);
+    }
+    pub fn deep_clone(&self) -> Self {
+        self.clone()
     }
 }
 

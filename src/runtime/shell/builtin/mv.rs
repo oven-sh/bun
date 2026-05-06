@@ -459,6 +459,28 @@ impl ShellMvBatchedTask {
         }
         this.task.on_finish();
     }
+
+    pub fn run_from_main_thread(this: *mut ShellMvBatchedTask, interp: &mut Interpreter) {
+        // SAFETY: `this` is a live boxed task.
+        let cmd = unsafe { (*this).cmd };
+        Mv::batched_move_task_done(interp, cmd, this);
+    }
+}
+
+impl crate::shell::interpreter::ShellTaskCtx for ShellMvCheckTargetTask {
+    const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
+    fn run_from_thread_pool(this: *mut Self) { Self::run_from_thread_pool(this) }
+    fn run_from_main_thread(this: *mut Self, interp: &mut Interpreter) {
+        Self::run_from_main_thread(this, interp)
+    }
+}
+
+impl crate::shell::interpreter::ShellTaskCtx for ShellMvBatchedTask {
+    const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
+    fn run_from_thread_pool(this: *mut Self) { Self::run_from_thread_pool(this) }
+    fn run_from_main_thread(this: *mut Self, interp: &mut Interpreter) {
+        Self::run_from_main_thread(this, interp)
+    }
 }
 
 #[derive(Clone, Copy)]

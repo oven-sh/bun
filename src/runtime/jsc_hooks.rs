@@ -1130,16 +1130,22 @@ fn transpile_source_code_inner(
                 }
 
                 // Spec :366-384 — JSON/TOML/YAML/JSON5: export as a JS object.
+                // TODO(b2-blocked): `Expr::to_js` — gated in `bun_js_parser`
+                // (`ast.parts.at(0).stmts[0].data.s_expr.value.to_js(...)`).
+                // Until that surfaces, fall through to the print path so the
+                // JSON/TOML body is emitted as JS source instead of a direct
+                // JSValue. This is the same behaviour as `Bun.Transpiler`
+                // (which also routes JSON through the printer).
+                #[cfg(any())]
                 if matches!(loader, L::Json | L::Jsonc | L::Toml | L::Yaml | L::Json5) {
                     let jsvalue_for_export = if parse_result.empty {
                         JSValue::create_empty_object(unsafe { &*(*jsc_vm).global }, 0)
                     } else {
-                        // TODO(b2-blocked): `Expr::to_js` — gated in `bun_js_parser`.
                         parse_result.ast.parts.at(0).stmts[0]
                             .data
                             .s_expr
                             .value
-                            .to_js(arena, unsafe { &*(*jsc_vm).global })?
+                            .to_js(&arena_guard.1, unsafe { &*(*jsc_vm).global })?
                     };
                     return Ok(ResolvedSource {
                         specifier: input_specifier.dupe_ref(),
@@ -1188,21 +1194,29 @@ fn transpile_source_code_inner(
                 if let Some(entry) = cache.entry.as_mut() {
                     // TODO(b2-blocked): `SavedSourceMap::put_mappings` +
                     // `ModuleInfoDeserialized::create_from_cached_record`.
-                    let source_code = match &mut entry.output_code {
-                        bun_jsc::runtime_transpiler_cache::OutputCode::String(s) => s.dupe_ref(),
-                        bun_jsc::runtime_transpiler_cache::OutputCode::Utf8(utf8) => {
-                            let r = bun_string::String::clone_utf8(utf8);
-                            // PORT NOTE: spec frees via `cache.output_code_allocator`;
-                            // arena-backed in Rust, so just clear the slice.
-                            *utf8 = b"";
-                            r
-                        }
+                    // PORT NOTE: bundler-side `Entry::output_code` is a flat
+                    // `Box<[u8]>` (the `OutputCode::{String,Utf8}` enum lives
+                    // on the T6 `bun_jsc::RuntimeTranspilerCache` mirror).
+                    // Spec dispatches on `entry.metadata.output_encoding` to
+                    // pick latin1 vs utf8; mirror that here.
+                    let source_code = if entry.metadata.output_encoding
+                        == bun_js_parser::ExportsKind::None as u8
+                    {
+                        // encoding == .none unreachable per spec :430; clone as
+                        // latin1 (lossless byte → WTFString).
+                        bun_string::String::clone_latin1(&entry.output_code)
+                    } else {
+                        bun_string::String::clone_utf8(&entry.output_code)
                     };
+                    // PORT NOTE: spec frees via `cache.output_code_allocator`;
+                    // `Box<[u8]>` drops on its own.
+                    entry.output_code = Box::default();
                     return Ok(ResolvedSource {
                         source_code,
                         specifier: input_specifier.dupe_ref(),
                         source_url: create_if_different(input_specifier, path.text),
-                        is_commonjs_module: entry.metadata.module_type == ModuleType::Cjs,
+                        is_commonjs_module: entry.metadata.module_type
+                            == ModuleType::Cjs as u8,
                         // TODO(b2-blocked): `module_info` + `tag` package_json probe (:448-464).
                         tag: ResolvedSourceTag::Javascript,
                         ..Default::default()

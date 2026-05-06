@@ -396,6 +396,14 @@ impl ShellLsTask {
     }
 }
 
+impl crate::shell::interpreter::ShellTaskCtx for ShellLsTask {
+    const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
+    fn run_from_thread_pool(this: *mut Self) { Self::run_from_thread_pool(this) }
+    fn run_from_main_thread(this: *mut Self, interp: &mut Interpreter) {
+        Self::run_from_main_thread(this, interp)
+    }
+}
+
 /// Spec: ls.zig `Opts`. Only the fields the current port actually consults
 /// are kept; the rest are recognised by `parse_flag` but not stored.
 #[derive(Clone, Copy, Default)]

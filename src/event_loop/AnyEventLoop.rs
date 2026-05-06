@@ -34,6 +34,8 @@ pub struct JsEventLoopVTable {
     pub stderr: unsafe fn(*mut ()) -> *mut (),
     pub enter: unsafe fn(*mut ()),
     pub exit: unsafe fn(*mut ()),
+    /// `el.enqueueTask(jsc.Task)` — same-thread task enqueue (no wakeup).
+    pub enqueue_task: unsafe fn(*mut (), crate::Task),
     pub enqueue_task_concurrent: unsafe fn(*mut (), *mut ConcurrentTask),
     /// `el.virtual_machine.transpiler.env`.
     pub env: unsafe fn(*mut ()) -> *mut DotEnvLoader<'static>,

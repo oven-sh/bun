@@ -230,7 +230,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                 let red = ((int >> 16) & 0xff) as u8;
                 let alpha = ((int >> 24) & 0xff) as u8;
 
-                break 'brk css::CssColorParseResult::Result(CssColor::Rgba(RGBA {
+                break 'brk Ok(CssColor::Rgba(RGBA {
                     alpha,
                     red,
                     green,
@@ -242,7 +242,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                         let r = color_int_from_js(global, args[0].get_index(global, 0)?, "[0]")?;
                         let g = color_int_from_js(global, args[0].get_index(global, 1)?, "[1]")?;
                         let b = color_int_from_js(global, args[0].get_index(global, 2)?, "[2]")?;
-                        break 'brk css::CssColorParseResult::Result(CssColor::Rgba(RGBA {
+                        break 'brk Ok(CssColor::Rgba(RGBA {
                             alpha: 255,
                             red: u8::try_from(r).unwrap(),
                             green: u8::try_from(g).unwrap(),
@@ -254,7 +254,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                         let g = color_int_from_js(global, args[0].get_index(global, 1)?, "[1]")?;
                         let b = color_int_from_js(global, args[0].get_index(global, 2)?, "[2]")?;
                         let a = color_int_from_js(global, args[0].get_index(global, 3)?, "[3]")?;
-                        break 'brk css::CssColorParseResult::Result(CssColor::Rgba(RGBA {
+                        break 'brk Ok(CssColor::Rgba(RGBA {
                             alpha: u8::try_from(a).unwrap(),
                             red: u8::try_from(r).unwrap(),
                             green: u8::try_from(g).unwrap(),
@@ -301,7 +301,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                     return Ok(JSValue::ZERO);
                 }
 
-                break 'brk css::CssColorParseResult::Result(CssColor::Rgba(RGBA {
+                break 'brk Ok(CssColor::Rgba(RGBA {
                     alpha: if let Some(a) = a { a } else { 255 },
                     red: u8::try_from(r).unwrap(),
                     green: u8::try_from(g).unwrap(),
@@ -322,7 +322,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         };
 
         match parsed_color {
-            css::CssColorParseResult::Err(err) => {
+            Err(err) => {
                 if log.msgs.is_empty() {
                     return Ok(JSValue::NULL);
                 }
@@ -335,7 +335,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                     err.basic().kind
                 )));
             }
-            css::CssColorParseResult::Result(result) => {
+            Ok(result) => {
                 let format: OutputColorFormat = if unresolved_format == OutputColorFormat::Ansi {
                     match OutputSource::color_depth() {
                         // No color terminal, therefore return an empty string

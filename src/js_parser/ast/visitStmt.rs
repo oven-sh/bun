@@ -1075,10 +1075,17 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 if let Some(val) = d.value {
                     p.record_usage(p.enclosing_namespace_arg_ref.unwrap());
                     // TODO: is it necessary to lowerAssign? why does esbuild do it _most_ of the time?
-                    // blocked_on: Binding2ExprWrapperNamespace is `()` stub (P.rs:578); Binding::to_expr
-                    //   needs a real ToExprWrapper impl. See _draft.
-                    let _ = (&d.binding, val);
-                    todo!("s_local: namespace-export Binding::to_expr path");
+                    // PORT NOTE: ToExprWrapper is Copy; pass by value to avoid borrowing `*p`
+                    // across `p.s(...)`.
+                    let wrapper = p.to_expr_wrapper_namespace;
+                    let lhs = Binding::to_expr(&d.binding, wrapper);
+                    stmts.push(p.s(
+                        S::SExpr {
+                            value: Expr::assign(lhs, val),
+                            ..Default::default()
+                        },
+                        stmt.loc,
+                    ));
                 }
             }
 

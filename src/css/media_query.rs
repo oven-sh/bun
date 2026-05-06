@@ -313,11 +313,12 @@ impl PartialEq for MediaFeatureValue {
             (V::Ratio(a), V::Ratio(b)) => a == b,
             // SAFETY: arena-owned slice valid for the MediaList lifetime.
             (V::Ident(a), V::Ident(b)) => unsafe { *a.v == *b.v },
-            // EnvironmentVariable tree equality — loud `todo!()` until
-            // `properties::custom` gains PartialEq; silently returning false
-            // is forbidden (PORTING.md §Forbidden patterns: silent-no-op).
-            (V::Env(_), V::Env(_)) => {
-                todo!("MediaFeatureValue::Env PartialEq — gated on EnvironmentVariable: PartialEq")
+            // Zig: `css.implementEql` recurses into `EnvironmentVariable.eql` —
+            // ported via the `CssEql` derive on `EnvironmentVariable`
+            // (name + indices + fallback structural equality).
+            (V::Env(a), V::Env(b)) => {
+                use crate::generics::CssEql as _;
+                a.eql(b)
             }
             _ => false,
         }

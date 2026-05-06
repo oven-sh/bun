@@ -1901,6 +1901,32 @@ pub fn print_error(args: fmt::Arguments<'_>) {
     print_to(Destination::Stderr, args);
 }
 
+/// `Output.printErrorln` — function form (the `print_errorln!` macro at crate
+/// root is the comptime-string variant). Takes anything `Display` so both
+/// `format_args!(..)` and bare `&str` call sites compile; appends `\n`.
+#[inline]
+pub fn print_errorln(args: impl core::fmt::Display) {
+    print_to(Destination::Stderr, format_args!("{args}\n"));
+}
+
+/// `Output.enable_ansi_colors_stdout` — safe relaxed-load wrapper over the
+/// startup-initialized atomic. Mirrors the Zig public-var read.
+#[inline]
+pub fn enable_ansi_colors_stdout() -> bool {
+    ENABLE_ANSI_COLORS_STDOUT.load(Ordering::Relaxed)
+}
+/// `Output.enable_ansi_colors_stderr`.
+#[inline]
+pub fn enable_ansi_colors_stderr() -> bool {
+    ENABLE_ANSI_COLORS_STDERR.load(Ordering::Relaxed)
+}
+/// `Output.enable_ansi_colors` (legacy combined accessor — Zig deprecates the
+/// var; expose as stderr to match its historical meaning).
+#[inline]
+pub fn enable_ansi_colors() -> bool {
+    ENABLE_ANSI_COLORS_STDERR.load(Ordering::Relaxed)
+}
+
 // ── DebugTimer ────────────────────────────────────────────────────────────
 
 pub struct DebugTimer {

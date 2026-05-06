@@ -1322,6 +1322,9 @@ pub fn errno_to_zig_err(errno: i32) -> crate::Error {
 pub mod time {
     pub const NS_PER_MS: i128 = 1_000_000;
     pub const NS_PER_S: i128 = 1_000_000_000;
+    pub const NS_PER_US: u64 = 1_000;
+    pub const US_PER_MS: u64 = 1_000;
+    pub const US_PER_S: u64 = 1_000_000;
     pub const MS_PER_S: i64 = 1_000;
     pub const S_PER_DAY: u32 = 86_400;
     pub const MS_PER_DAY: u64 = 86_400_000;
@@ -2274,6 +2277,177 @@ pub fn set_timespec_now_hook(hook: Option<fn() -> Timespec>) {
         AOrdering::Relaxed,
     );
 }
+
+// ── f16 ───────────────────────────────────────────────────────────────────
+// Zig's native `f16` (IEEE-754 binary16). Rust's `f16` is still nightly-only,
+// so model it as a transparent `u16` bit-container with `f64` widening for the
+// one hot caller (ConsoleObject Float16Array printing). PERF(port): scalar
+// soft-float decode; revisit once `core::f16` stabilizes.
+#[allow(non_camel_case_types)]
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq, Default, Debug)]
+pub struct f16(pub u16);
+
+impl f16 {
+    #[inline] pub const fn from_bits(bits: u16) -> Self { Self(bits) }
+    #[inline] pub const fn to_bits(self) -> u16 { self.0 }
+
+    /// Widen to `f64` (exact). Port of Zig `@floatCast(f64, h)`.
+    pub fn to_f64(self) -> f64 {
+        let h = self.0 as u32;
+        let sign = (h >> 15) & 1;
+        let exp = (h >> 10) & 0x1F;
+        let frac = h & 0x3FF;
+        let signf = if sign != 0 { -1.0 } else { 1.0 };
+        if exp == 0 {
+            if frac == 0 { return signf * 0.0; }
+            // subnormal: 2^-14 * (frac / 1024)
+            return signf * (frac as f64) * 2.0_f64.powi(-24);
+        }
+        if exp == 0x1F {
+            return if frac == 0 { signf * f64::INFINITY } else { f64::NAN };
+        }
+        signf * (1.0 + (frac as f64) / 1024.0) * 2.0_f64.powi(exp as i32 - 15)
+    }
+}
+impl From<f16> for f64 { #[inline] fn from(h: f16) -> f64 { h.to_f64() } }
+impl From<f16> for f32 { #[inline] fn from(h: f16) -> f32 { h.to_f64() as f32 } }
+impl core::fmt::Display for f16 {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.to_f64().fmt(f)
+    }
+}
+
+// ── perf ──────────────────────────────────────────────────────────────────
+// Port of `bun.perf` (src/perf/perf.zig). Real impl wires to OS-native
+// signpost/ftrace and is gated behind a runtime env-var check; T0 ships the
+// `Disabled` arm only so `let _tracer = bun_core::perf::trace("X")` compiles
+// and is a no-op. The macOS `OSLog`/Linux `ftrace` backends live in `bun_sys`
+// (higher tier) and are wired in via `set_backend` at init — §Dispatch hook
+// pattern (low tier defines `static HOOK`, high tier writes it).
+pub mod perf {
+    use core::sync::atomic::{AtomicPtr, Ordering};
+
+    /// Opaque per-span state returned by `trace()`. `end()` is idempotent;
+    /// `Drop` calls it so `let _t = trace("x");` works as a scope guard.
+    #[must_use = "bind to a local (`let _t = perf::trace(..)`) so the span has nonzero duration"]
+    pub struct Ctx {
+        end: Option<unsafe fn(*mut core::ffi::c_void)>,
+        data: *mut core::ffi::c_void,
+    }
+    impl Ctx {
+        pub const DISABLED: Ctx = Ctx { end: None, data: core::ptr::null_mut() };
+        #[inline]
+        pub fn end(&mut self) {
+            if let Some(f) = self.end.take() {
+                // SAFETY: backend produced `data` paired with `end`.
+                unsafe { f(self.data) };
+            }
+        }
+    }
+    impl Drop for Ctx { #[inline] fn drop(&mut self) { self.end(); } }
+
+    type BeginFn = unsafe fn(name: &'static str) -> Ctx;
+    static BACKEND: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+
+    #[inline]
+    pub fn is_enabled() -> bool { !BACKEND.load(Ordering::Relaxed).is_null() }
+
+    /// Installed once at startup by `bun_sys::perf::init()`.
+    pub fn set_backend(begin: Option<BeginFn>) {
+        BACKEND.store(
+            begin.map(|f| f as *mut ()).unwrap_or(core::ptr::null_mut()),
+            Ordering::Release,
+        );
+    }
+
+    /// `bun.perf.trace("Event.name")`. When no backend is registered (the
+    /// common case — Instruments/ftrace not attached), this is a single
+    /// relaxed-load + branch.
+    #[inline]
+    pub fn trace(name: &'static str) -> Ctx {
+        let p = BACKEND.load(Ordering::Relaxed);
+        if p.is_null() {
+            return Ctx::DISABLED;
+        }
+        // SAFETY: `p` was stored from a `BeginFn` in `set_backend`.
+        let begin: BeginFn = unsafe { core::mem::transmute::<*mut (), BeginFn>(p) };
+        // SAFETY: backend contract — `name` is `'static`.
+        unsafe { begin(name) }
+    }
+}
+
+// ── form_data ─────────────────────────────────────────────────────────────
+// Port of `bun.FormData.{Encoding, AsyncFormData, getBoundary}` (src/runtime/
+// webcore/FormData.zig:16-95). The JSC-touching parts (`toJS`, the field map,
+// multipart parser) stay in `bun_runtime::webcore::form_data`; T0 owns only
+// the encoding-detection types so `Request`/`Response`/`Body` can name them
+// without a runtime→core cycle. Per PORTING.md §JSC: `to_js` is an extension
+// method that lives in the higher-tier crate.
+pub mod form_data {
+    /// `FormData.Encoding` — `union(enum) { URLEncoded, Multipart: []const u8 }`.
+    /// `Multipart` owns its boundary (Zig `AsyncFormData.init` duped it; here
+    /// the Box moves in directly).
+    #[derive(Debug)]
+    pub enum Encoding {
+        URLEncoded,
+        /// boundary
+        Multipart(Box<[u8]>),
+    }
+
+    impl Encoding {
+        pub fn get(content_type: &[u8]) -> Option<Encoding> {
+            if crate::strings::includes(content_type, b"application/x-www-form-urlencoded") {
+                return Some(Encoding::URLEncoded);
+            }
+            if !crate::strings::includes(content_type, b"multipart/form-data") {
+                return None;
+            }
+            let boundary = get_boundary(content_type)?;
+            Some(Encoding::Multipart(Box::from(boundary)))
+        }
+    }
+
+    /// `FormData.getBoundary` — borrow the `boundary=` value out of a
+    /// `Content-Type` header. Returns `None` on malformed quoting.
+    pub fn get_boundary(content_type: &[u8]) -> Option<&[u8]> {
+        let idx = ::bstr::ByteSlice::find(content_type, b"boundary=")?;
+        let begin = &content_type[idx + b"boundary=".len()..];
+        if begin.is_empty() {
+            return None;
+        }
+        let end = crate::strings::index_of_char(begin, b';').unwrap_or(begin.len());
+        if begin[0] == b'"' {
+            if end > 1 && begin[end - 1] == b'"' {
+                return Some(&begin[1..end - 1]);
+            }
+            // Opening quote with no matching closing quote — malformed.
+            return None;
+        }
+        Some(&begin[..end])
+    }
+
+    /// `FormData.AsyncFormData` — heap-allocated, owns its `Encoding`.
+    /// PORT NOTE: Zig stored `allocator: std.mem.Allocator`; deleted (non-AST
+    /// crate, global mimalloc per §Allocators). `deinit` becomes `Drop` on the
+    /// `Box`/`Box<[u8]>` fields — no explicit impl needed.
+    #[derive(Debug)]
+    pub struct AsyncFormData {
+        pub encoding: Encoding,
+    }
+
+    impl AsyncFormData {
+        #[inline]
+        pub fn init(encoding: Encoding) -> Box<AsyncFormData> {
+            // Zig duped `encoding.Multipart` here so the struct owned its
+            // boundary; with `Box<[u8]>` ownership has already transferred.
+            Box::new(AsyncFormData { encoding })
+        }
+    }
+}
+/// Zig `bun.FormData` namespace — capitalized alias for callers that ported
+/// `bun.FormData.AsyncFormData` verbatim.
+pub use form_data as FormData;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

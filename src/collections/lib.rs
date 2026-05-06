@@ -29,11 +29,12 @@ pub use static_hash_map::StaticHashMap;
 pub use multi_array_list::{MultiArrayList, MultiArrayElement};
 pub use bun_collections_macros::MultiArrayElement;
 pub use baby_list::{BabyList, ByteList, OffsetByteList};
-pub use hive_array::HiveArray;
+pub use hive_array::{HiveArray, HiveRef, Fallback as HiveArrayFallback};
 pub use bounded_array::BoundedArray;
 pub use linear_fifo::{LinearFifo, LinearFifoBufferType};
 
-pub use bit_set::{AutoBitSet, IntegerBitSet, StaticBitSet, DynamicBitSetUnmanaged};
+pub use bit_set::{AutoBitSet, DynamicBitSet, DynamicBitSetUnmanaged, IntegerBitSet, StaticBitSet};
+pub use identity_context::{ArrayIdentityContext, IdentityContext, IdentityHash};
 
 pub mod array_hash_map;
 pub use array_hash_map::{
@@ -59,13 +60,135 @@ pub use bun_ptr::tagged_pointer::{TaggedPtr as TaggedPointer, TaggedPtrUnion};
 /// `small_list.rs` is hoisted out of `bun_css`.
 pub type SmallList<T, const N: usize> = Vec<T>;
 
-// Unordered HashMap alias. PORTING.md: must be wyhash-backed for determinism.
-// TODO(port): swap RandomState for a wyhash BuildHasher once bun_wyhash exposes one.
-pub type HashMap<K, V> = std::collections::HashMap<K, V>;
+// ──────────────────────────────────────────────────────────────────────────
+// HashMap — `std.AutoHashMap(K, V)` / `std.HashMap(K, V, Ctx, max_load)`.
+//
+// Newtype (not a bare alias) so it can:
+//   1. carry the optional third `Ctx` parameter Zig call sites thread
+//      (`IdentityContext<u64>` etc.) without forcing it to be a `BuildHasher`;
+//   2. expose `get_or_put` returning the Zig-shaped `{found_existing, value_ptr}`.
+//
+// `Deref`/`DerefMut` to the inner `std::collections::HashMap` keeps the rest of
+// the std surface (`get`, `insert`, `entry`, `iter`, …) available unchanged.
+//
+// TODO(port): `Ctx` is currently a phantom marker — hashing still uses std's
+// `RandomState`. Phase B must route `Ctx`/wyhash into the actual hasher so
+// iteration order and `IdentityContext` semantics match Zig (PORTING.md
+// §Collections: "wyhash, not SipHash").
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Default context marker for `HashMap<K, V>` when the Zig site used
+/// `std.AutoHashMap` (auto-derived hash/eql).
+#[derive(Default, Clone, Copy)]
+pub struct AutoHashContext;
+
+#[repr(transparent)]
+pub struct HashMap<K, V, C = AutoHashContext> {
+    inner: std::collections::HashMap<K, V>,
+    _ctx: core::marker::PhantomData<C>,
+}
+
+impl<K, V, C> Default for HashMap<K, V, C> {
+    fn default() -> Self {
+        Self { inner: std::collections::HashMap::default(), _ctx: core::marker::PhantomData }
+    }
+}
+
+impl<K, V, C> core::ops::Deref for HashMap<K, V, C> {
+    type Target = std::collections::HashMap<K, V>;
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl<K, V, C> core::ops::DerefMut for HashMap<K, V, C> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+
+impl<K, V, C> HashMap<K, V, C> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            inner: std::collections::HashMap::with_capacity(capacity),
+            _ctx: core::marker::PhantomData,
+        }
+    }
+
+    /// Zig `deinit` — drop all entries and release storage.
+    pub fn deinit(&mut self) {
+        self.inner = std::collections::HashMap::default();
+    }
+}
+
+impl<K, V, C> HashMap<K, V, C>
+where
+    K: Eq + core::hash::Hash,
+{
+    /// Zig `getOrPut`: single-probe insert-or-lookup. On miss the value slot is
+    /// left "undefined" in Zig; Rust cannot expose uninit through a `&mut V`,
+    /// so `V: Default` and the slot is default-initialised — callers are
+    /// expected to overwrite `*value_ptr` when `!found_existing`.
+    pub fn get_or_put(
+        &mut self,
+        key: K,
+    ) -> Result<hash_map::GetOrPutResult<'_, V>, bun_alloc::AllocError>
+    where
+        V: Default,
+    {
+        use std::collections::hash_map::Entry as StdEntry;
+        match self.inner.entry(key) {
+            StdEntry::Occupied(o) => Ok(hash_map::GetOrPutResult {
+                found_existing: true,
+                value_ptr: o.into_mut(),
+            }),
+            StdEntry::Vacant(v) => Ok(hash_map::GetOrPutResult {
+                found_existing: false,
+                value_ptr: v.insert(V::default()),
+            }),
+        }
+    }
+
+    /// Zig `putNoClobber`: insert asserting the key is new.
+    pub fn put_no_clobber(&mut self, key: K, value: V) -> Result<(), bun_alloc::AllocError> {
+        let prev = self.inner.insert(key, value);
+        debug_assert!(prev.is_none(), "putNoClobber: key already present");
+        Ok(())
+    }
+}
+
+impl<'a, K, V, C> IntoIterator for &'a HashMap<K, V, C> {
+    type Item = (&'a K, &'a V);
+    type IntoIter = std::collections::hash_map::Iter<'a, K, V>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.inner.iter()
+    }
+}
+
+impl<'a, K, V, C> IntoIterator for &'a mut HashMap<K, V, C> {
+    type Item = (&'a K, &'a mut V);
+    type IntoIter = std::collections::hash_map::IterMut<'a, K, V>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.inner.iter_mut()
+    }
+}
+
 /// std-compat path so call sites that wrote `bun_collections::hash_map::Entry`
 /// against the old std-alias keep compiling now that `ArrayHashMap` is real.
 pub mod hash_map {
     pub use crate::array_hash_map::{MapEntry as Entry, OccupiedEntry, VacantEntry};
+
+    /// Result of `HashMap::get_or_put` — the unordered map has no stable index
+    /// or key slot to hand out, so unlike `array_hash_map::GetOrPutResult` this
+    /// only exposes `found_existing` + `value_ptr`.
+    pub struct GetOrPutResult<'a, V> {
+        pub found_existing: bool,
+        pub value_ptr: &'a mut V,
+    }
 }
 
 pub mod array_list;

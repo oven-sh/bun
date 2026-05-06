@@ -810,16 +810,18 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
         }
     }
     // Covers `try arguments[7/8].toBunString()` and the null-byte rejection
-    // below. Ownership passes into `ptr.*` once allocated — locals are nulled
-    // there so the connect-fail path's `ptr.deinit()` is the sole cleanup.
-    let errdefer_guard = scopeguard::guard((secure, &mut tls_config as *mut _), |(secure, tls_config)| {
+    // below. Ownership passes into `ptr.*` once allocated — `into_inner`
+    // recovers them just before the Box is built so the connect-fail path's
+    // `ptr.deinit()` is the sole cleanup.
+    // PORT NOTE: guard owns `(secure, tls_config)` by value. Do NOT
+    // `drop_in_place` a stack local that Rust would also auto-drop on unwind —
+    // that double-frees. The closure's `_tls_config` is dropped exactly once by
+    // normal scope-exit drop here.
+    let errdefer_guard = scopeguard::guard((secure, tls_config), |(secure, _tls_config)| {
         if let Some(s) = secure {
             // SAFETY: SSL_CTX_free is safe to call on a valid SSL_CTX*.
             unsafe { BoringSSL::c::SSL_CTX_free(s) };
         }
-        // SAFETY: tls_config is still valid; drop it.
-        unsafe { core::ptr::drop_in_place(tls_config) };
-        // TODO(port): errdefer — this guard captures raw ptr to tls_config; revisit ownership in Phase B.
     });
 
     let mut username: &[u8] = b"";
@@ -893,6 +895,10 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
     let max_lifetime = arguments[13].to_int32();
     let use_unnamed_prepared_statements = arguments[14].as_boolean();
 
+    // Ownership transferred into `ptr`; disarm the errdefer and recover the
+    // moved `secure`/`tls_config` for the struct literal below.
+    let (secure, tls_config) = scopeguard::ScopeGuard::into_inner(errdefer_guard);
+
     let ptr: *mut PostgresSQLConnection = Box::into_raw(Box::new(PostgresSQLConnection {
         socket: Socket::SocketTCP(uws::SocketTCP { socket: uws::SocketState::Detached }),
         status: Status::Connecting,
@@ -942,8 +948,6 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
         },
         auto_flusher: AutoFlusher::default(),
     }));
-    // Ownership transferred into `ptr`; disarm the errdefer.
-    scopeguard::ScopeGuard::into_inner(errdefer_guard);
 
     // SAFETY: ptr was just Box-allocated above.
     let this = unsafe { &mut *ptr };

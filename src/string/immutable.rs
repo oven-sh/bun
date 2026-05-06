@@ -133,7 +133,51 @@ pub mod visible {
             }
 
             pub fn latin1(input: &[u8]) -> usize { utf8(input) }
-            // utf16 variant lives in the gated draft (needs grapheme tables).
+
+            /// Visible terminal width of a UTF-16 string, treating ANSI
+            /// escape sequences as zero-width.
+            ///
+            /// PORT NOTE (B-2): scalar fallback — counts 1 column per
+            /// codepoint and ignores `ambiguous_as_wide`. Full
+            /// East-Asian-width / grapheme handling lives in the gated
+            /// `visible_draft` module; un-gate to replace this.
+            pub fn utf16(input: &[u16], ambiguous_as_wide: bool) -> usize {
+                let _ = ambiguous_as_wide;
+                let mut w = 0usize;
+                let mut i = 0usize;
+                while i < input.len() {
+                    let c = input[i];
+                    if c == 0x1b {
+                        // Re-use the byte-level ANSI parser by narrowing the
+                        // ASCII run; CSI/OSC sequences are 7-bit clean.
+                        let mut j = i;
+                        let mut buf = [0u8; 64];
+                        let take = (input.len() - i).min(buf.len());
+                        for k in 0..take {
+                            let u = input[i + k];
+                            buf[k] = if u < 0x80 { u as u8 } else { 0xff };
+                        }
+                        j += skip_ansi(&buf[..take]);
+                        i = j;
+                        continue;
+                    }
+                    if c < 0x80 {
+                        if c >= 0x20 && c != 0x7f { w += 1; }
+                        i += 1;
+                    } else if (0xD800..0xDC00).contains(&c)
+                        && i + 1 < input.len()
+                        && (0xDC00..0xE000).contains(&input[i + 1])
+                    {
+                        // Surrogate pair → one codepoint.
+                        w += 1;
+                        i += 2;
+                    } else {
+                        w += 1;
+                        i += 1;
+                    }
+                }
+                w
+            }
         }
     }
 }
@@ -1669,6 +1713,14 @@ pub fn first_non_ascii(slice: &[u8]) -> Option<u32> {
         return None;
     }
     Some(result.count as u32)
+}
+
+/// `bun.strings.isValidUTF8` — SIMD-validated UTF-8 check (immutable.zig).
+/// Wraps `simdutf::validate::utf8`; the gated `unicode_draft` adds a
+/// `bun.FeatureFlags.use_simdutf` toggle + scalar fallback.
+#[inline]
+pub fn is_valid_utf8(slice: &[u8]) -> bool {
+    simdutf::validate::utf8(slice)
 }
 
 pub use index_of_newline_or_non_ascii as index_of_newline_or_non_ascii_or_ansi;

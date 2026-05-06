@@ -22,10 +22,15 @@ use crate::OfflineMode::OfflineMode;
 // never freed). Ported as `Box<[u8]>` / `Vec<Box<[u8]>>` for now; Phase B may
 // retype to `&'static [u8]` once the CLI parser leaks into a bump arena.
 
-pub struct ContextData<'a> {
+pub struct ContextData {
     pub start_time: i128,
     pub args: api::TransformOptions,
-    pub log: &'a mut logger::Log,
+    /// Zig: `log: *Log`. Raw pointer (not `&mut`) so `Default` works and so the
+    /// process-global `CONTEXT_DATA` static can be zero-initialized before
+    /// `create_context_data()` writes the real `&mut Log` into it.
+    // SAFETY: written exactly once in single-threaded CLI startup; thereafter
+    // always non-null for the process lifetime. Callers deref via `ctx.log()`.
+    pub log: *mut logger::Log,
     // PORT NOTE: `allocator: std.mem.Allocator` deleted (global mimalloc).
     pub positionals: Vec<Box<[u8]>>,
     pub passthrough: Vec<Box<[u8]>>,
@@ -47,7 +52,46 @@ pub struct ContextData<'a> {
     pub has_loaded_global_config: bool,
 }
 
-impl<'a> ContextData<'a> {
+impl Default for ContextData {
+    fn default() -> Self {
+        Self {
+            start_time: 0,
+            args: api::TransformOptions::default(),
+            log: core::ptr::null_mut(),
+            positionals: Vec::new(),
+            passthrough: Vec::new(),
+            install: None,
+            debug: DebugOptions::default(),
+            test_options: TestOptions::default(),
+            bundler_options: BundlerOptions::default(),
+            runtime_options: RuntimeOptions::default(),
+            filters: Vec::new(),
+            workspaces: false,
+            if_present: false,
+            parallel: false,
+            sequential: false,
+            no_exit_on_error: false,
+            preloads: Vec::new(),
+            has_loaded_global_config: false,
+        }
+    }
+}
+
+impl ContextData {
+    /// Deref the process-lifetime `*mut Log` set in `create_context_data()`.
+    ///
+    /// # Safety
+    /// `self.log` must have been populated by `create_context_data()` (i.e. this
+    /// `ContextData` is the global CLI context), and no other `&mut` to the same
+    /// `Log` may be live.
+    #[inline]
+    pub unsafe fn log(&self) -> &mut logger::Log {
+        debug_assert!(!self.log.is_null());
+        // SAFETY: invariant documented above; single-threaded CLI startup writes
+        // a process-lifetime `&mut Log` and never invalidates it.
+        unsafe { &mut *self.log }
+    }
+
     /// `Arguments.parse` lives in `cli/`; forward-aliased so
     /// `Command::ContextData::create(...)` keeps working.
     // TODO(port): Zig was `pub const create = bun.cli.Command.createContextData;`
@@ -157,10 +201,10 @@ impl Default for BundlerOptions {
     }
 }
 
-pub type Context<'a> = &'a mut ContextData<'a>;
+pub type Context<'a> = &'a mut ContextData;
 // TODO(port): Zig `*ContextData` is passed everywhere as a long-lived handle;
-// the double-`'a` above may need splitting (`&'ctx mut ContextData<'log>`) in
-// Phase B once call sites are ported.
+// the borrow lifetime above may need to become `*mut ContextData` at call sites
+// that re-enter the global ctx (Phase B).
 
 pub struct DebugOptions {
     pub dump_environment_variables: bool,

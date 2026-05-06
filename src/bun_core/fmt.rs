@@ -2618,6 +2618,24 @@ impl Display for FormatDouble {
     }
 }
 
+/// Downstream alias — several callers (ConsoleObject) refer to this as
+/// `bun_core::fmt::DoubleFormatter` (matching the Zig "formatter" naming
+/// convention rather than the `Format*` struct convention used here).
+pub type DoubleFormatter = FormatDouble;
+
+/// Decimal digit count of a signed integer, including the leading `-` for
+/// negatives. Complements `fast_digit_count` (which is unsigned-only and
+/// limited to the 32-bit Lemire table). Used by ConsoleObject width tracking.
+#[inline]
+pub fn count_int(n: i64) -> usize {
+    if n == 0 { return 1; }
+    let neg = (n < 0) as usize;
+    let mut x = n.unsigned_abs();
+    let mut d = 0usize;
+    while x > 0 { d += 1; x /= 10; }
+    neg + d
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // NullableFallback
 // ───────────────────────────────────────────────────────────────────────────

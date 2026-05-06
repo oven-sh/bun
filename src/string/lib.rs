@@ -529,9 +529,26 @@ impl String {
         Ok(webcore_encoding::encode_into_from8(self.latin1(), out, enc))
     }
 
+    /// `bun.String.visibleWidthExcludeANSIColors` — terminal column width of
+    /// `self`, treating ANSI escape sequences as zero-width (string.zig).
+    /// Dispatches on encoding to [`strings::visible::width::exclude_ansi_colors`].
+    pub fn visible_width_exclude_ansi_colors(&self, ambiguous_as_wide: bool) -> usize {
+        use crate::strings::visible::width::exclude_ansi_colors as w;
+        if self.is_utf16() {
+            return w::utf16(self.utf16(), ambiguous_as_wide);
+        }
+        if self.is_utf8() {
+            // SAFETY: tag is ZigString/StaticZigString and 8-bit; `slice()` is
+            // the UTF-8 byte view.
+            return w::utf8(unsafe { self.value.zig.slice() });
+        }
+        w::latin1(self.latin1())
+    }
+
     // `to_js` / `transfer_to_js` / `create_utf8_for_js` are tier-6 (jsc) — the
-    // *_jsc alias pattern: deleted here per PORTING.md, defined as extension
-    // trait in `bun_jsc`.
+    // *_jsc alias pattern: deleted here per PORTING.md, defined as inherent
+    // free fns / extension trait in `bun_jsc::string` (would otherwise create
+    // a `bun_string ↔ bun_jsc` dependency cycle).
 }
 impl Default for String {
     #[inline] fn default() -> Self { Self::EMPTY }
@@ -606,6 +623,9 @@ impl ZigString {
 
     #[inline] pub fn is_utf8(self) -> bool { (self.ptr as usize & ZS_UTF8_BIT) != 0 }
     #[inline] pub fn is_16bit(self) -> bool { (self.ptr as usize & ZS_16BIT_BIT) != 0 }
+    /// Alias of [`is_16bit`] (Zig spelled it `is16Bit`; per PORTING.md acronym
+    /// rule that becomes `is_16_bit`).
+    #[inline] pub fn is_16_bit(self) -> bool { self.is_16bit() }
     #[inline] pub fn is_globally_allocated(self) -> bool { (self.ptr as usize & ZS_GLOBAL_BIT) != 0 }
     #[inline] pub fn mark_utf8(&mut self) { self.ptr = (self.ptr as usize | ZS_UTF8_BIT) as *const u8; }
     #[inline] pub fn mark_utf16(&mut self) { self.ptr = (self.ptr as usize | ZS_16BIT_BIT) as *const u8; }
@@ -664,6 +684,24 @@ impl ZigString {
         };
         list.push(0);
         bun_core::ZBox::from_vec_with_nul(list)
+    }
+
+    /// `ZigString.eqlComptime` — encoding-aware equality against a `'static`
+    /// ASCII literal (ZigString.zig:272). UTF-16 inputs go through the
+    /// per-unit `eql_comptime_utf16` path; 8-bit inputs compare bytes
+    /// directly. The Zig version `@compileError`s on non-ASCII `other`; in
+    /// Rust we cannot enforce that at compile time, so it falls through to
+    /// the byte compare (caller is expected to pass ASCII).
+    pub fn eql_comptime(self, other: &'static [u8]) -> bool {
+        if self.is_16bit() {
+            return strings::eql_comptime_utf16(self.utf16_slice(), other);
+        }
+        // PORT NOTE: Zig branched on `comptime strings.isAllASCII(other)`;
+        // demoted to runtime length-check + byte compare.
+        if self.len != other.len() {
+            return false;
+        }
+        strings::eql_comptime_ignore_len(self.slice(), other)
     }
 
     /// `ZigString.eql` — encoding-aware equality (ZigString.zig).

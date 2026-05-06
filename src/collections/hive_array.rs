@@ -170,6 +170,79 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
     }
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// HiveRef
+// ──────────────────────────────────────────────────────────────────────────
+//
+// PORT NOTE: ground truth is `bun.HiveRef` in src/bun.zig. It lives here (not
+// in the `bun` crate) because every consumer names it through
+// `bun_collections::HiveRef`, and its only collaborator is `Fallback` above.
+//
+// Zig defines `const HiveAllocator = HiveArray(@This(), capacity).Fallback`
+// inside the returned struct; Rust spells the self-referential pool type out
+// as `Fallback<HiveRef<T, CAPACITY>, CAPACITY>`. CAPACITY is `usize` (widened
+// from Zig's `u16`) to line up with `HiveArray`/`Fallback`'s const generic.
+
+/// Intrusive ref-counted slot allocated from a `HiveArray::Fallback` pool.
+/// `allocator` is a BACKREF (LIFETIMES.tsv class) — the pool strictly outlives
+/// every `HiveRef` it hands out, so a raw pointer is the honest mapping.
+#[repr(C)]
+pub struct HiveRef<T, const CAPACITY: usize> {
+    pub ref_count: u32,
+    pub allocator: *mut Fallback<HiveRef<T, CAPACITY>, CAPACITY>,
+    pub value: T,
+}
+
+/// Convenience alias mirroring Zig's nested `const HiveAllocator`.
+pub type HiveAllocator<T, const CAPACITY: usize> = Fallback<HiveRef<T, CAPACITY>, CAPACITY>;
+
+impl<T, const CAPACITY: usize> HiveRef<T, CAPACITY> {
+    /// Zig: `pub fn init(value, allocator) !*@This()`.
+    ///
+    /// # Safety
+    /// `allocator` must be valid for the entire lifetime of the returned
+    /// `HiveRef` (i.e. until its `ref_count` drops to zero and it is `put`
+    /// back). Callers hold the pool in a long-lived owner (e.g. `VirtualMachine`).
+    pub unsafe fn init(
+        value: T,
+        allocator: *mut Fallback<Self, CAPACITY>,
+    ) -> Result<*mut Self, AllocError> {
+        // SAFETY: caller contract — `allocator` is dereferenceable.
+        let this = unsafe { (*allocator).try_get()? };
+        // SAFETY: `try_get` returns an uninitialized slot; we fully initialize it.
+        unsafe {
+            core::ptr::write(this, HiveRef { ref_count: 1, allocator, value });
+        }
+        Ok(this)
+    }
+
+    pub fn ref_(&mut self) -> &mut Self {
+        self.ref_count += 1;
+        self
+    }
+
+    /// Zig: `pub fn unref(this) ?*@This()` — returns `null` when the count hit
+    /// zero and the slot was returned to the pool.
+    pub fn unref(&mut self) -> Option<&mut Self> {
+        let ref_count = self.ref_count;
+        self.ref_count = ref_count - 1;
+        if ref_count == 1 {
+            let allocator = self.allocator;
+            // SAFETY: `self` was produced by `init` above, so `allocator` is the
+            // pool that owns this slot and is still live (caller contract on
+            // `init`). Zig's `if @hasDecl(T, "deinit") this.value.deinit()` maps
+            // to dropping `value` in place; `Fallback::put` then poisons/recycles
+            // the slot without running any destructor.
+            unsafe {
+                core::ptr::drop_in_place(core::ptr::addr_of_mut!(self.value));
+                (*allocator).put(self as *mut Self);
+            }
+            return None;
+        }
+        Some(self)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

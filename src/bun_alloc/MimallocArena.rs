@@ -1,3 +1,4 @@
+#![cfg(any())] // CYCLEBREAK draft — re-gated per MASS-UNGATE (bun_alloc → bun_core/sys/runtime back-edge); MOVE_DOWN pending
 //! This type is a `GenericAllocator`; see `src/allocators.zig`.
 
 use core::cell::RefCell;

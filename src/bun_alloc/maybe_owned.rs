@@ -1,3 +1,4 @@
+#![cfg(any())] // CYCLEBREAK draft — re-gated per MASS-UNGATE (bun_alloc → bun_core/sys/runtime back-edge); MOVE_DOWN pending
 //! This type can be used with `bun_ptr::Owned` to model "maybe owned" pointers:
 //!
 //! ```ignore

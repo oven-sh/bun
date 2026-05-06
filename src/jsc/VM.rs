@@ -39,7 +39,7 @@ unsafe extern "C" {
     fn JSC__VM__notifyNeedDebuggerBreak(vm: *mut VM);
     fn JSC__VM__notifyNeedShellTimeoutCheck(vm: *mut VM);
     fn JSC__VM__isEntered(vm: *mut VM) -> bool;
-    fn JSC__VM__isTerminationException(vm: *mut VM, exception: *mut Exception) -> bool;
+    fn JSC__VM__isTerminationException(vm: *mut VM, exception: *const Exception) -> bool;
     fn JSC__VM__hasTerminationRequest(vm: *mut VM) -> bool;
     fn JSC__VM__clearHasTerminationRequest(vm: *mut VM);
     fn JSC__VM__throwError(vm: *mut VM, global_object: *mut JSGlobalObject, value: JSValue);

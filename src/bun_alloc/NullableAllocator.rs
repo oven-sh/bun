@@ -1,3 +1,4 @@
+#![cfg(any())] // CYCLEBREAK draft — re-gated per MASS-UNGATE (bun_alloc → bun_core/sys/runtime back-edge); MOVE_DOWN pending
 //! A nullable allocator the same size as `std.mem.Allocator`.
 
 use core::ffi::c_void;

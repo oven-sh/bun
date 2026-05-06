@@ -79,7 +79,10 @@ impl<T, const N: usize> LinearFifoBuffer<T> for StaticBuffer<T, N> {
     }
     #[inline]
     fn as_mut_slice(&mut self) -> &mut [T] {
-        // SAFETY: same invariant as as_slice.
+        // SAFETY: `&mut self` is the unique owner of the inline `[MaybeUninit<T>; N]`;
+        // the intermediate `&mut [MaybeUninit<T>]` is consumed by the cast so no
+        // second `&mut` aliases the returned slice. Layout of `MaybeUninit<T>` is
+        // identical to `T`; validity invariant is the same as `as_slice` (see TODO above).
         unsafe { &mut *(self.0.as_mut_slice() as *mut [MaybeUninit<T>] as *mut [T]) }
     }
 }

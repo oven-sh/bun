@@ -305,7 +305,15 @@ impl ShellSubprocess {
                 if let Readable::Pipe(pipe) = r {
                     if matches!(pipe.state, PipeReaderState::Pending) {
                         // TODO(port): Arc<PipeReader> interior mutability.
-                        pipe.set_state(PipeReaderState::Err(None));
+                        // SAFETY: raw-ptr write through the Arc allocation; see
+                        // PipeReader::set_state. start() failed before any reader
+                        // callback could alias this pipe.
+                        unsafe {
+                            PipeReader::set_state(
+                                Arc::as_ptr(pipe).cast_mut(),
+                                PipeReaderState::Err(None),
+                            )
+                        };
                     }
                 }
             }

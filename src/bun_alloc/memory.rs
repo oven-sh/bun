@@ -1,3 +1,4 @@
+#![cfg(any())] // CYCLEBREAK draft — re-gated per MASS-UNGATE (bun_alloc → bun_core/sys/runtime back-edge); MOVE_DOWN pending
 //! Basic utilities for working with memory and objects.
 
 use crate::AllocError;

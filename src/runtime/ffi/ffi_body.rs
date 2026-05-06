@@ -1219,13 +1219,13 @@ impl FFI {
                         skip_empty_name: true,
                     },
                 )?;
-                while let Some(entry) = iter.next(global_this)? {
+                while let Some(entry) = iter.next()? {
                     let key = entry.to_owned_slice_z();
-                    let mut owned_value: Box<ZStr> = ZStr::empty();
+                    let mut owned_value: ZBox = ZBox::from_bytes(b"");
                     if !iter.value.is_undefined_or_null() {
                         if iter.value.is_string() {
                             let value = iter.value.get_zig_string(global_this)?;
-                            if value.len() > 0 {
+                            if value.len > 0 {
                                 owned_value = value.to_owned_slice_z();
                             }
                         }

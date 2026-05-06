@@ -2760,8 +2760,35 @@ pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: bool) -> bool {
         unsafe { libc::access(path.as_ptr().cast(), libc::F_OK) == 0 }
     }
     #[cfg(windows)] {
-        let _ = (path, file_only);
-        todo!("exists_os_path windows: GetFileAttributesW")
+        use bun_windows_sys::externs as w;
+        // sys.zig:3454 — `getFileAttributes(path)`; if `file_only` reject dirs;
+        // if reparse point, open the target with `OPEN_EXISTING` to follow.
+        // SAFETY: path is NUL-terminated UTF-16.
+        let attrs = unsafe { w::GetFileAttributesW(path.as_ptr()) };
+        if attrs == windows::INVALID_FILE_ATTRIBUTES { return false; }
+        if file_only && (attrs & w::FILE_ATTRIBUTE_DIRECTORY) != 0 {
+            return false;
+        }
+        if (attrs & w::FILE_ATTRIBUTE_REPARSE_POINT) != 0 {
+            // Check if the underlying file exists by opening it.
+            // SAFETY: path is NUL-terminated; null security/template handles.
+            let rc = unsafe {
+                w::CreateFileW(
+                    path.as_ptr(),
+                    0,
+                    0,
+                    core::ptr::null_mut(),
+                    w::OPEN_EXISTING,
+                    w::FILE_FLAG_BACKUP_SEMANTICS,
+                    core::ptr::null_mut(),
+                )
+            };
+            if rc == bun_windows_sys::INVALID_HANDLE_VALUE { return false; }
+            // SAFETY: rc is a valid handle from CreateFileW.
+            unsafe { let _ = w::CloseHandle(rc); }
+            return true;
+        }
+        true
     }
 }
 /// sys.zig:3636 `ExistsAtType`.

@@ -1066,6 +1066,25 @@ impl AnyPromise {
             Self::Internal(p) => JSValue::from_cell(p),
         }
     }
+    /// `AnyPromise.setHandled` (AnyPromise.zig:42).
+    #[inline] pub fn set_handled(self, vm: &VM) {
+        let _ = vm;
+        // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
+        match self {
+            Self::Normal(p) => unsafe { (*p).set_handled() },
+            Self::Internal(p) => unsafe { (*p).set_handled() },
+        }
+    }
+    /// `AnyPromise.unwrap` (AnyPromise.zig:14).
+    #[inline] pub fn unwrap(self, vm: &VM, mode: PromiseUnwrapMode) -> PromiseResult {
+        // SAFETY: variants hold a live JSC heap cell; `vm` is the owning VM and
+        // `JSPromise::unwrap` only reads status/result (no aliased &mut escapes).
+        let vm = unsafe { &mut *(vm as *const VM as *mut VM) };
+        match self {
+            Self::Normal(p) => unsafe { (*p).unwrap(vm, mode) },
+            Self::Internal(p) => unsafe { (*p).unwrap(vm, mode) },
+        }
+    }
 }
 
 /// `JSPromise.UnwrapMode` (JSPromise.zig:349).

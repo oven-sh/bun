@@ -2718,6 +2718,143 @@ unsafe fn get_hardcoded_module_hook(
     }
 }
 
+/// `LoaderHooks::transpile_virtual_module` body — port of
+/// `Bun__transpileVirtualModule` (spec ModuleLoader.zig:1234-1304). Transpiles
+/// plugin-provided source through the per-thread `TRANSPILE_PRINTER`.
+///
+/// # Safety
+/// `global` is the live JS-thread `JSGlobalObject*`; `specifier_ptr` /
+/// `referrer_ptr` are valid `bun.String*` for the call's duration;
+/// `source_code` is a valid `ZigString*`; `ret` is a valid out-param.
+unsafe fn transpile_virtual_module(
+    global: *mut JSGlobalObject,
+    specifier_ptr: *const bun_string::String,
+    referrer_ptr: *const bun_string::String,
+    source_code: *mut bun_string::ZigString,
+    loader_: bun_options_types::schema::api::Loader,
+    ret: *mut ErrorableResolvedSource,
+) -> bool {
+    use bun_options_types::schema::api;
+
+    // SAFETY: per fn contract — `global` is the live JS-thread global.
+    let global_ref = unsafe { &*global };
+    let jsc_vm = global_ref.bun_vm() as *const VirtualMachine as *mut VirtualMachine;
+    // PORT NOTE: spec asserted `jsc_vm.plugin_runner != null` then dropped the
+    // assert ("not required for build.module()") — keep parity (no assert).
+
+    // SAFETY: per fn contract — pointers valid for the call.
+    let specifier_slice = unsafe { &*specifier_ptr }.to_utf8();
+    let specifier = specifier_slice.slice();
+    // SAFETY: per fn contract.
+    let source_code_slice = unsafe { &*source_code }.to_slice();
+    // SAFETY: per fn contract.
+    let referrer_slice = unsafe { &*referrer_ptr }.to_utf8();
+
+    let virtual_source = logger::Source::init_path_string(specifier, source_code_slice.slice());
+    let mut log = logger::Log::init();
+    let path = Fs::Path::init(specifier);
+
+    // Spec :1262-1270 — `loader_ != ._none ? fromAPI(loader_) : loaders.get(ext)
+    // orelse (specifier == main ? .js : .file)`.
+    let loader = if loader_ != api::Loader::_none {
+        Loader::from_api(loader_)
+    } else {
+        // SAFETY: `jsc_vm` is the live per-thread VM.
+        let opt = unsafe { (*jsc_vm).transpiler.options.loaders.get(path.name.ext).copied() };
+        opt.unwrap_or_else(|| {
+            // SAFETY: `jsc_vm` is the live per-thread VM.
+            if bun_string::strings::eql_long(specifier, unsafe { (*jsc_vm).main }, true) {
+                Loader::Js
+            } else {
+                Loader::File
+            }
+        })
+    };
+
+    // Spec :1272-1273 — `defer log.deinit(); defer module_loader.resetArena()`.
+    let _reset_arena = scopeguard::guard((), |_| {
+        // SAFETY: `jsc_vm` is the live per-thread VM (closure runs on the same
+        // thread, before this hook returns).
+        ModuleLoader::reset_arena(unsafe { &mut *jsc_vm });
+    });
+
+    // Lazy-init the per-thread shared printer (same path as `transpile_file`).
+    let printer_ptr: *mut bun_js_printer::BufferPrinter = TRANSPILE_PRINTER.with(|cell| {
+        let mut p = cell.get();
+        if p.is_null() {
+            let writer = bun_js_printer::BufferWriter::init();
+            let mut bp = Box::new(bun_js_printer::BufferPrinter::init(writer));
+            bp.ctx.append_null_byte = false;
+            p = Box::into_raw(bp);
+            cell.set(p);
+        }
+        p
+    });
+
+    // ── `ModuleLoader.transpileSourceCode(...)` ─────────────────────────────
+    // Spec :1276-1300.
+    let mut extra = TranspileExtra {
+        path,
+        loader,
+        module_type: ModuleType::Unknown,
+        source_code_printer: printer_ptr,
+        promise_ptr: ptr::null_mut(), // null forbids async resolution
+    };
+    let args = TranspileArgs {
+        specifier,
+        referrer: referrer_slice.slice(),
+        // SAFETY: per fn contract — `*specifier_ptr` is valid for the call;
+        // `bun.String` is `Copy` (tagged-pointer pair) so by-value is sound.
+        input_specifier: unsafe { *specifier_ptr },
+        log: &mut log as *mut logger::Log,
+        virtual_source: Some(&virtual_source),
+        global_object: global,
+        flags: FetchFlags::Transpile,
+        extra: (&mut extra as *mut TranspileExtra).cast::<c_void>(),
+    };
+
+    match transpile_source_code_inner(jsc_vm, &args, &mut extra) {
+        Ok(resolved) => {
+            // SAFETY: per fn contract — `ret` is a valid out-param.
+            unsafe { *ret = ErrorableResolvedSource::ok(resolved) };
+            bun_analytics::features::virtual_modules
+                .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            true
+        }
+        Err(err) => {
+            // Spec :1289-1299.
+            if err == bun_core::err!("PluginError") {
+                return true;
+            }
+            if err == bun_core::err!("JSError") {
+                // PORT NOTE: spec calls `globalObject.takeError(error.JSError)`;
+                // surface the pending exception via `tryTakeException` (same
+                // C++ slot as `transpile_file` above).
+                let exc = global_ref
+                    .try_take_exception()
+                    .unwrap_or(JSValue::UNDEFINED);
+                // SAFETY: per fn contract.
+                unsafe {
+                    *ret = ErrorableResolvedSource::err(bun_core::err!("JSError"), exc);
+                }
+                return true;
+            }
+            // Generic transpile error → format `log` into `*ret`.
+            bun_jsc::module_loader::process_fetch_log(
+                global,
+                // SAFETY: per fn contract — pointers valid for the call.
+                unsafe { *specifier_ptr },
+                unsafe { *referrer_ptr },
+                &mut log,
+                // SAFETY: per fn contract — `ret` is a valid out-param.
+                unsafe { &mut *ret },
+                err,
+            );
+            true
+        }
+    }
+}
+
 /// `LoaderHooks::resolve_embedded_node_file` body — port of
 /// `ModuleLoader.resolveEmbeddedFile` (spec ModuleLoader.zig:33-71) for the
 /// `process.dlopen()`-on-a-compiled-executable path. Extracts an embedded

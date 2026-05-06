@@ -755,9 +755,13 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             Vec::with_capacity(dev.framework.file_system_router_types.len());
 
         for (i, fsr) in dev.framework.file_system_router_types.iter().enumerate() {
-            let buf = paths::path_buffer_pool::get();
+            let mut buf = paths::path_buffer_pool::get();
             let joined_root =
-                paths::join_abs_string_buf(&dev.root, &mut *buf, &[&fsr.root], paths::Style::Auto);
+                paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
+                    &dev.root,
+                    &mut buf[..],
+                    &[&fsr.root],
+                );
             let Some(entry) = dev
                 .server_transpiler
                 .resolver
@@ -4916,7 +4920,7 @@ impl SafeFileId {
     }
     fn side(self) -> bake::Side {
         // SAFETY: low bit is always a valid bake::Side discriminant
-        unsafe { core::mem::transmute((self.0 & 1) as u8) }
+        unsafe { ::core::mem::transmute((self.0 & 1) as u8) }
     }
     fn index(self) -> u32 {
         (self.0 >> 1) & 0x3FFF_FFFF

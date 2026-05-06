@@ -587,7 +587,7 @@ impl ServerConfig {
                 for port_env in PORT_ENV {
                     if let Some(port) = env.get(port_env) {
                         // TODO(port): std.fmt.parseInt(u16, port, 10) — using helper
-                        if let Ok(_port) = bun_core::parse_int::<u16>(port, 10) {
+                        if let Ok(_port) = bun_string::immutable::parse_int::<u16>(port, 10) {
                             break 'brk _port;
                         }
                     }
@@ -859,7 +859,7 @@ impl ServerConfig {
                 || !init_ctx.framework_router_list.is_empty()
             {
                 if args.development.is_hmr_enabled() {
-                    let root = bun_fs::FileSystem::instance().top_level_dir;
+                    let root = bun_resolver::fs::FileSystem::instance().top_level_dir;
                     let framework = crate::bake::Framework::auto(
                         &init_ctx.arena,
                         &mut global.bun_vm().transpiler.resolver,

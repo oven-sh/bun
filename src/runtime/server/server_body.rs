@@ -4009,12 +4009,12 @@ pub struct ServerAllConnectionsClosedTask {
 }
 
 impl ServerAllConnectionsClosedTask {
-    pub fn schedule(this: ServerAllConnectionsClosedTask, vm: &VirtualMachine) {
+    pub fn schedule(this: ServerAllConnectionsClosedTask, vm: &jsc::virtual_machine::VirtualMachine) {
         let ptr = Box::into_raw(Box::new(this));
         vm.event_loop().enqueue_task(jsc::Task::init(ptr));
     }
 
-    pub fn run_from_js_thread(this: *mut Self, vm: &VirtualMachine) -> Result<(), jsc::JsTerminated> {
+    pub fn run_from_js_thread(this: *mut Self, vm: &jsc::virtual_machine::VirtualMachine) -> Result<(), jsc::JsTerminated> {
         httplog!("ServerAllConnectionsClosedTask runFromJSThread");
 
         // SAFETY: ptr was Box::into_raw'd in schedule()

@@ -88,8 +88,17 @@ macro_rules! extern_crypto_job {
                             callback: StrongOptional::create(callback, global),
                         }));
                         // SAFETY: `job` was just allocated and is exclusively owned here.
+                        // Zig: `AnyTask.New(@This(), &runFromJS).init(job)`. Rust's `New<T>`
+                        // cannot carry a comptime callback (see event_loop/AnyTask.rs), so build
+                        // the erased AnyTask directly with a non-capturing shim.
                         unsafe {
-                            (*job).any_task = jsc::AnyTask::new::<Job>(Self::run_from_js).init(job);
+                            (*job).any_task = AnyTask {
+                                ctx: core::ptr::NonNull::new(job.cast::<c_void>()),
+                                callback: |ctx: *mut c_void| {
+                                    Job::run_from_js(ctx.cast::<Job>());
+                                    Ok(())
+                                },
+                            };
                         }
                         job
                     }

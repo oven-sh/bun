@@ -839,24 +839,16 @@ impl BuildCommand {
                             // so use map_basename (not a path with directory components)
                             // to avoid writing to a doubled directory path.
                             let mut pathbuf = PathBuffer::uninit();
-                            match crate::node::fs::NodeFS::write_file_with_path_buffer(
+                            match bun_sys::write_file_with_path_buffer(
                                 &mut pathbuf,
-                                crate::node::fs::WriteFileArgs {
-                                    data: crate::node::fs::WriteFileData::Buffer(
-                                        crate::node::Buffer {
-                                            buffer: crate::node::ArrayBuffer {
-                                                ptr: sourcemap_bytes.as_ptr() as *mut u8,
-                                                len: sourcemap_bytes.len() as u32,
-                                                byte_len: sourcemap_bytes.len() as u32,
-                                            },
-                                        },
-                                    ),
-                                    encoding: crate::node::Encoding::Buffer,
-                                    dirfd: Fd::from_std_dir(root_dir),
-                                    file: crate::node::PathOrFileDescriptor::Path(
-                                        crate::node::PathLike {
-                                            string: bun_str::PathString::init(map_basename),
-                                        },
+                                bun_sys::WriteFileArgs {
+                                    data: bun_sys::WriteFileData::Buffer {
+                                        buffer: sourcemap_bytes,
+                                    },
+                                    encoding: bun_sys::WriteFileEncoding::Buffer,
+                                    dirfd: root_dir.fd,
+                                    file: bun_sys::PathOrFileDescriptor::Path(
+                                        bun_str::PathString::init(map_basename),
                                     ),
                                     ..Default::default()
                                 },

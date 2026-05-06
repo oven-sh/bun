@@ -2429,7 +2429,7 @@ pub fn parse(
     let args = unsafe { core::slice::from_raw_parts(args_ptr, args_len as usize) };
     let path_ptr: JSValue = if args_len > 0 { args[0] } else { JSValue::UNDEFINED };
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
-    validate_string(global_object, path_ptr, format_args!("path"))?;
+    crate::node::validators_impl::validate_string(global_object, path_ptr, format_args!("path"))?;
 
     let path_zstr = path_ptr.get_zig_string(global_object)?;
     if path_zstr.len() == 0 {
@@ -2781,7 +2781,7 @@ pub fn relative_posix_js_t<T: PathChar>(
     buf3: &mut [T],
 ) -> JsResult<JSValue> {
     match relative_posix_t(from, to, buf, buf2, buf3) {
-        Ok(r) => BunString::create_utf8_for_js(global_object, r),
+        Ok(r) => crate::jsc::bun_string_jsc::create_utf8_for_js(global_object, r),
         Err(e) => Ok(e.to_js(global_object)),
     }
 }

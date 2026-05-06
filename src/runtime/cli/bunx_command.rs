@@ -1096,19 +1096,22 @@ impl BunxCommand {
         );
         this_transpiler.env.map.put(b"BUN_INTERNAL_BUNX_INSTALL", b"true").expect("oom");
 
-        let spawn_result = match bun_core::spawn_sync(&bun_core::SpawnSyncOptions {
-            argv: argv_to_use,
+        let spawn_result = match proc_sync::spawn(&proc_sync::Options {
+            argv: argv_to_use.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
 
-            envp: this_transpiler.env.map.create_null_delimited_env_map()?,
+            // TODO(port): wire `this_transpiler.env.map.create_null_delimited_env_map()` once
+            // its return type matches `Option<*const *const c_char>`.
+            envp: None,
 
-            cwd: bunx_cache_dir,
-            stderr: bun_core::Stdio::Inherit,
-            stdout: bun_core::Stdio::Inherit,
-            stdin: bun_core::Stdio::Inherit,
+            cwd: Box::<[u8]>::from(bunx_cache_dir),
+            stderr: proc_sync::SyncStdio::Inherit,
+            stdout: proc_sync::SyncStdio::Inherit,
+            stdin: proc_sync::SyncStdio::Inherit,
 
             #[cfg(windows)]
-            windows: bun_core::SpawnWindowsOptions {
+            windows: proc_sync::WindowsOptions {
                 loop_: bun_jsc::EventLoopHandle::init(bun_event_loop::MiniEventLoop::init_global(&this_transpiler.env, None)),
+                ..Default::default()
             },
             ..Default::default()
         }) {

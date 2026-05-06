@@ -353,14 +353,6 @@ mod allocator_interface {
     // above plus `noResize`/`noRemap`.
 }
 
-// Probe instance used only for vtable-identity comparison in `from()`.
-// TODO(port): remove once `crate::Allocator` exposes a proper downcast/type_id hook.
-static PROBE: LinuxMemFdAllocator = LinuxMemFdAllocator {
-    ref_count: AtomicU32::new(0),
-    fd: Fd::INVALID,
-    size: 0,
-};
-
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/bun_alloc/LinuxMemFdAllocator.zig (195 lines)

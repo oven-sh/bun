@@ -1721,10 +1721,9 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     }
 
     fn register_auto_flusher(&mut self) {
-        let Some(res) = self.res else { return };
+        let Some(res) = self.any_res() else { return };
         // if we enqueue data we should reset the timeout
-        // SAFETY: res is live uWS handle
-        unsafe { &mut *(res as *mut uws::Response) }.reset_timeout();
+        res.reset_timeout();
         if !self.auto_flusher.registered {
             // SAFETY: global_this set before first write
             let vm = unsafe { &*self.global_this }.bun_vm();
@@ -1782,21 +1781,19 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         bun_core::scoped_log!(HTTPServerWritableLog, "finalize()");
         if !self.done {
             self.unregister_auto_flusher();
-            if let Some(res) = self.res {
+            if let Some(res) = self.any_res() {
                 // Detach the handlers this sink registered before flushing.
                 // onAborted/onData belong to RequestContext, not the sink —
                 // clearing them here would drop the holder's pointer (and on
                 // H3, where the stream is freed after FIN, leave it dangling).
-                // SAFETY: res is live uWS handle
-                unsafe { &mut *(res as *mut uws::Response) }.clear_on_writable();
+                res.clear_on_writable();
             }
             let _ = self.flush_no_wait();
             self.done = true;
 
-            if let Some(res) = self.res {
+            if let Some(res) = self.any_res() {
                 // is actually fine to call this if the socket is closed because of flushNoWait, the free will be defered by usockets
-                // SAFETY: res is live uWS handle
-                unsafe { &mut *(res as *mut uws::Response) }.end_stream(false);
+                res.end_stream(false);
             }
         }
 
@@ -2218,7 +2215,7 @@ impl BufferAction {
     pub fn fulfill(&mut self, global: &JSGlobalObject, blob: &mut AnyBlob) -> JsResult<()> {
         // TODO(port): narrow error set — Zig: bun.JSTerminated!void
         blob.wrap(
-            crate::webcore::blob::WrapKind::Normal(self.swap()),
+            jsc::AnyPromise::Normal(self.swap()),
             global,
             self.tag(),
         )

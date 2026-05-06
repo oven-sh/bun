@@ -413,7 +413,7 @@ impl ShellSubprocess {
         let stdin_opt = match stdio_guard[0].as_spawn_option(0) {
             Ok(opt) => opt,
             Err(e) => {
-                return sh::Result::Err(sh::Error::Custom(Box::<[u8]>::from(e.to_str())));
+                return Err(ShError::Custom(Box::<[u8]>::from(e.to_str())));
             }
         };
         let stdout_opt = match stdio_guard[1].as_spawn_option(1) {
@@ -421,7 +421,7 @@ impl ShellSubprocess {
             Err(e) => {
                 #[cfg(windows)]
                 stdin_opt.deinit();
-                return sh::Result::Err(sh::Error::Custom(Box::<[u8]>::from(e.to_str())));
+                return Err(ShError::Custom(Box::<[u8]>::from(e.to_str())));
             }
         };
         let stderr_opt = match stdio_guard[2].as_spawn_option(2) {
@@ -432,7 +432,7 @@ impl ShellSubprocess {
                     stdin_opt.deinit();
                     stdout_opt.deinit();
                 }
-                return sh::Result::Err(sh::Error::Custom(Box::<[u8]>::from(e.to_str())));
+                return Err(ShError::Custom(Box::<[u8]>::from(e.to_str())));
             }
         };
 
@@ -457,7 +457,7 @@ impl ShellSubprocess {
         let cmd_parent = unsafe { &mut *spawn_args.cmd_parent };
         if cmd_parent.args.try_push(core::ptr::null()).is_err() {
             spawn_options.deinit();
-            return sh::Result::Err(sh::Error::Custom(Box::<[u8]>::from(
+            return Err(ShError::Custom(Box::<[u8]>::from(
                 b"out of memory" as &[u8],
             )));
         }
@@ -465,12 +465,12 @@ impl ShellSubprocess {
         if spawn_args.env_array.try_push(core::ptr::null()).is_err() {
             // TODO(port): Vec::push cannot fail without try_reserve; mirror Zig OOM path.
             spawn_options.deinit();
-            return sh::Result::Err(sh::Error::Custom(Box::<[u8]>::from(
+            return Err(ShError::Custom(Box::<[u8]>::from(
                 b"out of memory" as &[u8],
             )));
         }
 
-        let spawn_result = match bun_spawn::spawn_process(
+        let spawn_result = match bun_process::spawn_process(
             &spawn_options,
             cmd_parent.args.as_ptr() as *const *const c_char,
             spawn_args.env_array.as_ptr() as *const *const c_char,
@@ -480,12 +480,12 @@ impl ShellSubprocess {
                 let mut msg = Vec::<u8>::new();
                 use std::io::Write;
                 let _ = write!(&mut msg, "Failed to spawn process: {}", err.name());
-                return sh::Result::Err(sh::Error::Custom(msg.into_boxed_slice()));
+                return Err(ShError::Custom(msg.into_boxed_slice()));
             }
             Ok(r) => match r {
                 bun_sys::Result::Err(err) => {
                     spawn_options.deinit();
-                    return sh::Result::Err(sh::Error::Sys(err.to_shell_system_error()));
+                    return Err(ShError::Sys(err.to_shell_system_error()));
                 }
                 bun_sys::Result::Ok(result) => result,
             },
@@ -561,7 +561,7 @@ impl ShellSubprocess {
                 let sys_err = err.to_shell_system_error();
                 let _ = subproc.try_kill(SignalCode::SIGTERM as i32);
                 Self::abort_after_failed_start(subprocess);
-                return sh::Result::Err(sh::Error::Sys(sys_err));
+                return Err(ShError::Sys(sys_err));
             }
         }
 
@@ -572,7 +572,7 @@ impl ShellSubprocess {
                 // SAFETY: subprocess was allocated above and is uniquely owned here.
                 let _ = unsafe { &mut *subprocess }.try_kill(SignalCode::SIGTERM as i32);
                 Self::abort_after_failed_start(subprocess);
-                return sh::Result::Err(sh::Error::Sys(sys_err));
+                return Err(ShError::Sys(sys_err));
             }
             if !spawn_args.lazy {
                 if let Readable::Pipe(pipe) = &mut subproc.stdout {
@@ -588,7 +588,7 @@ impl ShellSubprocess {
                 // SAFETY: subprocess was allocated above and is uniquely owned here.
                 let _ = unsafe { &mut *subprocess }.try_kill(SignalCode::SIGTERM as i32);
                 Self::abort_after_failed_start(subprocess);
-                return sh::Result::Err(sh::Error::Sys(sys_err));
+                return Err(ShError::Sys(sys_err));
             }
 
             if !spawn_args.lazy {
@@ -600,7 +600,7 @@ impl ShellSubprocess {
 
         log!("returning");
 
-        sh::Result::Ok(())
+        Ok(())
     }
 
     pub fn wait(&mut self, sync: bool) {

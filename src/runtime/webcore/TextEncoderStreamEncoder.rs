@@ -217,29 +217,28 @@ impl TextEncoderStreamEncoder {
             let spare = buf.spare_capacity_mut();
             let spare_slice =
                 core::slice::from_raw_parts_mut(spare.as_mut_ptr().cast::<u8>(), spare.len());
-            bun_simdutf::convert::utf16_to_utf8_with_errors_le(remain, spare_slice)
+            simdutf::convert::utf16::to::utf8::with_errors::le(remain, spare_slice)
         };
 
-        match result.status {
-            bun_simdutf::Status::Success => {
-                // SAFETY: result.count bytes were just initialized in spare capacity.
-                unsafe { buf.set_len(buf.len() + result.count) };
-                JSUint8Array::from_bytes(global, buf)
-            }
-            _ => {
-                // Slow path: there was invalid UTF-16, so we need to convert it without simdutf.
-                // TODO(port): Zig threw a JS OOM exception on alloc failure; Rust Vec aborts on OOM.
-                let lead_surrogate = strings::to_utf8_list_with_type_bun(&mut buf, remain, true);
+        if result.status == simdutf::Status::SUCCESS {
+            // SAFETY: result.count bytes were just initialized in spare capacity.
+            unsafe { buf.set_len(buf.len() + result.count) };
+            JSUint8Array::from_bytes(global, buf)
+        } else {
+            // Slow path: there was invalid UTF-16, so we need to convert it without simdutf.
+            let lead_surrogate = match strings::to_utf8_list_with_type_bun::<true>(&mut buf, remain) {
+                Ok(v) => v,
+                Err(_) => return global.throw_out_of_memory_value(),
+            };
 
-                if let Some(pending_lead) = lead_surrogate {
-                    self.pending_lead_surrogate = Some(pending_lead);
-                    if buf.is_empty() {
-                        return JSUint8Array::create_empty(global);
-                    }
+            if let Some(pending_lead) = lead_surrogate {
+                self.pending_lead_surrogate = Some(pending_lead);
+                if buf.is_empty() {
+                    return JSUint8Array::create_empty(global);
                 }
-
-                JSUint8Array::from_bytes(global, buf)
             }
+
+            JSUint8Array::from_bytes(global, buf)
         }
     }
 

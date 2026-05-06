@@ -260,28 +260,44 @@ impl WindowsNamedPipeContext {
             Box::into_raw(Box::<core::mem::MaybeUninit<WindowsNamedPipeContext>>::new_uninit()).cast();
 
         // named_pipe owns the pipe (PipeWriter owns the pipe and will close and deinit it)
-        // SAFETY: all-zero is a valid uv::Pipe (#[repr(C)] POD)
-        let pipe = Box::into_raw(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }));
-        let named_pipe = WindowsNamedPipe::from(
-            pipe,
-            uws::WindowsNamedPipeHandlers {
-                ctx: this as *mut c_void,
-                // SAFETY: fn pointers cast to erased callback ABI; receiver layout matches ctx type
-                ref_ctx: unsafe { core::mem::transmute(Self::ref_ as fn(*mut Self)) },
-                deref_ctx: unsafe { core::mem::transmute(Self::deref as fn(*mut Self)) },
-                on_open: unsafe { core::mem::transmute(Self::on_open as fn(&mut Self)) },
-                on_data: unsafe { core::mem::transmute(Self::on_data as fn(&mut Self, &[u8])) },
-                on_handshake: unsafe { core::mem::transmute(Self::on_handshake as fn(&mut Self, bool, us_bun_verify_error_t)) },
-                on_end: unsafe { core::mem::transmute(Self::on_end as fn(&mut Self)) },
-                on_writable: unsafe { core::mem::transmute(Self::on_writable as fn(&mut Self)) },
-                on_error: unsafe { core::mem::transmute(Self::on_error as fn(&mut Self, SysError)) },
-                on_timeout: unsafe { core::mem::transmute(Self::on_timeout as fn(&mut Self)) },
-                on_close: unsafe { core::mem::transmute(Self::on_close as fn(*mut Self)) },
+        let handlers = NamedPipeHandlers {
+            ctx: this as *mut c_void,
+            // SAFETY: fn pointers cast to erased callback ABI; receiver layout matches ctx type
+            ref_ctx: unsafe { core::mem::transmute(Self::ref_ as fn(*mut Self)) },
+            deref_ctx: unsafe { core::mem::transmute(Self::deref as fn(*mut Self)) },
+            on_open: unsafe { core::mem::transmute(Self::on_open as fn(&mut Self)) },
+            on_data: unsafe { core::mem::transmute(Self::on_data as fn(&mut Self, &[u8])) },
+            on_handshake: unsafe { core::mem::transmute(Self::on_handshake as fn(&mut Self, bool, us_bun_verify_error_t)) },
+            on_end: unsafe { core::mem::transmute(Self::on_end as fn(&mut Self)) },
+            on_writable: unsafe { core::mem::transmute(Self::on_writable as fn(&mut Self)) },
+            on_error: unsafe { core::mem::transmute(Self::on_error as fn(&mut Self, SysError)) },
+            on_timeout: unsafe { core::mem::transmute(Self::on_timeout as fn(&mut Self)) },
+            on_close: unsafe { core::mem::transmute(Self::on_close as fn(*mut Self)) },
+        };
+        #[cfg(windows)]
+        let named_pipe = {
+            // SAFETY: all-zero is a valid uv::Pipe (#[repr(C)] POD)
+            let pipe = Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() });
+            WindowsNamedPipe::from(pipe, handlers, vm)
+        };
+        #[cfg(not(windows))]
+        let named_pipe: WindowsNamedPipe = {
+            // Unreachable at runtime on POSIX (`crate::socket::WindowsNamedPipeContext`
+            // is aliased to `()`); keep the module type-checking by leaving the
+            // Windows-only constructor out of the call graph.
+            let _ = handlers;
+            todo!("blocked_on: WindowsNamedPipe::from (windows-only)")
+        };
+        // Zig: `jsc.AnyTask.New(WindowsNamedPipeContext, runEvent).init(this)` — the
+        // comptime-callback `New<T>` wrapper is not yet expressible on stable Rust,
+        // so build the erased AnyTask directly.
+        let task = AnyTask {
+            ctx: NonNull::new(this.cast::<c_void>()),
+            callback: |ctx| {
+                Self::run_event(ctx.cast::<WindowsNamedPipeContext>());
+                Ok(())
             },
-            vm,
-        );
-        // TODO(port): jsc.AnyTask.New(T, callback).init(this) — typed task wrapper
-        let task = AnyTask::new::<WindowsNamedPipeContext>(Self::run_event, this);
+        };
 
         // SAFETY: `this` is freshly allocated uninit storage exclusively owned here; we write
         // every field exactly once before any read.

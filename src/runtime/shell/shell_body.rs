@@ -4635,7 +4635,7 @@ pub fn handle_template_value(
             return Ok(());
         }
 
-        if let Some(_rstream) = jsc::WebCore::ReadableStream::from_js(template_value, global)? {
+        if let Some(_rstream) = crate::webcore::ReadableStream::from_js(template_value, global)? {
             let idx = out_jsobjs.len();
             marked_argument_buffer.append(template_value);
             out_jsobjs.push(template_value);
@@ -4798,8 +4798,8 @@ impl<'a> ShellSrcBuilder<'a> {
         &mut self,
         bunstr: BunString,
     ) -> Result<bool, bun_alloc::AllocError> {
-        let invalid = (bunstr.is_utf16() && !bun_str::simdutf::validate::utf16le(bunstr.utf16()))
-            || (bunstr.is_utf8() && !bun_str::simdutf::validate::utf8(bunstr.byte_slice()));
+        let invalid = (bunstr.is_utf16() && !simdutf::validate::utf16le(bunstr.utf16()))
+            || (bunstr.is_utf8() && !simdutf::validate::utf8(bunstr.byte_slice()));
         if invalid {
             return Ok(false);
         }
@@ -4833,7 +4833,7 @@ impl<'a> ShellSrcBuilder<'a> {
         utf8: &[u8],
     ) -> Result<bool, bun_core::Error> {
         // TODO(port): narrow error set
-        let invalid = bun_str::simdutf::validate::utf8(utf8);
+        let invalid = simdutf::validate::utf8(utf8);
         // PORT NOTE: Zig variable name `invalid` is misleading — it holds the validity bool.
         if !invalid {
             return Ok(false);
@@ -4852,10 +4852,9 @@ impl<'a> ShellSrcBuilder<'a> {
     }
 
     pub fn append_utf16_impl(&mut self, utf16: &[u16]) -> Result<(), bun_alloc::AllocError> {
-        let size = bun_str::simdutf::utf8_length_from_utf16le(utf16.as_ptr(), utf16.len());
+        let size = simdutf::length::utf8::from::utf16::le(utf16);
         self.outbuf.reserve(size);
-        strings::convert_utf16_to_utf8_append(self.outbuf, utf16)
-            .map_err(|_| bun_alloc::AllocError)?;
+        strings::convert_utf16_to_utf8_append(self.outbuf, utf16);
         // TODO(port): error mapping — Zig propagates encoding error directly.
         Ok(())
     }

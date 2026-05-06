@@ -200,12 +200,12 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
             let blob = construct_s3_file_internal_store(global, path.path(), options)?;
 
             let mut blob_internal = PathOrBlob::Blob(blob);
-            Blob::write_file_internal(
+            blob::write_file_internal(
                 global,
                 &mut blob_internal,
                 data,
                 blob::WriteFileOptions {
-                    mkdirp_if_not_exists: false,
+                    mkdirp_if_not_exists: Some(false),
                     extra_options: options,
                     ..Default::default()
                 },
@@ -214,12 +214,12 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
         PathOrBlob::Blob(blob) => {
             // PORT NOTE: reshaped for borrowck — match consumes path_or_blob; rebuild to pass &mut PathOrBlob
             let mut pob = PathOrBlob::Blob(blob);
-            Blob::write_file_internal(
+            blob::write_file_internal(
                 global,
                 &mut pob,
                 data,
                 blob::WriteFileOptions {
-                    mkdirp_if_not_exists: false,
+                    mkdirp_if_not_exists: Some(false),
                     extra_options: args.next_eat(),
                     ..Default::default()
                 },

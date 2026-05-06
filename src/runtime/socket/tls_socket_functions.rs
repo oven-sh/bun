@@ -696,7 +696,7 @@ pub fn get_session(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame)
         return Ok(JSValue::UNDEFINED);
     };
     // SAFETY: session is a non-null *mut SSL_SESSION; null out-param requests only the encoded size.
-    let size = unsafe { boringssl::i2d_SSL_SESSION(session, core::ptr::null_mut()) };
+    let size = unsafe { ffi::i2d_SSL_SESSION(session, core::ptr::null_mut()) };
     if size <= 0 {
         return Ok(JSValue::UNDEFINED);
     }
@@ -706,7 +706,7 @@ pub fn get_session(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame)
     let mut buffer_ptr: *mut u8 = buffer.as_array_buffer(global).unwrap().ptr;
 
     // SAFETY: session is a non-null *mut SSL_SESSION; buffer_ptr points to a buffer_size-byte JS ArrayBuffer kept alive on the stack.
-    let result_size = unsafe { boringssl::i2d_SSL_SESSION(session, &mut buffer_ptr) };
+    let result_size = unsafe { ffi::i2d_SSL_SESSION(session, &mut buffer_ptr) };
     debug_assert!(result_size == size);
     Ok(buffer)
 }
@@ -731,14 +731,14 @@ pub fn set_session(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) 
         let mut tmp: *const u8 = session_slice.as_ptr();
         // SAFETY: tmp/session_slice.len() describe a valid readable buffer borrowed from `sb` for the duration of this call.
         let Some(session) = (unsafe {
-            boringssl::d2i_SSL_SESSION(core::ptr::null_mut(), &mut tmp, c_long::try_from(session_slice.len()).unwrap())
+            ffi::d2i_SSL_SESSION(core::ptr::null_mut(), &mut tmp, c_long::try_from(session_slice.len()).unwrap())
         }) else {
             return Ok(JSValue::UNDEFINED);
         };
         // SSL_set_session takes its own reference ("the caller retains ownership of |session|"),
         // so we must release the one returned by d2i_SSL_SESSION on every path.
         // SAFETY: `s` is the +1 SSL_SESSION reference returned by d2i_SSL_SESSION; we own it.
-        let _guard = scopeguard::guard(session, |s| unsafe { boringssl::SSL_SESSION_free(s) });
+        let _guard = scopeguard::guard(session, |s| unsafe { ffi::SSL_SESSION_free(s) });
         // SAFETY: ssl_ptr is a live *mut SSL; session is a non-null *mut SSL_SESSION owned above.
         if unsafe { boringssl::SSL_set_session(ssl_ptr, session) } != 1 {
             return global.throw_value(get_ssl_exception(global, b"SSL_set_session error"));

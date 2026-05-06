@@ -738,7 +738,7 @@ impl JSValkeyClient {
                 tls,
                 database: self.client.database,
                 allocator: (), // TODO(port): allocator param dropped
-                flags: valkey::Flags {
+                flags: valkey::ConnectionFlags {
                     // Because this starts in the disconnected state, we need to reset some flags.
                     is_authenticated: false,
                     // If the user manually closed the connection, then duplicating a closed client
@@ -1183,7 +1183,7 @@ impl JSValkeyClient {
     }
 
     // Callback for when Valkey client connects
-    pub fn on_valkey_connect(&mut self, value: &mut protocol::RESPValue) -> jsc::JsTerminatedResult<()> {
+    pub fn on_valkey_connect(&mut self, value: &mut protocol::RESPValue) -> JsTerminatedResult<()> {
         debug_assert!(self.client.status == valkey::Status::Connected);
         // we should always have a strong reference to the object here
         debug_assert!(self.this_value.is_strong());
@@ -1323,7 +1323,7 @@ impl JSValkeyClient {
     }
 
     // Callback for when Valkey client closes
-    pub fn on_valkey_close(&mut self) -> jsc::JsTerminatedResult<()> {
+    pub fn on_valkey_close(&mut self) -> JsTerminatedResult<()> {
         let global_object = self.global_object;
 
         let _defer = scopeguard::guard((), |_| {
@@ -1338,7 +1338,7 @@ impl JSValkeyClient {
         this_jsvalue.ensure_still_alive();
 
         // Create an error value
-        let error_value = protocol::valkey_error_to_js(
+        let error_value = protocol_jsc::valkey_error_to_js(
             global_object,
             b"Connection closed",
             protocol::RedisError::ConnectionClosed,
@@ -1373,7 +1373,7 @@ impl JSValkeyClient {
         &mut self,
         message: &[u8],
         err: protocol::RedisError,
-    ) -> jsc::JsTerminatedResult<()> {
+    ) -> JsTerminatedResult<()> {
         self.client.fail(message, err)
     }
 
@@ -1405,7 +1405,7 @@ impl JSValkeyClient {
             // in run() keep it alive across the task hop, exactly as the Zig does.
             // TODO(port): LIFETIMES.tsv lists this as SHARED; update to BACKREF.
             ctx: *mut JSValkeyClient,
-            task: jsc::AnyTask,
+            task: jsc::AnyTask::AnyTask,
         }
         impl Holder {
             fn run(self_: *mut Holder) {
@@ -1704,7 +1704,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     pub fn on_open(
         this: &mut JSValkeyClient,
         socket: SocketType<SSL>,
-    ) -> jsc::JsTerminatedResult<()> {
+    ) -> JsTerminatedResult<()> {
         this.client.socket = Self::_socket(socket);
         this.client.on_open(Self::_socket(socket))
     }
@@ -1714,7 +1714,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         _socket: S, // anytype — opaque, body never calls a method on it
         success: i32,
         ssl_error: uws::us_bun_verify_error_t,
-    ) -> jsc::JsTerminatedResult<()> {
+    ) -> JsTerminatedResult<()> {
         debug!(
             "onHandshake: {} error={} reason={} code={}",
             success,
@@ -1805,7 +1805,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this: &mut JSValkeyClient,
         vm: &VirtualMachine,
         ssl_error: &uws::us_bun_verify_error_t,
-    ) -> jsc::JsTerminatedResult<()> {
+    ) -> JsTerminatedResult<()> {
         let ssl_js_value = match ssl_error.to_js(this.global_object) {
             Ok(v) => v,
             Err(err) => match err {
@@ -1830,7 +1830,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this: &mut JSValkeyClient,
         vm: &VirtualMachine,
         err_value: JSValue,
-    ) -> jsc::JsTerminatedResult<()> {
+    ) -> JsTerminatedResult<()> {
         this.client.flags.is_authenticated = false;
         let loop_ = vm.event_loop();
         loop_.enter();
@@ -1849,7 +1849,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
             (),
             i32,
             uws::us_bun_verify_error_t,
-        ) -> jsc::JsTerminatedResult<()>,
+        ) -> JsTerminatedResult<()>,
     > = if SSL {
         // TODO(port): cannot directly cast generic-anytype fn here; placeholder.
         None
@@ -1891,7 +1891,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this: &mut JSValkeyClient,
         _socket: SocketType<SSL>,
         _code: i32,
-    ) -> jsc::JsTerminatedResult<()> {
+    ) -> JsTerminatedResult<()> {
         // Ensure the socket pointer is updated.
         this.client.socket = Socket::SocketTCP(uws::SocketTCP::detached());
         this.ref_();

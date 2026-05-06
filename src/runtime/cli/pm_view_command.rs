@@ -14,7 +14,7 @@ use bun_url::URL;
 use bun_js_parser as ast;
 use bun_js_printer as JSPrinter;
 use bstr::BStr;
-use bumpalo::Bump;
+use bun_alloc::Arena as Bump; // bumpalo::Bump re-export
 
 /// Helper: write `args` into `buf` and return the written subslice.
 /// Mirrors `std.fmt.bufPrint(buf, fmt, args) catch unreachable`.

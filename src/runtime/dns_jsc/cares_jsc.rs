@@ -6,7 +6,7 @@ use core::ffi::{c_char, c_int, CStr};
 
 use ::bstr::BStr;
 use bun_cares_sys::c_ares_draft as c_ares;
-use bun_jsc::{bun_string_jsc, CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc, SystemError};
+use bun_jsc::{bun_string_jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, StringJsc, SystemError};
 use bun_str::{self as bstr, strings};
 
 use crate::dns_jsc::options_jsc::{address_to_js, result_to_js};
@@ -17,6 +17,23 @@ use crate::dns_jsc::options_jsc::{address_to_js, result_to_js};
 #[inline]
 fn utf8_to_js(global: &JSGlobalObject, bytes: &[u8]) -> JSValue {
     bun_string_jsc::create_utf8_for_js(global, bytes).unwrap_or(JSValue::UNDEFINED)
+}
+
+/// Local shim for `bun.String.toJSArray` — not yet surfaced through the
+/// top-level `bun_jsc::bun_string_jsc` re-export module. Calls `toJS` on each
+/// element of `array` and returns a JSArray.
+#[inline]
+fn bun_string_to_js_array(global_object: &JSGlobalObject, array: &[bstr::String]) -> JsResult<JSValue> {
+    unsafe extern "C" {
+        fn BunString__createArray(
+            global_object: *mut JSGlobalObject,
+            ptr: *const bstr::String,
+            len: usize,
+        ) -> JSValue;
+    }
+    // SAFETY: ptr/len from a live slice; `global_object` borrowed for call duration.
+    let v = unsafe { BunString__createArray(global_object.as_ptr(), array.as_ptr(), array.len()) };
+    if global_object.has_exception() { Err(JsError::Thrown) } else { Ok(v) }
 }
 
 // ── struct_hostent ─────────────────────────────────────────────────────────

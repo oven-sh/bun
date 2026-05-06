@@ -3657,7 +3657,7 @@ where
                     }
 
                     let mut replaced: Vec<E::TemplatePart> = Vec::new();
-                    for (i, _part) in e.parts.iter().enumerate() {
+                    for (i, _part) in e.parts().iter().enumerate() {
                         let mut part = part_clone(_part);
                         let inlined_value: Option<Expr> = match &part.value.data {
                             ExprData::ENameOfSymbol(e2) => Some(Expr::init(
@@ -3673,7 +3673,7 @@ where
 
                         if let Some(value) = inlined_value {
                             if replaced.is_empty() {
-                                replaced.extend(e.parts[..i].iter().map(part_clone));
+                                replaced.extend(e.parts()[..i].iter().map(part_clone));
                             }
                             part.value = value;
                             replaced.push(part);
@@ -3686,11 +3686,9 @@ where
                         // Zig: `var copy = e.*; copy.parts = &replaced;` — build a
                         // local `Template` (not a StoreRef alias) so `fold`'s
                         // `mem::take(self.head)` doesn't clobber the AST node.
-                        // SAFETY: `replaced` outlives `copy`/`fold()`; lifetime
-                        // erased to match `Template.parts: &'static [_]` (Phase B
-                        // threads `'bump` through).
-                        let parts_slice: &'static [E::TemplatePart] =
-                            unsafe { core::mem::transmute::<&[E::TemplatePart], _>(&replaced[..]) };
+                        // `replaced` outlives `copy`/`fold()`; store a raw `*mut`
+                        // into the local Vec to match `Template.parts: *mut [_]`.
+                        let parts_slice: *mut [E::TemplatePart] = replaced.as_mut_slice();
                         let mut copy = E::Template {
                             tag: e.tag,
                             parts: parts_slice,
@@ -3719,7 +3717,7 @@ where
                     }
 
                     // Convert no-substitution template literals into strings if it's smaller
-                    if e.parts.is_empty() {
+                    if e.parts().is_empty() {
                         self.add_source_mapping(expr.loc);
                         self.print_string_characters_e_string(&e.head.cooked(), b'`');
                         return;
@@ -3759,7 +3757,7 @@ where
                     }
                 }
 
-                for part in e.parts.iter() {
+                for part in e.parts().iter() {
                     self.print(b"${");
                     self.print_expr(part.value, Level::Lowest, ExprFlag::none());
                     self.print(b"}");

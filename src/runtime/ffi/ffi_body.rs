@@ -2149,7 +2149,10 @@ impl Function {
         self.step = Step::Compiled(Compiled {
             ptr: symbol,
             js_function,
-            js_context: Some(js_context as *const _ as *mut JSGlobalObject),
+            // SAFETY: opaque-handle storage only (Zig: `?*anyopaque`). Never
+            // dereferenced or written through on the Rust side; stored as
+            // NonNull to avoid laundering &T → *mut T provenance.
+            js_context: Some(NonNull::from(js_context)),
             ffi_callback_function_wrapper: NonNull::new(ffi_wrapper),
         });
         Ok(())
@@ -2468,7 +2471,9 @@ pub struct Compiled {
     pub ptr: *mut c_void,
     // TODO(port): bare JSValue on heap — rooted via JSFFI.symbolsValue own: property; revisit Strong/JsRef in Phase B
     pub js_function: JSValue,
-    pub js_context: Option<*mut JSGlobalObject>,
+    // Zig: `?*anyopaque` — opaque storage, never dereferenced. NonNull avoids
+    // a &T → *mut T cast at the assignment site in compile_callback().
+    pub js_context: Option<NonNull<JSGlobalObject>>,
     pub ffi_callback_function_wrapper: Option<NonNull<c_void>>,
 }
 

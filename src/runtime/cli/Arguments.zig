@@ -266,11 +266,25 @@ pub fn loadSystemBunfig(allocator: std.mem.Allocator, ctx: Command.Context, comp
         Global.exit(1);
     }
     if (result.path) |path| {
+        const errors_before = ctx.log.errors;
         // Explicit BUN_SYSTEM_CONFIG should fail loudly; auto-discovered default is optional.
         // System config is not project-level, so don't set ctx.debug.loaded_bunfig.
         // loadBunfig dupes `path` onto the allocator, so it's safe for `config_buf`
         // to go out of scope after loadBunfig returns.
         try loadBunfig(allocator, !result.is_explicit, false, path, ctx, comptime cmd);
+
+        // Parse errors (e.g. malformed TOML) are logged to ctx.log without being
+        // propagated as Zig errors, so loadBunfig returns OK even when the config
+        // is unusable. For explicit BUN_SYSTEM_CONFIG — an administrator policy
+        // override — that's fail-open: a typo silently disables the policy while
+        // the process exits 0. Turn a log error into a loud exit so policy typos
+        // are caught immediately. Auto-discovered defaults stay best-effort so a
+        // broken /etc/bunfig.toml doesn't brick every bun invocation on the box.
+        if (result.is_explicit and ctx.log.errors > errors_before) {
+            ctx.log.print(Output.errorWriter()) catch {};
+            Output.errGeneric("failed to parse BUN_SYSTEM_CONFIG at \"{s}\"", .{path});
+            Global.exit(1);
+        }
     }
 }
 

@@ -77,13 +77,18 @@ describe("system-wide bunfig.toml", () => {
     expect(exitCode).not.toBe(0);
   });
 
-  test("malformed BUN_SYSTEM_CONFIG prints path without use-after-return", async () => {
-    // Regression: loadBunfig used to stash the caller's PathBuffer slice in
-    // ctx.log (via Source.path.text), and bun's later dumpBuildError printed
-    // that slice after the frame was gone — stack-use-after-return on ASAN.
-    // The fix dupes the config path onto the allocator so the log-borrowed
-    // pointer stays valid for any later print. Under ASAN (bun bd) the bad
-    // path was visible as \xaa\xaa\xaa bytes where the filename should be.
+  test("malformed BUN_SYSTEM_CONFIG fails loudly and prints the path", async () => {
+    // Two regressions in one:
+    //  1. Policy typos must fail loudly (`loadSystemBunfig` turns ctx.log.errors
+    //     into Global.exit(1) when BUN_SYSTEM_CONFIG is explicit). Previously
+    //     the TOML parse error was logged but the process exited 0, which
+    //     silently disables the admin policy.
+    //  2. loadBunfig used to stash the caller's PathBuffer slice in ctx.log
+    //     (via Source.path.text), and the later error print read freed stack
+    //     memory after the frame was gone — stack-use-after-return on ASAN.
+    //     Under ASAN (bun bd) the bad path showed up as poison/garbage bytes
+    //     where the filename should be. The fix dupes the config path onto
+    //     the allocator so the log-borrowed pointer stays valid.
     using dir = tempDir("system-bunfig-malformed", {
       // Unclosed TOML section header makes TOML.parse log a caret-style
       // error referencing source.path.text — the exact UAF trigger.
@@ -98,16 +103,19 @@ describe("system-wide bunfig.toml", () => {
       stderr: "pipe",
     });
 
-    const [_stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+    // Script must not run — admin policy typos can't be allowed to pass through.
+    expect(stdout).not.toContain("ran");
     // The readable path must appear in stderr after the caret diagnostic.
-    // Before the fix, the `at <path>:line:col` line printed whatever bytes
-    // remained on the freed stack where the PathBuffer used to live — either
-    // ASAN poison or whatever random values (pointers, stale heap) followed
-    // the frame. Asserting the exact filename:line:col shape rejects all of
-    // those while accepting the clean output produced by the fix.
+    // Before the UAF fix, the `at <path>:line:col` line printed whatever bytes
+    // remained on the freed stack where the PathBuffer used to live — ASAN
+    // poison or random values (pointers, stale heap) following the frame.
+    // Asserting the exact filename:line:col shape rejects all of those while
+    // accepting the clean output produced by the fix.
     expect(stderr).toMatch(/at [^\n]*system-bunfig\.toml:1:\d+/);
-    expect(exitCode).toBe(0);
+    expect(stderr).toContain("failed to parse BUN_SYSTEM_CONFIG");
+    expect(exitCode).not.toBe(0);
   });
 
   test("system config define is applied", async () => {
@@ -202,5 +210,64 @@ describe("system-wide bunfig.toml", () => {
 
     expect(stdout.trim()).toBe("works");
     expect(exitCode).toBe(0);
+  });
+
+  test("package-manager command merges system + home bunfigs (readGlobalConfig path)", async () => {
+    // Package-manager commands (InstallCommand/BunxCommand/etc.) have
+    // readGlobalConfig() == true, so loadConfig() dispatches through
+    // loadGlobalBunfig() which loads the system config first and then the
+    // home config on top. Every other surviving test either runs through
+    // AutoCommand/RunCommand (readGlobalConfig() == false) or has no home
+    // config — so without this test the readGlobalConfig-true branch at
+    // Arguments.zig:loadConfig and loadGlobalBunfig's system→home ordering
+    // have zero coverage.
+    //
+    // We verify the ordering by giving each tier a distinct `[install] cache`
+    // directory and reading it back with `bun pm cache`, which prints the
+    // resolved cache path without hitting the network.
+    using dir = tempDir("system-bunfig-pkg-merge", {
+      "package.json": `{"name": "test", "version": "1.0.0"}`,
+      "sys.toml": `[install]\ncache = "/tmp/sys-cache-28726"\n`,
+      "xdg/.bunfig.toml": `[install]\ncache = "/tmp/home-cache-28726"\n`,
+    });
+
+    // System + home: home wins (matches documented "later overrides earlier").
+    await using mergeProc = Bun.spawn({
+      cmd: [bunExe(), "pm", "cache"],
+      env: {
+        ...bunEnv,
+        BUN_SYSTEM_CONFIG: `${dir}/sys.toml`,
+        XDG_CONFIG_HOME: `${dir}/xdg`,
+      },
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [mergeOut, _mergeErr, mergeExit] = await Promise.all([
+      mergeProc.stdout.text(),
+      mergeProc.stderr.text(),
+      mergeProc.exited,
+    ]);
+    expect(mergeExit).toBe(0);
+    expect(mergeOut.trim()).toBe("/tmp/home-cache-28726");
+
+    // System only (XDG points nowhere): system config applies, proving
+    // loadSystemBunfig ran through the readGlobalConfig branch.
+    await using sysOnlyProc = Bun.spawn({
+      cmd: [bunExe(), "pm", "cache"],
+      env: {
+        ...bunEnv,
+        BUN_SYSTEM_CONFIG: `${dir}/sys.toml`,
+        XDG_CONFIG_HOME: `${dir}/nonexistent`,
+      },
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [sysOut, _sysErr, sysExit] = await Promise.all([
+      sysOnlyProc.stdout.text(),
+      sysOnlyProc.stderr.text(),
+      sysOnlyProc.exited,
+    ]);
+    expect(sysExit).toBe(0);
+    expect(sysOut.trim()).toBe("/tmp/sys-cache-28726");
   });
 });

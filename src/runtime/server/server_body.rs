@@ -321,7 +321,7 @@ impl AnyRoute {
             return Ok(Some(route));
         }
 
-        let mut methods = http::Method::Optional { method: http::Method::Set::init_empty() };
+        let mut methods = Option<http::Method> { method: http::Method::Set::init_empty() };
         methods.insert(Method::GET);
         methods.insert(Method::HEAD);
 
@@ -895,7 +895,7 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
 
 // TODO(port): RequestContextStackAllocator is defined in RequestContext.zig; placeholder generic
 pub type RequestContextStackAllocator<const SSL: bool, const DEBUG: bool, const H3: bool> =
-    <NewRequestContext<SSL, DEBUG, NewServer<SSL, DEBUG>, H3> as super::request_context::HasPool>::Pool;
+    super::request_context::RequestContextStackAllocator<NewServer<SSL, DEBUG>, SSL, DEBUG, H3>;
 
 pub struct UserRoute<const SSL: bool, const DEBUG: bool> {
     pub id: u32,
@@ -914,7 +914,7 @@ pub struct PreparedRequestFor<'a, Ctx> {
     pub ctx: &'a mut Ctx,
 }
 
-impl<'a, Ctx: super::request_context::RequestCtx> PreparedRequestFor<'a, Ctx> {
+impl<'a, Ctx: RequestCtx> PreparedRequestFor<'a, Ctx> {
     /// This is used by DevServer for deferring calling the JS handler
     /// to until the bundle is actually ready.
     pub fn save(
@@ -922,7 +922,7 @@ impl<'a, Ctx: super::request_context::RequestCtx> PreparedRequestFor<'a, Ctx> {
         global: &JSGlobalObject,
         req: &mut Ctx::Req,
         resp: &mut Ctx::Resp,
-    ) -> SavedRequest {
+    ) -> SavedRequest<'a> {
         // TODO(port): if Ctx::IS_H3 { compile_error!("PreparedRequest.save is HTTP/1-only") }
         // By saving a request, all information from `req` must be
         // copied since the provided uws.Request will be re-used for
@@ -943,10 +943,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub const DEBUG_MODE: bool = DEBUG;
     const HAS_H3: bool = SSL;
 
-    pub type App = uws::NewApp<SSL>;
-    pub type RequestContext = NewRequestContext<SSL, DEBUG, Self, false>;
-    pub type H3RequestContext = NewRequestContext<SSL, DEBUG, Self, true>;
-    pub type PreparedRequest<'a> = PreparedRequestFor<'a, Self::RequestContext>;
+    // PORT NOTE: Zig's `pub const App = …` etc. are inherent associated types,
+    // which are unstable in Rust. Module-level aliases `ServerApp<SSL>`,
+    // `ServerRequestContext<SSL,DEBUG>`, `ServerH3RequestContext<SSL,DEBUG>`,
+    // `ServerPreparedRequest<'a,SSL,DEBUG>` are used instead.
 
     // TODO(port): codegen — `js` is selected from JSDebugHTTPServer/JSHTTPServer/JSDebugHTTPSServer/JSHTTPSServer
     // The from_js/to_js/to_js_direct fns are provided by #[bun_jsc::JsClass] codegen.
@@ -1090,7 +1090,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         &mut self,
         path: &[u8],
         route: AnyRoute,
-        method: http::Method::Optional,
+        method: Option<http::Method>,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         self.config.append_static_route(path, route, method)
@@ -1270,7 +1270,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return global.throw_invalid_arguments(format_args!("upgrade requires a Request object"));
         };
 
-        let Some(upgrader) = request.request_context.get::<Self::RequestContext>() else {
+        let Some(upgrader) = request.request_context.get::<ServerRequestContext<SSL, DEBUG>>() else {
             return Ok(JSValue::FALSE);
         };
 
@@ -2181,7 +2181,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // scheduleDeinit can be called inside a finalizer.
             // Therefore, we split it into two tasks.
             self.flags.insert(ServerFlags::TERMINATED);
-            let task = Box::new(jsc::AnyTask::new::<Self::App>(Self::App::close, self.app.unwrap()));
+            let task = Box::new(jsc::AnyTask::new::<ServerApp<SSL>>(ServerApp<SSL>::close, self.app.unwrap()));
             self.vm.enqueue_task(jsc::Task::init(Box::into_raw(task)));
         }
 
@@ -2221,7 +2221,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
         if let Some(app) = this.app.take() {
             // SAFETY: FFI destroy; app is a live uws App handle owned by this server
-            unsafe { Self::App::destroy(app) };
+            unsafe { ServerApp<SSL>::destroy(app) };
         }
 
         // SAFETY: this was Box::into_raw'd in init()
@@ -2261,12 +2261,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             h3_alt_svc: ZStr::empty_boxed(),
             js_value: JsRef::empty(),
             pending_requests: 0,
-            request_pool_allocator: Self::RequestContext::pool_get_or_init(),
+            request_pool_allocator: ServerRequestContext<SSL, DEBUG>::pool_get_or_init(),
             h3_request_pool_allocator: if Self::HAS_H3 {
-                Self::H3RequestContext::pool_get_or_init()
+                ServerH3RequestContext<SSL, DEBUG>::pool_get_or_init()
             } else {
                 // TODO(port): conditional field — placeholder static
-                Self::H3RequestContext::pool_get_or_init()
+                ServerH3RequestContext<SSL, DEBUG>::pool_get_or_init()
             },
             all_closed_promise: jsc::JSPromiseStrong::default(),
             listen_callback: jsc::AnyTask::default(),
@@ -2485,7 +2485,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if self.config.on_request.is_empty() {
             return Self::on_h3_404(self, req, resp);
         }
-        self.on_request_for::<Self::H3RequestContext>(req, resp);
+        self.on_request_for::<ServerH3RequestContext<SSL, DEBUG>>(req, resp);
     }
 
     pub fn on_h3_user_route_request(
@@ -2494,7 +2494,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         resp: &mut uws::H3::Response,
     ) {
         if !Self::HAS_H3 { unreachable!(); }
-        Self::on_user_route_request_for::<Self::H3RequestContext>(user_route, req, resp);
+        Self::on_user_route_request_for::<ServerH3RequestContext<SSL, DEBUG>>(user_route, req, resp);
     }
 
     pub fn on_h3_404(_this: &mut Self, _req: &mut uws::H3::Request, resp: &mut uws::H3::Response) {
@@ -2775,10 +2775,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         req: &mut uws::Request,
         resp: &mut uws_sys::NewAppResponse<SSL>,
     ) {
-        Self::on_user_route_request_for::<Self::RequestContext>(user_route, req, resp);
+        Self::on_user_route_request_for::<ServerRequestContext<SSL, DEBUG>>(user_route, req, resp);
     }
 
-    fn on_user_route_request_for<Ctx: super::request_context::RequestCtx>(
+    fn on_user_route_request_for<Ctx: RequestCtx>(
         user_route: &mut UserRoute<SSL, DEBUG>,
         req: &mut Ctx::Req,
         resp: &mut Ctx::Resp,
@@ -2824,14 +2824,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     fn handle_request(
         &mut self,
         should_deinit_context: &mut bool,
-        prepared: Self::PreparedRequest<'_>,
+        prepared: ServerPreparedRequest<'_, SSL, DEBUG>,
         req: &mut uws::Request,
         response_value: JSValue,
     ) {
-        self.handle_request_for::<Self::RequestContext>(should_deinit_context, prepared, req, response_value);
+        self.handle_request_for::<ServerRequestContext<SSL, DEBUG>>(should_deinit_context, prepared, req, response_value);
     }
 
-    fn handle_request_for<Ctx: super::request_context::RequestCtx>(
+    fn handle_request_for<Ctx: RequestCtx>(
         &mut self,
         should_deinit_context: &mut bool,
         prepared: PreparedRequestFor<'_, Ctx>,
@@ -2867,10 +2867,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     pub fn on_request(&mut self, req: &mut uws::Request, resp: &mut uws_sys::NewAppResponse<SSL>) {
-        self.on_request_for::<Self::RequestContext>(req, resp);
+        self.on_request_for::<ServerRequestContext<SSL, DEBUG>>(req, resp);
     }
 
-    fn on_request_for<Ctx: super::request_context::RequestCtx>(
+    fn on_request_for<Ctx: RequestCtx>(
         &mut self,
         req: &mut Ctx::Req,
         resp: &mut Ctx::Resp,
@@ -2908,7 +2908,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         callback: JSValue,
         extra_args: [JSValue; ARG_COUNT],
     ) {
-        let prepared: Self::PreparedRequest<'_> = match &req {
+        let prepared: ServerPreparedRequest<'_, SSL, DEBUG> = match &req {
             SavedRequestUnion::Stack(r) => {
                 match self.prepare_js_request_context(
                     // SAFETY: stack uws::Request still alive
@@ -2925,7 +2925,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             SavedRequestUnion::Saved(data) => PreparedRequestFor {
                 js_request: data.js_request.get().expect("Request was unexpectedly freed"),
                 request_object: data.request,
-                ctx: data.ctx.tagged_pointer.as_::<Self::RequestContext>(),
+                ctx: data.ctx.tagged_pointer.as_::<ServerRequestContext<SSL, DEBUG>>(),
             },
         };
         let ctx = prepared.ctx;
@@ -2982,11 +2982,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         should_deinit_context: Option<&mut bool>,
         create_js_request: CreateJsRequest,
         method: Option<http::Method>,
-    ) -> Option<Self::PreparedRequest<'_>> {
-        self.prepare_js_request_context_for::<Self::RequestContext>(req, resp, should_deinit_context, create_js_request, method)
+    ) -> Option<ServerPreparedRequest<'_, SSL, DEBUG>> {
+        self.prepare_js_request_context_for::<ServerRequestContext<SSL, DEBUG>>(req, resp, should_deinit_context, create_js_request, method)
     }
 
-    fn prepare_js_request_context_for<Ctx: super::request_context::RequestCtx>(
+    fn prepare_js_request_context_for<Ctx: RequestCtx>(
         &mut self,
         req: &mut Ctx::Req,
         resp: &mut Ctx::Resp,
@@ -3517,10 +3517,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 if entry.path.as_ref() == b"/*" {
                     has_static_route_for_star_path = true;
                     match &entry.method {
-                        http::Method::Optional::Any => {
+                        Option<http::Method>::Any => {
                             star_methods_covered_by_user = http::Method::Set::init_full();
                         }
-                        http::Method::Optional::Method(method) => {
+                        Option<http::Method>::Method(method) => {
                             star_methods_covered_by_user.set_union(*method);
                         }
                     }
@@ -3700,7 +3700,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     // TODO: make this return JSError!void, and do not deinitialize on synchronous failure, to allow errdefer in caller scope
     pub fn listen(&mut self) -> JSValue {
         httplog!("listen");
-        let app: *mut Self::App;
+        let app: *mut ServerApp<SSL>;
         let global = unsafe { &*self.global_this };
         let mut route_list_value = JSValue::ZERO;
         if SSL {
@@ -3708,7 +3708,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             let ssl_config = self.config.ssl_config.as_ref().expect("Assertion failure: ssl_config");
             let ssl_options = ssl_config.as_usockets();
 
-            app = match Self::App::create(ssl_options) {
+            app = match ServerApp<SSL>::create(ssl_options) {
                 Some(a) => a,
                 None => {
                     if !global.has_exception() {
@@ -3811,7 +3811,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
             }
         } else {
-            app = match Self::App::create(Default::default()) {
+            app = match ServerApp<SSL>::create(Default::default()) {
                 Some(a) => a,
                 None => {
                     if !global.has_exception() {
@@ -4144,7 +4144,7 @@ impl AnyServer {
         &self,
         path: &[u8],
         route: AnyRoute,
-        method: http::Method::Optional,
+        method: Option<http::Method>,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         any_server_dispatch!(self, |s| s.append_static_route(path, route, method))

@@ -2,7 +2,6 @@
 //!
 //! TCP/TLS socket JS bindings (`Bun.connect` / `Bun.listen` socket wrappers).
 
-use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr::{self, NonNull};
 
@@ -201,7 +200,10 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     // Intrusive refcount API (Zig: `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`).
     pub fn ref_(&self) {
-        self.ref_count.set(self.ref_count.get() + 1);
+        // SAFETY: `self` is live; `RefCount::ref_` only reads/writes the
+        // embedded `ref_count` Cell (interior-mutable), so `&self`→`*mut`
+        // is sound for that access.
+        unsafe { bun_ptr::RefCount::<Self>::ref_(self as *const Self as *mut Self) };
     }
     // Takes `&mut self` (not `&self`) so the destruction pointer carries
     // write provenance — `&T as *const T as *mut T` followed by a write is
@@ -210,13 +212,23 @@ impl<const SSL: bool> NewSocket<SSL> {
     // `&mut *raw` in scopeguard cleanup); see `bun_ptr::AnyRefCounted::rc_deref`
     // for the raw-pointer variant this mirrors.
     pub fn deref(&mut self) {
-        let n = self.ref_count.get() - 1;
-        self.ref_count.set(n);
-        if n == 0 {
-            // SAFETY: refcount reached zero; we are the unique owner of the
-            // `Box::into_raw` allocation and `self` is not used after this.
-            unsafe { Self::deinit_and_destroy(self as *mut Self) };
-        }
+        // SAFETY: `self` is live; if count hits 0, `RefCounted::destructor`
+        // (→ `deinit_and_destroy`) runs and `self` is not used after.
+        unsafe { bun_ptr::RefCount::<Self>::deref(self as *mut Self) };
+    }
+
+    // ── codegen accessors (Zig: `pub const js = if (!ssl) jsc.Codegen.JSTCPSocket else jsc.Codegen.JSTLSSocket`) ──
+    // `#[bun_jsc::JsClass]` can't express the per-monomorphisation symbol
+    // dispatch, so these are hand-rolled stubs until the codegen externs land.
+    // TODO(port): wire `TCPSocket__create`/`TLSSocket__create` + `dataSetCached`/`dataGetCached`.
+    pub fn to_js(&mut self, _global: &JSGlobalObject) -> JSValue {
+        todo!("blocked_on: jsc.Codegen.JS{{TCP,TLS}}Socket.toJS")
+    }
+    pub fn data_set_cached(_this: JSValue, _global: &JSGlobalObject, _value: JSValue) {
+        todo!("blocked_on: jsc.Codegen.JS{{TCP,TLS}}Socket.dataSetCached")
+    }
+    pub fn data_get_cached(_this: JSValue) -> Option<JSValue> {
+        todo!("blocked_on: jsc.Codegen.JS{{TCP,TLS}}Socket.dataGetCached")
     }
 
     pub fn new(init: Self) -> *mut Self {
@@ -1855,7 +1867,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             return WriteResult::Fail;
         }
 
-        const LABEL: &str = if IS_END { "end" } else { "write" };
+        // PORT NOTE: was `comptime if (is_end) "end" else "write"` in Zig; Rust
+        // can't reference an outer `const` generic in a nested `const` item
+        // (E0401), so precompute the full label per branch.
+        let label: &'static str = if IS_END { "Socket.end" } else { "Socket.write" };
 
         let byte_offset: usize = 'brk: {
             if offset_value.is_undefined() {
@@ -1863,7 +1878,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
             if !offset_value.is_any_int() {
                 let _ = global.throw_invalid_argument_type(
-                    const_format::concatcp!("Socket.", LABEL),
+                    label,
                     "byteOffset",
                     "integer",
                 );
@@ -1890,7 +1905,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
             if !length_value.is_any_int() {
                 let _ = global.throw_invalid_argument_type(
-                    const_format::concatcp!("Socket.", LABEL),
+                    label,
                     "byteLength",
                     "integer",
                 );
@@ -2471,7 +2486,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         let cfg = ssl_opts.as_ref();
         let tls_ptr: *mut TLSSocket = TLSSocket::new(TLSSocket {
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             handlers: Some(handlers_ptr),
             socket: SocketHandler::<true>::DETACHED,
             owned_ssl_ctx: owned_ctx_taken,
@@ -2599,7 +2614,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // *Handlers, writes bypass SSL. Dispatch reaches it via the
         // `ssl_raw_tap` ciphertext hook, never via the ext slot.
         let raw = TLSSocket::new(TLSSocket {
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             handlers: raw_handlers,
             socket: SocketHandler::<true>::from(new_raw),
             owned_ssl_ctx: None,
@@ -3209,7 +3224,7 @@ pub fn js_upgrade_duplex_to_tls(
     let handlers_ptr =
         unsafe { NonNull::new_unchecked(Box::into_raw(Box::new(handlers_taken))) };
     let tls = TLSSocket::new(TLSSocket {
-        ref_count: Cell::new(1),
+        ref_count: bun_ptr::RefCount::init(),
         handlers: Some(handlers_ptr),
         socket: SocketHandler::<true>::DETACHED,
         owned_ssl_ctx: None,

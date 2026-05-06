@@ -325,20 +325,12 @@ pub fn run_task(
             unsafe { (*t).run_from_js()? };
         }
         task_tag::ReadFileTask => {
-            let t = cast_ptr!(ReadFileTask);
-            let _g = scopeguard::guard(t, |p| unsafe {
-                bun_jsc::WorkTask::destroy(p)
-            });
-            // SAFETY: live until guard runs.
-            unsafe { bun_jsc::WorkTask::run_from_js(&mut *t)? };
+            // Body: `defer t.deinit(); try t.runFromJS();`
+            todo!("blocked_on: crate::webcore::blob::read_file::ReadFileTask");
         }
         task_tag::WriteFileTask => {
-            let t = cast_ptr!(WriteFileTask);
-            let _g = scopeguard::guard(t, |p| unsafe {
-                bun_jsc::WorkTask::destroy(p)
-            });
-            // SAFETY: live until guard runs.
-            unsafe { bun_jsc::WorkTask::run_from_js(&mut *t)? };
+            // Body: `defer t.deinit(); try t.runFromJS();`
+            todo!("blocked_on: crate::webcore::blob::write_file::WriteFileTask");
         }
 
         // ── napi ─────────────────────────────────────────────────────────
@@ -355,7 +347,8 @@ pub fn run_task(
         // ── JSC scheduler / module loader ────────────────────────────────
         task_tag::JSCDeferredWorkTask => {
             bun_jsc::mark_binding(core::panic::Location::caller());
-            cast!(JSCDeferredWorkTask).run()?;
+            // Body: `cast!(JSCDeferredWorkTask).run()?;`
+            todo!("blocked_on: bun_jsc::jsc_scheduler::JSCDeferredWorkTask");
         }
         task_tag::PollPendingModulesTask => {
             // Zig: `virtual_machine.modules.onPoll()`.
@@ -378,12 +371,8 @@ pub fn run_task(
             BakeHotReloadEvent::run(cast!(BakeHotReloadEvent));
         }
         task_tag::FSWatchTask => {
-            let t = cast_ptr!(FSWatchTask);
-            // SAFETY: live Box'd watch task; `run` may re-enter.
-            unsafe { (*t).run() };
-            // Zig `defer t.deinit()` — Drop runs via Box reclaim.
-            // SAFETY: paired with `Box::into_raw` in `enqueue`.
-            drop(unsafe { Box::from_raw(t) });
+            // Body: `t.run(); defer t.deinit();`
+            todo!("blocked_on: crate::node::node_fs_watcher::FSWatchTask");
         }
 
         // ── DNS ──────────────────────────────────────────────────────────
@@ -392,12 +381,10 @@ pub fn run_task(
             panic!("This should not be reachable on Windows");
             #[cfg(not(windows))]
             {
-                let t = cast_ptr!(get_addr_info_request::Task);
-                let _g = scopeguard::guard(t, |p| unsafe {
-                    bun_jsc::WorkTask::destroy(p)
-                });
-                // SAFETY: live until guard runs.
-                unsafe { bun_jsc::WorkTask::run_from_js(&mut *t)? };
+                // Body: `defer t.deinit(); try t.runFromJS();` over
+                // `WorkTask<GetAddrInfoRequest>` — type lives in the gated
+                // `dns_jsc::dns_body` draft, not the public `dns_jsc` surface.
+                todo!("blocked_on: crate::dns_jsc::get_addr_info_request::Task");
             }
         }
 
@@ -649,8 +636,10 @@ pub unsafe fn run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
         poll_tag::GET_ADDR_INFO_REQUEST => {
             #[cfg(target_os = "macos")]
             {
-                let loader = owner.ptr as *mut GetAddrInfoRequest;
-                get_addr_info_request::BackendLibInfo::on_machport_change(loader);
+                let _loader = owner.ptr as *mut GetAddrInfoRequest;
+                // `BackendLibInfo::on_machport_change` lives in the gated
+                // `dns_jsc::dns_body` draft.
+                todo!("blocked_on: crate::dns_jsc::get_addr_info_request::BackendLibInfo");
             }
             #[cfg(not(target_os = "macos"))]
             {
@@ -660,8 +649,9 @@ pub unsafe fn run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
         poll_tag::REQUEST => {
             #[cfg(target_os = "macos")]
             {
-                let loader = owner.ptr as *mut dns::Request;
-                dns::MacAsyncDNS::on_machport_change(loader);
+                // `internal::MacAsyncDNS::on_machport_change` lives in the gated
+                // `dns_jsc::dns_body` draft.
+                todo!("blocked_on: crate::dns_jsc::internal::MacAsyncDNS");
             }
             #[cfg(not(target_os = "macos"))]
             {
@@ -805,7 +795,10 @@ unsafe fn fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, vm: *mut ()
         EventLoopTimerTag::AbortSignalTimeout => {
             let container = container_of!(AbortSignalTimeout, event_loop_timer);
             // SAFETY: per fn contract; `run` may free `container`.
-            unsafe { AbortSignalTimeout::run(container, &*vm) };
+            // `AbortSignalTimeout::run` lives in the gated
+            // `bun_jsc::abort_signal` Phase-A draft.
+            let _ = container;
+            todo!("blocked_on: bun_jsc::abort_signal::Timeout::run");
         }
         EventLoopTimerTag::DateHeaderTimer => {
             let container = container_of!(DateHeaderTimer, event_loop_timer);
@@ -818,9 +811,8 @@ unsafe fn fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, vm: *mut ()
             unsafe { (*container).on_fire(&mut *vm, &*now) };
         }
         EventLoopTimerTag::StatWatcherScheduler => {
-            let container = container_of!(StatWatcherScheduler, event_loop_timer);
-            // SAFETY: per fn contract.
-            unsafe { (*container).timer_callback() };
+            // Body: `container_of!(StatWatcherScheduler, event_loop_timer).timer_callback()`
+            todo!("blocked_on: crate::node::node_fs_stat_watcher::StatWatcherScheduler");
         }
         EventLoopTimerTag::UpgradedDuplex => {
             let container = container_of!(UpgradedDuplex<'_>, event_loop_timer);

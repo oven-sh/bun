@@ -417,7 +417,7 @@ impl Subprocess<'_> {
 
         // Upgrade or downgrade the reference based on pending activity
         if has_pending {
-            self.this_value.upgrade(self.global_this);
+            self.this_value.upgrade(self.global_this());
         } else {
             self.this_value.downgrade();
         }
@@ -529,11 +529,10 @@ impl Subprocess<'_> {
         self.update_has_pending_activity();
     }
 
-    #[bun_jsc::host_fn]
     pub fn constructor(
         global_object: &JSGlobalObject,
         _frame: &CallFrame,
-    ) -> JsResult<*mut Subprocess> {
+    ) -> JsResult<*mut Subprocess<'a>> {
         Err(global_object.throw("Cannot construct Subprocess", &[]))
     }
 
@@ -575,7 +574,8 @@ impl Subprocess<'_> {
     #[bun_jsc::host_fn(getter)]
     pub fn get_terminal(this: &Self, global_this: &JSGlobalObject) -> JSValue {
         if let Some(terminal) = this.terminal {
-            return terminal.to_js(global_this);
+            // SAFETY: terminal pointer is valid while subprocess is alive.
+            return unsafe { terminal.as_ref() }.to_js(global_this);
         }
         JSValue::UNDEFINED
     }
@@ -617,7 +617,7 @@ impl Subprocess<'_> {
             return;
         }
         self.event_loop_timer_refd = refd;
-        let vm = self.global_this.bun_vm();
+        let vm = self.global_this().bun_vm();
         if refd {
             vm.timer.increment_timer_ref(1);
         } else {
@@ -864,7 +864,7 @@ impl Subprocess<'_> {
     pub fn on_process_exit(&mut self, process: &Process, status: Status, rusage: &Rusage) {
         bun_output::scoped_log!(Subprocess, "onProcessExit()");
         let this_jsvalue = self.this_value.try_get().unwrap_or(JSValue::ZERO);
-        let global_this = self.global_this;
+        let global_this = self.global_this();
         let jsc_vm = global_this.bun_vm();
         this_jsvalue.ensure_still_alive();
         self.pid_rusage = Some(*rusage);
@@ -1209,7 +1209,7 @@ impl Subprocess<'_> {
         unsafe { ManuallyDrop::drop(&mut this.process) };
 
         if this.event_loop_timer.state == EventLoopTimerState::ACTIVE {
-            this.global_this
+            this.global_this()
                 .bun_vm()
                 .timer
                 .remove(&mut this.event_loop_timer);
@@ -1299,7 +1299,7 @@ impl Subprocess<'_> {
                 let _keep = jsc::EnsureStillAlive(this_jsvalue);
                 if !this_jsvalue.is_empty() {
                     if let Some(cb) = js::ipc_callback_get_cached(this_jsvalue) {
-                        let global_this = self.global_this;
+                        let global_this = self.global_this();
                         global_this.bun_vm().event_loop().run_callback(
                             cb,
                             global_this,
@@ -1311,7 +1311,7 @@ impl Subprocess<'_> {
             }
             IPC::DecodedIPCMessage::Internal(data) => {
                 bun_output::scoped_log!(IPC, "Received IPC internal message from child");
-                let global_this = self.global_this;
+                let global_this = self.global_this();
                 let _ =
                     node_cluster_binding::handle_internal_message_primary(global_this, self, data);
             }
@@ -1322,7 +1322,7 @@ impl Subprocess<'_> {
         bun_output::scoped_log!(IPC, "Subprocess#handleIPCClose");
         let this_jsvalue = self.this_value.try_get().unwrap_or(JSValue::ZERO);
         let _keep = jsc::EnsureStillAlive(this_jsvalue);
-        let global_this = self.global_this;
+        let global_this = self.global_this();
         self.update_has_pending_activity();
 
         if !this_jsvalue.is_empty() {
@@ -1347,13 +1347,13 @@ impl Subprocess<'_> {
     }
 
     pub fn get_global_this(&self) -> Option<&JSGlobalObject> {
-        Some(self.global_this)
+        Some(self.global_this())
     }
 }
 
 pub enum Source {
-    Blob(Blob::Any),
-    ArrayBuffer(ArrayBuffer::Strong),
+    Blob(webcore::AnyBlob),
+    ArrayBuffer(jsc::ArrayBufferStrong),
     Detached,
 }
 

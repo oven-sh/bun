@@ -6,10 +6,10 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_jsc::{JSGlobalObject, JSValue};
-use bun_string::wtf::StringImpl;
-// Zig's `bun.WTF.StringImpl` is the WTF-backed refcounted string impl,
-// re-exported from `bun_string::wtf`.
+use bun_jsc::{JSGlobalObject, JSValue, JsResult};
+// Zig's `bun.WTF.StringImpl` is the *pointer* type `*WTFStringImplStruct`;
+// in Rust that's `bun_string::WTFStringImpl` (= `*mut WTFStringImplStruct`).
+use bun_string::WTFStringImpl;
 use bun_jsc::StringJsc as _; // extension trait providing `.to_js()` on `bun_string::String`
 
 pub type Hash = u32;
@@ -26,7 +26,7 @@ pub struct RefString {
     pub len: usize,
     pub hash: Hash,
     // `impl` is a Rust keyword — renamed to `impl_`.
-    pub impl_: StringImpl,
+    pub impl_: WTFStringImpl,
 
     // Zig field `allocator: std.mem.Allocator` dropped — non-AST crate uses the
     // global mimalloc allocator (see PORTING.md §Allocators). `destroy` below

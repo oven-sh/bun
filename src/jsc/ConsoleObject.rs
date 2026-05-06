@@ -2172,7 +2172,10 @@ pub mod formatter {
                             break;
                         }
 
-                        if self.remaining().is_empty() {
+                        // PORT NOTE: borrowck — `writer` holds `&mut self.estimated_line_length`,
+                        // so route `remaining_values` reads/writes through the raw-pointer
+                        // field directly instead of the `&self` helper methods.
+                        if unsafe { (*self.remaining_values).is_empty() } {
                             break;
                         }
 
@@ -2212,8 +2215,8 @@ pub mod formatter {
                         i = 0;
                         hit_percent = true;
                         len = slice.len() as u32;
-                        let next_value = self.remaining()[0];
-                        self.advance_remaining();
+                        let next_value = unsafe { (*self.remaining_values)[0] };
+                        self.remaining_values = unsafe { &(*self.remaining_values)[1..] };
 
                         // https://console.spec.whatwg.org/#formatter
                         const MAX_BEFORE_E_NOTATION: f64 = 1.0e21;
@@ -2293,7 +2296,7 @@ pub mod formatter {
 
                                     // for NaN and the string Infinity and -Infinity,
                                     // parseInt returns NaN
-                                    self.add_for_new_line("NaN".len());
+                                    writer.add_for_new_line("NaN".len());
                                     writer.print(format_args!("NaN"));
                                     i += 1;
                                     continue 'outer;
@@ -2307,9 +2310,9 @@ pub mod formatter {
                                     } else {
                                         1
                                     };
-                                    self.add_for_new_line(digits as usize);
+                                    writer.add_for_new_line(digits as usize);
                                 } else {
-                                    self.add_for_new_line(bun_core::fmt::count_int(int));
+                                    writer.add_for_new_line(bun_core::fmt::count_int(int));
                                 }
                                 writer.print(format_args!("{int}"));
                             }
@@ -2329,7 +2332,7 @@ pub mod formatter {
                                         } else {
                                             1
                                         };
-                                        self.add_for_new_line(digits as usize);
+                                        writer.add_for_new_line(digits as usize);
                                         writer.print(format_args!("{int}"));
                                         i += 1;
                                         continue 'outer;
@@ -2349,13 +2352,13 @@ pub mod formatter {
 
                                 let abs = converted.abs();
                                 if abs < MAX_BEFORE_E_NOTATION && abs >= MIN_BEFORE_E_NOTATION {
-                                    self.add_for_new_line(bun_core::fmt::count_float(converted));
+                                    writer.add_for_new_line(bun_core::fmt::count_float(converted));
                                     writer.print(format_args!("{converted}"));
                                 } else if converted.is_nan() {
-                                    self.add_for_new_line("NaN".len());
+                                    writer.add_for_new_line("NaN".len());
                                     writer.write_all(b"NaN");
                                 } else if converted.is_infinite() {
-                                    self.add_for_new_line(
+                                    writer.add_for_new_line(
                                         "Infinity".len() + ((converted < 0.0) as usize),
                                     );
                                     if converted < 0.0 {
@@ -2366,7 +2369,7 @@ pub mod formatter {
                                     let mut buf = [0u8; 124];
                                     let formatted =
                                         bun_core::fmt::FormatDouble::dtoa(&mut buf, converted);
-                                    self.add_for_new_line(formatted.len());
+                                    writer.add_for_new_line(formatted.len());
                                     writer.print(format_args!("{}", bstr::BStr::new(formatted)));
                                 }
                             }
@@ -2408,12 +2411,12 @@ pub mod formatter {
                                 // for SIMD optimization
                                 let mut str = BunString::empty();
                                 next_value.json_stringify_fast(global, &mut str)?;
-                                self.add_for_new_line(str.length());
+                                writer.add_for_new_line(str.length());
                                 writer.print(format_args!("{str}"));
                                 str.deref();
                             }
                         }
-                        if self.remaining().is_empty() {
+                        if unsafe { (*self.remaining_values).is_empty() } {
                             break;
                         }
                     }

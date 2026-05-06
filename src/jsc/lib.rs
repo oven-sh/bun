@@ -390,7 +390,7 @@ impl From<bun_core::Error> for JsError {
 /// `&[..]` for the trailing "args" tuple — this trait normalizes them so a
 /// single method signature works for all of them.
 pub trait ThrowFmtArgs {
-    fn ignore(self) {}
+    fn ignore(self) where Self: Sized {}
 }
 impl ThrowFmtArgs for () {}
 impl<T> ThrowFmtArgs for &[T] {}
@@ -1237,6 +1237,7 @@ unsafe extern "C" {
     fn JSC__VM__throwError(vm: *mut VM, global: *const JSGlobalObject, value: JSValue);
     fn JSGlobalObject__createOutOfMemoryError(this: *const JSGlobalObject) -> JSValue;
     fn JSGlobalObject__tryTakeException(this: *const JSGlobalObject) -> JSValue;
+    fn JSGlobalObject__clearTerminationException(this: *const JSGlobalObject);
     fn JSC__JSGlobalObject__queueMicrotaskCallback(
         this: *const JSGlobalObject,
         ctx: *mut c_void,
@@ -1531,7 +1532,8 @@ impl JSGlobalObject {
     /// `clearTerminationException` (JSGlobalObject.zig:509) — drop any pending
     /// termination exception so cleanup code can run after `process.exit`.
     pub fn clear_termination_exception(&self) {
-        self.vm().clear_termination_exception();
+        // SAFETY: `self` is a live JSGlobalObject (JSGlobalObject.zig:63 — direct extern).
+        unsafe { JSGlobalObject__clearTerminationException(self) }
     }
 
     /// `validateObject(arg_name, value, opts)` (JSGlobalObject.zig:710) —
@@ -1904,13 +1906,13 @@ pub use self::runtime_transpiler_store::RuntimeTranspilerStore;
 pub use self::web_worker::WebWorker;
 
 // TODO(b1): bun_runtime crate not in dep-graph at this tier; gate re-exports.
-
+#[cfg(any())]
 pub use bun_runtime::test_runner::jest as Jest;
-
+#[cfg(any())]
 pub use bun_runtime::test_runner::jest::TestScope;
-
+#[cfg(any())]
 pub use bun_runtime::test_runner::expect as Expect;
-
+#[cfg(any())]
 pub use bun_runtime::test_runner::snapshot as Snapshot;
 pub mod Jest {}
 pub mod Expect {}
@@ -2107,7 +2109,7 @@ pub type ZigString = bun_string::ZigString;
 pub type ZigStringSlice = bun_string::ZigStringSlice;
 /// Deprecated: Use `bun_webcore`
 // TODO(b1): bun_webcore crate not available at this tier.
-
+#[cfg(any())]
 #[deprecated]
 pub use bun_webcore as WebCore;
 #[allow(non_snake_case)]
@@ -2266,7 +2268,7 @@ pub mod api {
 }
 /// Deprecated: Use `bun_api::node`
 // TODO(b1): bun_api::node missing from stub surface
-
+#[cfg(any())]
 #[deprecated]
 pub use bun_api::node as Node;
 #[allow(non_snake_case)]
@@ -2292,7 +2294,7 @@ pub fn mark_member_binding(_class: &'static str, _src: &core::panic::Location<'s
 }
 
 // TODO(b1): bun_api::Subprocess missing from stub surface
-
+#[cfg(any())]
 pub use bun_api::Subprocess;
 stub_ty!(Subprocess);
 
@@ -2576,7 +2578,7 @@ pub mod zig_exception {
                 // SAFETY: JSErrorCode is `#[repr(u8)]`; `255` is the documented
                 // "unknown" sentinel (ZigException.zig:99 `@enumFromInt(255)`).
                 r#type: unsafe { core::mem::transmute::<u8, JSErrorCode>(255) },
-                runtime_type: JSRuntimeType::Nothing,
+                runtime_type: JSRuntimeType::NOTHING,
                 errno: 0,
                 syscall: String::EMPTY,
                 system_code: String::EMPTY,

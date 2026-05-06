@@ -426,7 +426,7 @@ impl PmPkgCommand {
                     let Some(value) = &prop.value else { continue };
 
                     if let ExprData::EString(str) = &value.data {
-                        let bin_path = str.slice();
+                        let bin_path = str.slice8();
                         let mut pkg_dir = path::resolve_path::dirname::<path::platform::Auto>(&path);
                         if pkg_dir.is_empty() {
                             pkg_dir = cwd;
@@ -477,7 +477,7 @@ impl PmPkgCommand {
                 js_printer::print_json(
                     &mut printer,
                     expr,
-                    &Source::init_empty_file("expression.json"),
+                    &Source::init_empty_file(b"expression.json"),
                     js_printer::PrintJsonOptions {
                         mangled_props: None,
                         indent: match initial_indent {

@@ -219,8 +219,11 @@ impl Editor {
         cwd: &[u8],
         out: &mut &'a [u8],
     ) -> Option<Editor> {
+        // PORT NOTE: borrowck — see `by_path` above; same Polonius-case reborrow.
+        let buf_ptr: *mut PathBuffer = buf;
         for &editor in &DEFAULT_PREFERENCE_LIST {
-            if Self::by_path_for_editor(env, editor, buf, cwd, out) {
+            // SAFETY: exclusive per-iteration reborrow; we return immediately on hit.
+            if Self::by_path_for_editor(env, editor, unsafe { &mut *buf_ptr }, cwd, out) {
                 return Some(editor);
             }
 

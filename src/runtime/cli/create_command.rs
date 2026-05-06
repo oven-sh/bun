@@ -2518,30 +2518,29 @@ impl CreateListExamplesCommand {
         let node = progress.start(b"Fetching manifest", 0);
         progress.refresh();
 
+        // SAFETY: FileSystem::init returns the process-global singleton; valid for 'static.
+        let filesystem = unsafe { &mut *filesystem };
         let examples = Example::fetch_all_local_and_remote(ctx, Some(node), &mut env_loader, filesystem)?;
-        Output::prettyln(
-            "Welcome to bun! Create a new project by pasting any of the following:\n\n",
-            format_args!(""),
-        );
+        Output::prettyln(format_args!(
+            "Welcome to bun! Create a new project by pasting any of the following:\n",
+        ));
         Output::flush();
 
         Example::print(&examples, None);
 
-        Output::prettyln(
-            "<r><d>#<r> You can also paste a GitHub repository:\n\n  <b>bun create <cyan>ahfarmer/calculator calc<r>\n\n",
-            format_args!(""),
-        );
+        Output::prettyln(format_args!(
+            "<r><d>#<r> You can also paste a GitHub repository:\n\n  <b>bun create <cyan>ahfarmer/calculator calc<r>\n",
+        ));
 
         if let Some(homedir) = env_loader.map.get(bun_core::env_var::HOME.key()) {
-            Output::prettyln(
+            Output::prettyln(format_args!(
                 "<d>This command is completely optional. To add a new local template, create a folder in {}/.bun-create/. To publish a new template, git clone https://github.com/oven-sh/bun, add a new folder to the \"examples\" folder, and submit a PR.<r>",
-                format_args!("{}", bstr::BStr::new(homedir)),
-            );
+                bstr::BStr::new(homedir),
+            ));
         } else {
-            Output::prettyln(
+            Output::prettyln(format_args!(
                 "<d>This command is completely optional. To add a new local template, create a folder in $HOME/.bun-create/. To publish a new template, git clone https://github.com/oven-sh/bun, add a new folder to the \"examples\" folder, and submit a PR.<r>",
-                format_args!(""),
-            );
+            ));
         }
 
         Output::flush();

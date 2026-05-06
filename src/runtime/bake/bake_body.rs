@@ -893,7 +893,7 @@ impl Framework {
                     },
                 ),
                 server_register_client_reference: if let Some(slice) =
-                    sc.get_optional::<ZigStringSlice>(global, "serverRegisterClientReferenceExport")?
+                    get_optional_slice(sc, global, b"serverRegisterClientReferenceExport")?
                 {
                     refs.track(slice)
                 } else {

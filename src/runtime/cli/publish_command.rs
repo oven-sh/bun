@@ -1703,14 +1703,14 @@ impl PublishCommand {
     fn construct_publish_request_body<const DIRECTORY_PUBLISH: bool>(
         ctx: &Context<'_, DIRECTORY_PUBLISH>,
     ) -> Result<Box<[u8]>, AllocError> {
-        let tag: &[u8] = if !ctx.manager.options.publish_config.tag.is_empty() {
-            &ctx.manager.options.publish_config.tag
+        let tag: &[u8] = if !ctx.manager.options.publish_config.tag().is_empty() {
+            ctx.manager.options.publish_config.tag()
         } else {
             b"latest"
         };
 
         let encoded_tarball_len = bun_core::base64::standard_encoder_calc_size(ctx.tarball_bytes.len());
-        let version_without_build_tag = Dependency::without_build_tag(&ctx.package_version);
+        let version_without_build_tag = install::dependency::without_build_tag(&ctx.package_version);
 
         let mut buf: Vec<u8> = Vec::with_capacity(
             ctx.package_name.len() * 5

@@ -273,7 +273,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         self.source.detach();
         // SAFETY: `process` is a backref to the owning process, guaranteed alive
         // for the lifetime of this writer (the process owns/outlives its stdio writers).
-        unsafe { (*self.process).on_close_io(StdioKind::Stdin) };
+        unsafe { P::on_close_io(self.process, StdioKind::Stdin) };
     }
 
     pub fn memory_cost(&self) -> usize {

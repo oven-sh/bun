@@ -104,25 +104,29 @@ pub mod reader {
 
     // TODO(port): same DOMCall codegen note as `DOM_CALL` above. In Zig this is an
     // anonymous struct of 12 `DOMCall(...)` values iterated via `inline for`.
+    // PORT NOTE: the `DOMEffect.forRead(.World)` argument is encoded on the C++ side
+    // (generated `Reader__*__put` in ZigLazyStaticFunctions-inlines.h); the runtime
+    // descriptor here only needs the `put` extern.
     pub const DOM_CALLS: &[(&str, DomCall)] = &[
-        ("u8", DomCall::new("Reader", "u8", DomEffect::for_read(DomEffect::Heap::World))),
-        ("u16", DomCall::new("Reader", "u16", DomEffect::for_read(DomEffect::Heap::World))),
-        ("u32", DomCall::new("Reader", "u32", DomEffect::for_read(DomEffect::Heap::World))),
-        ("ptr", DomCall::new("Reader", "ptr", DomEffect::for_read(DomEffect::Heap::World))),
-        ("i8", DomCall::new("Reader", "i8", DomEffect::for_read(DomEffect::Heap::World))),
-        ("i16", DomCall::new("Reader", "i16", DomEffect::for_read(DomEffect::Heap::World))),
-        ("i32", DomCall::new("Reader", "i32", DomEffect::for_read(DomEffect::Heap::World))),
-        ("i64", DomCall::new("Reader", "i64", DomEffect::for_read(DomEffect::Heap::World))),
-        ("u64", DomCall::new("Reader", "u64", DomEffect::for_read(DomEffect::Heap::World))),
-        ("intptr", DomCall::new("Reader", "intptr", DomEffect::for_read(DomEffect::Heap::World))),
-        ("f32", DomCall::new("Reader", "f32", DomEffect::for_read(DomEffect::Heap::World))),
-        ("f64", DomCall::new("Reader", "f64", DomEffect::for_read(DomEffect::Heap::World))),
+        ("u8", DomCall { class_name: "Reader", function_name: "u8", put: Reader__u8__put }),
+        ("u16", DomCall { class_name: "Reader", function_name: "u16", put: Reader__u16__put }),
+        ("u32", DomCall { class_name: "Reader", function_name: "u32", put: Reader__u32__put }),
+        ("ptr", DomCall { class_name: "Reader", function_name: "ptr", put: Reader__ptr__put }),
+        ("i8", DomCall { class_name: "Reader", function_name: "i8", put: Reader__i8__put }),
+        ("i16", DomCall { class_name: "Reader", function_name: "i16", put: Reader__i16__put }),
+        ("i32", DomCall { class_name: "Reader", function_name: "i32", put: Reader__i32__put }),
+        ("i64", DomCall { class_name: "Reader", function_name: "i64", put: Reader__i64__put }),
+        ("u64", DomCall { class_name: "Reader", function_name: "u64", put: Reader__u64__put }),
+        ("intptr", DomCall { class_name: "Reader", function_name: "intptr", put: Reader__intptr__put }),
+        ("f32", DomCall { class_name: "Reader", function_name: "f32", put: Reader__f32__put }),
+        ("f64", DomCall { class_name: "Reader", function_name: "f64", put: Reader__f64__put }),
     ];
 
     pub fn to_js(global_this: &JSGlobalObject) -> JSValue {
         let obj = JSValue::create_empty_object(global_this, DOM_CALLS.len());
         for (_, dc) in DOM_CALLS {
-            dc.put(global_this, obj);
+            // SAFETY: `put` is a C++-side helper; global_this is live for the call.
+            unsafe { (dc.put)(global_this as *const _ as *mut _, obj) };
         }
         obj
     }

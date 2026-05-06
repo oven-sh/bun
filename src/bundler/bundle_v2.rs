@@ -4773,13 +4773,20 @@ impl<'a> BundleV2<'a> {
             )
         };
 
-        let transpiler = self.transpiler_for_target(target);
+        // Extract raw pointers so the `&mut self` borrow from
+        // `transpiler_for_target` doesn't overlap `self.allocator()` below.
+        // SAFETY: `define`/`log` live for `'a` (owned by the Transpiler /
+        // BACKREF set in `BundleV2::init`).
+        let (define_ptr, log_ptr): (*mut bun_js_parser::Define, *mut bun_logger::Log) = {
+            let transpiler = self.transpiler_for_target(target);
+            (&mut *transpiler.options.define as *mut _, transpiler.log)
+        };
 
         let ast_for_html_entrypoint = JSAst::init(bun_js_parser::new_lazy_export_ast(
             self.allocator(),
-            &mut *transpiler.options.define,
+            unsafe { &mut *define_ptr },
             js_parser_options,
-            unsafe { &mut *transpiler.log },
+            unsafe { &mut *log_ptr },
             Expr::init(E::EString { data: unique_key, ..Default::default() }, Logger::Loc::EMPTY),
             &empty_html_file_source,
             // We replace this runtime API call's ref later via .link on the Symbol.

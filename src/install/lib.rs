@@ -847,6 +847,11 @@ pub mod lockfile {
     /// re-export the real enum so `PackageManagerDirectories::save_lockfile`
     /// can branch on `.Text` / `.Binary` without reaching into `lockfile_real`.
     pub use crate::lockfile_real::LockfileFormat;
+    /// `Lockfile.PackageIndex` (src/install/lockfile.zig) — re-export the real
+    /// `package_index` module so `json_stringify` / `bun.lockb` can name
+    /// `bun_install::lockfile::package_index::Entry` before `lockfile_real`
+    /// un-gates.
+    pub use crate::lockfile_real::package_index;
     pub mod tree {
         use crate::DependencyID;
         use super::DependencyIDSlice;

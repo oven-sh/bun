@@ -562,7 +562,7 @@ impl UninstallTask {
         let dir = match open_dir_a(Dir::cwd(), dirname) {
             Ok(d) => d,
             Err(err) => {
-                if cfg!(debug_assertions) || cfg!(feature = "asan") {
+                if bun_core::Environment::IS_DEBUG || bun_core::Environment::ENABLE_ASAN {
                     Output::debug_warn(format_args!(
                         "Failed to delete {}: {}",
                         bstr::BStr::new(&uninstall_task.absolute_path),
@@ -575,7 +575,7 @@ impl UninstallTask {
         let _close = scopeguard::guard(dir, |d| d.close());
 
         if let Err(err) = dir.delete_tree(basename) {
-            if cfg!(debug_assertions) || cfg!(feature = "asan") {
+            if bun_core::Environment::IS_DEBUG || bun_core::Environment::ENABLE_ASAN {
                 Output::debug_warn(format_args!(
                     "Failed to delete {} in {}: {}",
                     bstr::BStr::new(basename),

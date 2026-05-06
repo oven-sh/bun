@@ -250,18 +250,18 @@ where
 
     // TODO(port): Output.prettyFmt comptime ANSI format string
     let fmt = if ENABLE_ANSI_COLORS {
-        Output::pretty_fmt_str::<ENABLE_ANSI_COLORS>("<r><cyan>↑<r> <b>{s}<r><d> <b>{f} →<r> <b><cyan>{f}<r>\n")
+        "<r><cyan>↑<r> <b>{s}<r><d> <b>{f} →<r> <b><cyan>{f}<r>\n"
     } else {
-        Output::pretty_fmt_str::<ENABLE_ANSI_COLORS>("<r>^ <b>{s}<r><d> <b>{f} -\\><r> <b>{f}<r>\n")
+        "<r>^ <b>{s}<r><d> <b>{f} -\\><r> <b>{f}<r>\n"
     };
 
     write!(
         writer,
         "{}",
-        Output::apply_fmt(
+        Output::pretty_fmt_args(
             fmt,
-            format_args!(
-                "{} {} {}",
+            ENABLE_ANSI_COLORS,
+            (
                 bstr::BStr::new(dependency.name.slice(string_buf)),
                 update_info.version.fmt(update_info.version_buf),
                 update_info.resolution.value.npm.version.fmt(string_buf),

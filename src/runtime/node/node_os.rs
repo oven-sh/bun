@@ -1357,8 +1357,8 @@ pub fn user_info(global_this: &JSGlobalObject, options: gen_::UserInfoOptions) -
         result.put(global_this, ZigString::static_("username"), ZigString::init(username).with_encoding().to_js(global_this));
         result.put(global_this, ZigString::static_("shell"), ZigString::init(env_var::SHELL.get().unwrap_or(b"unknown")).with_encoding().to_js(global_this));
         // SAFETY: pure FFI getters
-        result.put(global_this, ZigString::static_("uid"), JSValue::js_number(unsafe { c::getuid() }));
-        result.put(global_this, ZigString::static_("gid"), JSValue::js_number(unsafe { c::getgid() }));
+        result.put(global_this, ZigString::static_("uid"), JSValue::js_number(unsafe { libc::getuid() }));
+        result.put(global_this, ZigString::static_("gid"), JSValue::js_number(unsafe { libc::getgid() }));
     }
 
     Ok(result)
@@ -1419,6 +1419,7 @@ pub fn version() -> JsResult<BunString> {
     Ok(BunString::clone_utf8(slice))
 }
 } // mod _impl
+pub use _impl::*;
 
 /// Given a netmask returns a CIDR suffix.  Returns null if the mask is not valid.
 /// `T` must be one of u32 (IPv4) or u128 (IPv6)

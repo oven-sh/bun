@@ -185,26 +185,30 @@ impl LinuxMemFdAllocator {
         #[cfg(target_os = "linux")]
         {
             let mut label_buf = [0u8; 128];
-            let label: &crate::stubs::ZStr = {
-                use core::fmt::Write as _;
+            // Zig: `std.fmt.bufPrintZ(&label_buf, "memfd-num-{d}", .{n}) catch ""`
+            let label: &core::ffi::CStr = {
+                use std::io::Write as _;
                 let n = MEMFD_COUNTER.fetch_add(1, Ordering::Relaxed);
-                // Zig: `std.fmt.bufPrintZ(&label_buf, "memfd-num-{d}", .{n}) catch ""`
-                let mut cursor = crate::stubs::BufWriter::new(&mut label_buf[..label_buf.len() - 1]);
+                let cap = label_buf.len() - 1;
+                let mut cursor = std::io::Cursor::new(&mut label_buf[..cap]);
                 match write!(cursor, "memfd-num-{}", n) {
                     Ok(()) => {
-                        let written = cursor.written();
+                        let written = cursor.position() as usize;
                         label_buf[written] = 0;
-                        // SAFETY: we wrote `written` bytes and a NUL at `label_buf[written]`.
-                        unsafe { crate::stubs::ZStr::from_raw(label_buf.as_ptr(), written) }
+                        // SAFETY: we wrote `written` ASCII bytes (no interior NUL) and a NUL
+                        // at `label_buf[written]`.
+                        unsafe {
+                            core::ffi::CStr::from_bytes_with_nul_unchecked(&label_buf[..=written])
+                        }
                     }
-                    Err(_) => crate::stubs::ZStr::EMPTY,
+                    Err(_) => c"",
                 }
             };
 
             // Using huge pages was slower.
-            let fd = match sys::memfd_create(label, sys::MemfdFlags::NON_EXECUTABLE) {
+            let fd = match sys::memfd_create(label, sys::MemfdFlags::NonExecutable) {
                 Err(err) => {
-                    return Err(sys::Error::from_code(err.errno(), sys::Tag::Open));
+                    return Err(sys::Error::from_code(err.get_errno(), sys::Tag::open));
                 }
                 Ok(fd) => fd,
             };
@@ -215,13 +219,13 @@ impl LinuxMemFdAllocator {
             }
 
             // Dump all the bytes in there
-            let mut written: isize = 0;
+            let mut written: i64 = 0;
 
             let mut remain = bytes;
             while !remain.is_empty() {
                 match sys::pwrite(fd, remain, written) {
                     Err(err) => {
-                        if err.errno() == sys::Errno::AGAIN {
+                        if err.get_errno() == sys::E::EAGAIN {
                             continue;
                         }
 
@@ -233,9 +237,9 @@ impl LinuxMemFdAllocator {
                         if result == 0 {
                             bun_core::debug_warn!("Failed to write to memfd: EOF");
                             fd.close();
-                            return Err(sys::Error::from_code(sys::Errno::NOMEM, sys::Tag::Write));
+                            return Err(sys::Error::from_code(sys::E::ENOMEM, sys::Tag::write));
                         }
-                        written += isize::try_from(result).unwrap();
+                        written += i64::try_from(result).unwrap();
                         remain = &remain[result..];
                     }
                 }
@@ -246,7 +250,7 @@ impl LinuxMemFdAllocator {
             match linux_memfd_allocator.alloc(
                 bytes.len(),
                 0,
-                sys::posix::MapFlags::shared(), // TODO(port): `.{ .TYPE = .SHARED }`
+                libc::MAP_SHARED, // Zig: `.{ .TYPE = .SHARED }`
             ) {
                 Ok(res) => {
                     // PORT NOTE: Zig's `Self.new` returns a raw `*Self` (refcount=1) which

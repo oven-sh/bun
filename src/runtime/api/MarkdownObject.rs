@@ -590,14 +590,6 @@ impl<'a> ParseRenderer<'a> {
         }
     }
 
-    const VTABLE: md::types::VTable = md::types::VTable {
-        enter_block: Self::enter_block_impl,
-        leave_block: Self::leave_block_impl,
-        enter_span: Self::enter_span_impl,
-        leave_span: Self::leave_span_impl,
-        text: Self::text_impl,
-    };
-
     // ========================================
     // Block callbacks
     // ========================================
@@ -679,7 +671,7 @@ impl<'a> ParseRenderer<'a> {
             }
             md::BlockType::Th | md::BlockType::Td => {
                 let alignment = md::types::alignment_from_data(entry.data);
-                if alignment != md::types::Alignment::Default {
+                if alignment != md::types::Align::Default {
                     props_count += 1;
                 }
             }

@@ -805,9 +805,9 @@ impl BunxCommand {
 
         let passthrough = opts.passthrough_list.as_slice();
 
-        let mut do_cache_bust = update_request.version.tag == bun_semver::VersionTag::DistTag;
+        let mut do_cache_bust = update_request.version.tag == VersionTag::DistTag;
         let look_for_existing_bin =
-            update_request.version.literal.is_empty() || update_request.version.tag != bun_semver::VersionTag::DistTag;
+            update_request.version.literal.is_empty() || update_request.version.tag != VersionTag::DistTag;
 
         bun_output::scoped_log!(bunx, "try run existing? {}", look_for_existing_bin);
         if look_for_existing_bin {

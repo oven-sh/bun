@@ -1295,7 +1295,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     debug_assert!(IS_SYNC);
 
     if can_block_entire_thread_to_reduce_cpu_usage_in_fast_path {
-        jsc_vm.counters.mark(jsc::Counter::SpawnSyncBlocking);
+        jsc_vm.counters.mark(jsc::counters::Field::SpawnSyncBlocking);
         let debug_timer = Output::DebugTimer::start();
         subprocess.process.wait(true);
         bun_output::scoped_log!(Subprocess, "spawnSync fast path took {}", debug_timer);

@@ -14,7 +14,7 @@ struct ExpectedEntry<'a> {
 }
 
 extern "C" fn deep_equals_iterator(
-    _: *mut Vm,
+    _: *mut VM,
     _: &JSGlobalObject,
     entry_: *mut c_void,
     item: JSValue,

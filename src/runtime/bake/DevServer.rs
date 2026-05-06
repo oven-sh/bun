@@ -821,7 +821,7 @@ impl Drop for DevServer<'_> {
     fn drop(&mut self) {
         debug_log!("deinit");
         DEV_SERVER_DEINIT_COUNT_FOR_TESTING
-            .fetch_add(1, core::sync::atomic::Ordering::Relaxed)
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
             .saturating_add(0); // TODO(port): saturating += on static
 
         // TODO(port): Zig used `useAllFields(DevServer, .{...})` to ensure every field

@@ -7,8 +7,8 @@ use bun_core::ZStr;
 // ─── FFI bindings ─────────────────────────────────────────────────────────
 // TODO(port): move to zstd_sys once that crate exists. PORTING.md §FFI:
 // "If your file has externs and isn't already *_sys, leave them in place".
-#[allow(non_camel_case_types, non_snake_case)]
-mod c {
+#[allow(non_camel_case_types, non_snake_case, non_upper_case_globals)]
+pub mod c {
     use core::ffi::{c_char, c_int, c_uint, c_ulonglong, c_void};
     use core::marker::{PhantomData, PhantomPinned};
 
@@ -18,6 +18,64 @@ mod c {
         _p: [u8; 0],
         _m: PhantomData<(*mut u8, PhantomPinned)>,
     }
+
+    /// `ZSTD_CCtx` — opaque streaming-compression context.
+    #[repr(C)]
+    pub struct ZSTD_CCtx {
+        _p: [u8; 0],
+        _m: PhantomData<(*mut u8, PhantomPinned)>,
+    }
+
+    /// `typedef ZSTD_DCtx ZSTD_DStream;` — same opaque object.
+    pub type ZSTD_DCtx = ZSTD_DStream;
+
+    // C enums passed by value across FFI — model as `c_uint` (their declared
+    // underlying type) so callers can pass raw values without transmute.
+    pub type ZSTD_ErrorCode = c_uint;
+    pub type ZSTD_EndDirective = c_uint;
+    pub type ZSTD_ResetDirective = c_uint;
+    pub type ZSTD_cParameter = c_uint;
+    pub type ZSTD_dParameter = c_uint;
+
+    // ZSTD_EndDirective
+    pub const ZSTD_e_continue: ZSTD_EndDirective = 0;
+    pub const ZSTD_e_flush: ZSTD_EndDirective = 1;
+    pub const ZSTD_e_end: ZSTD_EndDirective = 2;
+
+    // ZSTD_ResetDirective
+    pub const ZSTD_reset_session_only: ZSTD_ResetDirective = 1;
+    pub const ZSTD_reset_parameters: ZSTD_ResetDirective = 2;
+    pub const ZSTD_reset_session_and_parameters: ZSTD_ResetDirective = 3;
+
+    // ZSTD_ErrorCode (zstd_errors.h) — only the public stable subset.
+    pub const ZSTD_error_no_error: ZSTD_ErrorCode = 0;
+    pub const ZSTD_error_GENERIC: ZSTD_ErrorCode = 1;
+    pub const ZSTD_error_prefix_unknown: ZSTD_ErrorCode = 10;
+    pub const ZSTD_error_version_unsupported: ZSTD_ErrorCode = 12;
+    pub const ZSTD_error_frameParameter_unsupported: ZSTD_ErrorCode = 14;
+    pub const ZSTD_error_frameParameter_windowTooLarge: ZSTD_ErrorCode = 16;
+    pub const ZSTD_error_corruption_detected: ZSTD_ErrorCode = 20;
+    pub const ZSTD_error_checksum_wrong: ZSTD_ErrorCode = 22;
+    pub const ZSTD_error_literals_headerWrong: ZSTD_ErrorCode = 24;
+    pub const ZSTD_error_dictionary_corrupted: ZSTD_ErrorCode = 30;
+    pub const ZSTD_error_dictionary_wrong: ZSTD_ErrorCode = 32;
+    pub const ZSTD_error_dictionaryCreation_failed: ZSTD_ErrorCode = 34;
+    pub const ZSTD_error_parameter_unsupported: ZSTD_ErrorCode = 40;
+    pub const ZSTD_error_parameter_combination_unsupported: ZSTD_ErrorCode = 41;
+    pub const ZSTD_error_parameter_outOfBound: ZSTD_ErrorCode = 42;
+    pub const ZSTD_error_tableLog_tooLarge: ZSTD_ErrorCode = 44;
+    pub const ZSTD_error_maxSymbolValue_tooLarge: ZSTD_ErrorCode = 46;
+    pub const ZSTD_error_maxSymbolValue_tooSmall: ZSTD_ErrorCode = 48;
+    pub const ZSTD_error_stabilityCondition_notRespected: ZSTD_ErrorCode = 50;
+    pub const ZSTD_error_stage_wrong: ZSTD_ErrorCode = 60;
+    pub const ZSTD_error_init_missing: ZSTD_ErrorCode = 62;
+    pub const ZSTD_error_memory_allocation: ZSTD_ErrorCode = 64;
+    pub const ZSTD_error_workSpace_tooSmall: ZSTD_ErrorCode = 66;
+    pub const ZSTD_error_dstSize_tooSmall: ZSTD_ErrorCode = 70;
+    pub const ZSTD_error_srcSize_wrong: ZSTD_ErrorCode = 72;
+    pub const ZSTD_error_dstBuffer_null: ZSTD_ErrorCode = 74;
+    pub const ZSTD_error_noForwardProgress_destFull: ZSTD_ErrorCode = 80;
+    pub const ZSTD_error_noForwardProgress_inputEmpty: ZSTD_ErrorCode = 82;
 
     #[repr(C)]
     pub struct ZSTD_inBuffer {

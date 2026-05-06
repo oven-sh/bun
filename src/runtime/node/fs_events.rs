@@ -404,10 +404,28 @@ pub struct ConcurrentTask {
     pub auto_delete: bool,
 }
 
-impl ConcurrentTask {
-    // TODO(port): UnboundedQueue<ConcurrentTask> needs to know the `next` field offset
-    pub type Queue = UnboundedQueue<ConcurrentTask>;
+// SAFETY: all four accessors route through the `next: *mut Self` field; the
+// atomic variants treat it as an `AtomicPtr` (same layout/ABI as `*mut T`).
+unsafe impl bun_threading::unbounded_queue::Node for ConcurrentTask {
+    unsafe fn get_next(item: *mut Self) -> *mut Self {
+        unsafe { (*item).next }
+    }
+    unsafe fn set_next(item: *mut Self, ptr: *mut Self) {
+        unsafe { (*item).next = ptr };
+    }
+    unsafe fn atomic_load_next(item: *mut Self, ordering: Ordering) -> *mut Self {
+        // SAFETY: `*mut Self` and `AtomicPtr<Self>` share layout.
+        unsafe { (*(ptr::addr_of!((*item).next) as *const AtomicPtr<Self>)).load(ordering) }
+    }
+    unsafe fn atomic_store_next(item: *mut Self, ptr: *mut Self, ordering: Ordering) {
+        // SAFETY: `*mut Self` and `AtomicPtr<Self>` share layout.
+        unsafe { (*(core::ptr::addr_of!((*item).next) as *const AtomicPtr<Self>)).store(ptr, ordering) }
+    }
+}
 
+pub type ConcurrentTaskQueue = UnboundedQueue<ConcurrentTask>;
+
+impl ConcurrentTask {
     pub fn from(this: &mut ConcurrentTask, task: Task, auto_delete: bool) -> &mut ConcurrentTask {
         *this = ConcurrentTask { task, next: ptr::null_mut(), auto_delete };
         this

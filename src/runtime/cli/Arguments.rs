@@ -1814,7 +1814,12 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             unsafe { Bun__Node__ProcessThrowDeprecation = true; }
         }
         if let Some(title) = args.option("--title") {
-            cli::set_process_title(title);
+            // SAFETY: single-threaded startup; argv slice is process-lifetime.
+            // Zig: `CLI.Bun__Node__ProcessTitle = title;`
+            unsafe {
+                cli::Bun__Node__ProcessTitle =
+                    Some(core::mem::transmute::<&[u8], &'static [u8]>(title));
+            }
         }
         if args.flag("--zero-fill-buffers") {
             // SAFETY: single-threaded startup
@@ -2111,7 +2116,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                 Output::err_generic("Using --windows-hide-console is only available when compiling on Windows", format_args!(""));
                 Global::crash();
             }
-            if ctx.bundler_options.compile_target.os != cli::CompileTargetOs::Windows {
+            if ctx.bundler_options.compile_target.os != OperatingSystem::Windows {
                 Output::err_generic("--windows-hide-console requires a Windows compile target", format_args!(""));
                 Global::crash();
             }
@@ -2126,7 +2131,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                 Output::err_generic("Using --windows-icon is only available when compiling on Windows", format_args!(""));
                 Global::crash();
             }
-            if ctx.bundler_options.compile_target.os != cli::CompileTargetOs::Windows {
+            if ctx.bundler_options.compile_target.os != OperatingSystem::Windows {
                 Output::err_generic("--windows-icon requires a Windows compile target", format_args!(""));
                 Global::crash();
             }
@@ -2141,7 +2146,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                 Output::err_generic("Using --windows-title is only available when compiling on Windows", format_args!(""));
                 Global::crash();
             }
-            if ctx.bundler_options.compile_target.os != cli::CompileTargetOs::Windows {
+            if ctx.bundler_options.compile_target.os != OperatingSystem::Windows {
                 Output::err_generic("--windows-title requires a Windows compile target", format_args!(""));
                 Global::crash();
             }
@@ -2156,7 +2161,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                 Output::err_generic("Using --windows-publisher is only available when compiling on Windows", format_args!(""));
                 Global::crash();
             }
-            if ctx.bundler_options.compile_target.os != cli::CompileTargetOs::Windows {
+            if ctx.bundler_options.compile_target.os != OperatingSystem::Windows {
                 Output::err_generic("--windows-publisher requires a Windows compile target", format_args!(""));
                 Global::crash();
             }
@@ -2171,7 +2176,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                 Output::err_generic("Using --windows-version is only available when compiling on Windows", format_args!(""));
                 Global::crash();
             }
-            if ctx.bundler_options.compile_target.os != cli::CompileTargetOs::Windows {
+            if ctx.bundler_options.compile_target.os != OperatingSystem::Windows {
                 Output::err_generic("--windows-version requires a Windows compile target", format_args!(""));
                 Global::crash();
             }
@@ -2186,7 +2191,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                 Output::err_generic("Using --windows-description is only available when compiling on Windows", format_args!(""));
                 Global::crash();
             }
-            if ctx.bundler_options.compile_target.os != cli::CompileTargetOs::Windows {
+            if ctx.bundler_options.compile_target.os != OperatingSystem::Windows {
                 Output::err_generic("--windows-description requires a Windows compile target", format_args!(""));
                 Global::crash();
             }
@@ -2201,7 +2206,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                 Output::err_generic("Using --windows-copyright is only available when compiling on Windows", format_args!(""));
                 Global::crash();
             }
-            if ctx.bundler_options.compile_target.os != cli::CompileTargetOs::Windows {
+            if ctx.bundler_options.compile_target.os != OperatingSystem::Windows {
                 Output::err_generic("--windows-copyright requires a Windows compile target", format_args!(""));
                 Global::crash();
             }

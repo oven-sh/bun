@@ -143,6 +143,60 @@ mod hardcoded_module {
     }
 }
 
+// ── PluginRunner shim ───────────────────────────────────────────────────
+// CYCLEBREAK: `crate::transpiler::PluginRunner` is an opaque `[u8; 0]`
+// FORWARD_DECL (real impl lives in `bundler_jsc::PluginRunner`, which depends
+// back on `bun_bundler`). The linker only needs the cheap pre-filter
+// `could_be_plugin` (pure, no JSC) and the `on_resolve` hook. Port the
+// pre-filter body from `PluginRunner.zig:22`; `on_resolve` returns `None`
+// here because the opaque struct carries no `JSGlobalObject` to dispatch
+// through — the real JSC-side runner casts `*mut PluginRunner` back to its
+// own type and never reaches this impl.
+#[derive(Clone, Copy)]
+pub enum PluginTarget {
+    Bun,
+    Browser,
+    Node,
+}
+impl PluginRunner {
+    /// Spec PluginRunner.zig:22 `couldBePlugin` — cheap pre-filter that rules
+    /// out `./` / `../` / absolute paths before hitting the resolve hook.
+    pub fn could_be_plugin(specifier: &[u8]) -> bool {
+        if let Some(last_dot) = strings::last_index_of_char(specifier, b'.') {
+            let ext = &specifier[last_dot + 1..];
+            // '.' followed by either a letter or a non-ascii character
+            // maybe there are non-ascii file extensions?
+            // we mostly want to cheaply rule out "../" and ".." and "./"
+            if !ext.is_empty()
+                && (ext[0].is_ascii_lowercase()
+                    || ext[0].is_ascii_uppercase()
+                    || ext[0] > 127)
+            {
+                return true;
+            }
+        }
+        !bun_paths::is_absolute(specifier) && strings::contains_char(specifier, b':')
+    }
+
+    /// Spec PluginRunner.zig:34 `onResolve`. CYCLEBREAK: the real body calls
+    /// `JSGlobalObject.runOnResolvePlugins` (JSC-side, `bundler_jsc` crate);
+    /// the FORWARD_DECL struct here is field-less, so there is no global to
+    /// dispatch through. Return `None` ("no plugin matched") — the
+    /// `bundler_jsc` runner overrides this via its own `on_resolve` and casts
+    /// `*mut PluginRunner` back before calling.
+    #[allow(unused_variables)]
+    pub fn on_resolve(
+        &mut self,
+        specifier: &[u8],
+        importer: &[u8],
+        log: &mut Log,
+        loc: bun_logger::Loc,
+        target: PluginTarget,
+    ) -> Result<Option<PFs::Path<'static>>, bun_core::Error> {
+        Ok(None)
+    }
+}
+
 // ── ExternalModules::is_node_builtin ────────────────────────────────────
 // Spec (linker.zig:229) routes the browser-target diagnostic through
 // `Options.ExternalModules.isNodeBuiltin`; that lives in `options.rs` and
@@ -247,10 +301,13 @@ impl Linker {
             bun_sys::open_file(file_path.text, bun_sys::OpenFlags::READ_ONLY)?
         };
         Fs::FileSystem::set_max_fd(file.handle().native());
-        // SAFETY: `self.fs` is owned by the `Transpiler` which outlives all
-        // `Linker` calls (raw-ptr field, see struct PORT NOTE).
-        let modkey =
-            Fs::ModKey::generate(unsafe { &mut (*self.fs).fs }, file_path.text, &file)?;
+        // PORT NOTE: spec called `Fs.FileSystem.RealFS.ModKey.generate(&this.fs.fs,
+        // path, file)`; both leading args are unread (fs.rs:1386). The inline
+        // `bun_resolver::fs::RealFS` (which `self.fs.fs` is) and the full-port
+        // `fs_full::RealFS` are distinct types, so route through the
+        // RealFS-agnostic `from_file` wrapper added alongside the `ModKey`
+        // re-export.
+        let modkey = Fs::ModKey::from_file(&file)?;
         if fd.is_none() {
             let _ = file.close();
         }

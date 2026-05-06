@@ -29,6 +29,7 @@
 
 use crate::options::{self, Format, Loader, OutputFile};
 use crate::{Chunk, LinkerContext};
+use crate::Graph::InputFileListExt as _;
 
 pub struct OutputFileList {
     pub output_files: Vec<options::OutputFile>,
@@ -61,7 +62,7 @@ impl OutputFileList {
         let mut output_files: Vec<options::OutputFile> =
             Vec::with_capacity(length as usize);
         // PERF(port): was appendNTimesAssumeCapacity — profile in Phase B
-        output_files.resize_with(length as usize, OutputFile::zero_value);
+        output_files.resize_with(length as usize, || OutputFile::zero_value());
 
         Self {
             output_files,

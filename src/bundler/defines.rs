@@ -441,7 +441,9 @@ impl DefineDataExt for DefineData {
             // `bump`, which the caller (`Define::init`) owns for the lifetime
             // of the `Define` table — i.e. as long as any `ExprData` produced
             // here is reachable.
-            contents: unsafe { core::mem::transmute::<&[u8], &'static [u8]>(arena_value) },
+            contents: std::borrow::Cow::Borrowed(unsafe {
+                core::mem::transmute::<&[u8], &'static [u8]>(arena_value)
+            }),
             path: defines_path(),
             ..Default::default()
         };

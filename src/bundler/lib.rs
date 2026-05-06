@@ -342,6 +342,12 @@ pub mod bake_types {
         pub built_in_modules: bun_collections::StringArrayHashMap<BuiltInModule>,
         /// Mirrors `Framework.server_components`.
         pub server_components: Option<ServerComponents>,
+        /// Legacy `options.Framework.client_css_in_js` — read by
+        /// `entry_points::{FallbackEntryPoint,ClientEntryPoint}::generate`. The
+        /// Zig spec keeps this on the legacy `options.Framework`; both shapes
+        /// are unified under `bake_types::Framework` in the Rust port until the
+        /// tier-6 collapse splits them.
+        pub client_css_in_js: crate::options::ClientCssInJs,
         // TODO(b0-genuine): remaining Framework fields (react_fast_refresh,
         // file_system_router_types, ...) — bake constructs.
         _opaque_tail: (),

@@ -458,7 +458,7 @@ impl LinkerContext<'_> {
                 // Use a non-local dependency since this is likely from a different
                 // file if it came in through an export star
                 ns_export_dependencies.append_assume_capacity(Dependency {
-                    source_index: js_ast::Index::source(exp_data.source_index.get()),
+                    source_index: js_ast::Index::source(exp_data.source_index.get() as usize),
                     part_index: part_id,
                 });
             }

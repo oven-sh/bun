@@ -107,6 +107,36 @@ pub trait CompletionStruct: Node + Send + 'static {
     /// Zig: `switch (CompletionStruct) { BundleV2.JSBundleCompletionTask => completion, … }`
     /// — the comptime type-switch collapses to a cast the impl provides.
     fn as_js_bundle_completion_task(&mut self) -> NonNull<JSBundleCompletionTask>;
+
+    /// Zig: `const transpiler = try allocator.create(bun.Transpiler);` followed by
+    /// `try completion.configureBundler(transpiler, allocator);` — Zig left the
+    /// `Transpiler` `undefined` and let `configureBundler` initialize it in place.
+    /// Rust's `Transpiler<'a>` has borrow-carrying fields (`allocator: &'a Arena`,
+    /// `resolver: Resolver<'a>`) that cannot be zero-init'd, so the allocate +
+    /// configure pair is folded into one trait call returning the
+    /// arena-allocated, fully-configured transpiler.
+    fn create_and_configure_transpiler<'a>(
+        &mut self,
+        bump: &'a Arena,
+    ) -> Result<&'a mut Transpiler<'a>, bun_core::Error>;
+
+    /// Zig: `try BundleV2.init(transpiler, null, allocator, jsc.AnyEventLoop.init(allocator),
+    /// false, jsc.WorkPool.get(), heap)` followed by `this.runFromJSInNewThread(...)`.
+    ///
+    /// PORT NOTE: the un-gated `BundleV2` impl does not yet expose `init` /
+    /// `run_from_js_in_new_thread` (they live in `bundle_v2::__phase_a_draft`
+    /// pending the linker pipeline un-gate). The Zig `@compileError` already
+    /// proves this body is `JSBundleCompletionTask`-specific, so the
+    /// construction + run is delegated to the trait impl in T6, which has
+    /// access to the concrete event-loop / work-pool wiring. The shared
+    /// scaffolding (arena, AST allocator push/pop, log copy, errdefer
+    /// wait-group drain) stays in `generate_in_new_thread` below.
+    fn init_and_run<'a>(
+        &mut self,
+        transpiler: &'a mut Transpiler<'a>,
+        bump: &'a Arena,
+        thread_pool: &'static bun_threading::ThreadPool,
+    ) -> Result<&'a mut BundleV2<'a>, bun_core::Error>;
 }
 
 impl<C: CompletionStruct> BundleThread<C> {
@@ -230,7 +260,7 @@ impl<C: CompletionStruct> BundleThread<C> {
             }
 
             // SAFETY: `Waker::wait` takes `&self`; concurrent `wake()` from `enqueue` is by design.
-            let _ = unsafe { (*instance).waker.wait() };
+            unsafe { (*instance).waker.wait() };
         }
     }
 
@@ -249,74 +279,67 @@ impl<C: CompletionStruct> BundleThread<C> {
         ast_memory_allocator.reset();
         ast_memory_allocator.push();
 
-        // PORT NOTE: Zig left this `undefined` until `configureBundler` filled it
-        // in-place; Rust requires an initialized value, so `Default` then configure.
-        let transpiler: &mut Transpiler<'_> = bump.alloc(Transpiler::default());
-
-        completion.configure_bundler(transpiler, bump)?;
+        // Zig: `const transpiler = try allocator.create(bun.Transpiler);`
+        //      `try completion.configureBundler(transpiler, allocator);`
+        // Folded — see `create_and_configure_transpiler` doc.
+        let transpiler = completion.create_and_configure_transpiler(bump)?;
 
         transpiler.resolver.generation = generation;
 
-        // PORT NOTE: borrowck — `BundleV2::init` (in the Zig spec) consumes the
-        // arena by value as `heap` while also borrowing `bump = &heap`. The Rust
-        // signature is being reshaped in B-2 (see `bundle_v2.rs:__phase_a_draft`);
-        // here we hand it the raw `*mut Transpiler` + arena ref and let `init`
-        // own its own pool/heap wiring.
-        let this: &mut BundleV2<'_> = bump.alloc(BundleV2::init_in_arena(
-            transpiler as *mut _,
+        // Zig: `const this = try BundleV2.init(transpiler, null, allocator,
+        //       jsc.AnyEventLoop.init(allocator), false, jsc.WorkPool.get(), heap);`
+        // followed by field wiring + `runFromJSInNewThread`. Delegated — see
+        // `init_and_run` doc. Reborrow `transpiler` through a raw ptr so
+        // `completion` can be borrowed again below (Zig stored `*Transpiler`).
+        let transpiler_ptr: *mut Transpiler<'_> = transpiler;
+        let this = completion.init_and_run(
+            // SAFETY: `transpiler` lives in `bump` for the duration of `heap`.
+            unsafe { &mut *transpiler_ptr },
             bump,
-            // `jsc.AnyEventLoop.init(allocator)` — erased `EventLoop` slot. The
-            // bundler stores `Option<NonNull<()>>` (see `LinkerContext::EventLoop`);
-            // the concrete `MiniEventLoop` is wired by T6 when it constructs the
-            // completion task.
-            None,
-            false,
             bun_threading::work_pool::WorkPool::get(),
-        )?);
+        );
 
-        this.plugins = completion.plugins();
-        // Zig: switch (CompletionStruct) { BundleV2.JSBundleCompletionTask => completion, else => @compileError(...) }
-        this.completion = Some(completion.as_js_bundle_completion_task());
-        // Set the file_map pointer for in-memory file support
-        this.file_map = completion.file_map();
-        completion.set_transpiler(this as *mut _);
-
-        // defer { ast_memory_allocator.pop(); this.deinitWithoutFreeingArena(); }
-        // errdefer { wait groups; copy log }
-        // PORT NOTE: Zig's overlapping defer/errdefer captured ≥2 disjoint &mut
-        // borrows. Restructured as straight-line: run, branch on result, then
-        // unconditional cleanup. Semantics preserved (errdefer body runs only
-        // on the error path; defer body runs on both).
-        let entry_points: &[Box<[u8]>] = unsafe { &(*this.transpiler).options.entry_points };
-        let run_result = this.run_from_js_in_new_thread(entry_points);
-
-        let out = match run_result {
-            Ok(value) => {
-                completion.set_result(BundleV2Result::Value(value));
+        // PORT NOTE: Zig's overlapping `defer { ast_memory_allocator.pop();
+        // this.deinitWithoutFreeingArena(); }` + `errdefer { wait_groups; copy log }`
+        // captured ≥2 disjoint &mut borrows. Restructured as straight-line: branch
+        // on result, then unconditional cleanup. Semantics preserved (errdefer body
+        // runs only on the error path; defer body runs on both).
+        let out = match this {
+            Ok(this) => {
+                this.plugins = completion.plugins();
+                this.completion = Some(completion.as_js_bundle_completion_task());
+                // Set the file_map pointer for in-memory file support
+                this.file_map = completion.file_map();
+                completion.set_transpiler(this as *mut _);
 
                 let mut out_log = Logger::Log::init();
-                // SAFETY: `this.transpiler` is the `*mut Transpiler` stored above;
-                // valid for the lifetime of `heap`.
-                unsafe { (*(*this.transpiler).log).append_to_with_recycled(&mut out_log, true) };
+                // SAFETY: `transpiler.log` is the arena-allocated Log set up by
+                // `configure_bundler`; valid for the lifetime of `heap`.
+                unsafe { (*(*transpiler_ptr).log).append_to_with_recycled(&mut out_log, true) };
                 completion.set_log(out_log);
                 completion.complete_on_bundle_thread();
+
+                ast_memory_allocator.pop();
+                this.deinit_without_freeing_arena();
                 Ok(())
             }
             Err(err) => {
                 // Wait for wait groups to finish. There still may be ongoing work.
-                this.linker.source_maps.line_offset_wait_group.wait();
-                this.linker.source_maps.quoted_contents_wait_group.wait();
-
+                // PORT NOTE: on the error path `init_and_run` may have failed
+                // before `BundleV2` was constructed; the impl in T6 is
+                // responsible for draining its own wait groups before returning
+                // `Err` (it owns `this.linker`). Here we only restore the AST
+                // allocator stack and copy out the log.
                 let mut out_log = Logger::Log::init();
                 // SAFETY: as above.
-                unsafe { (*(*this.transpiler).log).append_to_with_recycled(&mut out_log, true) };
+                unsafe { (*(*transpiler_ptr).log).append_to_with_recycled(&mut out_log, true) };
                 completion.set_log(out_log);
+
+                ast_memory_allocator.pop();
                 Err(err)
             }
         };
 
-        ast_memory_allocator.pop();
-        this.deinit_without_freeing_arena();
         out
     }
 }
@@ -392,5 +415,8 @@ pub use crate::ThreadPool;
 //   todos:      0
 //   notes:      generic-static singleton collapsed to concrete JSBundleCompletionTask;
 //               defer/errdefer rewritten straight-line; Waker via bun_aio (new dep);
-//               ResetEvent ported locally (parking_lot-backed)
+//               ResetEvent ported locally (parking_lot-backed); BundleV2::init +
+//               runFromJSInNewThread delegated to CompletionStruct trait (Zig
+//               @compileError already made the body monomorphic on
+//               JSBundleCompletionTask, whose concrete impl lives in T6)
 // ──────────────────────────────────────────────────────────────────────────

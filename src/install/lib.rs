@@ -1694,6 +1694,33 @@ pub use dependency::Behavior;
 pub use lockfile::bun_lock as TextLockfile;
 pub use patch_install as patch;
 pub use bin::Bin;
+
+/// Stub-`Bin` → real-`Bin` bridge (reconciler-6). `lockfile_real::Package.bin`
+/// is typed as the inline stub `bin::Bin` (struct `Value`, all four payloads
+/// always populated), while `bin_real::Linker` consumes the real `bin_real::Bin`
+/// (union `Value`, tag-selected payload). CLI commands (`link`/`unlink`) need
+/// to feed `package.bin` into a `Linker`, so this conversion projects the
+/// active payload by tag. Removed once the two `Bin` structs unify.
+impl From<bin::Bin> for bin_real::Bin {
+    fn from(b: bin::Bin) -> Self {
+        let tag = match b.tag {
+            bin::Tag::None => bin_real::Tag::None,
+            bin::Tag::File => bin_real::Tag::File,
+            bin::Tag::NamedFile => bin_real::Tag::NamedFile,
+            bin::Tag::Dir => bin_real::Tag::Dir,
+            bin::Tag::Map => bin_real::Tag::Map,
+        };
+        let value = match b.tag {
+            bin::Tag::None => bin_real::Value::init_none(),
+            bin::Tag::File => bin_real::Value::init_file(b.value.file),
+            bin::Tag::NamedFile => bin_real::Value::init_named_file(b.value.named_file),
+            bin::Tag::Dir => bin_real::Value::init_dir(b.value.dir),
+            bin::Tag::Map => bin_real::Value::init_map(b.value.map),
+        };
+        bin_real::Bin { tag, _padding_tag: [0; 3], value }
+    }
+}
+
 pub use repository::Repository;
 pub use lockfile::{Lockfile, PatchedDep, LoadResult, LoadStep};
 pub use package_manager::Options::LogLevel;

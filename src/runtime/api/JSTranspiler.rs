@@ -1680,13 +1680,27 @@ impl JSTranspiler {
     }
 }
 
-#[allow(dead_code)]
-const _: fn() = || {
-    // keep PackageJSON import live for Phase-B `parse_macros_json` wiring
-    let _ = core::mem::size_of::<PackageJSON>();
-};
-
-} // mod _jsc_gated
+/// Heuristic used by the REPL: returns true if `code` starts with `{` (after
+/// whitespace) and doesn't end with `;` — i.e. should be wrapped in `()` to
+/// parse as an object literal rather than a block statement. Mirrors Node.js.
+pub fn is_likely_object_literal(code: &[u8]) -> bool {
+    // Skip leading whitespace
+    let mut start: usize = 0;
+    while start < code.len() && matches!(code[start], b' ' | b'\t' | b'\n' | b'\r') {
+        start += 1;
+    }
+    // Check if starts with {
+    if start >= code.len() || code[start] != b'{' {
+        return false;
+    }
+    // Skip trailing whitespace
+    let mut end: usize = code.len();
+    while end > 0 && matches!(code[end - 1], b' ' | b'\t' | b'\n' | b'\r') {
+        end -= 1;
+    }
+    // Check if ends with semicolon - if so, it's likely a block statement
+    !(end > 0 && code[end - 1] == b';')
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

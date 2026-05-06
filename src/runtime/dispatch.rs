@@ -322,39 +322,59 @@ pub fn run_task(
         }
 
         // ── glob / image / transpiler ────────────────────────────────────
+        // Zig: `defer t.deinit(); try t.runFromJS();` — `defer` runs after
+        // `try` whether it errored or not, so destroy unconditionally then
+        // propagate. `JsTerminated` tears down the VM, so the destroy ordering
+        // is observably equivalent.
         task_tag::AsyncGlobWalkTask => {
-            let _t = cast_ptr!(AsyncGlobWalkTask<'_>);
-            // Zig: `defer t.deinit(); try t.runFromJS();` — `?` short-circuits
-            // before `destroy` only on JsTerminated, which tears down the VM.
-            // `AsyncGlobWalkTask` is currently aliased to the zero-generic
-            // `ConcurrentPromiseTask` stub (see api/glob.rs); the real
-            // `run_from_js`/`destroy` are on the gated generic.
-            todo!("blocked_on: bun_jsc::ConcurrentPromiseTask<WalkTask>::run_from_js");
+            let t = cast_ptr!(AsyncGlobWalkTask<'_>);
+            // SAFETY: tag identifies pointee; Box::into_raw'd at schedule time.
+            let r = unsafe { (*t).run_from_js() };
+            // SAFETY: paired with `create_on_js_thread` Box::into_raw.
+            unsafe { AsyncGlobWalkTask::destroy(t) };
+            r?;
         }
         task_tag::AsyncImageTask => {
-            let _t = cast_ptr!(AsyncImageTask<'_>);
-            // Body: `defer t.deinit(); try t.runFromJS();`
-            todo!("blocked_on: crate::image::PipelineTask::run_from_js");
+            let t = cast_ptr!(AsyncImageTask<'_>);
+            // SAFETY: tag identifies pointee; Box::into_raw'd at schedule time.
+            let r = unsafe { (*t).run_from_js() };
+            // SAFETY: paired with `create_on_js_thread` Box::into_raw.
+            unsafe { AsyncImageTask::destroy(t) };
+            r?;
         }
         task_tag::AsyncTransformTask => {
-            let _t = cast_ptr!(AsyncTransformTask);
-            // Body: `defer t.deinit(); try t.runFromJS();`
-            todo!("blocked_on: bun_jsc::ConcurrentPromiseTask<TransformTask>::run_from_js");
+            let t = cast_ptr!(AsyncTransformTask<'_>);
+            // SAFETY: tag identifies pointee; Box::into_raw'd at schedule time.
+            let r = unsafe { (*t).run_from_js() };
+            // SAFETY: paired with `create_on_js_thread` Box::into_raw.
+            unsafe { AsyncTransformTask::destroy(t) };
+            r?;
         }
 
         // ── blob copy/read/write promise tasks ───────────────────────────
         task_tag::CopyFilePromiseTask => {
-            let _t = cast_ptr!(CopyFilePromiseTask);
-            // Body: `defer t.deinit(); try t.runFromJS();`
-            todo!("blocked_on: bun_jsc::ConcurrentPromiseTask<CopyFile>::run_from_js");
+            let t = cast_ptr!(CopyFilePromiseTask<'_>);
+            // SAFETY: tag identifies pointee; Box::into_raw'd at schedule time.
+            let r = unsafe { (*t).run_from_js() };
+            // SAFETY: paired with `create_on_js_thread` Box::into_raw.
+            unsafe { CopyFilePromiseTask::destroy(t) };
+            r?;
         }
         task_tag::ReadFileTask => {
-            // Body: `defer t.deinit(); try t.runFromJS();`
-            todo!("blocked_on: crate::webcore::blob::read_file::ReadFileTask");
+            let t = cast_ptr!(ReadFileTask);
+            // SAFETY: tag identifies pointee; Box::into_raw'd in WorkTask::create.
+            let r = bun_jsc::work_task::WorkTask::run_from_js(t);
+            // SAFETY: paired with `create_on_js_thread` Box::into_raw.
+            unsafe { bun_jsc::work_task::WorkTask::destroy(t) };
+            r?;
         }
         task_tag::WriteFileTask => {
-            // Body: `defer t.deinit(); try t.runFromJS();`
-            todo!("blocked_on: crate::webcore::blob::write_file::WriteFileTask");
+            let t = cast_ptr!(WriteFileTask);
+            // SAFETY: tag identifies pointee; Box::into_raw'd in WorkTask::create.
+            let r = bun_jsc::work_task::WorkTask::run_from_js(t);
+            // SAFETY: paired with `create_on_js_thread` Box::into_raw.
+            unsafe { bun_jsc::work_task::WorkTask::destroy(t) };
+            r?;
         }
 
         // ── napi ─────────────────────────────────────────────────────────
@@ -371,14 +391,11 @@ pub fn run_task(
         // ── JSC scheduler / module loader ────────────────────────────────
         task_tag::JSCDeferredWorkTask => {
             bun_jsc::mark_binding();
-            // Body: `cast!(JSCDeferredWorkTask).run()?;`
-            todo!("blocked_on: bun_jsc::jsc_scheduler::JSCDeferredWorkTask");
+            cast!(JSCDeferredWorkTask).run()?;
         }
         task_tag::PollPendingModulesTask => {
             // Zig: `virtual_machine.modules.onPoll()`.
-            // `vm.modules` is currently `()` in bun_jsc::VirtualMachine.
-            let _ = &vm.modules;
-            todo!("blocked_on: bun_jsc::VirtualMachine::modules (ModuleLoader::on_poll)");
+            vm.modules.on_poll();
         }
         task_tag::RuntimeTranspilerStore => {
             cast!(RuntimeTranspilerStore).run_from_js_thread(el, global, vm);
@@ -386,14 +403,13 @@ pub fn run_task(
 
         // ── hot-reload (Zig early-returns from the drain loop) ───────────
         task_tag::HotReloadTask => {
-            let _t = cast!(hot_reloader::HotReloadTask);
+            let t = cast!(hot_reloader::HotReloadTask);
             // Zig: `defer t.deinit(); t.run(); counter.* = 0; return;`.
-            // `deinit` here only resets the intrusive task state (no free).
-            // `HotReloadTask::{run,deinit}` require `Ctx: HotReloaderCtx`;
-            // `bun_jsc::VirtualMachineRef` doesn't implement it yet (gated).
-            todo!("blocked_on: bun_jsc::VirtualMachineRef: hot_reloader::HotReloaderCtx");
-            #[allow(unreachable_code)]
-            { return Ok(RunTaskResult::EarlyReturn); }
+            // `deinit` here only resets the intrusive `count` (no free) — the
+            // task buffer is reused by the next `append`.
+            t.run();
+            t.deinit();
+            return Ok(RunTaskResult::EarlyReturn);
         }
         task_tag::BakeHotReloadEvent => {
             BakeHotReloadEvent::run(cast!(BakeHotReloadEvent));

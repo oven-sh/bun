@@ -43,6 +43,16 @@ pub type JsHostFnZigWithContext<C> = fn(&mut C, &JSGlobalObject, &CallFrame) -> 
 pub type JsHostFunctionTypeWithContext<C> =
     unsafe extern "C" fn(*mut C, *mut JSGlobalObject, *mut CallFrame) -> JSValue;
 
+// Capitalized re-exports — Zig spells these `JSHostFn*` (acronym-caps); the
+// PORTING.md acronym rule lowercases to `Js…`, but enough call sites (and the
+// crate-root re-export in lib.rs) use the Zig spelling that both must resolve.
+#[allow(non_camel_case_types)]
+pub use {
+    JsHostFn as JSHostFn, JsHostFnZig as JSHostFnZig,
+    JsHostFnZigWithContext as JSHostFnZigWithContext,
+    JsHostFunctionTypeWithContext as JSHostFunctionTypeWithContext,
+};
+
 // ─────────────────────── comptime fn-wrapping → proc-macro ───────────────────────
 
 // Zig: `pub fn toJSHostFn(comptime functionToWrap: JSHostFnZig) JSHostFn`

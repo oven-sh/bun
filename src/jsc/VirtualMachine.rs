@@ -3861,9 +3861,8 @@ impl VirtualMachine {
                 // TODO(port): blocked_on `ZigStackTrace` stub — populate
                 // `holder.zig_exception().stack` via
                 // `Exception::get_stack_trace` and route through
-                // `print_stack_trace`. `crate::ZigStackTrace` is a `stub_ty!`
-                // opaque (no `frames_len`/`frames_ptr`) until B-2 un-gates the
-                // real `#[repr(C)]` definition.
+                // `print_stack_trace`. `crate::ZigStackTrace` field walk
+                // not yet ported here.
                 let _ = (global_ref, allow_ansi_color);
             }
         }
@@ -3997,9 +3996,8 @@ impl VirtualMachine {
         trace: &crate::ZigStackTrace,
         allow_ansi_colors: bool,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): blocked_on `ZigStackTrace`/`ZigStackFrame` stub — both
-        // are `stub_ty!` opaques (no `frames()`/`.position`/`.source_url`).
-        // real `#[repr(C)]` types land.
+        // TODO(port): `ZigStackTrace`/`ZigStackFrame` per-frame walk —
+        // body not yet ported (matches Zig :2720).
         let _ = (writer, trace, allow_ansi_colors);
         return Ok(());
         {
@@ -4093,9 +4091,8 @@ impl VirtualMachine {
         // the same source); port the straightforward per-frame resolve and
         // leave the cache as `// PERF(port)`.
         //
-        // TODO(port): blocked_on `ZigStackFrame` stub — `.position` /
-        // `.remapped` / `.source_url` are unavailable on the `stub_ty!`
-        // real `#[repr(C)]` type lands.
+        // TODO(port): per-frame `.position` / `.remapped` / `.source_url`
+        // remap — body not yet ported (matches Zig :2808).
         let _ = (frames, frames_count, &mut table_locked);
         {
         // SAFETY: caller passes `frames_count` valid `ZigStackFrame`s.
@@ -4168,8 +4165,7 @@ impl VirtualMachine {
         // The frame-remap step is shared with `remap_stack_frame_positions`;
         // delegate to it for the position rewrite.
         //
-        // TODO(port): blocked_on `ZigStackTrace` stub — no
-        // `frames_ptr`/`frames_len` on the `stub_ty!` opaque.
+        // TODO(port): `ZigStackTrace` frame walk — body not yet ported.
         // self.remap_stack_frame_positions(exception.stack.frames_ptr,
         //     exception.stack.frames_len as usize);
         let _ = &exception.stack;

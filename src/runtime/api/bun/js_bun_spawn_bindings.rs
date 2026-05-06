@@ -176,11 +176,66 @@ fn sys_system_error_to_js(err: bun_sys::SystemError, global: &JSGlobalObject) ->
     jsc_err.to_error_instance(global)
 }
 
-/// `Terminal.CreateResult` — full struct gated behind `bun_terminal_body`. Stub
-/// the shape used by `spawn_maybe_sync` so the parsing path type-checks.
+/// `Terminal.CreateResult` — local mirror that erases `IntrusiveRc<Terminal>`
+/// to the opaque `*mut Terminal` used by `Subprocess.terminal`, so the
+/// scopeguard / field-assignment paths share one pointer type with
+/// `existing_terminal`.
 pub struct TerminalCreateResult {
     pub terminal: *mut Terminal,
     pub js_value: JSValue,
+}
+
+/// Project the opaque `*mut Terminal` (forward-declared in
+/// `crate::api::bun::terminal`) back to the concrete `bun_terminal_body::Terminal`.
+///
+/// # Safety
+/// `ptr` must have originated from `bun_terminal_body::Terminal` (either via
+/// `js::from_js` or `CreateResult.terminal.into_raw()`).
+#[inline]
+unsafe fn terminal_impl<'a>(ptr: *mut Terminal) -> &'a mut TerminalImpl {
+    // SAFETY: caller contract; the opaque `Terminal(())` is a layering forward
+    // declaration for `bun_terminal_body::Terminal` and every producer in this
+    // file casts from that concrete type.
+    unsafe { &mut *ptr.cast::<TerminalImpl>() }
+}
+
+// ── IPC owner vtable for Subprocess ─────────────────────────────────────────
+// Mirrors `IPCINSTANCE_OWNER_VTABLE` in `bun_jsc::VirtualMachine`; lives here
+// because `Subprocess` is a `bun_runtime` type and `bun_jsc::ipc` (tier-5) only
+// sees the erased `*mut c_void` + fn-pointer dispatch.
+static SUBPROCESS_IPC_OWNER_VTABLE: IPC::SendQueueOwnerVTable = IPC::SendQueueOwnerVTable {
+    global_this: |ptr| {
+        // SAFETY: `ptr` was set from a live `*mut Subprocess<'static>` in
+        // `subprocess_ipc_owner` below; the SendQueue is stored inline in
+        // `Subprocess.ipc_data` and dropped before the Subprocess is freed.
+        unsafe { (*ptr.cast::<SubprocessT<'static>>()).global_this() as *const JSGlobalObject }
+    },
+    handle_ipc_close: |ptr| {
+        // SAFETY: see `global_this`.
+        unsafe { (*ptr.cast::<SubprocessT<'static>>()).handle_ipc_close() }
+    },
+    handle_ipc_message: |ptr, msg, handle| {
+        // SAFETY: see `global_this`.
+        unsafe { (*ptr.cast::<SubprocessT<'static>>()).handle_ipc_message(msg, handle) }
+    },
+    this_jsvalue: |ptr| {
+        // SAFETY: see `global_this`.
+        unsafe {
+            (*ptr.cast::<SubprocessT<'static>>())
+                .this_value
+                .try_get()
+                .unwrap_or(JSValue::ZERO)
+        }
+    },
+};
+
+#[inline]
+fn subprocess_ipc_owner(ptr: *mut SubprocessT<'_>) -> IPC::SendQueueOwner {
+    IPC::SendQueueOwner {
+        ptr: ptr.cast(),
+        kind: IPC::SendQueueOwnerKind::Subprocess,
+        vtable: &SUBPROCESS_IPC_OWNER_VTABLE,
+    }
 }
 
 /// Obtain `&mut Process` from `ManuallyDrop<Arc<Process>>`. Zig stores
@@ -421,6 +476,10 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     let mut override_env = false;
     let mut env_array: Vec<Option<*const c_char>> = Vec::new();
+    // Backing storage for the inherited-env path (`!override_env`). Zig used a
+    // bump arena freed at function exit; here the owning struct keeps the
+    // `K=V\0` buffers alive for as long as `env_array` borrows their pointers.
+    let mut inherited_env_storage: Option<bun_dotenv::NullDelimitedEnvMap> = None;
     // SAFETY: `bun_vm()` returns the live VirtualMachine for this thread; it
     // outlives this call frame.
     let jsc_vm: &mut jsc::VirtualMachineRef = unsafe { &mut *global_this.bun_vm() };
@@ -477,11 +536,12 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             // Downgrade the JSRef so the wrapper is GC-eligible, and mark
             // finalized so onReaderDone skips the JS exit callback — the user
             // never received this terminal (spawn threw).
-            if let Some(_info) = terminal_info.take() {
-                // TODO(port): Terminal body is gated; teardown (`this_value.downgrade()`,
-                // `flags.finalized = true`, `close_internal()`) lands once
-                // `bun_terminal_body` is un-gated.
-                let _ = _info;
+            if let Some(info) = terminal_info.take() {
+                // SAFETY: `info.terminal` is the `IntrusiveRc<Terminal>` leaked
+                // via `into_raw()` when `terminal_info` was populated below;
+                // `abandon_from_spawn` is the spawn-side error-path teardown
+                // (downgrade JSRef, mark finalized, close_internal).
+                unsafe { terminal_impl(info.terminal) }.abandon_from_spawn();
             }
         },
     );

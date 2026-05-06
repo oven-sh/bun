@@ -173,7 +173,6 @@ impl AnyBlobExt for blob::Any {
 trait HTTPRequestBodyExt {
     fn any_blob(&self) -> &blob::Any;
     fn sendfile_mut(&mut self) -> &mut http::SendFile;
-    fn clone_ref(&self) -> HTTPRequestBody;
 }
 impl HTTPRequestBodyExt for HTTPRequestBody {
     fn any_blob(&self) -> &blob::Any {
@@ -187,12 +186,6 @@ impl HTTPRequestBodyExt for HTTPRequestBody {
             HTTPRequestBody::Sendfile(sf) => sf,
             _ => unreachable!("HTTPRequestBody::sendfile_mut() on non-Sendfile"),
         }
-    }
-    fn clone_ref(&self) -> HTTPRequestBody {
-        // PORT NOTE: Zig `http_body = body` was a shallow struct copy that bumped
-        // refcounts where the union arm is refcounted. AnyBlob/ReadableStream are
-        // not yet `Clone` here.
-        todo!("blocked_on: HTTPRequestBody::clone_ref (shallow refcount-bumping copy)")
     }
 }
 
@@ -279,33 +272,43 @@ pub fn bun_fetch_preconnect(
     }
 
     // PORT NOTE: bun.handleOom(url_str.toOwnedSlice(...)) → to_owned_slice() aborts on OOM.
-    let href = url_str.to_owned_slice();
-    let url = ZigURL::parse(&href);
+    // `preconnect` takes a `URL<'static>` that borrows a `Box<[u8]>` href and
+    // assumes ownership when `is_url_owned == true` (it reconstructs the Box
+    // to free it). Hand the allocation off via `Box::into_raw`.
+    let href_box: Box<[u8]> = url_str.to_owned_slice().into_boxed_slice();
+    let href_raw: *mut [u8] = Box::into_raw(href_box);
+    // SAFETY: `href_raw` is a freshly-leaked Box<[u8]>; we either pass ownership
+    // to `preconnect` (which frees it) or reclaim it on the early-return paths.
+    let href: &'static [u8] = unsafe { &*href_raw };
+    let url = ZigURL::parse(href);
+
+    macro_rules! reclaim_href {
+        () => {
+            // SAFETY: paired with the `Box::into_raw` above; not yet handed to preconnect.
+            drop(unsafe { Box::from_raw(href_raw) });
+        };
+    }
+
     if !url.is_http() && !url.is_https() && !url.is_s3() {
-        drop(href);
+        reclaim_href!();
         return Err(global_object.throw_invalid_arguments(format_args!("URL must be HTTP or HTTPS")));
     }
 
     if url.hostname.is_empty() {
-        drop(href);
+        reclaim_href!();
         return Err(global_object
             .err(jsc::ErrorCode::INVALID_ARG_TYPE, format_args!("{}", FETCH_ERROR_BLANK_URL))
             .throw());
     }
 
     if !url.has_valid_port() {
-        drop(href);
+        reclaim_href!();
         return Err(global_object.throw_invalid_arguments(format_args!("Invalid port")));
     }
 
-    // TODO(port): lifetime — `url` borrows `href`; preconnect(url, true) takes ownership of href.
-    // PORT NOTE: `preconnect` is a free fn in `bun_http::async_http`, not an `AsyncHTTP` method.
-    {
-        let _ = url;
-        let _ = href;
-        todo!("blocked_on: bun_http::async_http::preconnect (URL<'static> lifetime)")
-    };
-    #[allow(unreachable_code)]
+    // PORT NOTE: `preconnect` is a free fn in `bun_http::async_http`. Ownership
+    // of `href_raw` transfers here (`is_url_owned: true`).
+    http::async_http::preconnect(url, true);
     Ok(JSValue::UNDEFINED)
 }
 

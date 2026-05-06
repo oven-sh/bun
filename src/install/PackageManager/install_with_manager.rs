@@ -511,9 +511,9 @@ pub fn install_with_manager(
                                     manager.patched_dependencies_to_remove.insert(*key, ());
                                 }
                             }
-                            let to_remove: Vec<u64> = manager.patched_dependencies_to_remove.keys().copied().collect();
+                            let to_remove: Vec<u64> = manager.patched_dependencies_to_remove.keys().to_vec();
                             for hash in to_remove {
-                                let _ = manager.lockfile.patched_dependencies.shift_remove(&hash);
+                                let _ = manager.lockfile.patched_dependencies.ordered_remove(&hash);
                             }
                         }
                     }
@@ -656,7 +656,7 @@ pub fn install_with_manager(
             let _ = manager.get_temporary_directory();
         }
         {
-            let keys: Vec<u64> = manager.lockfile.patched_dependencies.keys().copied().collect();
+            let keys: Vec<u64> = manager.lockfile.patched_dependencies.keys().to_vec();
             let mgr: *mut PackageManager = manager;
             for key in keys {
                 manager.enqueue_patch_task_pre(PatchTask::new_calc_patch_hash(mgr, key, None));
@@ -665,7 +665,7 @@ pub fn install_with_manager(
         manager.enqueue_dependency_list(root.dependencies);
     } else {
         {
-            let keys: Vec<u64> = manager.lockfile.patched_dependencies.keys().copied().collect();
+            let keys: Vec<u64> = manager.lockfile.patched_dependencies.keys().to_vec();
             let mgr: *mut PackageManager = manager;
             for key in keys {
                 manager.enqueue_patch_task_pre(PatchTask::new_calc_patch_hash(mgr, key, None));
@@ -957,11 +957,13 @@ pub fn install_with_manager(
         loop {
             match linker {
                 NodeLinker::Auto => match config_version {
-                    ConfigVersion::V0 => {
+                    // `None` only when no lockfile loaded; treat as v0 (Zig
+                    // `chooseConfigVersion` always returns a concrete enum).
+                    None | Some(ConfigVersion::V0) => {
                         linker = NodeLinker::Hoisted;
                         continue;
                     }
-                    ConfigVersion::V1 => {
+                    Some(ConfigVersion::V1) => {
                         if !load_result.migrated_from_npm() && manager.lockfile.workspace_paths.len() > 0 {
                             linker = NodeLinker::Isolated;
                             continue;
@@ -1073,7 +1075,7 @@ pub fn install_with_manager(
     }
 
     if manager.options.do_.run_scripts && install_root_dependencies && !manager.options.global {
-        if let Some(scripts) = &manager.root_lifecycle_scripts {
+        if let Some(scripts) = manager.root_lifecycle_scripts.take() {
             if cfg!(debug_assertions) {
                 debug_assert!(scripts.total > 0);
             }
@@ -1086,6 +1088,10 @@ pub fn install_with_manager(
             // have finished, and lockfiles have been saved
             let optional = false;
             let output_in_foreground = true;
+            // PORT NOTE: Zig passes `scripts.*` (deref-copy of the List).
+            // `spawn_package_lifecycle_scripts` consumes by-value; `.take()`
+            // moves it out (Zig only frees `package_name` afterwards, which is
+            // owned by the List in Rust and drops with it).
             manager.spawn_package_lifecycle_scripts(ctx, scripts, optional, output_in_foreground, None)?;
 
             // .monotonic is okay because at this point, this value is only accessed from this
@@ -1156,6 +1162,7 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
                 on_package_manifest_error: (),
                 on_package_download_error: (),
                 progress_bar: true,
+                manifests_only: false,
             },
             CHECK_PEERS,
             log_level,
@@ -1396,7 +1403,7 @@ pub fn get_workspace_filters(
         let abs_root_path: &[u8] = 'abs_root_path: {
             #[cfg(not(windows))]
             {
-                break 'abs_root_path strings::without_trailing_slash(FileSystem::instance().top_level_dir);
+                break 'abs_root_path strings::without_trailing_slash(FileSystem::instance().top_level_dir());
             }
 
             #[cfg(windows)]

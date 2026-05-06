@@ -107,7 +107,7 @@ static FETCH_HEADERS_VTABLE: bun_http::headers::FetchHeadersVTable =
     };
 
 #[inline]
-pub(super) fn fetch_headers_ref(h: &FetchHeaders) -> bun_http::headers::FetchHeadersRef<'_> {
+fn fetch_headers_ref(h: &FetchHeaders) -> bun_http::headers::FetchHeadersRef<'_> {
     bun_http::headers::FetchHeadersRef {
         owner: h as *const FetchHeaders as *const (),
         vtable: &FETCH_HEADERS_VTABLE,
@@ -153,31 +153,6 @@ fn append_etag_to_headers(bytes: &[u8], headers: &mut Headers) {
         40 - cursor.len()
     };
     headers.append(b"etag", &etag_buf[..len]);
-}
-
-/// `bun_uws::AnyRequest` only exposes `header()`; add the rest here as a local
-/// extension trait dispatching to the underlying `uws_sys` request types.
-trait AnyRequestExt {
-    fn set_yield(&mut self, y: bool);
-    fn method(&self) -> &[u8];
-}
-
-impl AnyRequestExt for AnyRequest {
-    fn set_yield(&mut self, y: bool) {
-        // SAFETY: variant pointers are non-null FFI handles owned by uWS for
-        // the duration of the request callback (see `AnyRequest::header`).
-        match self {
-            AnyRequest::H1(r) => unsafe { (**r).set_yield(y) },
-            AnyRequest::H3(r) => unsafe { (**r).set_yield(y) },
-        }
-    }
-    fn method(&self) -> &[u8] {
-        // SAFETY: see `set_yield`.
-        match self {
-            AnyRequest::H1(r) => unsafe { (**r).method() },
-            AnyRequest::H3(r) => unsafe { (**r).method() },
-        }
-    }
 }
 
 // ─── blocked shims (duplicate inherent methods upstream) ─────────────────────

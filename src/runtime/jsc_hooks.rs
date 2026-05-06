@@ -804,6 +804,38 @@ unsafe fn print_exception(
     todo!("blocked_on: bun_jsc::console_object::Formatter (print_exception hook body)")
 }
 
+/// `vm.timer.insert(timer)` — Spec Timer.zig `All.insert`. The heap lives in
+/// [`RuntimeState::timer`]; low-tier callers (`AbortSignal::Timeout`) reach it
+/// through this slot.
+///
+/// # Safety
+/// `_vm` is the live per-thread VM (unused — `runtime_state()` recovers the
+/// same thread's `Timer::All`); `t` points at a live unlinked `EventLoopTimer`.
+unsafe fn timer_insert(
+    _vm: *mut VirtualMachine,
+    t: *mut bun_event_loop::EventLoopTimer::EventLoopTimer,
+) {
+    let state = runtime_state();
+    debug_assert!(!state.is_null(), "timer_insert before init_runtime_state");
+    // SAFETY: per fn contract; `Timer::All::insert` takes its own lock and
+    // re-derefs `t` per-field (no aliased `&mut` held across the call).
+    unsafe { (*state).timer.insert(t) };
+}
+
+/// `vm.timer.remove(timer)` — counterpart to [`timer_insert`].
+///
+/// # Safety
+/// `t` points at a live `EventLoopTimer` currently linked into the heap.
+unsafe fn timer_remove(
+    _vm: *mut VirtualMachine,
+    t: *mut bun_event_loop::EventLoopTimer::EventLoopTimer,
+) {
+    let state = runtime_state();
+    debug_assert!(!state.is_null(), "timer_remove before init_runtime_state");
+    // SAFETY: per fn contract.
+    unsafe { (*state).timer.remove(t) };
+}
+
 /// The static `RuntimeHooks` instance handed to `bun_jsc`.
 pub static RUNTIME_HOOKS_INSTANCE: RuntimeHooks = RuntimeHooks {
     init_runtime_state,
@@ -814,6 +846,8 @@ pub static RUNTIME_HOOKS_INSTANCE: RuntimeHooks = RuntimeHooks {
     auto_tick,
     auto_tick_active,
     print_exception,
+    timer_insert,
+    timer_remove,
 };
 
 // ════════════════════════════════════════════════════════════════════════════

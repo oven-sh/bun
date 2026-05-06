@@ -134,18 +134,22 @@ impl JSValueDnsExt for JSValue {
 #[inline]
 pub(crate) fn global_resolver_mut(global_this: &JSGlobalObject) -> &mut Resolver {
     let vm_ptr = global_this.bun_vm();
+    // PORT NOTE: reshaped for borrowck — `GlobalData::init` needs
+    // `&VirtualMachine` while `rare_data()` needs `&mut VirtualMachine`. Read
+    // the slot, drop the borrow, init if empty, then re-acquire the slot to
+    // store. The two `&mut *vm_ptr` derefs are sequenced (no overlap).
     // SAFETY: `bun_vm()` returns the live VM back-ptr; RareData is owned by it
     // and outlives this call.
-    let vm = unsafe { &mut *vm_ptr };
-    let slot = vm.rare_data().global_dns_data_slot();
-    let data: *mut GlobalData = match *slot {
+    let existing = *unsafe { &mut *vm_ptr }.rare_data().global_dns_data_slot();
+    let data: *mut GlobalData = match existing {
         Some(nn) => nn.as_ptr().cast::<GlobalData>(),
         None => {
-            // SAFETY: re-derive `&VirtualMachine` from `vm_ptr` rather than
-            // reborrowing through `vm` (still mutably borrowed via `slot`).
+            // SAFETY: `vm_ptr` is live; the prior `&mut` borrow ended above.
             let gd = Box::into_raw(GlobalData::init(unsafe { &*vm_ptr }));
-            // SAFETY: `gd` was just `Box::into_raw`'d (non-null).
-            *slot = Some(unsafe { NonNull::new_unchecked(gd.cast::<c_void>()) });
+            // SAFETY: `vm_ptr` is live; re-acquire the slot to publish `gd`.
+            *unsafe { &mut *vm_ptr }.rare_data().global_dns_data_slot() =
+                // SAFETY: `gd` was just `Box::into_raw`'d (non-null).
+                Some(unsafe { NonNull::new_unchecked(gd.cast::<c_void>()) });
             // SAFETY: `gd` points to a live, freshly-allocated GlobalData.
             unsafe { (*gd).resolver.ref_() }; // live forever
             gd

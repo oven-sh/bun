@@ -8,8 +8,6 @@ use core::cell::Cell;
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, SystemError};
 use bun_output::{declare_scope, scoped_log};
-#[allow(unused_imports)]
-use bun_ptr::IntrusiveRc;
 use bun_str::String as BunString;
 
 use crate::node::{ErrorCode, StringOrBuffer};
@@ -22,9 +20,11 @@ declare_scope!(ResumableSink, visible);
 
 /// Trait capturing the codegen'd JS-side accessors for a ResumableSink class
 /// (e.g. `jsc.Codegen.JSResumableFetchSink`).
-// TODO(port): this models the Zig `comptime js: type` param which carries the
-// codegen module's static fns. Phase B should replace with the actual
-// `#[bun_jsc::JsClass]` derive output once codegen emits Rust.
+///
+/// Models the Zig `comptime js: type` param, which carries a codegen module
+/// (a bag of free fns) by value. Rust generics carry types, not modules, so
+/// each monomorphization implements this trait by delegating to the matching
+/// `bun_jsc::generated::JS*` module — see [`impl_resumable_sink_js!`] below.
 pub trait ResumableSinkJs {
     fn to_js(this: *mut (), global: &JSGlobalObject) -> JSValue;
     fn from_js(value: JSValue) -> Option<*mut ()>;
@@ -70,9 +70,6 @@ pub struct ResumableSink<'a, Js: ResumableSinkJs, Context: ResumableSinkContext>
 }
 
 impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<'a, Js, Context> {
-    // TODO(port): `pub const new = bun.TrivialNew(@This())` — IntrusiveRc::new / Box::into_raw
-    // pattern; the codegen `m_ctx` owns the allocation.
-
     #[inline]
     fn set_cancel(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
         Js::oncancel_set_cached(this_value, global, value);
@@ -135,8 +132,8 @@ impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<'a, J
         context: *mut Context,
         ref_count: u32,
     ) -> *mut Self {
-        // TODO(port): bun.TrivialNew — allocate via IntrusiveRc / Box::into_raw so
-        // ref/deref + finalize can free it.
+        // `bun.TrivialNew(@This())` — heap-allocate via the global mimalloc;
+        // `Self::deref_` reclaims via `Box::from_raw` when the count hits 0.
         let this: *mut Self = Box::into_raw(Box::new(Self {
             ref_count: Cell::new(ref_count),
             js_this: JsRef::empty(),

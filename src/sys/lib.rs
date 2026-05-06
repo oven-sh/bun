@@ -4828,7 +4828,7 @@ impl Dir {
         let z = unsafe { ZStr::from_raw(buf.0.as_ptr(), len) };
         match mkdirat(self.fd, z, 0o755) {
             Ok(()) => Ok(()),
-            Err(e) if e.get_errno() == E::EXIST => Err(bun_core::err!("PathAlreadyExists")),
+            Err(e) if e.get_errno() == E::EEXIST => Err(bun_core::err!("PathAlreadyExists")),
             Err(e) => Err(e.into()),
         }
     }

@@ -49,19 +49,68 @@ impl<'a> Default for InitOptions<'a> {
     }
 }
 
-// ─── Headers::from cycle-break adapter ───────────────────────────────────────
+// ─── Headers::from cycle-break adapters ──────────────────────────────────────
 // `Headers::from` lives in bun_http (T5) and takes vtable-erased refs because
-// it cannot depend on bun_runtime. Reuse the `FetchHeaders` / `AnyBlob` vtables
-// from `static_route` and wrap a bare `Blob` as `AnyBlob::Blob` for the body.
+// it cannot depend on bun_runtime. Provide the vtables for the concrete
+// `FetchHeaders` / `Blob` types here.
+
+unsafe fn fh_count(owner: *const (), header_count: &mut u32, buf_len: &mut u32) {
+    // SAFETY: `owner` is `&FetchHeaders` erased; `count` mutates only internal
+    // scratch state on the C++ side, hence the const→mut cast.
+    unsafe { (*(owner as *mut FetchHeaders)).count(header_count, buf_len) }
+}
+unsafe fn fh_fast_has(owner: *const (), _name: bun_http::headers::HeaderName) -> bool {
+    // SAFETY: see `fh_count`. Only ever called with HeaderName::ContentType
+    // (see Headers::from).
+    unsafe { (*(owner as *mut FetchHeaders)).fast_has(bun_jsc::HTTPHeaderName::ContentType) }
+}
+unsafe fn fh_copy_to(
+    owner: *const (),
+    names: *mut StringPointer,
+    values: *mut StringPointer,
+    buf: *mut u8,
+) {
+    // SAFETY: see `fh_count`. `bun_http_types::ETag::StringPointer` and
+    // `bun_string::StringPointer` are both `#[repr(C)] {u32,u32}`.
+    unsafe { (*(owner as *mut FetchHeaders)).copy_to(names.cast(), values.cast(), buf) }
+}
+
+static FETCH_HEADERS_VTABLE: bun_http::headers::FetchHeadersVTable =
+    bun_http::headers::FetchHeadersVTable {
+        count: fh_count,
+        fast_has: fh_fast_has,
+        copy_to: fh_copy_to,
+    };
+
+unsafe fn blob_has_content_type_from_user(owner: *const ()) -> bool {
+    // SAFETY: `owner` is `&Blob` erased.
+    unsafe { (*(owner as *const Blob)).has_content_type_from_user() }
+}
+unsafe fn blob_content_type(owner: *const ()) -> (*const u8, usize) {
+    // SAFETY: `owner` is `&Blob` erased; the returned slice borrows blob
+    // storage that outlives the `AnyBlobRef`.
+    let s = unsafe { (*(owner as *const Blob)).content_type() };
+    (s.as_ptr(), s.len())
+}
+
+static BLOB_VTABLE: bun_http::headers::AnyBlobVTable = bun_http::headers::AnyBlobVTable {
+    has_content_type_from_user: blob_has_content_type_from_user,
+    content_type: blob_content_type,
+};
+
+/// Zig: `Headers.from(opts.headers, allocator, .{ .body = &.{ .Blob = blob } })`.
 fn headers_from_blob(fetch_headers: Option<&FetchHeaders>, blob: &Blob) -> Headers {
-    // PORT NOTE: Zig passed `&.{ .Blob = blob }` (an `AnyBlob` literal). Build
-    // the wrapper on the stack; `AnyBlobRef` only borrows it for the duration
-    // of `Headers::from`. `dupe()` is a shallow refcount-bump clone.
-    let any = AnyBlob::Blob(blob.dupe());
-    Headers::from(
-        fetch_headers.map(fetch_headers_ref),
-        HeadersFromOptions { body: Some(any_blob_ref(&any)) },
-    )
+    let body_ref = bun_http::headers::AnyBlobRef {
+        owner: blob as *const Blob as *const (),
+        vtable: &BLOB_VTABLE,
+        _phantom: core::marker::PhantomData,
+    };
+    let headers_ref = fetch_headers.map(|h| bun_http::headers::FetchHeadersRef {
+        owner: h as *const FetchHeaders as *const (),
+        vtable: &FETCH_HEADERS_VTABLE,
+        _phantom: core::marker::PhantomData,
+    });
+    Headers::from(headers_ref, HeadersFromOptions { body: Some(body_ref) })
 }
 
 impl FileRoute {

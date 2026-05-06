@@ -4333,7 +4333,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     let mut decls = G::DeclList::default();
                     decls
                         .append(Decl {
-                            binding: self.b(js_ast::b::Identifier { ref_ }, local.loc),
+                            binding: self.b(js_ast::b::Identifier { r#ref: ref_ }, local.loc),
                             value: None,
                         })
                         .expect("oom");
@@ -4349,22 +4349,19 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             let final_stmts = part_stmts.into_bump_slice();
 
             parts.push(js_ast::Part {
-                stmts: final_stmts as *mut [Stmt],
+                stmts: final_stmts as *const [Stmt] as *mut [Stmt],
                 symbol_uses: core::mem::take(&mut self.symbol_uses),
                 import_symbol_property_uses: core::mem::take(&mut self.import_symbol_property_uses),
                 declared_symbols: self.declared_symbols.to_owned_slice(),
-                // SAFETY: bump-slice wrapped Borrowed; never grown after this point.
-                import_record_indices: unsafe {
-                    BabyList::<u32>::from_bump_slice(
-                        core::mem::replace(
-                            &mut self.import_records_for_current_part,
-                            BumpVec::new_in(self.allocator),
-                        )
-                        .into_bump_slice(),
-                    )
+                import_record_indices: {
+                    let v = core::mem::replace(
+                        &mut self.import_records_for_current_part,
+                        BumpVec::new_in(self.allocator),
+                    );
+                    BabyList::<u32>::from_owned_slice(v.as_slice().to_vec().into_boxed_slice())
                 },
                 scopes: core::mem::replace(&mut self.scopes_for_current_part, BumpVec::new_in(self.allocator))
-                    .into_bump_slice() as *mut [*mut js_ast::Scope],
+                    .into_bump_slice() as *const [*mut js_ast::Scope] as *mut [*mut js_ast::Scope],
                 can_be_removed_if_unused: self.stmts_can_be_removed_if_unused(final_stmts),
                 tag: if self.had_commonjs_named_exports_this_visit {
                     crate::PartTag::CommonjsNamedExport
@@ -7340,7 +7337,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             import_items_for_namespace: Default::default(),
             is_import_item: Default::default(),
             import_namespace_cc_map: Default::default(),
-            scope_order_to_visit: &mut [],
+            scope_order_to_visit: allocator.alloc_slice_copy(&[]),
             module_scope_directive_loc: logger::Loc::default(),
             is_control_flow_dead: false,
             is_revisit_for_substitution: false,

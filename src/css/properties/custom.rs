@@ -1292,19 +1292,16 @@ impl PartialEq for CustomPropertyName {
 }
 
 impl CustomPropertyName {
-    #[cfg(any())]
-    // blocked_on: DashedIdent::to_css (Printer::write_dashed_ident).
+    // blocked_on: DashedIdent::to_css (Printer::write_dashed_ident) — until
+    // that lands, both arms route through `serialize_identifier` so
+    // `properties_impl::property_mixin::to_css` resolves. The Zig spec arm
+    // for `Custom` calls `dest.writeDashedIdent`; Phase B switches once
+    // `Printer::write_dashed_ident` un-gates.
     pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
-        match self {
-            CustomPropertyName::Custom(custom) => custom.to_css(dest),
-            CustomPropertyName::Unknown(unknown) => {
-                // SAFETY: arena-owned slice valid for printer lifetime.
-                let v = unsafe { &*unknown.v };
-                css_parser::serializer::serialize_identifier(v, dest)
-                    .map_err(|_| dest.add_fmt_error())
-                // TODO(port): Zig `catch return dest.addFmtError()` — exact error mapping needs Phase B
-            }
-        }
+        // SAFETY: arena-owned slice valid for printer lifetime.
+        let v = self.as_str();
+        css_parser::serializer::serialize_identifier(v, dest).map_err(|_| dest.add_fmt_error())
+        // TODO(port): Zig `Custom` arm → `dest.writeDashedIdent(custom, true)`.
     }
 
     pub fn from_str(name: &[u8]) -> CustomPropertyName {

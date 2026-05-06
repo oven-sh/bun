@@ -595,6 +595,7 @@ pub struct SymbolUse {
 /// `js_ast.Symbol.{List,NestedList,Map}` — exposed as `bun_logger::symbol` so css's
 /// `bun_logger::symbol::{Map, List}` forward-refs resolve.
 pub mod symbol {
+    use core::cell::UnsafeCell;
     #[allow(unused_imports)]
     use super::{BabyList, Ref, Symbol};
 
@@ -602,13 +603,22 @@ pub mod symbol {
     pub type NestedList = BabyList<List>;
 
     /// Two-level array indexed by `(source_index, inner_index)`. See comment on `Ref`.
+    ///
+    /// `symbols_for_source` is wrapped in `UnsafeCell` so the accessors below can
+    /// hand out write-capable raw pointers through `&self` (matching Zig's
+    /// `*const Map` + interior mutation) without violating Stacked Borrows
+    /// provenance. See PORTING.md §Forbidden patterns: aliased-`&mut`.
     pub struct Map {
-        pub symbols_for_source: NestedList,
+        pub symbols_for_source: UnsafeCell<NestedList>,
     }
+
+    // SAFETY: the symbol table is single-owner per parse and never shared across
+    // threads concurrently; `UnsafeCell` only opts out of the auto-`Sync` impl.
+    unsafe impl Sync for Map where NestedList: Sync {}
 
     impl Map {
         pub fn init_list(list: NestedList) -> Map {
-            Map { symbols_for_source: list }
+            Map { symbols_for_source: UnsafeCell::new(list) }
         }
 
         pub fn init_with_one_list(list: List) -> Map {
@@ -616,41 +626,64 @@ pub mod symbol {
             // PERF(port): Zig used `fromBorrowedSliceDangerous((&list)[0..1])` (no alloc).
             // BabyList::append owns; revisit if this shows up in profiles.
             let _ = nested.append(list);
-            Map { symbols_for_source: nested }
+            Map { symbols_for_source: UnsafeCell::new(nested) }
         }
 
-        pub fn get(&self, r: Ref) -> Option<&mut Symbol> {
+        /// Raw-pointer lookup. Never materializes a `&mut` along the path so
+        /// multiple live `*mut Symbol` derived from the same `&self` do not
+        /// alias under Stacked Borrows. All mutation goes through this.
+        #[inline]
+        fn get_ptr(&self, r: Ref) -> Option<*mut Symbol> {
             if Ref::is_source_index_null(r.source_index()) || r.is_source_contents_slice() {
                 return None;
             }
-            // SAFETY: matches Zig's `.mut(ref.innerIndex())` on a `*const Map` —
-            // the symbol table is single-owner per parse and never aliased across
-            // threads. TODO(port): tighten to `&mut self` once callers are ported.
+            let src = r.source_index() as usize;
+            let inner = r.inner_index() as usize;
+            // SAFETY: write provenance comes from `UnsafeCell::get`. We index via
+            // the BabyList raw `ptr` fields directly (no intermediate `&mut`).
             unsafe {
-                let nested = &mut *(core::ptr::addr_of!(self.symbols_for_source)
-                    as *mut NestedList);
-                Some(nested.mut_(r.source_index() as usize).mut_(r.inner_index() as usize))
+                let nested: *mut NestedList = self.symbols_for_source.get();
+                debug_assert!(src < (*nested).len as usize);
+                let list: *mut List = (*nested).ptr.as_ptr().add(src);
+                debug_assert!(inner < (*list).len as usize);
+                Some((*list).ptr.as_ptr().add(inner))
             }
+        }
+
+        /// SAFETY: matches Zig's `.mut(ref.innerIndex())` on a `*const Map` —
+        /// the symbol table is single-owner per parse and never aliased across
+        /// threads. Caller must not hold two live `&mut Symbol` from the same
+        /// `Map` at once; use `get_ptr` directly when that's needed.
+        /// TODO(port): tighten to `&mut self` once callers are ported.
+        #[allow(clippy::mut_from_ref)]
+        pub fn get(&self, r: Ref) -> Option<&mut Symbol> {
+            self.get_ptr(r).map(|p| unsafe { &mut *p })
         }
 
         pub fn get_const(&self, r: Ref) -> Option<&Symbol> {
             if Ref::is_source_index_null(r.source_index()) || r.is_source_contents_slice() {
                 return None;
             }
+            // SAFETY: shared read of the table; no concurrent mutation.
+            let nested = unsafe { &*self.symbols_for_source.get() };
             Some(
-                self.symbols_for_source
+                nested
                     .at(r.source_index() as usize)
                     .at(r.inner_index() as usize),
             )
         }
 
+        #[allow(clippy::mut_from_ref)]
         pub fn get_with_link(&self, r: Ref) -> Option<&mut Symbol> {
-            let symbol = self.get(r)?;
-            if symbol.has_link() {
-                let link = symbol.link;
-                return Some(self.get(link).unwrap_or(symbol));
+            let p = self.get_ptr(r)?;
+            // SAFETY: `p` is a valid slot pointer; we only read `link` here.
+            let (has_link, link) = unsafe { ((*p).has_link(), (*p).link) };
+            if has_link {
+                if let Some(linked) = self.get_ptr(link) {
+                    return Some(unsafe { &mut *linked });
+                }
             }
-            Some(symbol)
+            Some(unsafe { &mut *p })
         }
 
         pub fn get_with_link_const(&self, r: Ref) -> Option<&Symbol> {
@@ -665,61 +698,79 @@ pub mod symbol {
             if old.eql(new) {
                 return new;
             }
-            let old_symbol = match self.get(old) {
-                Some(s) => s,
+            let old_ptr = match self.get_ptr(old) {
+                Some(p) => p,
                 None => return new,
             };
-            if old_symbol.has_link() {
-                let old_link = old_symbol.link;
-                old_symbol.link = self.merge(old_link, new);
-                return old_symbol.link;
+            // SAFETY: `old_ptr` is the only pointer live across this read/write.
+            unsafe {
+                if (*old_ptr).has_link() {
+                    let old_link = (*old_ptr).link;
+                    let merged = self.merge(old_link, new);
+                    (*old_ptr).link = merged;
+                    return merged;
+                }
             }
-            let new_symbol = match self.get(new) {
-                Some(s) => s,
+            let new_ptr = match self.get_ptr(new) {
+                Some(p) => p,
                 None => return new,
             };
-            if new_symbol.has_link() {
-                let new_link = new_symbol.link;
-                new_symbol.link = self.merge(old, new_link);
-                return new_symbol.link;
+            // SAFETY: `old != new` was checked above, so `old_ptr` and `new_ptr`
+            // address distinct slots; we never hold two `&mut` simultaneously —
+            // all access stays at the raw-pointer level.
+            unsafe {
+                if (*new_ptr).has_link() {
+                    let new_link = (*new_ptr).link;
+                    let merged = self.merge(old, new_link);
+                    (*new_ptr).link = merged;
+                    return merged;
+                }
+                (*old_ptr).link = new;
+                (*new_ptr).merge_contents_with(&*old_ptr);
             }
-            old_symbol.link = new;
-            // SAFETY: old_symbol/new_symbol point at distinct slots (old != new checked above).
-            let old_ro: &Symbol = unsafe { &*(old_symbol as *const Symbol) };
-            new_symbol.merge_contents_with(old_ro);
             new
         }
 
         /// Equivalent to `followSymbols` in esbuild.
         pub fn follow(&self, r: Ref) -> Ref {
-            let symbol = match self.get(r) {
-                Some(s) => s,
+            let p = match self.get_ptr(r) {
+                Some(p) => p,
                 None => return r,
             };
-            if !symbol.has_link() {
-                return r;
+            // SAFETY: `p` is valid; the recursive `self.follow` re-enters
+            // `get_ptr` (raw pointers only) so no `&mut` aliasing occurs.
+            unsafe {
+                if !(*p).has_link() {
+                    return r;
+                }
+                let link = self.follow((*p).link);
+                if !(*p).link.eql(link) {
+                    (*p).link = link;
+                }
+                link
             }
-            let link = self.follow(symbol.link);
-            if !symbol.link.eql(link) {
-                symbol.link = link;
-            }
-            link
         }
 
         pub fn follow_all(&self) {
             // PERF(port): was `bun.perf.trace("Symbols.followAll")`.
-            // SAFETY: see `get` — single-owner table, never aliased across threads.
-            // The Zig original mutates through `*const Map`; we mirror that by going
-            // through a raw pointer to the nested list (avoids the &T→&mut T cast lint).
-            let nested = core::ptr::addr_of!(self.symbols_for_source) as *mut NestedList;
-            for i in 0..self.symbols_for_source.len {
-                let list = unsafe { (*nested).mut_(i as usize) };
-                for j in 0..list.len {
-                    let sym = list.mut_(j as usize);
-                    if !sym.has_link() {
-                        continue;
+            // SAFETY: write provenance via `UnsafeCell::get`; we never form a
+            // `&mut` here — `self.follow` goes through `get_ptr` which is also
+            // raw-pointer-only, so the inner `sym` pointer stays valid across
+            // the recursive call.
+            let nested: *mut NestedList = self.symbols_for_source.get();
+            let outer_len = unsafe { (*nested).len as usize };
+            for i in 0..outer_len {
+                let list: *mut List = unsafe { (*nested).ptr.as_ptr().add(i) };
+                let inner_len = unsafe { (*list).len as usize };
+                for j in 0..inner_len {
+                    let sym: *mut Symbol = unsafe { (*list).ptr.as_ptr().add(j) };
+                    unsafe {
+                        if !(*sym).has_link() {
+                            continue;
+                        }
+                        let link = self.follow((*sym).link);
+                        (*sym).link = link;
                     }
-                    sym.link = self.follow(sym.link);
                 }
             }
         }

@@ -227,13 +227,11 @@ impl DeferredDerefTask {
 // Low 3 bits hold the tag; verify both capacity and alignment slack so adding
 // a tag or a packed field can't silently break the packing.
 const _: () = assert!(Tag::COUNT <= DeferredDerefTask::TAG_MASK + 1);
-// TODO(port): re-enable these once the concrete server RequestContext types are
-// addressable from Rust (Zig used @alignOf at comptime).
-// const _: () = assert!(core::mem::align_of::<server::HTTPServer::RequestContext>() > DeferredDerefTask::TAG_MASK);
-// const _: () = assert!(core::mem::align_of::<server::HTTPSServer::RequestContext>() > DeferredDerefTask::TAG_MASK);
-// const _: () = assert!(core::mem::align_of::<server::DebugHTTPServer::RequestContext>() > DeferredDerefTask::TAG_MASK);
-// const _: () = assert!(core::mem::align_of::<server::DebugHTTPSServer::RequestContext>() > DeferredDerefTask::TAG_MASK);
-// const _: () = assert!(core::mem::align_of::<body::ValueBufferer>() > DeferredDerefTask::TAG_MASK);
+const _: () = assert!(core::mem::align_of::<HTTPServerRequestContext>() > DeferredDerefTask::TAG_MASK);
+const _: () = assert!(core::mem::align_of::<HTTPSServerRequestContext>() > DeferredDerefTask::TAG_MASK);
+const _: () = assert!(core::mem::align_of::<DebugHTTPServerRequestContext>() > DeferredDerefTask::TAG_MASK);
+const _: () = assert!(core::mem::align_of::<DebugHTTPSServerRequestContext>() > DeferredDerefTask::TAG_MASK);
+const _: () = assert!(core::mem::align_of::<body::ValueBufferer<'_>>() > DeferredDerefTask::TAG_MASK);
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

@@ -113,6 +113,23 @@ impl Route {
     // init() gated alongside the route-handler bodies below (needs RefPtr).
 }
 
+// `bun.ptr.RefCount(Route, "ref_count", Route.deinit, .{ .debug_name = "HTMLBundleRoute" })`
+impl bun_ptr::RefCounted for Route {
+    type DestructorCtx = ();
+    fn debug_name() -> &'static str {
+        "HTMLBundleRoute"
+    }
+    unsafe fn get_ref_count(this: *mut Self) -> *mut bun_ptr::RefCount<Self> {
+        // SAFETY: caller contract — `this` points to a live Route; field projection is in-bounds.
+        unsafe { core::ptr::addr_of_mut!((*this).ref_count) }
+    }
+    unsafe fn destructor(this: *mut Self, _ctx: ()) {
+        // SAFETY: refcount hit zero; allocated via Box (RefPtr::new / init()).
+        // Drop impl asserts pending_responses is empty and frees owned fields.
+        drop(unsafe { Box::from_raw(this) });
+    }
+}
+
 impl Drop for Route {
     fn drop(&mut self) {
         // pending responses keep a ref to the route
@@ -697,8 +714,7 @@ impl PendingResponse {
 
 // TODO(port): these enum/type stubs reference cross-crate types whose exact paths
 // Phase B will resolve. Kept local to make control flow readable.
-use bun_bundler::options::{Loader, Target};
-use bun_bundler::output_file::{OutputFileValue, OutputKind};
+use bun_bundler::options::{Loader, OutputFileValue, OutputKind, Target};
 use crate::server::{AnyRoute, PluginsResult};
 type BundleResult = bun_bundler::bundle_v2::CompletionResult;
 } // mod _gated

@@ -681,7 +681,7 @@ macro_rules! maybe_debug_params { () => { ([] as [ParamType; 0]) }; }
 #[cfg(feature = "error_return_tracing")]
 macro_rules! maybe_verbose_error_trace { () => { [clap::parse_param!("--verbose-error-trace             Dump error return traces")] }; }
 #[cfg(not(feature = "error_return_tracing"))]
-macro_rules! maybe_verbose_error_trace { () => { [] }; }
+macro_rules! maybe_verbose_error_trace { () => { ([] as [ParamType; 0]) }; }
 
 pub static BASE_PARAMS_: LazyLock<Vec<ParamType>> = LazyLock::new(|| concat_params!(
     maybe_debug_params!(),
@@ -825,7 +825,7 @@ macro_rules! maybe_bake_debug_params {
     };
 }
 #[cfg(not(feature = "bake_debugging_features"))]
-macro_rules! maybe_bake_debug_params { () => { [] }; }
+macro_rules! maybe_bake_debug_params { () => { ([] as [ParamType; 0]) }; }
 
 pub static BUILD_ONLY_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| concat_params!(
     [

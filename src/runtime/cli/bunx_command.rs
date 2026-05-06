@@ -504,7 +504,7 @@ impl BunxCommand {
 
         let mut opts = Options::parse(ctx, argv)?;
 
-        let mut requests_buf = UpdateRequest::Array::with_capacity(64);
+        let mut requests_buf = update_request::Array::with_capacity(64);
         let update_requests = UpdateRequest::parse(
             None,
             &mut ctx.log,
@@ -693,7 +693,7 @@ impl BunxCommand {
         bun_output::scoped_log!(bunx, "install_param: {}", BStr::new(&install_param));
         bun_output::scoped_log!(bunx, "result_package_name: {}", BStr::new(result_package_name));
 
-        let temp_dir = FileSystem::RealFS::platform_temp_dir();
+        let temp_dir = RealFS::platform_temp_dir();
 
         let path_for_bin_dirs: Vec<u8> = 'brk: {
             if ignore_cwd.is_empty() {

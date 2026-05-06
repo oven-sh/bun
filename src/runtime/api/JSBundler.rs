@@ -701,10 +701,10 @@ pub mod js_bundler {
                                 global_this,
                                 match this.target {
                                     Target::Bun | Target::BunMacro => {
-                                        jsc::JSGlobalObject::BunPluginTarget::Bun
+                                        jsc::BunPluginTarget::Bun
                                     }
-                                    Target::Node => jsc::JSGlobalObject::BunPluginTarget::Node,
-                                    _ => jsc::JSGlobalObject::BunPluginTarget::Browser,
+                                    Target::Node => jsc::BunPluginTarget::Node,
+                                    _ => jsc::BunPluginTarget::Browser,
                                 },
                             );
                             **plugins = Some(p);
@@ -1676,7 +1676,7 @@ pub mod js_bundler {
     }
 
     impl<'a> Load<'a> {
-        pub fn init(bv2: *mut BundleV2, parse: &'a mut bun_bundler::ParseTask) -> Load<'a> {
+        pub fn init(bv2: *mut BundleV2<'static>, parse: &'a mut bun_bundler::ParseTask) -> Load<'a> {
             // SAFETY: bv2 is a valid backref
             let default_loader = parse
                 .path
@@ -1693,7 +1693,7 @@ pub mod js_bundler {
                 parse_task: parse,
                 was_file: false,
                 called_defer: false,
-                task: jsc::AnyEventLoop::Task::default(),
+                task: jsc::AnyTaskWithExtraContext::default(),
                 js_task: jsc::AnyTask::default(),
             }
         }
@@ -1859,7 +1859,7 @@ pub mod js_bundler {
     unsafe extern "C" {
         fn JSBundlerPlugin__create(
             global: *mut JSGlobalObject,
-            target: jsc::JSGlobalObject::BunPluginTarget,
+            target: jsc::BunPluginTarget,
         ) -> *mut Plugin;
         fn JSBundlerPlugin__callOnBeforeParsePlugins(
             plugin: *mut Plugin,
@@ -1917,7 +1917,7 @@ pub mod js_bundler {
     impl Plugin {
         pub fn create(
             global: &JSGlobalObject,
-            target: jsc::JSGlobalObject::BunPluginTarget,
+            target: jsc::BunPluginTarget,
         ) -> *mut Plugin {
             jsc::mark_binding();
             // SAFETY: FFI — `global` is a live `JSGlobalObject*`. `as_ptr()` goes

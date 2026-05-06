@@ -1,5 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 
 /**
  * Tests for `install.blockExoticSubdeps` — a supply-chain hardening flag
@@ -10,7 +11,18 @@ import { bunEnv, bunExe, tempDir } from "harness";
  *
  * https://pnpm.io/11.x/supply-chain-security#prevent-exotic-transitive-dependencies
  */
-describe.concurrent("install.blockExoticSubdeps", () => {
+beforeAll(() => {
+  setDefaultTimeout(1000 * 60 * 5);
+});
+
+// Each test spawns `bun install` in its own tempDir. Point the install cache
+// at a per-test subdir so concurrent tests don't race on the shared cache
+// and so leftover state from unrelated runs can't affect resolution.
+function envForDir(dir: string): NodeJS.Dict<string> {
+  return { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") };
+}
+
+describe("install.blockExoticSubdeps", () => {
   test("rejects a transitive file-folder dependency", async () => {
     using dir = tempDir("block-exotic-transitive-folder", {
       "package.json": JSON.stringify({
@@ -38,7 +50,7 @@ blockExoticSubdeps = true
     await using proc = Bun.spawn({
       cmd: [bunExe(), "install"],
       cwd: String(dir),
-      env: bunEnv,
+      env: envForDir(String(dir)),
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -71,7 +83,7 @@ blockExoticSubdeps = true
     await using proc = Bun.spawn({
       cmd: [bunExe(), "install"],
       cwd: String(dir),
-      env: bunEnv,
+      env: envForDir(String(dir)),
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -106,7 +118,7 @@ blockExoticSubdeps = true
     await using proc = Bun.spawn({
       cmd: [bunExe(), "install"],
       cwd: String(dir),
-      env: bunEnv,
+      env: envForDir(String(dir)),
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -141,7 +153,7 @@ blockExoticSubdeps = false
     await using proc = Bun.spawn({
       cmd: [bunExe(), "install"],
       cwd: String(dir),
-      env: bunEnv,
+      env: envForDir(String(dir)),
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -178,7 +190,7 @@ blockExoticSubdeps = true
     await using proc = Bun.spawn({
       cmd: [bunExe(), "install"],
       cwd: String(dir),
-      env: bunEnv,
+      env: envForDir(String(dir)),
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -217,7 +229,7 @@ blockExoticSubdeps = true
     await using proc = Bun.spawn({
       cmd: [bunExe(), "install"],
       cwd: String(dir),
-      env: bunEnv,
+      env: envForDir(String(dir)),
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -261,23 +273,15 @@ blockExoticSubdeps = true
     await using proc = Bun.spawn({
       cmd: [bunExe(), "install"],
       cwd: String(dir),
-      env: bunEnv,
+      env: envForDir(String(dir)),
       stdout: "pipe",
       stderr: "pipe",
     });
 
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-    // Either resolution (warn + succeed, or hard error) is acceptable from
-    // the registry perspective, but the block must fire when the flag is on.
-    if (exitCode === 0) {
-      // If install succeeded before our check (unlikely), something skipped
-      // the policy — fail loudly.
-      expect(stderr).toContain("blockExoticSubdeps");
-    } else {
-      // Error must be our policy, not an unrelated install failure.
-      expect(stderr).toContain("blockExoticSubdeps");
-      expect(stderr).toContain("ws-member");
-    }
+    expect(stderr).toContain("blockExoticSubdeps");
+    expect(stderr).toContain("ws-member");
+    expect(exitCode).not.toBe(0);
   });
 });

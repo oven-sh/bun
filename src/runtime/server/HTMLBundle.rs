@@ -544,7 +544,14 @@ impl Route {
                     bun_output::flush();
                 }
 
-                let mut this_html_route: Option<*mut StaticRoute> = None;
+                // PORT NOTE: reshaped for borrowck — Zig appended every route in
+                // iteration order then mutably called `html_route.clone()` through
+                // a raw ptr aliasing the route table. `AnyRoute::Static` carries
+                // `Rc<StaticRoute>` here, so we instead defer appending the HTML
+                // entry-point until after cloning (when we still hold the sole
+                // `Rc`), which keeps the `&mut` borrow sound. Static routes are
+                // keyed by `dest_path`, so registration order is immaterial.
+                let mut this_html_route: Option<(std::rc::Rc<StaticRoute>, Box<[u8]>)> = None;
 
                 // Create static routes for each output file
                 // PORT NOTE: index loop because the SourceMap branch reads a sibling entry.
@@ -603,7 +610,11 @@ impl Route {
                     }
 
                     let cached_blob_size = blob.size() as u64;
-                    let static_route = Box::into_raw(Box::new(StaticRoute {
+                    // PORT NOTE: `AnyRoute::Static` carries `Rc<StaticRoute>` while
+                    // `StaticRoute` itself also has an intrusive `ref_count` Cell
+                    // (used by the uws on_aborted/on_writable userdata round-trip).
+                    // The two coexist until `AnyRoute` migrates to `*mut StaticRoute`.
+                    let static_route = std::rc::Rc::new(StaticRoute {
                         ref_count: Cell::new(1),
                         blob,
                         server: Cell::new(Some(server)),
@@ -611,13 +622,13 @@ impl Route {
                         headers,
                         cached_blob_size,
                         has_content_disposition: false,
-                    }));
+                    });
 
                     if this_html_route.is_none()
                         && output_files[i].output_kind == bundler_options::OutputKind::EntryPoint
                         && output_files[i].loader == Loader::Html
                     {
-                        this_html_route = Some(static_route);
+                        this_html_route = Some(std::rc::Rc::clone(&static_route));
                     }
 
                     let mut route_path: &[u8] = &output_files[i].dest_path;
@@ -630,17 +641,7 @@ impl Route {
 
                     bun_core::handle_oom(server.append_static_route(
                         route_path,
-                        AnyRoute::Static(std::rc::Rc::from(unsafe {
-                            // SAFETY: `static_route` is a freshly-boxed allocation; we hand
-                            // one ref to the route table here. Reconstitute the Box and wrap
-                            // it in `Rc` so `AnyRoute::Static` matches its declared shape.
-                            // PORT NOTE: `AnyRoute::Static` carries `Rc<StaticRoute>` while
-                            // `StaticRoute` itself is intrusively counted; the two counts
-                            // are reconciled by `StaticRoute::ref_` / `Rc` co-existing
-                            // until `AnyRoute` migrates to `*mut StaticRoute`.
-                            (*static_route).ref_();
-                            Box::from_raw(static_route)
-                        })),
+                        AnyRoute::Static(static_route),
                         MethodOptional::Any,
                     ));
                 }
@@ -648,9 +649,13 @@ impl Route {
                 let html_route = this_html_route.unwrap_or_else(|| {
                     panic!("Internal assertion failure: HTML entry point not found in HTMLBundle.")
                 });
-                // SAFETY: `html_route` is a live Box::into_raw allocation from above.
-                let html_route_clone =
-                    bun_core::handle_oom(unsafe { (*html_route).clone(global_this) });
+                // SAFETY: `html_route` is held alive by both this `Rc` clone and the
+                // route table; `StaticRoute::clone` only mutates `self.blob` to
+                // normalize it in-place, and the route table is not yet serving so
+                // no concurrent reader exists on the JS thread.
+                let html_route_clone = bun_core::handle_oom(unsafe {
+                    (*(std::rc::Rc::as_ptr(&html_route) as *mut StaticRoute)).clone(global_this)
+                });
                 self.state = State::Html(html_route_clone);
 
                 if !bun_core::handle_oom(server.reload_static_routes()) {

@@ -744,15 +744,6 @@ impl FormDataContext {
                 joiner.push_owned(value.to_slice().into_vec().into_boxed_slice());
             }
             FormDataEntry::File { blob, filename } => {
-                // PORT NOTE (layering): `bun_jsc::dom_form_data::FormDataEntry`
-                // carries the lower-tier `bun_jsc::WebCore::Blob` forward-decl
-                // (layout-identical `#[repr(C)]` to this crate's `Blob`). The
-                // C++ side hands us the native `m_ctx` pointer; cast it back to
-                // the runtime type so the inherent methods resolve.
-                // SAFETY: `bun_jsc::WebCore::Blob` is repr(C)-identical to
-                // `crate::webcore::Blob`; pointer originates from C++ `JSBlob::m_ctx`.
-                let blob: &mut Blob =
-                    unsafe { &mut *(blob as *const _ as *mut Blob) };
                 joiner.push_static(b"\"; filename=\"");
                 joiner.push_owned(filename.to_slice().into_vec().into_boxed_slice());
                 joiner.push_static(b"\"\r\n");
@@ -1192,7 +1183,53 @@ impl Blob {
             global_this: global_this,
         };
 
-        form_data.for_each(&mut |name, entry| context.on_entry(name, entry));
+        // PORT NOTE (layering): `bun_jsc::DOMFormData::for_each` yields the
+        // lower-tier `bun_jsc::dom_form_data::FormDataEntry`, whose `blob`
+        // field is `&bun_jsc::WebCore::Blob` (the forward-decl). The native
+        // pointer the C++ hands us is the `m_ctx` `*mut Blob`; reinterpret it
+        // as the runtime `&mut Blob` here. Driving the FFI directly (rather
+        // than going through `for_each`'s immutable wrapper) avoids a
+        // `&T → &mut T` cast.
+        unsafe extern "C" fn for_each_thunk(
+            ctx_ptr: *mut c_void,
+            name_: *mut ZigString,
+            value_ptr: *mut c_void,
+            filename: *mut ZigString,
+            is_blob: u8,
+        ) {
+            // SAFETY: `ctx_ptr` is the `&mut FormDataContext` passed below.
+            let ctx = unsafe { &mut *(ctx_ptr as *mut FormDataContext) };
+            let entry = if is_blob == 0 {
+                // SAFETY: when `is_blob == 0`, `value_ptr` points to a `ZigString`.
+                FormDataEntry::String(unsafe { *(value_ptr as *mut ZigString) })
+            } else {
+                FormDataEntry::File {
+                    // SAFETY: `value_ptr` is the C++ `JSBlob::m_ctx` (`*mut Blob`);
+                    // valid for the synchronous callback scope.
+                    blob: unsafe { &mut *(value_ptr as *mut Blob) },
+                    filename: if filename.is_null() {
+                        ZigString::EMPTY
+                    } else {
+                        // SAFETY: non-null `filename` is a valid `*ZigString` for this call.
+                        unsafe { *filename }
+                    },
+                }
+            };
+            // SAFETY: `name_` is always a valid non-null `*ZigString` for this callback.
+            ctx.on_entry(unsafe { *name_ }, entry);
+        }
+        unsafe extern "C" {
+            fn DOMFormData__forEach(
+                this: *mut jsc::DOMFormData,
+                ctx: *mut c_void,
+                cb: unsafe extern "C" fn(*mut c_void, *mut ZigString, *mut c_void, *mut ZigString, u8),
+            );
+        }
+        // SAFETY: C++ invokes the callback synchronously and does not retain
+        // `ctx`/`cb` past this call.
+        unsafe {
+            DOMFormData__forEach(form_data, &mut context as *mut _ as *mut c_void, for_each_thunk);
+        }
         if context.failed {
             // The joiner's Node structs are owned by the (former) arena, but each
             // node's data carries its own owner allocator — heap for non-ASCII

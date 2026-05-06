@@ -425,6 +425,129 @@ impl Token {
     }
 }
 
+// ─── JSON debug formatters ───────────────────────────────────────────────────
+// Port of Zig's `std.json.fmt(tokens)` / `std.json.fmt(ast_node)` used by
+// `Bun.$.braces(str, {tokenize:true})` / `{parse:true}` (debug-only). Zig's
+// reflection-driven JSON encoder emits tagged unions as `{"<tag>": <payload>}`
+// and bare-payload structs by field; reproduce that shape so the JS-visible
+// output is byte-compatible.
+
+fn json_escape_into(out: &mut Vec<u8>, s: &[u8]) {
+    out.push(b'"');
+    for &b in s {
+        match b {
+            b'"' => out.extend_from_slice(b"\\\""),
+            b'\\' => out.extend_from_slice(b"\\\\"),
+            b'\n' => out.extend_from_slice(b"\\n"),
+            b'\r' => out.extend_from_slice(b"\\r"),
+            b'\t' => out.extend_from_slice(b"\\t"),
+            0x00..=0x1f => {
+                use core::fmt::Write as _;
+                let _ = write!(out, "\\u{:04x}", b);
+            }
+            _ => out.push(b),
+        }
+    }
+    out.push(b'"');
+}
+
+pub fn tokens_to_json(tokens: &[Token]) -> Vec<u8> {
+    use core::fmt::Write as _;
+    let mut out = Vec::with_capacity(tokens.len() * 16 + 2);
+    out.push(b'[');
+    for (i, t) in tokens.iter().enumerate() {
+        if i > 0 {
+            out.push(b',');
+        }
+        match t {
+            Token::Open(v) => {
+                let _ = write!(
+                    &mut out,
+                    "{{\"open\":{{\"idx\":{},\"end\":{}}}}}",
+                    v.idx, v.end
+                );
+            }
+            Token::Comma => out.extend_from_slice(b"\"comma\""),
+            Token::Close => out.extend_from_slice(b"\"close\""),
+            Token::Eof => out.extend_from_slice(b"\"eof\""),
+            Token::Text(txt) => {
+                out.extend_from_slice(b"{\"text\":");
+                json_escape_into(&mut out, txt.slice());
+                out.push(b'}');
+            }
+        }
+    }
+    out.push(b']');
+    out
+}
+
+pub fn ast_to_json(root: ast::Group) -> Vec<u8> {
+    let mut out = Vec::new();
+    ast_group_to_json(&root, &mut out);
+    out
+}
+
+fn ast_atom_to_json(atom: &ast::Atom, out: &mut Vec<u8>) {
+    match atom {
+        ast::Atom::Text(txt) => {
+            out.extend_from_slice(b"{\"text\":");
+            json_escape_into(out, txt.slice());
+            out.push(b'}');
+        }
+        ast::Atom::Expansion(exp) => {
+            out.extend_from_slice(b"{\"expansion\":{\"variants\":[");
+            // SAFETY: `variants` is a bump-allocated slice live for the parse arena.
+            let variants = unsafe { &*exp.variants };
+            for (i, g) in variants.iter().enumerate() {
+                if i > 0 {
+                    out.push(b',');
+                }
+                ast_group_to_json(g, out);
+            }
+            out.extend_from_slice(b"]}}");
+        }
+    }
+}
+
+fn ast_group_to_json(group: &ast::Group, out: &mut Vec<u8>) {
+    use core::fmt::Write as _;
+    out.extend_from_slice(b"{\"bubble_up\":");
+    if group.bubble_up.is_null() {
+        out.extend_from_slice(b"null");
+    } else {
+        // Zig's std.json.fmt encodes `?*T` as the pointer address.
+        let _ = write!(out, "{}", group.bubble_up as usize);
+    }
+    out.extend_from_slice(b",\"bubble_up_next\":");
+    match group.bubble_up_next {
+        Some(n) => {
+            let _ = write!(out, "{}", n);
+        }
+        None => out.extend_from_slice(b"null"),
+    }
+    out.extend_from_slice(b",\"atoms\":");
+    match &group.atoms {
+        ast::GroupAtoms::Single(atom) => {
+            out.extend_from_slice(b"{\"single\":");
+            ast_atom_to_json(atom, out);
+            out.push(b'}');
+        }
+        ast::GroupAtoms::Many(atoms) => {
+            out.extend_from_slice(b"{\"many\":[");
+            // SAFETY: bump-allocated slice live for the parse arena.
+            let atoms = unsafe { &**atoms };
+            for (i, a) in atoms.iter().enumerate() {
+                if i > 0 {
+                    out.push(b',');
+                }
+                ast_atom_to_json(a, out);
+            }
+            out.extend_from_slice(b"]}");
+        }
+    }
+    out.push(b'}');
+}
+
 pub mod ast {
     use super::*;
 

@@ -24,10 +24,8 @@ use crate::api::bun_process::{
 // User-facing JS `Stdio` enum (extract/as_spawn_option/is_piped).
 use crate::api::bun_spawn::stdio::{self, Stdio};
 use crate::api::bun_subprocess::{self as Subprocess, Readable, Subprocess as SubprocessT, Writable};
-use crate::api::bun::terminal::Terminal;
 use crate::api::bun_terminal_body::{
-    self as terminal_body, InitError as TerminalInitError, Options as TerminalOptions,
-    Terminal as TerminalImpl,
+    self as terminal_body, InitError as TerminalInitError, Options as TerminalOptions, Terminal,
 };
 use crate::webcore as WebCore;
 
@@ -176,27 +174,12 @@ fn sys_system_error_to_js(err: bun_sys::SystemError, global: &JSGlobalObject) ->
     jsc_err.to_error_instance(global)
 }
 
-/// `Terminal.CreateResult` — local mirror that erases `IntrusiveRc<Terminal>`
-/// to the opaque `*mut Terminal` used by `Subprocess.terminal`, so the
-/// scopeguard / field-assignment paths share one pointer type with
-/// `existing_terminal`.
+/// `Terminal.CreateResult` — local mirror that flattens `IntrusiveRc<Terminal>`
+/// to the raw `*mut Terminal` used by `Subprocess.terminal`, so the scopeguard /
+/// field-assignment paths share one pointer type with `existing_terminal`.
 pub struct TerminalCreateResult {
     pub terminal: *mut Terminal,
     pub js_value: JSValue,
-}
-
-/// Project the opaque `*mut Terminal` (forward-declared in
-/// `crate::api::bun::terminal`) back to the concrete `bun_terminal_body::Terminal`.
-///
-/// # Safety
-/// `ptr` must have originated from `bun_terminal_body::Terminal` (either via
-/// `js::from_js` or `CreateResult.terminal.into_raw()`).
-#[inline]
-unsafe fn terminal_impl<'a>(ptr: *mut Terminal) -> &'a mut TerminalImpl {
-    // SAFETY: caller contract; the opaque `Terminal(())` is a layering forward
-    // declaration for `bun_terminal_body::Terminal` and every producer in this
-    // file casts from that concrete type.
-    unsafe { &mut *ptr.cast::<TerminalImpl>() }
 }
 
 // ── IPC owner vtable for Subprocess ─────────────────────────────────────────
@@ -541,7 +524,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                 // via `into_raw()` when `terminal_info` was populated below;
                 // `abandon_from_spawn` is the spawn-side error-path teardown
                 // (downgrade JSRef, mark finalized, close_internal).
-                unsafe { terminal_impl(info.terminal) }.abandon_from_spawn();
+                unsafe { (*info.terminal).abandon_from_spawn() };
             }
         },
     );
@@ -844,19 +827,19 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                             return Err(global_this
                                 .throw_invalid_arguments("terminal pseudoconsole is no longer valid"));
                         }
-                        existing_terminal = Some(terminal.cast::<Terminal>());
+                        existing_terminal = Some(terminal);
                         terminal_js_value = terminal_val;
                     } else if terminal_val.is_object() {
                         // Create a new terminal from options
                         let mut term_options =
                             TerminalOptions::parse_from_js(global_this, terminal_val)?;
-                        match TerminalImpl::create_from_spawn(global_this, &mut term_options) {
+                        match Terminal::create_from_spawn(global_this, &mut term_options) {
                             Ok(created) => {
                                 **terminal_info = Some(TerminalCreateResult {
                                     // Transfer the +1 ref to `Subprocess.terminal` (released
                                     // in `Subprocess::finalize`); the scopeguard's
                                     // `abandon_from_spawn` path covers the error case.
-                                    terminal: created.terminal.into_raw().cast::<Terminal>(),
+                                    terminal: created.terminal.into_raw(),
                                     js_value: created.js_value,
                                 });
                             }
@@ -892,7 +875,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                             .unwrap_or_else(|| terminal_info.as_ref().unwrap().terminal);
                         // SAFETY: `terminal` was just produced above from a live
                         // wrapper or freshly-created `IntrusiveRc`.
-                        let slave_fd = unsafe { terminal_impl(terminal) }.get_slave_fd();
+                        let slave_fd = unsafe { (*terminal).get_slave_fd() };
                         stdio[0] = Stdio::Fd(slave_fd);
                         stdio[1] = Stdio::Fd(slave_fd);
                         stdio[2] = Stdio::Fd(slave_fd);

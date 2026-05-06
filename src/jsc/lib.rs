@@ -3,18 +3,17 @@
 //!
 //! Web and runtime-specific APIs should go in `bun.webcore` and `bun.api`.
 //!
-//! TODO: Remove remaining aliases to `webcore` and `api`
-//!
-//! ──────────────────────────────────────────────────────────────────────────
-//! B-1 GATE-AND-STUB STATUS
-//!   All Phase-A draft modules are gated behind `` (with correct
-//!   `#[path]` attrs so the drafts remain on disk and addressable). A minimal
-//!   opaque stub surface is exposed so downstream crates type-check. Un-gating
-//!   happens in B-2.
-//! ──────────────────────────────────────────────────────────────────────────
+//! LAYERING: `jsc.zig` carries deprecated aliases `WebCore = bun.webcore`,
+//! `API = bun.api`, `Node = bun.api.node`, `Subprocess = bun.api.Subprocess`.
+//! In the Rust crate graph those targets live in `bun_runtime`, which depends
+//! on this crate — re-exporting them here would create a cycle. The Zig source
+//! already marks every one of them `Deprecated` with a "TODO: Remove" header,
+//! so the Rust port drops the aliases outright. Callers reference
+//! `bun_runtime::{webcore,api,node}` directly; lower-tier crates that touched
+//! these types (e.g. `output_file_jsc`) have been moved up into `bun_runtime`.
 
 #![allow(dead_code, unused_imports, unused_variables, deprecated, non_snake_case)]
-#![allow(unexpected_cfgs)] // TODO(b2): ci_assert / asan features — wire up in Cargo.toml
+#![allow(unexpected_cfgs)]
 // `ConsoleObject::Formatter::print_as` dispatches on `const FORMAT: Tag` to
 // preserve Zig's comptime monomorphization (zig:2210). `Tag` is a fieldless
 // enum, so this is the structural-match subset of the feature.
@@ -1461,9 +1460,22 @@ impl JSGlobalObject {
     pub fn throw2(&self, msg: impl core::fmt::Display, _args: impl ThrowFmtArgs) -> JsError {
         self.throw(msg)
     }
+    /// `throwError(err: anyerror, comptime fmt)` (JSGlobalObject.zig:492).
+    /// Zig formats `"{errorName} " ++ fmt` and throws a plain `Error` instance;
+    /// `error.OutOfMemory` short-circuits to `throwOutOfMemory()`.
     pub fn throw_error(&self, err: bun_core::Error, msg: &'static str) -> JsError {
-        // TODO(b2): SystemError/JSError dispatch — for now, format both.
-        self.throw(format_args!("{msg}: {err:?}"))
+        if err == bun_core::Error::OUT_OF_MEMORY {
+            return self.throw_out_of_memory();
+        }
+        // If we're throwing JSError, that means either an exception is already
+        // active or the caller is incorrectly returning JSError without throwing.
+        debug_assert_ne!(err, bun_core::Error::JS_ERROR);
+        // PERF(port): Zig used `std.heap.stackFallback(128)` — profile in Phase B.
+        let buffer = alloc::format!("{} {msg}", err.name());
+        let str = bun_string::ZigString::init_utf8(buffer.as_bytes());
+        // SAFETY: `self` is live; `str` borrows `buffer` for the call.
+        let err_value = unsafe { ZigString__toErrorInstance(&str, self) };
+        self.throw_value(err_value)
     }
     pub fn throw_type_error(&self, args: impl core::fmt::Display) -> JsError {
         let err = self.create_type_error_instance(format_args!("{args}"));
@@ -1578,10 +1590,19 @@ impl JSGlobalObject {
             panic!("A JavaScript exception was thrown, but it was cleared before it could be read.")
         })
     }
+    /// `takeError(proof)` (JSGlobalObject.zig:573) — like [`take_exception`] but
+    /// unwraps a `JSC::Exception` cell to its inner thrown value via
+    /// `JSValue::toError()`.
     pub fn take_error(&self, proof: JsError) -> JSValue {
-        let v = self.take_exception(proof);
-        // TODO(b2): unwrap Exception → its value (jsc.Exception cast). For now, pass through.
-        v
+        if proof == JsError::OutOfMemory {
+            let _ = self.throw_out_of_memory();
+        }
+        let exception = self.try_take_exception().unwrap_or_else(|| {
+            panic!("A JavaScript exception was thrown, but it was cleared before it could be read.")
+        });
+        exception.to_error().unwrap_or_else(|| {
+            panic!("Couldn't convert a JavaScript exception to an Error instance.")
+        })
     }
     pub fn try_take_exception(&self) -> Option<JSValue> {
         // SAFETY: `self` is a live JSGlobalObject.

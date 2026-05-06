@@ -154,10 +154,58 @@ impl LogToJsAggregateErrorExt for Log {
 }
 pub use crate::bake::dev_server::HotReloadEvent;
 pub use crate::bake::dev_server::incremental_graph::IncrementalGraph;
-// TODO(port): memory_cost helpers live in the gated draft; stub the two referenced.
+pub use crate::bake::dev_server::memory_cost_body::MemoryCost;
+
 impl DevServer<'_> {
-    fn memory_cost(&self) -> usize { todo!("blocked_on: memory_cost") }
-    fn memory_cost_detailed(&self) -> () { todo!("blocked_on: memory_cost_detailed") }
+    /// `DevServer.memoryCost` — see `DevServer/memory_cost.rs` for the
+    /// keystone-typed version. Ported inline here against the body
+    /// `DevServer<'_>` so the field set matches; both will collapse when the
+    /// two `DevServer` shapes unify.
+    fn memory_cost(&self) -> usize {
+        let cost = self.memory_cost_detailed();
+        cost.incremental_graph_client
+            + cost.incremental_graph_server
+            + cost.js_code
+            + cost.source_maps
+            + cost.assets
+            + cost.other
+    }
+
+    fn memory_cost_detailed(&self) -> MemoryCost {
+        let mut other: usize = ::core::mem::size_of::<DevServer>();
+        other += self.root.len();
+        other += self.router.memory_cost();
+        for bundle in &self.route_bundles {
+            other += bundle.memory_cost();
+        }
+        let (igs_meta, igs_js, igs_sm) = self.server_graph.memory_cost_detailed();
+        let (igc_meta, igc_js, igc_sm) = self.client_graph.memory_cost_detailed();
+        let assets = self.assets.memory_cost();
+        for (key, _) in self.route_lookup.iter() {
+            other += ::core::mem::size_of_val(key);
+        }
+        for failure in self.bundling_failures.keys() {
+            other += failure.data.len();
+        }
+        other += self.incremental_result.memory_cost();
+        if let Some(h) = &self.has_tailwind_plugin_hack {
+            for k in h.keys() {
+                other += k.len();
+            }
+        }
+        // current_bundle / next_bundle / source_maps / directory_watchers /
+        // active_websocket_connections / html_router / barrel_* — counted in
+        // their owning sub-stores or considered ephemeral; matches Zig's
+        // `useAllFields` `= {}` no-op entries.
+        MemoryCost {
+            incremental_graph_client: igc_meta,
+            incremental_graph_server: igs_meta,
+            js_code: igs_js + igc_js,
+            source_maps: igs_sm + igc_sm,
+            assets,
+            other,
+        }
+    }
 
     /// Recover `&mut VirtualMachine` from the JSC_BORROW `vm` field.
     /// SAFETY: single JS thread; caller must not hold an aliasing `&mut`.
@@ -1587,21 +1635,20 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                                         None
                                     };
 
-                                // TODO(port): blocked_on: crate::server::AnyServer::get_or_load_plugins
-                                // — only the per-server-type method is ported (server.zig:611), not
-                                // the AnyServer dispatch (server.zig:3454).
-                                let load_result: crate::server::GetOrStartLoadResult = {
-                                    let _ = dev.server.as_ref().unwrap();
-                                    let _ = crate::server::ServePluginsCallback::DevServer(
-                                        // SAFETY: dev_server_body::DevServer<'_> and dev_server::DevServer
-                                        // are duplicate Phase-A/keystone shapes pending unification; the
-                                        // callee only stores the pointer for plugin-resolution callback.
-                                        // TODO(port): blocked_on: dev_server_body::DevServer unification
-                                        unsafe { &*(dev as *mut _ as *const crate::bake::dev_server::DevServer) },
+                                let load_result: crate::server::GetOrStartLoadResult =
+                                    dev.server.as_ref().unwrap().get_or_load_plugins(
+                                        crate::server::ServePluginsCallback::DevServer(
+                                            // LAYERING: callback stores an opaque
+                                            // `*const dev_server::DevServer`; bridge the
+                                            // body↔keystone seam via `*const ()`.
+                                            // SAFETY: pointer is only stored, never
+                                            // deref'd as the keystone type by this path.
+                                            unsafe {
+                                                &*(dev as *mut _ as *const ()
+                                                    as *const crate::bake::dev_server::DevServer)
+                                            },
+                                        ),
                                     );
-                                    todo!("blocked_on: crate::server::AnyServer::get_or_load_plugins")
-                                };
-                                #[allow(unreachable_code)]
                                 match load_result {
                                     crate::server::GetOrStartLoadResult::Pending => {
                                         dev.plugin_state = PluginState::Pending;
@@ -2522,13 +2569,10 @@ pub mod deferred_request {
 }
 use deferred_request::{DlogeferredRequest, Handler, PromiseResponse};
 
-/// `SavedRequest.Union` — local mirror of `crate::server::server_body::SavedRequestUnion`
-/// (the upstream enum is in a private module and is unnameable here).
-// TODO(port): replace with a `pub use` once `server::server_body` is public.
-pub enum SavedRequestUnion<'a> {
-    Stack(&'a mut uws::Request),
-    Saved(SavedRequest),
-}
+// LAYERING: `SavedRequestUnion` was a local mirror because `server_body`'s
+// copy was unnameable; the canonical enum now lives in `crate::server` so
+// `AnyServer::on_saved_request` can name it across the seam.
+pub use crate::server::SavedRequestUnion;
 
 impl DeferredRequest<'_> {
     pub const MAX_PREALLOCATED: usize = deferred_request::MAX_PREALLOCATED;

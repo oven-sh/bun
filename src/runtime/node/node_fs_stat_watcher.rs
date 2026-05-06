@@ -362,7 +362,10 @@ impl StatWatcher {
         let this_ref = unsafe { &mut *this };
 
         if this_ref.ctx.test_isolation_enabled {
-            this_ref.ctx.rare_data().remove_stat_watcher_for_isolation(this);
+            this_ref
+                .ctx
+                .rare_data()
+                .remove_stat_watcher_for_isolation(this as *mut core::ffi::c_void);
         }
         this_ref.persistent = false;
         if cfg!(debug_assertions) {
@@ -614,7 +617,7 @@ impl StatWatcher {
             // InitStatTask is responsible for setting this
             // SAFETY: all-zero is a valid PosixStat (POD #[repr(C)])
             last_stat: Guarded::init(unsafe { core::mem::zeroed::<PosixStat>() }),
-            scheduler: vm.rare_data().node_fs_stat_watcher_scheduler(vm),
+            scheduler: Self::lazy_scheduler(vm),
         });
         let this_ptr = Box::into_raw(this);
         // errdefer this.deinit()
@@ -633,7 +636,12 @@ impl StatWatcher {
         this_ref.this_value = JsRef::init_strong(js_this, this_ref.global_this);
         js::listener_set_cached(js_this, this_ref.global_this, args.listener);
         if vm.test_isolation_enabled {
-            vm.rare_data().add_stat_watcher_for_isolation(this_ptr);
+            vm.rare_data().add_stat_watcher_for_isolation(
+                this_ptr as *mut core::ffi::c_void,
+                // SAFETY: §Dispatch cold-path vtable — `bun_jsc::RareData` stores
+                // (ptr, close-fn) so it can fire close without naming StatWatcher.
+                |p| unsafe { (*p.cast::<StatWatcher>()).close() },
+            );
         }
         InitialStatTask::create_and_schedule(this_ptr);
 

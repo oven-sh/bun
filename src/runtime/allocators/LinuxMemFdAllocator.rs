@@ -147,7 +147,11 @@ impl LinuxMemFdAllocator {
         // `std.posix.MAP`, so this *replaces* it (not OR). Mask out the
         // existing TYPE bits first so e.g. an incoming `MAP_PRIVATE` (0x02)
         // becomes `MAP_SHARED` (0x01), not `MAP_SHARED_VALIDATE` (0x03).
-        let flags_mut = (flags & !libc::MAP_TYPE) | libc::MAP_SHARED;
+        #[cfg(target_os = "linux")]
+        const MAP_TYPE: i32 = libc::MAP_TYPE;
+        #[cfg(not(target_os = "linux"))]
+        const MAP_TYPE: i32 = 0x0f; // `std.posix.MAP.TYPE` is `u4` on every POSIX target
+        let flags_mut = (flags & !MAP_TYPE) | libc::MAP_SHARED;
 
         // SAFETY: `this` is live per caller contract; we only read scalar fields.
         let self_size = unsafe { (*this).size };

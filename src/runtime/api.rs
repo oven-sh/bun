@@ -249,9 +249,10 @@ pub mod bun {
 
     pub mod terminal {
         use core::ffi::{c_int, c_void};
-        /// Opaque surface — full struct gated in `terminal_body` (JsRef + IOReader/IOWriter fields).
-        // TODO(b2-blocked): bun_jsc::JsRef — replace with terminal_body::Terminal once un-gated.
-        pub struct Terminal(());
+        /// Re-export the full struct now that `bun_terminal_body` is un-gated;
+        /// downstream callers (`Subprocess.terminal`, spawn bindings) hold the
+        /// concrete type directly — no opaque-ZST cast layer.
+        pub use crate::api::bun_terminal_body::Terminal;
         /// `Terminal.PtyResult` — pure FFI handles, no JSC.
         pub struct PtyResult {
             pub master_fd: bun_sys::Fd,

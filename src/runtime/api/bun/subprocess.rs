@@ -586,13 +586,17 @@ impl Subprocess<'_> {
         match kind {
             StdioKind::Stdin => match &mut self.stdin {
                 Writable::Pipe(pipe) => {
+                    let pipe = *pipe;
                     // SAFETY: Writable::Pipe holds a live `*FileSink` for the
                     // subprocess lifetime; we're on the mutator thread.
-                    unsafe { pipe.as_mut() }.signal.clear();
-                    // PORT NOTE: Zig's `pipe.deref()` is the Arc<FileSink> drop that
-                    // happens when the Writable::Pipe payload is overwritten below.
-                    // Calling an explicit deref here would double-decrement.
+                    unsafe { (*pipe.as_ptr()).signal.clear() };
                     self.stdin = Writable::Ignore;
+                    // SAFETY: `Writable::Pipe` owns one intrusive ref (NonNull,
+                    // no Drop impl); release it explicitly now that the variant
+                    // has been overwritten. Ordered after the assignment so any
+                    // re-entrant `on_stdin_destroyed` from `deinit` observes
+                    // `.Ignore`.
+                    unsafe { FileSink::deref(pipe.as_ptr()) };
                 }
                 Writable::Buffer(buffer) => {
                     // SAFETY: RefPtr has no DerefMut; StaticPipeWriter is single-thread
@@ -747,15 +751,7 @@ impl Subprocess<'_> {
     #[bun_jsc::host_fn(getter)]
     pub fn get_terminal(this: &Self, global_this: &JSGlobalObject) -> JSValue {
         if let Some(terminal) = this.terminal {
-            // PORT NOTE: `self.terminal` is typed as the opaque
-            // `crate::api::bun::Terminal` stub (api.rs); the actual allocation
-            // it points to is a `bun_terminal_body::Terminal` (created by
-            // `Terminal::init_terminal`). Cast through to call the real
-            // codegen `to_js` — Zig's `terminal.toJS(global)` is `js.toJS`.
-            return crate::api::bun_terminal_body::js::to_js(
-                terminal.as_ptr().cast::<crate::api::bun_terminal_body::Terminal>(),
-                global_this,
-            );
+            return Terminal::to_js(terminal.as_ptr(), global_this);
         }
         JSValue::UNDEFINED
     }
@@ -1086,9 +1082,10 @@ impl Subprocess<'_> {
             // exits. ConPTY's conhost stays alive after the child exits, so close
             // the pseudoconsole now to deliver EOF and fire the terminal's exit
             // callback. Leaves the Terminal itself open to match POSIX.
-            if let Some(terminal) = self.terminal {
-                // SAFETY: terminal pointer is valid while subprocess is alive.
-                unsafe { terminal.as_ref() }.close_pseudoconsole();
+            if let Some(mut terminal) = self.terminal {
+                // SAFETY: terminal pointer is valid while subprocess is alive;
+                // single mutator thread.
+                unsafe { terminal.as_mut() }.close_pseudoconsole();
             }
         }
 

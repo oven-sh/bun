@@ -791,7 +791,9 @@ impl FSWatcher {
     // this can be called multiple times
     pub fn detach(&mut self) {
         if self.ctx.test_isolation_enabled {
-            self.ctx.rare_data().remove_fs_watcher_for_isolation(self);
+            self.ctx
+                .rare_data()
+                .remove_fs_watcher_for_isolation(self as *mut Self as *mut core::ffi::c_void);
         }
 
         if let Some(path_watcher) = self.path_watcher.take() {
@@ -886,7 +888,12 @@ impl FSWatcher {
         };
         ctx.init_js(args.listener.with_async_context_if_needed(args.global_this));
         if vm.test_isolation_enabled {
-            vm.rare_data().add_fs_watcher_for_isolation(ctx_ptr);
+            vm.rare_data().add_fs_watcher_for_isolation(
+                ctx_ptr as *mut core::ffi::c_void,
+                // SAFETY: §Dispatch cold-path vtable — `bun_jsc::RareData` stores
+                // (ptr, close-fn) so it can fire detach without naming FSWatcher.
+                |p| unsafe { (*p.cast::<FSWatcher>()).detach() },
+            );
         }
         bun_sys::Result::Ok(Box::into_raw(ctx))
     }

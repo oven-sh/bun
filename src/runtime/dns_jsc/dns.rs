@@ -1955,10 +1955,9 @@ pub mod internal {
         pub info: Option<NonNull<ResultEntry>>, // thin ptr; head of intrusive `ai_next` chain
         pub err: c_int,
     }
-    // Ownership of the ResultEntry buffer is tracked separately on `Request` (see
-    // `Request::deinit` / `process_results`); this struct is a read-only view for C.
-    // TODO(port): store the owning `Box<[ResultEntry]>` on `Request` and write its
-    // `.as_mut_ptr()` here; do NOT free via this field.
+    // Ownership of the ResultEntry buffer is `Request.result_buf` — this struct is
+    // a borrowed C-ABI view (`info` points at `result_buf[0]`). Do NOT free via
+    // this field.
 
     pub struct MacAsyncDNS {
         pub file_poll: Option<NonNull<FilePoll>>, // OWNED hive slot (FilePoll::init)
@@ -1999,6 +1998,9 @@ pub mod internal {
     pub struct Request {
         pub key: RequestKeyOwned,
         pub result: Option<RequestResult>,
+        /// Owns the `[ResultEntry; N]` packed by `process_results`; `result.info`
+        /// borrows its first element. Freed by `Drop` in `Request::deinit`.
+        pub result_buf: Option<Box<[ResultEntry]>>,
 
         pub notify: Vec<DNSRequestOwner>,
 
@@ -2025,6 +2027,7 @@ pub mod internal {
             Box::into_raw(Box::new(Self {
                 key,
                 result: None,
+                result_buf: None,
                 notify: Vec::new(),
                 refcount,
                 created_at,
@@ -2061,7 +2064,7 @@ pub mod internal {
             // SAFETY: this is a Box::into_raw'd Request with refcount==0
             unsafe {
                 debug_assert!((*this).notify.is_empty());
-                // result.info / key.host freed by Drop
+                // `result_buf` (Box<[ResultEntry]>) and `key.host` freed by Drop.
                 drop(Box::from_raw(this));
             }
         }
@@ -2381,14 +2384,13 @@ pub mod internal {
         let guard = global_cache().lock();
 
         let notify = unsafe {
-            // RequestResult is the C-ABI view (thin ptr); ownership of the
-            // Box<[ResultEntry]> is leaked here and reclaimed in Request::deinit.
-            // TODO(port): store the owning Box on Request once Phase B settles ownership.
-            let info = results.and_then(|mut b| {
-                let p = b.as_mut_ptr();
-                core::mem::forget(b);
-                NonNull::new(p)
-            });
+            // Park the owning Box on `Request.result_buf`; `RequestResult.info`
+            // borrows its first element as a thin pointer for the C side.
+            (*req).result_buf = results;
+            let info = (*req)
+                .result_buf
+                .as_mut()
+                .and_then(|b| NonNull::new(b.as_mut_ptr()));
             (*req).result = Some(RequestResult { info, err });
             let notify = core::mem::take(&mut (*req).notify);
             (*req).refcount -= 1;
@@ -2507,8 +2509,10 @@ pub mod internal {
         let rc = unsafe { (*poll).register(&mut *loop_.r#loop(), Async::PollKind::Machport, true) };
 
         if rc.is_err() {
-            // TODO(port): FilePoll::deinit(poll, ctx) — hive slot leak until then.
-            let _ = poll;
+            // SAFETY: `poll` is the freshly-allocated hive slot returned by
+            // `FilePoll::init` above; nothing else aliases it. Registration
+            // failed, so it was never armed — release the slot back to the hive.
+            unsafe { (*poll).deinit() };
             return false;
         }
 
@@ -3946,6 +3950,7 @@ impl Resolver {
         }
     }
 
+    #[cfg(windows)]
     pub extern "C" fn on_close_uv(watcher: *mut c_void) {
         let poll = UvDnsPoll::from_poll(watcher.cast());
         UvDnsPoll::destroy(poll);
@@ -4473,24 +4478,6 @@ impl Resolver {
         }
         let _free = scopeguard::guard((), |_| unsafe { c_ares::ares_free_data(servers.cast()) });
 
-        // PORT NOTE: `struct_ares_addr_port_node.addr` is a private field upstream
-        // (`bun_cares_sys`). Mirror the `#[repr(C)]` layout locally to obtain a
-        // `*const c_void` to the address union without touching the upstream crate.
-        // The union is `{ in_addr (4B, align 4), ares_in6_addr (16B, align 1) }` →
-        // size 16, align 4; matches `[u32; 4]` here.
-        #[repr(C)]
-        struct AddrPortNodeShadow {
-            next: *mut c_void,
-            family: c_int,
-            addr: [u32; 4],
-            udp_port: c_int,
-            tcp_port: c_int,
-        }
-        debug_assert_eq!(
-            core::mem::size_of::<AddrPortNodeShadow>(),
-            core::mem::size_of::<c_ares::struct_ares_addr_port_node>(),
-        );
-
         let values = JSValue::create_empty_array(global_this, 0)?;
 
         let mut i: u32 = 0;
@@ -4508,9 +4495,7 @@ impl Resolver {
             // in6_addr union arm (read-only — `ares_inet_ntop` never writes `src`);
             // `dst` is `buf[1..].as_mut_ptr()` which already yields `*mut u8` with
             // write provenance over the stack buffer. No `*const → *mut` cast here.
-            // The `addr` field is private upstream — reach it via the layout-shadow above.
-            let addr_ptr: *const c_void =
-                unsafe { ptr::addr_of!((*(cur as *const AddrPortNodeShadow)).addr) }.cast();
+            let addr_ptr: *const c_void = current.addr_ptr();
             let ip = unsafe {
                 c_ares::ares_inet_ntop(family, addr_ptr, buf[1..].as_mut_ptr(), (buf.len() - 1) as _)
             };
@@ -4681,21 +4666,6 @@ impl Resolver {
             }
             return Ok(JSValue::UNDEFINED);
         }
-
-        // PORT NOTE: `struct_ares_addr_port_node.addr` is private upstream — mirror
-        // the `#[repr(C)]` layout locally so `ares_inet_pton` can write into it.
-        #[repr(C)]
-        struct AddrPortNodeShadow {
-            next: *mut c_void,
-            family: c_int,
-            addr: [u32; 4],
-            udp_port: c_int,
-            tcp_port: c_int,
-        }
-        debug_assert_eq!(
-            core::mem::size_of::<AddrPortNodeShadow>(),
-            core::mem::size_of::<c_ares::struct_ares_addr_port_node>(),
-        );
 
         let mut entries: Vec<c_ares::struct_ares_addr_port_node> =
             Vec::with_capacity(triples_iterator.len as usize);

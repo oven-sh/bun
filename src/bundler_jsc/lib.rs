@@ -27,25 +27,10 @@ pub mod output_file_jsc;
 pub mod analyze_jsc;
 
 // ──────────────────────────────────────────────────────────────────────────
-// JSBundleCompletionTask remains module-gated: its Phase-A body depends
-// pervasively on higher-tier `bun_runtime::api::*` (HTMLBundleRoute,
-// JSBundlerConfig, BuildArtifact, NodeFS), `bun_standalone`, `bun_dot_env`,
-// `bun_schema`, plus dozens of `bun_jsc::JSPromise`/`VirtualMachine`/`Strong`
-// methods absent from the stub surface. Re-gating "just the fn body" would
-// gate every fn in the 888-line file; the module gate is equivalent and keeps
-// the draft addressable on disk.
+// `JSBundleCompletionTask` was MOVED to `bun_runtime::api::js_bundle_completion_task`
+// (layering: its fields name `bun_runtime` types — `JSBundler::Config`,
+// `Plugin`, `HTMLBundle::Route` — so a lower-tier crate cannot own it without
+// a cycle). The Phase-A draft that imported `bun_runtime` from here has been
+// dissolved; `bun_runtime` now depends on this crate for the JSC-aware option
+// parsers in `options_jsc` only.
 // ──────────────────────────────────────────────────────────────────────────
-
-#[path = "JSBundleCompletionTask.rs"]
-pub mod JSBundleCompletionTask_draft;
-pub mod JSBundleCompletionTask {
-    // TODO(b2-blocked): bun_jsc::JSPromise::Strong
-    // TODO(b2-blocked): bun_jsc::AnyTask / ConcurrentTask / EventLoop (methods)
-    // TODO(b2-blocked): bun_jsc::JSGlobalObject::bun_vm
-    // TODO(b2-blocked): bun_bundler::bundle_v2::BundleV2
-    // TODO(b2-blocked): bun_bundler::bundle_v2::BundleThread
-    // TODO(b2-blocked): bun_ptr::IntrusiveArc
-    // TODO(b2-blocked): bun_aio::KeepAlive
-    // (higher-tier — cannot depend): bun_runtime::api::{js_bundler, html_bundle, BuildArtifact}, bun_runtime::node::fs
-    pub struct JSBundleCompletionTask(());
-}

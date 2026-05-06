@@ -44,19 +44,6 @@ pub use crate::work_task::{WorkTask, WorkTaskContext};
 
 bun_core::declare_scope!(EventLoop, hidden);
 
-/// `bun_runtime::api::Timer::ImmediateObject` — forward-declared opaque. The
-/// real type lives in the higher-tier `bun_runtime` crate (cycle); the queue
-/// here only stores raw pointers and never dereferences them at this tier.
-#[repr(C)]
-pub struct ImmediateObject {
-    _opaque: [u8; 0],
-}
-/// `bun_runtime::api::Timer::WTFTimer` — forward-declared opaque (see above).
-#[repr(C)]
-pub struct WTFTimer {
-    _opaque: [u8; 0],
-}
-
 // TODO(port): bun.LinearFifo(Task, .Dynamic) — std.fifo.LinearFifo
 pub type Queue = bun_collections::LinearFifo<Task, bun_collections::linear_fifo::DynamicBuffer<Task>>;
 

@@ -1958,8 +1958,10 @@ impl PostgresSQLConnection {
                                         let binding_value = postgres_sql_query::js::binding_get_cached(this_value).unwrap_or(JSValue::ZERO);
                                         let columns_value = postgres_sql_query::js::columns_get_cached(this_value).unwrap_or(JSValue::ZERO);
                                         debug!("parseAndBindAndExecute (unnamed, first execution)");
+                                        // PORT NOTE: hoist global (JSC_BORROW) — see above.
+                                        let global = unsafe { &*self.global_object };
                                         if let Err(err) = PostgresRequest::parse_and_bind_and_execute(
-                                            self.global(),
+                                            global,
                                             query_str.slice(),
                                             statement,
                                             binding_value,
@@ -2101,10 +2103,10 @@ impl PostgresSQLConnection {
     // TODO(port): Zig signature is `on(comptime MessageType: @Type(.enum_literal), comptime Context: type, reader)`.
     // Const-generic enum params are unstable, so `message_type` is a runtime arg; the match
     // below still monomorphizes per-Context and the branch is trivially predictable.
-    // PORT NOTE: reshaped for borrowck — `reader` is taken by `&mut` so the
-    // dispatch loop in `PostgresRequest::on_data` can call `on` per-message
-    // without moving the wrapper. Per-arm `decode_internal` calls reborrow via
-    // `reader.reborrow()` (see protocol::NewReaderWrap::reborrow).
+    // PORT NOTE: `reader` is taken by-value as a `NewReaderWrap<&mut Context>`
+    // (the dispatch loop in `PostgresRequest::on_data` passes
+    // `reader.reborrow()` per-message). Per-arm `decode_internal` calls reborrow
+    // again via `reader.reborrow()` (see protocol::NewReaderWrap::reborrow).
     pub fn on<Context: protocol::ReaderContext>(
         &mut self,
         message_type: MessageType,

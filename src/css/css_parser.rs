@@ -3364,7 +3364,13 @@ pub struct Parser<'a> {
     pub at_start_of: Option<BlockType>,
     pub stop_before: Delimiters,
     pub flags: ParserOpts,
-    pub import_records: Option<&'a mut BabyList<ImportRecord>>,
+    /// Stored as a raw `NonNull` (mirrors Zig's `?*BabyList(ImportRecord)`,
+    /// css_parser.zig:3808) because `BundlerAtRuleParser` holds an aliasing
+    /// raw pointer to the same list. Keeping a long-lived `&'a mut` here would
+    /// be invalidated under Stacked Borrows the moment `on_import_rule`
+    /// derives its own `&mut` from the sibling raw pointer. Each access site
+    /// materialises a fresh short-lived `&mut` instead.
+    pub import_records: Option<core::ptr::NonNull<BabyList<ImportRecord>>>,
     pub extra: Option<&'a mut ParserExtra>,
 }
 

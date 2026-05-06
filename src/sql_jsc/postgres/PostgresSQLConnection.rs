@@ -1286,25 +1286,27 @@ pub struct Writer {
 
 impl Writer {
     #[inline]
-    fn conn(&self) -> &mut PostgresSQLConnection {
-        // SAFETY: see struct-level PORT NOTE — connection outlives the Writer and
-        // write_buffer is disjoint from any concurrent read_buffer access.
-        unsafe { &mut *self.connection }
+    fn write_buffer(&self) -> &mut OffsetByteList {
+        // SAFETY: see struct-level PORT NOTE — connection outlives the Writer.
+        // Raw-pointer field projection (`addr_of_mut!`) avoids materializing
+        // `&mut PostgresSQLConnection`, which would alias the caller's live `&mut self`.
+        // Only `write_buffer` is borrowed here, and callers never touch it through
+        // `&mut self` while a Writer is live.
+        unsafe { &mut *core::ptr::addr_of_mut!((*self.connection).write_buffer) }
     }
 
     pub fn write(&mut self, data: &[u8]) -> Result<(), AnyPostgresError> {
-        let buffer = &mut self.conn().write_buffer;
-        buffer.write(data)?;
+        self.write_buffer().write(data)?;
         Ok(())
     }
 
     pub fn pwrite(&mut self, data: &[u8], index: usize) -> Result<(), AnyPostgresError> {
-        self.conn().write_buffer.byte_list.slice_mut()[index..][..data.len()].copy_from_slice(data);
+        self.write_buffer().byte_list.slice_mut()[index..][..data.len()].copy_from_slice(data);
         Ok(())
     }
 
     pub fn offset(&self) -> usize {
-        self.conn().write_buffer.len()
+        self.write_buffer().len()
     }
 }
 

@@ -1651,7 +1651,7 @@ impl UpdateInteractiveCommand {
                                         checkbox_color = "yellow";
                                     }
                                 }
-                                semver::VersionDiff::Patch => {
+                                semver::version::ChangedVersion::Patch => {
                                     if current_full.major == 0 && current_full.minor == 0 {
                                         checkbox_color = "red"; // 0.0.x patch changes are breaking
                                     } else {

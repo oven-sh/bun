@@ -1523,7 +1523,7 @@ impl FrameworkRouter {
                             self.scan_inner(t_index, r, child_info, arena_state, ctx)?;
                         }
                     }
-                    bun_fs::EntryKind::File => {
+                    bun_resolver::fs::EntryKind::File => {
                         let ext = paths::extension(base);
 
                         {

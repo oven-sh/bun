@@ -309,7 +309,7 @@ pub mod js_bundler {
                 // This ensures Windows paths like "C:\foo\bar.js" become "C:/foo/bar.js"
                 // Use dangerouslyConvertPathToPosixInPlace which always converts \ to /
                 // (uses sep_windows constant, not sep which varies by target)
-                bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(&mut key);
+                bun_paths::resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(&mut key);
 
                 // PERF(port): was assume_capacity
                 guard.map.insert(key, blob_or_string);

@@ -93,7 +93,10 @@ impl ReadDuringJSOnPullResult {
 
 pub enum Lazy {
     None,
-    Blob(std::sync::Arc<blob::Store>),
+    /// Intrusively-refcounted `*Blob.Store`. Uses `StoreRef` (not `Arc`) so the
+    /// raw pointer carries mutable provenance from `Box::into_raw`, matching
+    /// Zig's `*Blob.Store` direct-field-write usage in `openFileBlob`.
+    Blob(blob::StoreRef),
 }
 
 pub struct OpenedFileBlob {

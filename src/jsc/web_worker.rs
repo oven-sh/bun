@@ -262,7 +262,11 @@ mod live_workers {
         MUTEX.unlock();
     }
 
-    pub(super) fn unregister(worker: *mut WebWorker) {
+    // `*const WebWorker` (not `*mut`): called from `shutdown(&self)` while
+    // other threads may hold `&WebWorker`, so the caller only has shared-ref
+    // provenance. All writes here go through `UnsafeCell` fields
+    // (`live_next`/`live_prev`), which is sound via shared provenance.
+    pub(super) fn unregister(worker: *const WebWorker) {
         MUTEX.lock();
         // SAFETY: MUTEX held; node was registered in `register`.
         unsafe {
@@ -602,6 +606,11 @@ mod __phase_a_body {
             // SAFETY: start_vm published vm under vm_lock; non-null here. Raw
             // deref — do not bind `&VirtualMachine` (see start_vm publish note).
             let global = unsafe { (*(*self.vm.get())).global };
+            // SAFETY: `ctx` is an opaque token — `hold_api_lock` (C++ JSLockHolder)
+            // never dereferences it, only passes it back to
+            // `opaque_spin_trampoline`, which casts it back to `*const WebWorker`
+            // and takes `&WebWorker`. The const→mut cast is signature-only; no
+            // write ever occurs through this pointer with mut provenance.
             global.vm().hold_api_lock(
                 self as *const WebWorker as *mut c_void,
                 opaque_spin_trampoline,
@@ -925,7 +934,7 @@ mod __phase_a_body {
                 unsafe { WebWorker__teardownJSCVM(global) };
             }
 
-            live_workers::unregister(self as *const WebWorker as *mut WebWorker);
+            live_workers::unregister(self);
 
             // 4. Post close task to parent
             // SAFETY: cpp_worker valid (snapshot taken above).

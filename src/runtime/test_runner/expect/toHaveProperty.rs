@@ -130,7 +130,7 @@ pub fn to_have_property(
             format_args!(
                 "\n\nExpected path: <green>{}<r>\n\nExpected value: <green>{}<r>\n\nUnable to find property\n",
                 expected_property_path.to_fmt(&mut formatter),
-                expected_property.unwrap().to_fmt(&mut formatter),
+                expected_property.unwrap().to_fmt(&mut formatter2),
             ),
         );
     }

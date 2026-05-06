@@ -475,9 +475,8 @@ impl Terminal {
         let terminal = unsafe { &mut *terminal };
 
         // Set reader parent
-        terminal
-            .reader
-            .set_parent(terminal as *mut Terminal as *mut c_void);
+        let parent_ptr = terminal as *mut Terminal as *mut c_void;
+        terminal.reader.set_parent(parent_ptr);
 
         // Set writer parent
         terminal.writer.parent = terminal;
@@ -1783,7 +1782,10 @@ impl Terminal {
         // First data received - upgrade to strong ref (connected)
         if !self.flags.contains(Flags::CONNECTED) {
             self.flags.insert(Flags::CONNECTED);
-            self.this_value.upgrade(self.global());
+            // Disjoint-borrow: inline global() so this_value can be &mut.
+            // SAFETY: see Terminal::global().
+            let global = unsafe { self.global_this.as_ref() };
+            self.this_value.upgrade(global);
         }
 
         let Some(this_jsvalue) = self.this_value.try_get() else {

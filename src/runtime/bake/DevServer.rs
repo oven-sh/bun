@@ -3956,10 +3956,10 @@ pub fn finalize_bundle(
                     // TODO(port): `SavedRequest` is move-only; Zig copied the
                     // pointer-only struct by value. Replace with by-value move
                     // once `Handler::ServerHandler` stores it by-value.
-                    SavedRequestUnion::Saved(::core::mem::replace(
-                        saved,
-                        todo!("blocked_on: server::SavedRequest by-value move"),
-                    )),
+                    SavedRequestUnion::Saved({
+                        let _ = &mut *saved;
+                        todo!("blocked_on: server::SavedRequest by-value move")
+                    }),
                     response,
                 )?
             }
@@ -4373,8 +4373,11 @@ impl DevServer<'_> {
         html: &mut HTMLBundleRoute,
     ) -> Result<(), bun_core::Error> {
         let _bundle_index = self.get_or_put_route_bundle(route_bundle::UnresolvedIndex::Html(html))?;
-        // Our `HTMLRouter::fallback` is `Option<&HTMLBundleRoute>`; store the route ref.
-        self.html_router.fallback = Some(html);
+        // Our `HTMLRouter::fallback` is `Option<&'a HTMLBundleRoute>`; the
+        // route is heap-owned by `Bun.serve` for the DevServer's lifetime, so
+        // erase the local borrow lifetime.
+        // SAFETY: `html` outlives `self` (owned by the parent server config).
+        self.html_router.fallback = Some(unsafe { &*(html as *mut HTMLBundleRoute) });
         // TODO(port): Zig set `.fallback = bundle_index.toOptional()` but field type is
         // `?*HTMLBundle.HTMLBundleRoute` per LIFETIMES.tsv — likely the LIFETIMES row is
         // for an older version. Following Zig source: fallback stores RouteBundle.Index.Optional

@@ -1143,15 +1143,15 @@ impl GetAddrInfoRequest {
     ) -> *mut Self {
         bun_output::scoped_log!(GetAddrInfoRequest, "init");
         let mut poll_ref = KeepAlive::init();
-        poll_ref.ref_(global_this.bun_vm());
+        poll_ref.ref_(js_event_loop_ctx());
         let request = Box::into_raw(Box::new(Self {
             backend,
             resolver_for_caching: resolver,
             hash: query.hash(),
             cache: CacheConfig::default(),
             head: DNSLookup {
-                // SAFETY: resolver is a live intrusive-RC m_ctx; clone_from_raw bumps the embedded ref_count.
-                resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::clone_from_raw(r) }),
+                // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
+                resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::init_ref(r) }),
                 global_this: global_this as *const JSGlobalObject,
                 promise: JSPromiseStrong::init(global_this),
                 poll_ref,

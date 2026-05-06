@@ -1439,12 +1439,16 @@ impl Subprocess<'_> {
             // Call the onDisconnectCallback if it exists and prevent it from being kept alive longer than necessary
             if let Some(callback) = Self::consume_on_disconnect_callback(this_jsvalue, global_this)
             {
-                global_this.bun_vm().event_loop().run_callback(
-                    callback,
-                    global_this,
-                    this_jsvalue,
-                    &[JSValue::TRUE],
-                );
+                // SAFETY: bun_vm()/event_loop() return live VM-owned pointers.
+                let event_loop = unsafe { (*global_this.bun_vm()).event_loop() };
+                unsafe {
+                    (*event_loop).run_callback(
+                        callback,
+                        global_this,
+                        this_jsvalue,
+                        &[JSValue::TRUE],
+                    )
+                };
             }
         }
     }

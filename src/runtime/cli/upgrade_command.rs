@@ -651,31 +651,39 @@ impl UpgradeCommand {
             }
         };
 
-        let zip_url = URL::parse(&version.zip_url);
+        // PORT NOTE: AsyncHTTP::init_sync wants `URL<'static>`; leak the zip_url
+        // bytes (Zig used a static module-level buffer).
+        let zip_url_bytes: &'static [u8] =
+            Box::leak(core::mem::take(&mut version.zip_url));
+        let zip_url = URL::parse(zip_url_bytes);
         let http_proxy: Option<URL> = env_loader.get_http_proxy_for(&zip_url);
 
         {
-            let mut refresher = Progress::Progress::default();
-            let mut progress = refresher.start("Downloading", version.size);
-            progress.unit = Progress::Unit::Bytes;
-            refresher.refresh();
-            let async_http = Box::leak(Box::new(HTTP::AsyncHTTP::default()));
+            let refresher: *mut Progress::Progress =
+                Box::into_raw(Box::new(Progress::Progress::default()));
+            // SAFETY: refresher is a fresh leaked allocation.
+            let progress: *mut Progress::Node =
+                unsafe { (*refresher).start(b"Downloading", version.size as usize) };
+            // SAFETY: see above.
+            unsafe { (*progress).unit = Progress::Unit::Bytes };
+            unsafe { (*refresher).refresh() };
             // TODO(port): Zig leaks this allocation intentionally
             let zip_file_buffer =
                 Box::leak(Box::new(MutableString::init(version.size.max(1024) as usize)?));
 
-            *async_http = HTTP::AsyncHTTP::init_sync(
+            let async_http = Box::leak(Box::new(HTTP::AsyncHTTP::init_sync(
                 HTTP::Method::GET,
                 zip_url,
-                Headers::Entry::List::default(),
+                headers::EntryList::default(),
                 b"",
-                zip_file_buffer,
+                zip_file_buffer as *mut MutableString,
                 b"",
                 http_proxy,
                 None,
                 HTTP::FetchRedirect::Follow,
-            );
-            async_http.client.progress_node = Some(&mut progress);
+            )));
+            // SAFETY: progress is leaked; AsyncHTTP holds a NonNull into it.
+            async_http.client.progress_node = Some(unsafe { NonNull::new_unchecked(progress) });
             // TODO(port): lifetime — progress_node stores a borrow of progress
             async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 

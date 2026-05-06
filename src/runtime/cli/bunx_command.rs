@@ -1035,10 +1035,10 @@ impl BunxCommand {
                                         ),
                                     );
                                     // TODO(port): Output API takes a single format_args; Zig had two slots.
-                                    Output::prettyln(
+                                    Output::prettyln(format_args!(
                                         "  <d>hint: try running without --package to install and run {} directly<r>",
-                                        format_args!("{}", BStr::new(opts.binary_name.unwrap())),
-                                    );
+                                        BStr::new(opts.binary_name.unwrap()),
+                                    ));
                                 } else {
                                     Output::err_generic(
                                         "could not determine executable to run for package <b>{}<r>",

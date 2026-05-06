@@ -1641,10 +1641,10 @@ impl CronJob {
 
         let Some(next_time) = job_ref.compute_next_timespec() else {
             Self::deref(job);
-            return global.throw_invalid_arguments(format_args!(
+            return Err(global.throw_invalid_arguments(format_args!(
                 "Cron expression '{}' has no future occurrences",
                 bstr::BStr::new(schedule_slice.slice())
-            ));
+            )));
         };
 
         // The cron_jobs list exists so --hot reload and worker teardown can
@@ -1652,7 +1652,11 @@ impl CronJob {
         // so skip the list ref + append entirely.
         if vm.hot_reload == HOT_RELOAD_HOT || vm.worker.is_some() {
             job_ref.ref_(); // owned by cron_jobs entry
-            vm.rare_data().cron_jobs.push(job);
+            // PORT NOTE: `RareData::cron_jobs` stores the opaque high-tier
+            // placeholder type; cast through `*mut ()`.
+            vm.rare_data()
+                .cron_jobs
+                .push(job as *mut () as *mut bun_jsc::rare_data::high_tier::CronJob);
         }
 
         let js_value = job_ref.to_js(global);
@@ -1660,8 +1664,8 @@ impl CronJob {
         js::cron_set_cached(js_value, global, schedule_arg);
         js::callback_set_cached(js_value, global, callback_arg.with_async_context_if_needed(global));
 
-        job_ref.poll_ref.ref_(vm);
-        vm.timer.update(&mut job_ref.event_loop_timer, &next_time);
+        job_ref.poll_ref.ref_(vm_ctx());
+        timer_all().update(&mut job_ref.event_loop_timer, &next_time);
 
         Ok(js_value)
     }

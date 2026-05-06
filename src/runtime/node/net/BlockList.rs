@@ -450,7 +450,22 @@ impl BlockList {
         // SAFETY: `int` was produced by `on_structured_clone_serialize` from a
         // live `*mut Self` whose ref was bumped at serialize time.
         unsafe { (*this).ref_() };
-        Ok(unsafe { (*this).to_js(global) })
+        Ok(Self::to_js_ptr(this, global))
+    }
+
+    /// Wrap an existing heap-allocated `*mut BlockList` in a fresh JS wrapper.
+    /// `JsClass::to_js` boxes by value; the structured-clone path needs to wrap
+    /// an *existing* refcounted pointer instead, so we bind `${T}__create`
+    /// directly (codegen-emitted; see generate-classes.ts).
+    fn to_js_ptr(this: *mut Self, global: &JSGlobalObject) -> JSValue {
+        extern "C" {
+            #[link_name = "BlockList__create"]
+            fn __create(global: *mut JSGlobalObject, ptr: *mut BlockList) -> JSValue;
+        }
+        // SAFETY: `global` is live; `this` is a live `Box::into_raw` pointer
+        // whose ref was bumped for this wrapper. Ownership of one ref transfers
+        // to the C++ wrapper (released via `finalize` → `deref`).
+        unsafe { __create(global as *const _ as *mut _, this) }
     }
 }
 

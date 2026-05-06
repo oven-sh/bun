@@ -708,8 +708,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             // And then one fd is assigned specifically and only for IPC. If the user dont specify it, we add one (default: 3).
             //
             // When Bun.spawn() is given an `.ipc` callback, it enables IPC as follows:
-            if let Err(err) = env_array.try_reserve(3) {
-                let _ = global_this.throw_error(err.into(), "in Bun.spawn");
+            if let Err(_err) = env_array.try_reserve(3) {
+                let _ = global_this.throw_out_of_memory();
                 return Ok(JSValue::ZERO);
             }
             let ipc_fd: i32 = 'brk: {

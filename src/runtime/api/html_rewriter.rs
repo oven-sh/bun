@@ -390,7 +390,7 @@ impl HTMLRewriterLoader {
     }
 
     pub fn write_to_destination(&mut self, bytes: &[u8]) {
-        if self.backpressure.count() > 0 {
+        if self.backpressure.readable_length() > 0 {
             if self.backpressure.write(bytes).is_err() {
                 self.fail(bun_sys::Error::oom());
                 self.finalize();
@@ -398,9 +398,14 @@ impl HTMLRewriterLoader {
             return;
         }
 
+        // SAFETY: `bytes` borrowed for the synchronous `output.write` call only;
+        // the `Temporary` variant signals the sink it must copy before returning.
+        let borrowed = core::mem::ManuallyDrop::into_inner(unsafe {
+            ByteList::from_borrowed_slice_dangerous(bytes)
+        });
         let write_result = self
             .output
-            .write(StreamResult::Temporary(ByteList::from_borrowed_slice_dangerous(bytes)));
+            .write(webcore::sink::Data::Bytes(StreamResult::Temporary(borrowed)));
 
         match write_result {
             Writable::Err(err) => {

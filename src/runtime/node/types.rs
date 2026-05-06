@@ -157,34 +157,26 @@ impl BlobOrStringOrBuffer {
 
     pub fn protect(&self) {
         match self {
-            Self::StringOrBuffer(sob) => {
-                // TODO(port): `StringOrBuffer::protect` is not defined in this file in Zig either;
-                // verify it exists / port from sibling file.
-                sob.protect();
-            }
+            Self::StringOrBuffer(sob) => sob.protect(),
             _ => {}
         }
     }
 
-    pub fn deinit_and_unprotect(mut self) {
-        // Alternate cleanup path (unprotects JS-side buffers); consumes `self`
-        // and skips Drop to avoid double-release.
-        match &mut self {
+    pub fn deinit_and_unprotect(&mut self) {
+        // Alternate cleanup path (unprotects JS-side buffers); leaves `self`
+        // empty (subsequent Drop is a no-op).
+        match self {
             Self::StringOrBuffer(sob) => {
-                // TODO(port): StringOrBuffer::deinit_and_unprotect now consumes; reshape once borrowck allows move-out-of-enum here.
-                core::mem::take(sob).deinit_and_unprotect();
+                sob.deinit_and_unprotect();
             }
             Self::Blob(blob) => {
                 // `.blob` is populated via a raw bitwise copy of a live JS Blob
                 // (see from_js_maybe_file_maybe_async / from_js_with_encoding_value_allow_request_response),
                 // so it does not own `content_type` or `name`. Only release the
                 // store reference, matching Drop above.
-                if let Some(store) = blob.store() {
-                    store.deref_count();
-                }
+                let _ = blob.store.take();
             }
         }
-        core::mem::forget(self);
     }
 
     pub fn byte_length(&self) -> usize {

@@ -2012,7 +2012,8 @@ fn resolve_path(
     frame: &CallFrame,
     path_: &[u8],
 ) -> Result<ZString, bun_core::Error> {
-    let vm = global.bun_vm();
+    // SAFETY: `bun_vm()` returns the per-thread singleton.
+    let vm = unsafe { &mut *global.bun_vm() };
     let srcloc = frame.get_caller_src_loc(global);
     let caller_utf8 = srcloc.str.to_utf8();
     let raw_dir = path::resolve_path::dirname::<path::platform::Auto>(caller_utf8.slice());

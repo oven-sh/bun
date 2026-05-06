@@ -1294,7 +1294,7 @@ pub fn format_windows_js_t<T: PathChar>(
     path_object: &PathParsed<'_, T>,
     buf: &mut [T],
 ) -> JsResult<JSValue> {
-    BunString::create_utf8_for_js(
+    create_js_string_t::<T>(
         global_object,
         _format_t(path_object, T::from_u8(CHAR_BACKWARD_SLASH), buf),
     )

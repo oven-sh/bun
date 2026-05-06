@@ -284,8 +284,8 @@ pub struct NapiHandleScope {
 unsafe extern "C" {
     pub fn NapiHandleScope__open(env: *mut NapiEnv, escapable: bool) -> *mut NapiHandleScope;
     pub fn NapiHandleScope__close(env: *mut NapiEnv, current: *mut NapiHandleScope);
-    fn NapiHandleScope__append(env: *mut NapiEnv, value: i64);
-    fn NapiHandleScope__escape(handle_scope: *mut NapiHandleScope, value: i64) -> bool;
+    fn NapiHandleScope__append(env: *mut NapiEnv, value: usize);
+    fn NapiHandleScope__escape(handle_scope: *mut NapiHandleScope, value: usize) -> bool;
 }
 
 #[derive(Debug, thiserror::Error, strum::IntoStaticStr)]

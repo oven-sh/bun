@@ -232,7 +232,7 @@ pub fn cpus(global: &JSGlobalObject) -> JsResult<JSValue> {
 }
 
 #[cfg(target_os = "linux")]
-fn cpus_impl_linux(global_this: &JSGlobalObject) -> Result<JSValue, bun_core::Error> {
+fn cpus_impl_linux(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
     // Create the return array
     let values = JSValue::create_empty_array(global_this, 0)?;
     let mut num_cpus: u32 = 0;
@@ -243,7 +243,7 @@ fn cpus_impl_linux(global_this: &JSGlobalObject) -> Result<JSValue, bun_core::Er
     // Read /proc/stat to get number of CPUs and times
     {
         // TODO(port): std.fs.cwd().openFile → bun_sys::File::open (no std::fs)
-        let file = match bun_sys::File::open(b"/proc/stat", bun_sys::O::RDONLY, 0) {
+        let file = match bun_sys::File::open(bun_core::zstr!("/proc/stat"), bun_sys::O::RDONLY, 0) {
             Ok(f) => f,
             Err(_) => {
                 // hidepid mounts (common on Android) deny /proc/stat. lazyCpus in os.ts
@@ -251,13 +251,13 @@ fn cpus_impl_linux(global_this: &JSGlobalObject) -> Result<JSValue, bun_core::Er
                 // entries (zeroed times / unknown model / speed 0) — matches Node.
                 // SAFETY: pure FFI getter
                 let count: u32 = u32::try_from(1i32.max(unsafe { bun_sysconf__SC_NPROCESSORS_ONLN() })).unwrap();
-                let stubs = JSValue::create_empty_array(global_this, count)?;
+                let stubs = JSValue::create_empty_array(global_this, count as usize)?;
                 let mut i: u32 = 0;
                 while i < count {
                     let cpu = JSValue::create_empty_object(global_this, 3);
-                    cpu.put(global_this, ZigString::static_("times"), CPUTimes::default().to_value(global_this));
-                    cpu.put(global_this, ZigString::static_("model"), ZigString::static_("unknown").with_encoding().to_js(global_this));
-                    cpu.put(global_this, ZigString::static_("speed"), JSValue::js_number(0));
+                    cpu.put(global_this, b"times", CPUTimes::default().to_value(global_this));
+                    cpu.put(global_this, b"model", ZigString::static_("unknown").with_encoding().to_js(global_this));
+                    cpu.put(global_this, b"speed", JSValue::js_number(0.0));
                     stubs.put_index(global_this, i, cpu)?;
                     i += 1;
                 }
@@ -266,8 +266,7 @@ fn cpus_impl_linux(global_this: &JSGlobalObject) -> Result<JSValue, bun_core::Er
         };
         // file closed on Drop
 
-        let read = bun_sys::File::from(file).read_to_end_with_array_list(&mut file_buf, bun_sys::SizeHint::ProbablySmall).unwrap()?;
-        let contents = &file_buf[0..read];
+        let contents = file.read_to_end_with_array_list(&mut file_buf, bun_sys::SizeHint::ProbablySmall)?;
 
         let mut line_iter = contents.split(|b| *b == b'\n').filter(|s| !s.is_empty());
 

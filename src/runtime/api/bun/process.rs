@@ -232,41 +232,9 @@ pub struct SyncProcessPosix {
 #[cfg(not(windows))]
 type SyncProcess = SyncProcessPosix;
 
-/// Implemented by high-tier handler types that want to call
-/// `Process::set_exit_handler(self_ptr)` Zig-style (no explicit vtable).
-/// Replaces the Zig `TaggedPointerUnion` `inline switch` — see `_exit_handler_variants`.
-pub trait ProcessExitOwner: Sized {
-    /// Thunk invoked when the process exits. `this` is the owner pointer
-    /// passed to `set_exit_handler`. Default impls in caller modules forward
-    /// to the type's inherent `on_process_exit`.
-    unsafe fn on_process_exit_dyn(
-        this: *mut Self,
-        process: *mut Process,
-        status: Status,
-        rusage: &Rusage,
-    );
-
-    /// Returns the vtable for this owner type. Generated per-`T` via a
-    /// generic-monomorphised thunk.
-    #[inline]
-    fn exit_vtable() -> ProcessExitVTable {
-        unsafe fn thunk<T: ProcessExitOwner>(
-            owner: *mut (),
-            process: *mut Process,
-            status: Status,
-            rusage: *const Rusage,
-        ) {
-            // SAFETY: owner was registered as `*mut T`; rusage is a valid
-            // pointer for the duration of the call (see `ProcessExitHandler::call`).
-            unsafe { T::on_process_exit_dyn(owner.cast::<T>(), process, status, &*rusage) }
-        }
-        ProcessExitVTable { on_process_exit: thunk::<Self> }
-    }
-}
-
 impl ProcessExitHandler {
     /// Zig: `init(anytype)` — high-tier callers pass `(&mut self, &SELF_EXIT_VTABLE)`.
-    pub fn init(&mut self, owner: *mut (), vtable: ProcessExitVTable) {
+    pub fn init(&mut self, owner: *mut (), vtable: &'static ProcessExitVTable) {
         self.owner = owner;
         self.vtable = Some(vtable);
     }

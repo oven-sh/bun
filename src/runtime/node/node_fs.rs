@@ -1081,14 +1081,14 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         if matches!(this_ref.evtloop, EventLoopHandle::Js { .. }) {
             // PORT NOTE: `ConcurrentTask::from_callback` expects `fn(*mut T) -> JsResult<()>`;
             // Zig accepted `fn(*T) JSError!void` directly. Adapt the signature inline.
-            this_ref.evtloop.enqueue_task_concurrent(ConcurrentTask::from_callback(
+            this_ref.evtloop.enqueue_task_concurrent(EventLoopTaskPtr { js: ConcurrentTask::from_callback(
                 this,
-                |p| unsafe { (&mut *p).run_from_js_thread().map_err(Into::into) },
-            ));
+                |p| unsafe { (&mut *p).run_from_js_thread().map_err(|_| core::ptr::null_mut()) },
+            ) });
         } else {
-            this_ref.evtloop.enqueue_task_concurrent(
-                AnyTaskWithExtraContext::from_callback_auto_deinit(this, Self::run_from_js_thread_mini),
-            );
+            this_ref.evtloop.enqueue_task_concurrent(EventLoopTaskPtr { mini:
+                AnyTaskWithExtraContext::from_callback_auto_deinit(this, |p: *mut Self, ctx| unsafe { (*p).run_from_js_thread_mini(ctx) }),
+            });
         }
     }
 

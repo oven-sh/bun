@@ -14,7 +14,8 @@ use core::sync::atomic::{AtomicU32, Ordering};
 
 use bun_aio::Loop as AsyncLoop;
 use bun_core::SignalCode;
-use bun_io::{BufferedReader, BufferedReaderParent, ReadState, StreamingWriter, WriteStatus};
+use bun_io::{BufferedReader, ReadState, StreamingWriter, WriteStatus};
+use bun_io::pipe_reader::{BufferedReaderParent, PosixFlags};
 use crate::node::StringOrBuffer;
 use crate::webcore::blob::ZigStringBlobExt;
 use bun_jsc::{

@@ -413,7 +413,7 @@ pub fn apply_static_route_h3<T>(
 
 // TODO(port): helper trait introduced to express `comptime T: type` constraint from Zig.
 // Phase B: replace with the real trait bound on AnyRoute-like types.
-pub trait StaticRouteLike<const SSL: bool>: Copy {
+pub trait StaticRouteLike<const SSL: bool>: 'static {
     fn set_server(&self, server: AnyServer);
     fn on_request(&self, req: RequestUnion<'_>, resp: ResponseUnion<'_>);
     fn on_head_request(&self, req: RequestUnion<'_>, resp: ResponseUnion<'_>);
@@ -718,15 +718,16 @@ impl ServerConfig {
             };
             args.had_routes_object = true;
 
-            let mut iter = JSPropertyIterator::init(
-                global,
-                static_obj,
-                bun_jsc::JSPropertyIteratorOptions {
-                    skip_empty_name: true,
-                    include_value: true,
-                    ..Default::default()
-                },
-            )?;
+            // PORT NOTE: JSPropertyIterator carries its options as a const generic.
+            const ROUTE_ITER_OPTS: bun_jsc::JSPropertyIteratorOptions =
+                bun_jsc::JSPropertyIteratorOptions::new(
+                    /* skip_empty_name */ true,
+                    /* include_value   */ true,
+                );
+            // SAFETY: `get_object()` returned Some, so the pointer is a live JSObject.
+            let static_obj: &bun_jsc::JSObject = unsafe { &*static_obj };
+            let mut iter =
+                JSPropertyIterator::<ROUTE_ITER_OPTS>::init(global, static_obj)?;
             // iter drops at scope end
 
             let mut init_ctx_ = super::super::server_body::ServerInitContext {

@@ -425,6 +425,13 @@ pub trait Encoding: Copy + 'static {
     /// (matching the Zig behavior of "compile error on Utf16 instantiation").
     /// TODO(port): Utf16 needs a real keying story (transcode or u16-keyed map).
     fn key_bytes(s: &[Self::Unit]) -> &[u8];
+
+    /// Construct a Unit from a `u16` code unit. Only meaningful for `Utf16`
+    /// (identity); the `u8` encodings mark this `unreachable!()` because every
+    /// call site is gated on `Enc::KIND == EncodingKind::Utf16`. Mirrors Zig's
+    /// `text.append(@intCast(cp))` paths in `scanDoubleQuotedScalar` /
+    /// `decodeHexCodePoint` where `unit() == u16`.
+    fn unit_from_u16(u: u16) -> Self::Unit;
 }
 
 #[derive(Clone, Copy)]
@@ -448,6 +455,11 @@ impl Encoding for Latin1 {
     fn key_bytes(s: &[u8]) -> &[u8] {
         s
     }
+    #[inline]
+    fn unit_from_u16(_u: u16) -> u8 {
+        // Only reachable from `EncodingKind::Utf16`-gated arms.
+        unreachable!("unit_from_u16 on Latin1")
+    }
 }
 
 impl Encoding for Utf8 {
@@ -463,6 +475,11 @@ impl Encoding for Utf8 {
     #[inline]
     fn key_bytes(s: &[u8]) -> &[u8] {
         s
+    }
+    #[inline]
+    fn unit_from_u16(_u: u16) -> u8 {
+        // Only reachable from `EncodingKind::Utf16`-gated arms.
+        unreachable!("unit_from_u16 on Utf8")
     }
 }
 
@@ -483,6 +500,10 @@ impl Encoding for Utf16 {
         // would also fail to compile this call for Utf16. Phase B decides
         // whether to transcode or switch to a u16-keyed map.
         unimplemented!("Utf16::key_bytes — StringHashMap is u8-keyed")
+    }
+    #[inline]
+    fn unit_from_u16(u: u16) -> u16 {
+        u
     }
 }
 
@@ -1481,15 +1502,12 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
 
         let mut scalar: NodeScalar<Enc> = 'scalar: {
             if x || o || hex {
-                // TODO(port): std.fmt.parseUnsigned(u64, slice, 0) over &[Enc::Unit] —
-                // need ASCII narrowing for non-u8 encodings; Phase B.
                 let unsigned = match parse_unsigned_radix0::<Enc>(parser!().slice(start, end)) {
                     Ok(v) => v,
                     Err(_) => return Ok(()),
                 };
                 break 'scalar NodeScalar::Number(unsigned as f64);
             }
-            // TODO(port): bun.jsc.wtf.parseDouble over &[Enc::Unit] — Phase B.
             // MOVE_DOWN(b0): wtf::parse_double → bun_str (T1)
             let float = match parse_double_generic::<Enc>(parser!().slice(start, end)) {
                 Ok(v) => v,
@@ -1517,17 +1535,87 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
     }
 }
 
-// TODO(port): placeholder for std.fmt.parseUnsigned(u64, _, 0). Phase B should
-// route through bun_str or core u64::from_str_radix after ASCII narrowing.
-fn parse_double_generic<Enc: Encoding>(_s: &[Enc::Unit]) -> Result<f64, ()> {
-    // TODO(port): bun_str::wtf::parse_double takes &[u8]; need Enc::Unit→u8
-    // narrowing (or a u16 overload) before this can call through. Mirrors
-    // parse_unsigned_radix0 below — Phase B.
-    Err(())
+/// Port of `bun.jsc.wtf.parseDouble(slice)` over an encoding-generic slice.
+/// `bun_str::wtf::parse_double` takes `&[u8]`; for `Utf8`/`Latin1` we narrow
+/// via `Enc::key_bytes` (identity). The `Utf16` monomorph fails loudly via
+/// `todo!()` rather than silently returning `Err(())` (PORTING.md
+/// §Forbidden-patterns: silent-no-op).
+// MOVE_DOWN(b0): wtf::parse_double → bun_str (T1)
+fn parse_double_generic<Enc: Encoding>(s: &[Enc::Unit]) -> Result<f64, ()> {
+    match Enc::KIND {
+        EncodingKind::Utf8 | EncodingKind::Latin1 => {
+            let bytes = Enc::key_bytes(s);
+            bun_str::wtf::parse_double(bytes).map_err(|_| ())
+        }
+        EncodingKind::Utf16 => {
+            // TODO(port): needs &[u16]→ASCII narrowing (the lexer guaranteed
+            // ASCII-only digits/sign/dot/e in this slice). Phase B.
+            todo!("parse_double_generic<Utf16>: ASCII-narrow &[u16] before wtf::parse_double")
+        }
+    }
 }
 
-fn parse_unsigned_radix0<Enc: Encoding>(_s: &[Enc::Unit]) -> Result<u64, ()> {
-    Err(())
+/// Port of `std.fmt.parseUnsigned(u64, slice, 0)` over an encoding-generic
+/// slice. Radix 0 = auto-detect `0x`/`0X` (hex), `0o`/`0O` (oct), `0b`/`0B`
+/// (bin), else decimal; `_` is a digit separator. Utf8/Latin1 narrow via
+/// `Enc::key_bytes`; Utf16 is `todo!()` (loud, not silent).
+fn parse_unsigned_radix0<Enc: Encoding>(s: &[Enc::Unit]) -> Result<u64, ()> {
+    match Enc::KIND {
+        EncodingKind::Utf8 | EncodingKind::Latin1 => {
+            parse_unsigned_radix0_bytes(Enc::key_bytes(s))
+        }
+        EncodingKind::Utf16 => {
+            // TODO(port): needs &[u16]→ASCII narrowing. Phase B.
+            todo!("parse_unsigned_radix0<Utf16>: ASCII-narrow &[u16]")
+        }
+    }
+}
+
+/// Byte-level impl of Zig `std.fmt.parseUnsigned(u64, buf, 0)`.
+fn parse_unsigned_radix0_bytes(mut buf: &[u8]) -> Result<u64, ()> {
+    if buf.is_empty() {
+        return Err(());
+    }
+    let radix: u32 = if buf.len() >= 2 && buf[0] == b'0' {
+        match buf[1] {
+            b'x' | b'X' => {
+                buf = &buf[2..];
+                16
+            }
+            b'o' | b'O' => {
+                buf = &buf[2..];
+                8
+            }
+            b'b' | b'B' => {
+                buf = &buf[2..];
+                2
+            }
+            _ => 10,
+        }
+    } else {
+        10
+    };
+    if buf.is_empty() {
+        return Err(());
+    }
+    let mut acc: u64 = 0;
+    for &c in buf {
+        if c == b'_' {
+            continue;
+        }
+        let digit = match c {
+            b'0'..=b'9' => (c - b'0') as u32,
+            b'a'..=b'z' => (c - b'a') as u32 + 10,
+            b'A'..=b'Z' => (c - b'A') as u32 + 10,
+            _ => return Err(()),
+        };
+        if digit >= radix {
+            return Err(());
+        }
+        acc = acc.checked_mul(radix as u64).ok_or(())?;
+        acc = acc.checked_add(digit as u64).ok_or(())?;
+    }
+    Ok(acc)
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -4435,26 +4523,22 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                         0x4E /* 'N' */ => match Enc::KIND {
                             EncodingKind::Utf8 => text.extend_from_slice(Enc::literal(&[0xC2, 0x85])),
-                            EncodingKind::Utf16 => {
-                                // TODO(port): need to push u16 0x0085 — Enc::ch only takes u8.
-                                // Phase B: add Enc::unit_from_u16.
-                                return Err(ParseError::UnexpectedCharacter);
-                            }
+                            EncodingKind::Utf16 => text.push(Enc::unit_from_u16(0x0085)),
                             EncodingKind::Latin1 => return Err(ParseError::UnexpectedCharacter),
                         },
                         0x5F /* '_' */ => match Enc::KIND {
                             EncodingKind::Utf8 => text.extend_from_slice(Enc::literal(&[0xC2, 0xA0])),
-                            EncodingKind::Utf16 => return Err(ParseError::UnexpectedCharacter), // TODO(port)
+                            EncodingKind::Utf16 => text.push(Enc::unit_from_u16(0x00A0)),
                             EncodingKind::Latin1 => return Err(ParseError::UnexpectedCharacter),
                         },
                         0x4C /* 'L' */ => match Enc::KIND {
                             EncodingKind::Utf8 => text.extend_from_slice(Enc::literal(&[0xE2, 0x80, 0xA8])),
-                            EncodingKind::Utf16 => return Err(ParseError::UnexpectedCharacter), // TODO(port)
+                            EncodingKind::Utf16 => text.push(Enc::unit_from_u16(0x2028)),
                             EncodingKind::Latin1 => return Err(ParseError::UnexpectedCharacter),
                         },
                         0x50 /* 'P' */ => match Enc::KIND {
                             EncodingKind::Utf8 => text.extend_from_slice(Enc::literal(&[0xE2, 0x80, 0xA9])),
-                            EncodingKind::Utf16 => return Err(ParseError::UnexpectedCharacter), // TODO(port)
+                            EncodingKind::Utf16 => text.push(Enc::unit_from_u16(0x2029)),
                             EncodingKind::Latin1 => return Err(ParseError::UnexpectedCharacter),
                         },
 
@@ -4512,24 +4596,16 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             EncodingKind::Utf16 => {
                 // Zig: std.unicode.utf16CodepointSequenceLength + manual surrogate split.
                 let len: u8 = if cp < 0x10000 { 1 } else { 2 };
-                // TODO(port): need Enc::Unit==u16 push helper; Enc::ch only takes u8.
-                // Phase B: add `Enc::ch16(u16) -> Self::Unit` or specialize per encoding.
-                // Until that lands, fail loudly rather than silently emitting an empty
-                // decode (matches the Utf16 arms of the named-escape table above).
                 match len {
                     1 => {
                         let unit = u16::try_from(cp).unwrap();
-                        let _ = (unit, &text);
-                        // text.push(Enc::ch16(unit));
-                        return Err(ParseError::UnexpectedCharacter);
+                        text.push(Enc::unit_from_u16(unit));
                     }
                     2 => {
                         let high = 0xD800u16 + u16::try_from((cp - 0x10000) >> 10).unwrap();
                         let low = 0xDC00u16 + u16::try_from((cp - 0x10000) & 0x3FF).unwrap();
-                        let _ = (high, low, &text);
-                        // text.push(Enc::ch16(high));
-                        // text.push(Enc::ch16(low));
-                        return Err(ParseError::UnexpectedCharacter);
+                        text.push(Enc::unit_from_u16(high));
+                        text.push(Enc::unit_from_u16(low));
                     }
                     _ => unreachable!(),
                 }

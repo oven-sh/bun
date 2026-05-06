@@ -74,23 +74,23 @@ type NapiFinalize = unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void);
 // Exported variables (Zig: `export var` / `@export(&var, …)`)
 // ════════════════════════════════════════════════════════════════════════════
 
-// REAL: src/jsc/VirtualMachine.rs / src/runtime/cli/Arguments.rs / src/analytics
-// PHASE-C: C++ callback — Zig: `pub export var isBunTest: bool = false;`
-#[unsafe(no_mangle)]
-pub static mut isBunTest: bool = false;
+// REAL: now provided by bun_jsc (src/jsc/VirtualMachine.rs).
+// isBunTest
+// Bun__stringSyntheticAllocationLimit
+// Bun__defaultRemainingRunsUntilSkipReleaseAccess
+// Bun__getDefaultGlobalObject
 
 // REAL: now provided by bun_runtime (src/runtime/cli/Arguments.rs).
 // Bun__Node__ProcessNoDeprecation
 // Bun__Node__ProcessThrowDeprecation
 // Bun__Node__UseSystemCA
 
-// PHASE-C: C++ callback — Zig: `@export(&string_allocation_limit, …)` (= u32::MAX)
-#[unsafe(no_mangle)]
-pub static mut Bun__stringSyntheticAllocationLimit: usize = u32::MAX as usize;
+// REAL: now provided by bun_analytics (src/analytics/lib.rs).
+// Bun__napi_module_register_count
+// Bun__isEpollPwait2SupportedOnLinuxKernel
 
-// PHASE-C: C++ callback — Zig: `@export(&napi_module_register, …)` (usize counter)
-#[unsafe(no_mangle)]
-pub static mut Bun__napi_module_register_count: usize = 0;
+// REAL: now provided by bun_uws (src/uws/lib.rs).
+// BUN__warn__extra_ca_load_failed
 
 // ════════════════════════════════════════════════════════════════════════════
 // Real-body exports (no gated-crate dependency)
@@ -103,6 +103,15 @@ pub extern "C" fn Bun__panic(msg: *const u8, len: usize) -> ! {
     // SAFETY: caller guarantees `msg` is valid for `len` bytes.
     let bytes = if msg.is_null() { &b""[..] } else { unsafe { core::slice::from_raw_parts(msg, len) } };
     bun_core::output::panic(format_args!("{}", String::from_utf8_lossy(bytes)));
+}
+
+// PHASE-C: C++ deallocator — Zig: `export fn MarkedArrayBuffer_deallocator(bytes, ctx) void`
+// REAL: src/jsc/array_buffer.rs (gated under `#[cfg(any())] mod _body`).
+// Body is identical to the real impl: mi_free the buffer.
+#[unsafe(no_mangle)]
+pub extern "C" fn MarkedArrayBuffer_deallocator(bytes: *mut c_void, _ctx: *mut c_void) {
+    // SAFETY: bytes was allocated by mimalloc (default_allocator); mi_free is null-safe.
+    unsafe { bun_mimalloc_sys::mimalloc::mi_free(bytes) };
 }
 
 // PHASE-C: C++ callback — Zig: `export fn ZigString__freeGlobal(ptr, len) void`
@@ -124,23 +133,6 @@ pub extern "C" fn Bun__NODE_NO_WARNINGS() -> bool {
     // Real impl reads VirtualMachine env loader; until that's wired, honour
     // the env var directly so `--no-warnings` plumbing isn't silently broken.
     std::env::var_os("NODE_NO_WARNINGS").is_some_and(|v| v == "1")
-}
-
-// PHASE-C: C++ callback — Zig: `export fn Bun__isEpollPwait2SupportedOnLinuxKernel() i32`
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__isEpollPwait2SupportedOnLinuxKernel() -> i32 {
-    // Conservative "no" until analytics::kernelVersion() is linkable; usockets
-    // falls back to epoll_pwait(1) which is always available.
-    0
-}
-
-// PHASE-C: C++ callback — Zig: `export fn BUN__warn__extra_ca_load_failed(filename, error_msg) void`
-#[unsafe(no_mangle)]
-pub extern "C" fn BUN__warn__extra_ca_load_failed(filename: *const c_char, error_msg: *const c_char) {
-    // SAFETY: both are NUL-terminated C strings or null.
-    let f = if filename.is_null() { "" } else { unsafe { core::ffi::CStr::from_ptr(filename) }.to_str().unwrap_or("") };
-    let e = if error_msg.is_null() { "" } else { unsafe { core::ffi::CStr::from_ptr(error_msg) }.to_str().unwrap_or("") };
-    eprintln!("warn: ignoring extra certs from {f}, load failed: {e}");
 }
 
 // PHASE-C: C++ callback — Zig: `export fn Bun__getTLSRejectUnauthorizedValue() i32`
@@ -215,11 +207,36 @@ pub extern "C" fn Bun__getVM() -> *mut VirtualMachine {
     phase_c_todo!("Bun__getVM")
 }
 
+// REAL: src/jsc/virtual_machine_exports.rs (gated under `#![cfg(any())]`)
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__getDefaultGlobalObject() -> *mut JSGlobalObject {
-    // Zig returns `?*JSGlobalObject` = null when no VM; null is the safe answer
-    // pre-runtime so C++ paths that null-check don't crash on cold start.
-    core::ptr::null_mut()
+pub extern "C" fn Bun__VirtualMachine__exitDuringUncaughtException(this: *mut VirtualMachine) {
+    phase_c_todo!("Bun__VirtualMachine__exitDuringUncaughtException")
+}
+
+// REAL: src/jsc/VirtualMachine.rs (no Rust impl yet — C++ BunProcess.cpp caller)
+// Default = allow the warning (matches Zig `is_handled_promise_warned == false`).
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__VM__allowRejectionHandledWarning(vm: *mut VirtualMachine) -> bool {
+    let _ = vm;
+    true
+}
+
+// REAL: C++ ZigGlobalObject.cpp (not in the Phase-C link set)
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__JSC_GlobalObject__handleRejectedPromises(global: *mut JSGlobalObject) {
+    phase_c_todo!("Bun__JSC_GlobalObject__handleRejectedPromises")
+}
+
+// REAL: C++ bindings.cpp `JSC__JSValue__parseJSON` (not in the Phase-C link set)
+#[unsafe(no_mangle)]
+pub extern "C" fn JSC__JSValue__parseJSON(string: *const c_void, global: *const JSGlobalObject) -> JSValue {
+    phase_c_todo!("JSC__JSValue__parseJSON")
+}
+
+// REAL: C++ BunString.cpp `BunString__toErrorInstance` (not in the Phase-C link set)
+#[unsafe(no_mangle)]
+pub extern "C" fn BunString__toErrorInstance(this: *const c_void, global: *mut JSGlobalObject) -> JSValue {
+    phase_c_todo!("BunString__toErrorInstance")
 }
 
 #[unsafe(no_mangle)]
@@ -548,6 +565,12 @@ pub extern "C" fn Blob__getSize(value: JSValue) -> usize {
     phase_c_todo!("Blob__getSize")
 }
 
+// REAL: src/runtime/webcore/Blob.rs (gated)
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__Blob__getSizeForBindings(this: *mut Blob) -> u64 {
+    phase_c_todo!("Bun__Blob__getSizeForBindings")
+}
+
 // .classes.ts hooks (build/debug/codegen/ZigGeneratedClasses.zig)
 #[unsafe(no_mangle)]
 pub extern "C" fn Blob__estimatedSize(this: *mut Blob) -> usize {
@@ -609,6 +632,16 @@ pub extern "C" fn BlockList__onStructuredCloneDeserialize(
 ) -> JSValue {
     phase_c_todo!("BlockList__onStructuredCloneDeserialize")
 }
+
+// ── WebView process control ─────────────────────────────────────────────────
+// REAL: src/runtime/webview/{ChromeProcess,HostProcess}.rs (gated)
+// No-op pre-runtime: there is no spawned browser/host process to kill.
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__Chrome__kill() {}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__WebViewHost__kill() {}
 
 // ── napi ────────────────────────────────────────────────────────────────────
 // REAL: src/runtime/napi/napi.rs
@@ -737,6 +770,21 @@ pub extern "C" fn us_dispatch_ssl_raw_tap(
 // REAL: src/runtime/dns_jsc/dns.rs (gated until bun_jsc compiles)
 
 #[unsafe(no_mangle)]
+pub extern "C" fn Bun__addrinfo_get(
+    loop_: *mut UwsLoop,
+    host: *const c_char,
+    port: u16,
+    socket: *mut *mut c_void,
+) -> c_int {
+    phase_c_todo!("Bun__addrinfo_get")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__addrinfo_set(request: *mut c_void, socket: *mut c_void) {
+    phase_c_todo!("Bun__addrinfo_set")
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn Bun__addrinfo_cancel(request: *mut c_void, socket: *mut c_void) -> c_int {
     phase_c_todo!("Bun__addrinfo_cancel")
 }
@@ -750,11 +798,6 @@ pub extern "C" fn Bun__addrinfo_freeRequest(req: *mut c_void, err: c_int) {
 pub extern "C" fn Bun__addrinfo_getRequestResult(req: *mut c_void) -> *mut c_void {
     phase_c_todo!("Bun__addrinfo_getRequestResult")
 }
-
-// ── JSC GC controller knob ──────────────────────────────────────────────────
-// REAL: src/jsc/VirtualMachine.rs::Bun__defaultRemainingRunsUntilSkipReleaseAccess
-#[unsafe(no_mangle)]
-pub static mut Bun__defaultRemainingRunsUntilSkipReleaseAccess: c_int = 10;
 
 // ── bundler analyze ─────────────────────────────────────────────────────────
 // REAL: src/bundler/analyze_transpiled_module.rs, src/bundler_jsc/analyze_jsc.rs

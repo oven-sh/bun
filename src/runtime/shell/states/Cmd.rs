@@ -5,7 +5,7 @@
 
 use crate::shell::ast;
 use crate::shell::builtin::Builtin;
-use crate::shell::interpreter::{log, Interpreter, Node, NodeId, ShellExecEnv, StateKind};
+use crate::shell::interpreter::{log, CowFd, Interpreter, Node, NodeId, ShellExecEnv, StateKind};
 use crate::shell::io::IO;
 use crate::shell::states::base::Base;
 use crate::shell::yield_::Yield;
@@ -17,7 +17,8 @@ pub struct Cmd {
     pub io: IO,
     pub state: CmdState,
     pub args: Vec<Vec<u8>>,
-    pub redirects_expanded: Vec<Vec<u8>>,
+    pub redirection_file: Vec<u8>,
+    pub redirection_fd: Option<*mut CowFd>,
     pub exec: Exec,
     pub exit_code: Option<ExitCode>,
 }
@@ -28,7 +29,7 @@ pub enum CmdState {
     Idle,
     ExpandingAssigns,
     ExpandingArgs { idx: u32 },
-    ExpandingRedirects { idx: u32 },
+    ExpandingRedirect { idx: u32 },
     Exec,
     WaitingWriteErr,
     Done,
@@ -59,7 +60,8 @@ impl Cmd {
             io,
             state: CmdState::Idle,
             args: Vec::new(),
-            redirects_expanded: Vec::new(),
+            redirection_file: Vec::new(),
+            redirection_fd: None,
             exec: Exec::None,
             exit_code: None,
         }))
@@ -71,7 +73,7 @@ impl Cmd {
 
     pub fn next(interp: &mut Interpreter, this: NodeId) -> Yield {
         // The full body (~550 lines) drives the state machine through
-        // ExpandingAssigns → ExpandingArgs → ExpandingRedirects → Exec.
+        // ExpandingAssigns → ExpandingArgs → ExpandingRedirect → Exec.
         // It spawns Assigns/Expansion children, then either constructs a
         // Builtin (and calls `Builtin::start(interp, this)`) or spawns a
         // subprocess via `subproc::ShellSubprocess::spawn`.
@@ -119,9 +121,12 @@ impl Cmd {
         log!("Cmd {} deinit", this);
         let me = interp.as_cmd_mut(this);
         me.args.clear();
-        me.redirects_expanded.clear();
+        me.redirection_file.clear();
+        if let Some(fd) = me.redirection_fd.take() {
+            CowFd::deref(fd);
+        }
         me.exec = Exec::None;
-        // TODO(b2-blocked): close redirect fds, deinit duped shell env if any.
+        // TODO(b2-blocked): deinit duped shell env if any.
         me.base.end_scope();
     }
 }

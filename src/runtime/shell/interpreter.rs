@@ -494,7 +494,7 @@ impl Interpreter {
             StateKind::Expansion => Expansion::deinit(self, id),
             StateKind::IfClause => If::deinit(self, id),
             StateKind::Condexpr => CondExpr::deinit(self, id),
-            StateKind::Async => { /* Async deinit is purposefully empty; see Async::actually_deinit */ }
+            StateKind::Async => return, // Async deinit is purposefully empty; freed later by async_cmd_done → actually_deinit.
             StateKind::Subshell => Subshell::deinit(self, id),
             StateKind::Free => return,
         }

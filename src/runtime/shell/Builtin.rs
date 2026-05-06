@@ -168,7 +168,9 @@ impl Builtin {
                 IoKind::Stdin => return 0,
             };
             match &out.kind {
-                OutKind::Fd(f) => f.captured,
+                OutKind::Fd(_) => unreachable!(
+                    "write_no_io called on fd output; caller must check needs_io()"
+                ),
                 OutKind::Pipe => {
                     // Pipe → captured buffer on the shell env.
                     let shell = interp.as_cmd(cmd).base.shell;

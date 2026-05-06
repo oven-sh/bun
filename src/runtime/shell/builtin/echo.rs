@@ -23,7 +23,7 @@ enum State {
 
 impl Echo {
     pub fn start(interp: &mut Interpreter, cmd: NodeId) -> Yield {
-        let (no_newline, output) = {
+        let (no_newline, has_trailing_newline, output) = {
             let args = Builtin::of(interp, cmd).args_slice();
             let mut i = 0usize;
             let mut no_newline = false;
@@ -41,19 +41,34 @@ impl Echo {
                 }
             }
             let mut out = Vec::new();
-            for (j, arg) in args[i..].iter().enumerate() {
+            let rest = &args[i..];
+            let mut has_trailing_newline = false;
+            for (j, arg) in rest.iter().enumerate() {
                 if j > 0 {
                     out.push(b' ');
                 }
                 // SAFETY: argv entries are NUL-terminated.
-                out.extend_from_slice(unsafe { CStr::from_ptr(*arg) }.to_bytes());
+                let thearg = unsafe { CStr::from_ptr(*arg) }.to_bytes();
+                let is_last = j == rest.len() - 1;
+                if is_last && thearg.last() == Some(&b'\n') {
+                    has_trailing_newline = true;
+                    // Collapse repeated trailing '\n' to a single one
+                    // (matches bun.strings.trimSubsequentLeadingChars).
+                    let mut end = thearg.len();
+                    while end > 1 && thearg[end - 1] == b'\n' && thearg[end - 2] == b'\n' {
+                        end -= 1;
+                    }
+                    out.extend_from_slice(&thearg[..end]);
+                } else {
+                    out.extend_from_slice(thearg);
+                }
             }
-            (no_newline, out)
+            (no_newline, has_trailing_newline, out)
         };
         {
             let me = Self::state_mut(interp, cmd);
             me.output = output;
-            if !no_newline {
+            if !no_newline && !has_trailing_newline {
                 me.output.push(b'\n');
             }
         }
@@ -77,7 +92,11 @@ impl Echo {
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
         Self::state_mut(interp, cmd).state = State::Done;
-        Builtin::done(interp, cmd, if err.is_some() { 1 } else { 0 })
+        Builtin::done(
+            interp,
+            cmd,
+            err.map(|e| e.errno as crate::shell::ExitCode).unwrap_or(0),
+        )
     }
 
     #[inline]

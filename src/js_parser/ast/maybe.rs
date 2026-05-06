@@ -855,6 +855,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
     pub fn maybe_comma_spread_error(&mut self, _comma_after_spread: Option<logger::Loc>) {
         let p = self;
+        todo!("b2-ast-E: maybe_comma_spread_error body");
         #[cfg(any())] // TODO(b2-ast-E): body — log.add_range_error signature (&[u8] vs &str)
         {
         let Some(comma_after_spread) = _comma_after_spread else { return };

@@ -3,7 +3,6 @@ use core::ffi::CStr;
 use crate::shell::builtin::{Builtin, IoKind};
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::yield_::Yield;
-use crate::shell::ExitCode;
 
 #[derive(Default)]
 pub struct Exit {
@@ -21,7 +20,7 @@ enum State {
 impl Exit {
     pub fn start(interp: &mut Interpreter, cmd: NodeId) -> Yield {
         let args = Builtin::of(interp, cmd).args_slice();
-        let code: ExitCode = match args.len() {
+        let code: crate::shell::ExitCode = match args.len() {
             0 => 0,
             1 => {
                 // SAFETY: argv entries are NUL-terminated (built by Cmd from
@@ -34,13 +33,12 @@ impl Exit {
                             interp,
                             cmd,
                             b"exit: numeric argument required\n",
-                            2,
                         );
                     }
                 }
             }
             _ => {
-                return Self::fail(interp, cmd, b"exit: too many arguments\n", 1);
+                return Self::fail(interp, cmd, b"exit: too many arguments\n");
             }
         };
         // TODO(port): bash `exit` should unwind the whole script, not just the
@@ -49,25 +47,24 @@ impl Exit {
         Builtin::done(interp, cmd, code)
     }
 
-    fn fail(interp: &mut Interpreter, cmd: NodeId, msg: &[u8], code: ExitCode) -> Yield {
+    fn fail(interp: &mut Interpreter, cmd: NodeId, msg: &[u8]) -> Yield {
         if Builtin::of(interp, cmd).stderr.needs_io().is_some() {
             // TODO(b2-blocked): IOWriter::enqueue — async path.
             Self::state_mut(interp, cmd).state = State::WaitingIo;
             return Yield::suspended();
         }
         Builtin::write_no_io(interp, cmd, IoKind::Stderr, msg);
-        Builtin::done(interp, cmd, code)
+        Builtin::done(interp, cmd, 1)
     }
 
     pub fn on_io_writer_chunk(
         interp: &mut Interpreter,
         cmd: NodeId,
         _: usize,
-        err: Option<bun_sys::SystemError>,
+        _err: Option<bun_sys::SystemError>,
     ) -> Yield {
-        let code = if err.is_some() { 2 } else { 1 };
         Self::state_mut(interp, cmd).state = State::Done;
-        Builtin::done(interp, cmd, code)
+        Builtin::done(interp, cmd, 1)
     }
 
     #[inline]
@@ -79,9 +76,9 @@ impl Exit {
     }
 }
 
-fn parse_exit_code(s: &[u8]) -> Option<ExitCode> {
+fn parse_exit_code(s: &[u8]) -> Option<crate::shell::ExitCode> {
     let s = core::str::from_utf8(s).ok()?;
-    s.trim().parse::<i64>().ok().map(|n| (n & 0xff) as ExitCode)
+    s.parse::<u64>().ok().map(|n| (n % 256) as crate::shell::ExitCode)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -1,10 +1,11 @@
 //! Port of `src/runtime/ffi/FFI.zig` — `Bun.FFI` / `bun:ffi`.
 //!
-//! B-2 un-gate round: `ABIType` (CType) enum, `FFI`/`Function`/`Step`/`Compiled`
-//! structs, formatters, and the dlopen data path are real. TinyCC compile
-//! bodies and JSC host-fn entry points (`open`/`close`/`cc`/`linkSymbols`/
-//! `callback`/`generate_symbols`) stay gated on `bun_jsc` method surface and
-//! `bun_tcc_sys::State` API.
+//! B-2 second-pass: `ABIType` (CType) enum, `FFI`/`Function`/`Step`/`Compiled`
+//! structs, formatters, dlopen data path, and the JSC host-fn entry points
+//! (`open`/`close`/`compile`/`generate_symbols`) are real. TinyCC compile
+//! bodies (`CompileC`, `Function::compile` relocate path) and the remaining
+//! host-fns (`cc`/`linkSymbols`/`callback`) stay gated on `bun_tcc_sys::State`
+//! API.
 
 use core::ffi::{c_char, c_int, c_void};
 use core::fmt::{self, Write as _};
@@ -19,6 +20,10 @@ use bun_sys::DynLib;
 
 use crate::jsc::{JSGlobalObject, JSValue};
 
+// ─── un-gated host-fn bodies (open/close/compile/generate_symbols) ───────────
+mod host_fns;
+pub use host_fns::{generate_symbol_for_function, generate_symbols};
+
 // ─── gated Phase-A drafts (preserved, not compiled) ──────────────────────────
 #[cfg(any())]
 #[path = "ffi_body.rs"]
@@ -27,10 +32,7 @@ mod ffi_body; // full Phase-A draft of FFI.zig
 #[path = "FFIObject.rs"]
 pub mod ffi_object_draft;
 
-// TODO(b2-blocked): bun_jsc::host_fn / JsClass proc-macro / DomCall
-// TODO(b2-blocked): bun_jsc::JSGlobalObject method surface (throw, to_invalid_arguments, …)
 // TODO(b2-blocked): bun_tcc_sys::State (compile/relocate/add_symbol/define_symbol)
-// TODO(b2-blocked): crate::napi::NapiEnv / NapiHandleScope
 pub mod ffi_object {}
 
 // ─── TinyCC handle stub ──────────────────────────────────────────────────────
@@ -44,6 +46,12 @@ mod TCC {
     pub struct State {
         _p: [u8; 0],
         _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+    }
+    // Raw extern so the handle can be freed even while the method-ful
+    // `bun_tcc_sys::State` API stays gated.
+    // TODO(port): move to <area>_sys
+    unsafe extern "C" {
+        pub fn tcc_delete(s: *mut State);
     }
 }
 
@@ -185,7 +193,7 @@ pub struct CompileC {
 impl Default for CompileC {
     fn default() -> Self {
         Self {
-            source: Source::Files(Vec::new()),
+            source: Source::File(ZBox::from_vec_with_nul(Vec::new())),
             current_file_for_errors: ZStr::EMPTY,
             libraries: StringArray::default(),
             library_dirs: StringArray::default(),
@@ -280,8 +288,10 @@ unsafe extern "C" {
 impl Drop for Function {
     fn drop(&mut self) {
         // base_name, arg_types, Step::Failed.msg are owned and freed by drop glue.
-        if let Some(_state) = self.state.take() {
-            // TODO(b2-blocked): bun_tcc_sys::State::deinit — `tcc_delete(state)`
+        if let Some(state) = self.state.take() {
+            // SAFETY: `state` is the live TCCState* allocated for this Function's
+            // trampoline; ownership is unique here (taken from self).
+            unsafe { TCC::tcc_delete(state.as_ptr()) };
         }
         if let Step::Compiled(compiled) = &mut self.step {
             if let Some(wrapper) = compiled.ffi_callback_function_wrapper.take() {
@@ -311,7 +321,7 @@ impl Function {
         false
     }
 
-    fn fail(&mut self, msg: &'static [u8]) {
+    pub(super) fn fail(&mut self, msg: &'static [u8]) {
         if !matches!(self.step, Step::Failed { .. }) {
             // PORT NOTE: @branchHint(.likely) — Rust has no statement-level hint; left as-is
             self.step = Step::Failed {
@@ -348,8 +358,7 @@ impl Default for Compiled {
     fn default() -> Self {
         Self {
             ptr: core::ptr::null_mut(),
-            // TODO(b2-blocked): bun_jsc::JSValue::ZERO — shim has only Default
-            js_function: JSValue::default(),
+            js_function: JSValue::ZERO,
             js_context: None,
             ffi_callback_function_wrapper: None,
         }
@@ -756,9 +765,10 @@ impl CompilerRT {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/ffi/FFI.zig (2465 lines)
-//   confidence: medium (B-2 partial un-gate)
-//   notes:      ABIType + FFI/Function/Step/Compiled/CompileC structs real; dlopen
-//               primitives (DynLib/get_dl_error) real. JSC host-fn bodies
-//               (open/close/cc/linkSymbols/callback/generate_symbols) and TinyCC
-//               compile/relocate paths preserved in ffi_body.rs (gated).
+//   confidence: medium (B-2 second-pass un-gate)
+//   notes:      ABIType + FFI/Function/Step/Compiled/CompileC structs real;
+//               dlopen primitives + JSC host-fn bodies (open/close/compile/
+//               generate_symbols) real in `host_fns.rs`. TinyCC compile/
+//               relocate paths and cc/linkSymbols/callback preserved in
+//               ffi_body.rs (gated on bun_tcc_sys::tcc).
 // ──────────────────────────────────────────────────────────────────────────

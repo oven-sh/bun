@@ -1069,10 +1069,13 @@ pub fn flush() {
             )
         });
         // SAFETY: see with_dest_writer — pointers target thread-local backing
-        // fields with stable addresses once Source::init has run.
+        // fields with stable addresses once Source::init has run. We call the
+        // vtable fn pointer directly with the raw `*mut` (no `&mut Writer`
+        // formed) so a re-entrant print/flush from inside the drain cannot
+        // alias an outstanding exclusive borrow.
         unsafe {
-            let _ = (*bs).flush();
-            let _ = (*bes).flush();
+            let _ = ((*bs).flush)(bs);
+            let _ = ((*bes).flush)(bes);
         }
         // let _ = s.stream().flush();
         // let _ = s.error_stream().flush();
@@ -1127,29 +1130,15 @@ impl fmt::Display for ElapsedFormatter {
     }
 }
 
-#[inline]
-fn print_elapsed_to_with_ctx<C>(
-    elapsed: f64,
-    printer: impl Fn(Option<&C>, fmt::Arguments<'_>),
-    has_ctx: bool,
-    ctx: Option<&C>,
-) {
-    // TODO(port): Zig passed comptime fmt strings to a `(comptime fmt, args)` printer; in Rust
-    // the printer takes pre-built `fmt::Arguments` and the pretty_fmt! rewrite happens here.
-    let _ = has_ctx;
-    match elapsed.round() as i64 {
-        0..=1500 => {
-            printer(ctx, format_args!(pretty_fmt!("<r><d>[<b>{:>.2}ms<r><d>]<r>", true), elapsed));
-            // PORT NOTE: color/no-color branching moved into callers via pretty()/pretty_error()
-        }
-        _ => {
-            printer(
-                ctx,
-                format_args!(pretty_fmt!("<r><d>[<b>{:>.2}s<r><d>]<r>", true), elapsed / 1000.0),
-            );
-        }
-    }
-}
+// PORT NOTE: Zig's `printElapsedToWithCtx` passed the raw `<r><d>[...]<r>`
+// template to a `(comptime fmt, args)` printer (`prettyError`/`pretty`), which
+// then routed through `prettyTo` to branch on `enable_ansi_colors_{stdout,stderr}`.
+// In Rust the `pretty_fmt!` rewrite must happen at the macro call site, so the
+// public entry points (`print_elapsed`/`print_elapsed_stdout` below) inline the
+// match and call `pretty_error!`/`pretty!` directly — those macros emit both the
+// colored and stripped variants and let `pretty_to` pick at runtime. The
+// intermediate helper had no way to defer the color/no-color choice without
+// leaking raw `\x1b[` escapes when colors are disabled, so it was removed.
 
 #[inline]
 pub fn print_elapsed_to<C>(elapsed: f64, printer: impl Fn(&C, fmt::Arguments<'_>), ctx: &C) {
@@ -1157,7 +1146,8 @@ pub fn print_elapsed_to<C>(elapsed: f64, printer: impl Fn(&C, fmt::Arguments<'_>
         0..=1500 => printer(ctx, format_args!("[{:>.2}ms]", elapsed)),
         _ => printer(ctx, format_args!("[{:>.2}s]", elapsed / 1000.0)),
     }
-    // TODO(port): pretty_fmt! color tags — see print_elapsed_to_with_ctx
+    // TODO(port): pretty_fmt! color tags — callers that want color should use
+    // `print_elapsed`/`print_elapsed_stdout` (which route through `pretty_to`).
 }
 
 pub fn print_elapsed(elapsed: f64) {
@@ -1227,15 +1217,21 @@ pub fn print_timer(timer: &mut impl ReadTimer) {
 
 /// Pick the active writer for `dest`, honoring `enable_buffering`. Non-generic
 /// so the buffering branch isn't duplicated into every call site.
+///
+/// Hands `f` a **raw** `*mut io::Writer`, not a `&mut`. `f` may call into
+/// `write_fmt`, which evaluates user `Display` impls that can re-enter this
+/// module (e.g. `debug_warn` → `print_to`, or `flush()`). If we materialized a
+/// `&mut io::Writer` here, the re-entrant call would produce a second `&mut`
+/// aliasing the first while it is still live — UB. Zig's `destWriter()`
+/// (output.zig:731-737) returns a raw `*std.Io.Writer` with no exclusivity
+/// contract, so callers must do the same and route writes through the vtable
+/// fn pointers directly (see `write_fmt_raw`).
 #[inline(never)]
-fn with_dest_writer<R>(dest: Destination, f: impl FnOnce(&mut io::Writer) -> R) -> R {
+fn with_dest_writer<R>(dest: Destination, f: impl FnOnce(*mut io::Writer) -> R) -> R {
     debug_assert!(SOURCE_SET.get());
     let buffering = ENABLE_BUFFERING.load(Ordering::Relaxed);
-    // Load the writer pointer and *drop the RefCell borrow* before invoking `f`.
-    // `f` may call `write_fmt`, which evaluates user `Display` impls that can
-    // re-enter this module (e.g. `debug_warn` → `print_to`, or `flush()`); holding
-    // the `with_borrow_mut` guard across that re-entry panics with BorrowMutError.
-    // Zig's `destWriter()` has no such exclusion — it just returns the pointer.
+    // Load the writer pointer and *drop the RefCell borrow* before invoking `f`;
+    // holding the `with_borrow_mut` guard across re-entry panics with BorrowMutError.
     let w: *mut io::Writer = SOURCE.with_borrow_mut(|s| match dest {
         Destination::Stdout => {
             (if buffering { s.buffered_stream() } else { s.stream() }) as *mut _
@@ -1250,14 +1246,46 @@ fn with_dest_writer<R>(dest: Destination, f: impl FnOnce(&mut io::Writer) -> R) 
     // pointers are already cached on `Source.{stream,error_stream,...}` and
     // handed out by `writer()`/`error_writer()` — this is the established
     // self-referential pattern, not a lifetime extension of borrowed data.
-    f(unsafe { &mut *w })
+    // We pass the raw pointer through unchanged; `f` is responsible for not
+    // forming a `&mut` that outlives a single non-reentrant vtable call.
+    f(w)
+}
+
+/// Write `args` through a raw `*mut io::Writer` without ever forming a
+/// `&mut io::Writer`, so re-entrant writes from inside `Display` impls don't
+/// alias an outstanding exclusive borrow.
+///
+/// SAFETY: `w` must point to a live `io::Writer` for the duration of the call
+/// (guaranteed by `with_dest_writer`'s thread-local-stability invariant).
+unsafe fn write_fmt_raw(w: *mut io::Writer, args: fmt::Arguments<'_>) {
+    struct Raw(*mut io::Writer);
+    impl fmt::Write for Raw {
+        fn write_str(&mut self, s: &str) -> fmt::Result {
+            // SAFETY: `self.0` is the `w` passed to `write_fmt_raw`, valid per
+            // the caller's contract. We read the `write_all` vtable fn pointer
+            // via raw-pointer field projection (no intermediate `&`/`&mut`
+            // Writer) and call it with the raw `*mut` — any re-entrant write
+            // sees only another raw pointer, never an aliased `&mut`.
+            unsafe {
+                let f = (*self.0).write_all;
+                let _ = f(self.0, s.as_bytes());
+            }
+            Ok(())
+        }
+    }
+    let _ = fmt::Write::write_fmt(&mut Raw(w), args);
 }
 
 /// Single shared write path for pre-formatted bytes.
 #[inline(never)]
 fn write_bytes(dest: Destination, bytes: &[u8]) {
     with_dest_writer(dest, |w| {
-        let _ = w.write_all(bytes);
+        // SAFETY: `w` is valid per `with_dest_writer`; call the vtable fn
+        // directly with the raw pointer so no `&mut Writer` is formed.
+        unsafe {
+            let f = (*w).write_all;
+            let _ = f(w, bytes);
+        }
     });
 }
 
@@ -1277,7 +1305,10 @@ pub fn print_to(dest: Destination, args: fmt::Arguments<'_>) {
     }
     // There's not much we can do if this errors. Especially if it's something like BrokenPipe.
     with_dest_writer(dest, |w| {
-        let _ = w.write_fmt(args);
+        // SAFETY: `w` is valid per `with_dest_writer`; `write_fmt_raw` routes
+        // through the vtable without forming a `&mut Writer`, so `Display`
+        // impls that re-enter `print_to`/`flush` cannot alias.
+        unsafe { write_fmt_raw(w, args) };
     });
 }
 
@@ -2230,10 +2261,112 @@ impl Synchronized {
     }
 }
 
+#[cfg(test)]
+mod pretty_fmt_tests {
+    //! Parity checks between the `pretty_fmt!` proc-macro (compile-time) and
+    //! `pretty_fmt_runtime` (1:1 port of Zig `prettyFmt`). Guards against the
+    //! macro leaking raw `<r>`/`<b>` markup into help text.
+    use super::{pretty_fmt_runtime, RESET};
+    use bun_core_macros::pretty_fmt;
+
+    #[test]
+    fn reset_tag_emits_ansi_or_nothing() {
+        assert_eq!(pretty_fmt!("<r>", true), RESET);
+        assert_eq!(pretty_fmt!("<r>", false), "");
+        assert_eq!(pretty_fmt!("</b>", true), RESET);
+        assert_eq!(pretty_fmt!("</b>", false), "");
+    }
+
+    #[test]
+    fn color_tags_emit_ansi() {
+        assert_eq!(pretty_fmt!("<red>x<r>", true), "\x1b[31mx\x1b[0m");
+        assert_eq!(pretty_fmt!("<red>x<r>", false), "x");
+        assert_eq!(pretty_fmt!("<b><green>bun<r>", true), "\x1b[1m\x1b[32mbun\x1b[0m");
+        assert_eq!(pretty_fmt!("<b><green>bun<r>", false), "bun");
+    }
+
+    #[test]
+    fn escaped_angle_brackets_survive() {
+        // `\<folder\>` must round-trip to literal `<folder>` and never be
+        // mistaken for a tag.
+        assert_eq!(pretty_fmt!("\\<folder\\>", true), "<folder>");
+        assert_eq!(pretty_fmt!("\\<folder\\>", false), "<folder>");
+    }
+
+    #[test]
+    fn format_specs_with_angle_brackets_pass_through() {
+        // `{:<16}` / `{:>.2}` contain `<`/`>` *inside* a format spec — the
+        // brace scanner must shield them from the tag parser.
+        assert_eq!(pretty_fmt!("<d>{:<16}<r>", true), "\x1b[2m{:<16}\x1b[0m");
+        assert_eq!(pretty_fmt!("<d>{:<16}<r>", false), "{:<16}");
+        assert_eq!(pretty_fmt!("<b>{:>.2}ms<r>", false), "{:>.2}ms");
+    }
+
+    #[test]
+    fn zig_spec_rewrites() {
+        assert_eq!(pretty_fmt!("{s}", true), "{}");
+        assert_eq!(pretty_fmt!("{d}", true), "{}");
+        assert_eq!(pretty_fmt!("{any}", true), "{:?}");
+        assert_eq!(pretty_fmt!("{?}", true), "{:?}");
+    }
+
+    #[test]
+    fn concat_and_stringify_inputs() {
+        assert_eq!(
+            pretty_fmt!(concat!("<r><d>[", stringify!(http), "]<r> "), true),
+            "\x1b[0m\x1b[2m[http]\x1b[0m ",
+        );
+    }
+
+    #[test]
+    fn no_raw_tags_leak_into_help_header() {
+        // First line of `bun --help` — must contain no `<r>` / `<b>` literals.
+        const ON: &str = pretty_fmt!(
+            "<r><b><magenta>Bun<r> is a fast JavaScript runtime, package manager, bundler, and test runner. <d>({s})<r>\n",
+            true
+        );
+        const OFF: &str = pretty_fmt!(
+            "<r><b><magenta>Bun<r> is a fast JavaScript runtime, package manager, bundler, and test runner. <d>({s})<r>\n",
+            false
+        );
+        assert!(!ON.contains("<r>"), "raw <r> leaked: {ON:?}");
+        assert!(!ON.contains("<b>"), "raw <b> leaked: {ON:?}");
+        assert!(ON.contains("\x1b["), "no ANSI emitted: {ON:?}");
+        assert_eq!(
+            OFF,
+            "Bun is a fast JavaScript runtime, package manager, bundler, and test runner. ({})\n",
+        );
+    }
+
+    #[test]
+    fn macro_matches_runtime() {
+        // Spot-check macro output against the runtime reference (which is 1:1
+        // with Zig `prettyFmt`) for the help-text shapes that matter.
+        macro_rules! check {
+            ($s:literal) => {{
+                assert_eq!(
+                    pretty_fmt!($s, true).as_bytes(),
+                    pretty_fmt_runtime($s.as_bytes(), true).as_slice(),
+                    "enabled mismatch for {:?}", $s,
+                );
+                assert_eq!(
+                    pretty_fmt!($s, false).as_bytes(),
+                    pretty_fmt_runtime($s.as_bytes(), false).as_slice(),
+                    "disabled mismatch for {:?}", $s,
+                );
+            }};
+        }
+        check!("<b>Usage<r>: <b><green>bun init<r> <cyan>[flags]<r> <blue>[\\<folder\\>]<r>\n");
+        check!("<r><d>[<b>{d:>.2}ms<r><d>]<r>");
+        check!("<r><red>error<r><d>:<r> ");
+        check!("  <b><blue>link<r>      <d>[\\<package\\>]<r>          Register or link a local npm package\n");
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/bun_core/output.zig (1380 lines)
 //   confidence: medium
 //   todos:      29
-//   notes:      pretty_fmt!/scoped_log! need a proc-macro; Source self-ref *Writer fields replaced by accessors (TSV BORROW_FIELD); writer()/error_writer() escape raw ptrs and want a with_* closure API; per-scope buffered writer state deferred; many `static mut` need atomics/OnceLock in Phase B; Source::ZEROED relies on mem::zeroed() over QuietWriterAdapter/StreamType (hand-write once layouts fixed).
+//   notes:      pretty_fmt! proc-macro landed (bun_core_macros) — tested against pretty_fmt_runtime; Source self-ref *Writer fields replaced by accessors (TSV BORROW_FIELD); writer()/error_writer() escape raw ptrs and want a with_* closure API; per-scope buffered writer state deferred; many `static mut` need atomics/OnceLock in Phase B; Source::ZEROED relies on mem::zeroed() over QuietWriterAdapter/StreamType (hand-write once layouts fixed).
 // ──────────────────────────────────────────────────────────────────────────

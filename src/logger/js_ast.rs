@@ -274,7 +274,7 @@ pub mod E {
         }
         pub fn eql_bytes(&self, other: &[u8]) -> bool {
             if self.is_utf8() {
-                strings::eql_long::<true>(self.data, other)
+                strings::eql_long(self.data, other, true)
             } else {
                 strings::utf16_eql_string(self.slice16(), other)
             }
@@ -293,7 +293,7 @@ pub mod E {
             let mut i = 0usize;
             let mut next: Option<&EString> = Some(self);
             while let Some(cur) = next {
-                if !strings::eql_long::<false>(cur.data, &value[i..i + cur.data.len()]) {
+                if !strings::eql_long(cur.data, &value[i..i + cur.data.len()], false) {
                     return false;
                 }
                 i += cur.data.len();

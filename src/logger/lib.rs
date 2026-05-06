@@ -898,6 +898,70 @@ type Str = &'static [u8];
 // TODO(port): lifetime — see module-level note. `Str` is a stand-in for the Zig
 // `[]const u8` struct-field pattern; Phase B should replace with the real type.
 
+// ───────────────────────────────────────────────────────────────────────────
+// api — hand-ported slice of `bun.schema.api` (src/options_types/schema.zig
+// :2295–2509) consumed by `Kind/Location/Data/Msg/Log::to_api`. The full
+// peechy → .rs codegen (`bun_api`) will supersede this; field shapes are kept
+// faithful so the generated diff stays reviewable. Lives here (not `bun_api`)
+// to avoid a T2→T4 dep-cycle.
+// ───────────────────────────────────────────────────────────────────────────
+pub mod api {
+    /// schema.zig:2295 `MessageLevel` (u32 enum, 1-based; `_none` = 0).
+    #[repr(u32)]
+    #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+    pub enum MessageLevel {
+        #[default]
+        None = 0,
+        Err = 1,
+        Warn = 2,
+        Note = 3,
+        Info = 4,
+        Debug = 5,
+    }
+
+    /// schema.zig:2319 `Location`.
+    #[derive(Clone, Default, Debug)]
+    pub struct Location {
+        pub file: Vec<u8>,
+        pub namespace: Vec<u8>,
+        pub line: i32,
+        pub column: i32,
+        pub line_text: Vec<u8>,
+        pub offset: u32,
+    }
+
+    /// schema.zig:2360 `MessageData`.
+    #[derive(Clone, Default, Debug)]
+    pub struct MessageData {
+        pub text: Option<Vec<u8>>,
+        pub location: Option<Location>,
+    }
+
+    /// schema.zig:2403 `MessageMeta`.
+    #[derive(Clone, Default, Debug)]
+    pub struct MessageMeta {
+        pub resolve: Option<Vec<u8>>,
+        pub build: Option<bool>,
+    }
+
+    /// schema.zig:2446 `Message`.
+    #[derive(Clone, Default, Debug)]
+    pub struct Message {
+        pub level: MessageLevel,
+        pub data: MessageData,
+        pub notes: Box<[MessageData]>,
+        pub on: MessageMeta,
+    }
+
+    /// schema.zig:2477 `Log`.
+    #[derive(Clone, Default, Debug)]
+    pub struct Log {
+        pub warnings: u32,
+        pub errors: u32,
+        pub msgs: Box<[Message]>,
+    }
+}
+
 /// Phase-A `[]const u8` parameter shim — accepts `&str` / `&[u8]` (any lifetime)
 /// and erases to the crate-wide `Str` (`&'static [u8]`) lie so callers in either
 /// string flavour compile against the same Zig-shaped signatures.
@@ -990,11 +1054,9 @@ impl IntoLogWrite for *mut bun_core::io::Writer {
     #[inline]
     fn into_log_write(self) -> IoWriterAdapter { IoWriterAdapter(self) }
 }
-impl IntoLogWrite for &mut *mut bun_core::io::Writer {
-    type W = IoWriterAdapter;
-    #[inline]
-    fn into_log_write(self) -> IoWriterAdapter { IoWriterAdapter(*self) }
-}
+// NOTE: a `&mut *mut Writer` blanket can't coexist with the generic
+// `&mut W: fmt::Write` impl above (coherence reservation). Callers holding a
+// `&mut *mut Writer` deref to `*mut Writer` and hit the impl above.
 
 // ───────────────────────────────────────────────────────────────────────────
 // Kind
@@ -1032,7 +1094,6 @@ impl Kind {
         }
     }
 
-     // TODO(b2-blocked): bun_schema::api
     #[inline]
     pub fn to_api(self) -> api::MessageLevel {
         match self {
@@ -1193,14 +1254,13 @@ impl Location {
         }
     }
 
-     // TODO(b2-blocked): bun_schema::api
     pub fn to_api(&self) -> api::Location {
         api::Location {
-            file: self.file,
-            namespace: self.namespace,
+            file: self.file.to_vec(),
+            namespace: self.namespace.to_vec(),
             line: self.line,
             column: self.column,
-            line_text: self.line_text.unwrap_or(b""),
+            line_text: self.line_text.unwrap_or(b"").to_vec(),
             offset: self.offset as u32, // @truncate
         }
     }
@@ -1350,10 +1410,9 @@ impl Data {
         }
     }
 
-     // TODO(b2-blocked): bun_schema::api
     pub fn to_api(&self) -> api::MessageData {
         api::MessageData {
-            text: self.text,
+            text: Some(self.text.to_vec()),
             location: self.location.as_ref().map(|l| l.to_api()),
         }
     }
@@ -1649,32 +1708,26 @@ impl Msg {
         }
     }
 
-     // TODO(b2-blocked): bun_schema::api
     pub fn to_api(&self) -> Result<api::Message, AllocError> {
         let mut notes = vec![api::MessageData::default(); self.notes.len()].into_boxed_slice();
-        let msg = api::Message {
-            level: self.kind.to_api(),
-            data: self.data.to_api(),
-            // PORT NOTE: reshaped for borrowck — fill `notes` before moving into struct.
-            notes: Box::default(), // placeholder, set below
-            on: api::MessageMeta {
-                resolve: if let Metadata::Resolve(r) = &self.metadata {
-                    r.specifier.slice(self.data.text)
-                } else {
-                    b""
-                },
-                build: matches!(self.metadata, Metadata::Build),
-            },
-        };
-
         for (i, note) in self.notes.iter().enumerate() {
             notes[i] = note.to_api();
         }
-
-        Ok(api::Message { notes, ..msg })
+        Ok(api::Message {
+            level: self.kind.to_api(),
+            data: self.data.to_api(),
+            notes,
+            on: api::MessageMeta {
+                resolve: if let Metadata::Resolve(r) = &self.metadata {
+                    Some(r.specifier.slice(&self.data.text).to_vec())
+                } else {
+                    None
+                },
+                build: Some(matches!(self.metadata, Metadata::Build)),
+            },
+        })
     }
 
-     // TODO(b2-blocked): bun_schema::api
     pub fn to_api_from_list(list: &[Msg]) -> Result<Box<[api::Message]>, AllocError> {
         // PORT NOTE: Zig took `comptime ListType: type, list: ListType` and read
         // `list.items`; collapsed to `&[Msg]`.
@@ -1951,7 +2004,6 @@ impl Log {
         (self.warnings + self.errors) > 0
     }
 
-     // TODO(b2-blocked): bun_schema::api
     pub fn to_api(&self) -> Result<api::Log, AllocError> {
         let mut warnings: u32 = 0;
         let mut errors: u32 = 0;
@@ -3231,12 +3283,11 @@ pub fn source_from_file(
 
 mod file_source_ext_draft {
 use super::*;
-pub use bun_sys::file::ToSourceOptions;
 
 /// Read `path` (relative to `dir_fd`) into memory and wrap it in a `Source`.
 pub fn to_source_at(
-    dir_fd: impl Into<bun_sys::file::File>,
-    path: &bun_str::ZStr,
+    dir_fd: bun_sys::Fd,
+    path: &bun_string::ZStr,
     opts: ToSourceOptions,
 ) -> bun_sys::Result<Source> {
     let bytes = match bun_sys::file::File::read_from(dir_fd, path) {
@@ -3259,7 +3310,7 @@ pub fn to_source_at(
 }
 
 /// `to_source_at` rooted at the process CWD.
-pub fn to_source(path: &bun_str::ZStr, opts: ToSourceOptions) -> bun_sys::Result<Source> {
+pub fn to_source(path: &bun_string::ZStr, opts: ToSourceOptions) -> bun_sys::Result<Source> {
     to_source_at(bun_sys::Fd::cwd(), path, opts)
 }
 
@@ -3267,23 +3318,23 @@ pub fn to_source(path: &bun_str::ZStr, opts: ToSourceOptions) -> bun_sys::Result
 pub trait FileSourceExt {
     fn to_source_at(
         dir_fd: Self,
-        path: &bun_str::ZStr,
+        path: &bun_string::ZStr,
         opts: ToSourceOptions,
     ) -> bun_sys::Result<Source>
     where
         Self: Sized;
-    fn to_source(path: &bun_str::ZStr, opts: ToSourceOptions) -> bun_sys::Result<Source>;
+    fn to_source(path: &bun_string::ZStr, opts: ToSourceOptions) -> bun_sys::Result<Source>;
 }
 
-impl FileSourceExt for bun_sys::file::File {
+impl FileSourceExt for bun_sys::Fd {
     fn to_source_at(
         dir_fd: Self,
-        path: &bun_str::ZStr,
+        path: &bun_string::ZStr,
         opts: ToSourceOptions,
     ) -> bun_sys::Result<Source> {
         to_source_at(dir_fd, path, opts)
     }
-    fn to_source(path: &bun_str::ZStr, opts: ToSourceOptions) -> bun_sys::Result<Source> {
+    fn to_source(path: &bun_string::ZStr, opts: ToSourceOptions) -> bun_sys::Result<Source> {
         to_source(path, opts)
     }
 }

@@ -136,7 +136,7 @@ impl Listener {
 
         let socket_obj = match opts.get(global, "socket")? {
             Some(v) => v,
-            None => return Err(global.throw("Expected \"socket\" object")),
+            None => return Err(global.throw("{}", format_args!("Expected \"socket\" object"))),
         };
 
         // SAFETY: JSC_BORROW — global lives for the program; Handlers stores `&'static`.

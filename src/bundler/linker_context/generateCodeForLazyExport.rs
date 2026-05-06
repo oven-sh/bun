@@ -27,7 +27,7 @@ use bun_logger::{Loc, Log, Source};
 use bun_options_types::ImportRecord;
 
 #[cfg(feature = "css")]
-use crate::bun_css::{self, BundlerStyleSheet, CssRef, CssRefTag};
+use crate::bun_css::{BundlerStyleSheet, CssRef, CssRefTag};
 #[cfg(feature = "css")]
 use crate::bun_css::properties::css_modules::Specifier as CssSpecifier;
 use crate::{Index, IndexInt, LinkerContext};
@@ -42,6 +42,7 @@ pub fn generate_code_for_lazy_export(
     source_index: IndexInt,
 ) -> Result<(), AllocError> {
     let exports_kind = this.graph.ast.items_exports_kind()[source_index as usize];
+    #[cfg(feature = "css")]
     let all_sources = unsafe { &(*this.parse_graph).input_files }.items_source();
     #[cfg(feature = "css")]
     let all_css_asts: &[Option<*mut core::ffi::c_void>] = this.graph.ast.items_css();
@@ -49,8 +50,6 @@ pub fn generate_code_for_lazy_export(
     // SAFETY: `css` SoA column is type-erased `*mut BundlerStyleSheet` (BundledAst.rs).
     let maybe_css_ast: Option<&BundlerStyleSheet> =
         all_css_asts[source_index as usize].map(|p| unsafe { &*(p as *const BundlerStyleSheet) });
-    #[cfg(not(feature = "css"))]
-    let _ = all_sources;
     // PORT NOTE: reshaped for borrowck — `parts` re-borrowed below after other graph borrows drop.
     let parts: *mut [Part] = this.graph.ast.items_parts_mut()[source_index as usize].slice_mut();
 
@@ -334,7 +333,7 @@ pub fn generate_code_for_lazy_export(
 
             for entry in values {
                 let ref_ = entry.ref_;
-                debug_assert!((ref_.inner_index as u32) < symbols.len());
+                debug_assert!(ref_.inner_index() < symbols.len());
 
                 // PERF(port): was arena-backed ArrayList (no deinit; `.items` moved into E.Template).
                 let mut template_parts: Vec<E::TemplatePart> = Vec::new();

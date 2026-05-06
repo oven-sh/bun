@@ -297,7 +297,7 @@ use crate::ungate_support::bun_node_fallbacks as NodeFallbackModules;
 use bun_resolver::{self as _resolver, Resolver, is_package_path};
 use bun_threading::ThreadPool as ThreadPoolLib;
 use crate::options_impl::{TargetExt, LoaderExt};
-use crate::Graph::InputFileListExt;
+use crate::Graph::{InputFileListExt, InputFileSliceExt as _};
 use bun_js_parser::ast::bundled_ast::{BundledAstListExt as _, BundledAstSliceExt as _};
 use bun_js_parser::ast::server_component_boundary::{
     ServerComponentBoundaryListExt as _, ServerComponentBoundarySliceExt as _,
@@ -1771,7 +1771,7 @@ impl<'a> BundleV2<'a> {
         })?;
         let task = Box::leak(Box::new(ParseTask::init(&result, source_index, self)));
         task.loader = Some(loader);
-        task.task.node.next = None;
+        task.task.node.next = core::ptr::null_mut();
         task.tree_shaking = self.linker.options.tree_shaking;
         task.known_target = target;
         task.jsx.development = match t.options.force_node_env {
@@ -1784,7 +1784,7 @@ impl<'a> BundleV2<'a> {
         if !self.enqueue_on_load_plugin_if_needed(task) {
             if loader.should_copy_for_bundling() {
                 let additional_files: &mut BabyList<crate::AdditionalFile> = &mut self.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
-                additional_files.push(crate::AdditionalFile::SourceIndex(task.source_index.get()));
+                additional_files.append(crate::AdditionalFile::SourceIndex(task.source_index.get())).expect("oom");
                 self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsPureData;
                 self.graph.estimated_file_loader_count += 1;
             }
@@ -1831,7 +1831,7 @@ impl<'a> BundleV2<'a> {
         })?;
         let task = Box::leak(Box::new(ParseTask::init(&result, source_index, self)));
         task.loader = Some(loader);
-        task.task.node.next = None;
+        task.task.node.next = core::ptr::null_mut();
         task.tree_shaking = self.linker.options.tree_shaking;
         task.is_entry_point = is_entry_point;
         task.known_target = target;
@@ -1848,7 +1848,7 @@ impl<'a> BundleV2<'a> {
         if !self.enqueue_on_load_plugin_if_needed(task) {
             if loader.should_copy_for_bundling() {
                 let additional_files: &mut BabyList<crate::AdditionalFile> = &mut self.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
-                additional_files.push(crate::AdditionalFile::SourceIndex(task.source_index.get()));
+                additional_files.append(crate::AdditionalFile::SourceIndex(task.source_index.get())).expect("oom");
                 self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsPureData;
                 self.graph.estimated_file_loader_count += 1;
             }
@@ -1856,7 +1856,7 @@ impl<'a> BundleV2<'a> {
             unsafe { self.graph.pool.as_mut() }.schedule(task);
         }
 
-        self.graph.entry_points.push(source_index);
+        self.graph.entry_points.push(js_ast::Index::init(source_index.get()));
 
         Ok(Some(source_index.get()))
     }
@@ -1872,7 +1872,7 @@ impl<'a> BundleV2<'a> {
         heap: ThreadLocalArena,
     ) -> Result<Box<BundleV2<'a>>, Error> {
         // TODO(port): arena-allocate self via bump.alloc — Box::new is wrong allocator (Zig: allocator.create(@This()) on arena)
-        transpiler.env.load_tracy();
+        unsafe { (*transpiler.env).load_tracy() };
 
         transpiler.options.mark_builtins_as_external = transpiler.options.target.is_bun() || transpiler.options.target == Target::Node;
         transpiler.resolver.opts.mark_builtins_as_external = transpiler.options.target.is_bun() || transpiler.options.target == Target::Node;
@@ -1933,17 +1933,17 @@ impl<'a> BundleV2<'a> {
         }
         // TODO(port): allocator field assignments — Transpiler/Resolver/Linker
         // store `&Arena` in Rust; lifetime threading deferred.
-        this.transpiler.log.clone_line_text = true;
+        unsafe { (*this.transpiler.log).clone_line_text = true };
 
         // We don't expose an option to disable this. Bake forbids tree-shaking
         // since every export must is always exist in case a future module
         // starts depending on it.
         if this.transpiler.options.output_format == options::Format::InternalBakeDev {
             this.transpiler.options.tree_shaking = false;
-            this.transpiler.resolver.opts.tree_shaking = false;
+            // TODO(port): resolver.opts.tree_shaking — field absent on FORWARD_DECL BundleOptions subset
         } else {
             this.transpiler.options.tree_shaking = true;
-            this.transpiler.resolver.opts.tree_shaking = true;
+            // TODO(port): resolver.opts.tree_shaking — field absent on FORWARD_DECL BundleOptions subset
         }
 
         this.linker.resolver = &mut this.transpiler.resolver;
@@ -2008,7 +2008,7 @@ impl<'a> BundleV2<'a> {
         if self.asynchronous && self.is_done() {
             let dev = self.dev_server
                 .unwrap_or_else(|| panic!("No dev server attached in asynchronous bundle job"));
-            self.finish_from_bake_dev_server(dev).expect("oom");
+            self.finish_from_bake_dev_server(&dev).expect("oom");
         }
     }
 
@@ -2115,7 +2115,7 @@ impl<'a> BundleV2<'a> {
                         transpiler.log as *const _,
                         self as *mut _,
                     ).expect("oom");
-                    transpiler.log.reset();
+                    unsafe { (*transpiler.log).reset() };
                     continue;
                 }
             };
@@ -2181,7 +2181,7 @@ impl<'a> BundleV2<'a> {
 
         // try this.graph.entry_points.append(allocator, Index.runtime);
         self.graph.ast.append(JSAst::empty());
-        self.path_to_source_index_map(self.transpiler.options.target).put(b"bun:wrap".into(), Index::RUNTIME.get());
+        self.path_to_source_index_map(self.transpiler.options.target).put(&b"bun:wrap"[..], Index::RUNTIME.get()).expect("oom");
         let runtime_parse_task = self.allocator().alloc(rt.parse_task);
         runtime_parse_task.ctx = self;
         runtime_parse_task.tree_shaking = true;
@@ -2374,8 +2374,8 @@ impl<'a> BundleV2<'a> {
         let task = Box::leak(Box::new(ParseTask::init(resolve_result, source_index, self)));
         task.loader = Some(loader);
         task.jsx = self.transpiler_for_target(known_target).options.jsx.clone();
-        task.task.node.next = None;
-        task.io_task.node.next = None;
+        task.task.node.next = core::ptr::null_mut();
+        task.io_task.node.next = core::ptr::null_mut();
         task.tree_shaking = self.linker.options.tree_shaking;
         task.known_target = known_target;
 
@@ -2385,7 +2385,7 @@ impl<'a> BundleV2<'a> {
         if !self.enqueue_on_load_plugin_if_needed(task) {
             if loader.should_copy_for_bundling() {
                 let additional_files: &mut BabyList<crate::AdditionalFile> = &mut self.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
-                additional_files.push(crate::AdditionalFile::SourceIndex(task.source_index.get()));
+                additional_files.append(crate::AdditionalFile::SourceIndex(task.source_index.get())).expect("oom");
                 self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsPureData;
                 self.graph.estimated_file_loader_count += 1;
             }
@@ -2432,8 +2432,8 @@ impl<'a> BundleV2<'a> {
             known_target,
             ..Default::default()
         });
-        task.task.node.next = None;
-        task.io_task.node.next = None;
+        task.task.node.next = core::ptr::null_mut();
+        task.io_task.node.next = core::ptr::null_mut();
 
         self.increment_scan_counter();
 
@@ -2441,7 +2441,7 @@ impl<'a> BundleV2<'a> {
         if !self.enqueue_on_load_plugin_if_needed(task) {
             if loader.should_copy_for_bundling() {
                 let additional_files: &mut BabyList<crate::AdditionalFile> = &mut self.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
-                additional_files.push(crate::AdditionalFile::SourceIndex(task.source_index.get()));
+                additional_files.append(crate::AdditionalFile::SourceIndex(task.source_index.get())).expect("oom");
                 self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsPureData;
                 self.graph.estimated_file_loader_count += 1;
             }
@@ -2609,7 +2609,7 @@ impl<'a> BundleV2<'a> {
             match crate::linker_context::metafile_builder::MetafileBuilder::generate(&mut this.linker, chunks) {
                 Ok(m) => Some(m),
                 Err(err) => {
-                    Output::warn(format_args!("Failed to generate metafile: {}", err.name()));
+                    Output::warn(format_args!("Failed to generate metafile: {}", err));
                     None
                 }
             }
@@ -2731,7 +2731,8 @@ impl<'a> BundleV2<'a> {
             return Ok(Vec::new());
         }
 
-        crate::linker_context_mod::generate_chunks_in_parallel::<false>(&mut this.linker, chunks)
+        let mut chunks = chunks;
+        crate::linker_context_mod::generate_chunks_in_parallel::<false>(&mut this.linker, &mut chunks)
     }
 
     pub fn add_server_component_boundaries_as_extra_entry_points(&mut self) -> Result<(), Error> {
@@ -2744,10 +2745,10 @@ impl<'a> BundleV2<'a> {
         {
             let scbs = self.graph.server_component_boundaries.slice();
             self.graph.entry_points.reserve(scbs.list.len() * 2);
-            debug_assert_eq!(scbs.list.items_source_index().len(), scbs.list.items_ssr_source_index().len());
-            for (original_index, ssr_index) in scbs.list.items_source_index().iter().zip(scbs.list.items_ssr_source_index().iter()) {
+            debug_assert_eq!(scbs.list.source_index().len(), scbs.list.ssr_source_index().len());
+            for (original_index, ssr_index) in scbs.list.source_index().iter().zip(scbs.list.ssr_source_index().iter()) {
                 for idx in [*original_index, *ssr_index] {
-                    self.graph.entry_points.push(Index::init(idx)); // PERF(port): was assume_capacity
+                    self.graph.entry_points.push(bun_js_parser::Index::init(idx)); // PERF(port): was assume_capacity
                 }
             }
         }
@@ -2756,7 +2757,7 @@ impl<'a> BundleV2<'a> {
 
     pub fn process_files_to_copy(&mut self, reachable_files: &[Index]) -> Result<(), Error> {
         if self.graph.estimated_file_loader_count > 0 {
-            let file_allocators = self.graph.input_files.items_allocator();
+            // PORT NOTE: Zig per-file `allocator` column dropped — Box owns its alloc.
             let unique_key_for_additional_files = self.graph.input_files.items_unique_key_for_additional_file();
             let content_hashes_for_additional_files = self.graph.input_files.items_content_hash_for_additional_file();
             let sources = self.graph.input_files.items_source();
@@ -2770,7 +2771,7 @@ impl<'a> BundleV2<'a> {
                 let index = reachable_source.get() as usize;
                 let key = unique_key_for_additional_files[index];
                 if !key.is_empty() {
-                    let mut template: options::PathTemplate = if !self.graph.html_imports.server_source_indices.is_empty()
+                    let mut template: options::PathTemplate = if self.graph.html_imports.server_source_indices.len != 0
                         && self.transpiler.options.asset_naming.is_empty()
                     {
                         options::PathTemplate::ASSET_WITH_TARGET.into()
@@ -2806,7 +2807,7 @@ impl<'a> BundleV2<'a> {
                         }
 
                         if template.needs(options::PlaceholderField::Target) {
-                            template.placeholder.target = target.as_tag_name().as_bytes().to_vec().into_boxed_slice();
+                            template.placeholder.target = <&'static str>::from(target).as_bytes().to_vec().into_boxed_slice();
                         }
                         let mut v = Vec::new();
                         template.print(&mut v).expect("oom");
@@ -2816,12 +2817,11 @@ impl<'a> BundleV2<'a> {
                     let loader = loaders[index];
 
                     additional_output_files.push(options::OutputFile::init(crate::output_file::Options {
-                        source_index: Some(Index::init(index as u32)),
+                        source_index: crate::output_file::IndexOptional::init(index as u32),
                         data: crate::output_file::OptionsData::Buffer {
                             data: source.contents.to_vec().into_boxed_slice(),
-                            allocator: bun_alloc::NullableAllocator::null(),
                         },
-                        size: source.contents.len(),
+                        size: Some(source.contents.len()),
                         output_path,
                         input_path: source.path.text.to_vec().into_boxed_slice(),
                         input_loader: Loader::File,
@@ -2833,7 +2833,7 @@ impl<'a> BundleV2<'a> {
                         is_executable: false,
                         ..Default::default()
                     }));
-                    additional_files[index].push(crate::AdditionalFile::OutputFile((additional_output_files.len() - 1) as u32)).expect("oom");
+                    additional_files[index].append(crate::AdditionalFile::OutputFile((additional_output_files.len() - 1) as u32)).expect("oom");
                 }
             }
 
@@ -2849,7 +2849,7 @@ impl<'a> BundleV2<'a> {
         if let Some(completion) = self.completion {
             // SAFETY: completion is a valid backref while bundle is running.
             unsafe { &(*completion).jsc_event_loop }.enqueue_task_concurrent(
-                bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(load, on_load_from_js_loop),
+                bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(load as *mut _, on_load_from_js_loop_raw),
             );
         } else {
             Self::on_load(load, self);
@@ -2861,7 +2861,7 @@ impl<'a> BundleV2<'a> {
         if let Some(completion) = self.completion {
             // SAFETY: completion is a valid backref while bundle is running.
             unsafe { &(*completion).jsc_event_loop }.enqueue_task_concurrent(
-                bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(resolve, on_resolve_from_js_loop),
+                bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(resolve as *mut _, on_resolve_from_js_loop_raw),
             );
         } else {
             Self::on_resolve(resolve, self);
@@ -2871,17 +2871,21 @@ impl<'a> BundleV2<'a> {
 
 pub fn on_load_from_js_loop(load: &mut jsc_api::JSBundler::Load) {
     // SAFETY: `bv2` is a live backref set in `Load::init`.
-    BundleV2::on_load(load, unsafe { &mut *load.bv2 });
+    let bv2 = unsafe { &mut *load.bv2 };
+    BundleV2::on_load(load, bv2);
+}
+
+fn on_load_from_js_loop_raw(load: *mut jsc_api::JSBundler::Load) -> Result<(), *mut ()> {
+    // SAFETY: `load` is a valid pointer set up by `from_callback`.
+    on_load_from_js_loop(unsafe { &mut *load });
+    Ok(())
 }
 
 impl<'a> BundleV2<'a> {
     pub fn on_load(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
-        bun_core::scoped_log!(Bundle, "onLoad: ({}, {})", load.source_index.get(), <&'static str>::from(&load.value));
-        let _guard = scopeguard::guard((), |_| {
-            if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
-                this.graph.heap.help_catch_memory_issues();
-            }
-        });
+        bun_core::scoped_log!(Bundle, "onLoad: ({}, {:?})", load.source_index.get(), core::mem::discriminant(&load.value));
+        // PORT NOTE: `helpCatchMemoryIssues` was a mimalloc TLH probe; bumpalo has no equivalent.
+        let _ = FeatureFlags::HELP_CATCH_MEMORY_ISSUES;
         let log = this.transpiler.log;
 
         // TODO: watcher
@@ -2892,13 +2896,13 @@ impl<'a> BundleV2<'a> {
                 // If it's a file namespace, we should run it through the parser like normal.
                 // The file could be on disk.
                 if source.path.is_file() {
-                    unsafe { this.graph.pool.as_mut() }.schedule(load.parse_task);
+                    unsafe { this.graph.pool.as_mut() }.schedule(unsafe { &mut *load.parse_task });
                     return;
                 }
 
                 // When it's not a file, this is a build error and we should report it.
                 // we have no way of loading non-files.
-                let _ = log.add_error_fmt(Some(source), Logger::Loc::EMPTY, format_args!(
+                let _ = unsafe { &mut *log }.add_error_fmt(Some(source), Logger::Loc::EMPTY, format_args!(
                     "Module not found {} in namespace {}",
                     bun_core::fmt::quote(&source.path.pretty),
                     bun_core::fmt::quote(&source.path.namespace),
@@ -2908,24 +2912,29 @@ impl<'a> BundleV2<'a> {
                 this.decrement_scan_counter();
             }
             jsc_api::JSBundler::LoadValue::Success(code) => {
+                let code = code; // LoadSuccess { source_code, loader }
                 // When a plugin returns a file loader, we always need to populate additional_files
                 let should_copy_for_bundling = code.loader.should_copy_for_bundling();
                 if should_copy_for_bundling {
                     let source_index = load.source_index;
                     let additional_files: &mut BabyList<crate::AdditionalFile> = &mut this.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
-                    additional_files.push(crate::AdditionalFile::SourceIndex(source_index.get()));
+                    let _ = additional_files.append(crate::AdditionalFile::SourceIndex(source_index.get()));
                     this.graph.input_files.items_side_effects_mut()[source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsPureData;
                     this.graph.estimated_file_loader_count += 1;
                 }
                 this.graph.input_files.items_loader_mut()[load.source_index.get() as usize] = code.loader;
-                this.graph.input_files.items_source_mut()[load.source_index.get() as usize].contents = code.source_code;
-                this.graph.input_files.items_flags_mut()[load.source_index.get() as usize].is_plugin_file = true;
-                let parse_task = load.parse_task;
+                // PERF(port): Zig aliased the same `source_code` slice three ways; Rust
+                // boxes are single-owner, so leak once to a `'static` slice and reuse.
+                let source_code: &'static [u8] = Box::leak(code.source_code);
+                this.graph.input_files.items_source_mut()[load.source_index.get() as usize].contents = std::borrow::Cow::Borrowed(source_code);
+                this.graph.input_files.items_flags_mut()[load.source_index.get() as usize].insert(crate::Graph::InputFileFlags::IS_PLUGIN_FILE);
+                // SAFETY: `parse_task` was set in `Load::init` and is live for the load.
+                let parse_task = unsafe { &mut *load.parse_task };
                 parse_task.loader = Some(code.loader);
                 if !should_copy_for_bundling {
-                    this.free_list.push(code.source_code);
+                    this.free_list.push(Box::<[u8]>::from(source_code));
                 }
-                parse_task.contents_or_fd = parse_task::ContentsOrFd::Contents(code.source_code);
+                parse_task.contents_or_fd = parse_task::ContentsOrFd::Contents(source_code);
                 unsafe { this.graph.pool.as_mut() }.schedule(parse_task);
 
                 if let Some(watcher) = this.bun_watcher {
@@ -2943,7 +2952,7 @@ impl<'a> BundleV2<'a> {
                             let mut buf = bun_paths::path_buffer_pool::get();
                             let posix_path = bun_paths::resolve_path::path_to_posix_buf(load.path.as_ref(), &mut **buf);
                             // PORT NOTE: `Watcher.WATCH_OPEN_FLAGS` = `O_EVTONLY` on macOS.
-                            match bun_sys::open(bun_paths::z(posix_path, &mut **buf), 0x8000 /* O_EVTONLY */, 0) {
+                            match bun_sys::open(bun_paths::resolve_path::z(posix_path, &mut **buf), 0x8000 /* O_EVTONLY */, 0) {
                                 bun_sys::Result::Ok(fd) => fd,
                                 bun_sys::Result::Err(_) => break 'add_watchers,
                             }
@@ -2995,9 +3004,12 @@ impl<'a> BundleV2<'a> {
                         this,
                     ).expect("oom");
                 } else {
+                    let kind = msg.kind;
+                    // SAFETY: `log` is `*mut Log` backref valid for the bundle.
+                    let log = unsafe { &mut *log };
                     log.msgs.push(msg);
-                    log.errors += (msg.kind == Logger::Kind::Err) as u32;
-                    log.warnings += (msg.kind == Logger::Kind::Warn) as u32;
+                    log.errors += (kind == Logger::Kind::Err) as u32;
+                    log.warnings += (kind == Logger::Kind::Warn) as u32;
                 }
 
                 // An error occurred, prevent spinning the event loop forever
@@ -3011,41 +3023,46 @@ impl<'a> BundleV2<'a> {
 
 pub fn on_resolve_from_js_loop(resolve: &mut jsc_api::JSBundler::Resolve) {
     // SAFETY: `bv2` is a live backref set in `Resolve::init`.
-    BundleV2::on_resolve(resolve, unsafe { &mut *resolve.bv2 });
+    let bv2 = unsafe { &mut *resolve.bv2 };
+    BundleV2::on_resolve(resolve, bv2);
+}
+
+fn on_resolve_from_js_loop_raw(resolve: *mut jsc_api::JSBundler::Resolve) -> Result<(), *mut ()> {
+    // SAFETY: `resolve` is a valid pointer set up by `from_callback`.
+    on_resolve_from_js_loop(unsafe { &mut *resolve });
+    Ok(())
 }
 
 impl<'a> BundleV2<'a> {
     pub fn on_resolve(resolve: &mut jsc_api::JSBundler::Resolve, this: &mut BundleV2) {
         let _dec_guard = scopeguard::guard((), |_| this.decrement_scan_counter());
-        bun_core::scoped_log!(Bundle, "onResolve: ({}:{}, {})",
+        bun_core::scoped_log!(Bundle, "onResolve: ({}:{}, {:?})",
             bstr::BStr::new(&resolve.import_record.namespace),
             bstr::BStr::new(&resolve.import_record.specifier),
-            <&'static str>::from(&resolve.value));
+            core::mem::discriminant(&resolve.value));
 
-        let _mem_guard = scopeguard::guard((), |_| {
-            if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
-                this.graph.heap.help_catch_memory_issues();
-            }
-        });
+        // PORT NOTE: `helpCatchMemoryIssues` was a mimalloc TLH probe; bumpalo has no equivalent.
+        let _ = FeatureFlags::HELP_CATCH_MEMORY_ISSUES;
 
         match resolve.value.consume() {
             jsc_api::JSBundler::ResolveValue::NoMatch => {
                 // If it's a file namespace, we should run it through the resolver like normal.
                 //
                 // The file could be on disk.
-                if resolve.import_record.namespace == b"file" {
+                if resolve.import_record.namespace.as_ref() == b"file" {
                     if resolve.import_record.kind == ImportKind::EntryPointBuild {
                         let target = resolve.import_record.original_target;
                         let Ok(resolved) = this.transpiler_for_target(target).resolve_entry_point(&resolve.import_record.specifier) else {
                             return;
                         };
-                        let Ok(source_index) = this.enqueue_entry_item(resolved, true, target) else {
+                        let mut resolved = resolved;
+                        let Ok(source_index) = this.enqueue_entry_item(&mut resolved, true, target) else {
                             return;
                         };
 
                         // Store the original entry point name for virtual entries that fall back to file resolution
                         if let Some(idx) = source_index {
-                            this.graph.entry_point_original_names.put(idx, resolve.import_record.specifier.clone());
+                            let _ = this.graph.entry_point_original_names.put(idx, &resolve.import_record.specifier);
                         }
                         return;
                     }
@@ -3081,19 +3098,20 @@ impl<'a> BundleV2<'a> {
             jsc_api::JSBundler::ResolveValue::Success(result) => {
                 let mut out_source_index: Option<Index> = None;
                 if !result.external {
-                    let mut path = Fs::Path::init(result.path.clone());
-                    if result.namespace.is_empty() || result.namespace == b"file" {
+                    let mut path = Fs::Path::init(&result.path);
+                    if result.namespace.is_empty() || result.namespace.as_ref() == b"file" {
                         path.namespace = b"file";
                     } else {
-                        path.namespace = result.namespace;
+                        path.namespace = &result.namespace;
                     }
 
                     let existing = this.path_to_source_index_map(resolve.import_record.original_target)
-                        .get_or_put_path(&path);
+                        .get_or_put(path.text).expect("oom");
                     if !existing.found_existing {
                         let _ = this.free_list.extend_from_slice(&[result.namespace.clone(), result.path.clone()]);
                         path = this.path_with_pretty_initialized(path, resolve.import_record.original_target).expect("oom");
-                        *existing.key_ptr = path.text.to_vec().into_boxed_slice();
+                        // PORT NOTE: `GetOrPutResult` has no `key_ptr` — `get_or_put` already
+                        // duped the key into the map (see PathToSourceIndexMap.rs).
 
                         // We need to parse this
                         let source_index = Index::init(u32::try_from(this.graph.ast.len()).unwrap());
@@ -3104,8 +3122,8 @@ impl<'a> BundleV2<'a> {
 
                         this.graph.input_files.append(crate::Graph::InputFile {
                             source: Logger::Source {
-                                path: path.dupe_alloc().expect("oom"),
-                                contents: &b""[..],
+                                path: todo!("blocked_on: bun_resolver::Path::dupe_alloc"),
+                                contents: std::borrow::Cow::Borrowed(&b""[..]),
                                 index: bun_logger::Index(source_index.get()),
                                 ..Default::default()
                             },
@@ -3123,7 +3141,7 @@ impl<'a> BundleV2<'a> {
                             },
                             side_effects: _resolver::SideEffects::HasSideEffects,
                             jsx: this.transpiler_for_target(resolve.import_record.original_target).options.jsx.clone(),
-                            source_index,
+                            source_index: bun_js_parser::Index::init(source_index.get()),
                             module_type: options::ModuleType::Unknown,
                             loader: Some(loader),
                             tree_shaking: this.linker.options.tree_shaking,
@@ -3131,14 +3149,14 @@ impl<'a> BundleV2<'a> {
                             ..Default::default()
                         });
                         let task = Box::leak(task); // TODO(port): owned by pool; freed via destroy()
-                        task.task.node.next = None;
-                        task.io_task.node.next = None;
+                        task.task.node.next = core::ptr::null_mut();
+                        task.io_task.node.next = core::ptr::null_mut();
                         this.increment_scan_counter();
 
                         if !this.enqueue_on_load_plugin_if_needed(task) {
                             if loader.should_copy_for_bundling() {
                                 let additional_files: &mut BabyList<crate::AdditionalFile> = &mut this.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
-                                additional_files.push(crate::AdditionalFile::SourceIndex(task.source_index.get()));
+                                additional_files.append(crate::AdditionalFile::SourceIndex(task.source_index.get())).expect("oom");
                                 this.graph.input_files.items_side_effects_mut()[source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsPureData;
                                 this.graph.estimated_file_loader_count += 1;
                             }
@@ -3147,6 +3165,7 @@ impl<'a> BundleV2<'a> {
                         }
                     } else {
                         out_source_index = Some(Index::init(*existing.value_ptr));
+                        // PORT NOTE: Zig freed result.{namespace,path} here; Rust drops below.
                         drop(result.namespace);
                         drop(result.path);
                     }
@@ -3157,21 +3176,22 @@ impl<'a> BundleV2<'a> {
 
                 if let Some(source_index) = out_source_index {
                     if resolve.import_record.kind == ImportKind::EntryPointBuild {
-                        this.graph.entry_points.push(source_index);
+                        this.graph.entry_points.push(bun_js_parser::Index::init(source_index.get()));
 
                         // Store the original entry point name for virtual entries
                         // This preserves the original name for output file naming
-                        this.graph.entry_point_original_names.put(source_index.get(), resolve.import_record.specifier.clone());
+                        let _ = this.graph.entry_point_original_names.put(source_index.get(), &resolve.import_record.specifier);
                     } else {
                         let source_import_records = &mut this.graph.ast.items_import_records_mut()[resolve.import_record.importer_source_index as usize];
-                        if (source_import_records.len() as u32) <= resolve.import_record.import_record_index {
-                            let entry = this.resolve_tasks_waiting_for_import_source_index.get_or_put(                                resolve.import_record.importer_source_index,
-                            );
+                        if source_import_records.len <= resolve.import_record.import_record_index {
+                            let entry = this.resolve_tasks_waiting_for_import_source_index.get_or_put(
+                                resolve.import_record.importer_source_index,
+                            ).expect("oom");
                             if !entry.found_existing {
                                 *entry.value_ptr = BabyList::default();
                             }
-                            entry.value_ptr.append(PendingImport {
-                                to_source_index: bun_logger::Index(source_index.get()),
+                            let _ = entry.value_ptr.append(PendingImport {
+                                to_source_index: source_index,
                                 import_record_index: resolve.import_record.import_record_index,
                             });
                         } else {
@@ -3183,9 +3203,10 @@ impl<'a> BundleV2<'a> {
             }
             jsc_api::JSBundler::ResolveValue::Err(err) => {
                 let log = this.log_for_resolution_failures(&resolve.import_record.source_file, resolve.import_record.original_target.bake_graph());
-                log.msgs.push(err.clone());
-                log.errors += (err.kind == Logger::Kind::Err) as u32;
-                log.warnings += (err.kind == Logger::Kind::Warn) as u32;
+                let kind = err.kind;
+                log.msgs.push(err.clone().expect("oom"));
+                log.errors += (kind == Logger::Kind::Err) as u32;
+                log.warnings += (kind == Logger::Kind::Warn) as u32;
             }
             jsc_api::JSBundler::ResolveValue::Pending | jsc_api::JSBundler::ResolveValue::Consumed => unreachable!(),
         }
@@ -3214,7 +3235,7 @@ impl<'a> BundleV2<'a> {
                     // SAFETY: worker ptrs are live until `deinit_soon`.
                     unsafe { (**worker).deinit_soon() };
                 }
-                assignments.clear();
+                assignments.clear_retaining_capacity();
                 // SAFETY: worker_pool is live for the bundle lifetime.
                 unsafe { (*pool.worker_pool).wake_for_idle_events() };
             }
@@ -3265,22 +3286,32 @@ impl<'a> BundleV2<'a> {
 
         self.add_server_component_boundaries_as_extra_entry_points()?;
 
-        let chunks = self.linker.link(
-            self,
-            &self.graph.entry_points,
-            &self.graph.server_component_boundaries,
-            &reachable_files,
-        )?;
+        let mut chunks = {
+            // SAFETY: both `Index` newtypes are `repr(transparent)` over u32.
+            let entry_points: &mut [Index] = unsafe {
+                core::slice::from_raw_parts_mut(
+                    self.graph.entry_points.as_mut_ptr().cast(),
+                    self.graph.entry_points.len(),
+                )
+            };
+            let mut reachable_files = reachable_files;
+            self.linker.link(
+                self,
+                entry_points,
+                &self.graph.server_component_boundaries,
+                &mut reachable_files,
+            )?
+        };
 
         if unsafe { (*self.transpiler.log).errors } > 0 {
             return Err(bun_core::err!("BuildFailed"));
         }
 
-        let mut output_files = crate::linker_context_mod::generate_chunks_in_parallel::<false>(&mut self.linker, chunks)?;
+        let mut output_files = crate::linker_context_mod::generate_chunks_in_parallel::<false>(&mut self.linker, &mut chunks)?;
 
         // Generate metafile if requested
         let metafile: Option<Box<[u8]>> = if self.linker.options.metafile {
-            match crate::linker_context::metafile_builder::MetafileBuilder::generate(&mut self.linker, chunks) {
+            match crate::linker_context::metafile_builder::generate(&mut self.linker, &mut chunks) {
                 Ok(m) => Some(m),
                 Err(err) => {
                     Output::warn(format_args!("Failed to generate metafile: {}", err.name()));
@@ -3293,10 +3324,10 @@ impl<'a> BundleV2<'a> {
 
         // Generate markdown if metafile was generated and path specified
         let metafile_markdown: Option<Box<[u8]>> = if !self.linker.options.metafile_markdown_path.is_empty() && metafile.is_some() {
-            match crate::linker_context::metafile_builder::MetafileBuilder::generate_markdown(metafile.as_ref().unwrap()) {
+            match crate::linker_context::metafile_builder::generate_markdown(metafile.as_ref().unwrap()) {
                 Ok(m) => Some(m),
                 Err(err) => {
-                    Output::warn(format_args!("Failed to generate metafile markdown: {}", err.name()));
+                    Output::warn(format_args!("Failed to generate metafile markdown: {}", err));
                     None
                 }
             }
@@ -3306,7 +3337,8 @@ impl<'a> BundleV2<'a> {
 
         // Write metafile outputs to disk and add them as OutputFiles.
         // Metafile paths are relative to outdir, like all other output files.
-        let outdir = &self.linker.resolver.opts.output_dir;
+        // SAFETY: `resolver` is a `*mut Resolver` backref valid for the bundle.
+        let outdir = unsafe { &(*self.linker.resolver).opts.output_dir };
         if !self.linker.options.metafile_json_path.is_empty() {
             if let Some(mf) = &metafile {
                 write_metafile_output(&mut output_files, outdir, &self.linker.options.metafile_json_path, mf, crate::options::OutputKind::MetafileJson)?;
@@ -3346,9 +3378,11 @@ fn write_metafile_output(
         // Create parent directories if needed (relative to outdir).
         let parent = bun_paths::resolve_path::dirname::<bun_paths::resolve_path::platform::Loose>(joined);
         if !parent.is_empty() {
-            let _ = bun_sys::makedir_recursive(parent, 0o755);
+            let _ = bun_sys::mkdir_recursive(parent);
         }
-        match bun_sys::File::write_file(bun_core::Fd::cwd(), joined, content) {
+        let mut zbuf = bun_paths::path_buffer_pool::get();
+        let joined_z = bun_paths::resolve_path::z(joined, &mut zbuf);
+        match bun_sys::File::write_file(bun_core::Fd::cwd(), joined_z, content) {
             Ok(()) => {}
             Err(err) => {
                 Output::warn(format_args!(
@@ -3418,7 +3452,7 @@ impl<'a> BundleV2<'a> {
 
         /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
-        self.clone_ast()?;
+        self.clone_ast().map_err(|_| AllocError)?;
 
         /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
@@ -3432,17 +3466,17 @@ impl<'a> BundleV2<'a> {
             let mut js_files: Vec<Index> = Vec::with_capacity(self.graph.ast.len() - self.graph.css_file_count - 1);
 
             let asts = self.graph.ast.slice();
-            let css_asts = asts.items_css();
+            let css_asts = asts.css();
 
             let input_files = self.graph.input_files.slice();
-            let loaders = input_files.items_loader();
-            let sources = input_files.items_source();
+            let loaders = input_files.loader();
+            let sources = input_files.source();
             // TODO(port): multi-zip iteration over MultiArrayList slices [1..]
             for index in 1..self.graph.ast.len() {
-                let part_list = &asts.items_parts()[index];
-                let import_records = &asts.items_import_records()[index];
+                let part_list = &asts.parts()[index];
+                let import_records = &asts.import_records()[index];
                 let maybe_css = &css_asts[index];
-                let target = asts.items_target()[index];
+                let target = asts.target()[index];
                 // Dev Server proceeds even with failed files.
                 // These files are filtered out via the lack of any parts.
                 //
@@ -3470,7 +3504,7 @@ impl<'a> BundleV2<'a> {
                                 &sources[index].path.text,
                                 &log,
                                 self,
-                            )?;
+                            ).map_err(|_| AllocError)?;
                             // Since there is an error, do not treat it as a
                             // valid CSS chunk.
                             let _ = start.css_entry_points.swap_remove(&Index::init(u32::try_from(index).unwrap()));
@@ -3494,7 +3528,7 @@ impl<'a> BundleV2<'a> {
                         for record in import_records.slice_mut() {
                             if !record.source_index.is_valid() { continue; }
                             if loaders[record.source_index.get() as usize] != Loader::Css { continue; }
-                            if asts.items_parts()[record.source_index.get() as usize].len() == 0 {
+                            if asts.parts()[record.source_index.get() as usize].len == 0 {
                                 record.source_index = Index::INVALID;
                                 continue;
                             }
@@ -3516,11 +3550,11 @@ impl<'a> BundleV2<'a> {
             // Find CSS entry points. Originally, this was computed up front, but
             // failed files do not remember their loader, and plugins can
             // asynchronously decide a file is CSS.
-            let css = asts.items_css();
+            let css = asts.css();
             for entry_point in &self.graph.entry_points {
                 if css[entry_point.get() as usize].is_some() {
                     start.css_entry_points.put(
-                        *entry_point,
+                        Index::init(entry_point.get()),
                         CssEntryPointMeta { imported_on_server: false },
                     )?;
                 }
@@ -3544,12 +3578,21 @@ impl<'a> BundleV2<'a> {
 
         // The linker still has to be initialized as code generation expects
         // much of its state to be valid memory, even if empty.
-        self.linker.load(
-            self,
-            &self.graph.entry_points,
-            &self.graph.server_component_boundaries,
-            js_reachable_files,
-        )?;
+        {
+            // SAFETY: both `Index` newtypes are `repr(transparent)` over u32.
+            let entry_points: &[Index] = unsafe {
+                core::slice::from_raw_parts(
+                    self.graph.entry_points.as_ptr().cast(),
+                    self.graph.entry_points.len(),
+                )
+            };
+            self.linker.load(
+                self,
+                entry_points,
+                &self.graph.server_component_boundaries,
+                js_reachable_files,
+            ).map_err(|_| AllocError)?;
+        }
 
         /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
@@ -3557,7 +3600,7 @@ impl<'a> BundleV2<'a> {
         // Quoted contents will be default-allocated
         if cfg!(debug_assertions) {
             for idx in js_reachable_files {
-                debug_assert!(self.graph.ast.items_parts()[idx.get() as usize].len() != 0); // will create a memory leak
+                debug_assert!(self.graph.ast.items_parts()[idx.get() as usize].len != 0); // will create a memory leak
             }
         }
         // SAFETY: Index is repr(transparent) over u32
@@ -3567,14 +3610,14 @@ impl<'a> BundleV2<'a> {
         /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
         // Generate chunks
-        let js_part_ranges = self.allocator().alloc_slice_fill_default::<PartRange>(js_reachable_files.len());
+        let js_part_ranges = self.allocator().alloc_slice_fill_default::<crate::ungate_support::PartRange>(js_reachable_files.len());
         let parts = self.graph.ast.items_parts();
         debug_assert_eq!(js_reachable_files.len(), js_part_ranges.len());
         for (source_index, part_range) in js_reachable_files.iter().zip(js_part_ranges.iter_mut()) {
-            *part_range = PartRange {
+            *part_range = crate::ungate_support::PartRange {
                 source_index: *source_index,
                 part_index_begin: 0,
-                part_index_end: parts[source_index.get() as usize].len(),
+                part_index_end: parts[source_index.get() as usize].len,
             };
         }
 
@@ -3596,24 +3639,27 @@ impl<'a> BundleV2<'a> {
                 js.parts_in_chunk_in_order = js_part_ranges.to_vec().into_boxed_slice();
                 js
             }),
-            output_source_map: SourceMap::SourceMapPieces::init(self.allocator()),
-            ..Chunk::empty()
+            output_source_map: SourceMap::SourceMapPieces::init(),
+            ..Chunk::default()
         });
 
         // Then all the distinct CSS bundles (these are JS->CSS, not CSS->CSS)
         for entry_point in start.css_entry_points.keys() {
-            let order = self.linker.find_imported_files_in_css_order(self.allocator(), &[*entry_point]);
+            #[cfg(feature = "css")]
+            let order = crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order(&mut self.linker, self.allocator(), &[*entry_point]);
+            #[cfg(not(feature = "css"))]
+            let order: BabyList<chunk::CssImportOrder> = BabyList::default();
             chunks.push(Chunk {
                 entry_point: chunk::EntryPoint::new(entry_point.get(), entry_point.get(), false, false),
                 content: chunk::Content::Css(chunk::CssChunk {
                     imports_in_chunk_in_order: order,
-                    asts: (0..order.len())
-                        .map(|_| bun_css::BundlerStyleSheet::empty(self.allocator()))
+                    asts: (0..order.len as usize)
+                        .map(|_| crate::bun_css::BundlerStyleSheet::default())
                         .collect::<Vec<_>>()
                         .into_boxed_slice(),
                 }),
-                output_source_map: SourceMap::SourceMapPieces::init(self.allocator()),
-                ..Chunk::empty()
+                output_source_map: SourceMap::SourceMapPieces::init(),
+                ..Chunk::default()
             });
         }
 
@@ -3622,8 +3668,8 @@ impl<'a> BundleV2<'a> {
             chunks.push(Chunk {
                 entry_point: chunk::EntryPoint::new(source_index.get(), source_index.get(), false, true),
                 content: chunk::Content::Html,
-                output_source_map: SourceMap::SourceMapPieces::init(self.allocator()),
-                ..Chunk::empty()
+                output_source_map: SourceMap::SourceMapPieces::init(),
+                ..Chunk::default()
             });
         }
         let chunks: &mut [Chunk] = Box::leak(chunks.into_boxed_slice());
@@ -3960,7 +4006,7 @@ impl<'a> BundleV2<'a> {
         'outer: for (i, import_record) in ctx.import_records.slice_mut().iter_mut().enumerate() {
             // Preserve original import specifier before resolution modifies path
             if import_record.original_path.is_empty() {
-                import_record.original_path = import_record.path.text.to_vec().into_boxed_slice();
+                import_record.original_path = import_record.path.text;
             }
 
             if
@@ -4000,7 +4046,7 @@ impl<'a> BundleV2<'a> {
             if import_record.path.text == b"bun:wrap" {
                 import_record.path.namespace = b"bun";
                 import_record.tag = bun_options_types::import_record::Tag::Runtime;
-                import_record.path.text = b"wrap".into();
+                import_record.path.text = b"wrap";
                 import_record.source_index = Index::RUNTIME;
                 continue;
             }
@@ -4016,9 +4062,9 @@ impl<'a> BundleV2<'a> {
                     // into a non-node module resolver that doesn't support
                     // node's prefix. https://github.com/oven-sh/bun/issues/18545
                     import_record.path.text = if replacement.node_builtin && !replacement.node_only_prefix {
-                        replacement.path[5..].into()
+                        &replacement.path.as_bytes()[5..]
                     } else {
-                        replacement.path.into()
+                        replacement.path.as_bytes()
                     };
                     import_record.tag = replacement.tag;
                     import_record.source_index = Index::INVALID;
@@ -5396,7 +5442,7 @@ pub fn target_from_hashbang(buffer: &[u8]) -> Option<options::Target> {
     None
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct CssEntryPointMeta {
     /// When this is true, a stub file is added to the Server's IncrementalGraph
     pub imported_on_server: bool,

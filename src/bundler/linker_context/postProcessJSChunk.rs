@@ -363,21 +363,20 @@ pub fn post_process_js_chunk(
     }
 
     let mut j = StringJoiner {
-        // TODO(port): allocator field — drop in Rust (global mimalloc) or thread arena
-        allocator: worker.allocator,
-        watcher: StringJoiner::Watcher {
+        watcher: Watcher {
             input: chunk.unique_key,
+            ..Default::default()
         },
         ..Default::default()
     };
     // errdefer j.deinit() — deleted; StringJoiner has Drop
     let output_format = c.options.output_format;
 
-    let mut line_offset: SourceMap::LineColumnOffset::Optional =
+    let mut line_offset: SourceMap::LineColumnOffsetOptional =
         if c.options.source_maps != options::SourceMapOption::None {
-            SourceMap::LineColumnOffset::Optional::Value(Default::default())
+            SourceMap::LineColumnOffsetOptional::Value(Default::default())
         } else {
-            SourceMap::LineColumnOffset::Optional::Null
+            SourceMap::LineColumnOffsetOptional::Null
         };
 
     // Concatenate the generated JavaScript chunks together
@@ -397,8 +396,9 @@ pub fn post_process_js_chunk(
 
             // Otherwise check if banner starts with hashbang
             if !c.options.banner.is_empty() && c.options.banner.starts_with(b"#!") {
-                let newline_pos =
-                    strings::index_of_char(c.options.banner, b'\n').unwrap_or(c.options.banner.len());
+                let newline_pos = strings::index_of_char(c.options.banner, b'\n')
+                    .map(|n| n as usize)
+                    .unwrap_or(c.options.banner.len());
                 let banner_hashbang = &c.options.banner[..newline_pos];
 
                 break 'brk (
@@ -462,7 +462,7 @@ pub fn post_process_js_chunk(
     // Add the top-level directive if present (but omit "use strict" in ES
     // modules because all ES modules are automatically in strict mode)
     if chunk.is_entry_point() && !output_format.is_always_strict_mode() {
-        let flags: JSAst::Flags = c.graph.ast.items_flags()[chunk.entry_point.source_index() as usize];
+        let flags = c.graph.ast.items_flags()[chunk.entry_point.source_index() as usize];
 
         if flags.has_explicit_use_strict_directive {
             j.push_static(b"\"use strict\";\n");
@@ -472,11 +472,11 @@ pub fn post_process_js_chunk(
     }
 
     // For Kit, hoist runtime.js outside of the IIFE
-    let compile_results = chunk.compile_results_for_chunk;
+    let compile_results = &chunk.compile_results_for_chunk;
     if c.options.output_format == options::OutputFormat::InternalBakeDev {
         for compile_result in compile_results.iter() {
             let source_index = compile_result.source_index();
-            if source_index != Index::runtime().value() {
+            if source_index != Index::RUNTIME.value {
                 break;
             }
             line_offset.advance(compile_result.code());

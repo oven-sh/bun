@@ -1132,9 +1132,9 @@ impl SourceMapDataTask {
             (ctx as *const u8).sub(offset_of!(BundleV2, linker)).cast::<BundleV2>()
         };
         let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
-        let _wguard = scopeguard::guard((), |_| worker.unget());
         // SAFETY: `worker.allocator` points at `worker.heap` (init by `Worker::create`).
         SourceMapData::compute_line_offsets(ctx, unsafe { &*worker.allocator }, task.source_index);
+        worker.unget();
     }
 
     pub fn run_quoted_source_contents(thread_task: *mut ThreadPoolLib::Task) {
@@ -1159,7 +1159,6 @@ impl SourceMapDataTask {
             (ctx as *const u8).sub(offset_of!(BundleV2, linker)).cast::<BundleV2>()
         };
         let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
-        let _wguard = scopeguard::guard((), |_| worker.unget());
 
         // Use the default allocator when using DevServer and the file
         // was generated. This will be preserved so that remapping
@@ -1168,8 +1167,11 @@ impl SourceMapDataTask {
         // SAFETY: `worker.ctx` is a `*mut BundleV2` backref; `transpiler` is a
         // `*mut Transpiler` backref. Both valid for the worker's lifetime.
         let alloc: *const Bump = unsafe {
-            if let Some(dev) = (*(*worker.ctx).transpiler).options.dev_server.as_ref() {
-                dev.allocator()
+            if (*(*worker.ctx).transpiler).options.dev_server.is_some() {
+                // CYCLEBREAK FORWARD_DECL: `bake::DevServer.allocator()` —
+                // dev_server is type-erased here (Option<()>); the real handle
+                // arrives with the bake crate. Fall through to the worker arena.
+                todo!("blocked_on: bake::DevServer::allocator")
             } else {
                 worker.allocator
             }
@@ -1178,6 +1180,7 @@ impl SourceMapDataTask {
         // SAFETY: `alloc` is either the dev-server's static arena or the
         // thread-local worker arena (initialized by `Worker::create`).
         SourceMapData::compute_quoted_source_contents(ctx, unsafe { &*alloc }, task.source_index);
+        worker.unget();
     }
 }
 
@@ -1222,13 +1225,14 @@ impl SourceMapData {
             unsafe { (*this).graph.ast.items_approximate_newline_count()[source_index as usize] };
 
         // SAFETY: sole writer to this slot (disjoint by source_index).
+        let _ = alloc;
         unsafe {
             *line_offset_table = LineOffsetTable::generate(
-                alloc,
                 &source.contents,
                 // We don't support sourcemaps for source files with more than 2^31 lines
                 (approximate_line_count as u32 & 0x7FFF_FFFF) as i32, // @intCast(@truncate to u31)
-            );
+            )
+            .expect("OOM");
         }
     }
 
@@ -1315,11 +1319,19 @@ pub struct ChunkMeta {
 
 pub type ChunkMetaMap = ArrayHashMap<Ref, ()>;
 
+/// PORT NOTE: raw-pointer fields (was `&'a mut`) because `each_ptr` requires
+/// `Ctx: Sync + Copy` and the same context is observed from every worker
+/// thread. Each task only writes to its own `*mut Chunk` slot; reads of
+/// `c`/`chunks` are disjoint or read-only per the Zig spec.
+#[derive(Clone, Copy)]
 pub struct GenerateChunkCtx<'a> {
-    pub c: &'a mut LinkerContext<'a>,
-    pub chunks: &'a mut [Chunk],
-    pub chunk: &'a mut Chunk,
+    pub c: *mut LinkerContext<'a>,
+    pub chunks: *mut [Chunk],
+    pub chunk: *mut Chunk,
 }
+// SAFETY: see PORT NOTE above — mirrors Zig's freely-aliased `*LinkerContext`.
+unsafe impl<'a> Send for GenerateChunkCtx<'a> {}
+unsafe impl<'a> Sync for GenerateChunkCtx<'a> {}
 
 pub struct PendingPartRange<'a> {
     pub part_range: PartRange,

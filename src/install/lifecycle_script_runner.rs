@@ -362,20 +362,24 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         }
 
         // errdefer { decrement alive_count; ensure_not_in_heap }
-        // PORT NOTE: reshaped for borrowck — scopeguard cannot capture `&mut self` while we use
-        // it below, so capture a raw ptr and restore the side effects on the error path.
-        let this_ptr: *mut Self = self;
-        let guard = scopeguard::guard((), move |_| {
-            // SAFETY: `self` outlives this scope; guard runs before fn returns.
-            let this = unsafe { &mut *this_ptr };
-            if this.has_incremented_alive_count {
-                this.has_incremented_alive_count = false;
+        // PORT NOTE: Zig's `errdefer` is modeled by splitting the fallible body into
+        // `spawn_next_script_inner` and running the cleanup on the error branch. A scopeguard
+        // capturing a raw `*mut Self` (the previous approach) is UB under Stacked Borrows: the
+        // raw ptr derived from `self` is invalidated by subsequent uses of `self` in the body,
+        // so the guard's `&mut *ptr` on unwind would deref a dead tag.
+        let result = self.spawn_next_script_inner(next_script_index);
+        if result.is_err() {
+            if self.has_incremented_alive_count {
+                self.has_incremented_alive_count = false;
                 // .monotonic is okay because because this value is only used by hoisted installs.
                 let _ = ALIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
             }
-            this.ensure_not_in_heap();
-        });
+            self.ensure_not_in_heap();
+        }
+        result
+    }
 
+    fn spawn_next_script_inner(&mut self, next_script_index: u8) -> Result<(), bun_core::Error> {
         let manager = self.manager;
         let original_script = self.scripts.items[next_script_index as usize]
             .as_ref()
@@ -583,8 +587,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             bun_sys::Result::Ok(_) => {}
         }
 
-        // success path: disarm errdefer
-        scopeguard::ScopeGuard::into_inner(guard);
         Ok(())
     }
 

@@ -3434,7 +3434,10 @@ impl<'a> Parser<'a> {
         start_position: usize,
         kind: ImportKind,
     ) -> CssResult<u32> {
-        if let Some(import_records) = self.import_records.as_deref_mut() {
+        if let Some(ptr) = self.import_records {
+            // SAFETY: see `Parser.import_records` field doc — sole live `&mut`
+            // for this scope; provenance shared only with raw-pointer aliases.
+            let import_records = unsafe { &mut *ptr.as_ptr() };
             let idx = import_records.len;
             // SAFETY: `url` borrows the parser source / arena which outlives
             // every `ImportRecord` produced by this parse. `bun.fs.Path` in
@@ -3477,7 +3480,7 @@ impl<'a> Parser<'a> {
     /// error.
     pub fn new(
         input: &'a mut ParserInput<'a>,
-        import_records: Option<&'a mut BabyList<ImportRecord>>,
+        import_records: Option<core::ptr::NonNull<BabyList<ImportRecord>>>,
         flags: ParserOpts,
         extra: Option<&'a mut ParserExtra>,
     ) -> Parser<'a> {
@@ -3969,9 +3972,11 @@ impl<'a> Parser<'a> {
     pub fn reset(&mut self, state_: &ParserState) {
         self.input.tokenizer.reset(state_);
         self.at_start_of = state_.at_start_of;
-        if let Some(import_records) = &mut self.import_records {
+        if let Some(ptr) = self.import_records {
             // Roll back any speculatively-added @import/url() records.
-            import_records.shrink_retaining_capacity(state_.import_record_count as usize);
+            // SAFETY: see `Parser.import_records` field doc.
+            unsafe { &mut *ptr.as_ptr() }
+                .shrink_retaining_capacity(state_.import_record_count as usize);
         }
     }
 
@@ -3981,10 +3986,10 @@ impl<'a> Parser<'a> {
             current_line_start_position: self.input.tokenizer.current_line_start_position,
             current_line_number: self.input.tokenizer.current_line_number,
             at_start_of: self.at_start_of,
+            // SAFETY: see `Parser.import_records` field doc.
             import_record_count: self
                 .import_records
-                .as_ref()
-                .map(|ir| ir.len)
+                .map(|ptr| unsafe { (*ptr.as_ptr()).len })
                 .unwrap_or(0),
         }
     }
@@ -6403,7 +6408,12 @@ pub mod parse_utility {
         // I hope this is okay
         let mut import_records = BabyList::<ImportRecord>::default();
         let mut i = ParserInput::new(input, allocator);
-        let mut parser = Parser::new(&mut i, Some(&mut import_records), ParserOpts::default(), None);
+        let mut parser = Parser::new(
+            &mut i,
+            Some(core::ptr::NonNull::from(&mut import_records)),
+            ParserOpts::default(),
+            None,
+        );
         let result = parse_one(&mut parser)?;
         parser.expect_exhausted()?;
         Ok(result)

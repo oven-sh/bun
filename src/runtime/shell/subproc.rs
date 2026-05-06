@@ -1825,25 +1825,39 @@ impl PipeReader {
 
     // Helper accessors used above to paper over Arc<PipeReader> interior mutability.
     // TODO(port): remove once IntrusiveRc + Cell-wrapped fields land (Phase B).
-    fn set_state(&self, state: PipeReaderState) {
-        // SAFETY: Zig `PipeReader` is intrusively ref-counted (`bun.ptr.RefCount`) and
-        // mutated through any `*PipeReader`; the JS-thread single-owner invariant means
-        // no aliasing &mut exists when this runs. Mirrors `r.pipe.state = .{ ... }`.
-        unsafe { (*(self as *const Self as *mut Self)).state = state };
+    //
+    // These take `*mut Self` (not `&self`) because `Arc<PipeReader>` only yields
+    // `&Self`, and casting `&Self as *const Self as *mut Self` to write through is
+    // immediate UB — shared-ref provenance is read-only. Callers obtain the pointer
+    // via `Arc::as_ptr(&arc).cast_mut()`, which projects from the Arc allocation's
+    // original `NonNull` without materializing a `&Self`, mirroring Zig's intrusive
+    // `*PipeReader` (bun.ptr.RefCount) which is freely mutated through any alias.
+    // The JS-thread single-mutator invariant means no live `&`/`&mut` to these
+    // fields exists when these run.
+    unsafe fn set_state(this: *mut Self, state: PipeReaderState) {
+        // SAFETY: see block comment above. Mirrors `r.pipe.state = .{ ... }`.
+        // Raw place assignment drops the old value; no `&mut Self` is materialized.
+        unsafe { (*this).state = state };
     }
-    fn set_buffered_output(&self, bo: BufferedOutput) {
-        // SAFETY: see set_state. Mirrors `readable.pipe.buffered_output = .{ ... }` in
-        // Readable.init — called immediately after `PipeReader.create` while the Arc is
+    unsafe fn set_buffered_output(this: *mut Self, bo: BufferedOutput) {
+        // SAFETY: see block comment above. Mirrors `readable.pipe.buffered_output = .{ ... }`
+        // in Readable.init — called immediately after `PipeReader.create` while the Arc is
         // uniquely held.
-        unsafe { (*(self as *const Self as *mut Self)).buffered_output = bo };
+        unsafe { (*this).buffered_output = bo };
     }
-    fn take_done_buffer(&self) -> Box<[u8]> {
-        // SAFETY: see set_state. Mirrors onCloseIO:
+    unsafe fn take_done_buffer(this: *mut Self) -> Box<[u8]> {
+        // SAFETY: see block comment above. Mirrors onCloseIO:
         //   out.* = .{ .buffer = pipe.state.done }; pipe.state = .{ .done = &.{} };
-        let this = unsafe { &mut *(self as *const Self as *mut Self) };
-        if let PipeReaderState::Done(buf) =
-            core::mem::replace(&mut this.state, PipeReaderState::Done(Box::default()))
-        {
+        // `ptr::replace` reads/writes through the raw field pointer without
+        // materializing a `&mut Self` (on_reader_done may still hold one on the
+        // caller's stack via the BufferedReader parent backref).
+        let old = unsafe {
+            core::ptr::replace(
+                core::ptr::addr_of_mut!((*this).state),
+                PipeReaderState::Done(Box::default()),
+            )
+        };
+        if let PipeReaderState::Done(buf) = old {
             return buf;
         }
         Box::default()

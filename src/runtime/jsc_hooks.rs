@@ -3285,12 +3285,13 @@ unsafe fn resolve_hook(
 
     // SAFETY: per fn contract.
     let global_ref = unsafe { &*global };
-    // PORT NOTE: `bun_vm()` hands back `&VirtualMachine`; we go through a raw
-    // ptr (not `&mut`) for the resolver/log writes below to avoid aliasing the
-    // shared ref (PORTING.md §Forbidden — same raw-ptr-per-field style as
-    // `load_preloads`/`transpile_source_code`).
-    let vm: *mut VirtualMachine =
-        global_ref.bun_vm() as *const VirtualMachine as *mut VirtualMachine;
+    // PORT NOTE: `bun_vm_ptr()` returns the FFI `*mut VirtualMachine` directly
+    // (mutable provenance from C++); we go through a raw ptr (not `&mut`) for
+    // the resolver/log writes below to avoid aliasing (PORTING.md §Forbidden —
+    // same raw-ptr-per-field style as `load_preloads`/`transpile_source_code`).
+    // Going through `bun_vm() -> &VirtualMachine -> *mut` would be UB to write
+    // through under Stacked Borrows.
+    let vm: *mut VirtualMachine = global_ref.bun_vm_ptr();
 
     // Spec :1883-1904 — overlong specifier guard. `MAX_PATH_BYTES * 1.5`,
     // truncated. PORT NOTE: Zig used `@intFromFloat(@trunc(f64(..) * 1.5))`;

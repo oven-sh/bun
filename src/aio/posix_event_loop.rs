@@ -1486,10 +1486,15 @@ impl Store {
     pub fn process_deferred_frees(&mut self) {
         let mut next = self.pending_free_head;
         while !next.is_null() {
-            // SAFETY: intrusive list; nodes were allocated by this hive.
-            let current = unsafe { &mut *next };
-            next = current.next_to_free;
-            current.next_to_free = ptr::null_mut();
+            let current = next;
+            // SAFETY: intrusive list; nodes were allocated by this hive. Walk via
+            // raw-pointer reads/writes only — materializing a `&mut FilePoll`
+            // here would alias the `&mut self.hive` borrow taken by `put()`
+            // below (the slot may live inside the inline hive array).
+            unsafe {
+                next = (*current).next_to_free;
+                (*current).next_to_free = ptr::null_mut();
+            }
             self.hive.put(current);
         }
         self.pending_free_head = ptr::null_mut();
@@ -1506,10 +1511,14 @@ impl Store {
 
         if !self.pending_free_tail.is_null() {
             debug_assert!(!self.pending_free_head.is_null());
-            // SAFETY: tail is non-null and points into the hive.
-            let tail = unsafe { &mut *self.pending_free_tail };
-            debug_assert!(tail.next_to_free.is_null());
-            tail.next_to_free = poll;
+            // SAFETY: tail is non-null and points into the hive. Use raw-pointer
+            // access (Zig `*FilePoll` semantics) — a `&mut FilePoll` here could
+            // alias `poll` (if a caller ever re-puts the current tail) and would
+            // overlap storage reachable through `&mut self`.
+            unsafe {
+                debug_assert!((*self.pending_free_tail).next_to_free.is_null());
+                (*self.pending_free_tail).next_to_free = poll;
+            }
         }
 
         if self.pending_free_head.is_null() {

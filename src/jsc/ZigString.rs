@@ -578,6 +578,8 @@ impl ZigString {
         str
     }
 
+    // TODO(port): `bun_core::base64` module not yet exported. Gated.
+    #[cfg(any())]
     pub fn to_base64_data_url(&self) -> Result<Vec<u8>, bun_core::Error> {
         // TODO(port): narrow error set
         let slice_ = self.slice();
@@ -596,17 +598,8 @@ impl ZigString {
         }
     }
 
-    pub fn to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObject) -> JSValue {
-        if len > BunString::max_length() {
-            // SAFETY: ptr was allocated by global mimalloc with len u16 elements.
-            unsafe { bun_alloc::free_slice(ptr as *mut u16, len) };
-            // TODO(port): propagate?
-            let _ = global.err(crate::ErrorCode::STRING_TOO_LONG, "Cannot create a string longer than 2^32-1 characters").throw();
-            return JSValue::ZERO;
-        }
-        // SAFETY: ptr/len describe a globally-allocated UTF-16 buffer; ownership transferred to JSC.
-        unsafe { ZigString__toExternalU16(ptr, len, global) }
-    }
+    // `to_external_u16` is defined un-gated at module scope above (free fn +
+    // inherent wrapper) — no duplicate here.
 
     pub fn is_utf8(&self) -> bool {
         (self._unsafe_ptr_do_not_use as usize) & (1usize << 61) != 0
@@ -639,7 +632,8 @@ impl ZigString {
     #[inline]
     pub fn deinit_global(&self) {
         // SAFETY: slice() returns memory owned by global mimalloc when is_globally_allocated.
-        unsafe { bun_alloc::free_slice(self.slice().as_ptr() as *mut u8, self.slice().len()) };
+        // `mi_free` is size-agnostic (mimalloc tracks allocation metadata).
+        unsafe { bun_alloc::mimalloc::mi_free(self.slice().as_ptr() as *mut c_void) };
     }
 
     #[inline]
@@ -648,6 +642,8 @@ impl ZigString {
             ((self._unsafe_ptr_do_not_use as usize) | (1usize << 62)) as *const u8;
     }
 
+    // TODO(port): `JSValue::as_ref_()` (JSValueRef cast) not in JSValue.rs yet.
+    #[cfg(any())]
     #[inline]
     pub fn to_ref(slice_: &[u8], global: &JSGlobalObject) -> c_api::JSValueRef {
         Self::init(slice_).to_js(global).as_ref_()
@@ -678,19 +674,10 @@ impl ZigString {
         }
         if self.is_16bit() {
             let buffer = self.to_owned_slice().expect("OOM"); // bun.handleOom
-            let leaked = Box::leak(buffer.into_boxed_slice());
-            return Slice {
-                allocator: NullableAllocator::default_alloc(),
-                ptr: leaked.as_ptr(),
-                len: leaked.len() as u32,
-            };
+            return Slice::Owned(buffer);
         }
 
-        Slice {
-            allocator: NullableAllocator::null(),
-            ptr: Self::untagged(self._unsafe_ptr_do_not_use),
-            len: self.len as u32,
-        }
+        Slice::Static(Self::untagged(self._unsafe_ptr_do_not_use), self.len)
     }
 
     /// This function checks if the input is latin1 non-ascii.
@@ -701,31 +688,17 @@ impl ZigString {
         }
         if self.is_16bit() {
             let buffer = self.to_owned_slice().expect("OOM");
-            let leaked = Box::leak(buffer.into_boxed_slice());
-            return Slice {
-                allocator: NullableAllocator::default_alloc(),
-                ptr: leaked.as_ptr(),
-                len: leaked.len() as u32,
-            };
+            return Slice::Owned(buffer);
         }
 
         // SAFETY: untagged ptr valid for self.len bytes.
         let raw = unsafe { slice::from_raw_parts(Self::untagged(self._unsafe_ptr_do_not_use), self.len) };
         if !self.is_utf8() && !strings::is_all_ascii(raw) {
             let buffer = self.to_owned_slice().expect("OOM");
-            let leaked = Box::leak(buffer.into_boxed_slice());
-            return Slice {
-                allocator: NullableAllocator::default_alloc(),
-                ptr: leaked.as_ptr(),
-                len: leaked.len() as u32,
-            };
+            return Slice::Owned(buffer);
         }
 
-        Slice {
-            allocator: NullableAllocator::null(),
-            ptr: Self::untagged(self._unsafe_ptr_do_not_use),
-            len: self.len as u32,
-        }
+        Slice::Static(Self::untagged(self._unsafe_ptr_do_not_use), self.len)
     }
 
     /// The returned slice is always allocated by the default allocator.
@@ -733,13 +706,7 @@ impl ZigString {
         if self.len == 0 {
             return Ok(Slice::EMPTY);
         }
-        let buffer = self.to_owned_slice()?;
-        let leaked = Box::leak(buffer.into_boxed_slice());
-        Ok(Slice {
-            allocator: NullableAllocator::default_alloc(),
-            ptr: leaked.as_ptr(),
-            len: leaked.len() as u32,
-        })
+        Ok(Slice::Owned(self.to_owned_slice()?))
     }
 
     pub fn slice_z_buf<'a>(&self, buf: &'a mut PathBuffer) -> Result<&'a ZStr, bun_core::Error> {

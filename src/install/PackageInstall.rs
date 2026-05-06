@@ -1689,17 +1689,15 @@ impl<'a> PackageInstall<'a> {
                         }
                         EntryKind::File => {
                             match sys::symlink_w(dest, src, Default::default()) {
-                                sys::Result::Err(err) => {
+                                Err(err) => {
                                     if let Some(entry_dirname) =
-                                        bun_paths::Dirname::dirname_u16(entry.path)
+                                        bun_paths::resolve_path::dirname_u16(entry.path.as_slice())
                                     {
                                         let _ = bun_sys::MakePath::make_path_u16(
                                             destination_dir,
                                             entry_dirname,
                                         );
-                                        if let sys::Result::Ok(_) =
-                                            sys::symlink_w(dest, src, Default::default())
-                                        {
+                                        if sys::symlink_w(dest, src, Default::default()).is_ok() {
                                             continue;
                                         }
                                     }
@@ -1710,15 +1708,15 @@ impl<'a> PackageInstall<'a> {
                                         if !ONCE.swap(true, Ordering::Relaxed) {
                                             Output::warn(format_args!(
                                                 "CreateHardLinkW failed, falling back to CopyFileW: {} -> {}\n",
-                                                bun_core::fmt::fmt_os_path(src.as_slice()),
-                                                bun_core::fmt::fmt_os_path(dest.as_slice()),
+                                                bun_core::fmt::fmt_os_path(src.as_slice(), Default::default()),
+                                                bun_core::fmt::fmt_os_path(dest.as_slice(), Default::default()),
                                             ));
                                         }
                                     }
 
-                                    return Err(bun_sys::errno_to_zig_err(err.errno));
+                                    return Err(err.into());
                                 }
-                                sys::Result::Ok(_) => {}
+                                Ok(_) => {}
                             }
                         }
                         _ => unreachable!(), // handled above
@@ -1914,16 +1912,28 @@ impl<'a> PackageInstall<'a> {
             self.uninstall_before_install(destination_dir);
         }
 
-        let subdir = bun_paths::dirname(dest_path.as_bytes());
+        // PORT NOTE: Zig `std.fs.path.dirname` returns null when there is no directory
+        // component; mirror that with an Option around resolve_path::dirname.
+        let dirname_slice =
+            path::resolve_path::dirname::<path::platform::Auto>(dest_path.as_bytes());
+        let subdir: Option<&[u8]> =
+            (!dirname_slice.is_empty() && dirname_slice != dest_path.as_bytes()).then_some(dirname_slice);
 
         let mut dest_buf = PathBuffer::uninit();
         // cache_dir_subpath in here is actually the full path to the symlink pointing to the linked package
         let symlinked_path = self.cache_dir_subpath;
         let mut to_buf = PathBuffer::uninit();
-        let to_path = match self.cache_dir.realpath(symlinked_path, &mut to_buf) {
+        // Zig: `this.cache_dir.realpath(symlinked_path, &to_buf)` — open the target relative
+        // to cache_dir, then resolve its canonical path.
+        let to_path = match (|| -> Result<&[u8], bun_core::Error> {
+            let fd = sys::openat(self.cache_dir.fd(), symlinked_path, sys::O::RDONLY, 0)?;
+            let _close = scopeguard::guard(fd, |f| f.close());
+            sys::get_fd_path(fd, &mut to_buf).map_err(Into::into)
+        })() {
             Ok(p) => p,
             Err(err) => return InstallResult::fail(err, Step::LinkingDependency, None),
         };
+        let to_path_len = to_path.len();
 
         let dest = bun_paths::basename(dest_path.as_bytes());
         // When we're linking on Windows, we want to avoid keeping the source directory handle open
@@ -2130,8 +2140,9 @@ impl<'a> PackageInstall<'a> {
                         panic!("Patched dependency cache dir subpath does not have the \"_patch_hash=HASH\" suffix. This is a bug, please file a GitHub issue.")
                     });
                 let cache_dir_subpath_without_patch_hash = &self.cache_dir_subpath.as_bytes()[..idx];
-                // TODO(port): bun.path.join_buf is a global threadlocal buffer.
-                let join_buf = path::join_buf();
+                // PORT NOTE: Zig wrote into the global `bun.path.join_buf` thread-local; use a
+                // stack PathBuffer here instead (same size, no shared state).
+                let mut join_buf = PathBuffer::uninit();
                 join_buf[..cache_dir_subpath_without_patch_hash.len()]
                     .copy_from_slice(cache_dir_subpath_without_patch_hash);
                 join_buf[cache_dir_subpath_without_patch_hash.len()] = 0;
@@ -2140,9 +2151,7 @@ impl<'a> PackageInstall<'a> {
                     ZStr::from_raw(join_buf.as_ptr(), cache_dir_subpath_without_patch_hash.len())
                 };
                 let exists =
-                    sys::directory_exists_at(Fd::from_std_dir(self.cache_dir), subpath)
-                        .unwrap()
-                        .unwrap_or(false);
+                    sys::directory_exists_at(self.cache_dir.fd(), subpath).unwrap_or(false);
                 if exists {
                     manager.set_preinstall_state(package_id, manager.lockfile, crate::PreinstallState::Done);
                 }
@@ -2156,8 +2165,7 @@ impl<'a> PackageInstall<'a> {
         manager: &mut PackageManager,
         package_id: PackageID,
     ) -> bool {
-        let exists = sys::directory_exists_at(Fd::from_std_dir(self.cache_dir), self.cache_dir_subpath)
-            .unwrap()
+        let exists = sys::directory_exists_at(self.cache_dir.fd(), self.cache_dir_subpath)
             .unwrap_or(false);
         if exists {
             manager.set_preinstall_state(package_id, manager.lockfile, crate::PreinstallState::Done);

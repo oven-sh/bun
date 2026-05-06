@@ -1034,7 +1034,10 @@ pub mod serialize {
                 };
                 if let Some(class) = class {
                     $d.write_char(b'.')?;
-                    $d.write_ident(class, true)?;
+                    // blocked_on: `Printer::write_ident` (gated on css_modules
+                    // Pattern::write closure-arity reshape). Non-modules path:
+                    css::serializer::serialize_identifier(class, $d)
+                        .map_err(|_| PrintErr::CSSPrintError)?;
                 } else {
                     $d.write_str($s)?;
                 }
@@ -1121,16 +1124,16 @@ pub mod serialize {
             // https://html.spec.whatwg.org/multipage/semantics-other.html#selector-autofill
             PseudoClass::Autofill(prefix) => write_prefixed(dest, *prefix, b"autofill")?,
 
-            PseudoClass::Local(selector) => {
-                serialize_selector(&selector.selector, dest, context, false)?
+            PseudoClass::Local { selector } => {
+                serialize_selector(selector, dest, context, false)?
             }
-            PseudoClass::Global(selector) => {
+            PseudoClass::Global { selector } => {
                 let css_module = if let Some(module) = dest.css_module.take() {
                     Some(module)
                 } else {
                     None
                 };
-                serialize_selector(&selector.selector, dest, context, false)?;
+                serialize_selector(selector, dest, context, false)?;
                 dest.css_module = css_module;
             }
 
@@ -1138,7 +1141,7 @@ pub mod serialize {
             PseudoClass::WebkitScrollbar(s) => {
                 use parser::WebKitScrollbarPseudoClass as S;
                 dest.write_str(match s {
-                    S::Horizontal => b":horizontal",
+                    S::Horizontal => &b":horizontal"[..],
                     S::Vertical => b":vertical",
                     S::Decrement => b":decrement",
                     S::Increment => b":increment",
@@ -1158,11 +1161,14 @@ pub mod serialize {
                 dest.write_char(b':')?;
                 return dest.write_str(name);
             }
-            PseudoClass::CustomFunction(v) => {
+            PseudoClass::CustomFunction { name, arguments } => {
                 dest.write_char(b':')?;
-                dest.write_str(&v.name)?;
+                dest.write_str(name)?;
                 dest.write_char(b'(')?;
-                v.arguments.to_css_raw(dest)?;
+                // blocked_on: properties::custom (TokenList::to_css_raw) un-gate.
+                #[cfg(any())]
+                arguments.to_css_raw(dest)?;
+                let _ = arguments;
                 dest.write_char(b')')?;
             }
         }
@@ -1225,14 +1231,14 @@ pub mod serialize {
             PseudoElement::Selection(prefix) => write_prefixed(dest, *prefix, b"selection")?,
             PseudoElement::Cue => dest.write_str(b"::cue")?,
             PseudoElement::CueRegion => dest.write_str(b"::cue-region")?,
-            PseudoElement::CueFunction(v) => {
+            PseudoElement::CueFunction { selector } => {
                 dest.write_str(b"::cue(")?;
-                serialize_selector(&v.selector, dest, context, false)?;
+                serialize_selector(selector, dest, context, false)?;
                 dest.write_char(b')')?;
             }
-            PseudoElement::CueRegionFunction(v) => {
+            PseudoElement::CueRegionFunction { selector } => {
                 dest.write_str(b"::cue-region(")?;
-                serialize_selector(&v.selector, dest, context, false)?;
+                serialize_selector(selector, dest, context, false)?;
                 dest.write_char(b')')?;
             }
             PseudoElement::Placeholder(prefix) => {
@@ -1257,7 +1263,7 @@ pub mod serialize {
             PseudoElement::WebkitScrollbar(s) => {
                 use parser::WebKitScrollbarPseudoElement as S;
                 dest.write_str(match s {
-                    S::Scrollbar => b"::-webkit-scrollbar",
+                    S::Scrollbar => &b"::-webkit-scrollbar"[..],
                     S::Button => b"::-webkit-scrollbar-button",
                     S::Track => b"::-webkit-scrollbar-track",
                     S::TrackPiece => b"::-webkit-scrollbar-track-piece",
@@ -1267,36 +1273,38 @@ pub mod serialize {
                 })?;
             }
             PseudoElement::ViewTransition => dest.write_str(b"::view-transition")?,
-            PseudoElement::ViewTransitionGroup(v) => {
+            PseudoElement::ViewTransitionGroup { part_name } => {
                 dest.write_str(b"::view-transition-group(")?;
-                v.part_name.to_css(dest)?;
+                part_name.to_css(dest)?;
                 dest.write_char(b')')?;
             }
-            PseudoElement::ViewTransitionImagePair(v) => {
+            PseudoElement::ViewTransitionImagePair { part_name } => {
                 dest.write_str(b"::view-transition-image-pair(")?;
-                v.part_name.to_css(dest)?;
+                part_name.to_css(dest)?;
                 dest.write_char(b')')?;
             }
-            PseudoElement::ViewTransitionOld(v) => {
+            PseudoElement::ViewTransitionOld { part_name } => {
                 dest.write_str(b"::view-transition-old(")?;
-                v.part_name.to_css(dest)?;
+                part_name.to_css(dest)?;
                 dest.write_char(b')')?;
             }
-            PseudoElement::ViewTransitionNew(v) => {
+            PseudoElement::ViewTransitionNew { part_name } => {
                 dest.write_str(b"::view-transition-new(")?;
-                v.part_name.to_css(dest)?;
+                part_name.to_css(dest)?;
                 dest.write_char(b')')?;
             }
             PseudoElement::Custom { name } => {
                 dest.write_str(b"::")?;
                 return dest.write_str(name);
             }
-            PseudoElement::CustomFunction(v) => {
-                let name = &v.name;
+            PseudoElement::CustomFunction { name, arguments } => {
                 dest.write_str(b"::")?;
                 dest.write_str(name)?;
                 dest.write_char(b'(')?;
-                v.arguments.to_css_raw(dest)?;
+                // blocked_on: properties::custom (TokenList::to_css_raw) un-gate.
+                #[cfg(any())]
+                arguments.to_css_raw(dest)?;
+                let _ = arguments;
                 dest.write_char(b')')?;
             }
         }

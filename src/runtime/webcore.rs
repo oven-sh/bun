@@ -349,12 +349,39 @@ pub use form_data::{FormData, AsyncFormData};
 #[path = "webcore/ScriptExecutionContext.rs"]
 pub mod script_execution_context;
 
+/// `bun.webcore.ResumableSinkBackpressure` — re-declared here (not re-exported
+/// from `resumable_sink`) because that module is still gated on
+/// `bun_jsc::codegen::JSResumable*Sink`. The enum itself is dependency-free and
+/// is consumed by `s3::multipart::MultiPartUpload::write*`.
+// TODO(b2-blocked): swap to `pub use resumable_sink::ResumableSinkBackpressure;` once un-gated.
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum ResumableSinkBackpressure {
+    WantMore,
+    Backpressure,
+    Done,
+}
+
 #[doc(hidden)]
 #[path = "webcore/s3/multipart_options.rs"]
 pub mod multipart_options_impl;
 pub mod s3 {
     pub use super::multipart_options_impl as multipart_options;
     pub use super::multipart_options_impl::MultiPartUploadOptions;
+
+    // PORT NOTE: `client` is the umbrella re-export hub (matches Zig's `s3/client.zig`
+    // which `pub const X = @import(...)`-s every sibling). It pulls in `simple_request`
+    // / `download_stream` / `list_objects` / `multipart` transitively.
+    #[path = "s3/simple_request.rs"]
+    pub mod simple_request;
+    #[path = "s3/download_stream.rs"]
+    pub mod download_stream;
+    #[path = "s3/list_objects.rs"]
+    pub mod list_objects;
+    #[path = "s3/multipart.rs"]
+    pub mod multipart;
+    pub use multipart::MultiPartUpload;
+    #[path = "s3/client.rs"]
+    pub mod client;
 }
 
 #[path = "webcore/streams.rs"]

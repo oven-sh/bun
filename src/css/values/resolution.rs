@@ -4,7 +4,7 @@ use crate::values::number::CSSNumber;
 use bun_string::strings;
 
 /// A CSS `<resolution>` value.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Resolution {
     /// A resolution in dots per inch.
     Dpi(CSSNumber),

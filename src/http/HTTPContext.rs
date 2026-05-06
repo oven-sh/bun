@@ -67,6 +67,12 @@ pub type HTTPSocket<const SSL: bool> = uws::SocketHandler<SSL>;
 pub type ActiveSocket<const SSL: bool> =
     TaggedPtrUnion<(DeadSocket, HTTPClient, PooledSocket<SSL>, h2::ClientSession)>;
 
+// PORT NOTE: TaggedPtrUnion needs an explicit `impl_tagged_ptr_union!` per
+// concrete type-list (Zig generated this from `TagTypeEnumWithTypeMap`).
+// Two invocations because `PooledSocket<SSL>` is const-generic.
+bun_ptr::impl_tagged_ptr_union!(DeadSocket, HTTPClient, PooledSocket<false>, h2::ClientSession);
+bun_ptr::impl_tagged_ptr_union!(DeadSocket, HTTPClient, PooledSocket<true>, h2::ClientSession);
+
 pub struct PooledSocket<const SSL: bool> {
     pub http_socket: HTTPSocket<SSL>,
     pub hostname_buf: [u8; MAX_KEEPALIVE_HOSTNAME],
@@ -212,7 +218,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         }
         // PORT NOTE: `session.ref()` — intrusive refcount bump.
         // SAFETY: session is a live ClientSession owned elsewhere.
-        unsafe { (*session).ref_() };
+        unsafe { (*session).r#ref() };
         // SAFETY: same as above.
         unsafe {
             (*session).set_registry_index(u32::try_from(self.active_h2_sessions.len()).unwrap())
@@ -263,7 +269,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         }
         // SAFETY: session is a live ClientSession; deref releases the
         // strong ref taken in register_h2.
-        unsafe { (*session).deref_() };
+        unsafe { (*session).deref() };
     }
 
     pub fn tag_as_h2(socket: HTTPSocket<SSL>, session: *const h2::ClientSession) {

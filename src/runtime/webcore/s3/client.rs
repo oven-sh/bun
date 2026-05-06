@@ -31,9 +31,14 @@ pub use super::list_objects::S3ListObjectsOptions;
 pub use super::list_objects::get_list_objects_options_from_js;
 
 use super::simple_request as s3_simple_request;
+#[cfg(any())]
 use crate::webcore::resumable_sink::ResumableS3UploadSink;
 use crate::webcore::ResumableSinkBackpressure;
-use crate::webcore::{ByteStream, NetworkSink, ReadableStream};
+#[cfg(any())]
+use crate::webcore::{ByteStream, NetworkSink};
+use crate::webcore::ReadableStream;
+use crate::webcore::readable_stream::Strong as ReadableStreamStrong;
+use crate::webcore::readable_stream::Source as ReadableStreamPtr;
 
 bun_output::declare_scope!(S3UploadStream, visible);
 
@@ -353,6 +358,9 @@ pub fn upload(
     )
 }
 
+// TODO(b2-blocked): NetworkSink — `streams::NetworkSink` and its `JSSink::SinkSignal`
+// are gated alongside `HTTPServerWritable` in `webcore/streams.rs`. Un-gate together.
+#[cfg(any())]
 /// returns a writable stream that writes to the s3 path
 pub fn writable_stream(
     this: &mut S3Credentials,
@@ -459,6 +467,13 @@ pub fn writable_stream(
     debug_assert!(signal.is_dead());
     response_stream.sink.to_js(global_this)
 }
+
+// TODO(b2-blocked): ResumableS3UploadSink — `webcore::resumable_sink` is gated on
+// `bun_jsc::codegen::JSResumableS3UploadSink`. The wrapper + `upload_stream` /
+// `readable_stream` below are the only consumers; un-gate as a unit.
+#[cfg(any())]
+mod _upload_stream_gated {
+use super::*;
 
 pub struct S3UploadStreamWrapper {
     // intrusive ref_count — bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) → bun_ptr::IntrusiveRc<Self>
@@ -719,6 +734,10 @@ pub fn upload_stream(
     Ok(ctx_ref.end_promise.value())
 }
 
+} // mod _upload_stream_gated
+#[cfg(any())]
+pub use _upload_stream_gated::{S3UploadStreamWrapper, S3UploadStreamWrapperRef, upload_stream};
+
 /// download a file from s3 chunk by chunk aka streaming (used on readableStream)
 pub fn download_stream(
     this: &mut S3Credentials,
@@ -851,6 +870,9 @@ pub fn download_stream(
     bun_http::http_thread().schedule(batch);
 }
 
+// TODO(b2-blocked): ByteStream — `ByteStream::Source` and `ByteStream::on_data`/`parent`
+// are stubbed in `webcore.rs`. Un-gate once `webcore::byte_stream` body lands.
+#[cfg(any())]
 /// returns a readable stream that reads from the s3 path
 pub fn readable_stream(
     this: &mut S3Credentials,

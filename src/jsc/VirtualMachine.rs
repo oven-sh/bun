@@ -751,6 +751,194 @@ impl VirtualMachine {
     pub fn is_watcher_enabled(&self) -> bool {
         !self.bun_watcher.is_null()
     }
+
+    /// Whether this VM should be destroyed after it exits, even if it is the
+    /// main thread's VM. Worker VMs are always destroyed on exit, regardless
+    /// of this setting. Setting this to true may expose bugs that would
+    /// otherwise only occur using Workers.
+    pub fn should_destruct_main_thread_on_exit(&self) -> bool {
+        bun_core::env_var::feature_flag::BUN_DESTRUCT_VM_ON_EXIT::get().unwrap_or(false)
+    }
+
+    pub fn uncaught_exception(
+        &mut self,
+        global_object: &JSGlobalObject,
+        err: JSValue,
+        is_rejection: bool,
+    ) -> bool {
+        if self.is_shutting_down() {
+            return true;
+        }
+
+        // SAFETY: `isBunTest` is a process-global written once at startup.
+        if unsafe { isBunTest } {
+            self.unhandled_error_counter += 1;
+            (self.on_unhandled_rejection)(self, global_object, err);
+            return true;
+        }
+
+        if self.is_handling_uncaught_exception {
+            self.run_error_handler(err, None);
+            // SAFETY: extern "C" FFI; `global_object` is the live VM global.
+            unsafe { Bun__Process__exit(global_object.as_ptr(), 7) };
+            panic!("Uncaught exception while handling uncaught exception");
+        }
+        if self.exit_on_uncaught_exception {
+            self.run_error_handler(err, None);
+            // SAFETY: extern "C" FFI; `global_object` is the live VM global.
+            unsafe { Bun__Process__exit(global_object.as_ptr(), 1) };
+            panic!("made it past Bun__Process__exit");
+        }
+        self.is_handling_uncaught_exception = true;
+        // PORT NOTE: Zig `defer this.is_handling_uncaught_exception = false;` —
+        // the only thing between set and reset is the FFI call below, which
+        // does not unwind across the C boundary. Reset immediately after.
+        // SAFETY: extern "C" FFI; `global_object` is the live VM global.
+        let handled = unsafe {
+            Bun__handleUncaughtException(
+                global_object.as_ptr(),
+                err.to_error().unwrap_or(err),
+                if is_rejection { 1 } else { 0 },
+            )
+        } > 0;
+        self.is_handling_uncaught_exception = false;
+        if !handled {
+            // TODO maybe we want a separate code path for uncaught exceptions
+            self.unhandled_error_counter += 1;
+            self.exit_handler.exit_code = 1;
+            (self.on_unhandled_rejection)(self, global_object, err);
+        }
+        handled
+    }
+
+    pub fn hot_map(&mut self) -> Option<&mut crate::rare_data::HotMap> {
+        if self.hot_reload != HOT_RELOAD_HOT {
+            return None;
+        }
+        // TODO(b2-cycle): spec lazy-inits via `RareData::hotMap(allocator)`;
+        // that accessor is gated in `rare_data.rs::_accessor_body`. Until it
+        // un-gates, return whatever the field already holds (callers that need
+        // the lazy-init path are themselves gated on `bun_runtime`).
+        self.rare_data.as_deref_mut()?.hot_map.as_mut()
+    }
+
+    pub fn on_before_exit(&mut self) {
+        let vm = self as *mut VirtualMachine;
+        // SAFETY: `vm` is the live per-thread VM (we just took its address).
+        unsafe { ExitHandler::dispatch_on_before_exit(vm) };
+        let mut dispatch = false;
+        loop {
+            while self.is_event_loop_alive() {
+                self.tick();
+                // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
+                // accessed here (no live `&mut EventLoop` overlaps).
+                unsafe { (*self.event_loop()).auto_tick_active() };
+                dispatch = true;
+            }
+
+            if dispatch {
+                // SAFETY: `vm` is the live per-thread VM.
+                unsafe { ExitHandler::dispatch_on_before_exit(vm) };
+                dispatch = false;
+
+                if self.is_event_loop_alive() {
+                    continue;
+                }
+            }
+
+            break;
+        }
+    }
+
+    pub fn on_exit(&mut self) {
+        // Write CPU profile if profiling was enabled - do this FIRST before any
+        // shutdown begins. Grab the config and null it out to make this
+        // idempotent.
+        if let Some(_config) = self.cpu_profiler_config.take() {
+            // TODO(b2-cycle): `CPUProfiler::stop_and_write_profile(self.jsc_vm,
+            // config)` — `bun_cpu_profiler` sibling is gated and the config
+            // field is an `Option<()>` placeholder.
+        }
+        // Write heap profile if profiling was enabled - do this after CPU
+        // profile but before shutdown.
+        if let Some(_config) = self.heap_profiler_config.take() {
+            // TODO(b2-cycle): `HeapProfiler::generate_and_write_profile(
+            // self.jsc_vm, config)` — `bun_heap_profiler` sibling is gated and
+            // the config field is an `Option<()>` placeholder.
+        }
+
+        let vm = self as *mut VirtualMachine;
+        // SAFETY: `vm` is the live per-thread VM (we just took its address).
+        unsafe { ExitHandler::dispatch_on_exit(vm) };
+        self.is_shutting_down = true;
+
+        // Make sure we run new cleanup hooks introduced by running cleanup
+        // hooks.
+        // PORT NOTE: each iteration re-fetches `rare_data` so the FFI hook
+        // bodies (which may re-enter `VirtualMachine` and push more hooks) do
+        // not run while a `&mut RareData` is live — the borrow ends after
+        // `mem::take` returns the owned `Vec`.
+        loop {
+            let hooks = match self.rare_data.as_deref_mut() {
+                Some(rare) if !rare.cleanup_hooks.is_empty() => {
+                    core::mem::take(&mut rare.cleanup_hooks)
+                }
+                _ => break,
+            };
+            for hook in hooks {
+                // SAFETY: ctx/func were registered together by the N-API
+                // caller (`CleanupHook::init`).
+                unsafe { (hook.func)(hook.ctx) };
+            }
+        }
+        // Zig `defer rare_data.cleanup_hooks.clearAndFree(...)` — `mem::take`
+        // above leaves an empty `Vec` (capacity already freed by drop).
+    }
+
+    pub fn global_exit(&mut self) -> ! {
+        debug_assert!(self.is_shutting_down());
+        // FIXME: we should be doing this, but we're not, but unfortunately
+        // doing it causes like 50+ tests to break
+        // self.event_loop().tick();
+
+        if self.should_destruct_main_thread_on_exit() {
+            // SAFETY: `event_loop` is a self-pointer into this VM.
+            if let Some(_t) = unsafe { (*self.event_loop()).forever_timer.take() } {
+                // TODO(b2): `uws::Timer::deinit(true)` — not surfaced in
+                // `bun_uws_sys::Timer` at this tier yet.
+            }
+            // Detached worker threads may still be in startVM()/spin() using
+            // the process-global resolver BSSMap singletons. transpiler.deinit()
+            // below frees those singletons, so request termination of every
+            // live worker and wait for each to reach shutdown() first.
+            // TODO(b2-cycle): `webcore::WebWorker::terminate_all_and_wait(10_000)`
+            // lives in `bun_runtime` (forward-dep cycle). Route through
+            // `RuntimeHooks` once a slot is added.
+
+            // Embedded per-VM socket groups must drain while JSC is still
+            // alive (closeAll() fires on_close → JS).
+            // TODO(b2-cycle): `RareData::close_all_socket_groups(self)` is
+            // gated in `rare_data.rs::_accessor_body`.
+
+            // SAFETY: extern "C" FFI; `self.global` is the live VM global.
+            unsafe { Zig__GlobalObject__destructOnExit(self.global) };
+
+            // lastChanceToFinalize() above runs Listener/Server finalize →
+            // their own embedded group.closeAll() → sockets land in
+            // loop.closed_head. Drain again now or LSAN reports every accepted
+            // socket that was still open at process.exit().
+            // SAFETY: `uws::Loop::get()` returns the process-global usockets
+            // loop, which is live for the process lifetime.
+            unsafe { (*uws::Loop::get()).drain_closed_sockets() };
+
+            // TODO(b2-cycle): `self.transpiler.deinit()` /
+            // `self.gc_controller.deinit()` / `self.deinit()` — `gc_controller`
+            // is a `()` placeholder and `destroy()` is gated. The whole
+            // `BUN_DESTRUCT_VM_ON_EXIT` branch is opt-in debug behaviour;
+            // un-gate piecewise as the field types widen.
+        }
+        bun_core::Global::exit(u32::from(self.exit_handler.exit_code))
+    }
 }
 
 extern crate alloc;
@@ -1207,7 +1395,6 @@ impl VirtualMachine {
     pub fn allow_rejection_handled_warning(this: &VirtualMachine) -> bool { todo!() }
     pub fn unhandled_rejections_mode(&self) -> bun_options_types::schema::api::UnhandledRejections { todo!() }
     pub fn init_request_body_value(&mut self, body: bun_runtime::webcore::Body::Value) { todo!() }
-    pub fn should_destruct_main_thread_on_exit(&self) -> bool { todo!() }
     pub fn uv_loop(&self) -> &'static Async::Loop { todo!() }
     pub fn get_tls_reject_unauthorized(&self) -> bool { todo!() }
     pub fn on_subprocess_spawn(&mut self, process: &mut bun_spawn::Process) { todo!() }
@@ -1217,17 +1404,12 @@ impl VirtualMachine {
     pub fn source_map_handler<'a>(&'a self, printer: &'a mut bun_js_printer::BufferPrinter) { todo!() }
     pub fn load_extra_env_and_source_code_printer(&mut self) { todo!() }
     pub fn unhandled_rejection(&mut self, global_object: &JSGlobalObject, reason: JSValue, promise: JSValue) { todo!() }
-    pub fn uncaught_exception(&mut self, global_object: &JSGlobalObject, err: JSValue, is_rejection: bool) -> bool { todo!() }
     pub fn report_exception_in_hot_reloaded_module_if_needed(&mut self) { todo!() }
     pub fn add_main_to_watcher_if_needed(&mut self) { todo!() }
     pub fn package_manager(&mut self) -> &mut bun_install::PackageManager { todo!() }
     pub fn reload(&mut self, _: Option<&mut crate::hot_reloader::HotReloader::Task>) { todo!() }
     pub fn node_fs(&mut self) -> &mut bun_runtime::node::fs::NodeFS { todo!() }
-    pub fn on_before_exit(&mut self) { todo!() }
-    pub fn on_exit(&mut self) { todo!() }
-    pub fn global_exit(&mut self) -> ! { todo!() }
     pub fn next_async_task_id(&mut self) -> u64 { todo!() }
-    pub fn hot_map(&mut self) -> Option<&mut RareData::HotMap> { todo!() }
     pub fn enqueue_immediate_task(&mut self, task: *mut bun_runtime::api::Timer::ImmediateObject) { todo!() }
     pub fn enqueue_task_concurrent(&mut self, task: *mut crate::event_loop::ConcurrentTaskItem) { todo!() }
     pub fn wait_for(&mut self, cond: &mut bool) { todo!() }

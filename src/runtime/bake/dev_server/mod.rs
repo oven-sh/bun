@@ -988,3 +988,31 @@ impl DevServer {
         todo!("blocked_on: dev_server::DevServer::emit_memory_visualizer_message body un-gate")
     }
 }
+
+// ─── Shims added for incremental_graph_body (Phase-D) ────────────────────────
+impl EntryPointList {
+    /// `EntryPointList.appendJs` — DevServer.zig.
+    pub fn append_js(&mut self, abs_path: &[u8], side: Graph) -> Result<(), bun_core::Error> {
+        let flag = match side {
+            Graph::Client => entry_point_list::Flags::CLIENT,
+            Graph::Server => entry_point_list::Flags::SERVER,
+            Graph::Ssr => entry_point_list::Flags::SSR,
+        };
+        let gop = bun_core::handle_oom(self.set.get_or_put(abs_path));
+        if gop.found_existing { *gop.value_ptr |= flag; } else { *gop.value_ptr = flag; }
+        Ok(())
+    }
+}
+impl DevServer {
+    /// `DevServer.relativePath` — DevServer.zig. Full body in gated draft.
+    pub fn relative_path<'a>(&self, _buf: &'a mut bun_paths::PathBuffer, path: &'a [u8]) -> &'a [u8] {
+        let _ = &self.root;
+        // TODO(port): blocked_on: dev_server_body::DevServer::relative_path port
+        path
+    }
+}
+impl DirectoryWatchStore {
+    pub fn remove_dependencies_for_file(&mut self, _file_path: &[u8]) {
+        todo!("blocked_on: dev_server::DirectoryWatchStore::remove_dependencies_for_file body un-gate")
+    }
+}

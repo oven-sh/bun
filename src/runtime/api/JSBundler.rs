@@ -1239,7 +1239,7 @@ pub mod js_bundler {
                 }
             }
 
-            if let Some(features) = config.get_own_array(global_this, "features")? {
+            if let Some(features) = get_own_array(config, global_this, "features")? {
                 let mut iter = features.array_iterator(global_this)?;
                 while let Some(entry) = iter.next()? {
                     let slice = entry.to_slice_or_null(global_this)?;

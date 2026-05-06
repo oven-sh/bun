@@ -78,6 +78,27 @@ impl CondExpr {
         )
     }
 
+    /// Spec: CondExpr.zig `onStatTaskComplete`. Main-thread re-entry for the
+    /// off-thread `stat`/`lstat` posted by a unary file-test operator.
+    pub fn on_stat_task_done(
+        interp: &mut Interpreter,
+        this: NodeId,
+        stat: &bun_sys::Result<bun_sys::Stat>,
+        path: &[u8],
+    ) {
+        // TODO(b2-blocked): evaluate `ast::CondExpr::op` against `stat`
+        // (-e/-f/-d/-r/-s/-c…). The operator-eval body is gated alongside
+        // `next()`; until it lands, resume the trampoline with exit=0 so the
+        // parent isn't left suspended.
+        let _ = (stat, path);
+        debug_assert!(matches!(
+            interp.as_condexpr(this).state,
+            CondExprState::WaitingStat
+        ));
+        let parent = interp.as_condexpr(this).base.parent;
+        interp.child_done(parent, this, 0).run(interp);
+    }
+
     pub fn child_done(
         interp: &mut Interpreter,
         this: NodeId,

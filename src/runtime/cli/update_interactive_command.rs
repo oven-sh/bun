@@ -1120,7 +1120,7 @@ impl UpdateInteractiveCommand {
                             Output::pretty(format_args!(
                                 "{}",
                                 target_full.diff_fmt(
-                                    &current_full,
+                                    current_full,
                                     &pkg.update_version,
                                     &pkg.current_version,
                                 )

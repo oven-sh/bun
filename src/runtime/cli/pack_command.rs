@@ -1380,6 +1380,153 @@ fn is_excluded<'a>(
 type BufferedFileReader = bun_core::deprecated::BufferedReader<{ 1024 * 512 }, bun_sys::File>;
 
 // ───────────────────────────────────────────────────────────────────────────
+// Local shims / extension traits for upstream API gaps (Phase D)
+// ───────────────────────────────────────────────────────────────────────────
+
+use bun_libarchive::lib::Result as ArchiveResult;
+use bun_sys::FdDirExt as _;
+
+/// `Expr::as_string`/`as_string_cloned` now require a `&Bump`; package.json
+/// JSON strings are always UTF-8 literals, so route through
+/// `as_utf8_string_literal` until an arena is threaded through.
+trait PackExprExt {
+    fn pack_as_string(&self) -> Option<&[u8]>;
+    fn pack_as_string_cloned(&self) -> Result<Option<Box<[u8]>>, AllocError>;
+}
+impl PackExprExt for Expr {
+    #[inline]
+    fn pack_as_string(&self) -> Option<&[u8]> {
+        self.as_utf8_string_literal()
+    }
+    #[inline]
+    fn pack_as_string_cloned(&self) -> Result<Option<Box<[u8]>>, AllocError> {
+        Ok(self.as_utf8_string_literal().map(Box::from))
+    }
+}
+
+/// Allocate an owned `Box<ZStr>` from bytes (Zig `allocator.dupeZ`). The
+/// `Box<ZStr>` representation is intentionally not constructible upstream
+/// (`bun_str::ZStr`); callers in this file should migrate to `ZBox`.
+#[allow(dead_code)]
+fn boxed_zstr_from_bytes(_bytes: &[u8]) -> Box<ZStr> {
+    todo!("blocked_on: bun_str::ZStr boxed constructor (use ZBox)")
+}
+
+/// NUL-terminated literal → `&'static ZStr` (replacement for missing
+/// `ZStr::from_lit`).
+#[inline]
+const fn zstr_lit(s: &'static [u8]) -> &'static ZStr {
+    // SAFETY: caller guarantees `s` ends with a NUL byte.
+    unsafe { ZStr::from_raw(s.as_ptr(), s.len() - 1) }
+}
+
+/// Extension trait wrapping `*mut Archive` so existing `archive.method()` call
+/// sites compile without per-call `unsafe { &* }`. Missing libarchive write
+/// helpers are stubbed with `todo!` until `bun_libarchive` exposes them.
+trait ArchivePtrExt {
+    fn write_set_format_pax_restricted(self) -> ArchiveResult;
+    fn write_add_filter_gzip(self) -> ArchiveResult;
+    fn write_set_filter_option(self, module: Option<&ZStr>, key: &ZStr, value: &ZStr) -> ArchiveResult;
+    fn write_set_options(self, opts: &ZStr) -> ArchiveResult;
+    fn write_open_filename(self, path: &ZStr) -> ArchiveResult;
+    fn write_close(self) -> ArchiveResult;
+    fn write_free(self) -> ArchiveResult;
+    fn error_string(self) -> &'static [u8];
+}
+impl ArchivePtrExt for *mut Archive {
+    #[inline]
+    fn write_set_format_pax_restricted(self) -> ArchiveResult {
+        // SAFETY: `self` came from `Archive::write_new()`.
+        unsafe { &*self }.write_set_format_pax_restricted()
+    }
+    fn write_add_filter_gzip(self) -> ArchiveResult {
+        let _ = self;
+        todo!("blocked_on: bun_libarchive::Archive::write_add_filter_gzip")
+    }
+    fn write_set_filter_option(self, _module: Option<&ZStr>, _key: &ZStr, _value: &ZStr) -> ArchiveResult {
+        let _ = self;
+        todo!("blocked_on: bun_libarchive::Archive::write_set_filter_option")
+    }
+    fn write_set_options(self, _opts: &ZStr) -> ArchiveResult {
+        let _ = self;
+        todo!("blocked_on: bun_libarchive::Archive::write_set_options")
+    }
+    fn write_open_filename(self, _path: &ZStr) -> ArchiveResult {
+        let _ = self;
+        todo!("blocked_on: bun_libarchive::Archive::write_open_filename")
+    }
+    #[inline]
+    fn write_close(self) -> ArchiveResult {
+        // SAFETY: `self` came from `Archive::write_new()`.
+        unsafe { &*self }.write_close()
+    }
+    #[inline]
+    fn write_free(self) -> ArchiveResult {
+        // SAFETY: `self` came from `Archive::write_new()`; not used after.
+        unsafe { &*self }.write_free()
+    }
+    #[inline]
+    fn error_string(self) -> &'static [u8] {
+        Archive::error_string(self)
+    }
+}
+
+/// Construct a `BufferedFileReader` (no `Default`/`new` upstream because
+/// `bun_sys::File` doesn't impl `DeprecatedRead`).
+#[inline]
+fn make_buffered_file_reader(file: bun_sys::File) -> BufferedFileReader {
+    bun_core::deprecated::BufferedReader {
+        unbuffered_reader: file,
+        buf: [0u8; 1024 * 512],
+        start: 0,
+        end: 0,
+    }
+}
+
+/// `BufferedFileReader::read` shim — `bun_sys::File` doesn't impl
+/// `DeprecatedRead`, so route through `bun_sys::read` directly.
+#[inline]
+fn buffered_file_reader_read(r: &mut BufferedFileReader, dest: &mut [u8]) -> bun_sys::Maybe<usize> {
+    let current = &r.buf[r.start..r.end];
+    if !current.is_empty() {
+        let to_transfer = current.len().min(dest.len());
+        dest[..to_transfer].copy_from_slice(&current[..to_transfer]);
+        r.start += to_transfer;
+        return Ok(to_transfer);
+    }
+    if dest.len() >= r.buf.len() {
+        return bun_sys::read(r.unbuffered_reader.handle, dest);
+    }
+    r.end = bun_sys::read(r.unbuffered_reader.handle, &mut r.buf)?;
+    let to_transfer = r.end.min(dest.len());
+    dest[..to_transfer].copy_from_slice(&r.buf[..to_transfer]);
+    r.start = to_transfer;
+    Ok(to_transfer)
+}
+
+/// Shims for `PackageManagerOptionsStub` fields missing on the upstream stub.
+#[inline]
+fn opt_dry_run(_m: &PackageManager) -> bool {
+    todo!("blocked_on: bun_install::PackageManagerOptionsStub::dry_run")
+}
+#[inline]
+fn opt_pack_destination(_m: &PackageManager) -> &[u8] {
+    todo!("blocked_on: bun_install::PackageManagerOptionsStub::pack_destination")
+}
+#[inline]
+fn opt_pack_filename(_m: &PackageManager) -> &[u8] {
+    todo!("blocked_on: bun_install::PackageManagerOptionsStub::pack_filename")
+}
+#[inline]
+fn opt_pack_gzip_level(_m: &PackageManager) -> Option<&[u8]> {
+    todo!("blocked_on: bun_install::PackageManagerOptionsStub::pack_gzip_level")
+}
+#[inline]
+fn manager_env<'a>(_m: &'a PackageManager) -> &'a bun_dotenv::Loader<'a> {
+    todo!("blocked_on: bun_install::PackageManager::env")
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 // pack()
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -1555,17 +1702,17 @@ pub fn pack<const FOR_PUBLISH: bool>(
 
         let mut postpack_script: Option<Box<[u8]>> = None;
         if let Some(postpack) = scripts.expr.get(b"postpack") {
-            postpack_script = postpack.as_string().map(Box::from);
+            postpack_script = postpack.pack_as_string().map(Box::from);
         }
 
         if FOR_PUBLISH {
             let mut publish_script: Option<Box<[u8]>> = None;
             let mut postpublish_script: Option<Box<[u8]>> = None;
             if let Some(publish) = scripts.expr.get(b"publish") {
-                publish_script = publish.as_string_cloned()?;
+                publish_script = publish.pack_as_string_cloned()?;
             }
             if let Some(postpublish) = scripts.expr.get(b"postpublish") {
-                postpublish_script = postpublish.as_string_cloned()?;
+                postpublish_script = postpublish.pack_as_string_cloned()?;
             }
 
             break 'post_scripts (postpack_script, publish_script, postpublish_script, did_run_scripts);
@@ -1591,25 +1738,9 @@ pub fn pack<const FOR_PUBLISH: bool>(
         };
         #[cfg(not(windows))]
         let cache_key: &[u8] = abs_package_json_path.as_bytes();
-        let _ = manager.workspace_package_json_cache.map.remove(cache_key);
-
+        let _ = cache_key;
         // Re-read package.json from disk
-        json = match manager.workspace_package_json_cache.get_with_path(
-            &mut manager.log,
-            abs_package_json_path,
-            WorkspacePackageJSONCache::GetJSONOptions { guess_indentation: true, ..Default::default() },
-        ) {
-            WorkspacePackageJSONCache::GetResult::ReadErr(err) => {
-                Output::err(err, "failed to read package.json: {}", format_args!("{}", bstr::BStr::new(abs_package_json_path.as_bytes())));
-                Global::crash();
-            }
-            WorkspacePackageJSONCache::GetResult::ParseErr(err) => {
-                Output::err(err, "failed to parse package.json: {}", format_args!("{}", bstr::BStr::new(abs_package_json_path.as_bytes())));
-                let _ = manager.log.print(Output::error_writer());
-                Global::crash();
-            }
-            WorkspacePackageJSONCache::GetResult::Entry(entry) => entry,
-        };
+        json = todo!("blocked_on: bun_install::PackageManager::{workspace_package_json_cache,log}");
 
         // Re-validate private flag after scripts may have modified it.
         if FOR_PUBLISH {
@@ -1625,13 +1756,13 @@ pub fn pack<const FOR_PUBLISH: bool>(
         // Re-read name and version from the updated package.json, since lifecycle
         // scripts (e.g. prepublishOnly, prepack) may have modified them.
         package_name_expr = json.root.get(b"name").ok_or(PackError::MissingPackageName)?;
-        package_name = package_name_expr.as_string_cloned()?.ok_or(PackError::InvalidPackageName)?;
+        package_name = package_name_expr.pack_as_string_cloned()?.ok_or(PackError::InvalidPackageName)?;
         if package_name.is_empty() {
             return Err(PackError::InvalidPackageName);
         }
 
         package_version_expr = json.root.get(b"version").ok_or(PackError::MissingPackageVersion)?;
-        package_version = package_version_expr.as_string_cloned()?.ok_or(PackError::InvalidPackageVersion)?;
+        package_version = package_version_expr.pack_as_string_cloned()?.ok_or(PackError::InvalidPackageVersion)?;
         if package_version.is_empty() {
             return Err(PackError::InvalidPackageVersion);
         }
@@ -1646,7 +1777,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
         path_buf[abs_workspace_path.len()] = 0;
         // SAFETY: NUL written above
         let z = unsafe { ZStr::from_raw(path_buf.as_ptr(), abs_workspace_path.len()) };
-        match Dir::open_absolute_z(z, bun_sys::OpenDirOptions { iterate: true }) {
+        match dir_open_dir_z(&Dir::cwd(), z, bun_sys::OpenDirOptions { iterate: true, ..Default::default() }) {
             Ok(d) => break 'root_dir d,
             Err(err) => {
                 Output::err(err, "failed to open root directory: {}\n", format_args!("{}", bstr::BStr::new(abs_workspace_path)));
@@ -1669,11 +1800,11 @@ pub fn pack<const FOR_PUBLISH: bool>(
     for bin in &bins {
         match bin.ty {
             BinType::File => {
-                pack_queue.add(PackQueueItem { path: bin.path.clone(), optional: true })?;
+                pack_queue.add(PackQueueItem { path: boxed_zstr_from_bytes(bin.path.as_bytes()), optional: true })?;
                 // TODO(port): Zig pushed a borrowed slice; cloning here
             }
             BinType::Dir => {
-                let bin_dir = match root_dir.open_dir(bin.path.as_bytes(), bun_sys::OpenDirOptions { iterate: true }) {
+                let bin_dir = match dir_open_dir_z(&root_dir, &bin.path, bun_sys::OpenDirOptions { iterate: true, ..Default::default() }) {
                     Ok(d) => d,
                     Err(_) => {
                         // non-existent bins are ignored
@@ -1700,7 +1831,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
 
                     let mut path_buf = PathBuffer::uninit();
                     while let Some(files_entry) = files_array.next() {
-                        if let Some(file_entry_str) = files_entry.as_string() {
+                        if let Some(file_entry_str) = files_entry.pack_as_string() {
                             let normalized = resolve_path::normalize_buf::<resolve_path::platform::Posix>(file_entry_str, &mut path_buf);
                             let Some(parsed) = Pattern::from_utf8(normalized)? else { continue };
                             if parsed.flags.contains(PatternFlags::NEGATED) {
@@ -1751,25 +1882,25 @@ pub fn pack<const FOR_PUBLISH: bool>(
     // +1 for package.json
     ctx.stats.total_files = pack_queue.count() + bundled_pack_queue.count() + 1;
 
-    if manager.options.dry_run {
+    if opt_dry_run(manager) {
         // don't create the tarball, but run scripts if they exist
 
         print_archived_files_and_packages::<true>(ctx, &root_dir, PackListOrQueue::Queue(&mut pack_queue), 0);
 
         if !FOR_PUBLISH {
-            if manager.options.pack_destination.is_empty() && manager.options.pack_filename.is_empty() {
-                Output::pretty("\n{}\n", format_args!("{}", fmt_tarball_filename(&package_name, &package_version, TarballNameStyle::Normalize)));
+            if opt_pack_destination(manager).is_empty() && opt_pack_filename(manager).is_empty() {
+                Output::pretty(format_args!("\n{}\n", fmt_tarball_filename(&package_name, &package_version, TarballNameStyle::Normalize)));
             } else {
                 let mut dest_buf = PathBuffer::uninit();
                 let (abs_tarball_dest, _) = tarball_destination(
-                    &ctx.manager.options.pack_destination,
-                    &ctx.manager.options.pack_filename,
+                    opt_pack_destination(ctx.manager),
+                    opt_pack_filename(ctx.manager),
                     abs_workspace_path,
                     &package_name,
                     &package_version,
-                    dest_buf.as_mut_slice(),
+                    &mut dest_buf[..],
                 );
-                Output::pretty("\n{}\n", format_args!("{}", bstr::BStr::new(abs_tarball_dest.as_bytes())));
+                Output::pretty(format_args!("\n{}\n", bstr::BStr::new(abs_tarball_dest.as_bytes())));
             }
         }
 
@@ -1781,7 +1912,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
                 postpack_script_str,
                 b"postpack",
                 abs_workspace_path,
-                &manager.env,
+                manager_env(manager),
                 manager.options.log_level == LogLevel::Silent,
             )?;
         }
@@ -1789,28 +1920,17 @@ pub fn pack<const FOR_PUBLISH: bool>(
         if FOR_PUBLISH {
             let mut dest_buf = PathBuffer::uninit();
             let (abs_tarball_dest, _) = tarball_destination(
-                &ctx.manager.options.pack_destination,
-                &ctx.manager.options.pack_filename,
+                opt_pack_destination(ctx.manager),
+                opt_pack_filename(ctx.manager),
                 abs_workspace_path,
                 &package_name,
                 &package_version,
-                dest_buf.as_mut_slice(),
+                &mut dest_buf[..],
             );
-            return Ok(Some(Publish::Context {
-                command_ctx: ctx.command_ctx.clone(),
-                manager: ctx.manager,
-                package_name,
-                package_version,
-                abs_tarball_path: ZStr::from_bytes(abs_tarball_dest.as_bytes()),
-                tarball_bytes: Box::from(&b""[..]),
-                shasum: Default::default(), // undefined
-                integrity: Default::default(), // undefined
-                uses_workspaces: false,
-                publish_script,
-                postpublish_script,
-                script_env: this_transpiler.env,
-                normalized_pkg_info: Box::from(&b""[..]),
-            }));
+            let _ = (abs_tarball_dest, &publish_script, &postpublish_script, &this_transpiler);
+            return Ok(Some(todo!(
+                "blocked_on: bun_install::PackageManager reborrow for Publish::Context (dry-run)"
+            )));
             // TODO(port): Publish::Context field shapes
         }
 
@@ -1822,14 +1942,14 @@ pub fn pack<const FOR_PUBLISH: bool>(
     let archive = Archive::write_new();
 
     match archive.write_set_format_pax_restricted() {
-        Archive::Status::Failed | Archive::Status::Fatal | Archive::Status::Warn => {
+        ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
             Output::err_generic("failed to set archive format: {}", format_args!("{}", bstr::BStr::new(archive.error_string())));
             Global::crash();
         }
         _ => {}
     }
     match archive.write_add_filter_gzip() {
-        Archive::Status::Failed | Archive::Status::Fatal | Archive::Status::Warn => {
+        ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
             Output::err_generic("failed to set archive compression to gzip: {}", format_args!("{}", bstr::BStr::new(archive.error_string())));
             Global::crash();
         }
@@ -1838,12 +1958,12 @@ pub fn pack<const FOR_PUBLISH: bool>(
 
     // default is 9
     // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L12
-    let compression_level: &[u8] = manager.options.pack_gzip_level.as_deref().unwrap_or(b"9");
+    let compression_level: &[u8] = opt_pack_gzip_level(manager).unwrap_or(b"9");
     write!(&mut print_buf, "{}\x00", bstr::BStr::new(compression_level)).expect("OOM");
     // SAFETY: print_buf[compression_level.len()] == 0 written above
     let level_z = unsafe { ZStr::from_raw(print_buf.as_ptr(), compression_level.len()) };
-    match archive.write_set_filter_option(None, ZStr::from_lit(b"compression-level\0"), level_z) {
-        Archive::Status::Failed | Archive::Status::Fatal | Archive::Status::Warn => {
+    match archive.write_set_filter_option(None, zstr_lit(b"compression-level\0"), level_z) {
+        ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
             Output::err_generic("compression level must be between 0 and 9, received {}", format_args!("{}", bstr::BStr::new(compression_level)));
             Global::crash();
         }
@@ -1851,16 +1971,16 @@ pub fn pack<const FOR_PUBLISH: bool>(
     }
     print_buf.clear();
 
-    match archive.write_set_filter_option(None, ZStr::from_lit(b"os\0"), ZStr::from_lit(b"Unknown\0")) {
-        Archive::Status::Failed | Archive::Status::Fatal | Archive::Status::Warn => {
+    match archive.write_set_filter_option(None, zstr_lit(b"os\0"), zstr_lit(b"Unknown\0")) {
+        ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
             Output::err_generic("failed to set os to `Unknown`: {}", format_args!("{}", bstr::BStr::new(archive.error_string())));
             Global::crash();
         }
         _ => {}
     }
 
-    match archive.write_set_options(ZStr::from_lit(b"gzip:!timestamp\0")) {
-        Archive::Status::Failed | Archive::Status::Fatal | Archive::Status::Warn => {
+    match archive.write_set_options(zstr_lit(b"gzip:!timestamp\0")) {
+        ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
             Output::err_generic("failed to unset gzip timestamp option: {}", format_args!("{}", bstr::BStr::new(archive.error_string())));
             Global::crash();
         }
@@ -1869,12 +1989,12 @@ pub fn pack<const FOR_PUBLISH: bool>(
 
     let mut dest_buf = PathBuffer::uninit();
     let (abs_tarball_dest, abs_tarball_dest_dir_end) = tarball_destination(
-        &ctx.manager.options.pack_destination,
-        &ctx.manager.options.pack_filename,
+        opt_pack_destination(ctx.manager),
+        opt_pack_filename(ctx.manager),
         abs_workspace_path,
         &package_name,
         &package_version,
-        dest_buf.as_mut_slice(),
+        &mut dest_buf[..],
     );
     // PORT NOTE: reshaped for borrowck — abs_tarball_dest borrows dest_buf
     let abs_tarball_dest_len = abs_tarball_dest.as_bytes().len();
@@ -1885,7 +2005,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
         dest_buf[abs_tarball_dest_dir_end] = 0;
         // SAFETY: NUL written above
         let abs_tarball_dest_dir = unsafe { ZStr::from_raw(dest_buf.as_ptr(), abs_tarball_dest_dir_end) };
-        let _ = bun_sys::make_path(Fd::cwd(), abs_tarball_dest_dir.as_bytes());
+        let _ = bun_sys::make_path(Dir::cwd(), abs_tarball_dest_dir.as_bytes());
         dest_buf[abs_tarball_dest_dir_end] = most_likely_a_slash;
     }
 
@@ -1894,7 +2014,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
 
     // TODO: experiment with `archive.writeOpenMemory()`
     match archive.write_open_filename(abs_tarball_dest) {
-        Archive::Status::Failed | Archive::Status::Fatal | Archive::Status::Warn => {
+        ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
             Output::err_generic("failed to open tarball file destination: \"{}\"", format_args!("{}", bstr::BStr::new(abs_tarball_dest.as_bytes())));
             Global::crash();
         }
@@ -1905,10 +2025,10 @@ pub fn pack<const FOR_PUBLISH: bool>(
     let mut pack_list: PackList = Vec::new();
 
     let mut read_buf = [0u8; 8192];
-    let mut file_reader: Box<BufferedFileReader> = Box::new(BufferedFileReader::default());
+    let mut file_reader: Box<BufferedFileReader> = Box::new(make_buffered_file_reader(File::from_fd(Fd::invalid())));
     // TODO(port): Zig used allocator.create + manual init; Box::new equivalent
 
-    let mut entry = ArchiveEntry::new2(archive);
+    let mut entry = ArchiveEntry::new();
 
     {
         let mut progress = Progress::Progress::default();
@@ -1927,7 +2047,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
         });
         // TODO(port): scopeguard borrows of `node`; Phase B reshape
 
-        entry = archive_package_json(ctx, archive, entry, &root_dir, &edited_package_json)?;
+        entry = archive_package_json(ctx, unsafe { &mut *archive }, entry, &root_dir, &edited_package_json)?;
         if log_level.show_progress() {
             node.as_mut().unwrap().complete_one();
         }
@@ -1942,7 +2062,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
             });
             // TODO(port): defer-in-loop with mutable borrow; Phase B reshape
 
-            let file = match bun_sys::openat(Fd::from_std_dir(&root_dir), &item.path, bun_sys::O::RDONLY, 0).unwrap() {
+            let file = match bun_sys::openat(Fd::from_std_dir(&root_dir), &item.path, bun_sys::O::RDONLY, 0) {
                 Ok(f) => f,
                 Err(err) => {
                     if item.optional {
@@ -1954,7 +2074,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
                 }
             };
 
-            let fd = match file.make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail) {
+            let fd: Fd = match file.make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail) {
                 Ok(fd) => fd,
                 Err(err) => {
                     Output::err(err, "failed to open file: \"{}\"", format_args!("{}", bstr::BStr::new(item.path.as_bytes())));
@@ -1973,8 +2093,8 @@ pub fn pack<const FOR_PUBLISH: bool>(
             };
 
             pack_list.push(PackListEntry {
-                subpath: item.path.clone(),
-                size: usize::try_from(stat.size).unwrap(),
+                subpath: boxed_zstr_from_bytes(item.path.as_bytes()),
+                size: usize::try_from(stat.st_size).unwrap(),
             });
 
             entry = add_archive_entry(
@@ -1984,7 +2104,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
                 &item.path,
                 &mut read_buf,
                 &mut file_reader,
-                archive,
+                unsafe { &mut *archive },
                 entry,
                 &mut print_buf,
                 &bins,
@@ -2001,7 +2121,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
             });
             // TODO(port): same defer-in-loop borrow caveat
 
-            let file = match File::openat(Fd::from_std_dir(&root_dir), &item.path, bun_sys::O::RDONLY, 0).unwrap() {
+            let file = match File::openat(Fd::from_std_dir(&root_dir), &item.path, bun_sys::O::RDONLY, 0) {
                 Ok(f) => f,
                 Err(err) => {
                     if item.optional {
@@ -2013,7 +2133,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
                 }
             };
             let _close_file = scopeguard::guard((), |_| file.close());
-            let stat = match file.stat().unwrap() {
+            let stat = match file.stat() {
                 Ok(s) => s,
                 Err(err) => {
                     Output::err(err, "failed to stat file: \"{}\"", format_args!("{}", file.handle));
@@ -2028,7 +2148,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
                 &item.path,
                 &mut read_buf,
                 &mut file_reader,
-                archive,
+                unsafe { &mut *archive },
                 entry,
                 &mut print_buf,
                 &bins,
@@ -2039,7 +2159,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
     entry.free();
 
     match archive.write_close() {
-        Archive::Status::Failed | Archive::Status::Fatal | Archive::Status::Warn => {
+        ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
             Output::err_generic("failed to close archive: {}", format_args!("{}", bstr::BStr::new(archive.error_string())));
             Global::crash();
         }
@@ -2047,7 +2167,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
     }
 
     match archive.write_free() {
-        Archive::Status::Failed | Archive::Status::Fatal | Archive::Status::Warn => {
+        ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
             Output::err_generic("failed to free archive: {}", format_args!("{}", bstr::BStr::new(archive.error_string())));
             Global::crash();
         }
@@ -2058,7 +2178,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
     let mut integrity: [u8; sha::SHA512::DIGEST] = [0; sha::SHA512::DIGEST];
 
     let tarball_bytes: Option<Vec<u8>> = 'tarball_bytes: {
-        let tarball_file = match File::open(abs_tarball_dest, bun_sys::O::RDONLY, 0).unwrap() {
+        let tarball_file = match File::open(abs_tarball_dest, bun_sys::O::RDONLY, 0) {
             Ok(f) => f,
             Err(err) => {
                 Output::err(err, "failed to open tarball at: \"{}\"", format_args!("{}", bstr::BStr::new(abs_tarball_dest.as_bytes())));
@@ -2071,7 +2191,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
         let mut sha512 = sha::SHA512::init();
 
         if FOR_PUBLISH {
-            let bytes = match tarball_file.read_to_end().unwrap() {
+            let bytes = match tarball_file.read_to_end() {
                 Ok(b) => b,
                 Err(err) => {
                     Output::err(err, "failed to read tarball: \"{}\"", format_args!("{}", bstr::BStr::new(abs_tarball_dest.as_bytes())));
@@ -2082,18 +2202,18 @@ pub fn pack<const FOR_PUBLISH: bool>(
             sha1.update(&bytes);
             sha512.update(&bytes);
 
-            sha1.final_(&mut shasum);
-            sha512.final_(&mut integrity);
+            sha1.r#final(&mut shasum);
+            sha512.r#final(&mut integrity);
 
             ctx.stats.packed_size = bytes.len();
 
             break 'tarball_bytes Some(bytes);
         }
 
-        *file_reader = BufferedFileReader::new(tarball_file.reader());
+        *file_reader = make_buffered_file_reader(File::from_fd(tarball_file.handle));
 
         let mut size: usize = 0;
-        let mut read = match file_reader.read(&mut read_buf) {
+        let mut read = match buffered_file_reader_read(&mut file_reader, &mut read_buf) {
             Ok(n) => n,
             Err(err) => {
                 Output::err(err, "failed to read tarball: \"{}\"", format_args!("{}", bstr::BStr::new(abs_tarball_dest.as_bytes())));
@@ -2104,7 +2224,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
             sha1.update(&read_buf[..read]);
             sha512.update(&read_buf[..read]);
             size += read;
-            read = match file_reader.read(&mut read_buf) {
+            read = match buffered_file_reader_read(&mut file_reader, &mut read_buf) {
                 Ok(n) => n,
                 Err(err) => {
                     Output::err(err, "failed to read tarball: \"{}\"", format_args!("{}", bstr::BStr::new(abs_tarball_dest.as_bytes())));
@@ -2113,8 +2233,8 @@ pub fn pack<const FOR_PUBLISH: bool>(
             };
         }
 
-        sha1.final_(&mut shasum);
-        sha512.final_(&mut integrity);
+        sha1.r#final(&mut shasum);
+        sha512.r#final(&mut integrity);
 
         ctx.stats.packed_size = size;
         None
@@ -2127,8 +2247,8 @@ pub fn pack<const FOR_PUBLISH: bool>(
             &package_version,
             &mut json.root,
             &json.source,
-            &shasum,
-            &integrity,
+            shasum,
+            integrity,
         )?)
     } else {
         None
@@ -2142,10 +2262,10 @@ pub fn pack<const FOR_PUBLISH: bool>(
     );
 
     if !FOR_PUBLISH {
-        if manager.options.pack_destination.is_empty() && manager.options.pack_filename.is_empty() {
-            Output::pretty("\n{}\n", format_args!("{}", fmt_tarball_filename(&package_name, &package_version, TarballNameStyle::Normalize)));
+        if opt_pack_destination(manager).is_empty() && opt_pack_filename(manager).is_empty() {
+            Output::pretty(format_args!("\n{}\n", fmt_tarball_filename(&package_name, &package_version, TarballNameStyle::Normalize)));
         } else {
-            Output::pretty("\n{}\n", format_args!("{}", bstr::BStr::new(abs_tarball_dest.as_bytes())));
+            Output::pretty(format_args!("\n{}\n", bstr::BStr::new(abs_tarball_dest.as_bytes())));
         }
     }
 
@@ -2156,33 +2276,31 @@ pub fn pack<const FOR_PUBLISH: bool>(
     }
 
     if let Some(postpack_script_str) = &postpack_script {
-        Output::pretty("\n", format_args!(""));
+        Output::pretty(format_args!("\n"));
         run_lifecycle_script(
             ctx,
             postpack_script_str,
             b"postpack",
             abs_workspace_path,
-            &manager.env,
+            manager_env(manager),
             manager.options.log_level == LogLevel::Silent,
         )?;
     }
 
     if FOR_PUBLISH {
-        return Ok(Some(Publish::Context {
-            command_ctx: ctx.command_ctx.clone(),
-            manager: ctx.manager,
-            package_name,
-            package_version,
-            abs_tarball_path: ZStr::from_bytes(abs_tarball_dest.as_bytes()),
-            tarball_bytes: tarball_bytes.unwrap().into_boxed_slice(),
+        let _ = (
+            abs_tarball_dest,
+            tarball_bytes,
             shasum,
             integrity,
-            uses_workspaces: false,
-            publish_script,
-            postpublish_script,
-            script_env: this_transpiler.env,
-            normalized_pkg_info: normalized_pkg_info.unwrap(),
-        }));
+            &publish_script,
+            &postpublish_script,
+            normalized_pkg_info,
+            &this_transpiler,
+        );
+        return Ok(Some(todo!(
+            "blocked_on: bun_install::PackageManager reborrow for Publish::Context"
+        )));
     }
 
     Ok(None)
@@ -2199,16 +2317,12 @@ fn run_lifecycle_script<const FOR_PUBLISH: bool>(
     env: &bun_dotenv::Loader,
     silent: bool,
 ) -> Result<(), PackError<FOR_PUBLISH>> {
-    match RunCommand::run_package_script_foreground(
-        &ctx.command_ctx,
-        script,
-        name,
-        abs_workspace_path,
-        env,
-        &[],
-        silent,
-        ctx.command_ctx.debug.use_system_shell,
-    ) {
+    let _ = (ctx, script, abs_workspace_path, env, silent);
+    match {
+        todo!("blocked_on: RunCommand::run_package_script_foreground (&mut ctx/env)");
+        #[allow(unreachable_code)]
+        Result::<(), bun_core::Error>::Ok(())
+    } {
         Ok(_) => Ok(()),
         Err(err) => {
             if err == bun_core::err!("MissingShell") {
@@ -2270,13 +2384,17 @@ fn tarball_destination<'a>(
             0,
         );
     } else {
-        let tarball_destination_dir = resolve_path::join_abs_string_buf::<resolve_path::platform::Auto>(
-            abs_workspace_path,
-            dest_buf,
-            &[pack_destination],
-        );
-        let dir_len_trimmed = strings::without_trailing_slash(tarball_destination_dir).len();
-        let dir_len_full = tarball_destination_dir.len();
+        let (dir_len_trimmed, dir_len_full) = {
+            let tarball_destination_dir = resolve_path::join_abs_string_buf::<resolve_path::platform::Auto>(
+                abs_workspace_path,
+                dest_buf,
+                &[pack_destination],
+            );
+            (
+                strings::without_trailing_slash(tarball_destination_dir).len(),
+                tarball_destination_dir.len(),
+            )
+        };
 
         // bufPrint(dest_buf[dir_len_trimmed..], "/{f}\x00", ..)
         let mut cursor = std::io::Cursor::new(&mut dest_buf[dir_len_trimmed..]);
@@ -2290,7 +2408,7 @@ fn tarball_destination<'a>(
                 "archive destination name too long: \"{}/{}\"",
                 format_args!(
                     "{}/{}",
-                    bstr::BStr::new(strings::without_trailing_slash(tarball_destination_dir)),
+                    bstr::BStr::new(strings::without_trailing_slash(&dest_buf[..dir_len_full])),
                     fmt_tarball_filename(package_name, package_version, TarballNameStyle::Normalize),
                 ),
             );
@@ -2876,7 +2994,7 @@ impl IgnorePatterns {
 
         let mut ignore_kind = IgnorePatternsKind::Npmignore;
 
-        let ignore_file = match dir.open_file_z(ZStr::from_lit(b".npmignore\0"), Default::default()) {
+        let ignore_file = match dir.open_file_z(zstr_lit(b".npmignore\0"), Default::default()) {
             Ok(f) => f,
             Err(err) => 'ignore_file: {
                 if err != bun_core::err!("FileNotFound") {
@@ -2885,7 +3003,7 @@ impl IgnorePatterns {
                     Self::ignore_file_fail(dir, ignore_kind, IgnoreFileFailReason::Open, err);
                 }
                 ignore_kind = IgnorePatternsKind::Gitignore;
-                match dir.open_file_z(ZStr::from_lit(b".gitignore\0"), Default::default()) {
+                match dir.open_file_z(zstr_lit(b".gitignore\0"), Default::default()) {
                     Ok(f) => break 'ignore_file f,
                     Err(err2) => {
                         if err2 != bun_core::err!("FileNotFound") {
@@ -2976,7 +3094,7 @@ fn print_archived_files_and_packages<const IS_DRY_RUN: bool>(
     if IS_DRY_RUN {
         let PackListOrQueue::Queue(pack_queue) = pack_list else { unreachable!() };
 
-        let package_json_stat = match root_dir.statat(ZStr::from_lit(b"package.json\0")).unwrap() {
+        let package_json_stat = match root_dir.statat(zstr_lit(b"package.json\0")).unwrap() {
             Ok(s) => s,
             Err(err) => {
                 Output::err(err, "failed to stat package.json", format_args!(""));
@@ -3175,33 +3293,33 @@ pub mod bindings {
         let archive = Archive::read_new();
 
         match archive.read_support_format_tar() {
-            Archive::Status::Failed | Archive::Status::Fatal | Archive::Status::Warn => {
+            ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
                 return global.throw("failed to support tar: {}", format_args!("{}", bstr::BStr::new(archive.error_string())));
             }
             _ => {}
         }
         match archive.read_support_format_gnutar() {
-            Archive::Status::Failed | Archive::Status::Fatal | Archive::Status::Warn => {
+            ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
                 return global.throw("failed to support gnutar: {}", format_args!("{}", bstr::BStr::new(archive.error_string())));
             }
             _ => {}
         }
         match archive.read_support_filter_gzip() {
-            Archive::Status::Failed | Archive::Status::Fatal | Archive::Status::Warn => {
+            ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
                 return global.throw("failed to support gzip compression: {}", format_args!("{}", bstr::BStr::new(archive.error_string())));
             }
             _ => {}
         }
 
-        match archive.read_set_options(ZStr::from_lit(b"read_concatenated_archives\0")) {
-            Archive::Status::Failed | Archive::Status::Fatal | Archive::Status::Warn => {
+        match archive.read_set_options(zstr_lit(b"read_concatenated_archives\0")) {
+            ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
                 return global.throw("failed to set read_concatenated_archives option: {}", format_args!("{}", bstr::BStr::new(archive.error_string())));
             }
             _ => {}
         }
 
         match archive.read_open_memory(&tarball) {
-            Archive::Status::Failed | Archive::Status::Fatal | Archive::Status::Warn => {
+            ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
                 return global.throw("failed to open archive in memory: {}", format_args!("{}", bstr::BStr::new(archive.error_string())));
             }
             _ => {}
@@ -3212,14 +3330,14 @@ pub mod bindings {
 
         let mut read_buf: Vec<u8> = Vec::new();
 
-        while header_status != Archive::Status::Eof {
+        while header_status != ArchiveResult::Eof {
             match header_status {
-                Archive::Status::Eof => unreachable!(),
-                Archive::Status::Retry => {
+                ArchiveResult::Eof => unreachable!(),
+                ArchiveResult::Retry => {
                     header_status = archive.read_next_header(&mut archive_entry);
                     continue;
                 }
-                Archive::Status::Failed | Archive::Status::Fatal => {
+                ArchiveResult::Failed | ArchiveResult::Fatal => {
                     return global.throw(
                         "failed to read archive header: {}",
                         format_args!("{}", bstr::BStr::new(Archive::error_string(archive.cast()))),
@@ -3278,13 +3396,13 @@ pub mod bindings {
         }
 
         match archive.read_close() {
-            Archive::Status::Failed | Archive::Status::Fatal | Archive::Status::Warn => {
+            ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
                 return global.throw("failed to close read archive: {}", format_args!("{}", bstr::BStr::new(archive.error_string())));
             }
             _ => {}
         }
         match archive.read_free() {
-            Archive::Status::Failed | Archive::Status::Fatal | Archive::Status::Warn => {
+            ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
                 return global.throw("failed to close read archive: {}", format_args!("{}", bstr::BStr::new(archive.error_string())));
             }
             _ => {}

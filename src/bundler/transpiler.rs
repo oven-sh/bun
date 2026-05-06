@@ -574,6 +574,52 @@ fn to_parser_module_type(
     m
 }
 
+/// Spec: `fs.zig:FileSystem.init`.
+///
+/// PORT NOTE: the inline `bun_resolver::fs` module exposes the `FileSystem`
+/// struct + `INSTANCE`/`INSTANCE_LOADED` statics (resolver/lib.rs:120,129) but
+/// not the `init` constructor (that lives in the still-gated file-backed
+/// `resolver/fs.rs`). All fields are `pub` and `EntriesMap`/`Mutex` have
+/// public constructors, so reproduce the singleton-init here. Matches Zig
+/// semantics: first call sets `top_level_dir` (defaulting to getcwd),
+/// subsequent calls return the existing instance untouched.
+fn init_file_system(
+    top_level_dir: Option<&'static [u8]>,
+) -> Result<*mut Fs::FileSystem, bun_core::Error> {
+    // SAFETY: `INSTANCE_LOADED`/`INSTANCE` are the Zig-style global singleton
+    // (`var instance: FileSystem = undefined`). Init is single-threaded by
+    // contract (called from `Transpiler::init` before any worker spawn).
+    unsafe {
+        if *(&raw const Fs::INSTANCE_LOADED) {
+            return Ok(Fs::FileSystem::instance());
+        }
+        let cwd: &'static [u8] = match top_level_dir {
+            Some(d) => d,
+            None => {
+                // Spec fs.zig:161 — `bun.getcwdAlloc(allocator)`.
+                let mut buf = bun_paths::PathBuffer::default();
+                let n = bun_sys::getcwd(&mut buf[..])
+                    .map_err(|_| bun_core::err!("MissingCwd"))?;
+                Fs::DirnameStore::instance().append_slice(&buf[..n])?
+            }
+        };
+        (*(&raw mut Fs::INSTANCE)).write(Fs::FileSystem {
+            top_level_dir: cwd,
+            fs: Fs::Implementation {
+                entries_mutex: bun_threading::Mutex::default(),
+                entries: Fs::EntriesMap::new(),
+                cwd,
+                file_limit: 0,
+                file_quota: 0,
+            },
+            dirname_store: Fs::DirnameStore::instance(),
+            filename_store: Fs::FilenameStore::instance(),
+        });
+        *(&raw mut Fs::INSTANCE_LOADED) = true;
+        Ok(Fs::FileSystem::instance())
+    }
+}
+
 impl<'a> Transpiler<'a> {
     /// Port of `transpiler.zig:Transpiler.init`.
     ///
@@ -611,7 +657,7 @@ impl<'a> Transpiler<'a> {
             Some(s) => Some(Fs::DirnameStore::instance().append_slice(s)?),
             None => None,
         };
-        let fs: *mut Fs::FileSystem = Fs::FileSystem::init_once(cwd)?;
+        let fs: *mut Fs::FileSystem = init_file_system(cwd)?;
 
         let env_loader: *mut dot_env::Loader<'static> = match env_loader_ {
             Some(l) => l,

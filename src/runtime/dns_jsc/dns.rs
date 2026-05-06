@@ -373,9 +373,11 @@ pub mod lib_uv_backend {
                         return Ok(promise);
                     }
                 }
-                let mut head = core::ptr::read(&(*request).head);
+                // Consume the request and move `head` out by value; `ptr::read`
+                // + `Box::from_raw` would double-Drop `DNSLookup` (impls Drop).
+                let owned = *Box::from_raw(request);
+                let mut head = owned.head;
                 head.process_get_addr_info_native(rc.int(), ptr::null_mut());
-                drop(Box::from_raw(request));
                 return Ok(promise);
             }
             promise
@@ -547,8 +549,10 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
                 }
             }
 
-            let mut head = core::ptr::read(&(*this).head);
-            drop(Box::from_raw(this));
+            // Consume the request and move `head` out by value; `ptr::read`
+            // + `Box::from_raw` would double-Drop `CAresLookup<T>` (impls Drop).
+            let owned = *Box::from_raw(this);
+            let mut head = owned.head;
             head.process_resolve(err_, timeout, result);
         }
     }
@@ -659,8 +663,10 @@ impl GetHostByAddrInfoRequest {
                 }
             }
 
-            let mut head = core::ptr::read(&(*this).head);
-            drop(Box::from_raw(this));
+            // Consume the request and move `head` out by value; `ptr::read`
+            // + `Box::from_raw` would double-Drop `CAresReverse` (impls Drop).
+            let owned = *Box::from_raw(this);
+            let mut head = owned.head;
             head.process_resolve(err_, timeout, result);
         }
     }
@@ -851,8 +857,10 @@ impl GetNameInfoRequest {
                 }
             }
 
-            let mut head = core::ptr::read(&(*this).head);
-            drop(Box::from_raw(this));
+            // Consume the request and move `head` out by value; `ptr::read`
+            // + `Box::from_raw` would double-Drop `CAresNameInfo` (impls Drop).
+            let owned = *Box::from_raw(this);
+            let mut head = owned.head;
             head.process_resolve(err_, timeout, result);
         }
     }
@@ -1117,8 +1125,10 @@ impl GetAddrInfoRequest {
                 }
             }
 
-            let mut head = core::ptr::read(&(*this).head);
-            drop(Box::from_raw(this));
+            // Consume the request and move `head` out by value; `ptr::read`
+            // + `Box::from_raw` would double-Drop `DNSLookup` (impls Drop).
+            let owned = *Box::from_raw(this);
+            let mut head = owned.head;
             head.process_get_addr_info_native(status, addr_info);
         }
     }
@@ -1156,8 +1166,10 @@ impl GetAddrInfoRequest {
                             return;
                         }
                     }
-                    let mut head = core::ptr::read(&(*this).head);
-                    drop(Box::from_raw(this));
+                    // Consume the request and move `head` out by value;
+                    // `ptr::read` + `Box::from_raw` would double-Drop `DNSLookup`.
+                    let owned = *Box::from_raw(this);
+                    let mut head = owned.head;
                     head.on_complete_native(any);
                 }
                 get_addr_info_request::Backend::Libc(get_addr_info_request::LibcBackend::Err(err)) => {
@@ -1193,8 +1205,10 @@ impl GetAddrInfoRequest {
                 }
             }
 
-            let mut head = core::ptr::read(&(*this).head);
-            drop(Box::from_raw(this));
+            // Consume the request and move `head` out by value; `ptr::read`
+            // + `Box::from_raw` would double-Drop `DNSLookup` (impls Drop).
+            let owned = *Box::from_raw(this);
+            let mut head = owned.head;
             head.process_get_addr_info(err_, timeout, result);
         }
     }
@@ -1224,9 +1238,14 @@ impl GetAddrInfoRequest {
                 }
             }
 
-            let mut head = core::ptr::read(&(*this).head);
-            head.process_get_addr_info_native(retcode, (*uv_info).addrinfo);
-            drop(Box::from_raw(this));
+            // Capture addrinfo first: `uv_info` points into `(*this).backend`,
+            // which is freed when the Box deallocates below.
+            let addrinfo = (*uv_info).addrinfo;
+            // Consume the request and move `head` out by value; `ptr::read`
+            // + `Box::from_raw` would double-Drop `DNSLookup` (impls Drop).
+            let owned = *Box::from_raw(this);
+            let mut head = owned.head;
+            head.process_get_addr_info_native(retcode, addrinfo);
         }
     }
 }
@@ -3000,9 +3019,11 @@ impl Resolver {
             None => {
                 unsafe {
                     let mut pending = (*key.lookup).head.next;
-                    let mut head = core::ptr::read(&(*key.lookup).head);
+                    // Consume the request and move `head` out by value;
+                    // `ptr::read` + `Box::from_raw` would double-Drop `DNSLookup`.
+                    let owned = *Box::from_raw(key.lookup);
+                    let mut head = owned.head;
                     head.process_get_addr_info_native(err, ptr::null_mut());
-                    drop(Box::from_raw(key.lookup));
 
                     while let Some(value) = pending {
                         pending = (*value.as_ptr()).next;

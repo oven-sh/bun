@@ -1105,6 +1105,10 @@ impl String {
         }
         // SAFETY: Ctx is pointer-sized; callback ABI matches (Ctx erased to *mut c_void).
         let ctx_erased: *mut c_void = unsafe { core::mem::transmute_copy(&ctx) };
+        // Ownership of `ctx` transfers to the external string (freed via the
+        // WTF finalizer callback); suppress the local Drop to avoid double-free
+        // when `Ctx` is an owning pointer-sized type (e.g. `Box<T>`).
+        core::mem::forget(ctx);
         let cb_erased: Option<extern "C" fn(*mut c_void, *mut c_void, u32)> =
             unsafe { core::mem::transmute(callback) };
         // SAFETY: bytes.len() < max_length() checked above; ctx/cb erased to

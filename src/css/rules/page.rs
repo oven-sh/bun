@@ -61,10 +61,7 @@ impl PageSelector {
             let state = input.state();
             let is_colon = match input.next_including_whitespace() {
                 Ok(tok) => matches!(*tok, css::Token::Colon),
-                Err(_) => {
-                    input.reset(&state);
-                    break;
-                }
+                Err(e) => return Err(e),
             };
             if is_colon {
                 let vv = PagePseudoClass::parse(input)?;

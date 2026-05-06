@@ -10,7 +10,13 @@ use core::mem::size_of;
 use std::io::Write as _;
 
 use bun_alloc::Arena as Bump;
+use bun_collections::BabyList;
 use bun_string::{self as bun_str, strings, String as BunString};
+
+// PORT NOTE: `strings::Cursor` (immutable.zig CodepointIterator.Cursor). The
+// Phase-A draft referenced it as `CodepointCursor`; alias here so the body
+// reads identically to the Zig source.
+type CodepointCursor = strings::Cursor;
 
 /// Opaque stand-in for `bun_jsc::JSValue` — the parser only *stores* the
 /// jsobjs slice (never inspects it), so the lower-tier crate can stay
@@ -26,6 +32,7 @@ macro_rules! log {
     ($($arg:tt)*) => { bun_core::scoped_log!(SHELL, $($arg)*) };
 }
 
+#[derive(thiserror::Error, Debug, strum::IntoStaticStr, Clone, Copy, PartialEq, Eq)]
 pub enum ParseError {
     #[error("Unsupported")]
     Unsupported,
@@ -585,12 +592,15 @@ pub mod ast {
         }
 
         pub fn to_flags(self) -> i32 {
+            // PORT NOTE: shell.zig RedirectFlags.toFlags() uses bun.O.{RDONLY,...}.
+            // bun_shell_parser is sys-tier-free, so use libc constants directly
+            // (identical values; bun_sys::O is a re-export of these on POSIX).
             let read_write_flags: i32 = if self.stdin() {
-                bun_sys::O::RDONLY
+                libc::O_RDONLY
             } else {
-                bun_sys::O::WRONLY | bun_sys::O::CREAT
+                libc::O_WRONLY | libc::O_CREAT
             };
-            let extra: i32 = if self.append() { bun_sys::O::APPEND } else { bun_sys::O::TRUNC };
+            let extra: i32 = if self.append() { libc::O_APPEND } else { libc::O_TRUNC };
             if self.stdin() { read_write_flags } else { extra | read_write_flags }
         }
 
@@ -3681,8 +3691,8 @@ pub type CodepointIterator = strings::UnsignedCodepointIterator;
 #[derive(Clone, Copy)]
 pub struct SrcUnicode<'a> {
     pub iter: CodepointIterator<'a>,
-    pub cursor: strings::CodepointCursor,
-    pub next_cursor: strings::CodepointCursor,
+    pub cursor: CodepointCursor,
+    pub next_cursor: CodepointCursor,
 }
 
 #[derive(Clone, Copy)]
@@ -3692,7 +3702,7 @@ pub struct SrcUnicodeIndexValue {
 }
 
 impl<'a> SrcUnicode<'a> {
-    fn next_cursor(iter: &CodepointIterator<'a>, cursor: &mut strings::CodepointCursor) {
+    fn next_cursor(iter: &CodepointIterator<'a>, cursor: &mut CodepointCursor) {
         if !iter.next(cursor) {
             // This will make `i > sourceBytes.len` so the condition in `index` will fail
             cursor.i = u32::try_from(iter.bytes().len() + 1).unwrap();
@@ -3703,7 +3713,7 @@ impl<'a> SrcUnicode<'a> {
 
     fn init(bytes: &'a [u8]) -> Self {
         let iter = CodepointIterator::init(bytes);
-        let mut cursor = strings::CodepointCursor::default();
+        let mut cursor = CodepointCursor::default();
         Self::next_cursor(&iter, &mut cursor);
         let mut next_cursor = cursor;
         Self::next_cursor(&iter, &mut next_cursor);
@@ -3765,7 +3775,7 @@ impl<'a> Src<'a> {
     }
     fn set_unicode_cursor(&mut self, new_idx: usize) {
         if let Src::Unicode(u) = self {
-            u.cursor = strings::CodepointCursor {
+            u.cursor = CodepointCursor {
                 i: u32::try_from(new_idx).unwrap(),
                 c: 0,
                 width: 0,
@@ -3904,7 +3914,7 @@ pub fn is_valid_var_name(var_name: &[u8]) -> bool {
         return false;
     }
     let iter = CodepointIterator::init(var_name);
-    let mut cursor = strings::CodepointCursor::default();
+    let mut cursor = CodepointCursor::default();
 
     if !iter.next(&mut cursor) {
         return false;
@@ -3963,7 +3973,7 @@ pub fn has_eq_sign(str: &[u8]) -> Option<u32> {
 
     // TODO actually i think that this can also use the simd stuff
     let iter = CodepointIterator::init(str);
-    let mut cursor = strings::CodepointCursor::default();
+    let mut cursor = CodepointCursor::default();
     while iter.next(&mut cursor) {
         if cursor.c == b'=' as u32 {
             return Some(cursor.i);

@@ -2186,7 +2186,7 @@ impl<'a> BundleOptions<'a> {
             // 2. node-addons
             // 3. user conditions
             opts.conditions = ESMConditions::init(
-                opts.target.default_conditions(),
+                Target::default_conditions_map()[opts.target],
                 transform.allow_addons.unwrap_or(true),
                 &transform
                     .conditions

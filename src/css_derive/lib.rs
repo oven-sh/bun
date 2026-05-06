@@ -7,16 +7,20 @@
 //! reflection, so the derive emits the equivalent field-wise / variant-wise
 //! recursion as an `impl bun_css::generics::DeepClone<'bump> for T`.
 //!
-//! The generated body uses **fully-qualified trait** dispatch
-//! (`DeepClone::deep_clone(&field, bump)`) rather than method syntax. Rust's
-//! method probe selects an inherent method by *name only* (ignoring arity and
-//! method-level where-clauses) and does **not** fall through to the trait when
-//! the inherent's signature mismatches — so an unrelated inherent like
-//! `BabyList::deep_clone(&self) -> Result<Self, _>` would shadow the blanket
-//! `impl DeepClone for BabyList<T>` and break the derive. UFCS mirrors the
-//! Zig's free-fn `deepClone()` dispatch (structural-first via the blanket
-//! impls in `bun_css::generics` — Option, Vec, Box, slices, primitives, …)
-//! and is immune to inherent shadowing.
+//! The generated body uses **method-syntax** dispatch
+//! (`field.deep_clone(bump)`) with the trait brought into scope, so a leaf
+//! type may satisfy the call with either a *signature-matching* inherent
+//! `pub fn deep_clone(&self, &Arena) -> Self` *or* a `DeepClone` trait impl
+//! (the blanket impls in `bun_css::generics` cover Option, Vec, Box, slices,
+//! primitives, …).
+//!
+//! **CAVEAT:** Rust's method probe selects an inherent by *name only* and does
+//! NOT fall through to the trait on arity/signature mismatch. An inherent with
+//! a *different* signature (e.g. `BabyList::deep_clone(&self) -> Result<_,_>`)
+//! shadows the blanket `impl DeepClone for BabyList<T>` and fails E0061. Such
+//! conflicting inherents must be renamed (e.g. `deep_clone_fallible`) — UFCS
+//! in the derive is not an option because many CSS leaves carry inherent-only
+//! `deep_clone`/`hash` and would lose dispatch.
 //!
 //! Generics handling:
 //!   * If the deriving type already carries a lifetime parameter, the **first**

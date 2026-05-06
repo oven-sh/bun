@@ -79,7 +79,6 @@ pub struct DisplayPair {
     pub is_list_item: bool,
 }
 
-#[cfg(any())] // blocked_on: phf::Map<&[u8],T> requires const-eval-able values; expect_ident_matching takes &[u8]; Parser::try_parse single-arg
 impl DisplayPair {
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
         let mut list_item = false;
@@ -96,14 +95,14 @@ impl DisplayPair {
             }
 
             if outside.is_none() {
-                if let Some(o) = input.try_parse(DisplayOutside::parse).ok() {
+                if let Ok(o) = input.try_parse(DisplayOutside::parse) {
                     outside = Some(o);
                     continue;
                 }
             }
 
             if inside.is_none() {
-                if let Some(i) = input.try_parse(DisplayInside::parse).ok() {
+                if let Ok(i) = input.try_parse(DisplayInside::parse) {
                     inside = Some(i);
                     continue;
                 }
@@ -125,7 +124,7 @@ impl DisplayPair {
             if list_item
                 && !matches!(final_inside, DisplayInside::Flow | DisplayInside::FlowRoot)
             {
-                return Err(input.new_custom_error(css::ParserError::InvalidDeclaration));
+                return Err(input.new_custom_error(css::ParserError::invalid_declaration));
             }
 
             return Ok(DisplayPair {
@@ -136,29 +135,32 @@ impl DisplayPair {
         }
 
         let location = input.current_source_location();
-        let ident = match input.expect_ident() {
-            Ok(v) => v,
-            Err(e) => return Err(e),
-        };
+        let ident = unsafe { css::css_parser::src_str(input.expect_ident()?) };
 
-        // TODO(port): phf custom hasher — Zig used getASCIIICaseInsensitive; phf keys are
-        // case-sensitive. Phase B: either lowercase `ident` before lookup or use a
-        // case-insensitive perfect hash.
-        static DISPLAY_IDENT_MAP: phf::Map<&'static [u8], DisplayPair> = phf::phf_map! {
-            b"inline-block"        => DisplayPair { outside: DisplayOutside::Inline, inside: DisplayInside::FlowRoot,                  is_list_item: false },
-            b"inline-table"        => DisplayPair { outside: DisplayOutside::Inline, inside: DisplayInside::Table,                     is_list_item: false },
-            b"inline-flex"         => DisplayPair { outside: DisplayOutside::Inline, inside: DisplayInside::Flex(VendorPrefix::NONE),  is_list_item: false },
-            b"-webkit-inline-flex" => DisplayPair { outside: DisplayOutside::Inline, inside: DisplayInside::Flex(VendorPrefix::WEBKIT),is_list_item: false },
-            b"-ms-inline-flexbox"  => DisplayPair { outside: DisplayOutside::Inline, inside: DisplayInside::Flex(VendorPrefix::MS),    is_list_item: false },
-            b"-webkit-inline-box"  => DisplayPair { outside: DisplayOutside::Inline, inside: DisplayInside::Box(VendorPrefix::WEBKIT), is_list_item: false },
-            b"-moz-inline-box"     => DisplayPair { outside: DisplayOutside::Inline, inside: DisplayInside::Box(VendorPrefix::MOZ),    is_list_item: false },
-            b"inline-grid"         => DisplayPair { outside: DisplayOutside::Inline, inside: DisplayInside::Grid,                      is_list_item: false },
+        // PORT NOTE: Zig used `bun.ComptimeStringMap(..).getASCIIICaseInsensitive`.
+        // 8 keys → if-chain over `eql_case_insensitive_ascii::<true>` (phf values
+        // would have to be const-eval, and `VendorPrefix` bitflags are not).
+        use bun_string::strings::eql_case_insensitive_ascii as eq;
+        let inside = if eq::<true>(ident, b"inline-block") {
+            DisplayInside::FlowRoot
+        } else if eq::<true>(ident, b"inline-table") {
+            DisplayInside::Table
+        } else if eq::<true>(ident, b"inline-flex") {
+            DisplayInside::Flex(VendorPrefix::NONE)
+        } else if eq::<true>(ident, b"-webkit-inline-flex") {
+            DisplayInside::Flex(VendorPrefix::WEBKIT)
+        } else if eq::<true>(ident, b"-ms-inline-flexbox") {
+            DisplayInside::Flex(VendorPrefix::MS)
+        } else if eq::<true>(ident, b"-webkit-inline-box") {
+            DisplayInside::Box(VendorPrefix::WEBKIT)
+        } else if eq::<true>(ident, b"-moz-inline-box") {
+            DisplayInside::Box(VendorPrefix::MOZ)
+        } else if eq::<true>(ident, b"inline-grid") {
+            DisplayInside::Grid
+        } else {
+            return Err(location.new_unexpected_token_error(css::Token::Ident(ident)));
         };
-        if let Some(pair) = DISPLAY_IDENT_MAP.get(ident) {
-            return Ok(*pair);
-        }
-
-        Err(location.new_unexpected_token_error(css::Token::Ident(ident)))
+        Ok(DisplayPair { outside: DisplayOutside::Inline, inside, is_list_item: false })
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -239,34 +241,37 @@ pub enum DisplayInside {
     Ruby,
 }
 
-#[cfg(any())] // blocked_on: phf::Map<&[u8],DisplayInside> values not const-evaluable (VendorPrefix bitflags)
 impl DisplayInside {
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
-        // TODO(port): phf custom hasher — Zig used getASCIIICaseInsensitive; see note above.
-        static DISPLAY_INSIDE_MAP: phf::Map<&'static [u8], DisplayInside> = phf::phf_map! {
-            b"flow"         => DisplayInside::Flow,
-            b"flow-root"    => DisplayInside::FlowRoot,
-            b"table"        => DisplayInside::Table,
-            b"flex"         => DisplayInside::Flex(VendorPrefix::NONE),
-            b"-webkit-flex" => DisplayInside::Flex(VendorPrefix::WEBKIT),
-            b"-ms-flexbox"  => DisplayInside::Flex(VendorPrefix::MS),
-            b"-webkit-box"  => DisplayInside::Box(VendorPrefix::WEBKIT),
-            b"-moz-box"     => DisplayInside::Box(VendorPrefix::MOZ),
-            b"grid"         => DisplayInside::Grid,
-            b"ruby"         => DisplayInside::Ruby,
-        };
-
         let location = input.current_source_location();
-        let ident = match input.expect_ident() {
-            Ok(v) => v,
-            Err(e) => return Err(e),
-        };
+        let ident = unsafe { css::css_parser::src_str(input.expect_ident()?) };
 
-        if let Some(value) = DISPLAY_INSIDE_MAP.get(ident) {
-            return Ok(*value);
-        }
-
-        Err(location.new_unexpected_token_error(css::Token::Ident(ident)))
+        // PORT NOTE: Zig used `bun.ComptimeStringMap(..).getASCIIICaseInsensitive`.
+        // 10 keys → if-chain over `eql_case_insensitive_ascii::<true>`.
+        use bun_string::strings::eql_case_insensitive_ascii as eq;
+        Ok(if eq::<true>(ident, b"flow") {
+            DisplayInside::Flow
+        } else if eq::<true>(ident, b"flow-root") {
+            DisplayInside::FlowRoot
+        } else if eq::<true>(ident, b"table") {
+            DisplayInside::Table
+        } else if eq::<true>(ident, b"flex") {
+            DisplayInside::Flex(VendorPrefix::NONE)
+        } else if eq::<true>(ident, b"-webkit-flex") {
+            DisplayInside::Flex(VendorPrefix::WEBKIT)
+        } else if eq::<true>(ident, b"-ms-flexbox") {
+            DisplayInside::Flex(VendorPrefix::MS)
+        } else if eq::<true>(ident, b"-webkit-box") {
+            DisplayInside::Box(VendorPrefix::WEBKIT)
+        } else if eq::<true>(ident, b"-moz-box") {
+            DisplayInside::Box(VendorPrefix::MOZ)
+        } else if eq::<true>(ident, b"grid") {
+            DisplayInside::Grid
+        } else if eq::<true>(ident, b"ruby") {
+            DisplayInside::Ruby
+        } else {
+            return Err(location.new_unexpected_token_error(css::Token::Ident(ident)));
+        })
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {

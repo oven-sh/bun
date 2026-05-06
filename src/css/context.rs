@@ -327,7 +327,10 @@ impl<'a> PropertyHandlerContext<'a> {
             }
         }
         #[cfg(not(any()))]
-        let _ = unparsed;
+        {
+            let _ = unparsed;
+            todo!("add_unparsed_fallbacks: blocked on TokenList::get_fallbacks")
+        }
     }
 }
 

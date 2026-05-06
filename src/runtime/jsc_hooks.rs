@@ -1267,10 +1267,8 @@ fn transpile_source_code_inner(
                     // `MutableString` view (`.{ .list = .{ .items = … } }`);
                     // here `sourcemap` is an owned `Box<[u8]>`, so move it
                     // into `MutableString.list` (the callee takes by value).
-                    // `put_mappings`' body is currently `#[cfg(any())]`-gated
-                    // (SavedSourceMap.rs) so this is a no-op until that
-                    // un-gates, but the call site is wired per spec
-                    // (`catch {}` → `.ok()`).
+                    // `put_mappings` re-boxes the bytes into the
+                    // `SavedSourceMap` table; spec `catch {}` → `let _ =`.
                     let _ = unsafe { &mut (*jsc_vm).source_mappings }.put_mappings(
                         source,
                         bun_string::MutableString {
@@ -1286,13 +1284,16 @@ fn transpile_source_code_inner(
                     // utf8=1, utf16=2, latin1=3) to pick the WTFString clone
                     // path; mirror that here. Do NOT compare against
                     // `ExportsKind` — unrelated AST enum.
+                    use bun_bundler::cache::CacheEncoding;
                     let source_code = match entry.metadata.output_encoding {
-                        // Encoding::UTF8
-                        1 => bun_string::String::clone_utf8(&entry.output_code),
-                        // Encoding::LATIN1
-                        3 => bun_string::String::clone_latin1(&entry.output_code),
+                        x if x == CacheEncoding::Utf8 as u8 => {
+                            bun_string::String::clone_utf8(&entry.output_code)
+                        }
+                        x if x == CacheEncoding::Latin1 as u8 => {
+                            bun_string::String::clone_latin1(&entry.output_code)
+                        }
                         // Encoding::UTF16 — bytes are raw native-endian u16s.
-                        2 => {
+                        x if x == CacheEncoding::Utf16 as u8 => {
                             debug_assert!(entry.output_code.len() % 2 == 0);
                             // SAFETY: cache writer stored a `[u16]` view
                             // byte-for-byte (RuntimeTranspilerCache.rs:510);
@@ -1435,29 +1436,32 @@ fn transpile_source_code_inner(
                 // … jsc_vm.transpiler.printWithSourceMap(parse_result, &printer,
                 // .esm_ascii, mapper.get(), module_info)`.
                 //
-                // PORT NOTE (borrowck): `source_map_handler` borrows both the VM
-                // and the printer for the getter's lifetime, but the print call
-                // also needs `&mut vm.transpiler` and `&mut printer`. Per the
-                // raw-ptr aliasing convention at the top of this fn (see fn-level
-                // PORT NOTE), rederive both from `jsc_vm`/`extra` raw ptrs at
-                // each use-site so borrowck sees disjoint temporaries; the
-                // getter itself only stashes raw pointers (VirtualMachine.rs
+                // PORT NOTE (borrowck): `source_map_handler` borrows the VM for
+                // the getter's lifetime, but the print call also needs
+                // `&mut vm.transpiler` and `&mut printer`. Per the raw-ptr
+                // aliasing convention at the top of this fn (see fn-level PORT
+                // NOTE), rederive from `jsc_vm`/`extra` raw ptrs at each
+                // use-site so borrowck sees disjoint temporaries; the getter
+                // itself only stashes raw pointers (VirtualMachine.rs
                 // `SourceMapHandlerGetter`).
-                // TODO(port): aliased-&mut — when a debugger is attached
-                // (`mode != Connect`), `SourceMapHandlerGetter::on_source_map_chunk`
-                // (VirtualMachine.rs) reborrows `&mut *self.printer` while the
-                // `writer: &mut BufferPrinter` passed to `print_with_source_map`
-                // is still live inside `print_ast`. Fixing that requires
-                // changing `source_map_handler` to take `*mut BufferPrinter`
-                // and routing the inline-sourcemap append through the live
-                // writer; out of scope for this file.
+                //
+                // PORT NOTE (Stacked Borrows): the printer is passed to the
+                // getter as the RAW `*mut BufferPrinter` (`source_map_handler`
+                // takes `*mut`, not `&mut`). When a debugger is attached
+                // (`mode != Connect`), `SourceMapHandlerGetter::
+                // on_source_map_chunk` reborrows `&mut *self.printer` from that
+                // raw pointer to append the inline-sourcemap trailer; doing so
+                // through a stashed `&'a mut` would alias the
+                // `writer: &mut BufferPrinter` live inside `print_ast`. After
+                // this block returns, the `printer` binding is rederived from
+                // the raw pointer below — any earlier Unique tag is dead.
                 {
                     // SAFETY: `jsc_vm` / `(*extra).source_code_printer` are live
                     // for the call (fn contract); `mapper` does not escape this
-                    // scope, so the unbounded `'a` from the raw-deref reborrows
+                    // scope, so the unbounded `'a` from the raw-deref reborrow
                     // is bounded by the block.
                     let mut mapper = unsafe {
-                        (*jsc_vm).source_map_handler(&mut *(*extra).source_code_printer)
+                        (*jsc_vm).source_map_handler((*extra).source_code_printer)
                     };
                     unsafe {
                         (*jsc_vm).transpiler.print_with_source_map(
@@ -1499,10 +1503,12 @@ fn transpile_source_code_inner(
                 };
 
                 // SAFETY: `extra.source_code_printer` is non-null per
-                // `TranspileExtra` contract. Rederive from the raw pointer —
-                // the `&mut` reborrows inside the print block above
-                // invalidated any earlier Unique tag under Stacked Borrows,
-                // so reading through a pre-print binding here would be UB.
+                // `TranspileExtra` contract. Rederive from the raw pointer
+                // AFTER the print block — both the `writer: &mut BufferPrinter`
+                // passed into `print_with_source_map` and the
+                // `on_source_map_chunk` reborrow inside it invalidated any
+                // earlier Unique tag under Stacked Borrows, so reading through
+                // a pre-print binding here would be UB.
                 let printer: &mut bun_js_printer::BufferPrinter =
                     unsafe { &mut *(*extra).source_code_printer };
                 let written = printer.ctx.get_written();

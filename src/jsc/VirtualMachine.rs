@@ -1570,10 +1570,13 @@ pub fn process_fetch_log(
 ///
 /// PORT NOTE: Zig stored `*VirtualMachine` / `*BufferPrinter` directly. Here
 /// we keep raw pointers + a `PhantomData<&'a mut ()>` so the getter's lifetime
-/// is tied to the `&'a mut VirtualMachine` / `&'a mut BufferPrinter` it was
-/// built from in `source_map_handler`, but `get()` can still hand out a
+/// is tied to the `&'a mut VirtualMachine` it was built from in
+/// `source_map_handler`, but `get()` can still hand out a
 /// `SourceMapHandler<'_>` over `vm.source_mappings` without tripping borrowck
-/// on the disjoint `self.vm` reborrow.
+/// on the disjoint `self.vm` reborrow. `printer` is accepted and stored as a
+/// raw pointer (NOT `&'a mut`) because the same `BufferPrinter` is also the
+/// live `writer` inside `print_with_source_map`; holding an `&'a mut` here
+/// would alias it for the whole print.
 pub struct SourceMapHandlerGetter<'a> {
     vm: *mut VirtualMachine,
     printer: *mut bun_js_printer::BufferPrinter,
@@ -1631,8 +1634,16 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
         let prefix_len =
             SOURCE_MAP_URL_PREFIX_START.len() + SOURCE_MAPPING_URL.len() + source_url_len;
 
-        // SAFETY: `vm` / `printer` were set from live `&'a mut` borrows in
-        // `source_map_handler`; both outlive this getter (`'a`).
+        // SAFETY: `vm` was set from a live `&'a mut VirtualMachine` in
+        // `source_map_handler`. `printer` is the raw `*mut BufferPrinter`
+        // passed in by the caller (jsc_hooks.rs), with the SAME provenance as
+        // the `writer` arg to `print_with_source_map`. By the time
+        // `on_source_map_chunk` runs (js_printer/lib.rs `print_ast` /
+        // `print_common_js` tail), the writer has emitted its last byte; we
+        // reborrow from the raw pointer here rather than from a stashed
+        // `&'a mut` so no Unique tag is held across the writer's lifetime.
+        // The caller MUST rederive its own `&mut BufferPrinter` from the raw
+        // pointer after `print_with_source_map` returns (see jsc_hooks.rs).
         let vm = unsafe { &mut *self.vm };
         let printer = unsafe { &mut *self.printer };
 

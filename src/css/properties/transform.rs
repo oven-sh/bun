@@ -37,7 +37,6 @@ impl TransformList {
     }
 }
 
-#[cfg(any())] // blocked_on: Parser::allocator() + Transform::parse + Printer::new signature + Printer field access
 impl TransformList {
     pub fn parse(input: &mut Parser<'_>) -> Result<Self> {
         if input
@@ -54,7 +53,7 @@ impl TransformList {
 
         loop {
             input.skip_whitespace();
-            if let Some(item) = input.try_parse(Transform::parse).ok() {
+            if let Ok(item) = input.try_parse(Transform::parse) {
                 results.push(item);
             } else {
                 return Ok(Self { v: results });
@@ -69,27 +68,10 @@ impl TransformList {
 
         // TODO: Re-enable with a better solution
         //       See: https://github.com/parcel-bundler/lightningcss/issues/288
-        if dest.minify {
-            // PERF(port): was arena-backed std.Io.Writer.Allocating — profile in Phase B
-            let mut base: Vec<u8> = Vec::new();
-
-            let scratchbuf: Vec<u8> = Vec::new();
-            // TODO(port): Printer::new signature — Zig passed dest.allocator + scratchbuf + writer;
-            // Rust Printer likely takes (&'bump Bump, scratch, writer, opts, import_info, local_names, symbols).
-            let mut p = Printer::new(
-                scratchbuf,
-                &mut base,
-                PrinterOptions::default_with_minify(true),
-                dest.import_info,
-                dest.local_names,
-                dest.symbols,
-            );
-
-            self.to_css_base(&mut p)?;
-
-            return dest.write_str(&base);
-        }
-
+        // PORT NOTE: Zig's minify branch built a sub-`Printer` writing into a temp
+        // buffer then `dest.writeStr(base)` — observably identical to writing
+        // directly into `dest` while `dest.minify` is set (the original
+        // lightningcss size-comparison was already disabled upstream). Collapsed.
         self.to_css_base(dest)
     }
 
@@ -167,10 +149,11 @@ pub enum Transform {
     Matrix3d(Matrix3d<f32>),
 }
 
-#[cfg(any())] // blocked_on: Angle/Length/LengthPercentage/NumberOrPercentage::{parse,to_css,is_zero} + CSSNumberFns
 impl Transform {
     pub fn parse(input: &mut Parser) -> Result<Transform> {
-        let function = input.expect_function()?;
+        // SAFETY: `expect_function` returns a sub-slice of `input.tokenizer.src`;
+        // detach the borrow so `input` is reusable for `parse_nested_block` below.
+        let function = unsafe { crate::css_parser::src_str(input.expect_function()?) };
 
         // PORT NOTE: Zig used a Closure struct + nested anon-struct fn passed to
         // parseNestedBlock; Rust closures capture `function` directly.
@@ -257,7 +240,9 @@ impl Transform {
                     let y = NumberOrPercentage::parse(i)?;
                     Ok(Transform::Scale { x, y })
                 } else {
-                    let y = x.deep_clone(i.allocator());
+                    // PORT NOTE: Zig `x.deepClone(allocator)` — `NumberOrPercentage`
+                    // is POD; `clone()` is exact.
+                    let y = x.clone();
                     Ok(Transform::Scale { x, y })
                 }
             } else if strings::eql_case_insensitive_ascii_check_length(function, b"scalex") {
@@ -330,7 +315,7 @@ impl Transform {
                     dest.write_str("translate(")?;
                     x.to_css(dest)?;
                     if !y.is_zero() {
-                        dest.delim(',', false)?;
+                        dest.delim(b',', false)?;
                         y.to_css(dest)?;
                     }
                 }
@@ -364,14 +349,14 @@ impl Transform {
                 } else if dest.minify && z.is_zero() {
                     dest.write_str("translate(")?;
                     x.to_css(dest)?;
-                    dest.delim(',', false)?;
+                    dest.delim(b',', false)?;
                     y.to_css(dest)?;
                 } else {
                     dest.write_str("translate3d(")?;
                     x.to_css(dest)?;
-                    dest.delim(',', false)?;
+                    dest.delim(b',', false)?;
                     y.to_css(dest)?;
-                    dest.delim(',', false)?;
+                    dest.delim(b',', false)?;
                     z.to_css(dest)?;
                 }
                 dest.write_char(b')')?;
@@ -389,7 +374,7 @@ impl Transform {
                     dest.write_str("scale(")?;
                     CSSNumberFns::to_css(&x, dest)?;
                     if y != x {
-                        dest.delim(',', false)?;
+                        dest.delim(b',', false)?;
                         CSSNumberFns::to_css(&y, dest)?;
                     }
                 }
@@ -429,14 +414,14 @@ impl Transform {
                 } else if dest.minify && z == 1.0 {
                     dest.write_str("scale(")?;
                     CSSNumberFns::to_css(&x, dest)?;
-                    dest.delim(',', false)?;
+                    dest.delim(b',', false)?;
                     CSSNumberFns::to_css(&y, dest)?;
                 } else {
                     dest.write_str("scale3d(")?;
                     CSSNumberFns::to_css(&x, dest)?;
-                    dest.delim(',', false)?;
+                    dest.delim(b',', false)?;
                     CSSNumberFns::to_css(&y, dest)?;
-                    dest.delim(',', false)?;
+                    dest.delim(b',', false)?;
                     CSSNumberFns::to_css(&z, dest)?;
                 }
                 dest.write_char(b')')?;
@@ -474,11 +459,11 @@ impl Transform {
                 } else {
                     dest.write_str("rotate3d(")?;
                     CSSNumberFns::to_css(x, dest)?;
-                    dest.delim(',', false)?;
+                    dest.delim(b',', false)?;
                     CSSNumberFns::to_css(y, dest)?;
-                    dest.delim(',', false)?;
+                    dest.delim(b',', false)?;
                     CSSNumberFns::to_css(z, dest)?;
-                    dest.delim(',', false)?;
+                    dest.delim(b',', false)?;
                     angle.to_css_with_unitless_zero(dest)?;
                 }
                 dest.write_char(b')')?;
@@ -491,7 +476,7 @@ impl Transform {
                     dest.write_str("skew(")?;
                     x.to_css(dest)?;
                     if !y.is_zero() {
-                        dest.delim(',', false)?;
+                        dest.delim(b',', false)?;
                         y.to_css_with_unitless_zero(dest)?;
                     }
                 }
@@ -515,50 +500,50 @@ impl Transform {
             Transform::Matrix(m) => {
                 dest.write_str("matrix(")?;
                 CSSNumberFns::to_css(&m.a, dest)?;
-                dest.delim(',', false)?;
+                dest.delim(b',', false)?;
                 CSSNumberFns::to_css(&m.b, dest)?;
-                dest.delim(',', false)?;
+                dest.delim(b',', false)?;
                 CSSNumberFns::to_css(&m.c, dest)?;
-                dest.delim(',', false)?;
+                dest.delim(b',', false)?;
                 CSSNumberFns::to_css(&m.d, dest)?;
-                dest.delim(',', false)?;
+                dest.delim(b',', false)?;
                 CSSNumberFns::to_css(&m.e, dest)?;
-                dest.delim(',', false)?;
+                dest.delim(b',', false)?;
                 CSSNumberFns::to_css(&m.f, dest)?;
                 dest.write_char(b')')?;
             }
             Transform::Matrix3d(m) => {
                 dest.write_str("matrix3d(")?;
                 CSSNumberFns::to_css(&m.m11, dest)?;
-                dest.delim(',', false)?;
+                dest.delim(b',', false)?;
                 CSSNumberFns::to_css(&m.m12, dest)?;
-                dest.delim(',', false)?;
+                dest.delim(b',', false)?;
                 CSSNumberFns::to_css(&m.m13, dest)?;
-                dest.delim(',', false)?;
+                dest.delim(b',', false)?;
                 CSSNumberFns::to_css(&m.m14, dest)?;
-                dest.delim(',', false)?;
+                dest.delim(b',', false)?;
                 CSSNumberFns::to_css(&m.m21, dest)?;
-                dest.delim(',', false)?;
+                dest.delim(b',', false)?;
                 CSSNumberFns::to_css(&m.m22, dest)?;
-                dest.delim(',', false)?;
+                dest.delim(b',', false)?;
                 CSSNumberFns::to_css(&m.m23, dest)?;
-                dest.delim(',', false)?;
+                dest.delim(b',', false)?;
                 CSSNumberFns::to_css(&m.m24, dest)?;
-                dest.delim(',', false)?;
+                dest.delim(b',', false)?;
                 CSSNumberFns::to_css(&m.m31, dest)?;
-                dest.delim(',', false)?;
+                dest.delim(b',', false)?;
                 CSSNumberFns::to_css(&m.m32, dest)?;
-                dest.delim(',', false)?;
+                dest.delim(b',', false)?;
                 CSSNumberFns::to_css(&m.m33, dest)?;
-                dest.delim(',', false)?;
+                dest.delim(b',', false)?;
                 CSSNumberFns::to_css(&m.m34, dest)?;
-                dest.delim(',', false)?;
+                dest.delim(b',', false)?;
                 CSSNumberFns::to_css(&m.m41, dest)?;
-                dest.delim(',', false)?;
+                dest.delim(b',', false)?;
                 CSSNumberFns::to_css(&m.m42, dest)?;
-                dest.delim(',', false)?;
+                dest.delim(b',', false)?;
                 CSSNumberFns::to_css(&m.m43, dest)?;
-                dest.delim(',', false)?;
+                dest.delim(b',', false)?;
                 CSSNumberFns::to_css(&m.m44, dest)?;
                 dest.write_char(b')')?;
             }
@@ -677,7 +662,6 @@ pub enum Perspective {
     Length(Length),
 }
 
-#[cfg(any())] // blocked_on: Length::{parse,to_css}
 impl Perspective {
     pub fn eql(&self, other: &Self) -> bool {
         self == other

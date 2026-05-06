@@ -245,114 +245,24 @@ impl UpdateInteractiveCommand {
     }
 
 
+    #[allow(dead_code)]
     fn get_all_workspaces(manager: &PackageManager) -> Box<[PackageID]> {
-        let lockfile = &manager.lockfile;
-        let packages = lockfile.packages.slice();
-        let pkg_resolutions = packages.items_resolution();
-
-        let mut workspace_pkg_ids: Vec<PackageID> = Vec::new();
-        for (pkg_id, resolution) in pkg_resolutions.iter().enumerate() {
-            if resolution.tag != bun_install::resolution::Tag::Workspace
-                && resolution.tag != bun_install::resolution::Tag::Root
-            {
-                continue;
-            }
-            workspace_pkg_ids.push(u32::try_from(pkg_id).unwrap());
-        }
-
-        workspace_pkg_ids.into_boxed_slice()
+        let _ = manager;
+        // Needs `manager.lockfile.packages.items_resolution()` — gated behind
+        // `package_manager_real` (`#![cfg(any())]` reconciler-6).
+        todo!("blocked_on: bun_install::PackageManager::lockfile (package_manager_real un-gate)")
     }
 
+    #[allow(dead_code)]
     fn find_matching_workspaces(
         original_cwd: &[u8],
         manager: &PackageManager,
         filters: &[Box<[u8]>],
     ) -> Box<[PackageID]> {
-        let lockfile = &manager.lockfile;
-        let packages = lockfile.packages.slice();
-        let pkg_names = packages.items_name();
-        let pkg_resolutions = packages.items_resolution();
-        let string_buf = lockfile.buffers.string_bytes.as_slice();
-
-        let mut workspace_pkg_ids: Vec<PackageID> = Vec::new();
-        for (pkg_id, resolution) in pkg_resolutions.iter().enumerate() {
-            if resolution.tag != bun_install::resolution::Tag::Workspace
-                && resolution.tag != bun_install::resolution::Tag::Root
-            {
-                continue;
-            }
-            workspace_pkg_ids.push(u32::try_from(pkg_id).unwrap());
-        }
-
-        let mut path_buf = PathBuffer::uninit();
-
-        let converted_filters: Vec<WorkspaceFilter> = {
-            let mut buf = Vec::with_capacity(filters.len());
-            for filter in filters {
-                buf.push(WorkspaceFilter::init(filter, original_cwd, &mut path_buf));
-            }
-            buf
-        };
-        // converted_filters drop on scope exit.
-
-        // move all matched workspaces to front of array
-        let mut i: usize = 0;
-        while i < workspace_pkg_ids.len() {
-            let workspace_pkg_id = workspace_pkg_ids[i];
-
-            let matched = 'matched: {
-                for filter in &converted_filters {
-                    match filter {
-                        WorkspaceFilter::Path(pattern) => {
-                            if pattern.is_empty() {
-                                continue;
-                            }
-                            let res = &pkg_resolutions[workspace_pkg_id as usize];
-
-                            let res_path: &[u8] = match res.tag {
-                                bun_install::resolution::Tag::Workspace => {
-                                    res.value.workspace.slice(string_buf)
-                                }
-                                bun_install::resolution::Tag::Root => {
-                                    FileSystem::instance().top_level_dir
-                                }
-                                _ => unreachable!(),
-                            };
-
-                            let abs_res_path = path::resolve_path::join_abs_string_buf::<path::platform::Posix>(
-                                FileSystem::instance().top_level_dir,
-                                &mut path_buf,
-                                &[res_path],
-                            );
-
-                            if !glob::r#match(pattern, strings::without_trailing_slash(abs_res_path))
-                                .matches()
-                            {
-                                break 'matched false;
-                            }
-                        }
-                        WorkspaceFilter::Name(pattern) => {
-                            let name = pkg_names[workspace_pkg_id as usize].slice(string_buf);
-
-                            if !glob::r#match(pattern, name).matches() {
-                                break 'matched false;
-                            }
-                        }
-                        WorkspaceFilter::All => {}
-                    }
-                }
-
-                break 'matched true;
-            };
-
-            if matched {
-                i += 1;
-            } else {
-                workspace_pkg_ids.swap_remove(i);
-            }
-        }
-
-        workspace_pkg_ids.into_boxed_slice()
+        let _ = (original_cwd, manager, filters);
+        // Needs `manager.lockfile` + `Lockfile.packages.items_resolution()` —
+        // gated behind `package_manager_real` (`#![cfg(any())]` reconciler-6).
+        todo!("blocked_on: bun_install::PackageManager::lockfile (package_manager_real un-gate)")
     }
 
     fn group_catalog_dependencies<'a>(

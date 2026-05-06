@@ -367,9 +367,11 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     // PORT NOTE: reshaped for borrowck — re-borrow through the guard tuple.
     let (abort_signal, terminal_info) = &mut *defer_guard;
 
+    // TODO(port): lifetime — owned ZBox for cwd held here so the borrow stays valid.
+    let mut cwd_owned: Option<ZBox> = None;
     {
         if args.is_empty_or_undefined_or_null() {
-            return global_this.throw_invalid_arguments("cmd must be an array", format_args!(""));
+            return Err(global_this.throw_invalid_arguments("cmd must be an array"));
         }
 
         let args_type = args.js_type();
@@ -377,19 +379,21 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             cmd_value = args;
             args = secondary_args_value.unwrap_or(JSValue::ZERO);
         } else if !args.is_object() {
-            return global_this.throw_invalid_arguments("cmd must be an array", format_args!(""));
+            return Err(global_this.throw_invalid_arguments("cmd must be an array"));
         } else if let Some(cmd_value_) = args.get_truthy(global_this, "cmd")? {
             cmd_value = cmd_value_;
         } else {
-            return global_this.throw_invalid_arguments("cmd must be an array", format_args!(""));
+            return Err(global_this.throw_invalid_arguments("cmd must be an array"));
         }
 
         if args.is_object() {
             if let Some(argv0_) = args.get_truthy(global_this, "argv0")? {
                 let argv0_str = argv0_.get_zig_string(global_this)?;
                 if argv0_str.len > 0 {
-                    // TODO(port): lifetime — owned Box<ZStr>; Phase B: stash in backing Vec.
-                    argv0 = Some(argv0_str.to_owned_slice_z()?);
+                    // TODO(port): lifetime — owned ZBox; Phase B: stash in backing Vec.
+                    let owned = argv0_str.to_owned_slice_z();
+                    argv0 = Some(owned.as_ptr());
+                    core::mem::forget(owned);
                 }
             }
 
@@ -397,9 +401,14 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             if let Some(cwd_) = args.get_truthy(global_this, "cwd")? {
                 let cwd_str = cwd_.get_zig_string(global_this)?;
                 if cwd_str.len > 0 {
-                    // TODO(port): lifetime — owned Box<ZStr>; Phase B: stash in backing Vec.
-                    cwd = cwd_str.to_owned_slice_z()?;
-                    // TODO(port): cwd is &[u8] but to_owned_slice_z returns ZStr; .as_bytes() needed
+                    cwd_owned = Some(cwd_str.to_owned_slice_z());
+                    // SAFETY: cwd_owned outlives every read of `cwd` below.
+                    cwd = unsafe {
+                        core::slice::from_raw_parts(
+                            cwd_owned.as_ref().unwrap().as_bytes().as_ptr(),
+                            cwd_owned.as_ref().unwrap().len(),
+                        )
+                    };
                 }
             }
         }

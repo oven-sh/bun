@@ -14,7 +14,7 @@ impl CSSNumberFns {
                 Calc::Value(v) => return Ok(*v),
                 Calc::Number(n) => return Ok(n),
                 // Numbers are always compatible, so they will always compute to a value.
-                _ => return Err(input.new_custom_error(ParserError::InvalidValue)),
+                _ => return Err(input.new_custom_error(ParserError::invalid_value)),
             }
         }
 
@@ -28,7 +28,7 @@ impl CSSNumberFns {
             // PERF(port): Zig left dtoa_buf uninitialized — profile in Phase B
             let (str, _) = css::dtoa_short(&mut dtoa_buf, number, 6);
             if number < 0.0 {
-                dest.write_char('-')?;
+                dest.write_char(b'-')?;
                 dest.write_str(bun_string::strings::trim_leading_pattern2(str, b'-', b'0'))
             } else {
                 dest.write_str(bun_string::strings::trim_leading_char(str, b'0'))
@@ -63,7 +63,7 @@ impl CSSIntegerFns {
 
     #[inline]
     pub fn to_css(this: &CSSInteger, dest: &mut Printer) -> Result<(), PrintErr> {
-        css::to_css::integer::<i32>(*this, dest)
+        css::to_css::integer(*this, dest)
     }
 }
 

@@ -1,14 +1,10 @@
-use crate as css;
-use crate::Result;
-use crate::Printer;
-use crate::PrintErr;
-use crate::css_values::number::{CSSNumber, CSSNumberFns};
-use crate::css_values::calc::Calc;
-use crate::css_values::percentage::DimensionPercentage;
+use crate::css_parser as css;
+use crate::css_parser::{CssResult as Result, Maybe, Parser, ParserError, PrintErr, Printer, Token};
+use crate::values::calc::Calc;
+use crate::values::number::{CSSNumber, CSSNumberFns};
+use crate::values::percentage::DimensionPercentage;
 
-use bun_alloc::Arena; // bumpalo::Bump re-export (CSS is an AST crate)
-use bun_str::strings;
-use bun_wyhash::Wyhash;
+use bun_string::strings;
 use core::cmp::Ordering;
 
 const TAG_DEG: u8 = 1;
@@ -46,52 +42,49 @@ impl Angle {
         }
     }
 
-    pub fn parse(input: &mut css::Parser) -> Result<Angle> {
+    pub fn parse(input: &mut Parser) -> Result<Angle> {
         Angle::parse_internal(input, false)
     }
 
-    fn parse_internal(input: &mut css::Parser, allow_unitless_zero: bool) -> Result<Angle> {
-        if let Some(calc_value) = input.try_parse(Calc::<Angle>::parse, ()).as_value() {
+    fn parse_internal(input: &mut Parser, allow_unitless_zero: bool) -> Result<Angle> {
+        if let Ok(calc_value) = input.try_parse(Calc::<Angle>::parse) {
             if let Calc::Value(value) = calc_value {
-                return Result::Ok(*value);
+                return Ok(*value);
             }
             // Angles are always compatible, so they will always compute to a value.
-            return Result::Err(input.new_custom_error(css::ParserError::InvalidValue));
+            return Err(input.new_custom_error(ParserError::invalid_value));
         }
 
         let location = input.current_source_location();
-        let token = match input.next() {
-            Result::Ok(vv) => vv,
-            Result::Err(e) => return Result::Err(e),
-        };
-        match &*token {
-            css::Token::Dimension(dim) => {
+        let token = input.next()?.clone();
+        match &token {
+            Token::Dimension(dim) => {
                 let value = dim.num.value;
                 let unit = dim.unit;
                 // todo_stuff.match_ignore_ascii_case
                 if strings::eql_case_insensitive_ascii_check_length(b"deg", unit) {
-                    return Result::Ok(Angle::Deg(value));
+                    return Ok(Angle::Deg(value));
                 } else if strings::eql_case_insensitive_ascii_check_length(b"grad", unit) {
-                    return Result::Ok(Angle::Grad(value));
+                    return Ok(Angle::Grad(value));
                 } else if strings::eql_case_insensitive_ascii_check_length(b"turn", unit) {
-                    return Result::Ok(Angle::Turn(value));
+                    return Ok(Angle::Turn(value));
                 } else if strings::eql_case_insensitive_ascii_check_length(b"rad", unit) {
-                    return Result::Ok(Angle::Rad(value));
+                    return Ok(Angle::Rad(value));
                 } else {
-                    return Result::Err(location.new_unexpected_token_error(token.clone()));
+                    return Err(location.new_unexpected_token_error(token));
                 }
             }
-            css::Token::Number(num) => {
+            Token::Number(num) => {
                 if num.value == 0.0 && allow_unitless_zero {
-                    return Result::Ok(Angle::zero());
+                    return Ok(Angle::zero());
                 }
             }
             _ => {}
         }
-        Result::Err(location.new_unexpected_token_error(token.clone()))
+        Err(location.new_unexpected_token_error(token))
     }
 
-    pub fn parse_with_unitless_zero(input: &mut css::Parser) -> Result<Angle> {
+    pub fn parse_with_unitless_zero(input: &mut Parser) -> Result<Angle> {
         Angle::parse_internal(input, true)
     }
 
@@ -112,10 +105,7 @@ impl Angle {
             }
             Angle::Turn(val) => (val, "turn"),
         };
-        match css::serializer::serialize_dimension(value, unit, dest) {
-            Ok(()) => Ok(()),
-            Err(_) => dest.add_fmt_error(),
-        }
+        css::serializer::serialize_dimension(value, unit.as_bytes(), dest)
     }
 
     pub fn to_css_with_unitless_zero(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
@@ -131,21 +121,21 @@ impl Angle {
         Some(angle)
     }
 
-    pub fn try_from_token(token: &css::Token) -> css::Maybe<Angle, ()> {
-        if let css::Token::Dimension(dimension) = token {
+    pub fn try_from_token(token: &Token) -> Maybe<Angle, ()> {
+        if let Token::Dimension(dimension) = token {
             let value = dimension.num.value;
             let unit = dimension.unit;
             if strings::eql_case_insensitive_ascii_check_length(unit, b"deg") {
-                return css::Maybe::Ok(Angle::Deg(value));
+                return Ok(Angle::Deg(value));
             } else if strings::eql_case_insensitive_ascii_check_length(unit, b"grad") {
-                return css::Maybe::Ok(Angle::Grad(value));
+                return Ok(Angle::Grad(value));
             } else if strings::eql_case_insensitive_ascii_check_length(unit, b"turn") {
-                return css::Maybe::Ok(Angle::Turn(value));
+                return Ok(Angle::Turn(value));
             } else if strings::eql_case_insensitive_ascii_check_length(unit, b"rad") {
-                return css::Maybe::Ok(Angle::Rad(value));
+                return Ok(Angle::Rad(value));
             }
         }
-        css::Maybe::Err(())
+        Err(())
     }
 
     /// Returns the angle in radians.
@@ -184,9 +174,9 @@ impl Angle {
         v == 0.0
     }
 
-    pub fn into_calc<'bump>(&self, bump: &'bump Arena) -> Calc<'bump, Angle> {
-        // TODO(port): Calc::Value payload is arena-allocated in CSS crate; verify Calc<'bump, T> shape in Phase B
-        Calc::Value(bump.alloc(*self))
+    pub fn into_calc(&self) -> Calc<Angle> {
+        // PERF(port): was arena alloc (bun.create) — Calc<V>::Value now owns Box<V>.
+        Calc::Value(Box::new(*self))
     }
 
     pub fn map(&self, opfn: impl Fn(f32) -> f32) -> Angle {
@@ -229,7 +219,7 @@ impl Angle {
     }
 
     pub fn partial_cmp(&self, other: &Angle) -> Option<Ordering> {
-        css::generic::partial_cmp_f32(&self.to_degrees(), &other.to_degrees())
+        crate::generic::partial_cmp_f32(&self.to_degrees(), &other.to_degrees())
     }
 
     pub fn try_op<C>(
@@ -297,12 +287,11 @@ impl Angle {
         }
     }
 
-    pub fn hash(&self, hasher: &mut Wyhash) {
-        css::implement_hash(self, hasher)
-    }
-
-    pub fn deep_clone<'bump>(&self, bump: &'bump Arena) -> Self {
-        css::implement_deep_clone(self, bump)
+    // TODO(port): css.implementHash / css.implementDeepClone are reflection
+    // helpers. Angle is `Copy` (POD f32 payload) so deep_clone is bitwise; the
+    // CssHash trait impl for Angle wires hash() once generics.rs covers it.
+    pub fn deep_clone(&self) -> Self {
+        *self
     }
 }
 

@@ -1,9 +1,12 @@
-use crate as css;
-use crate::css_values::angle::Angle;
-use crate::css_values::calc::{Calc, MathFunction};
-use crate::css_values::number::CSSNumber;
+use crate::css_parser as css;
+use crate::css_parser::{CssResult, ParserError, PrintErr, Printer, Token};
+use crate::values::angle::Angle;
+use crate::values::calc::Calc;
+#[cfg(any())]
+use crate::values::calc::MathFunction;
+use crate::values::number::CSSNumber;
+#[cfg(any())]
 use crate::targets::Browsers;
-use crate::{PrintErr, Printer, Result as CssResult};
 use core::cmp::Ordering;
 
 #[derive(Debug, Clone, Copy)]
@@ -13,21 +16,17 @@ pub struct Percentage {
 
 impl Percentage {
     pub fn parse(input: &mut css::Parser) -> CssResult<Percentage> {
-        if let Some(calc_value) = input.try_parse(Calc::<Percentage>::parse).as_value() {
+        if let Ok(calc_value) = input.try_parse(Calc::<Percentage>::parse) {
             if let Calc::Value(v) = calc_value {
-                return CssResult::Ok(*v);
+                return Ok(*v);
             }
             // Handle calc() expressions that can't be reduced to a simple value (e.g., containing NaN, variables, etc.)
             // Return an error since we can't determine the percentage value at parse time
-            return CssResult::Err(input.new_custom_error(css::ParserError::InvalidValue));
+            return Err(input.new_custom_error(ParserError::invalid_value));
         }
 
-        let percent = match input.expect_percentage() {
-            CssResult::Ok(vv) => vv,
-            CssResult::Err(e) => return CssResult::Err(e),
-        };
-
-        CssResult::Ok(Percentage { v: percent })
+        let percent = input.expect_percentage()?;
+        Ok(Percentage { v: percent })
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -39,7 +38,7 @@ impl Percentage {
             None
         };
 
-        let percent = css::Token::Percentage {
+        let percent = Token::Percentage {
             has_sign: self.v < 0.0,
             unit_value: self.v,
             int_value,
@@ -50,13 +49,13 @@ impl Percentage {
             // PERF(port): was stack buffer; using small Vec for now — profile in Phase B.
             let mut buf: Vec<u8> = Vec::with_capacity(32);
             if percent.to_css_generic(&mut buf).is_err() {
-                return dest.add_fmt_error();
+                return Err(dest.add_fmt_error());
             }
             if self.v < 0.0 {
                 dest.write_char('-')?;
-                dest.write_str(bun_str::strings::trim_leading_pattern2(&buf, b'-', b'0'))?;
+                dest.write_str(bun_string::strings::trim_leading_pattern2(&buf, b'-', b'0'))?;
             } else {
-                dest.write_str(bun_str::strings::trim_leading_char(&buf, b'0'))?;
+                dest.write_str(bun_string::strings::trim_leading_char(&buf, b'0'))?;
             }
             Ok(())
         } else {
@@ -99,7 +98,7 @@ impl Percentage {
     }
 
     pub fn partial_cmp(&self, other: &Percentage) -> Option<Ordering> {
-        css::generic::partial_cmp(&self.v, &other.v)
+        crate::generic::partial_cmp_f32(&self.v, &other.v)
     }
 
     pub fn try_from_angle(_: Angle) -> Option<Percentage> {
@@ -157,6 +156,22 @@ pub enum DimensionPercentage<D> {
     Calc(Box<Calc<DimensionPercentage<D>>>),
 }
 
+impl<D: Clone> Clone for DimensionPercentage<D> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Dimension(d) => Self::Dimension(d.clone()),
+            Self::Percentage(p) => Self::Percentage(*p),
+            Self::Calc(c) => Self::Calc(Box::new(c.deep_clone())),
+        }
+    }
+}
+
+// ─── B-2 round 3: generic-D method block stays gated ──────────────────────
+// blocked_on: generics.rs `Zero`/`MulF32`/`TryAdd` protocol traits + the
+// `D: Parse/ToCss/IsCompatible` bounds (Parse<'bump> lifetime threading).
+// The enum + Clone above are real so `Calc<DimensionPercentage<D>>` and
+// `AnglePercentage` resolve; behavior un-gates with length.rs.
+#[cfg(any())]
 impl<D> DimensionPercentage<D>
 where
     // TODO(port): narrow these bounds in Phase B; mirroring methods called on D below.

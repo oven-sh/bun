@@ -37,16 +37,22 @@ macro_rules! gated_value {
         #[cfg(not(any()))] pub mod $name { $($body)* }
     };
 }
-gated_value!(number);
-gated_value!(angle);
-gated_value!(css_string);
+// ─── B-2 round 3: calc lattice leaves un-gated ───────────────────────────
+// number/angle/time/percentage/css_string + calc are now real. calc.rs
+// internally `#[cfg(any())]`-gates its Length/DimensionPercentage<LengthValue>
+// CalcValue impls until length.rs un-gates; percentage.rs likewise gates the
+// generic-D `DimensionPercentage<D>` method block on the missing
+// Zero/MulF32/TryAdd protocol traits.
+pub mod number;
+pub mod angle;
+pub mod css_string;
 pub use self::css_string as string;
 gated_value!(alpha);
 gated_value!(ratio);
 gated_value!(resolution);
-gated_value!(time);
-gated_value!(calc);
-gated_value!(percentage);
+pub mod time;
+pub mod calc;
+pub mod percentage;
 gated_value!(length);
 gated_value!(position);
 gated_value!(size);

@@ -1,19 +1,35 @@
 use crate::css_parser as css;
 pub use css::Error;
 use bumpalo::Bump;
-use css::{PrintErr, Printer, Result};
+use css::{CssResult as Result, PrintErr, Printer};
 
+// blocked_on: properties/{align,background,border,box_shadow,flex,font,
+// margin_padding,prefix_handler,size,transform,transition,ui} — every leaf
+// property module is still `gated_prop!`-stubbed in properties/mod.rs. Only
+// the gated `DeclarationHandler` body below references these.
+#[cfg(any())]
 use crate::css_properties::align::AlignHandler;
+#[cfg(any())]
 use crate::css_properties::background::BackgroundHandler;
+#[cfg(any())]
 use crate::css_properties::border::BorderHandler;
+#[cfg(any())]
 use crate::css_properties::box_shadow::BoxShadowHandler;
+#[cfg(any())]
 use crate::css_properties::flex::FlexHandler;
+#[cfg(any())]
 use crate::css_properties::font::FontHandler;
+#[cfg(any())]
 use crate::css_properties::margin_padding::{InsetHandler, MarginHandler, PaddingHandler, ScrollMarginHandler};
+#[cfg(any())]
 use crate::css_properties::prefix_handler::FallbackHandler;
+#[cfg(any())]
 use crate::css_properties::size::SizeHandler;
+#[cfg(any())]
 use crate::css_properties::transform::TransformHandler;
+#[cfg(any())]
 use crate::css_properties::transition::TransitionHandler;
+#[cfg(any())]
 use crate::css_properties::ui::ColorSchemeHandler;
 // const GridHandler = css.css_properties.g
 
@@ -36,6 +52,8 @@ pub struct DeclarationBlock<'bump> {
 
 pub struct DebugFmt<'a, 'bump>(&'a DeclarationBlock<'bump>);
 
+// blocked_on: Printer::new signature + DeclarationBlock::to_css (gated below).
+#[cfg(any())]
 impl<'a, 'bump> core::fmt::Display for DebugFmt<'a, 'bump> {
     fn fmt(&self, writer: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let mut arraylist: Vec<u8> = Vec::new();
@@ -72,6 +90,26 @@ impl<'bump> DeclarationBlock<'bump> {
         self.declarations.is_empty() && self.important_declarations.is_empty()
     }
 
+    pub fn len(&self) -> usize {
+        self.declarations.len() + self.important_declarations.len()
+    }
+
+    pub fn new_in(bump: &'bump Bump) -> Self {
+        Self {
+            important_declarations: DeclarationList::new_in(bump),
+            declarations: DeclarationList::new_in(bump),
+        }
+    }
+}
+
+// ─── parse / to_css / minify / hash (gated) ───────────────────────────────
+// blocked_on: css_parser::rule_parsers (RuleBodyParser / RuleBodyItemParser /
+// DeclarationParser traits live in the `#[cfg(any())] mod rule_parsers`
+// block), properties_generated (Property::to_css / property_id / variants),
+// and the per-property handler modules. The data layout above is real; only
+// behavior is deferred.
+#[cfg(any())]
+impl<'bump> DeclarationBlock<'bump> {
     pub fn parse(input: &mut css::Parser<'bump>, options: &css::ParserOptions) -> Result<DeclarationBlock<'bump>> {
         let bump = input.allocator();
         let mut important_declarations = DeclarationList::new_in(bump);
@@ -101,10 +139,6 @@ impl<'bump> DeclarationBlock<'bump> {
             important_declarations,
             declarations,
         })
-    }
-
-    pub fn len(&self) -> usize {
-        self.declarations.len() + self.important_declarations.len()
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
@@ -228,6 +262,16 @@ impl<'bump> DeclarationBlock<'bump> {
         css::implement_deep_clone(self, bump)
     }
 }
+
+// ─── PropertyDeclarationParser + parse_declaration (gated) ────────────────
+// blocked_on: css_parser::rule_parsers — `RuleBodyParser` / `DeclarationParser`
+// / `RuleBodyItemParser` / `ComposesCtx` / `ComposesState` / `NoComposesCtx`
+// are all inside the `#[cfg(any())] mod rule_parsers` block; and
+// properties_generated — `PropertyId::from_str` / `Property::parse` /
+// `Property::Composes` / `CustomPropertyId` are codegen stubs.
+#[cfg(any())]
+mod parse_decl {
+use super::*;
 
 pub struct PropertyDeclarationParser<'a, 'bump> {
     pub important_declarations: &'a mut DeclarationList<'bump>,
@@ -422,6 +466,31 @@ where
     Ok(())
 }
 
+} // mod parse_decl
+#[cfg(any())]
+pub use parse_decl::{parse_declaration, parse_declaration_impl, PropertyDeclarationParser};
+
+/// Per-shorthand-group handler state used by `DeclarationBlock::minify`.
+///
+/// B-2 round 4: the per-property handler fields (`background`, `border`, ...)
+/// are gated behind the still-stubbed `properties/*` leaf modules. Only the
+/// arena-backed `decls` accumulator is real so `MinifyContext` and
+/// `rules/style.rs` can name `&mut DeclarationHandler<'bump>` without pulling
+/// in the property lattice. The full struct re-widens when the property
+/// handlers un-gate.
+#[cfg(not(any()))]
+pub struct DeclarationHandler<'bump> {
+    pub decls: DeclarationList<'bump>,
+}
+
+#[cfg(not(any()))]
+impl<'bump> DeclarationHandler<'bump> {
+    pub fn new(bump: &'bump Bump) -> Self {
+        Self { decls: DeclarationList::new_in(bump) }
+    }
+}
+
+#[cfg(any())]
 pub struct DeclarationHandler<'bump> {
     pub background: BackgroundHandler,
     pub border: BorderHandler,
@@ -442,6 +511,7 @@ pub struct DeclarationHandler<'bump> {
     pub decls: DeclarationList<'bump>,
 }
 
+#[cfg(any())]
 impl<'bump> DeclarationHandler<'bump> {
     pub fn finalize(&mut self, context: &mut css::PropertyHandlerContext<'bump>) {
         if let Some(direction) = self.direction.take() {
@@ -493,6 +563,7 @@ impl<'bump> DeclarationHandler<'bump> {
     }
 }
 
+#[cfg(any())]
 impl<'bump> DeclarationHandler<'bump> {
     pub fn new(bump: &'bump Bump) -> Self {
         Self {

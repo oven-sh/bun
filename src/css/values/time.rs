@@ -1,8 +1,8 @@
-use crate as css;
-use crate::css_values::angle::Angle;
-use crate::css_values::calc::Calc;
-use crate::css_values::number::{CSSNumber, CSSNumberFns};
-use crate::{PrintErr, Printer, Result};
+use crate::css_parser as css;
+use crate::css_parser::{CssResult as Result, Maybe, PrintErr, Printer, Token};
+use crate::values::angle::Angle;
+use crate::values::calc::Calc;
+use crate::values::number::{CSSNumber, CSSNumberFns};
 
 /// A CSS [`<time>`](https://www.w3.org/TR/css-values-4/#time) value, in either
 /// seconds or milliseconds.
@@ -42,11 +42,9 @@ impl Time {
         lhs == rhs
     }
 
-    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
-        // Zig: css.implementHash — reflection-based field hashing.
-        // TODO(port): confirm bun_css::implement_hash signature in Phase B.
-        css::implement_hash(self, hasher);
-    }
+    // TODO(port): css.implementHash — reflection-based field hashing.
+    // CssHash impl for Time wires once generics.rs covers it; Time is POD so
+    // wyhash over the discriminant+payload is the eventual body.
 
     pub fn parse(input: &mut css::Parser) -> Result<Time> {
         match input.try_parse(Calc::<Time>::parse) {
@@ -64,22 +62,19 @@ impl Time {
         }
 
         let location = input.current_source_location();
-        let token = match input.next() {
-            Ok(vv) => vv,
-            Err(e) => return Err(e),
-        };
-        match token {
-            css::Token::Dimension(dim) => {
+        let token = input.next()?.clone();
+        match &token {
+            Token::Dimension(dim) => {
                 // TODO(port): Zig fn name has a typo (`ASCIII`); verify exact bun_str symbol in Phase B.
-                if bun_str::strings::eql_case_insensitive_ascii_check_length(b"s", dim.unit) {
+                if bun_string::strings::eql_case_insensitive_ascii_check_length(b"s", dim.unit) {
                     Ok(Time::Seconds(dim.num.value))
-                } else if bun_str::strings::eql_case_insensitive_ascii_check_length(b"ms", dim.unit) {
+                } else if bun_string::strings::eql_case_insensitive_ascii_check_length(b"ms", dim.unit) {
                     Ok(Time::Milliseconds(dim.num.value))
                 } else {
-                    Err(location.new_unexpected_token_error(css::Token::Ident(dim.unit)))
+                    Err(location.new_unexpected_token_error(Token::Ident(dim.unit)))
                 }
             }
-            _ => Err(location.new_unexpected_token_error(token.clone())),
+            _ => Err(location.new_unexpected_token_error(token)),
         }
     }
 
@@ -124,13 +119,13 @@ impl Time {
         }
     }
 
-    pub fn try_from_token(token: &css::Token) -> css::Maybe<Time, ()> {
+    pub fn try_from_token(token: &Token) -> Maybe<Time, ()> {
         match token {
-            css::Token::Dimension(dim) => {
+            Token::Dimension(dim) => {
                 // todo_stuff.match_ignore_ascii_case
-                if bun_str::strings::eql_case_insensitive_ascii_check_length(b"s", dim.unit) {
+                if bun_string::strings::eql_case_insensitive_ascii_check_length(b"s", dim.unit) {
                     return Ok(Time::Seconds(dim.num.value));
-                } else if bun_str::strings::eql_case_insensitive_ascii_check_length(b"ms", dim.unit) {
+                } else if bun_string::strings::eql_case_insensitive_ascii_check_length(b"ms", dim.unit) {
                     return Ok(Time::Milliseconds(dim.num.value));
                 }
             }
@@ -157,10 +152,9 @@ impl Time {
         self.add(other)
     }
 
-    pub fn into_calc<'bump>(self, bump: &'bump bun_alloc::Arena) -> Calc<'bump, Time> {
-        // Zig: bun.create(allocator, Time, this) — arena-allocated box.
-        // css is an AST crate (PORTING.md §Allocators): allocator.create(T) → bump.alloc(init).
-        Calc::Value(bump.alloc(self))
+    pub fn into_calc(self) -> Calc<Time> {
+        // PERF(port): was arena alloc (bun.create) — Calc<V>::Value now owns Box<V>.
+        Calc::Value(Box::new(self))
     }
 
     pub fn add(self, other: Self) -> Time {
@@ -170,7 +164,7 @@ impl Time {
     }
 
     pub fn partial_cmp(&self, other: &Time) -> Option<core::cmp::Ordering> {
-        css::generic::partial_cmp_f32(&self.to_ms(), &other.to_ms())
+        crate::generic::partial_cmp_f32(&self.to_ms(), &other.to_ms())
     }
 
     pub fn map(&self, map_fn: impl Fn(f32) -> f32) -> Time {

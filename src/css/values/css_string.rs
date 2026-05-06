@@ -1,23 +1,23 @@
 pub use crate::css_parser as css;
-pub use css::Result;
-pub use css::Printer;
+pub use css::CssResult as Result;
 pub use css::PrintErr;
+pub use css::Printer;
 
 /// A quoted CSS string.
 // TODO(port): arena-owned slice in CSS crate — may need `&'bump [u8]` threading in Phase B.
-pub type CssString<'a> = &'a [u8];
+pub type CssString = &'static [u8];
 
 pub struct CssStringFns;
 impl CssStringFns {
-    pub fn parse<'i>(input: &mut css::Parser<'i>) -> Result<CssString<'i>> {
+    pub fn parse(input: &mut css::Parser) -> Result<CssString> {
         input.expect_string()
     }
 
     pub fn to_css(this: &&[u8], dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        let Ok(v) = css::serializer::serialize_string(*this, dest) else {
-            return dest.add_fmt_error();
-        };
-        Ok(v)
+        match css::serializer::serialize_string(*this, dest) {
+            Ok(v) => Ok(v),
+            Err(_) => Err(dest.add_fmt_error()),
+        }
     }
 }
 

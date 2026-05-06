@@ -1,8 +1,13 @@
 use crate::css_parser as css;
 
+// blocked_on: rules/media + media_query::{MediaCondition,MediaFeature,...} +
+// properties/custom — only the gated `get_*_rules` / `add_unparsed_fallbacks`
+// bodies below reference these.
+#[cfg(any())]
 use css::css_rules::media::MediaRule;
+#[cfg(any())]
 use css::media_query::{MediaCondition, MediaFeature, MediaFeatureId, MediaList, MediaQuery};
-
+#[cfg(any())]
 use css::css_properties::custom::UnparsedProperty;
 
 // TODO(port): LIFETIMES.tsv prescribes `&'a HashSet<String>` for unused_symbols verbatim,
@@ -92,7 +97,16 @@ impl<'a> PropertyHandlerContext<'a> {
 
         self.targets.should_compile_logical(feature)
     }
+}
 
+// ─── heavy rule-building helpers (gated) ──────────────────────────────────
+// blocked_on: css_rules::{CssRule,CssRuleList,StyleRule,SupportsRule,media},
+// selectors::parser::{Direction,Component,PseudoClass}, DeclarationBlock
+// construction with bump-allocated lists, properties/custom::UnparsedProperty.
+// These build whole rule subtrees and are only called from the (still-gated)
+// minify path; un-gate alongside `rules/style.rs`.
+#[cfg(any())]
+impl<'a> PropertyHandlerContext<'a> {
     pub fn get_supports_rules<T>(&self, style_rule: &css::StyleRule<T>) -> Vec<css::CssRule<T>> {
         if self.supports.is_empty() {
             return Vec::new();
@@ -232,7 +246,9 @@ impl<'a> PropertyHandlerContext<'a> {
 
         dest.push(css::CssRule::Style(rule));
     }
+}
 
+impl<'a> PropertyHandlerContext<'a> {
     pub fn reset(&mut self) {
         // PORT NOTE: per-element `deinit()` calls dropped — Vec::clear drops each element,
         // and SupportsEntry / Property own their resources via Drop.
@@ -241,7 +257,11 @@ impl<'a> PropertyHandlerContext<'a> {
         self.rtl.clear();
         self.dark.clear();
     }
+}
 
+// blocked_on: SupportsCondition::eql + properties/custom::UnparsedProperty.
+#[cfg(any())]
+impl<'a> PropertyHandlerContext<'a> {
     pub fn add_conditional_property(
         &mut self,
         condition: css::SupportsCondition,

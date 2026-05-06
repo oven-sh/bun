@@ -1,9 +1,12 @@
 use crate::css_parser as css;
 use crate::css_parser::{CssResult, PrintErr, Printer};
 use crate::values::angle::Angle;
+#[cfg(any())] // blocked_on: values/length.rs un-gate
 use crate::values::length::{Length, LengthValue};
 use crate::values::number::{CSSNumber, CSSNumberFns};
-use crate::values::percentage::{DimensionPercentage, Percentage};
+#[cfg(any())] // blocked_on: DimensionPercentage<D> generic impl block
+use crate::values::percentage::DimensionPercentage;
+use crate::values::percentage::Percentage;
 use crate::values::time::Time;
 
 use core::cmp::Ordering;
@@ -324,7 +327,7 @@ impl<V: CalcValue> Calc<V> {
             }
             CalcUnit::Min => {
                 let mut reduced = input.parse_nested_block(|i| {
-                    i.parse_comma_separated_with_ctx(|i| Self::parse_sum(i, ctx, parse_ident))
+                    i.parse_comma_separated(|i| Self::parse_sum(i, ctx, parse_ident))
                 })?;
                 // PERF(alloc): i don't like this additional allocation
                 // can we use stack fallback here if the common case is that there will be 1 argument?
@@ -336,7 +339,7 @@ impl<V: CalcValue> Calc<V> {
             }
             CalcUnit::Max => {
                 let mut reduced = input.parse_nested_block(|i| {
-                    i.parse_comma_separated_with_ctx(|i| Self::parse_sum(i, ctx, parse_ident))
+                    i.parse_comma_separated(|i| Self::parse_sum(i, ctx, parse_ident))
                 })?;
                 // PERF: i don't like this additional allocation
                 Self::reduce_args(&mut reduced, Ordering::Greater);
@@ -461,13 +464,13 @@ impl<V: CalcValue> Calc<V> {
                 if let Some(v) = V::try_from_angle(res) {
                     return Ok(Calc::Value(Box::new(v)));
                 }
-                Err(i.new_custom_error(css::ParserError::InvalidValue))
+                Err(i.new_custom_error(css::ParserError::invalid_value))
             }),
             CalcUnit::Pow => input.parse_nested_block(|i| {
                 let a = Self::parse_numeric(i, ctx, parse_ident)?;
                 i.expect_comma()?;
                 let b = Self::parse_numeric(i, ctx, parse_ident)?;
-                Ok(Calc::Number(bun_core::powf(a, b)))
+                Ok(Calc::Number(a.powf(b)))
             }),
             CalcUnit::Log => input.parse_nested_block(|i| {
                 let value = Self::parse_numeric(i, ctx, parse_ident)?;
@@ -481,7 +484,7 @@ impl<V: CalcValue> Calc<V> {
             CalcUnit::Exp => Self::parse_numeric_fn(input, NumericFnOp::Exp, ctx, parse_ident),
             CalcUnit::Hypot => input.parse_nested_block(|i| {
                 let mut args =
-                    i.parse_comma_separated_with_ctx(|i| Self::parse_sum(i, ctx, parse_ident))?;
+                    i.parse_comma_separated(|i| Self::parse_sum(i, ctx, parse_ident))?;
                 let val = Self::parse_hypot(&mut args)?;
                 if let Some(v) = val {
                     return Ok(v);
@@ -574,10 +577,10 @@ impl<V: CalcValue> Calc<V> {
                     break; // allow trailing whitespace
                 }
                 let next_tok = input.next()?.clone();
-                if matches!(next_tok, css::Token::Delim('+')) {
+                if matches!(next_tok, css::Token::Delim(c) if c == b'+' as u32) {
                     let next = Self::parse_product(input, ctx, parse_ident)?;
                     cur = cur.add(next, input)?;
-                } else if matches!(next_tok, css::Token::Delim('-')) {
+                } else if matches!(next_tok, css::Token::Delim(c) if c == b'-' as u32) {
                     let mut rhs = Self::parse_product(input, ctx, parse_ident)?;
                     rhs = rhs.mul_f32(-1.0);
                     cur = cur.add(rhs, input)?;
@@ -609,7 +612,7 @@ impl<V: CalcValue> Calc<V> {
                 }
             };
 
-            if matches!(tok, css::Token::Delim('*')) {
+            if matches!(tok, css::Token::Delim(c) if c == b'*' as u32) {
                 // At least one of the operands must be a number.
                 let rhs = Self::parse_value(input, ctx, parse_ident)?;
                 if let Calc::Number(n) = rhs {
@@ -618,9 +621,9 @@ impl<V: CalcValue> Calc<V> {
                     node = rhs;
                     node = node.mul_f32(val);
                 } else {
-                    return Err(input.new_unexpected_token_error(css::Token::Delim('*')));
+                    return Err(input.new_unexpected_token_error(css::Token::Delim(b'*' as u32)));
                 }
-            } else if matches!(tok, css::Token::Delim('/')) {
+            } else if matches!(tok, css::Token::Delim(c) if c == b'/' as u32) {
                 let rhs = Self::parse_value(input, ctx, parse_ident)?;
                 if let Calc::Number(val) = rhs {
                     if val != 0.0 {
@@ -628,7 +631,7 @@ impl<V: CalcValue> Calc<V> {
                         continue;
                     }
                 }
-                return Err(input.new_custom_error(css::ParserError::InvalidValue));
+                return Err(input.new_custom_error(css::ParserError::invalid_value));
             } else {
                 input.reset(&start);
                 break;
@@ -723,14 +726,14 @@ impl<V: CalcValue> Calc<V> {
                     Calc::Number(n) => break 'rad trig_fn(*n),
                     _ => {}
                 }
-                return Err(i.new_custom_error(css::ParserError::InvalidValue));
+                return Err(i.new_custom_error(css::ParserError::invalid_value));
             };
 
             if to_angle && !rad.is_nan() {
                 if let Some(val) = V::try_from_angle(Angle::Rad(rad)) {
                     return Ok(Calc::Value(Box::new(val)));
                 }
-                return Err(i.new_custom_error(css::ParserError::InvalidValue));
+                return Err(i.new_custom_error(css::ParserError::invalid_value));
             } else {
                 return Ok(Calc::Number(rad));
             }
@@ -795,7 +798,7 @@ impl<V: CalcValue> Calc<V> {
 
         // We don't have a way to represent arguments that aren't angles, so just error.
         // This will fall back to an unparsed property, leaving the atan2() function intact.
-        Err(input.new_custom_error(css::ParserError::InvalidValue))
+        Err(input.new_custom_error(css::ParserError::invalid_value))
     }
 
     pub fn parse_numeric<C: Copy>(
@@ -816,7 +819,7 @@ impl<V: CalcValue> Calc<V> {
         let val = match v {
             Calc::Number(n) => n,
             Calc::Value(v) => *v,
-            _ => return Err(input.new_custom_error(css::ParserError::InvalidValue)),
+            _ => return Err(input.new_custom_error(css::ParserError::invalid_value)),
         };
         Ok(val)
     }
@@ -842,7 +845,7 @@ impl<V: CalcValue> Calc<V> {
         let mut errored = false;
         let mut sum = first;
         for arg in &args[i..] {
-            let Some(next) = Self::apply_op(&sum, arg, (), |_, a, b| a + bun_core::powf(b, 2.0))
+            let Some(next) = Self::apply_op(&sum, arg, (), |_, a, b| a + b.powf(2.0))
             else {
                 errored = true;
                 break;
@@ -908,11 +911,11 @@ impl<V: CalcValue> Calc<V> {
                 a.to_css(dest)?;
                 // White space is always required.
                 if b.is_sign_negative() {
-                    dest.write_str(" - ")?;
+                    dest.write_str(b" - ")?;
                     let b2 = b.deep_clone().mul_f32(-1.0);
                     b2.to_css(dest)?;
                 } else {
-                    dest.write_str(" + ")?;
+                    dest.write_str(b" + ")?;
                     b.to_css(dest)?;
                 }
                 Ok(())
@@ -923,11 +926,11 @@ impl<V: CalcValue> Calc<V> {
                 if num.abs() < 1.0 {
                     let div = 1.0 / num;
                     calc.to_css(dest)?;
-                    dest.delim('/', true)?;
+                    dest.delim(b'/', true)?;
                     CSSNumberFns::to_css(&div, dest)?;
                 } else {
                     CSSNumberFns::to_css(&num, dest)?;
-                    dest.delim('*', true)?;
+                    dest.delim(b'*', true)?;
                     calc.to_css(dest)?;
                 }
                 Ok(())
@@ -1198,7 +1201,7 @@ impl<V> MathFunction<V> {
             MathFunction::Calc(calc) => {
                 dest.write_str("calc(")?;
                 calc.to_css(dest)?;
-                dest.write_char(')')
+                dest.write_char(b')')
             }
             MathFunction::Min(args) => {
                 dest.write_str("min(")?;
@@ -1207,11 +1210,11 @@ impl<V> MathFunction<V> {
                     if first {
                         first = false;
                     } else {
-                        dest.delim(',', false)?;
+                        dest.delim(b',', false)?;
                     }
                     arg.to_css(dest)?;
                 }
-                dest.write_char(')')
+                dest.write_char(b')')
             }
             MathFunction::Max(args) => {
                 dest.write_str("max(")?;
@@ -1220,55 +1223,55 @@ impl<V> MathFunction<V> {
                     if first {
                         first = false;
                     } else {
-                        dest.delim(',', false)?;
+                        dest.delim(b',', false)?;
                     }
                     arg.to_css(dest)?;
                 }
-                dest.write_char(')')
+                dest.write_char(b')')
             }
             MathFunction::Clamp { min, center, max } => {
                 dest.write_str("clamp(")?;
                 min.to_css(dest)?;
-                dest.delim(',', false)?;
+                dest.delim(b',', false)?;
                 center.to_css(dest)?;
-                dest.delim(',', false)?;
+                dest.delim(b',', false)?;
                 max.to_css(dest)?;
-                dest.write_char(')')
+                dest.write_char(b')')
             }
             MathFunction::Round { strategy, value, interval } => {
                 dest.write_str("round(")?;
                 if *strategy != RoundingStrategy::default() {
                     strategy.to_css(dest)?;
-                    dest.delim(',', false)?;
+                    dest.delim(b',', false)?;
                 }
                 value.to_css(dest)?;
-                dest.delim(',', false)?;
+                dest.delim(b',', false)?;
                 interval.to_css(dest)?;
-                dest.write_char(')')
+                dest.write_char(b')')
             }
             MathFunction::Rem { dividend, divisor } => {
                 dest.write_str("rem(")?;
                 dividend.to_css(dest)?;
-                dest.delim(',', false)?;
+                dest.delim(b',', false)?;
                 divisor.to_css(dest)?;
-                dest.write_char(')')
+                dest.write_char(b')')
             }
             MathFunction::Mod { dividend, divisor } => {
                 dest.write_str("mod(")?;
                 dividend.to_css(dest)?;
-                dest.delim(',', false)?;
+                dest.delim(b',', false)?;
                 divisor.to_css(dest)?;
-                dest.write_char(')')
+                dest.write_char(b')')
             }
             MathFunction::Abs(v) => {
                 dest.write_str("abs(")?;
                 v.to_css(dest)?;
-                dest.write_char(')')
+                dest.write_char(b')')
             }
             MathFunction::Sign(v) => {
                 dest.write_str("sign(")?;
                 v.to_css(dest)?;
-                dest.write_char(')')
+                dest.write_char(b')')
             }
             MathFunction::Hypot(args) => {
                 dest.write_str("hypot(")?;
@@ -1277,11 +1280,11 @@ impl<V> MathFunction<V> {
                     if first {
                         first = false;
                     } else {
-                        dest.delim(',', false)?;
+                        dest.delim(b',', false)?;
                     }
                     arg.to_css(dest)?;
                 }
-                dest.write_char(')')
+                dest.write_char(b')')
             }
         }
     }
@@ -1396,7 +1399,7 @@ fn hypot(_: (), a: f32, b: f32) -> f32 {
 }
 
 fn powi2(v: f32) -> f32 {
-    bun_core::powf(v, 2.0)
+    v.powf(2.0)
 }
 
 fn sqrtf32(v: f32) -> f32 {
@@ -1476,7 +1479,7 @@ impl CalcValue for CSSNumber {
         match c {
             Calc::Value(v) => Ok(*v),
             Calc::Number(n) => Ok(n),
-            _ => Err(input.new_custom_error(css::ParserError::InvalidValue)),
+            _ => Err(input.new_custom_error(css::ParserError::invalid_value)),
         }
     }
     #[inline] fn try_sign(&self) -> Option<f32> { Some(CSSNumberFns::sign(self)) }
@@ -1504,7 +1507,7 @@ impl CalcValue for Angle {
     fn from_calc(c: Calc<Self>, input: &mut css::Parser) -> CssResult<Self> {
         match c {
             Calc::Value(v) => Ok(*v),
-            _ => Err(input.new_custom_error(css::ParserError::InvalidValue)),
+            _ => Err(input.new_custom_error(css::ParserError::invalid_value)),
         }
     }
     #[inline] fn try_sign(&self) -> Option<f32> { Some(self.sign()) }
@@ -1557,7 +1560,7 @@ impl CalcValue for Time {
     fn from_calc(c: Calc<Self>, input: &mut css::Parser) -> CssResult<Self> {
         match c {
             Calc::Value(v) => Ok(*v),
-            _ => Err(input.new_custom_error(css::ParserError::InvalidValue)),
+            _ => Err(input.new_custom_error(css::ParserError::invalid_value)),
         }
     }
     #[inline] fn try_sign(&self) -> Option<f32> { Some(self.sign()) }
@@ -1576,6 +1579,7 @@ impl CalcValue for Time {
     #[inline] fn eql(&self, other: &Self) -> bool { Time::eql(self, other) }
 }
 
+#[cfg(any())] // blocked_on: values/length.rs un-gate
 impl CalcValue for Length {
     #[inline] fn mul_f32(self, rhs: f32) -> Self { Length::mul_f32(self, rhs) }
     #[inline] fn add_internal(self, rhs: Self) -> Self { Length::add_internal(self, rhs) }
@@ -1602,6 +1606,7 @@ impl CalcValue for Length {
     #[inline] fn eql(&self, other: &Self) -> bool { self == other }
 }
 
+#[cfg(any())] // blocked_on: values/length.rs + DimensionPercentage<D> impl block
 impl CalcValue for DimensionPercentage<LengthValue> {
     #[inline] fn mul_f32(self, rhs: f32) -> Self { DimensionPercentage::mul_f32(self, rhs) }
     #[inline] fn add_internal(self, rhs: Self) -> Self { DimensionPercentage::add_internal(self, rhs) }
@@ -1632,6 +1637,7 @@ impl CalcValue for DimensionPercentage<LengthValue> {
     #[inline] fn eql(&self, other: &Self) -> bool { DimensionPercentage::eql(self, other) }
 }
 
+#[cfg(any())] // blocked_on: DimensionPercentage<D> impl block (parse/to_css/try_* bounds)
 impl CalcValue for DimensionPercentage<Angle> {
     #[inline] fn mul_f32(self, rhs: f32) -> Self { DimensionPercentage::mul_f32(self, rhs) }
     #[inline] fn add_internal(self, rhs: Self) -> Self { DimensionPercentage::add_internal(self, rhs) }

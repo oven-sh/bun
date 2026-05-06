@@ -67,9 +67,22 @@ pub mod selectors;
 #[path = "media_query.rs"]
 pub mod media_query;
 
-// ─── still gated (heavy cross-module deps) ────────────────────────────────
-gated_mod!(context, "context.rs");
-gated_mod!(declaration, "declaration.rs");
+// ─── B-2 round 4: declaration/context un-gated ────────────────────────────
+// `DeclarationBlock` / `DeclarationList` / `DeclarationHandler` and
+// `PropertyHandlerContext` / `DeclarationContext` now compile for real so the
+// `rules/` leaf modules can un-gate against them. The heavy method bodies
+// (parse / to_css / minify / get_*_rules) and the per-property handler
+// fields stay internally `#[cfg(any())]`-gated until `properties/*` and the
+// `rule_parsers` block in css_parser.rs un-gate.
+#[path = "context.rs"]
+pub mod context;
+#[path = "declaration.rs"]
+pub mod declaration;
+
+// Crate-root re-exports so `bun_css::DeclarationBlock` etc. resolve for the
+// rule modules without going through the (still-shimmed) css_parser hub.
+pub use context::{DeclarationContext, PropertyHandlerContext, SupportsEntry};
+pub use declaration::{DeclarationBlock, DeclarationHandler, DeclarationList};
 
 // Path aliases the ported submodules expect at crate root (Zig's `css.*`
 // namespace was flat; the Rust port re-nests under `values/`/`properties/`
@@ -87,6 +100,15 @@ pub use css_parser::{
 };
 pub use compat::Feature;
 pub use error::ParserErrorKind as ErrorKind;
+
+// `css::generic::*` is the Zig-spelled namespace for the protocol traits +
+// reflection helpers. The Rust module is `generics`; alias both spellings so
+// value/property modules can use `crate::generic::partial_cmp_f32` etc.
+pub use generics as generic;
+pub use generics::{implement_deep_clone, implement_eql, implement_hash};
+// Serializer + dtoa helpers live in the parser hub but are referenced as
+// `css::serializer` / `css::f32_length_with_5_digits` from value modules.
+pub use css_parser::{dtoa_short, f32_length_with_5_digits, serializer, to_css};
 
 // generics: un-gated (B-2). Core protocol traits (DeepClone/CssEql/CssHash/
 // IsCompatible/ListContainer) compile; Parse/ToCss/Angle impls remain

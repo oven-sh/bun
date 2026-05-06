@@ -2013,7 +2013,10 @@ impl Example {
                                     )
                                 };
 
-                                if folder.access_z(path, bun_sys::AccessMode::ReadOnly).is_err() {
+                                // Zig: `folder.accessZ(path, .{ .mode = .read_only })` (std.fs.Dir.accessZ).
+                                // bun_sys exposes `faccessat` for F_OK only; use it as the existence
+                                // gate here. TODO(port): plumb R_OK once bun_sys grows an accessor.
+                                if !bun_sys::faccessat(bun_sys::Fd::from_std_dir(folder), path).unwrap_or(false) {
                                     continue 'loop_;
                                 }
 

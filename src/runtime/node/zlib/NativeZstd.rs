@@ -361,45 +361,46 @@ impl Context {
     pub fn get_error_info(&mut self) -> Error {
         // PORT NOTE: reshaped `defer this.remaining = 0;` — compute result, then clear, then return.
         // SAFETY: ZSTD_getErrorCode is a pure fn on usize.
-        let err = unsafe { c::ZSTD_getErrorCode(self.remaining) };
+        let err = unsafe { c::ZSTD_getErrorCode(self.remaining as usize) };
         let result = if err == 0 {
             Error::OK
         } else {
             Error {
-                err: c_int::try_from(err).unwrap(),
+                err: err as c_int,
                 // SAFETY: ZSTD_getErrorString returns a static NUL-terminated string for any code.
-                msg: Some(unsafe { c::ZSTD_getErrorString(err) }),
+                msg: unsafe { c::ZSTD_getErrorString(err) },
                 code: match err {
-                    c::ZSTD_error_no_error => "ZSTD_error_no_error",
-                    c::ZSTD_error_GENERIC => "ZSTD_error_GENERIC",
-                    c::ZSTD_error_prefix_unknown => "ZSTD_error_prefix_unknown",
-                    c::ZSTD_error_version_unsupported => "ZSTD_error_version_unsupported",
-                    c::ZSTD_error_frameParameter_unsupported => "ZSTD_error_frameParameter_unsupported",
-                    c::ZSTD_error_frameParameter_windowTooLarge => "ZSTD_error_frameParameter_windowTooLarge",
-                    c::ZSTD_error_corruption_detected => "ZSTD_error_corruption_detected",
-                    c::ZSTD_error_checksum_wrong => "ZSTD_error_checksum_wrong",
-                    c::ZSTD_error_literals_headerWrong => "ZSTD_error_literals_headerWrong",
-                    c::ZSTD_error_dictionary_corrupted => "ZSTD_error_dictionary_corrupted",
-                    c::ZSTD_error_dictionary_wrong => "ZSTD_error_dictionary_wrong",
-                    c::ZSTD_error_dictionaryCreation_failed => "ZSTD_error_dictionaryCreation_failed",
-                    c::ZSTD_error_parameter_unsupported => "ZSTD_error_parameter_unsupported",
-                    c::ZSTD_error_parameter_combination_unsupported => "ZSTD_error_parameter_combination_unsupported",
-                    c::ZSTD_error_parameter_outOfBound => "ZSTD_error_parameter_outOfBound",
-                    c::ZSTD_error_tableLog_tooLarge => "ZSTD_error_tableLog_tooLarge",
-                    c::ZSTD_error_maxSymbolValue_tooLarge => "ZSTD_error_maxSymbolValue_tooLarge",
-                    c::ZSTD_error_maxSymbolValue_tooSmall => "ZSTD_error_maxSymbolValue_tooSmall",
-                    c::ZSTD_error_stabilityCondition_notRespected => "ZSTD_error_stabilityCondition_notRespected",
-                    c::ZSTD_error_stage_wrong => "ZSTD_error_stage_wrong",
-                    c::ZSTD_error_init_missing => "ZSTD_error_init_missing",
-                    c::ZSTD_error_memory_allocation => "ZSTD_error_memory_allocation",
-                    c::ZSTD_error_workSpace_tooSmall => "ZSTD_error_workSpace_tooSmall",
-                    c::ZSTD_error_dstSize_tooSmall => "ZSTD_error_dstSize_tooSmall",
-                    c::ZSTD_error_srcSize_wrong => "ZSTD_error_srcSize_wrong",
-                    c::ZSTD_error_dstBuffer_null => "ZSTD_error_dstBuffer_null",
-                    c::ZSTD_error_noForwardProgress_destFull => "ZSTD_error_noForwardProgress_destFull",
-                    c::ZSTD_error_noForwardProgress_inputEmpty => "ZSTD_error_noForwardProgress_inputEmpty",
-                    _ => "ZSTD_error_GENERIC",
-                },
+                    c::ZSTD_error_no_error => c"ZSTD_error_no_error",
+                    c::ZSTD_error_GENERIC => c"ZSTD_error_GENERIC",
+                    c::ZSTD_error_prefix_unknown => c"ZSTD_error_prefix_unknown",
+                    c::ZSTD_error_version_unsupported => c"ZSTD_error_version_unsupported",
+                    c::ZSTD_error_frameParameter_unsupported => c"ZSTD_error_frameParameter_unsupported",
+                    c::ZSTD_error_frameParameter_windowTooLarge => c"ZSTD_error_frameParameter_windowTooLarge",
+                    c::ZSTD_error_corruption_detected => c"ZSTD_error_corruption_detected",
+                    c::ZSTD_error_checksum_wrong => c"ZSTD_error_checksum_wrong",
+                    c::ZSTD_error_literals_headerWrong => c"ZSTD_error_literals_headerWrong",
+                    c::ZSTD_error_dictionary_corrupted => c"ZSTD_error_dictionary_corrupted",
+                    c::ZSTD_error_dictionary_wrong => c"ZSTD_error_dictionary_wrong",
+                    c::ZSTD_error_dictionaryCreation_failed => c"ZSTD_error_dictionaryCreation_failed",
+                    c::ZSTD_error_parameter_unsupported => c"ZSTD_error_parameter_unsupported",
+                    c::ZSTD_error_parameter_combination_unsupported => c"ZSTD_error_parameter_combination_unsupported",
+                    c::ZSTD_error_parameter_outOfBound => c"ZSTD_error_parameter_outOfBound",
+                    c::ZSTD_error_tableLog_tooLarge => c"ZSTD_error_tableLog_tooLarge",
+                    c::ZSTD_error_maxSymbolValue_tooLarge => c"ZSTD_error_maxSymbolValue_tooLarge",
+                    c::ZSTD_error_maxSymbolValue_tooSmall => c"ZSTD_error_maxSymbolValue_tooSmall",
+                    c::ZSTD_error_stabilityCondition_notRespected => c"ZSTD_error_stabilityCondition_notRespected",
+                    c::ZSTD_error_stage_wrong => c"ZSTD_error_stage_wrong",
+                    c::ZSTD_error_init_missing => c"ZSTD_error_init_missing",
+                    c::ZSTD_error_memory_allocation => c"ZSTD_error_memory_allocation",
+                    c::ZSTD_error_workSpace_tooSmall => c"ZSTD_error_workSpace_tooSmall",
+                    c::ZSTD_error_dstSize_tooSmall => c"ZSTD_error_dstSize_tooSmall",
+                    c::ZSTD_error_srcSize_wrong => c"ZSTD_error_srcSize_wrong",
+                    c::ZSTD_error_dstBuffer_null => c"ZSTD_error_dstBuffer_null",
+                    c::ZSTD_error_noForwardProgress_destFull => c"ZSTD_error_noForwardProgress_destFull",
+                    c::ZSTD_error_noForwardProgress_inputEmpty => c"ZSTD_error_noForwardProgress_inputEmpty",
+                    _ => c"ZSTD_error_GENERIC",
+                }
+                .as_ptr(),
             }
         };
         self.remaining = 0;

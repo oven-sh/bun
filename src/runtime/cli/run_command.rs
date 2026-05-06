@@ -1542,20 +1542,17 @@ impl RunCommand {
                     which(&mut path_buf, path_for_which, top_level_dir, target_name)
                 {
                     let out = destination.as_bytes();
-                    // PORT NOTE: `ctx.passthrough` is `Vec<Box<[u8]>>` but
-                    // `run_binary_without_bunx_path` takes `&[&[u8]]`.
-                    let passthrough: Vec<&[u8]> =
-                        ctx.passthrough.iter().map(|b| b.as_ref()).collect();
-                    let stored = fs.dirname_store.append(out)?;
-                    Self::run_binary_without_bunx_path(
-                        ctx,
-                        stored,
-                        destination.as_ptr() as *const ::core::ffi::c_char,
-                        top_level_dir,
-                        env_loader,
-                        &passthrough,
-                        Some(target_name),
-                    )?;
+                    let _stored = fs.dirname_store.append(out)?;
+                    let _ = (top_level_dir, target_name);
+                    // TODO(b2-blocked): `run_binary_without_bunx_path` lives in
+                    // `phase_a_draft` only (needs `bun_core::spawn_sync` wiring).
+                    // Once ported to the active `impl RunCommand`:
+                    //   Self::run_binary_without_bunx_path(
+                    //       ctx, stored, destination.as_ptr() as *const c_char,
+                    //       top_level_dir, env_loader, &passthrough,
+                    //       Some(target_name),
+                    //   )?;
+                    todo!("blocked_on: RunCommand::run_binary_without_bunx_path");
                 }
             }
         }
@@ -2313,23 +2310,26 @@ impl RunCommand {
             None // TODO: implement on Windows
         };
 
-        let spawn_result_maybe = bun_core::spawn_sync(&bun_core::SpawnSyncOptions {
-            argv: &argv,
+        use crate::api::bun_process::{sync as spawn_sync_mod, Status as SpawnStatus};
+
+        // TODO: remember to free this when we add --filter or --concurrent
+        // in the meantime we don't need to free it.
+        let envp = env.map.create_null_delimited_env_map()?;
+
+        let spawn_result_maybe = spawn_sync_mod::spawn(&spawn_sync_mod::Options {
+            argv: argv.iter().map(|s| s.to_vec().into_boxed_slice()).collect(),
             argv0: Some(shell_bin.as_ptr() as *const c_char),
-
-            // TODO: remember to free this when we add --filter or --concurrent
-            // in the meantime we don't need to free it.
-            envp: env.map.create_null_delimited_env_map()?,
-
-            cwd: Some(cwd),
-            stderr: bun_core::Stdio::Inherit,
-            stdout: bun_core::Stdio::Inherit,
-            stdin: bun_core::Stdio::Inherit,
+            envp: Some(envp.as_ptr() as *const *const c_char),
+            cwd: cwd.to_vec().into_boxed_slice(),
+            stderr: spawn_sync_mod::SyncStdio::Inherit,
+            stdout: spawn_sync_mod::SyncStdio::Inherit,
+            stdin: spawn_sync_mod::SyncStdio::Inherit,
             ipc: ipc_fd,
 
             #[cfg(windows)]
-            windows: bun_core::SpawnWindowsOptions {
+            windows: crate::api::bun_process::WindowsOptions {
                 loop_: jsc::EventLoopHandle::init(jsc::MiniEventLoop::init_global(env, None)),
+                ..Default::default()
             },
             ..Default::default()
         });
@@ -2345,7 +2345,7 @@ impl RunCommand {
                 Output::flush();
                 return Ok(());
             }
-            Ok(sys::Result::Err(err)) => {
+            Ok(Err(err)) => {
                 if !silent {
                     Output::pretty_errorln(
                         "<r><red>error<r>: Failed to run script <b>{}<r> due to error:\n{}",
@@ -2355,23 +2355,31 @@ impl RunCommand {
                 Output::flush();
                 return Ok(());
             }
-            Ok(sys::Result::Ok(result)) => result,
+            Ok(Ok(result)) => result,
         };
 
         match spawn_result.status {
-            bun_core::SpawnStatus::Exited(exit_code) => {
-                if exit_code.signal.valid() && exit_code.signal != bun_core::Signal::SIGINT && !silent {
-                    Output::pretty_errorln(
-                        "<r><red>error<r><d>:<r> script <b>\"{}\"<r> was terminated by signal {}<r>",
-                        (bstr::BStr::new(name), exit_code.signal.fmt(Output::enable_ansi_colors_stderr())),
-                    );
-                    Output::flush();
+            SpawnStatus::Exited(exit_code) => {
+                // Zig: `exit_code.signal.valid() && != .SIGINT` — `.signal` is a
+                // raw `u8` here; `signal_code()` range-checks 1..=31 (i.e. valid).
+                if let Some(sig) = spawn_result.status.signal_code() {
+                    if sig != bun_core::SignalCode::SIGINT && !silent {
+                        Output::pretty_errorln(
+                            "<r><red>error<r><d>:<r> script <b>\"{}\"<r> was terminated by signal {}<r>",
+                            (
+                                bstr::BStr::new(name),
+                                bun_sys::SignalCode(sig as u8)
+                                    .fmt(Output::enable_ansi_colors_stderr()),
+                            ),
+                        );
+                        Output::flush();
 
-                    if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get() {
-                        bun_crash_handler::suppress_reporting();
+                        if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get() {
+                            bun_crash_handler::suppress_reporting();
+                        }
+
+                        Global::raise_ignoring_panic_handler(sig);
                     }
-
-                    Global::raise_ignoring_panic_handler(exit_code.signal);
                 }
 
                 if exit_code.code != 0 {
@@ -2383,27 +2391,33 @@ impl RunCommand {
                         Output::flush();
                     }
 
-                    Global::exit(exit_code.code);
+                    Global::exit(exit_code.code as u32);
                 }
             }
 
-            bun_core::SpawnStatus::Signaled(signal) => {
-                if signal.valid() && signal != bun_core::Signal::SIGINT && !silent {
-                    Output::pretty_errorln(
-                        "<r><red>error<r><d>:<r> script <b>\"{}\"<r> was terminated by signal {}<r>",
-                        (bstr::BStr::new(name), signal.fmt(Output::enable_ansi_colors_stderr())),
-                    );
-                    Output::flush();
-                }
+            SpawnStatus::Signaled(_) => {
+                if let Some(sig) = spawn_result.status.signal_code() {
+                    if sig != bun_core::SignalCode::SIGINT && !silent {
+                        Output::pretty_errorln(
+                            "<r><red>error<r><d>:<r> script <b>\"{}\"<r> was terminated by signal {}<r>",
+                            (
+                                bstr::BStr::new(name),
+                                bun_sys::SignalCode(sig as u8)
+                                    .fmt(Output::enable_ansi_colors_stderr()),
+                            ),
+                        );
+                        Output::flush();
+                    }
 
-                if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get() {
-                    bun_crash_handler::suppress_reporting();
-                }
+                    if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get() {
+                        bun_crash_handler::suppress_reporting();
+                    }
 
-                Global::raise_ignoring_panic_handler(signal);
+                    Global::raise_ignoring_panic_handler(sig);
+                }
             }
 
-            bun_core::SpawnStatus::Err(err) => {
+            SpawnStatus::Err(ref err) => {
                 if !silent {
                     Output::pretty_errorln(
                         "<r><red>error<r>: Failed to run script <b>{}<r> due to error:\n{}",
@@ -4439,8 +4453,10 @@ impl RunCommand {
 
         if ctx.filters.is_empty()
             && !ctx.workspaces
-            && cli::Cli::cmd().is_some()
-            && cli::Cli::cmd().unwrap() == cli::Command::Tag::AutoCommand
+            // SAFETY: single-threaded CLI dispatch; `CMD` is set once in
+            // `create_context_data` before any subcommand `exec` runs.
+            && unsafe { cli::CMD }.is_some()
+            && unsafe { cli::CMD }.unwrap() == cli::Command::Tag::AutoCommand
         {
             if target_name == b"feedback" {
                 Self::bun_feedback(ctx)?;
@@ -4497,11 +4513,13 @@ impl RunCommand {
         if !ctx.runtime_options.eval.script.is_empty() {
             const TRIGGER: &[u8] = path_literal!(b"/[eval]", b"\\[eval]");
             let mut entry_point_buf = [0u8; MAX_PATH_BYTES + TRIGGER.len()];
-            // TODO(port): std.posix.getcwd → bun_sys
-            let cwd = sys::getcwd_buf(&mut entry_point_buf[..MAX_PATH_BYTES])?;
-            let cwd_len = cwd.len();
+            let cwd_len = sys::getcwd(&mut entry_point_buf[..MAX_PATH_BYTES])?;
             entry_point_buf[cwd_len..cwd_len + TRIGGER.len()].copy_from_slice(TRIGGER);
-            bun_bun_js::Run::boot(ctx, &entry_point_buf[..cwd_len + TRIGGER.len()], None)?;
+            super::Run::boot(
+                ctx,
+                entry_point_buf[..cwd_len + TRIGGER.len()].to_vec().into_boxed_slice(),
+                None,
+            )?;
             return Ok(());
         }
 
@@ -4530,19 +4548,18 @@ impl RunCommand {
                 path_buf[cwd_len] = b'/'; // sep_posix
                 let parts = [filename];
                 PATH_BUF2.with_borrow_mut(|path_buf2| {
-                    let r = resolve_path::join_abs_string_buf(
-                        &path_buf[..cwd_len + 1],
-                        path_buf2,
-                        &parts,
-                        bun_paths::Style::Loose,
-                    );
+                    let r = bun_paths::resolve_path::join_abs_string_buf::<
+                        bun_paths::platform::Loose,
+                    >(&path_buf[..cwd_len + 1], path_buf2, &parts);
                     // SAFETY: result borrows thread-local PATH_BUF2 which lives for process lifetime
-                    Ok(unsafe { core::mem::transmute::<&[u8], &'static [u8]>(r) })
+                    Ok(unsafe { ::core::mem::transmute::<&[u8], &'static [u8]>(r) })
                 })
             })?
         };
 
-        if let Err(err) = bun_bun_js::Run::boot(ctx, normalized_filename, None) {
+        if let Err(err) =
+            super::Run::boot(ctx, normalized_filename.to_vec().into_boxed_slice(), None)
+        {
             let _ = ctx.log.print(Output::error_writer());
 
             Output::err(
@@ -4558,9 +4575,7 @@ impl RunCommand {
     fn bun_feedback(ctx: &Command::Context) -> Result<::core::convert::Infallible, bun_core::Error> {
         const TRIGGER: &[u8] = path_literal!(b"/[eval]", b"\\[eval]");
         let mut entry_point_buf = [0u8; MAX_PATH_BYTES + TRIGGER.len()];
-        // TODO(port): std.posix.getcwd → bun_sys
-        let cwd = sys::getcwd_buf(&mut entry_point_buf[..MAX_PATH_BYTES])?;
-        let cwd_len = cwd.len();
+        let cwd_len = sys::getcwd(&mut entry_point_buf[..MAX_PATH_BYTES])?;
         entry_point_buf[cwd_len..cwd_len + TRIGGER.len()].copy_from_slice(TRIGGER);
         ctx.runtime_options.eval.script = if Environment::CODEGEN_EMBED {
             // TODO(port): @embedFile → include_str! (path relative to this .rs)
@@ -4569,7 +4584,11 @@ impl RunCommand {
             bun_core::runtime_embed_file(bun_core::EmbedKind::Codegen, "eval/feedback.ts")
         };
         // TODO(port): ctx mutability
-        bun_bun_js::Run::boot(ctx, &entry_point_buf[..cwd_len + TRIGGER.len()], None)?;
+        super::Run::boot(
+            ctx,
+            entry_point_buf[..cwd_len + TRIGGER.len()].to_vec().into_boxed_slice(),
+            None,
+        )?;
         Global::exit(0);
     }
 }
@@ -4736,6 +4755,7 @@ impl BunXFastPath {
     }
 
     /// If this returns, it implies the fast path cannot be taken
+    #[cfg(windows)]
     fn try_launch(
         ctx: &Command::Context,
         path_to_use: &mut bun_str::WStr,
@@ -4809,6 +4829,10 @@ impl BunXFastPath {
             });
             let Ok(environment) = environment else { return };
 
+            // TODO(b2-blocked): `bun_install::windows_shim::bun_shim_impl` is not
+            // re-exported from the install crate yet (only `bin_linking_shim` is).
+            todo!("blocked_on: bun_install::windows_shim::bun_shim_impl::FromBunRunContext");
+            #[cfg(any())]
             let run_ctx = bun_install::windows_shim::bun_shim_impl::FromBunRunContext {
                 handle,
                 base_path: &path_to_use.as_slice()[4..],
@@ -4839,22 +4863,29 @@ impl BunXFastPath {
                 );
             }
 
+            #[cfg(any())]
             bun_install::windows_shim::bun_shim_impl::try_startup_from_bun_js(run_ctx);
 
             bun_output::scoped_log!(BunXFastPath, "did not start via shim");
         });
     }
 
+    #[cfg(windows)]
     fn direct_launch_callback(wpath: &[u16], ctx: &Command::Context) {
         Self::DIRECT_LAUNCH_BUFFER.with_borrow_mut(|direct_launch_buffer| {
-            let utf8 = match strings::convert_utf16_to_utf8_in_buffer(
-                bun_core::reinterpret_slice::<u8>(direct_launch_buffer),
-                wpath,
-            ) {
+            // SAFETY: WPathBuffer is `[u16; N]` — reinterpret as `[u8; 2N]`
+            // for the UTF-16→UTF-8 transcoder's output buffer.
+            let out_buf = unsafe {
+                ::core::slice::from_raw_parts_mut(
+                    direct_launch_buffer.as_mut_ptr().cast::<u8>(),
+                    direct_launch_buffer.len() * 2,
+                )
+            };
+            let utf8 = match bun_core::strings::convert_utf16_to_utf8_in_buffer(out_buf, wpath) {
                 Ok(u) => u,
                 Err(_) => return,
             };
-            if let Err(err) = bun_bun_js::Run::boot(ctx, utf8, None) {
+            if let Err(err) = super::Run::boot(ctx, utf8.to_vec().into_boxed_slice(), None) {
                 let _ = ctx.log.print(Output::error_writer());
                 Output::err(
                     err,

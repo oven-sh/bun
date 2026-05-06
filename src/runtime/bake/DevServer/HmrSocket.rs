@@ -13,15 +13,9 @@ use super::{
 };
 use crate::bake::dev_server_body::HmrTopicBits;
 
-/// Local shim for Zig's `res: anytype` — `bun_uws` has no `ResponseLike` trait
-/// yet. Only `getRemoteSocketInfo()` is called on `res` in this file, so bound
-/// on that alone. Concrete `bun_uws_sys::Response<SSL>` / `AnyResponse` provide
-/// an inherent method of this shape; add `impl ResponseLike for ...` at the
-/// call site once `on_web_socket_upgrade` is wired up.
+// Local shim for Zig's `res: anytype` — shared with `DevServer::on_web_socket_upgrade`.
 // TODO(port): replace with `bun_uws::ResponseLike` once that trait lands upstream.
-pub trait ResponseLike {
-    fn get_remote_socket_info(&mut self) -> Option<bun_uws_sys::SocketAddress<'_>>;
-}
+pub use super::ResponseLike;
 
 pub struct HmrSocket {
     // TODO(port): lifetime — backref to owning DevServer (destroyed via
@@ -47,9 +41,9 @@ impl HmrSocket {
     {
         let is_from_localhost = if let Some(addr) = res.get_remote_socket_info() {
             if addr.is_ipv6 {
-                addr.ip == b"::1"
+                &addr.ip[..] == b"::1"
             } else {
-                addr.ip == b"127.0.0.1"
+                &addr.ip[..] == b"127.0.0.1"
             }
         } else {
             false

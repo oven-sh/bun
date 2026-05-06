@@ -66,6 +66,97 @@ pub mod read_file {
     }
 }
 
+// `blob/write_file.rs` self-gates with `#![cfg(any())]` (heavy bun_io/ThreadPool
+// + WorkTask deps), which cfg's out the `mod` *item itself* — so
+// `super::write_file` resolves to the *function* `write_file` below instead of
+// the module. `_jsc_gated` only needs the public façade types
+// (`WriteFilePromise`, `WriteFileWaitFromLockedValueTask`, `WriteFile{,Task}`),
+// so re-declare a thin module with `todo!()` bodies until the real body
+// un-gates (at which point delete this stub and the `#![cfg(any())]`).
+#[allow(dead_code, unused_variables)]
+pub mod write_file {
+    use super::{jsc, Blob, JSGlobalObject, SizeType};
+    use core::ffi::c_void;
+
+    /// Zig: `SystemError.Maybe(SizeType)`
+    pub enum WriteFileResultType {
+        Result(SizeType),
+        Err(bun_jsc::SystemError),
+    }
+
+    pub type WriteFileOnWriteFileCallback<C> =
+        fn(ctx: *mut C, count: WriteFileResultType) -> Result<(), bun_jsc::JsTerminated>;
+
+    pub struct WriteFilePromise<'a> {
+        pub promise: jsc::JSPromiseStrong,
+        pub global_this: &'a JSGlobalObject,
+    }
+    impl<'a> WriteFilePromise<'a> {
+        pub fn run(
+            _handler: *mut Self,
+            _count: WriteFileResultType,
+        ) -> Result<(), bun_jsc::JsTerminated> {
+            todo!("blocked_on: write_file::WriteFilePromise::run")
+        }
+    }
+
+    pub struct WriteFileWaitFromLockedValueTask<'a> {
+        pub file_blob: Blob,
+        pub global_this: &'a JSGlobalObject,
+        pub promise: jsc::JSPromiseStrong,
+        pub mkdirp_if_not_exists: bool,
+    }
+    impl<'a> WriteFileWaitFromLockedValueTask<'a> {
+        pub fn then_wrap(_this: *mut c_void, _value: &mut crate::webcore::body::Value) {
+            todo!("blocked_on: write_file::WriteFileWaitFromLockedValueTask::then_wrap")
+        }
+    }
+
+    pub struct WriteFile;
+    impl WriteFile {
+        pub fn create<C>(
+            _dest: Blob,
+            _src: Blob,
+            _ctx: *mut C,
+            _cb: WriteFileOnWriteFileCallback<C>,
+            _mkdirp: bool,
+        ) -> Result<Box<WriteFile>, bun_core::Error> {
+            todo!("blocked_on: write_file::WriteFile::create")
+        }
+    }
+
+    pub struct WriteFileTask;
+    impl WriteFileTask {
+        pub fn create_on_js_thread(
+            _global: &JSGlobalObject,
+            _wf: Box<WriteFile>,
+        ) -> Box<WriteFileTask> {
+            todo!("blocked_on: write_file::WriteFileTask::create_on_js_thread")
+        }
+        pub fn schedule(&self) {
+            todo!("blocked_on: write_file::WriteFileTask::schedule")
+        }
+    }
+}
+
+/// Deallocator for `ArrayBuffer`s backed by a `Blob::Store` ref. Passed as a C
+/// callback to `ArrayBuffer::to_js_with_context`; the `ctx` is a raw `Store*`
+/// produced by `StoreRef::into_raw()`.
+///
+/// Mirrors Zig `jsc.array_buffer.BlobArrayBuffer_deallocator`; defined here
+/// (rather than in `bun_jsc`) because `Store` is a `bun_runtime` type and the
+/// `bun_jsc` copy is a forward-dep `todo!()` stub.
+pub unsafe extern "C" fn blob_store_array_buffer_deallocator(
+    _bytes: *mut c_void,
+    ctx: *mut c_void,
+) {
+    // SAFETY: `ctx` is a `*mut Store` previously yielded by `StoreRef::into_raw`
+    // (one outstanding strong ref). `Store::deref` consumes that ref.
+    if let Some(store) = NonNull::new(ctx.cast::<Store>()) {
+        unsafe { Store::deref(store) };
+    }
+}
+
 /// Result delivered to `ReadBytesHandler::on_read_bytes`.
 pub enum ReadBytesResult {
     /// global-allocator-owned by the callback.

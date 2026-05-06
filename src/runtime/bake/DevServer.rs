@@ -1289,7 +1289,7 @@ impl<'a> RequestEnsureRouteBundledCtx<'a> {
         let kind = self.kind;
         let req = ::core::mem::replace(&mut self.req, ReqOrSaved::Aborted); // TODO(port): ReqOrSaved moved into deferRequest
         let resp = self.resp;
-        let requests_array: *mut deferred_request::List = match bundle_field {
+        let requests_array: *mut deferred_request::List<'_> = match bundle_field {
             BundleQueueType::CurrentBundle => &mut self.dev.current_bundle.as_mut().unwrap().requests,
             BundleQueueType::NextBundle => &mut self.dev.next_bundle.requests,
         };
@@ -1540,7 +1540,7 @@ impl ReqOrSaved {
 impl DevServer<'_> {
     fn defer_request(
         &mut self,
-        requests_array: &mut deferred_request::List,
+        requests_array: &mut deferred_request::List<'_>,
         route_bundle_index: route_bundle::Index,
         kind: deferred_request::HandlerKind,
         req: ReqOrSaved,

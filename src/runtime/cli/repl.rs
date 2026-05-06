@@ -659,7 +659,7 @@ fn cmd_save(repl: &mut Repl, args: &[u8]) -> ReplResult {
             return ReplResult::SkipEval;
         }
     };
-    let _close = scopeguard::guard((), |_| { let _ = file.close(); });
+    let file = scopeguard::guard(file, |file| { let _ = file.close(); });
     match file.write_all(&content) {
         sys::Result::Ok(()) => {}
         sys::Result::Err(err) => {

@@ -106,7 +106,7 @@ pub fn enqueue_dependency_list(
         let resolution = this.lockfile.buffers.resolutions[i as usize];
         if let Err(err) = enqueue_dependency_with_main(this, i, &dependency, resolution, false) {
             let path_sep = match dependency.version.tag {
-                Dependency::version::Tag::Folder => bun_fmt::PathSep::Auto,
+                dependency::version::Tag::Folder => bun_fmt::PathSep::Auto,
                 _ => bun_fmt::PathSep::Any,
             };
             let note_fmt = "error occurred while resolving {}";
@@ -358,9 +358,9 @@ pub enum DependencyToEnqueue {
 pub fn enqueue_dependency_to_root(
     this: &mut PackageManager,
     name: &[u8],
-    version: &Dependency::Version,
+    version: &dependency::Version,
     version_buf: &[u8],
-    behavior: Dependency::Behavior,
+    behavior: Behavior,
 ) -> DependencyToEnqueue {
     let dep_id = 'brk: {
         let str_buf = this.lockfile.buffers.string_bytes.as_slice();
@@ -568,19 +568,19 @@ pub fn enqueue_dependency_with_main_and_success_fn(
 
     let mut name = dependency.realname();
     let mut name_hash = match dependency.version.tag {
-        Dependency::version::Tag::DistTag
-        | Dependency::version::Tag::Git
-        | Dependency::version::Tag::Github
-        | Dependency::version::Tag::Npm
-        | Dependency::version::Tag::Tarball
-        | Dependency::version::Tag::Workspace => {
+        dependency::version::Tag::DistTag
+        | dependency::version::Tag::Git
+        | dependency::version::Tag::Github
+        | dependency::version::Tag::Npm
+        | dependency::version::Tag::Tarball
+        | dependency::version::Tag::Workspace => {
             SemverString::Builder::string_hash(this.lockfile.str(&name))
         }
         _ => dependency.name_hash,
     };
 
-    let version: Dependency::Version = 'version: {
-        if dependency.version.tag == Dependency::version::Tag::Npm {
+    let version: dependency::Version = 'version: {
+        if dependency.version.tag == dependency::version::Tag::Npm {
             if let Some(aliased) = this.known_npm_aliases.get(&name_hash) {
                 let group = &dependency.version.value.npm.version;
                 let buf = this.lockfile.buffers.string_bytes.as_slice();
@@ -609,7 +609,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         // allow overriding all dependencies unless the dependency is coming directly from an alias, "npm:<this dep>" or
         // if it's a workspaceOnly dependency
         if !dependency.behavior.is_workspace()
-            && (dependency.version.tag != Dependency::version::Tag::Npm
+            && (dependency.version.tag != dependency::version::Tag::Npm
                 || !dependency.version.value.npm.is_alias)
         {
             if let Some(new) = this.lockfile.overrides.get(&name_hash) {
@@ -623,7 +623,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 (name, name_hash) =
                     update_name_and_name_hash_from_version_replacement(this.lockfile, name, name_hash, new);
 
-                if new.tag == Dependency::version::Tag::Catalog {
+                if new.tag == dependency::version::Tag::Catalog {
                     if let Some(catalog_dep) =
                         this.lockfile.catalogs.get(this.lockfile, &new.value.catalog, &name)
                     {
@@ -641,7 +641,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 break 'version new;
             }
 
-            if dependency.version.tag == Dependency::version::Tag::Catalog {
+            if dependency.version.tag == dependency::version::Tag::Catalog {
                 if let Some(catalog_dep) = this.lockfile.catalogs.get(
                     this.lockfile,
                     &dependency.version.value.catalog,
@@ -661,7 +661,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
 
         // explicit copy here due to `dependency.version` becoming undefined
         // when `getOrPutResolvedPackageWithFindResult` is called and resizes the list.
-        break 'version Dependency::Version {
+        break 'version dependency::Version {
             literal: dependency.version.literal,
             tag: dependency.version.tag,
             value: dependency.version.value,
@@ -670,9 +670,9 @@ pub fn enqueue_dependency_with_main_and_success_fn(
     let mut loaded_manifest: Option<Npm::PackageManifest> = None;
 
     match version.tag {
-        Dependency::version::Tag::DistTag
-        | Dependency::version::Tag::Folder
-        | Dependency::version::Tag::Npm => {
+        dependency::version::Tag::DistTag
+        | dependency::version::Tag::Folder
+        | dependency::version::Tag::Npm => {
             'retry_from_manifests_ptr: loop {
                 let mut resolve_result_ = get_or_put_resolved_package(
                     this,
@@ -738,7 +738,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     } else {
                                         let age_gate_ms =
                                             this.options.minimum_release_age_ms.unwrap_or(0);
-                                        if version.tag == Dependency::version::Tag::DistTag {
+                                        if version.tag == dependency::version::Tag::DistTag {
                                             this.log
                                                 .add_error_fmt(
                                                     None,
@@ -772,7 +772,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 if dependency.behavior.is_required() {
                                     if let Some(fail) = fail_fn {
                                         fail(this, dependency, id, err);
-                                    } else if version.tag == Dependency::version::Tag::Folder {
+                                    } else if version.tag == dependency::version::Tag::Folder {
                                         this.log
                                             .add_error_fmt(
                                                 None,
@@ -917,14 +917,14 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                         this.scope_for_package_name(name_str),
                                         name_hash,
                                         &mut expired,
-                                        Npm::ManifestLoad::LoadFromMemoryFallbackToDisk,
+                                        ManifestLoad::LoadFromMemoryFallbackToDisk,
                                         needs_extended_manifest,
                                     ) {
                                         loaded_manifest = Some(*manifest);
 
                                         // If it's an exact package version already living in the cache
                                         // We can skip the network request, even if it's beyond the caching period
-                                        if version.tag == Dependency::version::Tag::Npm
+                                        if version.tag == dependency::version::Tag::Npm
                                             && version.value.npm.version.is_exact()
                                         {
                                             if let Some(find_result) = loaded_manifest
@@ -1050,7 +1050,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             #[allow(unreachable_code)]
             return Ok(());
         }
-        Dependency::version::Tag::Git => {
+        dependency::version::Tag::Git => {
             let dep = &version.value.git;
             let res = Resolution {
                 tag: Resolution::Tag::Git,
@@ -1154,7 +1154,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             }
             Ok(())
         }
-        Dependency::version::Tag::Github => {
+        dependency::version::Tag::Github => {
             let dep = &version.value.github;
             let res = Resolution {
                 tag: Resolution::Tag::Github,
@@ -1222,7 +1222,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             }
             Ok(())
         }
-        Dependency::version::Tag::Symlink | Dependency::version::Tag::Workspace => {
+        dependency::version::Tag::Symlink | dependency::version::Tag::Workspace => {
             // PORT NOTE: Zig used `inline .symlink, .workspace => |dependency_tag|` to capture
             // the comptime tag; we check `version.tag` at runtime instead.
             let dependency_tag = version.tag;
@@ -1307,7 +1307,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     );
                 }
             } else if dependency.behavior.is_required() {
-                if dependency_tag == Dependency::version::Tag::Workspace {
+                if dependency_tag == dependency::version::Tag::Workspace {
                     this.log
                         .add_error_fmt(
                             None,
@@ -1334,7 +1334,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         .expect("unreachable");
                 }
             } else if this.options.log_level.is_verbose() {
-                if dependency_tag == Dependency::version::Tag::Workspace {
+                if dependency_tag == dependency::version::Tag::Workspace {
                     this.log
                         .add_warning_fmt(
                             None,
@@ -1362,7 +1362,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             let _ = (WORKSPACE_NOT_FOUND_FMT, LINK_NOT_FOUND_FMT);
             Ok(())
         }
-        Dependency::version::Tag::Tarball => {
+        dependency::version::Tag::Tarball => {
             let res: Resolution = match &version.value.tarball.uri {
                 Dependency::TarballUri::Local(path) => Resolution {
                     tag: Resolution::Tag::LocalTarball,
@@ -1559,8 +1559,8 @@ fn enqueue_git_clone(
                     .get(&dep.name_hash)
                     .unwrap_or_else(|| panic!("Package not found"))
                 {
-                    Lockfile::PackageIndexEntry::Id(p) => *p,
-                    Lockfile::PackageIndexEntry::Ids(ps) => ps[0], // TODO is this correct
+                    PackageIndexEntry::Id(p) => *p,
+                    PackageIndexEntry::Ids(ps) => ps[0], // TODO is this correct
                 };
                 let patch_hash = this
                     .lockfile
@@ -1629,8 +1629,8 @@ pub fn enqueue_git_checkout(
                     .get(&dep.name_hash)
                     .unwrap_or_else(|| panic!("Package not found"))
                 {
-                    Lockfile::PackageIndexEntry::Id(p) => *p,
-                    Lockfile::PackageIndexEntry::Ids(ps) => ps[0], // TODO is this correct
+                    PackageIndexEntry::Id(p) => *p,
+                    PackageIndexEntry::Ids(ps) => ps[0], // TODO is this correct
                 };
                 let patch_hash = this
                     .lockfile
@@ -1688,11 +1688,10 @@ fn enqueue_local_tarball(
             .workspace
             .slice(this.lockfile.buffers.string_bytes.as_slice());
         break 'tarball_path (
-            Path::join_abs_string_buf(
+            Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
                 FileSystem::instance().top_level_dir,
                 &mut abs_buf,
                 &[workspace_path, path],
-                Path::Platform::Auto,
             ),
             false,
         );
@@ -1744,23 +1743,23 @@ fn update_name_and_name_hash_from_version_replacement(
     lockfile: &Lockfile::Lockfile,
     original_name: SemverString,
     original_name_hash: PackageNameHash,
-    new_version: Dependency::Version,
+    new_version: dependency::Version,
 ) -> (SemverString, PackageNameHash) {
     match new_version.tag {
         // only get name hash for npm and dist_tag. git, github, tarball don't have names until after extracting tarball
-        Dependency::version::Tag::DistTag => (
+        dependency::version::Tag::DistTag => (
             new_version.value.dist_tag.name,
             SemverString::Builder::string_hash(lockfile.str(&new_version.value.dist_tag.name)),
         ),
-        Dependency::version::Tag::Npm => (
+        dependency::version::Tag::Npm => (
             new_version.value.npm.name,
             SemverString::Builder::string_hash(lockfile.str(&new_version.value.npm.name)),
         ),
-        Dependency::version::Tag::Git => (new_version.value.git.package_name, original_name_hash),
-        Dependency::version::Tag::Github => {
+        dependency::version::Tag::Git => (new_version.value.git.package_name, original_name_hash),
+        dependency::version::Tag::Github => {
             (new_version.value.github.package_name, original_name_hash)
         }
-        Dependency::version::Tag::Tarball => {
+        dependency::version::Tag::Tarball => {
             (new_version.value.tarball.package_name, original_name_hash)
         }
         _ => (original_name, original_name_hash),
@@ -1776,7 +1775,7 @@ pub enum ResolvedPackageTask {
 }
 
 pub struct ResolvedPackageResult {
-    pub package: Lockfile::Package,
+    pub package: Package,
 
     /// Is this the first time we've seen this package?
     pub is_first_time: bool,
@@ -1787,7 +1786,7 @@ pub struct ResolvedPackageResult {
 impl Default for ResolvedPackageResult {
     fn default() -> Self {
         Self {
-            package: Lockfile::Package::default(),
+            package: Package::default(),
             is_first_time: false,
             task: None,
         }
@@ -1799,11 +1798,11 @@ fn get_or_put_resolved_package_with_find_result(
     name_hash: PackageNameHash,
     name: SemverString,
     dependency: &Dependency,
-    version: Dependency::Version,
+    version: dependency::Version,
     dependency_id: DependencyID,
     behavior: Behavior,
     manifest: &Npm::PackageManifest,
-    find_result: Npm::PackageManifest::FindResult,
+    find_result: Npm::FindResult,
     install_peer: bool,
     // PERF(port): was comptime monomorphization — profile in Phase B
     success_fn: SuccessFn,
@@ -1843,7 +1842,7 @@ fn get_or_put_resolved_package_with_find_result(
     }
 
     // appendPackage sets the PackageID on the package
-    let package = this.lockfile.append_package(Lockfile::Package::from_npm(
+    let package = this.lockfile.append_package(Package::from_npm(
         this,
         this.lockfile,
         &mut this.log,
@@ -1951,7 +1950,7 @@ fn get_or_put_resolved_package(
     name_hash: PackageNameHash,
     name: SemverString,
     dependency: &Dependency,
-    version: Dependency::Version,
+    version: dependency::Version,
     behavior: Behavior,
     dependency_id: DependencyID,
     resolution: PackageID,
@@ -1964,7 +1963,7 @@ fn get_or_put_resolved_package(
         if let Some(index) = this.lockfile.package_index.get(&name_hash) {
             let resolutions = this.lockfile.packages.items_resolution();
             match index {
-                Lockfile::PackageIndexEntry::Id(existing_id) => {
+                PackageIndexEntry::Id(existing_id) => {
                     let existing_id = *existing_id;
                     if (existing_id as usize) < resolutions.len() {
                         let existing_resolution = resolutions[existing_id as usize];
@@ -1979,11 +1978,11 @@ fn get_or_put_resolved_package(
 
                         let res_tag = resolutions[existing_id as usize].tag;
                         let ver_tag = version.tag;
-                        if (res_tag == Resolution::Tag::Npm && ver_tag == Dependency::version::Tag::Npm)
+                        if (res_tag == Resolution::Tag::Npm && ver_tag == dependency::version::Tag::Npm)
                             || (res_tag == Resolution::Tag::Git
-                                && ver_tag == Dependency::version::Tag::Git)
+                                && ver_tag == dependency::version::Tag::Git)
                             || (res_tag == Resolution::Tag::Github
-                                && ver_tag == Dependency::version::Tag::Github)
+                                && ver_tag == dependency::version::Tag::Github)
                         {
                             let existing_package = this.lockfile.packages.get(existing_id);
                             this.log
@@ -2011,7 +2010,7 @@ fn get_or_put_resolved_package(
                         }
                     }
                 }
-                Lockfile::PackageIndexEntry::Ids(list) => {
+                PackageIndexEntry::Ids(list) => {
                     for &existing_id in list.iter() {
                         if (existing_id as usize) < resolutions.len() {
                             let existing_resolution = resolutions[existing_id as usize];
@@ -2029,11 +2028,11 @@ fn get_or_put_resolved_package(
                         let res_tag = resolutions[list[0] as usize].tag;
                         let ver_tag = version.tag;
                         if (res_tag == Resolution::Tag::Npm
-                            && ver_tag == Dependency::version::Tag::Npm)
+                            && ver_tag == dependency::version::Tag::Npm)
                             || (res_tag == Resolution::Tag::Git
-                                && ver_tag == Dependency::version::Tag::Git)
+                                && ver_tag == dependency::version::Tag::Git)
                             || (res_tag == Resolution::Tag::Github
-                                && ver_tag == Dependency::version::Tag::Github)
+                                && ver_tag == dependency::version::Tag::Github)
                         {
                             let existing_package_id = list[0];
                             let existing_package = this.lockfile.packages.get(existing_package_id);
@@ -2074,9 +2073,9 @@ fn get_or_put_resolved_package(
     }
 
     match version.tag {
-        Dependency::version::Tag::Npm | Dependency::version::Tag::DistTag => {
+        dependency::version::Tag::Npm | dependency::version::Tag::DistTag => {
             'resolve_from_workspace: {
-                if version.tag == Dependency::version::Tag::Npm {
+                if version.tag == dependency::version::Tag::Npm {
                     let workspace_path = if this.lockfile.workspace_paths.count() > 0 {
                         this.lockfile.workspace_paths.get(&name_hash)
                     } else {
@@ -2111,7 +2110,7 @@ fn get_or_put_resolved_package(
                             root_dependencies.iter().zip(root_resolutions)
                         {
                             if workspace_package_id != invalid_package_id
-                                && root_dep.version.tag == Dependency::version::Tag::Workspace
+                                && root_dep.version.tag == dependency::version::Tag::Workspace
                                 && root_dep.name_hash == name_hash
                             {
                                 // make sure verifyResolutions sees this resolution as a valid package id
@@ -2134,19 +2133,19 @@ fn get_or_put_resolved_package(
                 this,
                 this.scope_for_package_name(name_str),
                 name_hash,
-                Npm::ManifestLoad::LoadFromMemoryFallbackToDisk,
+                ManifestLoad::LoadFromMemoryFallbackToDisk,
                 this.options.minimum_release_age_ms.is_some(),
             ) else {
                 return Ok(None); // manifest might still be downloading. This feels unreliable.
             };
 
             let version_result: Npm::PackageManifest::FindVersionResult = match version.tag {
-                Dependency::version::Tag::DistTag => manifest.find_by_dist_tag_with_filter(
+                dependency::version::Tag::DistTag => manifest.find_by_dist_tag_with_filter(
                     this.lockfile.str(&version.value.dist_tag.tag),
                     this.options.minimum_release_age_ms,
                     &this.options.minimum_release_age_excludes,
                 ),
-                Dependency::version::Tag::Npm => manifest.find_best_version_with_filter(
+                dependency::version::Tag::Npm => manifest.find_best_version_with_filter(
                     &version.value.npm.version,
                     this.lockfile.buffers.string_bytes.as_slice(),
                     this.options.minimum_release_age_ms,
@@ -2164,7 +2163,7 @@ fn get_or_put_resolved_package(
                             let min_age_seconds =
                                 this.options.minimum_release_age_ms.unwrap_or(0) / MS_PER_S;
                             match version.tag {
-                                Dependency::version::Tag::DistTag => {
+                                dependency::version::Tag::DistTag => {
                                     let tag_str = this.lockfile.str(&version.value.dist_tag.tag);
                                     Output::pretty_errorln(format_args!(
                                         "<d>[minimum-release-age]<r> <b>{}@{}<r> selected <green>{}<r> instead of <yellow>{}<r> due to {}-second filter",
@@ -2175,7 +2174,7 @@ fn get_or_put_resolved_package(
                                         min_age_seconds,
                                     ));
                                 }
-                                Dependency::version::Tag::Npm => {
+                                dependency::version::Tag::Npm => {
                                     let version_str =
                                         version.value.npm.version.fmt(manifest.string_buf);
                                     Output::pretty_errorln(format_args!(
@@ -2208,7 +2207,7 @@ fn get_or_put_resolved_package(
                 None => {
                     'resolve_workspace_from_dist_tag: {
                         // choose a workspace for a dist_tag only if a version was not found
-                        if version.tag == Dependency::version::Tag::DistTag {
+                        if version.tag == dependency::version::Tag::DistTag {
                             let workspace_path = if this.lockfile.workspace_paths.count() > 0 {
                                 this.lockfile.workspace_paths.get(&name_hash)
                             } else {
@@ -2231,7 +2230,7 @@ fn get_or_put_resolved_package(
                                 {
                                     if workspace_package_id != invalid_package_id
                                         && root_dep.version.tag
-                                            == Dependency::version::Tag::Workspace
+                                            == dependency::version::Tag::Workspace
                                         && root_dep.name_hash == name_hash
                                     {
                                         // make sure verifyResolutions sees this resolution as a valid package id
@@ -2252,8 +2251,8 @@ fn get_or_put_resolved_package(
                     }
 
                     return match version.tag {
-                        Dependency::version::Tag::Npm => Err(bun_core::err!("NoMatchingVersion")),
-                        Dependency::version::Tag::DistTag => Err(bun_core::err!("DistTagNotFound")),
+                        dependency::version::Tag::Npm => Err(bun_core::err!("NoMatchingVersion")),
+                        dependency::version::Tag::DistTag => Err(bun_core::err!("DistTagNotFound")),
                         _ => unreachable!(),
                     };
                 }
@@ -2274,7 +2273,7 @@ fn get_or_put_resolved_package(
             )
         }
 
-        Dependency::version::Tag::Folder => {
+        dependency::version::Tag::Folder => {
             let res: FolderResolution = 'res: {
                 if this.lockfile.is_workspace_dependency(dependency_id) {
                     // relative to cwd
@@ -2283,11 +2282,10 @@ fn get_or_put_resolved_package(
                     let folder_path_abs = if bun_paths::is_absolute(folder_path) {
                         folder_path
                     } else {
-                        Path::join_abs_string_buf(
+                        Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
                             FileSystem::instance().top_level_dir,
                             &mut buf2,
                             &[folder_path],
-                            Path::Platform::Auto,
                         )
                         // break :blk Path.joinAbsStringBuf(
                         //     strings.withoutSuffixComptime(this.original_package_json_path, "package.json"),
@@ -2313,7 +2311,7 @@ fn get_or_put_resolved_package(
                 // transitive folder dependencies do not have their dependencies resolved
                 let mut name_slice = this.lockfile.str(&name);
                 let mut folder_path = this.lockfile.str(&version.value.folder);
-                let mut package = Lockfile::Package::default();
+                let mut package = Package::default();
 
                 {
                     // only need name and path
@@ -2365,7 +2363,7 @@ fn get_or_put_resolved_package(
                 }
             }
         }
-        Dependency::version::Tag::Workspace => {
+        dependency::version::Tag::Workspace => {
             // package name hash should be used to find workspace path from map
             let workspace_path_raw: &SemverString = this
                 .lockfile
@@ -2377,11 +2375,10 @@ fn get_or_put_resolved_package(
             let workspace_path_u8 = if bun_paths::is_absolute(workspace_path) {
                 workspace_path
             } else {
-                Path::join_abs_string_buf(
+                Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
                     FileSystem::instance().top_level_dir,
                     &mut buf2,
                     &[workspace_path],
-                    Path::Platform::Auto,
                 )
             };
 
@@ -2411,7 +2408,7 @@ fn get_or_put_resolved_package(
                 }
             }
         }
-        Dependency::version::Tag::Symlink => {
+        dependency::version::Tag::Symlink => {
             let res = FolderResolution::get_or_put(
                 FolderResolution::Kind::Global(this.global_link_dir_path()),
                 version,
@@ -2446,10 +2443,10 @@ fn get_or_put_resolved_package(
 fn resolution_satisfies_dependency(
     this: &PackageManager,
     resolution: Resolution,
-    dependency: Dependency::Version,
+    dependency: dependency::Version,
 ) -> bool {
     let buf = this.lockfile.buffers.string_bytes.as_slice();
-    if resolution.tag == Resolution::Tag::Npm && dependency.tag == Dependency::version::Tag::Npm {
+    if resolution.tag == Resolution::Tag::Npm && dependency.tag == dependency::version::Tag::Npm {
         return dependency
             .value
             .npm
@@ -2457,12 +2454,12 @@ fn resolution_satisfies_dependency(
             .satisfies(resolution.value.npm.version, buf, buf);
     }
 
-    if resolution.tag == Resolution::Tag::Git && dependency.tag == Dependency::version::Tag::Git {
+    if resolution.tag == Resolution::Tag::Git && dependency.tag == dependency::version::Tag::Git {
         return resolution.value.git.eql(&dependency.value.git, buf, buf);
     }
 
     if resolution.tag == Resolution::Tag::Github
-        && dependency.tag == Dependency::version::Tag::Github
+        && dependency.tag == dependency::version::Tag::Github
     {
         return resolution.value.github.eql(&dependency.value.github, buf, buf);
     }

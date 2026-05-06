@@ -33,7 +33,84 @@ pub use hive_array::{HiveArray, HiveRef, Fallback as HiveArrayFallback};
 pub use bounded_array::BoundedArray;
 pub use linear_fifo::{LinearFifo, LinearFifoBufferType};
 
-pub use bit_set::{AutoBitSet, DynamicBitSet, DynamicBitSetUnmanaged, IntegerBitSet, StaticBitSet};
+pub use bit_set::{AutoBitSet, DynamicBitSet, DynamicBitSetList, DynamicBitSetUnmanaged, IntegerBitSet, StaticBitSet};
+/// `bun.bit_set` namespace alias (Zig: `bun.bit_set.List`).
+pub mod dynamic_bit_set {
+    pub use super::bit_set::DynamicBitSetList as List;
+    pub use super::bit_set::DynamicBitSet;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// `PriorityQueue` — port of `std.PriorityQueue(T, Context, lessThan)`.
+// Min-heap backed by a `Vec<T>`; the comparator context is held by value so
+// callers can rebind it (Zig stores `context: Context` directly on the queue).
+// ──────────────────────────────────────────────────────────────────────────
+pub trait PriorityCompare<T> {
+    fn compare(&self, a: &T, b: &T) -> core::cmp::Ordering;
+}
+pub struct PriorityQueue<T, C> {
+    pub items: Vec<T>,
+    pub context: C,
+}
+impl<T, C: Default> Default for PriorityQueue<T, C> {
+    fn default() -> Self { Self { items: Vec::new(), context: C::default() } }
+}
+impl<T, C> PriorityQueue<T, C> {
+    pub fn init(context: C) -> Self { Self { items: Vec::new(), context } }
+    #[inline] pub fn count(&self) -> usize { self.items.len() }
+    #[inline] pub fn len(&self) -> usize { self.items.len() }
+    pub fn deinit(&mut self) { self.items.clear(); }
+}
+impl<T: Copy, C: PriorityCompare<T>> PriorityQueue<T, C> {
+    /// Zig: `add(elem) !void` — push and sift-up.
+    pub fn add(&mut self, elem: T) -> Result<(), bun_alloc::AllocError> {
+        self.items.push(elem);
+        let mut child = self.items.len() - 1;
+        while child > 0 {
+            let parent = (child - 1) / 2;
+            if self.context.compare(&self.items[child], &self.items[parent])
+                == core::cmp::Ordering::Less
+            {
+                self.items.swap(child, parent);
+                child = parent;
+            } else {
+                break;
+            }
+        }
+        Ok(())
+    }
+    /// Zig: `removeOrNull()` — pop min, sift-down; `None` when empty.
+    pub fn remove_or_null(&mut self) -> Option<T> {
+        if self.items.is_empty() { return None; }
+        let last = self.items.len() - 1;
+        self.items.swap(0, last);
+        let out = self.items.pop();
+        // sift-down
+        let len = self.items.len();
+        let mut idx = 0usize;
+        loop {
+            let l = 2 * idx + 1;
+            let r = 2 * idx + 2;
+            let mut smallest = idx;
+            if l < len
+                && self.context.compare(&self.items[l], &self.items[smallest])
+                    == core::cmp::Ordering::Less
+            {
+                smallest = l;
+            }
+            if r < len
+                && self.context.compare(&self.items[r], &self.items[smallest])
+                    == core::cmp::Ordering::Less
+            {
+                smallest = r;
+            }
+            if smallest == idx { break; }
+            self.items.swap(idx, smallest);
+            idx = smallest;
+        }
+        out
+    }
+}
 pub use identity_context::{ArrayIdentityContext, IdentityContext, IdentityHash};
 
 pub mod array_hash_map;

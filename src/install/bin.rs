@@ -919,7 +919,7 @@ impl<'a> Linker<'a> {
         // always unlink the old one. If it fails for any reason then exit
         // early.
         let mut tmpname_buf = [0u8; 1024];
-        let Ok(tmpname) = bun_fs::FileSystem::tmpname(
+        let Ok(tmpname) = path::fs::FileSystem::tmpname(
             path::basename(abs_target.as_bytes()),
             &mut tmpname_buf,
             bun_wyhash::hash(chunk_without_newline),
@@ -927,9 +927,10 @@ impl<'a> Linker<'a> {
             return;
         };
 
-        let Some(dir_path) = path::dirname(abs_target.as_bytes(), path::Style::Auto) else {
+        let dir_path = resolve_path::dirname::<PlatformAuto>(abs_target.as_bytes());
+        if dir_path.is_empty() {
             return;
-        };
+        }
 
         let (content, content_to_free): (&[u8], Box<[u8]>) = 'brk: {
             if chunk.len() >= shebang_buf.len() {
@@ -960,7 +961,7 @@ impl<'a> Linker<'a> {
         // Create temporary file path
         let mut tmppath_buf = [0u8; MAX_PATH_BYTES];
         let tmppath =
-            path::join_abs_string_buf_z(dir_path, &mut tmppath_buf, &[tmpname], path::Style::Auto);
+            resolve_path::join_abs_string_buf_z::<PlatformAuto>(dir_path, &mut tmppath_buf, &[tmpname.as_bytes()]);
         let mut needs_unlink = true;
         let unlink_guard = scopeguard::guard(&mut needs_unlink, |needs_unlink| {
             if *needs_unlink {
@@ -1178,8 +1179,8 @@ impl<'a> Linker<'a> {
         // cannot capture `&mut self.err` without conflicting with the body's writes,
         // so each return path calls `Self::chmod_on_ok` explicitly instead.
 
-        let abs_dest_dir = path::dirname(abs_dest.as_bytes(), path::Style::Auto).unwrap_or(b"");
-        let rel_target = path::relative_buf_z(self.rel_buf, abs_dest_dir, abs_target.as_bytes());
+        let abs_dest_dir = resolve_path::dirname::<PlatformAuto>(abs_dest.as_bytes());
+        let rel_target = resolve_path::relative_buf_z(self.rel_buf, abs_dest_dir, abs_target.as_bytes());
 
         debug_assert!(strings::has_prefix(rel_target.as_bytes(), b".."));
 

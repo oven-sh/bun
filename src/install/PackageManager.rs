@@ -235,24 +235,26 @@ use bun_install::{
     initialize_store, ArrayIdentityContext, Dependency, DependencyID, Features, FolderResolution,
     IdentityContext, LifecycleScriptSubprocess, NetworkTask, PackageID, PackageManifestMap,
     PackageNameAndVersionHash, PackageNameHash, PatchTask, PostinstallOptimizer, PreinstallState,
-    Task, TaskCallbackContext,
+    TaskCallbackContext,
 };
-use bun_install::lockfile::{self, Lockfile, Package};
+use bun_install::lockfile::{self, Lockfile};
+use crate::lockfile_real::package as Package;
+use crate::package_manager_task as Task;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Sub-module re-exports (thin re-exports — bodies live in their own files)
 // ──────────────────────────────────────────────────────────────────────────
 
-pub use super::package_manager::command_line_arguments as command_line_arguments_mod;
-pub use super::package_manager::command_line_arguments::CommandLineArguments;
-pub use super::package_manager::package_manager_options::Options;
-pub use super::package_manager::package_json_editor::PackageJSONEditor;
-pub use super::package_manager::update_request::UpdateRequest;
-pub use super::package_manager::workspace_package_json_cache::WorkspacePackageJSONCache;
+pub use self::command_line_arguments as command_line_arguments_mod;
+pub use self::command_line_arguments::CommandLineArguments;
+pub use self::package_manager_options::Options;
+pub use self::package_json_editor::PackageJSONEditor;
+pub use self::update_request::UpdateRequest;
+pub use self::workspace_package_json_cache::WorkspacePackageJSONCache;
 pub use super::package_installer::PackageInstaller;
-pub use super::package_manager::install_with_manager::install_with_manager;
+pub use self::install_with_manager::install_with_manager;
 
-pub use super::package_manager::package_manager_directories as directories;
+pub use self::package_manager_directories as directories;
 pub use directories::{
     attempt_to_create_package_json, cached_git_folder_name, cached_git_folder_name_print,
     cached_git_folder_name_print_auto, cached_github_folder_name, cached_github_folder_name_print,
@@ -266,7 +268,7 @@ pub use directories::{
 };
 use directories::attempt_to_create_package_json_and_open;
 
-pub use super::package_manager::package_manager_enqueue as enqueue;
+pub use self::package_manager_enqueue as enqueue;
 pub use enqueue::{
     create_extract_task_for_streaming, enqueue_dependency_list, enqueue_dependency_to_root,
     enqueue_dependency_with_main, enqueue_dependency_with_main_and_success_fn,
@@ -276,7 +278,7 @@ pub use enqueue::{
     enqueue_tarball_for_reading,
 };
 
-use super::package_manager::package_manager_lifecycle as lifecycle;
+use self::package_manager_lifecycle as lifecycle;
 pub use lifecycle::{
     determine_preinstall_state, ensure_preinstall_state_list_capacity,
     find_trusted_dependencies_from_update_requests, get_preinstall_state,
@@ -285,38 +287,38 @@ pub use lifecycle::{
     tick_lifecycle_scripts, LifecycleScriptTimeLog,
 };
 
-use super::package_manager::package_manager_resolution as resolution;
+use self::package_manager_resolution as resolution;
 pub use resolution::{
     assign_resolution, assign_root_resolution, format_later_version_in_cache,
     get_installed_versions_from_disk_cache, resolve_from_disk_cache, scope_for_package_name,
     verify_resolutions,
 };
 
-pub use super::package_manager::progress_strings as progress_mod;
+pub use self::progress_strings as progress_mod;
 pub use progress_mod::{
     end_progress_bar, set_node_name, start_progress_bar, start_progress_bar_if_none,
     ProgressStrings,
 };
 
-pub use super::package_manager::patch_package::{do_patch_commit, prepare_patch, PatchCommitResult};
+pub use self::patch_package::{do_patch_commit, prepare_patch, PatchCommitResult};
 
-pub use super::package_manager::process_dependency_list::{
+pub use self::process_dependency_list::{
     process_dependency_list, process_dependency_list_item, process_extracted_tarball_package,
     process_peer_dependency_list, GitResolver,
 };
 
-pub use super::package_manager::run_tasks::{
+pub use self::run_tasks::{
     alloc_github_url, decrement_pending_tasks, drain_dependency_list, flush_dependency_queue,
     flush_network_queue, flush_patch_task_queue, generate_network_task_for_tarball,
     get_network_task, has_created_network_task, increment_pending_tasks, is_network_task_required,
     pending_task_count, run_tasks, schedule_tasks,
 };
 
-pub use super::package_manager::update_package_json_and_install::{
+pub use self::update_package_json_and_install::{
     update_package_json_and_install_catch_error, update_package_json_and_install_with_manager,
 };
 
-pub use super::package_manager::populate_manifest_cache::populate_manifest_cache;
+pub use self::populate_manifest_cache::populate_manifest_cache;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Type aliases

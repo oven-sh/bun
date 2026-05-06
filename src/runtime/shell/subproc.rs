@@ -1903,7 +1903,7 @@ impl PipeReader {
             PipeReaderState::Err(_err) => {
                 let empty = ReadableStream::empty(global_object)?;
                 ReadableStream::cancel(
-                    &ReadableStream::from_js(empty, global_object).unwrap(),
+                    &ReadableStream::from_js(empty, global_object).unwrap().unwrap(),
                     global_object,
                 );
                 Ok(empty)

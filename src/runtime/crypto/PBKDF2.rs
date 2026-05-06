@@ -136,22 +136,22 @@ impl PBKDF2 {
         }
 
         if !arg2.is_any_int() {
-            return global_this.throw_invalid_argument_type_value("iterations", "number", arg2);
+            return Err(global_this.throw_invalid_argument_type_value("iterations", "number", arg2));
         }
 
-        let iteration_count = arg2.coerce::<i64>(global_this)?;
+        let iteration_count = arg2.coerce_to_int64(global_this)?;
 
         if !global_this.has_exception() && (iteration_count < 1 || iteration_count > i32::MAX as i64)
         {
-            return global_this.throw_range_error(
+            return Err(global_this.throw_range_error(
                 iteration_count,
                 bun_jsc::RangeErrorOptions {
-                    field_name: "iterations",
-                    min: Some(1),
-                    max: Some(i32::MAX as i64 + 1),
+                    field_name: b"iterations",
+                    min: 1,
+                    max: i32::MAX as i64 + 1,
                     ..Default::default()
                 },
-            );
+            ));
         }
 
         if global_this.has_exception() {

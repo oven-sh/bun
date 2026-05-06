@@ -82,7 +82,7 @@ pub struct NativeBrotli {
     pub write_result: Option<NonNull<u32>>,
     pub poll_ref: CountedKeepAlive,
     // TODO(port): Strong on m_ctx self-ref → JsRef per PORTING.md §JSC (Strong back-ref to own wrapper leaks)
-    pub this_value: Strong, // Strong.Optional — empty-initialised
+    pub this_value: StrongOptional, // Strong.Optional — empty-initialised
     pub write_in_progress: bool,
     pub pending_close: bool,
     pub pending_reset: bool,

@@ -276,7 +276,9 @@ impl UpdateInteractiveCommand {
         // Group catalog dependencies
         for pkg in packages {
             if pkg.is_catalog {
-                let entry = catalog_map.get_or_put(&pkg.name);
+                let entry = catalog_map
+                    .get_or_put(&pkg.name)
+                    .map_err(|_| bun_core::err!("OutOfMemory"))?;
                 if !entry.found_existing {
                     *entry.value_ptr = Vec::new();
                 }

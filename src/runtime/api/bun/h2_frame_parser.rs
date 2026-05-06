@@ -918,7 +918,7 @@ impl Handlers {
         };
 
         if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
-            return global_object.throw_invalid_arguments("Expected \"handlers\" to be an object");
+            return Err(global_object.throw_invalid_arguments("Expected \"handlers\" to be an object"));
         }
 
         macro_rules! handler_pair {
@@ -957,7 +957,7 @@ impl Handlers {
 
         if let Some(callback_value) = opts.fast_get(global_object, bun_jsc::BuiltinName::Error)? {
             if !callback_value.is_cell() || !callback_value.is_callable() {
-                return global_object.throw_invalid_arguments("Expected \"error\" callback to be a function");
+                return Err(global_object.throw_invalid_arguments("Expected \"error\" callback to be a function"));
             }
             JSH2FrameParser::Gc::onError.set(
                 this_value,
@@ -971,12 +971,12 @@ impl Handlers {
             || JSH2FrameParser::Gc::onWrite.get(this_value).is_none()
         {
             // TODO(port): Zig compares to .zero; codegen may return None — check both
-            return global_object.throw_invalid_arguments("Expected at least \"write\" callback");
+            return Err(global_object.throw_invalid_arguments("Expected at least \"write\" callback"));
         }
 
         if let Some(binary_type_value) = opts.get_truthy(global_object, "binaryType")? {
             if !binary_type_value.is_string() {
-                return global_object.throw_invalid_arguments("Expected \"binaryType\" to be a string");
+                return Err(global_object.throw_invalid_arguments("Expected \"binaryType\" to be a string"));
             }
             handlers.binary_type = match BinaryType::from_js_value(global_object, binary_type_value)? {
                 Some(bt) => bt,

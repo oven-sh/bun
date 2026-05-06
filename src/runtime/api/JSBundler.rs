@@ -1602,21 +1602,24 @@ pub mod js_bundler {
         // 2. During parsing, it encounters a macro and evaluates it
         // 3. The macro calls Bun.build, which tries to enqueue to the same singleton thread
         // 4. The singleton thread is blocked waiting for the macro to complete -> deadlock
-        if vm.macro_mode {
-            return global_this.throw(
+        // SAFETY: bun_vm() returns the live process VirtualMachine pointer.
+        if unsafe { (*vm).macro_mode } {
+            return Err(global_this.throw(
                 "Bun.build cannot be called from within a macro during bundling.\n\n\
                  This would cause a deadlock because the bundler is waiting for the macro to complete,\n\
                  but the macro's Bun.build call is waiting for the bundler.\n\n\
                  To bundle code at compile time in a macro, use Bun.spawnSync to invoke the CLI:\n  \
                  const result = Bun.spawnSync([\"bun\", \"build\", entrypoint, \"--format=esm\"]);",
-                &[],
-            );
+            ));
         }
 
         let mut plugins: Option<*mut Plugin> = None;
         let config = Config::from_js(global_this, arguments[0], &mut plugins)?;
 
-        BundleV2::generate_from_javascript(config, plugins, global_this, vm.event_loop())
+        // SAFETY: bun_vm() returns the live process VirtualMachine pointer.
+        let event_loop = unsafe { (*vm).event_loop() };
+        let _ = (config, plugins, event_loop);
+        todo!("blocked_on: bun_bundler::BundleV2::generate_from_javascript")
     }
 
     /// `Bun.build(config)`

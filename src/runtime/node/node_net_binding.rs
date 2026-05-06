@@ -128,39 +128,35 @@ pub fn BlockList(global: &JSGlobalObject) -> JSValue {
 }
 
 #[bun_jsc::host_fn]
-pub fn new_detached_socket(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub fn new_detached_socket(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let args = frame.arguments_as_array::<1>();
-    let is_ssl = args[0].to_boolean();
+    let _is_ssl = args[0].to_boolean();
 
-    if !is_ssl {
-        // TODO(port): TCPSocket::new struct-init shape — verify field names/defaults in Phase B
-        let socket = TCPSocket::new(TCPSocket {
-            socket: uws::NewSocketHandler::detached(),
-            ref_count: Default::default(),
-            protos: None,
-            handlers: None,
-            ..Default::default()
-        });
-        Ok(socket.get_this_value(global))
-    } else {
-        // TODO(port): TLSSocket::new struct-init shape — verify field names/defaults in Phase B
-        let socket = TLSSocket::new(TLSSocket {
-            socket: uws::NewSocketHandler::detached(),
-            ref_count: Default::default(),
-            protos: None,
-            handlers: None,
-            ..Default::default()
-        });
-        Ok(socket.get_this_value(global))
-    }
+    // Zig:
+    //   const socket = bun.api.{TCP,TLS}Socket.new(.{
+    //       .socket = .detached, .ref_count = .init(),
+    //       .protos = null, .handlers = null,
+    //   });
+    //   return socket.getThisValue(globalThis);
+    //
+    // The Rust `crate::socket::NewSocket<SSL>` struct shape currently lacks
+    // `new()`/`get_this_value()` and the `JsClass` codegen impl (the per-
+    // monomorphisation `JS{TCP,TLS}Socket` codegen externs are not yet wired —
+    // see socket_body.rs `to_js`).
+    todo!("blocked_on: crate::socket::NewSocket<SSL>::{{new,get_this_value}} + jsc.Codegen.JS{{TCP,TLS}}Socket")
 }
 
 #[bun_jsc::host_fn]
 pub fn do_connect(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let [prev, opts] = frame.arguments_as_array::<2>();
-    let maybe_tcp = prev.as_type::<TCPSocket>();
-    let maybe_tls = prev.as_type::<TLSSocket>();
-    Listener::connect_inner(global, maybe_tcp, maybe_tls, opts)
+    let [_prev, opts] = frame.arguments_as_array::<2>();
+    // Zig: `prev.as(bun.api.{TCP,TLS}Socket)` — requires `JsClass` impl on
+    // `NewSocket<SSL>`, which the `#[bun_jsc::JsClass]` derive cannot emit for
+    // a const-generic type (two distinct codegen classes). Until those externs
+    // land, fall back to the no-prev-socket path so `Bun.connect()` (which
+    // passes `null` here) still works.
+    // TODO(port): wire `prev.as_::<TCPSocket>()` / `prev.as_::<TLSSocket>()` once
+    // `impl JsClass for NewSocket<{false,true}>` exists.
+    crate::socket::listener::Listener::connect_inner(global, None, None, opts)
 }
 } // mod _impl
 

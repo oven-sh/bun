@@ -743,7 +743,7 @@ impl BunxCommand {
 
             // Remove the cwd passed through BUN_WHICH_IGNORE_CWD from path. This prevents temp node-gyp script from finding and running itself
             let mut new_path: Vec<u8> = Vec::with_capacity(path.len());
-            let mut path_iter = path.split(|b| *b == DELIMITER).filter(|s| !s.is_empty());
+            let mut path_iter = path.split(|b| *b == DELIMITER).filter(|s: &&[u8]| !s.is_empty());
             if let Some(segment) = path_iter.next() {
                 if !strings::eql_long(
                     strings::without_trailing_slash(segment),

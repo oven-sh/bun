@@ -2335,6 +2335,9 @@ impl PackageManager {
     pub cache_directory: Vec<u8>,
     /// Zig: `Options.scope: Npm.Registry.Scope`.
     pub scope: npm::registry::Scope,
+    /// Zig: `Options.registries: Npm.Registry.Map = .{}` — per-`@scope`
+    /// registry overrides keyed by `Scope::hash(scope_name)`.
+    pub registries: npm::registry::Map,
     /// Zig: `Options.publish_config`.
     pub publish_config: PublishConfigStub,
     /// Zig: `Options.do: Do = .{}`.
@@ -2982,8 +2985,23 @@ impl PackageManager {
         BUF.with(|b| unsafe { &mut *b.get() })
     }
 
-    // `scope_for_package_name` moved to PackageManager/PackageManagerResolution.rs
-    // (real port handles `@scope/` prefix lookup in `options.registries`).
+    /// Port of `resolution.scopeForPackageName`
+    /// (src/install/PackageManager/PackageManagerResolution.zig:36). Real body
+    /// also lives in `package_manager_real::package_manager_resolution`; the
+    /// stub `PackageManager` carries its own `options.{scope,registries}` so
+    /// `PackageManagerTask::callback` can resolve the per-`@scope` registry
+    /// before the two structs unify.
+    pub fn scope_for_package_name(&self, name: &[u8]) -> &npm::registry::Scope {
+        if name.is_empty() || name[0] != b'@' {
+            return &self.options.scope;
+        }
+        self.options
+            .registries
+            .get(&npm::registry::Scope::hash(npm::registry::Scope::get_name(
+                name,
+            )))
+            .unwrap_or(&self.options.scope)
+    }
 
     /// Port of `directories.updateLockfileIfNeeded`
     /// (src/install/PackageManager/PackageManagerDirectories.zig:671). Real

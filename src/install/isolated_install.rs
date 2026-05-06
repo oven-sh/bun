@@ -160,12 +160,10 @@ impl<'a, 'b> Wait<'a, 'b> {
             // TODO(port): Zig passed an anon struct of callbacks; modeled as a
             // value-level `RunTasksCallbacks` struct (lib.rs).
             RunTasksCallbacks {
-                on_extract: store::Installer::on_package_extracted
-                    as fn(&mut store::Installer<'_>, crate::package_manager_task::Id),
+                on_extract: store::Installer::on_package_extracted,
                 on_resolve: (),
                 on_package_manifest_error: (),
-                on_package_download_error: store::Installer::on_package_download_error
-                    as fn(&mut store::Installer<'_>, crate::package_manager_task::Id),
+                on_package_download_error: store::Installer::on_package_download_error,
                 progress_bar: false,
                 manifests_only: false,
             },
@@ -1930,11 +1928,15 @@ pub fn install_isolated_packages(
         let manager = unsafe { &mut *manager_ptr };
         // (Drop handles installer.deinit())
 
+        // PORT NOTE: reshaped for borrowck — Zig writes `installer: &installer`
+        // into `installer.tasks[i]`; in Rust the back-pointer is taken before
+        // the `tasks` borrow.
+        let installer_ptr: *mut store::Installer<'_> = &mut installer;
         for (_entry_id, task) in installer.tasks.iter_mut().enumerate() {
             let entry_id = store::entry::Id::from(u32::try_from(_entry_id).unwrap());
             *task = installer::Task {
                 entry_id,
-                installer: &mut installer as *mut _,
+                installer: installer_ptr,
                 // TODO(port): back-pointer to installer; raw ptr to avoid borrowck cycle
                 result: installer::Result::None,
 
@@ -2148,15 +2150,15 @@ pub fn install_isolated_packages(
                                 let exists = match pkg_res_tag {
                                     ResolutionTag::Npm => 'exists: {
                                         let cache_dir_path_save = pkg_cache_dir_subpath.save();
-                                        let _r = scopeguard::guard((), |_| cache_dir_path_save.restore());
-                                        pkg_cache_dir_subpath.append(b"package.json");
+                                        let _r = scopeguard::guard(cache_dir_path_save, |s| s.restore());
+                                        bun_core::handle_oom(pkg_cache_dir_subpath.append(b"package.json"));
                                         break 'exists sys::exists_at(cache_dir, pkg_cache_dir_subpath.slice_z());
                                     }
-                                    _ => sys::directory_exists_at(cache_dir, pkg_cache_dir_subpath.slice_z())
+                                    _ => sys::directory_exists_at(cache_dir, pkg_cache_dir_subpath.slice_z().as_bytes())
                                         .unwrap_or(false),
                                 };
                                 if exists {
-                                    manager.set_preinstall_state(pkg_id, install::PreinstallState::Done);
+                                    manager.set_preinstall_state(pkg_id, installer.lockfile, install::PreinstallState::Done);
                                 }
                                 break 'missing_from_cache !exists;
                             }

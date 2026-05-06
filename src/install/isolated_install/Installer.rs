@@ -15,11 +15,13 @@ use bun_sys::{FdExt as _, FdDirExt as _};
 
 use crate::{
     self as install, bin, invalid_dependency_id, Bin, DependencyID, Lockfile, PackageID,
-    PackageManager, PackageNameHash, PostinstallOptimizer, Resolution,
+    PackageManager, PackageNameHash, Resolution, TaskCallbackContext,
     TruncatedPackageNameHash,
 };
+use crate::bin_real;
 use crate::resolution;
 use crate::postinstall_optimizer;
+use crate::postinstall_optimizer::PostinstallOptimizer;
 use crate::package_install::{self, Method as InstallMethod, Summary as InstallSummary};
 use crate::package_manager_real::Command;
 use crate::lockfile_real::PackageIDSlice;
@@ -140,7 +142,12 @@ impl<'a> Installer<'a> {
             let pkg_resolutions = pkgs.items_resolution();
 
             for install_ctx in removed.as_slice() {
-                let entry_id = install_ctx.isolated_package_install_context;
+                // Zig: `install_ctx.isolated_package_install_context` (union field
+                // access). Rust models `TaskCallbackContext` as an enum, so destructure.
+                let TaskCallbackContext::IsolatedPackageInstallContext(entry_id) = *install_ctx
+                else {
+                    continue;
+                };
 
                 let node_id = entry_node_ids[entry_id.get() as usize];
                 let pkg_id = node_pkg_ids[node_id.get() as usize];
@@ -186,7 +193,12 @@ impl<'a> Installer<'a> {
 
             let entry_steps = self.store.entries.items_step();
             for install_ctx in callbacks.as_slice() {
-                let entry_id = install_ctx.isolated_package_install_context;
+                // Zig: `install_ctx.isolated_package_install_context` (union field
+                // access). Rust models `TaskCallbackContext` as an enum, so destructure.
+                let TaskCallbackContext::IsolatedPackageInstallContext(entry_id) = *install_ctx
+                else {
+                    continue;
+                };
                 entry_steps[entry_id.get() as usize].store(Step::Done as u32, Ordering::Relaxed);
                 self.on_task_fail(
                     entry_id,
@@ -423,7 +435,7 @@ impl<'a> Installer<'a> {
             // task thread by virtue of popping from the `UnboundedQueue`.
             bun_core::assert_with_location(
                 self.store.entries.items_step()[entry_id.get() as usize].load(Ordering::Relaxed)
-                    == Step::Done,
+                    == Step::Done as u32,
                 core::panic::Location::caller(),
             );
         }
@@ -476,9 +488,9 @@ impl<'a> Installer<'a> {
 
         let pkg_id = nodes.items_pkg_id()[node_id.get() as usize];
 
-        let is_duplicate = self.installed.is_set(pkg_id);
+        let is_duplicate = self.installed.is_set(pkg_id as usize);
         self.summary.success += (!is_duplicate) as u32;
-        self.installed.set(pkg_id);
+        self.installed.set(pkg_id as usize);
     }
 
     // This function runs only on the main thread. The installer tasks threads
@@ -984,7 +996,7 @@ impl Task {
                             #[cfg(not(windows))]
                             {
                                 if let Some(st) = sys::lstat(local.slice_z()).ok() {
-                                    sys::posix::s_islnk(u32::try_from(st.mode).unwrap())
+                                    sys::posix::s_islnk(u32::try_from(st.st_mode).unwrap())
                                 } else {
                                     false
                                 }
@@ -1121,7 +1133,7 @@ impl Task {
                                 };
 
                                 let mut src = bun_core::handle_oom(
-                                    OsAutoAbsPath::from_long_path(cache_dir_path),
+                                    OsAutoAbsPath::from_long_path(cache_dir_path.slice()),
                                 );
                                 src.append_join(pkg_cache_dir_subpath.slice());
 
@@ -1179,7 +1191,7 @@ impl Task {
                                 };
 
                                 let mut src_path =
-                                    bun_core::handle_oom(OsAutoAbsPath::from(cache_dir_path));
+                                    bun_core::handle_oom(OsAutoAbsPath::from(cache_dir_path.slice()));
                                 src_path.append(pkg_cache_dir_subpath.slice());
 
                                 let mut file_copier = FileCopier::init(
@@ -1688,7 +1700,7 @@ impl Task {
                         for (i, item) in list.items[1..].iter().enumerate() {
                             let i = i + 1;
                             if item.is_some() {
-                                list.first_index = u32::try_from(i).unwrap();
+                                list.first_index = u8::try_from(i).unwrap();
                                 break;
                             }
                         }
@@ -1771,7 +1783,7 @@ impl Task {
                     bun_core::assert_with_location(
                         installer.store.entries.items_step()[this.entry_id.get() as usize]
                             .load(Ordering::Relaxed)
-                            == Step::Done,
+                            == Step::Done as u32,
                         core::panic::Location::caller(),
                     );
                 }
@@ -2308,7 +2320,7 @@ impl<'a> Installer<'a> {
                         #[cfg(not(windows))]
                         {
                             if let Some(st) = sys::lstat(dest.slice_z()).ok() {
-                                sys::posix::s_islnk(u32::try_from(st.mode).unwrap())
+                                sys::posix::s_islnk(u32::try_from(st.st_mode).unwrap())
                             } else {
                                 true
                             }

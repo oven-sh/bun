@@ -89,14 +89,12 @@ impl ProgressStrings {
 }
 
 impl PackageManager {
-    pub fn set_node_name(
+    pub fn set_node_name<const IS_FIRST: bool>(
         &mut self,
         node: *mut ProgressNode,
         name: &[u8],
-        emoji: &str,
-        is_first: bool,
+        emoji: &[u8],
     ) {
-        let emoji = emoji.as_bytes();
         // SAFETY: `node` is `self.downloads_node` / `self.scripts_node`, both of
         // which point at storage owned by (or outliving) this `PackageManager`
         // singleton; `progress_name_buf` is an inline field of that same
@@ -104,7 +102,7 @@ impl PackageManager {
         // raw-pointer aliasing (`node.name = this.progress_name_buf[..]`).
         unsafe {
             let len = if Output::enable_ansi_colors_stderr() {
-                if is_first {
+                if IS_FIRST {
                     self.progress_name_buf[..emoji.len()].copy_from_slice(emoji);
                 }
                 self.progress_name_buf[emoji.len()..][..name.len()].copy_from_slice(name);
@@ -131,11 +129,10 @@ impl PackageManager {
         // re-borrow `&mut self` for `set_node_name` / `progress.refresh()`.
         let node: *mut ProgressNode = self.progress.start(ProgressStrings::download(), 0);
         self.downloads_node = Some(node);
-        self.set_node_name(
+        self.set_node_name::<true>(
             node,
             ProgressStrings::DOWNLOAD_NO_EMOJI_.as_bytes(),
-            ProgressStrings::DOWNLOAD_EMOJI,
-            true,
+            ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
         );
         // SAFETY: `node` points into `self.progress.root`, live for as long as
         // `self.progress` is.
@@ -179,14 +176,13 @@ impl PackageManager {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[inline]
-pub fn set_node_name(
+pub fn set_node_name<const IS_FIRST: bool>(
     this: &mut PackageManager,
     node: *mut ProgressNode,
     name: &[u8],
-    emoji: &str,
-    is_first: bool,
+    emoji: &[u8],
 ) {
-    this.set_node_name(node, name, emoji, is_first)
+    this.set_node_name::<IS_FIRST>(node, name, emoji)
 }
 
 #[inline]
@@ -209,5 +205,5 @@ pub fn end_progress_bar(manager: &mut PackageManager) {
 //   source:     src/install/PackageManager/ProgressStrings.zig (100 lines)
 //   confidence: medium
 //   todos:      0
-//   notes:      `node.name` slice points into `self.progress_name_buf` (inline on a leaked singleton) — lifetime erased via `slice::from_raw_parts` to mirror Zig's raw-pointer aliasing. `set_node_name` takes `*mut Node` + runtime `is_first: bool` to match every in-tree caller; the Zig `comptime is_first` only gated a memcpy and has no codegen win worth a const-generic here.
+//   notes:      `node.name` slice points into `self.progress_name_buf` (inline on a leaked singleton) — lifetime erased via `slice::from_raw_parts` to mirror Zig's raw-pointer aliasing. `set_node_name` takes `*mut Node` + const-generic `IS_FIRST` (Zig `comptime is_first`) and `emoji: &[u8]` to match the `runTasks.rs` callers.
 // ──────────────────────────────────────────────────────────────────────────

@@ -276,13 +276,21 @@ pub fn on_resolve_entry_point_result(
     callframe: &CallFrame,
 ) -> bun_jsc::JsResult<JSValue> {
     let result = callframe.argument(0);
-    result.print(
-        global,
-        bun_jsc::ConsoleObject::MessageType::Log,
-        bun_jsc::ConsoleObject::MessageLevel::Log,
-    );
+    // SAFETY: `vals[..len]` is the single stack `result`; `ctype` may be null
+    // (the Zig path passes the per-VM ConsoleObject but only the writers are
+    // read off it, and `null` routes to the VM's stdout/stderr default).
+    unsafe {
+        bun_jsc::ConsoleObject::message_with_type_and_level(
+            core::ptr::null_mut(),
+            bun_jsc::ConsoleObject::MessageType::Log,
+            bun_jsc::ConsoleObject::MessageLevel::Log,
+            global,
+            &result as *const JSValue,
+            1,
+        );
+    }
     // SAFETY: bun_vm() never null for a Bun-owned global.
-    bun_core::Global::exit(unsafe { (*global.bun_vm()).exit_handler.exit_code });
+    bun_core::Global::exit(u32::from(unsafe { (*global.bun_vm()).exit_handler.exit_code }));
 }
 
 #[bun_jsc::host_fn(export = "Bun__onRejectEntryPointResult")]
@@ -291,13 +299,21 @@ pub fn on_reject_entry_point_result(
     callframe: &CallFrame,
 ) -> bun_jsc::JsResult<JSValue> {
     let result = callframe.argument(0);
-    result.print(
-        global,
-        bun_jsc::ConsoleObject::MessageType::Log,
-        bun_jsc::ConsoleObject::MessageLevel::Log,
-    );
+    // SAFETY: `vals[..len]` is the single stack `result`; `ctype` may be null
+    // (the Zig path passes the per-VM ConsoleObject but only the writers are
+    // read off it, and `null` routes to the VM's stdout/stderr default).
+    unsafe {
+        bun_jsc::ConsoleObject::message_with_type_and_level(
+            core::ptr::null_mut(),
+            bun_jsc::ConsoleObject::MessageType::Log,
+            bun_jsc::ConsoleObject::MessageLevel::Log,
+            global,
+            &result as *const JSValue,
+            1,
+        );
+    }
     // SAFETY: bun_vm() never null for a Bun-owned global.
-    bun_core::Global::exit(unsafe { (*global.bun_vm()).exit_handler.exit_code });
+    bun_core::Global::exit(u32::from(unsafe { (*global.bun_vm()).exit_handler.exit_code }));
 }
 
 // ─── rare_data.zig — TLS-ciphers / stdin-fd-type host fns (un-gated bodies) ──
@@ -325,10 +341,10 @@ pub fn get_tls_default_ciphers(
     // SAFETY: bun_vm() never null for a Bun-owned global.
     let vm = unsafe { &mut *global.bun_vm() };
     let ciphers = match vm.rare_data().tls_default_ciphers() {
-        Some(c) => c.as_bytes(),
-        None => bun_uws::DEFAULT_CIPHERS.to_bytes(),
+        Some(c) => c,
+        None => bun_uws::get_default_ciphers().as_bytes(),
     };
-    bun_string::String::create_utf8_for_js(global, ciphers)
+    Ok(bun_jsc::zig_string::ZigString::from_bytes(ciphers).to_js(global))
 }
 
 #[unsafe(no_mangle)]
@@ -338,7 +354,7 @@ pub extern "C" fn Bun__Process__getStdinFdType(vm: *mut VirtualMachine, fd: i32)
     // direct fstat on the fd until the Blob-store path is un-gated.
     let _ = vm;
     let fd = bun_sys::Fd::from_native(fd as _);
-    match fd.fstat() {
+    match bun_sys::fstat(fd) {
         Ok(st) if bun_sys::S::ISFIFO(st.st_mode as _) => 1,
         Ok(st) if bun_sys::S::ISSOCK(st.st_mode as _) => 2,
         _ => 0,
@@ -378,20 +394,15 @@ pub extern "C" fn bindgen_BunObject_dispatchBraces1(
     arg_input: *const bun_string::String,
     arg_options: *const BracesOptions,
 ) -> JSValue {
-    // SAFETY: `global`/`arg_input`/`arg_options` are live C++ stack values.
+    // TODO(b2-blocked): `crate::api::bun_object::braces` is in the `_jsc_gated`
+    // module (depends on `Braces::Lexer` un-gating). Surface a clear error
+    // until that body un-gates.
+    let _ = (arg_input, arg_options);
+    // SAFETY: `global` is the live per-thread global.
     let global = unsafe { &*global };
-    let input = unsafe { (*arg_input).dupe_ref() };
-    let opts = unsafe { &*arg_options };
     bun_jsc::host_fn::to_js_host_call(
         global,
-        crate::api::bun_object::braces(
-            global,
-            input,
-            crate::api::bun_object::r#gen::BracesOptions {
-                parse: opts.parse,
-                tokenize: opts.tokenize,
-            },
-        ),
+        Err(global.throw_todo("Bun.braces: shell brace-expansion not yet ported")),
     )
 }
 
@@ -405,16 +416,14 @@ pub extern "C" fn bindgen_BunObject_dispatchGc1(
     // SAFETY: `global` is the live per-thread global; `arg_force`/`out` are
     // valid C++ stack locals.
     let global = unsafe { &*global };
-    let force = unsafe { *arg_force };
-    // Spec body (BunObject.zig `gc`): `vm.jsc_vm.collectAsync()` /
-    // `collectSync()` then `vm.jsc_vm.heap.size()`.
-    let vm = unsafe { &mut *global.bun_vm() };
-    if force {
-        vm.jsc_vm().collect_sync();
-    } else {
-        vm.jsc_vm().collect_async();
-    }
-    unsafe { *out = vm.jsc_vm().heap_size() };
+    let _force = unsafe { *arg_force };
+    // Spec body (BunObject.zig `gc`): force ⇒ `collectSync()`, else
+    // `collectAsync()`, then return `heap.size()`. `collect_sync` is gated in
+    // `bun_jsc::VM`; both arms call the available async path for now.
+    // TODO(b2-blocked): wire `VM::collect_sync` once un-gated.
+    let jsc_vm = unsafe { &*(*global.bun_vm()).jsc_vm };
+    jsc_vm.collect_async();
+    unsafe { *out = jsc_vm.heap_size() };
     true
 }
 
@@ -428,7 +437,7 @@ pub extern "C" fn bindgen_BunObject_dispatchGc1(
 unsafe extern "C" {
     fn Bun__CreateFFIFunctionValue(
         global: *mut JSGlobalObject,
-        symbol_name: *const bun_jsc::ZigString,
+        symbol_name: *const bun_string::ZigString,
         arg_count: u32,
         function: bun_jsc::host_fn::JSHostFn,
         add_ptr_field: bool,
@@ -446,7 +455,7 @@ fn new_runtime_function(
     arg_count: u32,
     f: bun_jsc::host_fn::JSHostFn,
 ) -> JSValue {
-    let zs = bun_jsc::ZigString::init_utf8(name);
+    let zs = bun_string::ZigString::init_utf8(name);
     // SAFETY: thin FFI wrapper; `global` is live, `zs` outlives the call.
     unsafe { Bun__CreateFFIFunctionValue(global, &zs, arg_count, f, false, core::ptr::null_mut()) }
 }

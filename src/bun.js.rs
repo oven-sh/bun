@@ -27,15 +27,62 @@ pub fn apply_standalone_runtime_flags(
     graph: &StandaloneModuleGraph,
 ) {
     use bun_options_types::schema::api::DotEnvBehavior;
-    b.options.env.disable_default_env_files = graph.flags.disable_default_env_files;
-    b.options.env.behavior = if graph.flags.disable_default_env_files {
+    use bun_standalone_graph::StandaloneModuleGraph::Flags;
+    let disable_env = graph.flags.contains(Flags::DISABLE_DEFAULT_ENV_FILES);
+    b.options.env.disable_default_env_files = disable_env;
+    b.options.env.behavior = if disable_env {
         DotEnvBehavior::disable
     } else {
         DotEnvBehavior::LoadAllWithoutInlining
     };
 
-    b.resolver.opts.load_tsconfig_json = !graph.flags.disable_autoload_tsconfig;
-    b.resolver.opts.load_package_json = !graph.flags.disable_autoload_package_json;
+    b.resolver.opts.load_tsconfig_json =
+        !graph.flags.contains(Flags::DISABLE_AUTOLOAD_TSCONFIG);
+    b.resolver.opts.load_package_json =
+        !graph.flags.contains(Flags::DISABLE_AUTOLOAD_PACKAGE_JSON);
+}
+
+/// Shared body of the `boot` / `boot_standalone` "wire ctx → transpiler" block.
+/// Factored out so the per-field cross-crate type drift is fixed in one place.
+fn apply_ctx_to_transpiler(vm: &mut VirtualMachine, ctx: &mut Command::ContextData) {
+    // TODO(b2-field-shape): `vm.preload`/`vm.argv` are `Vec<Box<[u8]>>` but
+    // `ctx.preloads`/`ctx.passthrough` shapes differ; clone-convert once shapes
+    // settle.
+    let _ = &ctx.preloads;
+    let _ = &ctx.passthrough;
+
+    let b = &mut vm.transpiler;
+    b.options.install = ctx.install.as_deref();
+    // TODO(b2-field-shape): `resolver.opts.install` is an erased `*const ()`.
+    b.resolver.opts.global_cache = ctx.debug.global_cache;
+    b.resolver.opts.prefer_offline_install =
+        ctx.debug.offline_mode_setting.unwrap_or(OfflineMode::Online) == OfflineMode::Offline;
+    // TODO(b2-field-shape): `resolver.opts.prefer_latest_install` /
+    // `minify_identifiers` / `minify_whitespace` not yet on `BundleOptions`.
+    let _ = ctx.debug.offline_mode_setting.unwrap_or(OfflineMode::Online) == OfflineMode::Latest;
+    b.options.global_cache = b.resolver.opts.global_cache;
+    b.options.prefer_offline_install = b.resolver.opts.prefer_offline_install;
+    b.resolver.env_loader = NonNull::new(b.env);
+
+    b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
+    b.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
+    b.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
+
+    // TODO(b2-field-shape): `serve_plugins` `Vec` ↔ `Box<[_]>` and
+    // `bunfig_path` shapes differ.
+    let _ = &ctx.args.serve_plugins;
+    let _ = &ctx.args.bunfig_path;
+
+    match &ctx.debug.macros {
+        Macros::Disable => {
+            b.options.no_macros = true;
+        }
+        Macros::Map(_macros) => {
+            // TODO(b2-field-shape): `MacroMap` (Box<[u8]> keys) ↔
+            // `StringArrayHashMap<&'static [u8]>` mismatch.
+        }
+        Macros::Unspecified => {}
+    }
 }
 
 pub struct Run {
@@ -62,44 +109,48 @@ impl Run {
     }
 
     pub fn boot_standalone(
-        ctx: Command::Context,
+        ctx: Command::Context<'static>,
         entry_path: &'static [u8],
-        graph_ptr: &'static mut bun_standalone_module_graph::StandaloneModuleGraph,
+        graph_ptr: &'static mut StandaloneModuleGraph,
     ) -> Result<(), bun_core::Error> {
-        jsc::mark_binding(core::panic::Location::caller());
+        jsc::mark_binding();
         jsc::initialize(false);
-        // TODO(port): verify analytics counter API
-        bun_analytics::Features::standalone_executable_inc();
+        bun_analytics::features::standalone_executable.fetch_add(1, Ordering::Relaxed);
 
-        bun_js_parser::expr::Store::create();
-        bun_js_parser::stmt::Store::create();
-        let arena = Arena::init();
+        bun_js_parser::Expr::data_store_create();
+        bun_js_parser::Stmt::data_store_create();
+        let arena = Arena::new();
 
         // Load bunfig.toml unless disabled by compile flags
         // Note: config loading with execArgv is handled earlier in cli.zig via loadConfig
-        if !ctx.debug.loaded_bunfig && !graph_ptr.flags.disable_autoload_bunfig {
-            bun_runtime::cli::Arguments::load_config_path(
+        if !ctx.debug.loaded_bunfig
+            && !graph_ptr
+                .flags
+                .contains(bun_standalone_graph::StandaloneModuleGraph::Flags::DISABLE_AUTOLOAD_BUNFIG)
+        {
+            crate::cli::Arguments::load_config_path(
+                Command::Tag::RunCommand,
                 true,
-                b"bunfig.toml",
-                &ctx,
-                bun_runtime::cli::Command::Tag::RunCommand,
+                bun_core::zstr!("bunfig.toml"),
+                ctx,
             )?;
         }
 
         // SAFETY: single-threaded init; first and only write to RUN.
         unsafe {
             RUN.write(Run {
-                vm: VirtualMachine::init_with_module_graph(jsc::VirtualMachineInitOpts {
+                vm: VirtualMachine::init_with_module_graph(jsc::virtual_machine::Options {
                     // PERF(port): was arena.allocator() — global mimalloc in Rust
-                    log: ctx.log,
-                    args: ctx.args,
-                    graph: Some(graph_ptr),
+                    log: NonNull::new(ctx.log),
+                    args: ctx.args.clone(),
+                    graph: Some(NonNull::from(&mut *graph_ptr).cast()),
                     is_main_thread: true,
                     smol: ctx.runtime_options.smol,
-                    debugger: ctx.runtime_options.debugger,
-                    dns_result_order: DNSResolver::Order::from_string_or_die(
-                        ctx.runtime_options.dns_result_order,
-                    ),
+                    // TODO(b2-cycle): `Options.debugger` is `()` until the real type lands.
+                    debugger: (),
+                    dns_result_order: DnsResultOrder::from_string_or_die(
+                        &ctx.runtime_options.dns_result_order,
+                    ) as u8,
                     ..Default::default()
                 })?,
                 arena,
@@ -111,170 +162,144 @@ impl Run {
         }
 
         let run = Run::global();
-        let vm = &mut *run.vm;
-        let ctx = &run.ctx;
-        vm.preload = ctx.preloads;
-        vm.argv = ctx.passthrough;
+        // SAFETY: `vm` was just produced by `VirtualMachine::init_*`; uniquely
+        // owned by the static `RUN` for process lifetime.
+        let vm = unsafe { &mut *run.vm };
+        let ctx = &mut *run.ctx;
         // TODO(port): vm.arena / vm.allocator backref — raw ptr into static RUN
-        vm.arena = &mut run.arena as *mut Arena;
+        vm.arena = NonNull::new(&mut run.arena as *mut Arena);
 
+        apply_ctx_to_transpiler(vm, ctx);
         let b = &mut vm.transpiler;
-        b.options.install = ctx.install;
-        b.resolver.opts.install = ctx.install;
-        b.resolver.opts.global_cache = ctx.debug.global_cache;
-        b.resolver.opts.prefer_offline_install =
-            ctx.debug.offline_mode_setting.unwrap_or(OfflineMode::Online) == OfflineMode::Offline;
-        b.resolver.opts.prefer_latest_install =
-            ctx.debug.offline_mode_setting.unwrap_or(OfflineMode::Online) == OfflineMode::Latest;
-        b.options.global_cache = b.resolver.opts.global_cache;
-        b.options.prefer_offline_install = b.resolver.opts.prefer_offline_install;
-        b.options.prefer_latest_install = b.resolver.opts.prefer_latest_install;
-        b.resolver.env_loader = b.env;
-
-        b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
-        b.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
-        b.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
-        b.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
-        b.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
-
-        b.options.serve_plugins = ctx.args.serve_plugins;
-        b.options.bunfig_path = ctx.args.bunfig_path;
-
-        // b.options.minify_syntax = ctx.bundler_options.minify_syntax;
-
-        match &ctx.debug.macros {
-            Macros::Disable => {
-                b.options.no_macros = true;
-            }
-            Macros::Map(macros) => {
-                b.options.macro_remap = macros.clone();
-            }
-            Macros::Unspecified => {}
-        }
-
         apply_standalone_runtime_flags(b, graph_ptr);
 
         if b.configure_defines().is_err() {
             fail_with_build_error(vm);
         }
 
-        AsyncHTTP::load_env(vm.log, b.env);
+        // SAFETY: vm.log / b.env are non-null after `init_*`.
+        bun_http::async_http::load_env(
+            unsafe { vm.log.unwrap().as_mut() },
+            unsafe { &*vm.transpiler.env },
+        );
 
         vm.load_extra_env_and_source_code_printer();
         vm.is_main_thread = true;
-        VirtualMachine::set_is_main_thread_vm(true);
+        // TODO(b2-blocked): `VirtualMachine::set_is_main_thread_vm(true)` — not yet ported.
 
-        bun_http::set_experimental_http2_client_from_cli(
-            ctx.runtime_options.experimental_http2_fetch,
-        );
-        bun_http::set_experimental_http3_client_from_cli(
-            ctx.runtime_options.experimental_http3_fetch,
-        );
+        // TODO(b2-blocked): `bun_http::set_experimental_http{2,3}_client_from_cli` — Zig-only
+        // globals (`http.zig`); plumb once the Rust http crate exposes them.
+        let _ = ctx.runtime_options.experimental_http2_fetch;
+        let _ = ctx.runtime_options.experimental_http3_fetch;
         Self::do_preconnect(&ctx.runtime_options.preconnect);
 
-        let callback = jsc::opaque_wrap::<Run>(Run::start);
-        vm.global.vm().hold_api_lock(run as *mut Run, callback);
+        vm.global().vm().hold_api_lock(
+            (run as *mut Run).cast(),
+            start_trampoline,
+        );
         Ok(())
     }
 
-    fn do_preconnect(preconnect: &[&[u8]]) {
+    fn do_preconnect(preconnect: &[Box<[u8]>]) {
         if preconnect.is_empty() {
             return;
         }
-        bun_http::HTTPThread::init(&Default::default());
+        bun_http::http_thread::init(&Default::default());
 
         for url_str in preconnect {
+            // TODO(port): lifetime — `preconnect()` takes `URL<'static>` but
+            // `url_str` borrows `ctx.runtime_options`. Leak to extend; the
+            // process exits before this matters.
+            let url_str: &'static [u8] = Box::leak(url_str.clone());
             let url = bun_url::URL::parse(url_str);
 
             if !url.is_http() && !url.is_https() {
-                Output::err_generic(format_args!(
+                Output::err_generic(
                     "preconnect URL must be HTTP or HTTPS: {}",
-                    bun_core::fmt::quote(url_str)
-                ));
+                    (bun_core::fmt::quote(url_str),),
+                );
                 Global::exit(1);
             }
 
             if url.hostname.is_empty() {
-                Output::err_generic(format_args!(
+                Output::err_generic(
                     "preconnect URL must have a hostname: {}",
-                    bun_core::fmt::quote(url_str)
-                ));
+                    (bun_core::fmt::quote(url_str),),
+                );
                 Global::exit(1);
             }
 
             if !url.has_valid_port() {
-                Output::err_generic(format_args!(
+                Output::err_generic(
                     "preconnect URL must have a valid port: {}",
-                    bun_core::fmt::quote(url_str)
-                ));
+                    (bun_core::fmt::quote(url_str),),
+                );
                 Global::exit(1);
             }
 
-            AsyncHTTP::preconnect(url, false);
+            bun_http::async_http::preconnect(url, false);
         }
     }
 
     #[cold]
     fn boot_bun_shell(
-        ctx: &Command::Context,
+        ctx: Command::Context<'_>,
         entry_path: &[u8],
-    ) -> Result<bun_runtime::shell::ExitCode, bun_core::Error> {
+    ) -> Result<crate::shell::ExitCode, bun_core::Error> {
         // this is a hack: make dummy bundler so we can use its `.runEnvLoader()`
         // function to populate environment variables probably should split out
         // the functionality
-        let mut bundle = bun_bundler::Transpiler::init(
-            ctx.log,
-            bun_jsc::config::configure_transform_options_for_bun_vm(ctx.args)?,
-            None,
-        )?;
+        // TODO(b2-gated): `bun_jsc::config::configure_transform_options_for_bun_vm`
+        // is in `_gated`; inline the 3 field writes here (mirrors jsc_hooks.rs).
+        let opts = ctx.args.clone();
+        let arena = Arena::new();
+        let mut bundle = bun_bundler::Transpiler::init(&arena, ctx.log, opts, None)?;
         bundle.run_env_loader(bundle.options.env.disable_default_env_files)?;
-        let mini = jsc::MiniEventLoop::init_global(bundle.env, None);
-        mini.top_level_dir = ctx.args.absolute_working_dir.unwrap_or(b"");
-        bun_runtime::shell::Interpreter::init_and_run_from_file(ctx, mini, entry_path)
+        // SAFETY: `bundle.env` is non-null after a successful `init`.
+        let mini = jsc::MiniEventLoop::init_global(Some(unsafe { &mut *bundle.env }), None);
+        // SAFETY: `init_global` returns the live process-lifetime mini event loop.
+        unsafe { (*mini).top_level_dir = ctx.args.absolute_working_dir.clone().unwrap_or_default() };
+        crate::shell::Interpreter::init_and_run_from_file(ctx, mini, entry_path)
     }
 
     pub fn boot(
-        ctx: Command::Context,
+        ctx: Command::Context<'static>,
         entry_path: &'static [u8],
         loader: Option<bun_bundler::options::Loader>,
     ) -> Result<(), bun_core::Error> {
-        jsc::mark_binding(core::panic::Location::caller());
+        jsc::mark_binding();
 
         if !ctx.debug.loaded_bunfig {
-            bun_runtime::cli::Arguments::load_config_path(
+            crate::cli::Arguments::load_config_path(
+                Command::Tag::RunCommand,
                 true,
-                b"bunfig.toml",
-                &ctx,
-                bun_runtime::cli::Command::Tag::RunCommand,
+                bun_core::zstr!("bunfig.toml"),
+                ctx,
             )?;
         }
 
         // The shell does not need to initialize JSC.
         // JSC initialization costs 1-3ms. We skip this if we know it's a shell script.
         if entry_path.ends_with(b".sh") {
-            let exit_code = Self::boot_bun_shell(&ctx, entry_path)?;
+            let exit_code = Self::boot_bun_shell(ctx, entry_path)?;
             Global::exit(exit_code);
         }
 
         jsc::initialize(ctx.runtime_options.eval.eval_and_print);
 
-        bun_js_parser::expr::Store::create();
-        bun_js_parser::stmt::Store::create();
-        let arena = Arena::init();
+        bun_js_parser::Expr::data_store_create();
+        bun_js_parser::Stmt::data_store_create();
+        let arena = Arena::new();
 
         // SAFETY: single-threaded init; first and only write to RUN.
         unsafe {
             RUN.write(Run {
-                vm: VirtualMachine::init(jsc::VirtualMachineInitOpts {
-                    log: ctx.log,
-                    args: ctx.args,
-                    store_fd: ctx.debug.hot_reload != HotReload::None,
+                vm: VirtualMachine::init(jsc::VirtualMachineInitOptions {
+                    // TODO(b2-cycle): `InitOptions` is the minimal stub surface; the
+                    // full `Options` struct (log/store_fd/eval/debugger/dns) is wired
+                    // via `init_with_module_graph`-style patching once it un-gates.
                     smol: ctx.runtime_options.smol,
-                    eval: ctx.runtime_options.eval.eval_and_print,
-                    debugger: ctx.runtime_options.debugger,
-                    dns_result_order: DNSResolver::Order::from_string_or_die(
-                        ctx.runtime_options.dns_result_order,
-                    ),
+                    eval_mode: ctx.runtime_options.eval.eval_and_print,
                     is_main_thread: true,
                     ..Default::default()
                 })?,
@@ -285,14 +310,16 @@ impl Run {
                 is_html_entrypoint: false,
             });
         }
+        let _ = DnsResultOrder::from_string_or_die(&ctx.runtime_options.dns_result_order);
+        let _ = ctx.debug.hot_reload != HotReload::None; // store_fd
 
         let run = Run::global();
-        let vm = &mut *run.vm;
-        let ctx = &run.ctx;
-        vm.preload = ctx.preloads;
-        vm.argv = ctx.passthrough;
+        // SAFETY: `vm` was just produced by `VirtualMachine::init`; uniquely owned
+        // by the static `RUN` for process lifetime.
+        let vm = unsafe { &mut *run.vm };
+        let ctx = &mut *run.ctx;
         // TODO(port): vm.arena / vm.allocator backref — raw ptr into static RUN
-        vm.arena = &mut run.arena as *mut Arena;
+        vm.arena = NonNull::new(&mut run.arena as *mut Arena);
 
         if !ctx.runtime_options.eval.script.is_empty() {
             let script_source = Box::new(logger::Source::init_path_string(
@@ -325,85 +352,60 @@ impl Run {
             )
             .expect("unreachable");
             // entry_path must end with /[eval] for the transpiler to use eval_source
-            let trigger = bun_paths::path_literal(b"/[eval]");
+            // TODO(port): Zig used `bun.OSPathLiteral("/[eval]")`; on Windows this
+            // would be a wide string. Phase B: route through a path-literal helper.
+            let trigger: &[u8] = b"/[eval]";
             let mut cwd_buf = bun_paths::PathBuffer::uninit();
-            let cwd_slice = match bun_sys::getcwd(&mut cwd_buf) {
-                bun_sys::Result::Ok(cwd) => cwd,
-                bun_sys::Result::Err(_) => return Err(bun_core::err!("SystemResources")),
+            let cwd_len = match bun_sys::getcwd(&mut cwd_buf.0[..]) {
+                bun_sys::Maybe::Ok(len) => len,
+                bun_sys::Maybe::Err(_) => return Err(bun_core::err!("SystemResources")),
             };
             let mut eval_path_buf = [0u8; bun_paths::MAX_PATH_BYTES + b"/[eval]".len()];
-            eval_path_buf[..cwd_slice.len()].copy_from_slice(cwd_slice);
-            eval_path_buf[cwd_slice.len()..cwd_slice.len() + trigger.len()]
-                .copy_from_slice(trigger);
-            let eval_entry_path = &eval_path_buf[..cwd_slice.len() + trigger.len()];
+            eval_path_buf[..cwd_len].copy_from_slice(&cwd_buf.0[..cwd_len]);
+            eval_path_buf[cwd_len..cwd_len + trigger.len()].copy_from_slice(trigger);
+            let eval_entry_path = &eval_path_buf[..cwd_len + trigger.len()];
             // Heap-allocate the path so it outlives this stack frame
             let heap_entry_path: &'static [u8] = Box::leak(Box::<[u8]>::from(eval_entry_path));
             // TODO(port): Source ownership — pass owned Vec<u8> once logger::Source has an owning ctor
             let script_source = Box::new(logger::Source::init_path_string(
                 heap_entry_path,
-                Box::leak(cron_script.into_boxed_slice()),
+                &*Box::leak(cron_script.into_boxed_slice()),
             ));
             vm.module_loader.eval_source = Some(script_source);
             run.entry_path = heap_entry_path;
         }
 
+        apply_ctx_to_transpiler(vm, ctx);
         let b = &mut vm.transpiler;
-        b.options.install = ctx.install;
-        b.resolver.opts.install = ctx.install;
-        b.resolver.opts.global_cache = ctx.debug.global_cache;
-        b.resolver.opts.prefer_offline_install =
-            ctx.debug.offline_mode_setting.unwrap_or(OfflineMode::Online) == OfflineMode::Offline;
-        b.resolver.opts.prefer_latest_install =
-            ctx.debug.offline_mode_setting.unwrap_or(OfflineMode::Online) == OfflineMode::Latest;
-        b.options.global_cache = b.resolver.opts.global_cache;
-        b.options.prefer_offline_install = b.resolver.opts.prefer_offline_install;
-        b.options.prefer_latest_install = b.resolver.opts.prefer_latest_install;
-        b.resolver.env_loader = b.env;
-
-        b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
-        b.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
-        b.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
-        b.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
-        b.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
-
-        b.options.env.behavior = bun_bundler::options::EnvBehavior::LoadAllWithoutInlining;
-        // b.options.minify_syntax = ctx.bundler_options.minify_syntax;
-
-        match &ctx.debug.macros {
-            Macros::Disable => {
-                b.options.no_macros = true;
-            }
-            Macros::Map(macros) => {
-                b.options.macro_remap = macros.clone();
-            }
-            Macros::Unspecified => {}
-        }
+        b.options.env.behavior =
+            bun_options_types::schema::api::DotEnvBehavior::LoadAllWithoutInlining;
 
         if b.configure_defines().is_err() {
             fail_with_build_error(vm);
         }
 
-        AsyncHTTP::load_env(vm.log, b.env);
+        // SAFETY: vm.log / b.env are non-null after `init`.
+        bun_http::async_http::load_env(
+            unsafe { vm.log.unwrap().as_mut() },
+            unsafe { &*vm.transpiler.env },
+        );
 
         vm.load_extra_env_and_source_code_printer();
         vm.is_main_thread = true;
-        VirtualMachine::set_is_main_thread_vm(true);
+        // TODO(b2-blocked): `VirtualMachine::set_is_main_thread_vm(true)` — not yet ported.
 
         // Allow setting a custom timezone
-        if let Some(tz) = vm.transpiler.env.get(b"TZ") {
-            if !tz.is_empty() {
-                let _ = vm.global.set_time_zone(&bun_str::ZigString::init(tz));
-            }
-        }
+        // TODO(b2-gated): `JSGlobalObject::set_time_zone` lives in the gated
+        // JSGlobalObject.rs module; wire `vm.transpiler.env.get(b"TZ")` →
+        // `set_time_zone` once it un-gates.
 
-        vm.transpiler.env.load_tracy();
+        // SAFETY: `transpiler.env` is non-null after `init`.
+        unsafe { &mut *vm.transpiler.env }.load_tracy();
 
-        bun_http::set_experimental_http2_client_from_cli(
-            ctx.runtime_options.experimental_http2_fetch,
-        );
-        bun_http::set_experimental_http3_client_from_cli(
-            ctx.runtime_options.experimental_http3_fetch,
-        );
+        // TODO(b2-blocked): `bun_http::set_experimental_http{2,3}_client_from_cli` — Zig-only
+        // globals (`http.zig`); plumb once the Rust http crate exposes them.
+        let _ = ctx.runtime_options.experimental_http2_fetch;
+        let _ = ctx.runtime_options.experimental_http3_fetch;
         Self::do_preconnect(&ctx.runtime_options.preconnect);
 
         vm.main_is_html_entrypoint = loader
@@ -414,8 +416,10 @@ impl Run {
             })
             == bun_bundler::options::Loader::Html;
 
-        let callback = jsc::opaque_wrap::<Run>(Run::start);
-        vm.global.vm().hold_api_lock(run as *mut Run, callback);
+        vm.global().vm().hold_api_lock(
+            (run as *mut Run).cast(),
+            start_trampoline,
+        );
         Ok(())
     }
 
@@ -429,37 +433,24 @@ impl Run {
     }
 
     pub fn start(&mut self) {
-        let vm = &mut *self.vm;
+        // SAFETY: `self.vm` is the live VM pointer set in `boot*()`.
+        let vm = unsafe { &mut *self.vm };
         vm.hot_reload = self.ctx.debug.hot_reload;
         vm.on_unhandled_rejection = Self::on_unhandled_rejection_before_close;
 
         // Start CPU profiler if enabled
         if self.ctx.runtime_options.cpu_prof.enabled {
-            let cpu_prof_opts = &self.ctx.runtime_options.cpu_prof;
-
-            vm.cpu_profiler_config = Some(CPUProfiler::CPUProfilerConfig {
-                name: cpu_prof_opts.name,
-                dir: cpu_prof_opts.dir,
-                md_format: cpu_prof_opts.md_format,
-                json_format: cpu_prof_opts.json_format,
-                interval: cpu_prof_opts.interval,
-            });
-            CPUProfiler::set_sampling_interval(cpu_prof_opts.interval);
-            // SAFETY: `jsc_vm` is the live per-thread JSC VM pointer.
-            CPUProfiler::start_cpu_profiler(unsafe { &mut *vm.jsc_vm });
-            bun_analytics::Features::cpu_profile_inc();
+            // TODO(b2-gated): `bun_jsc::bun_cpu_profiler` is in `_gated`; wire
+            // `vm.cpu_profiler_config` + `set_sampling_interval` /
+            // `start_cpu_profiler` once that module compiles.
+            bun_analytics::features::cpu_profile.fetch_add(1, Ordering::Relaxed);
         }
 
         // Set up heap profiler config if enabled (actual profiling happens on exit)
         if self.ctx.runtime_options.heap_prof.enabled {
-            let heap_prof_opts = &self.ctx.runtime_options.heap_prof;
-
-            vm.heap_profiler_config = Some(HeapProfiler::HeapProfilerConfig {
-                name: heap_prof_opts.name,
-                dir: heap_prof_opts.dir,
-                text_format: heap_prof_opts.text_format,
-            });
-            bun_analytics::Features::heap_snapshot_inc();
+            // TODO(b2-gated): `bun_jsc::bun_heap_profiler` is in `_gated`; wire
+            // `vm.heap_profiler_config` once that module compiles.
+            bun_analytics::features::heap_snapshot.fetch_add(1, Ordering::Relaxed);
         }
 
         self.add_conditional_globals();
@@ -468,29 +459,29 @@ impl Run {
             if self.ctx.runtime_options.redis_preconnect {
                 // Go through the global object's getter because Bun.redis is a
                 // PropertyCallback which means we don't have a WriteBarrier we can access
-                let global = vm.global;
-                let bun_object = match vm.global.to_js_value().get(global, b"Bun") {
+                let global = vm.global();
+                let bun_object: JSValue = match global.to_js_value().get(global, b"Bun") {
                     Ok(Some(v)) => v,
                     Ok(None) => break 'do_redis_preconnect,
                     Err(err) => {
-                        vm.global.report_active_exception_as_unhandled(err);
+                        global.report_active_exception_as_unhandled(err);
                         break 'do_redis_preconnect;
                     }
                 };
-                let redis = match bun_object.get(global, b"redis") {
+                let redis: JSValue = match bun_object.get(global, b"redis") {
                     Ok(Some(v)) => v,
                     Ok(None) => break 'do_redis_preconnect,
                     Err(err) => {
-                        vm.global.report_active_exception_as_unhandled(err);
+                        global.report_active_exception_as_unhandled(err);
                         break 'do_redis_preconnect;
                     }
                 };
-                let Some(client) = redis.as_::<bun_valkey::JSValkeyClient>() else {
+                let Some(client) = redis.as_::<crate::valkey_jsc::JSValkeyClient>() else {
                     break 'do_redis_preconnect;
                 };
                 // If connection fails, this will become an unhandled promise rejection, which is fine.
-                if let Err(err) = client.do_connect(vm.global, redis) {
-                    vm.global.report_active_exception_as_unhandled(err);
+                if let Err(err) = client.do_connect(global, redis) {
+                    global.report_active_exception_as_unhandled(err);
                     break 'do_redis_preconnect;
                 }
             }
@@ -498,8 +489,8 @@ impl Run {
 
         'do_postgres_preconnect: {
             if self.ctx.runtime_options.sql_preconnect {
-                let global = vm.global;
-                let bun_object = match vm.global.to_js_value().get(global, b"Bun") {
+                let global = vm.global();
+                let bun_object: JSValue = match global.to_js_value().get(global, b"Bun") {
                     Ok(Some(v)) => v,
                     Ok(None) => break 'do_postgres_preconnect,
                     Err(err) => {
@@ -507,7 +498,7 @@ impl Run {
                         break 'do_postgres_preconnect;
                     }
                 };
-                let sql_object = match bun_object.get(global, b"sql") {
+                let sql_object: JSValue = match bun_object.get(global, b"sql") {
                     Ok(Some(v)) => v,
                     Ok(None) => break 'do_postgres_preconnect,
                     Err(err) => {
@@ -515,7 +506,7 @@ impl Run {
                         break 'do_postgres_preconnect;
                     }
                 };
-                let connect_fn = match sql_object.get(global, b"connect") {
+                let connect_fn: JSValue = match sql_object.get(global, b"connect") {
                     Ok(Some(v)) => v,
                     Ok(None) => break 'do_postgres_preconnect,
                     Err(err) => {
@@ -531,11 +522,10 @@ impl Run {
         }
 
         match self.ctx.debug.hot_reload {
-            HotReload::Hot => {
-                jsc::hot_reloader::HotReloader::enable_hot_module_reloading(vm, self.entry_path)
-            }
-            HotReload::Watch => {
-                jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(vm, self.entry_path)
+            HotReload::Hot | HotReload::Watch => {
+                // TODO(b2-blocked): `jsc::hot_reloader::{Hot,Watch}Reloader::
+                // enable_hot_module_reloading` — `VirtualMachineRef: HotReloaderCtx`
+                // bound is not yet implemented.
             }
             _ => {}
         }
@@ -548,9 +538,9 @@ impl Run {
 
         match vm.load_entry_point(self.entry_path) {
             Ok(promise) => {
-                if promise.status() == jsc::PromiseStatus::Rejected {
+                if promise.status() == jsc::js_promise::Status::Rejected {
                     let handled =
-                        vm.uncaught_exception(vm.global, promise.result(vm.global.vm()), true);
+                        vm.uncaught_exception(vm.global, promise.result(vm.global().vm()), true);
                     promise.set_handled();
                     vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
 
@@ -564,12 +554,12 @@ impl Run {
 
                         if Run::global().any_unhandled {
                             printed_sourcemap_warning_and_version = true;
-                            jsc::SavedSourceMap::MissingSourceMapNoteInfo::print();
+                            MissingSourceMapNoteInfo::print();
 
                             Output::pretty_errorln(
                                 format_args!(
                                     "<r>\n<d>{}<r>",
-                                    Global::unhandled_error_bun_version_string()
+                                    Global::unhandled_error_bun_version_string
                                 ),
                             );
                         }
@@ -577,7 +567,7 @@ impl Run {
                     }
                 }
 
-                let _ = promise.result(vm.global.vm());
+                let _ = promise.result(vm.global().vm());
 
                 if !vm.log.msgs.is_empty() {
                     dump_build_error(vm);
@@ -601,11 +591,11 @@ impl Run {
                 vm.on_exit();
                 if Run::global().any_unhandled {
                     printed_sourcemap_warning_and_version = true;
-                    jsc::SavedSourceMap::MissingSourceMapNoteInfo::print();
+                    MissingSourceMapNoteInfo::print();
 
                     Output::pretty_errorln(format_args!(
                         "<r>\n<d>{}<r>",
-                        Global::unhandled_error_bun_version_string()
+                        Global::unhandled_error_bun_version_string
                     ));
                 }
                 vm.global_exit();
@@ -614,9 +604,9 @@ impl Run {
 
         // don't run the GC if we don't actually need to
         if vm.is_event_loop_alive() || vm.event_loop().tick_concurrent_with_count() > 0 {
-            vm.global.vm().release_weak_refs();
+            vm.global().vm().release_weak_refs();
             let _ = vm.arena_gc(); // TODO(port): vm.arena.gc()
-            let _ = vm.global.vm().run_gc(false);
+            let _ = vm.global().vm().run_gc(false);
             vm.tick();
         }
 
@@ -625,12 +615,12 @@ impl Run {
         // source pages are off the hot path now. No-op unless this is a
         // compiled standalone binary, and skip under --watch/--hot since those
         // re-read source on every reload.
-        if !self.vm.is_watcher_enabled() {
-            bun_standalone_module_graph::StandaloneModuleGraph::hint_source_pages_dont_need();
+        if !vm.is_watcher_enabled() {
+            StandaloneModuleGraph::hint_source_pages_dont_need();
         }
 
         {
-            if self.vm.is_watcher_enabled() {
+            if vm.is_watcher_enabled() {
                 vm.report_exception_in_hot_reloaded_module_if_needed();
 
                 loop {
@@ -656,38 +646,11 @@ impl Run {
                 }
 
                 if self.ctx.runtime_options.eval.eval_and_print {
-                    let to_print = 'brk: {
-                        let result: JSValue =
-                            vm.entry_point_result.value.get().unwrap_or(JSValue::UNDEFINED);
-                        if let Some(promise) = result.as_any_promise() {
-                            match promise.status() {
-                                jsc::PromiseStatus::Pending => {
-                                    // TODO: properly propagate exception upwards
-                                    let _ = result.then2(
-                                        vm.global,
-                                        JSValue::UNDEFINED,
-                                        Bun__onResolveEntryPointResult,
-                                        Bun__onRejectEntryPointResult,
-                                    );
-
-                                    vm.tick();
-                                    vm.event_loop().auto_tick_active();
-
-                                    while vm.is_event_loop_alive() {
-                                        vm.tick();
-                                        vm.event_loop().auto_tick_active();
-                                    }
-
-                                    break 'brk result;
-                                }
-                                _ => break 'brk promise.result(vm.jsc_vm),
-                            }
-                        }
-
-                        result
-                    };
-
-                    to_print.print(vm.global, jsc::PrintKind::Log, jsc::PrintLevel::Log);
+                    // TODO(b2-blocked): `bun -p` result printing —
+                    // `JSValue::then2`/`JSValue::print` (Zig: `JSValue.print`, takes
+                    // `ConsoleObject.MessageType`/`MessageLevel`) +
+                    // `Bun__on{Resolve,Reject}EntryPointResult` are not yet at this
+                    // tier. Mirrors run_command.rs.
                 }
 
                 vm.on_before_exit();
@@ -700,29 +663,30 @@ impl Run {
         }
 
         vm.on_unhandled_rejection = Self::on_unhandled_rejection_before_close;
-        vm.global.handle_rejected_promises();
+        vm.global().handle_rejected_promises();
         vm.on_exit();
 
         if self.any_unhandled && !printed_sourcemap_warning_and_version {
-            self.vm.exit_handler.exit_code = 1;
+            vm.exit_handler.exit_code = 1;
 
-            jsc::SavedSourceMap::MissingSourceMapNoteInfo::print();
+            MissingSourceMapNoteInfo::print();
 
             Output::pretty_errorln(format_args!(
                 "<r>\n<d>{}<r>",
-                Global::unhandled_error_bun_version_string()
+                Global::unhandled_error_bun_version_string
             ));
         }
 
-        bun_runtime::api::napi::fix_dead_code_elimination();
-        bun_runtime::webcore::BakeResponse::fix_dead_code_elimination();
-        bun_crash_handler::fix_dead_code_elimination();
-        bun_jsc::js_secrets::fix_dead_code_elimination();
+        // PORT NOTE: `fixDeadCodeElimination()` calls dropped — Rust does not DCE
+        // `#[no_mangle] extern "C"` symbols the way Zig does, so the anti-DCE
+        // shims (`napi`, `BakeResponse`, `crash_handler`, `js_secrets`) are
+        // unnecessary here. Mirrors run_command.rs.
         vm.global_exit();
     }
 
     fn add_conditional_globals(&mut self) {
-        let vm = &mut *self.vm;
+        // SAFETY: `self.vm` is the live VM pointer set in `boot*()`.
+        let vm = unsafe { &mut *self.vm };
         let runtime_options: &Command::RuntimeOptions = &self.ctx.runtime_options;
 
         if !runtime_options.eval.script.is_empty() {
@@ -738,24 +702,36 @@ impl Run {
     }
 }
 
-// TODO(port): these use callconv(jsc.conv) + noreturn; #[bun_jsc::host_fn] emits the
-// correct ABI but expects JsResult<JSValue>. Phase B: confirm macro supports `-> !`.
+/// `OpaqueCallback` trampoline for `hold_api_lock` → `Run::start`.
+/// PORT NOTE: `jsc::opaque_wrap` is now zero-arg + `FnTyped` trait; a local
+/// trampoline is simpler than implementing the trait for a method.
+extern "C" fn start_trampoline(ctx: *mut core::ffi::c_void) {
+    // SAFETY: caller passes `(run as *mut Run).cast()`; `run` is the static
+    // `RUN` singleton initialised in `boot*()`.
+    unsafe { (*ctx.cast::<Run>()).start() }
+}
+
+// TODO(port): these use callconv(jsc.conv) + noreturn; `#[bun_jsc::host_fn]`
+// expects `IntoHostFnResult` which `!` does not implement. Return `JSValue`
+// nominally — `Global::exit` diverges before reaching the return.
 #[bun_jsc::host_fn]
 #[unsafe(no_mangle)]
-pub fn Bun__onResolveEntryPointResult(global: &JSGlobalObject, callframe: &CallFrame) -> ! {
-    let arguments = callframe.arguments_old(1);
-    let result = arguments.slice()[0];
-    result.print(global, jsc::PrintKind::Log, jsc::PrintLevel::Log);
-    Global::exit(global.bun_vm().exit_handler.exit_code);
+pub fn Bun__onResolveEntryPointResult(global: &JSGlobalObject, callframe: &CallFrame) -> JSValue {
+    let arguments = callframe.arguments_old::<1>();
+    let _result = arguments.slice()[0];
+    // TODO(b2-blocked): `JSValue::print(global, .Log, .Log)` — not yet ported.
+    // SAFETY: `bun_vm()` returns the live per-thread VM.
+    Global::exit(unsafe { (*global.bun_vm()).exit_handler.exit_code });
 }
 
 #[bun_jsc::host_fn]
 #[unsafe(no_mangle)]
-pub fn Bun__onRejectEntryPointResult(global: &JSGlobalObject, callframe: &CallFrame) -> ! {
-    let arguments = callframe.arguments_old(1);
-    let result = arguments.slice()[0];
-    result.print(global, jsc::PrintKind::Log, jsc::PrintLevel::Log);
-    Global::exit(global.bun_vm().exit_handler.exit_code);
+pub fn Bun__onRejectEntryPointResult(global: &JSGlobalObject, callframe: &CallFrame) -> JSValue {
+    let arguments = callframe.arguments_old::<1>();
+    let _result = arguments.slice()[0];
+    // TODO(b2-blocked): `JSValue::print(global, .Log, .Log)` — not yet ported.
+    // SAFETY: `bun_vm()` returns the live per-thread VM.
+    Global::exit(unsafe { (*global.bun_vm()).exit_handler.exit_code });
 }
 
 #[cold]

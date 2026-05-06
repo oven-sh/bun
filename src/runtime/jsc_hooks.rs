@@ -141,7 +141,10 @@ unsafe fn init_runtime_state(
     // `OnceLock`, which this is not (per-VM / per-Worker-thread).
     let state = Box::into_raw(Box::new(RuntimeState {
         timer: timer::All::init(),
-        sql_rare: Default::default(),
+        sql_rare: bun_sql_jsc::jsc::RareData {
+            mysql_context: Default::default(),
+            postgresql_context: Default::default(),
+        },
         ssl_ctx_cache: Default::default(),
         entry_point: ServerEntryPoint::default(),
         transpiler_arena: Box::new(bun_alloc::Arena::new()),

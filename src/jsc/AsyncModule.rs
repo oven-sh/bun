@@ -178,13 +178,16 @@ impl<'a> AsyncModule<'a> {
                 // `VirtualMachine.processFetchLog(globalThis, specifier,
                 // referrer, log, &errorable, e)` synthesizes a JS
                 // Error/AggregateError from the parser log and writes it into
-                // `errorable.result.err.value`. Routed through the §Dispatch
-                // `LoaderHooks::process_fetch_log` slot (body lives in
-                // `bun_runtime`); without this the import promise would reject
-                // with `undefined` (ModuleLoader.cpp:473).
+                // `errorable.result.err.value`. Without this the import promise
+                // would reject with `undefined` (ModuleLoader.cpp:473).
+                // PORT NOTE: call the `virtual_machine` impl directly (takes
+                // `&JSGlobalObject`) instead of the `module_loader` shim that
+                // takes `*mut` — avoids a `&T as *const T as *mut T` cast,
+                // which is UB-adjacent under Stacked Borrows even when the
+                // callee never writes through it.
                 errorable = ErrorableResolvedSource::err(e, JSValue::UNDEFINED);
-                super::process_fetch_log(
-                    global_this as *const JSGlobalObject as *mut JSGlobalObject,
+                crate::virtual_machine::process_fetch_log(
+                    global_this,
                     specifier,
                     referrer,
                     log,

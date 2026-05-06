@@ -960,29 +960,6 @@ pub struct FontHandler {
 }
 
 impl FontHandler {
-    // PORT NOTE: real `handle_property`/`finalize` bodies remain gated below.
-    // The handler stub surface here matches `handler_stub!` so
-    // `DeclarationHandler` (declaration.rs) compiles unchanged.
-    #[cfg(any())]
-    #[inline]
-    pub fn handle_property(
-        &mut self,
-        _property: &crate::properties::Property,
-        _dest: &mut crate::DeclarationList<'_>,
-        _context: &mut crate::PropertyHandlerContext<'_>,
-    ) -> bool {
-        false
-    }
-    #[cfg(any())]
-    #[inline]
-    pub fn finalize(
-        &mut self,
-        _dest: &mut crate::DeclarationList<'_>,
-        _context: &mut crate::PropertyHandlerContext<'_>,
-    ) {
-    }
-
-    
     // blocked_on: generics::is_compatible/eql/deepClone blankets,
     // PropertyHandlerContext::allocator(), DeclarationList::push,
     // Property::Font*/Unparsed payloads, FontFamilyHashMap.

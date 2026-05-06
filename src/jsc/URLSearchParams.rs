@@ -25,13 +25,10 @@ unsafe extern "C" {
 
 impl URLSearchParams {
     pub fn create(global_object: &JSGlobalObject, init: ZigString) -> JSValue {
-        // SAFETY: global_object is a valid &JSGlobalObject; init outlives the call.
-        unsafe {
-            URLSearchParams__create(
-                global_object as *const JSGlobalObject as *mut JSGlobalObject,
-                &init,
-            )
-        }
+        // SAFETY: `as_ptr()` yields a `*mut` with valid write provenance via the
+        // `UnsafeCell` interior of `JSGlobalObject` (C++ may mutate VM/heap state);
+        // `init` outlives the synchronous FFI call.
+        unsafe { URLSearchParams__create(global_object.as_ptr(), &init) }
     }
 
     // TODO(port): lifetime — opaque handle is owned by the JS GC heap, not by `value`.

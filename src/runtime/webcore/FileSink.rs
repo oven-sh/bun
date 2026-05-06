@@ -62,14 +62,27 @@ impl FileSink {
         self.ref_count.set(self.ref_count.get() + 1);
     }
 
+    /// Decrement the intrusive refcount; frees the allocation on zero.
+    ///
+    /// # Safety
+    /// `this` must point to a live `FileSink` allocated via `Box::into_raw`
+    /// (see `create*`/`init`) and must carry write+dealloc provenance — i.e.
+    /// be derived from the original `*mut FileSink` or an `&mut FileSink`,
+    /// never from a `&FileSink`. Taking `&self` here would strip write
+    /// provenance and make the `deinit` path UB under Stacked Borrows.
     #[inline]
-    pub fn deref(&self) {
-        let n = self.ref_count.get() - 1;
-        self.ref_count.set(n);
+    pub unsafe fn deref(this: *const Self) {
+        // SAFETY: caller contract — `this` is live; `ref_count` is `Cell<u32>`
+        // so the shared borrow of just that field is sound.
+        let rc = unsafe { &(*this).ref_count };
+        let n = rc.get() - 1;
+        rc.set(n);
         if n == 0 {
-            // SAFETY: refcount hit zero; we are the sole remaining reference and
-            // `self` was allocated via `Box::into_raw` in `create*`/`init`.
-            unsafe { Self::deinit(self as *const Self as *mut Self) };
+            // SAFETY: refcount hit zero; we hold the sole remaining reference.
+            // `this` retains the caller's write provenance (no `&self` in the
+            // chain), so the `*mut` cast is sound for `deinit` to write through
+            // and `Box::from_raw` to reclaim.
+            unsafe { Self::deinit(this as *mut Self) };
         }
     }
 }

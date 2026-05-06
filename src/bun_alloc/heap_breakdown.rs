@@ -99,25 +99,31 @@ macro_rules! get_zone {
 // only because `allocator<T>()`/`get_zone_t<T>()` can't expand a per-T static on
 // stable Rust without a proc-macro. Phase B may replace with a `#[heap_label]`
 // derive that expands `get_zone!` directly.
-fn get_zone_runtime(name: &'static str) -> &'static Zone {
+fn get_zone_runtime(name: &str) -> &'static Zone {
     const _: () = assert!(ENABLED);
 
+    use std::collections::HashMap;
     use std::sync::Mutex;
-    static ZONES: OnceLock<Mutex<StringHashMap<&'static Zone>>> = OnceLock::new();
-    let map = ZONES.get_or_init(|| Mutex::new(StringHashMap::default()));
+    // Map value carries the owning `Vec<u8>` for the NUL-terminated label so it
+    // lives for process lifetime (PORTING.md §Forbidden: never `Box::leak`).
+    static ZONES: OnceLock<Mutex<HashMap<Vec<u8>, (Vec<u8>, &'static Zone)>>> = OnceLock::new();
+    let map = ZONES.get_or_init(|| Mutex::new(HashMap::default()));
     let mut map = map.lock().unwrap();
-    if let Some(z) = map.get(name.as_bytes()) {
+    if let Some((_, z)) = map.get(name.as_bytes()) {
         return *z;
     }
-    // `name` verbatim (no prefix — matches Zig `getZone`), NUL-terminated, leaked for 'static.
+    // `name` verbatim (no prefix — matches Zig `getZone`), NUL-terminated.
     let mut owned = Vec::with_capacity(name.len() + 1);
     owned.extend_from_slice(name.as_bytes());
     owned.push(0);
-    let leaked: &'static [u8] = Box::leak(owned.into_boxed_slice());
-    // SAFETY: we just wrote a trailing NUL and there are no interior NULs in a type name.
-    let cstr = unsafe { core::ffi::CStr::from_bytes_with_nul_unchecked(leaked) };
-    let zone = Zone::init(cstr);
-    map.insert(name.as_bytes().into(), zone);
+    // The Vec's heap buffer address is stable across the move into the map
+    // (only the {ptr,len,cap} header moves), and the entry is never removed.
+    let raw = owned.as_ptr() as *const c_char;
+    // SAFETY: `raw` points into a NUL-terminated buffer that is moved into the
+    // 'static `ZONES` map immediately below and never freed — valid for process
+    // lifetime per `Zone::init` contract.
+    let zone = unsafe { Zone::init(raw) };
+    map.insert(name.as_bytes().to_vec(), (owned, zone));
     zone
 }
 

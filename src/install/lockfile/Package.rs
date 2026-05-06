@@ -351,17 +351,17 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
         let builder = &mut builder_;
         bun_output::scoped_log!(
             Lockfile,
-            "Clone: {}@{} ({}, {} dependencies)",
+            "Clone: {}@{} ({:?}, {} dependencies)",
             bstr::BStr::new(self.name.slice(old_string_buf)),
             self.resolution.fmt(old_string_buf, bun_core::fmt::PathSep::Auto),
-            <&'static str>::from(self.resolution.tag),
+            self.resolution.tag,
             self.dependencies.len,
         );
 
         builder.count(self.name.slice(old_string_buf));
-        self.resolution.count(old_string_buf, builder);
-        self.meta.count(old_string_buf, builder);
-        self.scripts.count(old_string_buf, builder);
+        self.resolution.count(old_string_buf, &mut *builder);
+        self.meta.count(old_string_buf, &mut *builder);
+        self.scripts.count(old_string_buf, &mut *builder);
         for patched_dep in old.patched_dependencies.values() {
             builder.count(patched_dep.path.slice(old.buffers.string_bytes.as_slice()));
         }
@@ -479,11 +479,14 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
         Ok(new_package.meta.id)
     }
 
-    pub fn from_package_json<const FEATURES: Features>(
+    pub fn from_package_json(
         lockfile: &mut Lockfile,
         pm: &mut PackageManager,
         package_json: &mut PackageJSON,
+        features: Features,
     ) -> Result<Self, bun_core::Error> {
+        #[allow(non_snake_case)]
+        let FEATURES = features;
         // TODO(port): narrow error set
         let mut package = Self::default();
 
@@ -584,14 +587,17 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
         }
     }
 
-    pub fn from_npm<const FEATURES: Features>(
+    pub fn from_npm(
         pm: &mut PackageManager,
         lockfile: &mut Lockfile,
         log: &mut logger::Log,
         manifest: &Npm::PackageManifest,
         version: SemverVersion,
         package_version_ptr: &Npm::PackageVersion,
+        features: Features,
     ) -> Result<Self, bun_core::Error> {
+        #[allow(non_snake_case)]
+        let FEATURES = features;
         // TODO(port): narrow error set
         let mut package = Self::default();
 
@@ -1408,13 +1414,14 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
         hasher.final_()
     }
 
-    pub fn parse<R, const FEATURES: Features>(
+    pub fn parse<R: ResolverContext>(
         &mut self,
         lockfile: &mut Lockfile,
         pm: &mut PackageManager,
         log: &mut logger::Log,
         source: &logger::Source,
         resolver: &mut R,
+        features: Features,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         initialize_store();
@@ -1431,18 +1438,19 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
             }
         };
 
-        self.parse_with_json::<R, FEATURES>(lockfile, pm, log, source, json, resolver)
+        self.parse_with_json::<R>(lockfile, pm, log, source, json, resolver, features)
     }
 
     // Zig: `comptime group: DependencyGroup`, `comptime features: Features`, `comptime tag: ?Dependency.Version.Tag`
     // PERF(port): was comptime monomorphization on `group`/`tag` — profile in Phase B
-    fn parse_dependency<const FEATURES: Features>(
+    fn parse_dependency(
         lockfile: &mut Lockfile,
         pm: &mut PackageManager,
         log: &mut logger::Log,
         source: &logger::Source,
         group: &DependencyGroup,
         string_builder: &mut StringBuilder<'_>,
+        features: Features,
         package_dependencies: &mut [Dependency],
         dependencies_count: u32,
         tag: Option<dependency::version::Tag>,
@@ -1791,7 +1799,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
         Ok(Some(this_dep))
     }
 
-    pub fn parse_with_json<R, const FEATURES: Features>(
+    pub fn parse_with_json<R: ResolverContext>(
         &mut self,
         lockfile: &mut Lockfile,
         pm: &mut PackageManager,
@@ -1799,11 +1807,11 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
         source: &logger::Source,
         json: Expr,
         resolver: &mut R,
+        features: Features,
     ) -> Result<(), bun_core::Error> {
+        #[allow(non_snake_case)]
+        let FEATURES = features;
         // TODO(port): narrow error set
-        // TODO(port): `R` needs a trait covering `count`, `resolve`, `check_bundled_dependencies`,
-        // and the `GitResolver`-specific fields. Zig used `comptime ResolverContext: type` +
-        // `@hasDecl`-style structural checks. Phase B should define `trait ResolverContext`.
         let mut string_builder = lockfile.string_builder();
         let mut total_dependencies_count: u32 = 0;
 

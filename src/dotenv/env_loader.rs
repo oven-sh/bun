@@ -151,6 +151,36 @@ impl<'a> Loader<'a> {
         None
     }
 
+    /// Port of `loadNodeJSConfig` (env_loader.zig:332). Populates `NODE` /
+    /// `npm_node_execpath` with the resolved node binary path. Returns `false`
+    /// only when no node could be discovered and no override was supplied.
+    pub fn load_nodejs_config(
+        &mut self,
+        fs: &bun_paths::fs::FileSystem,
+        override_node: &[u8],
+    ) -> Result<bool, AllocError> {
+        let mut buf = PathBuffer::ZEROED;
+
+        // PORT NOTE: Zig stores the borrowed slice into `node_path_to_use_set_once` and then
+        // into `Map.put` (which dupes). We dupe up-front into `Box<[u8]>` so the cached value
+        // is owned (matches `Map::put`'s ownership model).
+        let node_path_to_use: Box<[u8]> = if !override_node.is_empty() {
+            Box::from(override_node)
+        } else if let Some(cached) = NODE_PATH_TO_USE_SET_ONCE.read().as_ref() {
+            cached.clone()
+        } else {
+            let Some(node) = self.get_node_path(fs, &mut buf) else {
+                return Ok(false);
+            };
+            // Zig: `fs.dirname_store.append(..)` — process-static interning. Own a copy here.
+            Box::from(node.as_ref())
+        };
+        *NODE_PATH_TO_USE_SET_ONCE.write() = Some(node_path_to_use.clone());
+        self.map.put(b"NODE", &node_path_to_use)?;
+        self.map.put(b"npm_node_execpath", &node_path_to_use)?;
+        Ok(true)
+    }
+
     pub fn is_ci(&self) -> bool {
         self.get(b"CI")
             .or_else(|| self.get(b"TDDIUM"))

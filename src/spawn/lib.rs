@@ -464,6 +464,24 @@ impl Process {
         // poller/keep-alive live on the higher-tier struct.
     }
 
+    /// Zig: `Process.onExit` — record the final status, drop the keep-alive,
+    /// and dispatch `exit_handler.call(self, status, rusage)`. `&self` so
+    /// `Arc<Process>` callers compile.
+    #[inline]
+    pub fn on_exit(&self, _status: Status, _rusage: &Rusage) {
+        // TODO(port): blocked_on bun_runtime::api::bun::process::Process —
+        // status/exit_handler/poller fields live on the higher-tier struct.
+    }
+
+    /// Zig: `Process.close` — tear down the poller (pidfd close / waiter
+    /// shutdown / `uv_close`). `&self` because `Arc<Process>` is the canonical
+    /// handle and Zig's intrusive refcount allows mutation through shared.
+    #[inline]
+    pub fn close(&self) {
+        // TODO(port): blocked_on bun_runtime::api::bun::process::Process —
+        // poller lives on the higher-tier struct.
+    }
+
     /// Zig: `Process.kill(signal: u8) Maybe(void)`.
     ///
     /// At this tier the `Poller` discriminant is not available, so the POSIX

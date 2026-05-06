@@ -277,12 +277,11 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 let name = name.clone();
                 if log_level.show_progress() {
                     if !*has_updated_this_run {
-                        manager.set_node_name(
-                            manager.downloads_node.unwrap(),
+                        manager.set_node_name::<true>(
+                            unsafe { &mut *manager.downloads_node.unwrap() },
                             name.slice(),
-                            ProgressStrings::DOWNLOAD_EMOJI,
-                            true,
-                        );
+                            ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
+                            );
                         *has_updated_this_run = true;
                     }
                 }
@@ -435,23 +434,23 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 }
 
                 if log_level.is_verbose() {
-                    Output::pretty_error("    ");
+                    bun_core::pretty_error!("    ");
                     Output::print_elapsed(
-                        (task.unsafe_http_client.elapsed as f64) / bun_core::time::NS_PER_MS,
+                        (task.unsafe_http_client.elapsed as f64) / bun_core::time::NS_PER_MS as f64,
                     );
-                    Output::pretty_error(
+                    bun_core::pretty_error!(
                         "\n<d>Downloaded <r><green>{}<r> versions\n",
-                        format_args!("{}", bstr::BStr::new(name.slice())),
+                        bstr::BStr::new(name.slice()),
                     );
                     Output::flush();
                 }
 
                 if response.status_code == 304 {
                     // The HTTP request was cached
-                    if let Some(manifest) = manifest_req.loaded_manifest.take() {
+                    if let Some(manifest) = loaded_manifest.take() {
                         // If we requested extended manifest but we somehow got an abbreviated one, this is a bug
                         debug_assert!(
-                            !manifest_req.is_extended_manifest || manifest.pkg.has_extended_manifest
+                            !*is_extended_manifest || manifest.pkg.has_extended_manifest
                         );
 
                         let entry = manager
@@ -473,11 +472,11 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             .public_max_age = timestamp_this_tick.unwrap();
 
                         if manager.options.enable.contains(Enable::MANIFEST_CACHE) {
-                            Npm::PackageManifest::Serializer::save_async(
+                            npm::package_manifest::Serializer::save_async(
                                 entry.value_ptr.manifest_mut(),
                                 manager.scope_for_package_name(name.slice()),
-                                manager.get_temporary_directory().handle,
-                                manager.get_cache_directory(),
+                                directories::get_temporary_directory(manager).handle,
+                                directories::get_cache_directory(manager),
                             );
                         }
 
@@ -488,9 +487,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         let dependency_list_entry =
                             manager.task_queue.get_mut(&task.task_id).unwrap();
 
-                        let dependency_list = core::mem::take(dependency_list_entry.value_ptr);
+                        let dependency_list = core::mem::take(dependency_list_entry);
 
-                        manager.process_dependency_list::<C>(
+                        process_dependency_list_for_ctx::<C>(
+                            manager,
                             dependency_list,
                             extract_ctx,
                             install_peer,
@@ -501,7 +501,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 }
 
                 manager.task_batch.push(ThreadPoolBatch::from(
-                    manager.enqueue_parse_npm_package(task.task_id, &name, task),
+                    enqueue::enqueue_parse_npm_package(manager, task.task_id, name, task_ptr),
                 ));
             }
             NetworkTaskCallback::Extract(extract) => {
@@ -764,12 +764,11 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                 if log_level.show_progress() {
                     if !*has_updated_this_run {
-                        manager.set_node_name(
-                            manager.downloads_node.unwrap(),
+                        manager.set_node_name::<true>(
+                            unsafe { &mut *manager.downloads_node.unwrap() },
                             extract.name.slice(),
-                            ProgressStrings::EXTRACT_EMOJI,
-                            true,
-                        );
+                            ProgressStrings::EXTRACT_EMOJI.as_bytes(),
+                            );
                         *has_updated_this_run = true;
                     }
                 }
@@ -874,12 +873,11 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                 if log_level.show_progress() {
                     if !*has_updated_this_run {
-                        manager.set_node_name(
-                            manager.downloads_node.unwrap(),
+                        manager.set_node_name::<true>(
+                            unsafe { &mut *manager.downloads_node.unwrap() },
                             manifest.name(),
-                            ProgressStrings::DOWNLOAD_EMOJI,
-                            true,
-                        );
+                            ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
+                            );
                         *has_updated_this_run = true;
                     }
                 }
@@ -1088,12 +1086,11 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                 if log_level.show_progress() {
                     if !*has_updated_this_run {
-                        manager.set_node_name(
-                            manager.downloads_node.unwrap(),
+                        manager.set_node_name::<true>(
+                            unsafe { &mut *manager.downloads_node.unwrap() },
                             alias,
-                            ProgressStrings::EXTRACT_EMOJI,
-                            true,
-                        );
+                            ProgressStrings::EXTRACT_EMOJI.as_bytes(),
+                            );
                         *has_updated_this_run = true;
                     }
                 }
@@ -1238,12 +1235,11 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                 if log_level.show_progress() {
                     if !*has_updated_this_run {
-                        manager.set_node_name(
-                            manager.downloads_node.unwrap(),
+                        manager.set_node_name::<true>(
+                            unsafe { &mut *manager.downloads_node.unwrap() },
                             name,
-                            ProgressStrings::DOWNLOAD_EMOJI,
-                            true,
-                        );
+                            ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
+                            );
                         *has_updated_this_run = true;
                     }
                 }
@@ -1368,12 +1364,11 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                 if log_level.show_progress() {
                     if !*has_updated_this_run {
-                        manager.set_node_name(
-                            manager.downloads_node.unwrap(),
+                        manager.set_node_name::<true>(
+                            unsafe { &mut *manager.downloads_node.unwrap() },
                             alias.slice(),
-                            ProgressStrings::DOWNLOAD_EMOJI,
-                            true,
-                        );
+                            ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
+                            );
                         *has_updated_this_run = true;
                     }
                 }

@@ -20,6 +20,17 @@ pub struct MutableString {
     pub list: Vec<u8>,
 }
 
+/// Zig: `Npm.Registry.BodyPool = ObjectPool(MutableString, MutableString.init2048, true, 8)`
+/// (src/install/npm.zig). Init = `init2048`; reuse = `.reset()`.
+impl bun_collections::pool::ObjectPoolType for MutableString {
+    const INIT: Option<fn() -> Result<Self, bun_core::Error>> =
+        Some(|| MutableString::init2048().map_err(Into::into));
+    #[inline]
+    fn reset(&mut self) {
+        MutableString::reset(self);
+    }
+}
+
 impl MutableString {
     pub fn init2048() -> Result<MutableString, AllocError> {
         MutableString::init(2048)

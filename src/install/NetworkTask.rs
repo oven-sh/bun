@@ -345,12 +345,12 @@ impl NetworkTask {
                             quote(&scope.url.href),
                             quote(name),
                         ),
-                    );
+                    )?;
                 }
                 return Err(ForManifestError::InvalidURL);
             }
 
-            if !(tmp.has_prefix(b"https://") || tmp.has_prefix(b"http://")) {
+            if !(tmp.has_prefix_comptime(b"https://") || tmp.has_prefix_comptime(b"http://")) {
                 if !is_optional {
                     pm.log.add_error_fmt(
                         None,
@@ -359,7 +359,7 @@ impl NetworkTask {
                             "Registry URL must be http:// or https://\nReceived: \"{}\"",
                             tmp
                         ),
-                    );
+                    )?;
                 } else {
                     pm.log.add_warning_fmt(
                         None,
@@ -368,13 +368,13 @@ impl NetworkTask {
                             "Registry URL must be http:// or https://\nReceived: \"{}\"",
                             tmp
                         ),
-                    );
+                    )?;
                 }
                 return Err(ForManifestError::InvalidURL);
             }
 
             // This actually duplicates the string! So we defer deref the WTF managed one above.
-            break 'blk tmp.to_owned_slice()?;
+            break 'blk tmp.to_owned_slice().into_boxed_slice();
         };
 
         let mut last_modified: &[u8] = b"";
@@ -440,16 +440,16 @@ impl NetworkTask {
                 },
             })?;
             header_builder.header_count = 1;
-            // SAFETY: header_buf is &'static str; GlobalStringBuilder borrows
-            // it mutably in type but is never written to on this path.
-            header_builder.content = GlobalStringBuilder {
-                ptr: header_buf.as_ptr() as *mut u8,
+            // SAFETY: header_buf is &'static str; StringBuilder borrows it
+            // mutably in type but is never written to on this path.
+            header_builder.content = StringBuilder {
+                ptr: NonNull::new(header_buf.as_ptr() as *mut u8),
                 len: header_buf.len(),
                 cap: header_buf.len(),
             };
         }
 
-        self.response_buffer = MutableString::init(0);
+        self.response_buffer = MutableString::init(0)?;
 
         let url = URL::parse(&self.url_buf);
         // TODO(port): narrow error set
@@ -459,14 +459,17 @@ impl NetworkTask {
             header_builder.entries,
             // SAFETY: ptr is non-null on both branches above (allocate() or static buf).
             unsafe {
-                core::slice::from_raw_parts(header_builder.content.ptr, header_builder.content.len)
+                core::slice::from_raw_parts(
+                    header_builder.content.ptr.unwrap().as_ptr(),
+                    header_builder.content.len,
+                )
             },
             &mut self.response_buffer,
             b"",
             self.get_completion_callback(),
             http::FetchRedirect::Follow,
-            AsyncHTTP::Options {
-                http_proxy: pm.http_proxy(url),
+            AsyncHTTPOptions {
+                http_proxy: pm.http_proxy(&url),
                 ..Default::default()
             },
         );

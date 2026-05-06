@@ -1,13 +1,12 @@
-use core::fmt;
-
 use bun_collections::{DynamicBitSet, HashMap};
 use bun_core::Output;
+use bun_io::Write;
 use bun_semver as semver;
 
 use bun_core::fmt::PathSep;
 use bun_install::{
-    self as install, Bin, Dependency, DependencyID, PackageID, PackageManager, PackageNameHash,
-    Resolution, INVALID_PACKAGE_ID,
+    self as install, bin, resolution, Bin, Dependency, DependencyID, PackageID, PackageManager,
+    PackageNameHash, Resolution, INVALID_PACKAGE_ID,
 };
 use bun_install::lockfile::{package::Meta as PackageMeta, Printer};
 use crate::package_manager_real::TrackInstalledBin;
@@ -26,7 +25,7 @@ fn print_installed_workspace_section<W, const ENABLE_ANSI_COLORS: bool, const PR
     id_map: Option<&mut [DependencyID]>,
 ) -> Result<(), bun_core::Error>
 where
-    W: fmt::Write,
+    W: Write,
 {
     // TODO(port): narrow error set
     let lockfile = &this.lockfile;
@@ -34,12 +33,12 @@ where
     let packages_slice = lockfile.packages.slice();
     let resolutions = lockfile.buffers.resolutions.as_slice();
     let dependencies = lockfile.buffers.dependencies.as_slice();
-    // TODO(port): MultiArrayList column accessors (`.items(.resolution)` etc.)
-    let workspace_res = &packages_slice.resolution()[workspace_package_id as usize];
-    let names = packages_slice.name();
-    let pkg_metas = packages_slice.meta();
-    debug_assert!(workspace_res.tag == Resolution::Tag::Workspace || workspace_res.tag == Resolution::Tag::Root);
-    let resolutions_list = packages_slice.resolutions();
+    // PORT NOTE: Zig `slice.items(.field)` → derive(MultiArrayElement)-generated `items_<field>()`.
+    let workspace_res = &packages_slice.items_resolution()[workspace_package_id as usize];
+    let names = packages_slice.items_name();
+    let pkg_metas = packages_slice.items_meta();
+    debug_assert!(workspace_res.tag == resolution::Tag::Workspace || workspace_res.tag == resolution::Tag::Root);
+    let resolutions_list = packages_slice.items_resolutions();
     let mut printed_section_header = false;
     let mut printed_update = false;
 
@@ -116,7 +115,6 @@ where
         let package_id = resolutions[dep_id as usize];
 
         if dep_dedupe.get_or_put(dep.name_hash)?.found_existing {
-            // TODO(port): HashMap::get_or_put API — map to entry().or_insert semantics
             continue;
         }
 
@@ -216,15 +214,15 @@ fn should_print_package_install<'a>(
         return ShouldPrintPackageInstallResult::No;
     }
 
-    let resolution = this.lockfile.packages.resolution()[package_id as usize];
-    if resolution.tag == Resolution::Tag::Npm {
+    let resolution = this.lockfile.packages.items_resolution()[package_id as usize];
+    if resolution.tag == resolution::Tag::Npm {
         let name = dependency.name.slice(this.lockfile.buffers.string_bytes.as_slice());
         if let Some(entry) = manager.updating_packages.get(name) {
             if let Some(original_version) = entry.original_version {
                 if !original_version.eql(&resolution.value.npm.version) {
                     return ShouldPrintPackageInstallResult::Update(PackageUpdatePrintInfo {
                         version: original_version,
-                        version_buf: entry.original_version_string_buf,
+                        version_buf: entry.original_version_string_buf.as_ref(),
                         resolution,
                         dependency_id: dep_id,
                     });
@@ -242,7 +240,7 @@ fn print_updated_package<W, const ENABLE_ANSI_COLORS: bool>(
     writer: &mut W,
 ) -> Result<(), bun_core::Error>
 where
-    W: fmt::Write,
+    W: Write,
 {
     // TODO(port): narrow error set
     let string_buf = this.lockfile.buffers.string_bytes.as_slice();
@@ -274,21 +272,21 @@ where
 
 fn print_installed_package<W, const ENABLE_ANSI_COLORS: bool>(
     this: &Printer,
-    manager: &PackageManager,
+    manager: &mut PackageManager,
     dependency: &Dependency,
     package_id: PackageID,
     writer: &mut W,
 ) -> Result<(), bun_core::Error>
 where
-    W: fmt::Write,
+    W: Write,
 {
     // TODO(port): narrow error set
     let string_buf = this.lockfile.buffers.string_bytes.as_slice();
     let packages_slice = this.lockfile.packages.slice();
-    let resolution: Resolution = packages_slice.resolution()[package_id as usize];
+    let resolution: Resolution = packages_slice.items_resolution()[package_id as usize];
     let name = dependency.name.slice(string_buf);
 
-    let package_name = packages_slice.name()[package_id as usize].slice(string_buf);
+    let package_name = packages_slice.items_name()[package_id as usize].slice(string_buf);
     if let Some(later_version_fmt) =
         manager.format_later_version_in_cache(package_name, dependency.name_hash, resolution)
     {
@@ -347,20 +345,20 @@ pub fn print<W, const ENABLE_ANSI_COLORS: bool>(
     log_level: install::package_manager::Options::LogLevel,
 ) -> Result<(), bun_core::Error>
 where
-    W: fmt::Write,
+    W: Write,
 {
     // TODO(port): narrow error set
     writer.write_str("\n")?;
     // `allocator` param dropped — global mimalloc.
     let slice = this.lockfile.packages.slice();
-    let bins: &[Bin] = slice.bin();
-    let resolved: &[Resolution] = slice.resolution();
+    let bins: &[Bin] = slice.items_bin();
+    let resolved: &[Resolution] = slice.items_resolution();
     if resolved.is_empty() {
         return Ok(());
     }
     let string_buf = this.lockfile.buffers.string_bytes.as_slice();
-    let resolutions_list = slice.resolutions();
-    let pkg_metas = slice.meta();
+    let resolutions_list = slice.items_resolutions();
+    let pkg_metas = slice.items_meta();
     let resolutions_buffer: &[PackageID] = this.lockfile.buffers.resolutions.as_slice();
     let dependencies_buffer: &[Dependency] = this.lockfile.buffers.dependencies.as_slice();
     if dependencies_buffer.is_empty() {
@@ -518,7 +516,7 @@ where
         let package_name = name.slice(string_buf);
 
         match bin.tag {
-            Bin::Tag::None | Bin::Tag::Dir => {
+            bin::Tag::None | bin::Tag::Dir => {
                 printed_installed_update_request = true;
 
                 // TODO(port): Output.prettyFmt comptime ANSI format string
@@ -535,12 +533,15 @@ where
                     ),
                 )?;
             }
-            Bin::Tag::Map | Bin::Tag::File | Bin::Tag::NamedFile => {
+            bin::Tag::Map | bin::Tag::File | bin::Tag::NamedFile => {
                 printed_installed_update_request = true;
 
-                let mut iterator = Bin::NamesIterator {
+                let mut iterator = bin::NamesIterator {
                     bin,
+                    i: 0,
+                    done: false,
                     package_name: name,
+                    buf: bun_paths::PathBuffer::uninit(),
                     string_buffer: string_buf,
                     extern_string_buf: this.lockfile.buffers.extern_strings.as_slice(),
                 };
@@ -566,11 +567,11 @@ where
                     let fmt = "<r> <d>- <r><b>{s}<r>\n";
 
                     if matches!(manager.track_installed_bin, TrackInstalledBin::Pending) {
-                        // TODO(port): `iterator.next()` returns `Result<Option<&[u8]>, E>` in Zig (`!?[]const u8`);
-                        // `catch null` → `.unwrap_or(None)`.
+                        // PORT NOTE: `iterator.next()` returns `Result<Option<&[u8]>, E>` (Zig `!?[]const u8`);
+                        // `catch null` → `.unwrap_or(None)`. Reshaped for borrowck — `bin_name`'s
+                        // borrow of `iterator.buf` must end before the loop's `iterator.next()`.
                         if let Some(bin_name) = iterator.next().unwrap_or(None) {
-                            manager.track_installed_bin =
-                                TrackInstalledBin::Basename(Box::<[u8]>::from(bin_name));
+                            let owned = Box::<[u8]>::from(bin_name);
 
                             write!(
                                 writer,
@@ -578,9 +579,11 @@ where
                                 Output::pretty_fmt_args(
                                     fmt,
                                     ENABLE_ANSI_COLORS,
-                                    (bstr::BStr::new(bin_name),),
+                                    (bstr::BStr::new(&owned[..]),),
                                 ),
                             )?;
+
+                            manager.track_installed_bin = TrackInstalledBin::Basename(owned);
                         }
                     }
 
@@ -614,5 +617,5 @@ where
 //   source:     src/install/lockfile/printer/tree_printer.zig (486 lines)
 //   confidence: medium
 //   todos:      14
-//   notes:      Output.prettyFmt is comptime ANSI-template expansion — needs a Rust macro/const-fn equivalent; MultiArrayList column accessors (.items(.field)) stubbed as method calls; PackageUpdatePrintInfo carries a borrowed &[u8] (lifetime added despite Phase-A rule, see TODO).
+//   notes:      Output.prettyFmt is comptime ANSI-template expansion — needs a Rust macro/const-fn equivalent; MultiArrayList column accessors (.items(.field)) → derive-generated items_<field>(); PackageUpdatePrintInfo carries a borrowed &[u8] (lifetime added despite Phase-A rule, see TODO).
 // ──────────────────────────────────────────────────────────────────────────

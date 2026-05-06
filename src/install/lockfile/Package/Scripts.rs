@@ -258,12 +258,15 @@ impl Scripts {
         None
     }
 
-    pub fn parse_count(builder: &mut LockfileStringBuilder, json: Expr) {
+    pub fn parse_count(builder: &mut LockfileStringBuilder<'_>, json: &Expr) {
         if let Some(scripts_prop) = json.as_property(b"scripts") {
-            if scripts_prop.expr.data.is_e_object() {
+            if scripts_prop.expr.is_object() {
                 for script_name in LockfileScripts::NAMES {
-                    if let Some(script) = scripts_prop.expr.get(script_name) {
-                        if let Some(input) = script.as_string() {
+                    if let Some(script) = scripts_prop.expr.get(script_name.as_bytes()) {
+                        // PORT NOTE: Zig `script.asString(allocator)` — JSON parser
+                        // produces UTF-8 `EString`s, so the alloc-free literal accessor
+                        // is sufficient here.
+                        if let Some(input) = script.as_utf8_string_literal() {
                             builder.count(input);
                         }
                     }
@@ -273,13 +276,13 @@ impl Scripts {
         }
     }
 
-    pub fn parse_alloc(&mut self, builder: &mut LockfileStringBuilder, json: Expr) {
+    pub fn parse_alloc(&mut self, builder: &mut LockfileStringBuilder<'_>, json: &Expr) {
         if let Some(scripts_prop) = json.as_property(b"scripts") {
-            if scripts_prop.expr.data.is_e_object() {
+            if scripts_prop.expr.is_object() {
                 let dsts = self.hooks_mut();
                 for (dst, script_name) in dsts.into_iter().zip(LockfileScripts::NAMES) {
-                    if let Some(script) = scripts_prop.expr.get(script_name) {
-                        if let Some(input) = script.as_string() {
+                    if let Some(script) = scripts_prop.expr.get(script_name.as_bytes()) {
+                        if let Some(input) = script.as_utf8_string_literal() {
                             *dst = builder.append::<SemverString>(input);
                         }
                     }
@@ -339,31 +342,33 @@ impl Scripts {
 
     pub fn fill_from_package_json(
         &mut self,
-        string_builder: &mut LockfileStringBuilder,
+        string_builder: &mut LockfileStringBuilder<'_>,
         log: &mut logger::Log,
         folder_path: &mut AbsPath,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
-        let json = {
+        // PORT NOTE: Zig threaded `allocator` for JSON parsing; the Rust JSON
+        // parser uses a bump arena. Scoped here since the AST is consumed
+        // immediately into the string builder.
+        let bump = bun_alloc::Arena::new();
+        let json: Expr = {
             let save = folder_path.save();
             folder_path.append(b"package.json");
 
             let json_src = {
-                let buf = bun_sys::File::read_from(Fd::cwd(), folder_path.slice_z())
-                    .unwrap_err_into()?;
-                // TODO(port): verify bun_sys::File::read_from signature & Maybe→Result mapping
+                let buf = bun_sys::File::read_from(Fd::cwd(), folder_path.slice_z())?;
                 logger::Source::init_path_string(folder_path.slice(), buf)
             };
 
             initialize_store();
-            let r = bun_json::parse_package_json_utf8(&json_src, log)?;
+            let r = bun_json::parse_package_json_utf8(&json_src, log, &bump)?;
             drop(save);
-            r
+            r.into()
         };
 
-        Scripts::parse_count(string_builder, json);
+        Scripts::parse_count(string_builder, &json);
         string_builder.allocate()?;
-        self.parse_alloc(string_builder, json);
+        self.parse_alloc(string_builder, &json);
         self.filled = true;
         Ok(())
     }
@@ -374,10 +379,11 @@ impl Scripts {
         lockfile: &Lockfile,
         folder_path: &mut AbsPath,
         folder_name: &[u8],
-        resolution_tag: Resolution::Tag,
+        resolution_tag: ResolutionTag,
     ) -> Result<Option<List>, bun_core::Error> {
         // TODO(port): narrow error set
-        let mut tmp = Lockfile::init_empty();
+        // Zig: `var tmp: Lockfile = undefined; tmp.initEmpty(allocator)`.
+        let mut tmp = RealLockfile::init_empty_value();
         // `defer tmp.deinit()` — Lockfile impls Drop
         let mut builder = tmp.string_builder();
         self.fill_from_package_json(&mut builder, log, folder_path)?;
@@ -499,9 +505,11 @@ impl List {
                     BStr::new(&self.package_name),
                     BStr::new(self.cwd.as_bytes()),
                 );
-                // TODO(port): `@field(lockfile.scripts, Lockfile.Scripts.names[i])` —
-                // needs indexed mut access on `lockfile.scripts` (e.g. `hook_mut(i)`).
-                lockfile.scripts.hook_mut(i).push(script.to_vec());
+                // Zig: `@field(lockfile.scripts, Lockfile.Scripts.names[i]).append(...)`
+                lockfile
+                    .scripts
+                    .hook_mut(i)
+                    .push(script.to_vec().into_boxed_slice());
                 // PERF(port): was `inline for` + appendAssumeCapacity-style — profile in Phase B
             }
         }

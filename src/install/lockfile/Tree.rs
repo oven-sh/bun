@@ -721,7 +721,7 @@ impl Tree {
                     }
 
                     // skip unresolvable dependencies
-                    continue;
+                    continue 'dep;
                 }
 
                 if pkg_resolutions[pkg_id as usize].tag == crate::resolution::Tag::Folder {
@@ -752,9 +752,9 @@ impl Tree {
                     }
 
                     if let Some(entry) =
-                        builder.pending_optional_peers.swap_remove(&dependency.name_hash)
+                        builder.pending_optional_peers.fetch_swap_remove(&dependency.name_hash)
                     {
-                        let peers = entry;
+                        let peers = entry.1;
                         for &unresolved_dep_id in peers.keys() {
                             // the dependency should be either unresolved or the same dependency as above
                             debug_assert!(
@@ -771,9 +771,9 @@ impl Tree {
                     debug_assert!(pkg_id != invalid_package_id);
                     builder.resolutions[replace.dep_id as usize] = pkg_id;
                     if let Some(entry) =
-                        builder.pending_optional_peers.swap_remove(&dependency.name_hash)
+                        builder.pending_optional_peers.fetch_swap_remove(&dependency.name_hash)
                     {
-                        let peers = entry;
+                        let peers = entry.1;
                         for &unresolved_dep_id in peers.keys() {
                             // the dependency should be either unresolved or the same dependency as above
                             debug_assert!(
@@ -785,8 +785,8 @@ impl Tree {
                         }
                     }
                     {
-                        let list_slice = builder.list.slice();
-                        let dependency_lists = list_slice.items_dependencies_mut();
+                        let mut list_slice = builder.list.slice();
+                        let dependency_lists = list_slice.dependencies_mut();
                         for placed_dep_id in dependency_lists[replace.id as usize].iter_mut() {
                             if *placed_dep_id == replace.dep_id {
                                 *placed_dep_id = dep_id;
@@ -818,12 +818,12 @@ impl Tree {
                 }
                 HoistDependencyResult::Placement(dest) => {
                     {
-                        let list_slice = builder.list.slice();
-                        let dependency_lists = list_slice.items_dependencies_mut();
-                        let trees = list_slice.items_tree_mut();
+                        // PORT NOTE: reshaped for borrowck — Zig held both `items(.dependencies)`
+                        // and `items(.tree)` mutably from one slice; here we go through ListExt
+                        // accessors sequentially so the &mut borrows do not overlap.
                         // bun.handleOom -> push (aborts on OOM via global allocator)
-                        dependency_lists[dest.id as usize].push(dep_id);
-                        trees[dest.id as usize].dependencies.len += 1;
+                        builder.list.items_dependencies_mut()[dest.id as usize].push(dep_id);
+                        builder.list.items_tree_mut()[dest.id as usize].dependencies.len += 1;
                     }
                     if pkg_id != invalid_package_id
                         && builder.resolution_lists[pkg_id as usize].len > 0
@@ -841,9 +841,7 @@ impl Tree {
         }
 
         // PORT NOTE: reshaped for borrowck — re-read `next` via index.
-        let list_slice = builder.list.slice();
-        let trees = list_slice.items_tree();
-        let next = &trees[next_id as usize];
+        let next: Tree = builder.list.items_tree()[next_id as usize];
         if next.dependencies.len == 0 {
             if cfg!(debug_assertions) {
                 debug_assert!(builder.list.len() == (next.id as usize) + 1);

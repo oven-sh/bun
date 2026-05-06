@@ -1,19 +1,20 @@
-use core::ffi::c_char;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::ffi::{c_char, c_void};
+use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
 use bun_core::{Global, Output};
 use crate::lockfile_real::Scripts as LockfileScripts;
 use crate::lockfile_real::package::scripts::List as ScriptsList;
-use crate::isolated_install::store::entry;
+use crate::isolated_install::store::{entry, EntryListExt};
 use crate::isolated_install::installer::{Installer, Step, CompleteState};
+use crate::package_manager_real::{LifecycleScriptTimeLogEntry, ProgressStrings};
 use crate::PackageManager;
 use bun_event_loop::AnyEventLoop;
 use bun_io::heap as io_heap;
-use bun_io::BufferedReader;
+use bun_io::{BufferedReader, BufferedReaderParent, EventLoopHandle, FilePollFlag, PosixFlags};
 
 use bun_spawn::{Process, Rusage, SpawnOptions, Status};
 use bun_str::ZStr;
-use bun_sys::Fd;
+use bun_sys::{Fd, FdExt};
 use bun_aio::Loop as AsyncLoop;
 
 bun_output::declare_scope!(Script, visible);

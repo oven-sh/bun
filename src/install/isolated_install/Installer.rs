@@ -742,7 +742,7 @@ impl Task {
 
         // TODO(port): Zig labeled-switch `next_step:` modeled as loop+match
         let mut step = entry_steps[self.entry_id.get() as usize].load(Ordering::Acquire);
-        loop {
+        'step: loop {
             match step {
                 Step::LinkPackage => {
                     let current_step = Step::LinkPackage;
@@ -1105,15 +1105,15 @@ impl Task {
                                     }
                                 };
 
-                                let mut src = OsAutoAbsPath::from_long_path(
-                                    cache_dir_path.slice(),
+                                let mut src = bun_core::handle_oom(
+                                    OsAutoAbsPath::from_long_path(cache_dir_path),
                                 );
                                 src.append_join(pkg_cache_dir_subpath.slice());
 
                                 let mut hardlinker = Hardlinker::init(
                                     cached_package_dir.unwrap(),
-                                    src,
-                                    dest_subpath,
+                                    src.into_sep::<{ PathSeparators::ANY }>(),
+                                    dest_subpath.into_sep::<{ PathSeparators::ANY }>(),
                                     &[],
                                 )?;
 
@@ -1164,13 +1164,13 @@ impl Task {
                                 };
 
                                 let mut src_path =
-                                    OsAutoAbsPath::from(cache_dir_path.slice());
+                                    bun_core::handle_oom(OsAutoAbsPath::from(cache_dir_path));
                                 src_path.append(pkg_cache_dir_subpath.slice());
 
                                 let mut file_copier = FileCopier::init(
                                     cached_package_dir.unwrap(),
-                                    src_path,
-                                    dest_subpath,
+                                    src_path.into_sep::<{ PathSeparators::ANY }>(),
+                                    dest_subpath.into_sep::<{ PathSeparators::ANY }>(),
                                     &[],
                                 )?;
 
@@ -1266,9 +1266,10 @@ impl Task {
                         };
 
                         let mut symlinker = Symlinker {
-                            dest,
-                            target,
-                            fallback_junction_target: dep_store_path,
+                            dest: dest.into_sep::<{ PathSeparators::ANY }>(),
+                            target: target.into_sep::<{ PathSeparators::ANY }>(),
+                            fallback_junction_target: dep_store_path
+                                .into_sep::<{ PathSeparators::ANY }>(),
                         };
 
                         let link_strategy: symlinker::Strategy = if matches!(
@@ -1512,7 +1513,7 @@ impl Task {
                             if list_ref.first_index != 0 {
                                 // has scripts but not a preinstall
                                 step = self.next_step(current_step);
-                                continue;
+                                continue 'step;
                             }
 
                             return Ok(Yield::RunScripts(clone));
@@ -1920,9 +1921,9 @@ impl<'a> Installer<'a> {
         self.append_store_path(&mut full_target, entry_id);
 
         let mut symlinker = Symlinker {
-            dest: hidden_hoisted_node_modules,
-            target,
-            fallback_junction_target: full_target,
+            dest: hidden_hoisted_node_modules.into_sep::<{ PathSeparators::ANY }>(),
+            target: target.into_sep::<{ PathSeparators::ANY }>(),
+            fallback_junction_target: full_target.into_sep::<{ PathSeparators::ANY }>(),
         };
 
         // symlinks won't exist if node_modules/.bun is new
@@ -2264,7 +2265,7 @@ impl<'a> Installer<'a> {
             sys::Result::Err(err) => match err.get_errno() {
                 sys::Errno::ENOENT => {
                     if let Some(parent) = dest.dirname() {
-                        let _ = Fd::cwd().make_path::<u8>(parent);
+                        let _ = Fd::cwd().make_path(parent);
                     }
                 }
                 sys::Errno::EEXIST => {

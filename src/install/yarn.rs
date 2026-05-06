@@ -766,23 +766,23 @@ pub fn migrate_yarn_lockfile<'a>(
             let Some(prop) = package_json.as_property(section_info.key) else {
                 continue;
             };
-            let bun_js_parser::ExprData::EObject(e_object) = &prop.expr.data else {
+            let logger::js_ast::ExprData::EObject(e_object) = &prop.expr.data else {
                 continue;
             };
 
             for p in e_object.properties.slice() {
                 let Some(key) = &p.key else { continue };
-                let bun_js_parser::ExprData::EString(key_str) = &key.data else {
+                let logger::js_ast::ExprData::EString(key_str) = &key.data else {
                     continue;
                 };
 
-                let Ok(name_slice) = key_str.string() else { continue };
+                let Ok(name_slice) = key_str.string(&json_bump) else { continue };
                 let Some(value) = &p.value else { continue };
-                let bun_js_parser::ExprData::EString(value_str) = &value.data else {
+                let logger::js_ast::ExprData::EString(value_str) = &value.data else {
                     continue;
                 };
 
-                let Ok(version_slice) = value_str.string() else { continue };
+                let Ok(version_slice) = value_str.string(&json_bump) else { continue };
                 if version_slice.is_empty() {
                     continue;
                 }
@@ -832,14 +832,14 @@ pub fn migrate_yarn_lockfile<'a>(
         this.packages.append(LockfilePackage {
             name: root_name,
             name_hash: package_name_hash,
-            resolution: Resolution::init(Resolution::Value::Root(())),
+            resolution: Resolution::init(ResolutionValue::Root),
             dependencies: Default::default(),
             resolutions: Default::default(),
             meta: PackageMeta {
                 id: 0,
                 origin: Origin::Local,
-                arch: npm::Architecture::All,
-                os: npm::OperatingSystem::All,
+                arch: npm::Architecture::ALL,
+                os: npm::OperatingSystem::ALL,
                 man_dir: SemverString::default(),
                 has_install_script: HasInstallScript::False,
                 integrity: Integrity::default(),
@@ -853,21 +853,18 @@ pub fn migrate_yarn_lockfile<'a>(
             let mut root_package = this.packages.get(0);
             let mut string_builder = this.string_builder();
 
-            if let bun_js_parser::ExprData::EObject(e_object) = &resolutions.expr.data {
-                string_builder.cap += e_object.properties.len() * 128;
+            if let logger::js_ast::ExprData::EObject(e_object) = &resolutions.expr.data {
+                string_builder.cap += e_object.properties.len as usize * 128;
             }
             if string_builder.cap > 0 {
                 string_builder.allocate()?;
             }
-            this.overrides.parse_append(
-                manager,
-                this,
-                &mut root_package,
-                log,
-                &package_json_source,
-                &package_json,
-                &mut string_builder,
-            )?;
+            // TODO(port): blocked_on `OverrideMap::parse_append` typing — it
+            // takes the stub `bun_install::Lockfile` and `bun_js_parser::Expr`,
+            // but here `this` is `lockfile_real::Lockfile` and `package_json`
+            // is the value-shaped `bun_logger::js_ast::Expr`. Re-enable once
+            // OverrideMap is ported against `lockfile_real` (reconciler-6).
+            let _ = (&resolutions, &mut root_package, &mut string_builder, &package_json_source);
             this.packages.set(0, root_package);
         }
     }
@@ -1057,16 +1054,16 @@ pub fn migrate_yarn_lockfile<'a>(
             name_hash,
             resolution: 'blk: {
                 if entry.workspace {
-                    break 'blk Resolution::init(Resolution::Value::Workspace(
+                    break 'blk Resolution::init(ResolutionValue::Workspace(
                         string_buf.append(base_name)?,
                     ));
                 } else if let Some(file) = entry.file {
                     if file.ends_with(b".tgz") || file.ends_with(b".tar.gz") {
-                        break 'blk Resolution::init(Resolution::Value::LocalTarball(
+                        break 'blk Resolution::init(ResolutionValue::LocalTarball(
                             string_buf.append(file)?,
                         ));
                     } else {
-                        break 'blk Resolution::init(Resolution::Value::Folder(
+                        break 'blk Resolution::init(ResolutionValue::Folder(
                             string_buf.append(file)?,
                         ));
                     }

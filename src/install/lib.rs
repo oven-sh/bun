@@ -149,6 +149,14 @@ pub mod resolution {
         Symlink, Workspace, RemoteTarball, SingleFileModule,
     }
 
+    impl Tag {
+        /// Port of `Resolution.Tag.isGit` (src/install/resolution.zig:529).
+        #[inline]
+        pub fn is_git(self) -> bool {
+            matches!(self, Tag::Git | Tag::Github)
+        }
+    }
+
     impl Resolution {
         /// Port of `Resolution.fmt` (src/install/resolution.zig:275).
         pub fn fmt<'a>(
@@ -786,6 +794,13 @@ pub mod lockfile {
         /// fresh, empty lockfile.
         pub fn init_empty(&mut self) {
             *self = Self::default();
+        }
+
+        /// Port of `Lockfile.str` (src/install/lockfile.zig) - project a
+        /// `String` / `ExternalString` handle into `buffers.string_bytes`.
+        #[inline]
+        pub fn str<'a, T: bun_semver::Slicable>(&'a self, slicable: &'a T) -> &'a [u8] {
+            slicable.slice(self.buffers.string_bytes.as_slice())
         }
 
         /// Port of `Lockfile.stringBuf` (src/install/lockfile.zig). Returns a
@@ -1643,6 +1658,25 @@ pub struct PackageJSONDependencyMap {
 }
 pub use pnpm_matcher::PnpmMatcher;
 #[derive(Default)] pub struct PackageManifestMap;
+impl PackageManifestMap {
+    /// Stub: `PackageManifestMap.byName` (src/install/PackageManifestMap.zig).
+    /// Real body lives in `package_manifest_map::PackageManifestMap::by_name`;
+    /// the stub always cache-misses so `populate_manifest_cache` falls through
+    /// to `start_manifest_task`. `pm` is taken as a raw pointer to sidestep
+    /// the `&mut self.manifests` / `&mut self` overlap at every call site (Zig
+    /// passes the aliased `*PackageManager` freely).
+    // TODO(port): blocked_on package_manifest_map / PackageManager type unification (reconciler-6)
+    pub fn by_name<PM>(
+        &mut self,
+        _pm: *mut PM,
+        _scope: &npm::registry::Scope,
+        _name: &[u8],
+        _cache_behavior: package_manager::ManifestLoad,
+        _needs_extended_manifest: bool,
+    ) -> Option<&mut npm::PackageManifest> {
+        None
+    }
+}
 #[derive(Default)] pub struct PostinstallOptimizer;
 pub type Task = ();
 
@@ -1686,9 +1720,33 @@ pub use extract_tarball::ExtractTarball;
     pub response_buffer: bun_string::MutableString,
     pub response: NetworkTaskResponseStub,
     pub callback: NetworkTaskCallbackStub,
+    /// Zig: `task_id: Task.Id` (src/install/NetworkTask.zig:5).
+    pub task_id: package_manager_task::Id,
+    /// Zig: `package_manager: *PackageManager` (src/install/NetworkTask.zig:13).
+    /// BACKREF — typed as `*mut ()` so both the stub and `package_manager_real`
+    /// `PackageManager` can store their address without a type-level cycle;
+    /// callers `.cast()` at use sites.
+    // TODO(port): retype to `*const package_manager_real::PackageManager` once unified.
+    pub package_manager: *mut (),
     /// Zig: `next: ?*NetworkTask = null` (src/install/NetworkTask.zig:23) —
     /// intrusive link for `AsyncNetworkTaskQueue` (`UnboundedQueue(NetworkTask, .next)`).
     pub next: *mut NetworkTask,
+}
+impl NetworkTask {
+    /// Stub: `NetworkTask.forManifest` (src/install/NetworkTask.zig:45). Real
+    /// body lives in `network_task::NetworkTask::for_manifest`; routed there
+    /// once the stub/real `NetworkTask` types unify.
+    // TODO(port): blocked_on network_task::NetworkTask un-gate (reconciler-6)
+    pub fn for_manifest(
+        &mut self,
+        _name: &[u8],
+        _scope: &npm::registry::Scope,
+        _loaded_manifest: Option<&npm::PackageManifest>,
+        _is_optional: bool,
+        _needs_extended: bool,
+    ) -> Result<(), network_task::ForManifestError> {
+        Ok(())
+    }
 }
 // SAFETY: `next` is the sole intrusive link and is only ever read/written via
 // these accessors by `UnboundedQueue<NetworkTask>`. Mirrors Zig's
@@ -1778,6 +1836,9 @@ impl RootPackageId {
     /// Zig: `track_installed_bin: TrackInstalledBin = .none` — tree printer
     /// records the first installed binary's basename for `bunx` follow-up.
     pub track_installed_bin: package_manager_real::TrackInstalledBin,
+    /// Zig: `folders: FolderResolution.Map = .{}` — memoized
+    /// `getOrPut(hash(abs_path))` results for folder/workspace/symlink deps.
+    pub folders: crate::_folder_resolver::Map,
     /// Zig: `env: *DotEnv.Loader` (src/install/PackageManager.zig:11) — set
     /// once by `PackageManager.init()` and never null afterward. `Option` is
     /// only the `Default`-derive sentinel; accessors `env()`/`env_mut()` unwrap
@@ -1846,6 +1907,72 @@ impl RootPackageId {
     pub active_lifecycle_scripts: lifecycle_script_runner::List<'static>,
     /// Zig: `lifecycle_script_time_log: LifecycleScriptTimeLog`.
     pub lifecycle_script_time_log: package_manager_real::LifecycleScriptTimeLog,
+    /// Zig: `patch_task_queue: bun.UnboundedQueue(PatchTask, .next)`
+    /// (src/install/PackageManager.zig). Completed off-thread patch tasks
+    /// awaiting main-thread `runTasks` drain.
+    pub patch_task_queue: bun_threading::UnboundedQueue<PatchTask>,
+    /// Zig: `pending_pre_calc_hashes: std.atomic.Value(u32)` — count of
+    /// in-flight pre-install patch-hash calculations.
+    pub pending_pre_calc_hashes: core::sync::atomic::AtomicU32,
+    /// Zig: `network_dedupe_map: NetworkTask.DedupeMap` — prevents duplicate
+    /// tarball/manifest fetches for the same Task.Id.
+    pub network_dedupe_map: std::collections::HashMap<package_manager_task::Id, ()>,
+}
+
+/// Port of `PackageManager.CacheDirAndSubpath`
+/// (src/install/PackageManager/PackageManagerDirectories.zig). Returned by
+/// [`PackageManager::compute_cache_dir_and_subpath`].
+pub struct CacheDirAndSubpath<'a> {
+    pub cache_dir: bun_sys::Fd,
+    pub cache_dir_subpath: &'a bun_core::ZStr,
+}
+
+impl PackageManager {
+    /// Port of `directories.computeCacheDirAndSubpath`
+    /// (src/install/PackageManager/PackageManagerDirectories.zig:675). Real body
+    /// lives in `package_manager_real::package_manager_directories`; that impl
+    /// types against the real `PackageManager` so the stub forwards once the
+    /// two structs unify.
+    pub fn compute_cache_dir_and_subpath<'a>(
+        &mut self,
+        _pkg_name: &[u8],
+        _resolution: &Resolution,
+        _folder_path_buf: &'a mut bun_paths::PathBuffer,
+        _patch_hash: Option<u64>,
+    ) -> CacheDirAndSubpath<'a> {
+        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) — package_manager_directories::compute_cache_dir_and_subpath")
+    }
+
+    /// Port of `enqueue.enqueueNetworkTask`
+    /// (src/install/PackageManager/PackageManagerEnqueue.zig). Real body in
+    /// `package_manager_real::package_manager_enqueue::enqueue_network_task`.
+    pub fn enqueue_network_task(&mut self, _task: *mut network_task::NetworkTask) {
+        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) — package_manager_enqueue::enqueue_network_task")
+    }
+
+    /// Port of `enqueue.enqueuePatchTask`
+    /// (src/install/PackageManager/PackageManagerEnqueue.zig). Real body in
+    /// `package_manager_real::package_manager_enqueue::enqueue_patch_task`.
+    pub fn enqueue_patch_task(&mut self, _task: *mut PatchTask) {
+        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) — package_manager_enqueue::enqueue_patch_task")
+    }
+
+    /// Port of `runTasks.generateNetworkTaskForTarball`
+    /// (src/install/PackageManager/runTasks.zig). Real body in
+    /// `package_manager_real::run_tasks::generate_network_task_for_tarball`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn generate_network_task_for_tarball(
+        &mut self,
+        _task_id: package_manager_task::Id,
+        _url: &[u8],
+        _is_required: bool,
+        _dependency_id: DependencyID,
+        _pkg: &lockfile::Package,
+        _patch_name_and_version_hash: Option<u64>,
+        _authorization: network_task::Authorization,
+    ) -> Result<Option<*mut network_task::NetworkTask>, bun_core::Error> {
+        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) — run_tasks::generate_network_task_for_tarball")
+    }
 }
 #[derive(Default)] pub struct PackageManagerOptionsStub {
     pub log_level: package_manager::Options::LogLevel,
@@ -2056,6 +2183,37 @@ pub mod ci_info {
 
 /// Process-lifetime singleton — Zig: `var instance: PackageManager = undefined;`
 /// (src/install/PackageManager.zig). Allocated at `PackageManager.init()`.
+
+/// Port of the anonymous `comptime callbacks: anytype` struct passed to
+/// `PackageManager.runTasks` (src/install/PackageManager/runTasks.zig). Zig
+/// duck-types `@TypeOf(callbacks.onExtract) != void` etc.; the Rust shape is
+/// generic over each slot so call sites can pass `()` for unused hooks and a
+/// fn item for active ones. The trait-based dispatch lives in
+/// `package_manager_real::run_tasks::RunTasksCallbacks`; this value-level
+/// struct is only the call-site spelling.
+pub struct RunTasksCallbacks<E = (), R = (), M = (), D = ()> {
+    pub on_extract: E,
+    pub on_resolve: R,
+    pub on_package_manifest_error: M,
+    pub on_package_download_error: D,
+    /// Zig: `comptime callbacks.progress_bar` (defaults absent → false).
+    pub progress_bar: bool,
+    /// Zig: `comptime callbacks.manifests_only` (defaults absent → false).
+    pub manifests_only: bool,
+}
+impl<E: Default, R: Default, M: Default, D: Default> Default for RunTasksCallbacks<E, R, M, D> {
+    fn default() -> Self {
+        Self {
+            on_extract: E::default(),
+            on_resolve: R::default(),
+            on_package_manifest_error: M::default(),
+            on_package_download_error: D::default(),
+            progress_bar: false,
+            manifests_only: false,
+        }
+    }
+}
+
 static mut PACKAGE_MANAGER_INSTANCE: *mut PackageManager = core::ptr::null_mut();
 
 impl PackageManager {
@@ -2085,32 +2243,6 @@ impl PackageManager {
             }
         }
         false
-    }
-
-    /// Port of `PackageManager.sleepUntil` (src/install/PackageManager.zig:424).
-    ///
-    /// Associated fn taking `*mut PackageManager` (NOT `&mut self`): every
-    /// `is_done_fn` body in this crate reborrows the *whole* `PackageManager`
-    /// from a raw pointer stashed in `C` (`&mut *closure.manager`). If this
-    /// were a `&mut self` method, that whole-struct Unique retag would pop
-    /// `self`'s tag under Stacked Borrows, making the next loop-iteration
-    /// deref UB. Zig spec has no such constraint because Zig `*T` is
-    /// non-exclusive.
-    ///
-    /// SAFETY: `this` must be valid for `&mut` access between callback
-    /// invocations; while `is_done_fn` runs, the callback owns the unique
-    /// `&mut PackageManager` and `sleep_until`/`tick_raw` hold no borrow.
-    pub unsafe fn sleep_until<C>(
-        this: *mut PackageManager,
-        closure: &mut C,
-        is_done_fn: fn(&mut C) -> bool,
-    ) {
-        bun_core::Output::flush();
-        // SAFETY: caller contract — `this` is valid for the loop duration; we
-        // only touch `event_loop` between `is_done_fn` invocations.
-        unsafe {
-            (*this).event_loop.tick_raw(closure, is_done_fn);
-        }
     }
 
     /// Port of `PackageManager.runTasks` (src/install/PackageManager/runTasks.zig).

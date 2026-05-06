@@ -825,7 +825,8 @@ impl PostgresSQLConnection {
         // PORT NOTE: Zig `defer { ... }` block expanded after the body below; cannot use scopeguard
         // because it captures &mut self alongside the body.
 
-        let event_loop = vm.event_loop();
+        // SAFETY: `vm` is the live VM singleton stored in this connection.
+        let event_loop = unsafe { &mut *vm }.event_loop();
         event_loop.enter();
         SocketMonitor::read(data);
         // reset the head to the last message so remaining reflects the right amount of bytes

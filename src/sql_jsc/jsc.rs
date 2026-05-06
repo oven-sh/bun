@@ -357,7 +357,7 @@ pub struct AutoFlusher {
     pub registered: bool,
 }
 impl AutoFlusher {
-    pub fn register_deferred_microtask_with_type_unchecked<T>(this: *mut T, vm: &mut VirtualMachine) {
+    pub fn register_deferred_microtask_with_type_unchecked<T>(this: *mut T, vm: &VirtualMachine) {
         // SAFETY: `vm` is live; `this` is a live `*mut T` whose `auto_flusher`
         // field has `registered == false` (caller-checked).
         // TODO(port): export from Zig — `Bun__VM__postDeferredTask`.
@@ -365,7 +365,7 @@ impl AutoFlusher {
             Bun__VM__postDeferredTask(vm.as_mut_ptr(), this as *mut c_void, None);
         }
     }
-    pub fn unregister_deferred_microtask_with_type<T>(this: *mut T, vm: &mut VirtualMachine) {
+    pub fn unregister_deferred_microtask_with_type<T>(this: *mut T, vm: &VirtualMachine) {
         // SAFETY: `vm` is live; `this` was previously registered.
         // TODO(port): export from Zig — `Bun__VM__unregisterDeferredTask`.
         unsafe { Bun__VM__unregisterDeferredTask(vm.as_mut_ptr(), this as *mut c_void) };

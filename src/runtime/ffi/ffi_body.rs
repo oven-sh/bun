@@ -1,3 +1,5 @@
+#![allow(unexpected_cfgs)] // `feature = "tinycc"` / `feature = "codegen_embed"` are wired by build.rs in Phase C; not yet declared cargo features.
+
 use core::ffi::{c_char, c_int, c_long, c_void};
 use core::fmt::{self, Write as _};
 use core::ptr::NonNull;

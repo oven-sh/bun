@@ -81,7 +81,7 @@ impl<'a> Tmpfile<'a> {
                 match crate::linkat_tmpfile(self.fd, self.destination_dir, basename) {
                     Ok(()) => return Ok(()),
                     Err(err) if err.get_errno() == E::EEXIST && retry => {
-                        let _ = crate::unlinkat(self.destination_dir, basename, 0);
+                        let _ = crate::unlinkat(self.destination_dir, basename);
                         retry = false;
                     }
                     Err(err) => return Err(err.into()),

@@ -226,74 +226,64 @@ pub fn argv() -> impl Iterator<Item = &'static [u8]> {
 /// builds, through the Bun output sink (so colour/redirect logic applies),
 /// followed by an explicit flush. Zig output.zig:1189-1194.
 ///
-/// Function form takes a runtime `(fmt, args)` pair mirroring Zig
-/// `fn debugWarn(comptime fmt: []const u8, args: anytype)`.
+/// Function form takes a single [`PrettyFmtInput`] payload — callers pass
+/// `format_args!("template {}", x)` (the dominant convention across the
+/// codebase) or a bare `&str`. The payload is rendered first, then
+/// `<tag>`-rewritten. For the comptime-literal fast path use the macro form.
 #[inline]
-pub fn debug_warn(fmt: &str, args: impl FmtTuple) {
+pub fn debug_warn(payload: impl PrettyFmtInput) {
     if cfg!(debug_assertions) {
-        pretty_errorln!(
-            "<yellow>debug warn<r><d>:<r> {}",
-            pretty_fmt_args(fmt, enable_ansi_colors_stderr(), args),
-        );
+        let buf = payload.into_pretty_buf(enable_ansi_colors_stderr());
+        pretty_errorln!("<yellow>debug warn<r><d>:<r> {}", buf);
         flush();
     }
 }
 
 /// `bun.Output.warn` — yellow `warn:` prefix to stderr.
 #[inline]
-pub fn warn(fmt: &str, args: impl FmtTuple) {
-    pretty_errorln!(
-        "<r><yellow>warn<r><d>:<r> {}",
-        pretty_fmt_args(fmt, enable_ansi_colors_stderr(), args),
-    );
+pub fn warn(payload: impl PrettyFmtInput) {
+    let buf = payload.into_pretty_buf(enable_ansi_colors_stderr());
+    pretty_errorln!("<r><yellow>warn<r><d>:<r> {}", buf);
 }
 
 /// `bun.Output.note` — blue `note:` prefix to stderr (output.zig:1179).
 #[inline]
-pub fn note(fmt: &str, args: impl FmtTuple) {
-    pretty_errorln!(
-        "<blue>note<r><d>:<r> {}",
-        pretty_fmt_args(fmt, enable_ansi_colors_stderr(), args),
-    );
+pub fn note(payload: impl PrettyFmtInput) {
+    let buf = payload.into_pretty_buf(enable_ansi_colors_stderr());
+    pretty_errorln!("<blue>note<r><d>:<r> {}", buf);
 }
 
 /// Function-form of `Output.debug` (Zig: `pub fn debug(comptime fmt, args)`).
-/// The macro form is `crate::debug!`; this fn variant takes a runtime template
-/// + tuple for call sites that can't use the macro.
+/// The macro form is `crate::debug!`; this fn variant takes a single
+/// pre-formatted payload for call sites that build the message dynamically.
 #[inline]
-pub fn debug(fmt: &str, args: impl FmtTuple) {
+pub fn debug(payload: impl PrettyFmtInput) {
     if cfg!(debug_assertions) {
-        pretty_errorln!(
-            "<d>DEBUG:<r> {}",
-            pretty_fmt_args(fmt, enable_ansi_colors_stderr(), args),
-        );
+        let buf = payload.into_pretty_buf(enable_ansi_colors_stderr());
+        pretty_errorln!("<d>DEBUG:<r> {}", buf);
         flush();
     }
 }
 
 /// `Output.prettyErrorln` — function form. Performs `<tag>` → ANSI rewrite on
-/// `fmt` (using stderr's colour state), substitutes `args` at each `{}`
-/// placeholder, writes to stderr, and appends `\n` if `fmt` does not already
-/// end in one. Macro form: `crate::pretty_errorln!`.
+/// the rendered payload (using stderr's colour state), writes to stderr, and
+/// appends `\n` if the rendered output does not already end in one. Macro
+/// form: `crate::pretty_errorln!`.
 #[inline]
-pub fn pretty_errorln(fmt: &str, args: impl FmtTuple) {
-    print_to(
-        Destination::Stderr,
-        format_args!("{}", pretty_fmt_args(fmt, enable_ansi_colors_stderr(), args)),
-    );
-    if !fmt.ends_with('\n') {
+pub fn pretty_errorln(payload: impl PrettyFmtInput) {
+    let buf = payload.into_pretty_buf(enable_ansi_colors_stderr());
+    write_bytes(Destination::Stderr, &buf);
+    if buf.0.last() != Some(&b'\n') {
         write_bytes(Destination::Stderr, b"\n");
     }
 }
 
-/// `Output.prettyError` — `<tag>`-rewritten template to stderr without a
+/// `Output.prettyError` — `<tag>`-rewritten payload to stderr without a
 /// trailing newline.
 #[inline]
-pub fn pretty_error(fmt: &str, args: impl FmtTuple) {
-    print_to(
-        Destination::Stderr,
-        format_args!("{}", pretty_fmt_args(fmt, enable_ansi_colors_stderr(), args)),
-    );
+pub fn pretty_error(payload: impl PrettyFmtInput) {
+    let buf = payload.into_pretty_buf(enable_ansi_colors_stderr());
+    write_bytes(Destination::Stderr, &buf);
 }
 
 /// Test-harness initializer: configure the output sinks without touching the
@@ -2275,17 +2265,12 @@ pub enum Destination {
     Stdout,
 }
 
-/// `Output.printError` — function form. No `<tag>` rewrite; substitutes
-/// positional `args` at each `{}` in `fmt` and writes to stderr.
+/// `Output.printError` — function form. No `<tag>` rewrite; takes anything
+/// `Display` (so both `format_args!(..)` and bare `&str` call sites compile)
+/// and writes it to stderr without a trailing newline.
 #[inline]
-pub fn print_error(fmt: &str, args: impl FmtTuple) {
-    print_to(
-        Destination::Stderr,
-        format_args!("{}", TemplateDisplay {
-            template: std::borrow::Cow::Borrowed(fmt.as_bytes()),
-            args,
-        }),
-    );
+pub fn print_error(args: impl core::fmt::Display) {
+    print_to(Destination::Stderr, format_args!("{args}"));
 }
 
 /// `Output.printErrorln` — function form (the `print_errorln!` macro at crate

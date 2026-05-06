@@ -316,7 +316,7 @@ impl Entry {
             let using_tmpfile = tmpfile.using_tmpfile;
             let errdefer = scopeguard::guard((), |_| {
                 if !using_tmpfile {
-                    let _ = sys::unlinkat(destination_dir, tmpfilename, 0);
+                    let _ = sys::unlinkat(destination_dir, tmpfilename);
                 }
             });
 

@@ -1605,6 +1605,7 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
+ "bumpalo",
  "bun_alloc",
  "bun_analytics",
  "bun_base64",
@@ -1613,6 +1614,7 @@ dependencies = [
  "bun_crash_handler",
  "bun_dotenv",
  "bun_glob",
+ "bun_hash",
  "bun_http_types",
  "bun_interchange",
  "bun_js_parser",

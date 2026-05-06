@@ -7,7 +7,7 @@ use bun_core::Output;
 use bun_logger::{self as logger, Loc, Log};
 use bun_semver as semver;
 use bun_str::strings::StringOrTinyString;
-use bun_sys::{Fd, File};
+use bun_sys::{Fd, FdDirExt as _, File};
 use bun_threading::thread_pool;
 use bun_wyhash::Wyhash11;
 

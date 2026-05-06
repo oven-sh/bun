@@ -519,6 +519,10 @@ impl Fd {
     #[cfg(windows)]
     pub const INVALID: Fd = Fd(0);
 
+    /// Zig `bun.invalid_fd` / `FD.invalid` — function form of [`Fd::INVALID`]
+    /// for call sites that read better as a constructor (`Fd::invalid()`).
+    #[inline] pub const fn invalid() -> Fd { Fd::INVALID }
+
     #[inline] pub const fn from_native(v: FdBacking) -> Fd { Fd(v) }
     /// libuv fd (== posix fd on non-windows; uv-tagged on windows).
     #[inline] pub const fn from_uv(v: i32) -> Fd {

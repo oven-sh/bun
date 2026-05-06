@@ -2218,12 +2218,15 @@ impl File {
     pub fn open(path: &ZStr, flags: i32, mode: Mode) -> Maybe<Self> {
         open(path, flags, mode).map(Self::from_fd)
     }
-    pub fn openat(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Self> {
-        openat(dir, path, flags, mode).map(Self::from_fd)
+    /// File.zig `openat` — accepts a non-sentinel `&[u8]` (Zig: `path: anytype`
+    /// dispatches to `openatA` for non-sentinel slices). `&ZStr` callers
+    /// deref-coerce to `&[u8]`.
+    pub fn openat(dir: Fd, path: &[u8], flags: i32, mode: Mode) -> Maybe<Self> {
+        openat_a(dir, path, flags, mode).map(Self::from_fd)
     }
     /// snake_case alias (Zig: `File.openat`).
     #[inline]
-    pub fn open_at(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Self> {
+    pub fn open_at(dir: Fd, path: &[u8], flags: i32, mode: Mode) -> Maybe<Self> {
         Self::openat(dir, path, flags, mode)
     }
     /// `std.fs.cwd().createFile(path, .{ .truncate })` replacement.
@@ -2343,13 +2346,25 @@ impl File {
     }
     pub fn stat(&self) -> Maybe<Stat> { fstat(self.handle) }
     pub fn close(self) -> Maybe<()> { close(self.handle) }
-    /// `bun.sys.File.readFrom` — open + read + close.
-    pub fn read_from(dir: Fd, path: &ZStr) -> Maybe<Vec<u8>> {
+    /// `bun.sys.File.readFrom` — open + read + close. Accepts `&[u8]` (Zig:
+    /// `path: anytype`); `&ZStr` callers deref-coerce.
+    pub fn read_from(dir: Fd, path: &[u8]) -> Maybe<Vec<u8>> {
         let f = Self::openat(dir, path, O::RDONLY, 0)?;
         // File.zig: closes the fd on the error path too (no leak on read failure).
         let v = f.read_to_end();
         let _ = close(f.handle);
         v
+    }
+    /// `bun.sys.File.readFromUserInput` (File.zig:367) — normalize a
+    /// user-provided relative path against the resolver's cached
+    /// `top_level_dir` (NOT a fresh `getcwd()`), then `readFrom`.
+    pub fn read_from_user_input(dir: Fd, input_path: &[u8]) -> Maybe<Vec<u8>> {
+        let mut buf = bun_paths::PathBuffer::default();
+        let cwd = crate::fs::FileSystem::instance().top_level_dir();
+        let normalized = bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Loose>(
+            cwd, &mut buf.0, &[input_path],
+        );
+        Self::read_from(dir, normalized.as_bytes())
     }
     /// `bun.sys.File.writeFile` — open + write + close.
     pub fn write_file(dir: Fd, path: &ZStr, data: &[u8]) -> Maybe<()> {
@@ -4100,7 +4115,7 @@ pub fn move_file_z_with_handle(
             // Cross-device: full `copyFileZSlowWithHandle` (sys.zig:4305).
             let st = fstat(from_handle).map_err(bun_core::Error::from)?;
             // Unlink dest first — fixes ETXTBUSY on Linux.
-            let _ = unlinkat(to_dir, destination, 0);
+            let _ = unlinkat(to_dir, destination);
             let dst = openat(
                 to_dir, destination,
                 O::WRONLY | O::CREAT | O::CLOEXEC | O::TRUNC, 0o644,
@@ -4121,7 +4136,7 @@ pub fn move_file_z_with_handle(
             }
             let _ = close(dst);
             r.map_err(bun_core::Error::from)?;
-            let _ = unlinkat(from_dir, filename, 0);
+            let _ = unlinkat(from_dir, filename);
             Ok(())
         }
         Err(e) => Err(e.into()),
@@ -4486,11 +4501,11 @@ impl Dir {
         // SAFETY: NUL-terminated above.
         let z = unsafe { ZStr::from_raw(buf.0.as_ptr(), len) };
         #[cfg(unix)]
-        match unlinkat(self.fd, z, libc::AT_REMOVEDIR) {
+        match unlinkat_with_flags(self.fd, z, libc::AT_REMOVEDIR) {
             Ok(()) => return Ok(()),
             Err(e) if e.get_errno() == E::ENOENT => return Ok(()),
             Err(e) if e.get_errno() == E::ENOTDIR => {
-                return unlinkat(self.fd, z, 0).map_err(Into::into);
+                return unlinkat(self.fd, z).map_err(Into::into);
             }
             Err(e) if e.get_errno() == E::ENOTEMPTY => {
                 // Full recursive impl pending; surface the error so callers can react.
@@ -4639,7 +4654,7 @@ pub fn move_file_z_slow(from_dir: Fd, filename: &ZStr, to_dir: Fd, destination: 
         O::RDONLY | O::CLOEXEC,
         if cfg!(windows) { 0 } else { 0o644 },
     )?;
-    let _ = unlinkat(from_dir, filename, 0);
+    let _ = unlinkat(from_dir, filename);
     let r = copy_file_z_slow_with_handle(in_handle, to_dir, destination);
     let _ = close(in_handle);
     r
@@ -4648,7 +4663,7 @@ pub fn move_file_z_slow(from_dir: Fd, filename: &ZStr, to_dir: Fd, destination: 
 pub fn copy_file_z_slow_with_handle(in_handle: Fd, to_dir: Fd, destination: &ZStr) -> Maybe<()> {
     let st = fstat(in_handle)?;
     // Unlink dest first — fixes ETXTBUSY on Linux.
-    let _ = unlinkat(to_dir, destination, 0);
+    let _ = unlinkat(to_dir, destination);
     let dst = openat(to_dir, destination, O::WRONLY | O::CREAT | O::CLOEXEC | O::TRUNC, 0o644)?;
     #[cfg(target_os = "linux")] {
         // SAFETY: dst is a valid open fd; preallocation is best-effort.

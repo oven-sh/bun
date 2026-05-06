@@ -15,12 +15,7 @@ use super::web_socket_server_context::WebSocketServerContext;
 use super::{AnyRoute, AnyServer};
 
 // `pub const SSLConfig = @import("../socket/SSLConfig.zig");`
-// TODO(b2-blocked): crate::socket::ssl_config is ``-gated.
-// Re-enable the re-export once that un-gates; opaque placeholder until then.
-
 pub use crate::socket::ssl_config::SSLConfig;
-#[derive(Default)]
-pub struct SSLConfig(());
 
 pub struct ServerConfig {
     pub address: Address,

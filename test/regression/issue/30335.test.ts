@@ -33,11 +33,7 @@ async function runCompletions(home: string) {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
 
@@ -50,17 +46,37 @@ function countBunSourceLines(zshrc: string): number {
   return (zshrc.match(/source\s+"?[^"\s]*\.bun\/_bun/g) ?? []).length;
 }
 
-test.if(isPosix)(
-  "bun completions doesn't duplicate when .zshrc uses $HOME instead of a hardcoded path",
-  async () => {
-    const zshrcBefore = [
-      "# some existing config",
-      'export PATH="/usr/local/bin:$PATH"',
-      "",
-      '[ -s "$HOME/.bun/_bun" ] && source "$HOME/.bun/_bun"',
-      "",
-    ].join("\n");
-    using dir = tempDir("bun-completions-30335-home", {
+test.if(isPosix)("bun completions doesn't duplicate when .zshrc uses $HOME instead of a hardcoded path", async () => {
+  const zshrcBefore = [
+    "# some existing config",
+    'export PATH="/usr/local/bin:$PATH"',
+    "",
+    '[ -s "$HOME/.bun/_bun" ] && source "$HOME/.bun/_bun"',
+    "",
+  ].join("\n");
+  using dir = tempDir("bun-completions-30335-home", {
+    ".bun/.keep": "",
+    ".zshrc": zshrcBefore,
+  });
+  const home = String(dir);
+
+  const { exitCode } = await runCompletions(home);
+  expect(exitCode).toBe(0);
+
+  const zshrcAfter = readFileSync(join(home, ".zshrc"), "utf8");
+  // No duplicate line appended — the $HOME reference is recognised.
+  expect(countBunSourceLines(zshrcAfter)).toBe(1);
+  // And the user's original line is untouched.
+  expect(zshrcAfter).toBe(zshrcBefore);
+});
+
+test.if(isPosix)("bun completions doesn't duplicate for ~ or ${HOME} variants", async () => {
+  for (const snippet of [
+    '[ -s "~/.bun/_bun" ] && source "~/.bun/_bun"',
+    '[ -s "${HOME}/.bun/_bun" ] && source "${HOME}/.bun/_bun"',
+  ]) {
+    const zshrcBefore = `export PATH="/usr/local/bin:$PATH"\n\n${snippet}\n`;
+    using dir = tempDir("bun-completions-30335-variant", {
       ".bun/.keep": "",
       ".zshrc": zshrcBefore,
     });
@@ -70,59 +86,30 @@ test.if(isPosix)(
     expect(exitCode).toBe(0);
 
     const zshrcAfter = readFileSync(join(home, ".zshrc"), "utf8");
-    // No duplicate line appended — the $HOME reference is recognised.
     expect(countBunSourceLines(zshrcAfter)).toBe(1);
-    // And the user's original line is untouched.
     expect(zshrcAfter).toBe(zshrcBefore);
-  },
-);
+  }
+});
 
-test.if(isPosix)(
-  "bun completions doesn't duplicate for ~ or ${HOME} variants",
-  async () => {
-    for (const snippet of [
-      '[ -s "~/.bun/_bun" ] && source "~/.bun/_bun"',
-      '[ -s "${HOME}/.bun/_bun" ] && source "${HOME}/.bun/_bun"',
-    ]) {
-      const zshrcBefore = `export PATH="/usr/local/bin:$PATH"\n\n${snippet}\n`;
-      using dir = tempDir("bun-completions-30335-variant", {
-        ".bun/.keep": "",
-        ".zshrc": zshrcBefore,
-      });
-      const home = String(dir);
+test.if(isPosix)("bun completions still appends on a zshrc that doesn't reference _bun", async () => {
+  // Sanity check: we haven't broken the fresh-install path. A .zshrc with
+  // no existing bun snippet (and no marker comment) should still get one.
+  const zshrcBefore = 'export PATH="/usr/local/bin:$PATH"\n';
+  using dir = tempDir("bun-completions-30335-fresh", {
+    ".bun/.keep": "",
+    ".zshrc": zshrcBefore,
+  });
+  const home = String(dir);
 
-      const { exitCode } = await runCompletions(home);
-      expect(exitCode).toBe(0);
+  const { exitCode } = await runCompletions(home);
+  expect(exitCode).toBe(0);
 
-      const zshrcAfter = readFileSync(join(home, ".zshrc"), "utf8");
-      expect(countBunSourceLines(zshrcAfter)).toBe(1);
-      expect(zshrcAfter).toBe(zshrcBefore);
-    }
-  },
-);
-
-test.if(isPosix)(
-  "bun completions still appends on a zshrc that doesn't reference _bun",
-  async () => {
-    // Sanity check: we haven't broken the fresh-install path. A .zshrc with
-    // no existing bun snippet (and no marker comment) should still get one.
-    const zshrcBefore = 'export PATH="/usr/local/bin:$PATH"\n';
-    using dir = tempDir("bun-completions-30335-fresh", {
-      ".bun/.keep": "",
-      ".zshrc": zshrcBefore,
-    });
-    const home = String(dir);
-
-    const { exitCode } = await runCompletions(home);
-    expect(exitCode).toBe(0);
-
-    const zshrcAfter = readFileSync(join(home, ".zshrc"), "utf8");
-    expect(zshrcAfter).toContain("# bun completions");
-    expect(countBunSourceLines(zshrcAfter)).toBe(1);
-    // Running a second time must not append again.
-    const { exitCode: exit2 } = await runCompletions(home);
-    expect(exit2).toBe(0);
-    const zshrcAfter2 = readFileSync(join(home, ".zshrc"), "utf8");
-    expect(zshrcAfter2).toBe(zshrcAfter);
-  },
-);
+  const zshrcAfter = readFileSync(join(home, ".zshrc"), "utf8");
+  expect(zshrcAfter).toContain("# bun completions");
+  expect(countBunSourceLines(zshrcAfter)).toBe(1);
+  // Running a second time must not append again.
+  const { exitCode: exit2 } = await runCompletions(home);
+  expect(exit2).toBe(0);
+  const zshrcAfter2 = readFileSync(join(home, ".zshrc"), "utf8");
+  expect(zshrcAfter2).toBe(zshrcAfter);
+});

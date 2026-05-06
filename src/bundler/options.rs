@@ -623,81 +623,11 @@ impl TargetExt for Target {
 pub use bun_options_types::Format;
 pub use bun_options_types::WindowsOptions;
 
-// The max integer value in this enum can only be appended to.
-// It has dependencies in several places:
-// - bun-native-bundler-plugin-api/bundler_plugin.h
-// - src/jsc/bindings/headers-handwritten.h
-#[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Enum, strum::IntoStaticStr)]
-pub enum Loader {
-    Jsx = 0,
-    Js = 1,
-    Ts = 2,
-    Tsx = 3,
-    Css = 4,
-    File = 5,
-    Json = 6,
-    Jsonc = 7,
-    Toml = 8,
-    Wasm = 9,
-    Napi = 10,
-    Base64 = 11,
-    Dataurl = 12,
-    Text = 13,
-    Bunsh = 14,
-    Sqlite = 15,
-    SqliteEmbedded = 16,
-    Html = 17,
-    Yaml = 18,
-    Json5 = 19,
-    Md = 20,
-}
-
-#[repr(transparent)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LoaderOptional(u8);
-
-impl LoaderOptional {
-    pub const NONE: LoaderOptional = LoaderOptional(254);
-
-    pub fn unwrap(self) -> Option<Loader> {
-        // PORT NOTE: spec uses `@enumFromInt(@intFromEnum(opt))` which is
-        // debug-checked. PORTING.md §Forbidden patterns bars transmute-to-enum;
-        // use an exhaustive match so any out-of-range tag is `None`, not UB.
-        match self.0 {
-            0 => Some(Loader::Jsx),
-            1 => Some(Loader::Js),
-            2 => Some(Loader::Ts),
-            3 => Some(Loader::Tsx),
-            4 => Some(Loader::Css),
-            5 => Some(Loader::File),
-            6 => Some(Loader::Json),
-            7 => Some(Loader::Jsonc),
-            8 => Some(Loader::Toml),
-            9 => Some(Loader::Wasm),
-            10 => Some(Loader::Napi),
-            11 => Some(Loader::Base64),
-            12 => Some(Loader::Dataurl),
-            13 => Some(Loader::Text),
-            14 => Some(Loader::Bunsh),
-            15 => Some(Loader::Sqlite),
-            16 => Some(Loader::SqliteEmbedded),
-            17 => Some(Loader::Html),
-            18 => Some(Loader::Yaml),
-            19 => Some(Loader::Json5),
-            20 => Some(Loader::Md),
-            _ => None,
-        }
-    }
-
-    pub fn from_api(loader: api::Loader) -> LoaderOptional {
-        if loader == api::Loader::_none {
-            return LoaderOptional::NONE;
-        }
-        let l = Loader::from_api(loader);
-        LoaderOptional(l as u8)
-    }
-}
+// B-3 UNIFIED: was a local CYCLEBREAK dup of `bun_options_types::BundleEnums::Loader`.
+// Spec options.zig:568 has exactly ONE `Loader`; re-export so the bundler's
+// `BundleOptions.loaders` and the resolver's `Path::loader()` operate on the
+// same nominal type.
+pub use bun_options_types::BundleEnums::{Loader, LoaderOptional};
 
 // PORT NOTE: hoisted from `impl Loader` — Rust forbids `static` in inherent impls.
 pub static LOADER_NAMES: phf::Map<&'static [u8], Loader> = phf::phf_map! {

@@ -1235,8 +1235,23 @@ fn transpile_source_code_inner(
 
                 // Spec :417-466 — RuntimeTranspilerCache hit: skip print.
                 if let Some(entry) = cache.entry.as_mut() {
-                    // TODO(b2-blocked): `SavedSourceMap::put_mappings` +
-                    // `ModuleInfoDeserialized::create_from_cached_record`.
+                    // Spec :418-421 — register the cached sourcemap so error
+                    // stacks remap to original positions even on a cache hit.
+                    // PORT NOTE: spec wraps `entry.sourcemap` in a
+                    // `MutableString` view (`.{ .list = .{ .items = … } }`);
+                    // here `sourcemap` is an owned `Box<[u8]>`, so move it
+                    // into `MutableString.list` (the callee takes by value).
+                    // `put_mappings`' body is currently `#[cfg(any())]`-gated
+                    // (SavedSourceMap.rs) so this is a no-op until that
+                    // un-gates, but the call site is wired per spec
+                    // (`catch {}` → `.ok()`).
+                    let _ = unsafe { &mut (*jsc_vm).source_mappings }.put_mappings(
+                        source,
+                        bun_string::MutableString {
+                            list: core::mem::take(&mut entry.sourcemap).into_vec(),
+                        },
+                    );
+                    // TODO(b2-blocked): `ModuleInfoDeserialized::create_from_cached_record`.
                     // PORT NOTE: bundler-side `Entry::output_code` is a flat
                     // `Box<[u8]>` (the `OutputCode::{String,Utf8}` enum lives
                     // on the T6 `bun_jsc::RuntimeTranspilerCache` mirror).

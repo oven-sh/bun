@@ -2749,8 +2749,9 @@ impl<AtRule> StyleSheet<AtRule> {
             anon_layer_count: 0,
             enclosing_layer: LayerName::default(),
         };
-        // blocked_on: BundlerAtRuleParser: CustomAtRuleParser impl (gated above
-        // on BabyList push API). Signature kept; body re-enabled when that lands.
+        // blocked_on: `options` is borrowed by `at_rule_parser` above and
+        // moved into `parse_with` here — Zig aliased; Rust needs the Phase-B
+        // borrow reshape (see TODO above) before this can be enabled.
         #[cfg(any())] {
         return Self::parse_with(allocator, code, options, &mut at_rule_parser, None, source_index);
         }

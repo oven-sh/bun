@@ -919,21 +919,27 @@ impl EntriesMap {
     #[inline]
     pub const fn new() -> Self { Self(()) }
     #[inline]
-    fn inner(&self) -> &'static mut EntriesOptionMap {
-        // SAFETY: `entries_option_map()` returns the raw `*mut` singleton (Zig `*Self`);
-        // all access goes through `RealFS.entries_mutex`.
-        unsafe { &mut *entries_option_map() }
+    fn inner(&self) -> *mut EntriesOptionMap {
+        // PORT NOTE: returns the raw `*mut` singleton (Zig `*Self`). Do NOT materialize
+        // a `&'static mut` here — that asserts noalias for the whole map BEFORE
+        // `RealFS.entries_mutex` is taken, which is UB if two threads race. Form the
+        // `&mut` only for the duration of a single operation at the call site.
+        entries_option_map()
     }
     pub fn get(&self, key: &[u8]) -> Option<&'static mut EntriesOption> {
-        let r = self.inner().get(key)?;
+        // SAFETY: process-lifetime singleton; `&mut` scoped to this call. Caller holds
+        // `RealFS.entries_mutex` (Zig invariant) when mutating through the result.
+        let r = unsafe { (*self.inner()).get(key)? };
         // SAFETY: re-erase to 'static; storage is the BSSMap singleton.
         Some(unsafe { &mut *(r as *mut EntriesOption) })
     }
     pub fn get_or_put(&self, key: &[u8]) -> core::result::Result<allocators::Result, AllocError> {
-        self.inner().get_or_put(key)
+        // SAFETY: see `get` above; `&mut` scoped to this call only.
+        unsafe { (*self.inner()).get_or_put(key) }
     }
     pub fn at_index(&self, index: allocators::IndexType) -> Option<&'static mut EntriesOption> {
-        let r = self.inner().at_index(index)?;
+        // SAFETY: see `get` above; `&mut` scoped to this call only.
+        let r = unsafe { (*self.inner()).at_index(index)? };
         // SAFETY: re-erase to 'static; storage is the BSSMap singleton.
         Some(unsafe { &mut *(r as *mut EntriesOption) })
     }
@@ -942,15 +948,18 @@ impl EntriesMap {
         result: &mut allocators::Result,
         value: EntriesOption,
     ) -> core::result::Result<&'static mut EntriesOption, AllocError> {
-        let r = self.inner().put(result, value)?;
+        // SAFETY: see `get` above; `&mut` scoped to this call only.
+        let r = unsafe { (*self.inner()).put(result, value)? };
         // SAFETY: re-erase to 'static; storage is the BSSMap singleton.
         Ok(unsafe { &mut *(r as *mut EntriesOption) })
     }
     pub fn mark_not_found(&self, result: allocators::Result) {
-        self.inner().mark_not_found(result)
+        // SAFETY: see `get` above; `&mut` scoped to this call only.
+        unsafe { (*self.inner()).mark_not_found(result) }
     }
     pub fn remove(&self, key: &[u8]) -> bool {
-        self.inner().remove(key)
+        // SAFETY: see `get` above; `&mut` scoped to this call only.
+        unsafe { (*self.inner()).remove(key) }
     }
 }
 
@@ -1698,7 +1707,15 @@ impl RealFS {
         };
 
         let should_close_handle = !had_handle && (!store_fd || self.need_to_close_files());
-        // PORT NOTE: defer handle.close() under condition — handled at function exit points below
+        // PORT NOTE: Zig `defer { if (maybe_handle == null and (!store_fd or fs.needToCloseFiles())) handle.close(); }`
+        // runs on EVERY exit path including the `try`s below — wrap in a scopeguard so we never
+        // leak the directory FD when `DirnameStore::append` / `self.entries.put` early-return via `?`.
+        // `Dir` is `Copy`, so the closure captures a copy of `handle`; uses below remain valid.
+        let _close_handle_guard = scopeguard::guard((), move |_| {
+            if should_close_handle {
+                handle.close();
+            }
+        });
 
         // if we get this far, it's a real directory, so we can just store the dir name.
         let dir: &'static [u8] = if !had_handle {
@@ -1726,9 +1743,6 @@ impl RealFS {
                 if let Some(existing) = in_place {
                     // SAFETY: see above
                     unsafe { (*existing).data.clear() };
-                }
-                if should_close_handle {
-                    handle.close();
                 }
                 return Ok(self.read_directory_error(dir, err)?);
             }
@@ -1769,14 +1783,7 @@ impl RealFS {
                 }
             };
 
-            if should_close_handle {
-                handle.close();
-            }
             return Ok(out);
-        }
-
-        if should_close_handle {
-            handle.close();
         }
 
         Ok(TEMP_ENTRIES_OPTION.with_borrow_mut(|slot| {

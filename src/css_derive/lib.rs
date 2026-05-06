@@ -7,13 +7,16 @@
 //! reflection, so the derive emits the equivalent field-wise / variant-wise
 //! recursion as an `impl bun_css::generics::DeepClone<'bump> for T`.
 //!
-//! The generated body intentionally uses **method-syntax** dispatch
-//! (`field.deep_clone(bump)`) rather than the fully-qualified trait path so
-//! that — exactly like the Zig — a leaf type may satisfy the call with either
-//! an inherent `pub fn deep_clone(&self, &Arena) -> Self` *or* a
-//! `DeepClone` trait impl. The trait is brought into scope inside the
-//! generated fn body so the blanket impls in `bun_css::generics` (Option,
-//! Vec, Box, slices, primitives, …) resolve transparently.
+//! The generated body uses **fully-qualified trait** dispatch
+//! (`DeepClone::deep_clone(&field, bump)`) rather than method syntax. Rust's
+//! method probe selects an inherent method by *name only* (ignoring arity and
+//! method-level where-clauses) and does **not** fall through to the trait when
+//! the inherent's signature mismatches — so an unrelated inherent like
+//! `BabyList::deep_clone(&self) -> Result<Self, _>` would shadow the blanket
+//! `impl DeepClone for BabyList<T>` and break the derive. UFCS mirrors the
+//! Zig's free-fn `deepClone()` dispatch (structural-first via the blanket
+//! impls in `bun_css::generics` — Option, Vec, Box, slices, primitives, …)
+//! and is immune to inherent shadowing.
 //!
 //! Generics handling:
 //!   * If the deriving type already carries a lifetime parameter, the **first**
@@ -530,7 +533,9 @@ fn expand_deep_clone(input: DeriveInput) -> syn::Result<TokenStream2> {
                             .collect();
                         quote! {
                             Self::#vname( #(#binds),* ) =>
-                                Self::#vname( #( #binds.deep_clone(__bump) ),* ),
+                                Self::#vname( #(
+                                    ::bun_css::generics::DeepClone::deep_clone(#binds, __bump)
+                                ),* ),
                         }
                     }
                     Fields::Named(fs) => {
@@ -538,7 +543,9 @@ fn expand_deep_clone(input: DeriveInput) -> syn::Result<TokenStream2> {
                             fs.named.iter().map(|f| f.ident.clone().unwrap()).collect();
                         quote! {
                             Self::#vname { #(#names),* } =>
-                                Self::#vname { #( #names: #names.deep_clone(__bump) ),* },
+                                Self::#vname { #(
+                                    #names: ::bun_css::generics::DeepClone::deep_clone(#names, __bump)
+                                ),* },
                         }
                     }
                 }

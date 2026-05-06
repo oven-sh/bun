@@ -11,7 +11,9 @@ pub fn post_process_html_chunk(
 ) -> Result<(), bun_core::Error> {
     // TODO(port): narrow error set — Zig `!void` but body has zero `try` sites (inferred-empty)
     // This is where we split output into pieces
-    let c = ctx.c;
+    // SAFETY: `ctx.c` is a non-null backref into `BundleV2.linker`, valid for the
+    // duration of generateChunksInParallel() — see GenerateChunkCtx.
+    let c = unsafe { &mut *ctx.c };
     let mut j = StringJoiner {
         watcher: Watcher {
             input: chunk.unique_key,

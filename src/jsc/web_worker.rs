@@ -573,7 +573,13 @@ mod __phase_a_body {
     use core::mem::offset_of;
 
     impl WebWorker {
-        fn thread_main(&mut self) {
+        // Worker-thread call chain takes `&self` (NOT `&mut self`): the parent /
+        // main thread may concurrently hold `&WebWorker` (`notify_need_termination`,
+        // `terminate_all_and_wait`), so materialising `&mut WebWorker` here would
+        // be aliased-&mut UB. Worker-thread-only mutable fields are wrapped in
+        // `Cell` / `UnsafeCell` instead. Zig spec uses `*WebWorker` everywhere,
+        // which aliases freely.
+        fn thread_main(&self) {
             bun_analytics::Features::workers_spawned().fetch_add(1, Ordering::Relaxed);
 
             if !self.name.is_empty() {
@@ -593,11 +599,13 @@ mod __phase_a_body {
                 ));
             }
 
-            // SAFETY: start_vm published vm under vm_lock; non-null here.
-            let global = unsafe { (*self.vm).global };
-            global
-                .vm()
-                .hold_api_lock(self as *mut _ as *mut c_void, opaque_spin_trampoline);
+            // SAFETY: start_vm published vm under vm_lock; non-null here. Raw
+            // deref — do not bind `&VirtualMachine` (see start_vm publish note).
+            let global = unsafe { (*(*self.vm.get())).global };
+            global.vm().hold_api_lock(
+                self as *const WebWorker as *mut c_void,
+                opaque_spin_trampoline,
+            );
         }
 
         /// Phase 1: build the worker's arena + VirtualMachine and publish `vm`.

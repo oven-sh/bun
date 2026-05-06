@@ -613,7 +613,7 @@ pub fn write_output_files_to_disk(
                                 "{} creating outdir {} while saving file {}",
                                 e.name(),
                                 quote(rel_parent),
-                                quote(&src.dest_path),
+                                quote(&*src.dest_path),
                             ),
                         )
                         .expect("unreachable");

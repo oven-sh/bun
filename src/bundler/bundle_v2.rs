@@ -5550,21 +5550,17 @@ impl CrossChunkImport {
         chunks: &mut [Chunk],
         imports_from_other_chunks: &mut chunk::ImportsFromOtherChunks,
     ) -> Result<(), Error> {
-        let mut result = core::mem::take(list);
-        let _restore = scopeguard::guard((), |_| { *list = result; });
-        // PORT NOTE: reshaped for borrowck — defer reassignment via guard
+        // PORT NOTE: reshaped for borrowck — Zig used `defer list.* = result;`.
+        list.clear();
+        list.reserve(imports_from_other_chunks.count());
 
-        result.clear();
-        result.reserve(imports_from_other_chunks.count());
-
-        let import_items_list = imports_from_other_chunks.values();
-        let chunk_indices = imports_from_other_chunks.keys();
-        debug_assert_eq!(chunk_indices.len(), import_items_list.len());
-        for (chunk_index, import_items) in chunk_indices.iter().zip(import_items_list.iter()) {
-            let chunk = &mut chunks[*chunk_index as usize];
+        for i in 0..imports_from_other_chunks.count() {
+            let chunk_index = imports_from_other_chunks.keys()[i];
+            let chunk = &mut chunks[chunk_index as usize];
 
             // Sort imports from a single chunk by alias for determinism
             let exports_to_other_chunks = &chunk.content.javascript().exports_to_other_chunks;
+            let import_items = &mut imports_from_other_chunks.values_mut()[i];
             // TODO: do we need to clone this array?
             for item in import_items.slice_mut() {
                 item.export_alias = exports_to_other_chunks.get(&item.r#ref).unwrap().clone();
@@ -5572,13 +5568,13 @@ impl CrossChunkImport {
             }
             import_items.slice_mut().sort_by(|a, b| strings::order(&a.export_alias, &b.export_alias));
 
-            result.push(CrossChunkImport {
-                chunk_index: *chunk_index,
+            list.push(CrossChunkImport {
+                chunk_index,
                 sorted_import_items: import_items.clone(),
             });
         }
 
-        result.sort_by(|a, b| a.chunk_index.cmp(&b.chunk_index));
+        list.sort_by(|a, b| a.chunk_index.cmp(&b.chunk_index));
         Ok(())
     }
 }
@@ -5868,8 +5864,8 @@ pub enum BundleV2Result {
 }
 
 // re-exports
-pub use crate::html_scanner::HTMLScanner;
-pub use crate::index_string_map::IndexStringMap;
+pub use crate::HTMLScanner::HTMLScanner;
+pub use crate::IndexStringMap::IndexStringMap;
 pub type BitSet = DynamicBitSetUnmanaged;
 pub use Logger::Loc;
 

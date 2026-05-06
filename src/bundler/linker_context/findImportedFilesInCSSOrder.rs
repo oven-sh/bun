@@ -8,7 +8,6 @@ use bun_options_types::{ImportKind, ImportRecord, ImportRecordFlags};
 use crate::bun_css::{self, BundlerStyleSheet, ImportConditions, LayerName};
 use crate::chunk::{CssImportOrder, CssImportOrderKind, Layers};
 use crate::Graph::{Graph, InputFileListExt as _};
-use crate::linker_graph::LinkerGraph;
 use crate::{Index, LinkerContext};
 use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
 
@@ -291,11 +290,10 @@ pub fn find_imported_files_in_css_order<'a>(
 
     let mut visitor = Visitor {
         allocator,
-        graph: &mut this.graph as *mut _,
         parse_graph: this.parse_graph,
         visited: handle_oom(BabyList::<Index>::init_capacity(16)),
         // SAFETY: re-borrow the same column slices; lifetime erased to decouple
-        // from the &mut graph above (Zig holds these as raw slice views).
+        // from the shared `this.graph` borrow (Zig holds these as raw slice views).
         css_asts: unsafe {
             core::slice::from_raw_parts(css_asts_slice.as_ptr(), css_asts_slice.len())
         },
@@ -308,7 +306,6 @@ pub fn find_imported_files_in_css_order<'a>(
         has_external_import: false,
         order: BabyList::default(),
     };
-    let _ = visitor.graph;
     let mut wrapping_conditions: BabyList<ImportConditions> = BabyList::default();
     let mut wrapping_import_records: BabyList<ImportRecord> = BabyList::default();
     // Include all files reachable from any entry point

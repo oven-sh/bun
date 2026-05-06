@@ -824,21 +824,21 @@ fn get_ast(
                 return Err(err!("ParserError"));
             }
 
-            let path_to_use: &[u8] = 'brk: {
+            let path_to_use: &'static [u8] = 'brk: {
                 // Implements embedded sqlite
                 if loader == Loader::SqliteEmbedded {
-                    let mut buf = bumpalo::collections::Vec::new_in(bump);
+                    let mut buf = bumpalo::collections::String::new_in(bump);
                     write!(
                         &mut buf,
                         "{}A{:08}",
-                        bun_core::fmt::hex_int_lower(unique_key_prefix),
-                        source.index.get()
+                        bun_core::fmt::hex_int_lower::<16>(unique_key_prefix),
+                        source.index.0
                     )
                     .expect("unreachable");
-                    let embedded_path = buf.into_bump_slice();
+                    let embedded_path = leak_static(buf.into_bump_str().as_bytes());
                     *unique_key_for_additional_file = FileLoaderHash {
                         key: embedded_path,
-                        content_hash: ContentHasher::run(source.contents),
+                        content_hash: ContentHasher::run(&source.contents),
                     };
                     break 'brk embedded_path;
                 }
@@ -875,7 +875,8 @@ fn get_ast(
             };
             require_args[1] = Expr::init(
                 E::Object {
-                    properties: G::Property::List::from_owned_slice(object_properties),
+                    // SAFETY: bump-owned slice; never grown via this BabyList.
+                    properties: unsafe { G::PropertyList::from_bump_slice(object_properties) },
                     is_single_line: true,
                     ..Default::default()
                 },
@@ -884,7 +885,8 @@ fn get_ast(
             let require_call = Expr::init(
                 E::Call {
                     target: require_property,
-                    args: BabyList::<Expr>::from_owned_slice(require_args),
+                    // SAFETY: bump-owned slice; never grown via this BabyList.
+                    args: unsafe { BabyList::<Expr>::from_bump_slice(require_args) },
                     ..Default::default()
                 },
                 Loc { start: 0 },

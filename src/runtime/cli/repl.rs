@@ -1671,17 +1671,19 @@ impl<'a> Repl<'a> {
         let mut buffer_printer = bun_js_printer::BufferPrinter::init(buffer_writer);
 
         // Create symbol map from ast.symbols
-        let symbols_nested = bun_js_parser::ast::Symbol::NestedList::from_borrowed_slice_dangerous(&[ast.symbols]);
-        let symbols_map = bun_js_parser::ast::Symbol::Map::init_list(symbols_nested);
+        // PORT NOTE: Zig used `Symbol.NestedList.init(&.{ast.symbols})` (borrows
+        // a stack 1-slot slice). `Map::init_with_one_list` takes ownership of
+        // `ast.symbols` instead — see Symbol.rs PORT NOTE on the dangling-slice
+        // hazard.
+        let symbols_map = bun_js_parser::ast::symbol::Map::init_with_one_list(ast.symbols);
 
-        if bun_js_printer::print_ast(
+        if bun_js_printer::print_ast::<_, /* ASCII_ONLY */ true, /* GENERATE_SOURCE_MAP */ false>(
             &mut buffer_printer,
-            ast,
+            &arena,
+            &ast,
             symbols_map,
             &source,
-            true, // ascii_only
-            bun_js_printer::Options { mangled_props: None },
-            false, // generate_source_map
+            bun_js_printer::Options { mangled_props: None, ..Default::default() },
         )
         .is_err()
         {

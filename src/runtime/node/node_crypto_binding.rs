@@ -263,7 +263,7 @@ impl<Ctx: CryptoJobCtx> CryptoJob<Ctx> {
             // SAFETY: any_task is overwritten below before any use.
             any_task: unsafe { core::mem::zeroed() },
             poll: KeepAlive::default(),
-            ctx: ctx.clone(),
+            ctx,
             callback: StrongOptional::create(callback.with_async_context_if_needed(global), global),
         }));
         // If `ctx.init` throws, we must release the callback `Strong` and any resources the
@@ -291,10 +291,7 @@ impl<Ctx: CryptoJobCtx> CryptoJob<Ctx> {
         Ok(job)
     }
 
-    pub fn init_and_schedule(global: &JSGlobalObject, callback: JSValue, ctx: &Ctx) -> JsResult<()>
-    where
-        Ctx: Clone,
-    {
+    pub fn init_and_schedule(global: &JSGlobalObject, callback: JSValue, ctx: Ctx) -> JsResult<()> {
         let job = Self::init(global, callback, ctx)?;
         // SAFETY: job is a freshly-boxed live pointer.
         unsafe { (*job).schedule() };

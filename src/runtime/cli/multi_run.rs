@@ -1,15 +1,13 @@
 use core::ffi::{c_char, c_void};
 use core::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::time::Instant;
 
-use bun_alloc::AllocError;
 use bun_collections::StringArrayHashMap;
 use bun_core::{self as bun, err, Error, Global, Output};
 use bun_io::{BufferedReader, ReadState};
-use bun_jsc::{EventLoopHandle};
-use bun_jsc::MiniEventLoop::MiniEventLoop;
+use bun_event_loop::EventLoopHandle;
+use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_paths::{self as path, PathBuffer};
 use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
 use bun_str::{strings, ZStr};
@@ -20,12 +18,19 @@ use crate::Command;
 
 // `bun.spawn` (Process/Status/SpawnOptions/Rusage/spawnProcess) —
 // lives under src/runtime/api/bun/process.zig → crate::api::bun::process.
-use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, SpawnProcessResult, Status};
+use crate::api::bun::process::{
+    self as spawn, event_loop_handle_to_ctx, Process, ProcessExitVTable, Rusage, SpawnOptions,
+    SpawnProcessResult, Status,
+};
 // TODO(port): crate path for `bun.DotEnv.Loader`
 use bun_dotenv::Loader as DotEnvLoader;
 // TODO(port): crate path for `bun.io` BufferedReader/ReadState — assumed `bun_io`
 // TODO(port): crate path for Output writer type
 type OutputWriter = bun_core::io::Writer;
+
+/// Value type for package.json `scripts` map. Mirrors
+/// `bun_resolver::package_json::ScriptsMap` (`StringArrayHashMap<&'static [u8]>`).
+type ScriptsMap = StringArrayHashMap<&'static [u8]>;
 
 struct ScriptConfig {
     label: Box<[u8]>,

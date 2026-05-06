@@ -4243,7 +4243,7 @@ impl H2FrameParser {
     // get memory in bytes
     #[bun_jsc::host_fn(method)]
     pub fn get_buffer_size(this: &mut Self, _global_object: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
-        Ok(JSValue::js_number(this.write_buffer.len as u64 + this.queued_data_size))
+        Ok(JSValue::js_number((this.write_buffer.len as u64 + this.queued_data_size) as f64))
     }
 
     fn send_data(&mut self, stream: &mut Stream, payload: &[u8], close: bool, callback: JSValue) {

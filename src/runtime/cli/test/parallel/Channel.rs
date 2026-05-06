@@ -521,36 +521,53 @@ impl<Owner> Drop for Channel<Owner> {
 
 // -- platform callbacks ------------------------------------------------------
 
-/// `vtable::make()` shape: `(ext: *mut *mut Channel<Owner>, *mut us_socket_t, …)`.
+/// `vtable::make()` shape: `(ext: &mut *mut Channel<Owner>, *mut us_socket_t, …)`.
+// PORT NOTE: `PhantomData<fn() -> *mut Owner>` instead of `PhantomData<Owner>`
+// so the marker type itself carries no lifetime obligations from `Owner` —
+// `vtable::Handler` requires `Self: 'static` and one owner
+// (`WorkerCommands<'a>`) is non-`'static`.
 #[cfg(not(windows))]
-pub struct PosixHandlers<Owner: ChannelOwner>(PhantomData<Owner>);
+pub struct PosixHandlers<Owner: ChannelOwner>(PhantomData<fn() -> *mut Owner>);
 
-/// Ext slot type for the usockets vtable: `*mut *mut Channel<Owner>`.
+/// Ext slot type for the usockets vtable: the slot holds a `*mut Channel<Owner>`.
 // PORT NOTE: was an inherent `type Ext` on the impl in the Zig-shaped draft;
 // inherent associated types are unstable in Rust, so it lives as a free alias.
 #[cfg(not(windows))]
-pub type PosixExt<Owner> = *mut *mut Channel<Owner>;
+pub type PosixExt<Owner> = *mut Channel<Owner>;
 
 #[cfg(not(windows))]
-impl<Owner: ChannelOwner> PosixHandlers<Owner> {
-    pub fn on_data(self_: PosixExt<Owner>, _s: *mut uws::us_socket_t, data: &[u8]) {
+impl<Owner: ChannelOwner> VHandler for PosixHandlers<Owner>
+where
+    PosixHandlers<Owner>: 'static,
+    PosixExt<Owner>: 'static,
+{
+    /// `*Self` — the slot lives in C-allocated (`calloc`) ext memory; the
+    /// trampoline hands it to us by `&mut`.
+    type Ext = PosixExt<Owner>;
+
+    const HAS_ON_DATA: bool = true;
+    const HAS_ON_WRITABLE: bool = true;
+    const HAS_ON_CLOSE: bool = true;
+    const HAS_ON_END: bool = true;
+
+    fn on_data(ext: &mut Self::Ext, _s: *mut uws::us_socket_t, data: &[u8]) {
         // SAFETY: ext slot was set to `self as *mut Channel<_>` in `adopt()`;
         // the owner outlives all usockets callbacks (see module doc).
-        unsafe { &mut **self_ }.ingest(data);
+        unsafe { &mut **ext }.ingest(data);
     }
-    pub fn on_writable(self_: PosixExt<Owner>, _s: *mut uws::us_socket_t) {
+    fn on_writable(ext: &mut Self::Ext, _s: *mut uws::us_socket_t) {
         // SAFETY: see on_data.
-        unsafe { &mut **self_ }.flush();
+        unsafe { &mut **ext }.flush();
     }
-    pub fn on_close(self_: PosixExt<Owner>, _s: *mut uws::us_socket_t, _code: i32, _reason: *mut c_void) {
+    fn on_close(ext: &mut Self::Ext, _s: *mut uws::us_socket_t, _code: i32, _reason: Option<*mut c_void>) {
         // SAFETY: see on_data.
-        let chan = unsafe { &mut **self_ };
+        let chan = unsafe { &mut **ext };
         chan.backend.socket = Socket::DETACHED;
         chan.mark_done();
     }
-    pub fn on_end(_self: PosixExt<Owner>, s: *mut uws::us_socket_t) {
+    fn on_end(_ext: &mut Self::Ext, s: *mut uws::us_socket_t) {
         // SAFETY: `s` is a live us_socket_t passed by usockets.
-        unsafe { &*s }.close(uws::CloseCode::Normal);
+        unsafe { (*s).close(bun_uws_sys::CloseCode::normal) };
     }
 }
 

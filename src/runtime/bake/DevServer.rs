@@ -891,9 +891,9 @@ impl Drop for DevServer<'_> {
             debug_assert!(self.active_websocket_connections.is_empty());
         }
 
-        if self.memory_visualizer_timer.state == EventLoopTimer::State::ACTIVE {
-            // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
-            unsafe { (*self.vm).timer.remove(&mut self.memory_visualizer_timer) };
+        if self.memory_visualizer_timer.state == EventLoopTimerState::ACTIVE {
+            // TODO(port): blocked_on: bun_jsc::VirtualMachine::timer (field is `()` stub)
+            let _ = &mut self.memory_visualizer_timer;
         }
         self.graph_safety_lock.lock();
         // bun_watcher is Box<Watcher> — Drop handles, but Zig passed `true` for stop-thread.

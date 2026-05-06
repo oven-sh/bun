@@ -281,28 +281,38 @@ impl WhyCommand {
         Output::flush();
     }
 
-    pub fn exec(ctx: &mut command::Context) -> Result<(), bun_core::Error> {
-        let cli = PackageManager::CommandLineArguments::parse(PackageManager::Subcommand::Why)?;
-        let (pm, _) = PackageManager::init(ctx, &cli, PackageManager::Subcommand::Why)?;
+    pub fn exec(ctx: command::Context) -> Result<(), bun_core::Error> {
+        // PORT NOTE: `PackageManager::CommandLineArguments::parse` and
+        // `PackageManager::init` live in the gated `bun_install::package_manager_real`
+        // module; the active `PackageManager` is a stub with no `CommandLineArguments`/
+        // `Subcommand`/`init`. Body restored when reconciler-6 un-gates.
+        let _ = ctx;
+        todo!("blocked_on: bun_install::PackageManager::{{CommandLineArguments,Subcommand,init}}");
 
-        if cli.positionals.len() < 1 {
-            Self::print_usage();
-            Global::exit(1);
-        }
+        #[cfg(any())]
+        {
+            let cli = PackageManager::CommandLineArguments::parse(PackageManager::Subcommand::Why)?;
+            let (pm, _) = PackageManager::init(ctx, &cli, PackageManager::Subcommand::Why)?;
 
-        if cli.positionals[0].as_ref() == b"why" {
-            if cli.positionals.len() < 2 {
+            if cli.positionals.len() < 1 {
                 Self::print_usage();
                 Global::exit(1);
             }
-            return Self::exec_with_manager(ctx, pm, &cli.positionals[1], cli.top_only);
-        }
 
-        Self::exec_with_manager(ctx, pm, &cli.positionals[0], cli.top_only)
+            if cli.positionals[0].as_ref() == b"why" {
+                if cli.positionals.len() < 2 {
+                    Self::print_usage();
+                    Global::exit(1);
+                }
+                return Self::exec_with_manager(ctx, pm, &cli.positionals[1], cli.top_only);
+            }
+
+            Self::exec_with_manager(ctx, pm, &cli.positionals[0], cli.top_only)
+        }
     }
 
     pub fn exec_from_pm(
-        ctx: &mut command::Context,
+        ctx: command::Context,
         pm: &mut PackageManager,
         positionals: &[&[u8]],
     ) -> Result<(), bun_core::Error> {
@@ -311,15 +321,29 @@ impl WhyCommand {
             Global::exit(1);
         }
 
+        // PORT NOTE: `pm.options.top_only` lives on the gated real Options struct;
+        // the active `PackageManagerOptionsStub` lacks it.
+        let _ = (ctx, pm);
+        todo!("blocked_on: bun_install::PackageManagerOptionsStub::top_only");
+
+        #[cfg(any())]
         Self::exec_with_manager(ctx, pm, positionals[1], pm.options.top_only)
     }
 
     pub fn exec_with_manager(
-        ctx: &mut command::Context,
+        ctx: command::Context,
         pm: &mut PackageManager,
         package_pattern: &[u8],
         top_only: bool,
     ) -> Result<(), bun_core::Error> {
+        // PORT NOTE: `pm.lockfile` / `pm.options.depth` live on the gated
+        // `bun_install::package_manager_real` module; the active `PackageManager`
+        // stub lacks them. Body restored when reconciler-6 un-gates.
+        let _ = (ctx, pm, package_pattern, top_only);
+        todo!("blocked_on: bun_install::PackageManager::lockfile");
+
+        #[cfg(any())]
+        {
         let load_lockfile = pm.lockfile.load_from_cwd(pm, &mut ctx.log, true);
         PackageManagerCommand::handle_load_lockfile_errors(&load_lockfile, pm);
 

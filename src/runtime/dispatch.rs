@@ -464,8 +464,8 @@ pub fn run_task(
             node_zlib_binding::CompressionStream::<NativeZlib>::run_from_js_thread(cast!(NativeZlib));
         }
         task_tag::NativeBrotli => {
-            node_zlib_binding::CompressionStream::<NativeBrotli<'_>>::run_from_js_thread(
-                cast!(NativeBrotli<'_>),
+            node_zlib_binding::CompressionStream::<NativeBrotli>::run_from_js_thread(
+                cast!(NativeBrotli),
             );
         }
         task_tag::NativeZstd => {

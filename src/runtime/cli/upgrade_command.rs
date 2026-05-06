@@ -45,8 +45,8 @@ pub fn initialize_store() {
         }
         INITIALIZED_STORE = true;
     }
-    js_ast::Expr::Data::Store::create();
-    js_ast::Stmt::Data::Store::create();
+    js_ast::Expr::data_store_create();
+    js_ast::Stmt::data_store_create();
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -74,7 +74,7 @@ impl Version {
                 write!(
                     &mut out,
                     "bun-canary-timestamp-{}",
-                    bun_fmt::hex_int_lower(hash(bytes)),
+                    bun_fmt::hex_int_lower::<16>(hash(bytes)),
                 )
                 .expect("oom");
                 return Some(out);

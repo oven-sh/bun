@@ -255,6 +255,12 @@ impl From<Error> for bun_core::Error {
     }
 }
 
+impl From<bun_alloc::AllocError> for Error {
+    fn from(_: bun_alloc::AllocError) -> Self {
+        Error::OutOfMemory
+    }
+}
+
 /// Sharp's default: 0x3FFF * 0x3FFF ≈ 268 MP. A single RGBA8 frame at this
 /// cap is ~1 GiB, which is already past where you'd want to be.
 pub const DEFAULT_MAX_PIXELS: u64 = 0x3FFF * 0x3FFF;

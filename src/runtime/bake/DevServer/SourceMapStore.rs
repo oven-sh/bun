@@ -737,7 +737,7 @@ pub struct GetResult<'a> {
     pub mappings: source_map::mapping::List,
     pub file_paths: &'a [&'static [u8]],
     // TODO(port): inner-slice lifetime — see Entry.paths note.
-    pub entry_files: &'a MultiArrayList<packed_map::Shared>,
+    pub entry_files: &'a [packed_map::Shared],
 }
 // PORT NOTE: Zig `GetResult.deinit` only freed `mappings`; Rust drops it automatically — no `impl Drop` needed.
 

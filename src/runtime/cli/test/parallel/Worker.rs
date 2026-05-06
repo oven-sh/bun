@@ -32,7 +32,9 @@ pub struct Worker {
     // only ever dereferenced unsafely (constructor casts via `as *const _`).
     pub coord: *const Coordinator<'static>,
     pub idx: u32,
-    pub process: Option<Arc<Process>>,
+    // Intrusive-refcounted (`ThreadSafeRefCount`); `to_process` returns a
+    // `Box::into_raw`ed `*mut Process`. Matches Zig `?*bun.spawn.Process`.
+    pub process: Option<*mut Process>,
 
     /// Bidirectional IPC over fd 3. POSIX: usockets adopted from a socketpair.
     /// Windows: `uv.Pipe` (the parent end of `.buffer` extra-fd, full-duplex).
@@ -82,9 +84,9 @@ impl Worker {
         // holds workers in a stable slice).
         unsafe {
             let out_ptr: *mut WorkerPipe = &mut self.out;
-            (*out_ptr).reader.set_parent(out_ptr);
+            (*out_ptr).reader.set_parent(out_ptr.cast::<c_void>());
             let err_ptr: *mut WorkerPipe = &mut self.err;
-            (*err_ptr).reader.set_parent(err_ptr);
+            (*err_ptr).reader.set_parent(err_ptr.cast::<c_void>());
         }
 
         // All resource cleanup on any error return — including watchOrReap

@@ -550,6 +550,39 @@ impl FileResponseStream {
     }
 }
 
+// `bun.io.BufferedReader.init(@This())` — vtable parent. Maps the Zig
+// `onReadChunk`/`onReaderDone`/`onReaderError`/`loop`/`eventLoop` decls.
+impl bun_io::pipe_reader::BufferedReaderParent for FileResponseStream {
+    const HAS_ON_READ_CHUNK: bool = true;
+    // SAFETY (all): see `BufferedReaderParent` aliasing contract — `this` is the
+    // `*mut Self` registered via `set_parent`; a `&mut` to the embedded reader
+    // may be live on the caller's stack.
+    unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], state: ReadState) -> bool {
+        unsafe { (*this).on_read_chunk(chunk, state) }
+    }
+    unsafe fn on_reader_done(this: *mut Self) {
+        unsafe { (*this).on_reader_done() }
+    }
+    unsafe fn on_reader_error(this: *mut Self, err: sys::Error) {
+        unsafe { (*this).on_reader_error(err) }
+    }
+    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
+        // Route through the io vtable (knows EventLoopHandle layout).
+        unsafe { <Self as bun_io::pipe_reader::BufferedReaderParent>::event_loop(this) }
+            .loop_()
+            .cast()
+    }
+    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
+        // CYCLEBREAK: bun_io::EventLoopHandle is an opaque `*mut c_void`; pass
+        // the raw `*mut jsc::EventLoop` through. The FilePoll vtable (registered
+        // by bun_runtime::init) knows how to interpret it.
+        // SAFETY: `this` non-null/live per trait contract; `vm` is
+        // `&'static VirtualMachine` (LIFETIMES.tsv) and disjoint from `reader`.
+        let vm = unsafe { *core::ptr::addr_of!((*this).vm) };
+        bun_io::EventLoopHandle(unsafe { (*vm).event_loop() } as *mut c_void)
+    }
+}
+
 impl Drop for FileResponseStream {
     fn drop(&mut self) {
         bun_core::scoped_log!(FileResponseStream, "deinit");

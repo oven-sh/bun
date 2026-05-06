@@ -50,6 +50,37 @@ use bun_wyhash::hash as wyhash;
 use bun_cares_sys::c_ares_draft as c_ares;
 use crate::timer::{EventLoopTimer, EventLoopTimerTag};
 
+/// Bridge the JS-thread `VirtualMachine` to the aio-level `EventLoopCtx` used
+/// by `KeepAlive` / `FilePoll`. The DNS resolver always runs on the JS event
+/// loop, so the global `Js` ctx is the correct erasure here.
+#[inline]
+pub(crate) fn js_event_loop_ctx() -> Async::EventLoopCtx {
+    Async::posix_event_loop::get_vm_ctx(Async::AllocatorType::Js)
+}
+
+/// Local extension over `c_ares::Error` — `to_deferred` lives in `cares_jsc.rs`
+/// as a free function (`error_to_deferred`); this trait restores the Zig
+/// `err.toDeferred(...)` method-call shape used throughout this file.
+pub(crate) trait CAresErrorExt {
+    fn to_deferred(
+        self,
+        syscall: &'static str,
+        hostname: Option<&[u8]>,
+        promise: &mut JSPromiseStrong,
+    ) -> Box<super::cares_jsc::ErrorDeferred>;
+}
+impl CAresErrorExt for c_ares::Error {
+    #[inline]
+    fn to_deferred(
+        self,
+        syscall: &'static str,
+        hostname: Option<&[u8]>,
+        promise: &mut JSPromiseStrong,
+    ) -> Box<super::cares_jsc::ErrorDeferred> {
+        super::cares_jsc::error_to_deferred(self, syscall.as_bytes(), hostname, promise)
+    }
+}
+
 bun_output::declare_scope!(LibUVBackend, visible);
 bun_output::declare_scope!(ResolveInfoRequest, hidden);
 bun_output::declare_scope!(GetHostByAddrInfoRequest, visible);
@@ -111,7 +142,7 @@ pub mod lib_info {
             LOADED = true;
             HANDLE = sys::dlopen(bun_core::zstr!("libinfo.dylib"), sys::RTLD::LAZY | sys::RTLD::LOCAL);
             if HANDLE.is_none() {
-                Output::debug("libinfo.dylib not found", &[]);
+                Output::debug("libinfo.dylib not found");
             }
             HANDLE
         }

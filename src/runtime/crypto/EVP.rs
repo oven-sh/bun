@@ -5,9 +5,7 @@ use bun_boringssl_sys as boringssl;
 use bun_str::{self as bstr, strings, String as BunString, ZigString};
 
 use crate::jsc::JSGlobalObject;
-use enum_map::{Enum, EnumMap};
 use phf::phf_map;
-use strum::IntoStaticStr;
 
 pub struct EVP {
     pub ctx: boringssl::EVP_MD_CTX,
@@ -16,92 +14,38 @@ pub struct EVP {
     pub algorithm: Algorithm,
 }
 
-// we do this to avoid asking BoringSSL what the digest name is
-// because that API is confusing
-#[derive(Copy, Clone, Eq, PartialEq, Enum, IntoStaticStr)]
-pub enum Algorithm {
-    // @"DSA-SHA",
-    // @"DSA-SHA1",
-    // @"MD5-SHA1",
-    // @"RSA-MD5",
-    // @"RSA-RIPEMD160",
-    // @"RSA-SHA1",
-    // @"RSA-SHA1-2",
-    // @"RSA-SHA224",
-    // @"RSA-SHA256",
-    // @"RSA-SHA384",
-    // @"RSA-SHA512",
-    // @"ecdsa-with-SHA1",
-    #[strum(serialize = "blake2b256")]
-    Blake2b256,
-    #[strum(serialize = "blake2b512")]
-    Blake2b512,
-    #[strum(serialize = "blake2s256")]
-    Blake2s256,
-    #[strum(serialize = "md4")]
-    Md4,
-    #[strum(serialize = "md5")]
-    Md5,
-    #[strum(serialize = "ripemd160")]
-    Ripemd160,
-    #[strum(serialize = "sha1")]
-    Sha1,
-    #[strum(serialize = "sha224")]
-    Sha224,
-    #[strum(serialize = "sha256")]
-    Sha256,
-    #[strum(serialize = "sha384")]
-    Sha384,
-    #[strum(serialize = "sha512")]
-    Sha512,
-    #[strum(serialize = "sha512-224")]
-    Sha512_224,
-    #[strum(serialize = "sha512-256")]
-    Sha512_256,
+// ──────────────────────────────────────────────────────────────────────────
+// CYCLEBREAK: TYPE_ONLY — the `Algorithm` enum + `md()` were moved DOWN to
+// `bun_sha_hmac::evp` so lower-tier crates (`bun_csrf`, `bun_sha_hmac::hmac`)
+// can name it without depending upward on bun_runtime. Re-export the canonical
+// enum here; the higher-tier extras (`names`, `MAP`, `tag_cstr`, `map()`) that
+// need bun_str / phf live below as an extension trait on the re-exported type.
+// ──────────────────────────────────────────────────────────────────────────
+pub use bun_sha_hmac::evp::Algorithm;
 
-    #[strum(serialize = "sha3-224")]
-    Sha3_224,
-    #[strum(serialize = "sha3-256")]
-    Sha3_256,
-    #[strum(serialize = "sha3-384")]
-    Sha3_384,
-    #[strum(serialize = "sha3-512")]
-    Sha3_512,
-    #[strum(serialize = "shake128")]
-    Shake128,
-    #[strum(serialize = "shake256")]
-    Shake256,
+/// Higher-tier helpers on the lowered `Algorithm` enum (orphan rules prevent an
+/// inherent `impl` on a foreign type, so callers `use evp::AlgorithmExt as _;`).
+pub trait AlgorithmExt: Copy + Sized {
+    /// NUL-terminated tag name, equivalent to Zig's `@tagName(algorithm)` (which
+    /// yields `[:0]const u8`). Needed for `EVP_get_digestbyname` which reads a
+    /// C string.
+    fn tag_cstr(self) -> &'static CStr;
+
+    /// `bun.String` view of every algorithm tag name. Mirrors Zig's comptime
+    /// `EnumArray(Algorithm, bun.String)` table; returned as a flat slice since
+    /// the enum is foreign and cannot derive `enum_map::Enum`.
+    fn names() -> &'static [BunString];
+
+    /// Case-insensitive name → `Algorithm` lookup table (Rust port of the Zig
+    /// `ComptimeStringMap`). Returned by reference for the
+    /// `comptime_string_map_jsc::from_js*` helpers.
+    fn map() -> &'static phf::Map<&'static [u8], Algorithm> {
+        &MAP
+    }
 }
 
-impl Algorithm {
-    pub fn md(self) -> Option<*const boringssl::EVP_MD> {
-        // SAFETY: BoringSSL digest accessor fns are thread-safe and return static singletons.
-        unsafe {
-            match self {
-                Algorithm::Blake2b256 => Some(boringssl::EVP_blake2b256()),
-                Algorithm::Blake2b512 => Some(boringssl::EVP_blake2b512()),
-                Algorithm::Md4 => Some(boringssl::EVP_md4()),
-                Algorithm::Md5 => Some(boringssl::EVP_md5()),
-                Algorithm::Ripemd160 => Some(boringssl::EVP_ripemd160()),
-                Algorithm::Sha1 => Some(boringssl::EVP_sha1()),
-                Algorithm::Sha224 => Some(boringssl::EVP_sha224()),
-                Algorithm::Sha256 => Some(boringssl::EVP_sha256()),
-                Algorithm::Sha384 => Some(boringssl::EVP_sha384()),
-                Algorithm::Sha512 => Some(boringssl::EVP_sha512()),
-                Algorithm::Sha512_224 => Some(boringssl::EVP_sha512_224()),
-                Algorithm::Sha512_256 => Some(boringssl::EVP_sha512_256()),
-                Algorithm::Sha3_224 => Some(boringssl::EVP_sha3_224()),
-                Algorithm::Sha3_256 => Some(boringssl::EVP_sha3_256()),
-                Algorithm::Sha3_384 => Some(boringssl::EVP_sha3_384()),
-                Algorithm::Sha3_512 => Some(boringssl::EVP_sha3_512()),
-                _ => None,
-            }
-        }
-    }
-
-    /// NUL-terminated tag name, equivalent to Zig's `@tagName(algorithm)` (which yields
-    /// `[:0]const u8`). Needed for `EVP_get_digestbyname` which reads a C string.
-    pub fn tag_cstr(self) -> &'static CStr {
+impl AlgorithmExt for Algorithm {
+    fn tag_cstr(self) -> &'static CStr {
         match self {
             Algorithm::Blake2b256 => c"blake2b256",
             Algorithm::Blake2b512 => c"blake2b512",
@@ -122,66 +66,93 @@ impl Algorithm {
             Algorithm::Sha3_512 => c"sha3-512",
             Algorithm::Shake128 => c"shake128",
             Algorithm::Shake256 => c"shake256",
+            // upstream enum is `#[non_exhaustive]`; the variant set is closed in
+            // practice (mirrors EVP.zig 1:1).
+            _ => unreachable!("unhandled EVP algorithm variant"),
         }
     }
 
-    // TODO(port): Zig built this at comptime via a labeled block iterating EnumArray.
-    // bun_str::String is not const-constructible; use a lazy static in Phase B.
-    pub fn names() -> &'static EnumMap<Algorithm, BunString> {
-        static NAMES: std::sync::OnceLock<EnumMap<Algorithm, BunString>> = std::sync::OnceLock::new();
-        NAMES.get_or_init(|| {
-            EnumMap::from_fn(|key: Algorithm| BunString::static_(<&'static str>::from(key).as_bytes()))
-        })
+    // TODO(port): Zig built this at comptime via a labeled block iterating
+    // EnumArray. bun_str::String is not const-constructible; use a lazy static.
+    fn names() -> &'static [BunString] {
+        static NAMES: std::sync::OnceLock<[BunString; ALL.len()]> = std::sync::OnceLock::new();
+        NAMES
+            .get_or_init(|| core::array::from_fn(|i| BunString::static_(ALL[i].tag_cstr().to_bytes())))
+            .as_slice()
     }
-
-    pub const MAP: phf::Map<&'static [u8], Algorithm> = phf_map! {
-        b"blake2b256" => Algorithm::Blake2b256,
-        b"blake2b512" => Algorithm::Blake2b512,
-        b"blake2s256" => Algorithm::Blake2s256,
-        b"ripemd160" => Algorithm::Ripemd160,
-        b"rmd160" => Algorithm::Ripemd160,
-        b"md4" => Algorithm::Md4,
-        b"md5" => Algorithm::Md5,
-        b"sha1" => Algorithm::Sha1,
-        b"sha128" => Algorithm::Sha1,
-        b"sha224" => Algorithm::Sha224,
-        b"sha256" => Algorithm::Sha256,
-        b"sha384" => Algorithm::Sha384,
-        b"sha512" => Algorithm::Sha512,
-        b"sha-1" => Algorithm::Sha1,
-        b"sha-224" => Algorithm::Sha224,
-        b"sha-256" => Algorithm::Sha256,
-        b"sha-384" => Algorithm::Sha384,
-        b"sha-512" => Algorithm::Sha512,
-        b"sha-512/224" => Algorithm::Sha512_224,
-        b"sha-512_224" => Algorithm::Sha512_224,
-        b"sha-512224" => Algorithm::Sha512_224,
-        b"sha512-224" => Algorithm::Sha512_224,
-        b"sha-512/256" => Algorithm::Sha512_256,
-        b"sha-512_256" => Algorithm::Sha512_256,
-        b"sha-512256" => Algorithm::Sha512_256,
-        b"sha512-256" => Algorithm::Sha512_256,
-        // duplicate "sha384" entry in Zig source omitted (phf rejects duplicate keys)
-        b"sha3-224" => Algorithm::Sha3_224,
-        b"sha3-256" => Algorithm::Sha3_256,
-        b"sha3-384" => Algorithm::Sha3_384,
-        b"sha3-512" => Algorithm::Sha3_512,
-        b"shake128" => Algorithm::Shake128,
-        b"shake256" => Algorithm::Shake256,
-        // b"md5-sha1" => .@"MD5-SHA1",
-        // b"dsa-sha" => .@"DSA-SHA",
-        // b"dsa-sha1" => .@"DSA-SHA1",
-        // b"ecdsa-with-sha1" => .@"ecdsa-with-SHA1",
-        // b"rsa-md5" => .@"RSA-MD5",
-        // b"rsa-sha1" => .@"RSA-SHA1",
-        // b"rsa-sha1-2" => .@"RSA-SHA1-2",
-        // b"rsa-sha224" => .@"RSA-SHA224",
-        // b"rsa-sha256" => .@"RSA-SHA256",
-        // b"rsa-sha384" => .@"RSA-SHA384",
-        // b"rsa-sha512" => .@"RSA-SHA512",
-        // b"rsa-ripemd160" => .@"RSA-RIPEMD160",
-    };
 }
+
+/// Stable iteration order over every `Algorithm` variant — the lowered enum is
+/// foreign + `#[non_exhaustive]`, so we can't derive an iterator for it.
+const ALL: [Algorithm; 19] = [
+    Algorithm::Blake2b256,
+    Algorithm::Blake2b512,
+    Algorithm::Blake2s256,
+    Algorithm::Md4,
+    Algorithm::Md5,
+    Algorithm::Ripemd160,
+    Algorithm::Sha1,
+    Algorithm::Sha224,
+    Algorithm::Sha256,
+    Algorithm::Sha384,
+    Algorithm::Sha512,
+    Algorithm::Sha512_224,
+    Algorithm::Sha512_256,
+    Algorithm::Sha3_224,
+    Algorithm::Sha3_256,
+    Algorithm::Sha3_384,
+    Algorithm::Sha3_512,
+    Algorithm::Shake128,
+    Algorithm::Shake256,
+];
+
+pub const MAP: phf::Map<&'static [u8], Algorithm> = phf_map! {
+    b"blake2b256" => Algorithm::Blake2b256,
+    b"blake2b512" => Algorithm::Blake2b512,
+    b"blake2s256" => Algorithm::Blake2s256,
+    b"ripemd160" => Algorithm::Ripemd160,
+    b"rmd160" => Algorithm::Ripemd160,
+    b"md4" => Algorithm::Md4,
+    b"md5" => Algorithm::Md5,
+    b"sha1" => Algorithm::Sha1,
+    b"sha128" => Algorithm::Sha1,
+    b"sha224" => Algorithm::Sha224,
+    b"sha256" => Algorithm::Sha256,
+    b"sha384" => Algorithm::Sha384,
+    b"sha512" => Algorithm::Sha512,
+    b"sha-1" => Algorithm::Sha1,
+    b"sha-224" => Algorithm::Sha224,
+    b"sha-256" => Algorithm::Sha256,
+    b"sha-384" => Algorithm::Sha384,
+    b"sha-512" => Algorithm::Sha512,
+    b"sha-512/224" => Algorithm::Sha512_224,
+    b"sha-512_224" => Algorithm::Sha512_224,
+    b"sha-512224" => Algorithm::Sha512_224,
+    b"sha512-224" => Algorithm::Sha512_224,
+    b"sha-512/256" => Algorithm::Sha512_256,
+    b"sha-512_256" => Algorithm::Sha512_256,
+    b"sha-512256" => Algorithm::Sha512_256,
+    b"sha512-256" => Algorithm::Sha512_256,
+    // duplicate "sha384" entry in Zig source omitted (phf rejects duplicate keys)
+    b"sha3-224" => Algorithm::Sha3_224,
+    b"sha3-256" => Algorithm::Sha3_256,
+    b"sha3-384" => Algorithm::Sha3_384,
+    b"sha3-512" => Algorithm::Sha3_512,
+    b"shake128" => Algorithm::Shake128,
+    b"shake256" => Algorithm::Shake256,
+    // b"md5-sha1" => .@"MD5-SHA1",
+    // b"dsa-sha" => .@"DSA-SHA",
+    // b"dsa-sha1" => .@"DSA-SHA1",
+    // b"ecdsa-with-sha1" => .@"ecdsa-with-SHA1",
+    // b"rsa-md5" => .@"RSA-MD5",
+    // b"rsa-sha1" => .@"RSA-SHA1",
+    // b"rsa-sha1-2" => .@"RSA-SHA1-2",
+    // b"rsa-sha224" => .@"RSA-SHA224",
+    // b"rsa-sha256" => .@"RSA-SHA256",
+    // b"rsa-sha384" => .@"RSA-SHA384",
+    // b"rsa-sha512" => .@"RSA-SHA512",
+    // b"rsa-ripemd160" => .@"RSA-RIPEMD160",
+};
 
 impl EVP {
     pub fn init(algorithm: Algorithm, md: *const boringssl::EVP_MD, engine: *mut boringssl::ENGINE) -> EVP {
@@ -286,7 +257,7 @@ impl EVP {
         } else {
             name
         };
-        if let Some(&algorithm) = Algorithm::MAP.get(lookup_key) {
+        if let Some(&algorithm) = MAP.get(lookup_key) {
             if let Some(md) = algorithm.md() {
                 return Some(EVP::init(algorithm, md, engine));
             }
@@ -346,5 +317,5 @@ pub use super::pbkdf2;
 //   source:     src/runtime/crypto/EVP.zig (222 lines)
 //   confidence: medium
 //   todos:      3
-//   notes:      case-insensitive phf lookup + NUL-terminated @tagName for EVP_get_digestbyname need Phase B fixes; names() moved from comptime to OnceLock; `final` renamed to r#final (reserved keyword)
+//   notes:      Algorithm enum lowered to bun_sha_hmac (re-exported here); higher-tier helpers live on AlgorithmExt; case-insensitive phf lookup + NUL-terminated @tagName for EVP_get_digestbyname need Phase B fixes; names() moved from comptime EnumArray to OnceLock<[BunString; N]>; `final` renamed to r#final (reserved keyword)
 // ──────────────────────────────────────────────────────────────────────────

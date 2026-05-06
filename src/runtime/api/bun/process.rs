@@ -4460,12 +4460,12 @@ pub mod sync {
             };
             match bun_sys::recv_non_block(*fd, spare_slice) {
                 Maybe::Err(err) => {
-                    if err.is_retry() || err.get_errno() == bun_sys::E::PIPE {
+                    if err.is_retry() || err.get_errno() == bun_sys::E::EPIPE {
                         return None;
                     }
                     return Some(err);
                 }
-                Maybe::Result(bytes_read) => {
+                Maybe::Ok(bytes_read) => {
                     // SAFETY: recv wrote `bytes_read` bytes into spare capacity
                     unsafe { bytes.set_len(bytes.len() + bytes_read) };
                     if bytes_read == 0 {

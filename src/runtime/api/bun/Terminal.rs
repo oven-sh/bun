@@ -14,14 +14,15 @@ use core::sync::atomic::{AtomicU32, Ordering};
 
 use bun_aio::Loop as AsyncLoop;
 use bun_core::SignalCode;
-use bun_io::{BufferedReader, ReadState, StreamingWriter, WriteStatus};
+use bun_io::{BufferedReader, BufferedReaderParent, ReadState, StreamingWriter, WriteStatus};
 use crate::node::StringOrBuffer;
+use crate::webcore::blob::ZigStringBlobExt;
 use bun_jsc::{
     self as jsc, CallFrame, EventLoopHandle, JSGlobalObject, JSValue, JsRef, JsResult,
-    MarkedArrayBuffer, ZigStringSlice,
+    MarkedArrayBuffer, SysErrorJsc, ZigStringSlice,
 };
 use bun_string::ZigString;
-use bun_sys::{self as sys, Fd};
+use bun_sys::{self as sys, Fd, FdExt};
 
 #[cfg(windows)]
 use bun_sys::windows;

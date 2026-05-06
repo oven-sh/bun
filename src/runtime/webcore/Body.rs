@@ -45,65 +45,6 @@ fn as_image(value: JSValue) -> Option<*mut crate::image::Image> {
     value.as_::<crate::image::Image>()
 }
 
-/// Local extension over `bun_jsc::AnyPromise` adding `wrap`/`resolve`/`reject`
-/// (the upstream enum exposes only `as_value`/`status`/`set_handled`/`unwrap`;
-/// the full impl lives in the gated `src/jsc/AnyPromise.rs`).
-trait AnyPromiseExt {
-    fn wrap_call<F>(self, global: &JSGlobalObject, f: F) -> JsTerminated<()>
-    where
-        F: FnOnce(&JSGlobalObject) -> JsResult<JSValue>;
-    fn resolve_value(self, global: &JSGlobalObject, value: JSValue) -> JsTerminated<()>;
-    fn reject_value(self, global: &JSGlobalObject, value: JSValue) -> JsTerminated<()>;
-    fn reject_value_with_async_stack(
-        self,
-        global: &JSGlobalObject,
-        value: JSValue,
-    ) -> JsTerminated<()>;
-}
-impl AnyPromiseExt for jsc::AnyPromise {
-    fn wrap_call<F>(self, global: &JSGlobalObject, f: F) -> JsTerminated<()>
-    where
-        F: FnOnce(&JSGlobalObject) -> JsResult<JSValue>,
-    {
-        // Mirror `AnyPromise.wrap` (AnyPromise.zig): run `f` through the host-call
-        // wrapper so a thrown exception is converted to an Err, then resolve/reject
-        // this existing promise with the outcome.
-        match f(global) {
-            Ok(v) => self.resolve_value(global, v),
-            Err(_) => {
-                let err = global.try_take_exception().unwrap_or(JSValue::UNDEFINED);
-                self.reject_value(global, err)
-            }
-        }
-    }
-    fn resolve_value(self, global: &JSGlobalObject, value: JSValue) -> JsTerminated<()> {
-        // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
-        // `JSInternalPromise` subclasses `JSPromise` in C++; the pointer cast is sound.
-        let p: *mut JSPromise = match self {
-            jsc::AnyPromise::Normal(p) => p,
-            jsc::AnyPromise::Internal(p) => p as *mut JSPromise,
-        };
-        unsafe { Ok((*p).resolve(global, value)?) }
-    }
-    fn reject_value(self, global: &JSGlobalObject, value: JSValue) -> JsTerminated<()> {
-        // SAFETY: see `resolve_value`.
-        let p: *mut JSPromise = match self {
-            jsc::AnyPromise::Normal(p) => p,
-            jsc::AnyPromise::Internal(p) => p as *mut JSPromise,
-        };
-        unsafe { Ok((*p).reject(global, Ok(value))?) }
-    }
-    fn reject_value_with_async_stack(
-        self,
-        global: &JSGlobalObject,
-        value: JSValue,
-    ) -> JsTerminated<()> {
-        // TODO(port): `value.attach_async_stack_from_promise(global, self.as_js_promise())`
-        // — `attach_async_stack_from_promise` is gated upstream. Fall back to plain reject.
-        self.reject_value(global, value)
-    }
-}
-
 bun_core::declare_scope!(BodyValue, visible);
 bun_core::declare_scope!(BodyMixin, visible);
 bun_core::declare_scope!(BodyValueBufferer, visible);

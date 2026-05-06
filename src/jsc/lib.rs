@@ -430,6 +430,30 @@ impl From<bun_core::AllocError> for JsError {
     fn from(_: bun_core::AllocError) -> Self { JsError::OutOfMemory }
 }
 
+impl From<bun_event_loop::ErasedJsError> for JsError {
+    #[inline]
+    fn from(e: bun_event_loop::ErasedJsError) -> Self {
+        use bun_event_loop::ErasedJsError as E;
+        match e {
+            E::Thrown => JsError::Thrown,
+            E::OutOfMemory => JsError::OutOfMemory,
+            E::Terminated => JsError::Terminated,
+        }
+    }
+}
+
+impl From<JsError> for bun_event_loop::ErasedJsError {
+    #[inline]
+    fn from(e: JsError) -> Self {
+        use bun_event_loop::ErasedJsError as E;
+        match e {
+            JsError::Thrown => E::Thrown,
+            JsError::OutOfMemory => E::OutOfMemory,
+            JsError::Terminated => E::Terminated,
+        }
+    }
+}
+
 impl From<JsTerminated> for JsError {
     fn from(_: JsTerminated) -> Self { JsError::Terminated }
 }

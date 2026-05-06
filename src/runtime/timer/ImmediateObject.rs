@@ -2,11 +2,11 @@ use core::cell::Cell;
 use core::mem::MaybeUninit;
 
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{CallFrame, Debugger, EnsureStillAlive, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{CallFrame, Debugger, EnsureStillAlive, JSGlobalObject, JSValue, JsClass, JsResult};
 
 // bun.api.Timer.* — sibling modules under src/runtime/timer/
 // TODO(port): verify module path once crate layout is wired in Phase B
-use super::{ElTimespec, EventLoopTimer, EventLoopTimerTag, TimerObjectInternals, ID};
+use super::{EventLoopTimer, EventLoopTimerTag, KindBig, TimerObjectInternals, ID};
 
 // bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — intrusive single-thread refcount.
 // `ref`/`deref` are provided by IntrusiveRc over the `ref_count` field; `deref` calls

@@ -537,6 +537,18 @@ impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<'a, J
     }
 }
 
+// Satisfies `Wrap<T: PipeHandler>` so `Wrap::<Self>::init` can erase `*mut Self`
+// into a `Pipe`. Mirrors Zig `Pipe.Wrap(@This(), onStreamPipe)` where the
+// comptime fn-ptr param is fixed to `on_stream_pipe`.
+impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> PipeHandler
+    for ResumableSink<'a, Js, Context>
+{
+    #[inline]
+    fn on_pipe(&mut self, stream: StreamResult) {
+        self.on_stream_pipe(stream);
+    }
+}
+
 impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> Drop
     for ResumableSink<'a, Js, Context>
 {

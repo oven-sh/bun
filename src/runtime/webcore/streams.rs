@@ -1485,12 +1485,12 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             }
 
             if self.buffer.write(bytes).is_err() {
-                return Writable::Err(SysError::from_code(sys::E::NOMEM, sys::Tag::write));
+                return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write));
             }
         } else if self.buffer.len + len >= self.high_water_mark {
             // TODO: attempt to write both in a corked buffer?
             if self.buffer.write(bytes).is_err() {
-                return Writable::Err(SysError::from_code(sys::E::NOMEM, sys::Tag::write));
+                return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write));
             }
             // PORT NOTE: reshaped for borrowck
             let slice_ptr = self.readable_slice().as_ptr();
@@ -1503,7 +1503,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         } else {
             // queue the data wait until highWaterMark is reached or the auto flusher kicks in
             if self.buffer.write(bytes).is_err() {
-                return Writable::Err(SysError::from_code(sys::E::NOMEM, sys::Tag::write));
+                return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write));
             }
         }
 
@@ -1547,7 +1547,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             }
 
             if self.buffer.write_latin1(bytes).is_err() {
-                return Writable::Err(SysError::from_code(sys::E::NOMEM, sys::Tag::write));
+                return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write));
             }
 
             if do_send {
@@ -1565,7 +1565,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             // - combined chunk is large enough to flush automatically
             // - no backpressure
             if self.buffer.write_latin1(bytes).is_err() {
-                return Writable::Err(SysError::from_code(sys::E::NOMEM, sys::Tag::write));
+                return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write));
             }
             // PORT NOTE: reshaped for borrowck
             let slice_ptr = self.readable_slice().as_ptr();
@@ -1577,7 +1577,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             }
         } else {
             if self.buffer.write_latin1(bytes).is_err() {
-                return Writable::Err(SysError::from_code(sys::E::NOMEM, sys::Tag::write));
+                return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write));
             }
         }
 
@@ -1612,7 +1612,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         let written = match self.buffer.write_utf16(utf16) {
             Ok(n) => n,
             Err(_) => {
-                return Writable::Err(SysError::from_code(sys::E::NOMEM, sys::Tag::write))
+                return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write))
             }
         };
 
@@ -2098,7 +2098,7 @@ impl NetworkSink {
                 .write_bytes(bytes, false)
                 .is_err()
             {
-                return Writable::Err(SysError::from_code(sys::E::NOMEM, sys::Tag::write));
+                return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write));
             }
         }
         Writable::Owned(len)
@@ -2122,7 +2122,7 @@ impl NetworkSink {
                 .write_latin1(bytes, false)
                 .is_err()
             {
-                return Writable::Err(SysError::from_code(sys::E::NOMEM, sys::Tag::write));
+                return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write));
             }
         }
         Writable::Owned(len)
@@ -2141,7 +2141,7 @@ impl NetworkSink {
                 .write_utf16(bytes, false)
                 .is_err()
             {
-                return Writable::Err(SysError::from_code(sys::E::NOMEM, sys::Tag::write));
+                return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write));
             }
         }
 

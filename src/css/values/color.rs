@@ -3,11 +3,8 @@
 // `RelativeComponentParser`, the `Colorspace` / `Interpolate` traits,
 // `color-mix()`, and the 47-variant `SystemColor` are now real. The
 // `From<Src> for Dst` lattice + `ColorGamut`/`map_gamut` were un-gated in
-// round 7 and remain at the bottom of the file.
-//
-// `gated_full_impl` is preserved verbatim under `#[cfg(any())]` as the
-// reference port; everything callable from the rest of the crate now lives
-// in the outer scope.
+// round 7 and remain at the bottom of the file. The former
+// `gated_full_impl` reference module has been folded into the outer scope.
 
 use crate::css_parser as css;
 use crate::css_parser::CssResult;
@@ -727,9 +724,6 @@ impl CssColor {
 
     pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash11) {
         // PORT NOTE: Zig `css.implementHash` — variant-tag prefix + payload bytes.
-        // The full impl lives in `gated_full_impl`; this stub mirrors its shape
-        // for the un-gated variant set so `#[derive(CssHash)]` on TokenOrValue
-        // (which carries a `CssColor` arm) resolves.
         match self {
             CssColor::CurrentColor => hasher.update(&0u32.to_ne_bytes()),
             CssColor::Rgba(rgba) => {

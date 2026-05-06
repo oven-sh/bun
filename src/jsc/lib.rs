@@ -1861,18 +1861,39 @@ pub trait LogJsc {
     fn to_js(&self, global: &JSGlobalObject, message: &str) -> JsResult<JSValue>;
     fn to_js_array(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
 }
+/// Spec `msgToJS` (src/logger_jsc/logger_jsc.zig:23) — wrap a single `Msg` in
+/// either a `BuildMessage` or `ResolveMessage` JS cell, dispatching on metadata.
+fn msg_to_js(msg: &bun_logger::Msg, global: &JSGlobalObject) -> JsResult<JSValue> {
+    match msg.metadata {
+        bun_logger::Metadata::Build => BuildMessage::create(global, msg.clone()?),
+        bun_logger::Metadata::Resolve(_) => ResolveMessage::create(global, msg, b""),
+    }
+}
 impl LogJsc for bun_logger::Log {
     fn to_js(&self, global: &JSGlobalObject, message: &str) -> JsResult<JSValue> {
-        // TODO(b2): full impl wraps msgs into an AggregateError with `message`.
-        let arr = self.to_js_array(global)?;
-        global.create_aggregate_error_with_array(
-            bun_string::String::borrow_utf8(message.as_bytes()),
-            arr,
-        )
+        let msgs = &self.msgs;
+        // Spec: `@min(msgs.len, errors_stack.len)` — errors_stack is `[256]JSValue`.
+        let count = msgs.len().min(256);
+        match count {
+            0 => Ok(JSValue::UNDEFINED),
+            1 => msg_to_js(&msgs[0], global),
+            _ => {
+                let mut errors_stack: Vec<JSValue> = Vec::with_capacity(count);
+                for msg in &msgs[0..count] {
+                    errors_stack.push(msg_to_js(msg, global)?);
+                }
+                let out = bun_string::ZigString::init(message.as_bytes());
+                global.create_aggregate_error(&errors_stack, &out)
+            }
+        }
     }
     fn to_js_array(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        // TODO(b2): wrap each Msg in BuildMessage/ResolveMessage per kind — gated.
-        JSValue::create_empty_array(global, self.msgs.len())
+        let msgs = &self.msgs;
+        let arr = JSValue::create_empty_array(global, msgs.len())?;
+        for (i, msg) in msgs.iter().enumerate() {
+            arr.put_index(global, u32::try_from(i).unwrap(), msg_to_js(msg, global)?)?;
+        }
+        Ok(arr)
     }
 }
 

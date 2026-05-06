@@ -676,44 +676,42 @@ pub mod fs {
         }
 
         /// Port of `Entry.kind` in `fs.zig` — stat-on-first-use.
-        // PORT NOTE: takes `&self` (not `&mut self`) and mutates through a raw pointer.
-        // `Entry` lives in the EntryStore BSSMap singleton; all access is serialized
-        // through `RealFS.entries_mutex`, and the resolver body holds shared refs to
-        // `lookup.entry` across the call (e.g. `dir_info_uncached` reads
-        // `lookup.entry.cache.symlink` after `entry.symlink()`). Zig used `*Entry`
-        // which is freely aliasing-mutable.
-        #[allow(invalid_reference_casting)] // see PORT NOTE — Zig `*Entry` freely-aliasing semantics
-        pub fn kind(&self, fs: &mut Implementation, store_fd: bool) -> EntryKind {
-            if self.need_stat {
-                // SAFETY: ARENA — Entry is a slot in the EntryStore singleton; `entries_mutex`
-                // serializes access. See PORT NOTE above.
-                let this: &mut Self = unsafe { &mut *(self as *const Self as *mut Self) };
-                this.need_stat = false;
+        // PORT NOTE: `Entry` lives in the EntryStore BSSMap singleton; all access is
+        // serialized through `RealFS.entries_mutex`. Zig used `*Entry` (freely
+        // aliasing-mutable) and `*Fs.FileSystem.RealFS` (raw). `fs` is `*mut` so the
+        // call site does not require a second exclusive `&mut RealFS` borrow while a
+        // `&mut Entry` (borrowed out of `RealFS.entries`) is live. Mutation of the
+        // lazily-populated `need_stat` / `cache` goes through `Cell` / `UnsafeCell`.
+        pub fn kind(&self, fs: *mut Implementation, store_fd: bool) -> EntryKind {
+            if self.need_stat.get() {
+                self.need_stat.set(false);
                 // This is technically incorrect, but we are choosing not to handle errors here
-                match fs.kind(this.dir, this.base(), this.cache.fd, store_fd) {
-                    Ok(c) => this.cache = c,
-                    Err(_) => return this.cache.kind,
+                // SAFETY: `fs` points at the process-global RealFS singleton; caller holds
+                // `entries_mutex` so the `&mut` is exclusive for the duration of this call.
+                match unsafe { &mut *fs }.kind(self.dir, self.base(), self.cache().fd, store_fd) {
+                    // SAFETY: see `cache_mut()` — `entries_mutex` serializes access.
+                    Ok(c) => unsafe { *self.cache.get() = c },
+                    Err(_) => return self.cache().kind,
                 }
             }
-            self.cache.kind
+            self.cache().kind
         }
 
         /// Port of `Entry.symlink` in `fs.zig`.
-        #[allow(invalid_reference_casting)] // see PORT NOTE — Zig `*Entry` freely-aliasing semantics
-        pub fn symlink(&self, fs: &mut Implementation, store_fd: bool) -> &'static [u8] {
-            if self.need_stat {
-                // SAFETY: ARENA — see `Entry::kind` PORT NOTE.
-                let this: &mut Self = unsafe { &mut *(self as *const Self as *mut Self) };
-                this.need_stat = false;
+        pub fn symlink(&self, fs: *mut Implementation, store_fd: bool) -> &'static [u8] {
+            if self.need_stat.get() {
+                self.need_stat.set(false);
                 // This error can happen if the file was deleted between the time the directory
                 // was scanned and the time it was read
-                match fs.kind(this.dir, this.base(), this.cache.fd, store_fd) {
-                    Ok(c) => this.cache = c,
+                // SAFETY: see `Entry::kind` PORT NOTE.
+                match unsafe { &mut *fs }.kind(self.dir, self.base(), self.cache().fd, store_fd) {
+                    // SAFETY: see `cache_mut()` — `entries_mutex` serializes access.
+                    Ok(c) => unsafe { *self.cache.get() = c },
                     Err(_) => return b"",
                 }
             }
             // SAFETY: PathString backs onto the FilenameStore singleton (interned 'static).
-            unsafe { core::mem::transmute::<&[u8], &'static [u8]>(self.cache.symlink.slice()) }
+            unsafe { core::mem::transmute::<&[u8], &'static [u8]>(self.cache().symlink.slice()) }
         }
     }
 
@@ -724,12 +722,12 @@ pub mod fs {
     impl Clone for Entry {
         fn clone(&self) -> Self {
             Self {
-                cache: self.cache,
+                cache: core::cell::UnsafeCell::new(*self.cache()),
                 dir: self.dir,
                 base_: strings::StringOrTinyString::init(self.base_.slice()),
                 base_lowercase_: strings::StringOrTinyString::init(self.base_lowercase_.slice()),
                 mutex: Mutex::default(),
-                need_stat: self.need_stat,
+                need_stat: core::cell::Cell::new(self.need_stat.get()),
                 abs_path: self.abs_path,
             }
         }
@@ -976,16 +974,16 @@ pub mod fs {
                         });
                         existing.dir = self.dir;
 
-                        existing.need_stat = existing.need_stat
+                        existing.need_stat.set(existing.need_stat.get()
                             || found_kind.is_none()
-                            || Some(existing.cache.kind) != found_kind;
+                            || Some(existing.cache().kind) != found_kind);
                         // TODO: is this right?
-                        if Some(existing.cache.kind) != found_kind {
+                        if Some(existing.cache().kind) != found_kind {
                             // if found_kind is null, we have set need_stat above, so we
                             // store an arbitrary kind
-                            existing.cache.kind = found_kind.unwrap_or(EntryKind::File);
+                            existing.cache_mut().kind = found_kind.unwrap_or(EntryKind::File);
 
-                            existing.cache.symlink = PathString::EMPTY;
+                            existing.cache_mut().symlink = PathString::EMPTY;
                         }
                         break 'brk existing_ptr;
                     }
@@ -1010,14 +1008,14 @@ pub mod fs {
                     // Call "stat" lazily for performance. The "@material-ui/icons" package
                     // contains a directory with over 11,000 entries in it and running "stat"
                     // for each entry was a big performance issue for that package.
-                    need_stat: found_kind.is_none(),
-                    cache: EntryCache {
+                    need_stat: core::cell::Cell::new(found_kind.is_none()),
+                    cache: core::cell::UnsafeCell::new(EntryCache {
                         symlink: PathString::EMPTY,
                         // if found_kind is null, we have set need_stat above, so we
                         // store an arbitrary kind
                         kind: found_kind.unwrap_or(EntryKind::File),
                         fd: Fd::INVALID,
-                    },
+                    }),
                     abs_path: PathString::EMPTY,
                 })?
             };
@@ -4131,7 +4129,7 @@ impl<'a> Resolver<'a> {
                     if !symlink_path.is_empty() {
                         path.set_realpath(symlink_path);
                         if !result.file_fd.is_valid() {
-                            result.file_fd = query.entry.cache.fd;
+                            result.file_fd = query.entry.cache().fd;
                         }
 
                         if let Some(debug) = self.debug_logs.as_mut() {
@@ -4152,7 +4150,7 @@ impl<'a> Resolver<'a> {
 
                         let store_fd = self.store_fd;
 
-                        if !query.entry.cache.fd.is_valid() && store_fd {
+                        if !query.entry.cache().fd.is_valid() && store_fd {
                             buf[out_len] = 0;
                             // SAFETY: buf[out_len] == 0 written above
                             let span = unsafe { bun_core::ZStr::from_raw(buf.as_ptr(), out_len) };
@@ -4162,7 +4160,7 @@ impl<'a> Resolver<'a> {
                             // panic on EACCES/EMFILE/ELOOP here.
                             let file = bun_sys::open(span, bun_sys::O::RDONLY, 0)
                                 .map_err(Into::<bun_core::Error>::into)?;
-                            query.entry.cache.fd = file;
+                            query.entry.cache_mut().fd = file;
                             Fs::FileSystem::set_max_fd(file.native());
                         }
 
@@ -4176,9 +4174,9 @@ impl<'a> Resolver<'a> {
                                 // SAFETY: ARENA — Entry lives in the BSSMap singleton; guard
                                 // runs before the slot is reused (resolver mutex held).
                                 let e = unsafe { &mut *entry_ptr };
-                                if e.cache.fd.is_valid() {
-                                    e.cache.fd.close();
-                                    e.cache.fd = FD::INVALID;
+                                if e.cache().fd.is_valid() {
+                                    e.cache_mut().fd.close();
+                                    e.cache_mut().fd = FD::INVALID;
                                 }
                             }
                         });
@@ -4191,9 +4189,9 @@ impl<'a> Resolver<'a> {
                                 bstr::BStr::new(path.text())
                             ));
                         }
-                        query.entry.cache.symlink = PathString::init(symlink);
+                        query.entry.cache_mut().symlink = PathString::init(symlink);
                         if !result.file_fd.is_valid() && store_fd {
-                            result.file_fd = query.entry.cache.fd;
+                            result.file_fd = query.entry.cache().fd;
                         }
 
                         path.set_realpath(symlink);
@@ -5894,7 +5892,7 @@ impl<'a> Resolver<'a> {
                 Some(MatchResult {
                     path_pair: PathPair { primary: Path::init_with_namespace(absolute_out_path, b"file"), secondary: None },
                     dirname_fd: entries.fd,
-                    file_fd: entry_query.entry.cache.fd,
+                    file_fd: entry_query.entry.cache().fd,
                     dir_info: Some(resolved_dir_info as *const _),
                     diff_case: entry_query.diff_case,
                     is_node_module: true,
@@ -7333,7 +7331,7 @@ impl<'a> Resolver<'a> {
                     path: abs_path,
                     diff_case: query.diff_case,
                     dirname_fd: entries!().fd,
-                    file_fd: query.entry.cache.fd,
+                    file_fd: query.entry.cache().fd,
                     dir_info: None,
                 }));
             }
@@ -7418,7 +7416,7 @@ impl<'a> Resolver<'a> {
                                 },
                                 diff_case: query.diff_case,
                                 dirname_fd: entries!().fd,
-                                file_fd: query.entry.cache.fd,
+                                file_fd: query.entry.cache().fd,
                                 dir_info: None,
                             }));
                         }
@@ -7482,7 +7480,7 @@ impl<'a> Resolver<'a> {
                     },
                     diff_case: query.diff_case,
                     dirname_fd: unsafe { &*entries }.fd,
-                    file_fd: query.entry.cache.fd,
+                    file_fd: query.entry.cache().fd,
                     dir_info: None,
                 });
             }

@@ -916,9 +916,31 @@ fn transpile_source_code_inner(
             };
 
             let mut input_file_fd = bun_sys::Fd::INVALID;
-            // PORT NOTE: spec :251-256 `defer { if should_close ... close() }` —
-            // moved into the gated parse block below; `input_file_fd` is only
-            // ever written by `parse_maybe_return_file_only`.
+            // Spec :251-256 `defer { if (should_close_input_file_fd and
+            // input_file_fd != .invalid) input_file_fd.close(); }` — this
+            // `defer` is unconditional in Zig (independent of `give_back_arena`)
+            // and must fire on every exit path: parse failure, JSON early
+            // return, `disable_transpilying`, already_bundled, empty `.cjs`,
+            // cache-hit, AsyncModule, the wasm recurse, and the print error.
+            // PORT NOTE: reshaped for borrowck — capture raw pointers so the
+            // guard does not alias the later `&mut input_file_fd`
+            // (`file_fd_ptr`) / `&mut should_close_input_file_fd`
+            // (`maybe_watch_file`) borrows.
+            let should_close_ptr: *mut bool = &mut should_close_input_file_fd;
+            let input_file_fd_ptr: *mut bun_sys::Fd = &mut input_file_fd;
+            let _fd_guard = scopeguard::guard((), move |_| {
+                // SAFETY: `should_close_input_file_fd` / `input_file_fd` are
+                // declared earlier in this stack frame and outlive `_fd_guard`
+                // (locals drop in reverse declaration order); the guard runs on
+                // the same thread before either is destroyed.
+                unsafe {
+                    if *should_close_ptr && (*input_file_fd_ptr).is_valid() {
+                        use bun_sys::FdExt as _;
+                        (*input_file_fd_ptr).close();
+                        *input_file_fd_ptr = bun_sys::Fd::INVALID;
+                    }
+                }
+            });
 
             // ── Node-fallback virtual source ────────────────────────────────
             // Spec :258-264.
@@ -959,18 +981,6 @@ fn transpile_source_code_inner(
                 // gated; spec gates on `vm.debugger != null && debugger.set_...`.
                 let set_breakpoint_on_first_line = false;
                 let _ = is_main;
-
-                // PORT NOTE: spec :251-256 `defer { if should_close ... close() }`
-                // — capturing `should_close_input_file_fd` / `input_file_fd` in
-                // a `scopeguard` closure here would alias the later
-                // `&mut input_file_fd` (file_fd_ptr) and the `maybe_watch_file`
-                // by-value read. The close runs at the very end of the success
-                // path instead (see `// fd close` below); the early-error
-                // `return Err(ParseError)` arms leave the fd to the caller's
-                // `process_fetch_log`, matching Zig where `give_back_arena =
-                // false` paths skip the defer too.
-                // TODO(port): re-express as a raw-ptr scopeguard once the
-                // borrowck story for the watcher hand-off settles.
 
                 // PORT NOTE: `ParseOptions::path` is `bun_logger::fs::Path`
                 // (the `'static`-slice flavour used by `logger::Source`), but
@@ -1233,12 +1243,19 @@ fn transpile_source_code_inner(
                     // PORT NOTE: spec frees via `cache.output_code_allocator`;
                     // `Box<[u8]>` drops on its own.
                     entry.output_code = Box::default();
+                    // PORT NOTE: `entry.metadata.module_type` encodes the
+                    // on-disk cache enum (`RuntimeTranspilerCache.ModuleType`:
+                    // none=0, esm=1, cjs=2 — RuntimeTranspilerCache.zig:399),
+                    // NOT `bun_bundler::options::ModuleType` (Unknown=0, Cjs=1,
+                    // Esm=2). Spec ModuleLoader.zig:446 compares against the
+                    // cache enum's `.cjs` (= 2).
+                    const CACHE_MODULE_TYPE_CJS: u8 = 2;
                     return Ok(ResolvedSource {
                         source_code,
                         specifier: input_specifier.dupe_ref(),
                         source_url: create_if_different(input_specifier, path.text),
                         is_commonjs_module: entry.metadata.module_type
-                            == ModuleType::Cjs as u8,
+                            == CACHE_MODULE_TYPE_CJS,
                         // TODO(b2-blocked): `module_info` + `tag` package_json probe (:448-464).
                         tag: ResolvedSourceTag::Javascript,
                         ..Default::default()

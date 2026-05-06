@@ -21,7 +21,7 @@ use crate::shell::io_writer::{self, IOWriter};
 use crate::shell::{self as sh, EnvMap, Yield};
 use bun_spawn::{self, Status};
 use crate::api::bun::process::{
-    self as bun_process, Process, ProcessExitHandler as ProcessExitOwner, Rusage, SignalCodeExt, SpawnOptions,
+    self as bun_process, Process, Rusage, SignalCodeExt, SpawnOptions,
 };
 #[cfg(windows)]
 use crate::api::bun::process::{WindowsSpawnOptions, WindowsSpawnResult, WindowsStdioResult, WindowsOptions};
@@ -187,7 +187,10 @@ impl JscSubprocess::static_pipe_writer::StaticPipeWriterProcess for ShellSubproc
 
 pub type WatchFd = Fd;
 
-impl ProcessExitOwner for ShellSubprocess {
+// PORT NOTE: ProcessExitOwner trait does not exist; the vtable pattern uses
+// a free fn registered in ProcessExitVTable. This adapter is referenced by
+// `EXIT_VTABLE` in ShellSubprocess::set_exit_handler below.
+impl ShellSubprocess {
     unsafe fn on_process_exit_dyn(
         this: *mut Self,
         _process: *mut Process,
@@ -2123,7 +2126,10 @@ impl bun_io::pipe_reader::BufferedReaderParent for PipeReader {
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
         // SAFETY: see trait contract.
-        unsafe { (*this).event_loop() }
+        // CYCLEBREAK: `bun_io::EventLoopHandle` is an opaque `*mut c_void`; pass
+        // the address of the stored `bun_jsc::EventLoopHandle` so the
+        // (runtime-registered) FilePoll vtable can recover it.
+        bun_io::EventLoopHandle(unsafe { &raw const (*this).event_loop } as *mut c_void)
     }
 }
 

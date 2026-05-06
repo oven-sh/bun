@@ -1852,7 +1852,7 @@ pub enum Filter { Script, Bin, BunJs, All, AllPlusBunJs, ScriptExclude, ScriptAn
 // ─────────────────────────────────────────────────────────────────────────────
 
 mod phase_a_draft {
-use core::ffi::{c_char, CStr};
+use ::core::ffi::{c_char, CStr};
 use std::cell::RefCell;
 use std::io::Write as _;
 

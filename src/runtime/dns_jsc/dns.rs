@@ -3099,6 +3099,14 @@ impl Resolver {
     /// Dereference the back-pointer to the VirtualMachine.
     /// SAFETY: VirtualMachine outlives the Resolver (BACKREF, see field decl).
     #[inline]
+    /// JS `new Resolver()` — `#[bun_jsc::JsClass]` requires an associated
+    /// `constructor` returning `JsResult<*mut Self>`.
+    pub fn constructor(global_this: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<*mut Self> {
+        // SAFETY: `bun_vm()` returns the live thread-local VM for this global.
+        let vm = unsafe { &*global_this.bun_vm() };
+        Ok(Self::init(vm))
+    }
+
     pub fn vm(&self) -> &VirtualMachine { unsafe { &*self.vm } }
 
     // Intrusive refcount forwarders (RefCount.ref / RefCount.deref).

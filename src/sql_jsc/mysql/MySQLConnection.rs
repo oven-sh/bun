@@ -347,19 +347,6 @@ impl MySQLConnection {
         success: i32,
         ssl_error: uws::us_bun_verify_error_t,
     ) -> Result<bool, AnyMySQLError> {
-        // TODO(b2-blocked): bun_uws verify_error::to_js + AnySocket::get_native_handle
-        // + bun_boringssl::check_server_identity. Body gated until uws SSL handle
-        // accessor + boringssl identity check land.
-        let _ = (success, ssl_error, &self.tls_status, &self.ssl_mode);
-        unimplemented!("b2-blocked: bun_uws SSL handle + boringssl identity check")
-    }
-
-    
-    fn _do_handshake_gated(
-        &mut self,
-        success: i32,
-        ssl_error: uws::us_bun_verify_error_t,
-    ) -> Result<bool, AnyMySQLError> {
         bun_core::scoped_log!(
             MySQLConnection,
             "onHandshake: {} {} {}",
@@ -538,20 +525,6 @@ impl MySQLConnection {
         &mut self,
         reader: NewReader<C>,
     ) -> Result<(), AnyMySQLError> {
-        // TODO(b2-blocked): bun_sql::mysql::protocol::{HandshakeV10::decode,
-        // SSLRequest::write, Capabilities::CLIENT_SSL field-style, AuthMethod
-        // IntoStaticStr, Data::to_owned err-type}. Body gated until those
-        // surfaces stabilize. The Zig body is preserved below under
-        // `` so a search still hits this module.
-        let _ = reader;
-        unimplemented!("b2-blocked: bun_sql mysql HandshakeV10 decode surface")
-    }
-
-    
-    fn _handle_handshake_gated<C: ReaderContext>(
-        &mut self,
-        reader: NewReader<C>,
-    ) -> Result<(), AnyMySQLError> {
         let mut handshake = HandshakeV10::default();
         handshake.decode(reader)?;
         // handshake dropped at scope exit
@@ -680,21 +653,6 @@ impl MySQLConnection {
     }
 
     pub fn handle_auth<C: ReaderContext>(
-        &mut self,
-        reader: NewReader<C>,
-        header_length: u32, // u24 in Zig
-    ) -> Result<(), AnyMySQLError> {
-        // TODO(b2-blocked): bun_sql::mysql::protocol::{OKPacket/ErrorPacket/
-        // AuthSwitchRequest/LocalInfileRequest::decode, PacketType repr-u8 cast,
-        // Auth::caching_sha2_password::{Status,PublicKeyRequest::default,
-        // Response::decode}, AuthMethod IntoStaticStr}. Body gated until the
-        // bun_sql protocol Decode trait + struct shapes stabilize.
-        let _ = (reader, header_length);
-        unimplemented!("b2-blocked: bun_sql mysql auth packet decode surface")
-    }
-
-    
-    fn _handle_auth_gated<C: ReaderContext>(
         &mut self,
         reader: NewReader<C>,
         header_length: u32, // u24 in Zig
@@ -840,18 +798,6 @@ impl MySQLConnection {
         reader: NewReader<C>,
         header_length: u32, // u24 in Zig
     ) -> Result<(), AnyMySQLError> {
-        // TODO(b2-blocked): forwards to handle_result_set / handle_prepared_statement
-        // which are gated on bun_sql protocol decode shapes. Body preserved below.
-        let _ = (reader, header_length);
-        unimplemented!("b2-blocked: bun_sql mysql result-set decode surface")
-    }
-
-    
-    fn _handle_command_gated<C: ReaderContext>(
-        &mut self,
-        reader: NewReader<C>,
-        header_length: u32, // u24 in Zig
-    ) -> Result<(), AnyMySQLError> {
         // Get the current request if any
         let Some(request) = self.queue.current() else {
             debug!("Received unexpected command response");
@@ -918,15 +864,6 @@ impl MySQLConnection {
     }
 
     pub fn send_handshake_response(&mut self) -> Result<(), AnyMySQLError> {
-        // TODO(b2-blocked): bun_sql::mysql::protocol::HandshakeResponse41 lacks
-        // Default + write() (writeWrap not yet expressed); AuthMethod::scramble
-        // err-type; bun_core::Global::PACKAGE_JSON_VERSION_WITH_REVISION path.
-        // Body gated; preserved below under ``.
-        unimplemented!("b2-blocked: bun_sql mysql HandshakeResponse41 write surface")
-    }
-
-    
-    fn _send_handshake_response_gated(&mut self) -> Result<(), AnyMySQLError> {
         debug!("sendHandshakeResponse");
         // Only require password for caching_sha2_password when connecting for the first time
         if let Some(plugin) = self.auth_plugin {
@@ -989,18 +926,6 @@ impl MySQLConnection {
     }
 
     pub fn send_auth_switch_response(
-        &mut self,
-        auth_method: AuthMethod,
-        plugin_data: &[u8],
-    ) -> Result<(), AnyMySQLError> {
-        // TODO(b2-blocked): AuthMethod::scramble err-type; AuthSwitchResponse::write
-        // (writeWrap). Body gated; preserved below.
-        let _ = (auth_method, plugin_data);
-        unimplemented!("b2-blocked: bun_sql mysql AuthSwitchResponse write surface")
-    }
-
-    
-    fn _send_auth_switch_response_gated(
         &mut self,
         auth_method: AuthMethod,
         plugin_data: &[u8],

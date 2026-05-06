@@ -30,7 +30,9 @@ mod b1_stubs {
         bun_wyhash::hash(input)
     }
 
-    // TODO(b1): bun_logger crate missing from deps
+    // TODO(b2-blocked): bun_logger crate not yet in [dependencies]. Spec uses
+    // these on *recoverable* paths (log-and-continue / log-and-return-None) so
+    // the stub MUST be a no-op, never `todo!()` — PORTING.md §Forbidden.
     pub mod logger {
         pub struct Log;
         impl Log {
@@ -40,13 +42,14 @@ mod b1_stubs {
                 _loc: Loc,
                 _args: core::fmt::Arguments<'_>,
             ) -> Result<(), ()> {
-                todo!("b1-stub: bun_logger::Log::add_error_fmt")
+                // no-op until bun_logger lands; spec is log-and-continue
+                Ok(())
             }
         }
         pub struct Source;
         impl Source {
             pub fn init_empty_file(_path: &[u8]) -> Source {
-                todo!("b1-stub: bun_logger::Source::init_empty_file")
+                Source
             }
         }
         pub struct Loc;
@@ -953,9 +956,18 @@ impl<'a> RouteLoader<'a> {
                     continue 'outer;
                 }
 
-                // PORT NOTE: Entry::kind takes the resolver fs impl as erased *mut c_void
-                // (tier-clean stub); pass null until bun_resolver wires the vtable.
-                match entry.kind(core::ptr::null_mut(), false) {
+                // Zig: `entry.kind(&fs.fs, false)` (router.zig:416). Thread the
+                // resolver's fs `Implementation` through — `Entry.kind` derefs
+                // it to lazily stat when `need_stat` is true, so null would be
+                // a latent crash / silent route-drop once the stub forwards it.
+                //
+                // Zig `Entry.Kind` is exactly `{dir, file}` (resolver/fs.zig:378);
+                // the resolver collapses every stat result to one of those two
+                // before this point. The bun_sys stub currently returns the wide
+                // `FileKind`, so map it: Directory → dir, everything else → file.
+                // No `_ => {}` swallow arm — symlinked/unknown route files must
+                // reach the file branch, not be silently dropped.
+                match entry.kind(resolver.fs_impl(), false) {
                     bun_sys::EntryKind::Directory => {
                         for banned_dir in BANNED_DIRS.iter() {
                             if entry.base() == *banned_dir {
@@ -1539,6 +1551,10 @@ pub trait ResolverLike {
     // 'static here is faithful and avoids threading the resolver borrow into
     // RouteLoader<'a>.
     fn fs(&self) -> &'static FileSystem;
+    /// Zig: `&fs.fs` — the resolver's `Implementation` field, passed to
+    /// `Entry.kind` for lazy stat. Erased to `*mut c_void` here so this crate
+    /// stays tier-clean (concrete type lives in `bun_resolver::fs`).
+    fn fs_impl(&self) -> *mut core::ffi::c_void;
     fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<DirInfoRef>;
 }
 

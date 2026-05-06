@@ -74,7 +74,9 @@ impl JSMySQLConnection {
         self.ref_count.set(n);
         if n == 0 {
             // SAFETY: count hit 0; `self` came from `Box::into_raw` in
-            // `create_instance`, so we are the unique owner here.
+            // `create_instance`, so we are the unique owner here. `deinit`
+            // takes ownership back via `Box::from_raw` (mirrors Zig
+            // `bun.destroy(this)`).
             unsafe { (*(self as *const Self as *mut Self)).deinit() };
         }
     }
@@ -299,8 +301,11 @@ impl JSMySQLConnection {
         self.unregister_auto_flusher();
 
         self.connection.cleanup();
-        // bun.destroy(this) — freeing the Box is handled by IntrusiveRc::destroy.
-        // TODO(port): confirm IntrusiveRc frees allocation after this returns.
+        // bun.destroy(this): reclaim the `Box::into_raw` from `create_instance`.
+        // SAFETY: only reachable from `deref()` when ref_count hits 0; `self`
+        // was originally allocated via `Box::new` and leaked via `Box::into_raw`.
+        // No further access to `*self` after this line.
+        drop(unsafe { Box::from_raw(self as *mut Self) });
     }
 
     fn ensure_js_value_is_alive(&self) {

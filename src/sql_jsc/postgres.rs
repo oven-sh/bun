@@ -63,22 +63,12 @@ pub use postgres_sql_statement::PostgresSQLStatement;
 
 #[path = "postgres/PostgresSQLConnection.rs"]
 pub mod postgres_sql_connection;
-#[cfg(any())]
-pub mod postgres_sql_connection {
-    pub struct PostgresSQLConnection {
-        pub password: Vec<u8>,
-    }
-}
 pub use postgres_sql_connection::PostgresSQLConnection;
 
 // TODO(b2-blocked): bun_jsc::host_fn proc-macro + JSValue/CallFrame method surface
 
 #[path = "postgres/PostgresSQLQuery.rs"]
 pub mod postgres_sql_query;
-#[cfg(any())]
-pub mod postgres_sql_query {
-    pub struct PostgresSQLQuery(());
-}
 pub use postgres_sql_query::PostgresSQLQuery;
 
 // TODO(b2-blocked): bun_jsc::JSValue / bun_jsc::JSObject method surface

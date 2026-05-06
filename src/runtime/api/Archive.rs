@@ -517,11 +517,11 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
 /// Returns data as a ZigString.Slice (handles ownership automatically via deinit)
 fn get_entry_data(global: &JSGlobalObject, value: JSValue) -> JsResult<ZigStringSlice> {
     // For Blob, use sharedView (no copy needed)
-    if let Some(_blob_ptr) = blob_from_js(value) {
-        // SAFETY: blob_ptr came from a live JSValue; valid for this scope.
-        // TODO(port): `Blob::shared_view` currently has two identical inherent
-        // definitions in webcore/Blob.rs (E0034). Re-enable once de-duplicated.
-        todo!("blocked_on: webcore::Blob::shared_view duplicate definition");
+    if let Some(blob_ptr) = blob_from_js(value) {
+        // SAFETY: blob_ptr came from a live JSValue; the backing store outlives
+        // the returned slice for the duration of the caller's tarball build.
+        let view = unsafe { (*blob_ptr).shared_view() };
+        return Ok(ZigStringSlice::from_utf8_never_free(view));
     }
 
     // For ArrayBuffer/TypedArray, use view (no copy needed)

@@ -700,14 +700,15 @@ impl NetworkTask {
             });
         }
 
+        let completion_callback = self.get_completion_callback();
         self.unsafe_http_client = AsyncHTTP::init(
             http::Method::GET,
             url,
             header_builder.entries,
             header_buf,
-            &mut self.response_buffer,
+            ptr::addr_of_mut!(self.response_buffer),
             b"",
-            self.get_completion_callback(),
+            completion_callback,
             http::FetchRedirect::Follow,
             http_options,
         );

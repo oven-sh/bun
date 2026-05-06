@@ -35,7 +35,11 @@ pub trait S3CredentialsExt {
     fn guess_bucket(endpoint: &[u8]) -> Option<&[u8]>;
     #[allow(clippy::too_many_arguments)]
     fn get_credentials_with_options(
-        this: S3Credentials,
+        // PORT NOTE: takes `&S3Credentials` (not by-value) — `bun_s3_signing::S3Credentials`
+        // has a private `ref_count` field and no `Clone`, so callers holding a borrow
+        // (e.g. `&IntrusiveRc<S3Credentials>` deref) cannot produce an owned copy. The
+        // real impl in `s3/credentials_jsc.rs` deep-copies internally.
+        this: &S3Credentials,
         default_options: MultiPartUploadOptions,
         options: Option<JSValue>,
         default_acl: Option<ACL>,
@@ -54,7 +58,7 @@ impl S3CredentialsExt for S3Credentials {
         bun_s3_signing::credentials::guess_bucket(endpoint)
     }
     fn get_credentials_with_options(
-        _this: S3Credentials,
+        _this: &S3Credentials,
         _default_options: MultiPartUploadOptions,
         _options: Option<JSValue>,
         _default_acl: Option<ACL>,
@@ -246,7 +250,7 @@ impl S3Client {
         let env_creds: S3Credentials =
             todo!("blocked_on: bun_jsc::VirtualMachine::transpiler.env.get_s3_credentials() (mutable env access)");
         let aws_options = <S3Credentials as S3CredentialsExt>::get_credentials_with_options(
-            env_creds,
+            &env_creds,
             MultiPartUploadOptions::default(),
             args.next_eat(),
             None,

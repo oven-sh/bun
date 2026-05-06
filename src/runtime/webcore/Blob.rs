@@ -2981,6 +2981,42 @@ pub fn on_file_stream_reject_request_stream(
     Ok(JSValue::UNDEFINED)
 }
 
+// C-ABI shims for `JSValue::then` (mirrors Zig `toJSHostFn`). The Rust-side
+// host fns above are `JSHostFnZig`; `then()` wants the raw `JSHostFn` shape.
+unsafe extern "C" fn on_file_stream_resolve_request_stream_shim(
+    global: *mut JSGlobalObject,
+    callframe: *mut CallFrame,
+) -> JSValue {
+    // SAFETY: JSC guarantees both pointers are live for the host call.
+    let (global, callframe) = unsafe { (&*global, &*callframe) };
+    jsc::host_fn::to_js_host_fn_result(global, on_file_stream_resolve_request_stream(global, callframe))
+}
+unsafe extern "C" fn on_file_stream_reject_request_stream_shim(
+    global: *mut JSGlobalObject,
+    callframe: *mut CallFrame,
+) -> JSValue {
+    // SAFETY: JSC guarantees both pointers are live for the host call.
+    let (global, callframe) = unsafe { (&*global, &*callframe) };
+    jsc::host_fn::to_js_host_fn_result(global, on_file_stream_reject_request_stream(global, callframe))
+}
+
+// Local shim for `bun_jsc::AnyPromise::result` (not yet on the upstream enum).
+trait AnyPromiseResultExt {
+    fn result(self, vm: &jsc::VM) -> JSValue;
+}
+impl AnyPromiseResultExt for jsc::AnyPromise {
+    #[inline]
+    fn result(self, vm: &jsc::VM) -> JSValue {
+        match self {
+            // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
+            jsc::AnyPromise::Normal(p) => unsafe { (*p).result(vm) },
+            jsc::AnyPromise::Internal(_p) => {
+                todo!("blocked_on: bun_jsc::JSInternalPromise::result")
+            }
+        }
+    }
+}
+
 // TODO(port): @export of jsc::to_js_host_fn wrappers under
 // "Bun__FileStreamWrapper__onResolveRequestStream" / "...Reject..." names.
 // The // TODO(b2-blocked): #[bun_jsc::host_fn] attribute should support a `link_name = "..."` arg.
@@ -3012,12 +3048,15 @@ impl Blob {
             };
 
             let path = s3.path();
-            // SAFETY: bun_vm() never returns null for a Bun-owned global.
-            let proxy = unsafe { (*global_this.bun_vm()).transpiler.env.get_http_proxy(true, None, None) };
+            // SAFETY: bun_vm() never returns null for a Bun-owned global; `env`
+            // is a live `*mut Loader` owned by the transpiler.
+            let proxy = unsafe {
+                (*(*global_this.bun_vm()).transpiler.env).get_http_proxy(true, None, None)
+            };
             let proxy_url = proxy.map(|p| p.href);
 
             return crate::webcore::__s3_client::upload_stream(
-                if extra_options.is_some() { aws_options.credentials.dupe() } else { s3.get_credentials() },
+                if extra_options.is_some() { &aws_options.credentials } else { s3.get_credentials() },
                 path,
                 readable_stream,
                 global_this,
@@ -3025,8 +3064,10 @@ impl Blob {
                 aws_options.acl,
                 aws_options.storage_class,
                 self.content_type_or_mime_type(),
-                aws_options.content_disposition,
-                aws_options.content_encoding,
+                // SAFETY: option-wrapped raw `*const [u8]` borrowed back; the
+                // backing storage is owned by `aws_options` which outlives this call.
+                aws_options.content_disposition.map(|p| unsafe { &*p }),
+                aws_options.content_encoding.map(|p| unsafe { &*p }),
                 proxy_url,
                 aws_options.request_payer,
                 None,
@@ -3203,8 +3244,8 @@ impl Blob {
                         assignment_result.then(
                             global_this,
                             wrapper as *mut c_void,
-                            on_file_stream_resolve_request_stream,
-                            on_file_stream_reject_request_stream,
+                            on_file_stream_resolve_request_stream_shim,
+                            on_file_stream_reject_request_stream_shim,
                         );
                         return Ok(promise_value);
                     }
@@ -5087,7 +5128,7 @@ impl Blob {
         let path: PathOrFileDescriptor = match path_or_fd {
             PathOrFileDescriptor::Path(_) => {
                 #[allow(unused_mut)]
-                let mut slice = path_or_fd.path_slice();
+                let mut slice = path_or_fd.path().slice();
 
                 #[cfg(windows)]
                 if slice == b"/dev/null" {
@@ -5096,7 +5137,7 @@ impl Blob {
                             bun_str::PathString::init(b"\\\\.\\NUL"),
                         ),
                     );
-                    slice = path_or_fd.path_slice();
+                    slice = path_or_fd.path().slice();
                 }
 
                 // TODO(b2-blocked): standalone_module_graph — VM field is an

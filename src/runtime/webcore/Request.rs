@@ -1661,13 +1661,6 @@ impl Request {
     pub fn get_fetch_headers(&self) -> Option<&FetchHeaders> {
         self.headers.as_deref()
     }
-
-    // Zig: `pub fn getBodyValue(this: *Request) *Body.Value { return &this.#body.value; }`
-    // Request stores `body: Box<BodyValue>` (already the flattened `Body.Value`).
-    #[inline]
-    pub fn get_body_value(&mut self) -> &mut BodyValue {
-        &mut self.body
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

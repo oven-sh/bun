@@ -305,9 +305,13 @@ fn construct_s3_file_internal_store(
     // get credentials from env
     // SAFETY: bun_vm() returns the live VM raw ptr; `transpiler.env` is set during init
     // and live for the VM lifetime.
-    let existing_credentials =
-        unsafe { (*(*global.bun_vm()).transpiler.env).get_s3_credentials().clone() };
-    construct_s3_file_with_s3_credentials(global, path, options, existing_credentials)
+    let _existing_credentials =
+        unsafe { (*(*global.bun_vm()).transpiler.env).get_s3_credentials() };
+    let _ = (path, options);
+    // `get_s3_credentials()` yields `&S3Credentials` (intrusive-refcounted, not `Clone`);
+    // `construct_s3_file_with_s3_credentials` wants an owned `S3Credentials`. Phase B
+    // must thread `IntrusiveRc<S3Credentials>` through here.
+    todo!("blocked_on: bun_s3_signing::S3Credentials owned-handle from env (IntrusiveRc/dupe)")
 }
 
 /// if the credentials have changed, we need to clone it, if not we can just ref/deref it
@@ -321,26 +325,19 @@ pub fn construct_s3_file_with_s3_credentials_and_options(
     default_storage_class: Option<s3::StorageClass>,
     default_request_payer: bool,
 ) -> JsResult<Blob> {
-    let aws_options = <s3::S3Credentials>::get_credentials_with_options(
-        default_credentials.clone(),
-        default_options,
-        options,
-        default_acl,
-        default_storage_class,
-        default_request_payer,
-        global,
-    )?;
+    let _ = (default_options, default_acl, default_storage_class, default_request_payer);
+    // `S3Credentials` is intrusive-refcounted (not `Clone`); the Zig spec passes it
+    // by value here. Phase B must thread `IntrusiveRc<S3Credentials>` / `dupe()` through.
+    let aws_options: bun_s3_signing::S3CredentialsWithOptions =
+        todo!("blocked_on: bun_s3_signing::S3Credentials::dupe (intrusive clone for get_credentials_with_options)");
 
+    #[allow(unreachable_code)]
     let mut store = 'brk: {
         if aws_options.changed_credentials {
             break 'brk blob::Store::init_s3(path, None, aws_options.credentials).expect("oom");
         } else {
-            break 'brk blob::Store::init_s3_with_referenced_credentials(
-                path,
-                None,
-                Arc::new(default_credentials.clone()),
-            )
-            .expect("oom");
+            let _ = default_credentials;
+            break 'brk todo!("blocked_on: bun_s3_signing::S3Credentials::dupe (Arc from &S3Credentials)");
         }
     };
     // errdefer store.deinit() — handled by Drop on early return
@@ -363,13 +360,13 @@ pub fn construct_s3_file_with_s3_credentials_and_options(
                         blob.content_type_was_set = true;
                         // SAFETY: bun_vm() returns the live VM raw ptr.
                         if let Some(entry) = unsafe { (*global.bun_vm()).mime_type(str.slice()) } {
-                            blob.content_type = entry.value;
+                            blob.content_type = &*entry.value as *const [u8];
                             break 'inner;
                         }
-                        let mut content_type_buf = vec![0u8; slice.len()].into_boxed_slice();
+                        let content_type_buf = Box::leak(vec![0u8; slice.len()].into_boxed_slice());
                         // TODO(port): blob.content_type ownership — Zig stores raw slice + allocated flag
-                        blob.content_type = strings::copy_lowercase(slice, &mut content_type_buf);
-                        Box::leak(content_type_buf);
+                        blob.content_type =
+                            strings::copy_lowercase(slice, content_type_buf) as *const [u8];
                         blob.content_type_allocated = true;
                     }
                 }
@@ -415,13 +412,13 @@ pub fn construct_s3_file_with_s3_credentials(
                         blob.content_type_was_set = true;
                         // SAFETY: bun_vm() returns the live VM raw ptr.
                         if let Some(entry) = unsafe { (*global.bun_vm()).mime_type(str.slice()) } {
-                            blob.content_type = entry.value;
+                            blob.content_type = &*entry.value as *const [u8];
                             break 'inner;
                         }
-                        let mut content_type_buf = vec![0u8; slice.len()].into_boxed_slice();
+                        let content_type_buf = Box::leak(vec![0u8; slice.len()].into_boxed_slice());
                         // TODO(port): blob.content_type ownership — Zig stores raw slice + allocated flag
-                        blob.content_type = strings::copy_lowercase(slice, &mut content_type_buf);
-                        Box::leak(content_type_buf);
+                        blob.content_type =
+                            strings::copy_lowercase(slice, content_type_buf) as *const [u8];
                         blob.content_type_allocated = true;
                     }
                 }
@@ -652,12 +649,11 @@ pub fn get_presign_url_from(this: &mut Blob, global: &JSGlobalObject, extra_opti
     let mut expires: usize = 86400; // 1 day default
 
     let s3 = this.store.as_ref().unwrap().data.as_s3();
-    // PORT NOTE: `S3CredentialsWithOptions` is not `Default` (raw-ptr fields). When no
-    // `extra_options` are passed we only need `.credentials`, `.request_payer`, `.acl`,
-    // `.storage_class`, `.content_*` from it. Compute it via the same code path as the
-    // options branch by passing `None` so the struct is fully initialized.
+    // PORT NOTE: `S3CredentialsWithOptions` is not `Default` (raw-ptr fields) and
+    // `S3Credentials` is intrusive-refcounted (not `Clone`). Route through
+    // `get_credentials_with_options(None, …)` to obtain a fully-initialized struct;
+    // its `credentials` field already mirrors `s3.get_credentials()`.
     let mut credentials_with_options = s3.get_credentials_with_options(None, global)?;
-    credentials_with_options.credentials = (**s3.get_credentials()).clone();
     credentials_with_options.request_payer = s3.request_payer;
 
     if let Some(options) = extra_options {
@@ -674,7 +670,7 @@ pub fn get_presign_url_from(this: &mut Blob, global: &JSGlobalObject, extra_opti
             }
             if let Some(expires_js) = options.get_truthy(global, "expiresIn")? {
                 // TODO(port): blocked_on bun_jsc::JSValue::get_optional::<i32>
-                let expires_ = expires_js.coerce_to_int32(global)?;
+                let expires_ = expires_js.coerce_to_i32(global)?;
                 if expires_ <= 0 {
                     return Err(global.throw_invalid_arguments("expiresIn must be greather than 0"));
                 }

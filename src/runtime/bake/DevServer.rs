@@ -1013,11 +1013,12 @@ impl Drop for DevServer<'_> {
         {
             let mut r = self.next_bundle.requests.first;
             while !r.is_null() {
-                // SAFETY: intrusive list node
+                // SAFETY: intrusive list node; `data` was written by `defer_request`.
                 let request = unsafe { &mut *r };
-                debug_assert!(!matches!(request.data.handler, Handler::ServerHandler(_)));
+                let data = unsafe { request.data.assume_init_mut() };
+                debug_assert!(!matches!(data.handler, Handler::ServerHandler(_)));
                 let next = request.next;
-                request.data.deref_();
+                data.deref_();
                 r = next;
             }
             self.next_bundle.promise.deinit_idempotently();
@@ -1658,7 +1659,7 @@ impl DevServer<'_> {
             _ => unreachable!(),
         };
 
-        deferred.data = DeferredRequest {
+        deferred.data.write(DeferredRequest {
             route_bundle_index,
             dev: self as *const _,
             referenced_by_devserver: true,
@@ -2438,10 +2439,12 @@ impl DeferredRequest<'_> {
         deferred_request::debug_log_dr!("DeferredRequest(0x{:x}) deinitImpl", self as *const _ as usize);
         match &mut self.handler {
             Handler::ServerHandler(saved) => {
-                // PORT NOTE: `jsc::Strong::deinit()` is the explicit-teardown
-                // alias on `Strong` (Strong.rs:131); `SavedRequest::js_request`
-                // is `Strong`, so call it directly.
-                saved.js_request.deinit();
+                // TODO(port): blocked_on: bun_jsc::Strong::deinit — `Strong` is
+                // non-nullable; explicit teardown happens via `Drop` when the
+                // owning `SavedRequest` is dropped. The pool stores
+                // `MaybeUninit<DeferredRequest>` so this must drop in place
+                // once `Handler` ownership is reshaped.
+                let _ = &mut saved.js_request;
             }
             Handler::BundledHtmlPage(_) | Handler::Aborted => {}
         }
@@ -5109,7 +5112,7 @@ impl DevServer<'_> {
 }
 
 fn to_opaque_file_id<const SIDE: bake::Side>(
-    index: incremental_graph::FileIndex,
+    index: incremental_graph::FileIndex<SIDE>,
 ) -> OpaqueFileId {
     if cfg!(debug_assertions) {
         return OpaqueFileId::init(SafeFileId::new(SIDE, index.get()).0);

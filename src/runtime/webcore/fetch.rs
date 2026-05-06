@@ -1733,7 +1733,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 if s3_options.is_object() {
                     s3_options.ensure_still_alive();
                     credentials_with_options = s3::S3Credentials::get_credentials_with_options(
-                        credentials_with_options.credentials,
+                        &credentials_with_options.credentials,
                         Default::default(),
                         Some(s3_options),
                         None,

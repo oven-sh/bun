@@ -35,7 +35,7 @@ bun_output::declare_scope!(H2FrameParser, visible);
 // Mirror the surface this file consumes (`listen`/`ref_`/`aborted`/…) so the
 // module compiles; bodies `todo!()` until the upstream module is un-gated.
 // ──────────────────────────────────────────────────────────────────────────
-mod abort_signal_shim {
+pub mod abort_signal_shim {
     use super::{AbortSignal, JSValue, c_void};
 
     pub trait AbortListener {

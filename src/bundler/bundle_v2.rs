@@ -1232,8 +1232,18 @@ impl<'a> BundleV2<'a> {
         // practice; freed in `deinit_without_freeing_arena`). The body mirrors
         // bundle_v2.zig:310-360.
         todo!("blocked_on: Transpiler::shallow_clone_for_client");
+        // PORT NOTE: Zig holds `this_transpiler = this.transpiler` (a `*Transpiler`)
+        // and reads `.options.compile` / `.log` from it while also touching
+        // `this.client_transpiler`. In Rust `self.transpiler` is `&'a mut Transpiler`,
+        // so materializing a second `&mut` here would alias `*self`. Keep it as a raw
+        // pointer and snapshot the two `Copy` fields up front — no overlapping `&mut`
+        // is ever produced for the source transpiler.
         #[allow(unreachable_code)]
-        let this_transpiler: &mut Transpiler<'a> = unsafe { &mut *(&mut *self.transpiler as *mut _) };
+        let this_transpiler: *mut Transpiler<'a> = &mut *self.transpiler as *mut _;
+        // SAFETY: `self.transpiler` is a live exclusive reference; no other borrow of
+        // `*self` is outstanding while we read these two `Copy` fields.
+        #[allow(unreachable_code)]
+        let (this_compile, this_log) = unsafe { ((*this_transpiler).options.compile, (*this_transpiler).log) };
         #[allow(unreachable_code)]
         let client_transpiler: &'a mut Transpiler<'a> = unreachable!();
 
@@ -1250,7 +1260,7 @@ impl<'a> BundleV2<'a> {
         )?;
 
         // We need to make sure it has [hash] in the names so we don't get conflicts.
-        if this_transpiler.options.compile {
+        if this_compile {
             client_transpiler.options.asset_naming = options::PathTemplate::ASSET.data.to_vec().into_boxed_slice();
             client_transpiler.options.chunk_naming = options::PathTemplate::CHUNK.data.to_vec().into_boxed_slice();
             client_transpiler.options.entry_naming = b"./[name]-[hash].[ext]".to_vec().into_boxed_slice();

@@ -3272,11 +3272,14 @@ pub mod sync {
             waiting_count: 1,
             status: None,
         });
-        // this.process.ref() — Arc clone semantics; TODO(port): IntrusiveArc ref
         let this_ptr = this.as_mut() as *mut SyncWindowsProcess;
-        // SAFETY: unique access
+        // SAFETY: `this.process` was just produced by `to_process` (sole
+        // owner, mutable provenance from Box::into_raw). Mirrors Zig:
+        // `this.process.ref(); this.process.setExitHandler(this);
+        //  this.process.enableKeepingEventLoopAlive();`
         unsafe {
-            let p = &mut *(Arc::as_ptr(&this.process) as *mut Process);
+            let p = &mut *this.process;
+            p.ref_();
             p.set_exit_handler(this_ptr);
             p.enable_keeping_event_loop_alive();
         }
@@ -3298,10 +3301,10 @@ pub mod sync {
                 this.waiting_count += 1;
                 match reader.start() {
                     Maybe::Err(err) => {
-                        // SAFETY: unique access
+                        // SAFETY: sync spawn — `this.process` is the only
+                        // handle and no uv callback has fired yet.
                         unsafe {
-                            let p = &mut *(Arc::as_ptr(&this.process) as *mut Process);
-                            let _ = p.kill(1);
+                            let _ = (*this.process).kill(1);
                         }
                         Output::panic(
                             format_args!(
@@ -3330,7 +3333,8 @@ pub mod sync {
             stdout: flatten_owned_chunks(core::mem::take(&mut this.stdout)),
             stderr: flatten_owned_chunks(core::mem::take(&mut this.stderr)),
         };
-        // this.process.deref() — Arc drops with `this`
+        // SAFETY: loop drained (waiting_count == 0); drop the ref taken above.
+        unsafe { (*this.process).deref() };
         Ok(Maybe::Result(result))
     }
 

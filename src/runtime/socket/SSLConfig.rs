@@ -440,7 +440,7 @@ pub mod GlobalRegistry {
     // TODO(port): Zig used ArrayHashMapUnmanaged with a custom MapContext that
     // hashes/compares by *content* (content_hash / is_same) while the key is a
     // raw `*SSLConfig`. bun_collections::ArrayHashMap needs equivalent
-    // per-map-context support; if not available, wrap *mut SSLConfig in a
+    // per-map-context support; if not available, wrap *const SSLConfig in a
     // newtype implementing Hash/Eq via unsafe deref.
     //
     // Backing storage + intern() are gated until the content-hash MapContext
@@ -507,7 +507,12 @@ pub mod GlobalRegistry {
         /// The returned `SharedPtr` is dropped normally.
         pub fn intern(config: SSLConfig) -> SharedPtr {
             let new_shared: SharedPtr = Arc::new(config);
-            let new_ptr = Arc::as_ptr(&new_shared) as *mut SSLConfig;
+            // SAFETY: `new_ptr` is used only as an identity key and for shared
+            // reads (`content_hash`/`is_same`) under the registry mutex while
+            // `new_shared` (or its weak) keeps the allocation alive. Never
+            // written through, so `*const` provenance from `Arc::as_ptr` is
+            // sufficient — no `*mut` cast needed.
+            let new_ptr: *const SSLConfig = Arc::as_ptr(&new_shared);
 
             // Deferred cleanup MUST run after the mutex is released (Drop re-locks
             // the registry mutex via `SSLConfig::drop -> remove`).
@@ -550,7 +555,7 @@ pub mod GlobalRegistry {
             result
         }
 
-        pub(in super::super) fn remove(config: *mut SSLConfig) {
+        pub(in super::super) fn remove(config: *const SSLConfig) {
             let _guard = MUTEX.lock();
             let configs = configs();
             if configs.count() == 0 {

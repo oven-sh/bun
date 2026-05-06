@@ -5,13 +5,14 @@ use bun_paths::{self as path, PathBuffer};
 use bun_str::{strings, ZStr};
 use bun_sys::File;
 
-use bun_fs::FileSystem;
+use bun_resolver::fs::FileSystem;
 
 use bun_install::bin::{self, Bin};
 use bun_install::lockfile::Lockfile;
-use bun_install::package_manager::{
-    attempt_to_create_package_json, CommandLineArguments, Options, PackageManager, Subcommand,
-};
+use bun_install::package_manager::{PackageManager, Subcommand};
+use bun_install::package_manager_real::command_line_arguments::CommandLineArguments;
+use bun_install::package_manager_real::package_manager_directories::attempt_to_create_package_json;
+use bun_install::package_manager_real::package_manager_options::Options;
 use bun_install::Features;
 
 use crate::command;

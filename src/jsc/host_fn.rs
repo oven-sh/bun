@@ -544,3 +544,4 @@ pub type InstanceMethodType<C> = fn(&mut C, &JSGlobalObject, &CallFrame) -> JsRe
 //   todos:      16
 //   notes:      ~70% of source is @typeInfo fn-signature reflection -> #[bun_jsc::host_fn]/host_call/dom_call proc-macros; runtime helpers + FFI + DomEffect ported directly.
 // ──────────────────────────────────────────────────────────────────────────
+// trigger

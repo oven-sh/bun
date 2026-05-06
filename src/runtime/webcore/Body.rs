@@ -397,7 +397,6 @@ impl PendingValue {
                 | Action::GetBlob
                 | Action::GetArrayBuffer
                 | Action::GetBytes => {
-                    use ReadableStreamConvert as _;
                     let promise = match &mut self.action {
                         Action::GetJSON => global_this.readable_stream_to_json(readable.value),
                         Action::GetArrayBuffer => {
@@ -466,38 +465,6 @@ impl Action {
 impl PartialEq for Action {
     fn eq(&self, other: &Self) -> bool {
         core::mem::discriminant(self) == core::mem::discriminant(other)
-    }
-}
-
-/// Local extension shim for `JSGlobalObject::readableStreamTo*` — the real
-/// methods live in the cfg-gated `src/jsc/JSGlobalObject.rs`.
-// TODO(b2-blocked): drop once `bun_jsc::JSGlobalObject::readable_stream_to_*` un-gates.
-trait ReadableStreamConvert {
-    fn readable_stream_to_json(&self, value: JSValue) -> JSValue;
-    fn readable_stream_to_array_buffer(&self, value: JSValue) -> JSValue;
-    fn readable_stream_to_bytes(&self, value: JSValue) -> JSValue;
-    fn readable_stream_to_text(&self, value: JSValue) -> JSValue;
-    fn readable_stream_to_blob(&self, value: JSValue) -> JSValue;
-    fn readable_stream_to_form_data(&self, value: JSValue, content_type: JSValue) -> JSValue;
-}
-impl ReadableStreamConvert for JSGlobalObject {
-    fn readable_stream_to_json(&self, _value: JSValue) -> JSValue {
-        todo!("blocked_on: bun_jsc::JSGlobalObject::readable_stream_to_json")
-    }
-    fn readable_stream_to_array_buffer(&self, _value: JSValue) -> JSValue {
-        todo!("blocked_on: bun_jsc::JSGlobalObject::readable_stream_to_array_buffer")
-    }
-    fn readable_stream_to_bytes(&self, _value: JSValue) -> JSValue {
-        todo!("blocked_on: bun_jsc::JSGlobalObject::readable_stream_to_bytes")
-    }
-    fn readable_stream_to_text(&self, _value: JSValue) -> JSValue {
-        todo!("blocked_on: bun_jsc::JSGlobalObject::readable_stream_to_text")
-    }
-    fn readable_stream_to_blob(&self, _value: JSValue) -> JSValue {
-        todo!("blocked_on: bun_jsc::JSGlobalObject::readable_stream_to_blob")
-    }
-    fn readable_stream_to_form_data(&self, _value: JSValue, _content_type: JSValue) -> JSValue {
-        todo!("blocked_on: bun_jsc::JSGlobalObject::readable_stream_to_form_data")
     }
 }
 
@@ -2321,9 +2288,11 @@ impl<'a> ValueBufferer<'a> {
     }
 
     fn handle_reject_stream(&mut self, err: JSValue, is_async: bool) {
-        if let Some(_wrapper) = self.js_sink.take() {
-            // TODO(blocked_on: webcore::sink::ArrayBufferSink): see Drop impl above.
-            todo!("blocked_on: webcore::sink::JSSink::detach / ArrayBufferSink::destroy");
+        if let Some(mut wrapper) = self.js_sink.take() {
+            wrapper.detach(self.global);
+            // SAFETY: see `Drop` impl — `destroy` consumes the inner sink.
+            unsafe { ArrayBufferSink::destroy(&mut wrapper.sink as *mut ArrayBufferSink) };
+            core::mem::forget(wrapper);
         }
         // Zig: `var ref = ...; defer ref.deinit(); sink.onFinishedBuffering(..., .{ .JSValue = ref }, ...);`
         // — Zig's bitwise pass + `defer deinit` is only safe because Zig has no Drop. In
@@ -2335,16 +2304,10 @@ impl<'a> ValueBufferer<'a> {
     }
 
     fn handle_resolve_stream(&mut self, is_async: bool) {
-        if let Some(_wrapper) = &self.js_sink {
-            // TODO(blocked_on: webcore::sink::ArrayBufferSink): `bytes` field
-            // not yet present on the stub ArrayBufferSink.
-            let bytes: &[u8] =
-                todo!("blocked_on: webcore::sink::ArrayBufferSink.bytes");
-            #[allow(unreachable_code)]
-            {
-                bun_core::scoped_log!(BodyValueBufferer, "handleResolveStream {}", bytes.len());
-                (self.on_finished_buffering)(self.ctx, bytes, None, is_async);
-            }
+        if let Some(wrapper) = &self.js_sink {
+            let bytes = wrapper.sink.bytes.slice();
+            bun_core::scoped_log!(BodyValueBufferer, "handleResolveStream {}", bytes.len());
+            (self.on_finished_buffering)(self.ctx, bytes, None, is_async);
         } else {
             bun_core::scoped_log!(BodyValueBufferer, "handleResolveStream no sink");
             (self.on_finished_buffering)(self.ctx, b"", None, is_async);
@@ -2353,13 +2316,83 @@ impl<'a> ValueBufferer<'a> {
 
     #[allow(dead_code)]
     fn create_js_sink(&mut self, stream: ReadableStream) -> Result<(), bun_core::Error> {
-        // The Zig caller has this path commented out ("this is broken right now"
-        // — see buffer_locked_body_value below). ArrayBufferSink is currently a
-        // unit-struct stub without `bytes`/`signal`/`JsSinkAbi`, and
-        // `JSValue::then_with_value` is not yet bound. Restore from
-        // src/runtime/webcore/Body.zig:1639 once those land.
-        let _ = stream;
-        todo!("blocked_on: webcore::sink::ArrayBufferSink + bun_jsc::JSValue::then_with_value");
+        // PORT NOTE: The Zig caller has this path commented out ("this is broken
+        // right now" — see buffer_locked_body_value below). Ported faithfully so
+        // un-commenting that call site needs no further work.
+        stream.value.ensure_still_alive();
+        let global_this = self.global;
+        let mut buffer_stream = Box::new(ArrayBufferJSSink {
+            sink: ArrayBufferSink {
+                bytes: Default::default(),
+                next: None,
+                ..Default::default()
+            },
+        });
+        // Hand the box over to JS (lifetime now tied to the stream/signal); recover
+        // a raw pointer for `assign_to_stream` and `self.js_sink`.
+        let buffer_stream_ptr: *mut ArrayBufferJSSink = Box::into_raw(buffer_stream);
+        // SAFETY: freshly allocated; sole owner until handed to JS.
+        let buffer_stream = unsafe { &mut *buffer_stream_ptr };
+        let signal = &mut buffer_stream.sink.signal;
+        // SAFETY: re-box for the `Option<Box<…>>` slot; ownership tracked manually
+        // to mirror Zig's `allocator.create` + explicit `destroy`.
+        self.js_sink = Some(unsafe { Box::from_raw(buffer_stream_ptr) });
+
+        *signal = sink::SinkSignal::<ArrayBufferSink>::init(JSValue::ZERO);
+
+        // explicitly set it to a dead pointer
+        // we use this memory address to disable signals being sent
+        signal.clear();
+        debug_assert!(signal.is_dead());
+
+        let assignment_result: JSValue = ArrayBufferJSSink::assign_to_stream(
+            global_this,
+            stream.value,
+            &mut buffer_stream.sink,
+            (&mut signal.ptr) as *mut Option<NonNull<c_void>> as *mut *mut c_void,
+        );
+
+        assignment_result.ensure_still_alive();
+
+        // assert that it was updated
+        debug_assert!(!signal.is_dead());
+
+        if assignment_result.is_error() {
+            return Err(bun_core::err!("PipeFailed"));
+        }
+
+        if !assignment_result.is_empty_or_undefined_or_null() {
+            assignment_result.ensure_still_alive();
+            // it returns a Promise when it goes through ReadableStreamDefaultReader
+            if let Some(promise) = assignment_result.as_any_promise() {
+                match promise.status() {
+                    jsc::js_promise::Status::Pending => {
+                        let cell = crate::api::NativePromiseContext::create(
+                            global_this,
+                            self as *mut Self,
+                        );
+                        // Zig: `catch {}` — termination is observed by the surrounding scope.
+                        assignment_result.then_with_value(
+                            global_this,
+                            cell,
+                            jsc::to_js_host_fn(Self::on_resolve_stream),
+                            jsc::to_js_host_fn(Self::on_reject_stream),
+                        );
+                    }
+                    jsc::js_promise::Status::Fulfilled => {
+                        let _guard = scopeguard::guard((), |_| stream.value.unprotect());
+                        self.handle_resolve_stream(false);
+                    }
+                    jsc::js_promise::Status::Rejected => {
+                        let _guard = scopeguard::guard((), |_| stream.value.unprotect());
+                        self.handle_reject_stream(promise.result(global_this.vm()), false);
+                    }
+                }
+                return Ok(());
+            }
+        }
+
+        Err(bun_core::err!("PipeFailed"))
     }
 
     fn buffer_locked_body_value(

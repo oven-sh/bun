@@ -349,7 +349,7 @@ impl Default for Blob {
 
 impl Blob {
     #[inline]
-    fn content_type_slice(&self) -> &[u8] {
+    pub fn content_type_slice(&self) -> &[u8] {
         // SAFETY: content_type is always a valid (possibly empty) slice pointer
         // owned either by 'static data or by this Blob (when content_type_allocated).
         unsafe { &*self.content_type }

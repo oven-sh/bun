@@ -62,7 +62,7 @@ pub struct BuildCommand;
 impl BuildCommand {
     pub fn exec(
         ctx: Context,
-        fetcher: Option<&mut bundle_v2::__phase_a_draft::DependenciesScanner>,
+        fetcher: Option<&mut bundle_v2::DependenciesScanner>,
     ) -> Result<(), bun_core::Error> {
         Global::configure_allocator(Global::AllocatorConfiguration { long_running: true, ..Default::default() });
         // PERF(port): allocator param dropped — global mimalloc
@@ -405,10 +405,8 @@ impl BuildCommand {
 
         // PORT NOTE: `resolver.opts` is the canonical
         // `bun_resolver::options::BundleOptions` subset, distinct from the
-        // bundler-side `BundleOptions<'a>`; the subset is built once inside
-        // `Transpiler::init` via `resolver_bundle_options_subset`. Re-syncing
-        // the full struct here is blocked on that helper becoming `pub`.
-        // todo!("blocked_on: bun_bundler::transpiler::resolver_bundle_options_subset");
+        // bundler-side `BundleOptions<'a>`; re-project the mutated options.
+        this_transpiler.sync_resolver_opts();
         this_transpiler.resolver.env_loader = core::ptr::NonNull::new(this_transpiler.env);
 
         // Allow tsconfig.json overriding, but always set it to false if --production is passed.
@@ -421,8 +419,27 @@ impl BuildCommand {
             MacroOptions::Disable => {
                 this_transpiler.options.no_macros = true;
             }
-            MacroOptions::Map(_macros) => {
-                todo!("blocked_on: bun_bundler::options::macro_remap (StringArrayHashMap conversion)");
+            MacroOptions::Map(macros) => {
+                // PORT NOTE: `MacroOptions::Map` carries the
+                // `bun_options_types::Context::MacroMap` redeclaration; the
+                // bundler-side `options.macro_remap` is the resolver crate's
+                // `StringArrayHashMap` shape. Re-key into that shape here,
+                // duplicating value bytes into the process-lifetime `arena`
+                // (which is `&'static`) so the resolver-side `&'static [u8]`
+                // values are well-formed without leaking individual boxes.
+                use bun_resolver::package_json::{
+                    MacroImportReplacementMap as ResolverInner, MacroMap as ResolverMacroMap,
+                };
+                let mut remap = ResolverMacroMap::default();
+                for (pkg, imports) in macros.iter() {
+                    let mut inner = ResolverInner::default();
+                    for (name, path) in imports.iter() {
+                        let path: &'static [u8] = arena.alloc_slice_copy(path);
+                        inner.insert(name, path);
+                    }
+                    remap.insert(pkg, inner);
+                }
+                this_transpiler.options.macro_remap = remap;
             }
             MacroOptions::Unspecified => {}
         }
@@ -431,9 +448,12 @@ impl BuildCommand {
         let mut client_transpiler: Option<transpiler::Transpiler> = None;
         if this_transpiler.options.server_components {
             let mut ct = transpiler::Transpiler::init(arena, log, ctx.args.clone(), None)?;
-            // PORT NOTE: `BundleOptions<'a>` is non-`Clone`; Zig copied the
-            // struct by value. Field-wise re-init is deferred.
-            // todo!("blocked_on: bun_bundler::BundleOptions::clone");
+            // PORT NOTE: Zig assigned `client_transpiler.options = this_transpiler.options`
+            // (struct copy). `BundleOptions<'a>` is non-`Clone` in Rust; instead
+            // `Transpiler::init` above rebuilds options from the same `ctx.args`,
+            // and the divergent fields are set explicitly below. `client_transpiler`
+            // is currently unused after this block (matching the Zig), so a
+            // perfect field-wise copy is not load-bearing.
             ct.options.target = options::Target::Browser;
             ct.options.server_components = true;
             ct.options.conditions = this_transpiler.options.conditions.clone()?;
@@ -467,8 +487,9 @@ impl BuildCommand {
                 crate::bake::Side::Client,
             )?;
 
-            // resolver.opts re-sync deferred — see note above.
+            this_transpiler.sync_resolver_opts();
             this_transpiler.resolver.env_loader = core::ptr::NonNull::new(this_transpiler.env);
+            ct.sync_resolver_opts();
             ct.resolver.env_loader = core::ptr::NonNull::new(ct.env);
             client_transpiler = Some(ct);
         }

@@ -168,8 +168,7 @@ pub struct VirtualMachine {
     pub macro_entry_points: bun_collections::ArrayHashMap<i32, *mut c_void>,
     pub macro_mode: bool,
     pub no_macros: bool,
-    // TODO(b2-cycle): `auto_killer` is `ProcessAutoKiller` (gated sibling).
-    pub auto_killer: (),
+    pub auto_killer: ProcessAutoKiller::ProcessAutoKiller,
 
     pub has_any_macro_remappings: bool,
     pub is_from_devserver: bool,
@@ -1144,6 +1143,12 @@ pub struct RuntimeHooks {
     /// `eventLoop().autoTick()` — needs `Timer::All` for the timeout calc.
     /// Hoisted here so `event_loop.rs` doesn't need its own hook table.
     pub auto_tick: unsafe fn(vm: *mut VirtualMachine),
+    /// `eventLoop().autoTickActive()` — like `auto_tick` but only sleeps in
+    /// the uSockets loop while it has active handles (spec event_loop.zig:455).
+    /// Separate slot because the body skips `runImminentGCTimer` /
+    /// `handleRejectedPromises` and falls through to `tickWithoutIdle` when
+    /// idle — folding it into `auto_tick` would change shutdown semantics.
+    pub auto_tick_active: unsafe fn(vm: *mut VirtualMachine),
     /// `printException` / `printErrorlikeObject` — formats `value` (or its
     /// wrapped `JSC::Exception`) to stderr via `ConsoleObject::Formatter`.
     /// Spec `runErrorHandler` body (VirtualMachine.zig:2164-2188). High tier
@@ -1472,11 +1477,16 @@ impl VirtualMachine {
     /// `on_before_exit` / `bun_main` still make forward progress.
     #[inline]
     pub fn auto_tick_active(&mut self) {
-        // TODO(b2-cycle): dispatch to `EventLoop::auto_tick_active` once it
-        // un-gates (or add a dedicated `RuntimeHooks` slot); the semantic
-        // difference is only whether the loop blocks when no active handles
-        // remain, which `auto_tick` conservatively covers.
-        self.auto_tick();
+        if let Some(hooks) = runtime_hooks() {
+            // PERF(port): was inline switch — direct call in event_loop.zig.
+            // SAFETY: `self` is the live per-thread VM (hook contract).
+            unsafe { (hooks.auto_tick_active)(self) };
+        } else {
+            // No high-tier hook (unit tests) — drain JS tasks only so callers
+            // observe forward progress without blocking on the I/O loop.
+            // SAFETY: `event_loop` self-ptr; uniquely accessed here.
+            unsafe { (*self.event_loop()).tick() };
+        }
     }
 
     /// `reloadEntryPoint(entry_path)` — set `main`, generate the synthetic
@@ -2153,14 +2163,18 @@ impl VirtualMachine {
 
     /// Spec VirtualMachine.zig:255 `initRequestBodyValue`.
     ///
-    /// TODO(b2-cycle): real signature is
-    /// `(body: bun_runtime::webcore::Body::Value) -> *mut Body::Value::HiveRef`,
-    /// but `bun_runtime` is a forward-dep on `bun_jsc` (cycle). The
-    /// `body_value_hive_allocator` lives inside `runtime_state` (high tier);
-    /// callers in `bun_runtime` must construct the `HiveRef` directly until the
-    /// `RuntimeHooks` slot lands.
-    pub fn init_request_body_value(&mut self, _body: *mut c_void) -> *mut c_void {
-        todo!("blocked_on: bun_runtime::webcore::Body::Value (b2-cycle)")
+    /// `body` is a `*mut bun_runtime::webcore::Body::Value`; the returned
+    /// pointer is a `*mut Body::Value::HiveRef`. Both types live in the
+    /// higher `bun_runtime` tier (forward-dep on `bun_jsc`), so they're
+    /// type-erased here and dispatched through [`RuntimeHooks`]. Callers in
+    /// `bun_runtime` cast back.
+    pub fn init_request_body_value(&mut self, body: *mut c_void) -> *mut c_void {
+        let hooks = runtime_hooks().expect("runtime hooks not installed");
+        // SAFETY: hook contract — `body` is a `Body::Value` allocated by the
+        // same `bun_runtime` build that registered the hook; `self` is the
+        // live per-thread VM (which owns the hive allocator inside
+        // `runtime_state`).
+        unsafe { (hooks.init_request_body_value)(self, body) }
     }
 
     /// Spec VirtualMachine.zig:279 `uvLoop`.
@@ -2187,22 +2201,13 @@ impl VirtualMachine {
     }
 
     /// Spec VirtualMachine.zig:302 `onSubprocessSpawn`.
-    ///
-    /// TODO(b2-cycle): `process` is `*mut bun_spawn::Process`; `auto_killer`
-    /// is a `()` placeholder. Widen to `ProcessAutoKiller` when the sibling
-    /// crate un-gates — body is a one-liner forward to
-    /// `self.auto_killer.on_subprocess_spawn(process)`.
-    pub fn on_subprocess_spawn(&mut self, process: *mut c_void) {
-        let _ = process;
-        todo!("blocked_on: ProcessAutoKiller / bun_spawn::Process (b2-cycle)")
+    pub fn on_subprocess_spawn(&mut self, process: *mut bun_spawn::Process) {
+        self.auto_killer.on_subprocess_spawn(process);
     }
 
     /// Spec VirtualMachine.zig:306 `onSubprocessExit`.
-    ///
-    /// TODO(b2-cycle): see [`on_subprocess_spawn`].
-    pub fn on_subprocess_exit(&mut self, process: *mut c_void) {
-        let _ = process;
-        todo!("blocked_on: ProcessAutoKiller / bun_spawn::Process (b2-cycle)")
+    pub fn on_subprocess_exit(&mut self, process: *mut bun_spawn::Process) {
+        self.auto_killer.on_subprocess_exit(process);
     }
 
     /// Spec VirtualMachine.zig:310 `getVerboseFetch`.
@@ -2233,10 +2238,7 @@ impl VirtualMachine {
 
     /// Spec VirtualMachine.zig:369 `mimeType`.
     pub fn mime_type(&mut self, str_: &[u8]) -> Option<bun_http::MimeType::MimeType> {
-        // Body delegates to RareData::mime_type_from_string, which is currently
-        // (depends on MimeType::create_hash_table). Stub until that lands.
-        let _ = (self.rare_data(), str_);
-        todo!("blocked_on: RareData::mime_type_from_string")
+        self.rare_data().mime_type_from_string(str_)
     }
 
     /// Spec VirtualMachine.zig:498 `loadExtraEnvAndSourceCodePrinter`.
@@ -2291,9 +2293,7 @@ impl VirtualMachine {
             // lookups on start for obscure flags which we do not want others to
             // depend on.
             if map.get(b"BUN_FEATURE_FLAG_FORCE_WAITER_THREAD").is_some() {
-                // TODO(b2-cycle): `bun_spawn::process::WaiterThread::set_should_use_waiter_thread()`
-                // — `bun_spawn` is not at this tier.
-                todo!("blocked_on: bun_spawn::process::WaiterThread (b2-cycle)");
+                bun_spawn::process::WaiterThread::set_should_use_waiter_thread();
             }
             // Only allowed for testing
             if map.get(b"BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING").is_some() {
@@ -2497,15 +2497,19 @@ impl VirtualMachine {
 
     /// Spec VirtualMachine.zig:751 `packageManager`.
     ///
-    /// TODO(b2-cycle): real return type is `&mut bun_install::PackageManager`,
-    /// but `transpiler.get_package_manager()` returns the resolver's
-    /// forward-decl stub (`bun_resolver` cannot depend on `bun_install`).
-    /// Callers in `bun_runtime` reach `transpiler.resolver.get_package_manager()`
-    /// directly until the cycle break lands.
+    /// `bun_resolver` holds the manager as an opaque forward-decl (it cannot
+    /// depend on `bun_install`). `bun_jsc` *can*, so cast the opaque back to
+    /// the concrete `bun_install::PackageManager` here — the resolver's
+    /// `PackageManager` is exactly that struct, just type-erased at a lower
+    /// tier.
     #[inline]
     pub fn package_manager(&mut self) -> &mut bun_install::PackageManager {
-        let _ = self.transpiler.get_package_manager();
-        todo!("blocked_on: bun_resolver::PackageManager -> bun_install::PackageManager (b2-cycle)")
+        let pm = self.transpiler.get_package_manager();
+        // SAFETY: `bun_resolver::package_json::PackageManager` is an opaque
+        // forward-decl of `bun_install::PackageManager`; the pointer was
+        // produced by `PackageManager::init_with_runtime` (the install crate)
+        // and only ever names that one type.
+        unsafe { &mut *(pm as *mut _ as *mut bun_install::PackageManager) }
     }
 
     /// Spec VirtualMachine.zig:769 `reload`.
@@ -2572,15 +2576,22 @@ impl VirtualMachine {
 
     /// Spec VirtualMachine.zig:827 `nodeFS`.
     ///
-    /// TODO(b2-cycle): real return type is `&mut bun_runtime::node::fs::NodeFS`,
-    /// but `bun_runtime` is a forward-dep on `bun_jsc` (cycle). The field is
-    /// stored type-erased as `*mut c_void`; downstream callers in `bun_runtime`
-    /// cast back. Lazy-init of the boxed `NodeFS` must happen on that side
-    /// (it owns the struct definition).
+    /// `NodeFS` lives in `bun_runtime` (forward-dep on `bun_jsc`), so the
+    /// field is stored type-erased and the lazy boxed allocation goes through
+    /// [`RuntimeHooks::create_node_fs`]. Callers in `bun_runtime` cast the
+    /// returned pointer back to `*mut node::fs::NodeFS`.
     #[inline]
     pub fn node_fs(&mut self) -> *mut c_void {
-        let _ = self.standalone_module_graph.is_some();
-        todo!("blocked_on: bun_runtime::node::fs::NodeFS")
+        if let Some(existing) = self.node_fs {
+            return existing;
+        }
+        let hooks = runtime_hooks().expect("runtime hooks not installed");
+        // SAFETY: hook contract — `self` is the live per-thread VM. The hook
+        // boxes a `NodeFS{ vm: self if standalone else null }` and returns
+        // the leaked pointer.
+        let new = unsafe { (hooks.create_node_fs)(self) };
+        self.node_fs = Some(new);
+        new
     }
 
     /// Spec VirtualMachine.zig:998 `nextAsyncTaskID`.
@@ -3181,8 +3192,7 @@ impl VirtualMachine {
         }
         let str = jsc::ZigString::init(MAIN_FILE_NAME);
         // SAFETY: `global` valid for VM lifetime.
-        let _ = (&str, self.global);
-        todo!("blocked_on: JSGlobalObject::delete_module_registry_entry (JSGlobalObject.rs gated)")
+        unsafe { (*self.global).delete_module_registry_entry(&str) }
     }
 
     /// Spec VirtualMachine.zig:2363 `useIsolationSourceProviderCache`.
@@ -3393,11 +3403,10 @@ impl VirtualMachine {
         let old_global = self.global;
         // SAFETY: `old_global` valid for VM lifetime; `console` is the live
         // per-VM ConsoleObject.
-        let new_global: *mut JSGlobalObject = {
-            let _ = (old_global, self.console);
-            todo!("blocked_on: JSGlobalObject::create_for_test_isolation (JSGlobalObject.rs gated)")
-        };
-        #[allow(unreachable_code)]
+        // SAFETY: `old_global` valid for VM lifetime; `console` is the live
+        // per-VM ConsoleObject.
+        let new_global: *mut JSGlobalObject =
+            JSGlobalObject::create_for_test_isolation(unsafe { &*old_global }, self.console.cast());
         {
         self.global = new_global;
         VMHolder::CACHED_GLOBAL_OBJECT.set(Some(new_global));
@@ -3413,7 +3422,7 @@ impl VirtualMachine {
                 }
             }
         }
-        } // end #[allow(unreachable_code)]
+        }
     }
 
     /// Spec VirtualMachine.zig:2641 `_loadMacroEntryPoint`.
@@ -4125,26 +4134,120 @@ impl VirtualMachine {
 
     /// Spec VirtualMachine.zig:3989 `initIPCInstance`.
     pub fn init_ipc_instance(&mut self, fd: bun_sys::Fd, mode: crate::ipc::Mode) {
-        // TODO(b2-cycle): `self.ipc` is `Option<()>` until the field type
-        // widens to `Option<IPCInstanceUnion>`; the `Waiting { fd, mode }`
-        // state can't be stashed yet.
-        let _ = (fd, mode);
-        self.ipc = Some(());
+        bun_core::scoped_log!(IPC, "initIPCInstance {:?}", fd);
+        self.ipc = Some(IPCInstanceUnion::Waiting { fd, mode });
     }
 
     /// Spec VirtualMachine.zig:3994 `getIPCInstance`.
     pub fn get_ipc_instance(&mut self) -> Option<*mut IPCInstance> {
-        self.ipc?;
-        // TODO(b2-cycle): blocked_on `IPCInstanceUnion` field +
-        // `ipc::SendQueueOwner` vtable wiring + `ipc::Socket::from_fd`. The
-        // Unix path opens the SpawnIpc socket on the per-VM
-        // `RareData.spawn_ipc_group`, boxes an `IPCInstance`, seats
-        // `data.socket = SocketUnion::Open(socket)`, and writes the version
-        // packet; the Windows path goes through
-        // `SendQueue::windows_configure_client`. Preserve as `todo!` until the
-        // `self.ipc` field widens to `Option<IPCInstanceUnion>` and the IPC
-        // owner vtable for `VirtualMachine` lands.
-        todo!("blocked_on: IPCInstanceUnion / ipc::SendQueueOwner vtable / ipc::Socket::from_fd")
+        let (fd, mode) = match self.ipc.as_ref()? {
+            IPCInstanceUnion::Initialized(inst) => return Some(*inst),
+            IPCInstanceUnion::Waiting { fd, mode } => (*fd, *mode),
+        };
+
+        bun_core::scoped_log!(IPC, "getIPCInstance {:?}", fd);
+
+        // SAFETY: event loop is process-lifetime; sole `&mut` on JS thread.
+        unsafe { (*self.event_loop()).ensure_waker() };
+
+        // PORT NOTE: reshaped for borrowck — `rare_data()` borrows `self` and
+        // `spawn_ipc_group` then needs `&mut VirtualMachine`. Split via raw
+        // pointers (disjoint fields) per the existing `Bun__RareData__*`
+        // accessors in virtual_machine_exports.rs.
+        let this: *mut VirtualMachine = self;
+
+        #[cfg(not(windows))]
+        let instance: *mut IPCInstance = {
+            // SAFETY: disjoint borrow — `spawn_ipc_group` only touches the
+            // embedded `SocketGroup` field + `vm.uws_loop()`.
+            let group: *mut uws::SocketGroup = unsafe {
+                let rare = (*this).rare_data() as *mut RareData;
+                (*rare).spawn_ipc_group(&mut *this)
+            };
+
+            // Box the instance first so `data.owner.ptr` can name its final
+            // address (Zig wrote `.data = undefined` then re-init in place).
+            let instance = IPCInstance::new(IPCInstance {
+                global_this: self.global,
+                group,
+                data: crate::ipc::SendQueue::init(
+                    mode,
+                    crate::ipc::SendQueueOwner {
+                        ptr: core::ptr::null_mut(),
+                        kind: crate::ipc::SendQueueOwnerKind::VirtualMachine,
+                        vtable: &IPCINSTANCE_OWNER_VTABLE,
+                    },
+                    crate::ipc::SocketUnion::Uninitialized,
+                ),
+                has_disconnect_called: false,
+            });
+            // SAFETY: `instance` was just boxed by `IPCInstance::new`.
+            unsafe { (*instance).data.owner.ptr = instance.cast() };
+
+            self.ipc = Some(IPCInstanceUnion::Initialized(instance));
+
+            // SAFETY: `group` is the live per-VM SocketGroup; `instance.data`
+            // is the freshly-initialized SendQueue stored inline in `*instance`.
+            let socket = unsafe {
+                crate::ipc::Socket::from_fd::<crate::ipc::SendQueue>(
+                    &mut *group,
+                    uws::SocketKind::SpawnIpc,
+                    fd,
+                    core::ptr::addr_of_mut!((*instance).data),
+                    true,
+                )
+            };
+            let Some(socket) = socket else {
+                IPCInstance::deinit(instance);
+                self.ipc = None;
+                bun_core::output::warn(format_args!("Unable to start IPC socket"));
+                return None;
+            };
+            socket.set_timeout(0);
+
+            // SAFETY: `instance` is the live boxed IPCInstance.
+            unsafe { (*instance).data.socket = crate::ipc::SocketUnion::Open(socket) };
+
+            instance
+        };
+
+        #[cfg(windows)]
+        let instance: *mut IPCInstance = {
+            let instance = IPCInstance::new(IPCInstance {
+                global_this: self.global,
+                group: (),
+                data: crate::ipc::SendQueue::init(
+                    mode,
+                    crate::ipc::SendQueueOwner {
+                        ptr: core::ptr::null_mut(),
+                        kind: crate::ipc::SendQueueOwnerKind::VirtualMachine,
+                        vtable: &IPCINSTANCE_OWNER_VTABLE,
+                    },
+                    crate::ipc::SocketUnion::Uninitialized,
+                ),
+                has_disconnect_called: false,
+            });
+            // SAFETY: `instance` was just boxed by `IPCInstance::new`.
+            unsafe { (*instance).data.owner.ptr = instance.cast() };
+
+            self.ipc = Some(IPCInstanceUnion::Initialized(instance));
+
+            // SAFETY: `instance` is the live boxed IPCInstance.
+            if let Err(_) = unsafe { (*instance).data.windows_configure_client(fd) } {
+                IPCInstance::deinit(instance);
+                self.ipc = None;
+                bun_core::output::warn(format_args!("Unable to start IPC pipe '{:?}'", fd));
+                return None;
+            }
+
+            instance
+        };
+
+        // SAFETY: `instance` is the live boxed IPCInstance; `self.global` is
+        // the live VM global.
+        unsafe { (*instance).data.write_version_packet(&*self.global) };
+
+        Some(instance)
     }
 
     /// To satisfy the interface from NewHotReloader().

@@ -1115,21 +1115,6 @@ pub mod testing_apis {
     use super::*;
     use crate::test_runner::expect::JSGlobalObjectTestExt as _;
 
-    /// Local shim for Zig `jsc.MarkedArgumentBuffer.wrap(f)` — emits a host fn
-    /// that allocates a `MarkedArgumentBuffer` on the stack and forwards to `F`.
-    /// TODO(port): replace with proc-macro once `bun_jsc::MarkedArgumentBuffer::wrap` lands.
-    const fn marked_arg_buffer_wrap(
-        _f: fn(&JSGlobalObject, &CallFrame, &mut MarkedArgumentBuffer) -> JsResult<JSValue>,
-    ) -> jsc::JSHostFn {
-        unsafe extern "C" fn shim(
-            _g: *mut JSGlobalObject,
-            _cf: *mut CallFrame,
-        ) -> JSValue {
-            todo!("blocked_on: bun_jsc::MarkedArgumentBuffer::wrap")
-        }
-        shim
-    }
-
     #[bun_jsc::host_fn]
     pub fn disabled_on_this_platform(
         global: &JSGlobalObject,
@@ -1169,7 +1154,7 @@ pub mod testing_apis {
 
     // TODO(port): jsc::MarkedArgumentBuffer::wrap — generates a host_fn shim that allocates a
     // MarkedArgumentBuffer and forwards to the impl. Hand-write or proc-macro in Phase B.
-    pub const SHELL_LEX: jsc::JSHostFn = marked_arg_buffer_wrap(shell_lex_impl);
+    pub const SHELL_LEX: jsc::JSHostFn = bun_jsc::marked_argument_buffer_wrap!(shell_lex_impl);
 
     fn shell_lex_impl(
         global: &JSGlobalObject,

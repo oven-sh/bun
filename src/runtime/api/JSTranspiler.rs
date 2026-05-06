@@ -181,10 +181,21 @@ fn packages_option_from_js(
 }
 
 fn level_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<logger::Level>> {
-    // TODO(port): bun_logger::Level lacks a `phf::Map`; thread one through or
-    // hand-roll the lookup here.
-    let _ = (global, value);
-    todo!("blocked_on: bun_logger::Level::from_js")
+    logger::Level::MAP.from_js(global, value)
+}
+
+/// Deep-clone a [`MacroMap`]. Zig's `=` on `StringArrayHashMap` is a struct copy
+/// that shares the backing slice; Rust's keys are `Box<[u8]>` so an owned copy
+/// is needed wherever the spec assigns by value.
+fn clone_macro_map(src: &MacroMap) -> MacroMap {
+    let mut out = MacroMap::default();
+    let _ = out.ensure_unused_capacity(src.count());
+    for (k, v) in src.keys().iter().zip(src.values().iter()) {
+        // inner map: `StringArrayHashMap<&'static [u8]>` — `&[u8]: Clone` ⇒ inherent `clone()` works.
+        let inner = v.clone().expect("OOM");
+        out.put_assume_capacity(k, inner);
+    }
+    out
 }
 
 const PROP_ITER_OPTS: JSPropertyIteratorOptions = JSPropertyIteratorOptions {
@@ -198,8 +209,12 @@ const PROP_ITER_OPTS: JSPropertyIteratorOptions = JSPropertyIteratorOptions {
 impl Config {
     // PORT NOTE: out-param constructor kept as `&mut self` because `self` is a pre-initialized
     // field on `JSTranspiler` (in-place mutation), not a fresh value to return.
-    // Allocator param dropped (non-AST crate; global mimalloc).
-    pub fn from_js(&mut self, global: &JSGlobalObject, object: JSValue) -> JsResult<()> {
+    pub fn from_js(
+        &mut self,
+        global: &JSGlobalObject,
+        object: JSValue,
+        arena: &Arena,
+    ) -> JsResult<()> {
         if object.is_undefined_or_null() {
             return Ok(());
         }
@@ -414,11 +429,17 @@ impl Config {
                 self.macros_buf = out.to_owned_slice().into();
                 let source =
                     logger::Source::init_path_string(b"macros.json", &self.macros_buf[..]);
-                // TODO(port): `parse_json` mode enum literal — replace with the real
-                // cache JSON-mode enum from bun_resolver once exposed.
-                let _ = source;
-                todo!("blocked_on: bun_resolver::cache::Json::parse_json");
-                // self.macro_map = PackageJSON::parse_macros_json(json, &mut self.log, &source);
+                // SAFETY: VirtualMachine::get() returns the live singleton on the JS thread.
+                let vm = unsafe { &mut *VirtualMachine::get() };
+                let Ok(Some(json)) = vm.transpiler.resolver.caches.json.parse_json(
+                    &mut self.log,
+                    &source,
+                    bun_resolver::tsconfig_json::JsonMode::Json,
+                    false,
+                ) else {
+                    break 'macros;
+                };
+                self.macro_map = PackageJSON::parse_macros_json(json, &mut self.log, &source);
             }
         }
 
@@ -621,7 +642,7 @@ impl Config {
                         // the value first, then `put` (which upserts without needing a default
                         // slot). The Zig getOrPut left the slot uninitialized on the error path
                         // anyway, so this is strictly safer.
-                        if let Some(expr) = export_replacement_value(value, global)? {
+                        if let Some(expr) = export_replacement_value(value, global, arena)? {
                             replacements
                                 .put(&key, Runtime::ReplaceableExport::Replace(expr))
                                 .map_err(|_| bun_jsc::JsError::OutOfMemory)?;
@@ -631,7 +652,7 @@ impl Config {
                         if value.is_object() && value.get_length(global)? == 2 {
                             let replacement_value = value.get_index(global, 1)?;
                             if let Some(to_replace) =
-                                export_replacement_value(replacement_value, global)?
+                                export_replacement_value(replacement_value, global, arena)?
                             {
                                 let replacement_key = value.get_index(global, 0)?;
                                 let slice = replacement_key.to_bun_string(global)?;
@@ -873,6 +894,7 @@ impl<'a> Drop for TransformTask<'a> {
 fn export_replacement_value(
     value: JSValue,
     global: &JSGlobalObject,
+    arena: &Arena,
 ) -> JsResult<Option<JSAst::Expr>> {
     if value.is_boolean() {
         return Ok(Some(Expr {
@@ -907,11 +929,18 @@ fn export_replacement_value(
     }
 
     if value.is_string() {
-        // TODO(port): `EString` payload is `StoreRef<E::EString>` (arena slot), not
-        // `Box<E::EString>`. Constructing one outside the AST store needs the
-        // store-allocate helper from `bun_js_parser::ast::new_store`.
-        let _ = global;
-        todo!("blocked_on: bun_js_parser::ast::StoreRef<EString> alloc");
+        let zig_str = value.get_zig_string(global)?;
+        let mut buf = Vec::new();
+        write!(&mut buf, "{}", zig_str).expect("unreachable");
+        // Zig allocPrint'd into the caller's arena. Bump-allocate so the bytes
+        // live as long as the JSTranspiler arena that owns the resulting Expr;
+        // `E::EString::init` erases the borrow to `'static` per the Phase-A
+        // `Str` convention (see ast/E.rs).
+        let data = arena.alloc_slice_copy(&buf);
+        return Ok(Some(Expr::init(
+            JSAst::E::EString::init(data),
+            logger::Loc::EMPTY,
+        )));
     }
 
     Ok(None)
@@ -952,8 +981,7 @@ pub fn constructor(
     } else {
         JSValue::UNDEFINED
     };
-    // allocator = arena.allocator() → dropped (non-AST crate)
-    config.from_js(global, config_arg)?;
+    config.from_js(global, config_arg, arena_ref)?;
 
     if global.has_exception() {
         return Err(bun_jsc::JsError::Thrown);

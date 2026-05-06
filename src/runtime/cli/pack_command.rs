@@ -1737,15 +1737,15 @@ pub fn pack<const FOR_PUBLISH: bool>(
     abs_package_json_path: &ZStr,
 ) -> Result<PackReturn<'static, FOR_PUBLISH>, PackError<FOR_PUBLISH>> {
     let manager = &mut *ctx.manager;
+    let manager_ptr: *mut PackageManager = manager;
     let log_level = manager.options.log_level;
     let bump = pack_bump();
-    // PORT NOTE: `manager.workspace_package_json_cache` / `manager.log` are not on
-    // the upstream `PackageManager` stub yet — routed via `pm_*` shims. The two
-    // accessors can't both borrow `manager` mutably across the same call, so the
-    // `log` slot is `todo!()`-ed inline (the cache shim already gates the whole
-    // expression at runtime).
-    let mut json = match pm_workspace_cache(manager).get_with_path(
-        todo!("blocked_on: bun_install::PackageManager::log"),
+    // PORT NOTE: `workspace_package_json_cache` and `log` are disjoint fields on
+    // `PackageManager` but Zig accessed them via the same `*PackageManager`
+    // alias inside one call; route through raw-pointer field projections so the
+    // two `&mut` borrows don't conflict.
+    let mut json = match pm_workspace_cache(manager_ptr).get_with_path(
+        pm_log(manager_ptr),
         abs_package_json_path.as_bytes(),
         WorkspacePackageJSONCache::GetJSONOptions { guess_indentation: true, ..Default::default() },
     ) {
@@ -1755,17 +1755,30 @@ pub fn pack<const FOR_PUBLISH: bool>(
         }
         WorkspacePackageJSONCache::GetResult::ParseErr(err) => {
             Output::err(err, "failed to parse package.json: {}", format_args!("{}", bstr::BStr::new(abs_package_json_path.as_bytes())));
-            let _ = pm_log(manager).print(Output::error_writer() as *mut _);
+            let _ = pm_log(manager_ptr).print(Output::error_writer() as *mut _);
             Global::crash();
         }
         WorkspacePackageJSONCache::GetResult::Entry(entry) => entry,
     };
 
     if FOR_PUBLISH {
-        if let Some(_config) = json.root.get(b"publishConfig") {
-            // PORT NOTE: `PublishConfigStub` only carries `auth_type`; `tag`/`access`
-            // live on the gated real `PackageManagerOptions`. Body deferred.
-            todo!("blocked_on: bun_install::PublishConfigStub::tag/access");
+        if let Some(config) = json.root.get(b"publishConfig") {
+            if manager.options.publish_config.tag.is_empty() {
+                if let Some(tag) = Expr::get_string_cloned(&config, bump, b"tag")? {
+                    manager.options.publish_config.tag = tag.to_vec();
+                }
+            }
+            if manager.options.publish_config.access.is_none() {
+                if let Some((access, _)) = Expr::get_string(&config, bump, b"access")? {
+                    manager.options.publish_config.access = match bun_install::Access::from_str(access) {
+                        Some(a) => Some(a),
+                        None => {
+                            Output::err_generic("invalid `access` value: '{}'", format_args!("{}", bstr::BStr::new(access)));
+                            Global::crash();
+                        }
+                    };
+                }
+            }
         }
 
         // maybe otp
@@ -1934,9 +1947,25 @@ pub fn pack<const FOR_PUBLISH: bool>(
         };
         #[cfg(not(windows))]
         let cache_key: &[u8] = abs_package_json_path.as_bytes();
-        let _ = cache_key;
+        let _ = pm_workspace_cache(manager_ptr).map.remove(cache_key);
+
         // Re-read package.json from disk
-        json = todo!("blocked_on: bun_install::PackageManager::workspace_package_json_cache + log");
+        json = match pm_workspace_cache(manager_ptr).get_with_path(
+            pm_log(manager_ptr),
+            abs_package_json_path.as_bytes(),
+            WorkspacePackageJSONCache::GetJSONOptions { guess_indentation: true, ..Default::default() },
+        ) {
+            WorkspacePackageJSONCache::GetResult::ReadErr(err) => {
+                Output::err(err, "failed to read package.json: {}", format_args!("{}", bstr::BStr::new(abs_package_json_path.as_bytes())));
+                Global::crash();
+            }
+            WorkspacePackageJSONCache::GetResult::ParseErr(err) => {
+                Output::err(err, "failed to parse package.json: {}", format_args!("{}", bstr::BStr::new(abs_package_json_path.as_bytes())));
+                let _ = pm_log(manager_ptr).print(Output::error_writer() as *mut _);
+                Global::crash();
+            }
+            WorkspacePackageJSONCache::GetResult::Entry(entry) => entry,
+        };
 
         // Re-validate private flag after scripts may have modified it.
         if FOR_PUBLISH {

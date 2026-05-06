@@ -172,8 +172,8 @@ impl LinuxMemFdAllocator {
                 Ok(unsafe {
                     BlobStoreBytes::from_raw_parts(
                         slice_ptr,
-                        len as u32,
-                        map_len as u32,
+                        len as crate::webcore::blob::SizeType,
+                        map_len as crate::webcore::blob::SizeType,
                         Self::allocator(this),
                     )
                 })

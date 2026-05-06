@@ -817,7 +817,7 @@ use bun_options_types::schema::api;
 // exhaustiveness; deferred until `bun_options_types` grows the JSX surface.
 
 #[inline]
-fn to_parser_jsx_pragma(
+pub fn to_parser_jsx_pragma(
     p: crate::options_impl::jsx::Pragma,
 ) -> js_ast::parser::options::JSX::Pragma {
     use crate::options_impl::jsx::Runtime as Src;

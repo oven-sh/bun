@@ -121,12 +121,11 @@ impl AnyResponseExt for uws::AnyResponse {
     }
 }
 
-// TODO(port): jsc.WebCore.HTTPServerWritable(ssl_enabled, http3) — comptime type fn.
-// TODO(b2-blocked): `webcore::streams::HTTPServerWritable<SSL,H3>` name-clashes
-// with the `declare_scope!` static of the same name; alias to c_void until
-// streams.rs renames the scope. The JSSink wrapper is also gated there.
-pub type ResponseStream<const SSL_ENABLED: bool, const HTTP3: bool> = c_void;
-pub type ResponseStreamJSSink<const SSL_ENABLED: bool, const HTTP3: bool> = c_void;
+// `jsc.WebCore.HTTPServerWritable(ssl_enabled, http3)` — comptime type fn.
+pub type ResponseStream<const SSL_ENABLED: bool, const HTTP3: bool> =
+    crate::webcore::streams::HTTPServerWritable<SSL_ENABLED, HTTP3>;
+pub type ResponseStreamJSSink<const SSL_ENABLED: bool, const HTTP3: bool> =
+    crate::webcore::streams::HTTPServerWritableJSSink<SSL_ENABLED, HTTP3>;
 
 /// This pre-allocates up to 2,048 RequestContext structs.
 /// It costs about 655,632 bytes.

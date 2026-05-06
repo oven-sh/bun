@@ -39,7 +39,7 @@ pub use crate::concurrent_promise_task::ConcurrentPromiseTask;
 pub use crate::cpp_task::{ConcurrentCppTask, CppTask};
 pub use crate::garbage_collection_controller::GarbageCollectionController;
 pub use crate::posix_signal_handle::{PosixSignalHandle, PosixSignalTask};
-pub use crate::work_task::WorkTask;
+pub use crate::work_task::{WorkTask, WorkTaskContext};
 
 bun_core::declare_scope!(EventLoop, hidden);
 
@@ -864,12 +864,6 @@ impl EventLoop {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// `bun_runtime`-dependent methods — bodies preserved verbatim from the Phase-A
-// draft, gated behind `` until the cycle breaks (high tier owns
-// these via the dispatch hook). Un-gate piecewise in B-3.
-// ──────────────────────────────────────────────────────────────────────────
-
 impl EventLoop {
     pub fn tick_while_paused(&mut self, done: &mut bool) {
         while !*done {
@@ -893,73 +887,6 @@ impl EventLoop {
         let jsc_vm = unsafe { (*global_object.bun_vm()).jsc_vm };
         self.drain_microtasks_with_global(global_object, jsc_vm)?;
         Ok(result)
-    }
-
-    // PORT NOTE: real body — installed by `bun_runtime` via
-    // `virtual_machine::RuntimeHooks::auto_tick`. Preserved here for reference.
-    pub fn _auto_tick_body(&mut self) {
-        let loop_ = self.usockets_loop();
-        let ctx = self.vm();
-
-        self.tick_immediate_tasks(ctx);
-        #[cfg(windows)]
-        {
-            if !self.immediate_tasks.is_empty() {
-                self.wakeup();
-            }
-        }
-
-        #[cfg(unix)]
-        {
-            let pending_unref = ctx.pending_unref_counter;
-            if pending_unref > 0 {
-                ctx.pending_unref_counter = 0;
-                loop_.unref_count(pending_unref);
-            }
-        }
-
-        ctx.timer.update_date_header_timer_if_necessary(loop_, ctx);
-        self.run_imminent_gc_timer();
-
-        if loop_.is_active() {
-            self.process_gc_timer();
-            #[cfg(debug_assertions)]
-            let event_loop_sleep_timer = std::time::Instant::now();
-            let mut timespec: bun_core::Timespec = if cfg!(debug_assertions) {
-                bun_core::Timespec { sec: 0, nsec: 0 }
-            } else {
-                // SAFETY: only read when get_timeout() returned true and wrote it
-                unsafe { core::mem::zeroed() }
-            };
-            loop_.tick_with_timeout(if ctx.timer.get_timeout(&mut timespec, ctx) {
-                Some(&timespec)
-            } else {
-                None
-            });
-            #[cfg(debug_assertions)]
-            {
-                bun_core::scoped_log!(
-                    EventLoop,
-                    "tick {:?}, timeout: {:?}",
-                    event_loop_sleep_timer.elapsed(),
-                    timespec.ns()
-                );
-            }
-        } else {
-            loop_.tick_without_idle();
-            #[cfg(debug_assertions)]
-            {
-                bun_core::scoped_log!(EventLoop, "tickWithoutIdle");
-            }
-        }
-
-        #[cfg(unix)]
-        {
-            ctx.timer.drain_timers(ctx);
-        }
-
-        ctx.on_after_event_loop();
-        self.global_ref().handle_rejected_promises();
     }
 
     pub fn tick_possibly_forever(&mut self) {
@@ -1003,52 +930,6 @@ impl EventLoop {
         unsafe { (*ctx).on_after_event_loop() };
         self.tick_concurrent();
         self.tick();
-    }
-
-    pub fn auto_tick_active(&mut self) {
-        let loop_ptr = self.usockets_loop();
-        // SAFETY: usockets_loop() returns a live uws loop for the VM lifetime.
-        let loop_ = unsafe { &mut *loop_ptr };
-        let ctx = self.vm();
-
-        self.tick_immediate_tasks(ctx);
-        #[cfg(windows)]
-        {
-            if !self.immediate_tasks.is_empty() {
-                self.wakeup();
-            }
-        }
-
-        #[cfg(unix)]
-        {
-            // SAFETY: `ctx` is the live owning VM; field reads/writes only.
-            let pending_unref = unsafe { (*ctx).pending_unref_counter };
-            if pending_unref > 0 {
-                // SAFETY: see above.
-                unsafe { (*ctx).pending_unref_counter = 0 };
-                loop_.unref_count(pending_unref);
-            }
-        }
-
-        // TODO(b2-cycle): `ctx.timer.update_date_header_timer_if_necessary(loop_, ctx)` —
-        // `timer` is `()` until bun_runtime widens it to `Timer::All`.
-        let _ = &loop_ptr;
-
-        if loop_.is_active() {
-            self.process_gc_timer();
-            // TODO(b2-cycle): `ctx.timer.get_timeout(&mut timespec, ctx)` — see above.
-            loop_.tick_with_timeout(None);
-        } else {
-            loop_.tick_without_idle();
-        }
-
-        #[cfg(unix)]
-        {
-            // TODO(b2-cycle): `ctx.timer.drain_timers(ctx)` — see above.
-        }
-
-        // SAFETY: `ctx` is the live owning VM.
-        unsafe { (*ctx).on_after_event_loop() };
     }
 
     pub fn _wait_for_promise_body(&mut self, promise: jsc::AnyPromise) {
@@ -1194,11 +1075,10 @@ pub extern "C" fn Bun__EventLoop__exit(global: *mut JSGlobalObject) {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/jsc/event_loop.zig (748 lines)
-//   confidence: medium
-//   todos:      14
-//   notes:      B-2 un-gate. tick/enter/exit/drain/run_callback/concurrent-queue/
-//               tick_immediate_tasks real; auto_tick*/tick_possibly_forever/
-//               wait_for_promise gated behind cfg(any()) (bun_runtime cycle).
-//               Task + ImmediateObject dispatch hoisted to high tier via
-//               TICK_QUEUE_HOOK / RUN_IMMEDIATE_HOOK.
+//   confidence: high
+//   notes:      Full bodies ported. Task / ImmediateObject / WTFTimer dispatch
+//               hoisted to bun_runtime via TICK_QUEUE_HOOK / RUN_IMMEDIATE_HOOK
+//               / RUN_WTF_TIMER_HOOK; auto_tick / auto_tick_active dispatch via
+//               virtual_machine::RuntimeHooks (need Timer::All for poll
+//               deadline). All re-exports resolve to real types.
 // ──────────────────────────────────────────────────────────────────────────

@@ -91,7 +91,7 @@ impl AbortSignal {
     }
 
     pub fn signal(&self, global_object: &JSGlobalObject, reason: CommonAbortReason) {
-        bun_analytics::Features::abort_signal.fetch_add(1, Ordering::Relaxed);
+        bun_analytics::features::abort_signal.fetch_add(1, Ordering::Relaxed);
         // SAFETY: thin FFI forward.
         unsafe { WebCore__AbortSignal__signal(self.as_mut_ptr(), global_object.as_ptr(), reason) }
     }
@@ -171,7 +171,7 @@ impl AbortSignal {
     }
 
     pub fn new(global: &JSGlobalObject) -> *mut AbortSignal {
-        // TODO(port): jsc.markBinding(@src()) — debug-only binding tracer
+        crate::mark_binding!();
         // SAFETY: thin FFI forward; returns a freshly-ref'd signal.
         unsafe { WebCore__AbortSignal__new(global.as_ptr()) }
     }

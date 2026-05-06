@@ -228,13 +228,25 @@ pub fn install_with_manager(
                 let source_copy = root_package_json_entry.source;
 
                 let mut resolver: () = ();
-                // TODO(port): `Package::parse` is typed against `lockfile_real::Lockfile`;
-                // the local `lockfile` (and `manager.lockfile`) are the stub type until
-                // the stub/real Lockfile unification lands (reconciler-6).
-                let _ = (&mut lockfile, &mut maybe_root, &source_copy, &mut resolver);
-                let _: Result<(), bun_core::Error> = Ok(todo!(
-                    "blocked_on: lockfile::Lockfile / lockfile_real::Lockfile unification (reconciler-6) — Package::parse(&mut lockfile, manager, log, &source_copy, &mut resolver, Features::main())"
-                ));
+                // PORT NOTE: Zig passes `manager`, `manager.log` and a fresh
+                // stack `lockfile` simultaneously. Route through raw ptrs so
+                // borrowck doesn't see overlapping `&mut PackageManager` /
+                // `&mut Lockfile` (Zig `*T` semantics).
+                {
+                    let log = manager.log.unwrap().as_ptr();
+                    let mgr: *mut PackageManager = manager;
+                    // SAFETY: `parse` only reads `*log` / `*mgr` between writes
+                    // to `lockfile`/`maybe_root`; no field of `*mgr` aliases
+                    // the local `lockfile`.
+                    maybe_root.parse(
+                        &mut lockfile,
+                        unsafe { &mut *mgr },
+                        unsafe { &mut *log },
+                        &source_copy,
+                        &mut resolver,
+                        Features::main(),
+                    )?;
+                }
                 let mut mapping = vec![invalid_package_id; maybe_root.dependencies.len as usize].into_boxed_slice();
                 // @memset already done via vec! init
 
@@ -242,15 +254,28 @@ pub fn install_with_manager(
                 // fresh `lockfile` simultaneously. Route through raw ptrs to satisfy
                 // borrowck; `Diff::generate` is ported in lockfile_real::package.
                 manager.summary = {
-                    let log = manager.log_mut();
                     let mgr: *mut PackageManager = manager;
-                    let from_lockfile: *mut Lockfile = &mut manager.lockfile;
-                    let update_requests = if manager.to_update { Some(&manager.update_requests[..]) } else { None };
-                    // TODO(port): `Diff::generate` is typed against `lockfile_real::Lockfile`;
-                    // both `from_lockfile` (= &mut manager.lockfile) and the local `lockfile`
-                    // are the stub type until reconciler-6 unifies them.
-                    let _ = (mgr, log, from_lockfile, &mut lockfile, &mut root, &mut maybe_root, update_requests, &mut mapping[..]);
-                    todo!("blocked_on: lockfile::Lockfile / lockfile_real::Lockfile unification (reconciler-6) — Diff::generate(manager, log, &mut manager.lockfile, &mut lockfile, &mut root, &mut maybe_root, update_requests, Some(&mut mapping))")
+                    // SAFETY: `mgr` is the sole provenance root for the manager
+                    // from here on; `Diff::generate` reborrows disjoint fields
+                    // (`log`, `lockfile`, `update_requests`) through it. No
+                    // other live `&mut` to `*mgr` exists across the call.
+                    let log = unsafe { (*mgr).log.unwrap().as_ptr() };
+                    let from_lockfile: *mut Lockfile = unsafe { &mut (*mgr).lockfile };
+                    let update_requests = if unsafe { (*mgr).to_update } {
+                        Some(unsafe { &(*mgr).update_requests[..] })
+                    } else {
+                        None
+                    };
+                    Diff::generate(
+                        unsafe { &mut *mgr },
+                        unsafe { &mut *log },
+                        unsafe { &mut *from_lockfile },
+                        &mut lockfile,
+                        &mut root,
+                        &mut maybe_root,
+                        update_requests,
+                        Some(&mut mapping[..]),
+                    )?
                 };
 
                 had_any_diffs = manager.summary.has_diffs();
@@ -286,10 +311,18 @@ pub fn install_with_manager(
                         builder.count(patch_dep.path.slice(&lockfile.buffers.string_bytes));
                     }
 
-                    // TODO(port): OverrideMap/CatalogMap::count are typed against
-                    // `lockfile_real::Lockfile`; the local `lockfile` is the stub type.
-                    // Route through the real impl once stub/real unify (reconciler-6).
-                    let _ = (&lockfile.overrides, &lockfile.catalogs);
+                    // PORT NOTE: reshaped for borrowck — Zig passes `&lockfile`
+                    // while also borrowing `lockfile.overrides` / `.catalogs`.
+                    // `count` only reads `lockfile.buffers.string_bytes`, so
+                    // route through a raw ptr derived first (Zig `*T` semantics).
+                    {
+                        let lockfile_ptr: *mut Lockfile = &mut lockfile;
+                        // SAFETY: `count` only reads `(*lockfile_ptr).buffers.
+                        // string_bytes`; no overlap with the disjoint
+                        // `.overrides`/`.catalogs` field reborrows.
+                        unsafe { (*lockfile_ptr).overrides.count(&mut *lockfile_ptr, builder) };
+                        unsafe { (*lockfile_ptr).catalogs.count(&mut *lockfile_ptr, builder) };
+                    }
                     maybe_root.scripts.count(&lockfile.buffers.string_bytes, builder);
 
                     let off = manager.lockfile.buffers.dependencies.len() as u32;
@@ -323,14 +356,33 @@ pub fn install_with_manager(
                         break 'brk all_name_hashes;
                     };
 
-                    // TODO(port): OverrideMap/CatalogMap::clone — Zig: `lockfile.overrides.clone(
-                    // manager, &lockfile, manager.lockfile, builder)`. The ported impls in
-                    // `lockfile_real::{OverrideMap,CatalogMap}` are typed against
-                    // `lockfile_real::Lockfile`; the stub `Lockfile` here doesn't unify yet
-                    // (reconciler-6).
-                    manager.lockfile.overrides = core::mem::take(&mut lockfile.overrides);
-                    manager.lockfile.catalogs = core::mem::take(&mut lockfile.catalogs);
-                    let _ = builder;
+                    // PORT NOTE: reshaped for borrowck — Zig: `lockfile.overrides
+                    // .clone(manager, &lockfile, manager.lockfile, builder)`
+                    // borrows `manager` + `manager.lockfile` + the local
+                    // `lockfile` + a field of `lockfile`. Route through raw
+                    // ptrs derived from a single provenance root each.
+                    {
+                        let mgr: *mut PackageManager = manager;
+                        let to_lockfile: *mut Lockfile = unsafe { &mut (*mgr).lockfile };
+                        let from_lockfile: *mut Lockfile = &mut lockfile;
+                        // SAFETY: `clone` reads `*from_lockfile` (string_bytes)
+                        // and appends into `*to_lockfile` via `builder`; the
+                        // four reborrows touch disjoint storage.
+                        unsafe {
+                            (*to_lockfile).overrides = (*from_lockfile).overrides.clone(
+                                &mut *mgr,
+                                &mut *from_lockfile,
+                                &mut *to_lockfile,
+                                builder,
+                            )?;
+                            (*to_lockfile).catalogs = (*from_lockfile).catalogs.clone(
+                                &mut *mgr,
+                                &mut *from_lockfile,
+                                &mut *to_lockfile,
+                                builder,
+                            )?;
+                        }
+                    }
 
                     manager.lockfile.trusted_dependencies = if let Some(trusted_dependencies) = &lockfile.trusted_dependencies {
                         Some(bun_core::handle_oom(trusted_dependencies.clone()))

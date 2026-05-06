@@ -107,7 +107,7 @@ static FETCH_HEADERS_VTABLE: bun_http::headers::FetchHeadersVTable =
     };
 
 #[inline]
-fn fetch_headers_ref(h: &FetchHeaders) -> bun_http::headers::FetchHeadersRef<'_> {
+pub(super) fn fetch_headers_ref(h: &FetchHeaders) -> bun_http::headers::FetchHeadersRef<'_> {
     bun_http::headers::FetchHeadersRef {
         owner: h as *const FetchHeaders as *const (),
         vtable: &FETCH_HEADERS_VTABLE,

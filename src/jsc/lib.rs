@@ -2008,7 +2008,7 @@ pub use self::event_loop::{
     EventLoopKind, EventLoopTask, EventLoopTaskPtr, GarbageCollectionController, JsTerminated,
     JsTerminatedResult,
     JsVM, ManagedTask, MiniEventLoop, MiniVM, PosixSignalHandle, PosixSignalTask, Task, WorkPool,
-    WorkPoolTask, WorkTask,
+    WorkPoolTask, WorkTask, WorkTaskContext,
 };
 #[cfg(unix)]
 pub type PlatformEventLoop = bun_uws::Loop;
@@ -2025,15 +2025,82 @@ pub use self::sizes as Sizes;
 pub type ZigString = bun_string::ZigString;
 /// `ZigString.Slice` — re-exported under the path dependents expect.
 pub type ZigStringSlice = bun_string::ZigStringSlice;
-/// Deprecated: Use `bun_webcore`
-// TODO(b1): bun_webcore crate not available at this tier.
-#[deprecated]
-pub use bun_webcore as WebCore;
+/// Deprecated: Use `bun_runtime::webcore`.
+///
+/// LAYERING: `jsc.zig:163` aliases `WebCore = bun.webcore`, but `bun_runtime`
+/// (where `webcore` lives in the Rust port) depends on `bun_jsc` — a cycle. The
+/// types lower-tier crates actually need (`Blob`, `Request`, `Response`,
+/// `BuildArtifact`, …) are defined here as their FFI-opaque forms so callers
+/// below `bun_runtime` can name them without inverting the dep graph. The
+/// `bun_runtime::webcore` definitions are layout-compatible and adopt these via
+/// re-export once that crate un-gates.
 #[allow(non_snake_case)]
 pub mod WebCore {
-    // Forward stubs for the webcore types dependents reference. Real defs live
-    // in the bun_webcore crate (not available at this tier).
-    crate::stub_ty!(Request, Response);
+    /// `webcore.Request` — opaque FFI handle to the native `m_ctx` payload of a
+    /// `JSRequest` (src/runtime/webcore/Request.zig). Lower-tier crates only
+    /// downcast (`JSValue::as_::<Request>()`) and call C-ABI accessors; the
+    /// full field layout lives in `bun_runtime::webcore::Request`.
+    #[repr(C)]
+    pub struct Request {
+        _opaque: core::cell::UnsafeCell<[u8; 0]>,
+        _marker: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+    }
+    /// `webcore.Response` — opaque FFI handle (see [`Request`]).
+    #[repr(C)]
+    pub struct Response {
+        _opaque: core::cell::UnsafeCell<[u8; 0]>,
+        _marker: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+    }
+
+    // Codegen externs (build/debug/codegen/ZigGeneratedClasses.cpp) — C++
+    // symbols, not Rust, so declaring them here is the canonical FFI binding,
+    // not a layering workaround.
+    unsafe extern "C" {
+        fn Request__fromJS(value: crate::JSValue) -> Option<core::ptr::NonNull<Request>>;
+        fn Request__fromJSDirect(value: crate::JSValue) -> Option<core::ptr::NonNull<Request>>;
+        fn Request__getConstructor(global: *mut crate::JSGlobalObject) -> crate::JSValue;
+        fn Response__fromJS(value: crate::JSValue) -> Option<core::ptr::NonNull<Response>>;
+        fn Response__fromJSDirect(value: crate::JSValue) -> Option<core::ptr::NonNull<Response>>;
+        fn Response__getConstructor(global: *mut crate::JSGlobalObject) -> crate::JSValue;
+    }
+
+    impl crate::JsClass for Request {
+        fn from_js(v: crate::JSValue) -> Option<*mut Self> {
+            // SAFETY: codegen extern; `v` is a valid JSValue by contract.
+            unsafe { Request__fromJS(v) }.map(|p| p.as_ptr())
+        }
+        fn from_js_direct(v: crate::JSValue) -> Option<*mut Self> {
+            // SAFETY: caller has already checked `is_cell()`.
+            unsafe { Request__fromJSDirect(v) }.map(|p| p.as_ptr())
+        }
+        fn to_js(self, _g: &crate::JSGlobalObject) -> crate::JSValue {
+            // `Request` is opaque at this tier (zero-sized handle); construction
+            // goes through `bun_runtime::webcore::Request::to_js`. This handle
+            // type is only ever obtained via `from_js`, never moved by value.
+            crate::JSValue::UNDEFINED
+        }
+        fn get_constructor(g: &crate::JSGlobalObject) -> crate::JSValue {
+            // SAFETY: `g` is live; codegen extern returns the cached ctor.
+            unsafe { Request__getConstructor(g.as_ptr()) }
+        }
+    }
+    impl crate::JsClass for Response {
+        fn from_js(v: crate::JSValue) -> Option<*mut Self> {
+            // SAFETY: codegen extern; `v` is a valid JSValue by contract.
+            unsafe { Response__fromJS(v) }.map(|p| p.as_ptr())
+        }
+        fn from_js_direct(v: crate::JSValue) -> Option<*mut Self> {
+            // SAFETY: caller has already checked `is_cell()`.
+            unsafe { Response__fromJSDirect(v) }.map(|p| p.as_ptr())
+        }
+        fn to_js(self, _g: &crate::JSGlobalObject) -> crate::JSValue {
+            crate::JSValue::UNDEFINED
+        }
+        fn get_constructor(g: &crate::JSGlobalObject) -> crate::JSValue {
+            // SAFETY: `g` is live; codegen extern returns the cached ctor.
+            unsafe { Response__getConstructor(g.as_ptr()) }
+        }
+    }
 
     /// `webcore.Blob` (src/runtime/webcore/Blob.zig). Ported to this tier so
     /// lower-tier crates (e.g. `bun_bundler_jsc`) can construct Blob values
@@ -2331,16 +2398,14 @@ pub mod api {
         _m: core::marker::PhantomData<*mut u8>,
     }
 }
-/// Deprecated: Use `bun_api::node`
-// TODO(b1): bun_api::node missing from stub surface
-#[deprecated]
-pub use bun_api::node as Node;
+/// Deprecated: Use `bun_runtime::node`.
+///
+/// LAYERING: `jsc.zig:165` aliases `Node = bun.api.node`, but that namespace
+/// lives in `bun_runtime` (which depends on `bun_jsc`). Only the path types
+/// lower-tier crates need (`PathLike`, `PathOrFileDescriptor`) are defined
+/// here; everything else is reached via `bun_runtime::node` directly.
 #[allow(non_snake_case)]
 pub mod Node {
-    // `node.BlobOrStringOrBuffer` is defined in bun_runtime (forward-dep on
-    // bun_jsc). Surface an opaque placeholder so dependents type-check.
-    crate::stub_ty!(BlobOrStringOrBuffer);
-
     /// `node.PathLike` (src/runtime/node/types.zig:532). Ported to this tier
     /// so lower-tier crates (e.g. `bun_bundler_jsc`) can construct file-backed
     /// Blob stores without a `bun_runtime` forward-dep cycle.
@@ -2376,9 +2441,9 @@ pub fn mark_member_binding(_class: &'static str, _src: &core::panic::Location<'s
     // gated: bun_output::scoped_log!
 }
 
-// TODO(b1): bun_api::Subprocess missing from stub surface
-pub use bun_api::Subprocess;
-stub_ty!(Subprocess);
+// LAYERING: `jsc.zig:183` aliases `Subprocess = bun.api.Subprocess`, but that
+// type lives in `bun_runtime::api` (forward-dep). The Rust port drops the
+// alias; callers reference `bun_runtime::api::Subprocess` directly.
 
 /// Generated classes — re-run generate-classes.ts with .rs output.
 pub mod codegen {

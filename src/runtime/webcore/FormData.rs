@@ -9,87 +9,11 @@ use bun_jsc::{
 };
 use bun_semver::{self, SlicedString};
 use bun_str::{strings, ZigString, ZigStringSlice};
-#[allow(unused_imports)]
 use core::ffi::c_void;
 
 use crate::webcore::Blob;
 
 declare_scope!(FormData, visible);
-
-// PORT NOTE: `bun_jsc::AnyPromise` (the pointer-variant exported from lib.rs)
-// has no `resolve`/`reject` yet; thin local helpers dispatch to the underlying
-// `JSPromise` / `JSInternalPromise`.
-#[inline]
-fn any_promise_reject(p: AnyPromise, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
-    match p {
-        AnyPromise::Normal(ptr) => unsafe { (*ptr).reject(global, Ok(value))? },
-        AnyPromise::Internal(ptr) => unsafe { (*ptr).reject(global, Ok(value))? },
-    }
-    Ok(())
-}
-#[inline]
-fn any_promise_resolve(p: AnyPromise, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
-    match p {
-        AnyPromise::Normal(ptr) => unsafe { (*ptr).resolve(global, value)? },
-        AnyPromise::Internal(ptr) => unsafe { (*ptr).resolve(global, value)? },
-    }
-    Ok(())
-}
-
-// PORT NOTE: `bun_jsc::DOMFormData` is currently an opaque `stub_ty!` (real impl
-// locally and dispatch through free fns so this file compiles independently.
-mod dom_form_data_shim {
-    use super::{DOMFormData, JSGlobalObject, JSValue, ZigString};
-    use core::ffi::c_void;
-
-    unsafe extern "C" {
-        fn WebCore__DOMFormData__create(arg0: *mut JSGlobalObject) -> JSValue;
-        fn WebCore__DOMFormData__createFromURLQuery(
-            arg0: *mut JSGlobalObject,
-            arg1: *const ZigString,
-        ) -> JSValue;
-        fn WebCore__DOMFormData__fromJS(js_value0: JSValue) -> *mut DOMFormData;
-        fn WebCore__DOMFormData__append(
-            arg0: *mut DOMFormData,
-            arg1: *const ZigString,
-            arg2: *const ZigString,
-        );
-        fn WebCore__DOMFormData__appendBlob(
-            arg0: *mut DOMFormData,
-            arg1: *mut JSGlobalObject,
-            arg2: *const ZigString,
-            arg3: *mut c_void,
-            arg4: *const ZigString,
-        );
-    }
-
-    #[inline]
-    pub fn create(global: &JSGlobalObject) -> JSValue {
-        unsafe { WebCore__DOMFormData__create(global.as_ptr()) }
-    }
-    #[inline]
-    pub fn create_from_url_query(global: &JSGlobalObject, query: &ZigString) -> JSValue {
-        unsafe { WebCore__DOMFormData__createFromURLQuery(global.as_ptr(), query) }
-    }
-    #[inline]
-    pub fn from_js<'a>(value: JSValue) -> Option<&'a mut DOMFormData> {
-        unsafe { WebCore__DOMFormData__fromJS(value).as_mut() }
-    }
-    #[inline]
-    pub fn append(form: *mut DOMFormData, name_: &ZigString, value_: &ZigString) {
-        unsafe { WebCore__DOMFormData__append(form, name_, value_) }
-    }
-    #[inline]
-    pub fn append_blob(
-        form: *mut DOMFormData,
-        global: &JSGlobalObject,
-        name_: &ZigString,
-        blob: *mut c_void,
-        filename_: &ZigString,
-    ) {
-        unsafe { WebCore__DOMFormData__appendBlob(form, global.as_ptr(), name_, blob, filename_) }
-    }
-}
 
 pub struct FormData {
     pub fields: Map,
@@ -102,42 +26,26 @@ pub type Map = ArrayHashMap<bun_semver::String, FieldEntry>;
 // PORT NOTE: Zig used `bun.Semver.String.ArrayHashContext` + store_hash=false;
 // `bun_collections::ArrayHashMap` is wyhash-keyed — Phase B confirm context match.
 
-// PORT NOTE: `Encoding` is also defined in `bun_core::form_data` (lower-tier,
-// JSC-free) and is what callers in `Body.rs` hold. Re-export it here so this
-// module's `to_js` accepts the same type instead of a parallel local enum.
-pub use bun_core::form_data::Encoding;
+// `Encoding`, `get_boundary`, and `AsyncFormData` are JSC-free and live in the
+// lower-tier `bun_core::form_data` so `Body`/`Request`/`Response` can name them
+// without depending on `bun_runtime`. Re-exported here so `crate::webcore::
+// form_data::*` callers see the same nominal types.
+pub use bun_core::form_data::{get_boundary, AsyncFormData, Encoding};
 
-pub struct AsyncFormData {
-    pub encoding: Encoding,
-    // PORT NOTE: Zig stored `allocator: std.mem.Allocator`; deleted (non-AST
-    // crate, global mimalloc).
+/// JSC-touching extension on `AsyncFormData` (lives in this crate because it
+/// needs `JSGlobalObject` + `AnyPromise`).
+pub trait AsyncFormDataExt {
+    fn to_js(&self, global: &JSGlobalObject, data: &[u8], promise: AnyPromise) -> JsResult<()>;
 }
 
-impl AsyncFormData {
-    pub fn init(encoding: Encoding) -> Box<AsyncFormData> {
-        // PORT NOTE: Zig duped `encoding.Multipart` here so the struct owned
-        // its boundary. With `Encoding::Multipart(Box<[u8]>)` the caller has
-        // already transferred ownership, so the match collapses to a move.
-        Box::new(AsyncFormData { encoding })
-    }
-
-    // PORT NOTE: Zig `deinit` only freed `encoding.Multipart` then
-    // `allocator.destroy(this)`. Both are automatic via `Drop` on
-    // `Box<AsyncFormData>` / `Box<[u8]>`; no explicit `Drop` impl needed.
-
+impl AsyncFormDataExt for AsyncFormData {
     // TODO(port): `bun.JSTerminated!void` — mapped to `JsResult<()>`; Phase B
     // narrow to a `Terminated`-only error set if one exists.
-    pub fn to_js(
-        &self,
-        global: &JSGlobalObject,
-        data: &[u8],
-        promise: AnyPromise,
-    ) -> JsResult<()> {
+    fn to_js(&self, global: &JSGlobalObject, data: &[u8], promise: AnyPromise) -> JsResult<()> {
         if let Encoding::Multipart(b) = &self.encoding {
             if b.is_empty() {
                 scoped_log!(FormData, "AsnycFormData.toJS -> promise.reject missing boundary");
-                any_promise_reject(
-                    promise,
+                promise.reject(
                     global,
                     ZigString::init(b"FormData missing boundary").to_error_instance(global),
                 )?;
@@ -149,37 +57,16 @@ impl AsyncFormData {
             Ok(v) => v,
             Err(e) => {
                 scoped_log!(FormData, "AsnycFormData.toJS -> failed ");
-                any_promise_reject(
-                    promise,
+                promise.reject(
                     global,
                     global.create_error_instance(format_args!("FormData {}", e.name())),
                 )?;
                 return Ok(());
             }
         };
-        any_promise_resolve(promise, global, js_value)?;
+        promise.resolve(global, js_value)?;
         Ok(())
     }
-}
-
-pub fn get_boundary(content_type: &[u8]) -> Option<&[u8]> {
-    let boundary_index = strings::index_of(content_type, b"boundary=")?;
-    let boundary_start = boundary_index + b"boundary=".len();
-    let begin = &content_type[boundary_start..];
-    if begin.is_empty() {
-        return None;
-    }
-
-    let boundary_end = strings::index_of_char(begin, b';').unwrap_or(begin.len() as u32);
-    if begin[0] == b'"' {
-        if boundary_end > 1 && begin[boundary_end as usize - 1] == b'"' {
-            return Some(&begin[1..boundary_end as usize - 1]);
-        }
-        // Opening quote with no matching closing quote — malformed.
-        return None;
-    }
-
-    Some(&begin[..boundary_end as usize])
 }
 
 /// Raw slice into the input buffer. Not using `bun.Semver.String` because
@@ -239,7 +126,7 @@ impl FormData {
         match encoding {
             Encoding::URLEncoded => {
                 let str = ZigString::from_utf8(strings::without_utf8_bom(input));
-                let result = dom_form_data_shim::create_from_url_query(global, &str);
+                let result = DOMFormData::create_from_url_query(global, &str);
                 // Check if an exception was thrown (e.g., string too long)
                 if result.is_empty() {
                     return Err(err!("JSError"));
@@ -318,16 +205,16 @@ pub fn to_js_from_multipart_data(
     input: &[u8],
     boundary: &[u8],
 ) -> Result<JSValue, bun_core::Error> {
-    let form_data_value = dom_form_data_shim::create(global);
+    let form_data_value = DOMFormData::create(global);
     form_data_value.ensure_still_alive();
-    let Some(form) = dom_form_data_shim::from_js(form_data_value) else {
+    let Some(form) = DOMFormData::from_js(form_data_value) else {
         scoped_log!(FormData, "failed to create DOMFormData.fromJS");
         return Err(err!("failed to parse multipart data"));
     };
 
     struct Wrapper<'a> {
         global: &'a JSGlobalObject,
-        form: *mut DOMFormData,
+        form: &'a mut DOMFormData,
     }
 
     impl<'a> Wrapper<'a> {
@@ -386,11 +273,10 @@ pub fn to_js_from_multipart_data(
                     }
                 }
 
-                dom_form_data_shim::append_blob(
-                    wrap.form,
+                wrap.form.append_blob(
                     wrap.global,
                     &key,
-                    &mut blob as *mut Blob as *mut core::ffi::c_void,
+                    &mut blob as *mut Blob as *mut c_void,
                     &filename,
                 );
                 // PORT NOTE: Zig `defer blob.detach()` — no early returns in
@@ -407,13 +293,13 @@ pub fn to_js_from_multipart_data(
                     // > `charset` parameter.
                     strings::without_utf8_bom(value_str),
                 );
-                dom_form_data_shim::append(wrap.form, &key, &value);
+                wrap.form.append(&key, &value);
             }
         }
     }
 
     {
-        let mut wrap = Wrapper { global, form: form as *mut DOMFormData };
+        let mut wrap = Wrapper { global, form };
 
         if let Err(e) = for_each_multipart_entry(input, boundary, &mut wrap, Wrapper::on_entry) {
             scoped_log!(FormData, "failed to parse multipart data");
@@ -571,7 +457,7 @@ pub fn for_each_multipart_entry<C>(
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/webcore/FormData.zig (418 lines)
-//   confidence: medium
-//   todos:      11
-//   notes:      Encoding::Multipart boxed (was borrow); Field.value/FormData.buffer raw *const [u8] (borrow into caller input); host_fn export name + Blob field types need Phase-B wiring.
+//   confidence: high
+//   todos:      5
+//   notes:      Encoding/AsyncFormData/get_boundary live in bun_core (JSC-free); to_js is an extension trait here. Field.value/FormData.buffer raw *const [u8] (borrow into caller input).
 // ──────────────────────────────────────────────────────────────────────────

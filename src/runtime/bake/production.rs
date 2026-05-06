@@ -181,13 +181,29 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
             vm.transpiler.options.no_macros = true;
         }
         MacroOptions::Map(macros) => {
-            // TODO(port): `ctx.debug.macros` carries
-            // `ArrayHashMap<Box<[u8]>, ArrayHashMap<Box<[u8]>, Box<[u8]>>>` while
-            // `Transpiler.options.macro_remap` is
-            // `StringArrayHashMap<StringArrayHashMap<&'static [u8]>>`. The two
-            // shapes diverge at the value lifetime; defer the conversion.
-            let _ = macros;
-            todo!("blocked_on: bun_bundler::options::MacroRemap conversion from ctx.debug.macros");
+            // PORT NOTE: Zig spec is `b.options.macro_remap = macros;` — a
+            // shallow struct copy where both maps share the same backing
+            // string slices owned by `ctx`. The two Rust types are nominally
+            // distinct (`ArrayHashMap<Box<[u8]>, ArrayHashMap<Box<[u8]>, Box<[u8]>>>`
+            // vs `StringArrayHashMap<StringArrayHashMap<&'static [u8]>>`), so
+            // rebuild the resolver-shaped map borrowing `ctx`'s allocations.
+            //
+            // SAFETY: `ctx` is `&mut ContextData`, the CLI command singleton
+            // that lives for the process. The boxed bytes inside
+            // `ctx.debug.macros` are never freed or reassigned after CLI
+            // parsing, so extending the inner `&[u8]` borrows to `'static`
+            // mirrors the Zig shallow-copy semantics exactly.
+            let mut remap = bun_resolver::package_json::MacroMap::default();
+            for (pkg, inner) in macros.iter() {
+                let mut entry = bun_resolver::package_json::MacroImportReplacementMap::default();
+                for (import_name, path) in inner.iter() {
+                    let path: &'static [u8] =
+                        unsafe { core::mem::transmute::<&[u8], &'static [u8]>(path.as_ref()) };
+                    entry.insert(import_name.as_ref(), path);
+                }
+                remap.insert(pkg.as_ref(), entry);
+            }
+            vm.transpiler.options.macro_remap = remap;
         }
         MacroOptions::Unspecified => {}
     }
@@ -599,18 +615,13 @@ pub fn build_with_vm(
                 .iter()
                 .map(|s| Box::<[u8]>::from(*s))
                 .collect(),
-            // PORT NOTE: `fsr.style` is the keystone `framework_router::Style`
-            // (no `JavascriptDefined` arm); `fr::Type.style` is the full
-            // `framework_router_body::Style`. Convert by variant name until the
-            // two enums unify in Phase B.
-            style: match fsr.style {
-                framework_router::Style::NextjsPages => fr::Style::NextjsPages,
-                framework_router::Style::NextjsAppUi => fr::Style::NextjsAppUi,
-                framework_router::Style::NextjsAppRoutes => fr::Style::NextjsAppRoutes,
-                framework_router::Style::JavascriptDefined(_) => {
-                    todo!("blocked_on: framework_router::Style::JavascriptDefined conversion")
-                }
-            },
+            // PORT NOTE: `framework_router::Style` and `fr::Style` are now the
+            // same type (re-exported from `framework_router_body`); the prior
+            // by-variant conversion is gone. `fsr` is `&FileSystemRouterType`
+            // so move-out is unavailable — `Style` is `Clone` (the
+            // `JavascriptDefined` arm panics inside `clone()`, matching the
+            // Zig spec's `@panic("TODO: customizable Style")`).
+            style: fsr.style.clone(),
             allow_layouts: fsr.allow_layouts,
             server_file: fr::OpaqueFileId::init(server_file.get()),
             client_file: client_file.map(|f| fr::OpaqueFileId::init(f.get())),
@@ -625,31 +636,72 @@ pub fn build_with_vm(
     )?;
 
     // PORT NOTE: `BundleV2::generate_from_bake_production_cli` takes the
-    // bundler-crate's nominal `bake_types::production::EntryPointMap`,
-    // `bake_types::Framework`, `JSBundlerPlugin` and an opaque `EventLoop =
-    // Option<NonNull<()>>`. The runtime crate currently carries its own richer
-    // duplicates (`production_body::EntryPointMap`, `bake_body::Framework`,
-    // `api::JSBundler::Plugin`). Converting between them requires upstream
-    // surface that doesn't exist yet; defer the call body until Phase B unifies
-    // the types. Keep all locals referenced so the surrounding borrowck shape
-    // stays exercised.
+    // bundler-crate's TYPE_ONLY mirrors (`bake_types::production::EntryPointMap`,
+    // `bake_types::Framework`, opaque `JSBundlerPlugin`, `EventLoop =
+    // Option<NonNull<()>>`). The runtime carries richer duplicates; project the
+    // fields the bundler actually reads. Zig passed the runtime structs by
+    // shallow-copy — same here, just explicit.
     let bundled_outputs_list: Vec<OutputFile> = {
-        let _ = (
-            &entry_points,
-            &mut *server_transpiler,
-            &mut *client_transpiler,
-            &mut *ssr_transpiler,
-            separate_ssr_graph,
-            &options.arena,
-            options.bundler_options.plugin,
-            // SAFETY: vm.event_loop() returns a self-ptr; unique access here.
-            unsafe { &*vm.event_loop() },
-            &*framework,
+        // 1. EntryPointMap: bundler only reads `.root` and `.files.keys()`
+        //    (`enqueue_entry_points_bake_production`). Values are unused, so
+        //    rebuild with the same keys; raw `abs_path` ptrs borrow
+        //    `entry_points.owned_paths`, which outlives this block.
+        let mut bundler_entry_points =
+            bun_bundler::bake_types::production::EntryPointMap::default();
+        bundler_entry_points.root = entry_points.root.clone();
+        for k in entry_points.files.keys() {
+            bundler_entry_points.files.put(
+                bun_bundler::bake_types::production::InputFile::init(k.abs_path(), k.side),
+                0,
+            )?;
+        }
+
+        // 2. Framework: bundler reads `built_in_modules`, `server_components`,
+        //    `is_built_in_react`. Mirrors Zig's `framework.*` shallow-copy by
+        //    moving `built_in_modules` (not read again below) and projecting
+        //    `server_components`.
+        let bundler_framework = bun_bundler::bake_types::Framework::new(
+            core::mem::take(&mut framework.built_in_modules),
+            framework
+                .server_components
+                .as_ref()
+                .map(|sc| bun_bundler::bake_types::ServerComponents {
+                    separate_ssr_graph: sc.separate_ssr_graph,
+                    server_runtime_import: Box::from(sc.server_runtime_import.as_ref()),
+                    server_register_client_reference: Box::from(
+                        sc.server_register_client_reference.as_ref(),
+                    ),
+                }),
+            framework.is_built_in_react,
         );
-        todo!(
-            "blocked_on: bun_bundler::BundleV2::generate_from_bake_production_cli — \
-             EntryPointMap/Framework/JSBundlerPlugin/EventLoop type unification"
-        )
+
+        // 3. Transpiler pointers — reborrow via raw to sidestep the
+        //    `&'a mut Transpiler<'a>` invariant lifetime on the bundler API.
+        // SAFETY: the three transpilers live in this stack frame and outlive
+        // the bundle call; `BundleV2` does not retain them past return.
+        let server_ptr: *mut Transpiler = &mut *server_transpiler;
+        let client_ptr: *mut Transpiler = &mut *client_transpiler;
+        let ssr_ptr: *mut Transpiler = if separate_ssr_graph {
+            &mut *ssr_transpiler
+        } else {
+            server_ptr
+        };
+
+        BundleV2::generate_from_bake_production_cli(
+            bundler_entry_points,
+            unsafe { &mut *server_ptr },
+            bun_bundler::BakeOptions {
+                framework: bundler_framework,
+                client_transpiler: unsafe { NonNull::new_unchecked(client_ptr) },
+                ssr_transpiler: unsafe { NonNull::new_unchecked(ssr_ptr) },
+                // `jsc::Plugin` is `c_void`; bundler's `JSBundlerPlugin` is an
+                // opaque `#[repr(C)]` ZST — both name the same C++ BunPlugin*.
+                plugins: options.bundler_options.plugin.map(|p| p.cast()),
+            },
+            &options.arena,
+            // Zig: `.{ .js = vm.event_loop }` — bundler erased to `NonNull<()>`.
+            NonNull::new(vm.event_loop().cast()),
+        )?
     };
     let bundled_outputs = bundled_outputs_list.as_slice();
     if bundled_outputs.is_empty() {

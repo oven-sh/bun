@@ -118,8 +118,7 @@ pub extern "C" fn Bun__onPosixSignal(number: i32) {
         // boxed ring buffer installed by `Bun__ensureSignalHandler` below.
         unsafe {
             if let Some(handler) = (*(*vm).event_loop()).signal_handler {
-                let _ = (*handler.as_ptr().cast::<PosixSignalHandle>())
-                    .enqueue(u8::try_from(number).unwrap());
+                let _ = (*handler.as_ptr()).enqueue(u8::try_from(number).unwrap());
             }
         }
     }
@@ -164,12 +163,8 @@ pub extern "C" fn Bun__ensureSignalHandler() {
             // SAFETY: `vm` and its event loop are process-lifetime.
             let this = unsafe { &mut *(*vm).event_loop() };
             if this.signal_handler.is_none() {
-                // PORT NOTE: `EventLoop.signal_handler` is `Option<NonNull<c_void>>` in
-                // the Phase-B layout (gated sibling). Box the ring buffer and store the
-                // erased pointer; `Bun__onPosixSignal` casts it back.
                 let boxed = PosixSignalHandle::new(PosixSignalHandle::default());
-                this.signal_handler =
-                    NonNull::new(Box::into_raw(boxed).cast::<core::ffi::c_void>());
+                this.signal_handler = NonNull::new(Box::into_raw(boxed));
             }
         }
     }

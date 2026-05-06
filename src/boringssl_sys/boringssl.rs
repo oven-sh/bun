@@ -626,6 +626,10 @@ unsafe extern "C" {
     // ── SSL_METHOD ───────────────────────────────────────────────────────
     pub fn TLS_with_buffers_method() -> *const SSL_METHOD;
 
+    // ── ENGINE ───────────────────────────────────────────────────────────
+    pub fn ENGINE_new() -> *mut ENGINE;
+    pub fn ENGINE_free(engine: *mut ENGINE) -> c_int;
+
     // ── SSL_CTX ──────────────────────────────────────────────────────────
     pub fn SSL_CTX_new(method: *const SSL_METHOD) -> *mut SSL_CTX;
     pub fn SSL_CTX_free(ctx: *mut SSL_CTX);

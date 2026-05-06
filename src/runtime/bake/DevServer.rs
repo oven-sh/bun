@@ -74,13 +74,12 @@ fn convert_resolve_watcher(w: bun_watcher::AnyResolveWatcher) -> bun_resolver::A
         },
     }
 }
-// TODO(port): ErrorReportRequest body lives in the gated draft; stub until un-gated.
-pub struct ErrorReportRequest;
-impl ErrorReportRequest {
-    fn run<R>(_dev: &mut DevServer, _req: &mut Request, _resp: &mut R) {
-        todo!("blocked_on: ErrorReportRequest");
-    }
-}
+// PORT NOTE: full `ErrorReportRequest` body lives in
+// `crate::bake::dev_server::error_report_request_body` (mounted from
+// `DevServer/ErrorReportRequest.rs`). Its `run` is typed against the keystone
+// `dev_server::DevServer`; this body file's `set_routes` registers it through a
+// trampoline that recovers the keystone pointer, so no local stub is needed.
+pub use crate::bake::dev_server::error_report_request_body::ErrorReportRequest;
 pub use crate::bake::dev_server::HmrSocket;
 use crate::bake::dev_server::ResponseLike;
 

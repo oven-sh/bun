@@ -1251,38 +1251,13 @@ pub mod lockfile {
         /// `isolated_install::{Installer,Store}` resolve until
         /// `lockfile_real::package::scripts` un-gates; real bodies live in
         /// `lockfile/Package/Scripts.rs`.
+        /// Port of `Package.Scripts` (src/install/lockfile/Package/Scripts.zig).
+        /// Re-exported from the real file-backed module so the stub
+        /// `PackageList.scripts` column, `Package<u64>.scripts` field, and
+        /// callers in `install_with_manager` / `PackageInstaller` /
+        /// `isolated_install` all agree on a single `Scripts` type.
         pub mod scripts {
-            use bun_semver::String;
-            use crate::resolution::Resolution;
-            use crate::Lockfile;
-
-            #[derive(Default, Clone, Copy)]
-            pub struct Scripts {
-                pub preinstall: String,
-                pub install: String,
-                pub postinstall: String,
-                pub preprepare: String,
-                pub prepare: String,
-                pub postprepare: String,
-                pub filled: bool,
-            }
-            impl Scripts {
-                /// Stub: real impl in `lockfile/Package/Scripts.rs::get_list`.
-                pub fn get_list(
-                    &mut self,
-                    _log: &mut bun_logger::Log,
-                    _lockfile: &Lockfile,
-                    _cwd: &mut impl bun_paths::PathLike,
-                    _name: &[u8],
-                    _res: &Resolution,
-                ) -> Result<Option<List>, bun_core::Error> {
-                    todo!("blocked_on: lockfile_real::package::scripts un-gate (reconciler-6)")
-                }
-            }
-            /// `Package.Scripts.List` — the resolved per-hook command list.
-            /// Re-export the file-backed type so callers in `PackageManager` /
-            /// `PackageInstaller` agree on a single `List` shape.
-            pub use crate::lockfile_real::package::scripts::List;
+            pub use crate::lockfile_real::package::scripts::{List, Scripts};
         }
     }
     pub use package::Package;

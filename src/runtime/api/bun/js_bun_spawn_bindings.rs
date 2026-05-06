@@ -1541,9 +1541,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                 // SAFETY: see the matching block above.
                 unsafe {
                     (*signal).pending_activity_ref();
-                    (*subprocess_ptr).abort_signal = NonNull::new(
-                        (*signal).add_listener(subprocess_ptr.cast(), Subprocess::on_abort_signal),
-                    );
+                    let _ = (*signal)
+                        .add_listener(subprocess_ptr.cast(), Subprocess::on_abort_signal);
+                    (*subprocess_ptr).abort_signal = NonNull::new(signal);
                 }
             }
         }

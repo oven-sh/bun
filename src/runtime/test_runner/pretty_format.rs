@@ -1793,22 +1793,88 @@ impl<'a> Formatter<'a> {
                     self.add_for_new_line(1);
                 }
                 Tag::Private => {
-                    // DIVERGENCE(blocked_on: bun_jsc::webcore::{Response,Request,Blob}::write_format,
-                    // bun_jsc::api::BuildArtifact::write_format, bun_jsc::DOMFormData — JsClass):
-                    // the .zig spec dispatches to per-type `writeFormat` impls (.zig:1212-1239).
-                    // None of those types implement `JsClass` / expose `write_format` in the Rust
-                    // crates yet, so these branches are stubbed `false` and the value falls
-                    // through to the generic Object printer at the bottom of this arm.
-                    if false {
-                        todo!("blocked_on: bun_jsc::webcore::Response::write_format");
-                    } else if false {
-                        todo!("blocked_on: bun_jsc::webcore::Request::write_format");
-                    } else if false {
-                        todo!("blocked_on: bun_jsc::api::BuildArtifact::write_format");
-                    } else if false {
-                        todo!("blocked_on: bun_jsc::webcore::Blob::write_format");
-                    } else if false {
-                        // bun_jsc::DOMFormData — JsClass
+                    // .zig:1190-1278 — per-type `writeFormat` dispatch for Bun-native cells.
+                    // Downcast via the `JsClass`/FFI hooks on each type; the `write_format`
+                    // bodies re-enter this formatter through the `ConsoleFormatter` impl
+                    // below for nested values, so the byte sink is wrapped in `IoFmt` (a
+                    // `core::fmt::Write` view of the same writer).
+                    if let Some(response) = value.as_::<crate::webcore::Response>() {
+                        // SAFETY: `as_` returned non-null; the GC keeps the cell alive while
+                        // `value` is on the stack (conservative scan). `write_format` does not
+                        // re-enter `as_` for the same cell, so the `&mut` is unique here.
+                        let response = unsafe { &mut *response };
+                        let mut bridge = IoFmt(writer.ctx);
+                        if response
+                            .write_format::<_, _, ENABLE_ANSI_COLORS>(self, &mut bridge)
+                            .is_err()
+                        {
+                            self.failed = true;
+                            // TODO: make this better
+                            if !self.global_this.has_exception() {
+                                return Err(self.global_this.throw_error(
+                                    bun_core::err!("FmtError"),
+                                    "failed to print Response",
+                                ));
+                            }
+                            return Err(JsError::Thrown);
+                        }
+                    } else if let Some(request) = value.as_::<crate::webcore::Request>() {
+                        // SAFETY: see Response branch above.
+                        let request = unsafe { &mut *request };
+                        let mut bridge = IoFmt(writer.ctx);
+                        if request
+                            .write_format::<_, _, ENABLE_ANSI_COLORS>(value, self, &mut bridge)
+                            .is_err()
+                        {
+                            self.failed = true;
+                            // TODO: make this better
+                            if !self.global_this.has_exception() {
+                                return Err(self.global_this.throw_error(
+                                    bun_core::err!("FmtError"),
+                                    "failed to print Request",
+                                ));
+                            }
+                            return Err(JsError::Thrown);
+                        }
+                        return Ok(());
+                    } else if let Some(build) = value.as_::<crate::api::BuildArtifact>() {
+                        // SAFETY: see Response branch above.
+                        let build = unsafe { &mut *build };
+                        let mut bridge = IoFmt(writer.ctx);
+                        if build
+                            .write_format::<_, _, ENABLE_ANSI_COLORS>(self, &mut bridge)
+                            .is_err()
+                        {
+                            self.failed = true;
+                            // TODO: make this better
+                            if !self.global_this.has_exception() {
+                                return Err(self.global_this.throw_error(
+                                    bun_core::err!("FmtError"),
+                                    "failed to print BuildArtifact",
+                                ));
+                            }
+                            return Err(JsError::Thrown);
+                        }
+                    } else if let Some(blob) = value.as_::<crate::webcore::Blob>() {
+                        // SAFETY: see Response branch above.
+                        let blob = unsafe { &mut *blob };
+                        let mut bridge = IoFmt(writer.ctx);
+                        if blob
+                            .write_format::<_, _, ENABLE_ANSI_COLORS>(self, &mut bridge)
+                            .is_err()
+                        {
+                            self.failed = true;
+                            // TODO: make this better
+                            if !self.global_this.has_exception() {
+                                return Err(self.global_this.throw_error(
+                                    bun_core::err!("FmtError"),
+                                    "failed to print Blob",
+                                ));
+                            }
+                            return Err(JsError::Thrown);
+                        }
+                        return Ok(());
+                    } else if bun_jsc::DOMFormData::from_js(value).is_some() {
                         let to_json_function = value.get(self.global_this, "toJSON")?.unwrap();
 
                         self.add_for_new_line(b"FormData (entries) ".len());
@@ -1824,22 +1890,7 @@ impl<'a> Formatter<'a> {
                             to_json_function.call(self.global_this, value, &[])?,
                             JSType::Object,
                         );
-                    } else if let Some(timer) = {
-                        // DIVERGENCE(blocked_on: crate::timer::TimeoutObject — JsClass):
-                        // `value.as_::<TimeoutObject>()` does not yet typecheck because the
-                        // codegen-backed `JsClass` impl has not landed. This condition is
-                        // therefore ALWAYS `None`; Timeout values currently fall through to
-                        // the generic `print_as::<Object>(…, JSType::Event)` at the bottom
-                        // of this arm instead of printing `Timeout (#N[, repeats])` per
-                        // .zig:1242-1254. Replace with `value.as_::<crate::timer::TimeoutObject>()`
-                        // once available.
-                        {
-                            value.as_::<crate::timer::TimeoutObject>()
-                        }
-                        {
-                            None::<*mut crate::timer::TimeoutObject>
-                        }
-                    } {
+                    } else if let Some(timer) = crate::timer::TimeoutObject::from_js(value) {
                         // SAFETY: `as_` returned non-null; the GC keeps the cell alive while
                         // `value` is on the stack (conservative scan).
                         let timer = unsafe { &*timer };
@@ -1882,18 +1933,9 @@ impl<'a> Formatter<'a> {
                         }
 
                         return Ok(());
-                    } else if let Some(immediate) = {
-                        // DIVERGENCE(blocked_on: crate::timer::ImmediateObject — JsClass):
-                        // ALWAYS `None` until codegen lands; Immediate values fall through to
-                        // the generic Object printer instead of `Immediate (#N)` per
-                        // .zig:1255-1261. Replace with `value.as_::<crate::timer::ImmediateObject>()`.
-                        {
-                            value.as_::<crate::timer::ImmediateObject>()
-                        }
-                        {
-                            None::<*mut crate::timer::ImmediateObject>
-                        }
-                    } {
+                    } else if let Some(immediate) =
+                        crate::timer::ImmediateObject::from_js(value)
+                    {
                         // SAFETY: see TimeoutObject branch above.
                         let immediate = unsafe { &*immediate };
                         self.add_for_new_line(
@@ -1915,44 +1957,19 @@ impl<'a> Formatter<'a> {
                         ));
 
                         return Ok(());
-                    } else if let Some(build_log) = {
-                        // DIVERGENCE(blocked_on: crate::api::BuildMessage — JsClass):
-                        // ALWAYS `None` until codegen lands; BuildMessage values fall through
-                        // to the generic Object printer instead of `msg.writeFormat` per
-                        // .zig:1262-1264. Replace with `value.as_::<crate::api::BuildMessage>()`.
-                        {
-                            value.as_::<crate::api::BuildMessage>()
-                        }
-                        {
-                            None::<*mut crate::api::BuildMessage>
-                        }
-                    } {
+                    } else if let Some(build_log) = value.as_::<crate::api::BuildMessage>() {
                         // SAFETY: non-null JsClass cell, GC-rooted via `value`.
-                        // `Msg::write_format` wants `fmt::Write`; route through a String.
-                        let mut s = String::new();
+                        let mut bridge = IoFmt(writer.ctx);
                         let _ = unsafe { &*build_log }
                             .msg
-                            .write_format::<ENABLE_ANSI_COLORS>(&mut s);
-                        writer.write_all(s.as_bytes());
+                            .write_format::<ENABLE_ANSI_COLORS>(&mut bridge);
                         return Ok(());
-                    } else if let Some(resolve_log) = {
-                        // DIVERGENCE(blocked_on: crate::api::ResolveMessage — JsClass):
-                        // ALWAYS `None` until codegen lands; ResolveMessage values fall through
-                        // to the generic Object printer instead of `msg.writeFormat` per
-                        // .zig:1265-1268. Replace with `value.as_::<crate::api::ResolveMessage>()`.
-                        {
-                            value.as_::<crate::api::ResolveMessage>()
-                        }
-                        {
-                            None::<*mut crate::api::ResolveMessage>
-                        }
-                    } {
+                    } else if let Some(resolve_log) = value.as_::<crate::api::ResolveMessage>() {
                         // SAFETY: non-null JsClass cell, GC-rooted via `value`.
-                        let mut s = String::new();
+                        let mut bridge = IoFmt(writer.ctx);
                         let _ = unsafe { &*resolve_log }
                             .msg
-                            .write_format::<ENABLE_ANSI_COLORS>(&mut s);
-                        writer.write_all(s.as_bytes());
+                            .write_format::<ENABLE_ANSI_COLORS>(&mut bridge);
                         return Ok(());
                     } else if NAME_BUF.with_borrow(|name_buf| {
                         // TODO(port): printAsymmetricMatcher takes name_buf by value [512]u8;

@@ -97,9 +97,12 @@ describe.skipIf(!hasLocalRedis)("RedisClient commands (functional)", () => {
     try {
       return await fn(r);
     } finally {
-      // best-effort cleanup of any keys we created
-      const created = await r.keys(prefix + "*");
-      if (created.length) await r.del(...created);
+      // best-effort cleanup of any keys we created; swallow errors so a
+      // cleanup failure doesn't mask the original test error or skip close()
+      try {
+        const created = await r.keys(prefix + "*");
+        if (created.length) await r.del(...created);
+      } catch {}
       r.close();
     }
   }

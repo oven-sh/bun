@@ -363,9 +363,9 @@ impl ReadableStream {
                     context: FileReader {
                         // SAFETY: bun_vm() returns a non-null *mut VirtualMachine; event_loop()
                         // returns a non-null *mut EventLoop. Both outlive this call.
-                        event_loop: jsc::EventLoopHandle::init(unsafe {
-                            &*(*global_this.bun_vm()).event_loop()
-                        }),
+                        event_loop: jsc::EventLoopHandle::init(
+                            unsafe { (*global_this.bun_vm()).event_loop() }.cast(),
+                        ),
                         start_offset: Some(blob.offset as usize),
                         max_size: if blob.size != webcore::blob::MAX_SIZE {
                             Some(blob.size as usize)

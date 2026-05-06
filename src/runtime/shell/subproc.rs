@@ -1748,9 +1748,10 @@ impl PipeReader {
                 #[cfg(unix)]
                 {
                     // TODO: are these flags correct
-                    if let bun_io::pipes::PollOrFd::Poll(poll) = &mut self.reader.handle {
-                        poll.flags.insert(bun_aio::file_poll::Flags::Socket);
-                    }
+                    // TODO(port): `bun_io::FilePoll` is an opaque CYCLEBREAK
+                    // handle here with no `.flags` accessor; the Zig
+                    // `poll.flags.insert(.socket)` needs a setter on the
+                    // opaque type. Tracked separately.
                     self.reader
                         .flags
                         .insert(bun_io::pipe_reader::PosixFlags::SOCKET);

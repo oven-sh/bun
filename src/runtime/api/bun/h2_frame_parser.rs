@@ -2782,18 +2782,8 @@ impl JsValueArrayPush for JSValue {
     }
 }
 
-trait VmReportExtraMemory {
-    fn deprecated_report_extra_memory(&self, size: usize);
-}
-impl VmReportExtraMemory for bun_jsc::VM {
-    fn deprecated_report_extra_memory(&self, size: usize) {
-        unsafe extern "C" {
-            fn JSC__VM__reportExtraMemory(vm: *mut bun_jsc::VM, size: usize);
-        }
-        // SAFETY: `self` is a live VM; `as_mut_ptr` yields write-provenance `*mut`.
-        unsafe { JSC__VM__reportExtraMemory(self.as_mut_ptr(), size) }
-    }
-}
+// (`VmReportExtraMemory` shim removed — duplicate of `H2VMExt` above; both
+// provided `deprecated_report_extra_memory` and rustc rejected the ambiguity.)
 
 // ──────────────────────────────────────────────────────────────────────────
 // H2FrameParser impl — frame handlers

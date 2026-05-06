@@ -425,7 +425,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     ) -> Result<InsertEmptyResult<SIDE>, bun_alloc::AllocError> {
         let gop = self.bundled_files.get_or_put(abs_path)?;
         let idx = gop.index;
-        if !gop.found_existing {
+        let found_existing = gop.found_existing;
+        if !found_existing {
             *gop.key_ptr = Box::<[u8]>::from(abs_path);
             *gop.value_ptr = File {
                 kind,
@@ -440,13 +441,19 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 source_map: Default::default(),
                 content: Content::Unknown,
             };
+        }
+        // Capture the interned-key fat ptr now so the `gop` borrow on
+        // `bundled_files` ends before `ensure_stale_bit_capacity` reborrows
+        // `self` (it only touches `stale_files`, so the pointer stays valid).
+        let key = &**gop.key_ptr as *const [u8];
+        if !found_existing {
             self.first_import.push(None);
             self.first_dependency.push(None);
             self.ensure_stale_bit_capacity(true)?;
         }
         Ok(InsertEmptyResult {
             index: FileIndex(idx as u32),
-            key: &**gop.key_ptr as *const [u8],
+            key,
         })
     }
 

@@ -3291,10 +3291,8 @@ impl Blob {
         let args = &mut arguments_.ptr[..];
 
         if self.size == 0 {
-            let empty = Blob::init_empty(global_this);
-            let ptr = Blob::new(empty);
-            // SAFETY: ptr was just produced by Box::into_raw in Blob::new.
-            return Ok(unsafe { (*ptr).to_js(global_this) });
+            // PORT NOTE: `JsClass::to_js` heap-promotes via `Blob::new` internally.
+            return Ok(Blob::init_empty(global_this).to_js(global_this));
         }
 
         // If the optional start parameter is not used as a parameter, let relativeStart be 0.
@@ -3512,7 +3510,8 @@ pub extern "C" fn Bun__Blob__getSizeForBindings(this: &mut Blob) -> u64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn Blob__getDataPtr(value: JSValue) -> *mut c_void {
     let Some(blob) = Blob::from_js(value) else { return core::ptr::null_mut() };
-    let data = blob.shared_view();
+    // SAFETY: `from_js` returns a non-null pointer to a live JSC-owned Blob.
+    let data = unsafe { (*blob).shared_view() };
     if data.is_empty() { return core::ptr::null_mut(); }
     data.as_ptr() as *mut c_void
 }
@@ -3520,7 +3519,8 @@ pub extern "C" fn Blob__getDataPtr(value: JSValue) -> *mut c_void {
 #[unsafe(no_mangle)]
 pub extern "C" fn Blob__getSize(value: JSValue) -> usize {
     let Some(blob) = Blob::from_js(value) else { return 0 };
-    blob.shared_view().len()
+    // SAFETY: `from_js` returns a non-null pointer to a live JSC-owned Blob.
+    unsafe { (*blob).shared_view().len() }
 }
 
 #[unsafe(no_mangle)]

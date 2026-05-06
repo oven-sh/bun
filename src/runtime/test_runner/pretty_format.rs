@@ -2583,6 +2583,7 @@ impl<'a> Formatter<'a> {
                     let prev_always_newline_scope = self.always_newline_scope;
                     let always_newline =
                         self.always_newline_scope || self.good_time_for_a_new_line();
+                    let global = self.global_this;
                     let mut iter = PropertyIterator::<W, ENABLE_ANSI_COLORS> {
                         formatter: self,
                         writer: writer.ctx,
@@ -2591,15 +2592,15 @@ impl<'a> Formatter<'a> {
                         parent: value,
                     };
 
-                    // TODO(port): borrowck conflict — iter borrows self & writer.ctx mutably.
                     value.for_each_property_ordered(
-                        self.global_this,
+                        global,
                         &mut iter as *mut _ as *mut c_void,
                         PropertyIterator::<W, ENABLE_ANSI_COLORS>::for_each,
                     )?;
 
                     let iter_i = iter.i;
                     let iter_always_newline = iter.always_newline;
+                    drop(iter);
                     self.always_newline_scope = prev_always_newline_scope;
                     self.quote_strings = prev_quote_strings;
 

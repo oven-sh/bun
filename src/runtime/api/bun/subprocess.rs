@@ -1013,8 +1013,8 @@ impl Subprocess<'_> {
                 && self.flags.contains(Flags::IS_STDIN_A_READABLE_STREAM)
             {
                 if let Writable::Pipe(pipe) = &self.stdin {
-                    Some(NonNull::from(pipe.as_ref()))
-                    // TODO(port): Writable::Pipe payload type — assuming &FileSink-like.
+                    // Writable::Pipe already stores `NonNull<FileSink>`; just copy it.
+                    Some(*pipe)
                 } else {
                     unreachable!()
                 }
@@ -1040,7 +1040,9 @@ impl Subprocess<'_> {
 
         // We won't be sending any more data.
         if let Writable::Buffer(buffer) = &mut self.stdin {
-            buffer.close();
+            // SAFETY: RefPtr has no DerefMut; StaticPipeWriter is single-thread
+            // ref-counted and we hold the owning ref via `self.stdin`.
+            unsafe { (*buffer.data.as_ptr()).close() };
         }
 
         if !existing_stdin_value.is_empty() {

@@ -2566,7 +2566,9 @@ where
                 let readable_stream: Option<WebCore::ReadableStream> = 'brk: {
                     if let Some(stream) = lock.readable.get(global_this) {
                         // we hold the stream alive until we're done with it
-                        this.response_body_readable_stream_ref = lock.readable;
+                        // PORT NOTE: Zig `= lock.readable` is a bitwise struct copy (no
+                        // dtor); Rust `Strong` is move-only — take() transfers ownership.
+                        this.response_body_readable_stream_ref = core::mem::take(&mut lock.readable);
                         break 'brk Some(stream);
                     }
                     if let Some(stream) = owned_readable {

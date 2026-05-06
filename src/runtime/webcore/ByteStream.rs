@@ -173,7 +173,7 @@ impl ByteStream {
 
                 self.buffer.clear();
                 self.buffer.shrink_to_fit();
-                self.pending.result.deinit();
+                self.pending.result.release();
                 self.pending.result = streams::Result::Done;
                 self.buffer_action = None;
 
@@ -240,16 +240,16 @@ impl ByteStream {
                         self.pending.result = streams::Result::Done;
                     }
                 } else {
-                    self.pending.result = streams::Result::IntoArrayAndDone {
+                    self.pending.result = streams::Result::IntoArrayAndDone(IntoArray {
                         value: self.value(),
                         len: to_copy_len as blob::SizeType, // @truncate
-                    };
+                    });
                 }
             } else {
-                self.pending.result = streams::Result::IntoArray {
+                self.pending.result = streams::Result::IntoArray(IntoArray {
                     value: self.value(),
                     len: to_copy_len as blob::SizeType, // @truncate
-                };
+                });
             }
 
             let remaining = &chunk[to_copy_len..];

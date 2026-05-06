@@ -1394,20 +1394,6 @@ impl PublishCommand {
     }
 }
 
-// `bun_install::PublishConfigStub` only carries `auth_type` today; the real
-// `PackageManagerOptions::PublishConfig` (tag/access/otp/tolerate_republish) is
-// `#![cfg(any())]`-gated upstream. Shim the missing reads with no-op defaults so
-// `construct_publish_request_body` compiles until the upstream stub grows fields.
-// TODO(port): blocked_on bun_install::PublishConfigStub::{tag,access}
-pub trait PublishConfigStubExt {
-    fn tag(&self) -> &[u8];
-    fn access(&self) -> Option<Access>;
-}
-impl PublishConfigStubExt for install::PublishConfigStub {
-    fn tag(&self) -> &[u8] { b"" }
-    fn access(&self) -> Option<Access> { None }
-}
-
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum PublishError {
     #[error("OutOfMemory")]

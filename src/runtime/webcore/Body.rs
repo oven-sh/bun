@@ -81,7 +81,7 @@ impl AnyPromiseExt for jsc::AnyPromise {
             jsc::AnyPromise::Normal(p) => p,
             jsc::AnyPromise::Internal(p) => p as *mut JSPromise,
         };
-        unsafe { (*p).resolve(global, value) }
+        unsafe { Ok((*p).resolve(global, value)?) }
     }
     fn reject_value(self, global: &JSGlobalObject, value: JSValue) -> JsTerminated<()> {
         // SAFETY: see `resolve_value`.
@@ -89,7 +89,7 @@ impl AnyPromiseExt for jsc::AnyPromise {
             jsc::AnyPromise::Normal(p) => p,
             jsc::AnyPromise::Internal(p) => p as *mut JSPromise,
         };
-        unsafe { (*p).reject(global, Ok(value)) }
+        unsafe { Ok((*p).reject(global, Ok(value))?) }
     }
     fn reject_value_with_async_stack(
         self,

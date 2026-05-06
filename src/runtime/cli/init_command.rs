@@ -430,7 +430,7 @@ impl InitCommand {
                 Output::pretty_errorln(format_args!(
                     "Failed to change directory to {}: {}",
                     bstr::BStr::new(ifdir),
-                    err.name(),
+                    bstr::BStr::new(err.name()),
                 ));
                 Global::exit(1);
             }
@@ -533,10 +533,13 @@ impl InitCommand {
                     break 'process_package_json;
                 }
 
-                fields.object = package_json_expr.data.e_object();
+                fields.object = {
+                    let _ = package_json_expr.data.e_object();
+                    todo!("blocked_on: bun_logger::js_ast::E::Object vs bun_js_parser::E::Object type unification")
+                };
 
                 if let Some(name) = package_json_expr.get(b"name") {
-                    if let Some(str) = name.as_string(&bump) {
+                    if let Some(str) = name.as_utf8_string_literal() {
                         fields.name = str.to_vec();
                     }
                 }
@@ -545,7 +548,7 @@ impl InitCommand {
                     .get(b"module")
                     .or_else(|| package_json_expr.get(b"main"))
                 {
-                    if let Some(str_) = name.as_string(&bump) {
+                    if let Some(str_) = name.as_utf8_string_literal() {
                         // TODO(port): asStringZ returns NUL-terminated; we store bytes only
                         fields.entry_point = str_.to_vec();
                     }

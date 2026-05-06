@@ -350,6 +350,26 @@ impl<const SSL: bool, const HTTP3: bool> HasAutoFlusher
 #[derive(Debug, Default)]
 pub struct CookieMap;
 
+impl CookieMap {
+    /// Intrusive-refcount increment (Zig: `ref()`).
+    pub fn ref_(&mut self) {
+        todo!("blocked_on: webcore::cookie_map::CookieMap::ref")
+    }
+    /// Intrusive-refcount decrement (Zig: `deref()`).
+    pub fn deref(&mut self) {
+        todo!("blocked_on: webcore::cookie_map::CookieMap::deref")
+    }
+    /// Serialize Set-Cookie headers onto the response handle.
+    pub fn write(
+        &mut self,
+        _global: &bun_jsc::JSGlobalObject,
+        _ssl: bool,
+        _resp: *mut core::ffi::c_void,
+    ) -> bun_jsc::JsResult<()> {
+        todo!("blocked_on: webcore::cookie_map::CookieMap::write")
+    }
+}
+
 // ─── un-gated core types (cycle-5: Body/Blob/Response/Request real) ──────────
 #[path = "webcore/Blob.rs"]
 pub mod blob;

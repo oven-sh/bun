@@ -185,6 +185,28 @@ use super::*;
 use jsc::text_codec::TextCodec;
 use jsc::zig_string::ZigString;
 
+/// RAII guard for an FFI-owned `TextCodec` (matches Zig `defer codec.deinit()`).
+struct CodecGuard(core::ptr::NonNull<TextCodec>);
+impl Drop for CodecGuard {
+    fn drop(&mut self) {
+        // SAFETY: `self.0` came from `TextCodec::create` and has not been freed.
+        unsafe { TextCodec::destroy(self.0.as_ptr()) }
+    }
+}
+impl core::ops::DerefMut for CodecGuard {
+    fn deref_mut(&mut self) -> &mut TextCodec {
+        // SAFETY: pointer is live for the guard's lifetime; `&mut self` is exclusive.
+        unsafe { self.0.as_mut() }
+    }
+}
+impl core::ops::Deref for CodecGuard {
+    type Target = TextCodec;
+    fn deref(&self) -> &TextCodec {
+        // SAFETY: pointer is live for the guard's lifetime.
+        unsafe { self.0.as_ref() }
+    }
+}
+
 impl TextDecoder {
     #[bun_jsc::host_fn(getter)]
     pub fn get_ignore_bom(&self, _global: &JSGlobalObject) -> JsResult<JSValue> {

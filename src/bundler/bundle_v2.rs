@@ -372,6 +372,10 @@ pub mod bake_types {
         /// Mirrors `Framework.server_components`. TYPE_ONLY: only the two
         /// flags the bundler reads.
         pub server_components: Option<ServerComponents>,
+        /// Read by `entry_points.rs` (FallbackEntryPoint/ClientEntryPoint::generate).
+        /// In Zig this lives on the legacy package_json `Framework`; the duck-typed
+        /// `comptime TranspilerType` callers reach it through `options.framework.?`.
+        pub client_css_in_js: crate::options::ClientCssInJs,
         // TODO(b0-genuine): remaining Framework fields (react_fast_refresh,
         // file_system_router_types, ...) — bundler does not read them; bake constructs.
         _opaque_tail: (),

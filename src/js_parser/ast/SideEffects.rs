@@ -134,10 +134,328 @@ impl SideEffects {
         p: &mut P<'a, TS, J, SCAN>,
         expr: Expr,
     ) -> Option<Expr> {
-        // blocked_on: P::{expr_can_be_removed_if_unused, class_can_be_removed_if_unused,
-        //   call_runtime} gated (P.rs:640 impl block); 400-line body in _draft.
-        let _ = p;
+        if !p.options.features.dead_code_elimination {
+            return Some(expr);
+        }
+        // PORT NOTE: `Expr`/`ExprData`/`StoreRef<_>` are all `Copy`. We match on
+        // `expr.data` *by value* so `expr` itself is never borrowed across a
+        // recursive `simplify_unused_expr(p, ..)` call. Mutations to boxed
+        // payloads write through `StoreRef::DerefMut` into the arena, so they
+        // persist even though the `StoreRef` binding is a local copy.
+        match expr.data {
+            ExprData::ENull(_)
+            | ExprData::EUndefined(_)
+            | ExprData::EMissing(_)
+            | ExprData::EBoolean(_)
+            | ExprData::EBranchBoolean(_)
+            | ExprData::ENumber(_)
+            | ExprData::EBigInt(_)
+            | ExprData::EString(_)
+            | ExprData::EThis(_)
+            | ExprData::ERegExp(_)
+            | ExprData::EFunction(_)
+            | ExprData::EArrow(_)
+            | ExprData::EImportMeta(_)
+            | ExprData::EInlinedEnum(_) => return None,
+
+            ExprData::EDot(dot) => {
+                if dot.can_be_removed_if_unused {
+                    return None;
+                }
+            }
+            ExprData::EIdentifier(ident) => {
+                if ident.must_keep_due_to_with_stmt {
+                    return Some(expr);
+                }
+
+                if ident.can_be_removed_if_unused
+                    || p.symbols[ident.ref_.inner_index() as usize].kind != symbol::Kind::Unbound
+                {
+                    return None;
+                }
+            }
+            ExprData::EIf(mut ternary) => {
+                let yes = ternary.yes;
+                ternary.yes = Self::simplify_unused_expr(p, yes).unwrap_or_else(|| yes.to_empty());
+                let no = ternary.no;
+                ternary.no = Self::simplify_unused_expr(p, no).unwrap_or_else(|| no.to_empty());
+
+                // "foo() ? 1 : 2" => "foo()"
+                if ternary.yes.is_empty() && ternary.no.is_empty() {
+                    return Self::simplify_unused_expr(p, ternary.test_);
+                }
+
+                // "foo() ? 1 : bar()" => "foo() || bar()"
+                if ternary.yes.is_empty() {
+                    return Some(Expr::join_with_left_associative_op(
+                        Op::Code::BinLogicalOr,
+                        ternary.test_,
+                        ternary.no,
+                    ));
+                }
+
+                // "foo() ? bar() : 2" => "foo() && bar()"
+                if ternary.no.is_empty() {
+                    return Some(Expr::join_with_left_associative_op(
+                        Op::Code::BinLogicalAnd,
+                        ternary.test_,
+                        ternary.yes,
+                    ));
+                }
+            }
+            ExprData::EUnary(un) => {
+                // These operators must not have any type conversions that can execute code
+                // such as "toString" or "valueOf". They must also never throw any exceptions.
+                match un.op {
+                    Op::Code::UnVoid | Op::Code::UnNot => {
+                        return Self::simplify_unused_expr(p, un.value);
+                    }
+                    Op::Code::UnTypeof => {
+                        // "typeof x" must not be transformed into if "x" since doing so could
+                        // cause an exception to be thrown. Instead we can just remove it since
+                        // "typeof x" is special-cased in the standard to never throw.
+                        if matches!(un.value.data, ExprData::EIdentifier(_))
+                            && un.flags.contains(E::UnaryFlags::WAS_ORIGINALLY_TYPEOF_IDENTIFIER)
+                        {
+                            return None;
+                        }
+
+                        return Self::simplify_unused_expr(p, un.value);
+                    }
+                    _ => {}
+                }
+            }
+
+            // Zig: `inline .e_call, .e_new => |call|` — written out per variant.
+            ExprData::ECall(call) => {
+                // A call that has been marked "__PURE__" can be removed if all arguments
+                // can be removed. The annotation causes us to ignore the target.
+                if call.can_be_unwrapped_if_unused != CallUnwrap::Never {
+                    if call.args.len > 0 {
+                        let joined = Self::join_all_simplified(p, &call.args);
+                        if let Some(j) = &joined {
+                            if call.can_be_unwrapped_if_unused == CallUnwrap::IfUnusedAndToStringSafe {
+                                // PERF(port): @branchHint(.unlikely)
+                                // For now, only support this for 1 argument.
+                                if j.data.is_safe_to_string() {
+                                    return None;
+                                }
+                            }
+                        }
+                        return joined;
+                    } else {
+                        return None;
+                    }
+                }
+            }
+            ExprData::ENew(call) => {
+                // A call that has been marked "__PURE__" can be removed if all arguments
+                // can be removed. The annotation causes us to ignore the target.
+                if call.can_be_unwrapped_if_unused != CallUnwrap::Never {
+                    if call.args.len > 0 {
+                        let joined = Self::join_all_simplified(p, &call.args);
+                        if let Some(j) = &joined {
+                            if call.can_be_unwrapped_if_unused == CallUnwrap::IfUnusedAndToStringSafe {
+                                // PERF(port): @branchHint(.unlikely)
+                                // For now, only support this for 1 argument.
+                                if j.data.is_safe_to_string() {
+                                    return None;
+                                }
+                            }
+                        }
+                        return joined;
+                    } else {
+                        return None;
+                    }
+                }
+            }
+
+            ExprData::EBinary(mut bin) => {
+                match bin.op {
+                    // These operators must not have any type conversions that can execute code
+                    // such as "toString" or "valueOf". They must also never throw any exceptions.
+                    Op::Code::BinStrictEq | Op::Code::BinStrictNe | Op::Code::BinComma => {
+                        return Self::simplify_unused_binary_comma_expr(p, expr);
+                    }
+
+                    // We can simplify "==" and "!=" even though they can call "toString" and/or
+                    // "valueOf" if we can statically determine that the types of both sides are
+                    // primitives. In that case there won't be any chance for user-defined
+                    // "toString" and/or "valueOf" to be called.
+                    Op::Code::BinLooseEq
+                    | Op::Code::BinLooseNe
+                    | Op::Code::BinLt
+                    | Op::Code::BinGt
+                    | Op::Code::BinLe
+                    | Op::Code::BinGe => {
+                        if Self::is_primitive_with_side_effects(&bin.left.data)
+                            && Self::is_primitive_with_side_effects(&bin.right.data)
+                        {
+                            let left = bin.left;
+                            let right = bin.right;
+                            let left_simplified = Self::simplify_unused_expr(p, left);
+                            let right_simplified = Self::simplify_unused_expr(p, right);
+
+                            // If both sides would be removed entirely, we can return null to remove the whole expression
+                            if left_simplified.is_none() && right_simplified.is_none() {
+                                return None;
+                            }
+
+                            // Otherwise, preserve at least the structure
+                            return Some(Expr::join_with_comma(
+                                left_simplified.unwrap_or_else(|| left.to_empty()),
+                                right_simplified.unwrap_or_else(|| right.to_empty()),
+                            ));
+                        }
+
+                        match bin.op {
+                            Op::Code::BinLooseEq | Op::Code::BinLooseNe => {
+                                // If one side is a number and the other side is a known primitive with side effects,
+                                // the number can be printed as `0` since the result being unused doesn't matter,
+                                // we only care to invoke the coercion.
+                                // We only do this optimization if the other side is a known primitive with side effects
+                                // to avoid corrupting shared nodes when the other side is an undefined identifier
+                                if matches!(bin.left.data, ExprData::ENumber(_)) {
+                                    bin.left.data = ExprData::ENumber(E::Number { value: 0.0 });
+                                } else if matches!(bin.right.data, ExprData::ENumber(_)) {
+                                    bin.right.data = ExprData::ENumber(E::Number { value: 0.0 });
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    Op::Code::BinLogicalAnd | Op::Code::BinLogicalOr | Op::Code::BinNullishCoalescing => {
+                        let right = bin.right;
+                        bin.right = Self::simplify_unused_expr(p, right).unwrap_or_else(|| right.to_empty());
+                        // Preserve short-circuit behavior: the left expression is only unused if
+                        // the right expression can be completely removed. Otherwise, the left
+                        // expression is important for the branch.
+
+                        if bin.right.is_empty() {
+                            return Self::simplify_unused_expr(p, bin.left);
+                        }
+                    }
+
+                    _ => {}
+                }
+            }
+
+            ExprData::EObject(_) => {
+                // blocked_on: G::Property is not Copy (BabyList ts_decorators field) —
+                //   the in-place spread/computed-key trim needs index+raw-ptr reshape.
+                //   Full body lives in _draft below; falling through preserves the
+                //   object expression unchanged (conservative, matches Zig fallthrough
+                //   semantics for the "has side effects" path).
+            }
+            ExprData::EArray(mut arr) => {
+                let len = arr.items.len as usize;
+
+                // Arrays with "..." spread expressions can't be unwrapped because the
+                // "..." triggers code evaluation via iterators. In that case, just trim
+                // the missing items instead and leave the array expression there.
+                let mut has_spread = false;
+                for i in 0..len {
+                    if matches!(arr.items.at(i).data, ExprData::ESpread(_)) {
+                        has_spread = true;
+                        break;
+                    }
+                }
+                if has_spread {
+                    let items = arr.items.slice_mut();
+                    let mut end: usize = 0;
+                    for j in 0..len {
+                        if !matches!(items[j].data, ExprData::EMissing(_)) {
+                            items[end] = items[j];
+                            end += 1;
+                        }
+                    }
+                    arr.items.shrink_retaining_capacity(end);
+                    return Some(expr);
+                }
+
+                // Otherwise, the array can be completely removed. We only need to keep any
+                // array items with side effects. Apply this simplification recursively.
+                return Self::join_all_simplified(p, &arr.items);
+            }
+
+            _ => {}
+        }
+
         Some(expr)
+    }
+
+    /// Inline equivalent of `Expr::join_all_with_comma_callback(slice, p, simplify_unused_expr, _)`.
+    /// Hand-rolled because that helper takes `fn(&C, _)` and we need `&mut P` for the
+    /// recursive `simplify_unused_expr` call.
+    fn join_all_simplified<'a, const TS: bool, J: JsxT, const SCAN: bool>(
+        p: &mut P<'a, TS, J, SCAN>,
+        items: &bun_collections::BabyList<Expr>,
+    ) -> Option<Expr> {
+        let len = items.len as usize;
+        if len == 0 {
+            return None;
+        }
+        let mut result = Expr { data: ExprData::EMissing(E::Missing {}), loc: items.at(0).loc };
+        for i in 0..len {
+            // Copy the Expr out of the arena slice before recursing so the borrow
+            // of `items` is released across the `&mut P` call.
+            let item: Expr = *items.at(i);
+            let simplified = Self::simplify_unused_expr(p, item)
+                .unwrap_or(Expr { data: ExprData::EMissing(E::Missing {}), loc: item.loc });
+            result = Expr::join_with_comma(result, simplified);
+        }
+        if result.is_missing() { None } else { Some(result) }
+    }
+
+    ///
+    fn simplify_unused_binary_comma_expr<'a, const TS: bool, J: JsxT, const SCAN: bool>(
+        p: &mut P<'a, TS, J, SCAN>,
+        expr: Expr,
+    ) -> Option<Expr> {
+        let ExprData::EBinary(root_bin) = expr.data else {
+            if cfg!(debug_assertions) {
+                unreachable!("simplify_unused_binary_comma_expr: not e_binary");
+            }
+            return Some(expr);
+        };
+        debug_assert!(matches!(
+            root_bin.op,
+            Op::Code::BinStrictEq | Op::Code::BinStrictNe | Op::Code::BinComma
+        ));
+
+        // PORT NOTE: Zig threads `p.binary_expression_simplify_stack` (a reusable
+        // ArrayList on `P`) to avoid per-call allocation. The Rust `P` field is
+        // currently `ListManaged<'a, ()>` (placeholder element type — see P.rs:537),
+        // so until that's reshaped to `BinaryExpressionSimplifyVisitor` we use a
+        // local Vec. Same iteration order; only the allocator differs.
+        let mut stack: Vec<StoreRef<E::Binary>> = Vec::with_capacity(8);
+        stack.push(root_bin);
+
+        // Build stack up of expressions
+        let mut left: Expr = root_bin.left;
+        while let ExprData::EBinary(left_bin) = left.data {
+            match left_bin.op {
+                Op::Code::BinStrictEq | Op::Code::BinStrictNe | Op::Code::BinComma => {
+                    stack.push(left_bin);
+                    left = left_bin.left;
+                }
+                _ => break,
+            }
+        }
+
+        // Ride the stack downwards
+        let mut i = stack.len();
+        let mut result = Self::simplify_unused_expr(p, left).unwrap_or(Expr::EMPTY);
+        while i > 0 {
+            i -= 1;
+            let top = stack[i];
+            let right = top.right;
+            let visited_right = Self::simplify_unused_expr(p, right).unwrap_or(Expr::EMPTY);
+            result = Expr::join_with_comma(result, visited_right);
+        }
+
+        if result.is_missing() { None } else { Some(result) }
     }
 
     pub fn should_keep_stmt_in_dead_control_flow(stmt: Stmt, bump: &Bump) -> bool {
@@ -416,14 +734,14 @@ impl SideEffects {
 }
 
 #[cfg(any())]
-// blocked_on: simplify_unused_expr (~420L) needs P::{expr_can_be_removed_if_unused,
-//   class_can_be_removed_if_unused} gated (P.rs:640); Expr::join_with_comma associated-fn
-//   reshape (Zig method form); E::Call.can_be_unwrapped_if_unused (CallUnwrap, not bool).
-//   should_keep_stmt_in_dead_control_flow (~110L) needs P::extract_decls_for_binding gated;
-//   StmtNodeList = *mut [Stmt] iteration; B::* raw-ptr deref.
-//   The 9 simpler bodies (can_change_strict_to_loose / simplify_boolean / to_number /
-//   typeof_ / to_type_of / is_primitive_to_reorder / is_primitive_with_side_effects /
-//   to_null_or_undefined / to_boolean) are un-gated above.
+// blocked_on: simplify_unused_expr's `.e_object` arm — G::Property is not Copy
+//   (BabyList ts_decorators); index/raw-ptr reshape pending. simplify_unused_binary_comma_expr
+//   uses a local Vec until P.binary_expression_simplify_stack element type is fixed
+//   (P.rs:537 currently `()`).
+//   should_keep_stmt_in_dead_control_flow (~110L) needs StmtNodeList = *mut [Stmt]
+//   iteration; B::* raw-ptr deref; G::Decl::List::move_from_vec.
+//   All other bodies (incl. simplify_unused_expr e_if/e_unary/e_binary/e_call/e_new/
+//   e_array/e_dot/e_identifier) are un-gated above.
 #[allow(warnings)]
 mod _draft {
 use crate::ast::{self, Binding, BindingData, E, Expr, ExprData, G, Op, Stmt, StmtData};

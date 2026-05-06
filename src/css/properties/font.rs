@@ -170,45 +170,27 @@ impl FontSize {
 /// as used in the `font-size` property.
 ///
 /// See [FontSize](FontSize).
-#[derive(Clone, Copy, PartialEq, Eq, Hash, strum::IntoStaticStr)]
-// TODO(port): css.DefineEnumProperty provides parse/toCss via @tagName; map to #[derive(EnumProperty)] in Phase B
+#[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
 pub enum AbsoluteFontSize {
     /// "xx-small"
-    #[strum(serialize = "xx-small")]
     XxSmall,
     /// "x-small"
-    #[strum(serialize = "x-small")]
     XSmall,
     /// "small"
-    #[strum(serialize = "small")]
     Small,
     /// "medium"
-    #[strum(serialize = "medium")]
     Medium,
     /// "large"
-    #[strum(serialize = "large")]
     Large,
     /// "x-large"
-    #[strum(serialize = "x-large")]
     XLarge,
     /// "xx-large"
-    #[strum(serialize = "xx-large")]
     XxLarge,
     /// "xxx-large"
-    #[strum(serialize = "xxx-large")]
     XxxLarge,
 }
 
 impl AbsoluteFontSize {
-    // TODO(port): DefineEnumProperty: eql/hash/parse/toCss/deepClone — derives above + crate::enum_property_util
-    #[cfg(any())] // blocked_on: EnumProperty impl (from_ascii_case_insensitive)
-    pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
-        css::enum_property_util::parse::<Self>(input)
-    }
-    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
-        css::enum_property_util::to_css(self, dest)
-    }
-
     pub fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
         match self {
             AbsoluteFontSize::XxxLarge => Feature::FontSizeXXXLarge.is_compatible(browsers),
@@ -221,23 +203,10 @@ impl AbsoluteFontSize {
 /// as used in the `font-size` property.
 ///
 /// See [FontSize](FontSize).
-#[derive(Clone, Copy, PartialEq, Eq, Hash, strum::IntoStaticStr)]
-// TODO(port): css.DefineEnumProperty
+#[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
 pub enum RelativeFontSize {
-    #[strum(serialize = "smaller")]
     Smaller,
-    #[strum(serialize = "larger")]
     Larger,
-}
-
-impl RelativeFontSize {
-    #[cfg(any())] // blocked_on: EnumProperty impl (from_ascii_case_insensitive)
-    pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
-        css::enum_property_util::parse::<Self>(input)
-    }
-    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
-        css::enum_property_util::to_css(self, dest)
-    }
 }
 
 /// A value for the [font-stretch](https://www.w3.org/TR/css-fonts-4/#font-stretch-prop) property.
@@ -296,47 +265,29 @@ impl FontStretch {
 /// as used in the `font-stretch` property.
 ///
 /// See [FontStretch](FontStretch).
-#[derive(Clone, Copy, PartialEq, Eq, Hash, strum::IntoStaticStr)]
-// TODO(port): css.DefineEnumProperty
+#[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
 pub enum FontStretchKeyword {
     /// 100%
-    #[strum(serialize = "normal")]
     Normal,
     /// 50%
-    #[strum(serialize = "ultra-condensed")]
     UltraCondensed,
     /// 62.5%
-    #[strum(serialize = "extra-condensed")]
     ExtraCondensed,
     /// 75%
-    #[strum(serialize = "condensed")]
     Condensed,
     /// 87.5%
-    #[strum(serialize = "semi-condensed")]
     SemiCondensed,
     /// 112.5%
-    #[strum(serialize = "semi-expanded")]
     SemiExpanded,
     /// 125%
-    #[strum(serialize = "expanded")]
     Expanded,
     /// 150%
-    #[strum(serialize = "extra-expanded")]
     ExtraExpanded,
     /// 200%
-    #[strum(serialize = "ultra-expanded")]
     UltraExpanded,
 }
 
 impl FontStretchKeyword {
-    #[cfg(any())] // blocked_on: EnumProperty impl (from_ascii_case_insensitive)
-    pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
-        css::enum_property_util::parse::<Self>(input)
-    }
-    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
-        css::enum_property_util::to_css(self, dest)
-    }
-
     #[inline]
     pub fn default() -> FontStretchKeyword {
         FontStretchKeyword::Normal
@@ -518,67 +469,39 @@ impl Clone for FontFamily {
 /// as used in the `font-family` property.
 ///
 /// See [FontFamily](FontFamily).
-#[derive(Clone, Copy, PartialEq, Eq, Hash, strum::IntoStaticStr)]
-// TODO(port): css.DefineEnumProperty
+#[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
 pub enum GenericFontFamily {
-    #[strum(serialize = "serif")]
     Serif,
-    #[strum(serialize = "sans-serif")]
     SansSerif,
-    #[strum(serialize = "cursive")]
     Cursive,
-    #[strum(serialize = "fantasy")]
     Fantasy,
-    #[strum(serialize = "monospace")]
     Monospace,
-    #[strum(serialize = "system-ui")]
     SystemUi,
-    #[strum(serialize = "emoji")]
     Emoji,
-    #[strum(serialize = "math")]
     Math,
-    #[strum(serialize = "fangsong")]
     Fangsong,
-    #[strum(serialize = "ui-serif")]
     UiSerif,
-    #[strum(serialize = "ui-sans-serif")]
     UiSansSerif,
-    #[strum(serialize = "ui-monospace")]
     UiMonospace,
-    #[strum(serialize = "ui-rounded")]
     UiRounded,
 
     // CSS wide keywords. These must be parsed as identifiers so they
     // don't get serialized as strings.
     // https://www.w3.org/TR/css-values-4/#common-keywords
-    #[strum(serialize = "initial")]
     Initial,
-    #[strum(serialize = "inherit")]
     Inherit,
-    #[strum(serialize = "unset")]
     Unset,
     // Default is also reserved by the <custom-ident> type.
     // https://www.w3.org/TR/css-values-4/#custom-idents
-    #[strum(serialize = "default")]
     Default,
 
     // CSS defaulting keywords
     // https://drafts.csswg.org/css-cascade-5/#defaulting-keywords
-    #[strum(serialize = "revert")]
     Revert,
-    #[strum(serialize = "revert-layer")]
     RevertLayer,
 }
 
 impl GenericFontFamily {
-    #[cfg(any())] // blocked_on: EnumProperty impl (from_ascii_case_insensitive)
-    pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
-        css::enum_property_util::parse::<Self>(input)
-    }
-    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
-        css::enum_property_util::to_css(self, dest)
-    }
-
     pub fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
         match self {
             GenericFontFamily::SystemUi => Feature::FontFamilySystemUi.is_compatible(browsers),
@@ -667,41 +590,25 @@ impl FontStyle {
 }
 
 /// A value for the [font-variant-caps](https://www.w3.org/TR/css-fonts-4/#font-variant-caps-prop) property.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, strum::IntoStaticStr)]
-// TODO(port): css.DefineEnumProperty
+#[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
 pub enum FontVariantCaps {
     /// No special capitalization features are applied.
-    #[strum(serialize = "normal")]
     Normal,
     /// The small capitals feature is used for lower case letters.
-    #[strum(serialize = "small-caps")]
     SmallCaps,
     /// Small capitals are used for both upper and lower case letters.
-    #[strum(serialize = "all-small-caps")]
     AllSmallCaps,
     /// Petite capitals are used.
-    #[strum(serialize = "petite-caps")]
     PetiteCaps,
     /// Petite capitals are used for both upper and lower case letters.
-    #[strum(serialize = "all-petite-caps")]
     AllPetiteCaps,
     /// Enables display of mixture of small capitals for uppercase letters with normal lowercase letters.
-    #[strum(serialize = "unicase")]
     Unicase,
     /// Uses titling capitals.
-    #[strum(serialize = "titling-caps")]
     TitlingCaps,
 }
 
 impl FontVariantCaps {
-    #[cfg(any())] // blocked_on: EnumProperty impl (from_ascii_case_insensitive)
-    pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
-        css::enum_property_util::parse::<Self>(input)
-    }
-    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
-        css::enum_property_util::to_css(self, dest)
-    }
-
     pub fn default() -> FontVariantCaps {
         FontVariantCaps::Normal
     }
@@ -710,7 +617,6 @@ impl FontVariantCaps {
         matches!(self, FontVariantCaps::Normal | FontVariantCaps::SmallCaps)
     }
 
-    #[cfg(any())] // blocked_on: FontVariantCaps::parse
     pub fn parse_css2(input: &mut css::Parser) -> CssResult<FontVariantCaps> {
         let value = FontVariantCaps::parse(input)?;
         if !value.is_css2() {
@@ -938,43 +844,24 @@ pub enum VerticalAlign {
 }
 
 /// A keyword for the [vertical align](https://drafts.csswg.org/css2/#propdef-vertical-align) property.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, strum::IntoStaticStr)]
-// TODO(port): css.DefineEnumProperty
+#[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
 pub enum VerticalAlignKeyword {
     /// Align the baseline of the box with the baseline of the parent box.
-    #[strum(serialize = "baseline")]
     Baseline,
     /// Lower the baseline of the box to the proper position for subscripts of the parent's box.
-    #[strum(serialize = "sub")]
     Sub,
     /// Raise the baseline of the box to the proper position for superscripts of the parent's box.
-    #[strum(serialize = "super")]
     Super,
     /// Align the top of the aligned subtree with the top of the line box.
-    #[strum(serialize = "top")]
     Top,
     /// Align the top of the box with the top of the parent's content area.
-    #[strum(serialize = "text-top")]
     TextTop,
     /// Align the vertical midpoint of the box with the baseline of the parent box plus half the x-height of the parent.
-    #[strum(serialize = "middle")]
     Middle,
     /// Align the bottom of the aligned subtree with the bottom of the line box.
-    #[strum(serialize = "bottom")]
     Bottom,
     /// Align the bottom of the box with the bottom of the parent's content area.
-    #[strum(serialize = "text-bottom")]
     TextBottom,
-}
-
-impl VerticalAlignKeyword {
-    #[cfg(any())] // blocked_on: EnumProperty impl (from_ascii_case_insensitive)
-    pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
-        css::enum_property_util::parse::<Self>(input)
-    }
-    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
-        css::enum_property_util::to_css(self, dest)
-    }
 }
 
 bitflags::bitflags! {

@@ -7655,7 +7655,12 @@ pub struct LowerUsingDeclarationsContext {
     pub has_await_using: bool,
 }
 
-#[cfg(any())] // round-D: bodies call gated P methods (generate_temp_ref, call_runtime, etc.)
+// Round-H un-gate: `generate_temp_ref` / `call_runtime` are now real (5516/6407),
+// so the only blockers were API-shape divergences. Reshaped:
+//   • `call_runtime` takes `ExprNodeList` → wrap bump slices via `from_bump_slice`
+//   • `DeclaredSymbol.ref_` / `LocRef.ref_` (not `r#ref`)
+//   • `DeclaredSymbolList`/`BabyList` API has no allocator param in this port
+//   • `G::Decl::List` → `G::DeclList` (free alias; inherent assoc type not used)
 impl LowerUsingDeclarationsContext {
     pub fn init<'a, const T: bool, J: JsxT, const S_: bool>(
         p: &mut P<'a, T, J, S_>,
@@ -7673,34 +7678,41 @@ impl LowerUsingDeclarationsContext {
         stmts: &mut [Stmt],
     ) {
         for stmt in stmts.iter_mut() {
-            let js_ast::StmtData::SLocal(local) = &mut stmt.data else { continue };
+            // PORT NOTE: Zig `switch (stmt.data) { .s_local => |local| ... }` —
+            // `local` is a `*S.Local`. Match the `StoreRef` by value (Copy ptr)
+            // so DerefMut writes through to the arena slot.
+            let stmt_loc = stmt.loc;
+            let js_ast::StmtData::SLocal(mut local) = stmt.data else { continue };
             if !local.kind.is_using() {
                 continue;
             }
 
             if self.first_using_loc.is_empty() {
-                self.first_using_loc = stmt.loc;
+                self.first_using_loc = stmt_loc;
             }
             if local.kind == js_ast::s::Kind::KAwaitUsing {
                 self.has_await_using = true;
             }
+            let local_kind = local.kind;
             for decl in local.decls.slice_mut() {
                 if let Some(decl_value) = &mut decl.value {
                     let value_loc = decl_value.loc;
                     p.record_usage(self.stack_ref);
                     let args = p.allocator.alloc_slice_copy(&[
-                        Expr { data: js_ast::ExprData::EIdentifier(E::Identifier { r#ref: self.stack_ref, ..Default::default() }), loc: stmt.loc },
+                        p.new_expr(E::Identifier { r#ref: self.stack_ref, ..Default::default() }, stmt_loc),
                         *decl_value,
                         // 1. always pass this param for hopefully better jit performance
                         // 2. pass 1 or 0 to be shorter than `true` or `false`
-                        Expr {
-                            data: js_ast::ExprData::ENumber(E::Number {
-                                value: if local.kind == js_ast::s::Kind::KAwaitUsing { 1.0 } else { 0.0 },
-                            }),
-                            loc: stmt.loc,
-                        },
+                        p.new_expr(
+                            E::Number { value: if local_kind == js_ast::s::Kind::KAwaitUsing { 1.0 } else { 0.0 } },
+                            stmt_loc,
+                        ),
                     ]);
-                    decl.value = Some(p.call_runtime(value_loc, b"__using", args));
+                    // SAFETY: bump-arena slice valid for 'a; ExprNodeList::from_bump_slice
+                    // marks origin Borrowed so Drop is a no-op.
+                    decl.value = Some(p.call_runtime(value_loc, b"__using", unsafe {
+                        ExprNodeList::from_bump_slice(args)
+                    }));
                 }
             }
             // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding

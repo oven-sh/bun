@@ -707,10 +707,81 @@ impl ShellExecEnv {
         }
     }
 
-    // The full body (dupe_for_subshell, change_cwd, get_home_dir, deinit_impl,
-    // etc.) is preserved in the gated `interpreter_body` module below — it
-    // depends on bun_sys::dup, IOWriter, ResolvePath join_buf, and EnvMap
-    // method surface that aren't yet stable.
+    /// Spec: interpreter.zig `ShellExecEnv.dupeForSubshell`. Heap-allocates a
+    /// fresh env for a subshell/pipeline child: dups `cwd_fd`, clones
+    /// `shell_env`/`export_env`, gives it a fresh empty `cmd_local_env`, and
+    /// borrows or owns buffered stdout/stderr per `kind` (subshell/pipeline
+    /// borrow the parent's buffers so output bubbles up; cmd-subst owns).
+    ///
+    /// Caller frees with `ShellExecEnv::deinit_impl(p)`.
+    pub fn dupe_for_subshell(
+        &mut self,
+        io: &IO,
+        kind: ShellExecEnvKind,
+    ) -> bun_sys::Result<*mut ShellExecEnv> {
+        use crate::shell::io::OutKind;
+
+        let dupedfd = bun_sys::dup(self.cwd_fd)?;
+
+        // Spec (interpreter.zig dupeForSubshell): for `.fd` with a captured
+        // buffer, borrow that; for `.ignore`, own a fresh one; for `.pipe`,
+        // own when normal/cmd_subst, borrow parent's when subshell/pipeline.
+        let bufio_for = |out: &OutKind, parent_buf: *mut ByteList| -> Bufio {
+            match out {
+                OutKind::Fd(f) => match f.captured {
+                    Some(cap) => Bufio::Borrowed(cap),
+                    None => Bufio::Owned(ByteList::default()),
+                },
+                OutKind::Ignore => Bufio::Owned(ByteList::default()),
+                OutKind::Pipe => match kind {
+                    ShellExecEnvKind::Normal | ShellExecEnvKind::CmdSubst => {
+                        Bufio::Owned(ByteList::default())
+                    }
+                    ShellExecEnvKind::Subshell | ShellExecEnvKind::Pipeline => {
+                        Bufio::Borrowed(parent_buf)
+                    }
+                },
+            }
+        };
+        let stdout = bufio_for(&io.stdout, self.buffered_stdout());
+        let stderr = bufio_for(&io.stderr, self.buffered_stderr());
+
+        let duped = Box::new(ShellExecEnv {
+            kind,
+            _buffered_stdout: stdout,
+            _buffered_stderr: stderr,
+            shell_env: self.shell_env.clone(),
+            cmd_local_env: EnvMap::init(),
+            export_env: self.export_env.clone(),
+            __prev_cwd: self.__prev_cwd.clone(),
+            __cwd: self.__cwd.clone(),
+            cwd_fd: dupedfd,
+            async_pids: SmolList::default(),
+        });
+        Ok(Box::into_raw(duped))
+    }
+
+    /// Spec: interpreter.zig `ShellExecEnv.deinit` — wraps `deinitImpl(true,
+    /// true)` for the heap-allocated subshell/pipeline-child case.
+    ///
+    /// SAFETY: `this` was returned by `dupe_for_subshell` (or otherwise
+    /// `Box::into_raw`'d) and not yet freed.
+    pub fn deinit_impl(this: *mut ShellExecEnv) {
+        log!("[ShellExecEnv] deinit 0x{:x}", this as usize);
+        // SAFETY: precondition above. Reclaim the Box; `Drop` for the env
+        // maps / vecs / owned `Bufio` runs on drop. Only `cwd_fd` needs an
+        // explicit close (Zig: `closefd(this.cwd_fd)`).
+        let boxed = unsafe { Box::from_raw(this) };
+        closefd(boxed.cwd_fd);
+        // EnvMap/Vec/ByteList drop impls free their storage; `Bufio::Borrowed`
+        // is a raw ptr so its drop is a no-op (matches Zig's
+        // `if (== .owned) clearAndFree`).
+        drop(boxed);
+    }
+
+    // The remaining body (change_cwd, get_home_dir, assign_var, etc.) is
+    // preserved in the gated `interpreter_body` module below — it depends on
+    // ResolvePath join_buf and IOWriter method surface that aren't yet stable.
 }
 
 // ────────────────────────────────────────────────────────────────────────────

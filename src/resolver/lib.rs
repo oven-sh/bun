@@ -2053,35 +2053,34 @@ mod strings {
         bun_string::strings::index_of_any(slice, chars).map(|v| v as usize)
     }
 }
-// bun_sys shim — adds the dir-iteration / openat surface the resolver names.
-// TODO(b2-blocked): bun_sys dir-iteration API — `iterate_dir` /
-// `open_dir_absolute_z` / `open_dir_z` / `get_fd_path` / `OpenDirOptions`.
+// bun_sys shim — adds the `std.fs`-shaped dir-open surface the resolver names
+// (`openDirAbsoluteZ` / `Dir.openDirZ`) on top of the real `::bun_sys` crate.
+// `open` / `open_dir_for_iteration` / `get_fd_path` / `OpenDirOptions` /
+// `iterate_dir` are now provided by the `pub use ::bun_sys::*` glob.
 mod bun_sys {
     pub use ::bun_sys::*;
-    #[derive(Default)]
-    pub struct OpenDirOptions { pub no_follow: bool, pub iterate: bool }
-    pub fn open_dir_absolute_z(_path: &::bun_core::ZStr, _opts: OpenDirOptions) -> core::result::Result<Fd, ::bun_core::Error> {
-        unimplemented!("bun_sys::open_dir_absolute_z (Phase B)")
+
+    /// Port of `std.fs.openDirAbsoluteZ` — `open(path, O_DIRECTORY|O_RDONLY|O_CLOEXEC[|O_NOFOLLOW])`.
+    /// `opts.iterate` is a no-op on POSIX (Zig only used it to pick `iterate=true`
+    /// on `IterableDir`, which is just an open mode hint).
+    pub fn open_dir_absolute_z(path: &::bun_core::ZStr, opts: OpenDirOptions) -> core::result::Result<Fd, ::bun_core::Error> {
+        #[cfg(unix)]
+        let nofollow = if opts.no_follow { libc::O_NOFOLLOW } else { 0 };
+        #[cfg(not(unix))]
+        let nofollow = { let _ = opts; 0 };
+        ::bun_sys::open(path, O::DIRECTORY | O::CLOEXEC | O::RDONLY | nofollow, 0).map_err(Into::into)
     }
-    pub fn open_dir_z(_dir: Fd, _path: &[u8], _opts: OpenDirOptions) -> core::result::Result<Fd, ::bun_core::Error> {
-        unimplemented!("bun_sys::open_dir_z (Phase B)")
+    /// Port of `std.fs.Dir.openDirZ` — `openat(dir, path, O_DIRECTORY|O_RDONLY|O_CLOEXEC)`.
+    pub fn open_dir_z(dir: Fd, path: &[u8], _opts: OpenDirOptions) -> core::result::Result<Fd, ::bun_core::Error> {
+        // PORT NOTE: callers pass either a `&'static [u8]` literal or a NUL-terminated
+        // slice; `open_dir_at` builds its own ZStr internally so we strip the sentinel.
+        let path = if path.last() == Some(&0) { &path[..path.len() - 1] } else { path };
+        ::bun_sys::open_dir_at(dir, path).map_err(Into::into)
     }
-    pub fn open_dir_for_iteration(_dir: Fd, _path: &[u8]) -> Maybe<Fd> {
-        unimplemented!("bun_sys::open_dir_for_iteration (Phase B)")
-    }
-    pub fn open(_path: &::bun_core::ZStr, _flags: i32, _mode: u32) -> Maybe<Fd> {
-        unimplemented!("bun_sys::open shim (Phase B)")
-    }
-    pub fn iterate_dir(_fd: Fd) -> DirIteratorShim { DirIteratorShim }
-    pub struct DirIteratorShim;
-    impl DirIteratorShim {
-        pub fn next(&mut self) -> Maybe<core::result::Result<Option<()>, ::bun_core::Error>> {
-            unimplemented!("bun_sys::DirIterator (Phase B)")
-        }
-    }
-    pub fn get_fd_path<'b>(_fd: Fd, _buf: &'b mut [u8]) -> core::result::Result<&'b [u8], ::bun_core::Error> {
-        unimplemented!("bun_sys::get_fd_path (Phase B)")
-    }
+    // TODO(b2-blocked): `iterate_dir`'s real `WrappedIterator` is itself stubbed in
+    // `::bun_sys::dir_iterator` (T6 — `bun_runtime::node::dir_iterator` vtable). The
+    // resolver's `dir_info_cached_maybe_log` readdir loop compiles against the real
+    // type via the glob re-export above; the body will panic until T6 wires it.
     pub use ::bun_sys::RawFd;
 }
 

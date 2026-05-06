@@ -469,7 +469,7 @@ impl<'a> Parser<'a> {
 
         // Parse the file in the first pass, but do not bind symbols
         let mut opts = ParseStatementOptions { is_module_scope: true, ..Default::default() };
-        let parse_tracer = /* TODO(b2-blocked): bun_perf */ (); // TODO(b2-blocked): bun_perf::trace
+        let parse_tracer = bun_core::perf::trace("JSParser::parse");
 
         let stmts = match p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts) {
             Ok(s) => s,
@@ -585,6 +585,12 @@ impl<'a> Parser<'a> {
             }
         }
 
+        // reconciler-6: tail re-gated — ~148 port errors below (Path::is_node_module/
+        // is_jsx_file, p.bump→allocator, Stmt::Data paths, Tracer.end() on (), Loc:!Hash,
+        // Part:!Clone, G::Decl::List assoc-type, b::Identifier.ref_).
+        // Body preserved verbatim under #[cfg(any())]; runtime panics until un-gate.
+        #[cfg(any())]
+        {
         // We must check the cache only after we've consumed the hashbang and leading // @bun pragma
         // We don't want to ever put files with `// @bun` into this cache, as that would be wasteful.
         #[cfg(not(target_arch = "wasm32"))]
@@ -607,7 +613,7 @@ impl<'a> Parser<'a> {
 
         // Parse the file in the first pass, but do not bind symbols
         let mut opts = ParseStatementOptions { is_module_scope: true, ..Default::default() };
-        let parse_tracer = /* TODO(b2-blocked): bun_perf */ (); // TODO(b2-blocked): bun_perf::trace
+        let parse_tracer = bun_core::perf::trace("JSParser::parse");
 
         // Parsing seems to take around 2x as much time as visiting.
         // Which makes sense.
@@ -1014,12 +1020,6 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // reconciler-6: tail re-gated — ~148 port errors below (p.allocator→allocator,
-        // js_ast::Stmt::Data paths, Tracer.end() on (), ArrayHashMap<Loc>.get bounds,
-        // b::Identifier.ref_ field, BumpVec<Part>::extend_from_slice Clone bound).
-        // Body preserved verbatim under #[cfg(any())]; runtime panics until un-gate.
-        #[cfg(any())]
-        {
         if parts.len() < 4 && parts.len() > 0 && p.options.features.unwrap_commonjs_to_esm {
             // Specially handle modules shaped like this:
             //
@@ -1892,7 +1892,7 @@ impl<'a> Parser<'a> {
 
         Ok(js_ast::Result::Ast(p.to_ast(&mut parts, exports_kind, wrap_mode, hashbang)?))
         } // end reconciler-6 #[cfg(any())] gate
-        let _ = (&mut parts, &mut p);
+        let _ = (&hashbang, &mut p);
         todo!("phase-b2: Parser::_parse tail (unwrap_commonjs_to_esm → to_ast) re-gated by reconciler-6")
     }
 

@@ -1613,9 +1613,10 @@ impl NodeHTTPResponse {
     }
 
     #[bun_jsc::host_fn(setter)]
-    pub fn set_has_custom_on_data(&mut self, _global: &JSGlobalObject, value: JSValue) {
+    pub fn set_has_custom_on_data(&mut self, _global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
         self.flags
             .set(Flags::HAS_CUSTOM_ON_DATA, value.to_boolean());
+        Ok(true)
     }
 
     fn clear_on_data_callback(&mut self, this_value: JSValue, global_object: &JSGlobalObject) {

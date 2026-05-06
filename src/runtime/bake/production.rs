@@ -1175,14 +1175,13 @@ fn load_module(
     // SAFETY: FFI call; `global` is a live &JSGlobalObject and `key` is a JSValue
     // held on the stack for the duration of the call.
     let promise_value = unsafe { BakeLoadModuleByKey(global, key) };
-    let promise = match promise_value.as_any_promise().unwrap() {
+    let promise: *mut jsc::JSInternalPromise = match promise_value.as_any_promise().unwrap() {
         AnyPromise::Internal(p) => p,
         AnyPromise::Normal(_) => unreachable!(),
     };
     // SAFETY: `as_any_promise` returns a non-null cell pointer owned by the JSC
     // heap; unique &mut for `set_handled`/`unwrap` on this thread.
-    let promise = unsafe { &mut *promise };
-    promise.set_handled();
+    unsafe { (*promise).set_handled() };
     // PORT NOTE: Zig's `*VirtualMachine` is a freely-aliasing mutable pointer.
     // We take `*mut VirtualMachine` (not `&VirtualMachine`) so the provenance
     // permits mutation — casting a `&T` to `*mut T` and writing through it is

@@ -1177,7 +1177,8 @@ fn on_asset_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
         return not_found(resp);
     };
     req.set_yield(false);
-    asset.on(resp);
+    // SAFETY: asset is a live `*mut StaticRoute` held by the content-addressable store
+    unsafe { StaticRoute::on(asset, resp) };
 }
 
 // TODO(port): Zig was generic over `T` via `@bitCast([@sizeOf(T)]u8)`. Stable
@@ -1222,7 +1223,14 @@ where
     // TODO(port): Zig inspected fn_info.params[2].type to decide AnyResponse vs raw.
     move |dev, req, resp| {
         debug_assert!(dev.magic == Magic::Valid);
-        handler(dev, req, AnyResponse::init(resp));
+        // PORT NOTE: `AnyResponse: From<*mut Response<IS_SSL>>` only impl'd for
+        // concrete `true`/`false`; branch at runtime on the const generic.
+        let any = if IS_SSL {
+            AnyResponse::init(resp as *mut bun_uws_sys::TLSResponse)
+        } else {
+            AnyResponse::init(resp as *mut bun_uws_sys::TCPResponse)
+        };
+        handler(dev, req, any);
     }
 }
 

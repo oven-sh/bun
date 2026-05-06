@@ -1210,7 +1210,7 @@ impl BunxCommand {
                 exe = EXE_SUFFIX,
             )
             .expect("unreachable");
-            let written = absolute_in_cache_dir_buf.len() - cursor.len();
+            let written = buf_total - cursor.len();
             // SAFETY: `written` bytes initialized above
             unsafe { core::slice::from_raw_parts(absolute_in_cache_dir_buf.as_ptr(), written) }
         };
@@ -1219,33 +1219,26 @@ impl BunxCommand {
         //
         //  1. Try the bin in the global cache
         //     Do not try $PATH because we already checked it above if we should
-        if let Some(destination) = PATH_BUF.with_borrow_mut(|path_buf| {
-            bun_core::which(
-                path_buf,
-                bunx_cache_dir,
-                if !ignore_cwd.is_empty() { b"" } else { this_transpiler.fs.top_level_dir },
-                absolute_in_cache_dir,
-            )
-        }) {
+        if let Some(destination) = bun_core::which(
+            as_core_path_buf(&mut path_buf),
+            bunx_cache_dir,
+            if !ignore_cwd.is_empty() { b"" } else { top_level_dir },
+            absolute_in_cache_dir,
+        ) {
             let out: &[u8] = destination.as_bytes();
-            Run::run_binary(
-                ctx,
-                this_transpiler.fs.dirname_store.append(out)?,
-                destination,
-                this_transpiler.fs.top_level_dir,
-                &this_transpiler.env,
-                passthrough,
-                None,
-            )?;
-            // runBinary is noreturn
-            unreachable!();
+            let _stored = fs.dirname_store.append(out)?;
+            let _ = (&ctx, destination, top_level_dir, &env_loader, passthrough);
+            // TODO(port): see note above re: `run_binary`.
+            //   Run::run_binary(ctx, _stored, destination, top_level_dir,
+            //                   env_loader, passthrough, None)?;
+            todo!("blocked_on: RunCommand::run_binary");
         }
 
         // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
         // BUT: Skip this if --package was used, as the user explicitly specified the binary name
         if opts.binary_name.is_none() {
             if let Ok(package_name_for_bin) =
-                Self::get_bin_name_from_temp_directory(&mut this_transpiler, bunx_cache_dir, result_package_name, false)
+                Self::get_bin_name_from_temp_directory(this_transpiler, bunx_cache_dir, result_package_name, false)
             {
                 if !strings::eql_long(&package_name_for_bin, initial_bin_name, true) {
                     absolute_in_cache_dir = {
@@ -1258,31 +1251,24 @@ impl BunxCommand {
                             EXE_SUFFIX,
                         )
                         .expect("unreachable");
-                        let written = absolute_in_cache_dir_buf.len() - cursor.len();
+                        let written = buf_total - cursor.len();
                         // SAFETY: `written` bytes initialized above
                         unsafe { core::slice::from_raw_parts(absolute_in_cache_dir_buf.as_ptr(), written) }
                     };
 
-                    if let Some(destination) = PATH_BUF.with_borrow_mut(|path_buf| {
-                        bun_core::which(
-                            path_buf,
-                            bunx_cache_dir,
-                            if !ignore_cwd.is_empty() { b"" } else { this_transpiler.fs.top_level_dir },
-                            absolute_in_cache_dir,
-                        )
-                    }) {
+                    if let Some(destination) = bun_core::which(
+                        as_core_path_buf(&mut path_buf),
+                        bunx_cache_dir,
+                        if !ignore_cwd.is_empty() { b"" } else { top_level_dir },
+                        absolute_in_cache_dir,
+                    ) {
                         let out: &[u8] = destination.as_bytes();
-                        Run::run_binary(
-                            ctx,
-                            this_transpiler.fs.dirname_store.append(out)?,
-                            destination,
-                            this_transpiler.fs.top_level_dir,
-                            &this_transpiler.env,
-                            passthrough,
-                            None,
-                        )?;
-                        // runBinary is noreturn
-                        unreachable!();
+                        let _stored = fs.dirname_store.append(out)?;
+                        let _ = (&ctx, destination, top_level_dir, &env_loader, passthrough);
+                        // TODO(port): see note above re: `run_binary`.
+                        //   Run::run_binary(ctx, _stored, destination,
+                        //       top_level_dir, env_loader, passthrough, None)?;
+                        todo!("blocked_on: RunCommand::run_binary");
                     }
                 }
             }
@@ -1294,10 +1280,10 @@ impl BunxCommand {
                 format_args!("{} {}", BStr::new(&update_request.name), BStr::new(opts.binary_name.unwrap())),
             );
             // TODO(port): Output API — Zig used two positional {s} slots
-            Output::prettyln(
+            Output::prettyln(format_args!(
                 "  <d>hint: try running without --package to install and run {} directly<r>",
-                format_args!("{}", BStr::new(opts.binary_name.unwrap())),
-            );
+                BStr::new(opts.binary_name.unwrap()),
+            ));
         } else {
             Output::err_generic(
                 "could not determine executable to run for package <b>{}<r>",

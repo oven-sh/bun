@@ -277,11 +277,13 @@ pub fn get_hash_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
 }
 
 pub fn get_jsonc_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    crate::api::jsonc_object::create(global_this)
+    let _ = global_this;
+    todo!("blocked_on: crate::api::jsonc_object::create (gated under private _jsc_gated)")
 }
 
 pub fn get_markdown_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    crate::api::markdown_object::create(global_this)
+    let _ = global_this;
+    todo!("blocked_on: crate::api::markdown_object::create (gated under private _jsc_gated)")
 }
 
 pub fn enable_ansi_colors(_global_this: &JSGlobalObject, _: &JSObject) -> JSValue {

@@ -349,7 +349,9 @@ impl CryptoHasher {
     }
 
     // Bun.CryptoHasher(algorithm, hmacKey?: string | Buffer)
-    #[bun_jsc::host_fn]
+    // PORT NOTE: `#[bun_jsc::host_fn]` (Free) emits a bare `fn_name(g, f)` call,
+    // which cannot resolve to an associated fn inside an `impl` block. The
+    // constructor shim is wired by `#[bun_jsc::JsClass]` codegen.
     pub fn constructor(
         global: &JSGlobalObject,
         callframe: &CallFrame,

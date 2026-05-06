@@ -1555,7 +1555,9 @@ impl FrameworkRouter {
                             full_rel_path.len()
                         };
                         rel_path_buf[0] = b'/';
-                        paths::platform_to_posix_in_place(&mut rel_path_buf[0..full_rel_path_len]);
+                        paths::resolve_path::platform_to_posix_in_place(
+                            &mut rel_path_buf[0..full_rel_path_len],
+                        );
 
                         let t = &self.types[t_index.get() as usize];
                         let abs_root_len = t.abs_root.len();
@@ -1739,7 +1741,7 @@ impl JSFrameworkRouter {
             ));
         }
 
-        let Some(root) = opts.get_optional::<bun_str::Slice>(global, "root")? else {
+        let Some(root) = opts.get_optional::<bun_str::zig_string::Slice>(global, "root")? else {
             return Err(global.throw_invalid_arguments("Missing options.root", &[]));
         };
 

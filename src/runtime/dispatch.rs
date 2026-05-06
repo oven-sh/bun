@@ -434,13 +434,15 @@ pub fn run_task(
 
         // ── compression streams ──────────────────────────────────────────
         task_tag::NativeZlib => {
-            node_zlib_binding::run_from_js_thread::<NativeZlib>(cast!(NativeZlib));
+            node_zlib_binding::CompressionStream::<NativeZlib>::run_from_js_thread(cast!(NativeZlib));
         }
         task_tag::NativeBrotli => {
-            node_zlib_binding::run_from_js_thread::<NativeBrotli<'_>>(cast!(NativeBrotli<'_>));
+            node_zlib_binding::CompressionStream::<NativeBrotli<'_>>::run_from_js_thread(
+                cast!(NativeBrotli<'_>),
+            );
         }
         task_tag::NativeZstd => {
-            node_zlib_binding::run_from_js_thread::<NativeZstd>(cast!(NativeZstd));
+            node_zlib_binding::CompressionStream::<NativeZstd>::run_from_js_thread(cast!(NativeZstd));
         }
 
         // ── process / signals ────────────────────────────────────────────

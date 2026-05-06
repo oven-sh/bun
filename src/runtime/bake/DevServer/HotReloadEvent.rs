@@ -147,8 +147,12 @@ impl HotReloadEvent {
                             .server_transpiler
                             .resolver
                             .resolve(
-                                bun_paths::dirname(source_file_path, Platform::auto()),
-                                specifier,
+                                bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
+                                    source_file_path,
+                                ),
+                                // SAFETY: specifier borrow is valid; dependencies vec is not
+                                // mutated until after this resolve call returns.
+                                unsafe { &*specifier },
                                 bun_options_types::ImportKind::Stmt,
                             )
                             .ok()

@@ -4,15 +4,17 @@ use bstr::{BStr, ByteSlice};
 
 use bun_alloc::AllocError;
 use crate::cli::command::{self, Command};
-use crate::cli::RunCommand;
+use crate::cli::run_command::RunCommand;
 use bun_core::{env_var, Global, Output};
 use bun_install::PackageManager;
-use bun_js_parser::js_printer as JSPrinter;
+use bun_install::package_manager_real::options::LogLevel;
+use bun_js_printer as JSPrinter;
 // TODO(port): verify crate path for `bun.json` (package.json parser)
-use bun_json as JSON;
+use bun_interchange::json as JSON;
 use bun_logger as logger;
-use bun_paths::{self as path, PathBuffer};
-use crate::process::{spawn_sync, SpawnSyncOptions, SpawnSyncResult, Stdio};
+use bun_paths::{resolve_path as path, PathBuffer};
+use crate::api::process::sync::{spawn as spawn_sync, Options as SpawnSyncOptions, SyncStdio as Stdio};
+use bun_sys::Maybe as SpawnSyncResult;
 use bun_semver as Semver;
 use bun_str::strings;
 use bun_sys::{self, Fd};

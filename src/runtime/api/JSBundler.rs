@@ -493,7 +493,7 @@ pub mod js_bundler {
                     }
                     return Ok(Some(this));
                 } else if compile_value.is_string() {
-                    this.compile_target = CompileTarget::from_js(global_this, compile_value)?;
+                    this.compile_target = compile_target_from_js(global_this, compile_value)?;
                     return Ok(Some(this));
                 } else if compile_value.is_object() {
                     break 'brk compile_value;
@@ -506,7 +506,7 @@ pub mod js_bundler {
             };
 
             if let Some(target) = object.get_own(global_this, "target")? {
-                this.compile_target = CompileTarget::from_js(global_this, target)?;
+                this.compile_target = compile_target_from_js(global_this, target)?;
             }
 
             if let Some(exec_argv) = object.get_own_array(global_this, "execArgv")? {
@@ -641,7 +641,7 @@ pub mod js_bundler {
             if let Some(slice) = config.get_optional::<ZigString::Slice>(global_this, "target")? {
                 if bun_str::strings::has_prefix(slice.slice(), b"bun-") {
                     this.compile = Some(CompileOptions {
-                        compile_target: CompileTarget::from_slice(global_this, slice.slice())?,
+                        compile_target: compile_target_from_slice(global_this, slice.slice())?,
                         ..Default::default()
                     });
                     this.target = Target::Bun;

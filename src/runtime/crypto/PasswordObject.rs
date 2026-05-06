@@ -924,6 +924,12 @@ impl VerifyResult {
         Box::into_raw(Box::new(init))
     }
 
+    /// Type-erased shim matching `AnyTask.callback`'s ABI; recovers `*mut Self`
+    /// and forwards to `run_from_js`.
+    fn run_from_js_erased(p: *mut core::ffi::c_void) -> AnyTaskJsResult<()> {
+        Self::run_from_js(p.cast::<VerifyResult>()).map_err(|_| core::ptr::null_mut())
+    }
+
     pub fn run_from_js(this: *mut VerifyResult) -> Result<(), jsc::JsTerminated> {
         // SAFETY: `this` was produced by Box::into_raw in `VerifyResult::new` and is
         // uniquely owned here (event loop hands sole ownership to this callback).

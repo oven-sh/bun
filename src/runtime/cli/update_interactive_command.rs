@@ -561,7 +561,7 @@ impl UpdateInteractiveCommand {
             // Get the workspace path for this package
             let workspace_resolution =
                 &manager.lockfile.packages.items_resolution()[pkg.workspace_pkg_id as usize];
-            let workspace_path: &[u8] = if workspace_resolution.tag == bun_install::ResolutionTag::Workspace {
+            let workspace_path: &[u8] = if workspace_resolution.tag == bun_install::resolution::Tag::Workspace {
                 workspace_resolution
                     .value
                     .workspace
@@ -670,8 +670,8 @@ impl UpdateInteractiveCommand {
 
         let mut workspace_pkg_ids: Vec<PackageID> = Vec::new();
         for (pkg_id, resolution) in pkg_resolutions.iter().enumerate() {
-            if resolution.tag != bun_install::ResolutionTag::Workspace
-                && resolution.tag != bun_install::ResolutionTag::Root
+            if resolution.tag != bun_install::resolution::Tag::Workspace
+                && resolution.tag != bun_install::resolution::Tag::Root
             {
                 continue;
             }
@@ -694,8 +694,8 @@ impl UpdateInteractiveCommand {
 
         let mut workspace_pkg_ids: Vec<PackageID> = Vec::new();
         for (pkg_id, resolution) in pkg_resolutions.iter().enumerate() {
-            if resolution.tag != bun_install::ResolutionTag::Workspace
-                && resolution.tag != bun_install::ResolutionTag::Root
+            if resolution.tag != bun_install::resolution::Tag::Workspace
+                && resolution.tag != bun_install::resolution::Tag::Root
             {
                 continue;
             }
@@ -728,10 +728,10 @@ impl UpdateInteractiveCommand {
                             let res = &pkg_resolutions[workspace_pkg_id as usize];
 
                             let res_path: &[u8] = match res.tag {
-                                bun_install::ResolutionTag::Workspace => {
+                                bun_install::resolution::Tag::Workspace => {
                                     res.value.workspace.slice(string_buf)
                                 }
-                                bun_install::ResolutionTag::Root => {
+                                bun_install::resolution::Tag::Root => {
                                     FileSystem::instance().top_level_dir
                                 }
                                 _ => unreachable!(),
@@ -862,13 +862,13 @@ impl UpdateInteractiveCommand {
                 let Some(resolved_version) = manager.lockfile.resolve_catalog_dependency(dep) else {
                     continue;
                 };
-                if resolved_version.tag != bun_install::DependencyVersionTag::Npm
-                    && resolved_version.tag != bun_install::DependencyVersionTag::DistTag
+                if resolved_version.tag != bun_install::dependency::Tag::Npm
+                    && resolved_version.tag != bun_install::dependency::Tag::DistTag
                 {
                     continue;
                 }
                 let resolution = &pkg_resolutions[package_id as usize];
-                if resolution.tag != bun_install::ResolutionTag::Npm {
+                if resolution.tag != bun_install::resolution::Tag::Npm {
                     continue;
                 }
 
@@ -900,7 +900,7 @@ impl UpdateInteractiveCommand {
 
                 // In interactive mode, show the constrained update version as "Target"
                 // but always include packages (don't filter out breaking changes)
-                let update_version = if resolved_version.tag == bun_install::DependencyVersionTag::Npm {
+                let update_version = if resolved_version.tag == bun_install::dependency::Tag::Npm {
                     manifest
                         .find_best_version_with_filter(
                             &resolved_version.value.npm.version,
@@ -969,14 +969,14 @@ impl UpdateInteractiveCommand {
                 // Get workspace name but only show if it's actually a workspace
                 let workspace_resolution = &pkg_resolutions[workspace_pkg_id as usize];
                 let workspace_name: &[u8] =
-                    if workspace_resolution.tag == bun_install::ResolutionTag::Workspace {
+                    if workspace_resolution.tag == bun_install::resolution::Tag::Workspace {
                         pkg_names[workspace_pkg_id as usize].slice(string_buf)
                     } else {
                         b""
                     };
 
                 let catalog_name_str: &[u8] =
-                    if dep.version.tag == bun_install::DependencyVersionTag::Catalog {
+                    if dep.version.tag == bun_install::dependency::Tag::Catalog {
                         dep.version.value.catalog.slice(string_buf)
                     } else {
                         b""
@@ -1000,7 +1000,7 @@ impl UpdateInteractiveCommand {
                     workspace_name: Box::from(workspace_name),
                     behavior: dep.behavior,
                     manager,
-                    is_catalog: dep.version.tag == bun_install::DependencyVersionTag::Catalog,
+                    is_catalog: dep.version.tag == bun_install::dependency::Tag::Catalog,
                     catalog_name,
                     use_latest: manager.options.do_.update_to_latest, // default to --latest flag value
                 });

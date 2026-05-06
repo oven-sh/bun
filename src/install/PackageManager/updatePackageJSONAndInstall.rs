@@ -97,8 +97,15 @@ fn update_package_json_and_install_with_manager_with_updates_and_update_requests
             &mut []
         } else {
             UpdateRequest::parse(
-                manager,
-                &mut ctx.log,
+                // TODO(port): blocked_on `crate::PackageManager` stub/real unification —
+                // `dependency::parse_with_tag` (the only consumer of this `pm`) still
+                // types against the lib.rs stub struct, so the real `&mut PackageManager`
+                // can't flow through yet. Only effect lost: `known_npm_aliases` insert
+                // for `npm:`-aliased positionals.
+                None,
+                // SAFETY: `ctx.log` is set once during `Command::create()` (process-
+                // lifetime singleton) and is never null afterward.
+                unsafe { &mut *ctx.log },
                 positionals,
                 update_requests,
                 manager.subcommand,

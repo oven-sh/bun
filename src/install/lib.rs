@@ -593,6 +593,75 @@ pub mod bin {
     #[derive(Default, Clone, Copy, PartialEq, Eq)]
     #[repr(u8)]
     pub enum Tag { #[default] None, File, NamedFile, Dir, Map }
+
+    /// Port of `Bin.NamesIterator` (src/install/bin.zig). Stub-mod copy that
+    /// types against the inline `Bin`/`Value` above (`bin_real::NamesIterator`
+    /// can't be reused — it takes `bin_real::Bin`, a distinct type). Only the
+    /// `File`/`NamedFile`/`Map` paths are exercised by the tree printer; the
+    /// `Dir` path needs a node_modules dir handle the printer never sets.
+    pub struct NamesIterator<'a> {
+        pub bin: Bin,
+        pub i: usize,
+        pub done: bool,
+        pub package_name: bun_semver::String,
+        pub buf: bun_paths::PathBuffer,
+        pub string_buffer: &'a [u8],
+        pub extern_string_buf: &'a [bun_semver::ExternalString],
+    }
+
+    impl<'a> NamesIterator<'a> {
+        /// next filename, e.g. "babel" instead of "cli.js"
+        pub fn next(&mut self) -> Result<Option<&[u8]>, bun_core::Error> {
+            use bun_paths as path;
+            use bun_str::strings;
+            match self.bin.tag {
+                Tag::File => {
+                    if self.i > 0 {
+                        return Ok(None);
+                    }
+                    self.i += 1;
+                    self.done = true;
+                    let base = path::basename(self.package_name.slice(self.string_buffer));
+                    if strings::has_prefix(base, b"./") || strings::has_prefix(base, b".\\") {
+                        return Ok(Some(strings::copy(self.buf.as_mut_slice(), &base[2..])));
+                    }
+                    Ok(Some(strings::copy(self.buf.as_mut_slice(), base)))
+                }
+                Tag::NamedFile => {
+                    if self.i > 0 {
+                        return Ok(None);
+                    }
+                    self.i += 1;
+                    self.done = true;
+                    let base =
+                        path::basename(self.bin.value.named_file[0].slice(self.string_buffer));
+                    if strings::has_prefix(base, b"./") || strings::has_prefix(base, b".\\") {
+                        return Ok(Some(strings::copy(self.buf.as_mut_slice(), &base[2..])));
+                    }
+                    Ok(Some(strings::copy(self.buf.as_mut_slice(), base)))
+                }
+                Tag::Map => {
+                    let map = self.bin.value.map;
+                    if self.i >= map.len as usize {
+                        return Ok(None);
+                    }
+                    let index = self.i;
+                    self.i += 2;
+                    self.done = self.i >= map.len as usize;
+                    let current_string = map.get(self.extern_string_buf)[index];
+                    let base = path::basename(current_string.slice(self.string_buffer));
+                    if strings::has_prefix(base, b"./") || strings::has_prefix(base, b".\\") {
+                        return Ok(Some(strings::copy(self.buf.as_mut_slice(), &base[2..])));
+                    }
+                    Ok(Some(strings::copy(self.buf.as_mut_slice(), base)))
+                }
+                // `.dir` requires a `node_modules` directory handle the tree
+                // printer never sets; matches `bin_real::NamesIterator` shape
+                // but the printer's `match` arms route Dir/None elsewhere.
+                Tag::Dir | Tag::None => Ok(None),
+            }
+        }
+    }
 }
 /// Stub: `lockfile.rs` — type surface for `dependency.rs` / `npm.rs`.
 pub mod lockfile {

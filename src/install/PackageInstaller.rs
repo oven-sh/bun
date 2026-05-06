@@ -1124,8 +1124,8 @@ impl<'a> PackageInstaller<'a> {
             package_version,
             node_modules: &self.node_modules,
             lockfile: &*self.lockfile,
-            // TODO(port): PackageInstall has additional default-initialized fields
-            ..Default::default()
+            cache_dir_subpath: ZStr::EMPTY,
+            file_count: 0,
         };
         bun_output::scoped_log!(
             PackageInstaller,

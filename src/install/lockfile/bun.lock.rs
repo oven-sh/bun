@@ -1802,10 +1802,10 @@ pub fn parse_into_binary_lockfile(
 
                 let mut pkg = Package::default();
 
-                pkg.resolution = Resolution {
-                    tag: ResolutionTag::Workspace,
-                    value: ResolutionValue { workspace: string_buf.append(path)? },
-                };
+                pkg.resolution = Resolution::init(
+                    ResolutionTag::Workspace,
+                    ResolutionValue { workspace: string_buf.append(path)?, ..Default::default() },
+                );
 
                 let name = value.get(b"name").unwrap().as_utf8_string_literal().unwrap();
                 let name_hash = StringBuilder::string_hash(name);
@@ -2235,7 +2235,7 @@ pub fn parse_into_binary_lockfile(
 
         {
             // first the root dependencies are resolved
-            pkg_resolutions[0] = Resolution::init(ResolutionValue::root(()));
+            pkg_resolutions[0] = Resolution::init(ResolutionTag::Root, ResolutionValue::default());
             pkg_metas[0].origin = Origin::Local;
 
             for _dep_id in pkg_deps[0].begin()..pkg_deps[0].end() {

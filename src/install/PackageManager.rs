@@ -760,13 +760,14 @@ impl PackageManager {
     }
 
     pub fn crash(&mut self) -> ! {
-        if self.options.log_level != Options::LogLevel::Silent {
+        if self.options.log_level != package_manager_options::LogLevel::Silent {
             // SAFETY: `self.log` points to a separate `logger::Log` allocation (borrowed from
             // `ctx.log`) that outlives the singleton. `&mut self` only covers the pointer field,
             // not the pointee. `logger::Log::print` takes `&self` (Zig spec `*const Log`,
             // logger.zig:1204), so we only need a shared borrow here — the sole invariant is
             // that no `&mut logger::Log` to the pointee is live, which holds on this path.
-            let _ = unsafe { &*self.log }.print(Output::error_writer());
+            // `IntoLogWrite` is impl'd for `*mut io::Writer`, not `&mut`.
+            let _ = unsafe { &*self.log }.print(Output::error_writer() as *mut _);
         }
         Global::crash();
     }
@@ -788,7 +789,7 @@ impl PackageManager {
     pub fn configure_env_for_scripts(
         &mut self,
         ctx: Command::Context,
-        log_level: Options::LogLevel,
+        log_level: package_manager_options::LogLevel,
     ) -> Result<transpiler::Transpiler<'static>, Error> {
         // TODO(port): narrow error set
         CONFIGURE_ENV_FOR_SCRIPTS_ONCE.call((self, ctx, log_level))
@@ -975,7 +976,7 @@ fn configure_env_for_scripts_run(
         ctx,
         &mut this_transpiler_slot,
         env_ptr,
-        log_level != Options::LogLevel::Silent,
+        log_level != package_manager_options::LogLevel::Silent,
         false,
     )?;
     // SAFETY: the install-tier `RunCommand::configure_env_for_run` shim
@@ -2138,7 +2139,7 @@ pub fn init_with_runtime_once(
         manager.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
         manager.root_progress_node = manager.progress.start("", 0);
     } else {
-        manager.options.log_level = Options::LogLevel::DefaultNoProgress;
+        manager.options.log_level = package_manager_options::LogLevel::DefaultNoProgress;
     }
 
     if !manager.options.enable.cache {

@@ -35,6 +35,17 @@ pub struct Scripts {
 }
 
 impl Scripts {
+    /// (name, getter) table mirroring Zig `inline for (std.meta.fieldNames(Lockfile.Scripts))`.
+    /// Used by debug JSON serialization in place of comptime field reflection.
+    pub const FIELD_NAMES: &'static [(&'static str, fn(&Scripts) -> &SemverString)] = &[
+        ("preinstall", |s| &s.preinstall),
+        ("install", |s| &s.install),
+        ("postinstall", |s| &s.postinstall),
+        ("preprepare", |s| &s.preprepare),
+        ("prepare", |s| &s.prepare),
+        ("postprepare", |s| &s.postprepare),
+    ];
+
     /// Helper: indexed access matching `Lockfile.Scripts.names` order.
     /// Zig used `@field(this, hook)` over `Lockfile.Scripts.names`; Rust has no
     /// field-by-name reflection, so we tabulate the 6 hooks explicitly.

@@ -490,23 +490,27 @@ impl ExtractTarball {
             // PORT NOTE: reshaped for borrowck — Zig grabbed a raw `*TlBufs` from TLS;
             // here the entire body lives inside the thread_local borrow closure.
             let folder_name: &[u8] = match self.resolution.tag {
-                Resolution::Tag::Npm => package_manager.cached_npm_package_folder_name_print(
+                ResolutionTag::Npm => directories::cached_npm_package_folder_name_print(
+                    package_manager,
                     &mut bufs.folder_name_buf,
                     name,
                     self.resolution.value.npm.version,
                     None,
-                ),
-                Resolution::Tag::Github => PackageManager::cached_git_hub_folder_name_print(
+                )
+                .as_bytes(),
+                ResolutionTag::Github => directories::cached_github_folder_name_print(
                     &mut bufs.folder_name_buf,
                     resolved,
                     None,
-                ),
-                Resolution::Tag::LocalTarball | Resolution::Tag::RemoteTarball => {
-                    PackageManager::cached_tarball_folder_name_print(
+                )
+                .as_bytes(),
+                ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
+                    directories::cached_tarball_folder_name_print(
                         &mut bufs.folder_name_buf,
                         self.url.slice(),
                         None,
                     )
+                    .as_bytes()
                 }
                 _ => unreachable!(),
             };
@@ -656,9 +660,9 @@ impl ExtractTarball {
                 }
 
                 if let Err(err) = sys::renameat_concurrently_a(
-                    Fd::from_std_dir(tmpdir),
+                    tmpdir.fd(),
                     tmpname.as_bytes(),
-                    Fd::from_std_dir(cache_dir),
+                    cache_dir.fd(),
                     folder_name,
                     sys::RenameatConcurrentlyOptions { move_fallback: true },
                 ) {
@@ -698,10 +702,7 @@ impl ExtractTarball {
             };
             // `defer final_dir.close()` → Drop on Dir
             // and get the fd path
-            let final_path = match sys::get_fd_path_z(
-                Fd::from_std_dir(final_dir),
-                &mut bufs.final_path_buf,
-            ) {
+            let final_path = match sys::get_fd_path_z(final_dir.fd(), &mut bufs.final_path_buf) {
                 Ok(p) => p,
                 Err(err) => {
                     log.add_error_fmt(
@@ -710,7 +711,7 @@ impl ExtractTarball {
                         format_args!(
                             "failed to resolve cache dir for \"{}\": {}",
                             BStr::new(name),
-                            err.name(),
+                            BStr::new(err.name()),
                         ),
                     )
                     .expect("unreachable");
@@ -719,16 +720,16 @@ impl ExtractTarball {
             };
 
             let url = FileSystem::instance()
-                .dirname_store
+                .dirname_store()
                 .append(self.url.slice())?;
 
             let mut json_path: &[u8] = b"";
             let mut json_buf: Vec<u8> = Vec::new();
             let needs_json = match self.resolution.tag {
                 // TODO remove extracted files not matching any globs under "files"
-                Resolution::Tag::Github
-                | Resolution::Tag::LocalTarball
-                | Resolution::Tag::RemoteTarball => true,
+                ResolutionTag::Github
+                | ResolutionTag::LocalTarball
+                | ResolutionTag::RemoteTarball => true,
                 _ => {
                     package_manager.lockfile.trusted_dependencies.is_some()
                         && package_manager
@@ -736,7 +737,9 @@ impl ExtractTarball {
                             .trusted_dependencies
                             .as_ref()
                             .unwrap()
-                            .contains(Semver::String::Builder::string_hash(name) as u32)
+                            .contains(
+                                &(Semver::semver_string::Builder::string_hash(name) as u32),
+                            )
                 }
             };
             if needs_json {

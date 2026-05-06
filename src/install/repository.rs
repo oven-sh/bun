@@ -706,7 +706,7 @@ impl Repository {
             write!(
                 &mut cursor,
                 "{}.git",
-                bun_core::fmt::hex_int_lower(task_id.get())
+                bun_core::fmt::hex_int_lower::<16>(task_id.get())
             )
             .map_err(|_| err!("NoSpaceLeft"))?;
             // TODO(port): narrow error set
@@ -755,7 +755,7 @@ impl Repository {
     }
 
     pub fn checkout(
-        env: bun_dotenv::Map,
+        env: &bun_dotenv::Map,
         log: &mut bun_logger::Log,
         cache_dir: bun_sys::Dir,
         repo_dir: bun_sys::Dir,
@@ -767,8 +767,13 @@ impl Repository {
         bun_analytics::features::git_dependencies.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let bufs = tl_bufs();
         // SAFETY: raw-ptr field projection — retags only `folder_name_buf`. See tl_bufs().
-        let folder_name =
-            PackageManager::cached_git_folder_name_print(unsafe { &mut (*bufs).folder_name_buf }, resolved, None);
+        let folder_name_buf = unsafe { &mut (*bufs).folder_name_buf };
+        let folder_name = crate::package_manager_real::cached_git_folder_name_print(
+            &mut folder_name_buf[..],
+            resolved,
+            None,
+        )
+        .as_bytes();
 
         let mut package_dir = match bun_sys::open_dir(cache_dir, folder_name) {
             Ok(d) => d,

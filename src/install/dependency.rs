@@ -642,7 +642,9 @@ impl Version {
         Version::default()
     }
 
-    pub fn clone<SB: StringBuilderLike>(
+    /// Zig: `Version.clone`. Renamed to `clone_in` so it doesn't shadow
+    /// `std::clone::Clone::clone`.
+    pub fn clone_in<SB: StringBuilderLike>(
         &self,
         buf: &[u8],
         builder: &mut SB,
@@ -652,7 +654,7 @@ impl Version {
             tag: self.tag,
             literal: builder.append_string(self.literal.slice(buf)),
             // TODO(port): Value::clone not defined in this file; assumed on Value
-            value: self.value.clone(self.tag, buf, builder)?,
+            value: self.value.clone_in(self.tag, buf, builder)?,
         })
     }
 
@@ -739,17 +741,11 @@ impl Version {
     }
 }
 
-impl Drop for Version {
-    fn drop(&mut self) {
-        if self.tag == Tag::Npm {
-            // SAFETY: tag-guarded union access; npm.version owns heap data
-            unsafe {
-                ManuallyDrop::drop(&mut self.value.npm);
-            }
-        }
-        // other variants are POD / borrowed-slice-backed
-    }
-}
+// PORT NOTE: no `Drop for Version`. Zig treats `Version` as POD — the
+// `Semver::query::Group` linked list under `.npm` is arena-allocated and
+// outlives any individual `Version` copy. Adding `Drop` here would make
+// `Dependency`/`Version` non-clonable and break the shallow-copy contract
+// the lockfile buffers rely on.
 
 // ──────────────────────────────────────────────────────────────────────────
 // Version::Tag

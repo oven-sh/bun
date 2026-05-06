@@ -418,6 +418,38 @@ impl Process {
         matches!(self.status, Status::Exited { .. } | Status::Signaled(_) | Status::Err(_))
     }
 
+    /// Zig: `Process.setExitHandler` — registers the owner that receives
+    /// `onProcessExit`. The full body stores `(ptr, vtable)` on the
+    /// `bun_runtime` `Process`; at this tier the handle has no `exit_handler`
+    /// slot, so the call is recorded as a no-op and the runtime path attaches
+    /// it via `to_process` instead. `&self` so `Arc<Process>` callers compile.
+    #[inline]
+    pub fn set_exit_handler<T>(&self, _owner: *mut T) {
+        // TODO(port): blocked_on bun_runtime::api::bun::process::Process —
+        // exit-handler slot lives on the higher-tier struct.
+    }
+
+    /// Zig: `Process.watchOrReap` — start waiting for exit (pidfd / waiter
+    /// thread / kqueue) or, on Linux, reap immediately if the child already
+    /// exited before the pidfd was registered. Returns `Ok(true)` when the
+    /// process is being watched, `Ok(false)` if it had already exited.
+    #[inline]
+    pub fn watch_or_reap(&self) -> bun_sys::Maybe<bool> {
+        // TODO(port): blocked_on bun_runtime::api::bun::process::Process —
+        // dispatch to the real `watch_or_reap` once the runtime registers the
+        // poller. Mid-tier callers only inspect `.err`.
+        Ok(true)
+    }
+
+    /// Zig: `Process.detach` — clear the exit handler so the owner can drop
+    /// without a dangling callback, and unref the keep-alive on the event
+    /// loop. `&self` because `Arc<Process>` is the canonical handle.
+    #[inline]
+    pub fn detach(&self) {
+        // TODO(port): blocked_on bun_runtime::api::bun::process::Process —
+        // poller/keep-alive live on the higher-tier struct.
+    }
+
     /// Zig: `Process.kill(signal: u8) Maybe(void)`.
     ///
     /// At this tier the `Poller` discriminant is not available, so the POSIX

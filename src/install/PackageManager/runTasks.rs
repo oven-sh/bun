@@ -180,30 +180,37 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         }
     });
 
-    let mut patch_tasks_batch = manager.patch_task_queue.pop_batch();
+    let patch_tasks_batch = manager.patch_task_queue.pop_batch();
     let mut patch_tasks_iter = patch_tasks_batch.iterator();
-    while let Some(ptask) = patch_tasks_iter.next() {
+    loop {
+        let ptask_ptr = patch_tasks_iter.next();
+        if ptask_ptr.is_null() {
+            break;
+        }
+        // SAFETY: `next()` returned non-null; node is exclusively owned by this batch.
+        let ptask = unsafe { &mut *ptask_ptr };
         if cfg!(debug_assertions) {
             debug_assert!(manager.pending_task_count() > 0);
         }
         manager.decrement_pending_tasks();
-        // Zig: `defer ptask.deinit();` — Drop handles this; ensure `ptask` is
-        // owned (Box) by the iterator. // TODO(port): confirm PatchTask ownership
+        // Zig: `defer ptask.deinit();` — reclaim the Box at end of iteration.
+        let _ptask_guard = scopeguard::guard((), move |()| {
+            // SAFETY: `ptask_ptr` was produced by `Box::into_raw` in
+            // `PatchTask::new_*`; ownership returned exactly once here.
+            unsafe { PatchTask::destroy(ptask_ptr) };
+        });
         ptask.run_from_main_thread(manager, log_level)?;
-        if matches!(ptask.callback, PatchTask::Callback::Apply(_)) {
-            let apply = ptask.callback.apply_mut();
+        if let PatchTaskCallback::Apply(apply) = &mut ptask.callback {
             if apply.logger.errors == 0 {
                 if C::HAS_ON_EXTRACT {
                     if let Some(_task_id) = apply.task_id {
                         // autofix
                     } else if C::IS_PACKAGE_INSTALLER {
                         if let Some(ctx) = apply.install_context.as_mut() {
-                            // TODO(port): downcast `extract_ctx` to `&mut PackageInstaller`.
-                            // In Zig this is `Ctx == *PackageInstaller` so `extract_ctx`
-                            // *is* the installer. Phase B: add `as_package_installer()`
-                            // on the trait or split monomorphizations.
+                            // Zig: `Ctx == *PackageInstaller` so `extract_ctx`
+                            // *is* the installer.
                             let installer: &mut PackageInstaller =
-                                PackageInstaller::from_ctx_mut(extract_ctx);
+                                C::as_package_installer(extract_ctx);
                             let path = core::mem::take(&mut ctx.path);
                             // Zig: `ctx.path = std.array_list.Managed(u8).init(bun.default_allocator);`
                             // → `Vec::new()` via `mem::take` above.

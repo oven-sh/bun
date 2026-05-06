@@ -40,7 +40,7 @@ mod ConcurrentTask {
 }
 
 /// `webcore.Blob.SizeType` — Zig used `u52`; Rust models it as `u64` (see
-/// `src/runtime/webcore/Blob.rs`). Aliased locally because `Blob::SizeType`
+/// `src/runtime/webcore/Blob.rs`). Aliased locally because `BlobSizeType`
 /// is not an associated type in the Rust port.
 type BlobSizeType = u64;
 
@@ -81,7 +81,7 @@ mod node {
     }
 }
 
-// `node::validators::*` — `super::util::validators` is a `pub use` of a
+// `validators::*` — `super::util::validators` is a `pub use` of a
 // crate-private module, which trips E0365 if we `pub use` it again. Import it
 // privately at file scope instead and call as `validators::foo` directly.
 use super::util::validators;
@@ -459,7 +459,7 @@ impl<R, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, F> {
         Self::uv_callback(req);
     }
 
-    pub fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JSTerminated> {
+    pub fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: self was Box::leak'd in create(); destroy() runs exactly once on scope exit
         let _deinit = scopeguard::guard(self as *mut Self, |p| unsafe { Self::destroy(p) });
         // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv
@@ -585,7 +585,7 @@ impl<R, A: FsArgument, const F: NodeFSFunctionEnum> AsyncFSTask<R, A, F> {
             .enqueue_task_concurrent(ConcurrentTask::create_from(this));
     }
 
-    pub fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JSTerminated> {
+    pub fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: self was Box::leak'd in create(); destroy() runs exactly once on scope exit
         let _deinit = scopeguard::guard(self as *mut Self, |p| unsafe { Self::destroy(p) });
         // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv
@@ -920,7 +920,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         let _ = self.run_from_js_thread(); // TODO: properly propagate exception upwards
     }
 
-    fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JSTerminated> {
+    fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
         if IS_SHELL {
             // SAFETY: shelltask is set by create_with_shell_task/create_mini and outlives this task
             unsafe { &mut *self.shelltask }.cp_on_finish(*self.result.get_mut());
@@ -1049,7 +1049,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
                 }
             };
 
-            if !sys::S::isdir(stat_.mode) {
+            if !sys::S::ISDIR(stat_.mode) {
                 // This is the only file, there is no point in dispatching subtasks
                 let r = nodefs._copy_single_file_sync(
                     src,
@@ -1087,9 +1087,9 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
             args.flags,
             this,
             &mut src_buf,
-            PathString::PathInt::try_from(src.len()).unwrap(),
+            PathInt::try_from(src.len()).unwrap(),
             &mut dest_buf,
-            PathString::PathInt::try_from(dest.len()).unwrap(),
+            PathInt::try_from(dest.len()).unwrap(),
         );
     }
 
@@ -1099,9 +1099,9 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         args: args::CpFlags,
         this: &Self,
         src_buf: &mut OSPathBuffer,
-        src_dir_len: PathString::PathInt,
+        src_dir_len: PathInt,
         dest_buf: &mut OSPathBuffer,
-        dest_dir_len: PathString::PathInt,
+        dest_dir_len: PathInt,
     ) -> bool {
         // SAFETY: callers NUL-terminate at src_dir_len/dest_dir_len before calling
         let src = unsafe { ZStr::from_raw(src_buf.as_ptr().cast(), src_dir_len as usize) };
@@ -1199,8 +1199,8 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
 
                     let should_continue = Self::_cp_async_directory(
                         nodefs, args, this,
-                        src_buf, (sd + 1 + cname.len()) as PathString::PathInt,
-                        dest_buf, (dd + 1 + cname.len()) as PathString::PathInt,
+                        src_buf, (sd + 1 + cname.len()) as PathInt,
+                        dest_buf, (dd + 1 + cname.len()) as PathInt,
                     );
                     if !should_continue { return false; }
                 }
@@ -1538,7 +1538,7 @@ impl AsyncReaddirRecursiveTask {
         self.result_list_count.store(0, Ordering::Relaxed);
     }
 
-    pub fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JSTerminated> {
+    pub fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv
         let global_object = unsafe { &*self.global_object };
         let success = self.pending_err.is_none();
@@ -1687,7 +1687,7 @@ pub mod args {
             })?;
             let len: u64 = 'brk: {
                 let Some(len_value) = arguments.next() else { break 'brk 0 };
-                node::validators::validate_integer(ctx, len_value, "len", None, None)?.max(0) as u64
+                validators::validate_integer(ctx, len_value, "len", None, None)?.max(0) as u64
             };
             Ok(Truncate { path, len, flags: 0 })
         }
@@ -1706,7 +1706,7 @@ pub mod args {
         }
         pub fn to_thread_safe(&mut self) {
             self.buffers.value.protect();
-            let clone: Vec<sys::PlatformIOVec> = self.buffers.buffers.as_slice().to_vec();
+            let clone: Vec<sys::PlatformIoVecConst> = self.buffers.buffers.as_slice().to_vec();
             self.buffers.buffers = clone;
         }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Writev> {
@@ -1744,7 +1744,7 @@ pub mod args {
         }
         pub fn to_thread_safe(&mut self) {
             self.buffers.value.protect();
-            let clone: Vec<sys::PlatformIOVec> = self.buffers.buffers.as_slice().to_vec();
+            let clone: Vec<sys::PlatformIoVecConst> = self.buffers.buffers.as_slice().to_vec();
             self.buffers.buffers = clone;
         }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Readv> {
@@ -1771,7 +1771,7 @@ pub mod args {
 
     pub struct FTruncate {
         pub fd: FD,
-        pub len: Option<Blob::SizeType>,
+        pub len: Option<BlobSizeType>,
     }
     impl FTruncate {
         pub fn deinit(&self) {}
@@ -1780,13 +1780,13 @@ pub mod args {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<FTruncate> {
             let fd_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
             let fd = FD::from_js_validated(fd_value, ctx)?.ok_or_else(|| throw_invalid_fd_error(ctx, fd_value))?;
-            let len: Blob::SizeType = Blob::SizeType::try_from(
-                node::validators::validate_integer(
+            let len: BlobSizeType = BlobSizeType::try_from(
+                validators::validate_integer(
                     ctx,
                     arguments.next().unwrap_or(JSValue::js_number(0)),
                     "len",
                     Some(i64::from(i52::MIN)),
-                    Some(Blob::SizeType::MAX as i64),
+                    Some(BlobSizeType::MAX as i64),
                 )?
                 .max(0),
             )
@@ -1812,12 +1812,12 @@ pub mod args {
             let uid: UidT = 'brk: {
                 let Some(uid_value) = arguments.next() else { return Err(ctx.throw_invalid_arguments("uid is required")); };
                 arguments.eat();
-                break 'brk wrap_to::<UidT>(node::validators::validate_integer(ctx, uid_value, "uid", Some(-1), Some(u32::MAX as i64))?);
+                break 'brk wrap_to::<UidT>(validators::validate_integer(ctx, uid_value, "uid", Some(-1), Some(u32::MAX as i64))?);
             };
             let gid: GidT = 'brk: {
                 let Some(gid_value) = arguments.next() else { return Err(ctx.throw_invalid_arguments("gid is required")); };
                 arguments.eat();
-                break 'brk wrap_to::<GidT>(node::validators::validate_integer(ctx, gid_value, "gid", Some(-1), Some(u32::MAX as i64))?);
+                break 'brk wrap_to::<GidT>(validators::validate_integer(ctx, gid_value, "gid", Some(-1), Some(u32::MAX as i64))?);
             };
             Ok(Chown { path: scopeguard::ScopeGuard::into_inner(path), uid, gid })
         }
@@ -1837,12 +1837,12 @@ pub mod args {
             let uid: UidT = 'brk: {
                 let Some(uid_value) = arguments.next() else { return Err(ctx.throw_invalid_arguments("uid is required")); };
                 arguments.eat();
-                break 'brk wrap_to::<UidT>(node::validators::validate_integer(ctx, uid_value, "uid", Some(-1), Some(u32::MAX as i64))?);
+                break 'brk wrap_to::<UidT>(validators::validate_integer(ctx, uid_value, "uid", Some(-1), Some(u32::MAX as i64))?);
             };
             let gid: GidT = 'brk: {
                 let Some(gid_value) = arguments.next() else { return Err(ctx.throw_invalid_arguments("gid is required")); };
                 arguments.eat();
-                break 'brk wrap_to::<GidT>(node::validators::validate_integer(ctx, gid_value, "gid", Some(-1), Some(u32::MAX as i64))?);
+                break 'brk wrap_to::<GidT>(validators::validate_integer(ctx, gid_value, "gid", Some(-1), Some(u32::MAX as i64))?);
             };
             Ok(Fchown { fd, uid, gid })
         }
@@ -1895,7 +1895,7 @@ pub mod args {
             let mode_arg = arguments.next().unwrap_or(JSValue::UNDEFINED);
             let mode: Mode = match node::mode_from_js(ctx, mode_arg)? {
                 Some(m) => m,
-                None => { return Err(node::validators::throw_err_invalid_arg_type(ctx, "mode", &[], "number", mode_arg)); }
+                None => { return Err(validators::throw_err_invalid_arg_type(ctx, "mode", &[], "number", mode_arg)); }
             };
             arguments.eat();
             Ok(Chmod { path: scopeguard::ScopeGuard::into_inner(path), mode })
@@ -1914,7 +1914,7 @@ pub mod args {
             let fd_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
             let fd = FD::from_js_validated(fd_value, ctx)?.ok_or_else(|| throw_invalid_fd_error(ctx, fd_value))?;
             let mode_arg = arguments.next().unwrap_or(JSValue::UNDEFINED);
-            let mode: Mode = node::mode_from_js(ctx, mode_arg)?.ok_or_else(|| node::validators::throw_err_invalid_arg_type(ctx, "mode", &[], "number", mode_arg))?;
+            let mode: Mode = node::mode_from_js(ctx, mode_arg)?.ok_or_else(|| validators::throw_err_invalid_arg_type(ctx, "mode", &[], "number", mode_arg))?;
             arguments.eat();
             Ok(FChmod { fd, mode })
         }
@@ -2187,10 +2187,10 @@ pub mod args {
                         else { path.deinit(); return Err(ctx.throw_invalid_arguments("The \"options.force\" property must be of type boolean.")); }
                     }
                     if let Some(delay) = val.get(ctx, "retryDelay")? {
-                        retry_delay = c_uint::try_from(node::validators::validate_integer(ctx, delay, "options.retryDelay", Some(0), Some(c_uint::MAX as i64))?).unwrap();
+                        retry_delay = c_uint::try_from(validators::validate_integer(ctx, delay, "options.retryDelay", Some(0), Some(c_uint::MAX as i64))?).unwrap();
                     }
                     if let Some(retries) = val.get(ctx, "maxRetries")? {
-                        max_retries = u32::try_from(node::validators::validate_integer(ctx, retries, "options.maxRetries", Some(0), Some(u32::MAX as i64))?).unwrap();
+                        max_retries = u32::try_from(validators::validate_integer(ctx, retries, "options.maxRetries", Some(0), Some(u32::MAX as i64))?).unwrap();
                     }
                 } else if !val.is_undefined() {
                     path.deinit();
@@ -2448,7 +2448,7 @@ pub mod args {
                     // fs.write(fd, buffer[, offset[, length[, position]]], callback)
                     StringOrBuffer::Buffer(_) => {
                         if current.is_undefined_or_null() || current.is_function() { break 'parse; }
-                        args.offset = u64::try_from(node::validators::validate_integer(ctx, current, "offset", Some(0), Some(9007199254740991))?).unwrap();
+                        args.offset = u64::try_from(validators::validate_integer(ctx, current, "offset", Some(0), Some(9007199254740991))?).unwrap();
                         arguments.eat();
                         let Some(next) = arguments.next() else { break 'parse }; current = next;
                         if !(current.is_number() || current.is_big_int()) { break 'parse; }
@@ -2456,11 +2456,11 @@ pub mod args {
                         let buf_len = args.buffer.buffer().slice().len();
                         let max_offset = (buf_len as i64).min(i64::MAX);
                         if args.offset as i64 > max_offset {
-                            return Err(ctx.throw_range_error(args.offset as f64, bun_jsc::RangeErrorOpts { field_name: "offset", max: Some(max_offset), ..Default::default() }));
+                            return Err(ctx.throw_range_error(args.offset as f64, bun_jsc::RangeErrorOptions { field_name: "offset", max: Some(max_offset), ..Default::default() }));
                         }
                         let max_len = ((buf_len as u64 - args.offset) as i64).min(i32::MAX as i64);
                         if length > max_len || length < 0 {
-                            return Err(ctx.throw_range_error(length as f64, bun_jsc::RangeErrorOpts { field_name: "length", min: Some(0), max: Some(max_len), ..Default::default() }));
+                            return Err(ctx.throw_range_error(length as f64, bun_jsc::RangeErrorOptions { field_name: "length", min: Some(0), max: Some(max_len), ..Default::default() }));
                         }
                         args.length = u64::try_from(length).unwrap();
                         arguments.eat();
@@ -2523,7 +2523,7 @@ pub mod args {
             let offset: u64 = if offset_value.is_undefined_or_null() {
                 0
             } else {
-                u64::try_from(node::validators::validate_integer(ctx, offset_value, "offset", Some(0), Some(bun_jsc::MAX_SAFE_INTEGER))?).unwrap()
+                u64::try_from(validators::validate_integer(ctx, offset_value, "offset", Some(0), Some(bun_jsc::MAX_SAFE_INTEGER))?).unwrap()
             };
 
             // length |= 0;
@@ -2544,17 +2544,17 @@ pub mod args {
             }
             // validateOffsetLengthRead(offset, length, buffer.byteLength);
             if length_float % 1.0 != 0.0 {
-                return Err(ctx.throw_range_error(length_float, bun_jsc::RangeErrorOpts { field_name: "length", msg: Some("an integer"), ..Default::default() }));
+                return Err(ctx.throw_range_error(length_float, bun_jsc::RangeErrorOptions { field_name: "length", msg: Some("an integer"), ..Default::default() }));
             }
             let length_int: i64 = length_float as i64;
             if length_int as usize > buf_len {
-                return Err(ctx.throw_range_error(length_float, bun_jsc::RangeErrorOpts { field_name: "length", max: Some((buf_len as i64).min(i64::MAX)), ..Default::default() }));
+                return Err(ctx.throw_range_error(length_float, bun_jsc::RangeErrorOptions { field_name: "length", max: Some((buf_len as i64).min(i64::MAX)), ..Default::default() }));
             }
             if i64::try_from(offset).unwrap().saturating_add(length_int) > buf_len as i64 {
-                return Err(ctx.throw_range_error(length_float, bun_jsc::RangeErrorOpts { field_name: "length", max: Some((buf_len as u64).saturating_sub(offset) as i64), ..Default::default() }));
+                return Err(ctx.throw_range_error(length_float, bun_jsc::RangeErrorOptions { field_name: "length", max: Some((buf_len as u64).saturating_sub(offset) as i64), ..Default::default() }));
             }
             if length_int < 0 {
-                return Err(ctx.throw_range_error(length_float, bun_jsc::RangeErrorOpts { field_name: "length", min: Some(0), ..Default::default() }));
+                return Err(ctx.throw_range_error(length_float, bun_jsc::RangeErrorOptions { field_name: "length", min: Some(0), ..Default::default() }));
             }
             let length: u64 = length_int as u64;
 
@@ -2567,13 +2567,13 @@ pub mod args {
             let position_int: i64 = if position_value.is_undefined_or_null() {
                 -1
             } else if position_value.is_number() {
-                node::validators::validate_integer(ctx, position_value, "position", Some(-1), Some(bun_jsc::MAX_SAFE_INTEGER))?
+                validators::validate_integer(ctx, position_value, "position", Some(-1), Some(bun_jsc::MAX_SAFE_INTEGER))?
             } else if let Some(position) = bun_jsc::JSBigInt::from_js(position_value) {
                 // const maxPosition = 2n ** 63n - 1n - BigInt(length)
                 let max_position = i64::MAX - length_int;
                 if position.order(-1i64) == core::cmp::Ordering::Less || position.order(max_position) == core::cmp::Ordering::Greater {
                     let position_str = position.to_string(ctx)?;
-                    let r = Err(ctx.throw_range_error(position_str, bun_jsc::RangeErrorOpts { field_name: "position", min: Some(-1), max: Some(max_position), ..Default::default() }));
+                    let r = Err(ctx.throw_range_error(position_str, bun_jsc::RangeErrorOptions { field_name: "position", min: Some(-1), max: Some(max_position), ..Default::default() }));
                     position_str.deref();
                     return r;
                 }
@@ -2597,11 +2597,11 @@ pub mod args {
     pub struct ReadFile {
         pub path: PathOrFileDescriptor,
         pub encoding: Encoding,
-        pub offset: Blob::SizeType,
-        pub max_size: Option<Blob::SizeType>,
+        pub offset: BlobSizeType,
+        pub max_size: Option<BlobSizeType>,
         pub limit_size_for_javascript: bool,
         pub flag: FileSystemFlags,
-        pub signal: Option<webcore::RefPtr<AbortSignal>>,
+        pub signal: Option<AbortSignalRef>,
     }
     impl Default for ReadFile {
         fn default() -> Self {
@@ -2622,7 +2622,7 @@ pub mod args {
             let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments("path must be a string or a file descriptor"))?;
             let mut encoding = Encoding::Buffer;
             let mut flag = FileSystemFlags::R;
-            let mut abort_signal = scopeguard::guard(None::<webcore::RefPtr<AbortSignal>>, |s| {
+            let mut abort_signal = scopeguard::guard(None::<AbortSignalRef>, |s| {
                 if let Some(signal) = s { signal.pending_activity_unref(); signal.unref(); }
             });
             if let Some(arg) = arguments.next() {
@@ -2663,7 +2663,7 @@ pub mod args {
         /// Encoded at the time of construction.
         pub data: StringOrBuffer,
         pub dirfd: FD,
-        pub signal: Option<webcore::RefPtr<AbortSignal>>,
+        pub signal: Option<AbortSignalRef>,
     }
     impl WriteFile {
         pub fn deinit(&self) {
@@ -2683,7 +2683,7 @@ pub mod args {
             let mut encoding = Encoding::Buffer;
             let mut flag = FileSystemFlags::W;
             let mut mode: Mode = DEFAULT_PERMISSION;
-            let mut abort_signal = scopeguard::guard(None::<webcore::RefPtr<AbortSignal>>, |s| {
+            let mut abort_signal = scopeguard::guard(None::<AbortSignalRef>, |s| {
                 if let Some(signal) = s { signal.pending_activity_unref(); signal.unref(); }
             });
             let mut flush = false;
@@ -3120,7 +3120,7 @@ impl NodeFS {
 
     pub fn access(&mut self, args: &args::Access, _: Flavor) -> Maybe<ret::Access> {
         let path: OSPathSliceZ = if args.path.slice().is_empty() {
-            paths::os_path_literal!("")
+            os_path_literal_empty()
         } else {
             args.path.os_path_kernel32(&mut self.sync_error_buf)
         };
@@ -3308,7 +3308,7 @@ impl NodeFS {
                     Maybe::Err(err) => return Maybe::Err(err.with_path(src)),
                 };
 
-                if !sys::S::isreg(stat_.mode) {
+                if !sys::S::ISREG(stat_.mode) {
                     return Maybe::Err(sys::Error { errno: SystemErrno::ENOTSUP as _, syscall: sys::Tag::copyfile, ..Default::default() });
                 }
 
@@ -3385,7 +3385,7 @@ impl NodeFS {
                 Maybe::Ok(result) => result,
                 Maybe::Err(err) => return Maybe::Err(err),
             };
-            if !sys::S::isreg(stat_.mode) {
+            if !sys::S::ISREG(stat_.mode) {
                 return Maybe::Err(sys::Error { errno: SystemErrno::EOPNOTSUPP as _, syscall: sys::Tag::copyfile, ..Default::default() });
             }
 
@@ -3462,7 +3462,7 @@ impl NodeFS {
                 Maybe::Err(err) => return Maybe::Err(err),
             };
 
-            if !sys::S::isreg(stat_.mode) {
+            if !sys::S::ISREG(stat_.mode) {
                 return Maybe::Err(sys::Error { errno: SystemErrno::ENOTSUP as _, syscall: sys::Tag::copyfile, ..Default::default() });
             }
 
@@ -3497,7 +3497,7 @@ impl NodeFS {
             }
 
             // If we know it's a regular file and ioctl_ficlone is available, attempt to use it.
-            if sys::S::isreg(stat_.mode) && sys::can_use_ioctl_ficlone() {
+            if sys::S::ISREG(stat_.mode) && sys::copy_file::can_use_ioctl_ficlone() {
                 let rc = sys::linux::ioctl_ficlone(dest_fd, src_fd);
                 if rc == 0 {
                     let _ = Syscall::fchmod(dest_fd, stat_.mode);
@@ -3506,7 +3506,7 @@ impl NodeFS {
                 }
                 // If this fails for any reason, we say it's disabled
                 // We don't want to add the system call overhead of running this function on a lot of files that don't support it
-                sys::disable_ioctl_ficlone();
+                sys::copy_file::disable_ioctl_ficlone();
             }
 
             let _close_dest = scopeguard::guard((dest_fd, stat_.mode, &wrote), |(fd, m, wrote)| {
@@ -3520,7 +3520,7 @@ impl NodeFS {
             let mut off_in_copy: i64 = 0;
             let mut off_out_copy: i64 = 0;
 
-            if !sys::can_use_copy_file_range_syscall() {
+            if !sys::copy_file::can_use_copy_file_range_syscall() {
                 let mut w = wrote.get();
                 let r = Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut w);
                 wrote.set(w);
@@ -3538,7 +3538,7 @@ impl NodeFS {
                         match err.get_errno() {
                             E::INTR => continue,
                             E::XDEV | E::NOSYS | E::INVAL | E::OPNOTSUPP => {
-                                if matches!(err.get_errno(), E::NOSYS | E::OPNOTSUPP) { sys::disable_copy_file_range_syscall(); }
+                                if matches!(err.get_errno(), E::NOSYS | E::OPNOTSUPP) { sys::copy_file::disable_copy_file_range_syscall(); }
                                 let mut w = wrote.get();
                                 let r = Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut w);
                                 wrote.set(w);
@@ -3559,7 +3559,7 @@ impl NodeFS {
                         match err.get_errno() {
                             E::INTR => continue,
                             E::XDEV | E::NOSYS | E::INVAL | E::OPNOTSUPP => {
-                                if matches!(err.get_errno(), E::NOSYS | E::OPNOTSUPP) { sys::disable_copy_file_range_syscall(); }
+                                if matches!(err.get_errno(), E::NOSYS | E::OPNOTSUPP) { sys::copy_file::disable_copy_file_range_syscall(); }
                                 let mut w = wrote.get();
                                 let r = Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut w);
                                 wrote.set(w);
@@ -3599,14 +3599,14 @@ impl NodeFS {
         // NOTE: exists cannot return an error
         let Some(path) = &args.path else { return Maybe::Ok(false) };
 
-        if let Some(graph) = bun_core::StandaloneModuleGraph::get() {
+        if let Some(graph) = standalone_module_graph_get() {
             if graph.find(path.slice()).is_some() {
                 return Maybe::Ok(true);
             }
         }
 
         let slice = if path.slice().is_empty() {
-            paths::os_path_literal!("")
+            os_path_literal_empty()
         } else {
             path.os_path_kernel32(&mut self.sync_error_buf)
         };
@@ -3653,7 +3653,7 @@ impl NodeFS {
         #[cfg(windows)]
         { return Syscall::fdatasync(args.fd); }
         // SAFETY: args.fd.native() is a valid open fd; fdatasync is the libc FFI
-        Maybe::<ret::Fdatasync>::errno_sys_fd(unsafe { sys::system::fdatasync(args.fd.native()) }, sys::Tag::fdatasync, args.fd)
+        Maybe::<ret::Fdatasync>::errno_sys_fd(unsafe { libc::fdatasync(args.fd.native()) }, sys::Tag::fdatasync, args.fd)
             .unwrap_or(Maybe::SUCCESS)
     }
 
@@ -3666,7 +3666,7 @@ impl NodeFS {
             };
         }
         match Syscall::fstat(args.fd) {
-            Maybe::Ok(result) => Maybe::Ok(Stats::init(&Syscall::PosixStat::init(&result), args.big_int)),
+            Maybe::Ok(result) => Maybe::Ok(Stats::init(&PosixStat::init(&result), args.big_int)),
             Maybe::Err(err) => Maybe::Err(err),
         }
     }
@@ -3674,7 +3674,7 @@ impl NodeFS {
     pub fn fsync(&mut self, args: &args::Fsync, _: Flavor) -> Maybe<ret::Fsync> {
         #[cfg(windows)]
         { return Syscall::fsync(args.fd); }
-        Maybe::<ret::Fsync>::errno_sys(unsafe { sys::system::fsync(args.fd.native()) }, sys::Tag::fsync)
+        Maybe::<ret::Fsync>::errno_sys(unsafe { libc::fsync(args.fd.native()) }, sys::Tag::fsync)
             .unwrap_or(Maybe::SUCCESS)
     }
 
@@ -3731,7 +3731,7 @@ impl NodeFS {
                 Maybe::Ok(result) => Maybe::Ok(result),
             };
         }
-        Maybe::<ret::Link>::errno_sys_pd(unsafe { sys::system::link(from.as_ptr(), to.as_ptr()) }, sys::Tag::link, args.old_path.slice(), args.new_path.slice())
+        Maybe::<ret::Link>::errno_sys_pd(unsafe { libc::link(from.as_ptr(), to.as_ptr()) }, sys::Tag::link, args.old_path.slice(), args.new_path.slice())
             .unwrap_or(Maybe::SUCCESS)
     }
 
@@ -3749,7 +3749,7 @@ impl NodeFS {
             };
         }
         match Syscall::lstat(args.path.slice_z(&mut self.sync_error_buf)) {
-            Maybe::Ok(result) => Maybe::Ok(StatOrNotFound::Stats(Stats::init(&Syscall::PosixStat::init(&result), args.big_int))),
+            Maybe::Ok(result) => Maybe::Ok(StatOrNotFound::Stats(Stats::init(&PosixStat::init(&result), args.big_int))),
             Maybe::Err(err) => {
                 if !args.throw_if_no_entry && err.get_errno() == E::NOENT {
                     return Maybe::Ok(StatOrNotFound::NotFound);
@@ -3821,7 +3821,7 @@ impl NodeFS {
                     return match sys::directory_exists_at(FD::INVALID, path) {
                         Maybe::Err(_) => Maybe::Err(sys::Error {
                             errno: err.errno, syscall: sys::Tag::mkdir,
-                            path: self.os_path_into_sync_error_buf(strings::without_nt_prefix(path.as_slice())).into(),
+                            path: self.os_path_into_sync_error_buf(without_nt_prefix(path.as_slice())).into(),
                             ..Default::default()
                         }),
                         // if is a directory, OK. otherwise failure
@@ -3830,7 +3830,7 @@ impl NodeFS {
                         } else {
                             Maybe::Err(sys::Error {
                                 errno: err.errno, syscall: sys::Tag::mkdir,
-                                path: self.os_path_into_sync_error_buf(strings::without_nt_prefix(path.as_slice())).into(),
+                                path: self.os_path_into_sync_error_buf(without_nt_prefix(path.as_slice())).into(),
                                 ..Default::default()
                             })
                         },
@@ -3886,7 +3886,7 @@ impl NodeFS {
                                             let buf = unsafe { &mut *sync_error_buf_ptr };
                                             return Maybe::Err(sys::Error {
                                                 errno: E::NOTDIR as _, syscall: sys::Tag::mkdir,
-                                                path: Self::os_path_into_buf(buf, strings::without_nt_prefix(&path.as_slice()[..len as usize])).into(),
+                                                path: Self::os_path_into_buf(buf, without_nt_prefix(&path.as_slice()[..len as usize])).into(),
                                                 ..Default::default()
                                             });
                                         }
@@ -3902,7 +3902,7 @@ impl NodeFS {
                                     // `parent` aliases `working_mem` (== sync_error_buf). Copy it
                                     // out to a temp before re-deriving `&mut PathBuffer` so we
                                     // never hold `&mut buf` and `&buf[..]` simultaneously.
-                                    let stripped = strings::without_nt_prefix(parent.as_slice());
+                                    let stripped = without_nt_prefix(parent.as_slice());
                                     let n = stripped.len();
                                     let tmp = paths::os_path_buffer_pool().get();
                                     tmp[..n].copy_from_slice(stripped);
@@ -3910,7 +3910,7 @@ impl NodeFS {
                                     Self::os_path_into_buf(unsafe { &mut *sync_error_buf_ptr }, &tmp[..n])
                                 };
                                 #[cfg(not(windows))]
-                                let p = strings::without_nt_prefix(parent.as_slice());
+                                let p = without_nt_prefix(parent.as_slice());
                                 return Maybe::Err(err.with_path(p));
                             }
                         }
@@ -3942,7 +3942,7 @@ impl NodeFS {
                             _ => {
                                 // SAFETY: `working_mem` is not used after this return.
                                 let buf = unsafe { &mut *sync_error_buf_ptr };
-                                return Maybe::Err(err.with_path(Self::os_path_into_buf(buf, strings::without_nt_prefix(path.as_slice()))));
+                                return Maybe::Err(err.with_path(Self::os_path_into_buf(buf, without_nt_prefix(path.as_slice()))));
                             }
                         }
                     }
@@ -3966,7 +3966,7 @@ impl NodeFS {
                 _ => {
                     // SAFETY: `working_mem` is not used after this return.
                     let buf = unsafe { &mut *sync_error_buf_ptr };
-                    return Maybe::Err(err.with_path(Self::os_path_into_buf(buf, strings::without_nt_prefix(path.as_slice()))));
+                    return Maybe::Err(err.with_path(Self::os_path_into_buf(buf, without_nt_prefix(path.as_slice()))));
                 }
             },
             Maybe::Ok(_) => {}
@@ -4237,7 +4237,7 @@ impl NodeFS {
 
             if T::IS_DIRENT && dirent_path.is_empty() {
                 dirent_path = webcore::encoding::to_bun_string(
-                    strings::without_nt_prefix::<u8>(basename.as_bytes()),
+                    without_nt_prefix::<u8>(basename.as_bytes()),
                     args.encoding,
                 );
             }
@@ -4544,7 +4544,7 @@ impl NodeFS {
                     if dirent_path_prev.is_empty() || dirent_path_prev.byte_slice() != path_u8 {
                         dirent_path_prev.deref();
                         dirent_path_prev = webcore::encoding::to_bun_string(
-                            strings::without_nt_prefix::<u8>(path_u8),
+                            without_nt_prefix::<u8>(path_u8),
                             args.encoding,
                         );
                     }
@@ -4570,7 +4570,7 @@ impl NodeFS {
         };
         if adjusted_size > VirtualMachine::SYNTHETIC_ALLOCATION_LIMIT
             // If they do not have enough memory to open the file and they're on Linux, let's throw an error instead of dealing with the OOM killer.
-            || (cfg!(target_os = "linux") && size as u64 >= bun_core::get_total_memory_size())
+            || (cfg!(target_os = "linux") && size as u64 >= get_total_memory_size())
         {
             return Some(sys::Error::from_code(E::NOMEM, syscall));
         }
@@ -4648,7 +4648,7 @@ impl NodeFS {
             PathOrFileDescriptor::Path(p) => {
                 let path = p.slice_z(&mut self.sync_error_buf);
 
-                if let Some(graph) = bun_core::StandaloneModuleGraph::get() {
+                if let Some(graph) = standalone_module_graph_get() {
                     if let Some(file) = graph.find(path.as_bytes()) {
                         let contents = file.contents.as_bytes();
                         return if args.encoding == Encoding::Buffer {
@@ -4773,7 +4773,7 @@ impl NodeFS {
 
         // For certain files, the size might be 0 but the file might still have contents.
         // https://github.com/oven-sh/bun/issues/1220
-        let max_size: u64 = args.max_size.map(|v| v as u64).unwrap_or(Blob::SizeType::MAX as u64);
+        let max_size: u64 = args.max_size.map(|v| v as u64).unwrap_or(BlobSizeType::MAX as u64);
         let has_max_size = args.max_size.is_some();
 
         let size: u64 = (stat_.size as i64)
@@ -4927,7 +4927,7 @@ impl NodeFS {
 
         // Attempt to pre-allocate large files
         // Worthwhile after 6 MB at least on ext4 linux
-        if sys::PREALLOCATE_SUPPORTED && buf.len() >= sys::PREALLOCATE_LENGTH {
+        if PREALLOCATE_SUPPORTED && buf.len() >= PREALLOCATE_LENGTH {
             'preallocate: {
                 let offset: usize = if matches!(args.file, PathOrFileDescriptor::Path(_)) {
                     // on mac, it's relatively positioned
@@ -4970,7 +4970,7 @@ impl NodeFS {
 
         if args.flush {
             #[cfg(windows)] { let _ = unsafe { windows::kernel32::FlushFileBuffers(fd.cast()) }; }
-            #[cfg(not(windows))] { let _ = unsafe { sys::system::fsync(fd.cast()) }; }
+            #[cfg(not(windows))] { let _ = unsafe { libc::fsync(fd.cast()) }; }
         }
 
         Maybe::SUCCESS
@@ -5129,7 +5129,7 @@ impl NodeFS {
             };
         }
         // SAFETY: path is NUL-terminated by slice_z; rmdir(2) is the libc FFI
-        Maybe::<ret::Rmdir>::errno_sys_p(unsafe { sys::system::rmdir(args.path.slice_z(&mut self.sync_error_buf).as_ptr()) }, sys::Tag::rmdir, args.path.slice())
+        Maybe::<ret::Rmdir>::errno_sys_p(unsafe { libc::rmdir(args.path.slice_z(&mut self.sync_error_buf).as_ptr()) }, sys::Tag::rmdir, args.path.slice())
             .unwrap_or(Maybe::SUCCESS)
     }
 
@@ -5189,9 +5189,9 @@ impl NodeFS {
 
     pub fn stat(&mut self, args: &args::Stat, _: Flavor) -> Maybe<ret::Stat> {
         let path = args.path.slice_z(&mut self.sync_error_buf);
-        if let Some(graph) = bun_core::StandaloneModuleGraph::get() {
+        if let Some(graph) = standalone_module_graph_get() {
             if let Some(result) = graph.stat(path) {
-                return Maybe::Ok(StatOrNotFound::Stats(Stats::init(&Syscall::PosixStat::init(&result), args.big_int)));
+                return Maybe::Ok(StatOrNotFound::Stats(Stats::init(&PosixStat::init(&result), args.big_int)));
             }
         }
         #[cfg(target_os = "linux")]
@@ -5207,7 +5207,7 @@ impl NodeFS {
             };
         }
         match Syscall::stat(path) {
-            Maybe::Ok(result) => Maybe::Ok(StatOrNotFound::Stats(Stats::init(&Syscall::PosixStat::init(&result), args.big_int))),
+            Maybe::Ok(result) => Maybe::Ok(StatOrNotFound::Stats(Stats::init(&PosixStat::init(&result), args.big_int))),
             Maybe::Err(err) => {
                 if !args.throw_if_no_entry && err.get_errno() == E::NOENT {
                     return Maybe::Ok(StatOrNotFound::NotFound);
@@ -5353,7 +5353,7 @@ impl NodeFS {
             };
         }
         // SAFETY: path is NUL-terminated by slice_z; unlink(2) is the libc FFI
-        Maybe::<ret::Unlink>::errno_sys_p(unsafe { sys::system::unlink(args.path.slice_z(&mut self.sync_error_buf).as_ptr()) }, sys::Tag::unlink, args.path.slice())
+        Maybe::<ret::Unlink>::errno_sys_p(unsafe { libc::unlink(args.path.slice_z(&mut self.sync_error_buf).as_ptr()) }, sys::Tag::unlink, args.path.slice())
             .unwrap_or(Maybe::SUCCESS)
     }
 
@@ -5433,9 +5433,9 @@ impl NodeFS {
         let dest = args.dest.os_path(&mut dest_buf);
         self.cp_sync_inner(
             &mut src_buf,
-            PathString::PathInt::try_from(src.len()).unwrap(),
+            PathInt::try_from(src.len()).unwrap(),
             &mut dest_buf,
-            PathString::PathInt::try_from(dest.len()).unwrap(),
+            PathInt::try_from(dest.len()).unwrap(),
             args,
         )
     }
@@ -5471,8 +5471,8 @@ impl NodeFS {
 
     fn cp_sync_inner(
         &mut self,
-        src_buf: &mut OSPathBuffer, src_dir_len: PathString::PathInt,
-        dest_buf: &mut OSPathBuffer, dest_dir_len: PathString::PathInt,
+        src_buf: &mut OSPathBuffer, src_dir_len: PathInt,
+        dest_buf: &mut OSPathBuffer, dest_dir_len: PathInt,
         args: &args::Cp,
     ) -> Maybe<ret::Cp> {
         let cp_flags = &args.flags;
@@ -5517,7 +5517,7 @@ impl NodeFS {
                     return Maybe::Err(err.with_path(&self.sync_error_buf[..sd]));
                 }
             };
-            if !sys::S::isdir(stat_.mode) {
+            if !sys::S::ISDIR(stat_.mode) {
                 let r = self._copy_single_file_sync(
                     src, dest,
                     constants::Copyfile::from_raw(if cp_flags.error_on_exist || !cp_flags.force { constants::COPYFILE_EXCL } else { 0u8 }),
@@ -5616,8 +5616,8 @@ impl NodeFS {
             match current.kind {
                 sys::FileKind::Directory => {
                     let r = self.cp_sync_inner(
-                        src_buf, (sd + 1 + name_slice.len()) as PathString::PathInt,
-                        dest_buf, (dd + 1 + name_slice.len()) as PathString::PathInt,
+                        src_buf, (sd + 1 + name_slice.len()) as PathInt,
+                        dest_buf, (dd + 1 + name_slice.len()) as PathInt,
                         args,
                     );
                     if let Maybe::Err(_) = r { return r; }
@@ -5685,13 +5685,13 @@ impl NodeFS {
         }
         let mut cwd_buf = PathBuffer::uninit();
         let mut resolved_buf = PathBuffer::uninit();
-        let src_dir = paths::dirname(src.as_bytes(), paths::Platform::Posix);
+        let src_dir = paths::resolve_path::dirname(src.as_bytes(), paths::Platform::Posix);
         let Ok(cwd) = sys::getcwd(&mut cwd_buf) else {
             // If we can't resolve cwd, preserve the link target as-is rather
             // than pointing the copied link back at the source path.
             return Syscall::symlink(link_target, dest);
         };
-        let Some(resolved) = paths::join_abs_string_buf_checked(
+        let Some(resolved) = paths::resolve_path::join_abs_string_buf_checked(
             cwd, &mut resolved_buf[..resolved_buf.len() - 1], &[src_dir, link_target], paths::Platform::Posix,
         ) else {
             self.sync_error_buf[..src.len()].copy_from_slice(src.as_bytes());
@@ -5733,7 +5733,7 @@ impl NodeFS {
                 },
             };
 
-            if !sys::S::isreg(stat_.mode) {
+            if !sys::S::ISREG(stat_.mode) {
                 if sys::S::islnk(stat_.mode) {
                     let mut mode_: u32 = bun_sys::c::COPYFILE_ACL | bun_sys::c::COPYFILE_DATA | bun_sys::c::COPYFILE_NOFOLLOW_SRC;
                     if mode.shouldnt_overwrite() { mode_ |= bun_sys::c::COPYFILE_EXCL; }
@@ -5844,7 +5844,7 @@ impl NodeFS {
                 Maybe::Err(err) => return Maybe::Err(err.with_fd(src_fd)),
             };
 
-            if !sys::S::isreg(stat_.mode) {
+            if !sys::S::ISREG(stat_.mode) {
                 return Maybe::Err(sys::Error { errno: SystemErrno::ENOTSUP as _, syscall: sys::Tag::copyfile, ..Default::default() });
             }
 
@@ -5859,14 +5859,14 @@ impl NodeFS {
 
             let mut size: usize = stat_.size.max(0) as usize;
 
-            if sys::S::isreg(stat_.mode) && sys::can_use_ioctl_ficlone() {
+            if sys::S::ISREG(stat_.mode) && sys::copy_file::can_use_ioctl_ficlone() {
                 let rc = sys::linux::ioctl_ficlone(dest_fd, src_fd);
                 if rc == 0 {
                     let _ = Syscall::fchmod(dest_fd, stat_.mode);
                     dest_fd.close();
                     return Maybe::SUCCESS;
                 }
-                sys::disable_ioctl_ficlone();
+                sys::copy_file::disable_ioctl_ficlone();
             }
 
             let _close_dest = scopeguard::guard((dest_fd, stat_.mode, &wrote), |(fd, m, wrote)| {
@@ -5878,7 +5878,7 @@ impl NodeFS {
             let mut off_in_copy: i64 = 0;
             let mut off_out_copy: i64 = 0;
 
-            if !sys::can_use_copy_file_range_syscall() {
+            if !sys::copy_file::can_use_copy_file_range_syscall() {
                 let mut w = wrote.get();
                 let r = Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut w);
                 wrote.set(w);
@@ -5899,7 +5899,7 @@ impl NodeFS {
                             // NOSYS: syscall not available
                             // OPNOTSUPP: filesystem doesn't support this operation
                             E::XDEV | E::NOSYS | E::INVAL | E::OPNOTSUPP => {
-                                if matches!(err.get_errno(), E::NOSYS | E::OPNOTSUPP) { sys::disable_copy_file_range_syscall(); }
+                                if matches!(err.get_errno(), E::NOSYS | E::OPNOTSUPP) { sys::copy_file::disable_copy_file_range_syscall(); }
                                 let mut w = wrote.get();
                                 let r = Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut w);
                                 wrote.set(w);
@@ -5925,7 +5925,7 @@ impl NodeFS {
                             // NOSYS: syscall not available
                             // OPNOTSUPP: filesystem doesn't support this operation
                             E::XDEV | E::NOSYS | E::INVAL | E::OPNOTSUPP => {
-                                if matches!(err.get_errno(), E::NOSYS | E::OPNOTSUPP) { sys::disable_copy_file_range_syscall(); }
+                                if matches!(err.get_errno(), E::NOSYS | E::OPNOTSUPP) { sys::copy_file::disable_copy_file_range_syscall(); }
                                 let mut w = wrote.get();
                                 let r = Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut w);
                                 wrote.set(w);
@@ -5969,7 +5969,7 @@ impl NodeFS {
                 Maybe::Ok(result) => result,
                 Maybe::Err(err) => return Maybe::Err(err.with_fd(src_fd)),
             };
-            if !sys::S::isreg(stat_.mode) {
+            if !sys::S::ISREG(stat_.mode) {
                 return Maybe::Err(sys::Error { errno: SystemErrno::EOPNOTSUPP as _, syscall: sys::Tag::copyfile, ..Default::default() });
             }
 
@@ -6140,8 +6140,8 @@ impl NodeFS {
     // returns boolean `should_continue`
     fn _cp_async_directory(
         &mut self, args: args::CpFlags, task: &AsyncCpTask,
-        src_buf: &mut OSPathBuffer, src_dir_len: PathString::PathInt,
-        dest_buf: &mut OSPathBuffer, dest_dir_len: PathString::PathInt,
+        src_buf: &mut OSPathBuffer, src_dir_len: PathInt,
+        dest_buf: &mut OSPathBuffer, dest_dir_len: PathInt,
     ) -> bool {
         AsyncCpTask::_cp_async_directory(self, args, task, src_buf, src_dir_len, dest_buf, dest_dir_len)
     }
@@ -6295,7 +6295,7 @@ impl ReaddirEntry for BunString {
         entries.push(webcore::encoding::to_bun_string(utf8_name, encoding));
     }
     fn append_entry_recursive(entries: &mut Vec<Self>, _utf8_name: &[u8], name_to_copy: &[u8], _dirent_path: &BunString, _kind: sys::FileKind, encoding: Encoding, apply_encoding: bool) {
-        let bytes = strings::without_nt_prefix::<u8>(name_to_copy);
+        let bytes = without_nt_prefix::<u8>(name_to_copy);
         entries.push(if apply_encoding {
             webcore::encoding::to_bun_string(bytes, encoding)
         } else {
@@ -6334,7 +6334,7 @@ impl ReaddirEntry for Buffer {
         entries.push(Buffer::from_string(utf8_name).expect("oom"));
     }
     fn append_entry_recursive(entries: &mut Vec<Self>, _utf8_name: &[u8], name_to_copy: &[u8], _dirent_path: &BunString, _kind: sys::FileKind, _encoding: Encoding, _apply_encoding: bool) {
-        entries.push(Buffer::from_string(strings::without_nt_prefix::<u8>(name_to_copy)).expect("oom"));
+        entries.push(Buffer::from_string(without_nt_prefix::<u8>(name_to_copy)).expect("oom"));
     }
 }
 
@@ -6445,7 +6445,7 @@ pub extern "C" fn Bun__mkdirp(global_this: *mut JSGlobalObject, path: *const c_c
 fn dt_err(errno: E) -> bun_core::Error {
     // Reverse of the `map_anyerror_to_errno*` tables above — round-trip through
     // the Zig error-set name so existing callers don't have to change.
-    bun_core::err_from_static(match errno {
+    err_from_static(match errno {
         E::NOENT => "FileNotFound",
         E::ACCES => "AccessDenied",
         E::PERM => "PermissionDenied",

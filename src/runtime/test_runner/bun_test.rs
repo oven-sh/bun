@@ -121,20 +121,23 @@ pub mod js_fns {
     }
 
     // Zig: `fn genericHook(comptime tag) type { return struct { pub fn hookFn(...) } }`
-    pub struct GenericHook<const TAG: GenericHookTag>;
-    impl<const TAG: GenericHookTag> GenericHook<TAG> {
-        #[bun_jsc::host_fn]
-        pub fn hook_fn(
-            global_this: &JSGlobalObject,
-            call_frame: &CallFrame,
-        ) -> JsResult<JSValue> {
+    // PORT NOTE: reshaped — `adt_const_params` is unstable, so the body takes
+    // `tag` at runtime and 5 thin `#[host_fn]` wrappers below supply the
+    // per-tag entry points (one fn per JS function, matching Zig's comptime
+    // monomorphization for JSFunction::create).
+    pub fn generic_hook_impl(
+        tag: GenericHookTag,
+        global_this: &JSGlobalObject,
+        call_frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        {
             debug::group::begin();
             let _g = scopeguard::guard((), |_| debug::group::end());
             // errdefer group.log("ended in error", .{}) — handled by ? paths implicitly logging
             // TODO(port): errdefer side-effect log on error path
 
-            let tag_name: &'static str = TAG.into();
-            let sig_bytes: &'static [u8] = TAG.sig();
+            let tag_name: &'static str = tag.into();
+            let sig_bytes: &'static [u8] = tag.sig();
 
             let mut args = ScopeFunctions::parse_arguments(
                 global_this,

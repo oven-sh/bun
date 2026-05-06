@@ -1386,6 +1386,17 @@ mod __css_validation {
     use crate::bun_css::{BundlerStyleSheet, PropertyIdTag};
     use bun_logger::{self as Logger, Log};
 
+    /// `bun_css` keys its `composes`/`local_properties` maps on `bun_logger::Ref`
+    /// (cycle-break duplicate of `js_ast::Ref`). Both are `#[repr(transparent)]`
+    /// `u64` newtypes with the identical LSB-first packing — see
+    /// `src/js_parser/ast/base.rs` and `src/logger/lib.rs`. Transmute is the
+    /// only zero-cost bridge until the duplicates are unified upstream.
+    #[inline]
+    fn to_js_ref(r: logger::Ref) -> Ref {
+        // SAFETY: identical `#[repr(transparent)]` u64 layout (see doc comment).
+        unsafe { core::mem::transmute::<logger::Ref, Ref>(r) }
+    }
+
     // Zig: `?*bun.css.BundlerStyleSheet` — keep the column element as a raw
     // `*mut` (matches `BundledAst.css`), so we never launder a `&T` into `&mut T`.
     type CssCol = Option<*mut core::ffi::c_void>;
@@ -1509,7 +1520,7 @@ mod __css_validation {
         }
 
         struct Visitor<'a> {
-            visited: ArrayHashMap<Ref, ()>,
+            visited: ArrayHashMap<logger::Ref, ()>,
             properties: StringArrayHashMap<PropertyInFile>,
             all_import_records: *mut [ImportRecordList],
             all_css_asts: *mut [CssCol],
@@ -1523,7 +1534,7 @@ mod __css_validation {
         impl<'a> Visitor<'a> {
             fn add_property_or_warn(
                 &mut self,
-                local: Ref,
+                local: logger::Ref,
                 property_name: &[u8],
                 source_index: IndexInt,
                 range: Logger::Range,
@@ -1543,7 +1554,7 @@ mod __css_validation {
 
                 // SAFETY: `Map::get` returns a stable `*mut Symbol`; ref is valid.
                 let local_original_name: &[u8] =
-                    unsafe { &*(*self.all_symbols.get(local).unwrap()).original_name };
+                    unsafe { &*(*self.all_symbols.get(to_js_ref(local)).unwrap()).original_name };
 
                 let _ = self.log.add_msg(Logger::Msg {
                     kind: Logger::Kind::Err,
@@ -1606,7 +1617,7 @@ mod __css_validation {
                 self.properties.clear_retaining_capacity();
             }
 
-            fn visit(&mut self, idx: IndexInt, ast: &BundlerStyleSheet, r#ref: Ref) {
+            fn visit(&mut self, idx: IndexInt, ast: &BundlerStyleSheet, r#ref: logger::Ref) {
                 if self.visited.contains(&r#ref) {
                     return;
                 }
@@ -1678,7 +1689,7 @@ mod __css_validation {
                     return;
                 };
                 // Warn about cross-file composition with the same CSS properties
-                let mut iter = property_usage.bitset.iter();
+                let mut iter = property_usage.bitset.iter_set();
                 while let Some(property_tag) = iter.next() {
                     let property_id_tag: PropertyIdTag =
                         // SAFETY: bitset indices are valid PropertyIdTag discriminants by construction.
@@ -1689,9 +1700,14 @@ mod __css_validation {
                         };
                     debug_assert!(property_id_tag != PropertyIdTag::Custom);
                     debug_assert!(property_id_tag != PropertyIdTag::Unparsed);
+                    let _ = property_id_tag;
+                    #[allow(unreachable_code)]
                     self.add_property_or_warn(
                         r#ref,
-                        <&'static str>::from(property_id_tag).as_bytes(),
+                        // Zig: `@tagName(property_id_tag)` — kebab-case CSS
+                        // property name. `PropertyIdTag` has no `name()`/
+                        // `Into<&str>` yet (lives in generated `bun_css`).
+                        todo!("blocked_on: bun_css::PropertyIdTag::name"),
                         idx,
                         property_usage.range,
                     );
@@ -1708,7 +1724,7 @@ mod __css_validation {
         let parse_graph = unsafe { &*this.parse_graph };
         let input = parse_graph.input_files.slice();
         let mut visitor = Visitor {
-            visited: ArrayHashMap::<Ref, ()>::default(),
+            visited: ArrayHashMap::<logger::Ref, ()>::default(),
             properties: StringArrayHashMap::<PropertyInFile>::default(),
             all_import_records: import_records_list,
             all_css_asts,

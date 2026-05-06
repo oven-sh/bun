@@ -1142,16 +1142,241 @@ pub mod fs {
     }
 
     impl RealFS {
+        /// Port of `RealFS.openDir` in `fs.zig` — `open(path, O_DIRECTORY)`.
+        pub fn open_dir(&self, unsafe_dir_string: &[u8]) -> core::result::Result<Fd, bun_core::Error> {
+            // PORT NOTE: Zig used `std.fs.openDirAbsolute` (POSIX) /
+            // `bun.sys.openDirAtWindowsA` (Windows). Both reduce to opening the path
+            // with `O_DIRECTORY` for iteration; route through `bun_sys::open_a` so
+            // the cross-platform NUL-termination + Windows long-path handling lives
+            // in one place.
+            bun_sys::open_a(unsafe_dir_string, bun_sys::O::DIRECTORY, 0).map_err(Into::into)
+        }
+
+        /// Port of `RealFS.readdir` in `fs.zig` — iterate `handle` and populate a
+        /// fresh `DirEntry` (re-using `prev_map` Entry slots where the name matches).
+        fn readdir<I: DirEntryIterator>(
+            &mut self,
+            store_fd: bool,
+            mut prev_map: Option<&mut dir_entry::EntryMap>,
+            dir_: &'static [u8],
+            generation: Generation,
+            handle: Fd,
+            iterator: I,
+        ) -> core::result::Result<DirEntry, bun_core::Error> {
+            let mut iter = bun_sys::iterate_dir(handle);
+            let mut dir = DirEntry::init(dir_, generation);
+            // errdefer dir.deinit() — DirEntry: Drop frees `data` on `?`.
+
+            if store_fd {
+                FileSystem::set_max_fd(bun_sys::Fd::native(handle));
+                dir.fd = handle;
+            }
+
+            while let Some(entry_) = iter.next()? {
+                // debug("readdir entry {}", BStr::new(entry_.name.slice()));
+                dir.add_entry(prev_map.as_deref_mut(), &entry_, (), &iterator)?;
+            }
+
+            // debug("readdir({}, {}) = {}", handle, dir_, dir.data.count());
+
+            Ok(dir)
+        }
+
+        /// Port of `RealFS.readDirectoryError` in `fs.zig` — cache (or threadlocal-
+        /// stash) an `EntriesOption::Err` for `dir` and hand back its address.
+        fn read_directory_error(
+            &mut self,
+            dir: &[u8],
+            err: bun_core::Error,
+        ) -> core::result::Result<&'static mut EntriesOption, bun_core::Error> {
+            if bun_core::FeatureFlags::ENABLE_ENTRY_CACHE {
+                let get_or_put_result = self.entries.get_or_put(dir)?;
+                if err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound") {
+                    self.entries.mark_not_found(get_or_put_result);
+                    return Ok(temp_entries_option_write(EntriesOption::Err(dir_entry::Err {
+                        original_err: err,
+                        canonical_error: err,
+                    })));
+                } else {
+                    let opt = self.entries.put(
+                        &get_or_put_result,
+                        EntriesOption::Err(dir_entry::Err { original_err: err, canonical_error: err }),
+                    )?;
+                    // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
+                    return Ok(unsafe { &mut *opt });
+                }
+            }
+
+            Ok(temp_entries_option_write(EntriesOption::Err(dir_entry::Err {
+                original_err: err,
+                canonical_error: err,
+            })))
+        }
+
         /// Port of `RealFS.readDirectory` in `fs.zig`.
-        // TODO(b2-blocked): full body in gated `fs.rs` (open + iterate + cache).
         pub fn read_directory(
             &mut self,
-            _dir: &[u8],
-            _handle: Option<Fd>,
-            _generation: Generation,
-            _store_fd: bool,
+            dir_: &[u8],
+            handle_: Option<Fd>,
+            generation: Generation,
+            store_fd: bool,
         ) -> core::result::Result<&mut EntriesOption, bun_core::Error> {
-            unimplemented!("RealFS::read_directory (Phase B — fs.rs)")
+            self.read_directory_with_iterator(dir_, handle_, generation, store_fd, ())
+        }
+
+        // One of the learnings here
+        //
+        //   Closing file descriptors yields significant performance benefits on Linux
+        //
+        // It was literally a 300% performance improvement to bundling.
+        // https://twitter.com/jarredsumner/status/1655787337027309568
+        // https://twitter.com/jarredsumner/status/1655714084569120770
+        // https://twitter.com/jarredsumner/status/1655464485245845506
+        /// Port of `RealFS.readDirectoryWithIterator` in `fs.zig`.
+        ///
+        /// Caller borrows the returned `EntriesOption`. When `FeatureFlags::ENABLE_ENTRY_CACHE`
+        /// is `false`, it is not safe to store this pointer past the current function call.
+        pub fn read_directory_with_iterator<I: DirEntryIterator>(
+            &mut self,
+            dir_maybe_trail_slash: &[u8],
+            maybe_handle: Option<Fd>,
+            generation: Generation,
+            store_fd: bool,
+            iterator: I,
+        ) -> core::result::Result<&'static mut EntriesOption, bun_core::Error> {
+            let mut dir = strings::paths::without_trailing_slash_windows_path(dir_maybe_trail_slash);
+
+            crate::Resolver::assert_valid_cache_key(dir);
+            let mut cache_result: Option<bun_alloc::Result> = None;
+            if bun_core::FeatureFlags::ENABLE_ENTRY_CACHE {
+                self.entries_mutex.lock();
+            }
+            // PORT NOTE: defer entries_mutex.unlock() — using scopeguard via raw-ptr so the
+            // guard doesn't borrow `&self` (Zig: `defer self.entries_mutex.unlock()`).
+            let mutex_ptr = core::ptr::addr_of!(self.entries_mutex);
+            let _unlock_guard = scopeguard::guard((), move |_| {
+                if bun_core::FeatureFlags::ENABLE_ENTRY_CACHE {
+                    // SAFETY: `mutex_ptr` points into `*self`, which outlives this guard.
+                    unsafe { (*mutex_ptr).unlock() };
+                }
+            });
+
+            let mut in_place: Option<*mut DirEntry> = None;
+
+            if bun_core::FeatureFlags::ENABLE_ENTRY_CACHE {
+                cache_result = Some(self.entries.get_or_put(dir)?);
+
+                let cr = cache_result.as_ref().unwrap();
+                if cr.has_checked_if_exists() {
+                    if let Some(cached_result) = self.entries.at_index(cr.index) {
+                        // PORT NOTE: erase to raw immediately so the early-return reborrow
+                        // doesn't conflict with the `&mut self.entries` borrow above.
+                        let cached_ptr = cached_result as *mut EntriesOption;
+                        // SAFETY: BSSMap-owned slot; uniquely held under `entries_mutex`.
+                        match unsafe { &mut *cached_ptr } {
+                            EntriesOption::Err(_) => return Ok(unsafe { &mut *cached_ptr }),
+                            EntriesOption::Entries(e) if e.generation >= generation => {
+                                return Ok(unsafe { &mut *cached_ptr });
+                            }
+                            EntriesOption::Entries(e) => {
+                                in_place = Some(*e as *mut DirEntry);
+                            }
+                        }
+                    } else if cr.status == bun_alloc::ItemStatus::NotFound && generation == 0 {
+                        return Ok(temp_entries_option_write(EntriesOption::Err(dir_entry::Err {
+                            original_err: bun_core::err!("ENOENT"),
+                            canonical_error: bun_core::err!("ENOENT"),
+                        })));
+                    }
+                }
+            }
+
+            let had_handle = maybe_handle.is_some();
+            let handle: Fd = match maybe_handle {
+                Some(h) => h,
+                None => match self.open_dir(dir) {
+                    Ok(h) => h,
+                    Err(err) => return Ok(self.read_directory_error(dir, err)?),
+                },
+            };
+
+            // PORT NOTE: Zig `defer { if (...) handle.close() }` — runs on every exit. Use
+            // scopeguard so close happens even if `readdir`/`put` early-return with `?`.
+            let should_close_handle = !had_handle && (!store_fd || self.need_to_close_files());
+            let _close_guard = scopeguard::guard(handle, move |h| {
+                if should_close_handle {
+                    let _ = bun_sys::close(h);
+                }
+            });
+
+            // if we get this far, it's a real directory, so we can just store the dir name.
+            let dir: &'static [u8] = if !had_handle {
+                if let Some(existing) = in_place {
+                    // SAFETY: `in_place` points to a `DirEntry` inside the BSSMap singleton;
+                    // its `dir` field is DirnameStore-interned (&'static).
+                    unsafe { (*existing).dir }
+                } else {
+                    DirnameStore::instance().append_slice(dir_maybe_trail_slash)?
+                }
+            } else {
+                // PORT NOTE: Zig stored the caller-provided slice directly (no lifetime
+                // system). Intern into DirnameStore so the cache entry never dangles —
+                // `append_slice` is a bump-pointer copy, cost is bounded.
+                DirnameStore::instance().append_slice(dir)?
+            };
+
+            // Cache miss: read the directory entries
+            let prev = in_place.map(|p| {
+                // SAFETY: BSSMap-owned, no aliasing here (entries_mutex held).
+                unsafe { &mut (*p).data }
+            });
+            let mut entries = match self.readdir(store_fd, prev, dir, generation, handle, iterator) {
+                Ok(e) => e,
+                Err(err) => {
+                    if let Some(existing) = in_place {
+                        // SAFETY: see above.
+                        unsafe { (*existing).data.clear_and_free() };
+                    }
+                    return Ok(self.read_directory_error(dir, err)?);
+                }
+            };
+
+            if bun_core::FeatureFlags::ENABLE_ENTRY_CACHE {
+                // PORT NOTE: Zig `entries_ptr = in_place orelse allocator.create(DirEntry)`.
+                // `EntriesOption::Entries` here holds `&'static mut DirEntry` (raw, BSSMap-stored
+                // pointer), so a fresh slot is a leaked `Box<DirEntry>` whose lifetime is the
+                // `entries_option_map()` singleton (process-static).
+                let entries_ptr: *mut DirEntry = match in_place {
+                    Some(p) => p,
+                    None => Box::into_raw(Box::new(DirEntry::init(dir, generation))),
+                };
+                if let Some(original) = in_place {
+                    // SAFETY: BSSMap-owned; entries_mutex held.
+                    unsafe { (*original).data.clear_and_free() };
+                }
+                if store_fd && !entries.fd.is_valid() {
+                    entries.fd = handle;
+                }
+
+                // SAFETY: `entries_ptr` is either a live BSSMap slot (`in_place`) or a fresh
+                // leaked Box; exclusively owned here under `entries_mutex`.
+                unsafe { *entries_ptr = entries };
+                let result = EntriesOption::Entries(
+                    // SAFETY: see above — re-borrow as 'static for the BSSMap slot.
+                    unsafe { &mut *entries_ptr },
+                );
+
+                let out = self.entries.put(cache_result.as_ref().unwrap(), result)?;
+                // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
+                return Ok(unsafe { &mut *out });
+            }
+
+            // ENABLE_ENTRY_CACHE = false: stash in the threadlocal and hand back its
+            // address. The leaked Box lives until the next `read_directory` call on
+            // this thread (matches Zig — threadlocal `temp_entries_option`).
+            let entries_ptr = Box::into_raw(Box::new(entries));
+            // SAFETY: freshly-leaked Box; re-borrow as 'static for the threadlocal slot.
+            Ok(temp_entries_option_write(EntriesOption::Entries(unsafe { &mut *entries_ptr })))
         }
 
         /// Port of `RealFS.bustEntriesCache` in `fs.zig`.

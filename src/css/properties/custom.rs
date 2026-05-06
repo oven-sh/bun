@@ -194,13 +194,6 @@ mod ext {
     }
 }
 
-impl css_values::color::LightDarkOwned for UnresolvedColor {
-    #[inline]
-    fn light_dark_owned(light: Self, dark: Self) -> Self {
-        UnresolvedColor::light_dark_owned(light, dark)
-    }
-}
-
 // ─── Token protocol impls ──────────────────────────────────────────────────
 // `Token` / `Num` / `Dimension` are defined data-only at crate root (lib.rs);
 // their `eql`/`hash` bodies in css_parser.rs forward to `generic::implement_*`

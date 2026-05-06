@@ -2,7 +2,7 @@ use core::ffi::CStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::shell::builtin::{Builtin, IoKind, Kind};
-use crate::shell::interpreter::{EventLoopHandle, Interpreter, NodeId, ShellTask};
+use crate::shell::interpreter::{closefd, EventLoopHandle, Interpreter, NodeId, ShellTask};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 use crate::shell::ExitCode;

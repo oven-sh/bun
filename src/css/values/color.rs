@@ -958,7 +958,7 @@ pub fn parse_color_function(
         b"color-mix" => 10, b"light-dark" => 11,
     };
     // TODO(port): need case-insensitive lookup; for now lowercase the input
-    let lower = bun_str::strings::to_ascii_lowercase_stack::<16>(function);
+    let lower = strings::to_ascii_lowercase_stack::<16>(function);
     if let Some(val) = MAP.get(lower.as_slice()) {
         return match val {
             0 => parse_lab::<LAB>(input, &mut parser, |l, a, b, alpha| {
@@ -1064,7 +1064,7 @@ pub fn parse_rgb_components(
     };
 
     if is_legacy_syntax && (g.is_nan() || b.is_nan()) {
-        return Err(input.new_custom_error(css::ParserError::InvalidValue));
+        return Err(input.new_custom_error(css::ParserError::invalid_value));
     }
     Ok((r, g, b, is_legacy_syntax))
 }
@@ -1089,7 +1089,7 @@ pub fn parse_hslhwb_components<T>(
     }
     let b = parser.parse_percentage(input)?.clamp(0.0, 1.0);
     if is_legacy_syntax && (a.is_nan() || b.is_nan()) {
-        return Err(input.new_custom_error(css::ParserError::InvalidValue));
+        return Err(input.new_custom_error(css::ParserError::invalid_value));
     }
     Ok((h, a, b, is_legacy_syntax))
 }
@@ -1244,7 +1244,7 @@ pub fn parse_hsl_hwb_components<T>(
     let b = parser.parse_percentage(input)?.clamp(0.0, 1.0);
 
     if is_legacy_syntax && (a.is_nan() || b.is_nan()) {
-        return Err(input.new_custom_error(css::ParserError::InvalidValue));
+        return Err(input.new_custom_error(css::ParserError::invalid_value));
     }
 
     Ok((h, a, b, is_legacy_syntax))
@@ -1807,7 +1807,7 @@ impl ComponentParser {
 
         let new_from = match T::try_from_css_color(&from) {
             Some(v) => v.resolve(),
-            None => return Err(input.new_custom_error(css::ParserError::InvalidValue)),
+            None => return Err(input.new_custom_error(css::ParserError::invalid_value)),
         };
 
         self.from = Some(RelativeComponentParser::new(&new_from));
@@ -1837,7 +1837,7 @@ impl ComponentParser {
             }
             Ok(NumberOrPercentage::Number { value: f32::NAN })
         } else {
-            Err(input.new_custom_error(css::ParserError::InvalidValue))
+            Err(input.new_custom_error(css::ParserError::invalid_value))
         }
     }
 
@@ -1865,7 +1865,7 @@ impl ComponentParser {
             }
             Ok(css::color::AngleOrNumber::Number { value: f32::NAN })
         } else {
-            Err(input.new_custom_error(css::ParserError::InvalidValue))
+            Err(input.new_custom_error(css::ParserError::invalid_value))
         }
     }
 
@@ -1886,7 +1886,7 @@ impl ComponentParser {
             }
             Ok(f32::NAN)
         } else {
-            Err(input.new_custom_error(css::ParserError::InvalidValue))
+            Err(input.new_custom_error(css::ParserError::invalid_value))
         }
     }
 
@@ -1905,7 +1905,7 @@ impl ComponentParser {
             }
             Ok(f32::NAN)
         } else {
-            Err(input.new_custom_error(css::ParserError::InvalidValue))
+            Err(input.new_custom_error(css::ParserError::invalid_value))
         }
     }
 }
@@ -2003,7 +2003,7 @@ impl RelativeComponentParser {
                 Some(Calc::Value(&angle_slot)) // TODO(port): lifetime — Zig stored stack ptr
             }) {
                 Ok(Calc::Value(v)) => Ok(*v),
-                _ => Err(i.new_custom_error(css::ParserError::InvalidValue)),
+                _ => Err(i.new_custom_error(css::ParserError::invalid_value)),
             }
         }) {
             return Ok(css::color::AngleOrNumber::Angle {
@@ -2044,7 +2044,7 @@ impl RelativeComponentParser {
                     Some(Calc::Value(&percentage)) // TODO(port): lifetime
                 }) {
                     Ok(Calc::Value(v)) => Ok(*v),
-                    _ => Err(i.new_custom_error(css::ParserError::InvalidValue)),
+                    _ => Err(i.new_custom_error(css::ParserError::invalid_value)),
                 }
             }) {
                 return Ok(NumberOrPercentage::Percentage { unit_value: value.v });
@@ -2072,12 +2072,12 @@ impl RelativeComponentParser {
                 Some(Calc::Value(&temp)) // TODO(port): lifetime
             }) {
                 Ok(v) => v,
-                Err(_) => return Err(i.new_custom_error(css::ParserError::InvalidValue)),
+                Err(_) => return Err(i.new_custom_error(css::ParserError::invalid_value)),
             };
             if let Calc::Value(v) = calc_value {
                 return Ok(*v);
             }
-            Err(i.new_custom_error(css::ParserError::InvalidValue))
+            Err(i.new_custom_error(css::ParserError::invalid_value))
         }) {
             return Ok(value.v);
         }
@@ -2133,29 +2133,29 @@ impl RelativeComponentParser {
                 return Ok(n);
             }
         }
-        Err(input.new_custom_error(css::ParserError::InvalidValue))
+        Err(input.new_custom_error(css::ParserError::invalid_value))
     }
 
     pub fn get_ident(&self, ident: &[u8], allowed_types: ChannelType) -> Option<f32> {
-        if bun_str::strings::eql_case_insensitive_ascii_check_length(ident, self.names.0)
+        if strings::eql_case_insensitive_ascii_check_length(ident, self.names.0)
             && allowed_types.intersects(self.types.0)
         {
             return Some(self.components.0);
         }
 
-        if bun_str::strings::eql_case_insensitive_ascii_check_length(ident, self.names.1)
+        if strings::eql_case_insensitive_ascii_check_length(ident, self.names.1)
             && allowed_types.intersects(self.types.1)
         {
             return Some(self.components.1);
         }
 
-        if bun_str::strings::eql_case_insensitive_ascii_check_length(ident, self.names.2)
+        if strings::eql_case_insensitive_ascii_check_length(ident, self.names.2)
             && allowed_types.intersects(self.types.2)
         {
             return Some(self.components.2);
         }
 
-        if bun_str::strings::eql_case_insensitive_ascii_check_length(ident, b"alpha")
+        if strings::eql_case_insensitive_ascii_check_length(ident, b"alpha")
             && allowed_types.contains(ChannelType::PERCENTAGE)
         {
             return Some(self.components.3);
@@ -2220,7 +2220,7 @@ pub fn parse_predefined_relative(
     colorspace: &[u8],
     from_: Option<&CssColor>,
 ) -> CssResult<CssColor> {
-    use bun_str::strings::eql_case_insensitive_ascii_check_length as eq_ci;
+    use strings::eql_case_insensitive_ascii_check_length as eq_ci;
     let location = input.current_source_location();
     if let Some(from) = from_ {
         macro_rules! set_from {
@@ -2228,7 +2228,7 @@ pub fn parse_predefined_relative(
                 match <$T>::try_from_css_color(from) {
                     Some(v) => RelativeComponentParser::new(&v.resolve_missing()),
                     None => {
-                        return Err(input.new_custom_error(css::ParserError::InvalidValue));
+                        return Err(input.new_custom_error(css::ParserError::invalid_value));
                     }
                 }
             }};
@@ -2393,7 +2393,7 @@ pub fn parse_color_mix(input: &mut css::Parser) -> CssResult<CssColor> {
     };
 
     if (p1 + p2) == 0.0 {
-        return Err(input.new_custom_error(css::ParserError::InvalidValue));
+        return Err(input.new_custom_error(css::ParserError::invalid_value));
     }
 
     let result = match method {
@@ -2422,7 +2422,7 @@ pub fn parse_color_mix(input: &mut css::Parser) -> CssResult<CssColor> {
 
     let result = match result {
         Some(r) => r,
-        None => return Err(input.new_custom_error(css::ParserError::InvalidValue)),
+        None => return Err(input.new_custom_error(css::ParserError::invalid_value)),
     };
 
     Ok(result)

@@ -1179,17 +1179,44 @@ where
 }
 
 // ───────────────────── rule_parsers (heavy impl bodies) ──────────────────────
-// blocked_on: rules/ leaf modules (keyframes, page, container, font_face,
-// font_palette_values, viewport, property, scope, document, nesting,
-// starting_style, counter_style — all `gated_rule!`-stubbed in rules/mod.rs),
-// declaration::parse_declaration_impl (gated), MediaList::parse (gated),
-// LayerName::parse 'bump signature, properties_generated (Property variants).
-// The struct/trait *definitions* above are real; only the `AtRuleParser` /
-// `QualifiedRuleParser` / `DeclarationParser` / `RuleBodyItemParser` impl
-// bodies for `TopLevelRuleParser`/`NestedRuleParser` and the
-// `parse_nested`/`parse_style_block`/`record_composes` helpers stay gated.
-#[cfg(any())]
+// Un-gated: `declaration::parse_declaration_impl` + `selectors::parser` are
+// real, so the `QualifiedRuleParser`/`DeclarationParser`/`RuleBodyItemParser`
+// surface and `parse_nested`/`parse_style_block` compile end-to-end. Several
+// at-rule arms still bottom out on leaf-module parse fns that remain gated
+// (`MediaList::parse`, `KeyframesListParser`/`FontFaceDeclarationParser` trait
+// impls, `SmallList::<LayerName,1>::parse`); those specific call sites are
+// inline-`#[cfg(any())]`-gated below with a `todo!()` runtime fallback so the
+// type structure stays real and `StyleSheet::parse` links.
 mod rule_parsers { use super::*;
+use crate::selectors::parser as selector_parser;
+
+// PORT NOTE: Zig threaded `composes_ctx: anytype` (pointer to the
+// `NestedRuleParser`) directly into `parse_declaration`. Rust's borrow checker
+// forbids passing `&mut *this` while also borrowing `this.declarations` /
+// `this.important_declarations`, so split-borrow the three composes fields
+// into a small adaptor that implements the `ComposesCtx` dispatch trait.
+struct NestedComposesCtx<'a> {
+    state: ComposesState,
+    composes: &'a mut ComposesMap,
+    composes_refs: &'a mut SmallList<ast::Ref, 2>,
+}
+impl<'a> ComposesCtx for NestedComposesCtx<'a> {
+    #[inline]
+    fn composes_state(&self) -> ComposesState { self.state }
+    fn record_composes(&mut self, composes: &mut Composes) {
+        for ref_ in self.composes_refs.slice() {
+            let entry = self.composes.entry(*ref_).or_insert_with(ComposesEntry::default);
+            // blocked_on: `Composes::deep_clone(&Arena)` — the Zig original
+            // threads `input.allocator()` here. The `ComposesCtx` trait has no
+            // arena param yet (declaration.rs callers); until `'bump` threads,
+            // the arena-backed deep clone stays gated and we todo-stub.
+            #[cfg(any())]
+            { let _ = entry.composes.append(composes.deep_clone()); }
+            #[cfg(not(any()))]
+            { let _ = (entry, &composes); todo("record_composes: Composes::deep_clone arena threading"); }
+        }
+    }
+}
 
 impl<'a, AtRuleParserT: CustomAtRuleParser> AtRuleParser for TopLevelRuleParser<'a, AtRuleParserT> {
     type Prelude = AtRulePrelude<AtRuleParserT::Prelude>;

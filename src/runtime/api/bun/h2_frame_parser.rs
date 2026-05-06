@@ -2406,8 +2406,11 @@ impl Payload {
     /// `data_ptr`/`data_len` describe a slice into either the caller-supplied `data` (alive for
     /// the handler body) or `H2FrameParser.read_buffer.list`'s backing allocation. Callers must
     /// not grow or free `read_buffer` between obtaining the `Payload` and the last use of the
-    /// returned slice. `read_buffer.reset()` is permitted — it only sets `len = 0` without
-    /// reallocating, so the bytes remain readable (matches the Zig ordering).
+    /// returned slice. `read_buffer.reset()` is permitted: `data_ptr` is derived via
+    /// `Vec::as_mut_ptr()` (raw-ptr method, no intermediate `&[u8]` borrow), which is documented
+    /// to remain valid across non-reallocating mutation, so under Stacked Borrows the
+    /// `Vec::clear()` inside `reset()` does not invalidate it and the bytes remain readable
+    /// (matches the Zig ordering where several handlers reset before consuming `payload`).
     #[inline]
     unsafe fn data<'a>(&self) -> &'a [u8] {
         if self.data_len == 0 {
@@ -2463,12 +2466,16 @@ impl H2FrameParser {
             // SAFETY: global_this is JSC_BORROW (set at construction from &JSGlobalObject); outlives self, never null
             unsafe { &*self.global_this }.vm().deprecated_report_extra_memory(payload.len());
 
-            let buf = self.read_buffer.list.as_slice();
-            return Some(Payload {
-                data_ptr: buf.as_ptr(),
-                data_len: buf.len(),
-                end,
-            });
+            // SAFETY contract for Payload::data: derive via Vec::as_mut_ptr() (raw-ptr method,
+            // no intermediate &[u8]) so the provenance survives `read_buffer.reset()` —
+            // Vec::clear() forms `&mut [u8]` internally, which under Stacked Borrows would pop a
+            // SharedReadOnly tag obtained from `as_slice().as_ptr()`. Several handlers
+            // (origin/altsvc/continuation/headers) read `payload` AFTER reset(), mirroring the
+            // Zig ordering, so the pointer must outlive that mutation.
+            let list = &mut self.read_buffer.list;
+            let data_len = list.len();
+            let data_ptr: *const u8 = list.as_mut_ptr().cast_const();
+            return Some(Payload { data_ptr, data_len, end });
         }
 
         Some(Payload { data_ptr: payload.as_ptr(), data_len: payload.len(), end })
@@ -5532,5 +5539,5 @@ impl H2FrameParser {
 //   source:     src/runtime/api/bun/h2_frame_parser.zig (4879 lines)
 //   confidence: low
 //   todos:      23
-//   notes:      Heavy borrowck reshaping (raw *mut Stream / *mut Self, every block SAFETY-annotated); FrameHeader packed-u72 wire layout reimplemented manually; HiveArray pool stubbed; read_buffer.reset() vs Payload aliasing needs Phase-B audit; ERR(.X) calls mapped to placeholder methods; BunSocket Writeonly + SignalRef retyped to IntrusiveArc/IntrusiveRc per LIFETIMES.tsv — usage sites need DerefMut reconcile.
+//   notes:      Heavy borrowck reshaping (raw *mut Stream / *mut Self, every block SAFETY-annotated); FrameHeader packed-u72 wire layout reimplemented manually; HiveArray pool stubbed; read_buffer.reset() vs Payload aliasing audited (data_ptr now via Vec::as_mut_ptr so SB-valid across clear()); ERR(.X) calls mapped to placeholder methods; BunSocket Writeonly + SignalRef retyped to IntrusiveArc/IntrusiveRc per LIFETIMES.tsv — usage sites need DerefMut reconcile.
 // ──────────────────────────────────────────────────────────────────────────

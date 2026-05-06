@@ -1465,7 +1465,7 @@ impl<'a> CopyFileWindows<'a> {
                 let path = self
                     .destination_file_store
                     .data
-                    .file
+                    .as_file()
                     .pathlike
                     .path()
                     .slice_z(&mut pathbuf);

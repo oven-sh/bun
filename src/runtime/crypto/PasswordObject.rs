@@ -942,11 +942,14 @@ impl VerifyJob {
                 callback: VerifyResult::run_from_js_erased,
             };
         }
-        this_ref.event_loop.enqueue_task_concurrent(
-            // SAFETY: `result` is a valid Box::into_raw allocation; ownership transfers to
-            // the event loop here. `task` is an intrusive field at a stable address.
-            ConcurrentTask::create_from(unsafe { core::ptr::addr_of_mut!((*result).task) }),
-        );
+        // SAFETY: `event_loop` was stored from the JS-thread VM and outlives the job;
+        // `result` is a valid Box::into_raw allocation, ownership transfers to the
+        // event loop here. `task` is an intrusive field at a stable address.
+        unsafe {
+            (*this_ref.event_loop).enqueue_task_concurrent(ConcurrentTask::create_from(
+                core::ptr::addr_of_mut!((*result).task),
+            ));
+        }
         // SAFETY: `this` came from Box::into_raw in `VerifyJob::new`; `this_ref` is no
         // longer used after this point. Drop runs secure_zero on password/prev_hash.
         unsafe { drop(Box::from_raw(this)) };
@@ -977,23 +980,23 @@ impl VerifyResult {
         // SAFETY: `this` was produced by Box::into_raw in `VerifyResult::new` and is
         // uniquely owned here (event loop hands sole ownership to this callback).
         let this_ref = unsafe { &mut *this };
-        let promise = core::mem::take(&mut this_ref.promise);
+        let mut promise = core::mem::take(&mut this_ref.promise);
         // SAFETY: global stored from a live &JSGlobalObject; VM outlives task.
         let global = unsafe { &*this_ref.global };
-        this_ref.r#ref.unref(global.bun_vm());
+        this_ref.r#ref.unref(vm_ctx());
         match this_ref.value {
             VerifyResultValue::Err(_) => {
                 let error_instance = this_ref.value.to_error_instance(global);
                 // SAFETY: `this` came from Box::into_raw in `VerifyResult::new`;
                 // `this_ref` is not used again after this point.
                 unsafe { drop(Box::from_raw(this)) };
-                promise.reject_with_async_stack(global, error_instance)?;
+                promise.reject_with_async_stack(global, Ok(error_instance))?;
             }
             VerifyResultValue::Pass(pass) => {
                 // SAFETY: `this` came from Box::into_raw in `VerifyResult::new`;
                 // `this_ref` is not used again after this point.
                 unsafe { drop(Box::from_raw(this)) };
-                promise.resolve(global, JSValue::from(pass))?;
+                promise.resolve(global, JSValue::js_boolean(pass))?;
             }
         }
         Ok(())
@@ -1019,14 +1022,17 @@ impl VerifyResultValue {
             }
         )
         .expect("unreachable");
-        let instance = global_object.create_error_instance(format_args!(
-            "Password verification failed with error \"{}\"",
-            err.name()
-        ));
+        let instance = global_object.create_error_instance(
+            "Password verification failed with error \"{s}\"",
+            format_args!(
+                "Password verification failed with error \"{}\"",
+                err.name()
+            ),
+        );
         instance.put(
             global_object,
-            ZigString::static_("code"),
-            ZigString::init(&error_code).to_js(global_object),
+            b"code",
+            JscZigString::init(&error_code).to_js(global_object),
         );
         instance
     }

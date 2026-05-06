@@ -1000,10 +1000,18 @@ impl Readable {
                 ));
                 if let Readable::Pipe(pipe) = &readable {
                     // TODO(port): Arc interior mutability for buffered_output.
-                    pipe.set_buffered_output(BufferedOutput::ArrayBuffer {
-                        buf: array_buffer,
-                        i: 0,
-                    });
+                    // SAFETY: raw-ptr write through the Arc allocation; see
+                    // PipeReader::set_buffered_output. The Arc was just created by
+                    // PipeReader::create and is uniquely held here.
+                    unsafe {
+                        PipeReader::set_buffered_output(
+                            Arc::as_ptr(pipe).cast_mut(),
+                            BufferedOutput::ArrayBuffer {
+                                buf: array_buffer,
+                                i: 0,
+                            },
+                        )
+                    };
                 }
                 readable
             }

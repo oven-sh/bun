@@ -35,13 +35,19 @@ impl ConnectingSocket {
         SocketKind::from_u8(unsafe { us_connecting_socket_kind(self) })
     }
 
-    pub fn r#loop(&mut self) -> &mut Loop {
+    /// Returns the owning `Loop`. Raw pointer because the loop is a shared
+    /// singleton referenced by every group/socket/timer (Zig `*Loop` freely
+    /// aliases); materializing `&mut Loop` here would be aliased UB.
+    pub fn r#loop(&mut self) -> *mut Loop {
         // SAFETY: self is a valid handle; uSockets guarantees a non-null loop
-        unsafe { &mut *us_connecting_socket_get_loop(self) }
+        unsafe { us_connecting_socket_get_loop(self) }
     }
 
     pub fn ext<T>(&mut self) -> &mut T {
-        // SAFETY: caller asserts the ext slot was sized/aligned for T at group creation
+        // SAFETY: the ext slot is per-socket trailing storage inside this
+        // allocation; `&mut self` guarantees exclusive access to it for the
+        // returned borrow's lifetime. Caller asserts the slot was sized/
+        // aligned for T at group creation.
         unsafe { &mut *us_connecting_socket_ext(self).cast::<T>() }
     }
 

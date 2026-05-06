@@ -3779,9 +3779,10 @@ impl<'a> BundleV2<'a> {
                             u32::try_from(index).unwrap(),
                             import_records.slice(),
                             // PORT NOTE: `scan_css_imports` takes the column as a raw
-                            // `*mut` slice (the scanImportsAndExports caller holds raw
-                            // SoA pointers); it only reads via `is_none()`.
-                            css_asts as *const [Option<*mut core::ffi::c_void>] as *mut [Option<*mut core::ffi::c_void>],
+                            // `*const` slice (the scanImportsAndExports caller holds raw
+                            // SoA pointers); it only reads via `is_none()`. Zig spec
+                            // (`LinkerContext.zig:496`) types this `[]const ?*...`.
+                            css_asts as *const [Option<*mut core::ffi::c_void>],
                             sources,
                             loaders,
                         ) == crate::linker_context_mod::ScanCssImportsResult::Errors {

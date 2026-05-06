@@ -3,6 +3,7 @@ pub use crate::semver_string::String;
 pub use crate::external_string::ExternalString;
 pub use crate::version::Version;
 pub use crate::version::VersionType;
+pub use crate::version::PinnedVersion;
 
 pub use crate::sliced_string::SlicedString;
 pub use crate::semver_range::Range;

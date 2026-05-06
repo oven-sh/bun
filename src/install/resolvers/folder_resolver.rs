@@ -13,8 +13,9 @@ use bun_sys::{self, Fd, File, O};
 
 use crate::dependency::{self, Dependency};
 use crate::install::{Features, Lockfile, PackageID, PackageManager};
+use crate::lockfile::Package as LockfilePackage;
 use crate::npm;
-use crate::resolution::Resolution;
+use crate::resolution::{Resolution, Tag as ResolutionTag, Value as ResolutionValue, NpmVersionInfo};
 
 #[derive(Copy, Clone)]
 pub enum FolderResolution {

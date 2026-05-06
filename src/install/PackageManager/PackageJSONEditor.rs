@@ -7,14 +7,15 @@ use bun_semver as semver;
 use bun_str::strings;
 
 use bun_install::Dependency;
+use bun_install::dependency::Behavior;
 use bun_install::invalid_package_id;
-use bun_install::package_manager::{PackageManager, UpdateRequest};
+use bun_install::package_manager::{PackageManager, PackageUpdateInfo, UpdateRequest};
 
-const DEPENDENCY_GROUPS: &[(&[u8], Dependency::Behavior)] = &[
-    (b"optionalDependencies", Dependency::Behavior { optional: true, ..Dependency::Behavior::DEFAULT }),
-    (b"devDependencies", Dependency::Behavior { dev: true, ..Dependency::Behavior::DEFAULT }),
-    (b"dependencies", Dependency::Behavior { prod: true, ..Dependency::Behavior::DEFAULT }),
-    (b"peerDependencies", Dependency::Behavior { peer: true, ..Dependency::Behavior::DEFAULT }),
+const DEPENDENCY_GROUPS: &[(&[u8], Behavior)] = &[
+    (b"optionalDependencies", Behavior::OPTIONAL),
+    (b"devDependencies", Behavior::DEV),
+    (b"dependencies", Behavior::PROD),
+    (b"peerDependencies", Behavior::PEER),
 ];
 
 #[derive(Default)]
@@ -292,9 +293,10 @@ pub fn edit_update_no_args(
                             continue;
                         }
 
-                        *entry.value_ptr = bun_install::package_manager::UpdatingPackage {
+                        *entry.value_ptr = PackageUpdateInfo {
                             original_version_literal: version_literal.clone(),
                             is_alias: alias_at_index.is_some(),
+                            original_version_string_buf: Box::default(),
                             original_version: None,
                         };
 
@@ -608,12 +610,12 @@ pub fn edit(
                                                     }
                                                 }
 
-                                                *entry.value_ptr =
-                                                    bun_install::package_manager::UpdatingPackage {
-                                                        original_version_literal: version_literal,
-                                                        is_alias,
-                                                        original_version: None,
-                                                    };
+                                                *entry.value_ptr = PackageUpdateInfo {
+                                                    original_version_literal: version_literal,
+                                                    is_alias,
+                                                    original_version_string_buf: Box::default(),
+                                                    original_version: None,
+                                                };
                                             }
                                         }
                                         if !only_add_missing {

@@ -1,27 +1,34 @@
 use core::mem;
 
-use bun_collections::{ArrayHashMap, ArrayIdentityContext, MultiArrayList};
-use bun_core::{Global, Output, StringSet};
+use bun_collections::{ArrayHashMap, ArrayIdentityContext, MultiArrayList, StringSet};
+use bun_core::{Global, Output};
 use bun_js_parser::ast::Expr;
 use bun_logger as logger;
-use bun_paths::{self as path, AbsPath, PathBuffer, MAX_PATH_BYTES};
+use bun_paths::{self as path, resolve_path, AutoAbsPath, PathBuffer, MAX_PATH_BYTES};
 // MOVE_DOWN(b0): bun_resolver::fs → bun_sys::fs
 use bun_sys::fs::FileSystem;
 use bun_semver::{self as semver, ExternalString, String, Version as SemverVersion};
+use bun_semver::semver_query::Wildcard;
 use bun_str::strings;
 use bun_sys::File;
 
-use bun_install::{
-    self as install, default_trusted_dependencies, initialize_store, invalid_package_id, Aligner,
-    Bin, Dependency, ExternalStringList, ExternalStringMap, Features, Npm, PackageID, PackageJSON,
-    PackageManager, PackageNameHash, Repository, TruncatedPackageNameHash,
+use crate::{
+    self as install, bun_json, default_trusted_dependencies, dependency, initialize_store,
+    invalid_package_id, Aligner, Bin, Dependency, ExternalStringList, ExternalStringMap, Features,
+    Npm, PackageID, PackageJSON, PackageManager, PackageNameHash, Repository,
+    TruncatedPackageNameHash, UpdateRequest,
 };
-use bun_install::dependency::Behavior;
-use bun_install::lockfile::{
-    self, assert_no_uninitialized_padding, Cloner, DependencySlice, Lockfile, PackageIDSlice,
-    Stream, StringBuilder, TrustedDependenciesSet,
+use crate::dependency::Behavior;
+// `Package.rs` is mounted as `crate::lockfile_real::package`; the parent module
+// (`super`) is the real `lockfile.rs`, distinct from the `crate::lockfile`
+// stub that lib.rs exposes for downstream crates during the staged port.
+use super::{
+    self as lockfile, assert_no_uninitialized_padding, Cloner, DependencySlice, Lockfile,
+    PackageIDSlice, PatchedDep, PendingResolution, PositionalStream, Stream, StringBuilder,
+    TrustedDependenciesSet,
 };
-use bun_install::resolution::ResolutionType;
+use crate::resolution_real::{ResolutionType, Tag as ResolutionTag, TaggedValue};
+use crate::versioned_url::VersionedURLType;
 
 #[path = "Package/Scripts.rs"]
 pub mod scripts;
@@ -175,7 +182,7 @@ impl<SemverIntType> Package<SemverIntType> {
             Lockfile,
             "Clone: {}@{} ({}, {} dependencies)",
             bstr::BStr::new(self.name.slice(old_string_buf)),
-            self.resolution.fmt(old_string_buf, lockfile::FmtMode::Auto),
+            self.resolution.fmt(old_string_buf, bun_core::fmt::PathSep::Auto),
             <&'static str>::from(self.resolution.tag),
             self.dependencies.len,
         );
@@ -289,7 +296,7 @@ impl<SemverIntType> Package<SemverIntType> {
             if mapped < max_package_id {
                 *resolution = mapped;
             } else {
-                cloner.clone_queue.push(lockfile::CloneQueueItem {
+                cloner.clone_queue.push(PendingResolution {
                     old_resolution: *old_resolution,
                     parent: new_package.meta.id,
                     resolve_id: new_package.resolutions.off

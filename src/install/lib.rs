@@ -915,6 +915,8 @@ pub mod package_manager {
     pub use super::PackageManager;
     pub use super::Subcommand;
     pub use super::update_request;
+    pub use super::update_request::UpdateRequest;
+    pub use super::package_manager_real::PackageUpdateInfo;
     /// Stub: `PackageManager.Options` (src/install/PackageManager/PackageManagerOptions.zig).
     #[allow(non_snake_case)]
     pub mod Options {

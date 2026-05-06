@@ -43,7 +43,8 @@ use crate::{
     invalid_dependency_id, invalid_package_id,
 };
 use crate::lockfile::{Lockfile, Tree};
-use crate::package_manager::{PackageManager, ProgressStrings, WorkspaceFilter};
+use crate::package_manager::{PackageManager, WorkspaceFilter};
+use crate::package_manager_real::ProgressStrings;
 use store::{Entry as StoreEntry, Node as StoreNode};
 
 bun_output::declare_scope!(IsolatedInstall, visible);

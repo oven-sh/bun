@@ -4688,19 +4688,27 @@ impl Resolver {
 
     // FFI shim emitted by `export_host_fn!` below (JS2Native link name).
     pub fn new_resolver(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let resolver = Resolver::init(global_this.bun_vm());
+        // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
+        let resolver = Resolver::init(unsafe { &*global_this.bun_vm() });
 
         let options = callframe.argument(0);
         if options.is_object() {
             if let Some(timeout) = options.get_truthy(global_this, "timeout")? {
-                unsafe { (*resolver).options.timeout = timeout.coerce_to_int32(global_this)? };
+                unsafe { (*resolver).options.timeout = timeout.coerce_to_i32(global_this)? };
             }
             if let Some(tries) = options.get_truthy(global_this, "tries")? {
-                unsafe { (*resolver).options.tries = tries.coerce_to_int32(global_this)? };
+                unsafe { (*resolver).options.tries = tries.coerce_to_i32(global_this)? };
             }
         }
 
-        Ok(unsafe { (*resolver).to_js(global_this) })
+        // TODO(port): blocked_on bun_jsc::JsClass — `JsClass::to_js` takes `self`
+        // by value (Boxes it), but `Resolver::init` already returns a heap
+        // `*mut Self` (intrusive-RC). Zig's `resolver.toJS(globalThis)` called the
+        // generated `${T}__create(global, ptr)` directly with the existing pointer.
+        // Until the proc-macro grows a `to_js_ptr(*mut Self)` (or `Resolver` gets an
+        // inherent FFI shim), this would double-allocate.
+        let _ = resolver;
+        todo!("blocked_on: bun_jsc::JsClass::to_js for already-allocated *mut Resolver")
     }
 
     #[host_fn(method)]

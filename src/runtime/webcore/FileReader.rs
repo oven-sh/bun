@@ -1019,6 +1019,17 @@ impl readable_stream::SourceContext for FileReader {
     // toBufferedValue: null
 }
 
+// Local shim: `bun_io::ReadState` doesn't derive `IntoStaticStr` (upstream crate);
+// mirrors Zig `@tagName(state)` for the scoped log only.
+#[inline]
+fn read_state_tag(state: ReadState) -> &'static str {
+    match state {
+        ReadState::Progress => "progress",
+        ReadState::Eof => "eof",
+        ReadState::Drained => "drained",
+    }
+}
+
 // TODO(port): Vec<u8> has no `allocated_slice()`; helper trait providing
 // `&v.as_ptr()[0..v.capacity()]` semantics needed for `is_slice_in_buffer` checks.
 trait AllocatedSlice {

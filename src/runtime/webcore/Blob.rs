@@ -2463,32 +2463,8 @@ pub fn jsdom_file_construct_(
 // estimatedSize / constructBunFile / findOrCreateFileFromPath
 // ──────────────────────────────────────────────────────────────────────────
 
-impl Blob {
-    fn calculate_estimated_byte_size(&mut self) {
-        // in-memory size. not the size on disk.
-        let mut size: usize = core::mem::size_of::<Blob>();
-
-        if let Some(store) = &self.store {
-            size += core::mem::size_of::<Store>();
-            match &store.data {
-                Store::Data::Bytes(bytes) => {
-                    size += bytes.stored_name.estimated_size();
-                    size += if self.size != MAX_SIZE { self.size as usize } else { bytes.len };
-                }
-                Store::Data::File(file) => size += file.pathlike.estimated_size(),
-                Store::Data::S3(s3) => size += s3.estimated_size(),
-            }
-        }
-
-        self.reported_estimated_size = size
-            + (self.content_type_slice().len() * (self.content_type_allocated as usize))
-            + self.name.byte_slice().len();
-    }
-
-    pub fn estimated_size(&self) -> usize {
-        self.reported_estimated_size
-    }
-}
+// `calculate_estimated_byte_size` / `estimated_size`: canonical impls live
+// later in this file (near `dupe`/`to_js`). Duplicates removed here.
 
 // TODO(b2-blocked): #[bun_jsc::host_fn]
 pub fn construct_bun_file(

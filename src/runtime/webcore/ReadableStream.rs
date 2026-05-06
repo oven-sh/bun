@@ -44,7 +44,7 @@ impl Strong {
         false
     }
 
-    pub fn init(this: ReadableStream, global: &JSGlobalObject) -> Strong {
+    pub fn init(this: &ReadableStream, global: &JSGlobalObject) -> Strong {
         Strong {
             held: bun_jsc::strong::Optional::create(this.value, global),
         }

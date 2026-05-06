@@ -210,7 +210,8 @@ impl<'a> UpgradedDuplex<'a> {
 
     pub fn from(global: &'a JSGlobalObject, origin: JSValue, handlers: Handlers) -> UpgradedDuplex<'a> {
         UpgradedDuplex {
-            vm: global.bun_vm(),
+            // SAFETY: `bun_vm()` never returns null for a Bun-owned global; lifetime tied to `global: &'a`.
+            vm: unsafe { &*global.bun_vm() },
             origin: StrongOptional::create(origin, global),
             global: Some(global),
             wrapper: None,

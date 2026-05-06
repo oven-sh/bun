@@ -3322,7 +3322,7 @@ impl Resolver {
             if let Ok(channel) = (*this).get_channel_or_error(vm.global()) {
                 if (*this).any_requests_pending() {
                     c_ares::ares_process_fd(channel, c_ares::ARES_SOCKET_BAD, c_ares::ARES_SOCKET_BAD);
-                    let _ = (*this).add_timer(Some(now));
+                    let _ = (*this).add_timer(Some(&now));
                 }
             }
         }

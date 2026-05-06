@@ -421,16 +421,37 @@ impl Default for CompileResult {
 ///
 /// PORT NOTE: signature uses `bun_logger::fs::Path` (the type stored on
 /// `Logger::Source.path`, which is what every caller passes) rather than
-/// `bun_resolver::fs::Path<'a>`. The Zig body assigns a stack-buffer
-/// `.pretty` then interns via `dupeAllocFixPretty`, but that method lives on
-/// the resolver-side `fs_full::Path<'a>` and the logger `Path` pins its
-/// fields to `'static`. Body is stubbed until the two `Path` types unify.
+/// `bun_resolver::fs::Path<'a>`. `dupeAllocFixPretty` lives on the
+/// resolver-side `Path<'a>` only, so the body round-trips through that type
+/// via a layout-identical transmute (same shim as
+/// `bundle_v2::fs_path_to_logger`). The interned result borrows
+/// `FilenameStore` (process-static), so the `'static` bound on the logger
+/// `Path` fields is satisfied.
 pub fn generic_path_with_pretty_initialized(
     path: bun_logger::fs::Path,
-    _target: options::Target,
-    _top_level_dir: &[u8],
+    target: options::Target,
+    top_level_dir: &[u8],
     _bump: &bun_alloc::Arena,
 ) -> Result<bun_logger::fs::Path, bun_core::Error> {
+    use std::io::Write as _;
+
+    // PORT NOTE: `bun_logger::fs::Path` and `bun_resolver::fs::Path<'a>` are
+    // field-identical mirrors of `fs.zig:Path` that haven't been unified yet
+    // (TYPE_ONLY split). These shims bit-cast between them so the resolver's
+    // `dupe_alloc_fix_pretty` (which interns to `FilenameStore`) is reachable.
+    // SAFETY: identical field set (`pretty`/`text`/`namespace`/`name{dir,base,
+    // ext,filename}`/`is_disabled`/`is_symlink`); see `bundle_v2::fs_path_to_logger`.
+    #[inline]
+    fn to_resolver(p: bun_logger::fs::Path) -> bun_fs::Path<'static> {
+        unsafe { core::mem::transmute::<bun_logger::fs::Path, bun_fs::Path<'static>>(p) }
+    }
+    #[inline]
+    fn to_logger(p: bun_fs::Path<'static>) -> bun_logger::fs::Path {
+        unsafe { core::mem::transmute::<bun_fs::Path<'static>, bun_logger::fs::Path>(p) }
+    }
+
+    let mut buf = bun_paths::path_buffer_pool::get();
+
     let is_node = path.namespace == b"node";
     if is_node
         && (strings::has_prefix(path.text, bun_node_fallbacks::IMPORT_PATH)
@@ -438,8 +459,49 @@ pub fn generic_path_with_pretty_initialized(
     {
         return Ok(path);
     }
-    let _ = &path;
-    todo!("blocked_on: bun_logger::fs::Path::dupe_alloc_fix_pretty")
+
+    // "file" namespace should use the relative file path for its display name.
+    // the "node" namespace is also put through this code path so that the
+    // "node:" prefix is not emitted.
+    if path.is_file() || is_node {
+        let mut buf2 = bun_paths::path_buffer_pool::get();
+        // TODO(port): in Zig buf2 aliases buf when target != ssr.
+        let rel = bun_paths::resolve_path::relative_platform_buf::<
+            bun_paths::resolve_path::platform::Loose,
+            false,
+        >(&mut **buf2, top_level_dir, path.text);
+        let mut path_clone = to_resolver(path);
+        // stack-allocated temporary is not leaked because dupeAlloc on the path will
+        // move .pretty into the heap. that function also fixes some slash issues.
+        if target == options::Target::BakeServerComponentsSsr {
+            // the SSR graph needs different pretty names or else HMR mode will
+            // confuse the two modules.
+            let buf_len = buf.0.len();
+            let mut cursor = &mut buf.0[..];
+            let _ = write!(cursor, "ssr:{}", bstr::BStr::new(rel));
+            let written = buf_len - cursor.len();
+            path_clone.pretty = &buf.0[..written];
+        } else {
+            path_clone.pretty = rel;
+        }
+        Ok(to_logger(path_clone.dupe_alloc_fix_pretty()?))
+    } else {
+        // in non-file namespaces, standard filesystem rules do not apply.
+        let mut path_clone = to_resolver(path);
+        let buf_len = buf.0.len();
+        let mut cursor = &mut buf.0[..];
+        let _ = write!(
+            cursor,
+            "{}{}:{}",
+            if target == options::Target::BakeServerComponentsSsr { "ssr:" } else { "" },
+            // make sure that a namespace including a colon wont collide with anything
+            EscapedNamespace(path_clone.namespace),
+            bstr::BStr::new(path_clone.text),
+        );
+        let written = buf_len - cursor.len();
+        path_clone.pretty = &buf.0[..written];
+        Ok(to_logger(path_clone.dupe_alloc_fix_pretty()?))
+    }
 }
 
 struct EscapedNamespace<'a>(&'a [u8]);

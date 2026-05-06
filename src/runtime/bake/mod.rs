@@ -213,7 +213,7 @@ pub mod framework_router {
     // PORT NOTE: this module used to carry duplicate "keystone" stub structs
     // (`Route`, `Type`, `FrameworkRouter`, `MatchedParams`, `EncodedPattern`)
     // alongside the real defs in `framework_router_body` (FrameworkRouter.rs).
-    // The two nominal type sets diverged and forced `todo!()` shims. The body
+    // The two nominal type sets diverged and forced placeholder shims. The body
     // module is now fully ported and un-gated, so re-export everything so
     // `framework_router::X` ≡ `framework_router_body::X` and the real method
     // bodies (`init_empty`, `match_slow`, `memory_cost`, `to_js`, …) resolve

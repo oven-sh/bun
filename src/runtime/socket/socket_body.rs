@@ -2492,7 +2492,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         let new_raw = match raw_socket.adopt_tls(
             group,
             uws::SocketKind::BunSocketTls,
-            tls.owned_ssl_ctx.unwrap(),
+            // SAFETY: short-lived field read on the fresh allocation.
+            unsafe { (*tls_ptr).owned_ssl_ctx }.unwrap(),
             sni,
             core::mem::size_of::<*mut c_void>(),
             core::mem::size_of::<*mut c_void>(),
@@ -2507,11 +2508,20 @@ impl<const SSL: bool> NewSocket<SSL> {
                         unsafe { boringssl::ERR_clear_error() };
                     }
                 });
-                // tls.deinit drops the owned_ctx ref
-                tls.deref();
-                // TODO(port): handlers_ptr.deinit() + destroy — Rc::drop handles
-                // the destroy if this was the last ref; deinit is the unprotect.
-                drop(handlers_ptr);
+                // tls.deinit drops the owned_ctx ref. Null the handlers field
+                // first so `TLSSocket::deinit` doesn't double-destroy the
+                // `Handlers` we're about to free explicitly (Zig sequences
+                // `tls.deref()` then `handlers_ptr.deinit(); destroy(handlers_ptr)`).
+                // SAFETY: sole owner of the fresh allocation.
+                unsafe {
+                    (*tls_ptr).handlers = None;
+                    (&mut *tls_ptr).deref();
+                }
+                // Zig: `handlers_ptr.deinit(); allocator.destroy(handlers_ptr)`.
+                // `Handlers` has a `Drop` impl that runs `deinit` (unprotect).
+                // SAFETY: `handlers_ptr` is the `Box::into_raw` allocation
+                // created above; sole owner here.
+                drop(unsafe { Box::from_raw(handlers_ptr.as_ptr()) });
                 if err != 0 && !global.has_exception() {
                     return global.throw_value(boringssl::err_to_js(global, err));
                 }
@@ -2552,10 +2562,17 @@ impl<const SSL: bool> NewSocket<SSL> {
         this.socket.detach();
 
         // Only NOW is it safe for dispatch to fire: ext + kind point at `tls`.
+        // Store the allocation-root `tls_ptr` (from `Box::into_raw`), NOT a
+        // reborrow-derived pointer, so dispatch's `&mut *ext` shares
+        // provenance with our per-use reborrows below.
         // SAFETY: ext slot is sized for `*mut TLSSocket`.
-        unsafe { *new_raw.ext::<*mut TLSSocket>() = tls as *mut TLSSocket };
-        tls.socket = SocketHandler::<true>::from(new_raw);
-        tls.ref_();
+        unsafe { *new_raw.ext::<*mut TLSSocket>() = tls_ptr };
+        // SAFETY: short-lived reborrows; no `&mut TLSSocket` is held across
+        // any dispatch boundary (`on_open`/`start_tls_handshake` below).
+        unsafe {
+            (*tls_ptr).socket = SocketHandler::<true>::from(new_raw);
+            (*tls_ptr).ref_();
+        }
 
         // The `raw` half — same `us_socket_t*`, ORIGINAL pre-upgrade
         // *Handlers, writes bypass SSL. Dispatch reaches it via the
@@ -2585,25 +2602,34 @@ impl<const SSL: bool> NewSocket<SSL> {
         let raw_ref = unsafe { &mut *raw };
         raw_ref.ref_();
         // SAFETY: `raw` came from `TLSSocket::new` (Box::into_raw); intrusive +1 held.
-        tls.twin = Some(unsafe { IntrusiveRc::from_raw(raw) });
+        unsafe { (*tls_ptr).twin = Some(IntrusiveRc::from_raw(raw)) };
         new_raw.set_ssl_raw_tap(true);
 
-        let tls_js_value = tls.get_this_value(global);
+        // SAFETY: short-lived reborrow; no dispatch can fire until
+        // `on_open`/`start_tls_handshake` below.
+        let tls_js_value = unsafe { (*tls_ptr).get_this_value(global) };
         let raw_js_value = raw_ref.get_this_value(global);
         TLSSocket::data_set_cached(tls_js_value, global, default_data);
         // `raw` keeps the pre-upgrade `data` so its callbacks emit on the
         // original net.Socket, not the TLS one.
         TLSSocket::data_set_cached(raw_js_value, global, original_data);
 
-        tls.mark_active();
-        if was_reffed {
-            tls.poll_ref.ref_(vm);
+        // SAFETY: short-lived reborrows on the allocation-root pointer.
+        unsafe {
+            (*tls_ptr).mark_active();
+            if was_reffed {
+                (*tls_ptr).poll_ref.ref_(vm);
+            }
         }
 
         // Fire onOpen with the right `this`, then send ClientHello. Doing
         // it before ext was repointed would have ALPN/onOpen land in the
         // dead TCPSocket.
-        tls.on_open(tls.socket);
+        // SAFETY: `on_open` may synchronously dispatch through the ext slot
+        // (which now stores `tls_ptr`); accessing via the same root pointer
+        // here keeps both `&mut` derivations sharing provenance, and the
+        // reborrow ends at `;` so it does not span the call's reentrancy.
+        unsafe { (*tls_ptr).on_open((*tls_ptr).socket) };
         new_raw.start_tls_handshake();
 
         let array = JSValue::create_empty_array(global, 2)?;
@@ -3088,10 +3114,14 @@ pub fn js_upgrade_duplex_to_tls(
     // duplex/named-pipe path shares one `SSL_CTX_new` with everyone else.
     // node:net wraps `[buntls]`'s return as `opts.tls.secureContext`; userland
     // may also pass it top-level. Same lookup as `upgradeTLS` above.
-    let mut owned_ctx: Option<*mut SSL_CTX> = None;
-    let owned_ctx_guard = scopeguard::guard(&mut owned_ctx as *mut _, |p| {
-        // SAFETY: p points to local owned_ctx.
-        if let Some(c) = unsafe { (*p).take() } {
+    // Zig: `errdefer if (owned_ctx) |c| SSL_CTX_free(c)` — by-name capture.
+    // The local lives INSIDE the guard so all reads/writes go through
+    // `*owned_ctx` (DerefMut); capturing `&mut owned_ctx as *mut _` and then
+    // writing the local by name would invalidate the guard's pointer tag
+    // under Stacked Borrows.
+    let mut owned_ctx = scopeguard::guard(None::<*mut SSL_CTX>, |c| {
+        if let Some(c) = c {
+            // SAFETY: BoringSSL FFI; `c` is the +1 ref taken below.
             unsafe { boringssl::SSL_CTX_free(c) };
         }
     });
@@ -3116,7 +3146,7 @@ pub fn js_upgrade_duplex_to_tls(
                 sc_js,
             );
         };
-        owned_ctx = Some(sc.borrow());
+        *owned_ctx = Some(sc.borrow());
     }
 
     // Still parse SSLConfig for servername/ALPN (those live on the JS-side

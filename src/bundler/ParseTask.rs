@@ -1666,7 +1666,7 @@ pub extern "C" fn fetch_source_code(
             return 0;
         }
 
-        let entry = match get_code_for_parse_task_without_plugins(
+        let mut entry = match get_code_for_parse_task_without_plugins(
             this.task,
             this.log,
             this.transpiler,
@@ -1683,9 +1683,23 @@ pub extern "C" fn fetch_source_code(
                 return 1;
             }
         };
-        let contents_slice = entry.contents.as_slice();
-        result.source_ptr = contents_slice.as_ptr();
-        result.source_len = contents_slice.len();
+        // PORT NOTE: in Zig (`.zig:953-975`) `entry.contents` is a slice into
+        // the worker arena (`this.allocator`) with no destructor, so storing
+        // `entry.contents.ptr` and letting `entry` go out of scope is sound.
+        // In Rust `Contents::Owned(Vec<u8>)` (the file-read path — see
+        // `.rs:1287` / `resolver/lib.rs:2285`) frees on drop, which would
+        // leave `result.source_ptr` / `wrapper.original_source` dangling for
+        // the native plugin and `OnBeforeParsePlugin::run` to read through.
+        // Mirror the Zig contract by transferring ownership out of `entry`
+        // and leaking the buffer for the plugin pass: extract ptr/len/fd,
+        // then `mem::forget` the `Contents` so the bytes outlive the wrapper.
+        let fd = entry.fd;
+        let contents = core::mem::take(&mut entry.contents);
+        let contents_slice = contents.as_slice();
+        let source_ptr = contents_slice.as_ptr();
+        let source_len = contents_slice.len();
+        result.source_ptr = source_ptr;
+        result.source_len = source_len;
         result.free_user_context = None;
         result.user_context = core::ptr::null_mut();
         // SAFETY: result is always embedded in a wrapper. Write wrapper fields
@@ -1694,10 +1708,13 @@ pub extern "C" fn fetch_source_code(
         // overlap the live `result` borrow above (aliased-`&mut` UB).
         let wrapper = OnBeforeParseResult::get_wrapper(result_ptr);
         unsafe {
-            (*wrapper).original_source = contents_slice.as_ptr();
-            (*wrapper).original_source_len = contents_slice.len();
-            (*wrapper).original_source_fd = entry.fd;
+            (*wrapper).original_source = source_ptr;
+            (*wrapper).original_source_len = source_len;
+            (*wrapper).original_source_fd = fd;
         }
+        // Keep the bytes alive past this scope — `OnBeforeParsePlugin::run`
+        // returns them as the `CacheEntry` (see `Contents::External` below).
+        core::mem::forget(contents);
     }
     0
 }
@@ -1994,16 +2011,30 @@ fn run_with_source_code(
     log: &mut Log,
     entry: &mut CacheEntry,
 ) -> core::result::Result<Success, AnyError> {
-    // SAFETY: see `get_source_code` — worker arena pinned for the bundle pass.
-    // `'static` matches `JSAst = BundledAst<'static>` (ungate_support.rs); the
-    // arena outlives all reads through the returned ASTs.
-    let bump: &'static Bump = unsafe { &*this.allocator };
-
     // PORT NOTE: reshaped for borrowck — `transpiler_for_target` borrows `this`
     // mutably; we may need to call it again below (server-components branch),
     // so hold it as a raw pointer and reborrow per use site.
+    //
+    // Stacked-Borrows: derive a single raw `*mut Worker` once and route every
+    // subsequent worker access through it. The second `transpiler_for_target`
+    // call (server-components/browser branch) must NOT autoref `&mut *this`
+    // directly — that retag of the parent `&mut` pops the SharedRW tag chain
+    // backing the first `transpiler` (and the `resolver` field-projection
+    // derived from it), making the later `(*resolver)` derefs in `get_ast` UB.
+    // Zig (.zig:1124, .zig:1189) rebinds `transpiler` while keeping `resolver`
+    // pointing into the original — valid in Zig (no aliasing model); in Rust
+    // both calls' `&mut self` must be children of the same raw so neither pops
+    // the other's tag chain.
+    let worker_raw: *mut crate::Worker = this;
+    // SAFETY: see `get_source_code` — worker arena pinned for the bundle pass.
+    // `'static` matches `JSAst = BundledAst<'static>` (ungate_support.rs); the
+    // arena outlives all reads through the returned ASTs. `allocator` is a
+    // `*const Bump` field; the deref points outside `*worker_raw`.
+    let bump: &'static Bump = unsafe { &*(*worker_raw).allocator };
+
+    // SAFETY: `worker_raw` just derived from the live `this: &mut Worker`.
     let mut transpiler: *mut Transpiler<'static> =
-        this.transpiler_for_target(task.known_target) as *mut _;
+        unsafe { (*worker_raw).transpiler_for_target(task.known_target) } as *mut _;
     // TODO(port): errdefer transpiler.resetStore() + errdefer entry.deinit().
     // Reshaped: cleanup runs on the err return paths explicitly (scopeguard
     // would alias the `&mut Transpiler` / `&mut CacheEntry` borrows below).
@@ -2018,6 +2049,7 @@ fn run_with_source_code(
     let file_path = &mut task.path;
     let loader = task
         .loader
+        // SAFETY: `options` is a disjoint field of the live `*transpiler` (see .rs:1955).
         .or_else(|| file_path.loader(unsafe { &(*transpiler).options.loaders }))
         .unwrap_or(Loader::File);
 
@@ -2040,8 +2072,10 @@ fn run_with_source_code(
     // tag-change panic). The debug check used live `task.contents_or_fd` which
     // overlaps borrows in Rust; left as TODO above.
 
-    // SAFETY: this.ctx backref valid.
-    let worker_ctx = unsafe { &*this.ctx };
+    // SAFETY: `ctx` backref valid. Read the pointer field via `worker_raw`
+    // (not `this`) so no parent-`&mut` access pops the `transpiler`/`resolver`
+    // tag chain derived above.
+    let worker_ctx = unsafe { &*(*worker_raw).ctx };
 
     let will_close_file_descriptor = matches!(task.contents_or_fd, ContentsOrFd::Fd { .. })
         && entry.fd.is_valid()
@@ -2092,7 +2126,12 @@ fn run_with_source_code(
     {
         // separate_ssr_graph makes boundaries switch to client because the server file uses that generated file as input.
         // this is not done when there is one server graph because it is easier for plugins to deal with.
-        transpiler = this.transpiler_for_target(options::Target::Browser) as *mut _;
+        // SAFETY: route through `worker_raw` (see top-of-function PORT NOTE)
+        // so this call's `&mut self` is a child of the same raw and does not
+        // pop the SharedRW tag backing `resolver` (which still points into the
+        // original target's transpiler per Zig .zig:1189).
+        transpiler =
+            unsafe { (*worker_raw).transpiler_for_target(options::Target::Browser) } as *mut _;
     }
     // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler` (possibly
     // reassigned above); reborrow only the disjoint `options` field.

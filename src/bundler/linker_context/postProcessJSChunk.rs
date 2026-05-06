@@ -487,10 +487,10 @@ pub fn post_process_js_chunk(
     match c.options.output_format {
         options::OutputFormat::InternalBakeDev => {
             // TODO(b0): get_hmr_runtime / HmrRuntimeSide arrive from move-in (MOVE_DOWN bake → bundler)
-            let start = crate::get_hmr_runtime(if c.options.target.is_server_side() {
-                crate::HmrRuntimeSide::Server
+            let start = get_hmr_runtime(if c.options.target.is_server_side() {
+                HmrRuntimeSide::Server
             } else {
-                crate::HmrRuntimeSide::Client
+                HmrRuntimeSide::Client
             });
             j.push_static(start.code);
             line_offset.advance(start.code);
@@ -508,10 +508,13 @@ pub fn post_process_js_chunk(
         _ => {} // no wrapper
     }
 
-    if !cross_chunk_prefix.result.code.is_empty() {
-        newline_before_comment = true;
-        line_offset.advance(&cross_chunk_prefix.result.code);
-        j.push(&cross_chunk_prefix.result.code);
+    {
+        let code = print_result_code(&cross_chunk_prefix);
+        if !code.is_empty() {
+            newline_before_comment = true;
+            line_offset.advance(code);
+            j.push(code);
+        }
     }
 
     // Concatenate the generated JavaScript chunks together
@@ -523,11 +526,12 @@ pub fn post_process_js_chunk(
     // bun.handleOom dropped — Rust aborts on OOM
 
     let show_comments =
-        c.options.mode == options::Mode::Bundle && !c.options.minify_whitespace;
+        c.options.mode == LinkerOptionsMode::Bundle && !c.options.minify_whitespace;
 
     let emit_targets_in_commands = show_comments
         && (if let Some(fw) = ctx.c.framework {
-            fw.server_components.is_some()
+            // SAFETY: framework is a non-null bundler-owned pointer when Some.
+            unsafe { (*fw).server_components.is_some() }
         } else {
             false
         });

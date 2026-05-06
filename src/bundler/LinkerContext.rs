@@ -1374,7 +1374,10 @@ impl<'a> LinkerContext<'a> {
                         if source.path.text.as_ptr() == source.path.pretty.as_ptr() {
                             source.path = self.path_with_pretty_initialized(source.path.clone()).expect("OOM");
                         }
-                        source.path.assert_pretty_is_valid();
+                        // PORT NOTE: `Path::assert_pretty_is_valid` lives on the
+                        // resolver-side `Path<'a>`; the logger `Path` has no
+                        // such debug hook yet.
+                        debug_assert!(source.path.text.as_ptr() != source.path.pretty.as_ptr());
 
                         break 'brk &source.path.pretty;
                     } else {
@@ -1435,15 +1438,14 @@ impl<'a> LinkerContext<'a> {
                     hasher.write(piece.data());
                 }
             }
-            crate::chunk::IntermediateOutput::Joiner(joiner) => {
-                let mut el = joiner.head;
-                while let Some(e) = el {
-                    // SAFETY: `Joinable.next` is an intrusive linked-list
-                    // pointer into joiner-owned nodes; valid until `done()`.
-                    let node = unsafe { &*e.as_ptr() };
-                    hasher.write(&node.slice);
-                    el = node.next;
-                }
+            crate::chunk::IntermediateOutput::Joiner(_joiner) => {
+                // PORT NOTE: Zig walked `joiner.head` and hashed each
+                // `node.slice`; the Rust `StringJoiner::Node` keeps `slice` /
+                // `next` private (no public iterator yet). Hashing the joined
+                // output here would force an early `done()`, which would
+                // invalidate `IntermediateOutput::Joiner`. Defer until
+                // `StringJoiner` grows a node iterator.
+                todo!("blocked_on: StringJoiner node iterator (private fields)")
             }
             crate::chunk::IntermediateOutput::Empty => {}
         }
@@ -1536,8 +1538,8 @@ impl<'a> LinkerContext<'a> {
                                 use std::io::Write;
                                 write!(&mut text, "The top-level await in {} is here:", bstr::BStr::new(tla_pretty_path)).unwrap();
                                 notes.push(Data {
-                                    text: text.into_boxed_slice(),
-                                    location: Logger::Location::init_or_null(source, parent_result_tla_keyword),
+                                    text: text.into(),
+                                    location: Logger::Location::init_or_null(Some(source), parent_result_tla_keyword),
                                     ..Default::default()
                                 });
                                 break;
@@ -1545,7 +1547,7 @@ impl<'a> LinkerContext<'a> {
 
                             if !Index::is_valid(Index::init(parent_tla_check.parent)) {
                                 notes.push(Data {
-                                    text: b"unexpected invalid index".to_vec().into_boxed_slice(),
+                                    text: b"unexpected invalid index"[..].into(),
                                     ..Default::default()
                                 });
                                 break;

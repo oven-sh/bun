@@ -2242,11 +2242,11 @@ impl<'a> BundleV2<'a> {
         let specifier_string = server.new_expr(E::EString { data: b"specifier", ..Default::default() });
         let empty_array = server.new_expr(E::Array::default());
 
-        for ((r#use, source_id), ssr_index) in scbs.items_use_directive().iter()
-            .zip(scbs.items_source_index().iter())
-            .zip(scbs.items_ssr_source_index().iter())
+        for ((r#use, source_id), ssr_index) in scbs.use_directive().iter()
+            .zip(scbs.source_index().iter())
+            .zip(scbs.ssr_source_index().iter())
         {
-            if *r#use == UseDirective::Client {
+            if *r#use == js_ast::UseDirective::Client {
                 // TODO(@paperclover/bake): this file is being generated far too
                 // early. we don't know which exports are dead and which exports
                 // are live. Tree-shaking figures that out. However,
@@ -4073,7 +4073,8 @@ impl<'a> BundleV2<'a> {
                 }
 
                 if import_record.path.text.starts_with(b"bun:") {
-                    import_record.path = Fs::Path::init(import_record.path.text[b"bun:".len()..].into());
+                    let new_text: &'static [u8] = &import_record.path.text[b"bun:".len()..];
+                    import_record.path = bun_paths::fs::Path::init(new_text);
                     import_record.path.namespace = b"bun";
                     import_record.source_index = Index::INVALID;
                     import_record.flags.insert(bun_options_types::import_record::Flags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);

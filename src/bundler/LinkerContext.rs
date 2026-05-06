@@ -3582,7 +3582,10 @@ impl<'a> LinkerContext<'a> {
                         self.get_source(source_index).fmt_identifier()
                     )
                     .expect("write to Vec<u8> cannot fail");
-                    let name: &[u8] = self.allocator().alloc_slice_copy(&name_buf);
+                    // SAFETY: arena outlives this fn; detach `&Bump` from `&self` for borrowck
+                    // (same pattern as the `alloc` binding in the e_object branch above).
+                    let alloc: &Bump = unsafe { &*(self.allocator() as *const Bump) };
+                    let name: &[u8] = alloc.alloc_slice_copy(&name_buf);
 
                     let generated = self.generate_named_export_in_file(
                         source_index,
@@ -3590,8 +3593,7 @@ impl<'a> LinkerContext<'a> {
                         name,
                         b"default",
                     )?;
-                    let alloc = self.allocator();
-                    let new_stmts = alloc.alloc_slice_fill_iter(core::iter::once(Stmt::alloc(
+                    let new_stmts: *mut [Stmt] = alloc.alloc_slice_fill_iter(core::iter::once(Stmt::alloc(
                         S::ExportDefault {
                             default_name: js_ast::LocRef { ref_: Some(generated.0), loc: stmt_loc },
                             value: js_ast::StmtOrExpr::Expr(expr),
@@ -3599,7 +3601,7 @@ impl<'a> LinkerContext<'a> {
                         stmt_loc,
                     )));
                     let parts = self.graph.ast.items_parts_mut()[source_index as usize].slice_mut();
-                    parts[generated.1 as usize].stmts = new_stmts as *mut [Stmt];
+                    parts[generated.1 as usize].stmts = new_stmts;
                 }
             }
         }

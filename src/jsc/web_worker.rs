@@ -1010,9 +1010,10 @@ mod __phase_a_body {
 
         let mut array: Vec<u8> = Vec::new();
 
-        let worker = vm.worker.expect("Assertion failure: no worker") as *mut WebWorker;
-        // SAFETY: vm.worker is a valid *mut WebWorker owned by C++ while vm lives.
-        let worker = unsafe { &mut *worker };
+        let worker = vm.worker.expect("Assertion failure: no worker") as *const WebWorker;
+        // SAFETY: vm.worker is a valid *const WebWorker owned by C++ while vm
+        // lives. `&WebWorker` (not `&mut`) — see worker-thread `&self` note.
+        let worker = unsafe { &*worker };
 
         let format_result = jsc::ConsoleObject::format2(
             jsc::ConsoleObject::Kind::Debug,

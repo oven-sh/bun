@@ -443,12 +443,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // out_decls[j] = decl.*;
             if j != i - 1 {
                 // SAFETY: j < i-1 < len; src/dst non-overlapping; Decl has no Drop.
+                // Derive both pointers from a single `as_mut_ptr()` so the src `*const`
+                // shares provenance with dst (Stacked Borrows: a separate `as_ptr()`
+                // SharedRO tag would be popped by the later `as_mut_ptr()` Unique).
                 unsafe {
-                    core::ptr::copy_nonoverlapping(
-                        decls.as_ptr().add(i - 1),
-                        decls.as_mut_ptr().add(j),
-                        1,
-                    );
+                    let base = decls.as_mut_ptr();
+                    core::ptr::copy_nonoverlapping(base.add(i - 1), base.add(j), 1);
                 }
             }
             j += 1;
@@ -1342,8 +1342,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
             let prev_nearest_stmt_list = p.nearest_stmt_list;
             // PORT NOTE: BACKREF — `before` outlives this block; raw NonNull avoids
-            // the `&'a mut` borrow conflict.
-            p.nearest_stmt_list = Some(NonNull::from(&mut before));
+            // the `&'a mut` borrow conflict. Derive via `addr_of_mut!` (no intermediate
+            // `&mut`) so the pointer shares the local's base tag and survives the
+            // direct `&mut before` reborrows in the loop below (Stacked Borrows).
+            // SAFETY: `before` is a live local; address is non-null.
+            p.nearest_stmt_list =
+                Some(unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!(before)) });
 
             let mut preprocessed_enum_i: usize = 0;
 

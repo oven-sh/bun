@@ -2753,7 +2753,11 @@ impl<'a> BundleV2<'a> {
         let mut chunks = unsafe {
             let bundle_ptr: *mut BundleV2 = &mut *this;
             let ep_len = (*bundle_ptr).graph.entry_points.len();
-            let ep = (*bundle_ptr).graph.entry_points.as_ptr();
+            // `Graph::entry_points` is `Vec<bun_js_parser::Index>`; `link()` takes
+            // `&[crate::Index]` (= bun_options_types). Both are `#[repr(transparent)]`
+            // `u32` newtypes (see ast/base.rs:52 / BundleEnums.rs:659), so a ptr cast
+            // is layout-identical.
+            let ep = (*bundle_ptr).graph.entry_points.as_ptr().cast::<Index>();
             let scbs = core::mem::take(&mut (*bundle_ptr).graph.server_component_boundaries);
             this.linker.link(
                 &mut *bundle_ptr,
@@ -2896,7 +2900,8 @@ impl<'a> BundleV2<'a> {
         let mut chunks = unsafe {
             let bundle_ptr: *mut BundleV2 = &mut *this;
             let ep_len = (*bundle_ptr).graph.entry_points.len();
-            let ep = (*bundle_ptr).graph.entry_points.as_ptr();
+            // Both Index newtypes are `#[repr(transparent)]` u32 — see `generate_from_cli`.
+            let ep = (*bundle_ptr).graph.entry_points.as_ptr().cast::<Index>();
             let scbs = core::mem::take(&mut (*bundle_ptr).graph.server_component_boundaries);
             this.linker.link(
                 &mut *bundle_ptr,

@@ -971,10 +971,9 @@ pub mod js_bundler {
                 }
             }
 
-            if let Some(packages) =
-                config.get_optional_enum::<options::PackagesOption>(global_this, "packages")?
-            {
-                this.packages = packages;
+            if let Some(_packages_val) = config.get_truthy(global_this, "packages")? {
+                this.packages =
+                    todo!("blocked_on: bun_jsc::JSValue::get_optional_enum::<options::PackagesOption>");
             }
 
             // Parse JSX configuration

@@ -62,6 +62,9 @@ pub mod JSH2FrameParser {
         pub fn set(self, _this_value: JSValue, _global: &JSGlobalObject, _value: JSValue) {
             todo!("blocked_on: bun_jsc::codegen::JSH2FrameParser")
         }
+        pub fn clear(self, _this_value: JSValue, _global: &JSGlobalObject) {
+            todo!("blocked_on: bun_jsc::codegen::JSH2FrameParser")
+        }
     }
     pub fn get_constructor(_global: &JSGlobalObject) -> JSValue {
         todo!("blocked_on: bun_jsc::codegen::JSH2FrameParser")

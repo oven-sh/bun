@@ -270,15 +270,17 @@ impl UpgradeCommand {
 
         let http_proxy: Option<URL> = env_loader.get_http_proxy_for(&api_url);
 
-        let mut metadata_body = MutableString::init(2048)?;
+        let metadata_body: &'static mut MutableString =
+            Box::leak(Box::new(MutableString::init(2048)?));
+        let headers_buf: &'static [u8] = Box::leak(headers_buf.into_boxed_slice());
 
         // ensure very stable memory address
         let async_http: Box<HTTP::AsyncHTTP> = Box::new(HTTP::AsyncHTTP::init_sync(
             HTTP::Method::GET,
             api_url,
             header_entries,
-            &headers_buf,
-            &mut metadata_body,
+            headers_buf,
+            metadata_body as *mut MutableString,
             b"",
             http_proxy,
             None,
@@ -289,7 +291,8 @@ impl UpgradeCommand {
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
         if !SILENT {
-            async_http.client.progress_node = Some(progress.as_deref_mut().unwrap());
+            async_http.client.progress_node =
+                Some(NonNull::from(progress.as_deref_mut().unwrap()));
             // TODO(port): lifetime — progress_node stores a borrow of progress
         }
         let response = async_http.send_sync()?;

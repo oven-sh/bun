@@ -134,12 +134,13 @@ impl NativeBrotli {
             stream: Context::default(),
             write_result: None,
             poll_ref: CountedKeepAlive::default(),
-            this_value: Strong::empty(),
+            this_value: StrongOptional::empty(),
             write_in_progress: false,
             pending_close: false,
             pending_reset: false,
             closed: false,
-            task: WorkPoolTask::default(), // .callback = undefined
+            // .callback = undefined — overwritten before WorkPool::schedule()
+            task: WorkPoolTask { node: Default::default(), callback: noop_task_callback },
         });
         // SAFETY: mode_int is 8 or 9, both valid NodeMode discriminants.
         ptr.stream.mode = unsafe {

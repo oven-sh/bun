@@ -897,7 +897,7 @@ fn add_bundled_dep(
                                     continue;
                                 }
 
-                                let Some(dep_name) = dep.key.as_ref().unwrap().as_string() else { continue };
+                                let Some(dep_name) = dep.key.as_ref().unwrap().as_string(pack_bump()) else { continue };
 
                                 // allocPrintSentinel(.., "{s}/node_modules/{s}", ..)
                                 let mut dep_subpath_buf: Vec<u8> = Vec::with_capacity(
@@ -987,16 +987,13 @@ fn add_bundled_dep(
 
             if let Some((pattern, kind)) = is_excluded(&entry, &entry_subpath_, dir_depth, &[]) {
                 if log_level.is_verbose() {
-                    Output::prettyln(
+                    Output::prettyln(format_args!(
                         "<r><blue>ignore<r> <d>[{}:{}]<r> {}{}",
-                        format_args!(
-                            "{}:{} {}{}",
-                            <&str>::from(kind),
-                            bstr::BStr::new(pattern),
-                            bstr::BStr::new(entry_subpath_.as_bytes()),
-                            if entry.kind == bun_sys::FileKind::Directory { "/" } else { "" },
-                        ),
-                    );
+                        <&str>::from(kind),
+                        bstr::BStr::new(pattern),
+                        bstr::BStr::new(entry_subpath_.as_bytes()),
+                        if entry.kind == bun_sys::FileKind::Directory { "/" } else { "" },
+                    ));
                     Output::flush();
                 }
                 continue;
@@ -1088,16 +1085,13 @@ fn iterate_project_tree(
 
             if let Some((pattern, kind)) = is_excluded(&entry, &entry_subpath_, dir_depth, &ignores) {
                 if log_level.is_verbose() {
-                    Output::prettyln(
+                    Output::prettyln(format_args!(
                         "<r><blue>ignore<r> <d>[{}:{}]<r> {}{}",
-                        format_args!(
-                            "{}:{} {}{}",
-                            <&str>::from(kind),
-                            bstr::BStr::new(pattern),
-                            bstr::BStr::new(entry_subpath_.as_bytes()),
-                            if entry.kind == bun_sys::FileKind::Directory { "/" } else { "" },
-                        ),
-                    );
+                        <&str>::from(kind),
+                        bstr::BStr::new(pattern),
+                        bstr::BStr::new(entry_subpath_.as_bytes()),
+                        if entry.kind == bun_sys::FileKind::Directory { "/" } else { "" },
+                    ));
                     Output::flush();
                 }
                 continue;
@@ -1142,11 +1136,11 @@ fn get_bundled_deps(json: &Expr, field: &'static str) -> Result<Option<Vec<Bundl
                 let Some(mut iter) = bundled_deps.as_array() else { return Ok(Some(Vec::new())) };
 
                 while let Some(bundled_dep_item) = iter.next() {
-                    let Some(bundled_dep) = bundled_dep_item.as_string_cloned()? else {
+                    let Some(bundled_dep) = bundled_dep_item.as_string_cloned(pack_bump())? else {
                         break 'invalid_field;
                     };
                     deps.push(BundledDep {
-                        name: bundled_dep,
+                        name: bundled_dep.into(),
                         was_packed: false,
                         from_root_package_json: true,
                     });
@@ -1168,11 +1162,11 @@ fn get_bundled_deps(json: &Expr, field: &'static str) -> Result<Option<Vec<Bundl
                                 continue;
                             }
 
-                            let Some(bundled_dep) = dependency.key.as_ref().unwrap().as_string_cloned()? else {
+                            let Some(bundled_dep) = dependency.key.as_ref().unwrap().as_string_cloned(pack_bump())? else {
                                 break 'invalid_field;
                             };
                             deps.push(BundledDep {
-                                name: bundled_dep,
+                                name: bundled_dep.into(),
                                 was_packed: false,
                                 from_root_package_json: true,
                             });
@@ -1214,7 +1208,7 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
     let mut path_buf = PathBuffer::uninit();
 
     if let Some(bin) = json.as_property(b"bin") {
-        if let Some(bin_str) = bin.expr.as_string() {
+        if let Some(bin_str) = bin.expr.as_string(pack_bump()) {
             let normalized = resolve_path::normalize_buf::<resolve_path::platform::Posix>(bin_str, &mut path_buf);
             bins.push(BinInfo {
                 path: ZBox::from_bytes(normalized),
@@ -1230,7 +1224,7 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
 
             for bin_prop in bin_obj.properties.slice() {
                 if let Some(bin_prop_value) = &bin_prop.value {
-                    if let Some(bin_str) = bin_prop_value.as_string() {
+                    if let Some(bin_str) = bin_prop_value.as_string(pack_bump()) {
                         let normalized = resolve_path::normalize_buf::<resolve_path::platform::Posix>(bin_str, &mut path_buf);
                         bins.push(BinInfo {
                             path: ZBox::from_bytes(normalized),
@@ -1247,7 +1241,7 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
     if let Some(directories) = json.as_property(b"directories") {
         if let ExprData::EObject(directories_obj) = &directories.expr.data {
             if let Some(bin) = directories_obj.as_property(b"bin") {
-                if let Some(bin_str) = bin.expr.as_string() {
+                if let Some(bin_str) = bin.expr.as_string(pack_bump()) {
                     let normalized = resolve_path::normalize_buf::<resolve_path::platform::Posix>(bin_str, &mut path_buf);
                     bins.push(BinInfo {
                         path: ZBox::from_bytes(normalized),

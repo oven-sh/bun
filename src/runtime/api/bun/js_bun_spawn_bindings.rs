@@ -433,10 +433,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                                     break 'ipc_mode match IPC::Mode::from_js(global_this, mode_val)? {
                                         Some(m) => m,
                                         None => {
-                                            return global_this.throw_invalid_arguments(
+                                            return Err(global_this.throw_invalid_arguments(
                                                 "serialization must be \"json\" or \"advanced\"",
-                                                format_args!(""),
-                                            );
+                                            ));
                                         }
                                     };
                                 } else {

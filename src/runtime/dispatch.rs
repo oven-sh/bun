@@ -490,7 +490,7 @@ pub fn run_task(
             // real `run_from_js_thread` lives in the gated
             // `bun_jsc::posix_signal_handle` module.
             let _ = (task.ptr as usize as u8, global);
-            let _: &PosixSignalTask;
+            let _ = core::marker::PhantomData::<PosixSignalTask>;
             todo!("blocked_on: bun_jsc::posix_signal_handle::PosixSignalTask::run_from_js_thread");
         }
         task_tag::NativePromiseContextDeferredDerefTask => {

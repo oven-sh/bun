@@ -1651,7 +1651,7 @@ impl<'a> PerThread<'a> {
         let global = unsafe { &*(*self.vm).global };
         if !self.loaded_files.is_set(id.get() as usize) {
             self.loaded_files.set(id.get() as usize);
-            self.all_server_files.get().put_index(
+            self.all_server_files.as_ref().unwrap().get().put_index(
                 global,
                 u32::try_from(id.get()).unwrap(),
                 self.module_keys[id.get() as usize].to_js(global)?,

@@ -2,19 +2,20 @@ use std::io::Write as _;
 
 use bstr::{BStr, ByteSlice};
 
-use bun_alloc::AllocError;
+use bun_alloc::{AllocError, Arena};
 use crate::cli::command::{self, Command};
 use crate::cli::run_command::RunCommand;
 use bun_core::{env_var, Global, Output};
+use bun_dotenv as DotEnv;
 use bun_install::PackageManager;
 use bun_install::LogLevel;
 use bun_js_printer as JSPrinter;
-// TODO(port): verify crate path for `bun.json` (package.json parser)
 use bun_interchange::json as JSON;
 use bun_logger as logger;
-use bun_paths::{resolve_path as path, PathBuffer};
+use bun_logger::js_ast::{self, ExprData};
+use bun_paths::{resolve_path as path, resolve_path::platform as path_platform, PathBuffer};
 use crate::api::bun::process::sync::{spawn as spawn_sync, Options as SpawnSyncOptions, SyncStdio as Stdio};
-use bun_sys::Maybe as SpawnSyncResult;
+use crate::api::bun::process::Status as ProcStatus;
 use bun_semver as Semver;
 use bun_str::strings;
 use bun_sys::{self, Fd};
@@ -65,9 +66,50 @@ impl VersionType {
     }
 }
 
+// ── PackageManager option shims ─────────────────────────────────────────────
+// `bun_install::PackageManagerOptionsStub` is a partial stub that doesn't yet
+// expose the version-command fields. These shims keep this file compiling and
+// document the upstream gap; they panic at runtime until the real fields land.
+#[allow(dead_code, unreachable_code)]
+mod pm_shims {
+    use super::*;
+    #[inline(never)]
+    pub fn preid<'a>(_pm: &'a PackageManager) -> &'a [u8] {
+        todo!("blocked_on: bun_install::PackageManagerOptionsStub::preid")
+    }
+    #[inline(never)]
+    pub fn run_scripts(_pm: &PackageManager) -> bool {
+        todo!("blocked_on: bun_install::PackageManagerOptionsStub::do_.run_scripts")
+    }
+    #[inline(never)]
+    pub fn allow_same_version(_pm: &PackageManager) -> bool {
+        todo!("blocked_on: bun_install::PackageManagerOptionsStub::allow_same_version")
+    }
+    #[inline(never)]
+    pub fn git_tag_version(_pm: &PackageManager) -> bool {
+        todo!("blocked_on: bun_install::PackageManagerOptionsStub::git_tag_version")
+    }
+    #[inline(never)]
+    pub fn set_git_tag_version(_pm: &mut PackageManager, _v: bool) {
+        todo!("blocked_on: bun_install::PackageManagerOptionsStub::git_tag_version")
+    }
+    #[inline(never)]
+    pub fn force(_pm: &PackageManager) -> bool {
+        todo!("blocked_on: bun_install::PackageManagerOptionsStub::force")
+    }
+    #[inline(never)]
+    pub fn message<'a>(_pm: &'a PackageManager) -> Option<&'a [u8]> {
+        todo!("blocked_on: bun_install::PackageManagerOptionsStub::message")
+    }
+    #[inline(never)]
+    pub fn env<'a>(_pm: &'a mut PackageManager) -> &'a mut DotEnv::Loader<'static> {
+        todo!("blocked_on: bun_install::PackageManager::env")
+    }
+}
+
 impl PmVersionCommand {
     pub fn exec(
-        ctx: &command::Context,
+        ctx: &mut command::Context,
         pm: &mut PackageManager,
         positionals: &[&[u8]],
         original_cwd: &[u8],
@@ -85,31 +127,30 @@ impl PmVersionCommand {
         Self::verify_git(&package_json_dir, pm)?;
 
         let mut path_buf = PathBuffer::uninit();
-        let package_json_path = path::join_abs_string_buf_z(
+        let package_json_path = path::join_abs_string_buf_z::<path_platform::Auto>(
             &package_json_dir,
-            &mut path_buf,
+            &mut path_buf.0,
             &[b"package.json"],
-            path::Platform::Auto,
         );
 
         let package_json_contents =
             match bun_sys::File::read_from(Fd::cwd(), package_json_path) {
                 Ok(c) => c,
                 Err(err) => {
-                    Output::err_generic(format_args!(
+                    Output::err_generic(
                         "Failed to read package.json: {}",
-                        err.name()
-                    ));
+                        (BStr::new(err.name()),),
+                    );
                     Global::exit(1);
                 }
             };
         // `defer ctx.allocator.free(package_json_contents)` — handled by Drop.
 
         let package_json_source =
-            logger::Source::init_path_string(package_json_path.as_bytes(), &package_json_contents);
+            logger::Source::init_path_string(package_json_path.as_bytes(), &*package_json_contents);
         // PORT NOTE: Zig passed `ctx.allocator`; Rust ctx dropped allocator (global mimalloc),
         // so we hand the parser a local bump arena for its scratch allocations.
-        let json_bump = bumpalo::Bump::new();
+        let json_bump = Arena::new();
         let json_result = match JSON::parse_package_json_utf8_with_opts::<
             true,  // IS_JSON
             true,  // ALLOW_COMMENTS
@@ -127,30 +168,31 @@ impl PmVersionCommand {
         ) {
             Ok(r) => r,
             Err(err) => {
-                Output::err_generic(format_args!(
+                Output::err_generic(
                     "Failed to parse package.json: {}",
-                    err.name()
-                ));
+                    (err.name(),),
+                );
                 Global::exit(1);
             }
         };
 
         let mut json = json_result.root;
 
-        if !matches!(json.data, bun_js_parser::ast::ExprData::EObject(_)) {
-            Output::err_generic(format_args!(
-                "Failed to parse package.json: root must be an object"
-            ));
+        if !matches!(json.data, ExprData::EObject(_)) {
+            Output::err_generic(
+                "Failed to parse package.json: root must be an object",
+                (),
+            );
             Global::exit(1);
         }
 
-        let scripts = if pm.options.do_.run_scripts {
+        let scripts = if pm_shims::run_scripts(pm) {
             json.as_property(b"scripts")
         } else {
             None
         };
         let scripts_obj = if let Some(s) = &scripts {
-            if matches!(s.expr.data, bun_js_parser::ast::ExprData::EObject(_)) {
+            if matches!(s.expr.data, ExprData::EObject(_)) {
                 Some(s.expr)
             } else {
                 None
@@ -161,13 +203,13 @@ impl PmVersionCommand {
 
         if let Some(s) = &scripts_obj {
             if let Some(script) = s.get(b"preversion") {
-                if let Some(script_command) = script.as_string() {
+                if let Some(script_command) = script.as_utf8_string_literal() {
                     RunCommand::run_package_script_foreground(
                         ctx,
-                        &script_command,
+                        script_command,
                         b"preversion",
                         &package_json_dir,
-                        pm.env,
+                        pm_shims::env(pm),
                         &[],
                         pm.options.log_level == LogLevel::Silent,
                         ctx.debug.use_system_shell,
@@ -178,7 +220,7 @@ impl PmVersionCommand {
 
         let current_version: Option<&[u8]> = 'brk_version: {
             if let Some(v) = json.as_property(b"version") {
-                if let bun_js_parser::ast::ExprData::EString(s) = &v.expr.data {
+                if let ExprData::EString(s) = &v.expr.data {
                     break 'brk_version Some(s.data);
                 }
             }
@@ -189,68 +231,83 @@ impl PmVersionCommand {
             current_version.unwrap_or(b"0.0.0"),
             version_type,
             new_version,
-            pm.options.preid,
+            pm_shims::preid(pm),
             &package_json_dir,
         )?;
         // `defer ctx.allocator.free(new_version_str)` — handled by Drop.
 
         if let Some(version) = current_version {
-            if !pm.options.allow_same_version && version == new_version_str.as_slice() {
-                Output::err_generic(format_args!("Version not changed"));
+            if !pm_shims::allow_same_version(pm) && version == new_version_str.as_slice() {
+                Output::err_generic("Version not changed", ());
                 Global::exit(1);
             }
         }
 
         {
             // TODO(port): `json.data.e_object.putString` — verify AST mutation API
-            json.data
-                .as_e_object_mut()
-                .put_string(b"version", &new_version_str)?;
+            let _ = (&mut json, &new_version_str);
+            todo!("blocked_on: bun_logger::js_ast::E::Object::put_string");
 
-            let mut buffer_writer = JSPrinter::BufferWriter::init();
-            buffer_writer.append_newline = !package_json_contents.is_empty()
-                && package_json_contents[package_json_contents.len() - 1] == b'\n';
-            let mut package_json_writer = JSPrinter::BufferPrinter::init(buffer_writer);
+            #[allow(unreachable_code)]
+            {
+                let mut buffer_writer = JSPrinter::BufferWriter::init();
+                buffer_writer.append_newline = !package_json_contents.is_empty()
+                    && package_json_contents[package_json_contents.len() - 1] == b'\n';
+                let mut package_json_writer = JSPrinter::BufferPrinter::init(buffer_writer);
 
-            if let Err(err) = JSPrinter::print_json(
-                &mut package_json_writer,
-                json,
-                &package_json_source,
-                JSPrinter::PrintJsonOptions {
-                    indent: json_result.indentation,
-                    mangled_props: None,
-                },
-            ) {
-                Output::err_generic(format_args!(
-                    "Failed to save package.json: {}",
-                    err.name()
-                ));
-                Global::exit(1);
-            }
+                let printer_indent = JSPrinter::Indentation {
+                    scalar: json_result.indentation.scalar,
+                    count: json_result.indentation.count,
+                    character: match json_result.indentation.character {
+                        logger::js_printer::IndentationCharacter::Tab => {
+                            JSPrinter::IndentationCharacter::Tab
+                        }
+                        logger::js_printer::IndentationCharacter::Space => {
+                            JSPrinter::IndentationCharacter::Space
+                        }
+                    },
+                };
 
-            // Zig used `std.fs.cwd().writeFile`; ported to bun_sys (no std::fs).
-            if let Err(err) = bun_sys::File::write_file(
-                Fd::cwd(),
-                package_json_path,
-                package_json_writer.ctx.written_without_trailing_zero(),
-            ) {
-                Output::err_generic(format_args!(
-                    "Failed to write package.json: {}",
-                    err.name()
-                ));
-                Global::exit(1);
+                if let Err(err) = JSPrinter::print_json(
+                    &mut package_json_writer,
+                    bun_js_parser::Expr::from(json),
+                    &package_json_source,
+                    JSPrinter::PrintJsonOptions {
+                        indent: printer_indent,
+                        mangled_props: None,
+                    },
+                ) {
+                    Output::err_generic(
+                        "Failed to save package.json: {}",
+                        (err.name(),),
+                    );
+                    Global::exit(1);
+                }
+
+                // Zig used `std.fs.cwd().writeFile`; ported to bun_sys (no std::fs).
+                if let Err(err) = bun_sys::File::write_file(
+                    Fd::cwd(),
+                    package_json_path,
+                    package_json_writer.ctx.written_without_trailing_zero(),
+                ) {
+                    Output::err_generic(
+                        "Failed to write package.json: {}",
+                        (BStr::new(err.name()),),
+                    );
+                    Global::exit(1);
+                }
             }
         }
 
         if let Some(s) = &scripts_obj {
             if let Some(script) = s.get(b"version") {
-                if let Some(script_command) = script.as_string() {
+                if let Some(script_command) = script.as_utf8_string_literal() {
                     RunCommand::run_package_script_foreground(
                         ctx,
-                        &script_command,
+                        script_command,
                         b"version",
                         &package_json_dir,
-                        pm.env,
+                        pm_shims::env(pm),
                         &[],
                         pm.options.log_level == LogLevel::Silent,
                         ctx.debug.use_system_shell,
@@ -259,23 +316,23 @@ impl PmVersionCommand {
             }
         }
 
-        if pm.options.git_tag_version {
+        if pm_shims::git_tag_version(pm) {
             Self::git_commit_and_tag(
                 &new_version_str,
-                pm.options.message.as_deref(),
+                pm_shims::message(pm),
                 &package_json_dir,
             )?;
         }
 
         if let Some(s) = &scripts_obj {
             if let Some(script) = s.get(b"postversion") {
-                if let Some(script_command) = script.as_string() {
+                if let Some(script_command) = script.as_utf8_string_literal() {
                     RunCommand::run_package_script_foreground(
                         ctx,
-                        &script_command,
+                        script_command,
                         b"postversion",
                         &package_json_dir,
-                        pm.env,
+                        pm_shims::env(pm),
                         &[],
                         pm.options.log_level == LogLevel::Silent,
                         ctx.debug.use_system_shell,
@@ -294,17 +351,16 @@ impl PmVersionCommand {
         let mut current_dir = start_dir;
 
         loop {
-            let package_json_path_z = path::join_abs_string_buf_z(
+            let package_json_path_z = path::join_abs_string_buf_z::<path_platform::Auto>(
                 current_dir,
-                &mut path_buf,
+                &mut path_buf.0,
                 &[b"package.json"],
-                path::Platform::Auto,
             );
-            if Fd::cwd().exists_at(package_json_path_z) {
+            if bun_sys::exists_at(Fd::cwd(), package_json_path_z) {
                 return Ok(current_dir.to_vec());
             }
 
-            let parent = path::dirname(current_dir, path::Platform::Auto);
+            let parent = path::dirname::<path_platform::Auto>(current_dir);
             if parent == current_dir {
                 break;
             }
@@ -316,20 +372,23 @@ impl PmVersionCommand {
 
     fn verify_git(cwd: &[u8], pm: &mut PackageManager) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
-        if !pm.options.git_tag_version {
+        if !pm_shims::git_tag_version(pm) {
             return Ok(());
         }
 
         let mut path_buf = PathBuffer::uninit();
-        let git_dir_path =
-            path::join_abs_string_buf(cwd, &mut path_buf, &[b".git"], path::Platform::Auto);
-        if !Fd::cwd().directory_exists_at(git_dir_path).is_true() {
-            pm.options.git_tag_version = false;
+        let git_dir_path = path::join_abs_string_buf_z::<path_platform::Auto>(
+            cwd,
+            &mut path_buf.0,
+            &[b".git"],
+        );
+        if !matches!(bun_sys::directory_exists_at(Fd::cwd(), git_dir_path), Ok(true)) {
+            pm_shims::set_git_tag_version(pm, false);
             return Ok(());
         }
 
-        if !pm.options.force && !Self::is_git_clean(cwd)? {
-            Output::err_generic(format_args!("Git working directory not clean."));
+        if !pm_shims::force(pm) && !Self::is_git_clean(cwd)? {
+            Output::err_generic("Git working directory not clean.", ());
             Global::exit(1);
         }
         Ok(())
@@ -345,13 +404,13 @@ impl PmVersionCommand {
             return (VersionType::Specific, Some(arg));
         }
 
-        Output::err_generic(format_args!(
+        Output::err_generic(
             "Invalid version argument: \"{}\"",
-            BStr::new(arg)
-        ));
-        Output::note(format_args!(
-            "Valid options: patch, minor, major, prepatch, preminor, premajor, prerelease, from-git, or a specific semver version"
-        ));
+            (BStr::new(arg),),
+        );
+        Output::note(
+            "Valid options: patch, minor, major, prepatch, preminor, premajor, prerelease, from-git, or a specific semver version",
+        );
         Global::exit(1);
     }
 
@@ -359,11 +418,10 @@ impl PmVersionCommand {
         // PORT NOTE: reshaped — Zig returned a slice borrowing from ctx.allocator-owned
         // package.json bytes (leaked for process lifetime). Return owned Vec<u8> instead.
         let mut path_buf = PathBuffer::uninit();
-        let package_json_path = path::join_abs_string_buf_z(
+        let package_json_path = path::join_abs_string_buf_z::<path_platform::Auto>(
             cwd,
-            &mut path_buf,
+            &mut path_buf.0,
             &[b"package.json"],
-            path::Platform::Auto,
         );
 
         let Ok(package_json_contents) =
@@ -373,13 +431,19 @@ impl PmVersionCommand {
         };
 
         let package_json_source =
-            logger::Source::init_path_string(package_json_path.as_bytes(), &package_json_contents);
-        let Ok(json) = JSON::parse_package_json_utf8(&package_json_source, ctx.log) else {
+            logger::Source::init_path_string(package_json_path.as_bytes(), &*package_json_contents);
+        let json_bump = Arena::new();
+        let Ok(json) = JSON::parse_package_json_utf8(
+            &package_json_source,
+            // SAFETY: ctx.log is a non-null process-lifetime singleton (see cli::command).
+            unsafe { &mut *ctx.log },
+            &json_bump,
+        ) else {
             return None;
         };
 
         if let Some(v) = json.as_property(b"version") {
-            if let bun_js_parser::ast::ExprData::EString(s) = &v.expr.data {
+            if let ExprData::EString(s) = &v.expr.data {
                 return Some(s.data.to_vec());
             }
         }
@@ -406,43 +470,38 @@ impl PmVersionCommand {
             ));
         }
 
+        let preid = pm_shims::preid(pm);
+
         let patch_version = Self::calculate_new_version(
             current_version,
             VersionType::Patch,
             None,
-            pm.options.preid,
+            preid,
             cwd,
         )?;
         let minor_version = Self::calculate_new_version(
             current_version,
             VersionType::Minor,
             None,
-            pm.options.preid,
+            preid,
             cwd,
         )?;
         let major_version = Self::calculate_new_version(
             current_version,
             VersionType::Major,
             None,
-            pm.options.preid,
+            preid,
             cwd,
         )?;
         let prerelease_version = Self::calculate_new_version(
             current_version,
             VersionType::Prerelease,
             None,
-            pm.options.preid,
+            preid,
             cwd,
         )?;
         // `defer ctx.allocator.free(...)` — handled by Drop.
 
-        const INCREMENT_HELP_TEXT: &str = "\n\
-            <b>Increment<r>:\n\
-            \x20 <cyan>patch<r>      <d>{} → {}<r>\n\
-            \x20 <cyan>minor<r>      <d>{} → {}<r>\n\
-            \x20 <cyan>major<r>      <d>{} → {}<r>\n\
-            \x20 <cyan>prerelease<r> <d>{} → {}<r>\n";
-        // TODO(port): Output::pretty needs a fmt-string-with-tags API; using format_args for now
         Output::pretty(format_args!(
             "\n<b>Increment<r>:\n  <cyan>patch<r>      <d>{cv} → {pv}<r>\n  <cyan>minor<r>      <d>{cv} → {miv}<r>\n  <cyan>major<r>      <d>{cv} → {mav}<r>\n  <cyan>prerelease<r> <d>{cv} → {prv}<r>\n",
             cv = BStr::new(current_version),
@@ -451,28 +510,27 @@ impl PmVersionCommand {
             mav = BStr::new(&major_version),
             prv = BStr::new(&prerelease_version),
         ));
-        let _ = INCREMENT_HELP_TEXT;
 
-        if strings::index_of_char(current_version, b'-').is_some() || !pm.options.preid.is_empty() {
+        if strings::index_of_char(current_version, b'-').is_some() || !preid.is_empty() {
             let prepatch_version = Self::calculate_new_version(
                 current_version,
                 VersionType::Prepatch,
                 None,
-                pm.options.preid,
+                preid,
                 cwd,
             )?;
             let preminor_version = Self::calculate_new_version(
                 current_version,
                 VersionType::Preminor,
                 None,
-                pm.options.preid,
+                preid,
                 cwd,
             )?;
             let premajor_version = Self::calculate_new_version(
                 current_version,
                 VersionType::Premajor,
                 None,
-                pm.options.preid,
+                preid,
                 cwd,
             )?;
 
@@ -533,10 +591,10 @@ impl PmVersionCommand {
 
         let current = Semver::Version::parse(Semver::SlicedString::init(current_str, current_str));
         if !current.valid {
-            Output::err_generic(format_args!(
+            Output::err_generic(
                 "Current version \"{}\" is not a valid semver",
-                BStr::new(current_str)
-            ));
+                (BStr::new(current_str),),
+            );
             Global::exit(1);
         }
 
@@ -566,7 +624,7 @@ impl PmVersionCommand {
 
     fn increment_version(
         current_str: &[u8],
-        current: &Semver::version::ParseResult,
+        current: &Semver::version::ParseResult<u64>,
         version_type: VersionType,
         preid: &[u8],
     ) -> Result<Vec<u8>, AllocError> {
@@ -723,40 +781,37 @@ impl PmVersionCommand {
             cwd,
             b"git",
         ) else {
-            Output::err_generic(format_args!(
-                "git must be installed to use `bun pm version --git-tag-version`"
-            ));
+            Output::err_generic(
+                "git must be installed to use `bun pm version --git-tag-version`",
+                (),
+            );
             Global::exit(1);
         };
 
         let proc = match spawn_sync(&SpawnSyncOptions {
-            argv: &[git_path, b"status", b"--porcelain"],
+            argv: build_argv(&[git_path.as_bytes(), b"status", b"--porcelain"]),
             stdout: Stdio::Buffer,
             stderr: Stdio::Ignore,
             stdin: Stdio::Ignore,
-            cwd,
+            cwd: Box::<[u8]>::from(cwd),
             envp: None,
             #[cfg(windows)]
-            windows: crate::api::process::WindowsOptions {
-                loop_: bun_jsc::EventLoopHandle::init(bun_event_loop::MiniEventLoop::init_global(
-                    None, None,
-                )),
-            },
+            windows: spawn_windows_options(),
             ..Default::default()
         }) {
             Ok(p) => p,
             Err(err) => {
-                Output::err_generic(format_args!("Failed to spawn git process: {}", err.name()));
+                Output::err_generic("Failed to spawn git process: {}", (err.name(),));
                 Global::exit(1);
             }
         };
 
         match proc {
-            SpawnSyncResult::Err(err) => {
-                Output::err(err, format_args!("Failed to spawn git process"));
+            Err(err) => {
+                Output::err(err, "Failed to spawn git process", ());
                 Global::exit(1);
             }
-            SpawnSyncResult::Result(result) => {
+            Ok(result) => {
                 Ok(result.is_ok() && result.stdout.is_empty())
             }
         }
@@ -770,48 +825,45 @@ impl PmVersionCommand {
             cwd,
             b"git",
         ) else {
-            Output::err_generic(format_args!(
-                "git must be installed to use `bun pm version from-git`"
-            ));
+            Output::err_generic(
+                "git must be installed to use `bun pm version from-git`",
+                (),
+            );
             Global::exit(1);
         };
 
         let proc = match spawn_sync(&SpawnSyncOptions {
-            argv: &[git_path, b"describe", b"--tags", b"--abbrev=0"],
+            argv: build_argv(&[git_path.as_bytes(), b"describe", b"--tags", b"--abbrev=0"]),
             stdout: Stdio::Buffer,
             stderr: Stdio::Buffer,
             stdin: Stdio::Ignore,
-            cwd,
+            cwd: Box::<[u8]>::from(cwd),
             envp: None,
             #[cfg(windows)]
-            windows: crate::api::process::WindowsOptions {
-                loop_: bun_jsc::EventLoopHandle::init(bun_event_loop::MiniEventLoop::init_global(
-                    None, None,
-                )),
-            },
+            windows: spawn_windows_options(),
             ..Default::default()
         }) {
             Ok(p) => p,
             Err(err) => {
-                Output::err(err, format_args!("Failed to spawn git process"));
+                Output::err(err, "Failed to spawn git process", ());
                 Global::exit(1);
             }
         };
 
         match proc {
-            SpawnSyncResult::Err(err) => {
-                Output::err(err, format_args!("Git command failed unexpectedly"));
+            Err(err) => {
+                Output::err(err, "Git command failed unexpectedly", ());
                 Global::exit(1);
             }
-            SpawnSyncResult::Result(result) => {
+            Ok(result) => {
                 if !result.is_ok() {
                     if !result.stderr.is_empty() {
-                        Output::err_generic(format_args!(
+                        Output::err_generic(
                             "Git error: {}",
-                            BStr::new(strings::trim(&result.stderr, b" \n\r\t"))
-                        ));
+                            (BStr::new(strings::trim(&result.stderr, b" \n\r\t")),),
+                        );
                     } else {
-                        Output::err_generic(format_args!("No git tags found"));
+                        Output::err_generic("No git tags found", ());
                     }
                     Global::exit(1);
                 }
@@ -838,45 +890,46 @@ impl PmVersionCommand {
             cwd,
             b"git",
         ) else {
-            Output::err_generic(format_args!(
-                "git must be installed to use `bun pm version --git-tag-version`"
-            ));
+            Output::err_generic(
+                "git must be installed to use `bun pm version --git-tag-version`",
+                (),
+            );
             Global::exit(1);
         };
 
         let stage_proc = match spawn_sync(&SpawnSyncOptions {
-            argv: &[git_path, b"add", b"package.json"],
-            cwd,
+            argv: build_argv(&[git_path.as_bytes(), b"add", b"package.json"]),
+            cwd: Box::<[u8]>::from(cwd),
             stdout: Stdio::Buffer,
             stderr: Stdio::Buffer,
             stdin: Stdio::Ignore,
             envp: None,
             #[cfg(windows)]
-            windows: crate::api::process::WindowsOptions {
-                loop_: bun_jsc::EventLoopHandle::init(bun_event_loop::MiniEventLoop::init_global(
-                    None, None,
-                )),
-            },
+            windows: spawn_windows_options(),
             ..Default::default()
         }) {
             Ok(p) => p,
             Err(err) => {
-                Output::err_generic(format_args!("Git add failed: {}", err.name()));
+                Output::err_generic("Git add failed: {}", (err.name(),));
                 Global::exit(1);
             }
         };
 
         match stage_proc {
-            SpawnSyncResult::Err(err) => {
-                Output::err(err, format_args!("Git add failed unexpectedly"));
+            Err(err) => {
+                Output::err(err, "Git add failed unexpectedly", ());
                 Global::exit(1);
             }
-            SpawnSyncResult::Result(result) => {
+            Ok(result) => {
                 if !result.is_ok() {
-                    Output::err_generic(format_args!(
+                    let exit_code: i32 = match &result.status {
+                        ProcStatus::Exited(e) => i32::from(e.code),
+                        _ => -1,
+                    };
+                    Output::err_generic(
                         "Git add failed with exit code {}",
-                        result.status.exited().code
-                    ));
+                        (exit_code,),
+                    );
                     Global::exit(1);
                 }
             }
@@ -891,35 +944,31 @@ impl PmVersionCommand {
         // `defer allocator.free(commit_message)` — handled by Drop.
 
         let commit_proc = match spawn_sync(&SpawnSyncOptions {
-            argv: &[git_path, b"commit", b"-m", &commit_message],
-            cwd,
+            argv: build_argv(&[git_path.as_bytes(), b"commit", b"-m", &commit_message]),
+            cwd: Box::<[u8]>::from(cwd),
             stdout: Stdio::Buffer,
             stderr: Stdio::Buffer,
             stdin: Stdio::Ignore,
             envp: None,
             #[cfg(windows)]
-            windows: crate::api::process::WindowsOptions {
-                loop_: bun_jsc::EventLoopHandle::init(bun_event_loop::MiniEventLoop::init_global(
-                    None, None,
-                )),
-            },
+            windows: spawn_windows_options(),
             ..Default::default()
         }) {
             Ok(p) => p,
             Err(err) => {
-                Output::err_generic(format_args!("Git commit failed: {}", err.name()));
+                Output::err_generic("Git commit failed: {}", (err.name(),));
                 Global::exit(1);
             }
         };
 
         match commit_proc {
-            SpawnSyncResult::Err(err) => {
-                Output::err(err, format_args!("Git commit failed unexpectedly"));
+            Err(err) => {
+                Output::err(err, "Git commit failed unexpectedly", ());
                 Global::exit(1);
             }
-            SpawnSyncResult::Result(result) => {
+            Ok(result) => {
                 if !result.is_ok() {
-                    Output::err_generic(format_args!("Git commit failed"));
+                    Output::err_generic("Git commit failed", ());
                     Global::exit(1);
                 }
             }
@@ -929,35 +978,38 @@ impl PmVersionCommand {
         // `defer allocator.free(tag_name)` — handled by Drop.
 
         let tag_proc = match spawn_sync(&SpawnSyncOptions {
-            argv: &[git_path, b"tag", b"-a", &tag_name, b"-m", &tag_name],
-            cwd,
+            argv: build_argv(&[
+                git_path.as_bytes(),
+                b"tag",
+                b"-a",
+                &tag_name,
+                b"-m",
+                &tag_name,
+            ]),
+            cwd: Box::<[u8]>::from(cwd),
             stdout: Stdio::Buffer,
             stderr: Stdio::Buffer,
             stdin: Stdio::Ignore,
             envp: None,
             #[cfg(windows)]
-            windows: crate::api::process::WindowsOptions {
-                loop_: bun_jsc::EventLoopHandle::init(bun_event_loop::MiniEventLoop::init_global(
-                    None, None,
-                )),
-            },
+            windows: spawn_windows_options(),
             ..Default::default()
         }) {
             Ok(p) => p,
             Err(err) => {
-                Output::err_generic(format_args!("Git tag failed: {}", err.name()));
+                Output::err_generic("Git tag failed: {}", (err.name(),));
                 Global::exit(1);
             }
         };
 
         match tag_proc {
-            SpawnSyncResult::Err(err) => {
-                Output::err(err, format_args!("Git tag failed unexpectedly"));
+            Err(err) => {
+                Output::err(err, "Git tag failed unexpectedly", ());
                 Global::exit(1);
             }
-            SpawnSyncResult::Result(result) => {
+            Ok(result) => {
                 if !result.is_ok() {
-                    Output::err_generic(format_args!("Git tag failed"));
+                    Output::err_generic("Git tag failed", ());
                     Global::exit(1);
                 }
             }
@@ -981,10 +1033,27 @@ fn parse_u32(s: &[u8]) -> Option<u32> {
     core::str::from_utf8(s).ok().and_then(|s| s.parse::<u32>().ok())
 }
 
+// PORT NOTE: build `sync::Options.argv: Vec<Box<[u8]>>` from a slice of byte
+// slices (Zig was `&.{...}` of `[]const u8`).
+#[inline]
+fn build_argv(parts: &[&[u8]]) -> Vec<Box<[u8]>> {
+    parts.iter().map(|p| Box::<[u8]>::from(*p)).collect()
+}
+
+#[cfg(windows)]
+#[inline]
+fn spawn_windows_options() -> crate::api::bun::process::WindowsOptions {
+    crate::api::bun::process::WindowsOptions {
+        loop_: bun_jsc::EventLoopHandle::init(bun_event_loop::MiniEventLoop::init_global(
+            None, None,
+        )),
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/cli/pm_version_command.zig (646 lines)
 //   confidence: medium
-//   todos:      5
-//   notes:      spawn_sync/JSON/Output crate paths guessed; AST mutation (`e_object.putString`) and `#[cfg]` struct-init field for windows spawn opts need Phase B verification
+//   todos:      pm_shims (PackageManager option fields), E::Object::put_string
+//   notes:      spawn_sync/JSON/Output crate paths verified phase-d.
 // ──────────────────────────────────────────────────────────────────────────

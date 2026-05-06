@@ -1470,7 +1470,7 @@ impl CronJob {
         // SAFETY: timer heap holds the entry; the bracket-ref below keeps `this`
         // alive across scheduleNext → finishDeferredStop.
         let this_ref = unsafe { &mut *this };
-        this_ref.event_loop_timer.state = EventLoopTimer::State::FIRED;
+        this_ref.event_loop_timer.state = EventLoopTimerState::FIRED;
         // scheduleNext → finishDeferredStop downgrades this_value and derefs the
         // list entry; bracket-ref so that path can't drop the last ref mid-function.
         this_ref.ref_();

@@ -1021,19 +1021,14 @@ pub mod command {
 
                 if !ctx.positionals.is_empty() {
                     if !ctx.filters.is_empty() {
-                        Output::prettyln(
+                        Output::prettyln(format_args!(
                             "<r><yellow>warn<r>: Filters are ignored for auto command",
-                            format_args!(""),
-                        );
+                        ));
                     }
-                    if RunCommand::exec(
-                        ctx,
-                        RunCommand::ExecOptions {
-                            bin_dirs_only: true,
-                            log_errors: !ctx.runtime_options.if_present,
-                            allow_fast_run_for_extensions: true,
-                        },
-                    )? {
+                    // TODO(port): RunCommand::ExecOptions { log_errors, allow_fast_run_for_extensions }
+                    // collapsed to `bin_dirs_only` until run_command::exec grows the full struct.
+                    let _log_errors = !ctx.runtime_options.if_present;
+                    if RunCommand::exec(ctx, /* bin_dirs_only */ true)? {
                         return Ok(());
                     }
                     return Ok(());

@@ -471,7 +471,9 @@ impl<'a> State<'a> {
         for handle in self.handles.iter_mut() {
             if let Some(proc) = &mut handle.process {
                 if matches!(proc.status, Status::Running) {
-                    let _ = proc.ptr.kill(bun_sys::SignalCode::SIGINT.0);
+                    // SAFETY: proc.ptr is a live intrusively-ref-counted Process
+                    // allocated in `ProcessHandle::start`.
+                    let _ = unsafe { (*proc.ptr).kill(bun_sys::SignalCode::SIGINT.0) };
                 }
             }
         }
@@ -486,7 +488,9 @@ impl<'a> State<'a> {
                             return exited.code;
                         }
                     }
-                    Status::Signaled(signal) => return signal.to_exit_code().unwrap_or(1),
+                    Status::Signaled(signal) => {
+                        return bun_sys::SignalCode(*signal).to_exit_code().unwrap_or(1);
+                    }
                     _ => return 1,
                 }
             }
@@ -547,7 +551,7 @@ impl AbortHandler {
             };
             if res == 0 {
                 if cfg!(debug_assertions) {
-                    Output::warn("Failed to set abort handler\n", ());
+                    Output::warn("Failed to set abort handler\n");
                 }
             }
         }

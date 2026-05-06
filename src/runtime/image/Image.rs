@@ -799,17 +799,12 @@ pub fn get_backend(global: &JSGlobalObject, _: JSValue, _: JSValue) -> JsResult<
     let b: codecs::Backend = unsafe {
         core::mem::transmute(codecs::BACKEND.load(core::sync::atomic::Ordering::Relaxed))
     };
-    Ok(bun_str::String::static_(<&'static str>::from(b)).to_js(global))
+    bun_str::String::static_(<&'static str>::from(&b)).to_js(global)
 }
 
 pub fn set_backend(_: JSValue, global: &JSGlobalObject, value: JSValue) -> bool {
-    match value.to_enum::<codecs::Backend>(global, "Bun.Image.backend") {
-        Ok(b) => {
-            codecs::BACKEND.store(b as u8, core::sync::atomic::Ordering::Relaxed);
-            true
-        }
-        Err(_) => false,
-    }
+    let _ = (global, value);
+    todo!("blocked_on: bun_jsc::FromJsEnum impl for codecs::Backend")
 }
 
 // ───────────── static `Bun.Image.fromClipboard()` / `.hasClipboardImage()` ──
@@ -867,7 +862,7 @@ pub fn clipboard_change_count(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSV
         return Ok(JSValue::js_number(codecs::system_backend::clipboard_change_count()));
     }
     #[cfg(not(any(target_os = "macos", windows)))]
-    Ok(JSValue::js_number(-1i64))
+    Ok(JSValue::js_number(-1.0))
 }
 
 // ───────────────────────────── getters ──────────────────────────────────────

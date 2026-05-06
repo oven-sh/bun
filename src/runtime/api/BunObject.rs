@@ -2229,16 +2229,32 @@ impl CSRFObject {
     pub fn create(global_this: &JSGlobalObject) -> JSValue {
         let object = JSValue::create_empty_object(global_this, 2);
 
+        // PORT NOTE: `JSFunction::create` takes the raw C-ABI host fn pointer,
+        // so wrap the safe Rust-style `JsResult` fns via `to_js_host_fn`-style
+        // shims here.
+        unsafe extern "C" fn csrf_generate_shim(
+            g: *mut JSGlobalObject,
+            f: *mut CallFrame,
+        ) -> JSValue {
+            bun_jsc::to_js_host_fn(csrf_jsc::csrf__generate)(g, f)
+        }
+        unsafe extern "C" fn csrf_verify_shim(
+            g: *mut JSGlobalObject,
+            f: *mut CallFrame,
+        ) -> JSValue {
+            bun_jsc::to_js_host_fn(csrf_jsc::csrf__verify)(g, f)
+        }
+
         object.put(
             global_this,
-            ZigString::static_(b"generate"),
-            JSFunction::create(global_this, "generate", csrf_jsc::csrf__generate, 1, Default::default()),
+            b"generate",
+            JSFunction::create(global_this, "generate", csrf_generate_shim, 1, Default::default()),
         );
 
         object.put(
             global_this,
-            ZigString::static_(b"verify"),
-            JSFunction::create(global_this, "verify", csrf_jsc::csrf__verify, 1, Default::default()),
+            b"verify",
+            JSFunction::create(global_this, "verify", csrf_verify_shim, 1, Default::default()),
         );
 
         object

@@ -232,6 +232,24 @@ pub struct Resolver {
     pub pending_nameinfo_cache_cares: HiveArray<get_name_info_request::PendingCacheKey, 32>,
 }
 
+impl Resolver {
+    /// Spec dns.zig `onDNSPoll` — drive `ares_process_fd` for the readable
+    /// socket behind `poll`. Body lives in the gated `dns_body` draft.
+    pub fn on_dns_poll(&mut self, _poll: &mut bun_aio::posix_event_loop::FilePoll) {
+        todo!("blocked_on: crate::dns_jsc::dns_body::Resolver::on_dns_poll")
+    }
+
+    /// Spec dns.zig `checkTimeouts` — `ares_process_fd(ARES_SOCKET_BAD, …)`
+    /// to time out stale queries, then reschedule. Body in gated `dns_body`.
+    pub fn check_timeouts(
+        &mut self,
+        _now: &bun_event_loop::EventLoopTimer::Timespec,
+        _vm: &bun_jsc::VirtualMachine,
+    ) {
+        todo!("blocked_on: crate::dns_jsc::dns_body::Resolver::check_timeouts")
+    }
+}
+
 pub struct GlobalData {
     pub resolver: Resolver,
 }

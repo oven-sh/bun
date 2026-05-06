@@ -301,7 +301,7 @@ impl Worker {
     pub fn shutdown(&mut self) {
         // SAFETY: coord backref valid; frame mutation — see field TODO.
         let f = unsafe { &mut (*(self.coord as *mut Coordinator<'static>)).frame };
-        f.begin(Frame::Kind::Shutdown);
+        f.begin(frame::Kind::Shutdown);
         self.ipc.send(f.finish());
         // Leave the channel open so the reader drains trailing
         // repeat_bufs/junit_file/coverage_file frames; the worker exits on

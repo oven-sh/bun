@@ -1201,7 +1201,7 @@ pub mod js_bundler {
                 drop(path);
             }
 
-            if let Some(externals) = config.get_own_array(global_this, "external")? {
+            if let Some(externals) = get_own_array(config, global_this, "external")? {
                 let mut iter = externals.array_iterator(global_this)?;
                 while let Some(entry_point) = iter.next()? {
                     let slice = entry_point.to_slice_or_null(global_this)?;

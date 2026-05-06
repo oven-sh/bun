@@ -124,7 +124,7 @@ impl Drop for LOLHTMLContext {
     fn drop(&mut self) {
         for selector in self.selectors.drain(..) {
             // SAFETY: selector was allocated by LOLHTML.HTMLSelector.parse and is owned here.
-            unsafe { lolhtml::HTMLSelector::deinit(selector) };
+            unsafe { lolhtml::HTMLSelector::destroy(selector) };
         }
         // element_handlers / document_handlers: Box<_> drops via Drop impls below.
     }

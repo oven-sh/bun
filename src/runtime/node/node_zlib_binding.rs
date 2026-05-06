@@ -598,17 +598,17 @@ impl<T> CompressionStream<T> {
 #[allow(non_snake_case)]
 #[inline]
 pub fn NativeZlib(global: &JSGlobalObject) -> JSValue {
-    jsc::codegen::js::get_constructor::<crate::node::zlib::NativeZlib>(global)
+    jsc::codegen::js::get_constructor::<crate::node::zlib::native_zlib::NativeZlib>(global)
 }
 #[allow(non_snake_case)]
 #[inline]
 pub fn NativeBrotli(global: &JSGlobalObject) -> JSValue {
-    jsc::codegen::js::get_constructor::<crate::node::zlib::NativeBrotli<'static>>(global)
+    jsc::codegen::js::get_constructor::<crate::node::zlib::native_brotli::NativeBrotli>(global)
 }
 #[allow(non_snake_case)]
 #[inline]
 pub fn NativeZstd(global: &JSGlobalObject) -> JSValue {
-    jsc::codegen::js::get_constructor::<crate::node::zlib::NativeZstd>(global)
+    jsc::codegen::js::get_constructor::<crate::node::zlib::native_zstd::NativeZstd>(global)
 }
 } // mod _impl
 

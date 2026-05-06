@@ -14,8 +14,9 @@ use bun_ptr::CowString;
 use bun_core::Output;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, JSGlobalObject, JSPromise, JSValue, JsRef, JsResult,
-    VirtualMachine, ZigString,
+    VirtualMachine,
 };
+use bun_string::String as BunString;
 use bun_sys::{self, Fd, SignalCode};
 use enumset::{EnumSet, EnumSetType};
 
@@ -1276,7 +1277,7 @@ impl Subprocess<'_> {
     pub fn get_signal_code(this: &Self, global: &JSGlobalObject) -> JSValue {
         if let Some(signal) = this.process.signal_code() {
             if let Some(name) = signal.name() {
-                return ZigString::init(name).to_js(global);
+                return BunString::static_(name).to_js(global);
             } else {
                 return JSValue::js_number(signal as u32);
             }

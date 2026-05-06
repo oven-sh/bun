@@ -345,9 +345,16 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         if unsafe { (*loop_).is_active() } {
             // SAFETY: `el` is the live per-thread event loop.
             unsafe { (*el).process_gc_timer() };
-            // SAFETY: `state` is the live per-thread `RuntimeState`; re-entry
-            // into `runtime_state()` from a fired `WTFTimer` callback yields a
-            // fresh raw ptr, not an aliased `&mut`.
+            // TODO(port): `timer::All::get_timeout` takes `&mut self` but may
+            // fire a `WTFTimer` JS callback (spec Timer.zig:281
+            // `min.fire(&now, vm)`). A re-entrant `setTimeout`/`clearTimeout`
+            // reaches `timer::All::insert`/`remove` via `runtime_state()` and
+            // forms a second `&mut (*state).timer` while this outer `&mut self`
+            // is still live — aliased `&mut` UB (PORTING.md §Forbidden). The
+            // fix is to change `get_timeout`/`drain_timers` to take
+            // `this: *mut Self` and form short-lived `&mut` only around heap
+            // ops that cannot re-enter JS. Tracked for `timer/mod.rs`.
+            // SAFETY: `state` is the live per-thread `RuntimeState`.
             let have_timeout = unsafe { &mut (*state).timer }
                 .get_timeout(&mut timespec, has_pending_immediate, quic_next_tick_us, vm.cast());
             // PORT NOTE: `bun_core::Timespec` and `bun_uws::Timespec` are
@@ -368,9 +375,13 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
 
     #[cfg(unix)]
     {
-        // SAFETY: `state` is the live per-thread `RuntimeState`; `drain_timers`
-        // may fire JS callbacks that re-enter `runtime_state()` — they receive
-        // a fresh raw ptr, not an aliased `&mut`.
+        // TODO(port): `timer::All::drain_timers` takes `&mut self` but fires
+        // user `setTimeout` callbacks. Re-entry into `timer::All::insert`/
+        // `remove` via `runtime_state()` forms a second `&mut (*state).timer`
+        // while this `&mut self` is live in `drain_timers`'s frame — aliased
+        // `&mut` UB. See the `get_timeout` note above; needs `*mut Self`
+        // signature in `timer/mod.rs`.
+        // SAFETY: `state` is the live per-thread `RuntimeState`.
         unsafe { (*state).timer.drain_timers(vm.cast()) };
     }
     #[cfg(not(unix))]
@@ -1085,7 +1096,13 @@ fn transpile_source_code_inner(
                 input_file_fd,
                 should_close_input_file_fd,
             );
-            arena_guard.2 = false;
+            // PORT NOTE: do NOT clear `arena_guard.2` here — no parse ran, so
+            // nothing references the arena. Let the guard give it back to
+            // `vm.module_loader.transpile_source_code_arena` (or drop it).
+            // The spec only sets `give_back_arena = false` after a real parse
+            // so log spans into the arena stay valid; that precondition does
+            // not hold on this un-gated fallthrough.
+            let _ = &mut arena_guard;
             Err(bun_core::err!("ParseError"))
         }
 

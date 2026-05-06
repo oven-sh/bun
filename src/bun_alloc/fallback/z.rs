@@ -2,9 +2,7 @@ use core::ffi::c_void;
 use core::ptr;
 
 use crate::{Alignment, Allocator};
-// TODO(port): `std.heap.c_allocator` — the libc-malloc-backed allocator. In the
-// `bun_alloc::fallback` module this is the sibling C allocator; Phase B wires
-// the exact path (`super::c::ALLOCATOR` or equivalent).
+// `std.heap.c_allocator` — the libc-malloc-backed allocator.
 use super::C_ALLOCATOR as c_allocator;
 
 /// A fallback zero-initializing allocator.
@@ -18,9 +16,13 @@ pub static ALLOCATOR: Z = Z;
 #[derive(Clone, Copy, Default)]
 pub struct Z;
 
+// `Allocator` is a marker trait carrying `type_id()`; the Zig vtable methods
+// are inherent on `Z` below.
+impl Allocator for Z {}
+
 // Zig: `const vtable = Allocator.VTable{ .alloc, .resize, .remap = noRemap, .free }`
-impl Allocator for Z {
-    fn alloc(
+impl Z {
+    pub fn alloc(
         &self, // Zig: `_: *anyopaque` (unused vtable ctx)
         len: usize,
         alignment: Alignment,

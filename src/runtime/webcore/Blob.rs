@@ -2887,7 +2887,7 @@ pub struct FileStreamWrapper {
 impl Drop for FileStreamWrapper {
     fn drop(&mut self) {
         // SAFETY: `sink` is the +1 ref handed over by `pipe_readable_stream_to_blob`.
-        unsafe { (*self.sink).deref() };
+        unsafe { webcore::FileSink::deref(self.sink) };
     }
 }
 

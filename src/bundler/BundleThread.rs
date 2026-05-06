@@ -124,7 +124,10 @@ pub trait CompletionStruct: Node + Send + 'static {
     ) -> Result<&'a mut Transpiler<'a>, bun_core::Error>;
 
     /// Zig: `try BundleV2.init(transpiler, null, allocator, jsc.AnyEventLoop.init(allocator),
-    /// false, jsc.WorkPool.get(), heap)` followed by `this.runFromJSInNewThread(...)`.
+    /// false, jsc.WorkPool.get(), heap)` → wire `this.{plugins,completion,file_map}`
+    /// from `self` → `completion.transpiler = this` → `this.runFromJSInNewThread(...)`
+    /// → on success `self.set_result(Value(..))` → `this.deinitWithoutFreeingArena()`;
+    /// on error drain `this.linker.source_maps.*_wait_group` then deinit.
     ///
     /// PORT NOTE: the un-gated `BundleV2` impl does not yet expose `init` /
     /// `run_from_js_in_new_thread` (they live in `bundle_v2::__phase_a_draft`
@@ -132,14 +135,14 @@ pub trait CompletionStruct: Node + Send + 'static {
     /// proves this body is `JSBundleCompletionTask`-specific, so the
     /// construction + run is delegated to the trait impl in T6, which has
     /// access to the concrete event-loop / work-pool wiring. The shared
-    /// scaffolding (arena, AST allocator push/pop, log copy, errdefer
-    /// wait-group drain) stays in `generate_in_new_thread` below.
+    /// scaffolding (arena, AST allocator push/pop, log copy,
+    /// `completeOnBundleThread`) stays in `generate_in_new_thread` below.
     fn init_and_run<'a>(
         &mut self,
         transpiler: &'a mut Transpiler<'a>,
         bump: &'a Arena,
         thread_pool: &'static bun_threading::ThreadPool,
-    ) -> Result<&'a mut BundleV2<'a>, bun_core::Error>;
+    ) -> Result<(), bun_core::Error>;
 }
 
 impl<C: CompletionStruct> BundleThread<C> {

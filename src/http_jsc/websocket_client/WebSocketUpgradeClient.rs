@@ -447,14 +447,24 @@ impl<const SSL: bool> HTTPClient<SSL> {
             None
         };
 
+        // End the setup `&mut` before connect: `connect_*_group` may
+        // synchronously dispatch `handle_connect_error` via the userdata
+        // pointer, which would alias any live `&mut Self`.
+        let _ = client_ref;
+
         // Unix domain socket path (ws+unix:// / wss+unix://)
         if let Some(usp) = &unix_socket_path_slice {
             match Socket::<SSL>::connect_unix_group(group, kind, secure_ptr, usp.slice(), client, false)
             {
                 Ok(socket) => {
+                    // SAFETY: `client` is live (refcount >= 1); re-derive a
+                    // fresh `&mut` now that any reentrant dispatch has
+                    // returned. Not the sole owner anymore — `client` is also
+                    // installed as socket userdata.
+                    let client_ref = unsafe { &mut *client };
                     client_ref.tcp = socket;
                     if client_ref.state == State::Failed {
-                        // SAFETY: `client` from Box::into_raw above; sole owner.
+                        // SAFETY: `client` from Box::into_raw above.
                         unsafe { Self::deref(client) };
                         return None;
                     }
@@ -481,7 +491,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     return Some(client);
                 }
                 Err(_) => {
-                    // SAFETY: `client` from Box::into_raw above; sole owner.
+                    // SAFETY: `client` from Box::into_raw above; never
+                    // installed as userdata on the Err path.
                     unsafe { Self::deref(client) };
                 }
             }
@@ -491,11 +502,14 @@ impl<const SSL: bool> HTTPClient<SSL> {
         match Socket::<SSL>::connect_group(group, kind, secure_ptr, display_host, connect_port, client, false)
         {
             Ok(sock) => {
-                client_ref.tcp = sock;
-                let out = client_ref;
+                // SAFETY: `client` is live (refcount >= 1); re-derive a fresh
+                // `&mut` now that any reentrant dispatch has returned. Not the
+                // sole owner anymore — `client` is also socket userdata.
+                let out = unsafe { &mut *client };
+                out.tcp = sock;
                 // I don't think this case gets reached.
                 if out.state == State::Failed {
-                    // SAFETY: `client` from Box::into_raw above; sole owner.
+                    // SAFETY: `client` from Box::into_raw above.
                     unsafe { Self::deref(client) };
                     return None;
                 }
@@ -517,7 +531,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 Some(client)
             }
             Err(_) => {
-                // SAFETY: `client` from Box::into_raw above; sole owner.
+                // SAFETY: `client` from Box::into_raw above; never installed
+                // as userdata on the Err path.
                 unsafe { Self::deref(client) };
                 None
             }
@@ -555,71 +570,107 @@ impl<const SSL: bool> HTTPClient<SSL> {
         self.secure = None;
     }
 
-    pub fn cancel(&mut self) {
-        self.clear_data();
+    /// # Safety
+    /// `this` must point to a live `Self`. Takes `*mut Self` (not `&mut self`)
+    /// because `tcp.close()` synchronously dispatches `handle_close` from the
+    /// socket userdata pointer, which would alias a `&mut self` argument; and
+    /// the trailing `deref` may free `this`, which would violate a `&mut self`
+    /// argument protector.
+    pub unsafe fn cancel(this: *mut Self) {
+        // SAFETY: short-lived `&mut` for clear_data; ends before any reentrant call.
+        unsafe { (*this).clear_data() };
 
         // Either of the below two operations - closing the TCP socket or clearing the C++ reference could trigger a deref
         // Therefore, we need to make sure the `this` pointer is valid until the end of the function.
-        self.r#ref();
-        // PORT NOTE: reshaped for borrowck — Zig `defer this.deref()`. Capture a
-        // raw `*mut Self` so the guard doesn't hold a `&self` borrow across the
-        // mutable accesses below.
-        let this: *mut Self = self;
-        let _guard = scopeguard::guard((), move |_| {
-            // SAFETY: `this` derived from `&mut self`; the +1 from `r#ref` above
-            // keeps the allocation live until this guard drops.
-            unsafe { Self::deref(this) }
-        });
+        // SAFETY: `ref_count` is a `Cell`; short-lived `&self`.
+        unsafe { (*this).r#ref() };
 
         // The C++ end of the socket is no longer holding a reference to this, so we must clear it.
-        if self.outgoing_websocket.is_some() {
-            self.outgoing_websocket = None;
-            // SAFETY: `self: &mut Self`; refcount > 1 here (guard holds +1).
-            unsafe { Self::deref(self) };
+        // SAFETY: short-lived `&mut` for the field take; ends before any reentrant call.
+        if unsafe { (*this).outgoing_websocket.take().is_some() } {
+            // SAFETY: refcount > 1 here (the +1 above).
+            unsafe { Self::deref(this) };
         }
 
+        // Copy `tcp` out so no `&mut Self` spans the close — uSockets fires
+        // `handle_close` inline, which derives a fresh `&mut`/`*mut` from
+        // userdata.
+        // SAFETY: `Socket<SSL>` is `Copy`; short-lived read of `(*this).tcp`.
+        let tcp = unsafe { (*this).tcp };
         // no need to be .failure we still wanna to send pending SSL buffer + close_notify
         if SSL {
-            self.tcp.close(uws::CloseCode::Normal);
+            tcp.close(uws::CloseCode::Normal);
         } else {
-            self.tcp.close(uws::CloseCode::Failure);
+            tcp.close(uws::CloseCode::Failure);
         }
+
+        // Balance the `r#ref()` above. May free `this`; no `&mut Self` is live.
+        // SAFETY: `this` carries root (userdata) provenance.
+        unsafe { Self::deref(this) };
     }
 
-    pub fn fail(&mut self, code: ErrorCode) {
+    /// # Safety
+    /// `this` must point to a live `Self`. Takes `*mut Self` because
+    /// `did_abrupt_close` may run JS that re-enters via `cancel()`, and
+    /// `tcp.close()` synchronously dispatches `handle_close`; both would alias
+    /// a `&mut self` argument.
+    pub unsafe fn fail(this: *mut Self, code: ErrorCode) {
         log!("onFail: {}", <&'static str>::from(code));
         bun_jsc::mark_binding!();
-        self.dispatch_abrupt_close(code);
+        // Copy `tcp` out before dispatch so nothing touches `*this` after the
+        // FFI call (which may reenter and pop our tag).
+        // SAFETY: `Socket<SSL>` is `Copy`; short-lived read.
+        let tcp = unsafe { (*this).tcp };
+        // SAFETY: forwards `this` with root provenance; no `&mut Self` is live.
+        unsafe { Self::dispatch_abrupt_close(this, code) };
 
         if SSL {
-            self.tcp.close(uws::CloseCode::Normal);
+            tcp.close(uws::CloseCode::Normal);
         } else {
-            self.tcp.close(uws::CloseCode::Failure);
+            tcp.close(uws::CloseCode::Failure);
         }
     }
 
-    fn dispatch_abrupt_close(&mut self, code: ErrorCode) {
-        if let Some(ws) = self.outgoing_websocket.take() {
-            // SAFETY: ws is a live C++ WebSocket back-reference (BACKREF).
+    /// # Safety
+    /// `this` must point to a live `Self`. Takes `*mut Self` because
+    /// `did_abrupt_close` runs JS error handlers and may re-enter via C++
+    /// `cancel()`, which would alias a `&mut self` argument; and the trailing
+    /// `deref` may free `this`.
+    unsafe fn dispatch_abrupt_close(this: *mut Self, code: ErrorCode) {
+        // SAFETY: short-lived `&mut` for the field take; ends before the FFI call.
+        let ws = unsafe { (*this).outgoing_websocket.take() };
+        if let Some(ws) = ws {
+            // SAFETY: ws is a live C++ WebSocket back-reference (BACKREF). No
+            // `&mut Self` is live across this call.
             unsafe { (*ws).did_abrupt_close(code) };
-            // SAFETY: `self: &mut Self`; last use of `self` on this path.
-            unsafe { Self::deref(self) };
+            // SAFETY: `this` carries root provenance; may free `this`.
+            unsafe { Self::deref(this) };
         }
     }
 
-    pub fn handle_close(&mut self, _: Socket<SSL>, _: c_int, _: *mut c_void) {
+    /// # Safety
+    /// `this` must point to a live `Self`. Takes `*mut Self` because the
+    /// trailing `deref` releases the socket ref and on the normal path frees
+    /// `this`; a `&mut self` argument would carry a Stacked Borrows protector
+    /// that makes deallocating its referent UB.
+    pub unsafe fn handle_close(this: *mut Self, _: Socket<SSL>, _: c_int, _: *mut c_void) {
         log!("onClose");
         bun_jsc::mark_binding!();
-        self.clear_data();
-        self.tcp.detach();
-        self.dispatch_abrupt_close(ErrorCode::Ended);
+        // SAFETY: short-lived `&mut` borrows; each ends before the next call.
+        unsafe { (*this).clear_data() };
+        unsafe { (*this).tcp.detach() };
+        // SAFETY: forwards `this` with root provenance; no `&mut Self` is live.
+        unsafe { Self::dispatch_abrupt_close(this, ErrorCode::Ended) };
 
-        // SAFETY: `self: &mut Self`; last use of `self`.
-        unsafe { Self::deref(self) };
+        // SAFETY: may free `this`; no `&mut Self` is live.
+        unsafe { Self::deref(this) };
     }
 
-    pub fn terminate(&mut self, code: ErrorCode) {
-        self.fail(code);
+    /// # Safety
+    /// `this` must point to a live `Self`. See `fail`.
+    pub unsafe fn terminate(this: *mut Self, code: ErrorCode) {
+        // SAFETY: forwards `this` with root provenance.
+        unsafe { Self::fail(this, code) };
         // We cannot access the pointer after fail is called.
     }
 

@@ -1677,7 +1677,7 @@ impl<'a> ReachableFileVisitor<'a> {
                         // PORT NOTE: reshaped for borrowck — re-borrow import_record
                         let import_record = &mut self.all_import_records[import_record_list_id.get() as usize].slice_mut()[ir_idx];
                         import_record.source_index = other_import_record.source_index;
-                        import_record.path = other_import_record.path.clone();
+                        import_record.path = other_import_record.path.dupe_alloc().expect("oom");
                         other_source = other_import_record.source_index;
                         if redirect_count == Self::MAX_REDIRECTS {
                             import_record.path.is_disabled = true;
@@ -2040,7 +2040,7 @@ impl<'a> BundleV2<'a> {
 
         let entry = self.path_to_source_index_map(target).get_or_put(&path.text).expect("oom");
         if !entry.found_existing {
-            *path = self.path_with_pretty_initialized(path.clone(), target).expect("oom");
+            *path = self.path_with_pretty_initialized(core::mem::take(path), target).expect("oom");
             let loader: Loader = 'brk: {
                 let record: &ImportRecord = &self.graph.ast.items_import_records()[import_record.importer_source_index as usize].slice()[import_record.import_record_index as usize];
                 if let Some(out_loader) = record.loader {
@@ -2052,7 +2052,7 @@ impl<'a> BundleV2<'a> {
             let idx = self.enqueue_parse_task(
                 &resolve_result,
                 &Logger::Source {
-                    path: path.clone(),
+                    path: path.dupe_alloc().expect("oom"),
                     contents: &b""[..],
                     ..Default::default()
                 },
@@ -2067,7 +2067,7 @@ impl<'a> BundleV2<'a> {
                     && !core::ptr::eq(secondary, path)
                     && !strings::eql_long(&secondary.text, &path.text, true)
                 {
-                    let secondary_path_to_copy = secondary.dupe_alloc(self.allocator()).expect("oom");
+                    let secondary_path_to_copy = secondary.dupe_alloc().expect("oom");
                     self.graph.input_files.items_secondary_path_mut()[idx as usize] = secondary_path_to_copy.text;
                     // Ensure the determinism pass runs.
                     self.graph.has_any_secondary_paths = true;
@@ -2163,11 +2163,11 @@ impl<'a> BundleV2<'a> {
 
     pub fn enqueue_entry_item(
         &mut self,
-        resolve: _resolver::Result,
+        resolve: &mut _resolver::Result,
         is_entry_point: bool,
         target: options::Target,
     ) -> Result<Option<IndexInt>, Error> {
-        let mut result = resolve;
+        let result = &mut *resolve;
         let Some(path) = result.path() else { return Ok(None) };
 
         path.assert_file_path_is_absolute();
@@ -2180,14 +2180,14 @@ impl<'a> BundleV2<'a> {
 
         let loader = path.loader(&self.transpiler.options.loaders).unwrap_or(Loader::File);
 
-        *path = self.path_with_pretty_initialized(path.clone(), target)?;
+        *path = self.path_with_pretty_initialized(core::mem::take(path), target)?;
         path.assert_pretty_is_valid();
         *entry.value_ptr = source_index.get();
         self.graph.ast.append(JSAst::empty());
 
         self.graph.input_files.append(crate::Graph::InputFile {
             source: Logger::Source {
-                path: path.clone(),
+                path: path.dupe_alloc().expect("oom"),
                 contents: &b""[..],
                 index: bun_logger::Index(source_index.get()),
                 ..Default::default()
@@ -2399,7 +2399,7 @@ impl<'a> BundleV2<'a> {
             // Check FileMap first for in-memory entry points
             if let Some(file_map) = self.file_map {
                 if let Some(file_map_result) = file_map.resolve(b"", entry_point) {
-                    let _ = self.enqueue_entry_item(file_map_result, true, self.transpiler.options.target)?;
+                    let _ = self.enqueue_entry_item(&mut {file_map_result}, true, self.transpiler.options.target)?;
                     continue;
                 }
             }
@@ -2424,7 +2424,7 @@ impl<'a> BundleV2<'a> {
                 }
                 break 'brk main_target;
             };
-            let _ = self.enqueue_entry_item(resolved, true, target)?;
+            let _ = self.enqueue_entry_item(&mut resolved, true, target)?;
         }
         Ok(())
     }
@@ -2489,14 +2489,14 @@ impl<'a> BundleV2<'a> {
 
             if flags.client() {
                 'brk: {
-                    let Some(source_index) = self.enqueue_entry_item(resolved.clone(), true, Target::Browser)? else { break 'brk };
+                    let Some(source_index) = self.enqueue_entry_item(&mut resolved, true, Target::Browser)? else { break 'brk };
                     if flags.css() {
                         css_data.put_no_clobber(Index::init(source_index), CssEntryPointMeta { imported_on_server: false })?;
                     }
                 }
             }
-            if flags.server() { let _ = self.enqueue_entry_item(resolved.clone(), true, self.transpiler.options.target)?; }
-            if flags.ssr() { let _ = self.enqueue_entry_item(resolved, true, Target::BakeServerComponentsSsr)?; }
+            if flags.server() { let _ = self.enqueue_entry_item(&mut resolved, true, self.transpiler.options.target)?; }
+            if flags.ssr() { let _ = self.enqueue_entry_item(&mut resolved, true, Target::BakeServerComponentsSsr)?; }
         }
         Ok(())
     }
@@ -2530,7 +2530,7 @@ impl<'a> BundleV2<'a> {
             };
 
             // TODO: wrap client files so the exports arent preserved.
-            let Some(_) = self.enqueue_entry_item(resolved, true, target)? else { continue };
+            let Some(_) = self.enqueue_entry_item(&mut resolved, true, target)? else { continue };
         }
         Ok(())
     }
@@ -2725,7 +2725,7 @@ impl<'a> BundleV2<'a> {
     pub fn enqueue_parse_task(
         &mut self,
         resolve_result: &_resolver::Result,
-        source: &Logger::Source,
+        source: &mut Logger::Source,
         loader: Loader,
         known_target: options::Target,
     ) -> Result<IndexInt, AllocError> {
@@ -2733,7 +2733,7 @@ impl<'a> BundleV2<'a> {
         self.graph.ast.append(JSAst::empty());
 
         self.graph.input_files.append(crate::Graph::InputFile {
-            source: core::mem::take(&mut *source),
+            source: core::mem::take(source),
             loader,
             side_effects: loader.side_effects(),
             ..Default::default()
@@ -2765,7 +2765,7 @@ impl<'a> BundleV2<'a> {
 
     pub fn enqueue_parse_task2(
         &mut self,
-        source: &Logger::Source,
+        source: &mut Logger::Source,
         loader: Loader,
         known_target: options::Target,
     ) -> Result<IndexInt, AllocError> {
@@ -2773,14 +2773,14 @@ impl<'a> BundleV2<'a> {
         self.graph.ast.append(JSAst::empty());
 
         self.graph.input_files.append(crate::Graph::InputFile {
-            source: core::mem::take(&mut *source),
+            source: core::mem::take(source),
             loader,
             side_effects: loader.side_effects(),
             ..Default::default()
         })?;
         let task = self.allocator().alloc(ParseTask {
             ctx: self,
-            path: source.path.clone(),
+            path: source.path.dupe_alloc().expect("oom"),
             contents_or_fd: ParseTask::ContentsOrFd::Contents(source.contents),
             side_effects: _resolver::SideEffects::HasSideEffects,
             jsx: if known_target == Target::BakeServerComponentsSsr
@@ -3456,7 +3456,7 @@ impl<'a> BundleV2<'a> {
 
                         this.graph.input_files.append(crate::Graph::InputFile {
                             source: Logger::Source {
-                                path: path.clone(),
+                                path: path.dupe_alloc().expect("oom"),
                                 contents: &b""[..],
                                 index: bun_logger::Index(source_index.get()),
                                 ..Default::default()
@@ -4192,7 +4192,7 @@ impl<'a> BundleV2<'a> {
             // bounds crashes in BundleV2.onResolve / runResolver. The linker
             // never runs because `transpiler.log.errors > 0` aborts the
             // build before link time, so saving the AST is safe.
-            this.graph.ast.items_import_records_mut()[source_index.get() as usize] = result.ast.import_records.clone();
+            this.graph.ast.items_import_records_mut()[source_index.get() as usize] = core::mem::take(&mut result.ast.import_records);
 
             parse_result.value = parse_task::ResultValue::Err(parse_task::ResultError {
                 err,
@@ -4389,7 +4389,7 @@ impl<'a> BundleV2<'a> {
 
                     let resolve_entry = resolve_queue.get_or_put(&path_primary.text).expect("oom");
                     if resolve_entry.found_existing {
-                        import_record.path = (*resolve_entry.value_ptr).path.clone();
+                        import_record.path = unsafe { &**resolve_entry.value_ptr }.path.dupe_alloc().expect("oom");
                         continue;
                     }
 
@@ -4659,11 +4659,11 @@ impl<'a> BundleV2<'a> {
 
             let resolve_entry = resolve_queue.get_or_put(&path.text).expect("oom");
             if resolve_entry.found_existing {
-                import_record.path = (*resolve_entry.value_ptr).path.clone();
+                import_record.path = unsafe { &**resolve_entry.value_ptr }.path.dupe_alloc().expect("oom");
                 continue;
             }
 
-            *path = self.path_with_pretty_initialized(path.clone(), target).expect("oom");
+            *path = self.path_with_pretty_initialized(core::mem::take(path), target).expect("oom");
 
             import_record.path = path.clone();
             *resolve_entry.key_ptr = path.text.to_vec().into_boxed_slice();
@@ -4691,7 +4691,7 @@ impl<'a> BundleV2<'a> {
                     && !core::ptr::eq(secondary, path)
                     && !strings::eql_long(&secondary.text, &path.text, true)
                 {
-                    resolve_task.secondary_path_for_commonjs_interop = Some(secondary.dupe_alloc(self.allocator()).expect("oom"));
+                    resolve_task.secondary_path_for_commonjs_interop = Some(secondary.dupe_alloc().expect("oom"));
                 }
             }
 
@@ -4849,7 +4849,7 @@ impl<'a> BundleV2<'a> {
         // 3. Add it to the graph
         let graph = &mut self.graph;
         let empty_html_file_source = Logger::Source {
-            path: path.clone(),
+            path: path.dupe_alloc().expect("oom"),
             index: Index::source(graph.input_files.len()),
             contents: &b""[..],
             ..Default::default()

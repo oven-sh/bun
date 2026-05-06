@@ -270,7 +270,7 @@ use crate::ungate_support::{EntryPointListExt as _, CompileResultForSourceMapLis
 use crate::linker_graph::FileListExt as _;
 use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
 use bun_js_parser::ast::bundled_ast::Flags as AstFlags;
-use crate::bundle_v2::generic_path_with_pretty_initialized;
+use crate::ungate_support::generic_path_with_pretty_initialized;
 type DeclaredSymbolList = js_ast::DeclaredSymbolList;
 
 // TODO(b2-blocked): method bodies depend on `LinkerGraph` SoA accessors
@@ -1375,16 +1375,23 @@ impl<'a> LinkerContext<'a> {
         // Include the generated output content in the hash. This excludes the
         // randomly-generated import paths (the unique keys) and only includes the
         // data in the spans between them.
-        if let crate::chunk::IntermediateOutput::Pieces(pieces) = &chunk.intermediate_output {
-            for piece in pieces.slice() {
-                hasher.write(piece.data());
+        match &chunk.intermediate_output {
+            crate::chunk::IntermediateOutput::Pieces(pieces) => {
+                for piece in pieces.slice() {
+                    hasher.write(piece.data());
+                }
             }
-        } else {
-            let mut el = chunk.intermediate_output.joiner().head;
-            while let Some(e) = el {
-                hasher.write(&e.slice);
-                el = e.next;
+            crate::chunk::IntermediateOutput::Joiner(joiner) => {
+                let mut el = joiner.head;
+                while let Some(e) = el {
+                    // SAFETY: `Joinable.next` is an intrusive linked-list
+                    // pointer into joiner-owned nodes; valid until `done()`.
+                    let node = unsafe { &*e.as_ptr() };
+                    hasher.write(&node.slice);
+                    el = node.next;
+                }
             }
+            crate::chunk::IntermediateOutput::Empty => {}
         }
 
         // Also include the source map data in the hash. The source map is named the

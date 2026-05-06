@@ -103,6 +103,17 @@ pub struct TerminalCreateResult {
     pub js_value: JSValue,
 }
 
+/// Obtain `&mut Process` from `ManuallyDrop<Arc<Process>>`. Zig stores
+/// `*Process` and mutates freely; the Rust port currently uses `Arc<Process>`
+/// (TODO(port): switch to intrusive `RefPtr<Process>`). Until then, cast through
+/// the Arc's data pointer — sound because every `Process` is single-threaded
+/// and only ever mutated from the owning event-loop thread.
+#[inline]
+unsafe fn process_mut(p: &core::mem::ManuallyDrop<std::sync::Arc<Process>>) -> &mut Process {
+    // SAFETY: see fn doc; Process has interior single-thread ownership.
+    unsafe { &mut *(std::sync::Arc::as_ptr(p) as *mut Process) }
+}
+
 /// `MaxBuf` owner vtable for `Subprocess` — routes max-buffer-exceeded
 /// notifications back to `Subprocess::on_max_buffer`.
 static SUBPROCESS_MAXBUF_VTABLE: MaxBufOwnerVTable = MaxBufOwnerVTable {

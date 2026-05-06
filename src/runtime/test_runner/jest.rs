@@ -163,11 +163,15 @@ impl<'a> TestRunner<'a> {
             return bun_core::Timespec::EPOCH;
         };
         if active_file.timer.state != TimerState::ACTIVE
-            || active_file.timer.next.eql(&bun_core::Timespec::EPOCH)
+            || active_file.timer.next == ElTimespec::EPOCH
         {
             return bun_core::Timespec::EPOCH;
         }
-        active_file.timer.next
+        // PORT NOTE: bun_event_loop carries a local Timespec stub with the
+        // same `{sec, nsec}` shape as bun_core::Timespec; convert by field
+        // until the lower tier unifies on bun_core::Timespec (see
+        // src/runtime/timer/mod.rs ElTimespec alias).
+        bun_core::Timespec { sec: active_file.timer.next.sec, nsec: active_file.timer.next.nsec }
     }
 
     pub fn remove_active_timeout(&mut self, vm: &mut VirtualMachine) {
@@ -180,11 +184,14 @@ impl<'a> TestRunner<'a> {
         // reshape (see bun_test.rs).
         let active_file = unsafe { bun_test::buntest_as_mut(active_file) };
         if active_file.timer.state != TimerState::ACTIVE
-            || active_file.timer.next.eql(&bun_core::Timespec::EPOCH)
+            || active_file.timer.next == ElTimespec::EPOCH
         {
             return;
         }
-        vm.timer.remove(&mut active_file.timer);
+        // TODO(blocked_on: bun_jsc::VirtualMachine::timer): `vm.timer` is a
+        // `()` stub upstream; the real `All::remove` lives in
+        // src/runtime/timer/mod.rs but isn't wired through VirtualMachine yet.
+        let _ = (vm, &mut active_file.timer);
     }
 
     pub fn has_test_filter(&self) -> bool {

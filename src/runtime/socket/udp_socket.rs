@@ -706,7 +706,7 @@ impl UDPSocket {
 
         // SAFETY: all-zero is a valid sockaddr_storage.
         let mut addr: sockaddr_storage = unsafe { core::mem::zeroed() };
-        if !this.parse_addr(global_this, JSValue::js_number(0), arguments[0], &mut addr)? {
+        if !this.parse_addr(global_this, JSValue::js_number(0.0), arguments[0], &mut addr)? {
             return Err(global_this.throw_value(
                 bun_sys::Result::<()>::errno_sys(posix::E::INVAL as i32, bun_sys::Tag::setsockopt)
                     .unwrap()
@@ -722,7 +722,7 @@ impl UDPSocket {
         };
 
         let res = if arguments.len() > 1
-            && this.parse_addr(global_this, JSValue::js_number(0), arguments[1], &mut interface)?
+            && this.parse_addr(global_this, JSValue::js_number(0.0), arguments[1], &mut interface)?
         {
             if addr.ss_family != interface.ss_family {
                 return Err(global_this.throw_invalid_arguments(format_args!(
@@ -782,7 +782,7 @@ impl UDPSocket {
 
         let mut source_addr = MaybeUninit::<sockaddr_storage>::uninit();
         // SAFETY: parse_addr fully initializes on success; we never read on failure.
-        if !this.parse_addr(global_this, JSValue::js_number(0), arguments[0], unsafe {
+        if !this.parse_addr(global_this, JSValue::js_number(0.0), arguments[0], unsafe {
             &mut *source_addr.as_mut_ptr()
         })? {
             return Err(global_this.throw_value(
@@ -796,7 +796,7 @@ impl UDPSocket {
 
         let mut group_addr = MaybeUninit::<sockaddr_storage>::uninit();
         // SAFETY: see above.
-        if !this.parse_addr(global_this, JSValue::js_number(0), arguments[1], unsafe {
+        if !this.parse_addr(global_this, JSValue::js_number(0.0), arguments[1], unsafe {
             &mut *group_addr.as_mut_ptr()
         })? {
             return Err(global_this.throw_value(
@@ -821,7 +821,7 @@ impl UDPSocket {
         };
 
         let res = if arguments.len() > 2
-            && this.parse_addr(global_this, JSValue::js_number(0), arguments[2], unsafe {
+            && this.parse_addr(global_this, JSValue::js_number(0.0), arguments[2], unsafe {
                 &mut *interface.as_mut_ptr()
             })?
         {
@@ -886,7 +886,7 @@ impl UDPSocket {
         let mut addr = MaybeUninit::<sockaddr_storage>::uninit();
 
         // SAFETY: parse_addr fully initializes on success; never read on failure.
-        if !this.parse_addr(global_this, JSValue::js_number(0), arguments[0], unsafe {
+        if !this.parse_addr(global_this, JSValue::js_number(0.0), arguments[0], unsafe {
             &mut *addr.as_mut_ptr()
         })? {
             return Ok(JSValue::FALSE);

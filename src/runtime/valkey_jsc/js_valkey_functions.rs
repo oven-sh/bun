@@ -133,18 +133,18 @@ macro_rules! cmd_noargs {
                 global,
                 frame.this(),
                 &Command {
-                    command: $command,
+                    command: $command.as_bytes(),
                     args: CommandArgs::Args(&[]),
                     meta: CommandMeta::default(),
                 },
             ) {
                 Ok(p) => p,
                 Err(err) => {
-                    return protocol::valkey_error_to_js(
+                    return Ok(protocol::valkey_error_to_js(
                         global,
-                        concat!("Failed to send ", $command),
+                        Some(concat!("Failed to send ", $command).as_bytes()),
                         err,
-                    )
+                    ))
                 }
             };
             Ok(promise.to_js())

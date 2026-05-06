@@ -189,9 +189,11 @@ impl Crypto {
 
         // randomUUID must have been called already many times before this kicks
         // in so we can skip the rare_data pointer check.
-        let uuid = global.bun_vm().rare_data_unchecked().next_uuid();
+        // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
+        // NOTE(port): upstream lacks `rare_data_unchecked`; `rare_data()` lazy-inits anyway.
+        let uuid = unsafe { &mut *global.bun_vm() }.rare_data().next_uuid();
 
-        uuid.print(&mut bytes[0..36]);
+        uuid.print((&mut bytes[0..36]).try_into().unwrap());
         str.to_js(global)
     }
 

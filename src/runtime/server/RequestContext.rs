@@ -3490,15 +3490,17 @@ where
                 // no content-length or 0 content-length
                 // no transfer-encoding
                 if let Some(body) = &mut self.request_body {
-                    let mut old = core::mem::replace(&mut body.value, Body::Value::Null);
+                    // SAFETY: pooled HiveRef slot is live while held.
+                    let body = unsafe { body.as_mut() };
+                    let mut old = core::mem::replace(body, Body::Value::Null);
                     if let Body::Value::Locked(l) = &mut old {
                         l.on_receive_value = None;
                     }
                     let mut new_body: Body::Value = Body::Value::Null;
                     // SAFETY: BACKREF
                     let global_this = unsafe { (*server).global_this() };
-                    let _ = old.resolve(&mut new_body, global_this, None); // TODO: properly propagate exception upwards
-                    body.value = new_body;
+                    let _ = Body::Value::resolve(&mut old, &mut new_body, global_this, None); // TODO: properly propagate exception upwards
+                    *body = new_body;
                 }
             }
         }

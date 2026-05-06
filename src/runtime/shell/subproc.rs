@@ -902,7 +902,7 @@ impl Writable {
                 // TODO(port): `has_stdin_destructor_called` and `weak_file_sink_stdin_ptr`
                 // are referenced in the Zig but do NOT exist on ShellSubprocess (dead code
                 // path under Zig's lazy compilation). Mirrored here as TODOs.
-                if subprocess.process.has_exited()
+                if subprocess.proc().has_exited()
                 /* && !subprocess.flags.has_stdin_destructor_called */
                 {
                     pipe.on_attached_process_exit(&subprocess.process.status);

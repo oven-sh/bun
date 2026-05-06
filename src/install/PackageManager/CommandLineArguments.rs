@@ -508,7 +508,7 @@ Full documentation is available at <magenta>https://bun.com/docs/install/patch<r
   Generate a patch out of a directory and save it. This is equivalent to <b><green>bun patch --commit<r>.
 
 <b>Flags:<r>";
-                let outro_text = r"
+                let outro_text = r#"
 
 <b>Examples:<r>
   <d>Generate a patch in the default "./patches" directory for changes in "./node_modules/jquery"<r>
@@ -518,7 +518,7 @@ Full documentation is available at <magenta>https://bun.com/docs/install/patch<r
   <b><green>bun patch-commit --patches-dir 'my-patches' 'node_modules/jquery'<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/install/patch<r>.
-";
+"#;
                 Output::pretty(intro_text);
                 clap::simple_help(PATCH_PARAMS);
                 Output::pretty(outro_text);
@@ -577,12 +577,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/remove<r>.
                 Output::flush();
             }
             Subcommand::Link => {
-                let intro_text = r"
+                let intro_text = r#"
 <b>Usage<r>: <b><green>bun link<r> <cyan>[flags]<r> <blue>[\<packages\>]<r>
 
   Register a local directory as a "linkable" package, or link a "linkable" package to the current project.
 
-<b>Flags:<r>";
+<b>Flags:<r>"#;
                 let outro_text = r"
 
 <b>Examples:<r>
@@ -601,12 +601,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/link<r>.
                 Output::flush();
             }
             Subcommand::Unlink => {
-                let intro_text = r"
+                let intro_text = r#"
 <b>Usage<r>: <b><green>bun unlink<r> <cyan>[flags]<r>
 
   Unregister the current directory as a "linkable" package.
 
-<b>Flags:<r>";
+<b>Flags:<r>"#;
 
                 let outro_text = r"
 

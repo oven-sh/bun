@@ -479,11 +479,17 @@ fn transpile_source_code_inner(
                 (jsc_vm, arena, give_back_arena, args.flags),
                 |(jsc_vm, mut arena, give_back, flags)| {
                     if !give_back {
-                        // Caller (AsyncModule queue) took ownership; do nothing.
-                        // PORT NOTE: spec :161-163 destroys via `vm.allocator`;
-                        // Rust `Box` drop is the equivalent — but on the
-                        // give_back=false path the arena was already moved out
-                        // (see `core::mem::forget` at the AsyncModule site).
+                        // Spec :146-165 — when `give_back_arena == false` the
+                        // Zig `defer` is a no-op: the arena is NOT freed (it
+                        // was either handed to the AsyncModule queue, or is
+                        // intentionally kept alive past `processFetchLog` so
+                        // log span data pointing into it stays valid). Dropping
+                        // the `Box` here would free it → UAF. Forget instead.
+                        // PORT NOTE: this is an ownership hand-off, not a
+                        // `'static`-lifetime hack (PORTING.md §Forbidden does
+                        // not apply). The AsyncModule path will move the arena
+                        // out via `ScopeGuard::into_inner` once it un-gates.
+                        core::mem::forget(arena);
                         return;
                     }
                     // SAFETY: `jsc_vm` is the live per-thread VM (closure runs
@@ -1024,6 +1030,12 @@ fn transpile_source_code_inner(
                         ..Default::default()
                     });
                 }
+                // Spec :637-659 RETURNS the wasi-runner source here; it must
+                // NOT fall through to the `.file` recursion below. Fail closed
+                // until the gated ctor above un-gates (PORTING.md §Forbidden:
+                // no silent-no-op fall-through).
+                #[allow(unreachable_code)]
+                return Err(bun_core::err!("NotSupported"));
             }
             // Spec :661-675 — recurse as `.file`.
             // SAFETY: per fn contract — `extra` is live for the call.

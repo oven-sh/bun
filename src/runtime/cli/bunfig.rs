@@ -654,7 +654,20 @@ impl<'a> Parser<'a> {
                     // TODO(b2-blocked): CodeCoverageOptions.ignore_patterns is
                     // `&'static [&'static [u8]]`; retype to Vec<Box<[u8]>> before un-gating.
                     match &expr.data {
-                        ExprData::EString(_) | ExprData::EArray(_) => {
+                        ExprData::EString(_) => {
+                            #[cfg(any())]
+                            { /* see phase_a_draft */ }
+                        }
+                        ExprData::EArray(arr) => {
+                            for item in arr.items.slice() {
+                                if !matches!(item.data, ExprData::EString(_)) {
+                                    self.add_error(
+                                        item.loc,
+                                        b"coveragePathIgnorePatterns array must contain only strings",
+                                    )?;
+                                    return Ok(());
+                                }
+                            }
                             #[cfg(any())]
                             { /* see phase_a_draft */ }
                         }
@@ -883,13 +896,15 @@ impl<'a> Parser<'a> {
 
                 if let Some(entry_points) = expr_get(&_bun, b"entryPoints") {
                     self.expect(&entry_points, ExprTag::EArray)?;
+                    let items = entry_points.data.e_array().unwrap().items.slice();
+                    for item in items {
+                        self.expect_string(item)?;
+                    }
                     // TODO(b2-blocked): api::TransformOptions.entry_points (peechy codegen)
                     #[cfg(any())]
                     {
-                        let items = entry_points.data.e_array().unwrap().items.slice();
                         let mut names: Vec<Box<[u8]>> = Vec::with_capacity(items.len());
                         for item in items {
-                            self.expect_string(item)?;
                             names.push(estring_to_owned(item.data.e_string().unwrap().get(), self.bump));
                         }
                         self.ctx.args.entry_points = names.into();
@@ -1038,7 +1053,15 @@ impl<'a> Parser<'a> {
 
         if let Some(expr) = expr_get(&json, b"external") {
             match &expr.data {
-                ExprData::EString(_) | ExprData::EArray(_) => {
+                ExprData::EString(_) => {
+                    // TODO(b2-blocked): api::TransformOptions.external (peechy codegen)
+                    #[cfg(any())]
+                    { /* see phase_a_draft */ }
+                }
+                ExprData::EArray(array) => {
+                    for item in array.items.slice() {
+                        self.expect_string(item)?;
+                    }
                     // TODO(b2-blocked): api::TransformOptions.external (peechy codegen)
                     #[cfg(any())]
                     { /* see phase_a_draft */ }

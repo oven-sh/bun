@@ -29,6 +29,140 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let _ = (stmts, stmt);
         todo!("b2-ast-E: visit_and_append_stmt body")
     }
+
+    // ─── visitors ───────────────────────────────────────────────────────────
+    // In Zig these live on a nested `const visitors = struct { ... }`; in Rust they are private
+    // associated fns on this impl so they can see the const-generic feature params. Round-G
+    // un-gated s_local/s_import/s_export*/s_function/s_class; remaining s_* and the dispatch
+    // body stay `todo!()` with full draft preserved in `#[cfg(any())] mod _draft` below.
+
+    fn s_import(
+        p: &mut Self,
+        stmts: &mut StmtList<'a>,
+        stmt: &mut Stmt,
+        data: &mut S::Import,
+    ) -> Result<(), Error> {
+        p.record_declared_symbol(data.namespace_ref);
+
+        if let Some(default_name) = data.default_name {
+            p.record_declared_symbol(default_name.ref_.unwrap());
+        }
+
+        // SAFETY: arena-owned slice; valid for 'a.
+        let items = unsafe { &*data.items };
+        if !items.is_empty() {
+            for item in items.iter() {
+                p.record_declared_symbol(item.name.ref_.unwrap());
+            }
+        }
+
+        stmts.push(*stmt);
+        Ok(())
+    }
+
+    fn s_export_equals(
+        p: &mut Self,
+        stmts: &mut StmtList<'a>,
+        stmt: &mut Stmt,
+        data: &mut S::ExportEquals,
+    ) -> Result<(), Error> {
+        // "module.exports = value"
+        stmts.push(Stmt::assign(
+            // Zig: p.@"module.exports"(stmt.loc)
+            p.module_exports(stmt.loc),
+            p.visit_expr(data.value),
+        ));
+        p.record_usage(p.module_ref);
+        Ok(())
+    }
+
+    // ─── heavy visitors (bodies still gated) ────────────────────────────────
+    // blocked_on: P::inject_replacement_export (#[cfg(any())] in P.rs);
+    //   visit_decls<const _>() -> usize return shape (visit.rs stub returns ());
+    //   visit_class(loc, &mut Class, Ref) 3-arg form (visit.rs stub is 1-arg);
+    //   visit_func by-value return (visit.rs stub takes &mut, returns ());
+    //   ReplaceableExport::{is_replace, replace} accessors;
+    //   scopeguard borrow-of-p across defer points (needs manual restructure);
+    //   S::ExportClause/ExportFrom *mut [ClauseItem] indexed-write + truncate.
+    //   Full draft bodies preserved verbatim under `#[cfg(any())] mod _draft` below.
+
+    fn s_export_clause(
+        p: &mut Self,
+        stmts: &mut StmtList<'a>,
+        stmt: &mut Stmt,
+        data: &mut S::ExportClause,
+    ) -> Result<(), Error> {
+        let _ = (p, stmts, stmt, data);
+        todo!("G-round-4: s_export_clause body — see _draft");
+        #[allow(unreachable_code)] Ok(())
+    }
+
+    fn s_export_from(
+        p: &mut Self,
+        stmts: &mut StmtList<'a>,
+        stmt: &mut Stmt,
+        data: &mut S::ExportFrom,
+    ) -> Result<(), Error> {
+        let _ = (p, stmts, stmt, data);
+        todo!("G-round-4: s_export_from body — see _draft");
+        #[allow(unreachable_code)] Ok(())
+    }
+
+    fn s_export_star(
+        p: &mut Self,
+        stmts: &mut StmtList<'a>,
+        stmt: &mut Stmt,
+        data: &mut S::ExportStar,
+    ) -> Result<(), Error> {
+        let _ = (p, stmts, stmt, data);
+        todo!("G-round-4: s_export_star body — see _draft");
+        #[allow(unreachable_code)] Ok(())
+    }
+
+    fn s_export_default(
+        p: &mut Self,
+        stmts: &mut StmtList<'a>,
+        stmt: &mut Stmt,
+        data: &mut S::ExportDefault,
+    ) -> Result<(), Error> {
+        let _ = (p, stmts, stmt, data);
+        todo!("G-round-4: s_export_default body — see _draft");
+        #[allow(unreachable_code)] Ok(())
+    }
+
+    fn s_function(
+        p: &mut Self,
+        stmts: &mut StmtList<'a>,
+        stmt: &mut Stmt,
+        data: &mut S::Function,
+    ) -> Result<(), Error> {
+        let _ = (p, stmts, stmt, data);
+        todo!("G-round-4: s_function body — see _draft");
+        #[allow(unreachable_code)] Ok(())
+    }
+
+    fn s_class(
+        p: &mut Self,
+        stmts: &mut StmtList<'a>,
+        stmt: &mut Stmt,
+        data: &mut S::Class,
+    ) -> Result<(), Error> {
+        let _ = (p, stmts, stmt, data);
+        todo!("G-round-4: s_class body — see _draft");
+        #[allow(unreachable_code)] Ok(())
+    }
+
+    fn s_local(
+        p: &mut Self,
+        stmts: &mut StmtList<'a>,
+        stmt: &mut Stmt,
+        data: &mut S::Local,
+        was_after_after_const_local_prefix: bool,
+    ) -> Result<(), Error> {
+        let _ = (p, stmts, stmt, data, was_after_after_const_local_prefix);
+        todo!("G-round-4: s_local body — see _draft");
+        #[allow(unreachable_code)] Ok(())
+    }
 }
 
 #[cfg(any())]

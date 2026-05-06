@@ -95,9 +95,21 @@ pub use selectors::selector;
 // Crate-root re-exports of parser-core helpers referenced by the rule/
 // selector/property/media_query bodies via `css::*`.
 pub use css_parser::{
-    enum_property_util, parse_utility, signfns, void_wrap, CssResult as Result,
-    Delimiters, EnumProperty, Maybe, ParserState,
+    enum_property_util, nth, parse_utility, signfns, void_wrap, CssRef, CssRefTag,
+    CssResult as Result, Delimiters, EnumProperty, Maybe, ParserState,
 };
+
+// ─── selectors/ crate-root surface ────────────────────────────────────────
+// The selector grammar references these via `bun_css::*` (Zig's flat `css.*`
+// namespace). `Str` is the arena-borrowed `[]const u8` slice alias; in Phase A
+// it's `*const [u8]` (matches `error.rs` / `values::ident` field shape) and
+// becomes `&'bump [u8]` once the arena lifetime is plumbed.
+pub type Str = *const [u8];
+pub use values::ident::{CustomIdentFns, DashedIdentFns, IdentFns};
+pub use values::string::{CssString as CSSString, CssStringFns as CSSStringFns};
+pub use properties::custom::{TokenList, TokenListFns};
+/// `css::ParseErrorKind` — Zig spelling. Alias of `error::ParserErrorKind`.
+pub use error::ParserErrorKind as ParseErrorKind;
 pub use compat::Feature;
 pub use error::ParserErrorKind as ErrorKind;
 

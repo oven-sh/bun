@@ -5038,7 +5038,7 @@ impl<'a> Resolver<'a> {
 
         // Start at the top.
         while queue_slice_len > 0 {
-            let queue_top = bufs!(dir_entry_paths_to_resolve)[queue_slice_len - 1].clone();
+            let mut queue_top = bufs!(dir_entry_paths_to_resolve)[queue_slice_len - 1].clone();
             // defer top_parent = queue_top.result — done at end of loop body
             queue_slice_len -= 1;
 

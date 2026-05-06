@@ -1208,7 +1208,7 @@ impl WatchItemColumns for bun_collections::multi_array_list::Slice<WatchItem> {
     }
     fn items_fd_mut(&mut self) -> &mut [Fd] {
         // SAFETY: column 3 is `Fd`.
-        unsafe { self.items::<Fd>(WatchItemField::Fd) }
+        unsafe { self.items_mut::<Fd>(WatchItemField::Fd) }
     }
     fn items_parent_hash(&self) -> &[u32] {
         // SAFETY: column 5 is `u32`.

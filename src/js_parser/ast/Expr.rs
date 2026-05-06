@@ -556,7 +556,10 @@ impl Expr {
         }
 
         obj.properties.append(G::Property {
-            key: Some(Expr::init(E::String { data: name, ..Default::default() }, Loc::EMPTY)),
+            key: Some(Expr::init(
+                E::String { data: unsafe { arena_str(name) }, ..Default::default() },
+                Loc::EMPTY,
+            )),
             value: Some(value),
             ..Default::default()
         })?;

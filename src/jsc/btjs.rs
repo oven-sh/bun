@@ -158,8 +158,7 @@ mod zig_std_debug {
                         if bytes_read >= 0 {
                             return bytes_read as usize == buf.len();
                         }
-                        // SAFETY: errno location is thread-local and always valid.
-                        match unsafe { *libc::__errno_location() } {
+                        match bun_sys::errno() {
                             libc::EFAULT => return false,
                             // EPERM (containers), ENOMEM, ENOSYS (qemu) → fall through to /proc/pid/mem
                             _ => {}
@@ -233,8 +232,7 @@ mod zig_std_debug {
             // SAFETY: msync only inspects the mapping; aligned_address is page-aligned.
             let rc = unsafe { libc::msync(aligned_address as *mut c_void, page_size, libc::MS_ASYNC) };
             if rc != 0 {
-                // SAFETY: errno location is thread-local and always valid.
-                return unsafe { *libc::__errno_location() } != libc::ENOMEM;
+                return bun_sys::errno() != libc::ENOMEM;
             }
             true
         }
@@ -712,7 +710,7 @@ unsafe extern "C" {
 #[unsafe(no_mangle)]
 pub extern "C" fn dumpBtjsTrace() -> *const c_char {
     // Zig: `if (comptime bun.Environment.isDebug)` — must use #[cfg], not cfg!(), so the
-    // entire debug impl (and its todo!() stubs) is DCE'd from release builds.
+    // entire debug impl is DCE'd from release builds.
     #[cfg(debug_assertions)]
     {
         return dump_btjs_trace_debug_impl();

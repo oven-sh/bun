@@ -84,10 +84,9 @@ impl URL {
     /// This percent-encodes the URL, punycode-encodes the hostname, and returns the result
     /// If it fails, the tag is marked Dead
     pub fn href_from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<String> {
-        // SAFETY: global is a valid &JSGlobalObject; FFI takes *mut
-        let result = unsafe {
-            URL__getHrefFromJS(value, global as *const JSGlobalObject as *mut JSGlobalObject)
-        };
+        // SAFETY: global is a valid opaque JSGlobalObject*; any C++-side mutation (throw
+        // scope) is invisible to Rust through this zero-sized opaque handle.
+        let result = unsafe { URL__getHrefFromJS(value, global) };
         if global.has_exception() {
             return Err(JsError::Thrown);
         }
@@ -95,9 +94,9 @@ impl URL {
     }
 
     pub fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<NonNull<URL>>> {
-        // SAFETY: global is a valid &JSGlobalObject; FFI takes *mut
-        let result =
-            unsafe { URL__fromJS(value, global as *const JSGlobalObject as *mut JSGlobalObject) };
+        // SAFETY: global is a valid opaque JSGlobalObject*; any C++-side mutation (throw
+        // scope) is invisible to Rust through this zero-sized opaque handle.
+        let result = unsafe { URL__fromJS(value, global) };
         if global.has_exception() {
             return Err(JsError::Thrown);
         }

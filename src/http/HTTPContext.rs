@@ -795,7 +795,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     //   client.on_writable::<true, SSL>(sock);
                     // and drop the early-return guard above.
                     // Defensive: release the transferred ref so it never leaks.
-                    unsafe { (*tunnel.as_ptr()).deref() };
+                    unsafe { ProxyTunnel::deref(tunnel.as_ptr()) };
                     unreachable!("pooled-tunnel reuse is disabled until ProxyTunnel::adopt un-gates");
                 } else {
                     client.on_open::<SSL>(sock)?;

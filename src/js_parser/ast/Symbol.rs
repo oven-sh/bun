@@ -445,30 +445,38 @@ impl Map {
             return new;
         }
 
-        // TODO(port): lifetime — union-find with path compression; Zig holds two aliasing
-        // *Symbol into the same NestedList. Using raw pointers to preserve the algorithm
-        // exactly. Revisit with a sound interior-mutability design in Phase B.
-        // SAFETY: `old` and `new` are distinct refs (checked above for equality); the
-        // backing storage is not reallocated during this call.
-        let old_symbol = unsafe { &mut *self.get(old).unwrap() };
-        if old_symbol.has_link() {
-            let old_link = old_symbol.link;
-            old_symbol.link = self.merge(old_link, new);
-            return old_symbol.link;
+        // Union-find with path compression. Zig holds two aliasing *Symbol into the same
+        // NestedList; we mirror that with raw-pointer-only access — no `&mut Symbol` is
+        // materialized across the recursive `&mut self` calls. `get()` derives *mut from
+        // BabyList's raw `NonNull` (write provenance preserved, independent of `&self`
+        // borrow); backing storage is never reallocated during merge.
+        let old_symbol = self.get(old).unwrap();
+        // SAFETY: valid in-bounds ptr from `get()`; see note above.
+        if unsafe { (*old_symbol).has_link() } {
+            let old_link = unsafe { (*old_symbol).link };
+            let merged = self.merge(old_link, new);
+            // SAFETY: storage not reallocated by recursion; ptr still valid.
+            unsafe { (*old_symbol).link = merged };
+            return merged;
         }
 
-        // SAFETY: see above — `new` is distinct from `old`; backing storage not reallocated
-        // during this call.
-        let new_symbol = unsafe { &mut *self.get(new).unwrap() };
-
-        if new_symbol.has_link() {
-            let new_link = new_symbol.link;
-            new_symbol.link = self.merge(old, new_link);
-            return new_symbol.link;
+        let new_symbol = self.get(new).unwrap();
+        // SAFETY: valid in-bounds ptr from `get()`; see note above.
+        if unsafe { (*new_symbol).has_link() } {
+            let new_link = unsafe { (*new_symbol).link };
+            let merged = self.merge(old, new_link);
+            // SAFETY: storage not reallocated by recursion; ptr still valid.
+            unsafe { (*new_symbol).link = merged };
+            return merged;
         }
 
-        old_symbol.link = new;
-        new_symbol.merge_contents_with(old_symbol);
+        // SAFETY: `old != new` (checked above) so old_symbol/new_symbol are disjoint
+        // elements; materializing both `&mut` here is sound (cf. split_at_mut). Neither
+        // outlives this block.
+        unsafe {
+            (*old_symbol).link = new;
+            (&mut *new_symbol).merge_contents_with(&mut *old_symbol);
+        }
         new
     }
 

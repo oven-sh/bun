@@ -1266,7 +1266,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     p.has_es_module_syntax = true;
                     return Ok(p.s(
                         S::ExportFrom {
-                            items: export_clause.clauses as *const _ as *mut _,
+                            // SAFETY: sole owner — fresh arena slice from parse_export_clause,
+                            // moved into the AST node here; no other &mut alias exists.
+                            items: export_clause.clauses,
                             is_single_line: export_clause.is_single_line,
                             namespace_ref,
                             import_record_index,
@@ -1288,7 +1290,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 p.has_es_module_syntax = true;
                 Ok(p.s(
                     S::ExportClause {
-                        items: export_clause.clauses as *const _ as *mut _,
+                        // SAFETY: sole owner — fresh arena slice from parse_export_clause,
+                        // moved into the AST node here; no other &mut alias exists.
+                        items: export_clause.clauses,
                         is_single_line: export_clause.is_single_line,
                     },
                     loc,

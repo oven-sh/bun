@@ -186,9 +186,10 @@ impl ArrayBuffer {
         total_size: usize,
         ty: JSType,
     ) -> JSValue {
-        // SAFETY: FFI — global is a valid &JSGlobalObject; all integer args are passed by value.
+        // SAFETY: FFI — `global` is a live &JSGlobalObject (opaque ZST handle, coerces to
+        // *const); all integer args are passed by value.
         unsafe {
-            ArrayBuffer__fromSharedMemfd(fd, global as *const _ as *mut _, byte_offset, byte_length, total_size, ty)
+            ArrayBuffer__fromSharedMemfd(fd, global, byte_offset, byte_length, total_size, ty)
         }
     }
 
@@ -233,9 +234,10 @@ impl ArrayBuffer {
 
         match result {
             bun_sys::Result::Ok(buf) => {
-                // SAFETY: FFI — global is valid; buf is a fresh mmap region whose ownership transfers to JSC.
+                // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); `buf`
+                // is a fresh mmap region whose ownership transfers to JSC.
                 Ok(unsafe {
-                    JSBuffer__fromMmap(global as *const _ as *mut _, buf.as_mut_ptr().cast(), buf.len())
+                    JSBuffer__fromMmap(global, buf.as_mut_ptr().cast(), buf.len())
                 })
             }
             bun_sys::Result::Err(err) => {

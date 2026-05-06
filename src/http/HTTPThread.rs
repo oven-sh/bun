@@ -747,7 +747,7 @@ impl HttpThread {
 
         for http in self.queued_threadlocal_proxy_derefs.drain(..) {
             // SAFETY: pointer was queued by schedule_proxy_deref on this thread; still live.
-            unsafe { (*http).deref() };
+            unsafe { ProxyTunnel::deref(http) };
         }
         // .clearRetainingCapacity() — drain(..) above already cleared while keeping capacity.
 

@@ -473,7 +473,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
 
         Ok(ExportClauseResult {
-            clauses: items.into_bump_slice(),
+            clauses: items.into_bump_slice_mut(),
             is_single_line,
             had_type_only_exports,
         })

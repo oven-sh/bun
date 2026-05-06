@@ -20,6 +20,12 @@ pub struct StringJoiner {
     pub watcher: Watcher,
 }
 
+// SAFETY: raw pointers in `tail`/`Node` are interior to the singly-linked
+// chain uniquely owned by this struct; no aliasing escapes. Zig original is
+// passed across bundler worker threads (see Chunk.IntermediateOutput).
+unsafe impl Send for StringJoiner {}
+unsafe impl Sync for StringJoiner {}
+
 impl Default for StringJoiner {
     fn default() -> Self {
         Self {
@@ -61,6 +67,13 @@ impl Node {
 
 }
 
+// SAFETY: `Node` is a plain linked-list node; raw pointers are uniquely owned
+// through the chain rooted at `StringJoiner.head` and never shared aliased
+// across threads concurrently. The Zig original moves these between bundler
+// worker threads freely.
+unsafe impl Send for Node {}
+unsafe impl Sync for Node {}
+
 impl Drop for Node {
     fn drop(&mut self) {
         if self.owns_slice {
@@ -82,7 +95,7 @@ pub struct Watcher {
 impl StringJoiner {
     /// `data` is expected to live until `.done` is called
     pub fn push_static(&mut self, data: &[u8]) {
-        self.push(data, false);
+        self.push(data);
     }
 
     /// Takes ownership of `data` (no copy). Freed when the node is dropped.
@@ -106,12 +119,14 @@ impl StringJoiner {
     }
 
     // PORT NOTE: Zig signature was `push(data: []const u8, allocator: ?Allocator)`.
-    // The optional allocator only encoded ownership of `data`; replaced with `owned: bool`.
-    pub fn push(&mut self, data: &[u8], owned: bool) {
+    // The optional allocator only encoded ownership of `data`, which has no Rust
+    // analogue for a borrowed `&[u8]`; callers wanting owned semantics use
+    // `push_owned`/`push_cloned` instead.
+    pub fn push(&mut self, data: &[u8]) {
         if data.is_empty() {
             return;
         }
-        self.push_raw(data as *const [u8], owned);
+        self.push_raw(data as *const [u8], false);
     }
 
     fn push_raw(&mut self, data: *const [u8], owned: bool) {

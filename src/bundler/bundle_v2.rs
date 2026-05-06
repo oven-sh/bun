@@ -224,64 +224,6 @@ impl<'a> BundleV2<'a> {
         }
     }
 
-    pub fn is_barrel_optimization_enabled(&self) -> bool {
-        // bundle_v2.zig:2833-2836 — `_ = this; return true;` (always on).
-        let _ = self;
-        true
-    }
-
-    // ── scan-counter machinery (`bundle_v2.zig:{increment,decrement}ScanCounter`) ──
-    pub fn increment_scan_counter(&mut self) {
-        self.thread_lock.assert_locked();
-        self.graph.pending_items += 1;
-        bun_core::scoped_log!(scan_counter, ".pending_items + 1 = {}", self.graph.pending_items);
-    }
-
-    pub fn decrement_scan_counter(&mut self) {
-        self.thread_lock.assert_locked();
-        self.graph.pending_items -= 1;
-        bun_core::scoped_log!(scan_counter, ".pending_items - 1 = {}", self.graph.pending_items);
-        self.on_after_decrement_scan_counter();
-    }
-
-    pub fn on_after_decrement_scan_counter(&mut self) {
-        if self.asynchronous && self.is_done() {
-            let _dev = self
-                .dev_server
-                .unwrap_or_else(|| panic!("No dev server attached in asynchronous bundle job"));
-            // TODO(b2-blocked): `finish_from_bake_dev_server` — full body gated
-            // below (needs full `DevServerVTable` slot set). The DevServer
-            // vtable's `finalize_bundle` slot drives completion; until the
-            // draft un-gates, the dev-server path is unreachable from here.
-            let _ = _dev;
-        }
-    }
-
-    fn is_done(&mut self) -> bool {
-        self.thread_lock.assert_locked();
-        if self.graph.pending_items == 0 {
-            // PORT NOTE: reshaped — Zig called `self.graph.drain_deferred_tasks(self)`
-            // (aliased `&mut self.graph` + `&mut self`). Body inlined here to
-            // satisfy borrowck; `Graph::drain_deferred_tasks` stays as a thin
-            // forwarder for callers that already split the borrow.
-            if self.graph.deferred_pending > 0 {
-                self.graph.pending_items += self.graph.deferred_pending;
-                self.graph.deferred_pending = 0;
-                self.drain_defer_task.init();
-                self.drain_defer_task.schedule();
-                return false;
-            }
-            return true;
-        }
-        false
-    }
-
-    pub fn on_notify_defer(&mut self) {
-        self.thread_lock.assert_locked();
-        self.graph.deferred_pending += 1;
-        self.decrement_scan_counter();
-    }
-
     // ── on_parse_task_complete (`bundle_v2.zig:onParseTaskComplete`) ──────
     //
     // Runs on the bundle thread when a `ParseTask` worker finishes. Folds the

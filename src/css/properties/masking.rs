@@ -128,12 +128,7 @@ pub struct Ellipse {
 /// A [`polygon()`](https://www.w3.org/TR/css-shapes-1/#funcdef-polygon) shape.
 pub struct Polygon {
     /// The fill rule used to determine the interior of the polygon.
-    // blocked_on: properties::shape::FillRule (shape module gated). Field kept
-    // private + typed `()` so the struct shape is preserved without the dep.
-    
     pub fill_rule: FillRule,
-    #[cfg(any())]
-    fill_rule: (),
     /// The points of each vertex of the polygon.
     // TODO(port): css is an AST crate (§Allocators) — if Polygon is arena-fed this must become
     // `bumpalo::collections::Vec<'bump, Point>` and Polygon/BasicShape/ClipPath gain `<'bump>`.

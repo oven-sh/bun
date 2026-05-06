@@ -25,21 +25,38 @@ pub fn generate_compile_result_for_css_chunk(task: *mut ThreadPoolLib::Task) {
             .cast::<PendingPartRange>()
     };
     let ctx = part_range.ctx;
-    // SAFETY: ctx.c is the `linker` field embedded in BundleV2 (bundle_v2.zig:117 `linker: LinkerContext`);
-    // Zig `@fieldParentPtr("linker", ctx.c)` recovers *BundleV2, which Worker::get expects.
-    let worker = Worker::get(unsafe {
-        &mut *(ctx.c as *mut LinkerContext as *mut u8)
+    // SAFETY: `GenerateChunkCtx.{c, chunk}` are stored as `&mut T`, but `ctx` is held by
+    // shared ref (`PendingPartRange.ctx: &GenerateChunkCtx`), so a normal field access would
+    // reborrow them as `&T` and any later `*const → *mut` cast would launder shared
+    // provenance into mutable (UB). Instead, read the pointer *value* of each `&mut T` field
+    // directly: `addr_of!` yields `*const &mut T`, which has identical layout to
+    // `*const *mut T`, and dereferencing that yields a `*mut T` carrying the original
+    // mutable provenance. This mirrors Zig's `*LinkerContext` / `*Chunk` raw-pointer
+    // semantics in `generateChunksInParallel.zig`, where many `PendingPartRange` tasks share
+    // one `chunk_ctx` across worker threads.
+    let c_ptr: *mut LinkerContext =
+        unsafe { *core::ptr::addr_of!(ctx.c).cast::<*mut LinkerContext>() };
+    let chunk_ptr: *mut Chunk = unsafe { *core::ptr::addr_of!(ctx.chunk).cast::<*mut Chunk>() };
+
+    // SAFETY: `c_ptr` addresses the `linker` field embedded in `BundleV2`
+    // (`bundle_v2.zig:linker`); Zig `@fieldParentPtr("linker", ctx.c)` recovers `*BundleV2`.
+    // `Worker::get` only needs `&BundleV2` (it reads `graph.pool` and serializes via mutex),
+    // so no mutable reference is materialized here.
+    let bv2: &crate::BundleV2 = unsafe {
+        &*(c_ptr as *const u8)
             .sub(offset_of!(crate::BundleV2, linker))
             .cast::<crate::BundleV2>()
-    });
-    // `defer worker.unget()` — Worker::get returns an RAII guard; Drop calls unget().
+    };
+    let worker = Worker::get(bv2);
+    // `defer worker.unget()` — explicit; Worker::get returns `&'static mut Worker`.
+    let mut worker = scopeguard::guard(worker, |w| w.unget());
 
     #[cfg(feature = "show_crash_trace")]
     let _prev_action_guard = {
         let prev_action = bun_crash_handler::current_action();
         bun_crash_handler::set_current_action(bun_crash_handler::Action::BundleGenerateChunk {
-            chunk: ctx.chunk,
-            context: ctx.c,
+            chunk: chunk_ptr as *const (),
+            context: c_ptr as *const (),
             part_range: &part_range.part_range,
         });
         scopeguard::guard((), move |_| {
@@ -47,8 +64,19 @@ pub fn generate_compile_result_for_css_chunk(task: *mut ThreadPoolLib::Task) {
         })
     };
 
-    ctx.chunk.compile_results_for_chunk[part_range.i as usize] =
-        generate_compile_result_for_css_chunk_impl(&mut *worker, ctx.c, ctx.chunk, part_range.i);
+    // SAFETY: `c_ptr` / `chunk_ptr` carry mutable provenance (see extraction above). In the
+    // Zig source these are bare `*LinkerContext` / `*Chunk` shared across all part-range
+    // tasks for a chunk; concurrent tasks uphold a disjoint-write contract:
+    //   - `chunk.compile_results_for_chunk[i]` is written at a per-task unique index `i`,
+    //   - `chunk.files_with_parts_in_chunk` entries are updated via atomic RMW only,
+    //   - all other access through `c` / `chunk` during codegen is read-only.
+    // No other live `&`/`&mut` to these allocations exists in this frame at this point.
+    let _ = ctx;
+    let c_mut: &mut LinkerContext = unsafe { &mut *c_ptr };
+    let chunk_mut: &mut Chunk = unsafe { &mut *chunk_ptr };
+
+    chunk_mut.compile_results_for_chunk[part_range.i as usize] =
+        generate_compile_result_for_css_chunk_impl(&mut **worker, c_mut, chunk_mut, part_range.i);
 }
 
 fn generate_compile_result_for_css_chunk_impl(

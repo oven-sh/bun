@@ -94,20 +94,20 @@ pub fn compute_chunks(
         // a shared chunk rather than staying in the entry point's chunk.
         // https://github.com/evanw/esbuild/blob/cd832972927f1f67b6d2cc895c06a8759c1cf309/internal/linker/linker.go#L3882
         let mut entry_point_chunk_bits =
-            AutoBitSet::init_empty(this.graph.entry_points.len)?;
+            AutoBitSet::init_empty(this.graph.entry_points.len())?;
         entry_point_chunk_bits.set(entry_bit as usize);
 
         let js_chunk_key: &[u8] = 'brk: {
             if code_splitting {
                 break 'brk temp
-                    .alloc_slice_copy(entry_point_chunk_bits.bytes(this.graph.entry_points.len));
+                    .alloc_slice_copy(entry_point_chunk_bits.bytes(this.graph.entry_points.len()));
             } else {
                 // Force HTML chunks to always be generated, even if there's an identical JS file.
                 // PORT NOTE: Zig used a Formatter struct; build the byte key directly since
                 // entry_bits is arbitrary bytes (not UTF-8) and cannot go through fmt::Display.
                 let mut v = bumpalo::collections::Vec::new_in(temp);
                 v.push((!has_html_chunk) as u8);
-                v.extend_from_slice(entry_bits.bytes(this.graph.entry_points.len));
+                v.extend_from_slice(entry_bits.bytes(this.graph.entry_points.len()));
                 break 'brk v.into_bump_slice();
             }
         };
@@ -141,11 +141,11 @@ pub fn compute_chunks(
             // always generated even if the resulting file is empty
             let hash_to_use = if !this.options.css_chunking {
                 bun_wyhash::hash(
-                    temp.alloc_slice_copy(entry_bits.bytes(this.graph.entry_points.len)),
+                    temp.alloc_slice_copy(entry_bits.bytes(this.graph.entry_points.len())),
                 )
             } else {
                 let mut hasher = Wyhash::init(5);
-                bun_core::write_any_to_hasher(&mut hasher, order.len());
+                bun_core::write_any_to_hasher(&mut hasher, order.len);
                 for x in order.slice() {
                     x.hash(&mut hasher);
                 }
@@ -154,7 +154,7 @@ pub fn compute_chunks(
             let css_chunk_entry = css_chunks.get_or_put(hash_to_use)?;
             if !css_chunk_entry.found_existing {
                 // const css_chunk_entry = try js_chunks.getOrPut();
-                let order_len = order.len() as usize;
+                let order_len = order.len as usize;
                 *css_chunk_entry.value_ptr = Chunk {
                     entry_point: chunk::EntryPoint::new(source_index, entry_bit, true, false),
                     entry_bits: entry_point_chunk_bits,
@@ -162,7 +162,7 @@ pub fn compute_chunks(
                         imports_in_chunk_in_order: order,
                         asts: bun_core::handle_oom(
                             (0..order_len)
-                                .map(|_| bun_css::BundlerStyleSheet::default())
+                                .map(|_| bun_css::BundlerStyleSheet::empty())
                                 .collect::<Vec<_>>()
                                 .into_boxed_slice(),
                         ),
@@ -207,7 +207,7 @@ pub fn compute_chunks(
             // algorithm to determine the final CSS file order for the chunk.
             let css_source_indices =
                 find_imported_css_files_in_js_order(this, temp, Index::init(source_index));
-            if css_source_indices.len() > 0 {
+            if css_source_indices.len > 0 {
                 let order =
                     find_imported_files_in_css_order(this, temp, css_source_indices.slice());
 
@@ -217,7 +217,7 @@ pub fn compute_chunks(
                 // than producing duplicates that collide on hash-based naming.
                 let hash_to_use = {
                     let mut hasher = Wyhash::init(5);
-                    bun_core::write_any_to_hasher(&mut hasher, order.len());
+                    bun_core::write_any_to_hasher(&mut hasher, order.len);
                     for x in order.slice() {
                         x.hash(&mut hasher);
                     }
@@ -233,7 +233,7 @@ pub fn compute_chunks(
                 js_chunks_with_css += 1;
 
                 if !css_chunk_entry.found_existing {
-                    let order_len = order.len() as usize;
+                    let order_len = order.len as usize;
                     let mut css_files_with_parts_in_chunk: ArrayHashMap<IndexInt, usize> =
                         ArrayHashMap::new();
                     for entry in order.slice() {
@@ -250,7 +250,7 @@ pub fn compute_chunks(
                             imports_in_chunk_in_order: order,
                             asts: bun_core::handle_oom(
                                 (0..order_len)
-                                    .map(|_| bun_css::BundlerStyleSheet::default())
+                                    .map(|_| bun_css::BundlerStyleSheet::empty())
                                     .collect::<Vec<_>>()
                                     .into_boxed_slice(),
                             ),
@@ -286,7 +286,7 @@ pub fn compute_chunks(
 
                     if this.graph.code_splitting {
                         let js_chunk_key = temp.alloc_slice_copy(
-                            entry_bits.bytes(this.graph.entry_points.len),
+                            entry_bits.bytes(this.graph.entry_points.len()),
                         );
                         let js_chunk_entry = js_chunks.get_or_put(js_chunk_key)?;
 
@@ -420,7 +420,7 @@ pub fn compute_chunks(
             if let chunk::Content::Javascript(js) = &chunk.content {
                 if js.css_chunks.len() > 0 {
                     // PERF(port): was assume_capacity
-                    js_chunk_indices_with_css.append_assume_capacity(sorted_chunks.len());
+                    js_chunk_indices_with_css.append_assume_capacity(sorted_chunks.len);
                 }
             }
 
@@ -453,7 +453,7 @@ pub fn compute_chunks(
             // may be interleaved with JS chunks, so js_chunks.count() would be
             // incorrect when HTML entry points are present.
             for (sorted_index, &key) in
-                (sorted_chunks.len() as usize..).zip(sorted_css_keys.iter())
+                (sorted_chunks.len as usize..).zip(sorted_css_keys.iter())
             {
                 let index = css_chunks.get_index(&key).expect("unreachable");
                 // PERF(port): was assume_capacity
@@ -511,7 +511,7 @@ pub fn compute_chunks(
     // Handle empty chunks case
     if chunks.is_empty() {
         this.unique_key_buf = Box::default();
-        return Ok(chunks.into());
+        return Ok(Box::default());
     }
 
     // TODO(port): std.fmt.count — compute formatted byte length without allocating
@@ -643,7 +643,7 @@ pub fn compute_chunks(
                 ) else {
                     break 'dir &*resolve_path::normalize_buf::<bun_paths::platform::Auto>(
                         dir_path,
-                        real_path_buf.as_mut_slice(),
+                        &mut real_path_buf.0,
                     );
                 };
                 // PORT NOTE: defer dir.close() — Fd closes on Drop at scope end
@@ -656,7 +656,7 @@ pub fn compute_chunks(
                             bun_logger::Loc::EMPTY,
                             format_args!(
                                 "{}: Failed to get full path for directory '{}'",
-                                err.name(),
+                                bstr::BStr::new(err.name()),
                                 bstr::BStr::new(dir_path)
                             ),
                         )?;
@@ -674,7 +674,7 @@ pub fn compute_chunks(
     // Disarm errdefer guard on success
     let _ = scopeguard::ScopeGuard::into_inner(guard);
 
-    Ok(chunks.into())
+    Ok(sorted_chunks.to_owned_slice()?)
     // TODO(port): return type — Zig returns []Chunk allocated by this.allocator(); here we return Box<[Chunk]>.
     // Phase B: confirm ownership of `chunks` slice (sorted_chunks BabyList backing storage).
 }

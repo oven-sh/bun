@@ -14,21 +14,20 @@ pub struct CounterStyleRule {
     pub loc: Location,
 }
 
-// ─── behavior bodies ──────────────────────────────────────────────────────
-// blocked_on: DeclarationBlock::to_css_block (gated in declaration.rs) +
-// DeepClone derive.
-#[cfg(any())]
 impl CounterStyleRule {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        use crate::css_values::ident::CustomIdentFns;
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
         dest.write_str("@counter-style")?;
-        CustomIdentFns::to_css(&self.name, dest)?;
-        self.declarations.to_css_block(dest)
+        super::custom_ident_to_css(&self.name, dest)?;
+        super::decl_block_to_css(&self.declarations, dest)
     }
+}
 
+// blocked_on: DeepClone derive.
+#[cfg(any())]
+impl CounterStyleRule {
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // TODO(port): css.implementDeepClone uses @typeInfo field reflection — replace with
         // #[derive(DeepClone)] or hand-written per-field clone in Phase B.

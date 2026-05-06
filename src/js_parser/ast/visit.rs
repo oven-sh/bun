@@ -211,7 +211,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         for arg in args.iter_mut() {
             if arg.ts_decorators.len > 0 {
-                arg.ts_decorators = self.visit_ts_decorators(arg.ts_decorators);
+                self.visit_ts_decorators(&mut arg.ts_decorators);
             }
 
             // PORT NOTE: reborrow per-iter (Zig passes the same pointer each time).
@@ -224,11 +224,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
     }
 
-    pub fn visit_ts_decorators(&mut self, mut decs: ExprNodeList) -> ExprNodeList {
+    // PORT NOTE: Zig returned the list by value (`ExprNodeList` is a fat ptr there).
+    // `BabyList<Expr>` is not `Copy` in Rust; mutate in place instead.
+    pub fn visit_ts_decorators(&mut self, decs: &mut ExprNodeList) {
         for dec in decs.slice_mut() {
             *dec = self.visit_expr(*dec);
         }
-        decs
     }
 
     pub fn visit_decls<const IS_POSSIBLY_DECL_TO_REMOVE: bool>(
@@ -667,7 +668,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         if self.options.features.minify_syntax {
             // PORT NOTE: reshaped for borrowck — `stmts` was consumed above; in Zig
             // `stmts.items` aliases the slice now stored in `s_block.stmts`.
-            new_stmt = self.stmts_to_single_stmt(stmt.loc, items);
+            new_stmt = self.stmts_to_single_stmt_(stmt.loc, items);
         }
 
         new_stmt
@@ -697,7 +698,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             self.pop_scope();
         }
 
-        self.stmts_to_single_stmt(stmt.loc, stmts.into_bump_slice_mut())
+        self.stmts_to_single_stmt_(stmt.loc, stmts.into_bump_slice_mut())
     }
 
     pub fn visit_class(

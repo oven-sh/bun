@@ -152,8 +152,6 @@ mod _gated {
     #[path = "ResolvedSource.rs"] pub mod resolved_source;
     #[path = "Debugger.rs"] pub mod debugger;
     #[path = "SavedSourceMap.rs"] pub mod saved_source_map;
-    #[path = "VirtualMachine.rs"] pub mod virtual_machine;
-    #[path = "ModuleLoader.rs"] pub mod module_loader;
     #[path = "rare_data.rs"] pub mod rare_data;
     #[path = "ZigStackTrace.rs"] pub mod zig_stack_trace;
     #[path = "ZigStackFrame.rs"] pub mod zig_stack_frame;
@@ -161,7 +159,6 @@ mod _gated {
     #[path = "ConsoleObject.rs"] pub mod console_object;
     #[path = "hot_reloader.rs"] pub mod hot_reloader;
     #[path = "JSPropertyIterator.rs"] pub mod js_property_iterator;
-    #[path = "event_loop.rs"] pub mod event_loop;
     #[path = "javascript_core_c_api.rs"] pub mod c_api;
     #[path = "sizes.rs"] pub mod sizes;
     #[path = "generated_classes_list.rs"] pub mod generated_classes_list;
@@ -1477,11 +1474,56 @@ impl<'a> JSArrayIterator<'a> {
 // ──────────────────────────────────────────────────────────────────────────
 // B-2 Track A — VM / VirtualMachine / SystemError / URL / JSPromise / JSString.
 // ──────────────────────────────────────────────────────────────────────────
+unsafe extern "C" {
+    fn JSC__VM__releaseWeakRefs(vm: *mut VM);
+    fn JSC__VM__collectAsync(vm: *mut VM);
+    fn JSC__VM__heapSize(vm: *mut VM) -> usize;
+    fn Bun__JSC_GlobalObject__handleRejectedPromises(global: *mut JSGlobalObject);
+}
 impl VM {
     pub fn throw_error(&self, global: &JSGlobalObject, value: JSValue) -> JsError {
         // SAFETY: `self` and `global` are live; throws into the VM's exception scope.
         unsafe { JSC__VM__throwError(self as *const _ as *mut _, global, value) };
         JsError::Thrown
+    }
+    /// `VM.releaseWeakRefs()` (VM.zig:202).
+    #[inline]
+    pub fn release_weak_refs(&self) {
+        // SAFETY: `self` is a live JSC::VM.
+        unsafe { JSC__VM__releaseWeakRefs(self as *const _ as *mut _) }
+    }
+    /// `VM.collectAsync()` (VM.zig:90).
+    #[inline]
+    pub fn collect_async(&self) {
+        // SAFETY: `self` is a live JSC::VM.
+        unsafe { JSC__VM__collectAsync(self as *const _ as *mut _) }
+    }
+    /// `VM.heapSize()` (VM.zig:98).
+    #[inline]
+    pub fn heap_size(&self) -> usize {
+        // SAFETY: `self` is a live JSC::VM.
+        unsafe { JSC__VM__heapSize(self as *const _ as *mut _) }
+    }
+    /// `VM.runGC(sync)` (VM.zig:84).
+    pub fn run_gc(&self, _sync: bool) -> usize {
+        // TODO(b2): JSC__VM__runGC FFI — gated until VM.rs un-gates.
+        self.heap_size()
+    }
+}
+
+impl JSGlobalObject {
+    /// `JSGlobalObject.handleRejectedPromises()` (JSGlobalObject.zig:648).
+    #[inline]
+    pub fn handle_rejected_promises(&self) {
+        // SAFETY: `self` is a live JSGlobalObject.
+        unsafe { Bun__JSC_GlobalObject__handleRejectedPromises(self.as_ptr()) }
+    }
+    /// `JSGlobalObject.reportActiveExceptionAsUnhandled(err)` — takes the pending
+    /// exception (proven by `err`) and routes it through `bunVM().uncaughtException()`.
+    pub fn report_active_exception_as_unhandled(&self, err: JsError) {
+        let _ = self.take_exception(err);
+        // TODO(b2-cycle): bunVM().uncaught_exception(self, value, false) — body
+        // gated until VirtualMachine::uncaught_exception un-gates.
     }
 }
 
@@ -1702,106 +1744,25 @@ pub mod saved_source_map {
 }
 pub use self::saved_source_map as SavedSourceMap;
 
-pub mod virtual_machine {
-    use core::cell::Cell;
-
-    /// `jsc.VirtualMachine.InitOptions` — see VirtualMachine.zig:1100.
-    /// Only the fields downstream crates need are surfaced here.
-    #[derive(Default)]
-    pub struct InitOptions {
-        pub args: alloc::vec::Vec<alloc::string::String>,
-        pub graph: *mut core::ffi::c_void,
-        pub smol: bool,
-        pub eval_mode: bool,
-        pub is_main_thread: bool,
-    }
-
-    /// Thread-local VM holder (`VMHolder` in VirtualMachine.zig).
-    thread_local! {
-        static VM_HOLDER: Cell<*mut VirtualMachine> = const { Cell::new(core::ptr::null_mut()) };
-    }
-
-    #[repr(C)]
-    #[derive(Debug, Default)]
-    pub struct VirtualMachine {
-        pub active_tasks: u32,
-        pub counters: crate::counters::Counters,
-        // TODO(b2): full field layout — gated until VirtualMachine.rs un-gates.
-    }
-    impl VirtualMachine {
-        /// `jsc.VirtualMachine.get()` — returns the thread-local VM. In Zig this is
-        /// `VMHolder.vm.?`; the Rust port stores it in a thread-local once
-        /// VirtualMachine.rs un-gates.
-        pub fn get() -> &'static mut VirtualMachine {
-            let p = VM_HOLDER.with(|c| c.get());
-            assert!(!p.is_null(), "VirtualMachine::get() called before VM was initialized");
-            // SAFETY: `p` was set by `set_current` and is live for the thread's lifetime.
-            unsafe { &mut *p }
-        }
-        #[inline]
-        pub fn is_loaded() -> bool {
-            VM_HOLDER.with(|c| !c.get().is_null())
-        }
-        /// Installs `vm` as the current thread's VM (Zig: `VMHolder.vm = vm`).
-        pub fn set_current(vm: *mut VirtualMachine) {
-            VM_HOLDER.with(|c| c.set(vm));
-        }
-        pub fn global(&self) -> &super::JSGlobalObject {
-            // TODO(b2): `self.global` field — gated until full struct un-gates.
-            todo!("VirtualMachine::global")
-        }
-        pub fn event_loop(&self) -> &mut super::event_loop::EventLoop {
-            // TODO(b2): `self.event_loop` field — gated until full struct un-gates.
-            todo!("VirtualMachine::event_loop")
-        }
-        pub fn transpiler(&self) -> &mut bun_bundler::Transpiler {
-            // TODO(b2): `self.transpiler` field — gated until full struct un-gates.
-            todo!("VirtualMachine::transpiler")
-        }
-        pub fn source_mappings(&self) -> &mut super::saved_source_map::SavedSourceMap {
-            // TODO(b2): `self.source_mappings` field — gated until full struct un-gates.
-            todo!("VirtualMachine::source_mappings")
-        }
-        pub fn rare_data(&mut self) -> &mut super::rare_data::RareData {
-            // TODO(b2): lazy-init `self.rare_data` field — gated.
-            todo!("VirtualMachine::rare_data")
-        }
-        pub fn enable_macro_mode(&mut self) {
-            // TODO(b2): macro_mode counter + lazy MacroMap init — gated.
-        }
-        pub fn disable_macro_mode(&mut self) {
-            // TODO(b2): macro_mode counter — gated.
-        }
-        pub fn load_macro_entry_point(
-            &mut self,
-            entry_path: &str,
-            function_name: &str,
-            specifier: &str,
-            hash: i32,
-        ) -> super::JsResult<*mut super::JSInternalPromise> {
-            let _ = (entry_path, function_name, specifier, hash);
-            // TODO(b2): MacroEntryPointLoader + runWithAPILock — gated.
-            todo!("VirtualMachine::load_macro_entry_point")
-        }
-        /// `runWithAPILock(comptime Context, ctx, comptime fn)` — acquires the JSC
-        /// API lock around `f(ctx)`. Rust collapses the comptime params into a closure.
-        pub fn run_with_api_lock<R>(&self, f: impl FnOnce() -> R) -> R {
-            // TODO(b2): JSLock acquire/release FFI — gated. For now, call directly.
-            f()
-        }
-    }
-}
+// ──────────────────────────────────────────────────────────────────────────
+// B-2 un-gated: VirtualMachine / ModuleLoader / event_loop now compile from
+// their real Phase-A draft files. The stub `pub mod` blocks that lived here
+// in B-1 are replaced with `#[path]` decls; downstream-compat re-exports
+// (`VirtualMachine`, `ModuleLoader`, `EventLoop`, `VirtualMachineInitOptions`)
+// are preserved.
+// ──────────────────────────────────────────────────────────────────────────
+#[path = "VirtualMachine.rs"] pub mod virtual_machine;
 pub use self::virtual_machine as VirtualMachine;
 pub use self::virtual_machine::InitOptions as VirtualMachineInitOptions;
 
-pub mod module_loader {
-    /// Re-export of the canonical hard-coded module namespace.
-    /// `bun_resolve_builtins::HardcodedModule` is the *module* (containing
-    /// `Alias`, `Cfg`, and the `HardcodedModule` enum), so
-    /// `bun_jsc::ModuleLoader::HardcodedModule::Alias` resolves correctly.
-    pub use bun_resolve_builtins::HardcodedModule;
-}
+#[path = "ModuleLoader.rs"] pub mod module_loader;
 pub use self::module_loader as ModuleLoader;
+
+/// `jsc.ProcessAutoKiller` — gated sibling, surfaced as opaque so
+/// `VirtualMachine.rs` can re-export it.
+pub mod process_auto_killer {
+    crate::stub_ty!(ProcessAutoKiller);
+}
 
 pub mod rare_data {
     /// `jsc.RareData` — per-VM bag of optionally-allocated subsystems.
@@ -2058,52 +2019,14 @@ pub mod js_property_iterator {
 }
 pub use self::js_property_iterator::JSPropertyIterator;
 
-pub mod event_loop {
-    // TODO(b1): gated — see _gated::event_loop
-    crate::stub_ty!(
-        AbstractVM, AnyEventLoop, AnyTask, AnyTaskWithExtraContext, ConcurrentCppTask,
-        ConcurrentPromiseTask, ConcurrentTask, CppTask, DeferredTaskQueue, EventLoopHandle,
-        EventLoopKind, EventLoopTask, EventLoopTaskPtr, GarbageCollectionController, JsVM,
-        ManagedTask, MiniEventLoop, MiniVM, PosixSignalHandle, PosixSignalTask, Task, WorkPool,
-        WorkPoolTask, WorkTask,
-    );
-
-    /// `jsc.EventLoop` — the JS-thread event loop. Full struct lives in
-    /// event_loop.rs (gated). Surfaced as opaque so dependents can hold `*mut`.
-    #[repr(C)]
-    pub struct EventLoop {
-        // TODO(b2): real fields — gated until event_loop.rs un-gates.
-        _opaque: [u8; 0],
-    }
-    impl EventLoop {
-        pub fn tick(&mut self) { todo!("EventLoop::tick — gated") }
-        pub fn tick_possibly_forever(&mut self) { todo!("EventLoop::tick_possibly_forever — gated") }
-        pub fn auto_tick_active(&mut self) { todo!("EventLoop::auto_tick_active — gated") }
-        pub fn tick_concurrent_with_count(&mut self) -> usize { 0 }
-        pub fn enqueue_task(&mut self, _task: Task) { todo!("EventLoop::enqueue_task — gated") }
-
-        /// `EventLoop.enter()` (event_loop.zig:70) — increment the
-        /// entered-event-loop counter before calling into JavaScript.
-        pub fn enter(&mut self) {
-            // TODO(b2): `self.entered_event_loop_count += 1` + debug.enter() —
-            // field layout gated until event_loop.rs un-gates.
-            todo!("EventLoop::enter — gated")
-        }
-        /// `EventLoop.exit()` (event_loop.zig:79) — decrement and drain
-        /// microtasks when reaching zero.
-        pub fn exit(&mut self) {
-            // TODO(b2): drainMicrotasksWithGlobal when count hits 1 — gated.
-            todo!("EventLoop::exit — gated")
-        }
-    }
-}
+#[path = "event_loop.rs"] pub mod event_loop;
 pub use self::event_loop as EventLoop;
 pub use self::event_loop::{
     AbstractVM, AnyEventLoop, AnyTask, AnyTaskWithExtraContext, ConcurrentCppTask,
     ConcurrentPromiseTask, ConcurrentTask, CppTask, DeferredTaskQueue, EventLoopHandle,
-    EventLoopKind, EventLoopTask, EventLoopTaskPtr, GarbageCollectionController, JsVM, ManagedTask,
-    MiniEventLoop, MiniVM, PosixSignalHandle, PosixSignalTask, Task, WorkPool, WorkPoolTask,
-    WorkTask,
+    EventLoopKind, EventLoopTask, EventLoopTaskPtr, GarbageCollectionController, JsTerminated,
+    JsVM, ManagedTask, MiniEventLoop, MiniVM, PosixSignalHandle, PosixSignalTask, Task, WorkPool,
+    WorkPoolTask, WorkTask,
 };
 #[cfg(unix)]
 pub type PlatformEventLoop = bun_uws::Loop;

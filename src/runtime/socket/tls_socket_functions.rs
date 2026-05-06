@@ -7,6 +7,125 @@ use bun_str::{self, strings, String as BunString, ZigString};
 
 use crate::api::bun::x509 as X509;
 
+// ──────────────────────────────────────────────────────────────────────────
+// Local BoringSSL FFI surface not yet in bun_boringssl_sys.
+// Declared here per port rules (call the linked C symbol directly); migrate
+// into `bun_boringssl_sys` once the bindgen pass covers them.
+// ──────────────────────────────────────────────────────────────────────────
+#[allow(non_camel_case_types, non_upper_case_globals, dead_code)]
+mod ffi {
+    use super::boringssl::{SSL, X509, struct_stack_st_X509, X509_STORE_CTX};
+    use core::ffi::{c_char, c_int, c_long, c_uint, c_void};
+
+    // Opaque handles missing from boringssl_sys.
+    #[repr(C)] pub struct SSL_SESSION { _p: [u8; 0] }
+    #[repr(C)] pub struct SSL_CIPHER { _p: [u8; 0] }
+    #[repr(C)] pub struct EVP_PKEY { _p: [u8; 0] }
+    #[repr(C)] pub struct EC_KEY { _p: [u8; 0] }
+    #[repr(C)] pub struct EC_GROUP { _p: [u8; 0] }
+
+    pub type ssl_renegotiate_mode_t = c_int;
+
+    // ssl.h
+    pub const TLSEXT_NAMETYPE_host_name: c_int = 0;
+
+    // evp.h key types (NID values)
+    pub const EVP_PKEY_RSA: c_int = 6;
+    pub const EVP_PKEY_RSA_PSS: c_int = 912;
+    pub const EVP_PKEY_DSA: c_int = 116;
+    pub const EVP_PKEY_EC: c_int = 408;
+    pub const EVP_PKEY_DH: c_int = 28;
+    pub const EVP_PKEY_X25519: c_int = 948;
+    pub const EVP_PKEY_X448: c_int = 961;
+
+    // obj_mac.h
+    pub const NID_ED25519: c_int = 949;
+    pub const NID_ED448: c_int = 960;
+    pub const NID_id_GostR3410_2001: c_int = 811;
+    pub const NID_id_GostR3410_2012_256: c_int = 979;
+    pub const NID_id_GostR3410_2012_512: c_int = 980;
+
+    unsafe extern "C" {
+        // ── SSL session/handshake info ───────────────────────────────────
+        pub fn SSL_get_servername(ssl: *const SSL, type_: c_int) -> *const c_char;
+        pub fn SSL_get_version(ssl: *const SSL) -> *const c_char;
+        pub fn SSL_set_tlsext_host_name(ssl: *mut SSL, name: *const c_char) -> c_int;
+        pub fn SSL_get_peer_certificate(ssl: *const SSL) -> *mut X509;
+        pub fn SSL_get_certificate(ssl: *const SSL) -> *mut X509;
+        pub fn SSL_set_max_send_fragment(ssl: *mut SSL, max_send_fragment: usize) -> c_int;
+        pub fn SSL_get_finished(ssl: *const SSL, buf: *mut c_void, count: usize) -> usize;
+        pub fn SSL_get_peer_finished(ssl: *const SSL, buf: *mut c_void, count: usize) -> usize;
+        pub fn SSL_get_shared_sigalgs(
+            ssl: *mut SSL,
+            idx: c_int,
+            psign: *mut c_int,
+            phash: *mut c_int,
+            psignhash: *mut c_int,
+            rsig: *mut u8,
+            rhash: *mut u8,
+        ) -> c_int;
+        pub fn SSL_export_keying_material(
+            ssl: *mut SSL,
+            out: *mut u8,
+            out_len: usize,
+            label: *const c_char,
+            label_len: usize,
+            context: *const u8,
+            context_len: usize,
+            use_context: c_int,
+        ) -> c_int;
+        pub fn SSL_get0_alpn_selected(
+            ssl: *const SSL,
+            out_data: *mut *const u8,
+            out_len: *mut c_uint,
+        );
+        pub fn SSL_session_reused(ssl: *const SSL) -> c_int;
+        pub fn SSL_get_privatekey(ssl: *const SSL) -> *mut EVP_PKEY;
+
+        // ── SSL_SESSION ───────────────────────────────────────────────────
+        pub fn SSL_get_session(ssl: *const SSL) -> *mut SSL_SESSION;
+        pub fn SSL_set_session(ssl: *mut SSL, session: *mut SSL_SESSION) -> c_int;
+        pub fn SSL_SESSION_free(session: *mut SSL_SESSION);
+        pub fn SSL_SESSION_get0_ticket(
+            session: *const SSL_SESSION,
+            out_ticket: *mut *const u8,
+            out_len: *mut usize,
+        );
+        pub fn i2d_SSL_SESSION(session: *mut SSL_SESSION, pp: *mut *mut u8) -> c_int;
+        pub fn d2i_SSL_SESSION(
+            a: *mut *mut SSL_SESSION,
+            pp: *mut *const u8,
+            length: c_long,
+        ) -> *mut SSL_SESSION;
+
+        // ── SSL_CIPHER ────────────────────────────────────────────────────
+        pub fn SSL_get_current_cipher(ssl: *const SSL) -> *const SSL_CIPHER;
+        pub fn SSL_CIPHER_get_name(cipher: *const SSL_CIPHER) -> *const c_char;
+        pub fn SSL_CIPHER_standard_name(cipher: *const SSL_CIPHER) -> *const c_char;
+        pub fn SSL_CIPHER_get_version(cipher: *const SSL_CIPHER) -> *const c_char;
+
+        // ── X509 ─────────────────────────────────────────────────────────
+        pub fn X509_free(x: *mut X509);
+        pub fn X509_up_ref(x: *mut X509) -> c_int;
+
+        // ── EVP / EC ──────────────────────────────────────────────────────
+        pub fn EVP_PKEY_id(pkey: *const EVP_PKEY) -> c_int;
+        pub fn EVP_PKEY_bits(pkey: *const EVP_PKEY) -> c_int;
+        pub fn EVP_PKEY_get1_EC_KEY(pkey: *mut EVP_PKEY) -> *mut EC_KEY;
+        pub fn EC_KEY_get0_group(key: *const EC_KEY) -> *const EC_GROUP;
+        pub fn EC_GROUP_get_curve_name(group: *const EC_GROUP) -> c_int;
+
+        // ── OBJ / ERR ─────────────────────────────────────────────────────
+        pub fn OBJ_nid2sn(nid: c_int) -> *const c_char;
+        pub fn ERR_reason_error_string(e: u32) -> *const c_char;
+        pub fn ERR_func_error_string(e: u32) -> *const c_char;
+        pub fn ERR_lib_error_string(e: u32) -> *const c_char;
+    }
+}
+// Shadow `boringssl::*` references in the host-fn bodies below with the local
+// FFI surface where the sys crate doesn't yet export the symbol.
+use ffi::*;
+
 // In Zig this file is a mixin of free functions over `jsc.API.TLSSocket`.
 // TODO(port): these may need to move into `impl TLSSocket` once the class is ported.
 type This = crate::api::TLSSocket;

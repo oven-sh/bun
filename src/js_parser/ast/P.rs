@@ -3554,18 +3554,17 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     // Generate a TypeScript namespace object for this namespace's scope. If this
     // namespace is another block that is to be merged with an existing namespace,
     // use that earlier namespace's object instead.
-    #[cfg(any())] // blocked_on: TSNamespaceScope field set; ts::Data::Namespace payload type
     pub fn get_or_create_exported_namespace_members(
         &mut self,
         name: &[u8],
         is_export: bool,
         is_enum_scope: bool,
-    ) -> &'a mut js_ast::TSNamespaceScope {
+    ) -> *mut js_ast::TSNamespaceScope {
         let map: Option<*mut js_ast::TSNamespaceMemberMap> = 'brk: {
             // Merge with a sibling namespace from the same scope
             // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
             if let Some(existing_member) = unsafe { &*self.current_scope }.members.get(name) {
-                if let Some(member_data) = self.ref_to_ts_namespace_member.get(&existing_member.r#ref) {
+                if let Some(member_data) = self.ref_to_ts_namespace_member.get(&existing_member.ref_) {
                     if let js_ast::ts::Data::Namespace(ns) = member_data {
                         break 'brk Some(*ns as *mut _);
                     }
@@ -3576,10 +3575,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             if is_export {
                 // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
                 if let Some(ns) = unsafe { &*self.current_scope }.ts_namespace {
-                    // SAFETY: arena-owned TSNamespaceMemberMap valid for parser 'a lifetime
-                    if let Some(member) = unsafe { &*ns }.exported_members.get(name) {
-                        if let js_ast::ts::Data::Namespace(m) = member.data {
-                            break 'brk Some(m as *mut _);
+                    // SAFETY: arena-owned TSNamespaceScope/MemberMap valid for parser 'a lifetime
+                    let exported = unsafe { ns.as_ref() }.exported_members;
+                    if !exported.is_null() {
+                        if let Some(member) = unsafe { &*exported }.get(name) {
+                            if let js_ast::ts::Data::Namespace(m) = member.data {
+                                break 'brk Some(m as *mut _);
+                            }
                         }
                     }
                 }
@@ -3593,7 +3595,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 exported_members: existing,
                 is_enum_scope,
                 arg_ref: Ref::NONE,
-            });
+                property_accesses: Default::default(),
+            }) as *mut _;
         }
 
         // Otherwise, generate a new namespace object
@@ -3609,10 +3612,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 exported_members: core::ptr::null_mut(), // patched below
                 is_enum_scope,
                 arg_ref: Ref::NONE,
+                property_accesses: Default::default(),
             },
         });
         pair.scope.exported_members = &mut pair.map;
-        &mut pair.scope
+        &mut pair.scope as *mut _
     }
 
     // TODO:
@@ -3975,28 +3979,37 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
     // load_name_from_ref() lives in the round-C live block above (deduped).
 
-    #[cfg(any())] // blocked_on: ImportRecord Default + fs::Path<'a> (see add_import_record_by_range_and_path)
     #[inline]
     pub fn add_import_record(&mut self, kind: ImportKind, loc: logger::Loc, name: &'a [u8]) -> u32 {
         self.add_import_record_by_range(kind, self.source.range_of_string(loc), name)
     }
 
-    #[cfg(any())] // blocked_on: ImportRecord Default + fs::Path<'a> (see add_import_record_by_range_and_path)
     pub fn add_import_record_by_range(&mut self, kind: ImportKind, range: logger::Range, name: &'a [u8]) -> u32 {
-        // TODO(port): fs::Path::init takes &'static [u8] in Phase A; the parser passes
-        // arena-owned 'a slices. Thread the lifetime through bun_logger::fs::Path in
-        // round-E (or transmute-extend here once that's audited).
-        let index = self.import_records.len();
-        let record = ImportRecord { kind, range, path: fs::Path::init(name), ..Default::default() };
-        self.import_records.push(record);
-        u32::try_from(index).unwrap()
+        self.add_import_record_by_range_and_path(kind, range, fs::Path::init(name))
     }
 
-    #[cfg(any())] // blocked_on: ImportRecord: Default (bun_options_types); fs::Path<'a> lifetime
-    pub fn add_import_record_by_range_and_path(&mut self, kind: ImportKind, range: logger::Range, path: fs::Path) -> u32 {
+    pub fn add_import_record_by_range_and_path(&mut self, kind: ImportKind, range: logger::Range, path: fs::Path<'a>) -> u32 {
         let index = self.import_records.len();
-        let record = ImportRecord { kind, range, path, ..Default::default() };
-        self.import_records.push(record);
+        // Phase-A: `ImportRecord.path` is `fs::Path<'static>` (PORTING.md: no struct
+        // lifetime params yet). The parser-supplied path borrows arena-owned 'a bytes
+        // which outlive the import_records list (both dropped with the parser arena),
+        // so the lifetime extension is sound here. Round-E threads `'a` through
+        // `bun_options_types::ImportRecord` and removes this transmute.
+        // SAFETY: see above — arena 'a outlives every ImportRecord stored in self.import_records.
+        let path: fs::Path<'static> = unsafe { core::mem::transmute::<fs::Path<'a>, fs::Path<'static>>(path) };
+        // No `impl Default for ImportRecord` (range/path/kind have no Zig defaults) —
+        // spell out the optional fields with their Zig field-defaults explicitly.
+        self.import_records.push(ImportRecord {
+            kind,
+            range,
+            path,
+            tag: bun_options_types::import_record::Tag::None,
+            loader: None,
+            source_index: bun_options_types::BundleEnums::Index::INVALID,
+            module_id: 0,
+            original_path: b"",
+            flags: bun_options_types::import_record::Flags::empty(),
+        });
         u32::try_from(index).unwrap()
     }
 

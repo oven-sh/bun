@@ -129,7 +129,7 @@ pub fn download_slice(
             method: bun_http::Method::GET,
             proxy_url,
             body: b"",
-            range: range.as_deref(),
+            range: range.map(Vec::into_boxed_slice),
             request_payer,
             ..Default::default()
         },
@@ -821,7 +821,7 @@ pub fn download_stream(
     } else {
         Box::<[u8]>::default()
     };
-    let task = S3HttpDownloadStreamingTask::new(S3HttpDownloadStreamingTask {
+    let task = Box::into_raw(S3HttpDownloadStreamingTask::new(S3HttpDownloadStreamingTask {
         // TODO(port): `http: undefined` — initialized below
         // SAFETY: http is fully overwritten by AsyncHTTP::init below before any read
         http: unsafe { core::mem::zeroed() },
@@ -833,7 +833,10 @@ pub fn download_stream(
         headers,
         vm: VirtualMachine::get(),
         ..Default::default()
-    });
+    }));
+    // SAFETY: just allocated via Box::into_raw, non-null; lifetime owned by HTTP callback
+    // (freed via Box::from_raw in S3HttpDownloadStreamingTask::http_callback).
+    let task = unsafe { &mut *task };
     task.poll_ref.ref_(task.vm);
 
     let url = bun_url::URL::parse(&task.sign_result.url);

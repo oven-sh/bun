@@ -238,7 +238,7 @@ impl ClientSession {
             self.maybe_release();
             return;
         }
-        self.attach_client(client);
+        self.attach(client);
         // If attach() poisoned the encoder and left the session empty, release
         // it now — adopt() callers (keep-alive resume, active-session match)
         // have no tail maybeRelease of their own.
@@ -249,8 +249,7 @@ impl ClientSession {
 
     /// Park a coalesced request until the server's SETTINGS arrive. Abort
     /// is routed via the session socket so `abortByHttpId` can find it.
-    // PORT NOTE: see `create_session` rename note.
-    pub fn enqueue_client(&mut self, client: &mut HTTPClient) {
+    pub fn enqueue(&mut self, client: &mut HTTPClient) {
         client.h2_register_abort_tracker(self.socket);
         self.pending_attach.push(client as *mut _);
         self.rearm_timeout();
@@ -269,7 +268,7 @@ impl ClientSession {
             } else if client.signals.get(signals::Field::Aborted) {
                 client.h2_fail(err!(Aborted));
             } else if self.has_headroom() {
-                self.attach_client(client);
+                self.attach(client);
             } else {
                 client.h2_retry_after_coalesce();
             }
@@ -316,8 +315,7 @@ impl ClientSession {
 
     /// Allocate a stream for `client`, serialise its request as HEADERS +
     /// DATA, and flush.
-    // PORT NOTE: see `create_session` rename note.
-    pub fn attach_client(&mut self, client: &mut HTTPClient) {
+    pub fn attach(&mut self, client: &mut HTTPClient) {
         debug_assert!(self.has_headroom());
 
         let send_window =

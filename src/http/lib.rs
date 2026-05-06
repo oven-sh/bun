@@ -1023,9 +1023,38 @@ fn write_to_socket_with_buffer_fallback<const IS_SSL: bool>(
 }
 
 // ── Bridge stubs removed: real impls now live in HTTPContext.rs,
-//    HTTPThread.rs, ProxyTunnel.rs, h2_client/ClientSession.rs and
-//    h3_client/ClientContext.rs.
+//    HTTPThread.rs, h2_client/ClientSession.rs and h3_client/ClientContext.rs.
 // ────────────────────────────────────────────────────────────────────────
+// ProxyTunnel real impl is still gated behind `_phase_a_draft` in
+// ProxyTunnel.rs (depends on un-ported SSLWrapper handler surface). Keep the
+// bridge so the state machine type-checks; bodies fill when ProxyTunnel.rs
+// un-gates.
+// TODO(b2-blocked): drop once ProxyTunnel.rs `_phase_a_draft` un-gates.
+impl ProxyTunnel {
+    pub fn shutdown(&mut self) {
+        todo!("ProxyTunnel::shutdown — gated in ProxyTunnel.rs")
+    }
+    pub fn on_writable<const IS_SSL: bool>(&mut self, _socket: HttpSocket<IS_SSL>) {
+        todo!("ProxyTunnel::on_writable — gated in ProxyTunnel.rs")
+    }
+    pub fn write(&mut self, _buf: &[u8]) -> Result<usize, bun_core::Error> {
+        todo!("ProxyTunnel::write — gated in ProxyTunnel.rs")
+    }
+    pub fn receive(&mut self, _buf: &[u8]) {
+        todo!("ProxyTunnel::receive — gated in ProxyTunnel.rs")
+    }
+    pub fn detach_owner(&mut self, _client: &HTTPClient) {
+        todo!("ProxyTunnel::detach_owner — gated in ProxyTunnel.rs")
+    }
+    pub fn start<const IS_SSL: bool>(
+        _client: &mut HTTPClient,
+        _socket: HttpSocket<IS_SSL>,
+        _ssl_options: crate::ssl_config::SSLConfig,
+        _start_payload: &[u8],
+    ) {
+        todo!("ProxyTunnel::start — gated in ProxyTunnel.rs")
+    }
+}
 
 // ── HTTPClient field accessors ──────────────────────────────────────────
 // The Zig struct stored raw pointers (`*MutableString`, `*ProxyTunnel`); the

@@ -53,8 +53,12 @@ use super::bun_spawn::posix_spawn;
 #[cfg(unix)]
 #[allow(unused_imports)]
 use posix_spawn::{Actions as PosixSpawnActions, Attr as PosixSpawnAttr};
-/// `posix_spawn::WaitPidResult` — local mirror so `Status::from` and the
-/// waiter-thread queue compile while `super::spawn` is gated.
+/// `posix_spawn::WaitPidResult` — re-exported now that `super::bun_spawn` is
+/// un-gated. `status` is `u32` there (Zig `c_int` reinterpreted via the
+/// `W*` macros); `Status::from` casts before matching.
+#[cfg(unix)]
+pub use posix_spawn::WaitPidResult;
+#[cfg(not(unix))]
 #[derive(Clone, Copy)]
 pub struct WaitPidResult {
     pub pid: PidT,
@@ -293,16 +297,60 @@ impl Process {
     pub fn signal_code(&self) -> Option<bun_core::SignalCode> {
         self.status.signal_code()
     }
+
+    /// Intrusive ref-count helpers (Zig: `ref_count.ref()/deref()`). Kept on
+    /// `&mut self` to match call-site shape; the actual op is atomic on the
+    /// embedded `ThreadSafeRefCount` so the mutable borrow is conservative.
+    #[inline]
+    pub fn ref_(&mut self) {
+        // SAFETY: `self` is a live Process.
+        unsafe { bun_ptr::ThreadSafeRefCount::<Process>::ref_(self as *mut _) };
+    }
+
+    #[inline]
+    pub fn deref(&mut self) {
+        // SAFETY: `self` is a live Process; destructor frees the Box if this
+        // was the last ref.
+        unsafe { bun_ptr::ThreadSafeRefCount::<Process>::deref(self as *mut _) };
+    }
+
+    /// Bridge `self.event_loop` (`EventLoopHandle`) to `bun_aio::EventLoopCtx`
+    /// for FilePoll/KeepAlive calls. Zig used `anytype` and dispatched at
+    /// comptime; the Rust port split this into two erased layers, so we
+    /// reconstitute the aio-level ctx here.
+    #[inline]
+    fn event_loop_ctx(&self) -> bun_aio::EventLoopCtx {
+        event_loop_handle_to_ctx(self.event_loop)
+    }
+}
+
+/// Convert an `EventLoopHandle` to the aio-level `EventLoopCtx`.
+///
+/// `Mini` constructs the ctx directly from the published vtable. `Js` defers
+/// to the `GET_VM_CTX_HOOK` global (registered by `bun_runtime::init()`) since
+/// the JS event-loop ctx vtable lives in `bun_jsc` (T6) and bun_runtime is the
+/// only crate that sees both. Per-thread there is exactly one JS event loop,
+/// so the hook lookup is equivalent to dispatching on `owner`.
+// TODO(port): once a `JS_EVENT_LOOP_CTX_VTABLE` static lands in bun_runtime,
+// build the ctx from `owner` directly instead of the global hook.
+#[inline]
+pub(crate) fn event_loop_handle_to_ctx(handle: EventLoopHandle) -> bun_aio::EventLoopCtx {
+    match handle {
+        EventLoopHandle::Js { .. } => {
+            bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js)
+        }
+        EventLoopHandle::Mini(mini) => bun_aio::EventLoopCtx {
+            owner: mini.cast(),
+            vtable: bun_event_loop::MINI_EVENT_LOOP_CTX_VTABLE,
+        },
+    }
 }
 
 // ─── posix_spawn / FilePoll / uv-backed Process methods ──────────────────────
-// Gated: depend on `super::spawn::bun_spawn::wait4` (sibling not yet declared),
-// `bun_aio::FilePoll::{init,register,enable_keeping_process_alive}` (method
-// surface unverified), `EventLoopHandle::{init,loop_}` (B-2 in flux), and
-// `bun_sys::{get_errno,E,Syscall,INVALID_FD}` shape mismatches (`Maybe` is a
-// `Result` alias, not a `.Result/.Err` enum).
-// TODO(b2-blocked): super::spawn + bun_aio FilePoll method surface.
-#[cfg(any())]
+// Un-gated: `super::bun_spawn::posix_spawn` (Actions/Attr/wait4) and the
+// `bun_aio::FilePoll` method surface are stable. `EventLoopHandle` →
+// `EventLoopCtx` bridging is local (`event_loop_handle_to_ctx`) until a
+// JS-side ctx vtable lands.
 impl Process {
     #[cfg(windows)]
     pub fn update_status_on_windows(&mut self) {
@@ -801,10 +849,20 @@ impl Status {
         if let Some(code) = exit_code {
             return Some(Status::Exited(Exited { code, signal: signal.unwrap_or(0) }));
         } else if let Some(sig) = signal {
-            // SAFETY: signal byte → SignalCode enum (#[repr(u8)])
-            return Some(Status::Signaled(unsafe {
-                core::mem::transmute::<u8, bun_core::SignalCode>(sig)
-            }));
+            // Zig's `bun.SignalCode` is a *non-exhaustive* `enum(u8) { …, _ }`, so
+            // `@enumFromInt(signal.?)` is defined for any byte. `bun_core::SignalCode`
+            // is an exhaustive `#[repr(u8)]` enum with discriminants 1..=31, so a
+            // Linux RT signal (32..64) or 0 from WTERMSIG/WSTOPSIG would be UB via
+            // transmute. Guard the range; for out-of-range signals, preserve the raw
+            // byte in `Exited.signal` (already a `u8`) so callers can still observe it.
+            if (1..=31).contains(&sig) {
+                // SAFETY: range-checked 1..=31; SignalCode is #[repr(u8)] with exactly
+                // those discriminants.
+                return Some(Status::Signaled(unsafe {
+                    core::mem::transmute::<u8, bun_core::SignalCode>(sig)
+                }));
+            }
+            return Some(Status::Exited(Exited { code: 0, signal: sig }));
         }
 
         None
@@ -1831,9 +1889,17 @@ pub(crate) mod spawn_sys {
     ) -> Maybe<[Fd; 2]> {
         let mut fds: [c_int; 2] = [0; 2];
         // SAFETY: libc socketpair into a 2-int array.
-        let rc = unsafe { libc::socketpair(domain, socktype, protocol, fds.as_mut_ptr()) };
-        if rc != 0 {
-            return Err(bun_sys::Error::from_code_int(errno_int(), TAG_SOCKETPAIR));
+        // Spec (sys.zig:3144-3166) loops on EINTR for both Linux and libc paths.
+        loop {
+            let rc = unsafe { libc::socketpair(domain, socktype, protocol, fds.as_mut_ptr()) };
+            if rc != 0 {
+                let e = errno_int();
+                if e == libc::EINTR {
+                    continue;
+                }
+                return Err(bun_sys::Error::from_code_int(e, TAG_SOCKETPAIR));
+            }
+            break;
         }
         let pair = [Fd::from_native(fds[0]), Fd::from_native(fds[1])];
         // CLOEXEC on the parent-kept end; the child end is dup2'd over.
@@ -1843,23 +1909,36 @@ pub(crate) mod spawn_sys {
             let _ = bun_sys::set_nonblocking(pair[0]);
             let _ = bun_sys::set_nonblocking(pair[1]);
         }
-        // SO_NOSIGPIPE: shell semantics want SIGPIPE delivered on stdout close,
-        // so `for_shell` skips the parent-read side.
+        // macOS: spec (sys.zig:3180-3199) — when `for_shell`, set NEITHER fd's
+        // SO_NOSIGPIPE (the child must receive SIGPIPE so `yes | head` terminates)
+        // and instead bump RCVBUF/SNDBUF to 128 KB. When `!for_shell`, set
+        // SO_NOSIGPIPE on BOTH fds.
         #[cfg(target_os = "macos")]
         {
-            let on: c_int = 1;
             // SAFETY: setsockopt on freshly-created socketpair fds.
             unsafe {
-                if !for_shell {
+                if for_shell {
+                    let so_recvbuf: c_int = 1024 * 128;
+                    let so_sendbuf: c_int = 1024 * 128;
+                    libc::setsockopt(
+                        fds[1], libc::SOL_SOCKET, libc::SO_RCVBUF,
+                        &so_recvbuf as *const _ as *const c_void, core::mem::size_of::<c_int>() as u32,
+                    );
+                    libc::setsockopt(
+                        fds[0], libc::SOL_SOCKET, libc::SO_SNDBUF,
+                        &so_sendbuf as *const _ as *const c_void, core::mem::size_of::<c_int>() as u32,
+                    );
+                } else {
+                    let on: c_int = 1;
                     libc::setsockopt(
                         fds[0], libc::SOL_SOCKET, libc::SO_NOSIGPIPE,
                         &on as *const _ as *const c_void, core::mem::size_of::<c_int>() as u32,
                     );
+                    libc::setsockopt(
+                        fds[1], libc::SOL_SOCKET, libc::SO_NOSIGPIPE,
+                        &on as *const _ as *const c_void, core::mem::size_of::<c_int>() as u32,
+                    );
                 }
-                libc::setsockopt(
-                    fds[1], libc::SOL_SOCKET, libc::SO_NOSIGPIPE,
-                    &on as *const _ as *const c_void, core::mem::size_of::<c_int>() as u32,
-                );
             }
         }
         let _ = for_shell;

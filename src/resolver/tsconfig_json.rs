@@ -80,10 +80,17 @@ impl JsonCache {
     /// matching Zig's `Json{}` empty-struct semantics for the never-reached
     /// pre-init path.
     pub const fn noop() -> JsonCache {
-        // SAFETY: `parse_tsconfig` body never dereferences `cache` for the
-        // no-op vtable, so a null `ptr` is fine.
+        // SAFETY: `noop_parse_tsconfig` never dereferences `cache`, so a null
+        // `ptr` is fine.
+        unsafe fn noop_parse_tsconfig(
+            _cache: *mut (),
+            _log: &mut logger::Log,
+            _source: &logger::Source,
+        ) -> Result<Option<js_ast::Expr>, bun_core::Error> {
+            Ok(None)
+        }
         static NOOP_VTABLE: JsonCacheVTable = JsonCacheVTable {
-            parse_tsconfig: |_cache, _log, _source| Ok(None),
+            parse_tsconfig: noop_parse_tsconfig,
         };
         JsonCache { ptr: core::ptr::null_mut(), vtable: &NOOP_VTABLE }
     }

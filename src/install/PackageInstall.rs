@@ -1306,13 +1306,14 @@ impl<'a> PackageInstall<'a> {
                         destination_dir_.fd(),
                         bstr::BStr::new(entry.path.as_bytes())
                     );
-                    // Zig: `std.fs.Dir.createFile(dir, path, .{})` — open O_WRONLY|O_CREAT|O_TRUNC.
+                    // Zig: `std.fs.Dir.createFile(dir, path, .{})` — open O_WRONLY|O_CREAT|O_TRUNC,
+                    // mode = std.fs.File.default_mode (0o666).
                     let create = |path: &ZStr| {
                         sys::openat(
                             destination_dir_.fd(),
                             path,
                             sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
-                            0o644,
+                            0o666,
                         )
                     };
                     let outfile = match create(entry.path) {

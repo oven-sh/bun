@@ -619,9 +619,15 @@ impl<C: SourceContext> NewSourceCodegen for NewSource<C> {
     fn to_js(&mut self, _global_this: &JSGlobalObject) -> JSValue {
         unimplemented!("provided by JsClass codegen for JS{}InternalReadableStreamSource", C::NAME)
     }
-    fn pending_promise_set_cached(_this: JSValue, _global: &JSGlobalObject, _value: JSValue) {}
-    fn on_drain_callback_set_cached(_this: JSValue, _global: &JSGlobalObject, _value: JSValue) {}
-    fn on_drain_callback_get_cached(_this: JSValue) -> Option<JSValue> { None }
+    fn pending_promise_set_cached(_this: JSValue, _global: &JSGlobalObject, _value: JSValue) {
+        unimplemented!("provided by JsClass codegen for JS{}InternalReadableStreamSource", C::NAME)
+    }
+    fn on_drain_callback_set_cached(_this: JSValue, _global: &JSGlobalObject, _value: JSValue) {
+        unimplemented!("provided by JsClass codegen for JS{}InternalReadableStreamSource", C::NAME)
+    }
+    fn on_drain_callback_get_cached(_this: JSValue) -> Option<JSValue> {
+        unimplemented!("provided by JsClass codegen for JS{}InternalReadableStreamSource", C::NAME)
+    }
 }
 
 impl<C: SourceContext> NewSource<C> {

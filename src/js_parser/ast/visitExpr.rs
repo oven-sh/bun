@@ -130,21 +130,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 
     fn e_this(p: &mut Self, expr: Expr, _: ExprIn) -> Expr {
-        // Spec visitExpr.zig:53-56: `if (p.valueForThis(expr.loc)) |exp| return exp;`
-        // P::value_for_this is still individually gated
-        // (`#[cfg(any())] // blocked_on: fn_only_data_visit.class_name_ref deref`).
-        // PORTING.md §Forbidden bans a live silent no-op when the spec has real logic, so this
-        // body must be loud until the helper is un-gated. Once it compiles, replace with:
-        //   if let Some(exp) = p.value_for_this(expr.loc) { return exp; }
-        //
+        if let Some(exp) = p.value_for_this(expr.loc) {
+            return exp;
+        }
+
         //                 // Capture "this" inside arrow functions that will be lowered into normal
         // // function expressions for older language environments
         // if p.fnOrArrowDataVisit.isArrow && p.options.unsupportedJSFeatures.Has(compat.Arrow) && p.fnOnlyDataVisit.isThisNested {
         //     return js_ast.Expr{Loc: expr.Loc, Data: &js_ast.EIdentifier{Ref: p.captureThis()}}, exprOut{}
         // }
-        let _ = p;
-        todo!("G-round-4: e_this — blocked on P::value_for_this");
-        #[allow(unreachable_code)]
         expr
     }
 
@@ -1802,12 +1796,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             return Some(p.new_expr(E::Boolean { value: false }, loc));
         }
 
-        // blocked_on: Runtime::Features.bundler_feature_flags map (round-C Features stub
-        // omits it). Loud at the lookup.
-        let is_enabled: bool = {
-            let _ = flag_string.data;
-            todo!("maybe_replace_bundler_feature_call: features.bundler_feature_flags (stub)")
-        };
+        let is_enabled: bool = p
+            .options
+            .features
+            .bundler_feature_flags
+            .is_some_and(|flags| flags.contains(flag_string.data));
         Some(Expr {
             data: Data::EBranchBoolean(E::Boolean { value: is_enabled }),
             loc,

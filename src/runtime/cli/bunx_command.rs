@@ -329,12 +329,12 @@ impl BunxCommand {
                             },
                         };
 
-                        if current.kind == bun_sys::DirEntryKind::File {
-                            if current.name.len() == 0 {
+                        if current.kind == bun_sys::EntryKind::File {
+                            if current.name.slice().is_empty() {
                                 entry = iterator.next();
                                 continue;
                             }
-                            return Ok(Box::<[u8]>::from(current.name.slice()));
+                            return Ok(Box::<[u8]>::from(current.name.slice_u8()));
                         }
 
                         entry = iterator.next();

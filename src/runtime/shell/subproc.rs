@@ -130,6 +130,13 @@ impl Drop for ShellSubprocess {
 
 pub type StaticPipeWriter = JscSubprocess::NewStaticPipeWriter<ShellSubprocess>;
 
+impl JscSubprocess::static_pipe_writer::StaticPipeWriterProcess for ShellSubprocess {
+    unsafe fn on_close_io(this: *mut Self, kind: StdioKind) {
+        // SAFETY: caller (StaticPipeWriter) guarantees `this` is live.
+        unsafe { (*this).on_close_io(kind) }
+    }
+}
+
 pub type WatchFd = Fd;
 
 impl ShellSubprocess {

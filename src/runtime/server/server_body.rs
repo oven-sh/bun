@@ -863,7 +863,7 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     pub h3_alt_svc: Box<ZStr>, // empty when !SSL
     pub js_value: JsRef,
     /// Potentially null before listen() is called, and once .destroy() is called.
-    pub vm: &'static VirtualMachine,
+    pub vm: &'static VirtualMachine::VirtualMachine,
     pub global_this: *const JSGlobalObject,
     pub base_url_string_for_joining: Box<[u8]>,
     pub config: ServerConfig,

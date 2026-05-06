@@ -3778,7 +3778,7 @@ impl Resolver {
         Ok(promise)
     }
 
-    #[host_fn]
+    // JSC-ABI shim emitted by `export_host_fn!` at module scope (see `global_resolve`).
     pub fn global_lookup(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old(2);
         if arguments.len() < 1 {

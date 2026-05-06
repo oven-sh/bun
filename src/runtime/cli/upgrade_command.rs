@@ -726,10 +726,16 @@ impl UpgradeCommand {
                 Self::EXE_SUBPATH.as_bytes()
             };
 
-            let mut zip_file = match save_dir.create_file_z(tmpname, sys::CreateFileOptions {
-                truncate: true,
-                ..Default::default()
-            }) {
+            // PORT NOTE: Zig used std.fs.Dir.createFileZ(.{ .truncate = true }); mapped to
+            // bun_sys::openat with WRONLY|CREAT|TRUNC and wrapped in sys::File for write_all.
+            let mut zip_file = match sys::openat_a(
+                save_dir.fd(),
+                tmpname,
+                sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
+                0o644,
+            )
+            .map(sys::File::from)
+            {
                 Ok(f) => f,
                 Err(err) => {
                     Output::pretty_errorln(format_args!(

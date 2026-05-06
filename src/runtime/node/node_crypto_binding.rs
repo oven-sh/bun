@@ -911,15 +911,15 @@ impl Scrypt {
         let maxmem = self.maxmem;
         // SAFETY: all pointer args are null with len 0; numeric args are plain values.
         if unsafe {
-            boringssl::EVP_PBE_validate_scrypt_params(
+            boringssl::c::EVP_PBE_validate_scrypt_params(
                 core::ptr::null(),
                 0,
                 core::ptr::null(),
                 0,
-                n,
-                r,
-                p,
-                maxmem,
+                u64::from(n),
+                u64::from(r),
+                u64::from(p),
+                maxmem as usize,
                 core::ptr::null_mut(),
                 0,
             )

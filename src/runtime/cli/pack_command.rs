@@ -3204,9 +3204,9 @@ pub mod bindings {
         let mut sha512 = sha::SHA512::init();
         sha512.update(&tarball);
         sha512.final_(&mut sha512_digest);
-        let mut base64_buf = vec![0u8; bun_base64::standard_encoded_len(sha::SHA512::DIGEST)];
+        let mut base64_buf = vec![0u8; bun_base64::encode_len_from_size(sha::SHA512::DIGEST)];
         // TODO(port): comptime calcSize → const fn; using runtime helper
-        let encode_count = bun_simdutf::base64::encode(&sha512_digest, &mut base64_buf, false);
+        let encode_count = bun_base64::encode(&mut base64_buf, &sha512_digest);
         let integrity_value = BunString::create_utf8_for_js(global, &base64_buf[..encode_count])?;
 
         struct EntryInfo {

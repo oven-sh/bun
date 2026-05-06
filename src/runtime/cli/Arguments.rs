@@ -1483,7 +1483,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
     }
 
     opts.tsconfig_override = if let Some(ts) = args.option("--tsconfig-override") {
-        Some(resolve_path::join_abs_string(ctx.args.absolute_working_dir.as_ref().unwrap().as_bytes(), &[ts], resolve_path::Platform::Auto))
+        Some(resolve_path::join_abs_string::<platform::Auto>(ctx.args.absolute_working_dir.as_ref().unwrap().as_bytes(), &[ts]))
     } else {
         None
     };
@@ -1535,12 +1535,12 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
         }
 
         if args.flag("--hot") {
-            ctx.debug.hot_reload = cli::HotReload::Hot;
+            ctx.debug.hot_reload = HotReload::Hot;
             if args.flag("--no-clear-screen") {
                 bun_dotenv::Loader::set_has_no_clear_screen_cli_flag(true);
             }
         } else if args.flag("--watch") {
-            ctx.debug.hot_reload = cli::HotReload::Watch;
+            ctx.debug.hot_reload = HotReload::Watch;
 
             // Windows applies this to the watcher child process.
             // The parent process is unable to re-launch itself
@@ -1997,7 +1997,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
         }
 
         if args.flag("--watch") {
-            ctx.debug.hot_reload = cli::HotReload::Watch;
+            ctx.debug.hot_reload = HotReload::Watch;
             bun_core::set_auto_reload_on_crash(true);
 
             if args.flag("--no-clear-screen") {

@@ -164,8 +164,8 @@ impl LinuxMemFdAllocator {
                 return false;
             }
 
-            // MOVE_DOWN: VirtualMachine::is_smol_mode → bun_core (process-global flag; move-in pending).
-            if crate::stubs::is_smol_mode() {
+            // MOVE_DOWN: VirtualMachine::is_smol_mode → bun_alloc (process-global flag; move-in pending).
+            if bun_alloc::stubs::is_smol_mode() {
                 return bytes.len() >= 1024 * 1024 * 1;
             }
 

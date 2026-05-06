@@ -238,7 +238,7 @@ impl BuildCommand {
 
                     if outfile == b"index" {
                         outfile = bun_paths::basename(
-                            bun_paths::dirname(&this_transpiler.options.entry_points[0])
+                            bun_core::dirname(&this_transpiler.options.entry_points[0])
                                 .unwrap_or(b"index"),
                         );
                         was_renamed_from_index = outfile != b"index";
@@ -246,7 +246,7 @@ impl BuildCommand {
 
                     if outfile == b"bun" {
                         outfile = bun_paths::basename(
-                            bun_paths::dirname(&this_transpiler.options.entry_points[0])
+                            bun_core::dirname(&this_transpiler.options.entry_points[0])
                                 .unwrap_or(b"bun"),
                         );
                     }
@@ -304,7 +304,7 @@ impl BuildCommand {
                 }
 
                 if this_transpiler.options.entry_points.len() == 1 {
-                    break 'brk2 bun_paths::dirname(&this_transpiler.options.entry_points[0])
+                    break 'brk2 bun_core::dirname(&this_transpiler.options.entry_points[0])
                         .unwrap_or(b".");
                 }
 
@@ -481,7 +481,7 @@ impl BuildCommand {
                 )
                 .expect("unreachable");
                 this_transpiler.options.entry_naming = entry_naming.into_boxed_slice();
-                if let Some(dir) = bun_paths::dirname(outfile) {
+                if let Some(dir) = bun_core::dirname(outfile) {
                     ctx.bundler_options.outdir = dir.into();
                 }
                 this_transpiler.resolver.opts.entry_naming =
@@ -623,7 +623,7 @@ impl BuildCommand {
                         && matches!(output_files[0].value, options::OutputFileValue::Buffer { .. }));
 
             if output_dir.is_empty() && !outfile.is_empty() && will_be_one_file {
-                output_dir = bun_paths::dirname(outfile).unwrap_or(b".");
+                output_dir = bun_core::dirname(outfile).unwrap_or(b".");
                 if ctx.bundler_options.compile {
                     // If the first output file happens to be a client-side chunk imported server-side
                     // then don't rename it to something else, since an HTML
@@ -658,7 +658,7 @@ impl BuildCommand {
 
             let mut root_path: &[u8] = output_dir;
             if root_path.is_empty() && ctx.args.entry_points.len() == 1 {
-                root_path = bun_paths::dirname(&ctx.args.entry_points[0]).unwrap_or(b".");
+                root_path = bun_core::dirname(&ctx.args.entry_points[0]).unwrap_or(b".");
             }
 
             let root_dir = if root_path.is_empty() || root_path == b"." {

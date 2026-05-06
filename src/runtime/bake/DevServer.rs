@@ -508,7 +508,11 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     let global = unsafe { &*options.vm.global };
 
     let generic_action = "while initializing development server";
-    let fs = match bun_fs::FileSystem::init(options.root) {
+    // FileSystem is a process-lifetime singleton; leak the root path to satisfy
+    // its `&'static [u8]` parameter (Zig stored a borrowed `[:0]const u8`).
+    let root_static: &'static [u8] =
+        Box::leak(options.root.as_bytes().to_vec().into_boxed_slice());
+    let fs = match bun_resolver::fs::FileSystem::init(Some(root_static)) {
         Ok(fs) => fs,
         Err(err) => return Err(global.throw_error(err, generic_action)),
     };

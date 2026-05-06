@@ -868,8 +868,8 @@ pub fn network_interfaces_posix(global_this: &JSGlobalObject) -> JsResult<JSValu
 
         // family <string> Either IPv4 or IPv6
         interface.put(global_this, ZigString::static_("family"), match addr.family() as c_int {
-            bun_sys::posix::AF::INET => global_this.common_strings().ipv4(),
-            bun_sys::posix::AF::INET6 => global_this.common_strings().ipv6(),
+            libc::AF_INET => global_this.common_strings().ipv4(),
+            libc::AF_INET6 => global_this.common_strings().ipv6(),
             _ => ZigString::static_("unknown").to_js(global_this),
         });
 
@@ -911,7 +911,7 @@ pub fn network_interfaces_posix(global_this: &JSGlobalObject) -> JsResult<JSValu
                 let mut mac_buf = [0u8; 17];
                 #[cfg(target_os = "linux")]
                 // SAFETY: ll_addr is a sockaddr_ll* per is_link_layer check
-                let addr_data: &[u8] = unsafe { &(*(ll_addr as *const bun_sys::posix::sockaddr_ll)).addr };
+                let addr_data: &[u8] = unsafe { &(*(ll_addr as *const libc::sockaddr_ll)).sll_addr };
                 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
                 let addr_data: &[u8] = {
                     // SAFETY: ll_addr is a sockaddr_dl* per is_link_layer check

@@ -398,13 +398,11 @@ impl Execution {
                 Execution::advance_sequence(buntest_ptr, sequence_ptr, group_ptr);
 
                 let sequence_result =
-                    step_sequence(buntest_strong, global_this, group_ptr, sequence_index, &mut now)?;
+                    step_sequence(&buntest_strong, global_this, group_ptr, sequence_index, &mut now)?;
                 match sequence_result {
                     AdvanceSequenceStatus::Done => {}
                     AdvanceSequenceStatus::Execute { timeout } => {
-                        return Ok(StepResult::Waiting {
-                            timeout: Some(timeout),
-                        });
+                        return Ok(StepResult::Waiting { timeout });
                     }
                 }
                 // this sequence is complete; execute the next sequence

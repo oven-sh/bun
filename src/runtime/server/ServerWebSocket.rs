@@ -1353,17 +1353,18 @@ impl ServerWebSocket {
     pub fn get_data(&self, _global_this: &JSGlobalObject) -> JSValue {
         bun_output::scoped_log!(WebSocketServer, "getData()");
         if let Some(this_value) = self.this_value.try_get() {
-            return Self::js::data_get_cached(this_value).unwrap_or(JSValue::UNDEFINED);
+            return js::data_get_cached(this_value).unwrap_or(JSValue::UNDEFINED);
         }
         JSValue::UNDEFINED
     }
 
     #[bun_jsc::host_fn(setter)]
-    pub fn set_data(&mut self, global_object: &JSGlobalObject, value: JSValue) {
+    pub fn set_data(&mut self, global_object: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
         bun_output::scoped_log!(WebSocketServer, "setData()");
         if let Some(this_value) = self.this_value.try_get() {
-            Self::js::data_set_cached(this_value, global_object, value);
+            js::data_set_cached(this_value, global_object, value);
         }
+        Ok(true)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1371,10 +1372,10 @@ impl ServerWebSocket {
         bun_output::scoped_log!(WebSocketServer, "getReadyState()");
 
         if self.is_closed() {
-            return JSValue::js_number(3);
+            return JSValue::js_number(3.0);
         }
 
-        JSValue::js_number(1)
+        JSValue::js_number(1.0)
     }
 
     #[bun_jsc::host_fn(method)]

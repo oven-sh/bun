@@ -8,7 +8,6 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use bun_aio::KeepAlive;
-use bun_sys::FdExt as _;
 use bun_jsc::EventLoopTaskPtr;
 use crate::api::bun::process::event_loop_handle_to_ctx;
 use bun_threading::UnboundedQueue;

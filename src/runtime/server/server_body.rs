@@ -4506,23 +4506,24 @@ pub extern "C" fn Server__setIdleTimeout(server: JSValue, seconds: JSValue, glob
 
 pub fn server_set_idle_timeout_(server: JSValue, seconds: JSValue, global: &JSGlobalObject) -> JsResult<()> {
     if !server.is_object() {
-        return global.throw(format_args!("Failed to set timeout: The 'this' value is not a Server."));
+        return Err(global.throw(format_args!("Failed to set timeout: The 'this' value is not a Server.")));
     }
 
     if !seconds.is_number() {
-        return global.throw(format_args!("Failed to set timeout: The provided value is not of type 'number'."));
+        return Err(global.throw(format_args!("Failed to set timeout: The provided value is not of type 'number'.")));
     }
-    let value = seconds.to::<c_uint>();
+    let value = seconds.to_int32() as c_uint;
+    // SAFETY: as_ returned a non-null *mut to a live server.
     if let Some(this) = server.as_::<HTTPServer>() {
-        this.set_idle_timeout(value);
+        unsafe { &mut *this }.set_idle_timeout(value);
     } else if let Some(this) = server.as_::<HTTPSServer>() {
-        this.set_idle_timeout(value);
+        unsafe { &mut *this }.set_idle_timeout(value);
     } else if let Some(this) = server.as_::<DebugHTTPServer>() {
-        this.set_idle_timeout(value);
+        unsafe { &mut *this }.set_idle_timeout(value);
     } else if let Some(this) = server.as_::<DebugHTTPSServer>() {
-        this.set_idle_timeout(value);
+        unsafe { &mut *this }.set_idle_timeout(value);
     } else {
-        return global.throw(format_args!("Failed to set timeout: The 'this' value is not a Server."));
+        return Err(global.throw(format_args!("Failed to set timeout: The 'this' value is not a Server.")));
     }
     Ok(())
 }

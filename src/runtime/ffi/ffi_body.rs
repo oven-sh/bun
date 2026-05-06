@@ -3090,23 +3090,15 @@ static CREATE_COMPILER_RT_DIR_ONCE: Once = Once::new();
 
 impl CompilerRT {
     fn create_compiler_rt_dir() {
-        let Ok(tmpdir) = Fs::FileSystem::instance().tmpdir() else {
-            return;
-        };
-        // TODO(port): std.fs.Dir.makeOpenPath — using bun_sys equivalent
-        let Ok(mut bun_cc) = tmpdir.make_open_path(b"bun-cc") else {
-            return;
-        };
-        let _guard = scopeguard::guard(&mut bun_cc, |d| d.close());
-
-        for (name, source) in CompilerRtSources::SOURCES {
-            let _ = bun_cc.write_file(name.as_bytes(), source);
+        // TODO(port): `bun_resolver::fs::FileSystem::tmpdir()` exists in the
+        // full resolver crate but not the bundler-re-exported facade currently
+        // surfaced as `Fs::FileSystem`. Wire once that surface lands.
+        let _ = (PathBuffer::uninit(),);
+        todo!("blocked_on: bun_bundler::bun_fs::FileSystem::tmpdir");
+        #[allow(unreachable_code)]
+        {
+            let _ = COMPILER_RT_DIR.set(bun_core::ZBox::from_vec_with_nul(Vec::new()));
         }
-        let mut path_buf = PathBuffer::uninit();
-        let Ok(p) = bun_sys::get_fd_path(Fd::from_std_dir(&bun_cc), &mut path_buf) else {
-            return;
-        };
-        let _ = COMPILER_RT_DIR.set(bun_core::ZBox::from_vec_with_nul(p.to_vec()));
     }
 
     pub fn dir() -> Option<&'static ZStr> {

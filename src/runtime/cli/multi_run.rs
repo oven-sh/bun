@@ -10,7 +10,7 @@ use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_paths::{self as path, PathBuffer};
 use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
-use bun_str::{strings, ZStr};
+use bun_str::strings;
 
 use crate::filter_arg as FilterArg;
 use crate::run_command::RunCommand;

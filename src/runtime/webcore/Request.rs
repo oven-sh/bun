@@ -7,7 +7,6 @@ use enumset::EnumSet;
 
 use bun_alloc::AllocError;
 use bun_core::{fmt as bun_fmt, Output};
-use bun_http_types::MimeType::MimeType;
 use bun_http_types::FetchCacheMode::FetchCacheMode;
 use bun_http_types::FetchRedirect::FetchRedirect;
 use bun_http_types::FetchRequestMode::FetchRequestMode;
@@ -16,7 +15,6 @@ use crate::webcore::jsc::codegen::JSRequest as js;
 use bun_jsc::generated::JSRequest as js_gen;
 use crate::webcore::jsc::{
     self as jsc, CallFrame, HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsRef, JsResult,
-    Strong, URL,
 };
 use bun_ptr::weak_ptr::WeakPtrData;
 use crate::api::AnyRequestContext;
@@ -318,27 +316,6 @@ use bun_jsc::StringJsc as _;
 use bun_http_jsc::method_jsc::MethodJsc as _;
 use bun_http_jsc::fetch_enums_jsc::{fetch_cache_mode_to_js, fetch_redirect_to_js, fetch_request_mode_to_js};
 use crate::webcore::blob::ZigStringBlobExt as _;
-
-/// Local extension: `JSValue::get_optional_enum::<E>()` until `bun_jsc` exposes it.
-trait GetOptionalEnum {
-    fn get_optional_enum<E: bun_jsc::FromJsEnum>(
-        self,
-        global: &JSGlobalObject,
-        key: &'static str,
-    ) -> JsResult<Option<E>>;
-}
-impl GetOptionalEnum for JSValue {
-    fn get_optional_enum<E: bun_jsc::FromJsEnum>(
-        self,
-        global: &JSGlobalObject,
-        key: &'static str,
-    ) -> JsResult<Option<E>> {
-        match self.get(global, key)? {
-            Some(v) if !v.is_undefined_or_null() => Ok(Some(v.to_enum::<E>(global, key)?)),
-            _ => Ok(None),
-        }
-    }
-}
 
 impl Request {
     pub fn memory_cost(&self) -> usize {
@@ -1386,38 +1363,20 @@ impl Request {
 
             // Extract redirect option
             if !fields.contains(Fields::Redirect) {
-                match value.get_optional_enum::<FetchRedirect>(global_this, "redirect") {
-                    Ok(Some(redirect_value)) => {
-                        req.flags.redirect = redirect_value;
-                        fields.insert(Fields::Redirect);
-                    }
-                    Ok(None) => {}
-                    Err(e) => bail!(Err(e)),
-                }
+                let _ = (&value, global_this);
+                todo!("blocked_on: bun_jsc::FromJsEnum for FetchRedirect");
             }
 
             // Extract cache option
             if !fields.contains(Fields::Cache) {
-                match value.get_optional_enum::<FetchCacheMode>(global_this, "cache") {
-                    Ok(Some(cache_value)) => {
-                        req.flags.cache = cache_value;
-                        fields.insert(Fields::Cache);
-                    }
-                    Ok(None) => {}
-                    Err(e) => bail!(Err(e)),
-                }
+                let _ = (&value, global_this);
+                todo!("blocked_on: bun_jsc::FromJsEnum for FetchCacheMode");
             }
 
             // Extract mode option
             if !fields.contains(Fields::Mode) {
-                match value.get_optional_enum::<FetchRequestMode>(global_this, "mode") {
-                    Ok(Some(mode_value)) => {
-                        req.flags.mode = mode_value;
-                        fields.insert(Fields::Mode);
-                    }
-                    Ok(None) => {}
-                    Err(e) => bail!(Err(e)),
-                }
+                let _ = (&value, global_this);
+                todo!("blocked_on: bun_jsc::FromJsEnum for FetchRequestMode");
             }
         }
 

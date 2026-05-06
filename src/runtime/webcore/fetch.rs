@@ -1595,65 +1595,31 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
 
             // TODO: make this async + lazy
-            let res = node::fs::NodeFS::read_file(
-                global_this.bun_vm().node_fs(),
-                &node::fs::args::ReadFile {
-                    encoding: node::Encoding::Buffer,
-                    path: node::PathOrFileDescriptor::Fd(opened_fd),
-                    offset: body.any_blob().blob().offset,
-                    max_size: body.any_blob().blob().size,
-                    ..Default::default()
-                },
-                node::fs::Flavor::Sync,
-            );
-
-            if matches!(
-                body.store().unwrap().data.file.pathlike,
-                node::PathOrFileDescriptor::Path(_)
-            ) {
-                opened_fd.close();
-            }
-
-            match res {
-                Err(err) => {
-                    is_error = true;
-                    let err_js = match err.to_js(global_this) {
-                        Ok(v) => v,
-                        Err(_) => return Ok(JSValue::ZERO),
-                    };
-                    let rejected_value =
-                        JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                            global_this,
-                            err_js,
-                        );
-                    body.detach();
-                    return Ok(rejected_value);
-                }
-                Ok(result) => {
-                    body.detach();
-                    // TODO(port): @constCast(result.slice()) — taking ownership of buffer
-                    body = HTTPRequestBody::AnyBlob(Blob::Any::from_owned_slice(
-                        result.into_owned_slice(),
-                    ));
-                    http_body = HTTPRequestBody::AnyBlob(body.any_blob().clone());
-                }
-            }
+            // TODO(port): node::fs::NodeFS::read_file + node_fs() field reach-through
+            // (`.sync_error_buf`, `BlobStore.data.file.pathlike`) are gated.
+            let _ = opened_fd;
+            body.detach();
+            body = HTTPRequestBody::AnyBlob(blob::Any::from_owned_slice(Vec::new()));
+            http_body = HTTPRequestBody::AnyBlob(body.any_blob().clone());
+            todo!("blocked_on: crate::node::fs::NodeFS::read_file");
+            #[allow(unreachable_code)]
+            { break 'prepare_body; }
         }
     }
 
     if url.is_s3() {
         // get ENV config
-        let mut credentials_with_options = s3::S3CredentialsWithOptions {
-            credentials: global_this.bun_vm().transpiler.env.get_s3_credentials(),
-            options: Default::default(),
-            acl: None,
-            storage_class: None,
-            ..Default::default()
+        // TODO(port): `S3CredentialsWithOptions` is non-Default upstream; build via shim.
+        let mut credentials_with_options: s3::S3CredentialsWithOptions = {
+            // SAFETY: bun_vm() returns the live thread-local VM pointer.
+            let _env = unsafe { &(*global_this.bun_vm()).transpiler.env };
+            todo!("blocked_on: bun_s3_signing::S3CredentialsWithOptions::default + DotEnv::get_s3_credentials")
         };
         // PORT NOTE: `defer credentialsWithOptions.deinit()` → Drop.
 
         if let Some(options) = options_object {
-            if let Some(s3_options) = options.get_truthy_comptime(global_this, "s3")? {
+            if let Some(s3_options) = options.get_truthy(global_this, "s3")? {
+                let s3_options: JSValue = s3_options;
                 if s3_options.is_object() {
                     s3_options.ensure_still_alive();
                     credentials_with_options = s3::S3Credentials::get_credentials_with_options(
@@ -1684,15 +1650,17 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 );
             }
             let promise = jsc::JSPromiseStrong::init(global_this);
+            let promise_value = promise.value();
 
             let s3_stream = Box::new(S3StreamWrapper {
                 url,
                 url_proxy_buffer: url_proxy_buffer.into_boxed_slice(),
-                promise: promise.clone_ref(),
+                // TODO(port): JSPromiseStrong has no clone_ref(); the original Zig
+                // moved the strong ref into the wrapper after grabbing `.value()`.
+                promise,
                 global: global_this,
             });
 
-            let promise_value = promise.value();
             let proxy_url: Option<&[u8]> = proxy.as_ref().map(|p| p.href);
             // Shim: Zig used `@ptrCast(&Wrapper.resolve)` to erase both the
             // `*@This()` payload type and the `JSTerminated!void` error union when
@@ -1731,13 +1699,13 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             method = Method::PUT;
         }
 
-        let mut result = match credentials_with_options.credentials.sign_request(
-            SignOptions {
-                path: url.s3_path(),
-                method,
-                ..Default::default()
-            },
-            false,
+        // PORT NOTE: `SignOptions` is non-Default upstream; build a minimal one.
+        let sign_opts: SignOptions = {
+            let _ = (url.s3_path(), method);
+            todo!("blocked_on: bun_s3_signing::SignOptions::default")
+        };
+        let mut result = match credentials_with_options.credentials.sign_request::<false>(
+            sign_opts,
             None,
         ) {
             Ok(r) => r,
@@ -1746,7 +1714,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 return Ok(
                     JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                         global_this,
-                        s3::get_js_sign_error(sign_err, global_this),
+                        s3::get_js_sign_error(sign_err.into(), global_this),
                     ),
                 );
             }
@@ -1758,7 +1726,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             let old_buffer = core::mem::take(&mut url_proxy_buffer);
             // PORT NOTE: `defer allocator.free(old_buffer)` → drop(old_buffer) at end of scope.
             let mut buffer = vec![0u8; result.url.len() + proxy_.href.len()];
-            buffer[0..result.url.len()].copy_from_slice(result.url);
+            buffer[0..result.url.len()].copy_from_slice(&result.url);
             // TODO(port): Zig has `buffer[proxy_.href.len..]` which looks like a bug
             // (should be `buffer[result.url.len..]`). Preserved verbatim for Phase B review.
             buffer[proxy_.href.len()..].copy_from_slice(proxy_.href);
@@ -1776,28 +1744,20 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
 
         let content_type = headers.as_ref().and_then(|h| h.get_content_type());
-        let mut header_buffer: [picohttp::Header; s3::S3Credentials::SignResult::MAX_HEADERS + 1] =
-            // SAFETY: header_buffer is fully written by mix_with_header / headers() before read.
-            unsafe { core::mem::zeroed() };
-        // TODO(port): std.mem.zeroes on picohttp.Header — verify all-zero is valid in Phase B.
+        let mut header_buffer: [picohttp::Header; SignResult::MAX_HEADERS + 1] =
+            [picohttp::Header::ZERO; SignResult::MAX_HEADERS + 1];
 
         if let Some(range_) = &range {
             let new_headers = result.mix_with_header(
                 &mut header_buffer,
-                picohttp::Header {
-                    name: b"range",
-                    value: range_,
-                },
+                picohttp::Header::new(b"range", range_.as_bytes()),
             );
             set_headers(&mut headers, new_headers);
         } else if let Some(ct) = content_type {
             if !ct.is_empty() {
                 let new_headers = result.mix_with_header(
                     &mut header_buffer,
-                    picohttp::Header {
-                        name: b"Content-Type",
-                        value: ct,
-                    },
+                    picohttp::Header::new(b"Content-Type", ct),
                 );
                 set_headers(&mut headers, new_headers);
             } else {

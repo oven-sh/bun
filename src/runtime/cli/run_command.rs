@@ -3636,7 +3636,7 @@ impl RunCommand {
                     let keys = scripts.keys();
                     let mut key_i: usize = 0;
                     'loop_: while key_i < keys.len() {
-                        let key = keys[key_i];
+                        let key: &[u8] = &keys[key_i];
                         key_i += 1;
                         // PORT NOTE: reshaped for borrowck — increment moved to top with continue 'loop_
 
@@ -3668,7 +3668,7 @@ impl RunCommand {
                         // PERF(port): was assume_capacity
 
                         if FILTER == Filter::ScriptAndDescriptions && max_description_len > 0 {
-                            let mut description = scripts.get(key).unwrap();
+                            let mut description: &[u8] = *scripts.get(key).unwrap();
 
                             // When the command starts with something like
                             // NODE_OPTIONS='--max-heap-size foo' bar

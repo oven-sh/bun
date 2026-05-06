@@ -858,7 +858,7 @@ impl CommandLineReporter {
                 bun_test::Execution::Result::FailBecauseExpectedAssertionCount => {
                     // not sent to writer so it doesn't get printed twice
                     let expected_count = if let bun_test::ExpectAssertions::Exact(n) = sequence.expect_assertions { n } else { 12345 };
-                    Output::err(bun_core::err!("AssertionError"), format_args!("expected <green>{} assertion{}<r>, but test ended with <red>{} assertion{}<r>\n", 
+                    Output::err(bun_core::err!("AssertionError"), "expected <green>{} assertion{}<r>, but test ended with <red>{} assertion{}<r>\n", (
                         expected_count,
                         if expected_count == 1 { "" } else { "s" },
                         sequence.expect_call_count,

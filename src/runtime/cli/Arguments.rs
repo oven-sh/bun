@@ -1693,20 +1693,20 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                 }
             };
             // Treat depth=0 as maxInt(u16) for infinite depth
-            ctx.runtime_options.console_depth = if depth == 0 { u16::MAX } else { depth };
+            ctx.runtime_options.console_depth = Some(if depth == 0 { u16::MAX } else { depth });
         }
 
         if let Some(order) = args.option(b"--dns-result-order") {
-            ctx.runtime_options.dns_result_order = order;
+            ctx.runtime_options.dns_result_order = order.into();
         }
 
         let has_cron_title = args.option(b"--cron-title");
         let has_cron_period = args.option(b"--cron-period");
         if let Some(t) = has_cron_title {
-            ctx.runtime_options.cron_title = t;
+            ctx.runtime_options.cron_title = t.into();
         }
         if let Some(p) = has_cron_period {
-            ctx.runtime_options.cron_period = p;
+            ctx.runtime_options.cron_period = p.into();
         }
         if has_cron_title.is_some() != has_cron_period.is_some() {
             Output::err_generic("--cron-title and --cron-period must be provided together", format_args!(""));
@@ -1765,10 +1765,10 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
         if cpu_prof_flag || cpu_prof_md_flag {
             ctx.runtime_options.cpu_prof.enabled = true;
             if let Some(name) = args.option(b"--cpu-prof-name") {
-                ctx.runtime_options.cpu_prof.name = name;
+                ctx.runtime_options.cpu_prof.name = name.into();
             }
             if let Some(dir) = args.option(b"--cpu-prof-dir") {
-                ctx.runtime_options.cpu_prof.dir = dir;
+                ctx.runtime_options.cpu_prof.dir = dir.into();
             }
             // md_format is true if --cpu-prof-md is passed (regardless of --cpu-prof)
             ctx.runtime_options.cpu_prof.md_format = cpu_prof_md_flag;
@@ -1799,19 +1799,19 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             ctx.runtime_options.heap_prof.enabled = true;
             ctx.runtime_options.heap_prof.text_format = true;
             if let Some(name) = args.option(b"--heap-prof-name") {
-                ctx.runtime_options.heap_prof.name = name;
+                ctx.runtime_options.heap_prof.name = name.into();
             }
             if let Some(dir) = args.option(b"--heap-prof-dir") {
-                ctx.runtime_options.heap_prof.dir = dir;
+                ctx.runtime_options.heap_prof.dir = dir.into();
             }
         } else if heap_prof_v8 || heap_prof_md {
             ctx.runtime_options.heap_prof.enabled = true;
             ctx.runtime_options.heap_prof.text_format = heap_prof_md;
             if let Some(name) = args.option(b"--heap-prof-name") {
-                ctx.runtime_options.heap_prof.name = name;
+                ctx.runtime_options.heap_prof.name = name.into();
             }
             if let Some(dir) = args.option(b"--heap-prof-dir") {
-                ctx.runtime_options.heap_prof.dir = dir;
+                ctx.runtime_options.heap_prof.dir = dir.into();
             }
         } else {
             // Warn if --heap-prof-name or --heap-prof-dir is used without --heap-prof or --heap-prof-md
@@ -1863,7 +1863,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             } else if use_system_ca {
                 Bun__Node__CAStore = BunCAStore::System;
             } else {
-                if env_var::NODE_USE_SYSTEM_CA.get() {
+                if env_var::NODE_USE_SYSTEM_CA.get().unwrap_or(false) {
                     Bun__Node__CAStore = BunCAStore::System;
                 }
             }
@@ -1910,15 +1910,15 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
         }
 
         if let Some(public_path) = args.option(b"--public-path") {
-            ctx.bundler_options.public_path = public_path;
+            ctx.bundler_options.public_path = public_path.into();
         }
 
         if let Some(banner) = args.option(b"--banner") {
-            ctx.bundler_options.banner = banner;
+            ctx.bundler_options.banner = banner.into();
         }
 
         if let Some(footer) = args.option(b"--footer") {
-            ctx.bundler_options.footer = footer;
+            ctx.bundler_options.footer = footer.into();
         }
 
         let minify_flag = args.flag(b"--minify") || production;
@@ -1958,9 +1958,9 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
 
         if let Some(packages) = args.option(b"--packages") {
             if packages == b"bundle" {
-                opts.packages = api::Packages::Bundle;
+                opts.packages = Some(api::Packages::Bundle);
             } else if packages == b"external" {
-                opts.packages = api::Packages::External;
+                opts.packages = Some(api::Packages::External);
             } else {
                 Output::pretty_errorln(format_args!("<r><red>error<r>: Invalid packages setting: \"{}\"", BStr::new(packages)));
                 Global::crash();
@@ -1973,7 +1973,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                     ctx.bundler_options.env_behavior = options::EnvBehavior::LoadAll;
                 } else {
                     ctx.bundler_options.env_behavior = options::EnvBehavior::Prefix;
-                    ctx.bundler_options.env_prefix = &env[..asterisk as usize];
+                    ctx.bundler_options.env_prefix = Box::<[u8]>::from(&env[..asterisk as usize]);
                 }
             } else if env == b"inline" || env == b"1" {
                 ctx.bundler_options.env_behavior = options::EnvBehavior::LoadAll;
@@ -2014,12 +2014,12 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                     ctx.debug.run_in_bun = opts.target.unwrap() == api::Target::Bun;
                 } else {
                     if ctx.bundler_options.bytecode {
-                        Output::err_generic("target must be 'bun' when bytecode is true. Received: {}", format_args!("{}", <&'static str>::from(opts.target.unwrap())));
+                        Output::err_generic("target must be 'bun' when bytecode is true. Received: {}", format_args!("{}", options::Target::from(opts.target)));
                         Global::exit(1);
                     }
 
                     if ctx.bundler_options.bake {
-                        Output::err_generic("target must be 'bun' when using --app. Received: {}", format_args!("{}", <&'static str>::from(opts.target.unwrap())));
+                        Output::err_generic("target must be 'bun' when using --app. Received: {}", format_args!("{}", options::Target::from(opts.target)));
                     }
                 }
             }
@@ -2044,7 +2044,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                 Output::err_generic("--compile-exec-argv requires --compile", format_args!(""));
                 Global::crash();
             }
-            ctx.bundler_options.compile_exec_argv = compile_exec_argv;
+            ctx.bundler_options.compile_exec_argv = Some(compile_exec_argv.into());
         }
 
         // Handle --compile-autoload-dotenv flags
@@ -2124,7 +2124,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                 Output::err_generic("--compile-executable-path requires --compile", format_args!(""));
                 Global::crash();
             }
-            ctx.bundler_options.compile_executable_path = path;
+            ctx.bundler_options.compile_executable_path = Some(path.into());
         }
 
         if args.flag(b"--windows-hide-console") {
@@ -2157,7 +2157,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                 Output::err_generic("--windows-icon requires --compile", format_args!(""));
                 Global::crash();
             }
-            ctx.bundler_options.windows.icon = Some(path);
+            ctx.bundler_options.windows.icon = Some(path.into());
         }
         if let Some(title) = args.option(b"--windows-title") {
             if !cfg!(windows) {
@@ -2172,7 +2172,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                 Output::err_generic("--windows-title requires --compile", format_args!(""));
                 Global::crash();
             }
-            ctx.bundler_options.windows.title = Some(title);
+            ctx.bundler_options.windows.title = Some(title.into());
         }
         if let Some(publisher) = args.option(b"--windows-publisher") {
             if !cfg!(windows) {
@@ -2187,7 +2187,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                 Output::err_generic("--windows-publisher requires --compile", format_args!(""));
                 Global::crash();
             }
-            ctx.bundler_options.windows.publisher = Some(publisher);
+            ctx.bundler_options.windows.publisher = Some(publisher.into());
         }
         if let Some(version) = args.option(b"--windows-version") {
             if !cfg!(windows) {
@@ -2202,7 +2202,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                 Output::err_generic("--windows-version requires --compile", format_args!(""));
                 Global::crash();
             }
-            ctx.bundler_options.windows.version = Some(version);
+            ctx.bundler_options.windows.version = Some(version.into());
         }
         if let Some(description) = args.option(b"--windows-description") {
             if !cfg!(windows) {
@@ -2217,7 +2217,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                 Output::err_generic("--windows-description requires --compile", format_args!(""));
                 Global::crash();
             }
-            ctx.bundler_options.windows.description = Some(description);
+            ctx.bundler_options.windows.description = Some(description.into());
         }
         if let Some(copyright) = args.option(b"--windows-copyright") {
             if !cfg!(windows) {
@@ -2232,40 +2232,40 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                 Output::err_generic("--windows-copyright requires --compile", format_args!(""));
                 Global::crash();
             }
-            ctx.bundler_options.windows.copyright = Some(copyright);
+            ctx.bundler_options.windows.copyright = Some(copyright.into());
         }
 
         if let Some(outdir) = args.option(b"--outdir") {
             if !outdir.is_empty() {
-                ctx.bundler_options.outdir = outdir;
+                ctx.bundler_options.outdir = outdir.into();
             }
         } else if let Some(outfile) = args.option(b"--outfile") {
             if !outfile.is_empty() {
-                ctx.bundler_options.outfile = outfile;
+                ctx.bundler_options.outfile = outfile.into();
             }
         }
 
         if let Some(metafile) = args.option(b"--metafile") {
             // If --metafile is passed without a value, default to "meta.json"
             ctx.bundler_options.metafile = if !metafile.is_empty() {
-                bun_str::ZStr::from_bytes(metafile).into()
+                Box::<[u8]>::from(metafile)
             } else {
-                b"meta.json".into()
+                Box::<[u8]>::from(b"meta.json".as_slice())
             };
         }
 
         if let Some(metafile_md) = args.option(b"--metafile-md") {
             // If --metafile-md is passed without a value, default to "meta.md"
             ctx.bundler_options.metafile_md = if !metafile_md.is_empty() {
-                bun_str::ZStr::from_bytes(metafile_md).into()
+                Box::<[u8]>::from(metafile_md)
             } else {
-                b"meta.md".into()
+                Box::<[u8]>::from(b"meta.md".as_slice())
             };
         }
 
         if let Some(root_dir) = args.option(b"--root") {
             if !root_dir.is_empty() {
-                ctx.bundler_options.root_dir = root_dir;
+                ctx.bundler_options.root_dir = root_dir.into();
             }
         }
 
@@ -2323,8 +2323,8 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
         if args.flag(b"--server-components") {
             ctx.bundler_options.server_components = true;
             if let Some(target) = opts.target {
-                if !options::Target::from(target).is_server_side() {
-                    Output::err_generic("Cannot use client-side --target={} with --server-components", format_args!("{}", <&'static str>::from(target)));
+                if !options::Target::from(Some(target)).is_server_side() {
+                    Output::err_generic("Cannot use client-side --target={} with --server-components", format_args!("{}", options::Target::from(Some(target))));
                     Global::crash();
                 } else {
                     opts.target = Some(api::Target::Bun);
@@ -2339,15 +2339,15 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
         if let Some(setting) = args.option(b"--sourcemap") {
             if setting.is_empty() {
                 // In the future, Bun is going to make this default to .linked
-                opts.source_map = api::SourceMap::Linked;
+                opts.source_map = Some(api::SourceMap::Linked);
             } else if setting == b"inline" {
-                opts.source_map = api::SourceMap::Inline;
+                opts.source_map = Some(api::SourceMap::Inline);
             } else if setting == b"none" {
-                opts.source_map = api::SourceMap::None;
+                opts.source_map = Some(api::SourceMap::None);
             } else if setting == b"external" {
-                opts.source_map = api::SourceMap::External;
+                opts.source_map = Some(api::SourceMap::External);
             } else if setting == b"linked" {
-                opts.source_map = api::SourceMap::Linked;
+                opts.source_map = Some(api::SourceMap::Linked);
             } else {
                 Output::pretty_errorln(format_args!("<r><red>error<r>: Invalid sourcemap setting: \"{}\"", BStr::new(setting)));
                 Global::crash();
@@ -2357,7 +2357,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             // look at the source map comment. so after we validate the
             // user's choice was in the list, we secretly override it
             if ctx.bundler_options.compile {
-                opts.source_map = api::SourceMap::External;
+                opts.source_map = Some(api::SourceMap::External);
             }
         }
     }
@@ -2415,7 +2415,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
 
         if let Some(define) = &opts.define {
             if !define.keys.is_empty() {
-                bun_jsc::RuntimeTranspilerCache::set_disabled(true);
+                bun_jsc::RuntimeTranspilerCache::IS_DISABLED.store(true, std::sync::atomic::Ordering::Relaxed);
             }
         }
     }

@@ -200,10 +200,10 @@ pub fn encode(rgba: &[u8], w: u32, h: u32, quality: u8, lossless: bool, icc_prof
     // `WebPEncodeRGBA` produced is already the final container. Avoids the
     // mux round-trip (and its extra copy) for the common sRGB case.
     let Some(profile) = icc_profile else {
-        return Ok(codecs::Encoded { bytes: bitstream, free: codecs::Encoded::wrap(WebPFree) });
+        return Ok(codecs::Encoded { bytes: NonNull::from(bitstream), free: encoded_wrap_free!(WebPFree) });
     };
     if profile.is_empty() {
-        return Ok(codecs::Encoded { bytes: bitstream, free: codecs::Encoded::wrap(WebPFree) });
+        return Ok(codecs::Encoded { bytes: NonNull::from(bitstream), free: encoded_wrap_free!(WebPFree) });
     }
 
     // Wrap the bitstream in a VP8X container with an ICCP chunk. libwebpmux
@@ -252,7 +252,7 @@ pub fn encode(rgba: &[u8], w: u32, h: u32, quality: u8, lossless: bool, icc_prof
     let assembled_ptr = assembled.bytes as *mut u8;
     // SAFETY: WebPMuxAssemble returns a WebPMalloc-owned buffer of assembled.size bytes on WEBP_MUX_OK.
     let assembled_slice = unsafe { core::slice::from_raw_parts_mut(assembled_ptr, assembled.size) };
-    Ok(codecs::Encoded { bytes: assembled_slice, free: codecs::Encoded::wrap(WebPFree) })
+    Ok(codecs::Encoded { bytes: NonNull::from(assembled_slice), free: encoded_wrap_free!(WebPFree) })
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -25,7 +25,9 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_logger::Log;
 use bun_paths::{self as paths, PathBuffer, MAX_PATH_BYTES};
 use bun_str::{self as str, strings, String as BunString, ZStr};
+use bun_jsc::StringJsc as _;
 use bun_sys as sys;
+use bun_watcher::WatchItemColumns as _;
 use bun_uws::{self as uws, AnyResponse, Opcode, Request, WebSocketBehavior, WebSocketUpgradeContext};
 use bun_wyhash::{hash, Wyhash};
 

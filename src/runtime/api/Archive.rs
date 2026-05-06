@@ -95,13 +95,14 @@ use bun_jsc::{
 use bun_jsc::ConcurrentTask::{ConcurrentTask, AutoDeinit};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::SysErrorJsc as _;
+use bun_event_loop::{Taskable, TaskTag, task_tag};
 use crate::webcore::Blob;
 use crate::webcore::blob::{Store as BlobStore, StoreRef};
 use bun_aio::KeepAlive;
 use bun_core::{self, Output, ZBox};
 use bun_str::{self as strings, ZigString};
 use bun_str::zig_string::Slice as ZigStringSlice;
-use bun_sys::{self, Fd, Mode, FdExt as _};
+use bun_sys::{self, Fd, Mode, FdExt as _, FdDirExt as _};
 use bun_glob as glob;
 use bun_libarchive as libarchive;
 

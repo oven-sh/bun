@@ -2513,17 +2513,16 @@ pub mod JSZlib {
 
             if let Some(library_value) = options_val.get_truthy(global_this, "library")? {
                 if !library_value.is_string() {
-                    return global_this
-                        .throw_invalid_arguments("Expected library to be a string", format_args!(""));
+                    return Err(global_this
+                        .throw_invalid_arguments("Expected library to be a string"));
                 }
 
-                library = match Library::MAP.from_js(global_this, library_value)? {
+                library = match LIBRARY_MAP.from_js(global_this, library_value)? {
                     Some(v) => v,
                     None => {
-                        return global_this.throw_invalid_arguments(
+                        return Err(global_this.throw_invalid_arguments(
                             "Expected library to be one of 'zlib' or 'libdeflate'",
-                            format_args!(""),
-                        )
+                        ))
                     }
                 };
             }

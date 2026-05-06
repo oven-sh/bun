@@ -453,7 +453,7 @@ impl Glob {
 
         match glob_walker.walk()? {
             bun_sys::Result::Err(err) => {
-                return global_this.throw_value(err.to_js(global_this)?);
+                return Err(global_this.throw_value(err.to_js(global_this)));
             }
             bun_sys::Result::Ok(()) => {}
         }

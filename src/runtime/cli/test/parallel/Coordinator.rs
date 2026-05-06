@@ -627,11 +627,11 @@ impl<'a> Coordinator<'a> {
 /// from process.exit(N) — so this classification is effectively
 /// POSIX-only and Windows worker crashes fall into the non-panic
 /// per-file-failure branch.
-fn is_panic_status(status: SpawnStatus) -> bool {
+fn is_panic_status(status: &SpawnStatus) -> bool {
     let Some(sig) = status.signal_code() else {
         return false;
     };
-    use bun_sys::SignalCode;
+    use bun_core::SignalCode;
     matches!(
         sig,
         SignalCode::SIGILL
@@ -644,7 +644,7 @@ fn is_panic_status(status: SpawnStatus) -> bool {
     )
 }
 
-fn describe_status(buf: &mut [u8; 32], status: SpawnStatus) -> &[u8] {
+fn describe_status<'b>(buf: &'b mut [u8; 32], status: &SpawnStatus) -> &'b [u8] {
     // TODO(port): std.fmt.bufPrint — using io::Write on &mut [u8].
     match status {
         SpawnStatus::Exited(e) => {
@@ -656,11 +656,13 @@ fn describe_status(buf: &mut [u8; 32], status: SpawnStatus) -> &[u8] {
         // SignalCode is non-exhaustive (`_`); @tagName on an unnamed value
         // (e.g. Linux RT signals 32–64) is safety-checked illegal behavior.
         SpawnStatus::Signaled(sig) => {
-            if let Some(name) = sig.name() {
-                name
+            // PORT NOTE: bun_process::Status::Signaled carries the raw u8 (RT
+            // signals included); bun_sys::SignalCode wraps it for name lookup.
+            if let Some(name) = bun_sys::SignalCode(*sig).name() {
+                name.as_bytes()
             } else {
                 let mut cursor: &mut [u8] = &mut buf[..];
-                write!(cursor, "signal {}", sig as u32).expect("unreachable");
+                write!(cursor, "signal {}", *sig as u32).expect("unreachable");
                 let remaining = cursor.len();
                 &buf[..buf.len() - remaining]
             }

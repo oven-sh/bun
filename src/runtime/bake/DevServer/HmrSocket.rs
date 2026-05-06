@@ -176,33 +176,33 @@ impl HmrSocket {
                 let dev = unsafe { self.dev() };
                 let maybe_rbi = dev.route_to_bundle_index_slow(pattern);
                 // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
-            if let Some(agent) = unsafe { dev.inspector() } {
+                if let Some(agent) = unsafe { dev.inspector() } {
                     if self.inspector_connection_id > -1 {
-                        let pattern_str = bun_str::String::init(pattern);
+                        let mut pattern_str = bun_str::String::init(pattern);
                         // `defer pattern_str.deref()` → Drop on bun_str::String
                         agent.notify_client_navigated(
                             dev.inspector_server_id,
                             self.inspector_connection_id,
-                            &pattern_str,
+                            &mut pattern_str,
                             maybe_rbi,
                         );
                     }
                 }
                 let Some(rbi) = maybe_rbi else { return };
-                if let Some(old) = self.active_route.unwrap() {
+                if let Some(old) = self.active_route {
                     if old == rbi {
                         return;
                     }
                     dev.route_bundle_ptr(old).active_viewers -= 1;
                 }
                 dev.route_bundle_ptr(rbi).active_viewers += 1;
-                self.active_route = rbi.to_optional();
+                self.active_route = Some(rbi);
                 let mut response = [0u8; 5];
                 response[0] = MessageId::SetUrlResponse.char();
                 response[1..].copy_from_slice(&rbi.get().to_ne_bytes());
 
                 let _ = ws.send(&response, Opcode::Binary, false, true);
-                self.notify_inspector_client_navigation(pattern, rbi.to_optional());
+                self.notify_inspector_client_navigation(pattern, Some(rbi));
             }
             x if x == IncomingMessageId::TestingBatchEvents as u8 => {
                 let dev = unsafe { self.dev() };

@@ -301,7 +301,7 @@ impl Drop for Assets {
         // only the manual StaticRoute derefs remain as a side effect.
         for &blob in self.files.values() {
             // SAFETY: we hold one ref to each stored StaticRoute; release it.
-            unsafe { (*blob).deref() };
+            unsafe { StaticRoute::deref_(blob) };
         }
     }
 }

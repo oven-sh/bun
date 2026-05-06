@@ -1038,20 +1038,28 @@ impl Assets {
     }
 
     fn create_new(filename: &ZStr, contents: &[u8]) -> Result<(), Error> {
-        let file = bun_sys::File::make_open(
-            filename,
+        // Zig: bun.sys.File.makeOpen — creates parent dirs then opens.
+        if let Some(dir) = bun_core::dirname(filename.as_bytes()) {
+            if !dir.is_empty() && dir != b"." {
+                let _ = bun_sys::make_path(bun_sys::Dir::cwd(), dir);
+            }
+        }
+        let file = bun_sys::File::openat(
+            Fd::cwd(),
+            filename.as_bytes(),
             bun_sys::O::CREAT | bun_sys::O::EXCL | bun_sys::O::WRONLY,
             0o666,
-        )
-        .unwrap_result()?;
-        let _close = scopeguard::guard(&file, |f| f.close());
+        )?;
+        let _close = scopeguard::guard(&file, |f| {
+            let _ = f.close();
+        });
 
-        file.write_all(contents).unwrap_result()?;
+        file.write_all(contents)?;
 
-        Output::prettyln(
-            " + <r><d>{s}<r>",
-            format_args!("{}", bstr::BStr::new(filename.as_bytes())),
-        );
+        Output::prettyln(format_args!(
+            " + <r><d>{}<r>",
+            bstr::BStr::new(filename.as_bytes()),
+        ));
         Output::flush();
         Ok(())
     }

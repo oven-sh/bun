@@ -227,20 +227,19 @@ const DEFAULT_IGNORE_PATTERNS: &[(&[u8], bool)] = &[
 ];
 
 struct PackListEntry {
-    subpath: Box<ZStr>, // TODO(port): lifetime — owned NUL-terminated path
+    subpath: ZBox, // owned NUL-terminated path (Zig `stringZ`)
     size: usize,
 }
 type PackList = Vec<PackListEntry>;
 
-#[derive(Clone)]
 struct PackQueueItem {
-    path: Box<ZStr>, // TODO(port): owned [:0]const u8; allocated via entry_subpath
+    path: ZBox, // owned `[:0]const u8`; allocated via `entry_subpath`
     optional: bool,
 }
 
 impl Default for PackQueueItem {
     fn default() -> Self {
-        Self { path: ZStr::empty().into(), optional: false }
+        Self { path: ZBox::from_bytes(b""), optional: false }
     }
 }
 

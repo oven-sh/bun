@@ -273,13 +273,13 @@ impl CreateOptions {
             opts.positionals = opts.positionals[1..].to_vec().into_boxed_slice();
         }
 
-        opts.skip_package_json = args.flag("--no-package-json");
+        opts.skip_package_json = args.flag(b"--no-package-json");
 
-        opts.verbose = args.flag("--verbose") || Output::is_verbose();
-        opts.open = args.flag("--open");
-        opts.skip_install = args.flag("--no-install");
-        opts.skip_git = args.flag("--no-git");
-        opts.overwrite = args.flag("--force");
+        opts.verbose = args.flag(b"--verbose") || Output::is_verbose();
+        opts.open = args.flag(b"--open");
+        opts.skip_install = args.flag(b"--no-install");
+        opts.skip_git = args.flag(b"--no-git");
+        opts.overwrite = args.flag(b"--force");
 
         Ok(opts)
     }

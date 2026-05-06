@@ -226,14 +226,18 @@ impl<'a> Scanner<'a> {
         &mut self,
         name: &[u8],
         handle: Option<bun_sys::Dir>,
-    ) -> Result<&mut EntriesOption, bun_core::Error> {
-        // TODO(port): narrow error set
-        // TODO(port): readDirectoryWithIterator takes (comptime T: type, this: *T) and calls
-        // this.next() for each entry — in Rust this is a callback/trait. Phase B: define a
-        // `DirIterator` trait on FileSystem.RealFS and impl it for Scanner.
-        self.fs
-            .fs
-            .read_directory_with_iterator(name, handle, 0, true, self)
+    ) -> Result<&'static mut EntriesOption, bun_core::Error> {
+        // PORT NOTE: Zig `readDirectoryWithIterator` takes `*RealFS` and a
+        // duck-typed `*Scanner` iterator. `self.fs` is `&FileSystem` here, but
+        // the underlying `RealFS` is the process singleton and is mutated
+        // through `*mut` everywhere else (see `Transpiler.fs: *mut FileSystem`);
+        // cast away `&` to match the Zig calling convention. Serialised by
+        // `RealFS.entries_mutex` inside the callee.
+        let real_fs = &self.fs.fs as *const fs::RealFS as *mut fs::RealFS;
+        let iter = ScannerDirIter(self as *mut Scanner<'a>);
+        // SAFETY: see PORT NOTE above — `real_fs` aliases the singleton.
+        unsafe { &mut *real_fs }
+            .read_directory_with_iterator(name, handle.map(|d| d.fd), 0, true, iter)
     }
 
     pub fn could_be_test_file<const NEEDS_TEST_SUFFIX: bool>(&mut self, name: &[u8]) -> bool {

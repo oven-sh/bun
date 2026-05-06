@@ -83,6 +83,26 @@ pub struct File {
     pub content: Content,
 }
 
+impl Default for File {
+    /// Only exists to satisfy `StringArrayHashMap::get_or_put`'s `V: Default`
+    /// bound; the slot is always overwritten on `!found_existing`.
+    fn default() -> Self {
+        Self {
+            kind: FileKind::Unknown,
+            failed: false,
+            is_rsc: false,
+            is_ssr: false,
+            is_client_component_boundary: false,
+            is_route: false,
+            is_hmr_root: false,
+            is_special_framework_file: false,
+            html_route_bundle_index: None,
+            source_map: Default::default(),
+            content: Content::Unknown,
+        }
+    }
+}
+
 #[derive(Default)]
 pub enum Content {
     #[default]

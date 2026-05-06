@@ -2210,7 +2210,7 @@ impl H2FrameParser {
         buffer_len
     }
 
-    pub fn _generic_write<S: NativeSocketWrite>(&mut self, socket: S, bytes: &[u8]) -> bool {
+    pub fn _generic_write<S: NativeSocketWrite>(&mut self, mut socket: S, bytes: &[u8]) -> bool {
         bun_output::scoped_log!(H2FrameParser, "_genericWrite {}", bytes.len());
 
         // SAFETY: global_this is JSC_BORROW (set at construction from &JSGlobalObject); outlives self, never null

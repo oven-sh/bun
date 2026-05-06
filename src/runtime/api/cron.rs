@@ -52,6 +52,59 @@ use bun_str::{self as strings, ZStr};
 use bun_core::ZBox as ZString;
 use bun_sys::{self as sys, Fd, File};
 
+// ─── local shims (upstream-crate gaps; see PORTING.md §extension traits) ────
+
+/// JS-thread `EventLoopCtx` for `KeepAlive::ref_/unref`. Zig passed the
+/// `*VirtualMachine` directly (anytype dispatch); the Rust split routes through
+/// the aio hook registered by `crate::init()`.
+#[inline]
+fn vm_ctx() -> bun_aio::EventLoopCtx {
+    bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js)
+}
+
+/// Recover `&mut VirtualMachine` from the per-thread singleton.
+/// SAFETY: single JS thread; caller must not hold an aliasing `&mut`.
+#[inline]
+unsafe fn vm_mut<'a>() -> &'a mut VirtualMachine {
+    unsafe { &mut *VirtualMachine::get() }
+}
+
+/// Recover this thread's `timer::All` heap (b2-cycle: `vm.timer` is `()` in
+/// the low-tier `VirtualMachine`; the real value lives in `RuntimeState`).
+#[inline]
+fn timer_all<'a>() -> &'a mut crate::timer::All {
+    // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
+    // single JS thread, raw-ptr-per-field re-entry pattern (jsc_hooks.rs).
+    unsafe { &mut (*crate::jsc_hooks::runtime_state()).timer }
+}
+
+/// Missing `JSValue` methods used by cron — local extension until upstreamed.
+trait JSValueCronExt {
+    fn as_promise_ptr<T>(self) -> *mut T;
+    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue;
+}
+impl JSValueCronExt for JSValue {
+    /// Inverse of [`JSValue::from_ptr_address`] — recover the `*mut T` smuggled
+    /// through `Promise.then`'s trailing context argument.
+    #[inline]
+    fn as_promise_ptr<T>(self) -> *mut T {
+        // SAFETY: caller contract — value was created via `from_ptr_address`.
+        self.as_number() as usize as *mut T
+    }
+    /// `AsyncContextFrame::withAsyncContextIfNeeded` — wraps a callback so it
+    /// restores the current AsyncLocalStorage context when invoked later.
+    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue {
+        unsafe extern "C" {
+            fn AsyncContextFrame__withAsyncContextIfNeeded(
+                global: *mut JSGlobalObject,
+                callback: JSValue,
+            ) -> JSValue;
+        }
+        // SAFETY: FFI into JSC; `global` is live.
+        unsafe { AsyncContextFrame__withAsyncContextIfNeeded(global.as_ptr(), self) }
+    }
+}
+
 // ============================================================================
 // CronJobBase — shared base for CronRegisterJob and CronRemoveJob
 // ============================================================================

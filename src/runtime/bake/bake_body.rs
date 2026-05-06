@@ -1539,17 +1539,14 @@ pub fn add_import_meta_defines(
     // modes (production + hmr dev server)
     // TODO: BASE_URL
     define.insert(
-        arena,
         b"import.meta.env.DEV",
         DefineData::init_boolean(mode == Mode::Development),
     )?;
     define.insert(
-        arena,
         b"import.meta.env.PROD",
         DefineData::init_boolean(mode != Mode::Development),
     )?;
     define.insert(
-        arena,
         b"import.meta.env.MODE",
         DefineData::init_static_string(match mode {
             Mode::Development => &MODE_DEVELOPMENT,
@@ -1557,14 +1554,12 @@ pub fn add_import_meta_defines(
         }),
     )?;
     define.insert(
-        arena,
         b"import.meta.env.SSR",
         DefineData::init_boolean(side == Side::Server),
     )?;
 
     // To indicate a static build, `STATIC` is set to true then.
     define.insert(
-        arena,
         b"import.meta.env.STATIC",
         DefineData::init_boolean(mode == Mode::ProductionStatic),
     )?;
@@ -1590,7 +1585,7 @@ pub fn server_virtual_source() -> logger::Source {
             is_symlink: true,
             is_disabled: false,
         },
-        contents: b"", // Virtual
+        contents: bun_ptr::Cow::Borrowed(b""), // Virtual
         // = bun.ast.Index.bake_server_data (=1). bundle_v2 asserts on this; the
         // `..Default::default()` would silently zero it.
         index: logger::Index::source(1),
@@ -1609,7 +1604,7 @@ pub fn client_virtual_source() -> logger::Source {
             is_symlink: true,
             is_disabled: false,
         },
-        contents: b"", // Virtual
+        contents: bun_ptr::Cow::Borrowed(b""), // Virtual
         // = bun.ast.Index.bake_client_data (=2).
         index: logger::Index::source(2),
         ..Default::default()
@@ -1661,11 +1656,11 @@ impl PatternBuffer {
     }
 
     pub fn slice(&self) -> &[u8] {
-        &self.bytes.as_slice()[self.i as usize..]
+        &self.bytes[self.i as usize..]
     }
 
     fn slice_mut(&mut self) -> &mut [u8] {
-        &mut self.bytes.as_mut_slice()[self.i as usize..]
+        &mut self.bytes[self.i as usize..]
     }
 }
 

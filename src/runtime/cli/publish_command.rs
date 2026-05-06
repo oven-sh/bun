@@ -26,6 +26,31 @@ use bun_paths::resolve_path::{join_abs_string_buf_z, normalize_buf, normalize_bu
 // `LogLevel`/`AuthType` from the stub surface in `bun_install` and re-declare `Access`
 // locally (no stub upstream — see PackageManagerOptions.zig `Access`).
 use bun_install::{AuthType, LogLevel};
+use bun_install::dependency;
+
+// ── Upstream-stub shims ────────────────────────────────────────────────────
+// `PublishConfigStub` / `PackageManagerOptionsStub` in `bun_install` are
+// minimal placeholders (real bodies gated behind `package_manager_real`,
+// reconciler-6). Shim the missing field surface as trait getters so call
+// sites compile; bodies `todo!()` until the upstream stubs are widened.
+trait PublishConfigShim {
+    fn tag(&self) -> &[u8];
+    fn access(&self) -> Option<Access>;
+    fn otp(&self) -> &[u8];
+    fn tolerate_republish(&self) -> bool;
+}
+impl PublishConfigShim for install::PublishConfigStub {
+    fn tag(&self) -> &[u8] { todo!("blocked_on: bun_install::PublishConfigStub::tag") }
+    fn access(&self) -> Option<Access> { todo!("blocked_on: bun_install::PublishConfigStub::access") }
+    fn otp(&self) -> &[u8] { todo!("blocked_on: bun_install::PublishConfigStub::otp") }
+    fn tolerate_republish(&self) -> bool { todo!("blocked_on: bun_install::PublishConfigStub::tolerate_republish") }
+}
+trait PackageManagerOptionsShim {
+    fn dry_run(&self) -> bool;
+}
+impl PackageManagerOptionsShim for install::PackageManagerOptionsStub {
+    fn dry_run(&self) -> bool { todo!("blocked_on: bun_install::PackageManagerOptionsStub::dry_run") }
+}
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum Access {
     Public,

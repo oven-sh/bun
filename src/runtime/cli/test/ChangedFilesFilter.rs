@@ -62,7 +62,8 @@ pub fn filter<'a>(
     test_files: &'a mut [PathString],
     changed_since: &[u8],
 ) -> core::result::Result<Result<'a>, bun_core::Error> {
-    let top_level_dir = vm.transpiler.fs.top_level_dir.as_slice();
+    // SAFETY: `vm.transpiler.fs` is the process-lifetime FileSystem singleton.
+    let top_level_dir: &[u8] = unsafe { (*vm.transpiler.fs).top_level_dir };
 
     // If this process was restarted by the --watch file watcher, it
     // recorded exactly which files changed in this env var before

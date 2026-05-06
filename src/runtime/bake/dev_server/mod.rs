@@ -511,8 +511,8 @@ pub struct DirectoryWatchStore {
 impl DirectoryWatchStore {
     /// Full body in gated `../DevServer/DirectoryWatchStore.rs` draft.
     pub fn free_dependency_index(&mut self, index: u32) {
-        // PORT NOTE: minimal port of DirectoryWatchStore.zig:freeDependencyIndex.
-        self.dependencies[index as usize] = directory_watch_store::Dep::default();
+        // PORT NOTE: minimal port of DirectoryWatchStore.zig:freeDependencyIndex —
+        // skips the `dep = .{}` reset (Dep has no Default yet); free-list bookkeeping only.
         if index as usize == self.dependencies.len() - 1 {
             self.dependencies.truncate(self.dependencies.len() - 1);
         } else {

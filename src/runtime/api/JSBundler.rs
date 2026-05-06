@@ -711,8 +711,8 @@ pub mod js_bundler {
             });
 
             let mut did_set_target = false;
-            if let Some(slice) = config.get_optional::<ZigString::Slice>(global_this, "target")? {
-                if bun_str::strings::has_prefix(slice.slice(), b"bun-") {
+            if let Some(slice) = get_optional_slice(config, global_this, b"target")? {
+                if slice.slice().starts_with(b"bun-") {
                     this.compile = Some(CompileOptions {
                         compile_target: compile_target_from_slice(global_this, slice.slice())?,
                         ..Default::default()
@@ -720,16 +720,15 @@ pub mod js_bundler {
                     this.target = Target::Bun;
                     did_set_target = true;
                 } else {
-                    this.target = match options::Target::MAP.get(slice.slice()) {
+                    this.target = match options::TARGET_MAP.get(slice.slice()) {
                         Some(t) => *t,
                         None => {
-                            return global_this.throw_invalid_arguments(
-                                &format!(
+                            return Err(global_this.throw_invalid_arguments(
+                                format_args!(
                                     "Expected target to be one of 'browser', 'node', 'bun', 'macro', or 'bun-<target>', got {}",
                                     bstr::BStr::new(slice.slice())
                                 ),
-                                &[],
-                            );
+                            ));
                         }
                     };
                     did_set_target = true;

@@ -1160,7 +1160,14 @@ impl RealFS {
                 // drop the short-lived `&mut` before re-borrowing `self` for
                 // `readdir` / `read_directory_error` (Zig used `*DirEntry` directly).
                 let entries_ptr: *mut DirEntry = &mut **entries;
-                let prev_map_ptr: *mut dir_entry::EntryMap = &mut entries.data;
+                // SAFETY: derive `prev_map_ptr` FROM `entries_ptr` so both raw ptrs
+                // share one provenance root. Writing `&mut entries.data` here would
+                // call `Box::deref_mut` a second time, which under Stacked Borrows
+                // retags the whole `DirEntry` and invalidates `entries_ptr` — making
+                // the later `*entries_ptr = new_entry` UB. Zig's `existing.entries.*`
+                // / `existing.entries.data` go through one `*DirEntry`; mirror that.
+                let prev_map_ptr: *mut dir_entry::EntryMap =
+                    unsafe { core::ptr::addr_of_mut!((*entries_ptr).data) };
                 let handle = match bun_sys::open_dir_for_iteration(Fd::cwd(), dir_path) {
                     Ok(h) => h,
                     Err(err) => {

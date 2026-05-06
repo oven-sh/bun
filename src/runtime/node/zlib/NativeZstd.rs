@@ -199,12 +199,12 @@ impl NativeZstd {
             let err_ = this.stream.set_params(c_uint::try_from(i).unwrap(), x);
             if err_.is_error() {
                 this.stream.close();
-                // SAFETY: err_.msg is non-null when is_error() is true; it is a NUL-terminated C string.
-                let msg = unsafe { CStr::from_ptr(err_.msg) }.to_bytes();
+                // is_error() ⇔ msg.is_some()
+                let msg = err_.msg.unwrap_or("");
                 return Err(global
                     .err(
                         jsc::ErrorCode::ZLIB_INITIALIZATION_FAILED,
-                        format_args!("{}", bstr::BStr::new(msg)),
+                        format_args!("{msg}"),
                     )
                     .throw());
             }

@@ -80,7 +80,7 @@ pub fn to_js(global_object: &JSGlobalObject) -> JSValue {
                     name,
                     func,
                     1,
-                    jsc::JSFunctionCreateOptions { constructor: Some(func), ..Default::default() },
+                    jsc::js_function::CreateJSFunctionOptions { constructor: Some(func), ..Default::default() },
                 ),
             );
         } else {

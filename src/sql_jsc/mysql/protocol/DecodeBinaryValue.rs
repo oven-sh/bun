@@ -42,8 +42,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
             if unsigned {
                 return Ok(SQLDataCell { tag: CellTag::Uint4, value: CellValue { uint4: val as u32 }, ..Default::default() });
             }
-            // SAFETY: same-size POD bitcast u8 -> i8
-            let ival: i8 = unsafe { core::mem::transmute::<u8, i8>(val) };
+            let ival: i8 = val as i8;
             Ok(SQLDataCell { tag: CellTag::Int4, value: CellValue { int4: ival as i32 }, ..Default::default() })
         }
         FieldType::MYSQL_TYPE_SHORT => {

@@ -39,8 +39,13 @@ type ListManaged<'bump, T> = BumpVec<'bump, T>;
 
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
     // SAFETY: `current_scope` is always a valid arena-owned Scope for the parse;
-    // `pushScopeForVisitPass`/`popScope` keep it non-dangling. Private to this
-    // impl block (sibling files have their own copy).
+    // `pushScopeForVisitPass`/`popScope` keep it non-dangling. Aliasing: scopes
+    // are reached only via raw `*mut Scope` (P.current_scope / P.module_scope /
+    // Scope.parent / Scope.children) — no long-lived `&`/`&mut Scope` is ever
+    // held across a `&mut self` call, so `&mut self` here is the sole live
+    // borrow of this allocation and the returned `&mut` is unique for its
+    // (elided, tied-to-`&mut self`) lifetime. Private to this impl block
+    // (sibling files have their own copy).
     #[inline(always)]
     fn vis_scope(&mut self) -> &mut js_ast::Scope {
         unsafe { &mut *self.current_scope }

@@ -3061,7 +3061,7 @@ impl<'a> BundleV2<'a> {
                             // PORT NOTE: Zig used `std.posix.toPosixPath` (copy + NUL-
                             // terminate); on macOS paths are already posix-separated so
                             // `z()` alone suffices. `Watcher.WATCH_OPEN_FLAGS` = `O_EVTONLY`.
-                            match bun_sys::open(bun_paths::resolve_path::z(load.path.as_ref(), &mut buf), 0x8000 /* O_EVTONLY */, 0) {
+                            match bun_sys::open(bun_paths::resolve_path::z(load.path.as_ref(), &mut *buf), 0x8000 /* O_EVTONLY */, 0) {
                                 bun_sys::Result::Ok(fd) => fd,
                                 bun_sys::Result::Err(_) => break 'add_watchers,
                             }

@@ -295,9 +295,9 @@ pub fn get_peer_certificate(this: &mut This, global: &JSGlobalObject, frame: &Ca
             let cert = unsafe { ffi::SSL_get_peer_certificate(ssl_ptr) };
             if !cert.is_null() {
                 // SAFETY: `c` is the +1 X509 reference returned by SSL_get_peer_certificate; we own it.
-                let mut guard = scopeguard::guard(cert, |c| unsafe { ffi::X509_free(c) });
-                // SAFETY: *guard is a non-null *mut X509 (null-checked above).
-                return X509::to_js(unsafe { &mut **guard }, global);
+                let _guard = scopeguard::guard(cert, |c| unsafe { ffi::X509_free(c) });
+                // SAFETY: cert is a non-null *mut X509 (null-checked above).
+                return X509::to_js(unsafe { &mut *cert }, global);
             }
         }
 
